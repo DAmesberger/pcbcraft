@@ -13,7 +13,7 @@ fn draw(width: f32, row: &Row<'_>) -> (Vec<Painted>, Rect) {
         let area = Rect::from_min_size(pos2(10.0, 10.0), vec2(width, TREE_ROW_HEIGHT));
         ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
             ui.set_clip_rect(area);
-            tree_row(ui, egui::Id::new("row"), row);
+            tree_row(ui, egui::Id::unique("row"), row);
             rect = area;
         });
     };

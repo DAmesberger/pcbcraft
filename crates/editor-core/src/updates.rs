@@ -395,6 +395,7 @@ fn wire_end_label(project: &Project, end: WireEnd) -> String {
             || format!("sheet pin {}", p.sheet_pin),
             |(_, pin)| format!("sheet pin {}", pin.name),
         ),
+        WireEnd::Free(_) => "a free end".into(),
     }
 }
 
@@ -411,6 +412,7 @@ fn wire_end_name(project: &Project, end: WireEnd) -> String {
             || "a sheet pin".into(),
             |(_, pin)| format!("sheet pin {}", pin.name),
         ),
+        WireEnd::Free(_) => "a free end".into(),
     }
 }
 
@@ -823,7 +825,7 @@ fn stage_change(project: &Project, change: &Change) -> Result<Project> {
         }
         Change::SyncPcb {} => layout::apply(&mut next, layout::LayoutCommand::Sync)?,
     }
-    schematic::tidy(&mut next);
+    schematic::tidy(&mut next)?;
     nets::reconcile(&mut next)?;
     Ok(next)
 }
@@ -2315,6 +2317,33 @@ fn findings(project: &Project) -> Vec<Finding> {
     out
 }
 
+/// [`findings`] of `next` without the copper past the board edge of the
+/// parts the update stages beside the board (placed in `next`, not in
+/// `project`): off the board is their staging area, not news of the
+/// update. The board checks still report them until they are placed.
+fn findings_after(project: &Project, next: &Project) -> Vec<Finding> {
+    let staged: BTreeSet<Id> = next
+        .placements
+        .iter()
+        .map(|p| p.instance)
+        .filter(|i| project.placements.iter().all(|q| q.instance != *i))
+        .collect();
+    let off_board = |f: &Finding| {
+        f.code == "board.outside_outline"
+            && !f.objects.is_empty()
+            && f.objects.iter().all(|o| match o {
+                ObjectRef::Pad { instance, .. } | ObjectRef::Instance { id: instance } => {
+                    staged.contains(instance)
+                }
+                _ => false,
+            })
+    };
+    findings(next)
+        .into_iter()
+        .filter(|f| !off_board(f))
+        .collect()
+}
+
 /// Preview never mutates the source. Apply recomputes this plan at its bound revision.
 pub(crate) fn preview(
     project: &Project,
@@ -2893,7 +2922,7 @@ pub(crate) fn preview(
             change_refs(&change),
         );
     }
-    plan.findings = review::findings_diff(findings(project), findings(&next));
+    plan.findings = review::findings_diff(findings(project), findings_after(project, &next));
     plan.findings.new_rows = crate::issues::finding_rows(&next, &plan.findings.new);
     plan.findings.resolved_rows = crate::issues::finding_rows(project, &plan.findings.resolved);
     plan.planned_placements = next

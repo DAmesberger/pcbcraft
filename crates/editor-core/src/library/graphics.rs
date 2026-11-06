@@ -47,6 +47,10 @@ pub const PIN_TEXT_HEIGHT_MM: f64 = 1.0;
 /// Default designator, name and value text height on symbols: half the
 /// 2.5 mm module, below the height of a two-terminal body.
 pub const SYMBOL_TEXT_HEIGHT_MM: f64 = 1.25;
+/// Value text height on placed symbols (100 nF, 10 kΩ, the part number):
+/// the pin text height, smaller than the designator, so a value reads as
+/// secondary and stays clear of neighbours.
+pub const VALUE_TEXT_HEIGHT_MM: f64 = 1.0;
 /// How far a point may sit from a grid line and still be on it.
 pub const GRID_TOLERANCE_MM: f64 = 1e-6;
 /// The schematic sheet grid symbols are placed on.

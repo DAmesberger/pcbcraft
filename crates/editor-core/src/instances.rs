@@ -25,6 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod part;
 pub mod pins;
+pub mod text;
 pub use part::{MAX_ASSIGN_INSTANCES, assign_part, binding_name, part_findings, requirements};
 
 pub const MAX_INSTANCES: usize = 4096;
@@ -316,12 +317,6 @@ fn check_with<'a>(
                 "A device-NC or reserved terminal cannot be wired.".into(),
             ));
         }
-        if instance.no_connect.contains(&terminal.id) {
-            return Err(Error::Conflict(format!(
-                "{name} terminal ‘{}’ is marked no-connect; a no-connect terminal cannot be wired.",
-                terminal.name
-            )));
-        }
         let unit = owning_unit(symbol, terminal.id).ok_or_else(|| {
             invalid(format!(
                 "{name}: terminal ‘{}’ has no pin in its representation.",
@@ -447,6 +442,22 @@ pub fn effective_fields(
         .collect()
 }
 
+/// An instance's value text: the effective text of every typed field its
+/// component selects that has a value, in selection order and
+/// space-separated, as the instance shows them ("10 µF 16 V", "22 kΩ ±1%").
+/// The one value source of the schematic and the BOM, so a BOM keeps every
+/// rating the part was specified with. `None` when no field has a value;
+/// never the component name.
+pub fn value_text(library: &Library, instance: &ComponentInstance) -> Result<Option<String>> {
+    let texts: Vec<String> = effective_fields(library, instance)?
+        .into_iter()
+        .filter_map(|f| f.text)
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty())
+        .collect();
+    Ok((!texts.is_empty()).then(|| texts.join(" ")))
+}
+
 /// The effective value of every field `component` selects when nothing is
 /// assigned, in selection order: what an instance placed now would show.
 pub fn default_fields(
@@ -471,8 +482,9 @@ pub fn default_fields(
 
 /// Choices offered by the pinned component; unit IDs exist in the resolved
 /// representation; placed and unused exclusive; no-connect only on
-/// electrical terminals; every wire endpoint's unit placed, electrical and
-/// not project no-connect, so no-connect and wiring exclude each other;
+/// electrical terminals; every wire endpoint's unit placed and electrical
+/// (a wired no-connect terminal is a completeness error, not a refusal:
+/// `instance.no_connect_connected`);
 /// field values valid; function selections structurally valid and
 /// conflict-free, including availability in the chosen binding.
 pub fn check_instance(project: &Project, id: Id) -> Result<()> {
@@ -636,6 +648,7 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
         part: None,
         pin_config: Default::default(),
         marking: Default::default(),
+        text_placements: Default::default(),
     });
     let sheet = request.sheet.unwrap_or_else(|| project.sheets.first());
     let occurrence = add_occurrence(project, id, request.unit, request.position, sheet)?;
@@ -690,6 +703,7 @@ pub fn place_off_sheet(
         part: None,
         pin_config: Default::default(),
         marking: Default::default(),
+        text_placements: Default::default(),
     });
     check_instance(project, id)?;
     check_designators(project)?;
@@ -798,6 +812,7 @@ pub(crate) fn retarget(project: &mut Project, id: Id, target: Retarget) -> Resul
         }
     }
     let instance = instance_mut(project, id)?;
+    let old_footprint = instance.physical.map(|p| p.footprint);
     instance.component = target.component;
     instance.representation = target.representation;
     instance.physical = target.physical;
@@ -806,6 +821,7 @@ pub(crate) fn retarget(project: &mut Project, id: Id, target: Retarget) -> Resul
     instance.functions = target.functions;
     instance.no_connect.retain(|t| wirable(&component, *t));
     instance.pin_config = pins::carry_pin_config(&instance.pin_config, &component);
+    text::follow_footprint(project, id, old_footprint);
     Ok(())
 }
 

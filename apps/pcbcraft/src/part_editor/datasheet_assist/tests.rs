@@ -76,7 +76,10 @@ fn the_start_page_button_opens_the_form() -> Result<(), String> {
         "Datasheets",
         "Part name",
         "Save as",
+        "Provider",
+        "Endpoint",
         "Model",
+        "API key",
         "Cost cap",
         "Start",
     ] {
@@ -105,6 +108,8 @@ fn progress_and_the_result_arrive_from_the_thread() {
         Message::Done(Ok(Finished {
             stop: "review report submitted".into(),
             spent_usd: 0.42,
+            priced: true,
+            output_tokens: 1000,
             project: PathBuf::from("x.pcbcraft"),
             review: PathBuf::from("x.review.md"),
         })),
@@ -118,5 +123,67 @@ fn progress_and_the_result_arrive_from_the_thread() {
     assert!((assist.spent - 0.42).abs() < 1e-12);
     assert!(
         matches!(&assist.result, Some(Ok(f)) if f.review.as_path() == std::path::Path::new("x.review.md"))
+    );
+}
+
+#[test]
+fn an_openai_compatible_model_is_declared_not_detected() -> Result<(), String> {
+    let ctx = egui::Context::default();
+    solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+    let mut assist = DatasheetAssist {
+        open: true,
+        provider: Provider::OpenAiCompatible,
+        endpoint: "http://localhost:11434/v1".into(),
+        model: "qwen3.8:27b".into(),
+        ..DatasheetAssist::default()
+    };
+    let painted = frame(&ctx, vec![], |ui| assist.ui(ui));
+    for label in [
+        "Context",
+        "Takes images (vision)",
+        "Reads PDFs itself",
+        "API key",
+    ] {
+        assert!(
+            painted.iter().any(|(t, _)| t == label),
+            "{label}: {painted:?}"
+        );
+    }
+    // No cost cap without a price.
+    assert!(!painted.iter().any(|(t, _)| t == "Cost cap"));
+    assist.vision = true;
+    assist.context_tokens = 65_536.0;
+    assist.datasheets = "a.pdf".into();
+    assist.name = "X".into();
+    let plan = assist.plan()?;
+    let p = &plan.config.profile;
+    assert_eq!(p.provider, Provider::OpenAiCompatible);
+    assert_eq!(p.capabilities.context_tokens, 65_536);
+    assert!(p.capabilities.vision && !p.capabilities.native_pdf);
+    assert!(plan.endpoint.is_loopback());
+    assert!(plan.key.is_none());
+    Ok(())
+}
+
+#[test]
+fn a_key_for_plain_http_to_another_computer_is_refused_and_never_kept() {
+    let mut assist = DatasheetAssist {
+        open: true,
+        provider: Provider::OpenAiCompatible,
+        endpoint: "http://192.168.1.20:11434/v1".into(),
+        model: "m".into(),
+        key: "sk-typed".into(),
+        datasheets: "a.pdf".into(),
+        name: "X".into(),
+        out: "x.pcbcraft".into(),
+        ..DatasheetAssist::default()
+    };
+    assist.start();
+    assert!(assist.key.is_empty(), "the key leaves the form");
+    assert!(assist.job.is_none(), "nothing started");
+    assert!(
+        matches!(&assist.result, Some(Err(why)) if why.contains("plain HTTP") && !why.contains("sk-typed")),
+        "{:?}",
+        assist.result
     );
 }

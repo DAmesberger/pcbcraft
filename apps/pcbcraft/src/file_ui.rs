@@ -82,6 +82,11 @@ impl Controller {
     fn dirty(&self) -> bool {
         self.saved.as_ref() != Some(&self.current)
     }
+    /// The current revision holds the saved content again (an undo or redo
+    /// back to it): nothing is unsaved.
+    fn back_at_saved(&mut self) {
+        self.saved = Some(self.current.clone());
+    }
     fn observe(&mut self, revision: u64) -> bool {
         let next = Stamp {
             epoch: self.current.epoch,
@@ -318,6 +323,9 @@ pub struct FileUi {
     /// The current document; cloning shares its data.
     document: Document,
     captured: Option<Document>,
+    /// The content last saved (or opened). Undo and redo restore shared
+    /// snapshots, so returning to it is seen by identity, not by revision.
+    saved_document: Option<Document>,
     picker: rfd::AsyncFileDialog,
     folder: PathBuf,
     sender: Sender<Job>,
@@ -333,21 +341,39 @@ pub struct FileUi {
     /// own recovery snapshot of the restored document (so the work is never
     /// in no file at all).
     restored_source: Option<PathBuf>,
+    /// The file a restored session was opened from: until the project has
+    /// a path, the save panel proposes its name and folder.
+    restored_origin: Option<PathBuf>,
     recovery_choice_pending: bool,
     changed_at: f64,
     recovery_retry_at: f64,
     now: f64,
+    /// Quitting was asked for while a file operation ran: ask once it ends.
+    close_pending: bool,
+    /// The window is closing with the user's answer (or nothing unsaved):
+    /// the exit keeps no recovery copy.
+    closed: bool,
 }
 impl FileUi {
     pub fn new(cc: &eframe::CreationContext<'_>, engine: &Engine) -> Self {
+        let picker = rfd::AsyncFileDialog::new().set_parent(cc);
+        Self::with_directory(&cc.egui_ctx, picker, engine, recovery_directory())
+    }
+    /// The file workflow with recovery snapshots in `directory`.
+    pub(crate) fn with_directory(
+        ctx: &egui::Context,
+        picker: rfd::AsyncFileDialog,
+        engine: &Engine,
+        directory: PathBuf,
+    ) -> Self {
         let (events, receiver) = mpsc::channel();
-        let directory = recovery_directory();
-        let sender = worker(cc.egui_ctx.clone(), directory, events.clone());
+        let sender = worker(ctx.clone(), directory, events.clone());
         Self {
             controller: Controller::new(engine.revision()),
             document: engine.document().clone(),
             captured: None,
-            picker: rfd::AsyncFileDialog::new().set_parent(cc),
+            saved_document: Some(engine.document().clone()),
+            picker,
             folder: home_directory(),
             sender,
             event_sender: events,
@@ -357,10 +383,13 @@ impl FileUi {
             recoveries: vec![],
             recovery_selected: 0,
             restored_source: None,
+            restored_origin: None,
             recovery_choice_pending: false,
             changed_at: 0.0,
             recovery_retry_at: 0.0,
             now: 0.0,
+            close_pending: false,
+            closed: false,
         }
     }
     pub fn observe(&mut self, engine: &Engine, now: f64) {
@@ -368,6 +397,14 @@ impl FileUi {
         if self.controller.observe(engine.revision()) {
             self.document = engine.document().clone();
             self.changed_at = now;
+            if self.controller.dirty()
+                && self.saved_document.as_ref().is_some_and(|saved| {
+                    same_content(saved, &self.document) || only_unedited_drafts(saved, engine)
+                })
+            {
+                self.controller.back_at_saved();
+                self.clear_recovery(false);
+            }
         }
     }
     pub fn dirty(&self) -> bool {
@@ -393,10 +430,47 @@ impl FileUi {
         recovered: bool,
     ) -> Outcome<()> {
         self.controller.adopt(engine.revision(), path, recovered)?;
+        if !recovered {
+            self.restored_origin = None;
+        }
         self.document = engine.document().clone();
+        self.saved_document = (!recovered).then(|| self.document.clone());
         self.changed_at = self.now;
         self.clear_recovery(false);
         Ok(())
+    }
+    /// The app is ending without a Save or Don't Save answer (Dock › Quit,
+    /// a logout, a signal): write unsaved work to this session's recovery
+    /// snapshot now, waiting at most `wait`, so the next launch offers it.
+    /// Returns whether the snapshot holds the current document.
+    pub fn keep_for_recovery(&mut self, wait: Duration) -> bool {
+        if self.closed || !self.controller.dirty() {
+            return false;
+        }
+        if self.controller.recovered.as_ref() == Some(&self.controller.current) {
+            return true;
+        }
+        let Ok(ticket) = self.controller.allocate() else {
+            return false;
+        };
+        self.controller.recovery_flight = Some(ticket.clone());
+        self.send(Job::Recover(
+            ticket.clone(),
+            self.document.clone(),
+            self.controller.path.clone(),
+        ));
+        let deadline = std::time::Instant::now() + wait;
+        while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+            let Ok(event) = self.receiver.recv_timeout(left) else {
+                break;
+            };
+            let ours = matches!(&event, Event::Recovered(t, false, false, _) if *t == ticket);
+            self.receive(event);
+            if ours {
+                break;
+            }
+        }
+        self.controller.recovered.as_ref() == Some(&self.controller.current)
     }
     fn send(&mut self, job: Job) {
         if let Err(error) = self.sender.send(job) {
@@ -418,6 +492,19 @@ impl FileUi {
         }
     }
     pub fn request(&mut self, action: Action) {
+        if matches!(action, Action::Close) && self.closed {
+            return;
+        }
+        if matches!(action, Action::Close) && self.controller.prompt.is_none() {
+            if self.busy() {
+                // A save or a file panel is still open: quit once it ends.
+                self.close_pending = true;
+                return;
+            }
+            // The startup recovery question is kept on disk for the next
+            // launch, as "Keep for later" does.
+            self.recoveries.clear();
+        }
         if self.busy() || self.controller.prompt.is_some() || !self.recoveries.is_empty() {
             return;
         }
@@ -482,8 +569,24 @@ impl FileUi {
             self.pick(ticket, Kind::Save);
         }
     }
+    /// The folder and file name the project's save panel proposes: its
+    /// own file's, else (a restored session) the file it was restored
+    /// from, else the project's name in the last folder used.
+    fn save_proposal(&self) -> (&Path, String) {
+        let origin = self
+            .restored_origin
+            .as_deref()
+            .filter(|_| self.controller.path.is_none());
+        let folder = origin.and_then(Path::parent).unwrap_or(&self.folder);
+        let name = proposed_file_name(
+            self.controller.path.as_deref().or(origin),
+            &self.document.project.name,
+        );
+        (folder, name)
+    }
     fn pick(&mut self, ticket: Ticket, kind: Kind) {
-        let dialog = self.picker.clone().set_directory(&self.folder);
+        let (folder, filename) = self.save_proposal();
+        let dialog = self.picker.clone().set_directory(folder);
         let dialog = if kind == Kind::Export {
             dialog
                 .set_title("Export PCB to Solidcraft")
@@ -495,20 +598,13 @@ impl FileUi {
                 .set_file_name("schematic.pdf")
                 .add_filter("PDF document", &["pdf"])
         } else {
-            let filename = self
-                .controller
-                .path
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .and_then(|p| p.to_str())
-                .unwrap_or("untitled.pcbcraft");
             dialog
                 .set_title(if kind == Kind::Open {
                     "Open Pcbcraft project"
                 } else {
                     "Save Pcbcraft project"
                 })
-                .set_file_name(filename)
+                .set_file_name(&filename)
                 .add_filter("Pcbcraft project", &["pcbcraft", "PCBCRAFT"])
         };
         // Construct the parented native future on the event thread, just as
@@ -559,7 +655,13 @@ impl FileUi {
         while let Ok(event) = self.receiver.try_recv() {
             self.receive(event);
         }
+        if self.close_pending && !self.busy() {
+            self.close_pending = false;
+            self.request(Action::Close);
+        }
+        // Once closing (Don't Save), no new snapshot brings the work back.
         if self.controller.dirty()
+            && !self.closed
             && !self.prompting()
             && self.controller.recovery_flight.is_none()
             && self.controller.recovered.as_ref() != Some(&self.controller.current)
@@ -651,7 +753,7 @@ impl FileUi {
                     if let Some((current, continuation)) =
                         self.controller.saved(&ticket, path.clone())
                     {
-                        self.captured = None;
+                        self.saved_document = self.captured.take();
                         self.status = Some((
                             Level::Ok,
                             if current {
@@ -741,6 +843,7 @@ impl FileUi {
                 if close {
                     let current = self.controller.accept(&ticket, Kind::Close);
                     if current && result.is_ok() {
+                        self.closed = true;
                         self.effects.push(Effect::Close);
                     } else if result.is_ok() {
                         self.controller.prompt = Some(Transition::Close);
@@ -762,6 +865,11 @@ impl FileUi {
                 }
                 match result {
                     Ok(document) => {
+                        self.restored_origin = self
+                            .recoveries
+                            .iter()
+                            .find(|e| e.path == path)
+                            .and_then(|e| e.original_path.clone());
                         self.recoveries.retain(|e| e.path != path);
                         self.recovery_selected = 0;
                         self.restored_source = Some(path);
@@ -788,37 +896,37 @@ impl FileUi {
     /// Unsaved-changes and startup-recovery prompts, in Solidcraft's system
     /// window chrome.
     pub fn dialogs(&mut self, ctx: &egui::Context) {
-        if self.controller.prompt.is_some() {
+        if let Some(transition) = &self.controller.prompt {
+            let title = match transition {
+                Transition::Close => "Save changes before quitting?",
+                Transition::New | Transition::Open(_) => "Save changes before continuing?",
+            };
             let mut choice = None;
-            ui_kit::Window::new(
-                egui::Id::new("file-unsaved"),
-                "status_warning",
-                "Save changes before continuing?",
-            )
-            .required()
-            .show_body(ctx, |ui| {
-                dialog_body(ui, |ui| {
-                    crate::kit::status(
-                        ui,
-                        "The project or component draft has unsaved changes.",
-                        crate::kit::Tone::Dim,
-                    );
-                    if let Some((_, status)) = &self.status {
-                        crate::kit::note(ui, status);
-                    }
-                    crate::kit::actions(ui, |ui| {
-                        if crate::kit::primary(ui, "Save", true).clicked() {
-                            choice = Some(Choice::Save);
+            ui_kit::Window::new(egui::Id::unique("file-unsaved"), "status_warning", title)
+                .required()
+                .show_body(ctx, |ui| {
+                    dialog_body(ui, |ui| {
+                        crate::kit::status(
+                            ui,
+                            "The project or component draft has unsaved changes.",
+                            crate::kit::Tone::Dim,
+                        );
+                        if let Some((_, status)) = &self.status {
+                            crate::kit::note(ui, status);
                         }
-                        if ui_kit::button(ui, "Discard", Button::Normal).clicked() {
-                            choice = Some(Choice::Discard);
-                        }
-                        if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
-                            choice = Some(Choice::Cancel);
-                        }
+                        crate::kit::actions(ui, |ui| {
+                            if crate::kit::primary(ui, "Save", true).clicked() {
+                                choice = Some(Choice::Save);
+                            }
+                            if ui_kit::button(ui, DONT_SAVE, Button::Normal).clicked() {
+                                choice = Some(Choice::Discard);
+                            }
+                            if ui_kit::button(ui, "Cancel", Button::Normal).clicked() {
+                                choice = Some(Choice::Cancel);
+                            }
+                        });
                     });
                 });
-            });
             match choice {
                 Some(Choice::Save) => {
                     let next = self.controller.prompt.take();
@@ -829,7 +937,10 @@ impl FileUi {
                         self.proceed(next);
                     }
                 }
-                Some(Choice::Cancel) => self.controller.prompt = None,
+                Some(Choice::Cancel) => {
+                    self.controller.prompt = None;
+                    self.close_pending = false;
+                }
                 None => {}
             }
             return;
@@ -850,7 +961,7 @@ impl FileUi {
         } else {
             format!("Recover one of {count} earlier sessions?")
         };
-        ui_kit::Window::new(egui::Id::new("startup-recovery"), "status_warning", &title)
+        ui_kit::Window::new(egui::Id::unique("startup-recovery"), "status_warning", &title)
             .required()
             .show_body(ctx, |ui| {
                 dialog_body(ui, |ui| {
@@ -911,6 +1022,11 @@ impl FileUi {
     }
 }
 
+/// The unsaved-changes answer that goes on without saving. It keeps no
+/// recovery copy either: the session's snapshot is removed before the
+/// window closes, as in Solidcraft.
+const DONT_SAVE: &str = "Don't Save";
+
 /// One recovery as the dialog lists it: name, age and size.
 fn recovery_label(entry: &RecoveryEntry, now_ms: u64) -> String {
     if entry.error.is_some() {
@@ -935,6 +1051,64 @@ enum Choice {
     Save,
     Discard,
     Cancel,
+}
+
+/// Both documents share the same data: an undo or redo restored the very
+/// snapshot that was saved.
+fn same_content(a: &Document, b: &Document) -> bool {
+    Arc::ptr_eq(&a.project, &b.project) && Arc::ptr_eq(&a.drafts, &b.drafts)
+}
+
+/// The name the project panel proposes: the file's own, else the project's
+/// name ("USB sensor board.pcbcraft") without characters a file name
+/// cannot hold, else "untitled.pcbcraft".
+fn proposed_file_name(path: Option<&Path>, project: &str) -> String {
+    if let Some(name) = path.and_then(|p| p.file_name()).and_then(|n| n.to_str()) {
+        return name.to_owned();
+    }
+    let stem: String = project
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':') && !c.is_control())
+        .collect();
+    let stem = stem.trim().trim_start_matches('.');
+    if stem.is_empty() {
+        "untitled.pcbcraft".to_owned()
+    } else {
+        format!("{stem}.pcbcraft")
+    }
+}
+
+/// Whether the engine's document differs from `saved` only by drafts opened
+/// for editing and not yet changed: whole component working sets that still
+/// equal their published revisions. Opening a component is not an edit.
+fn only_unedited_drafts(saved: &Document, engine: &Engine) -> bool {
+    use crate::part_editor::WorkingSet;
+    use pcbcraft_core::DefinitionKind;
+    let now = engine.document();
+    let (old, new) = (&saved.drafts, &now.drafts);
+    if !Arc::ptr_eq(&saved.project, &now.project)
+        || old.grid != new.grid
+        || old.symbols != new.symbols
+        || !old.items.iter().all(|d| new.items.contains(d))
+    {
+        return false;
+    }
+    let added: Vec<_> = new
+        .items
+        .iter()
+        .filter(|d| !old.items.contains(d))
+        .collect();
+    let mut covered = std::collections::BTreeSet::new();
+    for draft in added
+        .iter()
+        .filter(|d| d.definition.kind() == DefinitionKind::Component)
+    {
+        match WorkingSet::of(new, draft.id) {
+            Some(set) if !set.unpublished(engine) => covered.extend(set.ids.all()),
+            _ => return false,
+        }
+    }
+    added.iter().all(|d| covered.contains(&d.id))
 }
 
 fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {
@@ -984,6 +1158,10 @@ fn dialog_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 }
 
 #[cfg(test)]
+#[path = "file_ui_tests.rs"]
+mod quit_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1010,6 +1188,34 @@ mod tests {
             recovery_label(&entry, 0),
             "Untitled · just now · 4 instances"
         );
+    }
+
+    /// Saving an untitled project proposes its name; a saved file keeps its
+    /// own; once saved, the path (whose stem the title bar shows) is the
+    /// chosen file.
+    #[test]
+    fn the_save_panel_proposes_the_project_name() -> Outcome<()> {
+        assert_eq!(
+            proposed_file_name(None, "USB sensor board"),
+            "USB sensor board.pcbcraft"
+        );
+        assert_eq!(proposed_file_name(None, " a/b:c "), "abc.pcbcraft");
+        assert_eq!(proposed_file_name(None, "  "), "untitled.pcbcraft");
+        assert_eq!(
+            proposed_file_name(Some(Path::new("/x/board.pcbcraft")), "USB sensor board"),
+            "board.pcbcraft"
+        );
+        let mut controller = Controller::new(1);
+        controller.observe(2);
+        let ticket = controller.start(Kind::Save, None)?;
+        let chosen = PathBuf::from("/x/USB sensor board.pcbcraft");
+        assert!(controller.saved(&ticket, chosen.clone()).is_some());
+        assert_eq!(controller.path.as_deref(), Some(chosen.as_path()));
+        assert_eq!(
+            chosen.file_stem().and_then(|s| s.to_str()),
+            Some("USB sensor board")
+        );
+        Ok(())
     }
 
     #[test]

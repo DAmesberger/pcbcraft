@@ -16,10 +16,9 @@
 //! keeps these crate-private, so the geometry is reproduced here on the
 //! public tokens and fonts.
 use super::severity::{Level, severity_glyph};
-use egui::text::{LayoutJob, TextWrapping};
 use egui::{
     Align, Color32, CursorIcon, FontId, Galley, Layout, Rect, Response, RichText, Sense, Stroke,
-    Ui, UiBuilder, WidgetInfo, WidgetType, pos2, vec2,
+    Ui, UiBuilder, WidgetInfo, Role, pos2, vec2,
 };
 use pcbcraft_core::issues::{IssueCounts, IssueDetail};
 use solidcraft_ui_egui::{fonts, theme::Tokens, ui_kit};
@@ -64,7 +63,7 @@ impl IssueRowView {
 }
 
 /// What a row's click did.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct IssueRowResponse {
     /// The row itself or its locate button: select and frame every
     /// referenced object.
@@ -75,6 +74,8 @@ pub struct IssueRowResponse {
     /// An object chip: select and frame only that object (an index into
     /// [`IssueRowView::objects`]).
     pub object: Option<usize>,
+    /// A right-click on the row: where, for its context menu.
+    pub menu: Option<egui::Pos2>,
 }
 
 /// One issue row. `id` keeps its interaction stable while the list scrolls.
@@ -151,7 +152,7 @@ fn row_at(ui: &mut Ui, id: egui::Id, row: &IssueRowView, indent: f32) -> IssueRo
         .galley(pos2(x, cy - title.size().y / 2.0), title, t.text);
 
     let label = format!("{}: {}", row.level.count_words(1), row.title);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), &label));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, ui.is_enabled(), &label));
     let response = response.on_hover_cursor(CursorIcon::PointingHand);
     let response = if elided {
         response.on_hover_text(&row.title)
@@ -159,6 +160,10 @@ fn row_at(ui: &mut Ui, id: egui::Id, row: &IssueRowView, indent: f32) -> IssueRo
         response
     };
     out.locate |= response.clicked();
+    out.menu = response
+        .secondary_clicked()
+        .then(|| response.interact_pointer_pos())
+        .flatten();
 
     if row.open && row.disclosable() {
         let inset = x - rect.left();
@@ -209,7 +214,7 @@ fn locate_button(ui: &Ui, id: egui::Id, right: &mut f32, cy: f32) -> Response {
         ui.painter()
             .line_segment([c + d * (r * 0.45), c + d * (r * 1.3)], stroke);
     }
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), "Locate"));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, ui.is_enabled(), "Locate"));
     response
 }
 
@@ -264,11 +269,13 @@ fn object_chips(ui: &mut Ui, id: egui::Id, objects: &[String]) -> Option<usize> 
                 ui.available_width().max(t.space_24) - t.space_16,
             );
             let size = vec2(text.size().x + t.space_16, t.space_16 + t.space_4);
+            let cut = text.elided;
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             let response = ui
                 .interact(rect, id.with(("object", i)), Sense::click())
                 .union(response)
                 .on_hover_cursor(CursorIcon::PointingHand);
+            let response = super::text::hover(response, name, "", cut);
             let fill = if response.hovered() {
                 t.hover
             } else {
@@ -283,7 +290,7 @@ fn object_chips(ui: &mut Ui, id: egui::Id, objects: &[String]) -> Option<usize> 
             );
             ui.painter()
                 .galley(rect.center() - text.size() / 2.0, text, t.text);
-            response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, name));
+            response.widget_info(|| WidgetInfo::labeled(Role::Button, true, name));
             if response.clicked() {
                 clicked = Some(i);
             }
@@ -304,7 +311,7 @@ pub struct IssueGroupView {
 }
 
 /// What happened in the list this frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IssueListEvent {
     /// A group header's disclosure.
     Group(usize),
@@ -460,7 +467,7 @@ fn group_header(ui: &mut Ui, id: egui::Id, group: &IssueGroupView) -> (bool, boo
         .galley(pos2(count_x, cy - count.size().y / 2.0), count, t.form_dim);
     let label = format!("{}: {}", group.title, group.level.count_words(group.rows));
     response.widget_info(|| {
-        WidgetInfo::selected(WidgetType::CollapsingHeader, true, group.open, &label)
+        WidgetInfo::selected(Role::DisclosureTriangle, true, group.open, &label)
     });
     let response = response.on_hover_cursor(CursorIcon::PointingHand);
     let response = if elided {
@@ -587,7 +594,7 @@ pub fn issue_line(ui: &mut Ui, counts: &IssueCounts, label: &str) -> Response {
         t.text_dim,
     );
     let name = format!("{} {label}", counts_words(counts, true, true));
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), &name));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, ui.is_enabled(), &name));
     response
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text("Show in Issues")
@@ -682,7 +689,7 @@ pub fn issues_bar(
         name = format!("{name}; {elsewhere}");
     }
     response
-        .widget_info(|| WidgetInfo::selected(WidgetType::Button, ui.is_enabled(), expanded, &name));
+        .widget_info(|| WidgetInfo::selected(Role::Button, ui.is_enabled(), expanded, &name));
     response
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text(&name)
@@ -711,7 +718,7 @@ pub fn count_badge(ui: &mut Ui, counts: &IssueCounts, hide_to_do_with_errors: bo
     );
     paint_counts(ui, rect.left() + t.space_8, rect.center().y, &segs, &font);
     let name = format!("Issues: {}", counts_words(counts, to_do, false));
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), &name));
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, ui.is_enabled(), &name));
     response
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text(&name)
@@ -738,11 +745,9 @@ fn galley(ui: &Ui, text: &str, font: FontId, color: Color32) -> Arc<Galley> {
 }
 
 /// One line clipped to `width` with an ellipsis; `elided` says whether it
-/// was cut.
+/// was cut (`kit::text`).
 fn clipped(ui: &Ui, text: &str, font: FontId, color: Color32, width: f32) -> Arc<Galley> {
-    let mut job = LayoutJob::simple_singleline(text.to_owned(), font, color);
-    job.wrap = TextWrapping::truncate_at_width(width.max(0.0));
-    ui.painter().layout_job(job)
+    super::text::one_line(ui, text, font, color, width.max(0.0))
 }
 
 #[cfg(test)]

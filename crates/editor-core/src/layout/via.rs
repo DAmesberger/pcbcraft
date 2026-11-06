@@ -476,15 +476,17 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
             let need = limits.clearance(hole, None, *kind, Some(*net));
             if ring.closer_than(other, need) {
                 let need = limits.clearance_need(hole, None, *kind, Some(*net));
+                let what = copper_words(project, object, *kind, *net);
+                let gap = ring.gap(other, need.mm + 1.0);
+                // Touching or overlapping copper is said so, not "0 mm".
+                let how = if gap <= EPS {
+                    format!("overlaps {what}")
+                } else {
+                    format!("is {} mm from {what}", mm(gap))
+                };
                 issues.push(Finding::new(
                     "board.hole_clearance",
-                    format!(
-                        "A mounting hole is {} mm from a {} on {}; {}",
-                        mm(ring.gap(other, need.mm + 1.0)),
-                        kind.label(),
-                        project.net_name(*net),
-                        need.text()
-                    ),
+                    format!("A mounting hole {how}; {}", need.text()),
                     vec![ObjectRef::Board, *object],
                 ));
             }
@@ -513,6 +515,36 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
         }
     }
     issues
+}
+
+/// A copper object in a mounting-hole message, named by its part or net:
+/// "U1 pad 1 on GND", "a track on GND", "a via on VCC".
+fn copper_words(project: &Project, object: &ObjectRef, kind: CopperObject, net: Id) -> String {
+    let net = project.net_name(net);
+    match *object {
+        ObjectRef::Pad { instance, pad } => {
+            let part = super::outline::part_name(project, instance);
+            let number = project
+                .placement_of(instance)
+                .and_then(|_| project.instance(instance))
+                .and_then(|i| crate::instances::resolve(&project.library, i).ok())
+                .and_then(|r| r.physical)
+                .and_then(|p| {
+                    p.footprint
+                        .definition
+                        .pads
+                        .iter()
+                        .find(|q| q.id == pad)
+                        .map(|q| q.number.clone())
+                })
+                .filter(|n| !n.is_empty());
+            match number {
+                Some(n) => format!("{part} pad {n} on {net}"),
+                None => format!("a pad of {part} on {net}"),
+            }
+        }
+        _ => format!("a {} on {net}", kind.label()),
+    }
 }
 
 pub(super) fn delete(project: &mut Project, id: Id) -> Result<()> {

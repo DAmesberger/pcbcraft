@@ -437,13 +437,16 @@ impl PcbEditor {
     }
 
     /// The copper of the fills on one layer as `look` has it, under the
-    /// layer's tracks: on the active layer solid or hatched in the layer's
-    /// opaque colour; on another layer lighter than its tracks (a
-    /// translucent tint with its outline, or the hatching `look.shade` of
-    /// the way from the board), so a pour never hides other copper. The
-    /// selected fill and the highlighted net's are in the selection
-    /// colour. A fill without copper, and every fill when the view shows
-    /// outlines only, is its dashed outline.
+    /// layer's tracks: on the active layer seen from its side solid or
+    /// hatched in the layer's opaque colour; on any other layer (the
+    /// active one included when it is not the near side) lighter than its
+    /// tracks (a translucent tint with its outline, or the hatching
+    /// `look.shade` of the way from the board), so a pour never hides the
+    /// near side or other copper. The selected fill and the highlighted
+    /// net's keep their copper colour and are outlined in the selection
+    /// colour, so a board-wide pour lights up without flooding the board.
+    /// A fill without copper, and every fill when the view shows outlines
+    /// only, is its dashed outline.
     pub(super) fn paint_fills(
         &self,
         painter: &egui::Painter,
@@ -458,16 +461,23 @@ impl PcbEditor {
         for fill in self.fills_on(project, layer) {
             let chosen =
                 self.fill == Some(fill.id) || (fill.net.is_some() && self.highlighted == fill.net);
-            let base = if chosen {
-                colors.selected
-            } else {
-                colors.copper_layer(layer)
-            };
+            let base = colors.copper_layer(layer);
             let color = ink.on_board(base, look.shade);
+            let edge = if chosen {
+                Stroke::new(2.0, ink.on_board(colors.selected, 1.0))
+            } else {
+                Stroke::new(1.0, color)
+            };
             let mesh = self
                 .fill_meshes
                 .mesh(fill.id)
                 .filter(|_| self.fill_display != FillDisplay::Outline);
+            let outline = |mesh: &FillMesh| {
+                for ring in mesh.regions.iter().flatten() {
+                    let points: Vec<Pos2> = ring.iter().map(|p| view.screen(*p)).collect();
+                    painter.add(Shape::closed_line(points, edge));
+                }
+            };
             match (mesh, self.fill_display) {
                 (Some(mesh), FillDisplay::Hatched) => {
                     if let Some(lines) = self.fill_meshes.hatch(fill.id, scale) {
@@ -476,21 +486,17 @@ impl PcbEditor {
                             painter.line_segment([view.screen(*a), view.screen(*b)], stroke);
                         }
                     }
-                    for ring in mesh.regions.iter().flatten() {
-                        let points: Vec<Pos2> = ring.iter().map(|p| view.screen(*p)).collect();
-                        painter.add(Shape::closed_line(points, Stroke::new(1.0, color)));
+                    outline(mesh);
+                }
+                (Some(mesh), _) => {
+                    match look.tint {
+                        None => paint_mesh(painter, view, mesh, color),
+                        Some(alpha) => paint_mesh(painter, view, mesh, base.gamma_multiply(alpha)),
+                    }
+                    if look.tint.is_some() || chosen {
+                        outline(mesh);
                     }
                 }
-                (Some(mesh), _) => match look.tint {
-                    None => paint_mesh(painter, view, mesh, color),
-                    Some(alpha) => {
-                        paint_mesh(painter, view, mesh, base.gamma_multiply(alpha));
-                        for ring in mesh.regions.iter().flatten() {
-                            let points: Vec<Pos2> = ring.iter().map(|p| view.screen(*p)).collect();
-                            painter.add(Shape::closed_line(points, Stroke::new(1.0, color)));
-                        }
-                    }
-                },
                 (None, _) => {
                     let ring = screen_ring(view, &fill.outline);
                     if let Some(first) = ring.first().copied() {
@@ -498,7 +504,7 @@ impl PcbEditor {
                         closed.push(first);
                         painter.extend(Shape::dashed_line(
                             &closed,
-                            Stroke::new(1.5, color),
+                            Stroke::new(1.5, edge.color),
                             8.0,
                             4.0,
                         ));

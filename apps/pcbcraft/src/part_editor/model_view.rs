@@ -280,7 +280,7 @@ impl PartEditor {
             translate: true,
             rotate: true,
         };
-        let id = ui.id().with("model-triad");
+        let id = ui.scope_id().with("model-triad");
         let Some(drag) = gizmo::show(ui, &painter, &proj, id, &triad, step) else {
             // The button went up outside the view: end the drag as released.
             if !ui.input(|i| i.pointer.any_down()) {

@@ -13,6 +13,7 @@ mod key_reveal;
 mod open_timing;
 mod settings_window;
 mod shortcut_sheet;
+mod system_windows;
 
 use crate::file_ui::{self, Effect, FileUi};
 use crate::kit::messages::Messages;
@@ -30,15 +31,25 @@ use solidcraft_ui_egui::{fonts, theme};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// The longest toast text; Messages keeps the whole message.
-const MAX_TOAST_CHARS: usize = pcbcraft_core::issues::MAX_TITLE;
-
 /// An import made for an update review that is still open.
 struct PendingImport {
     /// The engine revision right after the import.
     revision: u64,
     name: String,
     target: pcbcraft_core::Revision,
+}
+
+/// What [`App::with_parts`] builds the app around.
+struct Parts {
+    engine: Engine,
+    files: FileUi,
+    sources: LibrarySources,
+    registry: Arc<crate::commands::Registry>,
+    keymap_problems: Vec<crate::keymap::Unapplied>,
+    messages: Messages,
+    browser_width: f32,
+    #[cfg(target_os = "macos")]
+    native_menu: Option<crate::native_menu::NativeMenu>,
 }
 
 pub struct App {
@@ -58,6 +69,11 @@ pub struct App {
     /// Every message of this run, with the full engine text.
     messages: Messages,
     messages_open: bool,
+    /// Messages, Keyboard shortcuts and Settings open last frame, in that
+    /// order (`system_windows`).
+    system_windows: [bool; 3],
+    /// The system's fallback fonts (CJK and others) are installed.
+    system_fonts: bool,
     /// The Issues card, canvas badge and pill, and their cached answers.
     issues: crate::issues::Surface,
     /// The engine revision a toast's Undo would undo; Undo is withdrawn
@@ -67,6 +83,11 @@ pub struct App {
     browser: chrome::BrowserMode,
     /// Whether the last layout showed the Browser.
     browser_visible: bool,
+    /// The component row selected in the Browser (a click selects it; a
+    /// double-click opens it for editing).
+    browser_component: Option<pcbcraft_core::DefinitionId>,
+    /// A Browser row's right-click menu.
+    browser_menu: crate::context_menu::State<browser::MenuTarget>,
     /// The Browser's width as last dragged (kept per user in the
     /// settings); the layout clamps it to what the window fits.
     browser_width: f32,
@@ -84,10 +105,18 @@ pub struct App {
     /// Saved key changes that could not be applied (kept in the settings).
     keymap_problems: Vec<crate::keymap::Unapplied>,
     palette: command_palette::CommandPalette,
+    /// ⌘ commands pressed over a focused field, run once it committed.
+    after_commit: command_dispatch::AfterCommit,
     shortcut_sheet: shortcut_sheet::ShortcutSheet,
     settings_window: settings_window::SettingsWindow,
     /// Hold ⌘ for key badges, tap ⌥ for key tips.
     reveal: key_reveal::KeyReveal,
+    /// The macOS menu bar, built from the registry (`crate::menu_bar`).
+    #[cfg(target_os = "macos")]
+    native_menu: Option<crate::native_menu::NativeMenu>,
+    /// Commands chosen in the menu bar, run in the next update.
+    #[cfg(target_os = "macos")]
+    menu_runs: Vec<String>,
 }
 
 impl App {
@@ -96,17 +125,20 @@ impl App {
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         follow_system_theme(&cc.egui_ctx, true);
         fonts::setup_bundled_fonts(&cc.egui_ctx);
+        fonts::load_system_fonts_in_background(&cc.egui_ctx);
         let render_state = cc.wgpu_render_state.as_ref().ok_or("wgpu is required")?;
-        let engine = Engine::demo()?;
+        let mut engine = Engine::demo()?;
         let mut files = FileUi::new(cc, &engine);
         // `pcbcraft FILE.pcbcraft` opens that project through the file workflow.
         if let Some(path) = std::env::args_os()
             .skip(1)
             .map(PathBuf::from)
-            .find(|p| p.extension().is_some_and(|e| e == "pcbcraft"))
+            .find(|p| crate::open_documents::is_project(p))
         {
             files.request(file_ui::Action::OpenPath(path));
         }
+        // Files opened from Finder wake the UI (src/open_documents.rs).
+        crate::open_documents::set_ui(&cc.egui_ctx);
         let sources = LibrarySources::from_env(&cc.egui_ctx);
         // The user's keymap over the defaults; what cannot apply is
         // reported and kept.
@@ -144,13 +176,66 @@ impl App {
         }
         let registry = Arc::new(registry);
         crate::keys::publish(&cc.egui_ctx, &registry);
+        quit_through_registry(&cc.egui_ctx);
+        #[cfg(target_os = "macos")]
+        let native_menu = match crate::native_menu::NativeMenu::new(
+            &cc.egui_ctx,
+            &crate::menu_bar::Now {
+                registry: &registry,
+                active: &crate::commands::active_contexts(crate::commands::Context::PcbLayout),
+                typing: false,
+                recording: false,
+                browser_shown: true,
+                issues_shown: false,
+                available: &|_| true,
+            },
+        ) {
+            Ok(menu) => Some(menu),
+            Err(error) => {
+                messages.push(
+                    Level::Warning,
+                    &format!("App menu unavailable: {error}"),
+                    0.0,
+                );
+                None
+            }
+        };
         let browser_width = sources.browser_width().unwrap_or(chrome::BROWSER_WIDTH);
-        Ok(Self {
-            scene: SceneController::new(
-                cc.egui_ctx.clone(),
-                viewport::Viewport::new(render_state, &cc.egui_ctx),
-            ),
-            fills: crate::fill_worker::FillWorker::start(cc.egui_ctx.clone()),
+        engine.require_waiver_reason(sources.require_waiver_reason());
+        Ok(Self::with_parts(
+            &cc.egui_ctx,
+            viewport::Viewport::new(render_state, &cc.egui_ctx),
+            Parts {
+                engine,
+                files,
+                sources,
+                registry,
+                keymap_problems,
+                messages,
+                browser_width,
+                #[cfg(target_os = "macos")]
+                native_menu,
+            },
+        ))
+    }
+
+    /// The app around what [`Self::new`] set up (a window's; a test's has
+    /// none).
+    fn with_parts(ctx: &egui::Context, viewport: viewport::Viewport, parts: Parts) -> Self {
+        let Parts {
+            engine,
+            files,
+            sources,
+            registry,
+            keymap_problems,
+            messages,
+            browser_width,
+            #[cfg(target_os = "macos")]
+            native_menu,
+        } = parts;
+        Self {
+            scene: SceneController::new(ctx.clone(), viewport),
+            fills: crate::fill_worker::FillWorker::start(ctx.clone()),
             files,
             sources,
             engine,
@@ -161,10 +246,14 @@ impl App {
             toasts: Toasts::default(),
             messages,
             messages_open: false,
+            system_windows: [false; 3],
+            system_fonts: false,
             issues: Default::default(),
             undo_revision: None,
             browser: chrome::BrowserMode::Auto,
             browser_visible: false,
+            browser_component: None,
+            browser_menu: Default::default(),
             browser_width,
             pending_import: None,
             closing: false,
@@ -173,10 +262,15 @@ impl App {
             registry,
             keymap_problems,
             palette: Default::default(),
+            after_commit: Default::default(),
             shortcut_sheet: Default::default(),
             settings_window: Default::default(),
             reveal: Default::default(),
-        })
+            #[cfg(target_os = "macos")]
+            native_menu,
+            #[cfg(target_os = "macos")]
+            menu_runs: Vec::new(),
+        }
     }
 
     /// The one path from UI gestures to document changes. It carries the
@@ -215,7 +309,12 @@ impl App {
                 board: crate::pcb_editor::board_shape::host_evaluator(),
             },
         ) {
-            Ok(_) => self.clear_error(),
+            Ok(outcome) => {
+                if let pcbcraft_core::Outcome::Pasted { report } = &outcome {
+                    self.schematic.select_pasted(self.engine.project(), report);
+                }
+                self.clear_error();
+            }
             Err(error) => self.refuse(ctx, origin, error),
         }
     }
@@ -338,7 +437,8 @@ impl App {
     fn say_with(&mut self, level: Level, text: impl Into<String>, actions: Vec<ToastAction>) {
         let text = text.into();
         self.messages.push(level, &text, self.now);
-        let shown = refusal::clip(text.lines().next().unwrap_or_default(), MAX_TOAST_CHARS);
+        // The toast wraps it and shows all of it on hover (`kit::toast`).
+        let shown = refusal::clip(text.lines().next().unwrap_or_default(), refusal::MAX_SHOWN);
         if actions.contains(&ToastAction::Undo) {
             self.undo_revision = Some(self.engine.revision());
         }
@@ -393,6 +493,16 @@ impl App {
                 action: ToastAction::Show,
                 ..
             } => self.issues.open(),
+        }
+    }
+
+    /// The system's fallback fonts once a background search found them, as
+    /// Solidcraft installs them: CJK, Hangul, Thai, Hebrew and Arabic text
+    /// then draws instead of empty boxes. Nothing is bundled for them.
+    fn system_fonts(&mut self, ctx: &egui::Context) {
+        if !self.system_fonts && fonts::system_fonts_ready() {
+            self.system_fonts = true;
+            fonts::setup_fonts_without_waiting(ctx, "en", "");
         }
     }
 
@@ -773,6 +883,7 @@ impl App {
         self.sources.forget_project();
         self.pending_import = None;
         self.pcb.set_selection(None, None, None);
+        self.schematic.document_opened(self.engine.project());
         match self.files.adopt(&self.engine, path, recovered) {
             Ok(()) if recovered => {
                 self.say(Level::Info, format!("Recovered {name}; save it to keep it"));
@@ -798,6 +909,31 @@ impl App {
         }
         if let Some((level, status)) = self.files.take_status() {
             self.say(level, status);
+        }
+        self.opened_documents();
+    }
+
+    /// Files opened from Finder or the Dock go through File › Open's path,
+    /// which asks about unsaved work first. They wait while a file operation
+    /// or a file question is open, so none is dropped.
+    fn opened_documents(&mut self) {
+        if self.closing || self.files.busy() || self.files.prompting() {
+            return;
+        }
+        let arrivals = crate::open_documents::sort(crate::open_documents::take());
+        for path in arrivals.skipped {
+            let why = if crate::open_documents::is_project(&path) {
+                "another project opened at the same time"
+            } else {
+                "Pcbcraft opens .pcbcraft projects"
+            };
+            self.say(
+                Level::Warning,
+                format!("Not opened: {} ({why})", path.display()),
+            );
+        }
+        if let Some(path) = arrivals.open {
+            self.files.request(file_ui::Action::OpenPath(path));
         }
     }
 
@@ -878,7 +1014,9 @@ impl App {
                 Workspace::Schematic => self.schematic.canvas(ui, &self.engine),
                 Workspace::Pcb => self.pcb.canvas(ui, &self.engine),
             };
-            self.apply(&ui.ctx().clone(), Origin::Canvas, operation);
+            let ctx = ui.ctx().clone();
+            self.apply(&ctx, Origin::Canvas, operation);
+            self.canvas_menu_requests(&ctx);
             return;
         };
         let display = self.scene.display(&key);
@@ -968,13 +1106,86 @@ impl App {
         }
     }
 
-    /// Closing with unsaved work asks first; the file workflow closes the
-    /// window once recovery data is cleaned up.
-    fn guard_close(&mut self, ctx: &egui::Context) {
-        if ctx.input(|i| i.viewport().close_requested()) && !self.closing {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.files.request(file_ui::Action::Close);
+    /// What a canvas's right-click menu asked the app to run: a registry
+    /// command, as from the palette, or Edit component, as the Browser's
+    /// double-click.
+    fn canvas_menu_requests(&mut self, ctx: &egui::Context) {
+        use schematic_editor::MenuRequest;
+        match self.schematic.take_menu_request() {
+            Some(MenuRequest::Command(id)) => self.run_command(ctx, id),
+            Some(MenuRequest::EditComponent(id)) => self.pick(browser::Pick::EditComponent(id)),
+            None => {}
         }
+        if let Some(id) = self.pcb.take_menu_command() {
+            self.run_command(ctx, id);
+        }
+    }
+
+    /// The menu bar's commands chosen since the last frame, run as the
+    /// registry's (after a focused field commits, as for a key), and the
+    /// menu's states brought up to date.
+    fn native_menu(&mut self, ctx: &egui::Context) {
+        #[cfg(target_os = "macos")]
+        {
+            for id in std::mem::take(&mut self.menu_runs) {
+                if let Some(id) = command_dispatch::route(ctx, &mut self.after_commit, id) {
+                    self.run_command(ctx, &id);
+                }
+            }
+            if let Some(mut menu) = self.native_menu.take() {
+                self.menu_now(ctx, |now| menu.update(now));
+                self.native_menu = Some(menu);
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = ctx;
+    }
+
+    /// What the menus depend on now.
+    /// Whether the shown canvas has a selection its delete key removes.
+    fn can_delete(&self) -> bool {
+        match self.workspace {
+            Workspace::Part => self.part.can_delete(),
+            Workspace::Schematic => self.schematic.can_delete(self.engine.project()),
+            Workspace::Pcb => self.pcb.can_delete(self.engine.project()),
+        }
+    }
+
+    fn menu_now<R>(&self, ctx: &egui::Context, f: impl FnOnce(&crate::menu_bar::Now) -> R) -> R {
+        let active = self.active_contexts();
+        let available = |command: &crate::commands::Command| {
+            if command.id.ends_with(".delete") {
+                self.can_delete()
+            } else {
+                self.availability(command, &[]).is_ok()
+            }
+        };
+        f(&crate::menu_bar::Now {
+            registry: &self.registry,
+            active: &active,
+            typing: ctx.egui_wants_keyboard_input(),
+            recording: self.settings_window.is_recording(),
+            browser_shown: self.browser_visible,
+            issues_shown: self.issues.expanded(),
+            available: &available,
+        })
+    }
+}
+
+/// ⌘Q (Ctrl+Q) is the registry's `app.quit`, rebindable and asking about
+/// unsaved work like every other quit; egui's own quit key, which closes
+/// the window directly, is turned off.
+fn quit_through_registry(ctx: &egui::Context) {
+    ctx.options_mut(|o| o.quit_shortcuts.clear());
+}
+
+/// Closing the window (its close button, or the system closing it) with
+/// unsaved work asks first: the close is cancelled and the file workflow
+/// closes the window once answered. `closing`: the answer was given.
+fn guard_close(ctx: &egui::Context, files: &mut FileUi, closing: bool) {
+    if ctx.input(|i| i.viewport().close_requested()) && !closing {
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        files.request(file_ui::Action::Close);
     }
 }
 
@@ -983,6 +1194,8 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.now = ctx.input(|i| i.time);
         follow_system_theme(&ctx, false);
+        self.system_fonts(&ctx);
+        crate::kit::text::fit_tooltips(&ctx);
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
         open_timing::report(self.open_timing.frame(pcb_3d, std::time::Instant::now()));
         self.scene.receive();
@@ -1000,6 +1213,7 @@ impl eframe::App for App {
         // The palette's keys come before any canvas sees them.
         self.early_keys(&ctx);
         self.command_palette(&ctx);
+        self.system_windows(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
@@ -1008,8 +1222,12 @@ impl eframe::App for App {
         self.library_requests(&ctx);
         let draft = self.part.commit(&ctx, &self.engine);
         self.apply(&ctx, Origin::Command, draft);
+        // A command held for a field's commit runs next: the file workflow
+        // must already hold the document the field committed to.
+        self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.dispatch_keys(&ctx);
-        self.guard_close(&ctx);
+        self.native_menu(&ctx);
+        guard_close(&ctx, &mut self.files, self.closing);
         self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.files.dialogs(&ctx);
         self.sources.dialogs(&ctx);
@@ -1024,6 +1242,34 @@ impl eframe::App for App {
         if self.open_timing.pending() {
             ctx.request_repaint();
         }
+    }
+
+    /// Items chosen in the macOS menu bar, before egui reads this frame's
+    /// input: a field's own keys join the input; commands wait for `ui`,
+    /// and a press of the same key is dropped, so it runs once.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        #[cfg(target_os = "macos")]
+        if let Some(mut menu) = self.native_menu.take() {
+            let choices = self.menu_now(ctx, |now| menu.take(now));
+            self.native_menu = Some(menu);
+            for choice in choices {
+                crate::menu_bar::deliver(choice, &self.registry, raw, &mut self.menu_runs, || {
+                    arboard::Clipboard::new()
+                        .and_then(|mut clipboard| clipboard.get_text())
+                        .ok()
+                });
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (ctx, raw);
+    }
+
+    /// The app ends without asking only when the system ends it (Dock ›
+    /// Quit on macOS, a logout): unsaved work then goes to this session's
+    /// recovery snapshot, which the next launch offers to restore.
+    fn on_exit(&mut self) {
+        self.files
+            .keep_for_recovery(std::time::Duration::from_secs(5));
     }
 }
 
@@ -1080,6 +1326,48 @@ pub(crate) fn sheet_rows(
 }
 
 #[cfg(test)]
+#[path = "app/flow_tests.rs"]
+mod flow_tests;
+
+#[cfg(test)]
+mod font_tests {
+    use solidcraft_ui_egui::fonts;
+
+    /// The bundled faces have no CJK glyphs; the system fallbacks the app
+    /// installs once found do (macOS ships Hiragino), in every family a
+    /// name may use, the monospace of fields too.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn japanese_names_draw_with_the_system_fonts() {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let frame = |ctx: &egui::Context| {
+            ctx.run_ui(Default::default(), |_| {})
+                .textures_delta
+                .clear();
+        };
+        frame(&ctx);
+        let draws = |ctx: &egui::Context, font: &egui::FontId| {
+            ctx.fonts_mut(|f| f.has_glyphs(font, "日本語"))
+        };
+        let sans = egui::FontId::proportional(13.0);
+        let mono = egui::FontId::monospace(13.0);
+        assert!(!draws(&ctx, &sans), "the bundled faces lack CJK");
+        fonts::load_system_fonts_in_background(&ctx);
+        for _ in 0..600 {
+            if fonts::system_fonts_ready() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(fonts::system_fonts_ready(), "the search finished");
+        fonts::setup_fonts_without_waiting(&ctx, "en", "");
+        frame(&ctx);
+        assert!(draws(&ctx, &sans) && draws(&ctx, &mono));
+    }
+}
+
+#[cfg(test)]
 mod edit_copy_tests {
     use pcbcraft_core::Engine;
 
@@ -1103,6 +1391,111 @@ mod edit_copy_tests {
         let again = crate::part_editor::edit_copy(&mut engine, bundle)?;
         assert!(!again.changed);
         assert_eq!(again.lineage, copied.lineage);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod quit_tests {
+    use super::{file_ui, guard_close, quit_through_registry};
+    use crate::commands::{Chord, Context, Registry, active_contexts};
+    use pcbcraft_core::{Engine, Operation, schematic::SchematicCommand};
+
+    type Fallible<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+    fn input(events: Vec<egui::Event>, close: bool) -> egui::RawInput {
+        let mut input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        if close {
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .events
+                .push(egui::ViewportEvent::Close);
+        }
+        input
+    }
+
+    fn commands(output: &egui::FullOutput) -> Vec<egui::ViewportCommand> {
+        output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map(|v| v.commands.clone())
+            .unwrap_or_default()
+    }
+
+    /// The window's close button with unsaved work: the close is cancelled
+    /// and the unsaved-changes question is asked instead. Once answered
+    /// (`closing`), a close request goes through.
+    #[test]
+    fn the_close_button_asks_about_unsaved_work() -> Fallible {
+        let dir = tempfile::tempdir()?;
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
+        let mut files = file_ui::FileUi::with_directory(
+            &ctx,
+            rfd::AsyncFileDialog::new(),
+            &engine,
+            dir.path().to_path_buf(),
+        );
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::RenameProject {
+                name: "Unsaved".into(),
+            }),
+        )?;
+        files.observe(&engine, 0.0);
+        let mut output = ctx.run_ui(input(vec![], true), |ui| {
+            guard_close(ui.ctx(), &mut files, false);
+        });
+        output.textures_delta.clear();
+        assert!(commands(&output).contains(&egui::ViewportCommand::CancelClose));
+        assert!(files.prompting(), "no unsaved-changes question");
+        let mut output = ctx.run_ui(input(vec![], true), |ui| {
+            guard_close(ui.ctx(), &mut files, true);
+        });
+        output.textures_delta.clear();
+        assert!(!commands(&output).contains(&egui::ViewportCommand::CancelClose));
+        Ok(())
+    }
+
+    /// ⌘Q is the registry's `app.quit`, in every context and while typing.
+    /// egui's own ⌘Q, which would close the window without asking, is off.
+    #[test]
+    fn quit_key_is_the_registry_command() -> Fallible {
+        let registry = Registry::standard();
+        let quit = Chord::cmd(egui::Key::Q);
+        for context in Context::ALL {
+            let command = registry
+                .resolve(quit, &active_contexts(context))
+                .ok_or_else(|| format!("⌘Q does nothing in {context:?}"))?;
+            assert_eq!(command.id, "app.quit", "{context:?}");
+            assert!(super::command_dispatch::dispatchable(
+                command, quit, true, true
+            ));
+        }
+        let press = egui::Event::Key {
+            key: egui::Key::Q,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        };
+        let plain = egui::Context::default();
+        let mut output = plain.run_ui(input(vec![press.clone()], false), |_| {});
+        output.textures_delta.clear();
+        assert!(
+            commands(&output).contains(&egui::ViewportCommand::Close),
+            "egui's default quit key closes directly"
+        );
+        let ctx = egui::Context::default();
+        quit_through_registry(&ctx);
+        let mut output = ctx.run_ui(input(vec![press], false), |_| {});
+        output.textures_delta.clear();
+        assert!(!commands(&output).contains(&egui::ViewportCommand::Close));
         Ok(())
     }
 }

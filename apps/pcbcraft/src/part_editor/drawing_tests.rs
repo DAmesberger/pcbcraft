@@ -567,7 +567,7 @@ fn a_space_left_down_by_typing_does_not_block_drawing() -> TestResult {
     // Space pressed with no release seen by the canvas, as after typing.
     h.time += 1.0;
     h.ctx
-        .memory_mut(|m| m.request_focus(egui::Id::new("elsewhere")));
+        .memory_mut(|m| m.request_focus(egui::Id::unique("elsewhere")));
     h.frame(vec![egui::Event::Key {
         key: egui::Key::Space,
         physical_key: None,
@@ -576,7 +576,7 @@ fn a_space_left_down_by_typing_does_not_block_drawing() -> TestResult {
         modifiers: egui::Modifiers::NONE,
     }]);
     h.ctx
-        .memory_mut(|m| m.surrender_focus(egui::Id::new("elsewhere")));
+        .memory_mut(|m| m.surrender_focus(egui::Id::unique("elsewhere")));
     h.arm(Tool::Rect);
     h.click([10.0, 10.0]);
     h.click([15.0, 12.5]);

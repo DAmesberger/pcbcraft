@@ -1,7 +1,8 @@
 //! The project Browser: one tree over the whole design. Rows come from the
 //! project and drafts; clicking a row opens its workspace and selects it
-//! there. The tree reads state only; the app applies the returned
-//! [`Pick`] through the editors.
+//! there. A component row only selects on a click; a double-click opens it
+//! for editing (as Solidcraft's Browser does). The tree reads state only;
+//! the app applies the returned [`Pick`] through the editors.
 use crate::issues::{Badge, Badges};
 use crate::kit::{self, Row};
 use pcbcraft_core::catalog::{MAX_QUERY, MAX_RESULTS, UpdateAvailable};
@@ -26,14 +27,44 @@ pub struct Lit {
 /// A row the user picked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
+    /// Select a component row; the workspace stays and nothing is drafted.
     Component(DefinitionId),
+    /// Open a component in the Component workspace for editing.
+    EditComponent(DefinitionId),
     Instance(Id),
+    /// Select an instance and bring it into view on its sheet.
+    Locate(Id),
     Net(Id),
     Placement(Id),
     Track(Id),
     Board,
     /// A schematic sheet: show it.
     Sheet(SheetId),
+}
+
+/// What a Browser row's right-click menu is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuTarget {
+    Component(DefinitionId),
+    Instance(Id),
+}
+
+/// The rows of a Browser row's menu: each picks what the row's click or
+/// double-click picks, or locates as Issues does.
+pub fn menu_rows(target: MenuTarget) -> crate::context_menu::Rows<Pick> {
+    use crate::context_menu::Entry;
+    match target {
+        MenuTarget::Component(id) => vec![Some(Entry::act(
+            "Edit component",
+            "component",
+            Pick::EditComponent(id),
+            true,
+        ))],
+        MenuTarget::Instance(id) => vec![
+            Some(Entry::act("Select", "select", Pick::Instance(id), true)),
+            Some(Entry::act("Locate", "zoom", Pick::Locate(id), true)),
+        ],
+    }
 }
 
 /// One component lineage as the Browser lists it.
@@ -100,7 +131,7 @@ fn filtered(ctx: &egui::Context, engine: &Engine, text: &str) -> Result<Option<M
     if text.trim().is_empty() {
         return Ok(None);
     }
-    let key = egui::Id::new((FILTER, "result"));
+    let key = egui::Id::unique((FILTER, "result"));
     if let Some(cached) = ctx.data(|d| d.get_temp::<Filtered>(key))
         && cached.revision == engine.revision()
         && cached.text == text
@@ -132,7 +163,7 @@ fn filtered(ctx: &egui::Context, engine: &Engine, text: &str) -> Result<Option<M
         // did, so the rows do not jump while a predicate is typed.
         if let Ok(matches) = &result {
             d.insert_temp(
-                egui::Id::new((FILTER, "last-good")),
+                egui::Id::unique((FILTER, "last-good")),
                 (engine.revision(), matches.clone()),
             );
         }
@@ -142,7 +173,7 @@ fn filtered(ctx: &egui::Context, engine: &Engine, text: &str) -> Result<Option<M
 
 /// The rows of the last filter text that parsed, at this revision.
 fn last_good(ctx: &egui::Context, engine: &Engine) -> Option<Matches> {
-    ctx.data(|d| d.get_temp::<(u64, Option<Matches>)>(egui::Id::new((FILTER, "last-good"))))
+    ctx.data(|d| d.get_temp::<(u64, Option<Matches>)>(egui::Id::unique((FILTER, "last-good"))))
         .filter(|(revision, _)| *revision == engine.revision())
         .and_then(|(_, matches)| matches)
 }
@@ -150,13 +181,13 @@ fn last_good(ctx: &egui::Context, engine: &Engine) -> Option<Matches> {
 /// Fold state, persisted in egui memory per row key.
 fn folded(ui: &egui::Ui, key: &str, default_open: bool) -> bool {
     ui.ctx()
-        .data_mut(|d| d.get_persisted::<bool>(egui::Id::new(("browser-open", key))))
+        .data_mut(|d| d.get_persisted::<bool>(egui::Id::unique(("browser-open", key))))
         .unwrap_or(default_open)
 }
 
 fn set_open(ui: &egui::Ui, key: &str, open: bool) {
     ui.ctx()
-        .data_mut(|d| d.insert_persisted(egui::Id::new(("browser-open", key)), open));
+        .data_mut(|d| d.insert_persisted(egui::Id::unique(("browser-open", key)), open));
 }
 
 /// A folder row; returns whether it is open after this frame.
@@ -187,7 +218,7 @@ pub(super) fn folder_labelled(
     let open = folded(ui, key, default_open);
     let response = kit::tree_row(
         ui,
-        egui::Id::new(("browser", key)),
+        egui::Id::unique(("browser", key)),
         &Row {
             depth,
             fold: Some(open),
@@ -242,12 +273,49 @@ fn issue_mark(badge: Option<&Badge>, tip: &str) -> (Option<kit::severity::Level>
     }
 }
 
+/// A click on a component (or one of its Parts) selects it; a
+/// double-click opens it for editing.
+fn component_pick(response: &kit::RowResponse, id: DefinitionId) -> Option<Pick> {
+    if response.double {
+        Some(Pick::EditComponent(id))
+    } else {
+        response.clicked.then_some(Pick::Component(id))
+    }
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     engine: &Engine,
     lit: Lit,
     updates: &[UpdateAvailable],
     badges: &Badges,
+    menu: &mut crate::context_menu::State<MenuTarget>,
+) -> Option<Pick> {
+    let pick = tree(ui, engine, lit, updates, badges, menu);
+    // The open row menu; a row gone from the project closes it.
+    let rows = match menu.target() {
+        Some(MenuTarget::Component(id)) if !components(engine).iter().any(|c| c.id == *id) => {
+            Vec::new()
+        }
+        Some(MenuTarget::Instance(id)) if engine.project().instance(*id).is_none() => Vec::new(),
+        Some(target) => menu_rows(*target),
+        None => Vec::new(),
+    };
+    match menu.show(ui.ctx(), &rows) {
+        Some(crate::context_menu::Run::Act(chosen)) => Some(chosen),
+        _ => pick,
+    }
+}
+
+/// The tree's rows; a right-click on a component or instance row opens
+/// its menu.
+fn tree(
+    ui: &mut egui::Ui,
+    engine: &Engine,
+    lit: Lit,
+    updates: &[UpdateAvailable],
+    badges: &Badges,
+    menu: &mut crate::context_menu::State<MenuTarget>,
 ) -> Option<Pick> {
     let project = engine.project();
     let mut pick = None;
@@ -264,7 +332,7 @@ pub fn show(
     let all = components(engine);
     let mut filter = ui
         .ctx()
-        .data(|d| d.get_temp::<String>(egui::Id::new(FILTER)))
+        .data(|d| d.get_temp::<String>(egui::Id::unique(FILTER)))
         .unwrap_or_default();
     let matched = filtered(ui.ctx(), engine, &filter);
     let shown_matches = match &matched {
@@ -299,7 +367,7 @@ pub fn show(
         ui.add_space(2.0);
         let field = kit::filter_field(
             ui,
-            egui::Id::new((FILTER, "field")),
+            egui::Id::unique((FILTER, "field")),
             &mut filter,
             "Filter: name, 10k, res>=1k, pkg:0603",
             matched.is_err(),
@@ -307,7 +375,7 @@ pub fn show(
         );
         if field.changed {
             ui.ctx()
-                .data_mut(|d| d.insert_temp(egui::Id::new(FILTER), filter.clone()));
+                .data_mut(|d| d.insert_temp(egui::Id::unique(FILTER), filter.clone()));
         }
         ui.add_space(2.0);
         match &matched {
@@ -355,7 +423,7 @@ pub fn show(
             );
             let response = kit::tree_row(
                 ui,
-                egui::Id::new(("browser-component", component.id.0)),
+                egui::Id::unique(("browser-component", component.id.0)),
                 &Row {
                     depth: 2,
                     icon: if update.is_some() {
@@ -372,8 +440,11 @@ pub fn show(
                     ..Default::default()
                 },
             );
-            if response.clicked {
-                pick = Some(Pick::Component(component.id));
+            if let Some(row) = component_pick(&response, component.id) {
+                pick = Some(row);
+            }
+            if let Some(at) = response.menu {
+                menu.open(at, MenuTarget::Component(component.id));
             }
             // The component's manufacturer Parts, opened in its Parts editor.
             for part in project.library.latest_parts() {
@@ -384,7 +455,7 @@ pub fn show(
                 let secondary = part.revision.to_string();
                 let response = kit::tree_row(
                     ui,
-                    egui::Id::new(("browser-part", part.id.0)),
+                    egui::Id::unique(("browser-part", part.id.0)),
                     &Row {
                         depth: 3,
                         icon: "library",
@@ -394,8 +465,8 @@ pub fn show(
                         ..Default::default()
                     },
                 );
-                if response.clicked {
-                    pick = Some(Pick::Component(component.id));
+                if let Some(row) = component_pick(&response, component.id) {
+                    pick = Some(row);
                 }
             }
         }
@@ -437,7 +508,7 @@ pub fn show(
                 );
                 let response = kit::tree_row(
                     ui,
-                    egui::Id::new(("browser-instance", instance.id)),
+                    egui::Id::unique(("browser-instance", instance.id)),
                     &Row {
                         depth: 3,
                         icon: if stale.is_some() {
@@ -455,6 +526,9 @@ pub fn show(
                 );
                 if response.clicked {
                     pick = Some(Pick::Instance(instance.id));
+                }
+                if let Some(at) = response.menu {
+                    menu.open(at, MenuTarget::Instance(instance.id));
                 }
             }
         }
@@ -475,7 +549,7 @@ pub fn show(
                 let (issue, tip) = issue_mark(badges.nets.get(&net.id), "");
                 let response = kit::tree_row(
                     ui,
-                    egui::Id::new(("browser-net", net.id)),
+                    egui::Id::unique(("browser-net", net.id)),
                     &Row {
                         depth: 3,
                         icon: "line",
@@ -504,7 +578,7 @@ pub fn show(
         let (issue, tip) = issue_mark(badges.board.as_ref(), "");
         if kit::tree_row(
             ui,
-            egui::Id::new("browser-board"),
+            egui::Id::unique("browser-board"),
             &Row {
                 depth: 2,
                 icon: "plane",
@@ -543,7 +617,7 @@ pub fn show(
                 );
                 if kit::tree_row(
                     ui,
-                    egui::Id::new(("browser-placement", placement.instance)),
+                    egui::Id::unique(("browser-placement", placement.instance)),
                     &Row {
                         depth: 3,
                         icon: "component",
@@ -576,7 +650,7 @@ pub fn show(
                 let (issue, tip) = issue_mark(badges.tracks.get(&track.id), "");
                 if kit::tree_row(
                     ui,
-                    egui::Id::new(("browser-track", track.id)),
+                    egui::Id::unique(("browser-track", track.id)),
                     &Row {
                         depth: 3,
                         icon: "line",
@@ -645,7 +719,7 @@ pub fn show_sources(
         };
         let response = kit::tree_row(
             ui,
-            egui::Id::new(("browser-source", at)),
+            egui::Id::unique(("browser-source", at)),
             &Row {
                 depth: 1,
                 icon: if reason.is_some() {
@@ -666,7 +740,7 @@ pub fn show_sources(
     }
     if kit::tree_row(
         ui,
-        egui::Id::new("browser-sources-manage"),
+        egui::Id::unique("browser-sources-manage"),
         &Row {
             depth: 1,
             icon: "folder",
@@ -697,7 +771,7 @@ fn sheets(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<SheetId> {
         let secondary = format!("page {}", row.page);
         let response = kit::tree_row(
             ui,
-            egui::Id::new(("browser-sheet", row.id.0)),
+            egui::Id::unique(("browser-sheet", row.id.0)),
             &Row {
                 depth: 3 + row.depth.min(8),
                 icon: "sketch",
@@ -764,7 +838,14 @@ mod tests {
             },
             |ui| {
                 kit::form(ui, |ui| {
-                    show(ui, engine, Lit::default(), &[], &Badges::default())
+                    show(
+                        ui,
+                        engine,
+                        Lit::default(),
+                        &[],
+                        &Badges::default(),
+                        &mut Default::default(),
+                    )
                 });
             },
         );
@@ -786,7 +867,7 @@ mod tests {
         assert_eq!(all.iter().filter(|t| t.starts_with("EX-")).count(), 24);
 
         let set = |text: &str| {
-            ctx.data_mut(|d| d.insert_temp(egui::Id::new(FILTER), text.to_owned()));
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique(FILTER), text.to_owned()));
         };
         set("res>=10k pkg:0603");
         let shown = frame(&ctx, &engine, vec![]);
@@ -876,8 +957,8 @@ mod tests {
         })?;
         let ctx = egui::Context::default();
         solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
-        let text = || ctx.data(|d| d.get_temp::<String>(egui::Id::new(FILTER)));
-        let field = egui::Id::new((FILTER, "field"));
+        let text = || ctx.data(|d| d.get_temp::<String>(egui::Id::unique(FILTER)));
+        let field = egui::Id::unique((FILTER, "field"));
         frame(&ctx, &engine, vec![]);
         ctx.memory_mut(|m| m.request_focus(field));
         frame(&ctx, &engine, vec![egui::Event::Text("hdr".into())]);
@@ -896,5 +977,130 @@ mod tests {
         let shown = frame(&ctx, &engine, vec![]);
         assert!(shown.iter().any(|t| t == "24"), "{shown:?}");
         Ok(())
+    }
+
+    /// A right-click on a component or instance row opens its menu and
+    /// selects nothing; a row picks what the row's double-click picks, or
+    /// locates.
+    #[test]
+    fn a_rows_right_click_menu_picks() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::context_menu::{Run, State};
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let engine = Engine::demo()?;
+        let r1 = engine.project().instances[0].clone();
+        let mut menu = State::default();
+        let run = |events: Vec<egui::Event>, menu: &mut State<MenuTarget>| {
+            let mut pick = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 1200.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    pick = kit::form(ui, |ui| {
+                        show(ui, &engine, Lit::default(), &[], &Badges::default(), menu)
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            (crate::kit::text::tests::painted(&output), pick)
+        };
+        let (painted, _) = run(vec![], &mut menu);
+        let row = painted
+            .iter()
+            .find(|(t, ..)| *t == r1.designator)
+            .map(|(_, rect, ..)| rect.center())
+            .ok_or("the instance row")?;
+        let button = |at, which, pressed| egui::Event::PointerButton {
+            pos: at,
+            button: which,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        use egui::PointerButton::{Primary, Secondary};
+        run(vec![egui::Event::PointerMoved(row)], &mut menu);
+        assert_eq!(run(vec![button(row, Secondary, true)], &mut menu).1, None);
+        assert_eq!(run(vec![button(row, Secondary, false)], &mut menu).1, None);
+        assert_eq!(menu.target(), Some(&MenuTarget::Instance(r1.id)));
+        let (painted, _) = run(vec![], &mut menu);
+        let locate = painted
+            .iter()
+            .find(|(t, ..)| t == "Locate")
+            .map(|(_, rect, ..)| rect.center())
+            .ok_or("the Locate row")?;
+        run(vec![egui::Event::PointerMoved(locate)], &mut menu);
+        run(vec![button(locate, Primary, true)], &mut menu);
+        assert_eq!(
+            run(vec![button(locate, Primary, false)], &mut menu).1,
+            Some(Pick::Locate(r1.id))
+        );
+        assert!(!menu.is_open());
+        // A component's row edits it.
+        let edit = menu_rows(MenuTarget::Component(r1.component.id));
+        let edit = edit.into_iter().flatten().next().ok_or("Edit component")?;
+        assert_eq!(edit.label, "Edit component");
+        assert_eq!(edit.run, Run::Act(Pick::EditComponent(r1.component.id)));
+        Ok(())
+    }
+
+    /// Precision run finding 3, as in Solidcraft's Browser: a click on a
+    /// component row selects it; only a double-click opens it for editing.
+    #[test]
+    fn a_click_selects_a_component_and_a_double_click_edits_it() {
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let id = DefinitionId(7);
+        let at = egui::pos2(60.0, 12.0);
+        let mut picks = Vec::new();
+        let mut time = 0.0;
+        let mut row = |events: Vec<egui::Event>, picks: &mut Vec<Option<Pick>>| {
+            time += 0.05;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(300.0, 200.0),
+                    )),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let response = kit::tree_row(
+                        ui,
+                        egui::Id::unique("component"),
+                        &Row {
+                            label: "Resistor",
+                            ..Default::default()
+                        },
+                    );
+                    picks.push(component_pick(&response, id));
+                },
+            );
+            output.textures_delta.clear();
+        };
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        row(vec![egui::Event::PointerMoved(at)], &mut picks);
+        row(vec![button(true)], &mut picks);
+        row(vec![button(false)], &mut picks);
+        row(vec![button(true)], &mut picks);
+        row(vec![button(false)], &mut picks);
+        let picked: Vec<Pick> = picks.into_iter().flatten().collect();
+        assert_eq!(
+            picked,
+            vec![Pick::Component(id), Pick::EditComponent(id)],
+            "click selects, the second click of a double-click edits"
+        );
     }
 }

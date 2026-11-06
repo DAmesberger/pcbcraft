@@ -35,11 +35,11 @@ use std::sync::Arc;
 const SEARCH: &str = "browser-catalog-search";
 
 fn feed_slot() -> egui::Id {
-    egui::Id::new("browser-catalog-feed")
+    egui::Id::unique("browser-catalog-feed")
 }
 
 fn action_slot() -> egui::Id {
-    egui::Id::new("browser-catalog-action")
+    egui::Id::unique("browser-catalog-action")
 }
 
 /// One configured source as the catalog lists it.
@@ -209,7 +209,7 @@ fn search(
     feed: &Feed,
     text: &str,
 ) -> Arc<Result<Found, String>> {
-    let key = egui::Id::new((SEARCH, "result"));
+    let key = egui::Id::unique((SEARCH, "result"));
     if let Some(cached) = ctx.data(|d| d.get_temp::<Searched>(key))
         && cached.revision == engine.revision()
         && cached.generation == feed.generation
@@ -298,20 +298,20 @@ impl Catalog {
         ui.spacing_mut().item_spacing.y = 0.0;
         let ctx = ui.ctx().clone();
         let mut text = ctx
-            .data(|d| d.get_temp::<String>(egui::Id::new(SEARCH)))
+            .data(|d| d.get_temp::<String>(egui::Id::unique(SEARCH)))
             .unwrap_or_default();
         let found = search(&ctx, engine, &feed, &text);
         ui.add_space(2.0);
         let field = kit::filter_field(
             ui,
-            egui::Id::new((SEARCH, "field")),
+            egui::Id::unique((SEARCH, "field")),
             &mut text,
             "Search: name, 10k, res>=1k, pkg:0603",
             found.is_err(),
             MAX_QUERY,
         );
         if field.changed {
-            ctx.data_mut(|d| d.insert_temp(egui::Id::new(SEARCH), text.clone()));
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique(SEARCH), text.clone()));
         }
         ui.add_space(2.0);
         let found = match found.as_ref() {
@@ -359,7 +359,7 @@ impl Catalog {
                 let tip = source.reason.clone().unwrap_or_default();
                 kit::tree_row(
                     ui,
-                    egui::Id::new(("browser", key.as_str())),
+                    egui::Id::unique(("browser", key.as_str())),
                     &Row {
                         depth: 0,
                         icon: if source.reason.is_some() {
@@ -426,7 +426,7 @@ impl Catalog {
         }
         if kit::tree_row(
             ui,
-            egui::Id::new("browser-catalog-manage"),
+            egui::Id::unique("browser-catalog-manage"),
             &Row {
                 depth: 0,
                 icon: "folder",
@@ -496,7 +496,7 @@ fn entries(
         };
         let response = kit::tree_row(
             ui,
-            egui::Id::new(("browser-catalog", group, entry.key())),
+            egui::Id::unique(("browser-catalog", group, entry.key())),
             &Row {
                 depth: 1,
                 icon: if entry.kind == DefinitionKind::Part {
@@ -882,7 +882,7 @@ mod tests {
         let feed = feed(&catalog, &[]);
         publish(&ctx, Some(feed.clone()));
         for text in ["", "EX-R", "res>=10k"] {
-            ctx.data_mut(|d| d.insert_temp(egui::Id::new(SEARCH), text.to_owned()));
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique(SEARCH), text.to_owned()));
             let (_, shown) = frame(&ctx, &engine);
             let QueryResult::Search(report) = engine.query_with(
                 Query::Search {
@@ -1006,7 +1006,7 @@ mod tests {
         feed.folder = Some(OpenFolder { pick, report: None });
         publish(&ctx, Some(feed));
         ctx.data_mut(|d| {
-            d.insert_persisted(egui::Id::new(("browser-open", "catalog-favourites")), true);
+            d.insert_persisted(egui::Id::unique(("browser-open", "catalog-favourites")), true);
         });
         let (_, shown) = frame(&ctx, &engine);
         assert!(shown.iter().any(|t| t == "Favourites"), "{shown:?}");

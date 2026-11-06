@@ -282,6 +282,23 @@ impl PlacePalette {
         &self.query
     }
 
+    /// The text searched. Assign mode reads a group's `implements:id/rev`
+    /// as the whole lineage, so a Part for a newer revision stays listed:
+    /// its row is flagged and offers the reviewed update-and-assign.
+    fn search_text(&self) -> String {
+        if !matches!(self.mode, Mode::Assign { .. }) {
+            return self.query.clone();
+        }
+        self.query
+            .split(' ')
+            .map(|term| match term.split_once('/') {
+                Some((lineage, _)) if lineage.starts_with("implements:") => lineage,
+                _ => term,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     fn reopen(&mut self, query: String) {
         self.open = true;
         self.query = query;
@@ -376,7 +393,7 @@ impl PlacePalette {
         let kept = self.hits().get(self.highlighted).map(|h| h.entry.key());
         let report = match engine.query_with(
             Query::Search {
-                query: self.query.clone(),
+                query: self.search_text(),
                 limit: Some(ROWS),
                 include_drafts: false,
             },
@@ -640,7 +657,7 @@ impl PlacePalette {
             let invalid = matches!(self.results.as_ref().map(|r| &r.report), Some(Err(_)));
             let field = kit::search_field(
                 ui,
-                egui::Id::new("place-palette-query"),
+                egui::Id::unique("place-palette-query"),
                 &mut self.query,
                 hint,
                 invalid,
@@ -806,7 +823,7 @@ impl PlacePalette {
         }
         let instances = instances.clone();
         let ctx = ui.ctx().clone();
-        let id = egui::Id::new(CHOOSE_DIALOG);
+        let id = egui::Id::unique(CHOOSE_DIALOG);
         if let Some(refused) = refusal::claim(&ctx, Origin::Dialog(id)) {
             self.refusal = Some(refused);
             self.submitted = None;
@@ -944,7 +961,7 @@ impl PlacePalette {
                         let secondary = choose_secondary(&hit.entry, &targets);
                         let response = kit::tree_row(
                             ui,
-                            egui::Id::new(("choose-part-row", hit.entry.key())),
+                            egui::Id::unique(("choose-part-row", hit.entry.key())),
                             &kit::Row {
                                 fold: Some(open),
                                 icon: "library",
@@ -1166,6 +1183,7 @@ fn badges(entry: &CatalogEntry) -> [kit::SearchBadge<'static>; 4] {
     catalog::Badge::ALL.map(|badge| kit::SearchBadge {
         label: badge.label(),
         present: entry.badges.get(badge),
+        tip: "",
     })
 }
 
@@ -1459,7 +1477,7 @@ fn row(
         detail = format!("needs update to {} · {detail}", newer.revision);
     }
     let chip = update_chip(entry);
-    let id = egui::Id::new(("place-palette-row", entry.key()));
+    let id = egui::Id::unique(("place-palette-row", entry.key()));
     let shown = kit::SearchRow {
         icon: if entry.kind == DefinitionKind::Part {
             "library"
@@ -1763,7 +1781,7 @@ mod tests {
         );
         assert!(palette.is_open(), "open until the engine answers");
         // The app refuses it: the refusal returns to the dialog's row.
-        let id = egui::Id::new(CHOOSE_DIALOG);
+        let id = egui::Id::unique(CHOOSE_DIALOG);
         crate::refusal::hand_back(
             &ctx,
             crate::refusal::Refused {
@@ -1854,6 +1872,43 @@ mod tests {
         assert_eq!(component, r1.component.id);
         assert!(!values.is_empty());
         assert!(!palette.is_open());
+        Ok(())
+    }
+
+    /// A group's query names its exact component revision, and assign mode
+    /// still lists that lineage's Part for another revision, so the flagged
+    /// row and its reviewed update stay reachable from Choose…. Place mode
+    /// searches the text as typed.
+    #[test]
+    fn assign_mode_searches_a_groups_implements_as_its_lineage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let part = crate::resolve_parts::demo_part(&mut engine, "EX-R0603-10K0-F")?;
+        let body = engine.project().library.part(part).ok_or("the Part")?;
+        let lineage = body.definition.component.id.0;
+        let exact = format!("kind:part implements:{lineage}/99 \"two words\"");
+        let mut palette = PlacePalette::default();
+        palette.open_assign(exact.clone(), vec![]);
+        assert_eq!(palette.query(), exact, "the group's text stays as written");
+        assert_eq!(
+            palette.search_text(),
+            format!("kind:part implements:{lineage} \"two words\"")
+        );
+        let search = |query: String| match engine.query(Query::Search {
+            query,
+            limit: None,
+            include_drafts: false,
+        }) {
+            Ok(QueryResult::Search(report)) => Ok(report.results.len()),
+            other => Err(format!("{other:?}")),
+        };
+        let text = format!("kind:part implements:{lineage}/99");
+        assert_eq!(search(text.clone())?, 0, "no Part pins that revision");
+        palette.open_assign(text.clone(), vec![]);
+        assert_eq!(search(palette.search_text())?, 1, "listed, then flagged");
+        palette.open();
+        palette.query = text.clone();
+        assert_eq!(palette.search_text(), text, "Place mode is literal");
         Ok(())
     }
 

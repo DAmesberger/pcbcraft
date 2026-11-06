@@ -1,4 +1,6 @@
 use super::*;
+use pcbcraft_core::geometry::Bounds;
+use pcbcraft_core::library::TextMetric;
 use pcbcraft_core::model::{LabelKind, PortShape, PowerStyle, SheetItem};
 use pcbcraft_core::schematic::SchematicCommand as C;
 use pcbcraft_core::{Engine, Operation, Outcome};
@@ -156,4 +158,143 @@ fn export_writes_the_file_atomically_and_counts_pages() -> TestResult {
 fn ohm_is_spelled_out_for_the_winansi_font() {
     assert_eq!(printable("10 kΩ ±5%"), "10 kOhm ±5%");
     assert_eq!(printable("a–b"), "a–b");
+}
+
+/// Whether two boxes overlap by more than touching.
+fn overlap(a: &Bounds, b: &Bounds) -> bool {
+    a.min[0] < b.max[0] && b.min[0] < a.max[0] && a.min[1] < b.max[1] && b.min[1] < a.max[1]
+}
+
+fn ink(d: &Drawing, m: TextMetric) -> Vec<Bounds> {
+    d.strokes
+        .iter()
+        .map(|s| s.shape.bounds(s.width))
+        .chain(d.texts.iter().map(|t| t.bounds(m)))
+        .collect()
+}
+
+/// The gap a label keeps from pin names, numbers and no-connect crosses
+/// in this check, mm: about a printed stroke.
+const MARK_GAP_MM: f64 = 0.1;
+
+/// The ESP32 dev board's 133 labels and power ports, all attached to pins
+/// (gap 22 of docs/e2e-esp32-devboard.md): none overlaps a symbol body or
+/// another label on either sheet, nor runs into a pin name or number or a
+/// no-connect cross, and the print draws exactly them.
+#[test]
+fn the_esp32_board_labels_clear_bodies_and_each_other() -> TestResult {
+    let path = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    ));
+    let project = crate::read_project(path)?.project;
+    // Label text measured as it prints (capitals in Helvetica).
+    let m: TextMetric = scene::LABEL_METRIC;
+    assert_eq!(project.sheets.list.len(), 2);
+    let mut found = Vec::new();
+    let mut count = 0;
+    for sheet in project.sheets.list.iter().map(|s| s.id) {
+        let printed = scene::sheet_scene(&project, sheet);
+        let bodies: Vec<Bounds> = printed
+            .units
+            .iter()
+            .flat_map(|u| &u.shapes)
+            .filter(|s| s.fill == Fill::Body)
+            .map(|s| s.shape.bounds(0.0))
+            .collect();
+        // Pin names and numbers, each with the space between it and its
+        // pin line (a label's stem must not run under a number), and the
+        // no-connect crosses: a label keeps a visible gap from them, across
+        // the pin for pin text, all round for a cross. (text, box, gap).
+        let marks: Vec<(String, Bounds, Point)> = printed
+            .units
+            .iter()
+            .flat_map(|u| &u.pins)
+            .flat_map(|p| {
+                let horizontal =
+                    (p.end[0] - p.body_end[0]).abs() >= (p.end[1] - p.body_end[1]).abs();
+                p.name.iter().chain(&p.number).map(move |t| {
+                    let b = t.bounds(m);
+                    // Down to the pin line: only a label's leader, which
+                    // continues the pin as a wire does, may run under it.
+                    let toward = |lo: f64, hi: f64, line: f64| (lo.min(line), hi.max(line));
+                    let (region, gap) = if horizontal {
+                        let (lo, hi) = toward(b.min[1], b.max[1], p.end[1]);
+                        (
+                            Bounds {
+                                min: [b.min[0], lo],
+                                max: [b.max[0], hi],
+                            },
+                            [0.0, MARK_GAP_MM],
+                        )
+                    } else {
+                        let (lo, hi) = toward(b.min[0], b.max[0], p.end[0]);
+                        (
+                            Bounds {
+                                min: [lo, b.min[1]],
+                                max: [hi, b.max[1]],
+                            },
+                            [MARK_GAP_MM, 0.0],
+                        )
+                    };
+                    (format!("pin text {}", t.text), region, gap)
+                })
+            })
+            .chain(printed.no_connects.iter().map(|p| {
+                (
+                    "a no-connect cross".to_owned(),
+                    Bounds::point(*p).inflated(pcbcraft_core::schematic::NO_CONNECT_MM),
+                    [MARK_GAP_MM, MARK_GAP_MM],
+                )
+            }))
+            .collect();
+        let drawn = scene::sheet_labels(&project, sheet);
+        count += drawn.len();
+        let name = |id| {
+            project
+                .label(id)
+                .map(|l| l.name.clone())
+                .unwrap_or_default()
+        };
+        for (i, (id, d)) in drawn.iter().enumerate() {
+            let boxes = ink(d, m);
+            // The label without its leader (a wire-width line from the pin).
+            let symbol: Vec<Bounds> = d
+                .strokes
+                .iter()
+                .filter(|s| s.width != scene::WIRE_MM)
+                .map(|s| s.shape.bounds(s.width))
+                .chain(d.texts.iter().map(|t| t.bounds(m)))
+                .collect();
+            if bodies.iter().any(|b| boxes.iter().any(|x| overlap(x, b))) {
+                found.push(format!("{} ({id}) over a symbol", name(*id)));
+            }
+            for (what, mark, [gx, gy]) in &marks {
+                let grown = |b: &Bounds| Bounds {
+                    min: [b.min[0] - gx, b.min[1] - gy],
+                    max: [b.max[0] + gx, b.max[1] + gy],
+                };
+                if symbol.iter().any(|b| overlap(&grown(b), mark)) {
+                    found.push(format!("{} ({id}) against {what}", name(*id)));
+                }
+            }
+            for (other, e) in drawn.iter().skip(i + 1) {
+                let theirs = ink(e, m);
+                if boxes.iter().any(|b| theirs.iter().any(|t| overlap(b, t))) {
+                    found.push(format!(
+                        "{} ({id}) over {} ({other})",
+                        name(*id),
+                        name(*other)
+                    ));
+                }
+            }
+            // The print draws this same placement.
+            for t in &d.texts {
+                assert!(printed.items.texts.contains(t), "{} printed", t.text);
+            }
+        }
+    }
+    assert_eq!(count, 133);
+    assert!(found.is_empty(), "{} overlaps: {found:#?}", found.len());
+    Ok(())
 }

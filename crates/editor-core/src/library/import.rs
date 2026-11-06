@@ -25,6 +25,7 @@ use crate::ids::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Fresh source lineage ids one promote may consume.
@@ -283,6 +284,120 @@ pub fn import(
         root,
         revisions: done.into_values().collect(),
     })
+}
+
+/// The library every copy from a `.pcbcraft` file names as its origin
+/// (`library.import_from_project`). A project file has no identity of its
+/// own that survives editing, copying or moving it, so the identity of what
+/// it holds is its lineages' (see [`project_lineage_id`]), and the origin's
+/// content hash refuses a file that disagrees about a revision. Not a
+/// folder: `library.updates_available` never lists it, and a folder cannot
+/// be created with this id.
+pub const PROJECT_FILES: LibraryId = LibraryId(0x7063_6263_7261_6674_2d70_726f_6a65_6374);
+
+/// The source identity of a lineage of a project file: the hash of its id,
+/// kind and immutable first revision. Reading the same lineage again gives
+/// the same id, however the file was edited, named or moved since, and two
+/// unrelated files can only agree when that first revision is the same
+/// content under the same id. Pure, so a replay of an import gets equal ids.
+pub fn project_lineage_id(
+    library: &Library,
+    kind: DefinitionKind,
+    id: DefinitionId,
+) -> Result<SourceLineageId> {
+    let first = DefinitionRef {
+        kind,
+        id,
+        revision: Revision::FIRST,
+    };
+    let (meta, body) = library.definition(first).ok_or_else(|| {
+        Error::NotFound(format!(
+            "{} has no first revision",
+            library.describe_lineage(kind, id)
+        ))
+    })?;
+    let text = serde_json::to_vec(&(id, kind, meta, body))
+        .map_err(|e| Error::Invalid(format!("a definition could not be written: {e}")))?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"pcbcraft.project-lineage\0");
+    hasher.update(&text);
+    let digest: [u8; 32] = hasher.finalize().into();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    Ok(SourceLineageId::from_bytes(bytes))
+}
+
+/// The bundle of `root` and its closure as `source`, another project's
+/// library, holds them: every revision keeps its exact number in the record
+/// and so in the origin [`import`] writes, and every pin keeps naming the
+/// exact revision it names there. Pure and deterministic. A root the file
+/// does not hold, a dangling reference, an owner outside the closure or a
+/// model whose licence forbids sharing it refuses.
+pub fn project_bundle(source: &Library, root: DefinitionRef, name: &str) -> Result<Bundle> {
+    let members = bundle::closure(source, root)?;
+    shareable(source, &members)?;
+    let mut lineages: BTreeMap<DefinitionId, SourceLineageId> = BTreeMap::new();
+    for member in &members {
+        if let std::collections::btree_map::Entry::Vacant(slot) = lineages.entry(member.id) {
+            slot.insert(project_lineage_id(source, member.kind, member.id)?);
+        }
+    }
+    let source_revision = |r: DefinitionRef| {
+        lineages
+            .get(&r.id)
+            .filter(|_| members.contains(&r))
+            .map(|lineage| SourceRevision {
+                lineage: *lineage,
+                revision: r.revision,
+            })
+    };
+    let mut records = Vec::with_capacity(members.len());
+    let mut assets = BTreeSet::new();
+    for member in &members {
+        let (meta, body) = source
+            .definition(*member)
+            .ok_or_else(|| Error::NotFound(format!("{} is missing", source.describe(*member))))?;
+        let at = source_revision(*member).ok_or_else(|| {
+            Error::Invalid(format!("{} was not mapped", source.describe(*member)))
+        })?;
+        let record = bundle::to_record(
+            at.lineage,
+            at.revision,
+            meta,
+            body,
+            &mut |r| {
+                source_revision(r).ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "{} names {}, which is not in its closure",
+                        source.describe(*member),
+                        source.describe(r)
+                    ))
+                })
+            },
+            &mut |kind, id| {
+                lineages.get(&id).copied().ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "{} names {}, which is not in its closure; import the item that owns it",
+                        source.describe(*member),
+                        source.describe_lineage(kind, id)
+                    ))
+                })
+            },
+        )?;
+        assets.extend(record.assets.iter().copied());
+        records.push(record);
+    }
+    let root_at =
+        source_revision(root).ok_or_else(|| Error::Invalid("the root was not mapped".into()))?;
+    let bundle = Bundle {
+        library: PROJECT_FILES,
+        name: name.to_owned(),
+        root: root_at,
+        records,
+        assets: bundle::packed(source, &assets)?,
+    };
+    bundle::validate_bundle(&bundle)?;
+    Ok(bundle)
 }
 
 /// What `library.place_from` places.

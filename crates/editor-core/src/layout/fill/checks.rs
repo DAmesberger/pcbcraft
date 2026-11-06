@@ -18,7 +18,7 @@ use crate::geometry::{Point, polygons_overlap};
 use crate::ids::Id;
 use crate::model::fill::{FillJoin, IslandRemoval};
 use crate::model::{Fill, Project};
-use crate::rules::{CopperObject, PadConnection};
+use crate::rules::CopperObject;
 use std::collections::BTreeMap;
 
 /// How a fill is named in messages: its name, else its net and layer.
@@ -85,19 +85,6 @@ pub fn findings(project: &Project) -> Vec<Finding> {
         return out;
     }
     let mut ctx = Ctx::new(project);
-    let labels = super::super::pad_labels(project);
-    let pad_name = |instance: Id, pad| {
-        format!(
-            "{} pad {}",
-            project
-                .instance(instance)
-                .map_or("component", |i| i.designator.as_str()),
-            labels
-                .get(&(instance, pad))
-                .cloned()
-                .unwrap_or_else(|| pad.to_string())
-        )
-    };
     for fill in &project.fills {
         let me = ObjectRef::Fill { id: fill.id };
         let label = fill_label(project, fill);
@@ -133,46 +120,6 @@ pub fn findings(project: &Project) -> Vec<Finding> {
                 format!("{label} has no copper"),
                 vec![me],
             ));
-        }
-        let wanted = fill
-            .settings
-            .thermal
-            .unwrap_or(ctx.rules.fill.thermal)
-            .spoke_count;
-        for join in &copper.joins {
-            let (object, connection, spokes, name) = match *join {
-                FillJoin::Pad {
-                    instance,
-                    pad,
-                    connection,
-                    spokes,
-                    ..
-                } => (
-                    ObjectRef::Pad { instance, pad },
-                    connection,
-                    spokes,
-                    pad_name(instance, pad),
-                ),
-                FillJoin::Via {
-                    via,
-                    connection,
-                    spokes,
-                    ..
-                } => (
-                    ObjectRef::Via { id: via },
-                    connection,
-                    spokes,
-                    format!("a via on {}", fill.net.map_or("", |n| project.net_name(n))),
-                ),
-                FillJoin::Track { .. } => continue,
-            };
-            if connection == PadConnection::Thermal && spokes < wanted {
-                out.push(Finding::new(
-                    "fill.thermal_starved",
-                    format!("Starved thermal: {name} has {spokes} of {wanted} spokes in {label}"),
-                    vec![object, me],
-                ));
-            }
         }
         if fill.settings.islands == IslandRemoval::Never && fill.net.is_some() {
             let mut joined = vec![false; copper.regions.len()];

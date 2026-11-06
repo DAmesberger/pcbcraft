@@ -359,6 +359,41 @@ fn the_registry_arms_the_label_tools() -> TestResult {
     Ok(())
 }
 
+/// Label ▾ is a split button: its ▾ part lists Net, Global and
+/// Hierarchical label, and its upper part arms the kind used last.
+#[test]
+fn label_arms_the_last_label_kind_and_its_menu_lists_every_kind() -> TestResult {
+    let engine = Engine::demo()?;
+    let mut editor = SchematicEditor::default();
+    let label = |editor: &mut SchematicEditor| -> Result<(String, Vec<String>), String> {
+        let ribbon = editor.ribbon(&engine);
+        let tool = ribbon
+            .groups
+            .iter()
+            .flat_map(|g| g.tools.iter())
+            .find(|t| t.label == "Label")
+            .ok_or("no Label button")?;
+        Ok((
+            tool.id.to_owned(),
+            tool.menu.iter().map(|v| v.label.to_owned()).collect(),
+        ))
+    };
+    let (shown, menu) = label(&mut editor)?;
+    assert_eq!(shown, "label", "a net label at first");
+    assert_eq!(menu, ["Net label", "Global label", "Hierarchical label"]);
+    editor.on_tool("global-label", &engine);
+    editor.on_tool("select", &engine);
+    assert_eq!(label(&mut editor)?.0, "global-label");
+    // The upper part runs the shown id: the global label tool again.
+    let shown = label(&mut editor)?.0;
+    editor.on_tool(&shown, &engine);
+    assert_eq!(editor.tool, Tool::Label(LabelTool::Global));
+    // A power port is no label kind of this button.
+    editor.on_tool("power", &engine);
+    assert_eq!(label(&mut editor)?.0, "global-label");
+    Ok(())
+}
+
 /// Render the Properties card and click the text `label` in it.
 fn card_click(
     editor: &mut SchematicEditor,
@@ -502,5 +537,146 @@ fn delete_removes_the_selected_label_in_one_step() -> TestResult {
     ));
     engine.apply(engine.revision(), op)?;
     assert!(engine.project().labels.is_empty());
+    Ok(())
+}
+
+/// The ESP32 dev board example, opened over the demo the app starts with
+/// as the app opens a file.
+fn esp32_board() -> Result<Engine, Box<dyn std::error::Error>> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    );
+    let mut engine = Engine::demo()?;
+    engine.replace_document(pcbcraft_io::read_project(std::path::Path::new(path))?)?;
+    Ok(engine)
+}
+
+/// Every symbol of the active sheet lies on the canvas and shows its
+/// designator, and the view is the framed page: its width plus a 5 mm
+/// margin on each side across 800 points. Returns how many symbols.
+fn assert_framed(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    page_width_mm: f32,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    let shown = texts(&canvas_frame(editor, engine, ctx, vec![]).0);
+    let project = engine.project();
+    let view = schematic_view(editor);
+    let mut symbols = 0;
+    for occurrence in project
+        .occurrences
+        .iter()
+        .filter(|o| o.sheet == editor.sheet)
+    {
+        let bounds = editor
+            .placed_bounds
+            .get(&occurrence.id)
+            .ok_or("a resolved symbol")?;
+        for corner in [bounds.min, bounds.max] {
+            assert!(
+                CANVAS.contains(view.screen(corner)),
+                "{bounds:?} at scale {} and pan {:?}",
+                editor.scale,
+                editor.pan
+            );
+        }
+        let designator = &project
+            .instance(occurrence.instance)
+            .ok_or("its instance")?
+            .designator;
+        assert!(shown.contains(designator), "{designator} in {shown:?}");
+        symbols += 1;
+    }
+    let scale = 800.0 / (page_width_mm + 10.0);
+    assert!((editor.scale - scale).abs() < 1e-3, "{}", editor.scale);
+    Ok(symbols)
+}
+
+/// The founder's test drive: the ESP32 schematic opened zoomed into an
+/// empty corner of its sheet, showing no circuit until Fit.
+#[test]
+fn an_opened_schematic_and_a_switched_to_sheet_show_their_content_framed() -> TestResult {
+    let engine = esp32_board()?;
+    let project = engine.project();
+    let ctx = ctx();
+    let mut editor = SchematicEditor::default();
+    // A view left over from the document before.
+    editor.show_sheet(project.sheets.list[1].id, project);
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    editor.scale = 40.0;
+    editor.pan = vec2(900.0, -700.0);
+    // As the app does on open, before Schematic has drawn a frame.
+    editor.document_opened(project);
+    assert_eq!(editor.active_sheet(), SheetId::FIRST);
+    // Sheet 1 is A4 landscape, sheet 2 A3 landscape.
+    let first = assert_framed(&mut editor, &engine, &ctx, 297.0)?;
+    assert!(first > 0, "sheet 1 has symbols");
+
+    let second = project.sheets.list[1].id;
+    editor.scale = 40.0;
+    editor.pan = vec2(-900.0, 700.0);
+    editor.show_sheet(second, project);
+    let symbols = assert_framed(&mut editor, &engine, &ctx, 420.0)?;
+    assert!(symbols > 0, "sheet 2 has symbols");
+    assert_eq!(first + symbols, project.occurrences.len());
+    Ok(())
+}
+
+/// Framing happens once. The user's view stays through later frames and
+/// edits, and across a visit to another workspace, which draws no canvas.
+#[test]
+fn a_framed_sheet_keeps_the_users_view_afterwards() -> TestResult {
+    let mut engine = esp32_board()?;
+    let ctx = ctx();
+    let mut editor = SchematicEditor::default();
+    editor.document_opened(engine.project());
+    assert_framed(&mut editor, &engine, &ctx, 297.0)?;
+    editor.scale = 9.0;
+    editor.pan = vec2(120.0, -80.0);
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    engine.apply(
+        engine.revision(),
+        Operation::Schematic(SchematicCommand::RenameProject {
+            name: "ESP32 board".into(),
+        }),
+    )?;
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    assert_eq!((editor.scale, editor.pan), (9.0, vec2(120.0, -80.0)));
+    Ok(())
+}
+
+/// Pictures of the ESP32 board's labels on the canvas, for evidence: run
+/// with `PCBCRAFT_PICTURES=<dir>`. Each is the canvas's own egui output,
+/// filled by the CPU rasterizer of the layout tests.
+#[test]
+fn write_label_pictures() -> TestResult {
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Ok(());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let engine = esp32_board()?;
+    let project = engine.project();
+    let first = project.sheets.list[0].id;
+    let second = project.sheets.list[1].id;
+    let views: [(&str, SheetId, Point, f32); 6] = [
+        ("labels-sheet1-usb", first, [40.0, -55.0], 9.0),
+        ("labels-sheet1-ldo", first, [150.0, -55.0], 9.0),
+        ("labels-sheet2-module", second, [110.0, -135.0], 4.0),
+        ("labels-sheet2-module-gnd", second, [128.0, -125.0], 12.0),
+        ("labels-sheet2-module-io", second, [102.0, -125.0], 12.0),
+        ("labels-sheet2-headers", second, [315.0, -80.0], 7.0),
+    ];
+    for (name, sheet, at, scale) in views {
+        let mut editor = centred(at, scale);
+        editor.switch_sheet(Some(sheet), project);
+        let picture = crate::pcb_editor::raster_tests::render(|ui| {
+            editor.canvas(ui, &engine);
+        });
+        let png = picture.png().ok_or("png")?;
+        std::fs::write(dir.join(format!("{name}.png")), png)?;
+    }
     Ok(())
 }

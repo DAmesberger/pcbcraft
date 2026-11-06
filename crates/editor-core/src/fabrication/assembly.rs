@@ -154,38 +154,41 @@ pub struct PlacementRow {
     pub side: Layer,
 }
 
-/// What a BOM line says about each of its instances.
-struct LineInfo<'a> {
-    value: String,
-    line: &'a BomLine,
-}
-
-/// The value text of a BOM line: its requirement values, space-separated.
-fn line_value(line: &BomLine) -> String {
-    let parts: Vec<&str> = line
-        .values
-        .iter()
-        .map(|v| v.text.trim())
-        .filter(|t| !t.is_empty())
-        .collect();
-    parts.join(" ")
-}
-
-fn line_index(report: &completeness::BomReport) -> BTreeMap<Id, LineInfo<'_>> {
+/// The BOM line of each instance.
+fn line_index(report: &completeness::BomReport) -> BTreeMap<Id, &BomLine> {
     let mut index = BTreeMap::new();
     for line in &report.lines {
-        let value = line_value(line);
         for id in &line.instances {
-            index.insert(
-                *id,
-                LineInfo {
-                    value: value.clone(),
-                    line,
-                },
-            );
+            index.insert(*id, line);
         }
     }
     index
+}
+
+/// The Value of an instance in the BOM and pick-and-place files: its value
+/// text ([`instances::value_text`], every typed value field as the
+/// instance shows it, "10 µF 16 V"), else the chosen Part's MPN, else the component name for a component of
+/// more than two terminals (an IC, whose name is its identity), else empty.
+/// A two-terminal part's name is a package description ("Chip capacitor
+/// 0603 (1608 metric)") the Package column already carries, so a passive
+/// with no value set and no Part leaves Value empty; its Status reads
+/// "no part". The schematic falls back the same way.
+fn instance_value(
+    project: &Project,
+    instance: &crate::model::ComponentInstance,
+    line: Option<&BomLine>,
+) -> Result<String> {
+    if let Some(value) = instances::value_text(&project.library, instance)?
+        .or_else(|| line.and_then(|l| l.mpn.clone()))
+    {
+        return Ok(value);
+    }
+    Ok(project
+        .library
+        .component(instance.component)
+        .filter(|c| c.definition.terminals.len() > 2)
+        .map(|c| c.meta.name.clone())
+        .unwrap_or_default())
 }
 
 /// The package name of an instance (the package definition's name, else
@@ -199,15 +202,6 @@ fn package_name(project: &Project, instance: &crate::model::ComponentInstance) -
     } else {
         name.to_string()
     })
-}
-
-/// The component name of an instance, the value of last resort.
-fn component_name(project: &Project, instance: &crate::model::ComponentInstance) -> String {
-    project
-        .library
-        .component(instance.component)
-        .map(|c| c.meta.name.clone())
-        .unwrap_or_default()
 }
 
 /// `R10` after `R9`: the letter prefix, then the number, then the text (as
@@ -254,11 +248,7 @@ pub fn rows(project: &Project, convention: &PlacementConvention) -> Result<Vec<P
         let Some(package) = package_name(project, instance) else {
             continue;
         };
-        let value = lines
-            .get(&instance.id)
-            .map(|l| l.value.clone())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| component_name(project, instance));
+        let value = instance_value(project, instance, lines.get(&instance.id).copied())?;
         let mut x = placement.position[0] - origin[0];
         let y = placement.position[1] - origin[1];
         let mut rotation = placement.rotation_deg;
@@ -404,15 +394,10 @@ pub fn bom_csv(project: &Project) -> Result<String> {
         ],
     );
     for (k, line) in report.lines.iter().enumerate() {
-        let value = Some(line_value(line))
-            .filter(|v| !v.is_empty())
-            .or_else(|| {
-                project
-                    .library
-                    .component(line.component)
-                    .map(|c| c.meta.name.clone())
-            })
-            .unwrap_or_default();
+        let value = match line.instances.first().and_then(|id| project.instance(*id)) {
+            Some(first) => instance_value(project, first, Some(line))?,
+            None => String::new(),
+        };
         record(
             &mut out,
             &[
@@ -457,12 +442,8 @@ pub fn bom_parts_csv(project: &Project) -> Result<String> {
         ],
     );
     for instance in instances {
-        let info = lines.get(&instance.id);
-        let value = info
-            .map(|l| l.value.clone())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| component_name(project, instance));
-        let line = info.map(|l| l.line);
+        let line = lines.get(&instance.id).copied();
+        let value = instance_value(project, instance, line)?;
         record(
             &mut out,
             &[

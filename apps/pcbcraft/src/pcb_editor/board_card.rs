@@ -10,7 +10,7 @@ use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::{
     Engine, Fabrication, MaskColour, MaskFinish, Operation, PadFinish, Project, SilkscreenColour,
-    layout::LayoutCommand,
+    layout::LayoutCommand, schematic::SchematicCommand,
 };
 use solidcraft_ui_egui::theme::Tokens;
 
@@ -37,7 +37,7 @@ impl BoardSetup {
     }
 
     fn id() -> egui::Id {
-        egui::Id::new("pcb-board-setup")
+        egui::Id::unique("pcb-board-setup")
     }
 
     /// Take a refusal of the dialog's OK, handed back this frame.
@@ -53,13 +53,15 @@ impl PcbEditor {
     /// BOARD: size and copper layers, then the finish in one line with
     /// Setup…, which opens the Board setup dialog, and the rules profile
     /// with Rules…, which opens the Design rules panel.
-    pub(super) fn board_section(&mut self, ui: &mut Ui, project: &Project) {
+    pub(super) fn board_section(&mut self, ui: &mut Ui, project: &Project) -> Option<Operation> {
+        let mut renamed = None;
         let mut setup = false;
         let mut stackup = false;
         let mut classes = false;
         let mut rules = false;
         let mut signals = false;
         kit::section(ui, "pcb-board", "Board", true, None, |ui| {
+            renamed = self.project_name_row(ui, project);
             kit::value_row(
                 ui,
                 "Size",
@@ -123,6 +125,27 @@ impl PcbEditor {
         if classes {
             self.open_net_classes(None);
         }
+        renamed
+    }
+
+    /// The project's name, committed when focus leaves the row. An empty or
+    /// over-long name goes back to the current one.
+    fn project_name_row(&mut self, ui: &mut Ui, project: &Project) -> Option<Operation> {
+        if self.project_name.0 != project.name {
+            self.project_name = (project.name.clone(), project.name.clone());
+        }
+        let response = kit::text_row(ui, "Project", &mut self.project_name.1);
+        if !response.lost_focus() {
+            return None;
+        }
+        let name = self.project_name.1.trim().to_owned();
+        if name.is_empty() || name.len() > 256 {
+            self.project_name.1.clone_from(&project.name);
+            return None;
+        }
+        (name != project.name).then_some(Operation::Schematic(SchematicCommand::RenameProject {
+            name,
+        }))
     }
 
     pub(super) fn open_board_setup(&mut self, project: &Project) {

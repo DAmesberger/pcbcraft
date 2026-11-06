@@ -140,7 +140,7 @@ pub struct PlacedGraphic {
 /// is marked mirrored and arcs reverse (through `Shape::transformed`).
 /// Designator text shows the instance designator and literal text itself;
 /// other text content resolves to empty text for now. Hidden text is left
-/// out.
+/// out. A text the instance moved (`text_placements`) is placed there.
 pub fn placed_graphics(project: &Project) -> Vec<PlacedGraphic> {
     let mut result = Vec::new();
     for placement in &project.placements {
@@ -180,12 +180,20 @@ pub fn placed_graphics(project: &Project) -> Vec<PlacedGraphic> {
                         TextContent::Designator => instance.designator.clone(),
                         _ => String::new(),
                     };
+                    // Where this instance prints it, in the footprint's axes.
+                    let moved = instance
+                        .text_placements
+                        .get(&graphic.id)
+                        .copied()
+                        .unwrap_or_default();
+                    let at = [text.at[0] + moved.offset[0], text.at[1] + moved.offset[1]];
+                    let rotation = text.rotation.degrees() + moved.turn.degrees();
                     PlacedItem::Text(PlacedText {
                         graphic: Some(graphic.id),
                         text: content,
-                        at: t.apply(text.at),
+                        at: t.apply(at),
                         height: text.height,
-                        rotation_deg: t.apply_angle(text.rotation.degrees()).rem_euclid(360.0),
+                        rotation_deg: t.apply_angle(rotation).rem_euclid(360.0),
                         justify: text.justify,
                         mirrored: t.mirror,
                         line_spacing: text.line_spacing,

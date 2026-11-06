@@ -96,6 +96,107 @@ fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
     Ok(())
 }
 
+/// `project.rename` over the JSON contract names every output, and one
+/// undo step takes it back.
+#[test]
+fn the_project_name_reaches_the_production_files() -> Fallible<()> {
+    let dir = tempfile::tempdir()?;
+    let mut session = Session::new(showcase()?);
+    let was = session.engine().project().name.clone();
+    let revision = session.engine().revision();
+    let renamed = ok(
+        &mut session,
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Schematic", "operation": {
+                "command": "project.rename", "params": {"name": "Dev board A"}}},
+        }}),
+    )?;
+    assert_eq!(renamed["revision"], revision + 1);
+    let stale = session.dispatch(json!({"command": "project.apply", "params": {
+        "expected_revision": revision,
+        "operation": {"editor": "Schematic", "operation": {
+            "command": "project.rename", "params": {"name": "Late"}}},
+    }}));
+    assert_eq!(stale["ok"], false, "{stale}");
+    let malformed = session.dispatch(json!({"command": "project.apply", "params": {
+        "expected_revision": revision + 1,
+        "operation": {"editor": "Schematic", "operation": {
+            "command": "project.rename", "params": {"title": "Wrong field"}}},
+    }}));
+    assert_eq!(malformed["ok"], false, "{malformed}");
+    assert_eq!(session.engine().project().name, "Dev board A");
+
+    let out = dir.path().join("named");
+    ok(&mut session, export(&out, false, None))?;
+    let mut gerbers = 0;
+    for entry in std::fs::read_dir(&out)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|e| e == "gbr") {
+            let text = std::fs::read_to_string(&path)?;
+            assert!(
+                text.contains("%TF.ProjectId,Dev board A,"),
+                "{}",
+                path.display()
+            );
+            assert!(!text.contains(&was), "{}", path.display());
+            gerbers += 1;
+        }
+        if path.to_string_lossy().ends_with("-drill-table.txt") {
+            let text = std::fs::read_to_string(&path)?;
+            assert!(text.starts_with("Drill table: Dev board A\n"), "{text}");
+        }
+    }
+    assert!(gerbers > 0);
+    ok(
+        &mut session,
+        json!({"command": "project.undo", "params": {}}),
+    )?;
+    assert_eq!(session.engine().project().name, was);
+    Ok(())
+}
+
+/// The query takes a profile id as the export does, with the same result
+/// as the whole profile; an unknown id and a malformed one are refused.
+#[test]
+fn the_production_check_takes_a_profile_id() -> Fallible<()> {
+    let mut session = Session::new(showcase()?);
+    let query = |profile: Value| {
+        json!({"command": "project.query", "params": {
+            "query": "fabrication.preflight",
+            "params": {"profile": profile},
+        }})
+    };
+    let by_id = ok(&mut session, query(json!("std-6-6")))?;
+    let whole = ok(
+        &mut session,
+        query(serde_json::to_value(pcbcraft_core::rules::builtin::by_id(
+            "std-6-6",
+        ))?),
+    )?;
+    assert_eq!(by_id, whole);
+    // The report names the profile it checked under.
+    assert_eq!(by_id["result"]["profile"], "Standard 6/6");
+    assert!(by_id["result"]["blocking"].as_u64() > Some(0));
+
+    let revision = session.engine().revision();
+    let unknown = session.dispatch(query(json!("no-such-profile")));
+    assert_eq!(unknown["ok"], false, "{unknown}");
+    for malformed in [json!(6), json!({"id": "std-6-6"})] {
+        let reply = session.dispatch(query(malformed));
+        assert_eq!(reply["ok"], false, "{reply}");
+    }
+    assert_eq!(session.engine().revision(), revision);
+
+    // The engine alone knows the built-in profiles.
+    let engine = session.engine();
+    let refused = engine.query(pcbcraft_core::Query::Preflight {
+        profile: Some(pcbcraft_core::fabrication::ProfileChoice::Id("mine".into())),
+    });
+    assert!(refused.is_err());
+    Ok(())
+}
+
 #[test]
 fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
@@ -126,27 +227,46 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
         .collect();
     assert!(!blocking.is_empty());
     assert_eq!(report["result"]["blocking"], blocking.len());
-    // A waiver needs a reason.
+    // A reason is optional: without one the waiver keeps an empty reason.
     let revision = session.engine().revision();
-    let unreasoned = session.dispatch(json!({"command": "project.apply", "params": {
+    ok(
+        &mut session,
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Fabrication", "operation": {
+                "command": "fabrication.waive", "params": {"keys": [blocking[0]]}}},
+        }}),
+    )?;
+    let waivers = &session.engine().project().production.waivers;
+    assert_eq!(waivers.len(), 1);
+    assert_eq!(waivers[0].reason, "");
+    ok(
+        &mut session,
+        json!({"command": "project.undo", "params": {}}),
+    )?;
+    // One key that is not printable refuses the whole list.
+    let revision = session.engine().revision();
+    let mut bad = blocking.clone();
+    bad.push("bad\u{7}key".into());
+    let refused = session.dispatch(json!({"command": "project.apply", "params": {
         "expected_revision": revision,
         "operation": {"editor": "Fabrication", "operation": {
-            "command": "fabrication.waive", "params": {"key": blocking[0], "reason": " "}}},
+            "command": "fabrication.waive", "params": {"keys": bad, "reason": "prototype"}}},
     }}));
-    assert_eq!(unreasoned["ok"], false);
+    assert_eq!(refused["ok"], false);
     assert_eq!(session.engine().revision(), revision);
-    for key in &blocking {
-        let revision = session.engine().revision();
-        ok(
-            &mut session,
-            json!({"command": "project.apply", "params": {
-                "expected_revision": revision,
-                "operation": {"editor": "Fabrication", "operation": {
-                    "command": "fabrication.waive",
-                    "params": {"key": key, "reason": "fabricator refills planes"}}},
-            }}),
-        )?;
-    }
+    assert!(session.engine().project().production.waivers.is_empty());
+    // Every blocking finding is waived with one reason in one command.
+    let revision = session.engine().revision();
+    ok(
+        &mut session,
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Fabrication", "operation": {
+                "command": "fabrication.waive",
+                "params": {"keys": blocking, "reason": "fabricator refills planes"}}},
+        }}),
+    )?;
     let result = ok(&mut session, export(&out, false, Some("std-6-6")))?;
     assert_eq!(result["preflight"]["blocking"], 0);
     assert_eq!(result["preflight"]["waived"], blocking.len());
@@ -165,13 +285,11 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
         reopened.engine().project().production.waivers.len(),
         blocking.len()
     );
-    // Each waiver was one undo step.
-    for _ in 0..blocking.len() {
-        ok(
-            &mut session,
-            json!({"command": "project.undo", "params": {}}),
-        )?;
-    }
+    // The waivers were one undo step.
+    ok(
+        &mut session,
+        json!({"command": "project.undo", "params": {}}),
+    )?;
     assert!(session.engine().project().production.waivers.is_empty());
     // An unknown profile is refused.
     let unknown = session.dispatch(export(
@@ -180,5 +298,40 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
         Some("no-such-profile"),
     ));
     assert_eq!(unknown["ok"], false);
+    Ok(())
+}
+
+/// A host that requires a reason (the app's setting) refuses a waiver
+/// without one, changing nothing; with a reason it is kept.
+#[test]
+fn a_required_reason_refuses_a_waiver_without_one() -> Fallible<()> {
+    let mut engine = Engine::default();
+    engine.require_waiver_reason(true);
+    let mut session = Session::new(engine);
+    let waive = |revision: u64, reason: Value| {
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Fabrication", "operation": {
+                "command": "fabrication.waive", "params": {"keys": ["k"], "reason": reason}}},
+        }})
+    };
+    let revision = session.engine().revision();
+    for reason in [json!(" "), json!("")] {
+        let refused = session.dispatch(waive(revision, reason));
+        assert_eq!(refused["ok"], false, "{refused}");
+        assert!(
+            refused["error"]
+                .to_string()
+                .contains("fabrication.waiver_reason"),
+            "{refused}"
+        );
+        assert_eq!(session.engine().revision(), revision);
+        assert!(session.engine().project().production.waivers.is_empty());
+    }
+    ok(&mut session, waive(revision, json!("prototype")))?;
+    assert_eq!(
+        session.engine().project().production.waivers[0].reason,
+        "prototype"
+    );
     Ok(())
 }

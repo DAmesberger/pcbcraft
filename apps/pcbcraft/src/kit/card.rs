@@ -153,7 +153,7 @@ const ISSUES_WANTS: &str = "column-issues-wants";
 /// Keep the height a card's content wants for the next frame's
 /// [`column`], repainting when it changed.
 fn remember_wants(ctx: &egui::Context, key: &str, height: f32) {
-    let id = egui::Id::new(key);
+    let id = egui::Id::unique(key);
     let pass = ctx.cumulative_pass_nr();
     let previous = ctx.data(|d| d.get_temp::<(u64, f32)>(id));
     if previous.is_none_or(|(_, h)| (h - height).abs() > 0.5) {
@@ -174,7 +174,7 @@ pub fn remember_issues_wants(ctx: &egui::Context, height: f32) {
 pub fn wants(ctx: &egui::Context, margin: f32) -> Wants {
     let pass = ctx.cumulative_pass_nr();
     let read = |key: &str| {
-        ctx.data(|d| d.get_temp::<(u64, f32)>(egui::Id::new(key)))
+        ctx.data(|d| d.get_temp::<(u64, f32)>(egui::Id::unique(key)))
             .filter(|(at, _)| at.saturating_add(1) >= pass)
             .map(|(_, h)| h + margin)
     };
@@ -210,7 +210,7 @@ pub fn card<R>(
     let slot_height = t.control_height + ui.spacing().item_spacing.y;
     let footer_height = if inspector.footer { FOOTER_HEIGHT } else { 0.0 };
     let body_height = (ui.available_height() - slot_height - footer_height).max(0.0);
-    let key = ui.id().with("card-body");
+    let key = ui.scope_id().with("card-body");
     let mut scroll = egui::ScrollArea::vertical()
         .id_salt(key)
         .max_height(body_height)
@@ -380,7 +380,7 @@ mod tests {
     fn inspector(subject: &str, footer: bool, issues: Option<IssueSlot>) -> Inspector {
         Inspector {
             header: Header::new("component", "R1", "Placement"),
-            subject: egui::Id::new(subject),
+            subject: egui::Id::unique(subject),
             footer,
             issues,
         }
@@ -430,11 +430,11 @@ mod tests {
     #[test]
     fn the_scroll_offset_resets_only_when_the_subject_changes() {
         let ctx = egui::Context::default();
-        let key = egui::Id::new("k");
+        let key = egui::Id::unique("k");
         let mut seen = Vec::new();
         for subject in ["a", "a", "b", "b", "a"] {
             run(&ctx, |ui| {
-                seen.push(reset_scroll(ui, key, egui::Id::new(subject)))
+                seen.push(reset_scroll(ui, key, egui::Id::unique(subject)))
             });
         }
         assert_eq!(seen, [false, false, true, false, true]);

@@ -870,7 +870,7 @@ fn a_refused_template_shows_on_the_dialog() -> Result<(), Box<dyn std::error::Er
     crate::refusal::hand_back(
         &ctx,
         Refused {
-            origin: Origin::Dialog(egui::Id::new(TEMPLATE_DIALOG)),
+            origin: Origin::Dialog(egui::Id::unique(TEMPLATE_DIALOG)),
             error: pcbcraft_core::Error::Conflict("The land is wider than the package".into()),
         },
         false,

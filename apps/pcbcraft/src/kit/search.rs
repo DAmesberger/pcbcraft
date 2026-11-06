@@ -81,7 +81,7 @@ pub fn search_sheet(
     add: impl FnOnce(&mut Ui),
 ) -> Rect {
     let host = Container::new(ctx, Surface::Popup);
-    host.area(egui::Id::new(("search-sheet", id)))
+    host.area(egui::Id::unique(("search-sheet", id)))
         .fixed_pos(top)
         .movable(false)
         .order(egui::Order::Foreground)
@@ -191,7 +191,12 @@ pub fn search_field(
         "zoom",
         1.0,
     );
-    let key_width = key_cap(ui, r.right_center() - vec2(t.space_10, 0.0), "Esc");
+    let key_width = key_cap(
+        ui,
+        r.right_center() - vec2(t.space_10, 0.0),
+        "Esc",
+        t.form_dim,
+    );
     let editor_left = (r.left() + t.space_12 + t.space_16 + t.space_12).min(r.right());
     let editor = Rect::from_min_max(
         pos2(editor_left, r.top()),
@@ -206,7 +211,7 @@ pub fn search_field(
             ui.add_sized(
                 editor.size(),
                 egui::TextEdit::singleline(value)
-                    .vertical_align(egui::Align::Center)
+                    .align(egui::Align2::LEFT_CENTER)
                     .min_size(vec2(0.0, height))
                     .margin(vec2(t.form_inset, 0.0))
                     .id(id)
@@ -290,7 +295,7 @@ pub fn filter_field(
         ui.painter()
             .line_segment([c + vec2(-arm, arm), c + vec2(arm, -arm)], stroke);
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Clear filter")
+            egui::WidgetInfo::labeled(egui::Role::Button, true, "Clear filter")
         });
         if response.clicked() {
             value.clear();
@@ -308,7 +313,7 @@ pub fn filter_field(
             ui.add_sized(
                 editor.size(),
                 egui::TextEdit::singleline(value)
-                    .vertical_align(egui::Align::Center)
+                    .align(egui::Align2::LEFT_CENTER)
                     .min_size(vec2(0.0, height))
                     .margin(vec2(t.space_4, 0.0))
                     .id(id)
@@ -346,20 +351,18 @@ pub fn search_message(ui: &mut Ui, text: &str, error: bool) {
         vec2(ui.available_width(), galley.size().y + t.space_6 * 2.0),
         Sense::hover(),
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
     ui.painter()
         .galley(pos2(r.left() + inset, r.top() + t.space_6), galley, ink);
 }
 
 /// A key cap right-aligned at `right`; returns its width.
-fn key_cap(ui: &Ui, right: egui::Pos2, label: &str) -> f32 {
+fn key_cap(ui: &Ui, right: egui::Pos2, label: &str, ink: egui::Color32) -> f32 {
     let t = Tokens::get();
     let padding = t.space_10;
-    let galley = ui.painter().layout_no_wrap(
-        label.to_owned(),
-        FontId::monospace(t.font_small),
-        t.form_dim,
-    );
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), FontId::monospace(t.font_small), ink);
     let size = galley.size() + vec2(padding, t.space_4);
     let r = Rect::from_min_size(pos2(right.x - size.x, right.y - size.y / 2.0), size);
     t.container_rect(
@@ -370,7 +373,7 @@ fn key_cap(ui: &Ui, right: egui::Pos2, label: &str) -> f32 {
         t.dialog_rule,
     );
     ui.painter()
-        .galley(r.min + vec2(padding / 2.0, t.space_2), galley, t.form_dim);
+        .galley(r.min + vec2(padding / 2.0, t.space_2), galley, ink);
     size.x
 }
 
@@ -480,6 +483,8 @@ pub fn search_chips(ui: &mut Ui, chips: &[String], trailing: &str) {
 pub struct SearchBadge<'a> {
     pub label: &'a str,
     pub present: bool,
+    /// What the badge means, in the row's hover; empty for none.
+    pub tip: &'a str,
 }
 
 /// One result row.
@@ -636,22 +641,44 @@ pub fn search_row_marked(
     job.wrap.max_width = width;
     job.wrap.max_rows = 1;
     let galley = painter.layout_job(job);
+    let mut cut = galley.elided;
     painter.galley(pos2(left, r.top() + t.space_3), galley, t.form_ink);
-    let mut detail = egui::text::LayoutJob::simple_singleline(
-        row.detail.to_owned(),
+    let detail = super::text::one_line(
+        ui,
+        row.detail,
         FontId::proportional(t.font_small),
         t.form_dim,
+        width,
     );
-    detail.wrap.max_width = width;
-    detail.wrap.max_rows = 1;
-    let detail = painter.layout_job(detail);
+    cut |= detail.elided;
     painter.galley(
         pos2(left, r.bottom() - t.space_3 - detail.size().y),
         detail,
         t.form_dim,
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, row.label));
+    let tips: Vec<String> = row
+        .badges
+        .iter()
+        .filter(|b| !b.tip.is_empty())
+        .map(|b| format!("{}: {}", b.label, b.tip))
+        .collect();
+    let response = super::text::hover(
+        response,
+        &full_row(row.label, row.detail),
+        &tips.join("\n"),
+        cut,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, row.label));
     response
+}
+
+/// A search row's full text for its hover: the name, then the detail.
+fn full_row(label: &str, detail: &str) -> String {
+    if detail.is_empty() {
+        label.to_owned()
+    } else {
+        format!("{label}\n{detail}")
+    }
 }
 
 /// One command palette row (upstream `MenuItem::search_row` with a
@@ -709,15 +736,6 @@ pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response 
         row.icon,
         opacity,
     );
-    let right = match row.shortcut {
-        Some(key) => {
-            let width = key_cap(ui, r.right_center() - vec2(t.space_8, 0.0), key);
-            r.right() - t.space_8 - width - t.space_8
-        }
-        None => r.right() - t.space_8,
-    };
-    let left = tile.right() + t.space_10;
-    let width = (right - left).max(0.0);
     let (ink, dim) = if row.enabled {
         (t.form_ink, t.form_dim)
     } else {
@@ -726,6 +744,15 @@ pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response 
             t.form_dim.gamma_multiply(0.7),
         )
     };
+    let right = match row.shortcut {
+        Some(key) => {
+            let width = key_cap(ui, r.right_center() - vec2(t.space_8, 0.0), key, dim);
+            r.right() - t.space_8 - width - t.space_8
+        }
+        None => r.right() - t.space_8,
+    };
+    let left = tile.right() + t.space_10;
+    let width = (right - left).max(0.0);
     let normal = egui::TextFormat::simple(FontId::proportional(t.font_label), ink);
     let mut job = egui::text::LayoutJob::default();
     match highlight(row.label, row.query) {
@@ -747,26 +774,28 @@ pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response 
     job.wrap.max_width = width;
     job.wrap.max_rows = 1;
     let galley = painter.layout_job(job);
+    let mut cut = galley.elided;
     painter.galley(pos2(left, r.top() + t.space_3), galley, ink);
-    let mut detail = egui::text::LayoutJob::simple_singleline(
-        row.detail.to_owned(),
+    let detail = super::text::one_line(
+        ui,
+        row.detail,
         FontId::proportional(t.font_small),
         dim,
+        width,
     );
-    detail.wrap.max_width = width;
-    detail.wrap.max_rows = 1;
-    let detail = painter.layout_job(detail);
+    cut |= detail.elided;
     painter.galley(
         pos2(left, r.bottom() - t.space_3 - detail.size().y),
         detail,
         dim,
     );
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, row.enabled, row.label)
+        egui::WidgetInfo::labeled(egui::Role::Button, row.enabled, row.label)
     });
     if row.enabled {
-        response
+        super::text::hover(response, &full_row(row.label, row.detail), "", cut)
     } else {
+        // A disabled row's reason is its detail: it shows even when it fits.
         response.on_hover_text(row.detail)
     }
 }

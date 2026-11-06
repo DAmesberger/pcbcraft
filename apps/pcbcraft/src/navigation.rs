@@ -178,6 +178,7 @@ impl Trackpad {
                 delta,
                 modifiers,
                 phase,
+                ..
             } = event
             else {
                 continue;
@@ -352,6 +353,7 @@ pub(crate) mod tests {
     /// One trackpad scroll move of `delta` points with `modifiers`.
     pub fn scroll(delta: Vec2, modifiers: Modifiers, phase: TouchPhase) -> Event {
         Event::MouseWheel {
+            source: egui::MouseWheelSource::Unknown,
             unit: MouseWheelUnit::Point,
             delta,
             modifiers,
@@ -370,6 +372,7 @@ pub(crate) mod tests {
     /// One mouse-wheel notch (lines, no bracket).
     pub fn notch(lines: f32) -> Event {
         Event::MouseWheel {
+            source: egui::MouseWheelSource::Unknown,
             unit: MouseWheelUnit::Line,
             delta: vec2(0.0, lines),
             modifiers: Modifiers::NONE,
@@ -462,6 +465,7 @@ pub(crate) mod tests {
         }
         assert!(zoom > 1.0, "a notch up zooms in: {zoom}");
         let thumb = Event::MouseWheel {
+            source: egui::MouseWheelSource::Unknown,
             unit: MouseWheelUnit::Point,
             delta: vec2(7.0, 0.0),
             modifiers: Modifiers::NONE,

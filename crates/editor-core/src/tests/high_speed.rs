@@ -670,3 +670,141 @@ fn the_queries_reach_the_calculator_suggestions_and_table() -> Result<()> {
     ));
     Ok(())
 }
+
+fn branch(usb: &mut Usb, net: Id, from: Point, to: Point) -> Result<()> {
+    apply(
+        &mut usb.engine,
+        Operation::Layout(LayoutCommand::Route {
+            request: layout::RouteRequest {
+                net,
+                start: from,
+                end: to,
+                width: 0.2,
+                layer: CopperLayer::Top,
+            },
+        }),
+    )?;
+    Ok(())
+}
+
+/// The point on a coupled track of `net`, halfway along its longest one.
+fn on_run(usb: &Usb, net: Id) -> Result<Point> {
+    usb.engine
+        .project()
+        .tracks
+        .iter()
+        .filter(|t| t.net == net)
+        .max_by(|a, b| {
+            crate::geometry::distance(a.start, a.end)
+                .total_cmp(&crate::geometry::distance(b.start, b.end))
+        })
+        .map(|t| mid(t.start, t.end))
+        .ok_or_else(|| Error::NotFound("track".into()))
+}
+
+/// A two-pin half measures exactly its total copper; a branch off it is a
+/// stub of its own length, in neither skew nor uncoupled length, with no
+/// pad to reach. Hand-derived: the branch runs straight for 4 mm.
+#[test]
+fn a_branch_is_a_stub_and_not_skew() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let legs = straight(&usb);
+    routed(&mut usb, legs)?;
+    let before = report(&usb.engine)?;
+    let row = before
+        .pairs
+        .first()
+        .ok_or_else(|| Error::NotFound("row".into()))?;
+    assert_eq!(row.measured, layout::length::PairMeasured::Derived);
+    assert!(row.stubs.is_empty(), "{:?}", row.stubs);
+    assert!(row.skew < 1e-9, "{row:?}");
+    let copper = layout::length::net_lengths(usb.engine.project());
+    let total = copper.get(&usb.nets[0]).map_or(0.0, |l| l.total);
+    assert!(
+        (row.positive - total).abs() < 1e-9,
+        "{} {total}",
+        row.positive
+    );
+    let uncoupled = row.uncoupled;
+
+    let net = usb.nets[0];
+    let at = on_run(&usb, net)?;
+    // Away from the partner.
+    let away = if at[1] > mid(usb.start[0], usb.start[1])[1] {
+        4.0
+    } else {
+        -4.0
+    };
+    branch(&mut usb, net, at, [at[0], at[1] + away])?;
+    let r = report(&usb.engine)?;
+    let row = r
+        .pairs
+        .first()
+        .ok_or_else(|| Error::NotFound("row".into()))?;
+    assert!(row.skew < 1e-9, "{row:?}");
+    assert!((row.uncoupled - uncoupled).abs() < 1e-9, "{row:?}");
+    let [stub] = row.stubs.as_slice() else {
+        return Err(Error::Invalid(format!("{:?}", row.stubs)));
+    };
+    assert!((stub.length - 4.0).abs() < 1e-9, "{stub:?}");
+    assert_eq!(stub.net, usb.nets[0]);
+    assert!(stub.reaches.is_empty());
+    let net_row = r
+        .nets
+        .iter()
+        .find(|n| n.net == usb.nets[0])
+        .ok_or_else(|| Error::NotFound("net".into()))?;
+    assert!((net_row.length.total - total - 4.0).abs() < 1e-9);
+    assert_eq!(net_row.path, Some(row.positive));
+    assert!(!board_codes(&usb.engine).contains(&"pair.skew".to_owned()));
+    // The tuning target compares paths, too.
+    assert!(net_row.delta.is_none_or(|d| d.abs() < 1e-9), "{net_row:?}");
+    Ok(())
+}
+
+/// A half routed part of the way has no path: both halves are measured by
+/// total copper, as a route in progress always was.
+#[test]
+fn an_unfinished_half_is_measured_by_its_copper() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let (p, n) = (usb.start[0], usb.start[1]);
+    let nets = usb.nets;
+    branch(&mut usb, nets[0], p, [p[0] + 3.0, p[1]])?;
+    branch(&mut usb, nets[1], n, [n[0] + 5.0, n[1]])?;
+    let r = report(&usb.engine)?;
+    let row = r
+        .pairs
+        .first()
+        .ok_or_else(|| Error::NotFound("row".into()))?;
+    assert_eq!(row.measured, layout::length::PairMeasured::Copper);
+    assert!(row.paths.is_none() && row.stubs.is_empty(), "{row:?}");
+    assert!((row.skew - 2.0).abs() < 1e-9, "{row:?}");
+    Ok(())
+}
+
+/// Endpoints are saved only when set: an unset pair's file is unchanged.
+#[test]
+fn pair_endpoints_round_trip_and_stay_out_of_unset_files() -> Result<()> {
+    let usb = usb(usb90())?;
+    let pair = usb
+        .engine
+        .project()
+        .rules
+        .diff_pair(usb.pair)
+        .cloned()
+        .ok_or_else(|| Error::NotFound("pair".into()))?;
+    let text = serde_json::to_string(&pair).map_err(|e| Error::Invalid(e.to_string()))?;
+    assert!(!text.contains("endpoints"), "{text}");
+    let set = crate::rules::signal::DiffPair {
+        endpoints: Some(crate::rules::signal::PairEndpoints {
+            positive: [ep(1, 1), ep(2, 1)],
+            negative: [ep(1, 2), ep(2, 2)],
+        }),
+        ..pair
+    };
+    let text = serde_json::to_string(&set).map_err(|e| Error::Invalid(e.to_string()))?;
+    let back: crate::rules::signal::DiffPair =
+        serde_json::from_str(&text).map_err(|e| Error::Invalid(e.to_string()))?;
+    assert_eq!(back, set);
+    Ok(())
+}

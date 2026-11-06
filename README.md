@@ -28,7 +28,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 | `pcbcraft-io` | Bounded reads, atomic writes, crash recovery. |
 | `pcbcraft-solidcraft` | Builds the native Solidcraft model through a typed facade over Solidcraft's command API. |
 | `pcbcraft-automation` | Headless `Session` (engine + open/save/export) shared by the JSON-lines transport and the MCP server. |
-| `pcbcraft-assist` | The datasheet assistant: a Claude tool-use loop over the automation session that drafts a part from its datasheets, with a hard cost cap ([as built](docs/datasheet-assistant.md)). |
+| `pcbcraft-assist` | The datasheet assistant: a tool loop over the automation session that drafts a part from its datasheets, on a model you configure (Anthropic Messages or any OpenAI-compatible endpoint, hosted or local), with cost, token, time and request caps ([as built](docs/datasheet-assistant.md)). |
 | `pcbcraft`, `pcbcraft-cli` | Desktop editor and command line. |
 
 `cargo xtask layers` enforces this direction; `cargo xtask ui-containers` rejects raw egui windows, areas and panels outside Solidcraft's `ui_kit::Container`. `cargo xtask core-modules` enforces the core module map in [component model](docs/component-model.md). `cargo xtask licences --check` rejects dependencies that require GPL-family or unreviewed licenses, and `cargo xtask clean-room` rejects EDA library files and data in the repository. All of these run in `cargo xtask ci`.
@@ -44,12 +44,19 @@ cargo run --locked --profile ci -p pcbcraft-cli -- export example.pcbcraft examp
 cargo run --locked --profile ci -p pcbcraft-cli -- export-schematic-pdf example.pcbcraft example.pdf [--sheet ID]...   # vector PDF, one page per sheet
 cargo run --locked --profile ci -p pcbcraft-cli -- commands
 cargo run --locked --profile ci -p pcbcraft-cli -- stdio [FILE.pcbcraft]
-cargo run --locked --profile ci -p pcbcraft-cli -- mcp [FILE.pcbcraft]
+cargo run --locked --profile ci -p pcbcraft-cli -- mcp [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
 ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-part \
   --datasheet PART.pdf --name PART --out part.pcbcraft --max-usd 15   # drafts + PART.review.md; publishes nothing
+cargo run --locked --profile ci -p pcbcraft-cli -- design-part --provider openai \
+  --base-url http://localhost:11434/v1 --model MODEL --context-tokens N --vision yes \
+  --datasheet PART.pdf --name PART --out part.pcbcraft   # the same on a local model
 ```
 
 `stdio` reads one JSON request per line (4 MiB maximum) and answers `{"ok":true,"result":…}` or `{"ok":false,"error":{"code":…,"message":…}}`. `project.apply` takes the same typed operations as the UI with an expected revision; `project.inspect`, `.undo`, `.redo`, `.new`, `.open`, `.save`, `.preview_update`, `.apply_update` and `.export_native` share the session. `mcp` serves the same requests as MCP tools (`project_apply`, …) over stdio. `commands` prints schemas generated from the Rust types.
+
+Replies on both are compact: a mutation answers with `revision`, `outcome`, `changes` (added, changed and removed stable ids by collection, such as `{"added":{"vias":[644]}}`), `findings` (the new ones, resolved counts per code, the open total) and the changed `drafts`. `project.inspect` answers with counts, drafts and findings per code, and with `at` (a JSON pointer such as `/project/nets`) reads one piece of the document. `verbose: true`, beside `command` or inside `params`, returns the whole snapshot instead. In MCP, `tools/list` names every operation and query, and `project_schema {name}` (`project.schema`) returns one's exact schema and how to send it.
+
+Every command has a permission class: read, edit, ask or never, shown in its tool description and in `project_schema`. An MCP server is ungated by default, because the user who starts it has chosen to trust its client. `--permission-mode` turns on the gate: `ask-every-time` runs only reads, `auto-allow-edits` also runs edits, and `allow-all` runs everything except the never class. MCP has no way to ask, so whatever would need asking is refused with a message saying so. Under any mode, a path must be absolute and inside an `--allow-folder` or the folder of the project named on the command line.
 
 `project.query` also answers the parts catalog ([design and query language](docs/parts-library.md)): `library.search` ranks the project's component lineages for a one-line query, `library.facets` lists the fields, packages and badges the matches carry, and `library.inspect` reports one revision. For example:
 
@@ -59,7 +66,7 @@ ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-
 
 Field keys come from the project's field names and units, so a query reports `V>=10k: 10 k has no unit of voltage` rather than guessing.
 
-Library folders ([S3](docs/parts-library.md#s3-as-built)) are plain directories of immutable revision files, shareable through git. `library.source.add` lists one in the user's settings (`PCBCRAFT_CONFIG_DIR`, `PCBCRAFT_CACHE_DIR` override the platform directories); `library.search` then includes its entries, `library.place_from_folder` imports and places in one undo step and `library.publish_to_folder` promotes a project revision to a writable folder. Imported revisions keep their origin and attached copies, so projects reopen without the folder.
+Library folders ([S3](docs/parts-library.md#s3-as-built)) are plain directories of immutable revision files, shareable through git. `library.source.add` lists one in the user's settings (`PCBCRAFT_CONFIG_DIR`, `PCBCRAFT_CACHE_DIR` override the platform directories); `library.search` then includes its entries, `library.place_from_folder` imports and places in one undo step and `library.publish_to_folder` promotes a project revision to a writable folder. Imported revisions keep their origin and attached copies, so projects reopen without the folder. `library.import_from_project` copies one published revision and its closure from another `.pcbcraft` file, as one undo step.
 
 ## Scripting integration proof
 

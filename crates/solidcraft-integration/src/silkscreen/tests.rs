@@ -205,3 +205,69 @@ fn a_moved_part_never_fails_the_build_through_its_legend() -> Result<()> {
     assert_eq!(films.iter().filter(|g| g.item == Some(pick)).count(), 2);
     Ok(())
 }
+
+/// The 3D legend reads `layout::placed_graphics`, so a designator moved
+/// with `instance.set_text_placement` prints there: the part's film reaches
+/// the text's new line and no further than its height.
+#[test]
+fn a_moved_designator_moves_its_legend_film() -> Result<()> {
+    use pcbcraft_core::layout::LayoutCommand;
+    use pcbcraft_core::model::TextPlacement;
+    use pcbcraft_core::{InstanceCommand, Layer, Operation};
+    let fail = |e: pcbcraft_core::Error| crate::Error::Verification(e.to_string());
+    let mut engine = Engine::demo().map_err(fail)?;
+    let project = engine.project();
+    let [w, h] = project.board_size;
+    let instance = project
+        .placements
+        .iter()
+        .map(|p| p.instance)
+        .find(|id| pcbcraft_core::instances::text::target(project, *id, None).is_ok())
+        .ok_or_else(|| crate::Error::Verification("no designator".into()))?;
+    let revision = engine.revision();
+    engine
+        .apply(
+            revision,
+            Operation::Layout(LayoutCommand::Move {
+                instance,
+                position: [w / 2.0, h / 2.0],
+                rotation_deg: 0.0,
+                layer: Layer::Top,
+            }),
+        )
+        .map_err(fail)?;
+    let top = |project: &pcbcraft_core::Project| -> Result<f64> {
+        let model = crate::project::build(project)?;
+        Ok(model
+            .geometry
+            .iter()
+            .filter(|g| g.kind == BodyKind::Silkscreen)
+            .map(|g| g.max[1])
+            .fold(f64::NEG_INFINITY, f64::max))
+    };
+    let before = top(engine.project())?;
+    // Up the board by the room left above everything printed so far.
+    let dy = (h - 1.0) - before;
+    assert!(dy > 0.5, "the fixture leaves {dy} mm above the legend");
+    let revision = engine.revision();
+    engine
+        .apply(
+            revision,
+            Operation::Instance(InstanceCommand::SetTextPlacement {
+                instance,
+                graphic: None,
+                placement: Some(TextPlacement {
+                    offset: [0.0, dy],
+                    ..Default::default()
+                }),
+            }),
+        )
+        .map_err(fail)?;
+    let after = top(engine.project())?;
+    assert!(after > before + 0.5 * dy, "{before} to {after}, moved {dy}");
+    assert!(
+        after <= before + dy + 1e-6,
+        "{before} to {after}, moved {dy}"
+    );
+    Ok(())
+}

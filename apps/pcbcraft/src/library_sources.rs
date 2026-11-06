@@ -398,7 +398,7 @@ pub enum ComponentAction {
 }
 
 fn action_slot() -> egui::Id {
-    egui::Id::new("library-sources-component-action")
+    egui::Id::unique("library-sources-component-action")
 }
 
 /// The Component workspace's Library section for the published revision
@@ -414,7 +414,7 @@ pub fn component_section(ui: &mut egui::Ui, engine: &Engine, component: Componen
         .max_by_key(|o| o.local.revision);
     let names: Vec<(LibraryId, String)> = ui
         .ctx()
-        .data(|d| d.get_temp(egui::Id::new(SOURCE_NAMES)))
+        .data(|d| d.get_temp(egui::Id::unique(SOURCE_NAMES)))
         .unwrap_or_default();
     let mut action = None;
     kit::section(ui, "library-source", "Library", true, None, |ui| {
@@ -770,6 +770,19 @@ impl LibrarySources {
             self.persist();
         }
         Ok(())
+    }
+
+    /// Whether the app's waivers need a reason (Settings).
+    pub fn require_waiver_reason(&self) -> bool {
+        self.settings.require_waiver_reason
+    }
+
+    /// Keep the waiver-reason setting per user.
+    pub fn set_require_waiver_reason(&mut self, required: bool) {
+        if required != self.settings.require_waiver_reason {
+            self.settings.require_waiver_reason = required;
+            self.persist();
+        }
     }
 
     #[cfg(test)]
@@ -1324,7 +1337,7 @@ impl LibrarySources {
             .iter()
             .filter_map(|s| s.library().map(|l| (l, s.name.clone())))
             .collect();
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(SOURCE_NAMES), names));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(SOURCE_NAMES), names));
         // A file operation in flight owns the document; record afterwards.
         if !busy && self.finished.take().is_some() {
             self.finish_promote(engine);
@@ -1388,7 +1401,7 @@ impl LibrarySources {
     fn sources_card(&mut self, ctx: &egui::Context) {
         let mut action = None;
         let settings_path = self.dirs.as_ref().map(UserDirs::settings_path);
-        let id = egui::Id::new("library-sources-card");
+        let id = egui::Id::unique("library-sources-card");
         if scrim(ctx, id) {
             self.card = false;
             return;
@@ -1515,7 +1528,7 @@ impl LibrarySources {
         let mut cancel = false;
         let mut sources = false;
         let title = format!("Promote {} to a library", promote.name);
-        let close = ui_kit::Window::new(egui::Id::new("library-promote"), "library", &title)
+        let close = ui_kit::Window::new(egui::Id::unique("library-promote"), "library", &title)
             .show_body(ctx, |ui| {
                 body(ui, |ui| {
                     kit::value_row(
@@ -2019,6 +2032,7 @@ mod tests {
             &mut author,
             Operation::Library(LibraryCommand::Publish {
                 drafts: vec![component.id],
+                close: false,
             }),
         )?
         else {

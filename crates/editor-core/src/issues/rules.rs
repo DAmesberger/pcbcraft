@@ -51,7 +51,7 @@ pub(super) fn severity(finding: &Finding) -> Severity {
 }
 
 /// The group header of a code: "Clearance", "Unrouted connections".
-pub(super) fn group_title(code: &str) -> String {
+pub fn group_title(code: &str) -> String {
     let known = match code {
         "board.clearance" => "Clearance",
         "board.courtyard_overlap" => "Courtyards overlap",
@@ -66,14 +66,13 @@ pub(super) fn group_title(code: &str) -> String {
         "board.via_drill_size" => "Via drills too small",
         "board.via_aspect_ratio" => "Via aspect ratio too high",
         "board.edge_clearance" => "Too close to the board edge",
-        "board.hole_clearance" => "Mounting holes too close",
+        "board.hole_clearance" => "Too close to a mounting hole",
         "board.courtyard_clearance" => "Courtyards too close",
         "fill.clearance" => "Fill clearance",
         "fill.empty" => "Empty fills",
         "fill.island_unconnected" => "Unconnected fill islands",
         "fill.net_missing" => "Fills on missing nets",
         "fill.stale" => "Fills to refill",
-        "fill.thermal_starved" => "Starved thermal reliefs",
         "keepout.track" => "Tracks in keepouts",
         "keepout.via" => "Vias in keepouts",
         "keepout.pad" => "Pads in keepouts",
@@ -87,6 +86,7 @@ pub(super) fn group_title(code: &str) -> String {
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
+        "instance.no_connect_connected" => "No-connect pins connected",
         "instance.field_required" => "Required values missing",
         "instance.no_physical_choice" => "No footprint chosen",
         "config.function_unresolved" => "Pin functions not chosen",
@@ -104,6 +104,7 @@ pub(super) fn group_title(code: &str) -> String {
         "erc.undriven_power_input" => "Power inputs without a supply",
         "erc.unchecked_terminal" => "Terminals not checked",
         "erc.label_unconnected" => "Labels without a wire",
+        "erc.wire_end_free" => "Wire ends not connected",
         "erc.global_label_single" => "Global labels used once",
         "erc.hierarchy_mismatch" => "Sheet pins and labels that do not match",
         "erc.label_conflict" => "Nets with conflicting labels",
@@ -189,7 +190,6 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "fill.empty" => "Enlarge the fill outline or lower its priority",
         "fill.island_unconnected" => "Remove unconnected islands or connect them",
         "fill.net_missing" => "Choose the fill's net",
-        "fill.thermal_starved" => "Clear room around the pad or use more spokes",
         "keepout.track" | "keepout.via" | "keepout.pad" => "Move it out of the keepout",
         "pair.skew" | "length.mismatch" => "Tune the shorter net with the Tune tool",
         "pair.uncoupled" => "Route the halves together with pair routing",
@@ -200,6 +200,7 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "instance.unit_unplaced" => "Place the unit or mark it unused",
         "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
         "instance.required_terminal_no_connect" => "Connect the power input",
+        "instance.no_connect_connected" => "Remove the wire or clear the no-connect mark",
         "instance.field_required" => "Enter the value",
         "instance.no_physical_choice" => "Choose a footprint",
         "config.function_unresolved" => "Choose a pin function",
@@ -214,6 +215,7 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         }
         "component.pin_missing" => "Add a pin for the terminal on the Symbol tab",
         "erc.label_unconnected" => "Wire the label or remove it",
+        "erc.wire_end_free" => "Connect the end or remove the wire",
         "erc.global_label_single" => "Use the name elsewhere or make it a local label",
         "erc.hierarchy_mismatch" => "Add the missing pin or hierarchical label",
         "erc.label_conflict" => "Rename the labels to one name",
@@ -356,6 +358,19 @@ pub(super) fn title(names: &Names<'_>, findings: &[&Finding]) -> String {
             }
         }
         "board.unplaced" => format!("{} not placed", list(&names_of(names, findings, |_| true))),
+        // Short enough for the Issues row: the hole and what it is near.
+        "board.hole_clearance" => {
+            let near = names_of(names, findings, |o| !matches!(o, ObjectRef::Board));
+            let what = if message.contains(" overlaps ") {
+                "overlaps"
+            } else {
+                "too close to"
+            };
+            match near.as_slice() {
+                [] => line(message),
+                _ => format!("Hole {what} {}", list(&near)),
+            }
+        }
         "instance.unit_unplaced" => format!(
             "{} is neither placed nor marked unused",
             names_of(names, findings, |_| true).join(", ")
@@ -470,12 +485,12 @@ pub const KNOWN_CODES: &[&str] = &[
     "erc.power_port_undriven",
     "erc.unchecked_terminal",
     "erc.undriven_power_input",
+    "erc.wire_end_free",
     "fill.clearance",
     "fill.empty",
     "fill.island_unconnected",
     "fill.net_missing",
     "fill.stale",
-    "fill.thermal_starved",
     "field.choice_label",
     "field.default_invalid",
     "field.required_stage",
@@ -533,6 +548,7 @@ pub const KNOWN_CODES: &[&str] = &[
     "graphic.radius_too_large",
     "impedance.mismatch",
     "instance.field_required",
+    "instance.no_connect_connected",
     "instance.no_physical_choice",
     "instance.required_terminal_no_connect",
     "instance.terminal_unaccounted",

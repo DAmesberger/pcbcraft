@@ -19,6 +19,12 @@ const EPS: f64 = 1e-8;
 const MAX_TRACKS: usize = 2_000;
 /// Most footprint pads placed on one board.
 pub const MAX_PLACED_PADS: usize = 4_096;
+/// Where a part's datum may lie, mm, on both axes: the working area. A
+/// part may sit off the board (the board's surroundings are its staging
+/// area); DRC reports its copper past the edge. Every board lies within
+/// 0–1000 mm, so the area leaves at least one largest board's width free
+/// on every side, and no board size or outline edit can strand a part.
+pub const WORKING_AREA_MM: [f64; 2] = [-1000.0, 2000.0];
 
 pub mod board_edge;
 mod copper;
@@ -39,6 +45,7 @@ pub mod posture;
 pub mod restack;
 pub mod router;
 pub mod showcase;
+pub mod staging;
 pub mod via;
 #[cfg(test)]
 pub(crate) use copper::limit_finding as copper_limit_finding;
@@ -158,7 +165,10 @@ pub enum LayoutCommand {
     /// default) pushes their tracks and vias aside. One undo step with
     /// every shoved track and via; the head stops at the last legal point
     /// when no way exists, and a step that cannot move it at all is
-    /// refused. `layout.route_preview` returns the same plan unapplied.
+    /// refused. `max_detour` bounds the path against the straight line;
+    /// the outcome reports where the head ended and its `detour_factor`
+    /// (`Outcome::RouteStepped`). `layout.route_preview` returns the same
+    /// plan unapplied.
     #[serde(rename = "layout.route_step")]
     RouteStep { request: router::RouteStepRequest },
     /// Find or make the variant of a mechanical part spec (its component,
@@ -189,6 +199,35 @@ pub enum LayoutCommand {
     #[serde(rename = "layout.remove_part")]
     RemovePart { instance: Id },
 }
+
+// A new command chooses its permission class here.
+declare_classes!(LayoutCommand {
+    Sync "layout.sync" Edit,
+    Place "layout.place" Edit,
+    Move "layout.move" Edit,
+    SetPlacementLock "layout.placement_lock" Edit,
+    Route "layout.route" Edit,
+    ApplyRoute "layout.route_apply" Edit,
+    DeleteTrack "layout.track_delete" Edit,
+    SetTrackLock "layout.track_lock" Edit,
+    SetTrack "layout.track_set" Edit,
+    SetFabrication "layout.set_fabrication" Edit,
+    SetStackup "layout.set_stackup" Edit,
+    EditStackup "layout.edit_stackup" Edit,
+    AddVia "layout.add_via" Edit,
+    MoveVia "layout.via_move" Edit,
+    DeleteVia "layout.via_delete" Edit,
+    SetViaTented "layout.via_tent" Edit,
+    SetViaLock "layout.via_lock" Edit,
+    RouteLayerChange "layout.route_layer_change" Edit,
+    SetBoardSize "layout.set_board_size" Edit,
+    RoutePair "layout.route_pair" Edit,
+    TuneLength "layout.tune_length" Edit,
+    RouteStep "layout.route_step" Edit,
+    PlacePart "layout.place_part" Edit,
+    SetPart "layout.set_part" Edit,
+    RemovePart "layout.remove_part" Edit,
+});
 
 impl LayoutCommand {
     /// Whether the command places or re-points a mechanical part (its
@@ -456,10 +495,13 @@ pub fn set_physical(
     let placed = project.placement_of(instance).is_some();
     if placed && policy == EditPolicy::Direct {
         return Err(Error::Conflict(
-            "This instance is on the board. Preview the change with project.preview_update (Change::Instance) to review its copper impact.".into(),
+            "This instance is on the board. Review the change first: the review shows what it does to the copper.".into(),
         ));
     }
-    instances::instance_mut(project, instance)?.physical = choice;
+    let target = instances::instance_mut(project, instance)?;
+    let old_footprint = target.physical.map(|p| p.footprint);
+    target.physical = choice;
+    instances::text::follow_footprint(project, instance, old_footprint);
     if choice.is_none() {
         project.placements.retain(|p| p.instance != instance);
     }
@@ -471,7 +513,7 @@ pub fn detach_instance(project: &mut Project, instance: Id, policy: EditPolicy) 
     if project.placement_of(instance).is_some() {
         if policy == EditPolicy::Direct {
             return Err(Error::Conflict(
-                "Remove the PCB placement first, or preview the removal with project.preview_update (Change::Instance).".into(),
+                "Remove the PCB placement first, or review the removal.".into(),
             ));
         }
         project.placements.retain(|p| p.instance != instance);
@@ -487,6 +529,31 @@ pub fn apply(project: &mut Project, command: LayoutCommand) -> Result<()> {
     Ok(())
 }
 
+/// The refusal for a locked part: "J2 is locked; unlock it to move it".
+/// `verb` is what was refused ("move", "change", "remove").
+pub(crate) fn locked(project: &Project, instance: Id, verb: &str) -> Error {
+    Error::Conflict(format!(
+        "{} is locked; unlock it to {verb} it",
+        outline::part_name(project, instance)
+    ))
+}
+
+/// Why a hand move of the placed part `instance` is refused, in the words
+/// the engine refuses `layout.move` with: it is locked, or an edge
+/// constraint holds it (see [`outline::held`]). `None` for a free part, so
+/// a canvas can refuse a drag before it starts and say why.
+pub fn move_refusal(
+    project: &Project,
+    instance: Id,
+    evaluator: Option<&dyn outline::BoardShapeEvaluator>,
+) -> Option<Error> {
+    let placement = project.placement_of(instance)?;
+    if placement.locked {
+        return Some(locked(project, instance, "move"));
+    }
+    outline::held(project, instance, evaluator)
+}
+
 /// Apply to a candidate the caller discards on failure. Returns the via a
 /// `layout.add_via` created.
 pub(crate) fn apply_staged(candidate: &mut Project, command: LayoutCommand) -> Result<Option<Id>> {
@@ -499,22 +566,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
     match command {
         LayoutCommand::Sync => {
             let missing = sync_preview(project);
-            let columns = ((project.board_size[0] - 8.0) / 8.0).floor().max(1.0) as usize;
-            let offset = project.placements.len();
-            for (i, instance) in missing.into_iter().enumerate() {
-                let index = offset + i;
-                let position = [
-                    8.0 + (index % columns) as f64 * 8.0,
-                    8.0 + (index / columns) as f64 * 8.0,
-                ];
-                project.placements.push(Placement {
-                    instance,
-                    position,
-                    rotation_deg: 0.0,
-                    layer: Layer::Top,
-                    locked: false,
-                });
-            }
+            staging::stage(project, missing)?;
         }
         LayoutCommand::Place {
             instance,
@@ -547,14 +599,14 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             rotation_deg,
             layer,
         } => {
+            if project.placement_of(instance).is_some_and(|p| p.locked) {
+                return Err(locked(project, instance, "move"));
+            }
             let placement = project
                 .placements
                 .iter_mut()
                 .find(|p| p.instance == instance)
                 .ok_or_else(|| Error::NotFound("unknown placement".into()))?;
-            if placement.locked {
-                return Err(Error::Conflict("placement is locked".into()));
-            }
             placement.position = position;
             placement.rotation_deg = rotation_deg;
             placement.layer = layer;
@@ -637,14 +689,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             apply_routes(project, edits)?;
         }
         LayoutCommand::RouteStep { request } => {
-            let index = router::RouteIndex::of(project);
-            let plan = router::plan(project, &index, &request);
-            if plan.edits.add.is_empty() && plan.edits.vias.is_empty() {
-                return Err(Error::Conflict(
-                    plan.blocked.unwrap_or_else(|| "Nothing to route".into()),
-                ));
-            }
-            apply_routes(project, plan.edits)?;
+            route_step(project, &request)?;
         }
         LayoutCommand::TuneLength { request } => {
             let obstacles = obstacles::Obstacles::of(project);
@@ -655,6 +700,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             if !point_valid(size) || !size.iter().all(|v| (5.0..=1000.0).contains(v)) {
                 return invalid("board dimensions must be 5–1000 mm");
             }
+            copper_fits(project, size)?;
             project.board_size = size;
         }
         LayoutCommand::PlacePart {
@@ -673,6 +719,25 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
         LayoutCommand::RemovePart { instance } => part::remove(project, instance)?,
     }
     Ok(None)
+}
+
+/// `layout.route_step` on a candidate: applies the plan and returns it,
+/// its edit set spent. Refused when the head cannot move or the path
+/// exceeds the request's `max_detour`.
+pub(crate) fn route_step(
+    project: &mut Project,
+    request: &router::RouteStepRequest,
+) -> Result<router::RoutePlan> {
+    request.check()?;
+    let index = router::RouteIndex::of(project);
+    let mut plan = router::plan(project, &index, request);
+    if plan.edits.add.is_empty() && plan.edits.vias.is_empty() {
+        return Err(Error::Conflict(
+            plan.blocked.unwrap_or_else(|| "Nothing to route".into()),
+        ));
+    }
+    apply_routes(project, std::mem::take(&mut plan.edits))?;
+    Ok(plan)
 }
 
 fn invalid<T>(message: &str) -> Result<T> {
@@ -1089,6 +1154,7 @@ pub fn validate(project: &Project) -> Result<()> {
     if project.tracks.len() > MAX_TRACKS {
         return invalid("prototype supports at most 2000 track segments");
     }
+    instances::text::check(project)?;
     let mut placed = BTreeSet::new();
     let mut pad_count = 0usize;
     let mut graphic_vertices = 0usize;
@@ -1119,12 +1185,16 @@ pub fn validate(project: &Project) -> Result<()> {
         if graphic_vertices > MAX_PLACED_GRAPHIC_VERTICES {
             return invalid("prototype supports at most 262144 placed footprint graphic vertices");
         }
-        if !point_valid(placement.position)
-            || !placement.rotation_deg.is_finite()
-            || placement.rotation_deg.abs() > 360_000.0
-            || !inside_board(project, placement.position)
-        {
-            return invalid("placement datum must lie inside the board with a finite rotation");
+        if !in_working_area(placement.position) {
+            return Err(Error::Invalid(format!(
+                "{} must stay within {} to {} mm on each axis",
+                outline::part_name(project, placement.instance),
+                limits::mm(WORKING_AREA_MM[0]),
+                limits::mm(WORKING_AREA_MM[1])
+            )));
+        }
+        if !placement.rotation_deg.is_finite() || placement.rotation_deg.abs() > 360_000.0 {
+            return invalid("placement rotation must be finite");
         }
     }
     project.stackup.check()?;
@@ -1161,11 +1231,10 @@ pub fn validate(project: &Project) -> Result<()> {
     Ok(())
 }
 
-fn inside_board(project: &Project, point: Point) -> bool {
-    point[0] >= -EPS
-        && point[1] >= -EPS
-        && point[0] <= project.board_size[0] + EPS
-        && point[1] <= project.board_size[1] + EPS
+/// Whether `point` lies in the [`WORKING_AREA_MM`] square.
+pub fn in_working_area(point: Point) -> bool {
+    let [lo, hi] = WORKING_AREA_MM;
+    point.iter().all(|v| v.is_finite() && (lo..=hi).contains(v))
 }
 
 /// A track's copper: the stadium a round aperture of its width sweeps from
@@ -1205,13 +1274,72 @@ pub fn track_contains(track: &Track, point: Point, tolerance: f64) -> bool {
 
 /// Whether a track's whole copper, round caps included, lies on the board.
 fn track_inside_board(project: &Project, track: &Track) -> bool {
+    track_within(track, project.board_size)
+}
+
+/// Whether a track's whole copper lies on a board of `size`.
+fn track_within(track: &Track, size: Point) -> bool {
     let half = track.width * 0.5;
     [track.start, track.end].iter().all(|p| {
         p[0] - half >= -EPS
             && p[1] - half >= -EPS
-            && p[0] + half <= project.board_size[0] + EPS
-            && p[1] + half <= project.board_size[1] + EPS
+            && p[0] + half <= size[0] + EPS
+            && p[1] + half <= size[1] + EPS
     })
+}
+
+/// Refuse a board `size` that would leave tracks or vias off the board,
+/// naming them by count and net ("2 tracks on GND and CC2 would lie
+/// outside 38 × 64 mm"), so a designer knows what to move or remove.
+pub(crate) fn copper_fits(project: &Project, size: Point) -> Result<()> {
+    let tracks: Vec<Id> = project
+        .tracks
+        .iter()
+        .filter(|t| !track_within(t, size))
+        .map(|t| t.net)
+        .collect();
+    let vias: Vec<Id> = project
+        .vias
+        .iter()
+        .filter(|v| {
+            let (r, [x, y]) = (v.diameter / 2.0, v.position);
+            x - r < -EPS || y - r < -EPS || x + r > size[0] + EPS || y + r > size[1] + EPS
+        })
+        .map(|v| v.net)
+        .collect();
+    let counted = |nets: &[Id], one: &str, many: &str| -> Option<String> {
+        let mut names: Vec<&str> = Vec::new();
+        for net in nets {
+            let name = project.net_name(*net);
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        let shown = match names.as_slice() {
+            [] => return None,
+            [a] => (*a).to_owned(),
+            [a, b] => format!("{a} and {b}"),
+            [a, b, rest @ ..] => format!("{a}, {b} and {} more nets", rest.len()),
+        };
+        let kind = if nets.len() == 1 { one } else { many };
+        Some(format!("{} {kind} on {shown}", nets.len()))
+    };
+    let parts: Vec<String> = [
+        counted(&tracks, "track", "tracks"),
+        counted(&vias, "via", "vias"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if parts.is_empty() {
+        return Ok(());
+    }
+    Err(Error::Invalid(format!(
+        "{} would lie outside {} × {} mm",
+        parts.join(" and "),
+        limits::mm(size[0]),
+        limits::mm(size[1])
+    )))
 }
 
 fn add(a: Point, b: Point) -> Point {

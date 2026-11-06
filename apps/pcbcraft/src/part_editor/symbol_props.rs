@@ -64,7 +64,7 @@ fn row_response(ui: &mut Ui, salt: &str, add: impl FnOnce(&mut Ui)) -> egui::Res
         egui::pos2(ui.max_rect().left(), top),
         egui::pos2(ui.max_rect().right(), ui.cursor().top()),
     );
-    ui.interact(rect, ui.id().with(salt), egui::Sense::hover())
+    ui.interact(rect, ui.scope_id().with(salt), egui::Sense::hover())
 }
 
 /// Points and per-vertex corner radii of a path, one row each. Returns the

@@ -9,7 +9,7 @@ Release plan step 5: a real ESP32-S31-WROOM-3 development board designed from co
 | File | What |
 |---|---|
 | `esp32-s31-devboard.pcbcraft` | The project. Open it in the desktop app. It holds the parts library, two schematic sheets, the 4-layer board, the fills and the waiver-free production state. |
-| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 655 JSON-lines requests through `pcbcraft-cli stdio`. It replays to a byte-identical `project.json`. |
+| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 581 JSON-lines requests through `pcbcraft-cli stdio`. It replays to a byte-identical `project.json`. |
 | `regenerate.sh` | Replays the board and writes `fab/` and the schematic PDF. With `NATIVE=1` it also writes the `.solidcraft` model (about 10 s of CPU). |
 | `fab/` | Gerber X2 for 4 copper layers, masks, top paste, top legend and profile; plated and non-plated Excellon; drill map and table; job file; top pick-and-place; both BOMs; fabrication and assembly PDFs. |
 | `esp32-s31-devboard-schematic.pdf` | The schematic, two sheets. |
@@ -25,7 +25,7 @@ sh examples/esp32-s31-devboard/regenerate.sh
 
 - **Size:** 40 × 64 mm, 1.5 mm corner radius, four M2.5 mounting holes (2.7 mm NPTH, board-level holes).
 - **Stackup:** 4 layers, 1.74 mm. From the top: signal, prepreg 0.2 mm (2116), GND plane, core 1.2 mm (7628), 3V3 plane, prepreg 0.2 mm, signal. Both inner foils are marked as reference planes. The Dk values are Pcbcraft's generic estimates.
-- **Rules:** built-in profile *Standard 6/6* (a generic estimate, not a fabricator's data). Overrides: copper (track, pad, via, fill) to board edge 0.3 mm, and legend to edge 0.2 mm.
+- **Rules:** built-in profile *Standard 6/6* (a generic estimate, not a fabricator's data). Overrides: copper (track, pad, via, fill) to board edge 0.3 mm, which restates the profile, and legend to edge 0.2 mm.
 - **Net classes:**
   - Power (GND, +3V3, VBUS): 0.5 mm tracks, 0.3 mm minimum.
   - USB: 90 Ω differential. On top this derives a 0.266 mm width and a 0.152 mm gap, as microstrip over the GND plane.
@@ -98,10 +98,9 @@ The board in the desktop app: PCB 2D (top copper and the top pour; 0 airwires), 
 
 - **USB pair.** It runs from the ESD diodes to the module as one coupled 90 Ω pair on top, routed by `layout.route_pair`. Between the receptacle and the ESD diodes the halves run 1.5 mm apart.
   - The plug orientations are joined at the receptacle: A6 to B6 by a short top track, and A7 to B7 by two vias and a bottom track under the receptacle. The vias are tented, under the connector body.
-  - Pcbcraft's pair check counts every copper segment of each net, branches included, so it reports a skew of 4.735 mm.
-  - Measured by hand along the receptacle-to-module paths, both halves are 23.575 mm long, so the real skew is 0. The design is not tuned to the check, because a meander would create real skew. See the log.
+  - The pair check measures each half along its signal path, J1.B6 to U1.43 and J1.B7 to U1.42: 29.865 mm each, so the skew is 0. The length report lists the plug-orientation joins as stubs: 2.245 mm to J1.A6 and 6.98 mm to J1.A7. See the log.
 - **GPIO buses.** They run on the bottom layer, so no part sits in their way. The header order follows the module's pin order (J2 pin 4 = IO12 … pin 12 = IO4), so the buses route without crossings.
 - **EPAD.** Each of its nine squares has a via to the GND plane. The datasheet makes soldering the EPAD optional and recommends a moderate amount of paste. The paste follows the footprint's default.
 - **3D models.** The LED, the switches and the USB-C receptacle use envelope boxes; the production check warns about this. The module uses its parametric part file. The passives, the SOT parts and the headers use generated models.
-- **Legend.** Some legend (J2's designator, and legend at the antenna end) falls partly outside the board. The fabricator clips them. Pcbcraft cannot yet move a designator per instance, and its edge check does not flag legend text; see the log.
+- **Legend.** U1's footprint outline passes the top edge by 0.225 mm at the antenna end, and the production check warns about its three lines that reach it. The fabricator trims them. J2's and U1's designators are moved onto the board with `instance.set_text_placement`. The desktop screenshots in `images/` were taken before those moves.
 - **Antenna.** The module's edge is at the board edge. Espressif's guidelines ask for about 15 mm of clearance around the antenna on the host side, beyond the keep-out. The board leaves the keep-out area empty on every layer, but it does not extend past the module.

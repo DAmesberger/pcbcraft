@@ -102,7 +102,7 @@ pub fn multiline_row(ui: &mut Ui, label: &str, value: &mut String, invalid: bool
     row(ui, label, |ui| {
         let t = Tokens::get();
         let edit = egui::TextEdit::multiline(value)
-            .id(ui.id().with(("multiline", label)))
+            .id(ui.scope_id().with(("multiline", label)))
             .font(egui::TextStyle::Monospace)
             .desired_rows(3)
             .desired_width(ui.available_width())
@@ -135,13 +135,39 @@ pub fn text_field(
     hint: &str,
     invalid: bool,
 ) -> Response {
-    let id = ui.id().with(("text", id));
+    let id = ui.scope_id().with(("text", id));
     let response = ui_kit::cell_editor(ui, id, value, hint, invalid);
     if invalid {
         not_stored(response)
     } else {
-        response
+        shortened(ui, response, value)
     }
+}
+
+/// A field not being edited whose text does not fit ends in "…" and
+/// shows its whole text on hover, as every cut text does (`kit::text`);
+/// editing shows it all again.
+fn shortened(ui: &Ui, response: Response, value: &str) -> Response {
+    if response.has_focus() || value.is_empty() {
+        return response;
+    }
+    let t = Tokens::get();
+    // The cell editor's text: monospace at the label size, inset.
+    let font = egui::FontId::monospace(t.font_label);
+    let inner = response.rect.shrink2(vec2(t.form_inset, 1.0));
+    let width = ui
+        .painter()
+        .layout_no_wrap(value.to_owned(), font.clone(), t.form_ink)
+        .size()
+        .x;
+    if width <= inner.width() {
+        return response;
+    }
+    if ui.is_enabled() {
+        ui.painter().rect_filled(inner, 0.0, t.input_fill());
+        super::text::paint_line(ui, inner, value, font, t.form_ink);
+    }
+    response.on_hover_text(value)
 }
 
 /// The hover text of a field whose text is invalid: what it shows is not
@@ -218,7 +244,7 @@ pub fn number_input(
     unit: &str,
     range: std::ops::RangeInclusive<f64>,
 ) -> NumberInput {
-    let key = ui.id().with(("number", id));
+    let key = ui.scope_id().with(("number", id));
     let shown = || {
         if unit.is_empty() {
             number_text(*value)
@@ -372,7 +398,7 @@ pub fn dropdown_menu(
     add: impl FnOnce(&mut Ui),
 ) -> Response {
     let t = Tokens::get();
-    let response = egui::ComboBox::from_id_salt(ui.id().with(id))
+    let response = egui::ComboBox::from_id_salt(ui.scope_id().with(id))
         .width(ui.available_width().max(0.0))
         .height(t.space_24 * 14.0)
         .selected_text(current)
@@ -400,27 +426,50 @@ pub fn check_row(ui: &mut Ui, label: &str, value: &mut bool) -> bool {
     row(ui, "", |ui| ui.checkbox(value, label).changed())
 }
 
-/// A row of read-only text in the control column.
+/// Rows a read-only value wraps to before it is cut.
+const VALUE_MAX_ROWS: usize = 3;
+
+/// A row of read-only text in the control column. A long value wraps (the
+/// row grows, its label stays with the first line); past three lines it
+/// is cut and the full text shows on hover, as does a cut label. The
+/// tooltip belongs to the text, never to a value that fits: one that
+/// repeats the shown value lingers over it while the panel scrolls.
 pub fn value_row(ui: &mut Ui, label: &str, value: &str) {
-    row(ui, label, |ui| {
-        let t = Tokens::get();
-        let width = ui.available_width();
-        let response = ui.add(egui::Label::new(RichText::new(value).color(t.form_ink)).truncate());
-        // The full text as a tooltip only when it was cut short: a tooltip
-        // repeating the shown value lingers over it while the panel scrolls.
-        let full = ui
-            .painter()
-            .layout_no_wrap(
-                value.to_owned(),
-                egui::TextStyle::Body.resolve(ui.style()),
-                t.form_ink,
-            )
-            .size()
-            .x;
-        if full > width + 0.5 {
-            response.on_hover_text(value);
-        }
-    });
+    let t = Tokens::get();
+    let width = ui.available_width().max(0.0);
+    let label_width = t.form_label_width.min(width * 0.45);
+    let value_left = (label_width + t.space_8).min(width);
+    let font = egui::FontId::proportional(t.font_label);
+    let galley = super::text::wrapped(
+        ui,
+        value,
+        font.clone(),
+        t.form_ink,
+        (width - value_left).max(1.0),
+        VALUE_MAX_ROWS,
+    );
+    let line = ui.fonts_mut(|f| f.row_height(&font));
+    let pad = ((t.control_height - line) / 2.0).max(0.0);
+    let height = (galley.size().y + 2.0 * pad).max(t.control_height);
+    let (rect, row) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
+    let label_rect = egui::Rect::from_min_size(rect.min, vec2(label_width, t.control_height));
+    super::text::line(
+        ui,
+        row.id.with("label"),
+        label_rect,
+        label,
+        "",
+        font,
+        t.dialog_label,
+    );
+    let value_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + value_left, rect.top() + pad),
+        galley.size(),
+    );
+    let cut = galley.elided;
+    ui.painter().galley(value_rect.min, galley, t.form_ink);
+    let response = ui.interact(value_rect, row.id.with("value"), egui::Sense::hover());
+    super::text::hover(response, value, "", cut);
 }
 
 /// Semantic ink of a form message.
@@ -541,14 +590,16 @@ fn section_with<R>(
             rule_left = badge.right() + t.space_12;
         }
     }
+    let mut summary_cut = false;
     if let Some(summary) = summary.filter(|s| !open && !s.is_empty()) {
-        let mut job = egui::text::LayoutJob::simple_singleline(
-            summary.to_owned(),
+        let galley = super::text::one_line(
+            ui,
+            summary,
             egui::FontId::proportional(t.font_small),
             t.form_dim,
+            (rect.right() - rule_left).max(0.0),
         );
-        job.wrap = egui::text::TextWrapping::truncate_at_width((rect.right() - rule_left).max(0.0));
-        let galley = ui.painter().layout_job(job);
+        summary_cut = galley.elided;
         let width = galley.size().x;
         ui.painter().galley(
             egui::pos2(rule_left, rect.center().y - galley.size().y / 2.0),
@@ -570,8 +621,12 @@ fn section_with<R>(
             Some(summary) => format!("{title}: {summary}"),
             None => title.to_owned(),
         };
-        egui::WidgetInfo::selected(egui::WidgetType::CollapsingHeader, true, open, &name)
+        egui::WidgetInfo::selected(egui::Role::DisclosureTriangle, true, open, &name)
     });
+    let response = match summary {
+        Some(summary) if summary_cut => response.on_hover_text(summary),
+        _ => response,
+    };
     if response.clicked() {
         open = !open;
     }

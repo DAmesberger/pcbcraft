@@ -99,7 +99,7 @@ impl PartEditor {
         let focus = std::mem::take(&mut self.start.focus);
         kit::search_field(
             ui,
-            egui::Id::new("component-start-search"),
+            egui::Id::unique("component-start-search"),
             &mut self.start.query,
             "Search: name, 10k, pkg:0603…",
             false,
@@ -143,7 +143,7 @@ impl PartEditor {
                         badges: &[],
                         highlighted: false,
                     };
-                    let id = egui::Id::new(("component-start-hit", entry.key()));
+                    let id = egui::Id::unique(("component-start-hit", entry.key()));
                     if kit::search_row(ui, id, &row).clicked() {
                         open = subject_of(entry);
                     }
@@ -191,7 +191,7 @@ impl PartEditor {
                 badges: &[],
                 highlighted: false,
             };
-            let id = egui::Id::new(("component-start-recent", format!("{subject:?}")));
+            let id = egui::Id::unique(("component-start-recent", format!("{subject:?}")));
             if kit::search_row(ui, id, &row).clicked() {
                 open = Some(subject);
             }
@@ -211,7 +211,7 @@ fn start_new(ui: &mut Ui, assist: &mut super::datasheet_assist::DatasheetAssist)
             .on_hover_text("Search package rows by name, size code, pins, pitch or body")
             .clicked();
         if ui_kit::button(ui, "Create from datasheet…", Button::Normal)
-            .on_hover_text("Draft a part from its datasheets with Claude (needs ANTHROPIC_API_KEY)")
+            .on_hover_text("Draft a part from its datasheets with a model you configure: Claude or any OpenAI-compatible endpoint, local or hosted")
             .clicked()
         {
             assist.open = true;

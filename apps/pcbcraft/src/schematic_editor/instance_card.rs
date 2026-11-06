@@ -173,7 +173,7 @@ impl SchematicEditor {
                 );
             })
             .response;
-        let position_id = ui.id().with("position");
+        let position_id = ui.scope_id().with("position");
         if let Some(message) = refusal::claim(ui.ctx(), Origin::Field(position_id)) {
             self.refused = Some((position_id, message));
         }

@@ -1,10 +1,12 @@
 //! Schematic capture over one or more sheets: symbol occurrences, wires,
 //! junctions, net labels and power ports ([`labels`]), sheets, hierarchical
 //! sheet symbols and sheet furniture ([`sheets`]), and designator
-//! annotation ([`annotate`]). Wire ends reference terminals, junctions,
-//! labels or sheet pins; drawn crossings and coincident pins never imply a
-//! connection, and labels join by name (`nets`). A wire end routed onto
-//! another wire's segment splits it at a junction ([`wiring`]).
+//! annotation ([`annotate`]). A wire is a path with corners; its ends
+//! reference terminals, junctions, labels or sheet pins, or are free. A
+//! connection point that lies on a wire's path connects to it: every edit
+//! is normalised so the stored topology says so ([`tidy`]). Crossings join
+//! nothing without a junction point, `schematic.connect` routes around
+//! points it does not end on, and labels also join by name (`nets`).
 //! [`placed_unit`] resolves what an occurrence draws, [`definition_unit`]
 //! what a unit being authored draws and [`scene`] everything else a sheet
 //! draws. See docs/schematic-capture.md.
@@ -13,15 +15,15 @@ use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid, segment_dis
 use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, SheetId, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
 pub use crate::library::graphics::PlacedText;
-use crate::library::graphics::{SYMBOL_TEXT_HEIGHT_MM, TEXT_LINE_SPACING};
+use crate::library::graphics::{TEXT_LINE_SPACING, VALUE_TEXT_HEIGHT_MM};
 use crate::library::{
     BindingDefinition, ComponentDefinition, Fill, HAlign, Item, Justify, Library,
     PackageDefinition, Rotation, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit,
     VAlign,
 };
 use crate::model::{
-    EditPolicy, LabelKind, Net, Paper, PaperOrientation, PortShape, Project, ProjectProperties,
-    SheetItem, SheetSide, SymbolOccurrence, Wire, WireEnd,
+    Corner, EditPolicy, LabelKind, Net, Paper, PaperOrientation, PortShape, Project,
+    ProjectProperties, SheetItem, SheetSide, SymbolOccurrence, Wire, WireEnd,
 };
 use crate::nets;
 use schemars::JsonSchema;
@@ -29,16 +31,21 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const MAX_WIRES: usize = 16384;
+/// Corners one wire's path may have.
+pub const MAX_CORNERS: usize = 256;
 
 pub mod annotate;
+pub mod clipboard;
 pub mod labels;
 pub mod scene;
 pub mod sheets;
+pub mod wire_edit;
 mod wiring;
 pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
+pub use clipboard::{ClipObject, ClipSymbol, Pasted, PastedSymbol, SheetClip};
 pub use wiring::{
     JUNCTION_TOLERANCE_MM, MAX_JUNCTIONS, WirePoint, WireTarget, end_position, end_sheet,
-    junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_route, wire_sheet,
+    junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_path,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -56,7 +63,8 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sheet: Option<SheetId>,
     },
-    /// Presentation only; electrical identities are unchanged.
+    /// Move a unit; wires follow its pins, the segment on each pin staying
+    /// horizontal or vertical. A pin moved onto a wire connects to it.
     #[serde(rename = "symbol.move_unit")]
     MoveUnit { occurrence: Id, position: Point },
     /// Set an occurrence's orientation about its origin: `mirror` reflects
@@ -72,13 +80,46 @@ pub enum SchematicCommand {
     /// terminals; otherwise preview it as `Change::Schematic`.
     #[serde(rename = "symbol.unplace_unit")]
     UnplaceUnit { occurrence: Id },
-    /// Draw a wire between two targets: a terminal, a junction, or a point
-    /// on an existing wire, which splits that wire at a new junction. One
-    /// undo step.
+    /// Draw a wire between two targets: a terminal, a junction, a label, a
+    /// sheet pin, or a point on an existing wire, which splits that wire at
+    /// a new junction. The engine picks the path: the horizontal-first L,
+    /// or a detour around points in its way, with its bends as corners.
+    /// One undo step.
     #[serde(rename = "schematic.connect")]
     Connect { from: WireTarget, to: WireTarget },
+    /// Draw a wire along a given path: from `from` through `corners` to
+    /// `to`, each a target or a free end `{"free": [x, y]}`. No corners: one
+    /// straight segment. Connection points it runs over join it, as do
+    /// free ends it meets. One undo step.
+    #[serde(rename = "wire.draw")]
+    DrawWire {
+        /// The sheet of its attached ends; the first sheet when both are
+        /// free and it is omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        from: WireTarget,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        corners: Vec<Corner>,
+        to: WireTarget,
+    },
     #[serde(rename = "schematic.disconnect")]
     Disconnect { wire: Id },
+    /// Put a junction point on the wires at `position`: on a wire's path it
+    /// joins everything meeting there, and where two wires cross it joins
+    /// them. Refused off every wire and on an existing connection point.
+    #[serde(rename = "junction.place")]
+    PlaceJunction {
+        /// The first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        position: Point,
+    },
+    /// Remove a junction point where straight wires pass through it: each
+    /// pair of wires leaving it in opposite directions becomes one wire
+    /// again, so a crossing stops joining. Refused at a bend or a T, where
+    /// removing a wire is the way to change the drawing.
+    #[serde(rename = "junction.remove")]
+    RemoveJunction { junction: Id },
     /// Relabel a net. Its identity, membership and routed copper are
     /// unchanged. A net named by labels or sheet pins is renamed by renaming
     /// every one of them that spells its current name.
@@ -217,6 +258,11 @@ pub enum SchematicCommand {
     /// Set the title-block properties.
     #[serde(rename = "project.set_properties")]
     SetProperties { properties: ProjectProperties },
+    /// Name the project: the name fabrication outputs, drawings and the
+    /// title block's Project cell show. The same name changes nothing and
+    /// adds no undo step.
+    #[serde(rename = "project.rename")]
+    RenameProject { name: String },
     /// Number designators across sheets; existing annotated designators
     /// stay unless `mode` is `all`.
     #[serde(rename = "schematic.annotate")]
@@ -232,7 +278,62 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         sheets: Vec<SheetId>,
     },
+    /// Create what `clip` (from the `schematic.copy` query) holds on a
+    /// sheet, shifted by `offset`, as one undo step. A symbol becomes a new
+    /// instance of the same component with the next free designator and
+    /// its field values; a label keeps its name, so it joins that net as
+    /// any label would. Wires follow the pasted objects at the ends the
+    /// clip keeps.
+    #[serde(rename = "schematic.paste")]
+    Paste {
+        /// The sheet to paste on; the first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        clip: Box<SheetClip>,
+        /// Added to every position, in mm.
+        offset: Point,
+    },
 }
+
+// A new command chooses its permission class here.
+declare_classes!(SchematicCommand {
+    PlaceUnit "symbol.place_unit" Edit,
+    MoveUnit "symbol.move_unit" Edit,
+    OrientUnit "symbol.orient_unit" Edit,
+    UnplaceUnit "symbol.unplace_unit" Edit,
+    Connect "schematic.connect" Edit,
+    DrawWire "wire.draw" Edit,
+    Disconnect "schematic.disconnect" Edit,
+    PlaceJunction "junction.place" Edit,
+    RemoveJunction "junction.remove" Edit,
+    RenameNet "schematic.net_rename" Edit,
+    MoveUnitToSheet "symbol.move_to_sheet" Edit,
+    PlaceLabel "label.place" Edit,
+    MoveLabel "label.move" Edit,
+    EditLabel "label.edit" Edit,
+    RemoveLabel "label.remove" Edit,
+    AddSheet "sheet.add" Edit,
+    RenameSheet "sheet.rename" Edit,
+    SetPage "sheet.set_page" Edit,
+    ReorderSheet "sheet.reorder" Edit,
+    DeleteSheet "sheet.delete" Edit,
+    PlaceSheetSymbol "sheet_symbol.place" Edit,
+    MoveSheetSymbol "sheet_symbol.move" Edit,
+    ResizeSheetSymbol "sheet_symbol.resize" Edit,
+    SetSheetChild "sheet_symbol.set_child" Edit,
+    RemoveSheetSymbol "sheet_symbol.remove" Edit,
+    SyncSheetPins "sheet_symbol.sync_pins" Edit,
+    AddSheetPin "sheet_pin.add" Edit,
+    EditSheetPin "sheet_pin.edit" Edit,
+    RemoveSheetPin "sheet_pin.remove" Edit,
+    AddDrawing "drawing.add" Edit,
+    EditDrawing "drawing.edit" Edit,
+    RemoveDrawing "drawing.remove" Edit,
+    SetProperties "project.set_properties" Edit,
+    RenameProject "project.rename" Edit,
+    Annotate "schematic.annotate" Edit,
+    Paste "schematic.paste" Edit,
+});
 
 /// What a schematic command created or changed, for the engine's outcome.
 #[derive(Clone, Debug, PartialEq)]
@@ -240,11 +341,13 @@ pub enum Applied {
     None,
     Unit(Id),
     Label(Id),
+    Junction(Id),
     Sheet(SheetId),
     SheetSymbol { symbol: Id, child: SheetId },
     SheetPins(Vec<Id>),
     Drawing(Id),
     Annotated(Vec<Renumbered>),
+    Pasted(Pasted),
 }
 
 fn invalid(message: &str) -> Error {
@@ -258,8 +361,34 @@ fn conflict(message: &str) -> Error {
 }
 
 /// Apply to a candidate the caller discards on failure. The engine then
-/// reconciles nets and validates the document.
+/// reconciles nets and validates the document. Wires on a part, label,
+/// sheet symbol or sheet pin that moves, turns or mirrors follow it in the
+/// same step ([`wire_edit`]).
 pub fn apply(
+    project: &mut Project,
+    command: SchematicCommand,
+    policy: EditPolicy,
+) -> Result<Applied> {
+    use SchematicCommand as C;
+    let moves = matches!(
+        command,
+        C::MoveUnit { .. }
+            | C::OrientUnit { .. }
+            | C::MoveLabel { .. }
+            | C::EditLabel { .. }
+            | C::MoveSheetSymbol { .. }
+            | C::ResizeSheetSymbol { .. }
+            | C::EditSheetPin { .. }
+    );
+    let before = moves.then(|| wire_edit::ends(project));
+    let applied = apply_command(project, command, policy)?;
+    if let Some(before) = before {
+        wire_edit::follow_moved(project, &before);
+    }
+    Ok(applied)
+}
+
+fn apply_command(
     project: &mut Project,
     command: SchematicCommand,
     policy: EditPolicy,
@@ -289,7 +418,17 @@ pub fn apply(
         } => none(orient_unit(project, occurrence, rotation, mirror)),
         C::UnplaceUnit { occurrence } => none(unplace_unit(project, occurrence, policy)),
         C::Connect { from, to } => none(connect(project, from, to)),
+        C::DrawWire {
+            sheet,
+            from,
+            corners,
+            to,
+        } => draw_wire(project, sheet, from, corners, to).map(|_| Applied::None),
         C::Disconnect { wire } => none(disconnect(project, wire)),
+        C::PlaceJunction { sheet, position } => {
+            wiring::place_junction(project, sheet.unwrap_or(first), position).map(Applied::Junction)
+        }
+        C::RemoveJunction { junction } => none(wiring::remove_junction(project, junction)),
         C::RenameNet { net, name } => none(rename_net(project, net, name)),
         C::MoveUnitToSheet {
             occurrence,
@@ -393,12 +532,18 @@ pub fn apply(
         C::EditDrawing { drawing, item } => none(sheets::edit_drawing(project, drawing, item)),
         C::RemoveDrawing { drawing } => none(sheets::remove_drawing(project, drawing)),
         C::SetProperties { properties } => none(sheets::set_properties(project, properties)),
+        C::RenameProject { name } => none(sheets::rename_project(project, &name)),
         C::Annotate {
             order,
             mode,
             numbering,
             sheets,
         } => annotate::annotate(project, order, mode, numbering, &sheets).map(Applied::Annotated),
+        C::Paste {
+            sheet,
+            clip,
+            offset,
+        } => clipboard::paste(project, sheet.unwrap_or(first), *clip, offset).map(Applied::Pasted),
     }
 }
 
@@ -521,7 +666,7 @@ pub fn unplace_unit(project: &mut Project, occurrence: Id, policy: EditPolicy) -
     if !wires.is_empty() {
         if policy == EditPolicy::Direct {
             return Err(conflict(
-                "This unit is wired. Preview unplacing it with project.preview_update (Change::Schematic) to review the wires it removes.",
+                "This unit is wired. Review unplacing it first: the review lists the wires it removes.",
             ));
         }
         project.wires.retain(|w| !wires.contains(&w.id));
@@ -547,7 +692,7 @@ pub fn disconnect_terminals(
     if project.wires.iter().any(touches) {
         if policy == EditPolicy::Direct {
             return Err(conflict(
-                "These terminals are wired. Preview the change with project.preview_update to review the wires it removes.",
+                "These terminals are wired. Review the change first: the review lists the wires it removes.",
             ));
         }
         project.wires.retain(|w| !touches(w));
@@ -567,7 +712,7 @@ pub fn detach_instance(project: &mut Project, instance: Id, policy: EditPolicy) 
     if wired {
         if policy == EditPolicy::Direct {
             return Err(conflict(
-                "This instance is wired. Preview its removal with project.preview_update (Change::Instance) to review the wires it removes.",
+                "This instance is wired. Review its removal first: the review lists the wires it removes.",
             ));
         }
         project.wires.retain(|w| !on_instance(w));
@@ -581,6 +726,11 @@ pub fn detach_instance(project: &mut Project, instance: Id, policy: EditPolicy) 
 /// The caller discards the candidate on failure, so a refused connect leaves
 /// no split behind.
 pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Result<()> {
+    if matches!(from, WireTarget::Free(_)) || matches!(to, WireTarget::Free(_)) {
+        return Err(invalid(
+            "schematic.connect joins two connection points; draw a free end with wire.draw.",
+        ));
+    }
     if let (WireTarget::OnWire(a), WireTarget::OnWire(b)) = (&from, &to)
         && a.wire == b.wire
     {
@@ -598,20 +748,70 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
     {
         return Err(conflict("These points are already connected by a wire."));
     }
+    let sheet = match (end_sheet(project, from), end_sheet(project, to)) {
+        (Some(a), Some(b)) if a != b => {
+            return Err(invalid(
+                "A wire joins two points on one sheet; connect sheets with labels.",
+            ));
+        }
+        (a, b) => a.or(b).unwrap_or_else(|| project.sheets.first()),
+    };
+    // The wire must not run over a connection point it does not end on,
+    // which would join that point too: route around it, with each bend a
+    // corner. A label's first wire to a pin attaches it: the label then
+    // sits on the pin's end and the wire has no length.
+    let attaches = |label: WireEnd, pin: WireEnd| {
+        label
+            .label_id()
+            .and_then(|id| project.label(id))
+            .is_some_and(|l| !l.manual)
+            && pin.terminal().is_some()
+            && project.wires_at(label).next().is_none()
+    };
+    let path = match (
+        wiring::end_position(project, from),
+        wiring::end_position(project, to),
+    ) {
+        _ if attaches(from, to) || attaches(to, from) => Vec::new(),
+        (Some(a), Some(b)) => wiring::clean_route(project, sheet, a, b, [from, to])?,
+        _ => Vec::new(),
+    };
+    let corners = path
+        .get(1..path.len().saturating_sub(1))
+        .unwrap_or_default()
+        .iter()
+        .map(|at| Corner { at: *at })
+        .collect();
+    add_wire(project, sheet, from, corners, to).map(|_| ())
+}
+
+/// Store a new wire, without corners that add nothing, then check the
+/// instances on its terminal ends.
+fn add_wire(
+    project: &mut Project,
+    sheet: SheetId,
+    from: WireEnd,
+    corners: Vec<Corner>,
+    to: WireEnd,
+) -> Result<Id> {
     if project.wires.len() >= MAX_WIRES {
         return Err(Error::Limit(
             "This edition supports at most 16384 wires.".into(),
         ));
     }
-    if let (Some(a), Some(b)) = (end_sheet(project, from), end_sheet(project, to))
-        && a != b
-    {
-        return Err(invalid(
-            "A wire joins two points on one sheet; connect sheets with labels.",
-        ));
-    }
     let id = project.allocate()?;
-    project.wires.push(Wire { id, from, to });
+    let mut wire = Wire {
+        id,
+        sheet,
+        from,
+        to,
+        corners,
+    };
+    wiring::simplify(project, &mut wire);
+    if wire.from == wire.to && wire.corners.is_empty() {
+        return Err(invalid("A wire must connect two different points."));
+    }
+    project.wires.push(wire);
     // `check_instance` owns terminal validity: instance, terminal, unit
     // placement and NC/no-connect exclusion.
     for end in [from, to] {
@@ -619,7 +819,50 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
             instances::check_instance(project, endpoint.instance)?;
         }
     }
-    Ok(())
+    Ok(id)
+}
+
+/// Draw a wire along a given path (`wire.draw`). Its sheet is that of its
+/// attached ends, which must agree with `sheet` when given; the first
+/// sheet when every end is free and none is given. A target on a wire's
+/// path splits that wire first; both targets on one wire are refused.
+pub fn draw_wire(
+    project: &mut Project,
+    sheet: Option<SheetId>,
+    from: WireTarget,
+    corners: Vec<Corner>,
+    to: WireTarget,
+) -> Result<Id> {
+    if corners.len() > MAX_CORNERS {
+        return Err(Error::Limit("A wire has at most 256 corners.".into()));
+    }
+    if !corners.iter().all(|c| point_valid(c.at)) {
+        return Err(invalid(
+            "Schematic position must be finite and within ±10000 mm.",
+        ));
+    }
+    if let (WireTarget::OnWire(a), WireTarget::OnWire(b)) = (&from, &to)
+        && a.wire == b.wire
+    {
+        return Err(invalid("A wire cannot join two points of the same wire."));
+    }
+    let from = wiring::resolve(project, from)?;
+    let to = wiring::resolve(project, to)?;
+    let mut sheets = [from, to]
+        .into_iter()
+        .filter_map(|end| end_sheet(project, end))
+        .chain(sheet);
+    let first = sheets.next();
+    if sheets.any(|s| Some(s) != first) {
+        return Err(invalid(
+            "A wire joins points on one sheet; connect sheets with labels.",
+        ));
+    }
+    let sheet = first.unwrap_or_else(|| project.sheets.first());
+    if project.sheet(sheet).is_none() {
+        return Err(not_found("Unknown sheet."));
+    }
+    add_wire(project, sheet, from, corners, to)
 }
 
 pub fn disconnect(project: &mut Project, wire: Id) -> Result<()> {
@@ -671,7 +914,7 @@ pub fn protect_routed_nets(before: &Project, after: &Project) -> Result<()> {
         let b = after.net(id).map(|net| &net.terminals);
         if a != b {
             return Err(conflict(
-                "This connectivity change affects routed copper. Preview it with project.preview_update and apply the reviewed track removals through project.apply_update.",
+                "This connectivity change affects routed copper. Review it first: the review lists the tracks and vias it removes.",
             ));
         }
     }
@@ -749,6 +992,37 @@ pub struct PlacedPin {
     /// The designations the instance's binding maps to the terminal; `None`
     /// without a physical choice, never guessed.
     pub number: Option<PlacedText>,
+}
+
+/// Radius of the open ring that marks a pin end still needing a decision
+/// (wire it or mark it no-connect): its diameter is 0.8 of the pin text
+/// height, so it reads as a mark on the pin rather than a symbol of its own.
+pub const PIN_RING_MM: f64 = 0.4 * crate::library::graphics::PIN_TEXT_HEIGHT_MM;
+/// Half the width of the no-connect cross on a decided pin end.
+pub const NO_CONNECT_MM: f64 = 0.5 * crate::library::graphics::PIN_TEXT_HEIGHT_MM;
+
+impl PlacedPin {
+    /// The unit vector from the pin's body end out through its connection
+    /// end; zero for a pin of no length.
+    pub fn outward(&self) -> Point {
+        let d = [
+            self.end[0] - self.body_end[0],
+            self.end[1] - self.body_end[1],
+        ];
+        let len = d[0].hypot(d[1]);
+        if len > 0.0 && len.is_finite() {
+            [d[0] / len, d[1] / len]
+        } else {
+            [0.0, 0.0]
+        }
+    }
+    /// Where a ring of `radius` touching the connection end from outside
+    /// is centred, so the pin line stops at the ring's edge instead of
+    /// running into it.
+    pub fn ring_centre(&self, radius: f64) -> Point {
+        let o = self.outward();
+        [self.end[0] + o[0] * radius, self.end[1] + o[1] * radius]
+    }
 }
 
 /// Everything one unit draws, resolved against exact revisions. Views draw
@@ -851,6 +1125,11 @@ struct Resolution<'a> {
     designator: String,
     component_name: &'a str,
     fields: Vec<ShownField>,
+    /// The instance's value from its shown fields
+    /// ([`instances::value_text`]).
+    value: Option<String>,
+    /// The chosen Part's manufacturer part number.
+    mpn: Option<String>,
     /// Binding and package supplying pin numbers; none hides them.
     physical: Option<(&'a BindingDefinition, &'a PackageDefinition)>,
 }
@@ -917,6 +1196,21 @@ fn draw(
         mirrored: false,
         line_spacing: TEXT_LINE_SPACING,
     };
+    // The value slot (a `ComponentName` text) shows the instance's value
+    // (`instances::value_text`, the value the BOM shows too), else the
+    // Part's MPN, else the component name, which identifies an IC
+    // ("AP2112K-3.3") or a rail symbol ("GND"). A two-terminal part without
+    // a value shows none: its component name ("Chip capacitor 0603") is a
+    // description, never a value.
+    let value = r
+        .value
+        .clone()
+        .or_else(|| r.mpn.clone().filter(|m| !m.trim().is_empty()))
+        .or_else(|| (component.terminals.len() != 2).then(|| r.component_name.to_owned()));
+    // Turned a quarter, the symbol keeps its designator and value upright
+    // and beside the body, reading outward from it, instead of along the
+    // pins where they would run over neighbouring pins and labels.
+    let sideways = (t.rotation_deg.rem_euclid(180.0) - 90.0).abs() < 1e-9;
     let mut shapes = Vec::new();
     let mut texts = Vec::new();
     let mut drawn_fields = BTreeSet::new();
@@ -935,10 +1229,26 @@ fn draw(
                 if !text.visible {
                     continue;
                 }
+                let mut height = text.height;
                 let content = match &text.content {
                     TextContent::Literal(s) => s.clone(),
                     TextContent::Designator => r.designator.clone(),
-                    TextContent::ComponentName => r.component_name.to_owned(),
+                    TextContent::ComponentName => {
+                        let Some(value) = &value else {
+                            continue;
+                        };
+                        // The shown fields are the value: not stacked again.
+                        if r.value.is_some() {
+                            drawn_fields.extend(
+                                r.fields
+                                    .iter()
+                                    .filter(|f| f.shown && !f.text.trim().is_empty())
+                                    .map(|f| f.lineage),
+                            );
+                        }
+                        height = height.min(VALUE_TEXT_HEIGHT_MM);
+                        value.clone()
+                    }
                     TextContent::UnitLabel => unit.label.clone(),
                     TextContent::Field(lineage) => r
                         .fields
@@ -947,17 +1257,39 @@ fn draw(
                         .map(|f| f.text.clone())
                         .unwrap_or_default(),
                 };
-                texts.push(PlacedText {
+                let mut placed = PlacedText {
                     line_spacing: text.line_spacing,
                     ..place(
                         Some(graphic.id),
                         content,
                         text.at,
-                        text.height,
+                        height,
                         text.rotation.degrees(),
                         text.justify,
                     )
-                });
+                };
+                if sideways
+                    && matches!(
+                        text.content,
+                        TextContent::Designator
+                            | TextContent::ComponentName
+                            | TextContent::Field(_)
+                    )
+                {
+                    let dx = placed.at[0] - t.translate[0];
+                    placed.rotation_deg = 0.0;
+                    placed.justify = Justify {
+                        h: if dx < -1e-9 {
+                            HAlign::Right
+                        } else if dx > 1e-9 {
+                            HAlign::Left
+                        } else {
+                            HAlign::Center
+                        },
+                        v: VAlign::Middle,
+                    };
+                }
+                texts.push(placed);
             }
         }
     }
@@ -1020,7 +1352,7 @@ fn draw(
             graphic: None,
             text: field.text.clone(),
             at: [below.center()[0], y],
-            height: SYMBOL_TEXT_HEIGHT_MM,
+            height: VALUE_TEXT_HEIGHT_MM,
             rotation_deg: 0.0,
             justify: Justify {
                 h: HAlign::Center,
@@ -1029,7 +1361,7 @@ fn draw(
             mirrored: false,
             line_spacing: TEXT_LINE_SPACING,
         });
-        y -= SYMBOL_TEXT_HEIGHT_MM + FIELD_GAP_MM;
+        y -= VALUE_TEXT_HEIGHT_MM + FIELD_GAP_MM;
     }
     placed
 }
@@ -1061,6 +1393,11 @@ pub fn placed_unit(project: &Project, occurrence: Id) -> Result<PlacedUnit> {
         designator: instances::display_label(project, instance, unit.id),
         component_name: &resolved.component.meta.name,
         fields,
+        value: instances::value_text(&project.library, instance)?,
+        mpn: instance
+            .part
+            .and_then(|p| project.library.part(p))
+            .map(|p| p.definition.mpn.clone()),
         physical: resolved
             .physical
             .map(|p| (&p.binding.definition, &p.package.definition)),
@@ -1101,7 +1438,7 @@ pub fn definition_unit(library: &Library, d: DefinitionUnit<'_>) -> Result<Place
         designator.push_str(&unit.label);
     }
     // A field shows its default, or its name when it has none.
-    let fields = instances::default_fields(library, d.component)?
+    let fields: Vec<ShownField> = instances::default_fields(library, d.component)?
         .into_iter()
         .map(|f| ShownField {
             lineage: f.field.id,
@@ -1109,10 +1446,18 @@ pub fn definition_unit(library: &Library, d: DefinitionUnit<'_>) -> Result<Place
             shown: f.show_on_symbol,
         })
         .collect();
+    // No instance yet: the value slot shows the shown fields' placeholders.
+    let shown: Vec<&str> = fields
+        .iter()
+        .filter(|f| f.shown && !f.text.trim().is_empty())
+        .map(|f| f.text.as_str())
+        .collect();
     let resolution = Resolution {
         designator,
         component_name: d.component_name,
+        value: (!shown.is_empty()).then(|| shown.join(" ")),
         fields,
+        mpn: None,
         physical: d.physical,
     };
     Ok(draw(
@@ -1159,9 +1504,7 @@ pub fn sheet_rows(project: &Project) -> Vec<SheetRow> {
     let depths = nets::sheet_depths(project);
     let mut wires: std::collections::BTreeMap<SheetId, usize> = Default::default();
     for wire in &project.wires {
-        if let Some(sheet) = wire_sheet(project, wire) {
-            *wires.entry(sheet).or_default() += 1;
-        }
+        *wires.entry(wire.sheet).or_default() += 1;
     }
     project
         .sheets

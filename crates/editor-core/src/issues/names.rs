@@ -181,6 +181,11 @@ impl<'a> Names<'a> {
                 .project
                 .sheet(sheet)
                 .map_or_else(|| "a sheet".into(), |s| format!("sheet {}", s.name)),
+            ObjectRef::Wire { id } => self
+                .project
+                .wire(id)
+                .and_then(|w| self.project.sheet(w.sheet))
+                .map_or_else(|| "a wire".into(), |s| format!("a wire on {}", s.name)),
         }
     }
 

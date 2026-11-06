@@ -185,7 +185,7 @@ pub fn rule_list(
                         tip: "Edit the rule",
                         ..Default::default()
                     };
-                    if kit::tree_row(ui, ui.id().with(("rule", rule.id.0)), &row).clicked {
+                    if kit::tree_row(ui, ui.scope_id().with(("rule", rule.id.0)), &row).clicked {
                         event = Some(RulesEvent::Select(rule.id));
                     }
                 }
@@ -206,7 +206,7 @@ pub fn rule_list(
 pub fn script_editor(ui: &mut Ui, rule: &mut PinRule, editor: &mut RulesEditor) {
     let t = Tokens::get();
     kit::form(ui, |ui| {
-        let id = ui.id().with(("script", rule.id.0));
+        let id = ui.scope_id().with(("script", rule.id.0));
         let error_line = match editor.check(rule) {
             Check::Error(message) => error_line(&message),
             Check::Compiles => None,
@@ -326,7 +326,7 @@ pub fn explain_panel(ui: &mut Ui, component: &ComponentDefinition, editor: &mut 
                     "Add a second function to a pin in the Table view",
                 );
             }
-            let all_id = ui.id().with("explain-all");
+            let all_id = ui.scope_id().with("explain-all");
             let all = ui.data(|d| d.get_temp::<bool>(all_id)).unwrap_or(false);
             let max = if all { multi.len() } else { kit::LIST_MAX_ROWS };
             let shown = kit::list_frame(ui, multi.len(), max, |ui, index| {

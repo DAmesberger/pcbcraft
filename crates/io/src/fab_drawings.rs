@@ -413,7 +413,7 @@ fn dimension(page: &mut Page, a: P, b: P, normal: P, off: f64, value: f64) {
 }
 
 fn tool_label(tool: &DrillTool) -> String {
-    format!("{}{}", if tool.plated { "P" } else { "N" }, tool.number)
+    format!("T{}", tool.number)
 }
 
 /// The fabrication drawing: outline with dimensions, drill table, stackup
@@ -792,6 +792,32 @@ mod tests {
             engine.project(),
             &FabricationOptions::default(),
         )?)
+    }
+
+    /// The ESP32 dev board's BOM keeps every rating its parts were
+    /// specified with: C1 is "10 µF 16 V", not "10 µF".
+    #[test]
+    fn the_esp32_bom_value_keeps_the_voltage_rating() -> Result<()> {
+        let path = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+        ));
+        let project = crate::read_project(path)?.project;
+        let bom = pcbcraft_core::fabrication::assembly::bom_parts_csv(&project)?;
+        let row = |designator: &str| {
+            bom.lines()
+                .find(|l| l.starts_with(&format!("{designator},")))
+                .map(str::to_owned)
+        };
+        assert!(
+            row("C1").is_some_and(|l| l.starts_with("C1,10 µF 16 V,")),
+            "{bom}"
+        );
+        assert!(
+            row("C3").is_some_and(|l| l.starts_with("C3,100 nF 16 V,")),
+            "{bom}"
+        );
+        Ok(())
     }
 
     #[test]

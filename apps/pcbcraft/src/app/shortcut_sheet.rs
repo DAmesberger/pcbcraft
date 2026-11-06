@@ -26,14 +26,23 @@ pub(crate) fn groups(registry: &Registry, filter: &str, active: &[Context]) -> V
     contexts
         .into_iter()
         .filter_map(|context| {
-            let mut seen = std::collections::BTreeSet::new();
-            let rows: Vec<(String, String)> = registry
-                .commands()
-                .iter()
-                .filter(|c| c.context == context)
-                .filter_map(|c| Some((c.title.clone(), registry.shortcut(c)?)))
-                // One line per name and key (the palette's two keys).
-                .filter(|row| seen.insert(row.clone()))
+            // One line per name, with all its keys (the palette's two).
+            let mut named: Vec<(String, String)> = Vec::new();
+            for command in registry.commands().iter().filter(|c| c.context == context) {
+                let Some(key) = registry.shortcut(command) else {
+                    continue;
+                };
+                match named.iter_mut().find(|(title, _)| *title == command.title) {
+                    Some((_, keys)) if keys.split(", ").any(|k| k == key) => {}
+                    Some((_, keys)) => {
+                        keys.push_str(", ");
+                        keys.push_str(&key);
+                    }
+                    None => named.push((command.title.clone(), key)),
+                }
+            }
+            let rows: Vec<(String, String)> = named
+                .into_iter()
                 .filter(|(title, key)| {
                     filter.is_empty()
                         || title.to_lowercase().contains(&filter)
@@ -57,14 +66,14 @@ pub(crate) struct ShortcutSheet {
 }
 
 impl ShortcutSheet {
-    pub fn open(&mut self) {
-        self.open = true;
-    }
     pub fn close(&mut self) {
         self.open = false;
     }
     pub fn toggle(&mut self) {
         self.open = !self.open;
+    }
+    pub fn is_open(&self) -> bool {
+        self.open
     }
 
     pub fn show(&mut self, ctx: &egui::Context, registry: &Registry, active: &[Context]) {
@@ -74,7 +83,7 @@ impl ShortcutSheet {
         let groups = groups(registry, &self.filter, active);
         let filter = &mut self.filter;
         let closed = ui_kit::Window::new(
-            egui::Id::new("keyboard-shortcuts"),
+            egui::Id::unique("keyboard-shortcuts"),
             "list",
             "Keyboard shortcuts",
         )
@@ -82,7 +91,7 @@ impl ShortcutSheet {
             kit::note(ui, crate::reveal::hint_line());
             kit::filter_field(
                 ui,
-                egui::Id::new("keyboard-shortcuts-filter"),
+                egui::Id::unique("keyboard-shortcuts-filter"),
                 filter,
                 "Filter by name or key",
                 false,

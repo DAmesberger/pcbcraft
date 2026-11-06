@@ -28,7 +28,7 @@ mod tests;
 pub use assembly::{BottomRotation, PlacementConvention, PlacementOrigin, RotationOffset};
 pub use drawing::DrawingData;
 pub use drill::{DrillHole, DrillTable, DrillTool, HoleFeature, HoleFunction};
-pub use preflight::{FabricationCommand, PreflightItem, PreflightReport};
+pub use preflight::{FabricationCommand, PreflightItem, PreflightReport, ProfileChoice};
 
 /// Files in one fabrication set (a target bound on the output, well above
 /// a 32-layer board's).

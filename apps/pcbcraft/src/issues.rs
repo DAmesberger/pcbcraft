@@ -54,10 +54,11 @@ pub enum FixDialog {
 /// dialog that issues one, resolves get a Fix.
 #[derive(Clone, Debug)]
 pub enum Fix {
-    /// Apply this operation through the one command engine.
-    #[allow(dead_code, reason = "no issue is resolved by one fixed command yet")]
+    /// Apply this operation through the one command engine; `done` is the
+    /// toast that offers Undo once it applied.
     Apply {
         label: &'static str,
+        done: &'static str,
         operation: Box<Operation>,
     },
     /// Open a dialog whose primary issues the operation.
@@ -101,6 +102,41 @@ const FIXES: &[(&str, &str, FixDialog)] = &[
 
 /// The Fix for `row`, if it has one.
 pub fn fix(row: &IssueRow) -> Option<Fix> {
+    no_connect_fix(row).or_else(|| dialog_fix(row))
+}
+
+/// An unconnected terminal's Fix marks it no-connect; a connected
+/// no-connect terminal's clears the mark. One `instance.set_no_connect`
+/// over the row's terminals, when they are of one instance.
+fn no_connect_fix(row: &IssueRow) -> Option<Fix> {
+    let (label, done, no_connect) = match row.group.code.as_str() {
+        "instance.terminal_unaccounted" => ("Mark no-connect", "Marked no-connect", true),
+        "instance.no_connect_connected" => ("Clear no-connect", "Cleared no-connect", false),
+        _ => return None,
+    };
+    let mut instance = None;
+    let mut terminals = BTreeSet::new();
+    for object in row.objects() {
+        if let ObjectRef::Terminal { endpoint } = object {
+            if *instance.get_or_insert(endpoint.instance) != endpoint.instance {
+                return None;
+            }
+            terminals.insert(endpoint.terminal);
+        }
+    }
+    let operation = Operation::Instance(pcbcraft_core::InstanceCommand::SetNoConnect {
+        instance: instance?,
+        terminals: terminals.into_iter().collect(),
+        no_connect,
+    });
+    Some(Fix::Apply {
+        label,
+        done,
+        operation: Box::new(operation),
+    })
+}
+
+fn dialog_fix(row: &IssueRow) -> Option<Fix> {
     FIXES
         .iter()
         .find(|(code, _, _)| *code == row.group.code)
@@ -448,6 +484,26 @@ pub struct Surface {
     selection: Slot,
     names: Option<Names>,
     badges: Option<((u64, usize), Arc<Badges>)>,
+    /// A row's right-click menu, by the row's key.
+    menu: crate::context_menu::State<String>,
+}
+
+/// An issue row menu's actions: the row's own Locate and Fix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowAct {
+    Locate,
+    Fix,
+}
+
+/// The rows of an issue row's menu: Locate, and the row's Fix when the
+/// row offers one (a Fix for its whole group sits on the group header).
+pub fn row_menu(row: &IssueRow) -> crate::context_menu::Rows<RowAct> {
+    use crate::context_menu::Entry;
+    let mut rows = vec![Some(Entry::act("Locate", "zoom", RowAct::Locate, true))];
+    if let Some(fix) = fix(row).filter(|f| !f.group_wide()) {
+        rows.push(Some(Entry::act(fix.label(), "update", RowAct::Fix, true)));
+    }
+    rows
 }
 
 impl Surface {
@@ -661,7 +717,7 @@ impl Surface {
         self.names(engine, report);
         let names = self.names.as_ref().map_or(&[][..], |n| n.rows.as_slice());
         let open = &self.open;
-        let event = kit::issues_list(ui, egui::Id::new("issues-list"), &views, |g, r| {
+        let event = kit::issues_list(ui, egui::Id::unique("issues-list"), &views, |g, r| {
             let index = groups[g].rows[r];
             let row = &report.rows[index];
             IssueRowView {
@@ -677,8 +733,23 @@ impl Surface {
                 detail: row.detail.clone(),
                 objects: names.get(index).cloned().unwrap_or_default(),
             }
-        })?;
-        match event {
+        });
+        // The open row menu, about the row it opened on; a row gone from
+        // the list closes it.
+        let menu_row = self
+            .menu
+            .target()
+            .and_then(|key| report.rows.iter().find(|r| row_key(r) == *key));
+        let rows = menu_row.map(row_menu).unwrap_or_default();
+        if let Some(crate::context_menu::Run::Act(act)) = self.menu.show(ui.ctx(), &rows)
+            && let Some(row) = menu_row
+        {
+            return match act {
+                RowAct::Locate => Some(self.show(row)),
+                RowAct::Fix => fix(row).map(Request::Fix),
+            };
+        }
+        match event? {
             IssueListEvent::Group(g) => {
                 let key = &groups[g].key;
                 if !self.toggled.remove(key) {
@@ -689,6 +760,12 @@ impl Surface {
             IssueListEvent::GroupFix(g) => groups[g].fix.clone().map(Request::Fix),
             IssueListEvent::Row { group, row, action } => {
                 let issue = &report.rows[groups[group].rows[row]];
+                if let Some(at) = action.menu {
+                    self.menu.open(at, row_key(issue));
+                    // It draws from the next frame.
+                    ui.ctx().request_repaint();
+                    return None;
+                }
                 if action.toggle {
                     let key = row_key(issue);
                     if !self.open.remove(&key) {

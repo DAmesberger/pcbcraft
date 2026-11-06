@@ -1,10 +1,13 @@
 //! The first live Claude API run (`examples/esp32-s31-wroom-3/run1`: 13
-//! recorded responses of `claude-opus-5-5`, $7.23) and the hand-made
+//! recorded responses of `claude-opus-5-5`, $7.23, converted to the neutral
+//! recording format) and the hand-made
 //! reference replay, both replayed through the current tools: what the
 //! model would now have been told, and that the recorded spend is booked
 //! exactly. No network: the datasheet is a stand-in, since a replay never
 //! sends it.
 use super::*;
+use crate::model::record::{KeptRequest, Replay};
+use crate::model::{ModelRequest, Part, anthropic};
 use std::path::PathBuf;
 
 fn example(name: &str) -> PathBuf {
@@ -13,10 +16,11 @@ fn example(name: &str) -> PathBuf {
         .join(name)
 }
 
-fn replay(name: &str) -> Fallible<(Outcome, ReplayTransport, Session)> {
+fn replay(name: &str) -> Fallible<(Outcome, Replay, Session)> {
     let dir = tempfile::tempdir()?;
-    let mut transport = ReplayTransport::from_file(&example(name))?;
-    transport.prompt_tokens = Some(453_129);
+    let mut backend = Replay::from_file(&example(name))?;
+    backend.keep_requests = true;
+    backend.prompt_tokens = Some(453_129);
     let mut session = Session::default();
     let goal = Goal {
         name: "ESP32-S31-WROOM-3".into(),
@@ -25,28 +29,40 @@ fn replay(name: &str) -> Fallible<(Outcome, ReplayTransport, Session)> {
     };
     let outcome = run(
         &goal,
-        &Settings::default(),
-        &mut transport,
+        &RunConfig::default(),
+        &mut backend,
         &mut session,
         &mut |_| {},
         &AtomicBool::new(false),
     )?;
-    Ok((outcome, transport, session))
+    Ok((outcome, backend, session))
+}
+
+/// The Messages body a kept request was sent as.
+fn wire(request: &KeptRequest) -> Value {
+    anthropic::request_body(
+        &RunConfig::default().profile,
+        &ModelRequest {
+            system: &request.system,
+            tools: &request.tools,
+            messages: &request.messages,
+            max_output_tokens: request.max_output_tokens,
+            timeout: request.timeout,
+        },
+    )
 }
 
 /// The text of the tool results request `n` (1-based) carries.
-fn results_of(transport: &ReplayTransport, n: usize) -> Fallible<Vec<String>> {
-    let request = transport.requests.get(n - 1).ok_or("request")?;
-    let last = request["messages"]
-        .as_array()
-        .and_then(|m| m.last())
-        .ok_or("messages")?;
-    Ok(last["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|b| b["type"] == "tool_result")
-        .map(|b| b["content"].as_str().unwrap_or_default().to_owned())
+fn results_of(backend: &Replay, n: usize) -> Fallible<Vec<String>> {
+    let request = backend.requests.get(n - 1).ok_or("request")?;
+    let last = request.messages.last().ok_or("messages")?;
+    Ok(last
+        .content
+        .iter()
+        .filter_map(|p| match p {
+            Part::ToolResult { text, .. } => Some(text.clone()),
+            _ => None,
+        })
         .collect())
 }
 
@@ -71,13 +87,13 @@ fn the_first_live_run_replays_with_its_recorded_spend() -> Fallible {
     let limits: Vec<u64> = transport
         .requests
         .iter()
-        .map(|r| r["max_tokens"].as_u64().unwrap_or(0))
+        .map(|r| u64::from(r.max_output_tokens))
         .collect();
     let mut expected = vec![32_000; 13];
     expected[5] = 64_000;
     expected[8] = 64_000;
     assert_eq!(limits, expected);
-    assert_eq!(f.request_log[4].stop_reason, "max_tokens");
+    assert_eq!(f.request_log[4].stop_reason, "cut_off");
     assert_eq!(f.request_log[4].tools, vec!["library_pinout_preview!"]);
     Ok(())
 }
@@ -134,7 +150,7 @@ fn every_request_extends_the_last_one_so_the_datasheet_cache_holds() -> Fallible
     // previous request's messages unchanged. The datasheets carry their
     // own breakpoint in the first message.
     let (_, transport, _) = replay("run1/run1.recording.jsonl")?;
-    let requests = &transport.requests;
+    let requests: Vec<Value> = transport.requests.iter().map(wire).collect();
     let first = requests.first().ok_or("a request")?;
     assert_eq!(
         first["messages"][0]["content"][0]["cache_control"]["type"],

@@ -17,6 +17,10 @@ use pcbcraft_core::Error;
 use pcbcraft_core::issues::{MAX_TITLE, style};
 use std::sync::Arc;
 
+/// The longest text shown for one message, in characters: a bound for a
+/// display that fits text itself. Messages keeps the whole text.
+pub const MAX_SHOWN: usize = 600;
+
 /// Where a refused operation came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Origin {
@@ -57,8 +61,9 @@ pub fn level(error: &Error) -> Level {
 
 /// The wording a person sees for `error`, chosen by variant. Engine text is
 /// shown by its first sentence when that follows the message style;
-/// otherwise the variant's own wording stands in. The full engine text
-/// still goes to Messages.
+/// otherwise the variant's own wording stands in. The sentence is whole:
+/// where it shows decides how it fits (`kit::text`: wrapped, or cut with
+/// the full text on hover). The full engine text still goes to Messages.
 pub fn shown_error(error: &Error) -> String {
     let fallback = match error {
         Error::Stale { .. } => return "The project changed meanwhile; try again".into(),
@@ -76,7 +81,7 @@ pub fn shown_error(error: &Error) -> String {
         | Error::NotFound(text)
         | Error::Conflict(text)
         | Error::Limit(text)
-        | Error::Unsupported(text) => presentable(text).unwrap_or_else(|| fallback.into()),
+        | Error::Unsupported(text) => whole_sentence(text).unwrap_or_else(|| fallback.into()),
         Error::Stale { .. } | Error::Json(_) => fallback.into(),
     }
 }
@@ -85,14 +90,71 @@ pub fn shown_error(error: &Error) -> String {
 /// [`MAX_TITLE`] characters at a word, if it then follows the message
 /// style; `None` when it names IDs, codes or Debug output.
 pub fn presentable(text: &str) -> Option<String> {
+    let shown = clip(&first_sentence(text), MAX_TITLE);
+    style::check(&shown).is_empty().then_some(shown)
+}
+
+/// As [`presentable`], for a place that fits text itself: the sentence is
+/// not clipped to a title, only bounded by [`MAX_SHOWN`]. Past a title's
+/// length it must still name objects, not IDs or codes; otherwise only the
+/// part that does shows.
+pub fn whole_sentence(text: &str) -> Option<String> {
+    let title = presentable(text)?;
+    let sentence = clip(&first_sentence(text), MAX_SHOWN);
+    Some(if style::naming(&sentence).is_empty() {
+        sentence
+    } else {
+        title
+    })
+}
+
+/// The first sentence of `text` as the app words it, without its code or
+/// full stop.
+fn first_sentence(text: &str) -> String {
     let line = text.lines().next().unwrap_or_default().trim();
+    let line = quoted(without_code(line));
+    let line = line.as_str();
     let sentence = match line.find(". ") {
         Some(end) => &line[..end],
         None => line,
     };
-    let sentence = sentence.trim_end().trim_end_matches('.').trim_end();
-    let shown = clip(sentence, MAX_TITLE);
-    style::check(&shown).is_empty().then_some(shown)
+    sentence
+        .trim_end()
+        .trim_end_matches('.')
+        .trim_end()
+        .to_owned()
+}
+
+/// `line` without the rule code engine text leads with
+/// (`board.shape_unsolved: …`): the code is for tools and Messages.
+fn without_code(line: &str) -> &str {
+    let Some((head, rest)) = line.split_once(": ") else {
+        return line;
+    };
+    let part = |p: &str| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase() || c == '_');
+    if head.split('.').count() > 1 && head.split('.').all(part) {
+        rest.trim_start()
+    } else {
+        line
+    }
+}
+
+/// `line` with names quoted in backticks (`width`) quoted as the app
+/// quotes them (‘width’); an unpaired backtick stays.
+fn quoted(line: &str) -> String {
+    if !line.matches('`').count().is_multiple_of(2) {
+        return line.to_owned();
+    }
+    let mut open = true;
+    line.chars()
+        .map(|c| match c {
+            '`' => {
+                open = !open;
+                if open { '’' } else { '‘' }
+            }
+            c => c,
+        })
+        .collect()
 }
 
 /// `text` within `max` characters, cut at a word and ending in "…".
@@ -128,7 +190,7 @@ struct Pending {
 }
 
 fn inbox_id() -> egui::Id {
-    egui::Id::new("pcbcraft-refusals")
+    egui::Id::unique("pcbcraft-refusals")
 }
 
 fn with_inbox<R>(ctx: &egui::Context, f: impl FnOnce(&mut Inbox) -> R) -> R {
@@ -247,12 +309,12 @@ mod tests {
         }
         for error in &errors {
             let shown = shown_error(error);
-            assert!(
-                style::check(&shown).is_empty(),
-                "{:?} → {shown:?}: {:?}",
-                error,
-                style::check(&shown)
-            );
+            // Every rule but the length: where it shows fits a long one.
+            let problems: Vec<_> = style::check(&shown)
+                .into_iter()
+                .filter(|p| *p != style::Problem::TooLong)
+                .collect();
+            assert!(problems.is_empty(), "{error:?} → {shown:?}: {problems:?}");
         }
         Ok(())
     }
@@ -286,8 +348,34 @@ mod tests {
             shown_error(&Error::History("Nothing to undo".into())),
             "Nothing to undo"
         );
-        let long = shown_error(&Error::Invalid("word ".repeat(40)));
-        assert!(long.ends_with('…') && long.chars().count() <= MAX_TITLE);
+        // A refusal names the problem: the rule code goes and names keep
+        // their quotes, so the field says more than "not accepted".
+        assert_eq!(
+            shown_error(&Error::Invalid(
+                "board.shape_unsolved: board parameters: `width` = 1000000 mm is out of range"
+                    .into()
+            )),
+            "board parameters: ‘width’ = 1000000 mm is out of range"
+        );
+        assert_eq!(
+            shown_error(&Error::Invalid(
+                "footprint.solve_failed: the dimension ‘width’ cannot be satisfied".into()
+            )),
+            "the dimension ‘width’ cannot be satisfied"
+        );
+        assert_eq!(
+            shown_error(&Error::Invalid("an odd ` stays".into())),
+            "That value is not accepted"
+        );
+        // A long sentence stays whole: where it shows fits it, and a cut
+        // there can show the rest. Only absurd lengths are bounded.
+        let long = "word ".repeat(40);
+        assert_eq!(shown_error(&Error::Invalid(long.clone())), long.trim_end());
+        let absurd = shown_error(&Error::Invalid("word ".repeat(400)));
+        assert!(absurd.ends_with('…') && absurd.chars().count() <= MAX_SHOWN);
+        // Past a title's length it still never names an internal ID.
+        let id = shown_error(&Error::Invalid(format!("{}(ID 8)", "word ".repeat(40))));
+        assert!(!id.contains("ID 8") && id.ends_with('…'), "{id}");
     }
 
     #[test]
@@ -308,7 +396,7 @@ mod tests {
 
     #[test]
     fn a_refusal_is_claimed_only_by_its_origin() {
-        let id = egui::Id::new("width");
+        let id = egui::Id::unique("width");
         let refused = Refused {
             origin: Origin::Field(id),
             error: Error::Invalid("Enter a width".into()),
@@ -332,8 +420,8 @@ mod tests {
     #[test]
     fn hand_back_reaches_the_origin_on_the_next_frame() {
         let ctx = egui::Context::default();
-        let field = Origin::Field(egui::Id::new("width"));
-        let other = Origin::Field(egui::Id::new("height"));
+        let field = Origin::Field(egui::Id::unique("width"));
+        let other = Origin::Field(egui::Id::unique("height"));
         let refuse = |ctx: &egui::Context, origin, toasted| {
             hand_back(
                 ctx,
@@ -376,7 +464,7 @@ mod tests {
     #[test]
     fn a_mark_holds_for_its_own_frame_only() {
         let ctx = egui::Context::default();
-        let field = Origin::Field(egui::Id::new("width"));
+        let field = Origin::Field(egui::Id::unique("width"));
         frame(&ctx, |ctx| {
             mark(ctx, field);
             assert_eq!(take_mark(ctx), Some(field));

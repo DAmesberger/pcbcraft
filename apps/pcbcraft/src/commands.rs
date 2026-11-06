@@ -29,6 +29,8 @@ pub enum Context {
     /// The Component workspace's Footprint tab.
     Footprint,
     Schematic,
+    /// The Schematic canvas while the Wire tool is armed.
+    SchematicWire,
     /// Both PCB views.
     Pcb,
     PcbLayout,
@@ -45,12 +47,13 @@ pub enum Context {
 
 impl Context {
     /// Every context, in sheet order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Global,
         Self::Component,
         Self::Symbol,
         Self::Footprint,
         Self::Schematic,
+        Self::SchematicWire,
         Self::Pcb,
         Self::PcbLayout,
         Self::PcbRoute,
@@ -67,6 +70,7 @@ impl Context {
             Self::Symbol => "Component › Symbol",
             Self::Footprint => "Component › Footprint",
             Self::Schematic => "Schematic",
+            Self::SchematicWire => "Schematic › Wire tool",
             Self::Pcb => "PCB",
             Self::PcbLayout => "PCB › Layout",
             Self::PcbRoute => "PCB › Route tool",
@@ -82,6 +86,7 @@ impl Context {
             Self::Global => None,
             Self::Component | Self::Schematic | Self::Pcb => Some(Self::Global),
             Self::Symbol | Self::Footprint => Some(Self::Component),
+            Self::SchematicWire => Some(Self::Schematic),
             Self::PcbLayout | Self::Pcb3d => Some(Self::Pcb),
             Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape => {
                 Some(Self::PcbLayout)
@@ -94,7 +99,7 @@ impl Context {
     pub fn modal(self) -> bool {
         matches!(
             self,
-            Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape
+            Self::SchematicWire | Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape
         )
     }
 
@@ -322,6 +327,21 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
         Chord::key(egui::Key::M),
         "pcb.place-part",
     ),
+    // Wiring: F flips the elbow instead of fitting the view, and Esc ends
+    // the wire before it cancels the tool.
+    (Context::SchematicWire, Chord::key(egui::Key::F), "view.fit"),
+    (
+        Context::SchematicWire,
+        Chord::key(egui::Key::Escape),
+        "schematic.cancel",
+    ),
+    // Backspace takes back the last corner instead of deleting the
+    // selection.
+    (
+        Context::SchematicWire,
+        Chord::key(egui::Key::Backspace),
+        "schematic.delete",
+    ),
     // Tuning: F flips the meander's side instead of fitting the view.
     (Context::PcbTune, Chord::key(egui::Key::F), "view.fit"),
     (
@@ -338,6 +358,18 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
     // The board shape sketch hides the Layout keys; of the Everywhere
     // keys, F is its Fillet.
     (Context::BoardShape, Chord::key(egui::Key::F), "view.fit"),
+    // Backspace takes back the last route step or outline point instead
+    // of deleting the selection.
+    (
+        Context::PcbRoute,
+        Chord::key(egui::Key::Backspace),
+        "pcb.delete",
+    ),
+    (
+        Context::PcbFill,
+        Chord::key(egui::Key::Backspace),
+        "pcb.delete",
+    ),
 ];
 
 /// The Fill tool's keys, handled by the PCB canvas (`fill_tool`).
@@ -390,6 +422,10 @@ pub enum AppCommand {
     ExportSchematicPdf,
     Undo,
     Redo,
+    /// The sheet's selection or, while typing, the field's own text.
+    Cut,
+    Copy,
+    Paste,
     ToggleBrowser,
     ToggleIssues,
     Messages,
@@ -402,6 +438,10 @@ pub enum AppCommand {
     TogglePcb3d,
     /// Turn the PCB 3D view to a standard view.
     View3d(View3d),
+    /// Quit the app: unsaved work asks Save, Don't Save or Cancel first.
+    Quit,
+    /// Close the window: the app's one window, so the same request as Quit.
+    CloseWindow,
 }
 
 /// The PCB 3D view's standard views (the navigation cube's targets).
@@ -607,6 +647,7 @@ impl Registry {
             commands,
             custom: BTreeMap::new(),
         }
+        .with_keys(Context::SchematicWire, crate::schematic_editor::WIRE_KEYS)
         .with_keys(Context::PcbRoute, crate::pcb_editor::ROUTE_KEYS)
         .with_keys(Context::PcbFill, FILL_KEYS)
         .with_keys(Context::PcbTune, crate::pcb_editor::TUNE_KEYS)
@@ -768,6 +809,15 @@ impl Registry {
         self.chord(command)
             .map(Chord::shown)
             .or_else(|| command.key_text.clone())
+    }
+
+    /// The shortcut as a menu row shows it: one key, as a menu has room
+    /// for and macOS shows it. A command with two keys (Delete and
+    /// Backspace) shows its first; [`Self::shortcut`] lists both.
+    pub fn menu_shortcut(&self, command: &Command) -> Option<String> {
+        self.chord(command)
+            .map(Chord::shown)
+            .or_else(|| self.shortcut(command))
     }
 
     /// The command a ribbon button runs in `workspace`, for its tooltip.
@@ -1059,6 +1109,14 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::cmd(K::Slash))
             .icon("list")
             .keywords("keys keymap hotkeys help cheat sheet"),
+        app("app.quit", "Quit Pcbcraft", A::Quit)
+            .chord(Chord::cmd(K::Q))
+            .icon("close")
+            .keywords("exit close window"),
+        app("window.close", "Close window", A::CloseWindow)
+            .chord(Chord::cmd(K::W))
+            .icon("close")
+            .keywords("exit quit"),
         app("file.new", "New project", A::New)
             .chord(Chord::cmd(K::N))
             .icon("new"),
@@ -1088,6 +1146,23 @@ fn defaults() -> Vec<Command> {
         app("edit.redo", "Redo", A::Redo)
             .chord(Chord::cmd(K::Z).with_shift())
             .icon("redo"),
+        // The schematic sheet's; over a focused field the field keeps these
+        // keys (`command_dispatch::dispatchable`).
+        app("edit.cut", "Cut", A::Cut)
+            .chord(Chord::cmd(K::X))
+            .icon("cut")
+            .keywords("clipboard text field schematic"),
+        app("edit.copy", "Copy", A::Copy)
+            .chord(Chord::cmd(K::C))
+            .icon("copy")
+            .keywords("clipboard text field schematic duplicate"),
+        app("edit.paste", "Paste", A::Paste)
+            .chord(Chord::cmd(K::V))
+            .icon("paste")
+            .keywords("clipboard text field schematic duplicate"),
+        key("edit.select-all", "Select all", C::Global, Chord::cmd(K::A))
+            .icon("select")
+            .keywords("text field"),
         app("view.browser", "Show or hide the Browser", A::ToggleBrowser)
             .chord(Chord::cmd(K::B))
             .icon("list")
@@ -1254,6 +1329,26 @@ fn defaults() -> Vec<Command> {
         .icon("line")
         .keywords("connect net"),
         tool(
+            "schematic.junction",
+            "Junction point",
+            C::Schematic,
+            Workspace::Schematic,
+            "junction",
+        )
+        .chord(Chord::key(K::J))
+        .icon("point")
+        .keywords("dot join connect crossing"),
+        tool(
+            "schematic.no-connect",
+            "No connect",
+            C::Schematic,
+            Workspace::Schematic,
+            "no-connect",
+        )
+        .chord(Chord::key(K::N))
+        .icon("close")
+        .keywords("nc no-connect unused unconnected not connected cross pin"),
+        tool(
             "schematic.rotate",
             "Rotate symbol",
             C::Schematic,
@@ -1382,10 +1477,11 @@ fn defaults() -> Vec<Command> {
         .keywords("renumber reference designator"),
         key(
             "schematic.delete",
-            "Delete the selected label, sheet symbol or drawing",
+            "Delete the selected part, label, sheet symbol or drawing",
             C::Schematic,
             Chord::key(K::Delete),
-        ),
+        )
+        .also(&[Chord::key(K::Backspace)]),
         key(
             "schematic.cancel",
             "Cancel the tool",
@@ -1446,10 +1542,11 @@ fn defaults() -> Vec<Command> {
         .keywords("zoom selected frame orbit pivot focus"),
     );
     v.extend([
+        // Global, so ⇧⌘U runs it from the schematic too (it opens PCB).
         tool(
             "pcb.update",
             "Update PCB from schematic",
-            C::Pcb,
+            C::Global,
             Workspace::Pcb,
             "update",
         )
@@ -1534,6 +1631,13 @@ fn defaults() -> Vec<Command> {
             C::PcbLayout,
             Chord::key(K::Escape),
         ),
+        key(
+            "pcb.delete",
+            "Delete the selected track, via or fill",
+            C::PcbLayout,
+            Chord::key(K::Delete),
+        )
+        .also(&[Chord::key(K::Backspace)]),
         view(
             "pcb.from-bottom",
             "View from bottom",

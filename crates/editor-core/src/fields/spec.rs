@@ -176,7 +176,7 @@ fn compare(requirement: &Requirement, spec: &RatedSpec, spec_type: &ValueType) -
     use SpecMeaning as M;
     match (spec.meaning, &requirement.value, &spec.value) {
         (M::ExactNominal, V::Quantity { si: r, .. }, V::Quantity { si: s, .. }) => {
-            Some(close(*r, *s))
+            Some(close(r.to_f64(), s.to_f64()))
         }
         (M::ExactNominal, V::Integer(r), V::Integer(s)) => Some(r == s),
         (M::ExactNominal, V::Boolean(r), V::Boolean(s)) => Some(r == s),
@@ -192,9 +192,9 @@ fn compare(requirement: &Requirement, spec: &RatedSpec, spec_type: &ValueType) -
                 min: s_min,
                 max: s_max,
             },
-        ) => Some(close(*r_min, *s_min) && close(*r_max, *s_max)),
+        ) => Some(close(r_min.to_f64(), s_min.to_f64()) && close(r_max.to_f64(), s_max.to_f64())),
         (M::MinimumRating, V::Quantity { si: r, .. }, V::Quantity { si: s, .. }) => {
-            Some(at_least(*s, *r))
+            Some(at_least(s.to_f64(), r.to_f64()))
         }
         (M::MinimumRating, V::Integer(r), V::Integer(s)) => Some(s >= r),
         // A rated range covers the required one: an operating range of
@@ -209,7 +209,9 @@ fn compare(requirement: &Requirement, spec: &RatedSpec, spec_type: &ValueType) -
                 min: s_min,
                 max: s_max,
             },
-        ) => Some(at_least(*r_min, *s_min) && at_least(*s_max, *r_max)),
+        ) => Some(
+            at_least(r_min.to_f64(), s_min.to_f64()) && at_least(s_max.to_f64(), r_max.to_f64()),
+        ),
         (
             M::MaximumTolerance,
             V::Tolerance {
@@ -226,7 +228,11 @@ fn compare(requirement: &Requirement, spec: &RatedSpec, spec_type: &ValueType) -
             else {
                 return None;
             };
-            tolerance_met((*rm, *rp, rb), (*sm, *sp, sb), requirement.nominal)
+            tolerance_met(
+                (rm.to_f64(), rp.to_f64(), rb),
+                (sm.to_f64(), sp.to_f64(), sb),
+                requirement.nominal,
+            )
         }
         _ => None,
     }

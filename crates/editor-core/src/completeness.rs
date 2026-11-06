@@ -6,14 +6,15 @@ use crate::functions::rules::RuleFailureKind;
 use crate::functions::{Direction, Requirement, Resolution};
 use crate::ids::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Endpoint, FootprintRef,
-    Id, PackageRef, Revision, SymbolRef, UnitId,
+    Id, PackageRef, Revision, SymbolRef, TerminalId, UnitId,
 };
 use crate::instances::{self, UnitState};
 use crate::library::{self, Draft, Drafts, Grid, Library};
-use crate::model::Project;
+use crate::model::{Project, WireEnd};
 use crate::nets;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 mod purchasing;
 pub use purchasing::{
@@ -81,8 +82,20 @@ pub struct DefinitionReport {
     pub kind: DefinitionKind,
     /// The revision checked, or the draft's pending revision.
     pub revision: DefinitionRef,
+    /// Whether `library.publish` of this draft and `publish_with` passes:
+    /// neither this revision nor any draft it needs has a blocking finding.
     pub publishable: bool,
     pub findings: Vec<Finding>,
+    /// A draft's closure: the other drafts one `library.publish` must list
+    /// with it, because it names revisions only they create. Dependencies
+    /// first; empty when the snapshot satisfies it alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub publish_with: Vec<DefinitionRef>,
+    /// The members of `publish_with` that cannot publish themselves, which
+    /// is why this draft reports `publishable: false` with no blocking
+    /// finding of its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_by: Vec<DefinitionRef>,
 }
 
 /// Completeness of one instance.
@@ -115,6 +128,15 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
         });
     }
     let functions = instances::function_resolution(&project.library, item)?;
+    // Terminals of this instance a wire ends on.
+    let wired: BTreeSet<TerminalId> = project
+        .wires
+        .iter()
+        .flat_map(|w| [w.from, w.to])
+        .filter_map(WireEnd::terminal)
+        .filter(|e| e.instance == id)
+        .map(|e| e.terminal)
+        .collect();
     for terminal in &resolved.component.definition.terminals {
         let endpoint = Endpoint {
             instance: id,
@@ -126,6 +148,21 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
                 "instance.terminal_unaccounted",
                 format!(
                     "{} terminal ‘{}’ is neither connected nor marked no-connect.",
+                    item.designator, terminal.name
+                ),
+                object,
+                Stage::ElectricallyResolved,
+            ));
+        } else if item.no_connect.contains(&terminal.id)
+            && (wired.contains(&terminal.id)
+                || project
+                    .net_of(endpoint)
+                    .is_some_and(|net| net.terminals.len() >= 2))
+        {
+            findings.push(Finding::blocking(
+                "instance.no_connect_connected",
+                format!(
+                    "{} terminal ‘{}’ is marked no-connect but is connected.",
                     item.designator, terminal.name
                 ),
                 object,
@@ -267,7 +304,8 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
 
 /// Publish findings of one draft or published revision. A draft is checked
 /// as if published together with every other stageable draft, so pending
-/// references between drafts resolve as they would in one publish set.
+/// references between drafts resolve as they would in one publish set; the
+/// report names the drafts that set must list (`publish_with`).
 pub fn definition(
     project: &Project,
     drafts: &Drafts,
@@ -288,8 +326,11 @@ pub fn definition(
             let draft = drafts
                 .get(id)
                 .ok_or_else(|| Error::NotFound("That draft no longer exists.".into()))?;
-            let staged = Staged::new(&project.library, drafts)?;
-            Ok(staged.report(draft, &drafts.grid, project))
+            let id = draft.id;
+            self::drafts(project, drafts)?
+                .into_iter()
+                .find(|r| r.target == CheckTarget::Draft(id))
+                .ok_or_else(|| Error::NotFound("That draft no longer exists.".into()))
         }
     }
 }
@@ -297,11 +338,44 @@ pub fn definition(
 /// [`definition`] for every draft, staging the drafts once.
 pub fn drafts(project: &Project, drafts: &Drafts) -> Result<Vec<DefinitionReport>> {
     let staged = Staged::new(&project.library, drafts)?;
-    Ok(drafts
+    let own = drafts
         .items
         .iter()
         .map(|d| staged.report(d, &drafts.grid, project))
-        .collect())
+        .collect();
+    Ok(with_closures(own, &project.library, drafts))
+}
+
+/// Add each draft's closure to its report, and take `publishable` from the
+/// whole closure: a draft whose set cannot publish is not publishable,
+/// whatever its own findings say. One publish set is limited too.
+fn with_closures(
+    own: Vec<DefinitionReport>,
+    library: &Library,
+    drafts: &Drafts,
+) -> Vec<DefinitionReport> {
+    let blocked: Vec<DefinitionId> = own
+        .iter()
+        .filter(|r| !r.publishable)
+        .map(|r| r.revision.id)
+        .collect();
+    own.into_iter()
+        .map(|mut report| {
+            report.publish_with = library::publish_set(library, drafts, report.revision.id);
+            report.blocked_by = report
+                .publish_with
+                .iter()
+                .filter(|r| blocked.contains(&r.id))
+                .copied()
+                .collect();
+            if !report.blocked_by.is_empty()
+                || report.publish_with.len() >= library::MAX_PUBLISH_SET
+            {
+                report.publishable = false;
+            }
+            report
+        })
+        .collect()
 }
 
 fn report(
@@ -315,6 +389,8 @@ fn report(
         revision,
         publishable: !findings.iter().any(|f| f.blocks_stage(Stage::Publish)),
         findings,
+        publish_with: Vec::new(),
+        blocked_by: Vec::new(),
     }
 }
 

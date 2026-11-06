@@ -20,7 +20,7 @@ fn reference_input(tool: &str) -> Fallible<Value> {
     for line in std::fs::read_to_string(path)?.lines() {
         let response: Value = serde_json::from_str(line)?;
         for block in response["content"].as_array().into_iter().flatten() {
-            if block["type"] == "tool_use" && block["name"] == tool {
+            if block["type"] == "tool_call" && block["name"] == tool {
                 return Ok(block["input"].clone());
             }
         }
@@ -75,13 +75,13 @@ fn build(document: &Value, terminals: Option<&str>) -> Fallible<Built> {
     let mut workspace = tools::Workspace::default();
     let preview =
         json!({"target": {"target": "new", "name": "ESP32-S31-WROOM-3"}, "document": document});
-    let plan = reply_json(tools::execute(
+    let plan = reply_json(execute_open(
         &mut session,
         &mut workspace,
         "library_pinout_preview",
         &preview,
     ))?;
-    let applied = reply_json(tools::execute(
+    let applied = reply_json(execute_open(
         &mut session,
         &mut workspace,
         "library_pinout_apply",
@@ -99,7 +99,7 @@ fn build(document: &Value, terminals: Option<&str>) -> Fallible<Built> {
     if let Some(strategy) = terminals {
         request["request"]["terminals"] = json!(strategy);
     }
-    let outcome = reply_json(tools::execute(
+    let outcome = reply_json(execute_open(
         &mut session,
         &mut workspace,
         "library_package_from_template",

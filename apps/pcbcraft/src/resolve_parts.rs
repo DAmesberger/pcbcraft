@@ -505,7 +505,7 @@ impl ResolveParts {
             .clamp(MIN_CARDS, MAX_CARDS);
         let mut action = None;
         let closed =
-            ui_kit::Window::new(egui::Id::new("resolve-parts"), "component", "Resolve parts")
+            ui_kit::Window::new(egui::Id::unique("resolve-parts"), "component", "Resolve parts")
                 .cards(cards)
                 .show_body(ctx, |ui| {
                     kit::form(ui, |ui| action = self.body(ui, engine));
@@ -601,7 +601,7 @@ impl ResolveParts {
                     0 => {
                         let cell = ui.max_rect();
                         let click = ui
-                            .interact(cell, ui.id().with("fold"), Sense::click())
+                            .interact(cell, ui.scope_id().with("fold"), Sense::click())
                             .on_hover_text("Show why and what to do");
                         if click.clicked() {
                             toggle = Some(index);
@@ -755,7 +755,10 @@ pub fn demo_part(engine: &mut Engine, mpn: &str) -> pcbcraft_core::Result<PartRe
     };
     engine.apply(
         engine.revision(),
-        Operation::Library(LibraryCommand::Publish { drafts: vec![id] }),
+        Operation::Library(LibraryCommand::Publish {
+            drafts: vec![id],
+            close: false,
+        }),
     )?;
     Ok(PartRef::new(id, pcbcraft_core::Revision::FIRST))
 }

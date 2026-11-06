@@ -38,6 +38,17 @@ pub(crate) enum PaletteEvent {
     Run(String),
 }
 
+/// The ranked rows as the palette lists them: one row per name and
+/// context (a command with two keys, such as the palette's own, shows
+/// once), and in each group (Recent, Commands) the commands that run here
+/// before those that do not, which show dimmed with why. The ranking is
+/// otherwise kept.
+pub(crate) fn arrange(rows: &mut Vec<PaletteRow>, empty_query: bool) {
+    let mut seen = std::collections::BTreeSet::new();
+    rows.retain(|r| seen.insert((r.title.clone(), r.detail.clone())));
+    rows.sort_by_key(|r| (!(empty_query && r.recent), !r.enabled));
+}
+
 #[derive(Default)]
 pub(crate) struct CommandPalette {
     open: bool,
@@ -133,7 +144,7 @@ impl CommandPalette {
         kit::search_sheet(ctx, "command-palette", top, width, KEYS, |ui| {
             let field = kit::search_field(
                 ui,
-                egui::Id::new("command-palette-query"),
+                egui::Id::unique("command-palette-query"),
                 &mut self.query,
                 "Find a command: route, save, layer, shortcuts",
                 false,
@@ -145,6 +156,7 @@ impl CommandPalette {
                 self.highlighted = 0;
             }
             rows = rank(&self.query);
+            arrange(&mut rows, self.query.trim().is_empty());
             self.navigate(&rows, keys.up, keys.down);
             if self.query.trim().is_empty() {
                 kit::search_message(ui, crate::reveal::hint_line(), false);
@@ -178,7 +190,7 @@ impl CommandPalette {
                         }
                         let response = kit::command_row(
                             ui,
-                            egui::Id::new(("command-palette-row", &row.id)),
+                            egui::Id::unique(("command-palette-row", &row.id)),
                             &kit::CommandRow {
                                 icon: row.icon,
                                 label: &row.title,

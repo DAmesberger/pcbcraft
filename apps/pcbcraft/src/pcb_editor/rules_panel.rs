@@ -112,22 +112,22 @@ pub fn topic_for(code: &str) -> Option<RuleTopic> {
 }
 
 fn field_id(key: RuleKey) -> egui::Id {
-    egui::Id::new(("pcb-rules-field", key.normalized()))
+    egui::Id::unique(("pcb-rules-field", key.normalized()))
 }
 fn panel_id() -> egui::Id {
-    egui::Id::new("pcb-rules")
+    egui::Id::unique("pcb-rules")
 }
 fn preview_id() -> egui::Id {
-    egui::Id::new("pcb-rules-preview")
+    egui::Id::unique("pcb-rules-preview")
 }
 fn save_id() -> egui::Id {
-    egui::Id::new("pcb-rules-save")
+    egui::Id::unique("pcb-rules-save")
 }
 fn rename_id() -> egui::Id {
-    egui::Id::new("pcb-rules-rename")
+    egui::Id::unique("pcb-rules-rename")
 }
 fn delete_id() -> egui::Id {
-    egui::Id::new("pcb-rules-delete")
+    egui::Id::unique("pcb-rules-delete")
 }
 
 /// The impact review of switching to `profile`.

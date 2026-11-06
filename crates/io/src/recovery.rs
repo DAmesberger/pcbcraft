@@ -11,6 +11,7 @@ use pcbcraft_core::format::{EditorFile, encode_bounded};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    sync::OnceLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -69,32 +70,47 @@ pub struct RecoveryEntry {
     pub error: Option<String>,
 }
 
+/// A session's recovery file. Its name is reserved at the first snapshot,
+/// so a session with nothing to recover leaves no file behind, even when
+/// it ends without cleaning up.
 pub struct RecoveryStore {
     directory: PathBuf,
-    path: PathBuf,
+    path: OnceLock<PathBuf>,
 }
 impl RecoveryStore {
     pub fn new(directory: &Path) -> Result<Self> {
         std::fs::create_dir_all(directory)?;
         let directory = directory.canonicalize()?;
-        // create_new-backed reservation prevents two sessions from sharing a name.
+        Ok(Self {
+            directory,
+            path: OnceLock::new(),
+        })
+    }
+    /// The session's file, once a snapshot reserved it.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.get().map(PathBuf::as_path)
+    }
+    /// The session's file, reserving its name on first use: the
+    /// create_new-backed reservation prevents two sessions from sharing one.
+    fn reserve(&self) -> Result<&Path> {
+        if let Some(path) = self.path.get() {
+            return Ok(path);
+        }
         let reservation = tempfile::Builder::new()
             .prefix(PREFIX)
             .suffix(SUFFIX)
-            .tempfile_in(&directory)?;
+            .tempfile_in(&self.directory)?;
         let (file, path) = reservation.keep().map_err(|e| Error::Io(e.error))?;
         drop(file);
-        Ok(Self { directory, path })
-    }
-    pub fn path(&self) -> &Path {
-        &self.path
+        Ok(self.path.get_or_init(|| path))
     }
     pub fn write(&self, document: &EditorFile, original_path: Option<&Path>) -> Result<()> {
         document.validate()?;
         if original_path.is_some_and(|p| p.as_os_str().len() > 4096) {
             return Err(Error::Invalid("recovery original path is too long".into()));
         }
-        match std::fs::symlink_metadata(&self.path) {
+        let path = self.reserve()?;
+        match std::fs::symlink_metadata(path) {
             Ok(meta) if !meta.is_file() || meta.file_type().is_symlink() => {
                 return Err(Error::Invalid(
                     "recovery path is not a regular session file".into(),
@@ -115,14 +131,17 @@ impl RecoveryStore {
             saved_unix_ms,
         };
         container::write(
-            &self.path,
+            path,
             document,
             Some(&encode_bounded(&meta)?),
             Method::Stored,
         )
     }
     pub fn remove_own(&self) -> Result<()> {
-        remove_entry(&self.directory, &self.path)
+        match self.path() {
+            Some(path) => remove_entry(&self.directory, path),
+            None => Ok(()),
+        }
     }
 }
 
@@ -199,7 +218,7 @@ pub fn list(directory: &Path) -> Result<Vec<RecoveryEntry>> {
         }
         if meta.len() == 0 {
             continue;
-        } // reserved by a session awaiting its first dirty snapshot
+        } // reserved by a session writing its first snapshot
         match summary(&path) {
             Ok((record, document, read)) => {
                 bytes = bytes.saturating_add(read);

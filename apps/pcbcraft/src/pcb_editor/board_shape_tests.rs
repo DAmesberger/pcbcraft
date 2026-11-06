@@ -723,6 +723,58 @@ fn the_board_card_edits_a_board_parameter() -> Fallible {
 }
 
 #[test]
+fn the_placement_card_moves_and_resets_the_designator_in_one_step_each() -> Fallible {
+    use pcbcraft_core::InstanceCommand;
+    let mut engine = Engine::demo()?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    let id = engine
+        .project()
+        .placements
+        .first()
+        .map(|p| p.instance)
+        .ok_or("the demo has no placement")?;
+    editor.set_selection(Some(id), None, None);
+    let (output, op) = slot(&mut editor, &engine, &ctx, vec![]);
+    assert!(op.is_none());
+    let shown = painted(&output);
+    assert!(shown.iter().any(|(t, _)| t == "DESIGNATOR"), "{shown:?}");
+    assert!(
+        !shown.iter().any(|(t, _)| t == "Reset"),
+        "nothing moved yet"
+    );
+    // A typed offset commits once, as one command.
+    editor.text_offset = [1.5, -0.5];
+    let (_, op) = slot(&mut editor, &engine, &ctx, vec![]);
+    let Some(op @ Operation::Instance(InstanceCommand::SetTextPlacement { .. })) = op else {
+        return Err(format!("no text placement: {op:?}").into());
+    };
+    let (_, again) = slot(&mut editor, &engine, &ctx, vec![]);
+    assert!(again.is_none(), "sent twice: {again:?}");
+    let revision = engine.revision();
+    engine.apply(revision, op)?;
+    assert_eq!(engine.revision(), revision + 1);
+    let stored = |engine: &Engine| {
+        engine
+            .project()
+            .instance(id)
+            .map(|i| i.text_placements.values().next().map(|p| p.offset))
+    };
+    assert_eq!(stored(&engine), Some(Some([1.5, -0.5])));
+    // The card shows the stored value and offers Reset.
+    let op = click_text(&mut editor, &engine, &ctx, "Reset")?.ok_or("no reset")?;
+    engine.apply(engine.revision(), op)?;
+    assert_eq!(stored(&engine), Some(None));
+    assert_eq!(engine.revision(), revision + 2);
+    // Undo brings the moved text back, and the card follows the document.
+    engine.undo()?;
+    slot(&mut editor, &engine, &ctx, vec![]);
+    assert_eq!(editor.text_offset, [1.5, -0.5]);
+    Ok(())
+}
+
+#[test]
 fn the_placement_card_constrains_a_part_to_its_nearest_edge_in_place() -> Fallible {
     let mut engine = Engine::demo()?;
     let ctx = egui::Context::default();
@@ -826,4 +878,108 @@ fn the_host_evaluator_solves_a_cutout_gesture_on_the_engine() -> Fallible {
     engine.undo()?;
     assert!(engine.project().board().cutouts.is_empty());
     Ok(())
+}
+
+/// Finding 3 of the UI run: after a card edit in the board shape sketch,
+/// with a field still focused, ⌘S passes the card and the canvas untouched,
+/// so the app's dispatcher (which runs after them) sees it and saves.
+#[test]
+fn the_shape_mode_leaves_command_s_for_the_dispatcher() -> Fallible {
+    let engine = sketch_engine(Vec::new())?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    editor.shape.evaluator = Some(&HOST);
+    let _ = editor.on_tool("board-shape", &engine);
+    assert!(editor.shape.active);
+    assert_eq!(
+        editor.shortcut_context(),
+        crate::commands::Context::BoardShape
+    );
+    let mut value = "inset = 4".to_owned();
+    let field = egui::Id::unique("card-field");
+    let save = egui::Event::Key {
+        key: egui::Key::S,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    let mut left = None;
+    for (round, events) in [vec![], vec![save]].into_iter().enumerate() {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                let response = ui.add(egui::TextEdit::singleline(&mut value).id(field));
+                if round == 0 {
+                    response.request_focus();
+                }
+                let _ = editor.subject_slot(ui, &engine);
+                let _ = editor.canvas(ui, &engine);
+                let _ = refusal::take_mark(ui.ctx());
+                let typing = ui.ctx().egui_wants_keyboard_input();
+                let kept = ui.input(|i| {
+                    i.events.iter().any(|e| {
+                        matches!(
+                            e,
+                            egui::Event::Key {
+                                key: egui::Key::S,
+                                pressed: true,
+                                modifiers,
+                                ..
+                            } if modifiers.command
+                        )
+                    })
+                });
+                left = Some((typing, kept));
+            },
+        );
+        output.textures_delta.clear();
+    }
+    assert_eq!(left, Some((true, true)), "(typing, ⌘S still there)");
+    Ok(())
+}
+
+/// Edge names sit at the middle of their edge, outside the outline, apart
+/// from each other; a name whose place is taken (a dimension label, a part)
+/// slides clear of it.
+#[test]
+fn edge_names_centre_outside_their_edges_and_keep_clear() {
+    use crate::pcb_editor::board_shape_ui::edge_name_rect;
+    use egui::Rect;
+    // A 300 × 200 point board on screen, y down.
+    let [a, b, c, d] = [
+        Pos2::new(100.0, 300.0),
+        Pos2::new(400.0, 300.0),
+        Pos2::new(400.0, 100.0),
+        Pos2::new(100.0, 100.0),
+    ];
+    let centre = Pos2::new(250.0, 200.0);
+    let size = egui::vec2(36.0, 12.0);
+    let edges = [[a, b], [b, c], [c, d], [d, a]];
+    let board = Rect::from_two_pos(a, c);
+    let mut taken: Vec<Rect> = Vec::new();
+    for (k, edge) in edges.iter().enumerate() {
+        let r = edge_name_rect(edge, centre, size, 4.0, &taken);
+        assert!(r.is_some(), "edge {k}");
+        let Some(r) = r else { continue };
+        let mid = edge[0] + (edge[1] - edge[0]) / 2.0;
+        // Centred on the edge's middle along it, outside the board.
+        let along = (edge[1] - edge[0]).normalized();
+        assert!((r.center() - mid).dot(along).abs() < 0.5, "edge {k}: {r:?}");
+        assert!(!board.shrink(0.5).intersects(r), "edge {k} outside: {r:?}");
+        assert!(taken.iter().all(|o| !o.intersects(r)));
+        taken.push(r);
+    }
+    // A dimension label over the right edge's middle pushes its name off.
+    let label = Rect::from_center_size(Pos2::new(430.0, 200.0), egui::vec2(80.0, 16.0));
+    let r = edge_name_rect(&[b, c], centre, size, 4.0, &[label]);
+    assert!(r.is_some_and(|r| !r.intersects(label) && !board.shrink(0.5).intersects(r)));
 }

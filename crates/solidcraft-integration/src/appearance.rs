@@ -346,7 +346,7 @@ impl Body {
             Some(ChipKind::Resistor) => Self::Resistor,
             // An inductor's envelope shows the ceramic chip's wrapped
             // terminations; its generated model is ferrite.
-            Some(ChipKind::Capacitor | ChipKind::Inductor) => Self::Ceramic,
+            Some(ChipKind::Capacitor | ChipKind::Inductor | ChipKind::Led) => Self::Ceramic,
         }
     }
 

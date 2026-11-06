@@ -36,7 +36,11 @@ impl RibbonState {
 
     /// Whether the ribbon can run `event` now; `Err` says why not.
     pub(super) fn allows(&self, event: RibbonEvent, context: Context) -> Result<(), String> {
-        let elsewhere = || format!("Not available here; it applies in {}", context.label());
+        let elsewhere = || match context {
+            // It applies everywhere, so this workspace just lacks it now.
+            Context::Global => "Not available here".to_owned(),
+            context => format!("Not available here; it applies in {}", context.label()),
+        };
         match event {
             RibbonEvent::Tab(id) => self.tabs.contains(&id).then_some(()).ok_or_else(elsewhere),
             RibbonEvent::Tool(id) => match self.tools.iter().find(|t| t.0 == id) {
@@ -51,7 +55,7 @@ impl RibbonState {
 }
 
 /// Whether a pressed chord may run `command` now: a focused text field
-/// keeps plain keys and its own undo, redo and ⌘B; an open menu keeps plain
+/// keeps plain keys and its own undo, redo, clipboard and ⌘B; an open menu keeps plain
 /// keys; canvas keys run where they are handled.
 pub(super) fn dispatchable(command: &Command, chord: Chord, typing: bool, popup: bool) -> bool {
     if command.handler != Handler::Registry || !command.runnable() {
@@ -63,11 +67,37 @@ pub(super) fn dispatchable(command: &Command, chord: Chord, typing: bool, popup:
     !(typing
         && matches!(
             command.action,
-            Action::App(AppCommand::Undo | AppCommand::Redo | AppCommand::ToggleBrowser)
+            Action::App(
+                AppCommand::Undo
+                    | AppCommand::Redo
+                    | AppCommand::Cut
+                    | AppCommand::Copy
+                    | AppCommand::Paste
+                    | AppCommand::ToggleBrowser
+            )
         ))
 }
 
-/// The key presses of this frame no one consumed, as chords.
+/// Whether Cut, Copy or Paste can run in `workspace`: on the schematic
+/// sheet only. Parts come from the schematic, so the board has none to paste.
+pub(super) fn clipboard_availability(
+    workspace: Workspace,
+    schematic: &crate::schematic_editor::SchematicEditor,
+    project: &pcbcraft_core::Project,
+    app: AppCommand,
+) -> Result<(), String> {
+    if workspace != Workspace::Schematic {
+        return Err("Copy and paste work on the schematic sheet".into());
+    }
+    match app {
+        AppCommand::Cut => schematic.can_cut(project),
+        AppCommand::Copy => schematic.can_copy(project),
+        _ => schematic.can_paste(),
+    }
+}
+
+/// The key presses of this frame no one consumed, as chords. egui-winit
+/// delivers ⌘X, ⌘C and ⌘V as clipboard events rather than keys.
 pub(super) fn presses(ctx: &egui::Context) -> Vec<Chord> {
     ctx.input(|i| {
         i.events
@@ -85,10 +115,48 @@ pub(super) fn presses(ctx: &egui::Context) -> Vec<Chord> {
                     shift: modifiers.shift,
                     alt: modifiers.alt,
                 }),
-                _ => None,
+                other => crate::menu_bar::clipboard_chord(other),
             })
             .collect()
     })
+}
+
+/// Commands pressed while a text field had the keyboard, held for one
+/// frame so the field commits its edit first (`App::dispatch_keys`).
+#[derive(Default)]
+pub(super) struct AfterCommit(Vec<String>);
+
+impl AfterCommit {
+    /// The most commands held at once (a frame's own presses).
+    const MAX: usize = 8;
+
+    /// Take the keyboard from the focused field and hold `id` until the
+    /// next frame, which the field commits in.
+    pub(super) fn hold(&mut self, ctx: &egui::Context, id: String) {
+        ctx.memory_mut(egui::Memory::stop_text_input);
+        if self.0.len() < Self::MAX {
+            self.0.push(id);
+        }
+        ctx.request_repaint();
+    }
+
+    /// The held commands, in the order pressed.
+    pub(super) fn take(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+/// A command chosen in a menu: over a focused field it is held until the
+/// field committed (as for its key, see `App::dispatch_keys`); otherwise
+/// it is returned to run now.
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn route(ctx: &egui::Context, held: &mut AfterCommit, id: String) -> Option<String> {
+    if ctx.egui_wants_keyboard_input() {
+        held.hold(ctx, id);
+        None
+    } else {
+        Some(id)
+    }
 }
 
 impl App {
@@ -96,7 +164,7 @@ impl App {
     pub(super) fn active_contexts(&self) -> Vec<Context> {
         let inner = match self.workspace {
             Workspace::Part => self.part.shortcut_context(),
-            Workspace::Schematic => Context::Schematic,
+            Workspace::Schematic => self.schematic.shortcut_context(),
             Workspace::Pcb => self.pcb.shortcut_context(),
         };
         crate::commands::active_contexts(inner)
@@ -113,12 +181,22 @@ impl App {
 
     /// Whether `command` can run now; `Err` says why not. `ribbons` are
     /// the workspaces' ribbon states, built once per frame by the caller.
-    fn availability(&self, command: &Command, ribbons: &[RibbonState]) -> Result<(), String> {
+    pub(super) fn availability(
+        &self,
+        command: &Command,
+        ribbons: &[RibbonState],
+    ) -> Result<(), String> {
         match command.action {
             Action::Key => Err("Press the key in its tool".to_owned()),
             Action::App(app) => match app {
                 AppCommand::Undo if !self.engine.can_undo() => Err("Nothing to undo".into()),
                 AppCommand::Redo if !self.engine.can_redo() => Err("Nothing to redo".into()),
+                AppCommand::Cut | AppCommand::Copy | AppCommand::Paste => clipboard_availability(
+                    self.workspace,
+                    &self.schematic,
+                    self.engine.project(),
+                    app,
+                ),
                 AppCommand::New
                 | AppCommand::Open
                 | AppCommand::Save
@@ -175,7 +253,7 @@ impl App {
             return;
         }
         match command.action {
-            Action::App(app) => self.app_command(app),
+            Action::App(app) => self.app_command(ctx, app),
             Action::Ribbon(workspace, event) => {
                 self.enter(workspace);
                 self.ribbon_event(ctx, event);
@@ -199,7 +277,7 @@ impl App {
         }
     }
 
-    fn app_command(&mut self, app: AppCommand) {
+    fn app_command(&mut self, ctx: &egui::Context, app: AppCommand) {
         match app {
             AppCommand::Palette => {
                 self.shortcut_sheet.close();
@@ -219,6 +297,19 @@ impl App {
             }
             AppCommand::Undo => self.history(false),
             AppCommand::Redo => self.history(true),
+            AppCommand::Copy => {
+                if let Err(error) = self.schematic.copy_selection(ctx, &self.engine) {
+                    self.command_refused(error, true);
+                }
+            }
+            AppCommand::Cut => match self.schematic.cut_selection(ctx, &self.engine) {
+                Ok(operation) => self.apply(ctx, crate::refusal::Origin::Command, operation),
+                Err(error) => self.command_refused(error, true),
+            },
+            AppCommand::Paste => {
+                let operation = self.schematic.paste_at_pointer(&self.engine);
+                self.apply(ctx, crate::refusal::Origin::Command, operation);
+            }
             AppCommand::ToggleBrowser => self.toggle_browser(),
             AppCommand::ToggleIssues => self.issues.toggle(),
             AppCommand::Messages => self.messages_open = true,
@@ -232,6 +323,10 @@ impl App {
                 self.pcb.set_3d(!three_d);
             }
             AppCommand::View3d(view) => self.view_3d(view),
+            // The same request as the window's close button.
+            AppCommand::Quit | AppCommand::CloseWindow => {
+                self.files.request(file_ui::Action::Close)
+            }
         }
     }
 
@@ -284,6 +379,11 @@ impl App {
     /// press runs the command it names in the active contexts, unless the
     /// canvas owns it ([`Handler::InPlace`]).
     pub(super) fn dispatch_keys(&mut self, ctx: &egui::Context) {
+        // Commands held while a field committed (see below): the field
+        // sent its edit this frame, so they act on the committed document.
+        for id in self.after_commit.take() {
+            self.run_command(ctx, &id);
+        }
         if self.palette.is_open() {
             return;
         }
@@ -300,7 +400,14 @@ impl App {
                 continue;
             };
             ctx.input_mut(|i| i.consume_key(chord.modifiers(), chord.key));
-            self.run_command(ctx, &id);
+            if typing {
+                // A ⌘ chord over a focused field: the field gives up the
+                // keyboard and commits on that focus loss, as Enter would,
+                // next frame; the command runs right after it.
+                self.after_commit.hold(ctx, id);
+            } else {
+                self.run_command(ctx, &id);
+            }
         }
     }
 

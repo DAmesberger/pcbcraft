@@ -12,7 +12,9 @@
 //! board, the constraints or a constrained target changed, every target is
 //! placed where its constraint puts it, so parts move with the board's
 //! parameters. A command that moves a constrained part elsewhere is refused
-//! (`board.constrained`); a constraint whose edge or target is gone stays
+//! with [`held_message`] ("J1 is held 2 mm from the right edge; edit or
+//! remove its constraint to move it"), and [`held`] gives a client the same
+//! words before it tries; a constraint whose edge or target is gone stays
 //! stored and is reported by [`checks`] (`board.constraint_unresolved`).
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::geometry::{Bounds, Point, point_valid};
@@ -222,19 +224,39 @@ pub enum BoardCommand {
     DeleteConstraint { id: Id },
 }
 
-/// Apply a board command to a candidate; returns the constraint id
-/// `board.constrain` allocated. Constrained targets are placed by
+// A new command chooses its permission class here.
+declare_classes!(BoardCommand {
+    SetRectangle "board.set_rectangle" Edit,
+    StartSketch "board.start_sketch" Edit,
+    Edit "board.edit" Edit,
+    Constrain "board.constrain" Edit,
+    EditConstraint "board.constraint_edit" Edit,
+    DeleteConstraint "board.constraint_delete" Edit,
+});
+
+/// What a board command produced for its caller.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum BoardApplied {
+    #[default]
+    Nothing,
+    /// The constraint `board.constrain` allocated.
+    Constraint(Id),
+    /// The sketch entities a `board.edit` created and kept.
+    Edited { created: Vec<SketchRef> },
+}
+
+/// Apply a board command to a candidate. Constrained targets are placed by
 /// [`follow`], which the engine runs after every operation.
 pub fn apply(
     project: &mut Project,
     command: BoardCommand,
     evaluator: Option<&dyn BoardShapeEvaluator>,
-) -> Result<Option<Id>> {
+) -> Result<BoardApplied> {
     match command {
         BoardCommand::SetRectangle { size } => {
             project.board_shape = BoardShape::Rectangle;
             super::apply_staged(project, super::LayoutCommand::SetBoardSize { size })?;
-            Ok(None)
+            Ok(BoardApplied::Nothing)
         }
         BoardCommand::StartSketch => {
             let evaluator = needs(evaluator)?;
@@ -245,7 +267,7 @@ pub fn apply(
             }
             let sketch = evaluator.rectangle(project.board_size)?;
             commit(project, sketch, evaluator)?;
-            Ok(None)
+            Ok(BoardApplied::Nothing)
         }
         BoardCommand::Edit { edits } => {
             let evaluator = needs(evaluator)?;
@@ -260,13 +282,17 @@ pub fn apply(
                 ));
             };
             let mut sketch = (**sketch).clone();
+            let mut created = Vec::new();
             let mut deleted = BTreeSet::new();
             for edit in edits {
-                deleted.extend(edit_one(&mut sketch, edit, evaluator)?);
+                let changed = edit_one(&mut sketch, edit, evaluator)?;
+                created.extend(changed.created);
+                deleted.extend(changed.deleted);
             }
             retire(&mut sketch, &deleted)?;
             commit(project, sketch, evaluator)?;
-            Ok(None)
+            created.retain(|c| !deleted.contains(c));
+            Ok(BoardApplied::Edited { created })
         }
         BoardCommand::Constrain { constraint } => {
             check_spec(project, &constraint)?;
@@ -288,7 +314,7 @@ pub fn apply(
             project
                 .edge_constraints
                 .push(EdgeConstraint::from_spec(id, constraint));
-            Ok(Some(id))
+            Ok(BoardApplied::Constraint(id))
         }
         BoardCommand::EditConstraint { constraint } => {
             check_spec(project, &spec_of(&constraint))?;
@@ -307,7 +333,7 @@ pub fn apply(
                 .find(|c| c.id == constraint.id)
                 .ok_or_else(|| missing(constraint.id))?;
             *slot = constraint;
-            Ok(None)
+            Ok(BoardApplied::Nothing)
         }
         BoardCommand::DeleteConstraint { id } => {
             let before = project.edge_constraints.len();
@@ -315,7 +341,7 @@ pub fn apply(
             if project.edge_constraints.len() == before {
                 return Err(missing(id));
             }
-            Ok(None)
+            Ok(BoardApplied::Nothing)
         }
     }
 }
@@ -459,18 +485,37 @@ fn add_cutout(
     Ok(())
 }
 
+/// The sketch entities one edit created and deleted.
+#[derive(Default)]
+struct SketchChanges {
+    created: Vec<SketchRef>,
+    deleted: Vec<SketchRef>,
+}
+
+impl SketchChanges {
+    fn of(outcome: SketchOutcome) -> (SketchBlob, Self) {
+        (
+            outcome.sketch,
+            Self {
+                created: outcome.created,
+                deleted: outcome.deleted,
+            },
+        )
+    }
+}
+
 /// Apply one edit to the candidate sketch; returns the sketch entities it
-/// deleted.
+/// created and deleted.
 fn edit_one(
     sketch: &mut BoardSketch,
     edit: BoardEdit,
     evaluator: &dyn BoardShapeEvaluator,
-) -> Result<Vec<SketchRef>> {
+) -> Result<SketchChanges> {
     match edit {
         BoardEdit::Sketch { edit } => {
-            let outcome = evaluator.apply_sketch(&sketch.sketch, &edit)?;
-            sketch.sketch = outcome.sketch;
-            return Ok(outcome.deleted);
+            let (blob, changes) = SketchChanges::of(evaluator.apply_sketch(&sketch.sketch, &edit)?);
+            sketch.sketch = blob;
+            return Ok(changes);
         }
         BoardEdit::SetParameter { param } => {
             if !param.name.valid() || param.name.is_package() || !param.expr.valid() {
@@ -584,7 +629,8 @@ fn edit_one(
         }
         BoardEdit::Fillet { corners, radius } => {
             let drawn = evaluator.fillet(sketch, &corners, &radius)?;
-            sketch.sketch = drawn.outcome.sketch;
+            let (blob, changes) = SketchChanges::of(drawn.outcome);
+            sketch.sketch = blob;
             for (arc, beside) in drawn.arcs {
                 if sketch.outline.contains(&beside) {
                     sketch.outline.push(arc);
@@ -596,7 +642,7 @@ fn edit_one(
                     c.curves.push(arc);
                 }
             }
-            return Ok(drawn.outcome.deleted);
+            return Ok(changes);
         }
         BoardEdit::AddSlot {
             a,
@@ -608,12 +654,13 @@ fn edit_one(
                 return Err(Error::Invalid("board.slot: slot ends out of range".into()));
             }
             let drawn = evaluator.slot(sketch, a, b, &width)?;
-            sketch.sketch = drawn.outcome.sketch;
+            let (blob, changes) = SketchChanges::of(drawn.outcome);
+            sketch.sketch = blob;
             add_cutout(sketch, CutoutKind::Slot { plated }, drawn.curves)?;
-            return Ok(drawn.outcome.deleted);
+            return Ok(changes);
         }
     }
-    Ok(Vec::new())
+    Ok(SketchChanges::default())
 }
 
 /// Roles that name deleted sketch entities: a cutout, mounting hole or
@@ -664,6 +711,7 @@ fn commit(
     }
     expressions_evaluated(project, &evaluation)?;
     let size = sketch_size(&evaluation.solved)?;
+    super::copper_fits(project, size)?;
     sketch.solve = evaluation.solve;
     sketch.solved = evaluation.solved;
     if let Some(blob) = evaluation.sketch_out {
@@ -911,9 +959,9 @@ fn same_angle(a: f64, b: f64) -> bool {
 
 /// Place every constrained target where its constraint puts it, after an
 /// operation took the project from `before` to `project`. A constraint
-/// whose edge or target is gone is left for [`checks`]. Refuses
-/// (`board.constrained`) an operation that moved a constrained part away
-/// from its constrained pose, and expressions that do not evaluate.
+/// whose edge or target is gone is left for [`checks`]. Refuses, in the
+/// words of [`held_message`], an operation that moved a constrained part
+/// away from its constrained pose, and expressions that do not evaluate.
 pub fn follow(
     before: &Project,
     project: &mut Project,
@@ -1000,13 +1048,13 @@ pub fn follow(
                             commanded,
                         )
                 {
-                    let name = project
-                        .instance(id)
-                        .map_or_else(|| id.to_string(), |i| i.designator.clone());
-                    return Err(Error::Conflict(format!(
-                        "board.constrained: {name} is placed by edge constraint {} (edge `{}`); \
-                         edit or delete the constraint to move it",
-                        c.id, c.edge.0
+                    let verb = if moved && !lands { "move" } else { "turn" };
+                    let offset = values.get(&c.id).map(|v| v.1);
+                    return Err(Error::Conflict(held_message(
+                        &part_name(project, id),
+                        &c.edge,
+                        offset,
+                        verb,
                     )));
                 }
                 if !lands {
@@ -1026,6 +1074,84 @@ pub fn follow(
         }
     }
     Ok(())
+}
+
+/// A part's name in a message: its designator.
+pub(crate) fn part_name(project: &Project, instance: Id) -> String {
+    project
+        .instance(instance)
+        .map_or_else(|| "The part".to_owned(), |i| i.designator.clone())
+}
+
+/// "the right edge" for the edge named `right`; a name that already says
+/// "edge" is not doubled.
+fn edge_words(edge: &EdgeName) -> String {
+    let name = edge.0.trim();
+    if name.to_lowercase().ends_with("edge") {
+        format!("the {name}")
+    } else {
+        format!("the {name} edge")
+    }
+}
+
+/// Where an edge constraint holds a part, as words: "2 mm from the right
+/// edge", "on the right edge", "1.5 mm past the right edge", or "to the
+/// right edge" when `offset` (the solved distance off the edge, mm) is not
+/// known.
+pub fn held_at(edge: &EdgeName, offset: Option<f64>) -> String {
+    let edge = edge_words(edge);
+    match offset {
+        Some(o) if o.abs() <= 5e-4 => format!("on {edge}"),
+        Some(o) if o < 0.0 => format!("{} mm past {edge}", super::limits::mm(-o)),
+        Some(o) => format!("{} mm from {edge}", super::limits::mm(o)),
+        None => format!("to {edge}"),
+    }
+}
+
+/// The refusal for a part an edge constraint holds, as one message line:
+/// "J1 is held 2 mm from the right edge; edit or remove its constraint to
+/// move it". `offset` is the constraint's solved distance off the edge;
+/// `verb` is what was refused ("move", "turn"). Too long a line drops the
+/// distance, then the edge, so the way out always shows.
+pub fn held_message(name: &str, edge: &EdgeName, offset: Option<f64>, verb: &str) -> String {
+    let way_out = format!("edit or remove its constraint to {verb} it");
+    [
+        format!("{name} is held {}; {way_out}", held_at(edge, offset)),
+        format!("{name} is held {}; {way_out}", held_at(edge, None)),
+        format!("{name} is held to a board edge; {way_out}"),
+        format!("It is held to a board edge; {way_out}"),
+    ]
+    .into_iter()
+    .find(|m| m.chars().count() <= crate::diagnostics::MAX_LINE)
+    .unwrap_or_else(|| format!("Held to a board edge; {way_out}"))
+}
+
+/// Why no operation may move or turn `instance` away from where an edge
+/// constraint puts it, in the words [`follow`] refuses with; `None` for a
+/// part no resolvable constraint holds. The distance shows when the
+/// constraint's expressions evaluate (plain lengths always do; expressions
+/// need `evaluator`).
+pub fn held(
+    project: &Project,
+    instance: Id,
+    evaluator: Option<&dyn BoardShapeEvaluator>,
+) -> Option<Error> {
+    let c = project
+        .edge_constraints
+        .iter()
+        .find(|c| c.target == ConstraintTarget::Placement(instance))?;
+    project.board().edge(&c.edge)?;
+    let offset = plain_mm(&c.offset).or_else(|| {
+        values(project, evaluator)
+            .ok()
+            .and_then(|v| v.get(&c.id).map(|v| v.1))
+    });
+    Some(Error::Conflict(held_message(
+        &part_name(project, instance),
+        &c.edge,
+        offset,
+        "move",
+    )))
 }
 
 /// Translate an outline so its reference point (its start for

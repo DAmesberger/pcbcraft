@@ -3,9 +3,10 @@
 //! File effects never enter undo history.
 use crate::{Error, Result};
 use pcbcraft_core::{
-    DefinitionId, Engine, LibraryCommand, Operation, Project, Query, QueryResult,
+    Class, DefinitionId, Engine, LibraryCommand, Operation, Project, Query, QueryResult,
     catalog::EntryKey,
     erc,
+    fabrication::ProfileChoice,
     format::EditorFile,
     geometry::Point,
     ids::{DefinitionRef, LibraryId, Revision, SourceLineageId},
@@ -33,6 +34,29 @@ pub struct ApplyParams {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoParams {}
+
+/// What `project.inspect` returns.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InspectParams {
+    /// A JSON pointer into the snapshot, such as `/project/vias` or
+    /// `/project/nets`: just what it names is returned.
+    #[serde(default)]
+    pub at: Option<String>,
+}
+
+/// Which schema `project.schema` returns.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaParams {
+    /// An operation command (`layout.add_via`), a query (`library.search`)
+    /// or a command or tool name. Without it, the index of all of them.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// One definition `name`'s reply lists under `more_defs`.
+    #[serde(default)]
+    pub def: Option<String>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -106,6 +130,10 @@ pub struct SourceCreateParams {
     pub path: String,
     /// The library's display name, stored in its manifest.
     pub name: String,
+    /// The library id; drawn at random when omitted. A recorded session
+    /// passes the one it recorded, so its replay reproduces the folder.
+    #[serde(default)]
+    pub library: Option<LibraryId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -167,6 +195,23 @@ pub struct PublishParams {
     pub root: DefinitionRef,
     /// A writable library source.
     pub library: LibraryId,
+    /// Lineage ids for lineages new to the library, consumed in closure
+    /// order (fewer than it needs refuses, unused ones are ignored); drawn
+    /// at random when omitted. A recorded session passes the ones it
+    /// recorded, so its replay reproduces the folder and the origins.
+    #[serde(default)]
+    pub fresh: Option<Vec<SourceLineageId>>,
+}
+
+/// Import one exact revision and its closure from another project file.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportFromProjectParams {
+    pub expected_revision: u64,
+    /// The `.pcbcraft` file to read. It is not changed.
+    pub path: String,
+    /// A published revision in that file.
+    pub root: DefinitionRef,
 }
 
 /// Write the production files of the open project.
@@ -201,7 +246,10 @@ pub enum Request {
     Apply(ApplyParams),
     /// Return the document, drafts with their findings and design checks.
     #[serde(rename = "project.inspect")]
-    Inspect(NoParams),
+    Inspect(InspectParams),
+    /// The exact schema of one operation, query or command, or the index.
+    #[serde(rename = "project.schema")]
+    Schema(SchemaParams),
     /// Answer one read-only core query (`component.inspect`,
     /// `component.check`, `component.check_drafts`, `library.search`,
     /// `library.facets`, `library.inspect`, `project.bom`,
@@ -270,6 +318,10 @@ pub enum Request {
     /// bundle, then record the origins with `library.promote`.
     #[serde(rename = "library.publish_to_folder")]
     Publish(PublishParams),
+    /// Read another project file and apply `library.import` with one exact
+    /// revision and its closure: one undo step.
+    #[serde(rename = "library.import_from_project")]
+    ImportFromProject(ImportFromProjectParams),
     /// Read an SVG file and add its drawing to a draft through
     /// `library.edit_graphics`: one atomic undo step.
     #[serde(rename = "library.import_svg")]
@@ -318,15 +370,145 @@ pub enum Request {
     SetPartFileValues(mechanical_parts::SetPartFileValuesParams),
 }
 
+// A new request chooses its permission class here. `project.apply` and
+// `project.query` take their operation's or query's; a request that names a
+// path needs at least Ask ([`Request::effective_class`]).
+pcbcraft_core::declare_classes!(Request {
+    Apply "project.apply" Edit,
+    Inspect "project.inspect" Read,
+    Schema "project.schema" Read,
+    Query "project.query" Read,
+    Undo "project.undo" Edit,
+    Redo "project.redo" Edit,
+    New "project.new" Ask,
+    Open "project.open" Ask,
+    Save "project.save" Ask,
+    PreviewUpdate "project.preview_update" Read,
+    ApplyUpdate "project.apply_update" Edit,
+    ExportNative "project.export_native" Ask,
+    ExportFabrication "project.export_fabrication" Ask,
+    Sources "library.sources" Read,
+    SourceAdd "library.source.add" Never,
+    SourceCreate "library.source.create" Never,
+    SourceRemove "library.source.remove" Never,
+    SourceEnable "library.source.enable" Never,
+    Rescan "library.rescan" Read,
+    Favourite "library.favourite" Never,
+    Bundle "library.bundle" Read,
+    ImportFrom "library.import_from_folder" Edit,
+    PlaceFrom "library.place_from_folder" Edit,
+    Publish "library.publish_to_folder" Ask,
+    ImportFromProject "library.import_from_project" Ask,
+    ImportSvg "library.import_svg" Ask,
+    OpenPreview "library.open_preview" Read,
+    PinoutSchema "library.pinout_schema" Read,
+    FirmwarePreview "firmware.export_preview" Read,
+    FirmwareExport "firmware.export" Ask,
+    InspectModelFile "library.inspect_model_file" Ask,
+    SetMarking "library.set_marking" Edit,
+    SchematicPdf "schematic.export_pdf" Ask,
+    MarkingSurfaces "library.marking_surfaces" Read,
+    CheckPartFile "library.check_part_file" Read,
+    UsePartFile "library.use_part_file" Edit,
+    SetPartValues "library.set_part_values" Edit,
+    PartFiles "library.part_files" Read,
+    PlacePartFile "layout.place_part_file" Edit,
+    SetPartFileValues "layout.set_part_file_values" Edit,
+});
+
 impl Request {
+    /// The class the gate acts on: the one listed, or the operation's or
+    /// query's for those two requests, and at least Ask once a path is named.
+    pub fn effective_class(&self) -> Class {
+        let own = match self {
+            Self::Apply(params) => params.operation.class(),
+            Self::Query(query) => query.class(),
+            other => other.class(),
+        };
+        if self.paths().is_empty() {
+            own
+        } else {
+            own.max(Class::Ask)
+        }
+    }
+
+    /// What the gate reports as requested: the operation or query inside
+    /// `project.apply` and `project.query`, else the request itself.
+    pub fn subject(&self) -> &'static str {
+        match self {
+            Self::Apply(params) => params.operation.command(),
+            Self::Query(query) => query.command(),
+            other => other.command(),
+        }
+    }
+
+    /// Every file or folder path this request names.
+    pub fn paths(&self) -> Vec<&str> {
+        match self {
+            Self::Open(params) | Self::ExportNative(params) | Self::SourceRemove(params) => {
+                vec![params.path.as_str()]
+            }
+            Self::Save(params) => params.path.iter().map(String::as_str).collect(),
+            Self::ExportFabrication(params) => vec![params.output.as_str()],
+            Self::SourceAdd(params) => vec![params.path.as_str()],
+            Self::SourceCreate(params) => vec![params.path.as_str()],
+            Self::SourceEnable(params) => vec![params.path.as_str()],
+            Self::ImportFromProject(params) => vec![params.path.as_str()],
+            Self::ImportSvg(params) => vec![params.path.as_str()],
+            Self::FirmwarePreview(params) | Self::FirmwareExport(params) => params
+                .path
+                .iter()
+                .chain(&params.template_file)
+                .map(String::as_str)
+                .collect(),
+            Self::InspectModelFile(params) => vec![params.path.as_str()],
+            Self::SchematicPdf(params) => vec![params.path.as_str()],
+            Self::CheckPartFile(params) => params.path.iter().map(String::as_str).collect(),
+            Self::UsePartFile(params) => params.path.iter().map(String::as_str).collect(),
+            Self::PlacePartFile(params) => params.path.iter().map(String::as_str).collect(),
+            Self::Apply(_)
+            | Self::Inspect(_)
+            | Self::Schema(_)
+            | Self::Query(_)
+            | Self::Undo(_)
+            | Self::Redo(_)
+            | Self::New(_)
+            | Self::PreviewUpdate(_)
+            | Self::ApplyUpdate(_)
+            | Self::Sources(_)
+            | Self::Rescan(_)
+            | Self::Favourite(_)
+            | Self::Bundle(_)
+            | Self::ImportFrom(_)
+            | Self::PlaceFrom(_)
+            | Self::Publish(_)
+            | Self::OpenPreview(_)
+            | Self::PinoutSchema(_)
+            | Self::SetMarking(_)
+            | Self::MarkingSurfaces(_)
+            | Self::SetPartValues(_)
+            | Self::PartFiles(_)
+            | Self::SetPartFileValues(_) => Vec::new(),
+        }
+    }
+
     /// Every request ID with its description and parameter schema, generated
     /// from the Rust types the dispatcher deserializes.
     pub fn catalog() -> Vec<CommandInfo> {
         fn info<T: JsonSchema>(id: &'static str, description: &'static str) -> CommandInfo {
+            let params = serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null);
             CommandInfo {
                 id,
                 description,
-                params: serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null),
+                // Unlisted cannot pass the gate's tests; refused until then.
+                class: Request::CLASSES
+                    .iter()
+                    .find(|(name, _)| *name == id)
+                    .map_or(Class::Never, |(_, class)| *class),
+                takes_path: ["path", "output", "template_file"]
+                    .iter()
+                    .any(|name| params["properties"].get(name).is_some()),
+                params,
             }
         }
         vec![
@@ -334,9 +516,13 @@ impl Request {
                 "project.apply",
                 "Apply one typed document operation (library, instance including instance.assign_part, schematic, layout including layout.set_fabrication, layout.set_stackup, layout.edit_stackup and layout.add_via, or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
             ),
-            info::<NoParams>(
+            info::<InspectParams>(
                 "project.inspect",
-                "Return the revision, project, drafts with their publish findings, ERC and board-check findings.",
+                "Return the revision, object counts, each draft's state and open findings by code. verbose: true returns the whole snapshot (project, drafts with their publish findings, ERC and board-check findings; about 0.5 MB on a small board); at: a JSON pointer into it (/project/vias, /project/nets) returns just what it names.",
+            ),
+            info::<SchemaParams>(
+                "project.schema",
+                "The exact JSON schema of one project.apply operation (layout.add_via), project.query query (library.search) or command, with how to send it; large definitions come separately through def. Without a name, the index of all of them with one line each. Not a document change.",
             ),
             info::<Query>(
                 "project.query",
@@ -379,7 +565,7 @@ impl Request {
             ),
             info::<SourceCreateParams>(
                 "library.source.create",
-                "Create an empty library folder with a new random library id and add it as a writable source.",
+                "Create an empty library folder and add it as a writable source. Its library id is random unless library supplies one (a recorded session passes the id it recorded, so a replay reproduces the folder).",
             ),
             info::<PathParams>(
                 "library.source.remove",
@@ -405,13 +591,17 @@ impl Request {
                 "library.import_from_folder",
                 "Read a folder bundle and apply library.import with it at the expected revision: the closure is copied into the project under fresh project lineages, or appended as the next project revision of a lineage already imported from the same source; an equal origin is reused. One undo step; places nothing. Follow with project.preview_update to move instances to the new revision.",
             ),
+            info::<ImportFromProjectParams>(
+                "library.import_from_project",
+                "Read another .pcbcraft file (never changed) and copy one published revision (root, with its kind, id and revision in that file) and its complete closure into this project, packed assets included, as one library.import at expected_revision: one undo step, nothing placed. Each copy records its origin with the exact source revision and content hash, and every pin keeps naming the exact revision it names there. The project numbers its copies in import order. Ids are derived from the file's content, so a replay is reproducible and importing again reuses the copies (no undo step); a newer revision of a copied lineage becomes its next project revision. A draft in that file cannot be imported: publish it there first. An unknown root lists what the file holds. Refused without changes on a stale revision, a dangling reference, a model that may not be redistributed, or a revision that differs from the copy already held (library.source_modified).",
+            ),
             info::<PlaceFromParams>(
                 "library.place_from_folder",
                 "Read a folder bundle of a component lineage and apply library.place_from with it: import if needed, then place, as one transaction and one undo step. When the project holds another revision of that lineage, other_revision refuse (default) fails with code library.other_revision and keep_both imports the folder revision beside it.",
             ),
             info::<PublishParams>(
                 "library.publish_to_folder",
-                "Promote a published project revision and its closure to a writable library source: compute library.promote_preview with fresh random lineage ids, write the records and assets to the folder (an existing rNNNN.json with other content refuses the write before anything is written), then apply library.promote, which records the origins as one undo step. Returns the written and unchanged record paths.",
+                "Promote a published project revision and its closure to a writable library source: compute library.promote_preview with fresh lineage ids (random unless fresh supplies them, as a recorded session does so that a replay reproduces the folder and origins; too few refuses before anything is written), write the records and assets to the folder (an existing rNNNN.json with other content refuses the write before anything is written), then apply library.promote, which records the origins as one undo step. Returns the written and unchanged record paths.",
             ),
             info::<ImportSvgParams>(
                 "library.import_svg",
@@ -451,11 +641,11 @@ impl Request {
             ),
             info::<part_files::UsePartFileParams>(
                 "library.use_part_file",
-                "Make a package draft's 3D model a SolidCraft part file at literal parameter values: the file (path, with its licence, or a builtin) is checked, packed as a Model of format solidcraft (or the same file's existing model is reused) and the package's model set to it, with the evaluated bounds and marking surfaces stored, in one undo step at expected_revision. Refused whole on a blocking finding. The footprint, terminals and keep-outs stay the package's own. Returns the snapshot and the check report.",
+                "Make a package draft's 3D model a SolidCraft part file at literal parameter values: the file (path, with its licence, or a builtin) is checked, packed as a Model of format solidcraft (or the same file's existing model is reused) and the package's model set to it, with the evaluated bounds and marking surfaces stored, in one undo step at expected_revision. Refused whole on a blocking finding. The footprint, terminals and keep-outs stay the package's own. Returns the outcome and the check report.",
             ),
             info::<part_files::SetPartValuesParams>(
                 "library.set_part_values",
-                "Set new literal values for the part file a package draft uses (they replace the previous values), re-evaluated and checked, in one undo step at expected_revision; refused whole on a blocking finding. Returns the snapshot and the check report.",
+                "Set new literal values for the part file a package draft uses (they replace the previous values), re-evaluated and checked, in one undo step at expected_revision; refused whole on a blocking finding. Returns the outcome and the check report.",
             ),
             info::<NoParams>(
                 "library.part_files",
@@ -463,7 +653,7 @@ impl Request {
             ),
             info::<mechanical_parts::PlacePartFileParams>(
                 "layout.place_part_file",
-                "Place a parametric 3D part (an SMD nut or standoff, spacer, heatsink, bracket: path with its licence, builtin or model) directly on the board at position (mm, the part origin), rotation_deg and layer, at literal parameter values. The file is checked (blocking findings refuse) and evaluated; lands come from lands, lands_from (a footprint's pads) or a built-in's land rules, else none. pads: mechanical (default, no terminal) or terminals (each copper land a terminal that can join a net through the part's symbol on a sheet). bom (default true) and pick_and_place (default: has copper lands). The variant (file, values, lands, flags) is reused or made as an ordinary component set with a generated footprint and courtyard, and a new instance placed with its symbol unit off-sheet, in one undo step at expected_revision. Returns the snapshot, the outcome (PartPlaced: instance, designator, component, created) and the check report.",
+                "Place a parametric 3D part (an SMD nut or standoff, spacer, heatsink, bracket: path with its licence, builtin or model) directly on the board at position (mm, the part origin), rotation_deg and layer, at literal parameter values. The file is checked (blocking findings refuse) and evaluated; lands come from lands, lands_from (a footprint's pads) or a built-in's land rules, else none. pads: mechanical (default, no terminal) or terminals (each copper land a terminal that can join a net through the part's symbol on a sheet). bom (default true) and pick_and_place (default: has copper lands). The variant (file, values, lands, flags) is reused or made as an ordinary component set with a generated footprint and courtyard, and a new instance placed with its symbol unit off-sheet, in one undo step at expected_revision. Returns the outcome (PartPlaced: instance, designator, component, created) and the check report.",
             ),
             info::<mechanical_parts::SetPartFileValuesParams>(
                 "layout.set_part_file_values",
@@ -477,11 +667,38 @@ impl Request {
     }
 }
 
+impl Request {
+    /// [`Request::catalog`], generated once.
+    pub fn catalog_shared() -> &'static [CommandInfo] {
+        static CATALOG: std::sync::OnceLock<Vec<CommandInfo>> = std::sync::OnceLock::new();
+        CATALOG.get_or_init(Request::catalog)
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandInfo {
     pub id: &'static str,
     pub description: &'static str,
+    pub class: Class,
+    /// Whether it can name a path, which makes it at least Ask.
+    pub takes_path: bool,
     pub params: Value,
+}
+
+impl CommandInfo {
+    /// The sentence a tool description ends with, so a model can see what
+    /// will need asking.
+    pub fn permission_note(&self) -> String {
+        match (self.id, self.class, self.takes_path) {
+            ("project.apply", ..) => {
+                "Permission: edit; project_schema marks the operations that ask.".to_owned()
+            }
+            (_, class @ (Class::Read | Class::Edit), true) => {
+                format!("Permission: {}, or ask with a path.", class.name())
+            }
+            (_, class, _) => format!("Permission: {}.", class.name()),
+        }
+    }
 }
 
 /// A headless editing session: one engine, the current file path and the
@@ -491,14 +708,17 @@ pub struct Session {
     engine: Engine,
     path: Option<PathBuf>,
     sources: sources::Sources,
+    /// Set while [`Session::respond`] runs a request: mutations answer
+    /// without building the snapshot.
+    compact: bool,
+    baseline: Option<reply::Baseline>,
 }
 
 impl Session {
     pub fn new(engine: Engine) -> Self {
         Self {
             engine,
-            path: None,
-            sources: sources::Sources::default(),
+            ..Self::default()
         }
     }
     /// A session with the given library sources, e.g.
@@ -506,8 +726,8 @@ impl Session {
     pub fn with_sources(engine: Engine, sources: sources::Sources) -> Self {
         Self {
             engine,
-            path: None,
             sources,
+            ..Self::default()
         }
     }
     pub fn sources(&self) -> &sources::Sources {
@@ -529,12 +749,25 @@ impl Session {
                     params.operation,
                     hosted(),
                 )?;
-                let mut snapshot = self.snapshot();
-                snapshot["outcome"] = serde_json::to_value(outcome)?;
-                return Ok(snapshot);
+                let mut reply = self.document_reply();
+                reply["outcome"] = serde_json::to_value(outcome)?;
+                return Ok(reply);
             }
-            Request::Inspect(_) => {}
+            Request::Inspect(params) => return self.inspect(params),
+            Request::Schema(params) => return discovery::schema_reply(params),
             Request::Query(query) => {
+                // A profile id reads as it does for an export: a built-in
+                // profile or one of the user's library.
+                let query = match query {
+                    Query::Preflight {
+                        profile: Some(ProfileChoice::Id(id)),
+                    } => Query::Preflight {
+                        profile: Some(ProfileChoice::Profile(Box::new(
+                            pcbcraft_io::fabrication::resolve_profile(&id)?,
+                        ))),
+                    },
+                    other => other,
+                };
                 return Ok(serde_json::to_value(self.engine.query_using(
                     query,
                     &self.sources.context(),
@@ -615,7 +848,13 @@ impl Session {
                 return Ok(json!({"added": added, "sources": self.sources.list()}));
             }
             Request::SourceCreate(params) => {
-                let created = self.sources.create(Path::new(&params.path), &params.name)?;
+                let created = match params.library {
+                    Some(library) => {
+                        self.sources
+                            .create_as(Path::new(&params.path), &params.name, library)?
+                    }
+                    None => self.sources.create(Path::new(&params.path), &params.name)?,
+                };
                 return Ok(json!({"created": created, "sources": self.sources.list()}));
             }
             Request::SourceRemove(params) => {
@@ -673,6 +912,7 @@ impl Session {
                 }
                 return Ok(reply);
             }
+            Request::ImportFromProject(params) => return self.import_from_project(params),
             Request::Publish(params) => return self.publish(params),
             Request::ImportSvg(params) => return self.import_svg(params),
             Request::OpenPreview(params) => return self.open_preview(params),
@@ -701,17 +941,52 @@ impl Session {
             Request::PlacePartFile(params) => return self.place_part_file(*params),
             Request::SetPartFileValues(params) => return self.set_part_file_values(params),
         }
-        Ok(self.snapshot())
+        Ok(self.document_reply())
     }
 
-    /// Apply one operation and return the snapshot with its outcome.
+    /// Apply one operation and return the document state with its outcome.
     fn apply(&mut self, expected_revision: u64, operation: Operation) -> Result<Value> {
         let outcome = self
             .engine
             .apply_hosted(expected_revision, operation, hosted())?;
-        let mut snapshot = self.snapshot();
-        snapshot["outcome"] = serde_json::to_value(outcome)?;
-        Ok(snapshot)
+        let mut reply = self.document_reply();
+        reply["outcome"] = serde_json::to_value(outcome)?;
+        Ok(reply)
+    }
+
+    /// `library.import_from_project`: read the file, take the exact closure
+    /// from it and apply one `library.import` with that bundle inline.
+    fn import_from_project(&mut self, params: ImportFromProjectParams) -> Result<Value> {
+        let path = Path::new(&params.path);
+        let file = pcbcraft_io::read_project(path)?;
+        let library = &file.project.library;
+        if library.definition(params.root).is_none() {
+            let held = held_revisions(&file);
+            let message = match file.drafts.get(params.root.id) {
+                Some(draft) => format!(
+                    "{} holds ‘{}’ as an unpublished draft. Only a published revision is immutable: open that project, publish it and save, then import it.",
+                    params.path, draft.meta.name
+                ),
+                None => format!(
+                    "{} does not hold {} {} of lineage {}. It holds: {held}",
+                    params.path,
+                    pcbcraft_core::library::names::noun(params.root.kind),
+                    params.root.revision,
+                    params.root.id
+                ),
+            };
+            return Err(pcbcraft_core::Error::NotFound(message).into());
+        }
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .filter(|stem| stem.len() <= pcbcraft_core::ids::MAX_LABEL)
+            .unwrap_or("another project");
+        let bundle = pcbcraft_core::library::import::project_bundle(library, params.root, name)?;
+        let operation = Operation::Library(LibraryCommand::Import {
+            bundle: Box::new(bundle),
+        });
+        self.apply(params.expected_revision, operation)
     }
 
     fn list_sources(&self) -> Result<Value> {
@@ -734,9 +1009,12 @@ impl Session {
         let folder = self.sources.writable(params.library)?.clone();
         let members =
             pcbcraft_core::library::bundle::closure(&self.engine.project().library, params.root)?;
-        let fresh = (0..members.len())
-            .map(|_| pcbcraft_io::library_folder::new_lineage_id())
-            .collect::<pcbcraft_io::Result<Vec<_>>>()?;
+        let fresh = match params.fresh {
+            Some(fresh) => fresh,
+            None => (0..members.len())
+                .map(|_| pcbcraft_io::library_folder::new_lineage_id())
+                .collect::<pcbcraft_io::Result<Vec<_>>>()?,
+        };
         let name = folder.manifest.name.clone();
         let plan = match self.engine.query(Query::PromotePreview {
             root: params.root,
@@ -794,13 +1072,14 @@ impl Session {
             }),
             &pcbcraft_solidcraft::footprint::SketchEvaluator,
         )?;
-        let mut snapshot = self.snapshot();
-        snapshot["outcome"] = serde_json::to_value(outcome)?;
-        snapshot["import"] = json!({"size": artwork.size, "notes": artwork.notes});
-        Ok(snapshot)
+        let mut reply = self.document_reply();
+        reply["outcome"] = serde_json::to_value(outcome)?;
+        reply["import"] = json!({"size": artwork.size, "notes": artwork.notes});
+        Ok(reply)
     }
 
-    /// The document state every mutation and inspection returns. Each draft
+    /// The whole document state, returned to in-process callers and to
+    /// `verbose` requests. Each draft
     /// carries the core's `component.check` report, from one staged
     /// `component.check_drafts` query.
     pub fn snapshot(&self) -> Value {
@@ -882,6 +1161,7 @@ pub fn publish_library(session: &mut Session, path: &str, name: &str) -> Result<
     let created = session.execute(Request::SourceCreate(SourceCreateParams {
         path: path.into(),
         name: name.into(),
+        library: None,
     }))?;
     let id: LibraryId = serde_json::from_value(created["created"]["library"].clone())?;
     let mut written = Vec::new();
@@ -890,6 +1170,7 @@ pub fn publish_library(session: &mut Session, path: &str, name: &str) -> Result<
             expected_revision: session.engine().revision(),
             root,
             library: id,
+            fresh: None,
         }))?;
         if let Some(records) = reply["written"]["records"].as_array() {
             written.extend(records.iter().cloned());
@@ -902,6 +1183,35 @@ pub fn publish_library(session: &mut Session, path: &str, name: &str) -> Result<
     }))
 }
 
+/// What a project file holds that is worth importing, for a refusal: its
+/// latest Parts and components by kind, id, revision and name.
+fn held_revisions(file: &EditorFile) -> String {
+    const SHOWN: usize = 16;
+    let library = &file.project.library;
+    let parts = library
+        .latest_parts()
+        .into_iter()
+        .map(|p| ("part", p.id, p.revision, p.meta.name.clone()));
+    let components = library
+        .latest_components()
+        .into_iter()
+        .map(|c| ("component", c.id, c.revision, c.meta.name.clone()));
+    let all: Vec<String> = parts
+        .chain(components)
+        .map(|(kind, id, revision, name)| format!("{kind} {} {revision} ‘{name}’", id.0))
+        .collect();
+    if all.is_empty() {
+        return "no published Part or component.".into();
+    }
+    let more = all.len().saturating_sub(SHOWN);
+    let shown = all.into_iter().take(SHOWN).collect::<Vec<_>>().join(", ");
+    if more > 0 {
+        format!("{shown} and {more} more.")
+    } else {
+        format!("{shown}.")
+    }
+}
+
 /// Request, document and diagnostic schemas for discovery.
 pub fn schemas() -> Value {
     json!({
@@ -912,6 +1222,7 @@ pub fn schemas() -> Value {
     })
 }
 
+pub mod discovery;
 mod firmware;
 mod marking;
 pub mod mechanical_parts;
@@ -919,6 +1230,8 @@ mod models;
 pub mod part_files;
 mod pinout;
 mod preview;
+mod reply;
+pub(crate) use reply::take_verbose;
 pub mod sources;
 
 #[cfg(test)]
@@ -939,6 +1252,10 @@ mod package_tests;
 mod parts_tests;
 #[cfg(test)]
 mod pinout_tests;
+#[cfg(test)]
+mod project_import_tests;
+#[cfg(test)]
+mod reply_tests;
 #[cfg(test)]
 mod svg_tests;
 #[cfg(test)]

@@ -125,6 +125,10 @@ pub(super) struct RouteState {
     /// Revisions the fill worker made by storing fill copper (from, to):
     /// no track or via changed, so a route continues through them.
     pub(super) fill_stores: Vec<(u64, u64)>,
+    /// A route just finished without Esc (Enter, double-click,
+    /// right-click or a step onto the net's copper): the next Esc ends
+    /// nothing and keeps Route; the one after leaves it.
+    pub(super) ended: bool,
 }
 
 /// What a planned step was planned from.
@@ -161,6 +165,14 @@ impl Planned {
         match self {
             Planned::Single(plan) => plan.reached,
             Planned::Pair(plan) => plan.reached,
+        }
+    }
+
+    /// A pair in the way that could not be shoved as one unit.
+    pub(super) fn note(&self) -> Option<&str> {
+        match self {
+            Planned::Single(plan) => plan.note.as_deref(),
+            Planned::Pair(plan) => plan.note.as_deref(),
         }
     }
 
@@ -269,6 +281,7 @@ impl PcbEditor {
             self.layer = from;
         }
         self.reset_route();
+        self.route.ended = true;
     }
 
     /// Settle a step or unwind sent last frame. Returns whether the
@@ -329,6 +342,7 @@ impl PcbEditor {
                 self.route_start = Some(to);
                 if finish {
                     self.reset_route();
+                    self.route.ended = true;
                 }
             }
             Commit::Unwind { .. } => {
@@ -507,6 +521,15 @@ impl PcbEditor {
             let stop = screen(plan.end());
             painter.circle_stroke(stop, 5.0, Stroke::new(1.5, t.warning));
             painter.line_segment([stop, screen(end)], Stroke::new(1.0, t.warning));
+        }
+        if let Some(note) = plan.note() {
+            painter.text(
+                screen(end) + egui::vec2(12.0, -12.0),
+                egui::Align2::LEFT_BOTTOM,
+                note,
+                egui::FontId::proportional(t.font_label),
+                t.warning,
+            );
         }
     }
 

@@ -267,10 +267,33 @@ fn text_stays_upright_and_covers_its_image_in_every_orientation() -> Result<()> 
                         Item::Shape { .. } => None,
                     })
                     .ok_or_else(|| Error::NotFound("text graphic".into()))?;
+                if matches!(rotation, Rotation::R90 | Rotation::R270) {
+                    // Turned a quarter, the designator and value stay
+                    // horizontal beside the body, clear of it and of the
+                    // pins, which now run up and down.
+                    let m = TextMetric::default();
+                    let b = text.bounds(m);
+                    assert_eq!(text.rotation_deg, 0.0, "{what}: {}", text.text);
+                    let body = placed.shapes[0].shape.bounds(placed.shapes[0].width);
+                    assert!(
+                        b.max[0] < body.min[0] || b.min[0] > body.max[0],
+                        "{what}: {} {b:?} over the body {body:?}",
+                        text.text
+                    );
+                    for pin in &placed.pins {
+                        let stub = Bounds::point(pin.end).including(pin.body_end);
+                        assert!(
+                            b.max[0] < stub.min[0] || b.min[0] > stub.max[0],
+                            "{what}: {} over a pin",
+                            text.text
+                        );
+                    }
+                    continue;
+                }
                 let expected = image(
                     &t,
                     local.at,
-                    local.height,
+                    text.height,
                     local.rotation.degrees(),
                     local.justify,
                     &text.text,

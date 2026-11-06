@@ -2,9 +2,10 @@
 //! and the dimension annotations that show a constrained part's distance
 //! along and off its edge on the Layout canvas.
 //!
-//! "Constrain to edge" ties the selected part to the nearest named board
-//! edge at its current position (`board.constrain`, one undo step), so the
-//! part does not move. Edge, anchor, along, offset, alignment and turning
+//! "Constrain to edge" (the Placement section's state row) ties the
+//! selected part to the nearest named board edge at its current position
+//! (`board.constrain`, one undo step), so the part does not move. Edge,
+//! anchor, along, offset, alignment and turning
 //! with the edge then commit live, each as one `board.constraint_edit`;
 //! along and offset are expressions over the board parameters
 //! (`width / 2 - 3 mm`), so editing a parameter moves the part when the
@@ -39,7 +40,7 @@ pub(super) struct EdgeEdit {
 }
 
 fn field_id(field: &'static str) -> egui::Id {
-    egui::Id::new(("pcb-edge", field))
+    egui::Id::unique(("pcb-edge", field))
 }
 
 /// The constraint on a placement, if any.
@@ -190,9 +191,10 @@ fn align_options() -> [(ConstraintAlign, String); 3] {
 }
 
 impl PcbEditor {
-    /// BOARD EDGE: "Constrain to edge" for a free part; the constraint's
-    /// edge, anchor, along, offset, alignment and turning for a
-    /// constrained one, each committed live.
+    /// BOARD EDGE, for a constrained part only: the constraint's edge,
+    /// anchor, along, offset, alignment and turning, each committed live.
+    /// "Constrain to edge" and "Free part" are the Placement section's
+    /// state row.
     pub(super) fn edge_section(
         &mut self,
         ui: &mut Ui,
@@ -207,27 +209,12 @@ impl PcbEditor {
             self.edge.sent = None;
         }
         let board = project.board();
-        let constraint = constraint_of(project, placement.instance).cloned();
+        // A free part's "Constrain to edge" is the Placement section's
+        // state row; this section edits a constraint that exists.
+        let c = constraint_of(project, placement.instance).cloned()?;
         let mut operation = None;
         let mut sent = None;
         kit::section(ui, "pcb-edge", "Board edge", true, None, |ui| {
-            let Some(c) = constraint else {
-                let nearest = nearest_edge(&board, placement.position);
-                let summary = nearest.map_or_else(
-                    || "Name a board edge first".to_owned(),
-                    |e| format!("Free · nearest edge {}", e.name.0),
-                );
-                let action = nearest.is_some().then_some("Constrain to edge");
-                if kit::summary_row(ui, &summary, action)
-                    && let Some(spec) =
-                        nearest.and_then(|e| spec_at(placement.instance, e, placement.position))
-                {
-                    operation = Some(Operation::Board(BoardCommand::Constrain {
-                        constraint: spec,
-                    }));
-                }
-                return;
-            };
             let key = (revision, c.id);
             if self.edge.key != Some(key) {
                 self.edge.key = Some(key);
@@ -337,15 +324,7 @@ impl PcbEditor {
                     operation = edit(&|n| n.rotation_deg = rotation);
                 }
             }
-            if kit::summary_row(
-                ui,
-                "Follows the edge when the board changes",
-                Some("Free part"),
-            ) {
-                operation = Some(Operation::Board(BoardCommand::DeleteConstraint {
-                    id: c.id,
-                }));
-            }
+            kit::note(ui, "Follows the edge when the board changes");
         });
         if let Some(field) = sent {
             refusal::mark(ui.ctx(), Origin::Field(field_id(field)));

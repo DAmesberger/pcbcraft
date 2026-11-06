@@ -685,7 +685,7 @@ impl Default for ModelImport {
 }
 
 fn wizard_id() -> egui::Id {
-    egui::Id::new("model-import")
+    egui::Id::unique("model-import")
 }
 
 impl ModelImport {

@@ -57,6 +57,35 @@ pub fn apply(engine: &mut Engine, operation: Operation) -> Result<Outcome> {
     engine.apply(engine.revision(), operation)
 }
 
+/// Update PCB, then move each part it staged beside the board onto the
+/// board, 8 mm apart in rows from (8, 8), for tests that route between
+/// them.
+pub fn sync_onto_board(engine: &mut Engine) -> Result<()> {
+    use crate::layout::LayoutCommand;
+    let before = engine.project().placements.len();
+    apply(engine, Operation::Layout(LayoutCommand::Sync))?;
+    let staged: Vec<_> = engine.project().placements[before..].to_vec();
+    let columns = ((engine.project().board_size[0] - 8.0) / 8.0)
+        .floor()
+        .max(1.0) as usize;
+    for (i, placement) in staged.into_iter().enumerate() {
+        let index = before + i;
+        apply(
+            engine,
+            Operation::Layout(LayoutCommand::Move {
+                instance: placement.instance,
+                position: [
+                    8.0 + (index % columns) as f64 * 8.0,
+                    8.0 + (index / columns) as f64 * 8.0,
+                ],
+                rotation_deg: 0.0,
+                layer: placement.layer,
+            }),
+        )?;
+    }
+    Ok(())
+}
+
 /// Leave one undone step on the redo stack, so a failed operation that
 /// committed or cleared history would be visible.
 pub fn prime_history(engine: &mut Engine) -> Result<()> {
@@ -142,7 +171,10 @@ pub fn edit(engine: &mut Engine, edits: Vec<DraftEdit>) -> Result<()> {
 pub fn publish(engine: &mut Engine, drafts: Vec<DefinitionId>) -> Result<Vec<DefinitionRef>> {
     match apply(
         engine,
-        Operation::Library(LibraryCommand::Publish { drafts }),
+        Operation::Library(LibraryCommand::Publish {
+            drafts,
+            close: false,
+        }),
     )? {
         Outcome::Published { revisions } => Ok(revisions),
         other => Err(Error::Invalid(format!("unexpected outcome {other:?}"))),
@@ -542,6 +574,30 @@ pub fn connect(engine: &mut Engine, from: Endpoint, to: Endpoint) -> Result<()> 
     .map(|_| ())
 }
 
+/// The wires of the run that leaves `from`: its first wire and, through
+/// every two-wire junction (a routed wire's bends), the rest, sorted.
+pub fn wire_run(engine: &Engine, from: Endpoint) -> Vec<Id> {
+    let project = engine.project();
+    let mut run = Vec::new();
+    let mut at = WireEnd::from(from);
+    let mut next = project.wires_at(at).next();
+    while let Some(wire) = next {
+        if run.contains(&wire.id) {
+            break;
+        }
+        run.push(wire.id);
+        at = if wire.from == at { wire.to } else { wire.from };
+        next = match at {
+            WireEnd::Junction(_) if project.wires_at(at).count() == 2 => {
+                project.wires_at(at).find(|w| w.id != wire.id)
+            }
+            _ => None,
+        };
+    }
+    run.sort_unstable();
+    run
+}
+
 pub fn wire_between(engine: &Engine, a: Endpoint, b: Endpoint) -> Result<Id> {
     engine
         .project()
@@ -827,4 +883,10 @@ pub fn show_demo_pin_numbers(engine: &mut Engine) -> Result<()> {
         false,
     )?;
     Ok(())
+}
+
+/// An exact decimal from a finite fixture literal.
+#[allow(clippy::expect_used)]
+pub fn dec(value: f64) -> crate::quantity::Decimal {
+    crate::quantity::Decimal::from_f64(value).expect("a finite literal")
 }

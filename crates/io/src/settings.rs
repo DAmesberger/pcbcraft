@@ -71,6 +71,10 @@ pub struct UserSettings {
     /// absolute paths, at most [`MAX_RECENT_PART_FILES`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub part_files: Vec<PathBuf>,
+    /// The app's waivers of pre-flight findings need a reason (off by
+    /// default: a reason is optional).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub require_waiver_reason: bool,
 }
 
 impl Default for UserSettings {
@@ -83,6 +87,7 @@ impl Default for UserSettings {
             browser_width: None,
             keyboard: KeyboardSettings::default(),
             part_files: Vec::new(),
+            require_waiver_reason: false,
         }
     }
 }
@@ -476,6 +481,7 @@ mod tests {
             }],
             browser_width: Some(312.5),
             part_files: vec!["/parts/nut.solidcraft".into()],
+            require_waiver_reason: true,
             ..UserSettings::default()
         };
         write_settings(&path, &settings)?;

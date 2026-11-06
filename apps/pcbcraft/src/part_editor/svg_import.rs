@@ -165,7 +165,7 @@ impl SvgImport {
 
     fn dialog(&mut self, ctx: &egui::Context, loaded: Loaded) -> Option<Event> {
         let mut choice = None;
-        ui_kit::Window::new(egui::Id::new("svg-import"), "import", "Import SVG")
+        ui_kit::Window::new(egui::Id::unique("svg-import"), "import", "Import SVG")
             .required()
             .show_body(ctx, |ui| {
                 let t = Tokens::get();

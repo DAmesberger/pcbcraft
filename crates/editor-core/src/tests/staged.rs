@@ -144,11 +144,6 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
         }),
         Operation::Instance(InstanceCommand::SetNoConnect {
             instance: r1,
-            terminals: vec![TerminalId(2)],
-            no_connect: true,
-        }),
-        Operation::Instance(InstanceCommand::SetNoConnect {
-            instance: r1,
             terminals: vec![TerminalId(9)],
             no_connect: true,
         }),
@@ -186,12 +181,28 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
     Ok(())
 }
 
+/// A wire on a no-connect terminal is accepted and reported: the terminal
+/// is no longer unconnected, it is a no-connect pin that is connected.
 #[test]
-fn no_connect_and_wiring_exclude_each_other_with_one_diagnostic() -> Result<()> {
+fn a_wire_on_a_no_connect_terminal_is_a_completeness_error() -> Result<()> {
     let mut engine = Engine::demo()?;
     let f = demo_fixture(&engine)?;
     let (r3, _) = place(&mut engine, &f, "R3", 1, [30.0, 0.0])?;
     let r2 = by_designator(&engine, "R2")?;
+    let codes = |engine: &Engine| -> Result<Vec<String>> {
+        Ok(inspect(engine, r3)?
+            .findings
+            .into_iter()
+            .filter(|f| {
+                f.objects
+                    == [crate::ObjectRef::Terminal {
+                        endpoint: ep(r3, 1),
+                    }]
+            })
+            .map(|f| f.code)
+            .collect())
+    };
+    assert_eq!(codes(&engine)?, ["instance.terminal_unaccounted"]);
     apply(
         &mut engine,
         Operation::Instance(InstanceCommand::SetNoConnect {
@@ -200,21 +211,31 @@ fn no_connect_and_wiring_exclude_each_other_with_one_diagnostic() -> Result<()> 
             no_connect: true,
         }),
     )?;
-    let wired = connect(&mut engine, ep(r2, 2), ep(r3, 1)).err();
-    assert_eq!(wired.as_ref().map(|e| e.code()), Some("conflict"));
-    assert!(wired.is_some_and(|e| e.to_string().contains("no-connect")));
-    let r1 = by_designator(&engine, "R1")?;
-    let marked = engine
-        .apply(
-            engine.revision(),
-            Operation::Instance(InstanceCommand::SetNoConnect {
-                instance: r1,
-                terminals: vec![TerminalId(2)],
-                no_connect: true,
-            }),
-        )
-        .err();
-    assert!(marked.is_some_and(|e| e.to_string().contains("no-connect")));
+    // Intentionally unused: no finding at all.
+    assert!(codes(&engine)?.is_empty());
+    connect(&mut engine, ep(r2, 2), ep(r3, 1))?;
+    assert_eq!(codes(&engine)?, ["instance.no_connect_connected"]);
+    // The marker and the wire survive save and load.
+    let bytes = crate::format::encode(&engine.to_file())?;
+    let reopened = Engine::from_file(crate::format::decode(&bytes)?)?;
+    assert_eq!(reopened.document(), engine.document());
+    assert_eq!(codes(&reopened)?, ["instance.no_connect_connected"]);
+    let issues = crate::issues::report(
+        engine.project(),
+        &Default::default(),
+        &crate::issues::IssueScope::All,
+    )?;
+    let row = issues
+        .rows
+        .iter()
+        .find(|r| r.group.code == "instance.no_connect_connected")
+        .ok_or_else(|| crate::Error::Invalid("no issue row".into()))?;
+    assert_eq!(row.severity, crate::issues::Severity::Error);
+    assert!(
+        crate::issues::style::check(&row.title).is_empty(),
+        "{}",
+        row.title
+    );
     Ok(())
 }
 

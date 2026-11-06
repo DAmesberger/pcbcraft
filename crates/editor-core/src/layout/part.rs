@@ -98,7 +98,7 @@ pub(super) fn set(project: &mut Project, instance: Id, part: &PartSpec) -> Resul
         .placement_of(instance)
         .is_some_and(|placement| placement.locked)
     {
-        return Err(Error::Conflict("placement is locked".into()));
+        return Err(super::locked(project, instance, "change"));
     }
     let refs = variant(project, part)?;
     let current = project
@@ -148,14 +148,14 @@ pub(super) fn remove(project: &mut Project, instance: Id) -> Result<()> {
     mechanical_instance(project, instance)?;
     if project.occurrences_of(instance).next().is_some() || connected(project, instance) {
         return Err(Error::Conflict(
-            "part.connected: the part is on a sheet or connected; preview its removal with project.preview_update (Change::Instance)".into(),
+            "part.connected: the part is on a sheet or connected; review its removal first".into(),
         ));
     }
     if project
         .placement_of(instance)
         .is_some_and(|placement| placement.locked)
     {
-        return Err(Error::Conflict("placement is locked".into()));
+        return Err(super::locked(project, instance, "remove"));
     }
     project.placements.retain(|p| p.instance != instance);
     instances::remove(project, instance)

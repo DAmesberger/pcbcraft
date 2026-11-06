@@ -13,6 +13,7 @@
 //! reproduced on the public tokens, fonts and buttons.
 
 use super::severity::{Level, severity_glyph};
+use super::text;
 use egui::{Align, Color32, FontId, Layout, Rect, Response, Sense, Ui, UiBuilder, pos2, vec2};
 use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::{fonts, ui_kit};
@@ -51,6 +52,7 @@ pub struct ToolCardResponse {
 pub fn tool_card(ui: &mut Ui, card: &ToolCard<'_>, rows: impl FnOnce(&mut Ui)) -> ToolCardResponse {
     let t = Tokens::get();
     let mut out = ToolCardResponse::default();
+    let slot = ui.available_rect_before_wrap();
     let (rect, _) = ui.allocate_exact_size(
         vec2(
             ui.available_width().max(0.0),
@@ -86,7 +88,7 @@ pub fn tool_card(ui: &mut Ui, card: &ToolCard<'_>, rows: impl FnOnce(&mut Ui)) -
     let key_width = key
         .as_ref()
         .map_or(0.0, |g| g.size().x + t.space_8 + t.space_8);
-    let name = one_line(
+    let name = text::one_line(
         ui,
         card.name,
         fonts::semibold(t.font_heading),
@@ -94,10 +96,17 @@ pub fn tool_card(ui: &mut Ui, card: &ToolCard<'_>, rows: impl FnOnce(&mut Ui)) -
         (right - left - key_width).max(0.0),
     );
     let name_right = left + name.size().x;
-    ui.painter().galley(
+    let name_cut = name.elided;
+    let name_rect = Rect::from_min_size(
         pos2(left, rect.center().y - name.size().y / 2.0),
-        name,
-        t.form_ink,
+        name.size(),
+    );
+    ui.painter().galley(name_rect.min, name, t.form_ink);
+    text::hover(
+        ui.interact(name_rect, ui.scope_id().with("tool_name"), Sense::hover()),
+        card.name,
+        "",
+        name_cut,
     );
     if let Some(galley) = key {
         let cap = Rect::from_min_size(
@@ -117,12 +126,31 @@ pub fn tool_card(ui: &mut Ui, card: &ToolCard<'_>, rows: impl FnOnce(&mut Ui)) -
         }
     }
     t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);
-    super::form(ui, |ui| {
-        rows(ui);
-        if !card.hint.is_empty() {
-            hint(ui, card.hint, card.tip);
-        }
-    });
+    // The rows scroll within the slot, so a tall card never grows past it
+    // (its area would otherwise be pushed up over the ribbon).
+    let footer = if card.finish.is_some() {
+        super::card::FOOTER_HEIGHT
+    } else {
+        0.0
+    };
+    let room = if slot.bottom().is_finite() {
+        (slot.bottom() - ui.cursor().top() - footer).max(0.0)
+    } else {
+        f32::INFINITY
+    };
+    egui::ScrollArea::vertical()
+        .id_salt(("tool_card_body", card.name))
+        .min_scrolled_height(0.0)
+        .max_height(room)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            super::form(ui, |ui| {
+                rows(ui);
+                if !card.hint.is_empty() {
+                    hint(ui, card.hint, card.tip);
+                }
+            });
+        });
     if let Some(finish) = card.finish {
         let action =
             super::dialog::footer(ui, finish, super::dialog::PrimaryKind::Normal, None, None);
@@ -132,68 +160,34 @@ pub fn tool_card(ui: &mut Ui, card: &ToolCard<'_>, rows: impl FnOnce(&mut Ui)) -
     out
 }
 
-/// `text` laid out on one line of at most `width`, cut with an ellipsis.
-pub(super) fn one_line(
-    ui: &Ui,
-    text: &str,
-    font: FontId,
-    ink: Color32,
-    width: f32,
-) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, ink, width.max(1.0));
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    job.wrap.overflow_character = Some('\u{2026}');
-    ui.painter().layout_job(job)
-}
-
-/// Paint `text` on one line in `rect`, vertically centred and cut with an
-/// ellipsis. Returns whether it was cut.
-pub(super) fn paint_clipped(ui: &Ui, rect: Rect, text: &str, font: FontId, ink: Color32) -> bool {
-    let full = ui
-        .painter()
-        .layout_no_wrap(text.to_owned(), font.clone(), ink)
-        .size()
-        .x;
-    let galley = one_line(ui, text, font, ink, rect.width());
-    ui.painter().galley(
-        pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
-        galley,
-        ink,
-    );
-    full > rect.width() + 0.5
-}
-
-/// A painted line's hover: `tip` when given, else the full text when it was
-/// cut short; screen readers get `text`.
-pub(super) fn line_hover(response: Response, text: &str, tip: &str, cut: bool) -> Response {
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
-    if !tip.is_empty() {
-        response.on_hover_text(tip)
-    } else if cut {
-        response.on_hover_text(text)
-    } else {
-        response
-    }
-}
-
 /// The height of one small line with its padding.
 fn line_height(ui: &Ui, font: &FontId) -> f32 {
     let t = Tokens::get();
     ui.fonts_mut(|f| f.row_height(font)) + t.space_8
 }
 
-/// One dim line behind an information glyph, clipped to the row, with `tip`
-/// on hover (the full text when `tip` is empty and the line is cut). It
-/// replaces help paragraphs.
+/// Rows a hint wraps to before it is cut (with the full text on hover).
+const HINT_MAX_ROWS: usize = 4;
+
+/// One dim sentence behind an information glyph, wrapped to the card's
+/// width, with `tip` on hover. It replaces help paragraphs.
 pub fn hint(ui: &mut Ui, text: &str, tip: &str) -> Response {
     let t = Tokens::get();
     let font = FontId::proportional(t.font_small);
+    let indent = t.space_16;
+    let width = (ui.available_width() - indent).max(1.0);
+    let galley = text::wrapped(ui, text, font.clone(), t.form_dim, width, HINT_MAX_ROWS);
+    let cut = galley.elided;
+    let first = line_height(ui, &font);
+    let pad = (first - ui.fonts_mut(|f| f.row_height(&font))) / 2.0;
     let (rect, response) = ui.allocate_exact_size(
-        vec2(ui.available_width().max(0.0), line_height(ui, &font)),
+        vec2(
+            ui.available_width().max(0.0),
+            (galley.size().y + 2.0 * pad).max(first),
+        ),
         Sense::hover(),
     );
-    let glyph = pos2(rect.left() + t.space_6, rect.center().y);
+    let glyph = pos2(rect.left() + t.space_6, rect.top() + first / 2.0);
     ui.painter()
         .circle_stroke(glyph, t.space_4 + 0.5, t.control_border_stroke(t.form_dim));
     ui.painter().text(
@@ -203,9 +197,12 @@ pub fn hint(ui: &mut Ui, text: &str, tip: &str) -> Response {
         fonts::semibold(t.font_badge),
         t.form_dim,
     );
-    let text_rect = Rect::from_min_max(pos2(rect.left() + t.space_16, rect.top()), rect.max);
-    let cut = paint_clipped(ui, text_rect, text, font, t.form_dim);
-    line_hover(response, text, tip, cut)
+    ui.painter().galley(
+        pos2(rect.left() + indent, rect.top() + pad),
+        galley,
+        t.form_dim,
+    );
+    text::hover(response, text, tip, cut)
 }
 
 /// What a bounded list did.
@@ -329,7 +326,7 @@ pub fn table(
     let t = Tokens::get();
     let mut out = TableResponse::default();
     let row_height = t.control_height + t.space_2;
-    let id = ui.id().with("table");
+    let id = ui.scope_id().with("table");
     frame(ui, |ui| {
         let widths = column_widths(
             columns,
@@ -340,10 +337,12 @@ pub fn table(
         let mut x = rect.left();
         for (column, w) in columns.iter().zip(&widths) {
             let caption = Rect::from_min_size(pos2(x, rect.top()), vec2(*w, rect.height()));
-            paint_clipped(
+            text::line(
                 ui,
+                ui.scope_id().with(("caption", column.title)),
                 caption,
                 &column.title.to_uppercase(),
+                "",
                 fonts::semibold(t.font_caption),
                 t.form_dim,
             );
@@ -422,7 +421,7 @@ fn dashed_button(ui: &mut Ui, label: &str) -> Response {
         FontId::proportional(t.font_label),
         t.form_dim,
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -455,9 +454,17 @@ fn summary_line(ui: &mut Ui, summary: &str, ink: Color32, action: Option<&str>) 
         );
     }
     if !summary.is_empty() {
-        let text = Rect::from_min_max(rect.min, pos2(right.max(rect.left()), rect.bottom()));
-        let cut = paint_clipped(ui, text, summary, FontId::proportional(t.font_label), ink);
-        line_hover(response, summary, "", cut);
+        // The hover covers the text only, so the action keeps its own.
+        let area = Rect::from_min_max(rect.min, pos2(right.max(rect.left()), rect.bottom()));
+        text::line(
+            ui,
+            response.id.with("text"),
+            area,
+            summary,
+            "",
+            FontId::proportional(t.font_label),
+            ink,
+        );
     }
     clicked
 }
@@ -488,13 +495,41 @@ pub fn field_error(ui: &mut Ui, field: &Response, message: &str, not_stored: boo
         Level::Error,
     );
     let text = Rect::from_min_max(pos2(left + size + t.space_4, rect.top()), rect.max);
-    let tip = if not_stored {
-        format!("{message}\n{}", super::NOT_STORED)
-    } else {
-        String::new()
-    };
-    let cut = paint_clipped(ui, text, message, font, t.error);
-    line_hover(response, message, &tip, cut)
+    let tip = if not_stored { super::NOT_STORED } else { "" };
+    let cut = text::paint_line(ui, text, message, font, t.error);
+    text::hover(response, message, tip, cut)
+}
+
+/// A refused commit of `field` whose field went back to the stored value:
+/// no red ring (what the field shows is valid), and the whole reason under
+/// it, wrapped, so a refusal that names parts and distances is read in
+/// full. Call it right after the field's row; it shows until the field is
+/// edited again or the document changes.
+pub fn field_refused(ui: &mut Ui, field: &Response, message: &str) -> Response {
+    let t = Tokens::get();
+    let size = t.font_small;
+    let left = field.rect.left().max(ui.max_rect().left());
+    let width = (ui.max_rect().right() - left - size - t.space_4).max(24.0);
+    let galley = ui.painter().layout(
+        message.to_owned(),
+        FontId::proportional(t.font_small),
+        t.error,
+        width,
+    );
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(ui.available_width().max(0.0), galley.size().y),
+        Sense::hover(),
+    );
+    let first = line_height(ui, &FontId::proportional(t.font_small));
+    severity_glyph(
+        ui.painter(),
+        pos2(left + size / 2.0, rect.top() + first / 2.0),
+        size,
+        Level::Error,
+    );
+    ui.painter()
+        .galley(pos2(left + size + t.space_4, rect.top()), galley, t.error);
+    response
 }
 
 /// A dialog's refusal: the last body row, an error band with one clipped
@@ -519,8 +554,8 @@ pub fn refusal(ui: &mut Ui, message: &str) -> Response {
         pos2(rect.left() + t.space_6 + size + t.space_6, rect.top()),
         rect.max - vec2(t.space_6, 0.0),
     );
-    let cut = paint_clipped(ui, text, message, font, t.error);
-    line_hover(response, message, "", cut)
+    let cut = text::paint_line(ui, text, message, font, t.error);
+    text::hover(response, message, "", cut)
 }
 
 #[cfg(test)]

@@ -219,6 +219,62 @@ impl SymbolConventions {
 /// The two connection ends of a horizontal two-terminal symbol.
 pub const TWO_TERMINAL_PIN_X_MM: f64 = 2.0 * graphics::SYMBOL_MODULE_MM;
 
+/// Redraw `symbol` as `kind`, with its pins on `terminals` in the order the
+/// module documents (`library.restyle_symbol`). The unit keeps its identity
+/// and label, so placed instances still name it, and shown field text stays
+/// where it was; every other graphic and pin is replaced. New graphics take
+/// fresh IDs: a retired one is never reused. A symbol of several units, or a
+/// terminal count the drawing does not have, is refused.
+pub fn restyle(
+    symbol: &SymbolDefinition,
+    kind: SymbolKind,
+    conventions: SymbolConventions,
+    terminals: &[TerminalId],
+) -> Result<SymbolDefinition> {
+    let [unit] = symbol.units.as_slice() else {
+        return Err(Error::Invalid(format!(
+            "symbol.restyle_units: a {} symbol draws one unit; this symbol has {}",
+            kind.label().to_lowercase(),
+            symbol.units.len()
+        )));
+    };
+    let mut drawn = match kind {
+        SymbolKind::IcBox => super::samples::block_symbol(symbol.component, terminals),
+        SymbolKind::Connector => super::samples::column_symbol(symbol.component, terminals),
+        _ => generate(kind, conventions, symbol.component, terminals)?,
+    };
+    let exhausted = || Error::Limit("the symbol's local identities are exhausted".into());
+    let base = symbol.next_local.max(unit.id.0.saturating_add(1));
+    let next_local = base.checked_add(drawn.next_local).ok_or_else(exhausted)?;
+    let Some(fresh) = drawn.units.pop() else {
+        return Err(Error::Invalid(format!(
+            "symbol.kind: the {} drawing has no unit",
+            kind.label()
+        )));
+    };
+    let mut graphics: Vec<Graphic> = unit
+        .graphics
+        .iter()
+        .filter(|g| matches!(&g.item, Item::Text(t) if matches!(t.content, TextContent::Field(_))))
+        .cloned()
+        .collect();
+    for mut graphic in fresh.graphics {
+        graphic.id = GraphicId(base.checked_add(graphic.id.0).ok_or_else(exhausted)?);
+        graphics.push(graphic);
+    }
+    Ok(SymbolDefinition {
+        component: symbol.component,
+        next_local,
+        pin_text_height: symbol.pin_text_height,
+        units: vec![Unit {
+            id: unit.id,
+            label: unit.label.clone(),
+            graphics,
+            pins: fresh.pins,
+        }],
+    })
+}
+
 /// The symbol of `kind` for `component`, its pins on `terminals` in the
 /// order the module documents. One unit `A` with local ID 1, graphics from
 /// ID 2 (a resistor's IEC rectangle is the body graphic, ID 2), the

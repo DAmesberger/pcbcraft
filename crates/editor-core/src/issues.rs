@@ -17,7 +17,7 @@ pub mod style;
 #[cfg(test)]
 mod tests;
 
-pub use rules::KNOWN_CODES;
+pub use rules::{KNOWN_CODES, group_title};
 
 use crate::completeness;
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 /// The longest issue title, in characters. Titles are designed for about 56
 /// characters at the smallest supported column width and clipped there.
-pub const MAX_TITLE: usize = 80;
+pub const MAX_TITLE: usize = crate::diagnostics::MAX_LINE;
 
 /// The most objects a `selection` scope may name.
 pub const MAX_SCOPE_OBJECTS: usize = 4096;
@@ -193,6 +193,19 @@ pub struct IssueReport {
 /// board checks (Board). Rows are uncapped and sorted most severe first,
 /// grouped by [`IssueGroup`].
 pub fn report(project: &Project, drafts: &Drafts, scope: &IssueScope) -> Result<IssueReport> {
+    report_with(project, drafts, scope, false)
+}
+
+/// [`report`], keeping the findings waived for production when
+/// `waived` (the production check marks them; Issues leaves them out,
+/// as a waived finding is accepted and blocks nothing). A finding that
+/// blocks a component stage stays: a waiver is for production only.
+pub(crate) fn report_with(
+    project: &Project,
+    drafts: &Drafts,
+    scope: &IssueScope,
+    waived: bool,
+) -> Result<IssueReport> {
     if let IssueScope::Selection { objects } = scope
         && objects.len() > MAX_SCOPE_OBJECTS
     {
@@ -204,6 +217,18 @@ pub fn report(project: &Project, drafts: &Drafts, scope: &IssueScope) -> Result<
     let mut all = Vec::new();
     for (area, merged) in collect(project, drafts)? {
         all.push(row(&names, area, merged));
+    }
+    if !waived && !project.production.waivers.is_empty() {
+        all.retain(|r| {
+            r.blocks().is_some()
+                || project
+                    .production
+                    .waiver(&crate::model::production::waiver_key(
+                        &r.finding.code,
+                        &r.finding.objects,
+                    ))
+                    .is_none()
+        });
     }
     all.sort_by(|a, b| {
         (a.severity, a.area, &a.group.code, &a.group.key).cmp(&(

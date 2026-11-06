@@ -341,7 +341,9 @@ fn ranges_and_tolerances_mean_meets_not_equals() -> TestResult {
             .iter()
             .find(|f| f.label == "Tolerance")
             .ok_or("no tolerance")?;
-        assert!(matches!(tolerance.value, FieldValue::Tolerance { plus, .. } if plus <= 0.01));
+        assert!(
+            matches!(tolerance.value, FieldValue::Tolerance { plus, .. } if plus.to_f64() <= 0.01)
+        );
     }
     let tight = search(&index, "tol<1%")?;
     assert_eq!(tight.total, 2);
@@ -684,8 +686,8 @@ fn part_predicates_are_decided_by_satisfies() {
     let range = ValueType::Range { kind };
     let operating = rated(
         FieldValue::Range {
-            min: -40.0,
-            max: 125.0,
+            min: dec(-40.0),
+            max: dec(125.0),
         },
         range.clone(),
         SpecMeaning::MinimumRating,
@@ -739,8 +741,8 @@ fn part_predicates_are_decided_by_satisfies() {
     let ohms = |nominal| {
         rated(
             FieldValue::Tolerance {
-                minus: 50.0,
-                plus: 50.0,
+                minus: dec(50.0),
+                plus: dec(50.0),
             },
             absolute.clone(),
             SpecMeaning::MaximumTolerance,
@@ -761,4 +763,10 @@ fn part_predicates_are_decided_by_satisfies() {
     assert!(!meets(&ohms(Some(10e3)), &percent(0.0025)));
     // Without a nominal the bases cannot be compared: no hit.
     assert!(!meets(&ohms(None), &percent(0.01)));
+}
+
+/// An exact decimal from a finite fixture literal.
+#[allow(clippy::expect_used)]
+pub fn dec(value: f64) -> crate::quantity::Decimal {
+    crate::quantity::Decimal::from_f64(value).expect("a finite literal")
 }

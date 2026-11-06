@@ -21,7 +21,7 @@ use solidcraft_ui_egui::ui_kit;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReviewLine {
     pub level: Level,
-    /// One line, at most 80 characters, naming objects.
+    /// One line naming objects, cut with its full text on hover.
     pub title: String,
     /// The acknowledgement that clears this blocker ("Remove that track
     /// (Top, 4.2 mm)"), if one does.
@@ -263,14 +263,16 @@ fn glyph_line(ui: &mut Ui, level: Option<Level>, text: &str, action: Option<&str
     }
     let text_rect =
         Rect::from_min_max(pos2(left, rect.top()), pos2(right.max(left), rect.bottom()));
-    let cut = super::rows::paint_clipped(
+    // The hover covers the text only, so the action keeps its own.
+    super::text::line(
         ui,
+        response.id.with("text"),
         text_rect,
         text,
+        "",
         FontId::proportional(t.font_label),
         t.form_ink,
     );
-    super::rows::line_hover(response, text, "", cut);
     clicked
 }
 
@@ -330,7 +332,7 @@ mod tests {
         let action = Cell::new(None);
         let mut add = |ui: &mut Ui| {
             let panel = ReviewPanel {
-                id: egui::Id::new("review"),
+                id: egui::Id::unique("review"),
                 icon: "library",
                 title: "Update PCB",
                 summary: "Adds 6 placements: R17–R22",

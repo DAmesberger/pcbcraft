@@ -105,7 +105,7 @@ impl PartEditor {
         let lit = self.selected;
         let mut clicked = None;
         let mut assign = false;
-        let show_all_id = ui.id().with("footprint-terminals-all");
+        let show_all_id = ui.scope_id().with("footprint-terminals-all");
         let show_all = ui
             .data(|d| d.get_temp::<bool>(show_all_id))
             .unwrap_or(false);
@@ -127,7 +127,7 @@ impl PartEditor {
                     tip: "Select this terminal's pad",
                     ..Default::default()
                 };
-                if kit::tree_row(ui, ui.id().with(("terminal", id.0)), &row).clicked {
+                if kit::tree_row(ui, ui.scope_id().with(("terminal", id.0)), &row).clicked {
                     clicked = Some(*id);
                 }
             });

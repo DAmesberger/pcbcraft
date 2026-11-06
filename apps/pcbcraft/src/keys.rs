@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock};
 struct Published(Arc<Registry>);
 
 fn slot() -> egui::Id {
-    egui::Id::new("pcbcraft-effective-keymap")
+    egui::Id::unique("pcbcraft-effective-keymap")
 }
 
 /// The default keymap, for a context nothing was published to (an
@@ -106,6 +106,13 @@ pub fn pressed_tool(ctx: &egui::Context, prefix: &str, name: &str) -> bool {
 pub fn shown(ctx: &egui::Context, id: &str) -> Option<String> {
     let registry = registry(ctx);
     registry.get(id).and_then(|c| registry.shortcut(c))
+}
+
+/// The key a menu row shows for the command `id`: one key
+/// ([`Registry::menu_shortcut`]).
+pub fn menu_key(ctx: &egui::Context, id: &str) -> Option<String> {
+    let registry = registry(ctx);
+    registry.get(id).and_then(|c| registry.menu_shortcut(c))
 }
 
 /// `text (key)` when the command `id` has a key, else `text`.

@@ -9,6 +9,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod decimal;
+pub use decimal::{Decimal, MAX_DIGITS};
+
 /// SI exponents: length, mass, time, current, temperature, amount, luminosity.
 pub type Dimension = [i8; 7];
 pub const DIMENSIONLESS: Dimension = [0; 7];
@@ -44,16 +47,17 @@ pub const SI_PREFIXES: &[(&str, f64)] = &[
     ("G", 1e9),
 ];
 
-/// Prefixes used when formatting without a recorded display unit.
-const ENGINEERING: &[(&str, f64)] = &[
-    ("G", 1e9),
-    ("M", 1e6),
-    ("k", 1e3),
-    ("", 1.0),
-    ("m", 1e-3),
-    ("µ", 1e-6),
-    ("n", 1e-9),
-    ("p", 1e-12),
+/// Prefixes used when formatting without a recorded display unit, by
+/// power of ten.
+const ENGINEERING: &[(&str, i32)] = &[
+    ("G", 9),
+    ("M", 6),
+    ("k", 3),
+    ("", 0),
+    ("m", -3),
+    ("µ", -6),
+    ("n", -9),
+    ("p", -12),
 ];
 
 fn failure(message: &str) -> Error {
@@ -177,6 +181,8 @@ pub struct UnitSet {
 pub struct ResolvedUnit {
     /// Multiply by this factor to obtain an SI value.
     pub factor: f64,
+    /// `factor` as the exact product of the prefix and the unit scale.
+    pub exact: Decimal,
     /// The text in canonical spelling: prefix and unit symbol.
     pub canonical: String,
 }
@@ -259,6 +265,7 @@ impl UnitSet {
         if let Some(unit) = self.unit(text) {
             return Some(ResolvedUnit {
                 factor: unit.scale,
+                exact: Decimal::from_f64(unit.scale).ok()?,
                 canonical: unit.symbol.clone(),
             });
         }
@@ -270,6 +277,7 @@ impl UnitSet {
             {
                 return Some(ResolvedUnit {
                     factor: factor * unit.scale,
+                    exact: prefixed(*factor, unit.scale)?,
                     canonical: format!("{}{}", canonical_prefix(*factor), unit.symbol),
                 });
             }
@@ -293,6 +301,13 @@ impl UnitSet {
     }
 }
 
+/// The exact factor of an SI prefix applied to a unit scale.
+fn prefixed(prefix: f64, scale: f64) -> Option<Decimal> {
+    Decimal::from_f64(prefix)
+        .and_then(|p| p.checked_mul(Decimal::from_f64(scale)?))
+        .ok()
+}
+
 /// The recorded spelling of a prefix factor.
 fn canonical_prefix(factor: f64) -> &'static str {
     SI_PREFIXES
@@ -305,13 +320,15 @@ fn canonical_prefix(factor: f64) -> &'static str {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Parsed {
     pub quantity: Quantity,
+    /// The exact SI value; `quantity` holds the nearest `f64`.
+    pub si: Decimal,
     /// The unit written, in canonical spelling; `None` without a suffix.
     pub unit: Option<String>,
 }
 
 /// Split `number [whitespace] [suffix]`. The number is a decimal with
 /// optional sign and exponent and `.` as the separator.
-fn split_number(text: &str) -> Option<(f64, &str)> {
+fn split_number(text: &str) -> Option<(&str, &str)> {
     let bytes = text.as_bytes();
     let mut end = 0;
     if matches!(bytes.first(), Some(b'+' | b'-')) {
@@ -343,8 +360,7 @@ fn split_number(text: &str) -> Option<(f64, &str)> {
             end = at + exponent;
         }
     }
-    let number = text[..end].parse::<f64>().ok()?;
-    Some((number, text[end..].trim_start()))
+    Some((&text[..end], text[end..].trim_start()))
 }
 
 /// Parse quantity text against a unit set. The suffix resolves, first match
@@ -362,6 +378,7 @@ pub fn parse(text: &str, units: &UnitSet, default_unit: &str) -> Result<Parsed> 
             text.trim()
         ))
     })?;
+    let number: Decimal = number.parse()?;
     let default = units.unit(default_unit).ok_or_else(|| {
         Error::Invalid(format!(
             "default unit ‘{default_unit}’ is not in the unit set"
@@ -371,6 +388,7 @@ pub fn parse(text: &str, units: &UnitSet, default_unit: &str) -> Result<Parsed> 
         (
             ResolvedUnit {
                 factor: default.scale,
+                exact: Decimal::from_f64(default.scale)?,
                 canonical: default.symbol.clone(),
             },
             None,
@@ -388,6 +406,8 @@ pub fn parse(text: &str, units: &UnitSet, default_unit: &str) -> Result<Parsed> 
         (
             ResolvedUnit {
                 factor: factor * default.scale,
+                exact: prefixed(*factor, default.scale)
+                    .ok_or_else(|| failure("unit scale has no decimal form"))?,
                 canonical: canonical.clone(),
             },
             Some(canonical),
@@ -398,47 +418,64 @@ pub fn parse(text: &str, units: &UnitSet, default_unit: &str) -> Result<Parsed> 
             units.listing()
         )));
     };
-    let quantity = Quantity::new(number, units.dimension)?.scale(resolved.factor)?;
-    Ok(Parsed { quantity, unit })
+    let si = number.checked_mul(resolved.exact)?;
+    let quantity = Quantity::new(si.to_f64(), units.dimension)?;
+    Ok(Parsed { quantity, si, unit })
 }
 
 /// A number rounded to 12 significant digits, in plain or exponent notation.
 pub fn format_number(value: f64) -> String {
-    let rounded = format!("{value:.11e}").parse::<f64>().unwrap_or(value);
-    let magnitude = rounded.abs();
-    if rounded == 0.0 {
-        "0".into()
-    } else if (1e-6..1e15).contains(&magnitude) {
-        format!("{rounded}")
-    } else {
-        format!("{rounded:e}")
-    }
+    Decimal::from_f64(value).map_or_else(|_| value.to_string(), |d| d.to_string())
+}
+
+/// `si` in units of `factor`: exact for a power-of-ten factor, otherwise
+/// rounded to 12 significant digits.
+fn in_units(si: Decimal, factor: Decimal) -> Decimal {
+    factor
+        .power_of_ten()
+        .and_then(|n| si.shift(-n).ok())
+        .or_else(|| Decimal::from_f64(si.to_f64() / factor.to_f64()).ok())
+        .unwrap_or(si)
+}
+
+/// [`format_decimal`] for an `f64` SI value, rounded to 12 significant digits.
+pub fn format(si: f64, units: &UnitSet, default_unit: &str, display_unit: Option<&str>) -> String {
+    Decimal::from_f64(si).map_or_else(
+        |_| si.to_string(),
+        |si| format_decimal(si, units, default_unit, display_unit),
+    )
 }
 
 /// Text for an SI value: in `display_unit` when it resolves, otherwise in
 /// `default_unit`, with an engineering prefix when that unit accepts one.
-pub fn format(si: f64, units: &UnitSet, default_unit: &str, display_unit: Option<&str>) -> String {
+/// The digits are exact when the unit's scale is a power of ten.
+pub fn format_decimal(
+    si: Decimal,
+    units: &UnitSet,
+    default_unit: &str,
+    display_unit: Option<&str>,
+) -> String {
     if let Some(resolved) = display_unit.and_then(|d| units.resolve(d)) {
-        return format!(
-            "{} {}",
-            format_number(si / resolved.factor),
-            resolved.canonical
-        );
+        return format!("{} {}", in_units(si, resolved.exact), resolved.canonical);
     }
-    let Some(unit) = units.unit(default_unit) else {
-        return format_number(si);
+    let Some((unit, scale)) = units
+        .unit(default_unit)
+        .and_then(|u| Some((u, Decimal::from_f64(u.scale).ok()?)))
+    else {
+        return si.to_string();
     };
-    let value = si / unit.scale;
-    let (prefix, factor) = if unit.si_prefixes && value != 0.0 {
+    let value = in_units(si, scale);
+    let (prefix, power) = if unit.si_prefixes && !value.is_zero() {
         ENGINEERING
             .iter()
-            .find(|(_, f)| value.abs() >= *f * (1.0 - 1e-12))
+            .find(|(_, n)| value.leading_exponent() >= *n)
             .copied()
-            .unwrap_or(("p", 1e-12))
+            .unwrap_or(("p", -12))
     } else {
-        ("", 1.0)
+        ("", 0)
     };
-    format!("{} {prefix}{}", format_number(value / factor), unit.symbol)
+    let shown = value.shift(-power).unwrap_or(value);
+    format!("{shown} {prefix}{}", unit.symbol)
 }
 
 #[cfg(test)]

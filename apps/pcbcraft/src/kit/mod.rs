@@ -17,15 +17,18 @@ pub mod dialog;
 mod form;
 pub mod issues;
 pub mod messages;
+pub mod pick;
 pub mod review;
 mod rows;
 mod search;
 pub mod severity;
+pub mod text;
 pub mod toast;
 mod tree;
 
 pub use form::*;
 pub use issues::{count_badge, issues_bar, issues_list};
+pub use pick::{PickResponse, PickRow, Tick, pick_row};
 pub use rows::*;
 pub use search::*;
 pub use toast::{pill, status_chip};
@@ -73,6 +76,25 @@ pub fn icon(painter: &Painter, center: Pos2, size: f32, name: &str, opacity: f32
         name,
         opacity,
     );
+}
+
+/// The WCAG contrast ratio of two opaque colours, for tests against the
+/// theme's tokens.
+#[cfg(test)]
+pub fn contrast(a: egui::Color32, b: egui::Color32) -> f32 {
+    let channel = |c: u8| {
+        let c = f32::from(c) / 255.0;
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let luminance = |c: egui::Color32| {
+        0.2126 * channel(c.r()) + 0.7152 * channel(c.g()) + 0.0722 * channel(c.b())
+    };
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
 /// The canvas's one dim hint line at its bottom-left corner, `inset` from

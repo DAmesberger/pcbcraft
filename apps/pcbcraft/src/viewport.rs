@@ -465,7 +465,7 @@ impl Viewport {
         let shown = |i: &&model_scene::Instanced| self.layers.visible(i.layer);
         let mut out = Vec::new();
         for i in model.instanced.iter().filter(shown) {
-            out.push(match display {
+            let mesh = match display {
                 // Unmoved: the placements as built, without a pass over them.
                 None => i.mesh.clone(),
                 Some(_) => {
@@ -478,17 +478,19 @@ impl Viewport {
                         |_| true,
                     )
                 }
-            });
+            };
+            out.push(i.shaded(scene, mesh));
         }
         for i in self.decals.meshes.iter().filter(shown) {
             let color = scene.color(i.colour);
-            out.push(i.placed(
+            let mesh = i.placed(
                 &self.decals.geometry,
                 display.as_ref(),
                 i.mesh.look,
                 color,
                 |_| true,
-            ));
+            );
+            out.push(i.shaded(scene, mesh));
         }
         out
     }
@@ -682,6 +684,8 @@ impl Viewport {
             product_lights: Some(lighting::studio(&self.camera, &self.bounds)),
             product_look: Some(lighting::look()),
             units_per_mm: 1.0,
+            moving: None,
+            preview_bounds: None,
             product: false,
             upload_error: None,
             key: self.key,
@@ -1187,7 +1191,7 @@ impl Viewport {
         {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             let (cube, _) = nav_cube::layout(rect);
-            ui.interact(cube, ui.id().with("pcb-3d-cube"), egui::Sense::hover())
+            ui.interact(cube, ui.scope_id().with("pcb-3d-cube"), egui::Sense::hover())
                 .on_hover_text_at_pointer(nav_cube::tooltip(target));
         }
     }

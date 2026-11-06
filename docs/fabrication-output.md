@@ -7,18 +7,18 @@ The Gerber writer follows Ucamco's public Gerber Layer Format Specification. The
 ## One command
 
 - **Automation:** the `project.export_fabrication` request takes `{output, zip, profile, options}`. It runs the production check and then writes a new or empty folder, or one new `.zip`. It returns the pre-flight report, every file with its size, and the time each step took. It is a file effect: it adds no revision and no undo step.
-- **CLI:** `pcbcraft-cli fab FILE.pcbcraft OUT_DIR|OUT.zip [--zip] [--profile ID] [--date ISO|none]`. Files are named after the project file.
+- **CLI:** `pcbcraft-cli fab FILE.pcbcraft OUT_DIR|OUT.zip [--zip] [--profile ID] [--date ISO|none]`. Files are named after the project file. A blocked export prints the title of each unwaived error, up to 100 and then how many remain.
 - **MCP:** the same request reaches MCP through the generic catalog.
 - **Desktop:** PCB workspace → ribbon Output → Production, or "Production files…" in the command palette.
   - The dialog shows a profile picker, Folder or ZIP output, an output toggle for each group and the placement convention.
-  - It lists the pre-flight report, computed on a worker. Each finding offers Waive… (a reason is required) or Restore.
+  - It lists the pre-flight report, computed on a worker, grouped by kind of finding. Tick findings (Shift-click ticks a run, a group's box ticks the whole group), or use a row's or a group's Waive…. The reason form opens under that row or group, and Waive applies one optional reason to every ticked finding as one undo step. A waived finding offers Restore.
   - Export runs on a worker and shows progress; the result lists the written files.
 - **Shared path:** all of these call `pcbcraft_io::fabrication::export`. The pure generation is `pcbcraft_core::fabrication::generate`, the PDF drawings are `pcbcraft_io::fab_drawings`, and `pcbcraft_io::pdf` is a small generic PDF canvas that schematic printing can reuse.
 - **Writing:** a folder is written to a sibling staging folder and then renamed into place. A ZIP is written atomically, entries in set order with a fixed timestamp.
 
 ## Production check (`fabrication.preflight`)
 
-The check reports every project issue under the chosen fabrication profile. Overrides and net classes are kept; a profile that conflicts with an override is itself an error. It adds production findings to those issues.
+The check reports every project issue under the chosen fabrication profile. Overrides and net classes are kept; a profile that conflicts with an override is itself an error. It adds production findings to those issues. The query's `profile` is an id such as `"std-6-6"` (a built-in profile or one of the user's library, as for an export) or a whole profile; omitted, the project's own rules apply.
 
 **Errors** (they block export):
 - unrouted connections and unplaced parts;
@@ -33,12 +33,14 @@ The check reports every project issue under the chosen fabrication profile. Over
 - parts with only an envelope 3D model;
 - parts whose definitions have unpublished draft changes (the review gate for library changes);
 - legend over a pad's mask opening;
+- legend text past the board outline or over a cutout or slot (`fabrication.legend_outside`), one finding per text, naming it ("Designator J2 runs outside the board");
+- legend text closer to those edges than the rules' silkscreen edge clearance, when one is set (`fabrication.legend_edge`). Mounting holes are not edges for either check. Legend lines are not checked: a part may overhang the board and draw its outline past the edge;
 - purchasing to-dos such as a missing Part;
 - component-area findings.
 
 **Waivers:**
 - An unwaived error blocks export, and nothing is written.
-- `fabrication.waive {key, reason}` and `fabrication.unwaive {key}` are document operations, one undo step each. A waiver needs a reason.
+- `fabrication.waive {keys, reason?}` waives one or more findings with one optional reason, and `fabrication.unwaive {key}` restores one. Each is a document operation and one undo step. A list with one empty or unprintable key is refused whole. The desktop setting "Require a reason to waive errors" (Settings → Production, off by default) makes the app's engine refuse a waiver without a reason, from the dialog and the in-app assistant alike; headless CLI and MCP sessions keep the reason optional.
 - Waivers are saved in the project (`Project.production.waivers`, keyed by finding code plus the objects it names). A finding that changes identity needs a new waiver.
 
 ## Files
@@ -63,7 +65,7 @@ The check reports every project issue under the chosen fabrication profile. Over
 
 - **Format:** `%FSLAX46Y46*%` and `%MOMM*%` (1 nm), absolute coordinates, `G75` multi-quadrant arcs, `M02`. Unchanged coordinates are left out; `D01`/`D02`/`D03` are always written.
 - **Apertures:** each is defined once, numbered from D10 in first-use order, with its `.AperFunction` set by `%TA` before its `%AD`.
-- **File attributes:** `.GenerationSoftware`, `.CreationDate` (only when asked), `.ProjectId` (name, a stable GUID derived from the name, revision 1), `.SameCoordinates`, `.FileFunction` and `.FilePolarity`.
+- **File attributes:** `.GenerationSoftware`, `.CreationDate` (only when asked), `.ProjectId` (the project name set by `project.rename`, a stable GUID derived from the name, revision 1), `.SameCoordinates`, `.FileFunction` and `.FilePolarity`.
 - **Copper order:**
   1. Fill regions, largest first: each region dark, its holes clear (`%LPC`). An island inside another region's hole is smaller, so it is drawn after that hole is cleared; nothing drawn after the fills is erased.
   2. Tracks, as round-aperture `D01` draws, so their ends are exactly round.
@@ -84,13 +86,14 @@ The check reports every project issue under the chosen fabrication profile. Over
   - Footprint silkscreen strokes are drawn with a round pen, with exact arcs; filled shapes are regions.
   - Text uses Pcbcraft's stroke font (`layout::legend`, now shared with the 3D silkscreen films).
   - The legend is not clipped at mask openings; the check warns instead.
+  - Text an instance moved (`instance.set_text_placement`) prints where it was moved. The offset is in the footprint's own axes, so it turns and flips with the part; the turn is added in quarter turns. An offset is at most 1000 mm. The placement stays with the instance through new revisions of the same footprint, and goes when its footprint or text does.
 
 ### Excellon conventions
 
 - **Header:** `M48`, X2 attributes as `; #@! TF.…` comments, `FMAT,2`, `METRIC`, and one `TnnCd.ddd` tool table per file, each tool preceded by its `TA.AperFunction` comment.
 - **Body:** `%`, `G90`, `G05`, then decimal-point coordinates at 3 decimals, so no zero-suppression convention applies. The file ends with `T0` and `M30`.
 - **Slots:** pad slots and plated straight board slots are canned `G85` slots with the tool's width.
-- **Tools:** one per (plating, diameter to 1 µm, hit or slot, function), numbered from 1 per file.
+- **Tools:** one per (plating, diameter to 1 µm, hit or slot, function), numbered from 1 across both files, plated first (T1–T3 plated, T4 non-plated), so a number names one tool in the drill table, the drill map, the fabrication drawing and either file. Excellon numbers tools per file, but a fabricator who loads both files into one CAM job, or reads the combined drill table, then never sees two tools called T1.
 
 ### Pick-and-place
 
@@ -103,6 +106,7 @@ The check reports every project issue under the chosen fabrication profile. Over
   - Bottom angle seen from below: `(180 − rotation) mod 360`, optionally with bottom x negated.
   - Rotation offsets by package-name pattern.
 - **CSV format:** RFC 4180 quoting, LF line ends, UTF-8 without BOM.
+- **Value column** (pick-and-place and both BOMs): the instance's value text, every typed field with a value as the instance shows it ("10 µF 16 V", "10 kΩ ±1%"), so every rating the part was specified with is kept. Without one: the chosen Part's MPN, else the component name for a part of more than two terminals (an IC's name is its identity), else empty. A passive's component name ("Chip capacitor 0603 (1608 metric)") is a package description the Package column already carries, so it is never written as a value; its Status reads "no part".
 
 ### Drawings
 
@@ -137,7 +141,7 @@ Format tests check attributes, polarities, D-code reuse, macro text, escapes, de
 
 - **Out of scope:** IPC-2581 and ODB++ are follow-ups.
 - **Holes:** blind and buried vias are not modelled, so there are no drill-pair files. A plated board slot that is not straight is refused by the check.
-- **Legend:** it is not clipped at mask openings (the fabricator clips; the check warns).
+- **Legend:** it is not clipped at mask openings or the outline (the fabricator clips; the check warns). The desktop's Designator section moves the silkscreen designator only; the command takes any footprint text.
 - **Assembly variants:** there are no DNP flags or variants in the model; every part is fitted.
 - **Profile check:** the check compares profiles only by id. A changed user profile file is read fresh at each export.
 - **Drawings:** text widths use Helvetica's metrics; bold text is measured with the regular widths.

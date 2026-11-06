@@ -47,8 +47,12 @@ mod fill_paint;
 #[cfg(test)]
 mod fill_tests;
 mod fill_tool;
+mod hold_mark;
+#[cfg(test)]
+mod hold_tests;
 mod impedance_view;
 mod layer_focus;
+mod menu;
 #[cfg(test)]
 use layer_focus::OTHER_SHADE;
 use layer_focus::{FAR_SHADE, LayerFocus, Look};
@@ -62,7 +66,7 @@ mod part_place;
 mod placement_card;
 mod production;
 #[cfg(test)]
-mod raster_tests;
+pub(crate) mod raster_tests;
 mod route_card;
 #[cfg(test)]
 mod route_tests;
@@ -72,6 +76,7 @@ mod rules_panel;
 mod shove_tests;
 mod signal_card;
 mod stackup_panel;
+mod text_card;
 mod tune_tool;
 pub use rules_panel::{RuleTopic, topic_for as rule_topic_for};
 mod track_card;
@@ -276,18 +281,20 @@ enum Field {
     Side,
     TrackWidth,
     TrackLayer,
+    TextOffset,
 }
 
 impl Field {
-    const ALL: [Field; 5] = [
+    const ALL: [Field; 6] = [
         Field::Position,
         Field::Rotation,
         Field::Side,
         Field::TrackWidth,
         Field::TrackLayer,
+        Field::TextOffset,
     ];
     fn id(self) -> egui::Id {
-        egui::Id::new(("pcb-field", self))
+        egui::Id::unique(("pcb-field", self))
     }
 }
 
@@ -335,6 +342,8 @@ pub struct PcbEditor {
     layer: CopperLayer,
     /// The board's copper layers, top to bottom, per revision.
     stack: Vec<CopperLayer>,
+    /// The Board card's Project row: the name last seen and the text being edited.
+    project_name: (String, String),
     /// The Route tool's board point under the pointer while it hovers the
     /// canvas: where a layer key's via goes during a route.
     hover_at: Option<Point>,
@@ -394,6 +403,10 @@ pub struct PcbEditor {
     /// The staged values last sent, so a refused commit is not resent
     /// every frame while the field still shows it.
     sent: std::collections::BTreeMap<Field, [f64; 2]>,
+    /// The Designator section's Offset being edited.
+    text_offset: Point,
+    /// Esc this frame, for the Placement card's sections below its own.
+    card_escape: bool,
     errors: FieldErrors,
     /// The Board setup dialog while it is open.
     setup: Option<board_card::BoardSetup>,
@@ -414,6 +427,9 @@ pub struct PcbEditor {
     production: Option<production::ProductionDialog>,
     /// Board bounds a Locate asked the next Layout frame to frame.
     frame_request: Option<[Point; 2]>,
+    /// Bounds the next Layout frame shows whole, zooming out past the
+    /// board's fit if need be (Update PCB's staged parts).
+    overview_request: Option<[Point; 2]>,
     /// Instance whose schematic symbol the app should show next.
     show_in_schematic: Option<Id>,
     /// Every Connections row instead of the first eight.
@@ -448,6 +464,10 @@ pub struct PcbEditor {
     signals: Option<signal_card::SignalCard>,
     /// The Tune tool's settings and preview (`tune_tool`).
     tune: tune_tool::TuneState,
+    /// The right-click menu and what it is about (`menu`).
+    menu: crate::context_menu::State<menu::Target>,
+    /// A registry command a menu row asked the app to run.
+    menu_command: Option<&'static str>,
 }
 
 impl Default for PcbEditor {
@@ -465,6 +485,7 @@ impl Default for PcbEditor {
             route_lit: None,
             layer: CopperLayer::Top,
             hover_at: None,
+            project_name: Default::default(),
             stack: vec![CopperLayer::Top, CopperLayer::Bottom],
             width: 0.3,
             width_from: None,
@@ -499,6 +520,8 @@ impl Default for PcbEditor {
             track_width: 0.0,
             editing: None,
             sent: Default::default(),
+            text_offset: [0.0, 0.0],
+            card_escape: false,
             errors: FieldErrors::default(),
             setup: None,
             part_chooser: Default::default(),
@@ -509,6 +532,7 @@ impl Default for PcbEditor {
             rules: None,
             production: None,
             frame_request: None,
+            overview_request: None,
             show_in_schematic: None,
             connections_all: false,
             net_classes: None,
@@ -526,6 +550,8 @@ impl Default for PcbEditor {
             edge: Default::default(),
             signals: None,
             tune: Default::default(),
+            menu: Default::default(),
+            menu_command: None,
         }
     }
 }
@@ -630,6 +656,7 @@ impl PcbEditor {
     fn end_route(&mut self) {
         self.tool = Tool::Select;
         self.reset_route();
+        self.route.ended = false;
         self.fill_draw.clear();
         if let Some(net) = self.route_lit.take()
             && self.highlighted == Some(net)
@@ -772,6 +799,14 @@ impl PcbEditor {
                 self.position = p.position;
                 self.rotation = p.rotation_deg;
                 self.placement_layer = p.layer;
+                self.text_offset = engine
+                    .project()
+                    .instance(p.instance)
+                    .and_then(|instance| {
+                        let text = target_text(engine.project(), p.instance)?;
+                        instance.text_placements.get(&text).map(|t| t.offset)
+                    })
+                    .unwrap_or_default();
             }
             self.property_key = Some(key);
         }
@@ -975,7 +1010,7 @@ impl PcbEditor {
         }
         match tool {
             "update" => {
-                self.update.begin(engine, Change::SyncPcb {});
+                self.begin_update_pcb(engine);
                 self.end_route();
                 self.cancel_drag();
             }
@@ -983,6 +1018,7 @@ impl PcbEditor {
             "route" => {
                 if self.tool != Tool::Route {
                     self.reset_route();
+                    self.route.ended = false;
                 }
                 self.tool = Tool::Route;
             }
@@ -1137,7 +1173,7 @@ impl PcbEditor {
         let inspected = self.inspected(engine.project());
         Inspector {
             header: self.header(engine),
-            subject: egui::Id::new(("pcb-card", inspected)),
+            subject: egui::Id::unique(("pcb-card", inspected)),
             footer: matches!(
                 inspected,
                 Inspected::Placement(_)
@@ -1231,6 +1267,31 @@ impl PcbEditor {
         slot
     }
 
+    /// Open the Update PCB review and frame the board with the parts it
+    /// stages beside it, so the preview shows where they go.
+    pub(super) fn begin_update_pcb(&mut self, engine: &Engine) {
+        self.update.begin(engine, Change::SyncPcb {});
+        let board = engine.project().board_size;
+        let ghosts = self.update.marks().map(|m| m.ghosts).unwrap_or_default();
+        if !ghosts.is_empty() {
+            let reach = pcbcraft_core::layout::staging::BOARD_MARGIN_MM;
+            let (lo, hi) = ghosts.iter().fold(([0.0_f64, 0.0], board), |(lo, hi), g| {
+                let p = g.position;
+                (
+                    [lo[0].min(p[0] - reach), lo[1].min(p[1] - reach)],
+                    [hi[0].max(p[0] + reach), hi[1].max(p[1] + reach)],
+                )
+            });
+            self.overview_request = Some([lo, hi]);
+        }
+    }
+
+    /// Whether an update review is open.
+    #[cfg(test)]
+    pub(crate) fn reviewing(&self) -> bool {
+        self.update.is_open()
+    }
+
     /// Return the layout view to its fitted scale.
     pub fn fit(&mut self) {
         self.zoom = 1.0;
@@ -1249,8 +1310,9 @@ impl PcbEditor {
             Inspected::Placement(id) => {
                 let placement = project.placements.iter().find(|p| p.instance == id)?;
                 let moved = self.placement_section(ui, project, placement);
+                let text = self.text_section(ui, project, id);
                 let part = self.part_section(ui, engine, id);
-                moved.or(part)
+                moved.or(text).or(part)
             }
             Inspected::Unplaced(_) => {
                 self.unplaced_section(ui, engine);
@@ -1269,8 +1331,8 @@ impl PcbEditor {
                 self.fill_section(ui, project, engine.revision(), fill)
             }
             Inspected::Board | Inspected::Review => {
-                self.board_section(ui, project);
-                self.board_shape_section(ui, engine)
+                let renamed = self.board_section(ui, project);
+                renamed.or(self.board_shape_section(ui, engine))
             }
         }
     }
@@ -1295,6 +1357,39 @@ impl PcbEditor {
             Inspected::Fill(id) => fill_card::fill_footer(ui, project.fill(id)?),
             _ => None,
         }
+    }
+
+    /// Delete or Backspace with the Select tool: the selected track, via or
+    /// fill is deleted by the command its card's Delete button sends, one
+    /// undo step (the engine refuses a locked one). `keys::pressed` never
+    /// takes a plain key from a focused text field.
+    /// Whether a selection is there that the delete key removes.
+    pub fn can_delete(&self, project: &Project) -> bool {
+        if self.view_3d {
+            return false;
+        }
+        if self.shape.active {
+            return self.shape.tool == board_shape::ShapeTool::Select
+                && !self.shape.selection.is_empty();
+        }
+        self.tool == Tool::Select
+            && matches!(
+                self.inspected(project),
+                Inspected::Track(_) | Inspected::Via(_) | Inspected::Fill(_)
+            )
+    }
+
+    fn delete_key(&self, ui: &Ui, project: &Project) -> Option<Operation> {
+        if self.tool != Tool::Select {
+            return None;
+        }
+        let operation = match self.inspected(project) {
+            Inspected::Track(id) => Operation::Layout(LayoutCommand::DeleteTrack { id }),
+            Inspected::Via(id) => Operation::Layout(LayoutCommand::DeleteVia { id }),
+            Inspected::Fill(id) => Operation::Fill(layout::fill::FillCommand::Delete { id }),
+            _ => return None,
+        };
+        crate::keys::pressed(ui.ctx(), "pcb.delete").then_some(operation)
     }
 
     /// The two parts of each courtyard-overlap finding, with the side.
@@ -1343,6 +1438,9 @@ impl PcbEditor {
         if let Some(bounds) = self.frame_request.take() {
             (self.zoom, self.pan) = frame_view(rect, project.board_size, bounds, self.from_bottom);
         }
+        if let Some(bounds) = self.overview_request.take() {
+            (self.zoom, self.pan) = overview(rect, project.board_size, bounds, self.from_bottom);
+        }
         let view = board_view(
             rect,
             project.board_size,
@@ -1369,13 +1467,18 @@ impl PcbEditor {
             (None, false)
         };
         let mut operation = closed;
+        if self.route_start.is_some() {
+            self.route.ended = false;
+        }
         if response.hovered() && !fill_escaped {
             let typing = ui.ctx().egui_wants_keyboard_input();
             let end =
                 self.tool == Tool::Route && !typing && crate::keys::pressed(ui.ctx(), "route.end");
-            if end && self.route_start.is_some() {
-                // The first Esc ends the route; the next leaves Route.
+            if end && (self.route_start.is_some() || self.route.ended) {
+                // The first Esc ends the route, or follows one that has
+                // just finished, and keeps Route; the next leaves it.
                 self.finish_route();
+                self.route.ended = false;
             } else if end || crate::keys::pressed(ui.ctx(), "pcb.cancel") {
                 self.end_route();
                 self.cancel_drag();
@@ -1451,10 +1554,18 @@ impl PcbEditor {
                 let at = world(start);
                 if let Some(id) = self.pick_instance(project, at, tolerance, metric) {
                     self.set_selection(Some(id), None, None);
-                    if let Some(placement) = project
-                        .placements
-                        .iter()
-                        .find(|p| p.instance == id && !p.locked)
+                    // A locked or edge-held part does not follow the
+                    // pointer: the engine says why, in the words it would
+                    // refuse the move with, before anything moves.
+                    if let Some(error) = layout::move_refusal(project, id, self.shape.evaluator) {
+                        crate::kit::toast::post(
+                            ui.ctx(),
+                            refusal::level(&error),
+                            refusal::shown_error(&error),
+                            Vec::new(),
+                        );
+                    } else if let Some(placement) =
+                        project.placements.iter().find(|p| p.instance == id)
                     {
                         self.drag = Some((placement.clone(), at));
                     }
@@ -1478,6 +1589,17 @@ impl PcbEditor {
                 rotation_deg: placement.rotation_deg,
                 layer: placement.layer,
             }));
+        }
+        // A right-click with Select opens the menu of what a click there
+        // picks, selecting it first unless it is selected.
+        if self.tool == Tool::Select
+            && !self.update.is_open()
+            && response.clicked_by(PointerButton::Secondary)
+            && let (Some(at), Some(p)) = (cursor, pointer)
+        {
+            let hit = self.hit_at(project, at, tolerance, metric);
+            let target = self.menu_select(hit);
+            self.menu.open(p, target);
         }
         if response.clicked_by(PointerButton::Primary)
             && let Some(at) = cursor
@@ -1516,6 +1638,7 @@ impl PcbEditor {
         self.paint_board(&painter, view, project);
         self.paint_fill_handles(&painter, view, project);
         self.paint_fill_draw(&painter, view, cursor);
+        hold_mark::paint_marks(&painter, &view, project);
         self.paint_edge_constraints(&painter, &view, project);
         // Slice R1: the docked review's canvas preview.
         if let Some(marks) = self.update.marks() {
@@ -1556,10 +1679,10 @@ impl PcbEditor {
             &format!(
                 "{} · {} copper · {focus} · grid 0.5 mm · {} airwires{}",
                 match self.tool {
-                    Tool::Route => "Route (keys in the Route card)",
+                    Tool::Route => "Route",
                     Tool::Via => "Via",
                     Tool::Fill => "Fill (A arcs, Enter closes)",
-                    Tool::Tune => "Tune (keys in the Tune card)",
+                    Tool::Tune => "Tune",
                     Tool::Select => "Select / move",
                 },
                 self.layer.name(),
@@ -1571,7 +1694,13 @@ impl PcbEditor {
                 }
             ),
         );
+        if operation.is_none() {
+            operation = self.delete_key(ui, project);
+        }
         self.pills(ui, rect, project);
+        if let Some(menu) = self.show_menu(ui.ctx(), engine) {
+            operation = Some(menu);
+        }
         operation
     }
 
@@ -1733,24 +1862,48 @@ impl PcbEditor {
     /// layers: a pad (and its net), a track, then a part by its graphics or
     /// outline; empty board clears the selection.
     fn select_at(&mut self, project: &Project, at: Point, tolerance: f64, metric: TextMetric) {
+        let hit = self.hit_at(project, at, tolerance, metric);
+        self.select_hit(hit);
+    }
+
+    /// What a click at `at` picks: a visible pad, via, track, part body,
+    /// then fill.
+    fn hit_at(
+        &self,
+        project: &Project,
+        at: Point,
+        tolerance: f64,
+        metric: TextMetric,
+    ) -> menu::Hit {
+        use menu::Hit;
         let layers = self.seen();
         if let Some(pad) = self.pick_pad(at, |p| layers.pad(p)) {
-            let (instance, net) = (pad.instance, pad.net);
-            self.set_selection(Some(instance), None, net);
+            Hit::Pad(pad.instance, pad.net)
         } else if let Some(via) = self.pick_via(project, at) {
-            let (id, net) = (via.id, via.net);
-            self.select_via(id, Some(net));
+            Hit::Via(via.id, via.net)
         } else if let Some(track) = project.tracks.iter().rev().find(|track| {
             layers.copper_layer(track.layer) && layout::track_contains(track, at, 0.0)
         }) {
-            self.set_selection(None, Some(track.id), Some(track.net));
+            Hit::Track(track.id, track.net)
         } else if let Some(instance) = self.pick_instance(project, at, tolerance, metric) {
-            self.set_selection(Some(instance), None, None);
+            Hit::Part(instance)
         } else if let Some(fill) = self.pick_fill(project, at, tolerance) {
-            let (id, net) = (fill.id, fill.net);
-            self.select_fill(id, net);
+            Hit::Fill(fill.id, fill.net)
         } else {
-            self.set_selection(None, None, None);
+            Hit::Nothing
+        }
+    }
+
+    /// Select what `hit` picked (nothing clears the selection).
+    fn select_hit(&mut self, hit: menu::Hit) {
+        use menu::Hit;
+        match hit {
+            Hit::Pad(instance, net) => self.set_selection(Some(instance), None, net),
+            Hit::Via(id, net) => self.select_via(id, Some(net)),
+            Hit::Track(id, net) => self.set_selection(None, Some(id), Some(net)),
+            Hit::Part(instance) => self.set_selection(Some(instance), None, None),
+            Hit::Fill(id, net) => self.select_fill(id, net),
+            Hit::Nothing => self.set_selection(None, None, None),
         }
     }
 
@@ -2395,6 +2548,11 @@ fn opposite(layer: Layer) -> Layer {
     }
 }
 /// The board sides by their names.
+/// The silkscreen designator the Designator section edits.
+fn target_text(project: &Project, instance: Id) -> Option<pcbcraft_core::ids::GraphicId> {
+    pcbcraft_core::instances::text::target(project, instance, None).ok()
+}
+
 fn layer_options() -> [(Layer, String); 2] {
     [(Layer::Top, "Top"), (Layer::Bottom, "Bottom")].map(|(layer, name)| (layer, name.to_owned()))
 }
@@ -2604,6 +2762,24 @@ const LOCATE_MARGIN_MM: f64 = 2.0;
 /// The zoom and pan that frame `bounds` in the canvas `rect`: centred, the
 /// bounds plus a margin filling about two thirds of the canvas, never
 /// zoomed out past the fitted board nor in past [`LOCATE_MAX_ZOOM`].
+/// The zoom and pan that show `bounds` whole, at most at the board's fit
+/// and as far out as the zoom range allows, centred.
+fn overview(rect: Rect, board: Point, bounds: [Point; 2], from_bottom: bool) -> (f32, Vec2) {
+    let fit = fit_scale(rect, board);
+    let size = [
+        (bounds[1][0] - bounds[0][0]).max(1.0) as f32,
+        (bounds[1][1] - bounds[0][1]).max(1.0) as f32,
+    ];
+    let wanted = (rect.width() / size[0]).min(rect.height() / size[1]) * 0.9;
+    let zoom = (wanted / fit).clamp(*ZOOM_RANGE.start(), 1.0);
+    let centre = [
+        (bounds[0][0] + bounds[1][0]) / 2.0,
+        (bounds[0][1] + bounds[1][1]) / 2.0,
+    ];
+    let unpanned = board_view(rect, board, zoom, Vec2::ZERO, from_bottom);
+    (zoom, rect.center() - unpanned.screen(centre))
+}
+
 fn frame_view(rect: Rect, board: Point, bounds: [Point; 2], from_bottom: bool) -> (f32, Vec2) {
     let fit = fit_scale(rect, board);
     let size = [
@@ -2827,7 +3003,7 @@ mod tests {
                 // The app reads the origin in the same frame (`App::apply`).
                 let mark = refusal::take_mark(ui.ctx());
                 ui.ctx()
-                    .data_mut(|d| d.insert_temp(egui::Id::new("test-mark"), mark));
+                    .data_mut(|d| d.insert_temp(egui::Id::unique("test-mark"), mark));
             },
         );
         // No renderer in tests: drop font-atlas uploads instead of applying them.
@@ -2921,7 +3097,7 @@ mod tests {
         assert_eq!(*issued, expected);
         assert_eq!(
             marked(&ctx),
-            Some(Origin::Dialog(egui::Id::new("pcb-board-setup")))
+            Some(Origin::Dialog(egui::Id::unique("pcb-board-setup")))
         );
         engine.apply(engine.revision(), operation)?;
         assert_eq!(engine.project().fabrication, expected);
@@ -3731,7 +3907,7 @@ mod tests {
 
     /// The refusal origin the last `frame` marked for its operation.
     fn marked(ctx: &egui::Context) -> Option<Origin> {
-        ctx.data(|d| d.get_temp::<Option<Origin>>(egui::Id::new("test-mark")))
+        ctx.data(|d| d.get_temp::<Option<Origin>>(egui::Id::unique("test-mark")))
             .flatten()
     }
 
@@ -3814,9 +3990,9 @@ mod tests {
         Ok(())
     }
 
-    /// An off-board Position is refused by the engine; the refusal comes
-    /// back to the field, which keeps the typed value marked with the
-    /// board bounds under it, and the document is unchanged.
+    /// A Position outside the working area is refused by the engine; the
+    /// refusal comes back to the field, which keeps the typed value marked
+    /// with the engine's bounds under it, and the document is unchanged.
     #[test]
     fn a_refused_position_shows_under_the_field_and_is_not_resent()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3828,7 +4004,7 @@ mod tests {
         let mut editor = PcbEditor::default();
         editor.set_selection(Some(r1), None, None);
         frame(&mut editor, &engine, &ctx, vec![]);
-        editor.position = [500.0, 9.0];
+        editor.position = [5000.0, 9.0];
         let operation = frame(&mut editor, &engine, &ctx, vec![])
             .1
             .ok_or("the field did not commit")?;
@@ -3836,7 +4012,7 @@ mod tests {
         let error = engine
             .apply(engine.revision(), operation)
             .err()
-            .ok_or("the engine took an off-board placement")?;
+            .ok_or("the engine took a part outside the working area")?;
         assert_eq!(engine.project(), &before);
         // The app hands it back during the frame that applied it.
         let mut refused = Some(refusal::Refused { origin, error });
@@ -3853,10 +4029,10 @@ mod tests {
         assert!(
             shown
                 .iter()
-                .any(|t| t == "Must stay inside the board (60 × 40 mm)"),
+                .any(|t| t == "R1 must stay within -1000 to 2000 mm on each axis"),
             "{shown:?}"
         );
-        assert_eq!(editor.position, [500.0, 9.0], "the typed value stays");
+        assert_eq!(editor.position, [5000.0, 9.0], "the typed value stays");
         assert!(refusal::unclaimed(&ctx).is_empty(), "the field claimed it");
         // Another subject drops the edit and its refusal.
         editor.set_selection(None, None, None);
@@ -3864,7 +4040,7 @@ mod tests {
         assert!(
             !texts(&output)
                 .iter()
-                .any(|t| t.starts_with("Must stay inside"))
+                .any(|t| t.contains("must stay within"))
         );
         Ok(())
     }
@@ -3980,6 +4156,69 @@ mod tests {
             return Err("Delete track did nothing".into());
         };
         assert_eq!(id, track.id);
+        Ok(())
+    }
+
+    /// Precision run finding 2: Delete and Backspace delete the selected
+    /// track with the Delete track button's command, as one undo step;
+    /// with Route armed, Backspace is Route's own key.
+    #[test]
+    fn delete_and_backspace_delete_the_selected_track() -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = routed_board()?;
+        let track = engine.project().tracks[0].clone();
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let press = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for key in [egui::Key::Delete, egui::Key::Backspace] {
+            let mut editor = PcbEditor::default();
+            editor.set_selection(None, Some(track.id), Some(track.net));
+            canvas_frame(&mut editor, &engine, &ctx, vec![]);
+            let (_, operation) = canvas_frame(&mut editor, &engine, &ctx, vec![press(key)]);
+            assert!(
+                matches!(
+                    operation,
+                    Some(Operation::Layout(LayoutCommand::DeleteTrack { id })) if id == track.id
+                ),
+                "{key:?}"
+            );
+            // Nothing selected: the key does nothing.
+            editor.set_selection(None, None, None);
+            assert!(
+                canvas_frame(&mut editor, &engine, &ctx, vec![press(key)])
+                    .1
+                    .is_none()
+            );
+        }
+        let mut editor = PcbEditor::default();
+        editor.set_selection(None, Some(track.id), Some(track.net));
+        editor.tool = Tool::Route;
+        let (_, operation) = canvas_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![press(egui::Key::Backspace)],
+        );
+        assert!(
+            !matches!(
+                operation,
+                Some(Operation::Layout(LayoutCommand::DeleteTrack { .. }))
+            ),
+            "Route keeps Backspace"
+        );
+        let before = engine.revision();
+        engine.apply(
+            before,
+            Operation::Layout(LayoutCommand::DeleteTrack { id: track.id }),
+        )?;
+        assert!(engine.project().tracks.iter().all(|t| t.id != track.id));
+        engine.undo()?;
+        assert!(engine.project().tracks.iter().any(|t| t.id == track.id));
         Ok(())
     }
 

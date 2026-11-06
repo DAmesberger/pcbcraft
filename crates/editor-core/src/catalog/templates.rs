@@ -136,7 +136,8 @@ impl PackageShape {
             | PackageForm::Molded(_)
             | PackageForm::Grid(_)
             | PackageForm::Tht(_)
-            | PackageForm::Module(_) => {
+            | PackageForm::Module(_)
+            | PackageForm::UsbC(_) => {
                 let pitch = form.values().into_iter().find_map(|v| match v.value {
                     ParamValue::Length(mm) if v.name.0.ends_with("_e") => Some(mm),
                     _ => None,
@@ -352,7 +353,8 @@ impl Candidate {
                 | Term::Has { .. }
                 | Term::Components
                 | Term::Parts
-                | Term::Mpn { .. } => return None,
+                | Term::Mpn { .. }
+                | Term::Implements { .. } => return None,
             }
         }
         Some(worst.unwrap_or(MatchTier::Filter))
@@ -368,6 +370,7 @@ fn check_terms(terms: &[Term]) -> Result<()> {
             Term::Has { present: false, .. } => "missing",
             Term::Components | Term::Parts => "kind",
             Term::Mpn { .. } => "mpn",
+            Term::Implements { .. } => "implements",
             _ => continue,
         };
         return Err(Error::Invalid(format!(
@@ -434,6 +437,15 @@ fn custom_aliases(family: FamilyKind) -> &'static [&'static str] {
             "radio module",
             "castellated",
             "shield can",
+        ],
+        FamilyKind::UsbC => &[
+            "USB",
+            "USB-C",
+            "USB C",
+            "Type-C",
+            "USB Type-C",
+            "receptacle",
+            "connector",
         ],
     }
 }

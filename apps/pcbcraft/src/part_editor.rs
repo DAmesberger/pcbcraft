@@ -804,6 +804,17 @@ impl PartEditor {
         }
     }
 
+    /// Whether the shown canvas has a selection its delete key removes.
+    pub fn can_delete(&self) -> bool {
+        match self.view {
+            View::Symbol => !self.selection.is_empty(),
+            View::Footprint => {
+                !self.footprint_tool.selection.is_empty() || self.footprint_dims.selected.is_some()
+            }
+            _ => false,
+        }
+    }
+
     pub fn on_tab(&mut self, tab: &str) {
         self.view = match tab {
             "details" => View::Details,
@@ -1121,7 +1132,7 @@ impl PartEditor {
     fn publish_set(&self, engine: &Engine) -> Option<Operation> {
         let set = self.draft.as_ref()?;
         let mut publish = set.publish();
-        if let Operation::Library(LibraryCommand::Publish { drafts }) = &mut publish {
+        if let Operation::Library(LibraryCommand::Publish { drafts, .. }) = &mut publish {
             drafts.extend(part_props::PartProps::draft_ids(engine, set.ids.component));
         }
         Some(publish)
@@ -1408,7 +1419,7 @@ impl PartEditor {
         let inspected = self.inspected();
         kit::card::Inspector {
             header: self.header(engine),
-            subject: egui::Id::new(("component-card", self.lineage, inspected)),
+            subject: egui::Id::unique(("component-card", self.lineage, inspected)),
             footer: self.has_footer(engine, inspected),
             issues: self.issue_slot(engine, inspected),
         }
@@ -1844,7 +1855,7 @@ impl PartEditor {
         if self.view == View::Details {
             // A preview of the symbol: nothing on it is picked or edited
             // from the Details tab.
-            let preview = ui.interact(rect, ui.id().with("details-preview"), Sense::hover());
+            let preview = ui.interact(rect, ui.scope_id().with("details-preview"), Sense::hover());
             ui.add_enabled_ui(false, |ui| {
                 self.symbol_canvas(ui, rect, &preview, engine);
             });
@@ -1930,7 +1941,7 @@ impl PartEditor {
                         Pos2::new(left, y - t.control_height / 2.0),
                         Pos2::new(right, y + t.control_height / 2.0),
                     ),
-                    ui.id().with(("mapping-row", physical.id.0)),
+                    ui.scope_id().with(("mapping-row", physical.id.0)),
                     Sense::click(),
                 )
                 .clicked()
@@ -2729,7 +2740,7 @@ mod draft_tests {
             });
         assert!(matches!(
             committed.and_then(|f| f.default),
-            Some(FieldValue::Quantity { si, .. }) if (si - 10_000.0).abs() < 1e-9
+            Some(FieldValue::Quantity { si, .. }) if si.to_f64() == 10_000.0
         ));
         engine.undo()?;
         editor.commit(&ctx, &engine);
@@ -2895,12 +2906,13 @@ mod draft_tests {
         editor.commit(&ctx, &engine);
         editor.on_tab("symbol");
         let shown = canvas_frame(&mut editor, &engine, &ctx, vec![]);
-        // The designator placeholder reads prefix + "?"; the shown field
-        // reads its name (no default). A two-terminal passive hides its pin
-        // numbers.
-        for text in ["R?", "Resistor", "Resistance"] {
+        // The designator placeholder reads prefix + "?"; the value slot
+        // reads the shown field's name (no default), never the component
+        // name. A two-terminal passive hides its pin numbers.
+        for text in ["R?", "Resistance"] {
             assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
         }
+        assert!(!shown.iter().any(|t| t == "Resistor"), "{shown:?}");
         assert!(!shown.iter().any(|t| t == "1" || t == "2"), "{shown:?}");
         // The view fits the drawn bounds about the origin (3 mm margin).
         let set = editor.draft.as_ref().ok_or("no draft")?;
@@ -3017,7 +3029,7 @@ mod draft_tests {
             .and_then(|f| f.default.clone());
         assert!(matches!(
             default,
-            Some(FieldValue::Quantity { si, .. }) if (si - 10_000.0).abs() < 1e-9
+            Some(FieldValue::Quantity { si, .. }) if si.to_f64() == 10_000.0
         ));
         Ok(())
     }

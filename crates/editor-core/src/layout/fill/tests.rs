@@ -743,6 +743,40 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
     Ok(())
 }
 
+/// Under each built-in profile, unchanged, a whole-board fill stays that
+/// profile's edge clearance inside the rectangle. Under the first default
+/// (0) the same fill reached the edge and the production check passed.
+#[test]
+fn the_fill_keeps_the_profile_edge() -> Fallible<()> {
+    for profile in crate::rules::builtin::all() {
+        let edge = profile
+            .rules
+            .copper
+            .clearance
+            .get(CopperObject::Fill, CopperObject::BoardEdge);
+        assert!(edge > 0.0, "{}", profile.id);
+        let (engine, id, _) = showcase_with(CopperLayer::Bottom)?;
+        let mut p = engine.project().clone();
+        let [w, h] = p.board_size;
+        crate::rules::apply(
+            &mut p.rules,
+            crate::rules::RulesCommand::SetProfile {
+                profile: Box::new(profile.clone()),
+                keep_overrides: false,
+            },
+        )?;
+        let c = super::compute(&p, id)?;
+        let mut f = fill(&p, id)?.clone();
+        f.computed = Some(c);
+        assert!(!edges(&f).is_empty(), "{}", profile.id);
+        for (a, _) in edges(&f) {
+            let gap = a[0].min(a[1]).min(w - a[0]).min(h - a[1]);
+            assert!(gap >= edge - 1e-6, "{}: {a:?} is {gap}", profile.id);
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn the_cache_key_ignores_edits_out_of_reach() -> Fallible<()> {
     let mut engine = showcase()?;
@@ -855,24 +889,74 @@ fn computed_copper_persists_and_reloads_fresh() -> Fallible<()> {
     Ok(())
 }
 
-#[test]
-fn starved_thermals_are_reported() -> Fallible<()> {
+/// A GND surface pad on the showcase's top layer, its centre and the fill
+/// strip over it: tall enough to cover the pad, too thin for a via's four
+/// spokes.
+struct PadStrip {
+    engine: Engine,
+    gnd: Id,
+    in_pad: Id,
+    beside: Id,
+    strip: Outline,
+}
+
+fn via_at(engine: &mut Engine, net: Id, at: Point) -> Fallible<Id> {
+    match engine.apply(
+        engine.revision(),
+        Operation::Layout(layout::LayoutCommand::AddVia {
+            via: layout::ViaRequest::through(net, at),
+        }),
+    )? {
+        Outcome::ViaAdded { via } => Ok(via),
+        other => Err(format!("{other:?}").into()),
+    }
+}
+
+fn pad_strip() -> Fallible<PadStrip> {
     let mut engine = showcase()?;
     let gnd = net(&engine, "GND")?;
-    // A thin fill strip through one ground via reaches it from two sides.
-    let via = engine
-        .project()
-        .vias
-        .iter()
-        .find(|v| v.net == gnd)
-        .cloned()
-        .ok_or("no via")?;
-    let [x, y] = via.position;
-    let mut s = spec(
-        Some(gnd),
-        CopperLayer::Inner(2),
-        rect(x - 3.0, y - 0.4, x + 3.0, y + 0.4),
+    // The widest room comes from a blank part of the board: a surface pad
+    // placed there by hand would need a new footprint, so use a real one
+    // and put the second via along the strip, outside the pad.
+    let pad = placed_pads(engine.project())
+        .into_iter()
+        .find(|p| {
+            p.net == Some(gnd)
+                && p.pad.kind == crate::library::PadKind::Smd
+                && CopperLayer::from(p.layer) == CopperLayer::Top
+        })
+        .ok_or("no GND surface pad")?;
+    let center = pad.pad_transform().apply([0.0, 0.0]);
+    let ring = pad.outline().flatten(FILL_CHORD_MM);
+    let xs = ring.iter().map(|p| p[0]);
+    let right = xs.clone().fold(f64::NEG_INFINITY, f64::max);
+    let beside_at = [right + 1.0, center[1]];
+    let in_pad = via_at(&mut engine, gnd, center)?;
+    let beside = via_at(&mut engine, gnd, beside_at)?;
+    let strip = rect(
+        center[0] - 2.0,
+        center[1] - 0.4,
+        beside_at[0] + 2.0,
+        center[1] + 0.4,
     );
+    Ok(PadStrip {
+        engine,
+        gnd,
+        in_pad,
+        beside,
+        strip,
+    })
+}
+
+/// The strip fill on `layer` with the given connections: its vias thermal
+/// with four spokes unless told otherwise.
+fn strip_fill(
+    fixture: &mut PadStrip,
+    layer: CopperLayer,
+    connections: PadConnections,
+) -> Fallible<Id> {
+    let mut s = spec(Some(fixture.gnd), layer, fixture.strip.clone());
+    s.settings.connections = connections;
     s.settings.thermal = Some(crate::rules::ThermalRelief {
         spoke_width: 0.3,
         spoke_count: 4,
@@ -880,23 +964,137 @@ fn starved_thermals_are_reported() -> Fallible<()> {
         angle_deg: 0.0,
     });
     s.settings.width_min = Some(0.1);
-    let id = add(&mut engine, s)?;
-    refill(&mut engine)?;
-    let p = engine.project();
-    let joins = fill(p, id)?.computed.clone().ok_or("not filled")?.joins;
-    let spokes = joins
+    let id = add(&mut fixture.engine, s)?;
+    refill(&mut fixture.engine)?;
+    Ok(id)
+}
+
+fn via_spokes(
+    project: &Project,
+    fill_id: Id,
+    via: Id,
+) -> Fallible<(PadConnection, u32, Option<u32>)> {
+    let joins = fill(project, fill_id)?
+        .computed
+        .clone()
+        .ok_or("not filled")?
+        .joins;
+    Ok(joins
         .iter()
         .find_map(|j| match j {
-            FillJoin::Via { via: v, spokes, .. } if *v == via.id => Some(*spokes),
+            FillJoin::Via {
+                via: v,
+                connection,
+                spokes,
+                ..
+            } if *v == via => Some((*connection, *spokes, j.joined_region())),
             _ => None,
         })
-        .ok_or("via not joined")?;
-    assert_eq!(spokes, 2, "{joins:?}");
+        .ok_or("via not joined")?)
+}
+
+/// The other half of gap 17: a fill can join vias solidly. It leaves no
+/// relief to starve, and the vias still join the fill's copper.
+#[test]
+fn a_fill_can_join_its_vias_solidly() -> Fallible<()> {
+    let mut f = pad_strip()?;
+    let id = strip_fill(
+        &mut f,
+        CopperLayer::Top,
+        PadConnections {
+            smd: Some(PadConnection::Thermal),
+            through_hole: None,
+            via: Some(PadConnection::Solid),
+        },
+    )?;
+    let p = f.engine.project();
+    for via in [f.in_pad, f.beside] {
+        let (connection, _, region) = via_spokes(p, id, via)?;
+        assert_eq!(connection, PadConnection::Solid);
+        assert!(region.is_some(), "via {via} joins the copper");
+    }
+    // Solid copper runs up to the via's drill: 0.05 mm off its barrel is
+    // copper on the 0.6 mm pad's ring, where a thermal would have a gap.
+    let v = p.via(f.beside).ok_or("via")?;
+    let copper_at = [v.position[0], v.position[1] + v.drill / 2.0 + 0.05];
+    assert!(inside(fill(p, id)?, copper_at));
+
+    // Per fill: another fill's vias keep their thermals.
+    let mut other = pad_strip()?;
+    strip_fill(
+        &mut other,
+        CopperLayer::Top,
+        PadConnections {
+            smd: Some(PadConnection::Thermal),
+            through_hole: None,
+            via: Some(PadConnection::Thermal),
+        },
+    )?;
+    let beside = other.beside;
+    let other_id = other.engine.project().fills.last().ok_or("fill")?.id;
+    let (connection, _, _) = via_spokes(other.engine.project(), other_id, beside)?;
+    assert_eq!(connection, PadConnection::Thermal);
+    Ok(())
+}
+
+/// The least gap from a fill's copper to tracks of the nets `pick` accepts.
+fn track_gap(project: &Project, f: &Fill, pick: impl Fn(Id) -> bool) -> f64 {
+    project
+        .tracks
+        .iter()
+        .filter(|t| t.layer == f.layer && pick(t.net))
+        .map(|t| gap_to_segment(f, t.start, t.end) - t.width / 2.0)
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Gap 13 of the E2E log: a class's clearance to fills moves the pour away
+/// from that class's copper, and leaves other nets and the class's tracks
+/// and pads to their own clearances.
+#[test]
+fn a_class_fill_clearance_moves_the_pour_and_nothing_else() -> Fallible<()> {
+    let (mut engine, id, gnd) = showcase_with(CopperLayer::Bottom)?;
+    let project = engine.project();
+    let chosen = project
+        .tracks
+        .iter()
+        .find(|t| t.layer == CopperLayer::Bottom && t.net != gnd)
+        .map(|t| t.net)
+        .ok_or("no bottom track")?;
+    let f = fill(project, id)?;
+    let others_before = track_gap(project, f, |n| n != gnd && n != chosen);
+    let tolerance = 0.03;
+    assert!((track_gap(project, f, |n| n == chosen) - 0.2).abs() < tolerance);
+
+    let class = match engine.apply(
+        engine.revision(),
+        Operation::Rules(RulesCommand::AddNetClass {
+            class: NetClassSpec {
+                name: "USB".into(),
+                fill_clearance: Some(0.5),
+                ..Default::default()
+            },
+        }),
+    )? {
+        Outcome::NetClassAdded { class } => class,
+        other => return Err(format!("{other:?}").into()),
+    };
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(RulesCommand::AssignNets {
+            nets: vec![chosen],
+            class: Some(class),
+        }),
+    )?;
+    refill(&mut engine)?;
+    let project = engine.project();
+    let f = fill(project, id)?;
+    let gap = track_gap(project, f, |n| n == chosen);
+    assert!(gap >= 0.5 - 1e-6, "{gap}");
+    assert!(gap < 0.5 + tolerance, "{gap}");
+    let others = track_gap(project, f, |n| n != gnd && n != chosen);
     assert!(
-        layout::checks(p)
-            .iter()
-            .any(|f| f.code == "fill.thermal_starved"
-                && f.objects.contains(&ObjectRef::Via { id: via.id }))
+        (others - others_before).abs() < tolerance,
+        "other nets keep their gap: {others} against {others_before}"
     );
     Ok(())
 }

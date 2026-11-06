@@ -152,6 +152,8 @@ impl SchematicEditor {
         multiline: bool,
         problem: fn(&str) -> Option<&'static str>,
     ) -> Option<String> {
+        // The menu's Edit gives this field the keyboard once.
+        let focus = self.focus_field.as_deref() == Some(key.as_str());
         let index = match self.item_text.iter().position(|(k, _, _)| *k == key) {
             Some(i) => i,
             None => {
@@ -171,6 +173,10 @@ impl SchematicEditor {
         } else {
             kit::text_row(ui, label, &mut entry.2)
         };
+        if focus {
+            self.focus_field = None;
+            response.request_focus();
+        }
         let changed = entry.2.trim() != current;
         match live(ui, &response, &mut self.refused, changed, invalid) {
             Live::Commit => {
@@ -211,7 +217,7 @@ impl SchematicEditor {
             .response
             .rect;
         self.pair_buf = Some((key.to_owned(), value));
-        match focus_left(ui, ui.id().with(("pair", key)), rect) {
+        match focus_left(ui, ui.scope_id().with(("pair", key)), rect) {
             Some(false) if value != current => Some(value),
             Some(_) => {
                 self.pair_buf = Some((key.to_owned(), current));
@@ -392,7 +398,7 @@ impl SchematicEditor {
                         tip: "Select this pin",
                         ..Default::default()
                     };
-                    if kit::tree_row(ui, ui.id().with(("pin", pin.id)), &row).clicked {
+                    if kit::tree_row(ui, ui.scope_id().with(("pin", pin.id)), &row).clicked {
                         select = Some(pin.id);
                     }
                 });
@@ -774,6 +780,22 @@ impl SchematicEditor {
         });
         let props = project.properties.clone();
         kit::section(ui, "title-block", "Title block", true, None, |ui| {
+            if let Some(name) = self.live_text(
+                ui,
+                "project/name".to_owned(),
+                "Project",
+                &project.name,
+                false,
+                |t| {
+                    if t.trim().is_empty() {
+                        Some("Enter a project name")
+                    } else {
+                        (t.trim().len() > 256).then_some("At most 256 characters")
+                    }
+                },
+            ) {
+                output = op(SchematicCommand::RenameProject { name });
+            }
             let fields: [(&str, &str, Field); 5] = [
                 ("title", "Title", |p| &mut p.title),
                 ("revision", "Revision", |p| &mut p.revision),

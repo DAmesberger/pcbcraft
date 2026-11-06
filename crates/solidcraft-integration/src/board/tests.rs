@@ -376,6 +376,24 @@ fn bad_edits_are_refused_and_leave_the_board() -> Fallible<()> {
     Ok(())
 }
 
+/// A size the sketch cannot take is refused naming the dimension that
+/// drives it, never by the solver's constraint ids (k1, k2, …).
+#[test]
+fn an_unsolvable_size_names_its_dimension() -> Fallible<()> {
+    let mut engine = sketched()?;
+    let error = edit(&mut engine, vec![set("width", "-5 mm")])
+        .err()
+        .ok_or("refused")?
+        .to_string();
+    assert!(error.contains("‘width’"), "{error}");
+    assert!(error.contains("cannot be satisfied"), "{error}");
+    let ids = error
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| w.len() > 1 && w.starts_with('k') && w[1..].chars().all(|c| c.is_ascii_digit()));
+    assert!(!ids, "no constraint ids: {error}");
+    Ok(())
+}
+
 #[test]
 fn parts_follow_named_edges_when_board_parameters_change() -> Fallible<()> {
     let mut engine = sketched()?;
@@ -740,5 +758,174 @@ fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible
     assert!(close(at(&engine).ok_or("J1")?, [6.0, 15.0]));
     edit(&mut engine, vec![set("height", "32 mm")])?;
     assert!(close(at(&engine).ok_or("J1")?, [6.0, 17.0]));
+    Ok(())
+}
+
+fn created(outcome: Outcome) -> Fallible<Vec<SketchRef>> {
+    match outcome {
+        Outcome::BoardEdited { created } => Ok(created),
+        other => Err(format!("unexpected {other:?}").into()),
+    }
+}
+
+fn point_of(created: &[SketchRef]) -> Fallible<SketchPointId> {
+    Ok(created
+        .iter()
+        .find_map(|r| match r {
+            SketchRef::Point(p) => Some(p.clone()),
+            _ => None,
+        })
+        .ok_or("no created point")?)
+}
+
+/// Gap 21 of the E2E log: a client takes the mounting-hole centres from the
+/// outcome instead of parsing the stored sketch.
+#[test]
+fn board_edit_reports_what_it_created() -> Fallible<()> {
+    let mut engine = sketched()?;
+    let before = engine.revision();
+
+    let made = created(edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::AddPoint { at: [4.0, 4.0] },
+        }],
+    )?)?;
+    assert_eq!(made.len(), 1, "{made:?}");
+    let center = point_of(&made)?;
+    let stored = check::check_sketch(&sketch(&engine)?.sketch.0).map_err(Error::from)?;
+    let at = stored
+        .points
+        .iter()
+        .find(|p| p.id == center.0)
+        .ok_or("the reported point is not in the sketch")?;
+    assert_eq!((at.pos.x, at.pos.y), (4.0, 4.0));
+
+    // The reported id is what the next edit needs.
+    let none = created(edit(
+        &mut engine,
+        vec![BoardEdit::AddMountingHole {
+            center: center.clone(),
+            drill: Expr("2.7 mm".into()),
+            plated: false,
+            pad_diameter: None,
+        }],
+    )?)?;
+    assert!(none.is_empty(), "a role creates no sketch entity: {none:?}");
+    assert_eq!(engine.project().board().holes.len(), 1);
+
+    // Several edits report together: a line's two points and curve, and
+    // one more point; a parameter adds nothing.
+    let made = created(edit(
+        &mut engine,
+        vec![
+            set("margin", "2 mm"),
+            BoardEdit::Sketch {
+                edit: SketchEdit::AddLine {
+                    a: [10.0, 10.0],
+                    b: [20.0, 10.0],
+                    construction: true,
+                },
+            },
+            BoardEdit::Sketch {
+                edit: SketchEdit::AddPoint { at: [30.0, 10.0] },
+            },
+        ],
+    )?)?;
+    let count = |f: fn(&SketchRef) -> bool| made.iter().filter(|r| f(r)).count();
+    assert_eq!(count(|r| matches!(r, SketchRef::Point(_))), 3, "{made:?}");
+    assert_eq!(count(|r| matches!(r, SketchRef::Curve(_))), 1, "{made:?}");
+
+    // What the same edit deleted again is not reported.
+    let made = created(edit(
+        &mut engine,
+        vec![
+            BoardEdit::Sketch {
+                edit: SketchEdit::AddPoint { at: [35.0, 12.0] },
+            },
+            BoardEdit::Sketch {
+                edit: SketchEdit::AddPoint { at: [36.0, 12.0] },
+            },
+        ],
+    )?)?;
+    assert_eq!(made.len(), 2);
+    let gone = made[0].clone();
+    let probe = sketch(&engine)?;
+    let kept = created(edit(
+        &mut engine,
+        vec![
+            BoardEdit::Sketch {
+                edit: SketchEdit::AddPoint { at: [37.0, 12.0] },
+            },
+            BoardEdit::Sketch {
+                edit: SketchEdit::Delete {
+                    ids: vec![gone.clone()],
+                },
+            },
+        ],
+    )?)?;
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(!kept.contains(&gone));
+    assert_ne!(sketch(&engine)?.sketch, probe.sketch);
+
+    // A fillet and a slot report what they drew.
+    let made = created(edit(
+        &mut engine,
+        vec![BoardEdit::Fillet {
+            corners: Vec::new(),
+            radius: DimValue::Fixed(1.0),
+        }],
+    )?)?;
+    let arcs: Vec<_> = made
+        .iter()
+        .filter(|r| matches!(r, SketchRef::Curve(_)))
+        .collect();
+    assert_eq!(arcs.len(), 4, "one arc per corner: {made:?}");
+    let made = created(edit(
+        &mut engine,
+        vec![BoardEdit::AddSlot {
+            a: [20.0, 20.0],
+            b: [30.0, 20.0],
+            width: DimValue::Fixed(1.0),
+            plated: false,
+        }],
+    )?)?;
+    assert_eq!(
+        made.iter()
+            .filter(|r| matches!(r, SketchRef::Curve(_)))
+            .count(),
+        4,
+        "two lines and two caps: {made:?}"
+    );
+
+    // The JSON a client reads.
+    let json = serde_json::to_value(Outcome::BoardEdited {
+        created: vec![SketchRef::Point(center.clone())],
+    })?;
+    assert_eq!(json["outcome"], "board_edited");
+    assert_eq!(json["created"][0]["point"], center.0);
+
+    // A refused edit reports nothing and changes nothing.
+    let revision = engine.revision();
+    let file = engine.to_file();
+    assert!(
+        edit(
+            &mut engine,
+            vec![
+                BoardEdit::Sketch {
+                    edit: SketchEdit::AddPoint { at: [5.0, 5.0] },
+                },
+                set("width", "-5 mm"),
+            ],
+        )
+        .is_err()
+    );
+    assert_eq!(engine.revision(), revision);
+    assert_eq!(engine.to_file(), file);
+
+    // Undo takes the edit back as one step.
+    engine.undo()?;
+    assert_eq!(engine.project().board().cutouts.len(), 0);
+    assert!(engine.revision() > before);
     Ok(())
 }

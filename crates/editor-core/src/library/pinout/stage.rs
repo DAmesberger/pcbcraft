@@ -12,16 +12,14 @@ use crate::functions::{
     Function, MAX_FUNCTIONS, MAX_ROLES, MuxCode, PinOption, Resource, ResourceRole, Role,
     TerminalFunctions,
 };
-use crate::geometry::Bounds;
 use crate::ids::{
-    BindingRef, DefinitionId, FunctionId, GraphicId, MAX_LABEL, PackageRef, PackageTerminalId,
-    ResourceId, Revision, RoleId, RuleId, SymbolRef, TerminalId, UnitId,
+    BindingRef, DefinitionId, FunctionId, MAX_LABEL, PackageRef, PackageTerminalId, ResourceId,
+    Revision, RoleId, RuleId, SymbolRef, TerminalId,
 };
-use crate::library::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
 use crate::library::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, Drafts, Library, MAX_NOTE,
     PackageDefinition, PackageForm, PackageTerminal, SymbolDefinition, Terminal, TerminalClass,
-    TerminalMap, Unit,
+    TerminalMap,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -903,74 +901,11 @@ fn provenance(document: &PinoutDocument) -> String {
     text.chars().take(MAX_NOTE / 4).collect()
 }
 
-/// A rectangle with the first half of `terminals` down its left side and
-/// the rest up its right side, on the symbol module grid, wide enough for the
-/// pin names, with the designator above and the name below.
+/// The generated block symbol, wide enough for the pin names.
 fn block_symbol(component: DefinitionId, terminals: &[Terminal]) -> SymbolDefinition {
-    const STEP: f64 = graphics::SYMBOL_MODULE_MM;
-    let count = terminals.len();
-    let left = count.div_ceil(2);
-    let rows = left.max(1) as f64;
-    let top = ((rows - 1.0) / 2.0).floor() * STEP;
-    let longest = terminals
-        .iter()
-        .map(|t| t.name.chars().count())
-        .max()
-        .unwrap_or(1) as f64;
-    // Both sides' names inside the body, with a module between them.
-    let half = ((longest * 0.75 * PIN_TEXT_HEIGHT_MM + 1.5) / STEP)
-        .ceil()
-        .max(2.0)
-        * STEP;
-    let body = Bounds {
-        min: [-half, top - rows * STEP],
-        max: [half, top + STEP],
-    };
-    let gap = 0.5;
-    let pins = terminals
-        .iter()
-        .enumerate()
-        .map(|(k, terminal)| {
-            let position = if k < left {
-                [-half - STEP, top - k as f64 * STEP]
-            } else {
-                let j = count - 1 - k;
-                [half + STEP, top - j as f64 * STEP]
-            };
-            graphics::pin_toward(terminal.id, position, body)
-        })
-        .collect();
-    SymbolDefinition {
-        component,
-        next_local: 5,
-        pin_text_height: PIN_TEXT_HEIGHT_MM,
-        units: vec![Unit {
-            id: UnitId(1),
-            label: "A".into(),
-            graphics: vec![
-                graphics::body_rect(GraphicId(2), body),
-                graphics::text(
-                    GraphicId(3),
-                    TextContent::Designator,
-                    [body.center()[0], body.max[1] + gap],
-                    Justify {
-                        h: HAlign::Center,
-                        v: VAlign::Bottom,
-                    },
-                ),
-                graphics::text(
-                    GraphicId(4),
-                    TextContent::ComponentName,
-                    [body.center()[0], body.min[1] - gap],
-                    Justify {
-                        h: HAlign::Center,
-                        v: VAlign::Top,
-                    },
-                ),
-            ],
-            pins,
-        }],
-    }
+    let named: Vec<(TerminalId, &str)> =
+        terminals.iter().map(|t| (t.id, t.name.as_str())).collect();
+    crate::library::samples::named_block_symbol(component, &named)
 }
 
 /// Stage an import. `allocate` reserves a new lineage; it is called only
@@ -1023,12 +958,41 @@ pub fn stage(
             if meta.provenance.trim().is_empty() {
                 meta.provenance = provenance(document);
             }
+            // Renamed pins may no longer fit a box drawn for the old
+            // names ("RESET" over "USB_DM"): the component's symbol drafts
+            // widen to fit them, in the same import.
+            let mut symbols = Vec::new();
+            for representation in &component.representations {
+                let Some(symbol_draft) = drafts.get(representation.id) else {
+                    continue;
+                };
+                let Definition::Symbol(symbol) = &symbol_draft.definition else {
+                    continue;
+                };
+                let mut symbol = symbol.clone();
+                let name = |terminal: TerminalId| {
+                    component
+                        .terminals
+                        .iter()
+                        .find(|t| t.id == terminal)
+                        .map(|t| t.name.clone())
+                };
+                if crate::library::samples::fit_pin_names(&mut symbol, name) {
+                    symbols.push(StagedDraft {
+                        id: representation.id,
+                        create: false,
+                        meta: symbol_draft.meta.clone(),
+                        definition: Definition::Symbol(symbol),
+                    });
+                }
+            }
             out.drafts.push(StagedDraft {
                 id: *id,
                 create: false,
                 meta,
                 definition: Definition::Component(component),
             });
+            out.drafts.extend(symbols);
         }
         PinoutTarget::New { name, row } => {
             if !text_ok(name, MAX_LABEL) {

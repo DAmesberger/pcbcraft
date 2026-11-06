@@ -435,11 +435,18 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
     let disconnect =
         engine.preview_update(revise(vec![u2], regroup(RegroupAction::AcceptDisconnect)));
     assert!(disconnect.blockers.is_empty(), "{:?}", disconnect.blockers);
-    assert_eq!(disconnect.removed_wires, vec![wire6]);
+    // The wire from U2.6, with the rest of its run when it bends around
+    // other pins through junction points.
+    assert!(disconnect.removed_wires.contains(&wire6));
+    let mut removed = disconnect.removed_wires.clone();
+    removed.sort_unstable();
+    assert_eq!(removed, wire_run(&engine, ep(u2, 6)));
     let placed = engine.preview_update(revise(
         vec![u2],
+        // Not straight below U2's Aout: terminal 6's wire follows it from
+        // (65, 10), and a wire running over the no-connect pin would join it.
         regroup(RegroupAction::PlaceUnit {
-            position: [60.0, -20.0],
+            position: [40.0, -20.0],
         }),
     ));
     assert!(placed.blockers.is_empty(), "{:?}", placed.blockers);
@@ -491,7 +498,14 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
         ..Default::default()
     }));
     assert!(dropped.blockers.is_empty(), "{:?}", dropped.blockers);
-    assert_eq!(dropped.removed_wires.len(), 3);
+    // The three wires of terminals 4–6, each with the rest of its run
+    // where it bends around other pins.
+    let mut removed = dropped.removed_wires.clone();
+    removed.sort_unstable();
+    let mut runs: Vec<Id> = (4..=6).flat_map(|t| wire_run(&engine, ep(u2, t))).collect();
+    runs.sort_unstable();
+    assert_eq!(removed, runs);
+    assert!((4..=6).all(|t| !wire_run(&engine, ep(u2, t)).is_empty()));
 
     // Save and reopen keeps pins, unit states and markers.
     let reopened = Engine::from_file(format::decode(&format::encode(&engine.to_file())?)?)?;

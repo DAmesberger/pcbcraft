@@ -95,6 +95,9 @@ impl Default for ShapeMode {
     }
 }
 
+/// A refused parameter, why, and the board's key when it was refused.
+type Refused = (ParamName, String, Option<(u64, usize)>);
+
 /// The parameters section's text buffers.
 #[derive(Default)]
 pub(super) struct ParamRows {
@@ -105,12 +108,16 @@ pub(super) struct ParamRows {
     new_expr: String,
     /// A refused row (`None`: the add row) and why.
     error: Option<(Option<ParamName>, String)>,
+    /// A parameter whose committed value the engine refused: the row went
+    /// back to the stored value, and the whole reason shows under it until
+    /// the row is edited or the document changes (the board's key then).
+    refused: Option<Refused>,
     /// The row whose commit was sent last, to claim its refusal.
     sent: Option<Option<ParamName>>,
 }
 
 fn field_id(name: Option<&ParamName>) -> egui::Id {
-    egui::Id::new(("board-param", name.map(|n| n.0.clone())))
+    egui::Id::unique(("board-param", name.map(|n| n.0.clone())))
 }
 
 const DIM_FIELD: &str = "board-dimension";
@@ -601,22 +608,6 @@ impl PcbEditor {
                 painter.add(Shape::line(line, Stroke::new(width, color)));
             }
         }
-        // Named edges: the name at the edge's middle, inside.
-        for edge in &board.edges {
-            let Some(curve) = drawn.curve(&edge.curve) else {
-                continue;
-            };
-            let points = polyline(&curve.geometry);
-            if let Some(mid) = points.get(points.len() / 2) {
-                painter.text(
-                    view.screen(*mid) + vec2(0.0, -t.space_8),
-                    Align2::CENTER_BOTTOM,
-                    &edge.name.0,
-                    fonts::medium(t.font_small),
-                    t.sketch_accent,
-                );
-            }
-        }
         for point in drawn.points.iter().filter(|p| p.id.0 != "origin") {
             let r = SketchRef::Point(point.id.clone());
             let free = report.is_some_and(|rep| rep.free_points.contains(&point.id));
@@ -704,6 +695,38 @@ impl PcbEditor {
             painter.rect_filled(r, 2.0, t.panel);
             painter.text(centre, Align2::CENTER_CENTER, text, font.clone(), color);
             rects.push((layout.id.clone(), r));
+        }
+        // Named edges: each name centred on its edge just outside the
+        // outline, slid along or away from the edge to stay clear of the
+        // dimension labels, the other names and the parts' pads.
+        let mut taken: Vec<Rect> = rects.iter().map(|(_, r)| *r).collect();
+        taken.extend(self.board_pads.iter().map(|p| {
+            let b = p.outline.bounds(0.0);
+            Rect::from_two_pos(view.screen(b.min), view.screen(b.max))
+        }));
+        let edge_lines: Vec<(&str, Vec<Pos2>)> = board
+            .edges
+            .iter()
+            .filter_map(|edge| {
+                let curve = drawn.curve(&edge.curve)?;
+                let line: Vec<Pos2> = polyline(&curve.geometry)
+                    .into_iter()
+                    .map(|p| view.screen(p))
+                    .collect();
+                (line.len() >= 2).then_some((edge.name.0.as_str(), line))
+            })
+            .collect();
+        let all: Vec<Pos2> = edge_lines
+            .iter()
+            .flat_map(|(_, l)| l.iter().copied())
+            .collect();
+        let centre = all.iter().fold(Pos2::ZERO, |c, p| c + p.to_vec2()) / all.len().max(1) as f32;
+        for (name, line) in &edge_lines {
+            let galley = painter.layout_no_wrap((*name).to_owned(), font.clone(), t.sketch_accent);
+            if let Some(r) = edge_name_rect(line, centre, galley.size(), t.space_4, &taken) {
+                painter.galley(r.min, galley, t.sketch_accent);
+                taken.push(r);
+            }
         }
         self.shape.labels = rects;
         // The gesture's preview: clicked points and a rubber band.
@@ -886,7 +909,7 @@ impl PcbEditor {
                 match shape::dimension_value_edits(board, &view, &id, text) {
                     Ok(edits) => {
                         self.shape.errors.remove(DIM_FIELD);
-                        refusal::mark(ui.ctx(), Origin::Field(egui::Id::new(DIM_FIELD)));
+                        refusal::mark(ui.ctx(), Origin::Field(egui::Id::unique(DIM_FIELD)));
                         operation = Some(shape::operation(edits));
                     }
                     Err(why) => {
@@ -973,6 +996,16 @@ impl PcbEditor {
                 .map(|p| (p.name.clone(), p.expr.0.clone()))
                 .collect();
         }
+        // A refusal is about the value that was refused: it goes when the
+        // document changes or its row is edited again.
+        if let Some((name, _, at)) = &rows.refused
+            && (*at != key
+                || board.parameters.iter().any(|p| {
+                    p.name == *name && rows.exprs.get(name).is_some_and(|t| t.trim() != p.expr.0)
+                }))
+        {
+            rows.refused = None;
+        }
         let mut operation = None;
         let mut sent = None;
         kit::section(
@@ -1038,10 +1071,21 @@ impl PcbEditor {
                             }
                             Err(why) => rows.error = Some((Some(param.name.clone()), why)),
                         }
+                    } else if field.lost_focus() && failed {
+                        // Back at the stored value: the earlier text's error goes.
+                        rows.error = None;
                     }
+                    let refused = rows
+                        .refused
+                        .as_ref()
+                        .filter(|(n, _, _)| *n == param.name)
+                        .map(|(_, why, _)| why.clone());
                     match (&rows.error, values.iter().find(|v| v.name == param.name)) {
                         (Some((Some(n), why)), _) if *n == param.name => {
                             kit::field_error(ui, &field, why, true);
+                        }
+                        _ if refused.is_some() => {
+                            kit::field_refused(ui, &field, refused.as_deref().unwrap_or_default());
                         }
                         (_, Some(ParamEvaluation { value: Ok(v), .. })) => {
                             kit::note(ui, &format!("= {}", footprint_params::value_text(*v)));
@@ -1189,13 +1233,31 @@ impl PcbEditor {
     }
 
     fn claim_shape_refusals(&mut self, ctx: &egui::Context) {
-        if let Some(text) = refusal::claim(ctx, Origin::Field(egui::Id::new(DIM_FIELD))) {
+        if let Some(text) = refusal::claim(ctx, Origin::Field(egui::Id::unique(DIM_FIELD))) {
             self.shape.errors.insert(DIM_FIELD, text);
         }
         if let Some(row) = self.shape.params.sent.clone()
             && let Some(text) = refusal::claim(ctx, Origin::Field(field_id(row.as_ref())))
         {
-            self.shape.params.error = Some((row, text));
+            let rows = &mut self.shape.params;
+            match row {
+                // A refused parameter keeps its stored, valid value: the
+                // row reloads it, and the reason shows in full.
+                Some(name) => {
+                    let key = self.shape.loaded.as_ref().map(|l| l.key);
+                    rows.refused = Some((name.clone(), text, key));
+                    if rows
+                        .error
+                        .as_ref()
+                        .is_some_and(|(n, _)| n.as_ref() == Some(&name))
+                    {
+                        rows.error = None;
+                    }
+                    rows.key = None;
+                }
+                None => rows.error = Some((None, text)),
+            }
+            rows.sent = None;
         }
     }
 }
@@ -1204,6 +1266,53 @@ fn bump_name(name: &str) -> String {
     let digits = name.trim_end_matches(|c: char| c.is_ascii_digit());
     let n: u32 = name[digits.len()..].parse().unwrap_or(1);
     format!("{digits}{}", n.saturating_add(1))
+}
+
+/// Where an edge's name goes on screen: centred on the edge `line` just
+/// outside it (away from the outline's `centre`), `gap` points off; when
+/// that box meets one of `taken`, the first free box slid along the edge
+/// or farther out. `None` for a degenerate edge.
+pub(super) fn edge_name_rect(
+    line: &[Pos2],
+    centre: Pos2,
+    size: egui::Vec2,
+    gap: f32,
+    taken: &[Rect],
+) -> Option<Rect> {
+    let length: f32 = line.windows(2).map(|w| w[0].distance(w[1])).sum();
+    if length <= 1e-3 {
+        return None;
+    }
+    // The point and direction a fraction `f` along the line.
+    let at = |f: f32| -> (Pos2, egui::Vec2) {
+        let mut left = f.clamp(0.0, 1.0) * length;
+        for w in line.windows(2) {
+            let d = w[0].distance(w[1]);
+            if left <= d && d > 0.0 {
+                return (w[0] + (w[1] - w[0]) * (left / d), (w[1] - w[0]) / d);
+            }
+            left -= d;
+        }
+        let n = line.len();
+        (line[n - 1], (line[n - 1] - line[n - 2]).normalized())
+    };
+    let boxed = |f: f32, out: f32| {
+        let (p, dir) = at(f);
+        let mut n = egui::vec2(-dir.y, dir.x);
+        if (p - centre).dot(n) < 0.0 {
+            n = -n;
+        }
+        let reach = n.x.abs() * size.x / 2.0 + n.y.abs() * size.y / 2.0 + gap + out;
+        Rect::from_center_size(p + n * reach, size)
+    };
+    let free = |r: &Rect| !taken.iter().any(|o| o.intersects(*r));
+    let along = [0.5, 0.35, 0.65, 0.2, 0.8];
+    [0.0, size.y + gap, 2.0 * (size.y + gap)]
+        .iter()
+        .flat_map(|out| along.iter().map(move |f| (*f, *out)))
+        .map(|(f, out)| boxed(f, out))
+        .find(free)
+        .or_else(|| Some(boxed(0.5, 0.0)))
 }
 
 /// The drill of a hole expression in mm (`"3.2 mm"`), for drawing.

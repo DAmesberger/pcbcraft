@@ -191,19 +191,28 @@ fn locked_placements_and_tracks_reject_edits() -> Result<()> {
         },
     )?;
     let before = project.clone();
-    assert!(
-        apply(
-            &mut project,
-            LayoutCommand::Move {
-                instance: r1,
-                position: [20.0, 20.0],
-                rotation_deg: 0.0,
-                layer: Layer::Bottom
-            }
-        )
-        .is_err()
+    // The refusal names the part and the way out, and a canvas asking
+    // before a drag gets the same words.
+    let refused = apply(
+        &mut project,
+        LayoutCommand::Move {
+            instance: r1,
+            position: [20.0, 20.0],
+            rotation_deg: 0.0,
+            layer: Layer::Bottom,
+        },
+    )
+    .err()
+    .map(|e| e.to_string());
+    let want = Error::Conflict("R1 is locked; unlock it to move it".into()).to_string();
+    assert_eq!(refused.as_deref(), Some(want.as_str()));
+    assert_eq!(
+        move_refusal(&project, r1, None).map(|e| e.to_string()),
+        Some(want)
     );
     assert_eq!(project, before);
+    let (_, r2) = ids()?;
+    assert!(move_refusal(&project, r2, None).is_none(), "R2 is free");
     apply(&mut project, LayoutCommand::Route { request: request() })?;
     let id = project.tracks[0].id;
     apply(
@@ -226,6 +235,80 @@ fn locked_placements_and_tracks_reject_edits() -> Result<()> {
         .is_err()
     );
     assert_eq!(project, before);
+    Ok(())
+}
+
+/// The pads of `designator` that DRC reports past the board outline.
+fn off_board_pads(project: &Project, designator: &str) -> Vec<String> {
+    checks(project)
+        .into_iter()
+        .filter(|f| f.code == "board.outside_outline" && f.message.starts_with(designator))
+        .map(|f| f.message)
+        .collect()
+}
+
+/// A part may sit off the board, anywhere in the working area: the board's
+/// surroundings are its staging area. DRC reports its pads past the edge;
+/// a datum outside the working area is refused and changes nothing.
+#[test]
+fn a_part_may_sit_off_the_board_and_drc_reports_it() -> Result<()> {
+    let mut project = fixture()?;
+    let (_, r2) = ids()?;
+    assert!(off_board_pads(&project, "R2").is_empty());
+    let mv = |position: Point| LayoutCommand::Move {
+        instance: r2,
+        position,
+        rotation_deg: 0.0,
+        layer: Layer::Top,
+    };
+    // Left of the board, as when staged beside it.
+    apply(&mut project, mv([-30.0, 10.0]))?;
+    let placed = project.placements.iter().find(|p| p.instance == r2);
+    assert_eq!(placed.map(|p| p.position), Some([-30.0, 10.0]));
+    assert_eq!(off_board_pads(&project, "R2").len(), 2, "both pads");
+    // The working area's corner is allowed; one step past it is not.
+    let [lo, hi] = WORKING_AREA_MM;
+    apply(&mut project, mv([lo, hi]))?;
+    let before = project.clone();
+    let refused = apply(&mut project, mv([hi + 1.0, 10.0])).err();
+    assert_eq!(
+        refused.map(|e| e.to_string()),
+        Some(
+            Error::Invalid("R2 must stay within -1000 to 2000 mm on each axis".into()).to_string()
+        )
+    );
+    assert_eq!(project, before);
+    Ok(())
+}
+
+/// Shrinking the board past its parts is allowed; the parts left outside
+/// are DRC errors, not a refusal.
+#[test]
+fn shrinking_the_board_past_parts_leaves_them_off_the_board() -> Result<()> {
+    let mut project = fixture()?;
+    let (r1, r2) = ids()?;
+    // Only R1 (10, 10) and R2 (25, 10) are placed.
+    project
+        .placements
+        .retain(|p| p.instance == r1 || p.instance == r2);
+    project.tracks.clear();
+    let before = project.placements.clone();
+    // 20 mm wide: R2's datum is 5 mm past the right edge.
+    apply(
+        &mut project,
+        LayoutCommand::SetBoardSize { size: [20.0, 30.0] },
+    )?;
+    assert_eq!(project.board_size, [20.0, 30.0]);
+    assert_eq!(project.placements, before, "no part moved");
+    assert_eq!(off_board_pads(&project, "R2").len(), 2, "both pads");
+    assert!(off_board_pads(&project, "R1").is_empty());
+    // The smallest board leaves both parts outside.
+    apply(
+        &mut project,
+        LayoutCommand::SetBoardSize { size: [5.0, 5.0] },
+    )?;
+    assert!(!off_board_pads(&project, "R1").is_empty());
+    assert_eq!(project.placements, before);
     Ok(())
 }
 

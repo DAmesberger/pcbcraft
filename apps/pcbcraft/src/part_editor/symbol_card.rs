@@ -8,8 +8,9 @@ use egui::Ui;
 use pcbcraft_core::functions::{
     Direction, Drive, Function, MAX_FUNCTIONS, SignalKind, TerminalFunctions,
 };
+use pcbcraft_core::library::symbol_style::SymbolKind;
 use pcbcraft_core::library::{ComponentDefinition, Terminal, TerminalClass};
-use pcbcraft_core::{Engine, FunctionId, Operation, TerminalId};
+use pcbcraft_core::{Engine, FunctionId, LibraryCommand, Operation, TerminalId};
 
 /// A terminal's class as the inspector offers it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,10 +65,39 @@ impl PartEditor {
     /// TERMINAL card when the drawn unit has no pin for it.
     pub(super) fn symbol_card(&mut self, ui: &mut Ui, _engine: &Engine) -> Option<Operation> {
         self.unit_section(ui);
+        let operation = self.restyle_section(ui);
         if let Some(clicked) = self.terminal_rows(ui, None) {
             self.show_terminal(clicked);
         }
-        None
+        operation
+    }
+
+    /// Redraw the symbol as another kind: one `library.restyle_symbol`. Only
+    /// kinds drawn for the component's terminal count are offered.
+    fn restyle_section(&self, ui: &mut Ui) -> Option<Operation> {
+        let set = self.draft.as_ref()?;
+        let count = set.component.terminals.len();
+        let kinds = SymbolKind::ALL
+            .into_iter()
+            .filter(|k| k.terminal_count().is_none_or(|n| n == count));
+        let mut chosen = None;
+        kit::row(ui, "Redraw as", |ui| {
+            kit::dropdown_menu(ui, "symbol-restyle", "Choose a kind", |ui| {
+                for kind in kinds {
+                    if ui.selectable_label(false, kind.label()).clicked() {
+                        chosen = Some(kind);
+                    }
+                }
+            })
+            .on_hover_text("Replaces the drawing; terminals and mappings stay")
+        });
+        chosen.map(|kind| {
+            Operation::Library(LibraryCommand::RestyleSymbol {
+                draft: set.ids.symbol,
+                kind,
+                terminals: None,
+            })
+        })
     }
 
     /// Select `terminal`'s pin on the drawn unit, or show its TERMINAL card
@@ -180,7 +210,7 @@ impl PartEditor {
             true,
             Some(terminals.len()),
             |ui| {
-                let all_id = ui.id().with("show-all");
+                let all_id = ui.scope_id().with("show-all");
                 let all = ui.data(|d| d.get_temp::<bool>(all_id)).unwrap_or(false);
                 let max = if all {
                     terminals.len()
@@ -209,7 +239,7 @@ impl PartEditor {
                         },
                         ..Default::default()
                     };
-                    if kit::tree_row(ui, ui.id().with(("terminal", terminal.id.0)), &row).clicked {
+                    if kit::tree_row(ui, ui.scope_id().with(("terminal", terminal.id.0)), &row).clicked {
                         clicked = Some(terminal.id);
                     }
                 });

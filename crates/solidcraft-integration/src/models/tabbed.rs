@@ -264,6 +264,7 @@ mod tests {
             foot_length: 0.45,
             tab: None,
             lead_step: [1, 2],
+            lands: Default::default(),
         }
     }
 
@@ -285,6 +286,7 @@ mod tests {
                 flange: None,
             }),
             lead_step: [1, 1],
+            lands: Default::default(),
         }
     }
 
@@ -306,6 +308,7 @@ mod tests {
                 flange: Some(1.0),
             }),
             lead_step: [2, 1],
+            lands: Default::default(),
         }
     }
 

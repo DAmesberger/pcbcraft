@@ -50,7 +50,7 @@ impl StackupSetup {
     }
 
     fn id() -> egui::Id {
-        egui::Id::new("pcb-stackup")
+        egui::Id::unique("pcb-stackup")
     }
 
     /// Take a refusal of the dialog's OK, handed back this frame.

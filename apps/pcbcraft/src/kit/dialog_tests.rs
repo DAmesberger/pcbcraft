@@ -28,7 +28,7 @@ fn a_refusal_is_revealed_once() {
 
 fn dialog<'a>(id: &str, disabled: Option<&'a str>, refusal: Option<&'a str>) -> DialogPanel<'a> {
     let mut panel = DialogPanel::new(
-        egui::Id::new(id),
+        egui::Id::unique(id),
         "library",
         "Assign pads by number",
         "Assign 2 pads",
@@ -141,7 +141,7 @@ fn esc_in_a_focused_field_reverts_the_field_and_keeps_the_dialog() {
 #[test]
 fn a_confirmation_proceeds_only_on_its_destructive_primary() {
     let mut ui = Harness::new(800.0, 600.0);
-    let id = egui::Id::new("confirm");
+    let id = egui::Id::unique("confirm");
     let answer = Cell::new(None);
     let ctx = ui.ctx().clone();
     let mut add = |_: &mut Ui| {

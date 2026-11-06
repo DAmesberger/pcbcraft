@@ -113,7 +113,7 @@ pub(super) fn rows(ui: &mut Ui, form: &mut GridForm) -> bool {
 /// egui memory while the field has focus; only a list of real positions
 /// is stored.
 fn empty_positions(ui: &mut Ui, form: &mut GridForm) -> bool {
-    let id = ui.id().with("grid-empty-positions");
+    let id = ui.scope_id().with("grid-empty-positions");
     let stored = names(form);
     let mut text = ui
         .data_mut(|d| d.get_temp::<String>(id))

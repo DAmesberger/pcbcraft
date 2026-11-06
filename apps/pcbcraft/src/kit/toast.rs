@@ -164,9 +164,11 @@ impl Toasts {
         }
         let at = egui::pos2(canvas.center().x, canvas.bottom() - t.space_8);
         let host = Container::new(ctx, Surface::Toast);
-        let frame = host.frame(ctx, t.panel, Side::Left);
+        let frame = host
+            .frame(ctx, t.panel, Side::Left)
+            .inner_margin(toast_margin());
         let mut event = None;
-        host.area(egui::Id::new("toasts"))
+        host.area(egui::Id::unique("toasts"))
             .pivot(egui::Align2::CENTER_BOTTOM)
             .fixed_pos(at)
             .constrain_to(canvas)
@@ -184,6 +186,12 @@ impl Toasts {
             });
         event
     }
+}
+
+/// The room between a toast's box and its text.
+fn toast_margin() -> egui::Margin {
+    let t = Tokens::get();
+    egui::Margin::symmetric(t.space_10 as i8, t.space_6 as i8)
 }
 
 /// The text a toast shows: its message and a repeat count.
@@ -244,7 +252,7 @@ pub struct Posted {
 }
 
 fn posted_id() -> egui::Id {
-    egui::Id::new("pcbcraft-posted-toasts")
+    egui::Id::unique("pcbcraft-posted-toasts")
 }
 
 /// Post a toast from an editor ("Assigned 2 pads", Undo). It shows from
@@ -444,7 +452,7 @@ mod tests {
         for _ in 0..3 {
             ctx.run_ui(Default::default(), |ui| {
                 toasts.show(ui.ctx(), canvas, 1.0);
-                drawn = ui.ctx().memory(|m| m.area_rect(egui::Id::new("toasts")));
+                drawn = ui.ctx().memory(|m| m.area_rect(egui::Id::unique("toasts")));
             })
             .textures_delta
             .clear();

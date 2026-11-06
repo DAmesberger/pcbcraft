@@ -28,7 +28,7 @@ fn frame(
             command = editor.subject_slot(ui, engine).output;
             let mark = refusal::take_mark(ui.ctx());
             ui.ctx()
-                .data_mut(|d| d.insert_temp(egui::Id::new("test-mark"), mark));
+                .data_mut(|d| d.insert_temp(egui::Id::unique("test-mark"), mark));
         },
     );
     output.textures_delta.clear();
@@ -36,7 +36,7 @@ fn frame(
 }
 
 fn marked(ctx: &egui::Context) -> Option<Origin> {
-    ctx.data(|d| d.get_temp::<Option<Origin>>(egui::Id::new("test-mark")))
+    ctx.data(|d| d.get_temp::<Option<Origin>>(egui::Id::unique("test-mark")))
         .flatten()
 }
 

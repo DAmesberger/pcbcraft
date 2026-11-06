@@ -1,6 +1,7 @@
 //! Pcbcraft desktop editor.
 mod app;
 mod commands;
+mod context_menu;
 mod file_ui;
 mod fill_worker;
 mod issues;
@@ -10,9 +11,13 @@ mod kit;
 mod layer_view;
 mod library_sources;
 mod lighting;
+mod menu_bar;
 mod model_library;
 mod model_scene;
+#[cfg(target_os = "macos")]
+mod native_menu;
 mod navigation;
+mod open_documents;
 mod palette;
 mod part_chooser;
 mod part_editor;
@@ -32,6 +37,9 @@ mod viewport;
 
 fn main() -> eframe::Result {
     let compact = std::env::args().any(|argument| argument == "--compact");
+    // Files opened from Finder arrive as AppKit events, not arguments.
+    #[cfg(target_os = "macos")]
+    open_documents::install();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(if compact {

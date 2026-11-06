@@ -66,7 +66,7 @@ impl SchematicEditor {
                     tip: "Select this instance",
                     ..Default::default()
                 };
-                if kit::tree_row(ui, ui.id().with(("member", index)), &row).clicked {
+                if kit::tree_row(ui, ui.scope_id().with(("member", index)), &row).clicked {
                     select = Some(endpoint.instance);
                 }
             });

@@ -77,6 +77,10 @@ pub enum Outcome {
         changes: Vec<crate::library::footprint_edit::TerminalChange>,
         applied: bool,
     },
+    /// `library.footprint_from_pads`: the pads and drawings it made.
+    FootprintFromPads {
+        report: crate::library::pad_table::PadTableReport,
+    },
     /// What `library.import` appended or reused.
     Imported {
         report: crate::library::import::ImportReport,
@@ -147,9 +151,26 @@ pub enum Outcome {
     EdgeConstraintAdded {
         constraint: Id,
     },
+    /// The sketch points, curves and constraints a `board.edit` created
+    /// and kept, in the order its edits made them.
+    BoardEdited {
+        created: Vec<crate::library::footprint_source::SketchRef>,
+    },
+    /// Where a `layout.route_step` left the head, and how long its path
+    /// is against the straight line (`RoutePlan::detour_factor`).
+    RouteStepped {
+        end: crate::geometry::Point,
+        end_layer: crate::model::CopperLayer,
+        reached: bool,
+        detour_factor: f64,
+    },
     /// The label or power port `label.place` created.
     LabelPlaced {
         label: Id,
+    },
+    /// The junction point `junction.place` put on the wires there.
+    JunctionPlaced {
+        junction: Id,
     },
     /// The sheet `sheet.add` appended.
     SheetAdded {
@@ -171,6 +192,10 @@ pub enum Outcome {
     /// The designators `schematic.annotate` changed.
     Annotated {
         changes: Vec<crate::schematic::Renumbered>,
+    },
+    /// What `schematic.paste` created.
+    Pasted {
+        report: crate::schematic::Pasted,
     },
     /// The pair `diff_pair.add` created.
     DiffPairAdded {

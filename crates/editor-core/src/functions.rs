@@ -586,10 +586,14 @@ pub fn declaration_findings(
                 ));
             }
             if !function.combination_valid() {
+                // Lead with the pin, as ERC rows do, so truncated rows differ.
+                let pin = Some(declaration.name.trim())
+                    .filter(|n| !n.is_empty())
+                    .map_or_else(|| terminal.to_string(), str::to_owned);
                 out.push(publish_issue(
                     "function.combination",
                     format!(
-                        "Function ‘{}’ of terminal {name}: {} with {} signal and {} drive is not a valid combination.",
+                        "{pin}: function ‘{}’ is {} with {} signal and {} drive, not a valid combination.",
                         function.label,
                         function.direction.label(),
                         function.signal.label(),

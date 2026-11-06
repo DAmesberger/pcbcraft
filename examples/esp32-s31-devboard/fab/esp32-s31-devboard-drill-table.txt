@@ -1,11 +1,11 @@
-Drill table: Untitled
+Drill table: ESP32-S31 dev board
 Units: mm. Diameters are finished hole sizes as drawn.
 
 Tool  Diameter  Plating     Kind   Function      Count  Symbol
 T1    0.300     plated      hit    via              55  circle
 T2    0.600     plated      slot   component         4  cross
 T3    1.005     plated      hit    component        28  square
-T1    0.650     non-plated  hit    mechanical        2  triangle
-T2    2.700     non-plated  hit    mechanical        4  x
+T4    0.650     non-plated  hit    mechanical        2  triangle
+T5    2.700     non-plated  hit    mechanical        4  x
 
 Holes: 93 (87 plated, 6 non-plated), of which 4 routed slots.

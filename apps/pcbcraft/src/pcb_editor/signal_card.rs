@@ -12,9 +12,11 @@ use crate::kit::{self, card::CardResponse};
 use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::layout::length::{self, LengthReport};
+use pcbcraft_core::layout::length::{PairMeasured, PairRow, path};
 use pcbcraft_core::rules::RulesCommand;
 use pcbcraft_core::rules::signal::{
-    self, DiffPairId, DiffPairSpec, LengthGroup, LengthGroupId, LengthGroupSpec,
+    self, DiffPair, DiffPairId, DiffPairSpec, LengthGroup, LengthGroupId, LengthGroupSpec,
+    PairEndpoints,
 };
 use pcbcraft_core::{Engine, Id, Operation, Project};
 use solidcraft_ui_egui::ui_kit::{self, Button};
@@ -35,6 +37,13 @@ pub struct SignalCard {
 
 fn mm(value: f64) -> String {
     super::impedance_view::mm(value)
+}
+
+#[cfg(test)]
+impl SignalCard {
+    pub(super) fn select_pair(&mut self, pair: DiffPairId) {
+        self.pair = Some(pair);
+    }
 }
 
 impl PcbEditor {
@@ -59,7 +68,7 @@ impl PcbEditor {
         }
         let inspector = kit::card::Inspector {
             header: crate::shell::Header::new("trace", "High speed", "Rules"),
-            subject: egui::Id::new("pcb-signals"),
+            subject: egui::Id::unique("pcb-signals"),
             footer: true,
             issues: None,
         };
@@ -162,7 +171,7 @@ fn body(
                         tip: "Select this pair and highlight its positive net",
                         ..Default::default()
                     };
-                    if kit::tree_row(ui, ui.id().with(("pair", pair.id)), &tree).clicked {
+                    if kit::tree_row(ui, ui.scope_id().with(("pair", pair.id)), &tree).clicked {
                         card.pair = Some(pair.id);
                         card.group = None;
                         lit = Some(pair.positive);
@@ -171,6 +180,10 @@ fn body(
             );
         },
     );
+    if let Some(pair) = card.pair.and_then(|p| rules.diff_pair(p)) {
+        let row = report.pairs.iter().find(|r| r.pair == pair.id);
+        operation = pair_section(ui, project, pair, row).or(operation);
+    }
     let suggested = signal::suggest(rules, project.nets.iter().map(|n| (n.id, n.name.as_str())));
     if !suggested.is_empty() {
         kit::section(
@@ -231,7 +244,7 @@ fn body(
                     tip: "Edit this length group",
                     ..Default::default()
                 };
-                if kit::tree_row(ui, ui.id().with(("group", group.id)), &tree).clicked {
+                if kit::tree_row(ui, ui.scope_id().with(("group", group.id)), &tree).clicked {
                     card.group = Some(group.id);
                     card.pair = None;
                 }
@@ -285,7 +298,7 @@ fn body(
                 let Some(row) = report.nets.get(i) else {
                     return;
                 };
-                let mut secondary = mm(row.length.total);
+                let mut secondary = mm(row.path.unwrap_or(row.length.total));
                 if let (Some(target), Some(delta)) = (row.target, row.delta) {
                     secondary = format!("{secondary} · target {} ({:+.3})", mm(target), delta);
                 }
@@ -297,7 +310,7 @@ fn body(
                     tip: "Highlight this net; lengths include via barrels",
                     ..Default::default()
                 };
-                if kit::tree_row(ui, ui.id().with(("length", row.net)), &tree).clicked {
+                if kit::tree_row(ui, ui.scope_id().with(("length", row.net)), &tree).clicked {
                     lit = Some(row.net);
                 }
             });
@@ -307,6 +320,92 @@ fn body(
         },
     );
     (operation, lit)
+}
+
+/// The selected pair: what its lengths measure, its stubs and endpoints.
+fn pair_section(
+    ui: &mut Ui,
+    project: &Project,
+    pair: &DiffPair,
+    row: Option<&PairRow>,
+) -> Option<Operation> {
+    let mut edited: Option<Option<PairEndpoints>> = None;
+    kit::section(ui, ("signal-pair", pair.id), &pair.name, true, None, |ui| {
+        let Some(row) = row else {
+            return;
+        };
+        kit::value_row(
+            ui,
+            "Measured",
+            match row.measured {
+                PairMeasured::Set => "Between the set endpoints",
+                PairMeasured::Derived => "Between the farthest shared parts",
+                PairMeasured::Copper => "Total copper: no pad-to-pad path yet",
+            },
+        );
+        for (name, length, side) in [
+            (project.net_name(pair.positive), row.positive, 0),
+            (project.net_name(pair.negative), row.negative, 1),
+        ] {
+            let path = row.paths.as_ref().and_then(|p| p.get(side));
+            let value = path.map_or_else(
+                || mm(length),
+                |p| format!("{} · {} to {}", mm(length), p.from, p.to),
+            );
+            kit::value_row(ui, name, &value);
+        }
+        kit::value_row(ui, "Uncoupled", &mm(row.uncoupled));
+        kit::list_frame(ui, row.stubs.len(), row.stubs.len(), |ui, i| {
+            if let Some(stub) = row.stubs.get(i) {
+                let to = if stub.reaches.is_empty() {
+                    "open".to_owned()
+                } else {
+                    stub.reaches.join(", ")
+                };
+                kit::value_row(
+                    ui,
+                    "Stub",
+                    &format!("{} {} to {to}", stub.name, mm(stub.length)),
+                );
+            }
+        });
+        let options = |net: Id| -> Vec<(pcbcraft_core::ids::Endpoint, String)> {
+            path::net_pads(project, net)
+        };
+        let (plus, minus) = (options(pair.positive), options(pair.negative));
+        let (Some(p0), Some(p1), Some(n0), Some(n1)) =
+            (plus.first(), plus.last(), minus.first(), minus.last())
+        else {
+            return;
+        };
+        let mut ends = pair.endpoints;
+        let mut set = ends.is_some();
+        if kit::check_row(ui, "Set endpoints", &mut set) {
+            edited = Some(set.then_some(PairEndpoints {
+                positive: [p0.0, p1.0],
+                negative: [n0.0, n1.0],
+            }));
+        }
+        if let Some(chosen) = &mut ends {
+            let [a, b] = &mut chosen.positive;
+            let mut changed = kit::choice_row(ui, "+ from", a, &plus);
+            changed |= kit::choice_row(ui, "+ to", b, &plus);
+            let [c, d] = &mut chosen.negative;
+            changed |= kit::choice_row(ui, "− from", c, &minus);
+            changed |= kit::choice_row(ui, "− to", d, &minus);
+            if changed {
+                edited = Some(ends);
+            }
+        }
+    });
+    let endpoints = edited?;
+    refusal::mark(ui.ctx(), Origin::Command);
+    Some(Operation::Rules(RulesCommand::EditDiffPair {
+        pair: DiffPair {
+            endpoints,
+            ..pair.clone()
+        },
+    }))
 }
 
 /// "Group 1", "Group 2", ….
@@ -332,7 +431,7 @@ fn committed_number(
     current: f64,
     range: std::ops::RangeInclusive<f64>,
 ) -> Option<f64> {
-    let id = ui.id().with(("signal-number", label));
+    let id = ui.scope_id().with(("signal-number", label));
     let mut value = card.staged.get(&id).copied().unwrap_or(current);
     let input = kit::row(ui, label, |ui| {
         kit::number_input(ui, label, &mut value, "mm", range)

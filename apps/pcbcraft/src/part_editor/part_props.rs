@@ -202,6 +202,27 @@ pub struct PartProps {
 }
 
 /// Part drafts and published Parts of one component lineage, by lineage.
+/// One Parts row: its label, shortened with "…" where the column is
+/// narrow, with the whole label and what a click does on hover.
+fn part_row(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+    let response = ui.selectable_label(selected, label);
+    let room = response.rect.width() - 2.0 * ui.spacing().button_padding.x;
+    let width = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::TextStyle::Button.resolve(ui.style()),
+            ui.visuals().text_color(),
+        )
+        .size()
+        .x;
+    if width > room + 0.5 {
+        response.on_hover_text(format!("{label}\nOpen this Part"))
+    } else {
+        response.on_hover_text("Open this Part")
+    }
+}
+
 fn listed(engine: &Engine, component: DefinitionId) -> Vec<Listed> {
     let mut out: BTreeMap<DefinitionId, Listed> = BTreeMap::new();
     for part in engine.project().library.latest_parts() {
@@ -400,7 +421,7 @@ fn prefilled(
 
 /// The Part dialog's panel id: its refusals are handed back to it.
 fn dialog_id() -> egui::Id {
-    egui::Id::new("part-dialog")
+    egui::Id::unique("part-dialog")
 }
 
 const ICON: &str = "library";
@@ -693,6 +714,7 @@ impl PartProps {
         self.awaiting = true;
         Some(Operation::Library(LibraryCommand::Publish {
             drafts: vec![id],
+            close: false,
         }))
     }
 
@@ -722,6 +744,7 @@ impl PartProps {
             self.awaiting = true;
             return Some(Operation::Library(LibraryCommand::Publish {
                 drafts: vec![id],
+                close: false,
             }));
         }
         self.publish_next = true;
@@ -754,9 +777,7 @@ impl PartProps {
             };
             let shown = kit::list_frame(ui, listed.len(), rows, |ui, index| {
                 if let Some(item) = listed.get(index)
-                    && ui
-                        .selectable_label(self.dialog && self.open == Some(item.id), item.label())
-                        .on_hover_text("Open this Part")
+                    && part_row(ui, &item.label(), self.dialog && self.open == Some(item.id))
                         .clicked()
                 {
                     opened = Some(item.id);
@@ -1072,7 +1093,7 @@ impl PartProps {
         });
         if show_issues {
             // The column's Issues card (app/chrome.rs) opens on this flag.
-            ctx.data_mut(|d| d.insert_temp(egui::Id::new("issues-expanded"), true));
+            ctx.data_mut(|d| d.insert_temp(egui::Id::unique("issues-expanded"), true));
         }
         if discard {
             self.discarding = true;
@@ -1676,7 +1697,7 @@ mod tests {
             .publish_alone(&engine, set.ids.component, &pins);
         assert!(matches!(
             &operation,
-            Some(Operation::Library(LibraryCommand::Publish { drafts })) if drafts.len() == 1
+            Some(Operation::Library(LibraryCommand::Publish { drafts, close: false })) if drafts.len() == 1
         ));
         apply(&mut engine, operation)?;
         let parts = engine.project().library.latest_parts();
@@ -1734,7 +1755,7 @@ mod tests {
         )));
         apply(&mut engine, operation)?;
         let operation = editor.commit(&ctx, &engine);
-        let Some(Operation::Library(LibraryCommand::Publish { drafts })) = &operation else {
+        let Some(Operation::Library(LibraryCommand::Publish { drafts, .. })) = &operation else {
             return Err(format!("expected the publish set, got {operation:?}").into());
         };
         assert_eq!(drafts.len(), 6, "five drafts and the Part");
@@ -2002,7 +2023,7 @@ mod tests {
         assert!(
             matches!(
                 &publish,
-                Some(Operation::Library(LibraryCommand::Publish { drafts })) if drafts.len() == 1
+                Some(Operation::Library(LibraryCommand::Publish { drafts, close: false })) if drafts.len() == 1
             ),
             "{publish:?}"
         );
@@ -2045,7 +2066,7 @@ mod tests {
         editor.parts.request_new(vec![(
             field,
             fields::FieldValue::Quantity {
-                si: 4_700.0,
+                si: pcbcraft_core::quantity::Decimal::from_f64(4_700.0)?,
                 display_unit: None,
             },
         )]);
@@ -2058,7 +2079,7 @@ mod tests {
         assert!(matches!(
             &sent,
             Some(Operation::Library(LibraryCommand::NewDraft { definition: Definition::Part(p), .. }))
-                if p.specs.iter().any(|s| matches!(s.value, fields::FieldValue::Quantity { si, .. } if (si - 4_700.0).abs() < 1e-6))
+                if p.specs.iter().any(|s| matches!(s.value, fields::FieldValue::Quantity { si, .. } if si.to_f64() == 4_700.0))
         ));
         apply(&mut engine, sent)?;
         editor.commit(&ctx, &engine);
@@ -2135,6 +2156,7 @@ mod tests {
             &mut engine,
             Some(Operation::Library(LibraryCommand::Publish {
                 drafts: vec![id],
+                close: false,
             })),
         )?;
         // Publishing keeps a draft equal to the revision; without one the
@@ -2287,7 +2309,7 @@ mod tests {
         part.specs.push(RatedSpec {
             field,
             value: fields::FieldValue::Quantity {
-                si: 10_000.0,
+                si: pcbcraft_core::quantity::Decimal::from_f64(10_000.0)?,
                 display_unit: None,
             },
             meaning: SpecMeaning::ExactNominal,
@@ -2330,7 +2352,7 @@ mod tests {
         let specs = rated(&engine, id).ok_or("no Part draft")?;
         assert!(matches!(
             specs.first().map(|s| &s.value),
-            Some(fields::FieldValue::Quantity { si, .. }) if (si - 22_000.0).abs() < 1e-6
+            Some(fields::FieldValue::Quantity { si, .. }) if si.to_f64() == 22_000.0
         ));
         editor.commit(&ctx, &engine);
         let shown = frame(&mut editor, &engine, &ctx, vec![]);

@@ -575,7 +575,8 @@ fn ce06_functions_are_selected_per_instance_and_checked_by_drive() -> Result<()>
     // gpio-out on 1: one push-pull driver and an input.
     choose(&mut engine, u1, &[(1, Some(GPIO_OUT_1))])?;
     assert_eq!(erc_on(&engine, net1), Vec::<String>::new());
-    let (pp1, _) = place(&mut engine, &push_pull, "PP1", 1, [30.0, 10.0])?;
+    // Clear of the U1.1 wire's corner at (30, 10): a pin there would join it.
+    let (pp1, _) = place(&mut engine, &push_pull, "PP1", 1, [45.0, 10.0])?;
     connect(&mut engine, ep(pp1, 1), ep(u1, 1))?;
     let net1 = net_of(&engine, ep(u1, 1))?;
     assert_eq!(erc_on(&engine, net1), ["erc.driver_conflict"]);
@@ -591,7 +592,9 @@ fn ce06_functions_are_selected_per_instance_and_checked_by_drive() -> Result<()>
     // A push-pull driver on that net is contention, not a driver conflict:
     // ERC uses the open-drain drive, not the direction alone.
     let (pp2, _) = place(&mut engine, &push_pull, "PP2", 1, [30.0, 40.0])?;
-    connect(&mut engine, ep(pp2, 1), ep(u1, 3))?;
+    // Wired to the pull-up below it: U1.3 already has wires on both sides,
+    // and a third could only reach it along the pins above or below.
+    connect(&mut engine, ep(pp2, 1), ep(pull, 1))?;
     let net3 = net_of(&engine, ep(u1, 3))?;
     assert_eq!(erc_on(&engine, net3), ["erc.open_drain_contention"]);
     choose(&mut engine, u1, &[(3, Some(UART_RX))])?;
@@ -1150,8 +1153,8 @@ fn device_nc_and_reserved_terminals_and_no_connect_exclude_wiring() -> Result<()
                 .any(|f| f.objects == [terminal(x, t)])
         );
     }
-    // A wired terminal cannot become no-connect, and a no-connect terminal
-    // cannot be wired: the same diagnostic.
+    // A wired terminal may become no-connect, and a no-connect terminal may
+    // be wired: either way the same completeness error says so.
     connect(&mut engine, ep(x, 1), ep(p, 1))?;
     let no_connect = |engine: &mut Engine, t: u32| {
         apply(
@@ -1163,17 +1166,21 @@ fn device_nc_and_reserved_terminals_and_no_connect_exclude_wiring() -> Result<()
             }),
         )
     };
-    let wired = no_connect(&mut engine, 1).err();
+    no_connect(&mut engine, 1)?;
     no_connect(&mut engine, 4)?;
-    let marked = connect(&mut engine, ep(x, 4), ep(q, 1)).err();
-    let (Some(wired), Some(marked)) = (wired, marked) else {
-        return Err(Error::Invalid("both edits must be rejected".into()));
-    };
-    assert_eq!(wired.code(), marked.code());
-    assert_eq!(
-        wired.to_string().replace("terminal ‘A’", "terminal N"),
-        marked.to_string().replace("terminal ‘D’", "terminal N")
-    );
+    connect(&mut engine, ep(x, 4), ep(q, 1))?;
+    let report = inspect(&engine, x)?;
+    for t in [1, 4] {
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "instance.no_connect_connected"
+                    && f.objects == [terminal(x, t)]),
+            "terminal {t}: {:?}",
+            report.findings
+        );
+    }
     // A passive-only net has no ERC finding.
     let net = net_of(&engine, ep(x, 1))?;
     assert_eq!(erc_on(&engine, net), Vec::<String>::new());
@@ -1330,7 +1337,7 @@ fn an_unrouted_exposed_pad_land_is_reported_although_its_terminal_is_one_net() -
     let m = draft_mcu(&mut engine)?;
     publish(&mut engine, m.all())?;
     let u1 = place_mcu(&mut engine, &m, "U1", 0.0)?;
-    apply(&mut engine, Operation::Layout(LayoutCommand::Sync))?;
+    crate::tests::support::sync_onto_board(&mut engine)?;
     // Terminal 21 is one electrical terminal on one net with three lands,
     // pads 21–23 at y = −1, 0, +1 mm.
     let lands: Vec<_> = crate::layout::pads(engine.project())

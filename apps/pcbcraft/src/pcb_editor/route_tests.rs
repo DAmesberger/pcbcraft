@@ -251,6 +251,27 @@ fn a_route_continues_across_clicks_until_a_pad_of_the_net() -> TestResult {
     assert_eq!(editor.route_start, None, "finished");
     assert!(editor.route.steps.is_empty());
     assert!(editor.tool == Tool::Route, "Route stays armed");
+    // Esc after a route that finished on a pad keeps Route (the next pad
+    // click routes, not selects); a second Esc leaves it.
+    canvas.key(
+        &mut editor,
+        &engine,
+        R2_1,
+        egui::Key::Escape,
+        egui::Modifiers::NONE,
+    );
+    assert!(
+        editor.tool == Tool::Route,
+        "one Esc after a finish keeps Route"
+    );
+    canvas.key(
+        &mut editor,
+        &engine,
+        R2_1,
+        egui::Key::Escape,
+        egui::Modifiers::NONE,
+    );
+    assert!(editor.tool == Tool::Select, "the second Esc leaves Route");
     let project = engine.project();
     assert!(project.tracks.len() >= before + 3);
     assert!(
@@ -762,5 +783,36 @@ fn a_route_continues_through_fill_copper_stored_after_a_step() -> TestResult {
     canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
     assert_eq!(editor.route.steps.len(), 3);
     assert_eq!(editor.route_start, Some([13.0, 13.0]));
+    Ok(())
+}
+
+/// The Route card in a 300-point column: its key descriptions wrap rather
+/// than end in "…", and any text still cut shows in full on hover. With
+/// `PCBCRAFT_TEXT_PICTURES=<dir>` it also writes the card's picture.
+#[test]
+fn the_route_card_keys_wrap_and_cut_text_shows_on_hover() -> TestResult {
+    let engine = Engine::demo()?;
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    editor.route.keys_all = true;
+    let screen = crate::kit::text::tests::Screen::new(egui::vec2(300.0, 1600.0));
+    let run = |editor: &mut PcbEditor, events: Vec<egui::Event>| {
+        screen.run(events, |ui| {
+            editor.subject_slot(ui, &engine);
+        })
+    };
+    run(&mut editor, vec![]);
+    let rest = run(&mut editor, vec![]);
+    let cut = crate::kit::text::tests::cuts(&rest);
+    for described in ROUTE_KEYS.iter().map(|k| k.title) {
+        assert!(
+            crate::kit::text::tests::shows_in_full(&rest, described),
+            "{described} is shown whole: {cut:?}"
+        );
+    }
+    screen.picture("route-card-keys", &rest, 2.0)?;
+    let (_, missing) =
+        crate::kit::text::tests::cuts_without_hover(&screen.ctx, |events| run(&mut editor, events));
+    assert!(missing.is_empty(), "cut without a hover: {missing:?}");
     Ok(())
 }

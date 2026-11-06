@@ -3,6 +3,8 @@
 //! the shortcuts sheet, tooltips, tool cards, the key dispatcher and the
 //! reveal overlays all read, and the key-reveal options. Changes apply at
 //! once and are kept per user (`pcbcraft_io::settings::KeyboardSettings`).
+//! The Production section's "Require a reason to waive errors" sets the
+//! engine's `require_waiver_reason` (kept in `UserSettings`).
 //!
 //! A key is recorded by clicking its cap and pressing the new chord (Esc
 //! cancels). A chord another command already takes where both apply (the
@@ -49,6 +51,7 @@ pub(crate) struct SettingsWindow {
 }
 
 impl SettingsWindow {
+    #[cfg(test)]
     pub fn open(&mut self) {
         self.open = true;
     }
@@ -57,6 +60,14 @@ impl SettingsWindow {
         if !self.open {
             self.recording = None;
             self.pending = None;
+        }
+    }
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+    pub fn close(&mut self) {
+        if self.open {
+            self.toggle();
         }
     }
     pub fn is_recording(&self) -> bool {
@@ -100,7 +111,11 @@ impl SettingsWindow {
             i.events.retain(|e| {
                 !matches!(
                     e,
-                    egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Copy
+                    egui::Event::Key { .. }
+                        | egui::Event::Text(_)
+                        | egui::Event::Copy
+                        | egui::Event::Cut
+                        | egui::Event::Paste(_)
                 )
             });
             first
@@ -163,22 +178,32 @@ impl SettingsWindow {
         }
     }
 
-    /// Draw the window while open. Returns what to do with the keymap and
-    /// whether the reveal settings changed.
+    /// Draw the window while open. Returns what to do with the keymap,
+    /// whether the reveal settings changed and whether the waiver-reason
+    /// setting changed.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         registry: &Registry,
         reveal: &mut RevealSettings,
+        require_waiver_reason: &mut bool,
         unapplied: &[Unapplied],
-    ) -> (Option<KeyAction>, bool) {
+    ) -> (Option<KeyAction>, bool, bool) {
         if !self.open {
-            return (None, false);
+            return (None, false, false);
         }
         let mut action = None;
         let mut reveal_changed = false;
-        let closed = ui_kit::Window::new(egui::Id::new("app-settings"), "params", "Settings")
+        let mut waiver_changed = false;
+        let closed = ui_kit::Window::new(egui::Id::unique("app-settings"), "params", "Settings")
             .show_body(ctx, |ui| {
+                kit::section(ui, "settings-production", "Production", true, None, |ui| {
+                    waiver_changed = kit::check_row(
+                        ui,
+                        "Require a reason to waive errors",
+                        require_waiver_reason,
+                    );
+                });
                 kit::section(ui, "settings-reveal", "Key reveal", true, None, |ui| {
                     reveal_changed |= reveal_rows(ui, reveal);
                 });
@@ -191,7 +216,7 @@ impl SettingsWindow {
             self.recording = None;
             self.pending = None;
         }
-        (action, reveal_changed)
+        (action, reveal_changed, waiver_changed)
     }
 
     fn keyboard(
@@ -233,7 +258,7 @@ impl SettingsWindow {
         });
         kit::filter_field(
             ui,
-            egui::Id::new("settings-keys-filter"),
+            egui::Id::unique("settings-keys-filter"),
             &mut self.filter,
             "Filter by name, key or context",
             false,
@@ -427,17 +452,49 @@ impl super::App {
         }
     }
 
+    /// One system window at a time, the newest; Esc closes it unless a
+    /// key is being recorded in Settings.
+    pub(super) fn system_windows(&mut self, ctx: &egui::Context) {
+        let now = [
+            self.messages_open,
+            self.shortcut_sheet.is_open(),
+            self.settings_window.is_open(),
+        ];
+        let escape = now.contains(&true)
+            && !self.palette.is_open()
+            && !self.settings_window.is_recording()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let [messages, shortcuts, settings] =
+            super::system_windows::one_window(self.system_windows, now, escape);
+        self.messages_open = messages;
+        if !shortcuts {
+            self.shortcut_sheet.close();
+        }
+        if !settings {
+            self.settings_window.close();
+        }
+        self.system_windows = [messages, shortcuts, settings];
+    }
+
     /// The Settings window while open.
     pub(super) fn settings(&mut self, ctx: &egui::Context) {
         let mut keyboard = self.sources.keyboard().clone();
-        let (action, reveal_changed) = self.settings_window.show(
+        let mut require_reason = self.sources.require_waiver_reason();
+        let (action, reveal_changed, waiver_changed) = self.settings_window.show(
             ctx,
             &self.registry,
             &mut keyboard.reveal,
+            &mut require_reason,
             &self.keymap_problems,
         );
         if reveal_changed && let Err(reason) = self.sources.set_keyboard(keyboard) {
             self.say(crate::kit::severity::Level::Warning, reason);
+        }
+        if waiver_changed {
+            // The engine refuses a waiver without a reason in every path of
+            // this app (panels, assistant), not only at the Waive button.
+            self.sources.set_require_waiver_reason(require_reason);
+            self.engine.require_waiver_reason(require_reason);
         }
         if let Some(action) = action {
             self.key_action(ctx, action);
@@ -495,6 +552,72 @@ mod tests {
         .textures_delta
         .clear();
         out
+    }
+
+    /// Settings is taller than its window: the body scrolls, and wheel
+    /// scrolling brings its last row fully into view instead of leaving
+    /// it cut at the window's bottom edge.
+    #[test]
+    fn the_settings_body_scrolls_to_its_last_row() {
+        fn texts(shape: &egui::Shape, clip: egui::Rect, out: &mut Vec<(egui::Rect, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.rect.translate(t.pos.to_vec2()), clip)),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, clip, out)),
+                _ => {}
+            }
+        }
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let registry = Registry::standard();
+        let mut window = SettingsWindow::default();
+        window.open();
+        let (mut reveal, mut reason) = (RevealSettings::default(), false);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1380.0, 900.0));
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    window.show(ui.ctx(), &registry, &mut reveal, &mut reason, &[]);
+                },
+            );
+            out.textures_delta.clear();
+            let mut all = Vec::new();
+            for shape in &out.shapes {
+                texts(&shape.shape, shape.clip_rect, &mut all);
+            }
+            all
+        };
+        for _ in 0..3 {
+            frame(vec![]);
+        }
+        let below = |all: &[(egui::Rect, egui::Rect)]| {
+            all.iter()
+                .filter(|(text, clip)| text.bottom() > clip.bottom() + 0.5)
+                .count()
+        };
+        assert!(
+            below(&frame(vec![])) > 0,
+            "the body is taller than the window"
+        );
+        let center = ctx
+            .memory(|m| m.area_rect(egui::Id::unique("app-settings")))
+            .map_or(screen.center(), |r| r.center());
+        let wheel = egui::Event::MouseWheel {
+            source: egui::MouseWheelSource::Unknown,
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -400.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        };
+        for _ in 0..30 {
+            frame(vec![egui::Event::PointerMoved(center), wheel.clone()]);
+        }
+        let end = frame(vec![]);
+        assert_eq!(below(&end), 0, "every row is reachable");
     }
 
     /// Clicking a key cap records the next chord, which no one else sees;

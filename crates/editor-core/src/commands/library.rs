@@ -3,6 +3,7 @@ use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::ids::{
     ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, LibraryId, PartRef, SourceLineageId,
+    TerminalId,
 };
 use crate::instances::{self, NewInstance};
 use crate::library::Bundle;
@@ -13,10 +14,11 @@ use crate::library::import::{self, OtherRevision, PlaceSource};
 use crate::library::model3d::ImportModel;
 use crate::library::package_fit::{self, FitRotation, LeadPair};
 use crate::library::package_model::PackageEdit;
+use crate::library::pad_table::{self, FootprintFromPads};
 use crate::library::pinout::PinoutApply;
 use crate::library::templates::catalog::{NewFromTemplate, PackageFromTemplate, SavePackageRow};
 use crate::library::templates::footprint_family::{self, FootprintTemplate};
-use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts};
+use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts, standard_fields};
 use crate::model::Document;
 use crate::model::PhysicalChoice;
 use crate::scripting;
@@ -55,9 +57,16 @@ pub enum LibraryCommand {
     /// Drop a draft. A reserved new-lineage identity stays allocated.
     #[serde(rename = "library.discard_draft")]
     DiscardDraft { id: DefinitionId },
-    /// Publish 1–32 drafts together, in dependency order.
+    /// Publish 1–32 drafts together, in dependency order. `close` (the
+    /// default) drops the drafts it published, in the same undo step, so a
+    /// library's parts do not fill the project's 64 draft slots; with
+    /// `close: false` each stays open as a draft of its new revision.
     #[serde(rename = "library.publish")]
-    Publish { drafts: Vec<DefinitionId> },
+    Publish {
+        drafts: Vec<DefinitionId>,
+        #[serde(default = "close_by_default")]
+        close: bool,
+    },
     /// Regenerate a footprint draft's existing pads with a bounded script.
     /// Pad IDs and package-terminal associations are preserved.
     #[serde(rename = "library.generate_pads")]
@@ -76,6 +85,19 @@ pub enum LibraryCommand {
     #[serde(rename = "library.set_symbol_conventions")]
     SetSymbolConventions {
         conventions: library::symbol_style::SymbolConventions,
+    },
+    /// Redraw one symbol draft as another kind (a pinout import's IC box as
+    /// an LED, say), as one undo step: its unit keeps its identity, and its
+    /// other graphics and pins are replaced. Pins follow the component's
+    /// terminal order, or `terminals` when given (every terminal once, in
+    /// the kind's order: a diode's cathode first). The terminals never
+    /// change; a kind drawn for another terminal count is refused.
+    #[serde(rename = "library.restyle_symbol")]
+    RestyleSymbol {
+        draft: DefinitionId,
+        kind: library::symbol_style::SymbolKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        terminals: Option<Vec<TerminalId>>,
     },
     /// Apply 1–256 graphic and pin edits to one symbol draft, in order, as
     /// one undo step; any failure leaves the draft unchanged. The outcome
@@ -115,6 +137,15 @@ pub enum LibraryCommand {
         #[serde(default)]
         replace: bool,
     },
+    /// Build a footprint draft from a datasheet's pad table: pad rows, plated
+    /// or unplated slots and holes become an explicit footprint, with the
+    /// assembly outline, silkscreen broken around the pads, courtyard and
+    /// designators added, as one undo step. Terminals come from each row's
+    /// `terminal`, or by number with `assign_by_number`; the rest stay
+    /// unassigned and are listed. A draft with content is refused unless
+    /// `replace`. No evaluator is needed.
+    #[serde(rename = "library.footprint_from_pads")]
+    FootprintFromPads(Box<FootprintFromPads>),
     /// Land package terminals on footprint pads by an explicit rule. With
     /// `confirm: false` it only reports the changes; nothing is ever
     /// inferred without this command.
@@ -130,6 +161,13 @@ pub enum LibraryCommand {
     /// packed. Places nothing.
     #[serde(rename = "library.import")]
     Import { bundle: Box<Bundle> },
+    /// Import the built-in standard fields (`library.standard_fields`: SI
+    /// quantity kinds with resistance, capacitance, inductance, voltage,
+    /// current, power and frequency fields, and a relative tolerance), as
+    /// `library.import` does: one undo step, and importing them again
+    /// reuses the copies and changes nothing.
+    #[serde(rename = "library.import_standard_fields")]
+    ImportStandardFields {},
     /// Import if needed, then place the component, as one transaction and
     /// one undo step. A bundle whose root is a Part places its component
     /// with the Part's binding and assigns the Part. The placement takes
@@ -220,6 +258,43 @@ pub enum LibraryCommand {
     },
 }
 
+// A new command chooses its permission class here.
+declare_classes!(LibraryCommand {
+    NewDraft "library.new_draft" Edit,
+    DraftFrom "library.draft_from" Edit,
+    DraftClosure "library.draft_closure" Edit,
+    EditCopy "library.edit_copy" Edit,
+    Edit "library.edit" Edit,
+    DiscardDraft "library.discard_draft" Edit,
+    Publish "library.publish" Ask,
+    GeneratePads "library.generate_pads" Edit,
+    SetGrid "library.set_grid" Edit,
+    SetSymbolConventions "library.set_symbol_conventions" Edit,
+    RestyleSymbol "library.restyle_symbol" Edit,
+    EditGraphics "library.edit_graphics" Edit,
+    EditFootprint "library.edit_footprint" Edit,
+    FootprintFromTemplate "library.footprint_from_template" Edit,
+    FootprintFromPads "library.footprint_from_pads" Edit,
+    AssignTerminals "library.assign_terminals" Edit,
+    Import "library.import" Edit,
+    ImportStandardFields "library.import_standard_fields" Edit,
+    PlaceFrom "library.place_from" Edit,
+    Promote "library.promote" Ask,
+    Duplicate "library.duplicate" Edit,
+    EditPackage "library.edit_package" Edit,
+    FitLeads "library.fit_leads" Edit,
+    NewFromTemplate "library.new_from_template" Edit,
+    PackageFromTemplate "library.package_from_template" Edit,
+    SavePackageRow "library.save_package_row" Edit,
+    PinoutApply "library.pinout_apply" Edit,
+    ImportModel "library.import_model" Edit,
+    PackArtwork "library.pack_artwork" Edit,
+});
+
+fn close_by_default() -> bool {
+    true
+}
+
 fn package_draft(
     document: &Document,
     draft: DefinitionId,
@@ -284,6 +359,127 @@ fn store_package(
         definition: Definition::Package(package),
     };
     drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])
+}
+
+/// `library.restyle_symbol`: the draft redrawn as `kind`, its pins on the
+/// component's terminals in their own order or the one the request states.
+fn restyle_symbol(
+    document: &mut Document,
+    draft: DefinitionId,
+    kind: library::symbol_style::SymbolKind,
+    terminals: Option<Vec<TerminalId>>,
+) -> Result<Outcome> {
+    let current = document
+        .drafts
+        .get(draft)
+        .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
+    let Definition::Symbol(symbol) = &current.definition else {
+        return Err(Error::Invalid(format!(
+            "The draft ‘{}’ is not a symbol",
+            current.meta.name
+        )));
+    };
+    let named: Vec<(TerminalId, String)> = match document.drafts.get(symbol.component) {
+        Some(library::Draft {
+            definition: Definition::Component(component),
+            ..
+        }) => component
+            .terminals
+            .iter()
+            .map(|t| (t.id, t.name.clone()))
+            .collect(),
+        _ => document
+            .project
+            .library
+            .latest_components()
+            .into_iter()
+            .find(|c| c.id == symbol.component)
+            .map(|c| {
+                c.definition
+                    .terminals
+                    .iter()
+                    .map(|t| (t.id, t.name.clone()))
+                    .collect()
+            })
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "The component of the symbol ‘{}’ is not in the project",
+                    current.meta.name
+                ))
+            })?,
+    };
+    let owned: Vec<TerminalId> = named.iter().map(|(id, _)| *id).collect();
+    let order = match terminals {
+        None => owned,
+        Some(order) => {
+            let mut given = order.clone();
+            given.sort_unstable();
+            let mut expected = owned;
+            expected.sort_unstable();
+            if given != expected {
+                return Err(Error::Invalid(
+                    "symbol.restyle_terminals: list each of the component's terminals once".into(),
+                ));
+            }
+            order
+        }
+    };
+    let conventions = document.drafts.symbols;
+    let mut definition = library::symbol_style::restyle(symbol, kind, conventions, &order)?;
+    if kind == library::symbol_style::SymbolKind::IcBox {
+        // The box is as wide as its pin names need.
+        library::samples::fit_pin_names(&mut definition, |terminal| {
+            named
+                .iter()
+                .find(|(id, _)| *id == terminal)
+                .map(|(_, name)| name.clone())
+        });
+    }
+    let edit = DraftEdit {
+        id: draft,
+        meta: current.meta.clone(),
+        definition: Definition::Symbol(definition),
+    };
+    drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
+    Ok(Outcome::None)
+}
+
+/// The package draft whose pending revision the footprint draft lands, with
+/// its meta: the one a command may move the body of.
+fn landed_package(
+    document: &Document,
+    footprint: DefinitionId,
+) -> Option<(DefinitionId, DefinitionMeta, library::PackageDefinition)> {
+    let Definition::Footprint(landing) = &document.drafts.get(footprint)?.definition else {
+        return None;
+    };
+    let current = document.drafts.get(landing.package.id)?;
+    let Definition::Package(package) = &current.definition else {
+        return None;
+    };
+    (current.pending() == Some(landing.package.revision))
+        .then(|| (current.id, current.meta.clone(), package.clone()))
+}
+
+/// Give the package draft `footprint` lands its envelope's default place
+/// ([`package_fit::envelope_default`]) now that a command built its pads.
+/// `library.edit` is not one: it stores the bodies it is given as they are.
+/// A package already published cannot move here. The board check reports a
+/// body past the outline either way.
+fn follow_envelope(document: &mut Document, footprint: DefinitionId) -> Result<()> {
+    let Some((draft, meta, mut package)) = landed_package(document, footprint) else {
+        return Ok(());
+    };
+    let Some(Definition::Footprint(landing)) =
+        document.drafts.get(footprint).map(|d| &d.definition)
+    else {
+        return Ok(());
+    };
+    let Some(placement) = package_fit::envelope_default(&package, landing)? else {
+        return Ok(());
+    };
+    package.placement = placement;
+    store_package(document, draft, meta, package)
 }
 
 fn footprint_draft(
@@ -427,7 +623,10 @@ fn place_request(
 /// failure discards the whole candidate. Imported on a copy, so a bundle
 /// whose revisions are all in the project already leaves the document
 /// (revision, undo) alone.
-fn import_bundle(document: &mut Document, bundle: &Bundle) -> Result<import::ImportReport> {
+pub(super) fn import_bundle(
+    document: &mut Document,
+    bundle: &Bundle,
+) -> Result<import::ImportReport> {
     library::bundle::validate_bundle(bundle)?;
     let mut project = (*document.project).clone();
     let mut library = std::mem::take(&mut project.library);
@@ -572,7 +771,10 @@ pub(crate) fn apply_library(
             super::assets::drop_unnamed(document, before);
             Ok(Outcome::None)
         }
-        LibraryCommand::Publish { drafts } => {
+        LibraryCommand::Publish {
+            drafts: published,
+            close,
+        } => {
             // The pure publish rules run first, so their findings are
             // reported even without an evaluator; the candidate document
             // is discarded if the freshness check below then refuses.
@@ -580,9 +782,9 @@ pub(crate) fn apply_library(
             let revisions = library::publish(
                 &mut project.library,
                 Arc::make_mut(&mut document.drafts),
-                &drafts,
+                &published,
             )?;
-            for id in &drafts {
+            for id in &published {
                 if let Some(library::Draft {
                     definition: Definition::Footprint(footprint),
                     ..
@@ -592,6 +794,9 @@ pub(crate) fn apply_library(
                     let package = package_of(document, footprint)?;
                     footprint_edit::check_fresh(footprint, package, need(evaluator)?)?;
                 }
+            }
+            if close {
+                drafts::close(Arc::make_mut(&mut document.drafts), &published);
             }
             Ok(Outcome::Published { revisions })
         }
@@ -617,6 +822,7 @@ pub(crate) fn apply_library(
                 definition: Definition::Footprint(generated),
             };
             drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
+            follow_envelope(document, draft)?;
             Ok(Outcome::None)
         }
         LibraryCommand::SetGrid { grid } => {
@@ -647,6 +853,11 @@ pub(crate) fn apply_library(
             Arc::make_mut(&mut document.drafts).symbols = conventions;
             Ok(Outcome::None)
         }
+        LibraryCommand::RestyleSymbol {
+            draft,
+            kind,
+            terminals,
+        } => restyle_symbol(document, draft, kind, terminals),
         LibraryCommand::EditGraphics { draft, edits } => {
             let current = document
                 .drafts
@@ -689,7 +900,33 @@ pub(crate) fn apply_library(
                 definition: Definition::Footprint(definition),
             };
             drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
+            follow_envelope(document, draft)?;
             Ok(Outcome::FootprintEdited { report })
+        }
+        LibraryCommand::FootprintFromPads(request) => {
+            let draft = request.draft;
+            let (current, footprint) = footprint_draft(document, draft)?;
+            let package = package_of(document, footprint)?;
+            let built =
+                pad_table::build(footprint, package, &request, draft, &document.project.rules)?;
+            let edit = DraftEdit {
+                id: draft,
+                meta: current.meta.clone(),
+                definition: Definition::Footprint(built.footprint),
+            };
+            drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
+            // The courtyard was drawn around the body at this place, so it
+            // is stored rather than derived again from that courtyard. A
+            // published package stays where it is.
+            let mut report = built.report;
+            match (built.placement, landed_package(document, draft)) {
+                (Some(placement), Some((id, meta, mut package))) => {
+                    package.placement = placement;
+                    store_package(document, id, meta, package)?;
+                }
+                _ => report.envelope_moved_to = None,
+            }
+            Ok(Outcome::FootprintFromPads { report })
         }
         LibraryCommand::EditFootprint { draft, edits } => {
             let (current, footprint) = footprint_draft(document, draft)?;
@@ -702,6 +939,7 @@ pub(crate) fn apply_library(
                 definition: Definition::Footprint(definition),
             };
             drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
+            follow_envelope(document, draft)?;
             Ok(Outcome::FootprintEdited { report })
         }
         LibraryCommand::AssignTerminals {
@@ -728,6 +966,10 @@ pub(crate) fn apply_library(
         }
         LibraryCommand::Import { bundle } => {
             let report = import_bundle(document, &bundle)?;
+            Ok(Outcome::Imported { report })
+        }
+        LibraryCommand::ImportStandardFields {} => {
+            let report = import_bundle(document, &standard_fields::bundle()?)?;
             Ok(Outcome::Imported { report })
         }
         LibraryCommand::PlaceFrom {

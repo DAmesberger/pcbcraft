@@ -162,4 +162,12 @@ def build(s, L, S, PCB):
             spec["settings"] = {"clearance": 0.4}
         s.op("fill.add", {"fill": spec}, f"fill {name}")
     s.op("fill.refill", {"target": {"fills": "all"}}, "refill")
+
+    # --- legend ---------------------------------------------------------------
+    # Footprint designators that print off the board, moved for this board
+    # only: J2's to the inner side of its row (its footprint +y faces the left
+    # edge at 90 degrees), U1's from past the top edge to the left of the module.
+    for des, offset in (("J2", [0.0, -4.4]), ("U1", [-12.4, -2.9])):
+        s.op("instance.set_text_placement", {"instance": S["instances"][des]["id"], "placement": {"offset": offset}},
+             f"legend {des}")
     return R.short

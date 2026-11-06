@@ -106,7 +106,7 @@ pub struct Marks {
 impl UpdatePreview {
     /// The panel's identity: its refusal origin and widget state.
     fn id() -> egui::Id {
-        egui::Id::new("update-review")
+        egui::Id::unique("update-review")
     }
 
     pub fn begin(&mut self, engine: &Engine, change: Change) {
@@ -143,6 +143,12 @@ impl UpdatePreview {
         self.plan = Some(plan);
         self.acked.clear();
         self.focus.clear();
+    }
+
+    /// Cancel, as the panel's button does.
+    #[cfg(test)]
+    pub fn cancel(&mut self) {
+        self.close(Closed::Cancelled);
     }
 
     /// How the last review closed, once.
@@ -410,15 +416,30 @@ fn title(change: &Change, project: &Project) -> String {
             command: SchematicCommand::Connect { .. },
         } => "Connect pins".into(),
         Change::Schematic {
+            command: SchematicCommand::DrawWire { .. },
+        } => "Draw wire".into(),
+        Change::Schematic {
             command: SchematicCommand::Disconnect { .. },
         } => "Disconnect wire".into(),
+        Change::Schematic {
+            command: SchematicCommand::RemoveLabel { .. },
+        } => "Remove label".into(),
         Change::Schematic { .. } => "Change schematic".into(),
     }
 }
 
 /// The success toast: "Updated PCB: adds 2 placements".
-fn applied_line(plan: &UpdatePlan) -> String {
+pub(crate) fn applied_line(plan: &UpdatePlan) -> String {
     use pcbcraft_core::schematic::SchematicCommand;
+    // One wire drawn is one wire, whatever segments it splits to join.
+    if matches!(
+        &plan.change,
+        Change::Schematic {
+            command: SchematicCommand::DrawWire { .. }
+        }
+    ) {
+        return "Drew the wire".to_owned();
+    }
     let done = match &plan.change {
         Change::SyncPcb {} => "Updated PCB",
         Change::ComponentRevision { .. } => "Updated instances",
@@ -432,6 +453,9 @@ fn applied_line(plan: &UpdatePlan) -> String {
         Change::Schematic {
             command: SchematicCommand::Disconnect { .. },
         } => "Disconnected the wire",
+        Change::Schematic {
+            command: SchematicCommand::RemoveLabel { .. },
+        } => "Removed the label",
         Change::Schematic { .. } => "Changed the schematic",
     };
     let summary = summary_of(plan);
@@ -441,6 +465,15 @@ fn applied_line(plan: &UpdatePlan) -> String {
         .map(|c| c.to_lowercase().chain(chars).collect())
         .unwrap_or_default();
     refusal::clip(&format!("{done}: {summary}"), MAX_LINE)
+}
+
+/// "12 parts staged beside the board — place them on the board".
+fn staged_line(count: usize) -> String {
+    if count == 1 {
+        "1 part staged beside the board — place it on the board".into()
+    } else {
+        format!("{count} parts staged beside the board — place them on the board")
+    }
 }
 
 fn new_issues_line(new: usize) -> String {
@@ -509,7 +542,7 @@ pub fn content(
         let (line, objects) = match plan.blocker_lines.get(n) {
             Some(line) => (line.line.clone(), line.refs.clone()),
             None => (
-                refusal::presentable(blocker).unwrap_or_else(|| "The update is blocked".into()),
+                refusal::whole_sentence(blocker).unwrap_or_else(|| "The update is blocked".into()),
                 Vec::new(),
             ),
         };
@@ -581,7 +614,7 @@ pub fn content(
             }
             Some(line) => (line.line.clone(), line.refs.clone()),
             None => (
-                refusal::presentable(warning).unwrap_or_else(|| "Check this update".into()),
+                refusal::whole_sentence(warning).unwrap_or_else(|| "Check this update".into()),
                 Vec::new(),
             ),
         };
@@ -593,6 +626,25 @@ pub fn content(
                 locate: !objects.is_empty(),
             },
             objects,
+        );
+    }
+    // Parts new to the board are staged beside it, which no check flags
+    // here: one line says so, with the parts to Show.
+    let staged: Vec<ObjectRef> = plan
+        .planned_placements
+        .iter()
+        .filter(|p| project.placement_of(p.instance).is_none())
+        .map(|p| ObjectRef::Instance { id: p.instance })
+        .collect();
+    if !staged.is_empty() {
+        push(
+            ReviewLine {
+                level: Level::Info,
+                title: staged_line(staged.len()),
+                ack: None,
+                locate: true,
+            },
+            staged,
         );
     }
     let mut groups = Vec::new();
@@ -626,7 +678,9 @@ pub fn content(
         if row.severity == pcbcraft_core::issues::Severity::Error {
             after.push(ReviewLine {
                 level: Level::Error,
-                title: refusal::clip(&format!("New error: {}", row.title), MAX_LINE),
+                // The row leads with its objects; the footer counts them
+                // as new errors ("Leaves 3 new errors").
+                title: refusal::clip(&row.title, MAX_LINE),
                 ack: None,
                 locate: !row.refs.is_empty(),
             });
@@ -646,12 +700,12 @@ pub fn content(
         };
         let mut lines: Vec<String> = titled(&findings.new_rows, &findings.new)
             .into_iter()
-            .map(|t| refusal::clip(&format!("New: {t}"), MAX_LINE))
+            .map(|t| refusal::clip(&format!("{t} (new)"), MAX_LINE))
             .collect();
         lines.extend(
             titled(&findings.resolved_rows, &findings.resolved)
                 .into_iter()
-                .map(|t| refusal::clip(&format!("Resolved: {t}"), MAX_LINE)),
+                .map(|t| refusal::clip(&format!("{t} (resolved)"), MAX_LINE)),
         );
         groups.push(ReviewGroup {
             title: "After this update".into(),
@@ -1024,11 +1078,46 @@ mod tests {
             .filter(|r| r.severity == pcbcraft_core::issues::Severity::Error)
             .count();
         assert_eq!(content.after.len(), errors);
+        // Each leads with its own objects, not a shared prefix.
+        assert!(content.after.iter().all(|l| l.level == Level::Error
+            && !l.title.starts_with("New")
+            && plan.findings.new_rows.iter().any(|r| r.title == l.title)));
+        // R3 is staged beside the board: its copper past the edge is no
+        // new finding of the update; one line says it is staged.
         assert!(
-            content
-                .after
+            !plan
+                .findings
+                .new
                 .iter()
-                .all(|l| l.level == Level::Error && l.title.starts_with("New error: "))
+                .any(|f| f.code == "board.outside_outline"),
+            "{:?}",
+            plan.findings.new
+        );
+        let staged = content
+            .lines
+            .iter()
+            .position(|l| l.title == "1 part staged beside the board — place it on the board")
+            .ok_or("a staged line")?;
+        assert_eq!(content.lines[staged].level, Level::Info);
+        assert_eq!(content.refs[staged], vec![ObjectRef::Instance { id: r3 }]);
+        // The board checks still report it once applied.
+        let mut applied = with_unplaced()?;
+        applied.apply(
+            applied.revision(),
+            Operation::Update(Box::new(ApplyUpdate {
+                expected_revision: applied.revision(),
+                change: plan.change.clone(),
+                remove_conflicting_tracks: false,
+            })),
+        )?;
+        assert!(
+            layout::checks(applied.project()).iter().any(|f| {
+                f.code == "board.outside_outline"
+                    && f.objects
+                        .iter()
+                        .all(|o| matches!(o, ObjectRef::Pad { instance, .. } if *instance == r3))
+            }),
+            "the board checks flag the staged part"
         );
         // Pads of a new placement fold into its line.
         assert!(

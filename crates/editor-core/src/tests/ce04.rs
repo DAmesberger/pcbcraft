@@ -171,7 +171,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
             choice: Some(q.physical()),
         }),
     )?;
-    step(&mut engine, Operation::Layout(LayoutCommand::Sync))?;
+    crate::tests::support::sync_onto_board(&mut engine)?;
     let placements: Vec<_> = engine
         .project()
         .placements
@@ -221,34 +221,30 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
     )?;
     let track = engine.project().tracks[0].id;
 
-    // Exchange unit positions: presentation only.
+    // Move both units: presentation only. (Exchanging them would drag A's
+    // wires across B's pins, which would connect them.)
     let nets = engine.project().nets.clone();
     let pads = layout::pads(engine.project());
-    step(
-        &mut engine,
-        Operation::Schematic(SchematicCommand::MoveUnit {
-            occurrence: occ_a,
-            position: [30.0, 10.0],
-        }),
-    )?;
-    step(
-        &mut engine,
-        Operation::Schematic(SchematicCommand::MoveUnit {
-            occurrence: occ_b,
-            position: [10.0, 10.0],
-        }),
-    )?;
+    for (occurrence, position) in [(occ_a, [10.0, -10.0]), (occ_b, [30.0, -10.0])] {
+        step(
+            &mut engine,
+            Operation::Schematic(SchematicCommand::MoveUnit {
+                occurrence,
+                position,
+            }),
+        )?;
+    }
     assert_eq!(engine.project().nets, nets);
     assert_eq!(layout::pads(engine.project()), pads);
     assert_eq!(
         positions(&engine, q1),
         [
-            [25.0, 10.0],
-            [35.0, 12.5],
-            [35.0, 7.5],
-            [5.0, 10.0],
-            [15.0, 12.5],
-            [15.0, 7.5]
+            [5.0, -10.0],
+            [15.0, -7.5],
+            [15.0, -12.5],
+            [25.0, -10.0],
+            [35.0, -7.5],
+            [35.0, -12.5]
         ]
         .map(Some)
     );

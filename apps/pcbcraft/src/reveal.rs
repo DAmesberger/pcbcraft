@@ -49,7 +49,7 @@ impl Targets {
 }
 
 fn slot() -> egui::Id {
-    egui::Id::new("pcbcraft-key-targets")
+    egui::Id::unique("pcbcraft-key-targets")
 }
 
 /// Start a frame's list (the app calls it before anything draws).

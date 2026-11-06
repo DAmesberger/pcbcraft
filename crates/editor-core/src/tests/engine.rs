@@ -178,7 +178,14 @@ fn connecting_merges_into_the_older_net_and_disconnecting_splits_off_new_ids() -
     connect(&mut engine, ep(r2, 1), ep(r3, 1))?;
     assert_eq!(net_of(&engine, ep(r3, 1))?, shared);
     assert!(engine.project().net(lone).is_none());
-    let wire = wire_between(&engine, ep(r2, 1), ep(r3, 1))?;
+    // The new wire may bend around R2's other pin through junction points;
+    // removing its leg at R3.1 removes the whole run.
+    let wire = engine
+        .project()
+        .wires_at(ep(r3, 1))
+        .next()
+        .map(|w| w.id)
+        .ok_or_else(|| Error::NotFound("wire".into()))?;
     apply(
         &mut engine,
         Operation::Schematic(SchematicCommand::Disconnect { wire }),
@@ -305,7 +312,7 @@ fn malformed_references_and_routed_connectivity_changes_leave_state_unchanged() 
         assert_eq!(engine.revision(), revision);
     }
     connect(&mut engine, ep(a, 2), ep(b, 1))?;
-    apply(&mut engine, Operation::Layout(LayoutCommand::Sync))?;
+    crate::tests::support::sync_onto_board(&mut engine)?;
     let net = net_of(&engine, ep(a, 2))?;
     let pad = crate::layout::pads(engine.project())
         .into_iter()

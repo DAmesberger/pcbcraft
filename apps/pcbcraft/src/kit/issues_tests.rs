@@ -204,7 +204,7 @@ fn the_issue_line_is_reserved_and_inert_while_empty() {
 #[test]
 fn a_row_click_locates_and_its_controls_do_only_their_own_thing() {
     let mut h = Harness::new(360.0);
-    let id = egui::Id::new("row");
+    let id = egui::Id::unique("row");
     let mut view = row_view("R3 ↔ R6: 4 pads too close");
     view.fix = Some("Assign…".to_owned());
     view.count = 3;
@@ -267,7 +267,7 @@ fn a_row_click_locates_and_its_controls_do_only_their_own_thing() {
 #[test]
 fn dragging_across_a_row_selects_no_text() {
     let mut h = Harness::new(360.0);
-    let id = egui::Id::new("drag");
+    let id = egui::Id::unique("drag");
     let view = row_view("R1 pin 1 unconnected");
     let (_, painted) = h.frame(Vec::new(), |ui| issue_row(ui, id, &view));
     let title = rect_of(&painted, &view.title);
@@ -321,7 +321,7 @@ fn a_long_title_is_clipped_to_one_line_inside_the_row() {
     let mut h = Harness::new(240.0);
     let view = row_view(&"Courtyards of R7 and R10 overlap on the top side ".repeat(2));
     let ((), painted) = h.frame(Vec::new(), |ui| {
-        issue_row(ui, egui::Id::new("long"), &view);
+        issue_row(ui, egui::Id::unique("long"), &view);
     });
     let title = find(&painted, view.title.as_str()).expect("the title is painted");
     assert!(title.elided);
@@ -332,7 +332,7 @@ fn a_long_title_is_clipped_to_one_line_inside_the_row() {
 #[test]
 fn an_open_row_shows_its_details_and_chips_that_locate_one_object() {
     let mut h = Harness::new(360.0);
-    let id = egui::Id::new("open");
+    let id = egui::Id::unique("open");
     let mut view = row_view("2 pads have no package terminal");
     view.detail = IssueDetail {
         cause: Some("Each pad needs a package terminal.".to_owned()),
@@ -383,7 +383,7 @@ fn the_list_is_uncapped_and_builds_only_visible_rows() {
         egui::ScrollArea::vertical()
             .max_height(300.0)
             .show(ui, |ui| {
-                issues_list(ui, egui::Id::new("list"), &groups, |g, r| {
+                issues_list(ui, egui::Id::unique("list"), &groups, |g, r| {
                     built.set(built.get() + 1);
                     row_view(&format!("Row {g}.{r}"))
                 })
@@ -416,7 +416,7 @@ fn list_events_name_the_group_or_row() {
         fix: Some("Update PCB…".to_owned()),
     }];
     let mut draw = |ui: &mut Ui| {
-        issues_list(ui, egui::Id::new("events"), &groups, |_, r| {
+        issues_list(ui, egui::Id::unique("events"), &groups, |_, r| {
             row_view(&format!("R2{r} is not placed"))
         })
     };

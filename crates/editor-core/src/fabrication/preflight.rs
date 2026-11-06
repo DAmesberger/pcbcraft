@@ -3,18 +3,19 @@
 //! The report is the project's issues (design rules checked under the
 //! chosen fabrication profile) plus production findings: unrouted nets,
 //! unfilled or stale fills, parts without a footprint or placement, parts
-//! shown with only an envelope model, legend over pads and slots the drill
-//! file cannot route. Errors block export unless waived; waivers are saved
+//! shown with only an envelope model, legend over pads or off the board and
+//! slots the drill file cannot route. Errors block export unless waived; waivers are saved
 //! in the project (`Project::production`).
 use crate::diagnostics::{Error, ObjectRef, Result};
 use crate::geometry::{Bounds, Point, polyline_polygon_distance};
 use crate::ids::{DefinitionId, Id};
 use crate::issues::{IssueArea, IssueRow, IssueScope, Severity};
-use crate::layout::{self, BoardDrawing, PlacedItem};
+use crate::layout::board_edge::{BoardEdges, EdgeLoopKind, EdgeVerdict};
+use crate::layout::{self, BoardDrawing, CopperRing, PlacedItem};
 use crate::library::{Drafts, MaskRule, PackageModel};
 use crate::model::board::CutoutKind;
 use crate::model::production::{MAX_WAIVER_TEXT, MAX_WAIVERS, Production, Waiver};
-use crate::model::{Layer, Project};
+use crate::model::{CopperLayer, Layer, Project, Track};
 use crate::rules::{self, RuleProfile, RulesCommand};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,44 +27,82 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum FabricationCommand {
-    /// Accept a pre-flight finding for fabrication, by its key, with a
-    /// reason (required). Replaces an earlier waiver of the same key.
+    /// Accept pre-flight findings for fabrication, by their keys, with one
+    /// optional reason, as one undo step. Replaces earlier waivers of the
+    /// same keys. Refused whole, changing nothing, when any key is empty,
+    /// a key or the reason is too long or not printable, or the host
+    /// requires a reason and none is given.
     #[serde(rename = "fabrication.waive")]
-    Waive { key: String, reason: String },
+    Waive {
+        keys: Vec<String>,
+        #[serde(default)]
+        reason: String,
+    },
     /// Remove the waiver of a key.
     #[serde(rename = "fabrication.unwaive")]
     Unwaive { key: String },
 }
 
-/// Apply one waiver command.
-pub fn apply(production: &mut Production, command: FabricationCommand) -> Result<()> {
+// A new command chooses its permission class here.
+declare_classes!(FabricationCommand {
+    Waive "fabrication.waive" Ask,
+    Unwaive "fabrication.unwaive" Edit,
+});
+
+/// Apply one waiver command; `reason_required` refuses a waiver without a
+/// reason (a host setting). A refused command leaves `production`
+/// unchanged.
+pub fn apply(
+    production: &mut Production,
+    command: FabricationCommand,
+    reason_required: bool,
+) -> Result<()> {
     let waivers = &mut production.waivers;
     match command {
-        FabricationCommand::Waive { key, reason } => {
-            let key = key.trim().to_string();
+        FabricationCommand::Waive { keys, reason } => {
             let reason = reason.trim().to_string();
-            if key.is_empty() || reason.is_empty() {
+            let keys: BTreeSet<String> = keys.iter().map(|k| k.trim().to_string()).collect();
+            if keys.is_empty() || keys.contains("") {
                 return Err(Error::Invalid(
-                    "fabrication.waiver_reason: a waiver needs a finding key and a reason".into(),
+                    "fabrication.waiver_key: a waiver needs a finding key".into(),
                 ));
             }
-            if key.len() > MAX_WAIVER_TEXT
+            if reason_required && reason.is_empty() {
+                return Err(Error::Invalid(
+                    "fabrication.waiver_reason: a reason is required to waive findings (Settings)"
+                        .into(),
+                ));
+            }
+            if keys.len() > MAX_WAIVERS
                 || reason.len() > MAX_WAIVER_TEXT
-                || key.chars().chain(reason.chars()).any(char::is_control)
+                || reason.chars().any(char::is_control)
+                || keys
+                    .iter()
+                    .any(|k| k.len() > MAX_WAIVER_TEXT || k.chars().any(char::is_control))
             {
                 return Err(Error::Invalid(format!(
                     "fabrication.waiver_bounds: keys and reasons are printable, at most {MAX_WAIVER_TEXT} bytes"
                 )));
             }
-            match waivers.binary_search_by(|w| w.key.as_str().cmp(&key)) {
-                Ok(i) => waivers[i].reason = reason,
-                Err(i) => {
-                    if waivers.len() >= MAX_WAIVERS {
-                        return Err(Error::Limit(format!(
-                            "fabrication.waiver_limit: at most {MAX_WAIVERS} waivers"
-                        )));
-                    }
-                    waivers.insert(i, Waiver { key, reason });
+            let added = keys
+                .iter()
+                .filter(|k| waivers.binary_search_by(|w| w.key.as_str().cmp(k)).is_err())
+                .count();
+            if waivers.len().saturating_add(added) > MAX_WAIVERS {
+                return Err(Error::Limit(format!(
+                    "fabrication.waiver_limit: at most {MAX_WAIVERS} waivers"
+                )));
+            }
+            for key in keys {
+                match waivers.binary_search_by(|w| w.key.as_str().cmp(&key)) {
+                    Ok(i) => waivers[i].reason.clone_from(&reason),
+                    Err(i) => waivers.insert(
+                        i,
+                        Waiver {
+                            key,
+                            reason: reason.clone(),
+                        },
+                    ),
                 }
             }
         }
@@ -77,6 +116,33 @@ pub fn apply(production: &mut Production, command: FabricationCommand) -> Result
         }
     }
     Ok(())
+}
+
+/// The profile a `fabrication.preflight` query checks under.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(
+    untagged,
+    expecting = "a rule profile id such as std-6-6, or a whole rule profile"
+)]
+pub enum ProfileChoice {
+    /// A profile id. The engine knows the built-in profiles; a host with a
+    /// user profile library resolves the rest before it asks.
+    Id(String),
+    Profile(Box<RuleProfile>),
+}
+
+impl ProfileChoice {
+    /// The profile chosen. An id that is not a built-in profile is not found.
+    pub fn into_profile(self) -> Result<RuleProfile> {
+        match self {
+            Self::Id(id) => rules::builtin::by_id(&id).ok_or_else(|| {
+                Error::NotFound(format!(
+                    "rules.profile_unknown: no rule profile has the id {id}"
+                ))
+            }),
+            Self::Profile(profile) => Ok(*profile),
+        }
+    }
 }
 
 /// One pre-flight finding.
@@ -130,10 +196,12 @@ impl PreflightReport {
 /// the check stops and says so).
 pub const MAX_SILK_PAIRS: usize = 4_000_000;
 
+/// Characters of a legend text a finding quotes, so its title stays one line.
+const MAX_LEGEND_NAME: usize = 16;
+
 /// The waiver key of a finding: its code and the objects it names.
 pub fn key(code: &str, objects: &[ObjectRef]) -> String {
-    let objects = serde_json::to_string(objects).unwrap_or_default();
-    format!("{code} {objects}")
+    crate::model::production::waiver_key(code, objects)
 }
 
 /// Pre-flight severity of an issue row: unrouted connections, unplaced
@@ -192,7 +260,7 @@ pub fn report(
         _ => Cow::Borrowed(project),
     };
     let p: &Project = &checked;
-    let issues = crate::issues::report(p, drafts, &IssueScope::All)?;
+    let issues = crate::issues::report_with(p, drafts, &IssueScope::All, true)?;
     for row in &issues.rows {
         let Some(severity) = severity(row) else {
             continue;
@@ -247,8 +315,8 @@ fn item(
 
 /// Findings only production needs: parts without a footprint, fills never
 /// computed, parts with only an envelope 3D model, unpublished draft
-/// changes of definitions in use, plated slots the drill file cannot route
-/// and legend ink over pad openings.
+/// changes of definitions in use, plated slots the drill file cannot route,
+/// legend ink over pad openings and legend ink off the board.
 fn production_findings(project: &Project, drafts: &Drafts, items: &mut Vec<PreflightItem>) {
     // Drafts whose content differs from the revision they edit (an open
     // draft identical to its base is no pending change).
@@ -337,6 +405,142 @@ fn production_findings(project: &Project, drafts: &Drafts, items: &mut Vec<Prefl
         }
     }
     silk_over_pads(project, items);
+    legend_against_the_board(project, items);
+}
+
+/// How far a legend item is from staying on the board. Worse is greater.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum LegendFault {
+    /// Closer than the silkscreen edge clearance.
+    Close { gap: f64, near: EdgeLoopKind },
+    /// Over a cutout or slot.
+    Inside(CutoutKind),
+    /// Past the outer outline.
+    Outside,
+}
+
+impl LegendFault {
+    fn rank(self) -> u8 {
+        match self {
+            Self::Close { .. } => 0,
+            Self::Inside(_) => 1,
+            Self::Outside => 2,
+        }
+    }
+}
+
+/// The name a legend finding gives an item: at most `MAX_LEGEND_NAME`
+/// characters of its own text.
+fn legend_name(text: &str, designator: &str) -> String {
+    if text == designator {
+        return format!("Designator {designator}");
+    }
+    let line = text.lines().next().unwrap_or_default();
+    let short: String = line.chars().take(MAX_LEGEND_NAME).collect();
+    let more = if short.len() < line.len() { "…" } else { "" };
+    format!("Legend text {short}{more} of {designator}")
+}
+
+/// Legend text past the board's outline or over a cutout or slot: the
+/// fabricator trims it, so the text can't be read. With a silkscreen edge
+/// clearance in the rules, text closer than that to an edge is reported too.
+/// One finding per text on the printed sides. Legend lines may run past an
+/// edge: a part that overhangs the board, such as a module's antenna end,
+/// draws its outline there, and a trimmed line loses nothing.
+fn legend_against_the_board(project: &Project, items: &mut Vec<PreflightItem>) {
+    let limit = project.rules.effective().silkscreen.edge_clearance;
+    let edges = BoardEdges::of(project);
+    let names: BTreeMap<Id, &str> = project
+        .instances
+        .iter()
+        .map(|i| (i.id, i.designator.as_str()))
+        .collect();
+    for graphic in layout::placed_graphics(project) {
+        let BoardDrawing::Silkscreen(side) = graphic.layer else {
+            continue;
+        };
+        let printed = match side {
+            Layer::Top => project.stackup.silkscreen_top,
+            Layer::Bottom => project.stackup.silkscreen_bottom,
+        };
+        if !printed {
+            continue;
+        }
+        let PlacedItem::Text(text) = &graphic.item else {
+            continue;
+        };
+        let strokes = layout::legend::text_strokes(text);
+        let mut worst: Option<LegendFault> = None;
+        for points in &strokes.strokes {
+            let single = points.first().map(|p| [*p, *p]);
+            let pairs = points
+                .windows(2)
+                .map(|w| [w[0], w[1]])
+                .chain(single.filter(|_| points.len() == 1));
+            for [start, end] in pairs {
+                let ink = CopperRing::of_track(&Track {
+                    id: Id::default(),
+                    net: Id::default(),
+                    start,
+                    end,
+                    width: strokes.width,
+                    layer: CopperLayer::from(side),
+                    locked: false,
+                });
+                let fault = match edges.verdict(&ink, limit) {
+                    EdgeVerdict::Clear => continue,
+                    EdgeVerdict::Outside => LegendFault::Outside,
+                    EdgeVerdict::Inside(kind) => LegendFault::Inside(kind),
+                    EdgeVerdict::TooClose { gap, near } => LegendFault::Close { gap, near },
+                };
+                let worse = match (worst, fault) {
+                    (None, _) => true,
+                    (
+                        Some(LegendFault::Close { gap: a, .. }),
+                        LegendFault::Close { gap: b, .. },
+                    ) => b < a,
+                    (Some(w), f) => f.rank() > w.rank(),
+                };
+                if worse {
+                    worst = Some(fault);
+                }
+            }
+        }
+        let Some(fault) = worst else {
+            continue;
+        };
+        let designator = names.get(&graphic.instance).copied().unwrap_or("a part");
+        let name = legend_name(&text.text, designator);
+        let (code, title) = match fault {
+            LegendFault::Outside => (
+                "fabrication.legend_outside",
+                format!("{name} runs outside the board"),
+            ),
+            LegendFault::Inside(kind) => (
+                "fabrication.legend_outside",
+                format!("{name} runs into {}", EdgeLoopKind::Cutout(kind).describe()),
+            ),
+            LegendFault::Close { gap, near } => (
+                "fabrication.legend_edge",
+                format!(
+                    "{name} is {gap:.2} mm from {}; needs {limit} mm",
+                    near.describe()
+                ),
+            ),
+        };
+        let mut finding = item(
+            code,
+            Severity::Warning,
+            title,
+            Some("Move the text on the part's Placement card, or move the part".into()),
+            vec![ObjectRef::Instance {
+                id: graphic.instance,
+            }],
+        );
+        // One waiver per legend item, not per part.
+        finding.key = format!("{} graphic:{}", finding.key, graphic.graphic.0);
+        items.push(finding);
+    }
 }
 
 /// Legend strokes that reach into a solder-mask opening of a pad on the

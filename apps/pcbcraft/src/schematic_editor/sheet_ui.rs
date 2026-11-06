@@ -134,7 +134,9 @@ pub(super) struct SceneCache {
 /// corner, a note's anchor, a line's start or a rectangle's corner.
 pub(super) fn anchor(project: &Project, item: Item) -> Option<Point> {
     match item {
-        Item::Label(id) => project.label(id).map(|l| l.position),
+        Item::Label(id) => project
+            .label(id)
+            .map(|l| schematic::labels::anchor(project, l)),
         Item::SheetSymbol(id) => project.sheet_symbol(id).map(|s| s.position),
         Item::SheetPin(id) => project.sheet_pin(id).map(|(s, p)| s.pin_position(p)),
         Item::Drawing(id) => project.drawing(id).map(|d| match &d.item {
@@ -241,18 +243,30 @@ impl SchematicEditor {
         }
         if self.sheet != sheet {
             self.select(None, None, project);
-            self.wire_from = None;
+            self.wire = None;
             self.draw_from = None;
             self.fit_requested = true;
         }
         self.sheet = sheet;
     }
 
+    /// Another document replaced the last one (opened, recovered or new):
+    /// start on its first page with nothing selected and the page framed.
+    /// The frame waits for the next canvas frame, whenever Schematic shows.
+    pub fn document_opened(&mut self, project: &Project) {
+        self.select(None, None, project);
+        self.wire = None;
+        self.draw_from = None;
+        self.frame_request = None;
+        self.sheet = project.sheets.first();
+        self.fit_requested = true;
+    }
+
     /// Switch to `sheet` without fitting (a located object frames itself).
     pub(super) fn switch_sheet(&mut self, sheet: Option<SheetId>, project: &Project) {
         if let Some(sheet) = sheet.filter(|s| project.sheet(*s).is_some()) {
             if self.sheet != sheet {
-                self.wire_from = None;
+                self.wire = None;
                 self.draw_from = None;
             }
             self.sheet = sheet;
@@ -282,8 +296,8 @@ impl SchematicEditor {
         for s in project.sheet_symbols.iter().filter(|s| s.sheet == sheet) {
             items.push((Item::SheetSymbol(s.id), scene::sheet_symbol(project, s)));
         }
-        for l in project.labels.iter().filter(|l| l.sheet == sheet) {
-            items.push((Item::Label(l.id), scene::label(l)));
+        for (id, drawing) in scene::sheet_labels(project, sheet) {
+            items.push((Item::Label(id), drawing));
         }
         let page = project.sheet(sheet).map(|s| {
             let [w, h] = s.size_mm();
@@ -353,6 +367,34 @@ impl SchematicEditor {
             })
     }
 
+    /// The wire target a label drawn under `p` stands for, with its sheet
+    /// position. A label placing itself on a pin stands for that pin, so a
+    /// new wire leaves it on its pin (a second wire on the label itself
+    /// would end its self-placing).
+    pub(super) fn label_target_at(
+        &self,
+        project: &Project,
+        p: Point,
+        tol: f64,
+    ) -> Option<(WireTarget, Point)> {
+        let scene = self.scene.as_ref()?;
+        let m = TextMetric::default();
+        let id = scene
+            .items
+            .iter()
+            .rev()
+            .find_map(|(item, drawing)| match item {
+                Item::Label(id) if drawing.hit(p, tol, m) => Some(*id),
+                _ => None,
+            })?;
+        let label = project.label(id)?;
+        let target = match schematic::labels::attached_pin(project, label) {
+            Some(pin) => WireTarget::Terminal(pin),
+            None => WireTarget::from(WireEnd::label(id)),
+        };
+        Some((target, super::target_position(project, target)?))
+    }
+
     /// The labels and sheet pins of the active sheet as wire targets, with
     /// their sheet positions.
     pub(super) fn point_targets(&self, project: &Project) -> Vec<(WireTarget, Point)> {
@@ -360,7 +402,12 @@ impl SchematicEditor {
             .labels
             .iter()
             .filter(|l| l.sheet == self.sheet)
-            .map(|l| (WireTarget::from(WireEnd::label(l.id)), l.position));
+            .map(|l| {
+                (
+                    WireTarget::from(WireEnd::label(l.id)),
+                    schematic::labels::anchor(project, l),
+                )
+            });
         let pins = project
             .sheet_symbols
             .iter()
@@ -610,7 +657,13 @@ impl SchematicEditor {
                     && (l.kind.is_global() == label.kind.is_global())
                     && (label.kind.is_global() || l.sheet == label.sheet)
             })
-            .map(|l| (Item::Label(l.id), l.sheet, l.position))
+            .map(|l| {
+                (
+                    Item::Label(l.id),
+                    l.sheet,
+                    schematic::labels::anchor(project, l),
+                )
+            })
             .collect();
         places.sort_by_key(|(_, s, _)| project.sheets.number(*s).unwrap_or(usize::MAX));
         places

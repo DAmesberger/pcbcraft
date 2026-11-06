@@ -525,7 +525,7 @@ impl PartEditor {
     /// The docked "New footprint from template" dialog. Returns the one
     /// operation its primary sends.
     pub(super) fn template_dialog(&mut self, ui: &mut Ui) -> Option<Operation> {
-        let id = egui::Id::new(TEMPLATE_DIALOG);
+        let id = egui::Id::unique(TEMPLATE_DIALOG);
         let ctx = ui.ctx().clone();
         let now = self.draft.as_ref().map(|s| &s.footprint);
         if self.template_picker.settle(&ctx, id, now) {
@@ -646,7 +646,7 @@ impl PartEditor {
     /// The docked "Assign pads by number" dialog: each pad and the package
     /// terminal it takes, then one confirmed `library.assign_terminals`.
     pub(super) fn assign_dialog(&mut self, ui: &mut Ui) -> Option<Operation> {
-        let id = egui::Id::new(ASSIGN_DIALOG);
+        let id = egui::Id::unique(ASSIGN_DIALOG);
         let ctx = ui.ctx().clone();
         let now = self.draft.as_ref().map(|s| &s.footprint);
         if self.template_picker.settle(&ctx, id, now) {

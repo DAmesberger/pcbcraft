@@ -71,6 +71,32 @@ pub struct TabbedForm {
     /// Grid positions between neighbouring leads of the −y and +y rows.
     #[serde(default = "one_step", skip_serializing_if = "is_one_step")]
     pub lead_step: [u32; 2],
+    /// The datasheet's land pattern, over the estimates.
+    #[serde(default, skip_serializing_if = "TabbedLands::is_estimated")]
+    pub lands: TabbedLands,
+}
+
+/// A datasheet's recommended land pattern for a tabbed form. Each value left
+/// out keeps its estimate ([`TabbedForm::land_sizes`]).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TabbedLands {
+    /// One lead's land: `[along x, along y]`, width across the lead first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[f64; 2]>,
+    /// The rows' land centre to land centre, across y.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<f64>,
+    /// The tab's land: `[along x, along y]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_size: Option<[f64; 2]>,
+}
+
+impl TabbedLands {
+    /// No value overrides an estimate.
+    pub fn is_estimated(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 impl TabbedForm {
@@ -90,6 +116,7 @@ impl TabbedForm {
             foot_length: 0.4,
             tab: None,
             lead_step: [2, 1],
+            lands: TabbedLands::default(),
         }
     }
 
@@ -159,16 +186,24 @@ impl TabbedForm {
         }
     }
 
-    /// Estimated land sizes [along x, along y] per lead in lead order
-    /// (toe 0.4 mm, heel 0.2 mm, side 0.1 mm; estimated prototype values,
-    /// not a compliance claim), the tab last.
+    /// Land sizes [along x, along y] per lead in lead order, the tab last:
+    /// the datasheet's ([`TabbedLands`]) where given, else estimated (toe
+    /// 0.4 mm, heel 0.2 mm, side 0.1 mm; estimated prototype values, not a
+    /// compliance claim).
     pub fn land_sizes(&self) -> Vec<[f64; 2]> {
-        let lead = [self.lead_width + 0.2, self.foot_length + 0.6];
+        let lead = self
+            .lands
+            .size
+            .unwrap_or([self.lead_width + 0.2, self.foot_length + 0.6]);
         let mut out = vec![lead; usize::try_from(self.lead_count()).unwrap_or(0)];
         if let Some(tab) = self.tab {
             out.pop();
             let grow = if tab.flange.is_some() { 0.4 } else { 0.6 };
-            out.push([tab.width + 0.2, tab.length + grow]);
+            out.push(
+                self.lands
+                    .tab_size
+                    .unwrap_or([tab.width + 0.2, tab.length + grow]),
+            );
         }
         out
     }
@@ -195,6 +230,9 @@ impl FamilyForm for TabbedForm {
             v.extend([tab.width, tab.length]);
             v.extend(tab.flange);
         }
+        v.extend(self.lands.size.into_iter().flatten());
+        v.extend(self.lands.span);
+        v.extend(self.lands.tab_size.into_iter().flatten());
         v
     }
 
@@ -259,6 +297,19 @@ impl FamilyForm for TabbedForm {
             // The tab contact's centre lies on +y; a centred contact is 0.
             v.push(length("yt", y.max(0.0)));
         }
+        // Only what the form overrides, so a template names a value that
+        // exists (`TabbedTemplate::defaults`).
+        if let Some([x, y]) = self.lands.size {
+            v.push(length("land_x", x));
+            v.push(length("land_y", y));
+        }
+        if let Some(span) = self.lands.span {
+            v.push(length("land_span", span));
+        }
+        if let Some([x, y]) = self.lands.tab_size {
+            v.push(length("tab_land_x", x));
+            v.push(length("tab_land_y", y));
+        }
         v
     }
 
@@ -282,6 +333,17 @@ impl FamilyForm for TabbedForm {
         if let Some(tab) = self.tab {
             positive("Tab width", tab.width);
             positive("Tab length", tab.length);
+        }
+        if let Some([x, y]) = self.lands.size {
+            positive("Land width", x);
+            positive("Land length", y);
+        }
+        if let Some(span) = self.lands.span {
+            positive("Land span", span);
+        }
+        if let Some([x, y]) = self.lands.tab_size {
+            positive("Tab land width", x);
+            positive("Tab land length", y);
         }
         let mut rule = |ok: bool, message: &str| {
             if !ok {
@@ -387,6 +449,7 @@ mod tests {
             foot_length: 0.4,
             tab: None,
             lead_step: [2, 1],
+            lands: Default::default(),
         }
     }
 
@@ -408,6 +471,7 @@ mod tests {
                 flange: None,
             }),
             lead_step: [1, 1],
+            lands: Default::default(),
         }
     }
 
@@ -429,6 +493,7 @@ mod tests {
                 flange: Some(1.0),
             }),
             lead_step: [2, 1],
+            lands: Default::default(),
         }
     }
 

@@ -72,13 +72,13 @@ pub(crate) fn set_marking(
 /// value, an integer, or a symmetric relative tolerance as a fraction.
 fn numeric(value: &FieldValue, value_type: Option<&ValueType>) -> Option<f64> {
     match value {
-        FieldValue::Quantity { si, .. } => Some(*si),
+        FieldValue::Quantity { si, .. } => Some(si.to_f64()),
         FieldValue::Integer(v) => Some(*v as f64),
         FieldValue::Tolerance { minus, plus } if minus == plus => match value_type {
             Some(ValueType::Tolerance {
                 basis: ToleranceBasis::Absolute { .. },
             }) => None,
-            _ => Some(*plus),
+            _ => Some(plus.to_f64()),
         },
         _ => None,
     }

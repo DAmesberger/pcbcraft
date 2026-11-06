@@ -267,7 +267,7 @@ pub fn row(ui: &mut egui::Ui, engine: &Engine, instance: &ComponentInstance) -> 
         marking.vars.get(LOT).cloned().unwrap_or_default(),
         custom.clone().unwrap_or_default(),
     ];
-    let key = ui.id().with(("instance-marking", instance.id));
+    let key = ui.scope_id().with(("instance-marking", instance.id));
     let mut buffers: Buffers = ui.data(|d| d.get_temp(key)).unwrap_or_default();
     if buffers.instance != Some(instance.id) {
         buffers = Buffers {

@@ -3,6 +3,10 @@
 //! This crate is pure and wasm-compatible: no files, threads, windows or
 //! transports. `pcbcraft-io` reads and writes documents; transports (UI, CLI,
 //! MCP) translate requests into [`Operation`]s applied by [`Engine`].
+// First: its `declare_classes!` is in textual scope for every module below.
+#[macro_use]
+pub mod permission;
+
 pub mod catalog;
 pub mod commands;
 pub mod completeness;
@@ -39,6 +43,7 @@ pub use ids::*;
 use library::samples::{self, SampleRefs};
 use library::{Definition, DefinitionMeta, Drafts};
 pub use model::*;
+pub use permission::Class;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -62,6 +67,56 @@ pub enum Operation {
     /// Pre-flight waivers for fabrication output (`fabrication.*`).
     Fabrication(fabrication::FabricationCommand),
     Update(Box<updates::ApplyUpdate>),
+}
+
+impl Operation {
+    /// This operation's permission class, chosen beside its command enum.
+    pub const fn class(&self) -> Class {
+        match self {
+            Self::Library(command) => command.class(),
+            Self::Instance(command) => command.class(),
+            Self::Schematic(command) => command.class(),
+            Self::Layout(command) => command.class(),
+            Self::Rules(command) => command.class(),
+            Self::Fill(command) => command.class(),
+            Self::Board(command) => command.class(),
+            Self::Fabrication(command) => command.class(),
+            Self::Update(_) => Class::Edit,
+        }
+    }
+
+    /// This operation's wire name; `update` for an applied update.
+    pub const fn command(&self) -> &'static str {
+        match self {
+            Self::Library(command) => command.command(),
+            Self::Instance(command) => command.command(),
+            Self::Schematic(command) => command.command(),
+            Self::Layout(command) => command.command(),
+            Self::Rules(command) => command.command(),
+            Self::Fill(command) => command.command(),
+            Self::Board(command) => command.command(),
+            Self::Fabrication(command) => command.command(),
+            Self::Update(_) => "update",
+        }
+    }
+
+    /// Every operation by wire name with its class, for discovery.
+    pub fn classes() -> impl Iterator<Item = &'static (&'static str, Class)> {
+        const UPDATE: &[(&str, Class)] = &[("update", Class::Edit)];
+        [
+            LibraryCommand::CLASSES,
+            InstanceCommand::CLASSES,
+            schematic::SchematicCommand::CLASSES,
+            layout::LayoutCommand::CLASSES,
+            rules::RulesCommand::CLASSES,
+            layout::fill::FillCommand::CLASSES,
+            layout::outline::BoardCommand::CLASSES,
+            fabrication::FabricationCommand::CLASSES,
+            UPDATE,
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 /// Every read-only report. Queries never change the document, its revision
@@ -159,6 +214,10 @@ pub enum Query {
         #[serde(default)]
         limit: Option<usize>,
     },
+    /// The built-in standard fields as a bundle `library.import` takes
+    /// (`library.import_standard_fields` does both in one step).
+    #[serde(rename = "library.standard_fields")]
+    StandardFields {},
     /// B1: what `library.package_from_template` would change.
     #[serde(rename = "library.package_plan")]
     PackagePlan {
@@ -239,6 +298,18 @@ pub enum Query {
     /// label's other occurrences).
     #[serde(rename = "schematic.net_places")]
     NetPlaces { net: Id },
+    /// What `schematic.paste` needs to recreate these sheet objects: the
+    /// symbols' instances, labels, drawings, the wires named and the wires
+    /// with both ends on named objects. A wire end on anything else reads
+    /// as a free end. Changes nothing, so a transport or the app can keep
+    /// the result as its copy buffer.
+    #[serde(rename = "schematic.copy")]
+    SheetCopy {
+        /// The sheet they are on; the first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        objects: Vec<schematic::ClipObject>,
+    },
     /// Everything one sheet draws, resolved to shapes and text in sheet
     /// millimetres: page frame and title block, labels, power ports, sheet
     /// symbols, furniture, wires, junction dots and units.
@@ -277,14 +348,58 @@ pub enum Query {
         request: layout::meander::TuneRequest,
     },
     /// The production check before fabrication export: the design checked
-    /// under `profile` (the project's rules when omitted) plus production
-    /// findings, each with its waiver key and saved waiver.
+    /// under `profile` (a profile id such as `std-6-6` or a whole profile;
+    /// the project's rules when omitted) plus production findings, each
+    /// with its waiver key and saved waiver.
     #[serde(rename = "fabrication.preflight")]
     Preflight {
         #[serde(default)]
-        profile: Option<Box<rules::RuleProfile>>,
+        profile: Option<fabrication::ProfileChoice>,
     },
 }
+
+// A new command chooses its permission class here.
+declare_classes!(Query {
+    InspectInstance "component.inspect" Read,
+    CheckDefinition "component.check" Read,
+    CheckDrafts "component.check_drafts" Read,
+    Search "library.search" Read,
+    Facets "library.facets" Read,
+    InspectLineage "library.inspect" Read,
+    Bom "project.bom" Read,
+    ResolveGroups "library.resolve_groups" Read,
+    FootprintPreview "library.footprint_preview" Read,
+    UpdatesAvailable "library.updates_available" Read,
+    PromotePreview "library.promote_preview" Read,
+    Issues "project.issues" Read,
+    Templates "library.templates" Read,
+    StandardFields "library.standard_fields" Read,
+    PackagePlan "library.package_plan" Read,
+    Models "library.models" Read,
+    PinoutPreview "library.pinout_preview" Read,
+    SuggestPins "functions.suggest" Read,
+    PinReport "project.pin_report" Read,
+    PinConfig "project.pin_config" Read,
+    Marking "instance.marking" Read,
+    RulesEffective "rules.effective" Read,
+    RuleProfiles "rules.profiles" Read,
+    PreviewProfile "rules.preview_profile" Read,
+    NetClasses "net_class.list" Read,
+    PreviewNetClassPatterns "net_class.preview_patterns" Read,
+    BoardShape "board.shape" Read,
+    FillStatus "fill.status" Read,
+    Sheets "schematic.sheets" Read,
+    NetPlaces "schematic.net_places" Read,
+    SheetCopy "schematic.copy" Read,
+    SheetScene "schematic.scene" Read,
+    ImpedanceCalculate "impedance.calculate" Read,
+    ImpedanceTable "impedance.table" Read,
+    SuggestPairs "diff_pair.suggest" Read,
+    LengthReport "layout.length_report" Read,
+    RoutePreview "layout.route_preview" Read,
+    TunePreview "layout.tune_preview" Read,
+    Preflight "fabrication.preflight" Read,
+});
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "report", content = "result", rename_all = "snake_case")]
@@ -300,6 +415,8 @@ pub enum QueryResult {
     FootprintPreview(Box<library::footprint_edit::FootprintPreview>),
     UpdatesAvailable(Vec<catalog::UpdateAvailable>),
     Promote(Box<library::import::PromotePlan>),
+    /// `library.standard_fields`: a bundle for `library.import`.
+    StandardFields(Box<library::Bundle>),
     Issues(issues::IssueReport),
     Templates(catalog::templates::TemplateReport),
     PackagePlan(library::templates::catalog::PackagePlan),
@@ -318,6 +435,7 @@ pub enum QueryResult {
     FillStatus(Vec<layout::fill::FillStatus>),
     Sheets(Vec<schematic::SheetRow>),
     NetPlaces(Box<schematic::NetPlaces>),
+    SheetClip(Box<schematic::SheetClip>),
     SheetScene(Box<schematic::scene::SheetScene>),
     Impedance(Box<layout::impedance::ImpedanceResult>),
     ImpedanceTable(Box<layout::impedance::ImpedanceTable>),
@@ -351,9 +469,23 @@ pub struct Engine {
     revision: u64,
     undo: VecDeque<Document>,
     redo: Vec<Document>,
+    /// `fabrication.waive` refuses a waiver without a reason (a host
+    /// setting; off by default).
+    waiver_reason_required: bool,
 }
 
 impl Engine {
+    /// Whether `fabrication.waive` needs a reason in this engine. The app
+    /// sets it from its settings; headless hosts keep the default (off).
+    pub fn require_waiver_reason(&mut self, required: bool) {
+        self.waiver_reason_required = required;
+    }
+
+    /// Whether `fabrication.waive` needs a reason in this engine.
+    pub fn waiver_reason_required(&self) -> bool {
+        self.waiver_reason_required
+    }
+
     /// An engine for an already validated file, with empty history.
     pub fn from_file(file: format::EditorFile) -> Result<Self> {
         let mut engine = Self::default();
@@ -407,6 +539,7 @@ impl Engine {
                         lineages.footprint.id,
                         lineages.binding.id,
                     ],
+                    close: false,
                 }),
             )?;
             refs.push(lineages);
@@ -443,14 +576,42 @@ impl Engine {
                     *terminal,
                 )?);
             }
+            // Wire each terminal to the next; where no wire can be drawn
+            // without running over another pin, a pair of labels of the
+            // net's name, each on its pin, joins them instead.
+            let mut labelled = std::collections::BTreeSet::new();
             for pair in ends.windows(2) {
-                engine.apply(
+                let wired = engine.apply(
                     engine.revision,
                     Operation::Schematic(schematic::SchematicCommand::Connect {
                         from: pair[0].into(),
                         to: pair[1].into(),
                     }),
-                )?;
+                );
+                match wired {
+                    Ok(_) => {}
+                    Err(Error::Conflict(_)) => {
+                        for end in [pair[0], pair[1]] {
+                            if !labelled.insert(end) {
+                                continue;
+                            }
+                            let position = schematic::pin_position(engine.project(), end)
+                                .ok_or_else(|| Error::Invalid("showcase pin".into()))?;
+                            engine.apply(
+                                engine.revision,
+                                Operation::Schematic(schematic::SchematicCommand::PlaceLabel {
+                                    sheet: None,
+                                    name: (*name).into(),
+                                    kind: model::LabelKind::Local,
+                                    position,
+                                    rotation: Default::default(),
+                                    attach: Some(end.into()),
+                                }),
+                            )?;
+                        }
+                    }
+                    Err(other) => return Err(other),
+                }
             }
             let net = ends
                 .first()
@@ -606,6 +767,7 @@ impl Engine {
                     kind,
                     field,
                 ],
+                close: false,
             }),
         )?;
         let mut placed = Vec::new();
@@ -651,10 +813,19 @@ impl Engine {
                 .into(),
             }),
         )?;
-        engine.apply(
-            engine.revision,
-            Operation::Layout(layout::LayoutCommand::Sync),
-        )?;
+        // On the board, where the tests that build on the demo expect them
+        // (Update PCB would stage them beside it).
+        for (instance, position) in [(first, [8.0, 8.0]), (second, [16.0, 8.0])] {
+            engine.apply(
+                engine.revision,
+                Operation::Layout(layout::LayoutCommand::Place {
+                    instance,
+                    position,
+                    rotation_deg: 0.0,
+                    layer: Layer::Top,
+                }),
+            )?;
+        }
         engine.undo.clear();
         engine.redo.clear();
         Ok(engine)
@@ -793,7 +964,17 @@ impl Engine {
                 commands::apply_library(&mut candidate, command, evaluator)?
             }
             Operation::Instance(command) => {
-                commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
+                if command.restates(&candidate.project)? {
+                    Outcome::None
+                } else {
+                    commands::apply_instance(Arc::make_mut(&mut candidate.project), command)?
+                }
+            }
+            // The project's own name again: no change and no undo step.
+            Operation::Schematic(schematic::SchematicCommand::RenameProject { name })
+                if name.trim() == candidate.project.name =>
+            {
+                Outcome::None
             }
             Operation::Schematic(command) => {
                 match schematic::apply(
@@ -804,6 +985,7 @@ impl Engine {
                     schematic::Applied::None => Outcome::None,
                     schematic::Applied::Unit(occurrence) => Outcome::UnitPlaced { occurrence },
                     schematic::Applied::Label(label) => Outcome::LabelPlaced { label },
+                    schematic::Applied::Junction(junction) => Outcome::JunctionPlaced { junction },
                     schematic::Applied::Sheet(sheet) => Outcome::SheetAdded { sheet },
                     schematic::Applied::SheetSymbol { symbol, child } => {
                         Outcome::SheetSymbolPlaced { symbol, child }
@@ -811,6 +993,7 @@ impl Engine {
                     schematic::Applied::SheetPins(pins) => Outcome::SheetPinsAdded { pins },
                     schematic::Applied::Drawing(drawing) => Outcome::DrawingAdded { drawing },
                     schematic::Applied::Annotated(changes) => Outcome::Annotated { changes },
+                    schematic::Applied::Pasted(report) => Outcome::Pasted { report },
                 }
             }
             // Restating the current fabrication changes nothing, so it
@@ -819,6 +1002,17 @@ impl Engine {
                 if fabrication == candidate.project.fabrication =>
             {
                 Outcome::None
+            }
+            Operation::Layout(layout::LayoutCommand::RouteStep { request }) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                let plan = layout::route_step(project, &request)?;
+                layout::validate(project)?;
+                Outcome::RouteStepped {
+                    end: plan.end,
+                    end_layer: plan.end_layer,
+                    reached: plan.reached,
+                    detour_factor: plan.detour_factor,
+                }
             }
             Operation::Layout(command) => {
                 let part = command.places_part();
@@ -876,13 +1070,18 @@ impl Engine {
             Operation::Board(command) => {
                 let project = Arc::make_mut(&mut candidate.project);
                 match layout::outline::apply(project, command, evaluators.board)? {
-                    Some(constraint) => Outcome::EdgeConstraintAdded { constraint },
-                    None => Outcome::None,
+                    layout::outline::BoardApplied::Constraint(constraint) => {
+                        Outcome::EdgeConstraintAdded { constraint }
+                    }
+                    layout::outline::BoardApplied::Edited { created } => {
+                        Outcome::BoardEdited { created }
+                    }
+                    layout::outline::BoardApplied::Nothing => Outcome::None,
                 }
             }
             Operation::Fabrication(command) => {
                 let mut next = candidate.project.production.clone();
-                fabrication::preflight::apply(&mut next, command)?;
+                fabrication::preflight::apply(&mut next, command, self.waiver_reason_required)?;
                 if next != candidate.project.production {
                     Arc::make_mut(&mut candidate.project).production = next;
                 }
@@ -899,7 +1098,7 @@ impl Engine {
         };
         if !Arc::ptr_eq(&candidate.project, &self.document.project) {
             let project = Arc::make_mut(&mut candidate.project);
-            schematic::tidy(project);
+            schematic::tidy(project)?;
             let changes = nets::reconcile(project)?;
             // Explicit net-class assignments follow their nets through
             // merges and splits; a net that no longer exists takes its
@@ -1026,6 +1225,9 @@ impl Engine {
             Query::UpdatesAvailable {} => Ok(QueryResult::UpdatesAvailable(
                 catalog::updates_available(&self.document.project.library, &context.sources)?,
             )),
+            Query::StandardFields {} => Ok(QueryResult::StandardFields(Box::new(
+                library::standard_fields::bundle()?,
+            ))),
             Query::PromotePreview {
                 root,
                 library,
@@ -1090,18 +1292,30 @@ impl Engine {
             Query::BoardShape {} => Ok(QueryResult::BoardShape(Box::new(
                 self.document.project.board().into_owned(),
             ))),
-            Query::Preflight { profile } => Ok(QueryResult::Preflight(Box::new(
-                fabrication::preflight::report(
-                    &self.document.project,
-                    &self.document.drafts,
-                    profile.as_deref(),
-                )?,
-            ))),
+            Query::Preflight { profile } => {
+                let profile = profile
+                    .map(fabrication::ProfileChoice::into_profile)
+                    .transpose()?;
+                Ok(QueryResult::Preflight(Box::new(
+                    fabrication::preflight::report(
+                        &self.document.project,
+                        &self.document.drafts,
+                        profile.as_ref(),
+                    )?,
+                )))
+            }
             Query::FillStatus {} => Ok(QueryResult::FillStatus(layout::fill::status(
                 &self.document.project,
             ))),
             Query::Sheets {} => Ok(QueryResult::Sheets(schematic::sheet_rows(
                 &self.document.project,
+            ))),
+            Query::SheetCopy { sheet, objects } => Ok(QueryResult::SheetClip(Box::new(
+                schematic::clipboard::copy(
+                    &self.document.project,
+                    sheet.unwrap_or_else(|| self.document.project.sheets.first()),
+                    &objects,
+                )?,
             ))),
             Query::NetPlaces { net } => Ok(QueryResult::NetPlaces(Box::new(
                 schematic::net_places(&self.document.project, net)?,
@@ -1131,6 +1345,7 @@ impl Engine {
                 layout::length::report(&self.document.project),
             ))),
             Query::RoutePreview { request } => {
+                request.check()?;
                 let project = &self.document.project;
                 let index = layout::router::RouteIndex::of(project);
                 Ok(QueryResult::RoutePreview(Box::new(layout::router::plan(

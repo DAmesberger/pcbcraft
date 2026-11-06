@@ -314,3 +314,208 @@ fn class_clearance_spares_pads_of_one_footprint() -> Result<()> {
     assert!(findings.iter().all(|f| !same_part(&f.objects)));
     Ok(())
 }
+
+fn side(
+    object: crate::rules::CopperObject,
+    class: Option<NetClassId>,
+) -> crate::rules::ClearanceSide {
+    crate::rules::ClearanceSide { object, class }
+}
+
+/// Gap 13 of the E2E log: the two clearances resolve separately. Rule
+/// values are the default profile's 0.2 mm.
+#[test]
+fn fill_clearance_applies_to_fills_only() -> Result<()> {
+    use crate::rules::CopperObject::{Fill, Pad, Track};
+    let mut engine = Engine::demo()?;
+    let usb = add_class(
+        &mut engine,
+        NetClassSpec {
+            name: "USB".into(),
+            fill_clearance: Some(0.35),
+            ..Default::default()
+        },
+    )?;
+    let wide = add_class(
+        &mut engine,
+        NetClassSpec {
+            name: "Wide".into(),
+            clearance: Some(0.5),
+            ..Default::default()
+        },
+    )?;
+    let near = add_class(
+        &mut engine,
+        NetClassSpec {
+            name: "Near".into(),
+            clearance: Some(0.5),
+            fill_clearance: Some(0.25),
+            ..Default::default()
+        },
+    )?;
+    let low = add_class(
+        &mut engine,
+        NetClassSpec {
+            name: "Low".into(),
+            fill_clearance: Some(0.05),
+            ..Default::default()
+        },
+    )?;
+    let rules = &engine.project().rules;
+    let mm = |a, b| rules.clearance(a, b).value;
+    // Fill clearance set: fills keep it, tracks and pads do not.
+    assert_eq!(mm(side(Fill, None), side(Track, Some(usb))), 0.35);
+    assert_eq!(mm(side(Fill, None), side(Pad, Some(usb))), 0.35);
+    assert_eq!(mm(side(Track, Some(usb)), side(Pad, None)), 0.2);
+    assert_eq!(mm(side(Track, Some(usb)), side(Track, None)), 0.2);
+    // A fill of the class keeps it too.
+    assert_eq!(mm(side(Fill, Some(usb)), side(Track, None)), 0.35);
+    // Unset: the class clearance applies to fills, as before.
+    assert_eq!(mm(side(Fill, None), side(Track, Some(wide))), 0.5);
+    assert_eq!(mm(side(Track, Some(wide)), side(Track, None)), 0.5);
+    // Set lower than the clearance: it stands in for it against fills.
+    assert_eq!(mm(side(Fill, None), side(Track, Some(near))), 0.25);
+    assert_eq!(mm(side(Track, Some(near)), side(Track, None)), 0.5);
+    // Never below the rule.
+    assert_eq!(mm(side(Fill, None), side(Track, Some(low))), 0.2);
+    // The source names the class that set it.
+    assert_eq!(
+        rules
+            .clearance(side(Fill, None), side(Track, Some(usb)))
+            .source,
+        crate::rules::RuleSource::NetClass {
+            class: "USB".into()
+        }
+    );
+    // The report carries both.
+    let report = list(&engine)?;
+    let row = report
+        .classes
+        .iter()
+        .find(|r| r.class.id == usb)
+        .ok_or_else(|| Error::Invalid("no row".into()))?;
+    assert_eq!(row.clearance.value, 0.2);
+    assert_eq!(row.fill_clearance.value, 0.35);
+    assert_eq!(row.class.fill_clearance, Some(0.35));
+    Ok(())
+}
+
+/// The E2E board's trouble: a class keeping fills 0.35 mm off must still
+/// route between pads 0.2 mm apart. The same value as a plain clearance is
+/// refused.
+#[test]
+fn a_fill_clearance_leaves_a_tight_route_routable() -> Result<()> {
+    let route_near_pad = |engine: &mut Engine, net| {
+        // Past R2's pad, whose edge is at x 15.2 − 0.5: the track's edge is
+        // 14.7 − 14.3 − 0.15 = 0.25 mm from it.
+        apply(
+            engine,
+            Operation::Layout(LayoutCommand::Route {
+                request: RouteRequest {
+                    net,
+                    start: [14.3, 6.0],
+                    end: [14.3, 10.0],
+                    width: 0.3,
+                    layer: Layer::Top.into(),
+                },
+            }),
+        )
+    };
+    for (spec, routes) in [
+        (
+            NetClassSpec {
+                name: "Fill only".into(),
+                fill_clearance: Some(0.35),
+                ..Default::default()
+            },
+            true,
+        ),
+        (
+            NetClassSpec {
+                name: "All".into(),
+                clearance: Some(0.35),
+                ..Default::default()
+            },
+            false,
+        ),
+    ] {
+        let mut engine = Engine::demo()?;
+        let pad_net = layout::placed_pads(engine.project())
+            .into_iter()
+            .find(|p| (p.pad_transform().apply([0.0, 0.0])[0] - 15.2).abs() < 1e-6)
+            .and_then(|p| p.net);
+        let net = engine
+            .project()
+            .nets
+            .iter()
+            .map(|n| n.id)
+            .find(|n| Some(*n) != pad_net)
+            .ok_or_else(|| Error::Invalid("no other net".into()))?;
+        let class = add_class(&mut engine, spec)?;
+        assign(&mut engine, vec![net], Some(class))?;
+        let revision = engine.revision();
+        assert_eq!(route_near_pad(&mut engine, net).is_ok(), routes);
+        assert_eq!(engine.revision(), revision + u64::from(routes));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_bad_fill_clearance_is_refused_and_an_unset_one_stays_off_the_wire() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let revision = engine.revision();
+    for bad in [-0.1, f64::NAN, f64::INFINITY, 1.0e9] {
+        let refused = add_class(
+            &mut engine,
+            NetClassSpec {
+                name: "Bad".into(),
+                fill_clearance: Some(bad),
+                ..Default::default()
+            },
+        );
+        assert!(refused.is_err(), "{bad}");
+        assert_eq!(engine.revision(), revision);
+    }
+    // Set, edit, undo through the public commands.
+    let id = add_class(
+        &mut engine,
+        NetClassSpec {
+            name: "USB".into(),
+            ..Default::default()
+        },
+    )?;
+    let mut class = engine
+        .project()
+        .rules
+        .class(id)
+        .cloned()
+        .ok_or_else(|| Error::Invalid("no class".into()))?;
+    // Existing files and fill keys are unchanged while it is unset.
+    let unset = serde_json::to_value(&class).map_err(|e| Error::Invalid(e.to_string()))?;
+    assert!(unset.get("fill_clearance").is_none());
+    class.fill_clearance = Some(0.4);
+    apply(
+        &mut engine,
+        Operation::Rules(RulesCommand::EditNetClass {
+            class: class.clone(),
+        }),
+    )?;
+    assert_eq!(
+        engine
+            .project()
+            .rules
+            .class(id)
+            .and_then(|c| c.fill_clearance),
+        Some(0.4)
+    );
+    engine.undo()?;
+    assert_eq!(
+        engine
+            .project()
+            .rules
+            .class(id)
+            .and_then(|c| c.fill_clearance),
+        None
+    );
+    Ok(())
+}

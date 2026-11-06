@@ -14,12 +14,16 @@ use solidcraft_ui_egui::{
     theme::Tokens,
     titlebar::TRAFFIC_LIGHTS,
     toolbar::APP_BAR_HEIGHT,
-    ui_kit::{self, Button, Container, Edge, Surface},
+    ui_kit::{Container, Edge, Surface},
 };
 
 /// Gap between the viewport edge and floating cards (Solidcraft's
 /// crate-private `shell::SHELL_GAP`).
 const SHELL_GAP: f32 = 7.0;
+/// Application-bar room the document tab leaves to drag the window by.
+const TAB_DRAG_ROOM: f32 = 96.0;
+/// The document tab's narrowest width.
+const TAB_MIN_WIDTH: f32 = 96.0;
 /// The browser shows when the viewport fits it beside the canvas and the
 /// properties card.
 const BROWSER_MIN_VIEWPORT_CARDS: f32 = 3.5;
@@ -135,19 +139,19 @@ impl App {
                     ui.add_space(t.space_8);
                     self.file_menu(ui);
                     let save = self.with_shortcut("Save project", AppCommand::Save);
-                    let button = shell::icon_button(ui, "save", &save, !self.files.busy());
+                    let button = bar_icon(ui, "save", &save, !self.files.busy());
                     reveal::register(&ctx, Target::App(AppCommand::Save), button.rect);
                     if button.clicked() {
                         self.files.request(Action::Save);
                     }
                     let undo = self.with_shortcut("Undo", AppCommand::Undo);
-                    let button = shell::icon_button(ui, "undo", &undo, self.engine.can_undo());
+                    let button = bar_icon(ui, "undo", &undo, self.engine.can_undo());
                     reveal::register(&ctx, Target::App(AppCommand::Undo), button.rect);
                     if button.clicked() {
                         self.history(false);
                     }
                     let redo = self.with_shortcut("Redo", AppCommand::Redo);
-                    let button = shell::icon_button(ui, "redo", &redo, self.engine.can_redo());
+                    let button = bar_icon(ui, "redo", &redo, self.engine.can_redo());
                     reveal::register(&ctx, Target::App(AppCommand::Redo), button.rect);
                     if button.clicked() {
                         self.history(true);
@@ -160,13 +164,13 @@ impl App {
                         },
                         AppCommand::ToggleBrowser,
                     );
-                    let button = shell::icon_button(ui, "list", &browser, true);
+                    let button = bar_icon(ui, "list", &browser, true);
                     reveal::register(&ctx, Target::App(AppCommand::ToggleBrowser), button.rect);
                     if button.clicked() {
                         self.toggle_browser();
                     }
                     let palette = self.with_shortcut("Command palette", AppCommand::Palette);
-                    let button = shell::icon_button(ui, "zoom", &palette, true);
+                    let button = bar_icon(ui, "zoom", &palette, true);
                     reveal::register(&ctx, Target::App(AppCommand::Palette), button.rect);
                     if button.clicked() {
                         self.palette.toggle();
@@ -186,7 +190,6 @@ impl App {
 
     /// The open document as an application-bar tab, with the unsaved dot.
     fn document_tab(&self, ui: &mut egui::Ui) {
-        let t = Tokens::get();
         let name = self
             .files
             .path()
@@ -198,113 +201,31 @@ impl App {
         } else {
             name
         };
-        let galley = ui.painter().layout_no_wrap(
-            label.clone(),
-            fonts::semibold(t.font_label),
-            t.app_bar_text,
-        );
-        let size = vec2(
-            galley.size().x + 2.0 * t.space_12,
-            APP_BAR_HEIGHT - t.space_8,
-        );
-        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
-        ui.painter()
-            .rect_filled(rect, t.radius_md, t.app_bar_tab_active);
-        ui.painter()
-            .galley(rect.center() - galley.size() / 2.0, galley, t.app_bar_text);
-        if let Some(path) = self.files.path() {
-            response.on_hover_text(path.display().to_string());
-        } else if self.files.dirty() {
-            response.on_hover_text("Unsaved project");
-        }
+        let tip = match self.files.path() {
+            Some(path) => path.display().to_string(),
+            None if self.files.dirty() => "Unsaved project".to_owned(),
+            None => String::new(),
+        };
+        tab(ui, &label, &tip);
     }
 
+    /// The in-window File menu, as Solidcraft's: plain rows with their
+    /// keys, groups apart. Each row runs its registry command, as the menu
+    /// bar and the key do.
     fn file_menu(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let file = ui_kit::button(ui, "File", Button::Ghost);
-        let enabled = !self.files.busy();
+        let file = bar_text_button(ui, "File");
+        let rows = self.menu_now(&ctx, |now| {
+            crate::menu_bar::rows(now, crate::menu_bar::IN_WINDOW_FILE)
+        });
+        let mut chosen = None;
         Container::new(&ctx, Surface::Popup)
             .menu(&file)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-            .show(|ui| {
-                kit::form(ui, |ui| {
-                    for (label, action, command) in [
-                        ("New project", Action::New, AppCommand::New),
-                        ("Open…", Action::Open, AppCommand::Open),
-                        ("Save", Action::Save, AppCommand::Save),
-                        ("Save as…", Action::SaveAs, AppCommand::SaveAs),
-                        ("Export to Solidcraft…", Action::Export, AppCommand::Export),
-                        (
-                            "Export schematic PDF…",
-                            Action::ExportSchematicPdf,
-                            AppCommand::ExportSchematicPdf,
-                        ),
-                    ] {
-                        let key = self.with_shortcut(label, command);
-                        if ui_kit::button(ui, label, Button::Enabled(enabled))
-                            .on_hover_text(key)
-                            .clicked()
-                        {
-                            self.files.request(action);
-                        }
-                    }
-                    kit::note(
-                        ui,
-                        "Export writes a native, parametric .solidcraft model of the board.",
-                    );
-                    kit::rule(ui);
-                    if ui_kit::button(ui, "Library sources…", Button::Normal)
-                        .on_hover_text("Add, rescan, turn on or off and remove library folders")
-                        .clicked()
-                    {
-                        self.sources.open_card();
-                    }
-                    let label = if self.browser_visible {
-                        "Hide Browser"
-                    } else {
-                        "Show Browser"
-                    };
-                    let key = self.with_shortcut(label, AppCommand::ToggleBrowser);
-                    if ui_kit::button(ui, label, Button::Normal)
-                        .on_hover_text(key)
-                        .clicked()
-                    {
-                        self.toggle_browser();
-                    }
-                    if ui_kit::button(ui, "Messages…", Button::Normal)
-                        .on_hover_text("Every message of this session, with the full text")
-                        .clicked()
-                    {
-                        self.messages_open = true;
-                    }
-                    kit::rule(ui);
-                    let key = self.with_shortcut("Find and run any command", AppCommand::Palette);
-                    if ui_kit::button(ui, "Command palette…", Button::Normal)
-                        .on_hover_text(key)
-                        .clicked()
-                    {
-                        self.palette.open();
-                    }
-                    let key = self.with_shortcut(
-                        "Every shortcut, grouped by where it applies",
-                        AppCommand::Shortcuts,
-                    );
-                    if ui_kit::button(ui, "Keyboard shortcuts…", Button::Normal)
-                        .on_hover_text(key)
-                        .clicked()
-                    {
-                        self.shortcut_sheet.open();
-                    }
-                    let key =
-                        self.with_shortcut("Change keys and the key reveal", AppCommand::Settings);
-                    if ui_kit::button(ui, "Settings…", Button::Normal)
-                        .on_hover_text(key)
-                        .clicked()
-                    {
-                        self.settings_window.open();
-                    }
-                });
-            });
+            .show(|ui| chosen = crate::menu_bar::show_rows(ui, &rows));
+        if let Some(id) = chosen {
+            self.run_command(&ctx, id);
+        }
     }
 
     pub(super) fn ribbon(&mut self, ui: &mut egui::Ui) {
@@ -367,7 +288,14 @@ impl App {
                         }),
                         |ui| kit::card_title(ui, "Browser", &summary),
                         |ui| {
-                            pick = browser::show(ui, &self.engine, lit, &updates, &badges);
+                            pick = browser::show(
+                                ui,
+                                &self.engine,
+                                lit,
+                                &updates,
+                                &badges,
+                                &mut self.browser_menu,
+                            );
                             source_pick = browser::show_sources(ui, self.sources.sources());
                         },
                     );
@@ -377,7 +305,17 @@ impl App {
                     if resized.stopped {
                         self.sources.set_browser_width(self.browser_width);
                     }
-                    if let Some(pick) = pick {
+                    if let Some(browser::Pick::Locate(id)) = pick {
+                        // As an issue's locate: select and frame it.
+                        self.issue_request(
+                            &ctx,
+                            Some(issues::Request::Locate {
+                                refs: vec![pcbcraft_core::ObjectRef::Instance { id }],
+                                area: issues::area(Workspace::Schematic),
+                                pin_mux: None,
+                            }),
+                        );
+                    } else if let Some(pick) = pick {
                         self.pick(pick);
                         // An overlay Browser gives the canvas back once used.
                         if layout.overlay {
@@ -505,8 +443,18 @@ impl App {
     fn fix(&mut self, ctx: &egui::Context, fix: issues::Fix) {
         use issues::{Fix, FixDialog};
         match fix {
-            Fix::Apply { operation, .. } => {
+            Fix::Apply {
+                operation, done, ..
+            } => {
+                let before = self.engine.revision();
                 self.apply(ctx, crate::refusal::Origin::Command, Some(*operation));
+                if self.engine.revision() != before {
+                    self.say_with(
+                        crate::kit::severity::Level::Ok,
+                        done,
+                        vec![crate::kit::toast::ToastAction::Undo],
+                    );
+                }
             }
             Fix::Open { dialog, .. } => match dialog {
                 FixDialog::UpdatePcb => {
@@ -549,12 +497,14 @@ impl App {
                 ..Default::default()
             },
             Workspace::Schematic => browser::Lit {
+                component: self.browser_component,
                 instance: self.schematic.selected_instance(),
                 net: self.schematic.selected_net(&self.engine),
                 sheet: Some(self.schematic.active_sheet()),
                 ..Default::default()
             },
             Workspace::Pcb => browser::Lit {
+                component: self.browser_component,
                 placement: self.pcb.selected_instance(),
                 track: self.pcb.selected_track(),
                 net: self.pcb.highlighted_net(),
@@ -566,14 +516,17 @@ impl App {
     }
 
     /// Open a Browser row in its workspace and select it there.
-    fn pick(&mut self, pick: browser::Pick) {
+    pub(super) fn pick(&mut self, pick: browser::Pick) {
         use browser::Pick;
+        self.browser_component = None;
         match pick {
-            Pick::Component(id) => {
+            // Selecting a component changes no workspace and drafts nothing.
+            Pick::Component(id) => self.browser_component = Some(id),
+            Pick::EditComponent(id) => {
                 self.workspace = Workspace::Part;
                 self.part.open(id, &self.engine);
             }
-            Pick::Instance(id) => {
+            Pick::Instance(id) | Pick::Locate(id) => {
                 self.workspace = Workspace::Schematic;
                 self.schematic
                     .select_instance(Some(id), self.engine.project());
@@ -689,6 +642,76 @@ impl App {
     }
 }
 
+/// The document tab showing `label`: a long name ends in "…", keeping room
+/// to drag the window by, and shows in full on hover above `tip`.
+/// An icon button on the always dark application bar, as Solidcraft's
+/// (`toolbar.rs`): the dark theme's artwork, its bar hover, and 35 % opacity
+/// when disabled.
+fn bar_icon(ui: &mut egui::Ui, icon: &str, label: &str, enabled: bool) -> egui::Response {
+    let t = Tokens::get();
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(t.control_height, t.control_height), sense);
+    if enabled && (response.hovered() || response.has_focus()) {
+        ui.painter()
+            .rect_filled(rect, t.radius_sm, t.app_bar_hover_button);
+    }
+    solidcraft_ui_egui::icons::paint_on(
+        ui.painter(),
+        rect.shrink(t.space_4),
+        icon,
+        Some(true),
+        if enabled { 1.0 } else { 0.35 },
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    response.on_hover_text(label)
+}
+
+/// A text button on the application bar (File), in the bar's text token.
+fn bar_text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let t = Tokens::get();
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::proportional(t.font_button),
+        t.app_bar_text,
+    );
+    let size = vec2(galley.size().x + t.space_16, t.control_height);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, t.radius_sm, t.app_bar_hover);
+    }
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, t.app_bar_text);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    response
+}
+
+fn tab(ui: &mut egui::Ui, label: &str, tip: &str) -> egui::Response {
+    let t = Tokens::get();
+    let room = (ui.available_width() - TAB_DRAG_ROOM).max(TAB_MIN_WIDTH);
+    let galley = kit::text::one_line(
+        ui,
+        label,
+        fonts::semibold(t.font_label),
+        t.app_bar_text,
+        room - 2.0 * t.space_12,
+    );
+    let cut = galley.elided;
+    let size = vec2(
+        galley.size().x + 2.0 * t.space_12,
+        APP_BAR_HEIGHT - t.space_8,
+    );
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, t.radius_md, t.app_bar_tab_active);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, t.app_bar_text);
+    kit::text::hover(response, label, tip, cut)
+}
+
 /// Where toasts may go in `canvas`: above the navigation bar (its height
 /// and gap, see `navigation_bar`).
 fn toast_area(canvas: Rect) -> Rect {
@@ -706,6 +729,96 @@ fn toast_area(canvas: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// N2: the application bar's text and enabled icons stand out from the
+    /// always dark bar in both themes, and a disabled icon is fainter but
+    /// still there. Measured on the raster, against the bar's own token.
+    #[test]
+    fn the_application_bar_is_legible() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::kit::text::tests::Screen;
+        for dark in [false, true] {
+            solidcraft_ui_egui::theme::set_dark(dark);
+            let t = Tokens::get();
+            assert!(kit::contrast(t.app_bar_text, t.app_bar) >= 4.5);
+            let screen = Screen::new(vec2(200.0, 40.0));
+            let mut rects = Vec::new();
+            let mut draw = |ui: &mut egui::Ui| {
+                ui.painter()
+                    .rect_filled(ui.ctx().content_rect(), 0.0, t.app_bar);
+                ui.horizontal(|ui| {
+                    rects = vec![
+                        bar_text_button(ui, "File").rect,
+                        bar_icon(ui, "undo", "Undo", true).rect,
+                        bar_icon(ui, "undo", "Undo", false).rect,
+                        bar_icon(ui, "save", "Save", true).rect,
+                        bar_icon(ui, "zoom", "Find", false).rect,
+                    ];
+                });
+            };
+            screen.run(vec![], &mut draw);
+            let output = screen.run(vec![], &mut draw);
+            let rgba = screen.rgba(&output);
+            let strongest = |rect: Rect| {
+                // Inside the control: the fill's feathered edge is not ink.
+                let rect = rect.shrink(2.0);
+                let mut best = 1.0_f32;
+                for y in rect.top() as usize..rect.bottom() as usize {
+                    for x in rect.left() as usize..rect.right() as usize {
+                        let at = (y * screen.size.x as usize + x) * 4;
+                        if let Some(px) = rgba.get(at..at + 3) {
+                            let ink = egui::Color32::from_rgb(px[0], px[1], px[2]);
+                            best = best.max(kit::contrast(ink, t.app_bar));
+                        }
+                    }
+                }
+                best
+            };
+            let [file, undo, off, save, find] = rects[..] else {
+                return Err("five controls".into());
+            };
+            assert!(strongest(file) >= 4.5, "File {}", strongest(file));
+            assert!(strongest(undo) >= 3.0, "Undo {}", strongest(undo));
+            assert!(strongest(save) >= 3.0, "Save {}", strongest(save));
+            // WCAG exempts disabled controls, but they must still show.
+            for (name, rect) in [("Undo", off), ("Find", find)] {
+                assert!(strongest(rect) >= 1.5, "off {name} {}", strongest(rect));
+            }
+            screen.picture(if dark { "app-bar" } else { "app-bar-light" }, &output, 3.0)?;
+            assert!(strongest(off) < strongest(undo), "disabled reads fainter");
+        }
+        Ok(())
+    }
+
+    /// A 170-character file name in a narrow application bar: the tab
+    /// stays inside the bar with room left to drag the window by, ends in
+    /// "…" and shows the whole name and the path on hover.
+    #[test]
+    fn a_long_tab_title_is_cut_with_its_full_name_on_hover() {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let name = "ESP32-S31 sensor board ".repeat(8);
+        let path = format!("/Users/agent/prec/{name}.pcbcraft");
+        let bar = Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, APP_BAR_HEIGHT));
+        let mut tab_rect = Rect::NOTHING;
+        let (cuts, missing) = kit::text::tests::cuts_without_hover(&ctx, |events| {
+            let input = egui::RawInput {
+                screen_rect: Some(bar),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.horizontal(|ui| tab_rect = tab(ui, &name, &path).rect);
+            });
+            output.textures_delta.clear();
+            output
+        });
+        assert_eq!(cuts, 1, "the name is cut");
+        assert!(missing.is_empty(), "{missing:?}");
+        assert!(
+            tab_rect.right() <= bar.right() - TAB_DRAG_ROOM + 1.0,
+            "{tab_rect:?}"
+        );
+    }
 
     #[test]
     fn toasts_stay_above_the_navigation_bar() {

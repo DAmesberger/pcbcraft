@@ -610,14 +610,21 @@ impl PartEditor {
     }
 }
 
+/// A state chip's fill and text, as Solidcraft's state pills
+/// (`AssistantTone`): neutral, or the selection tint for read-only.
+/// (`Tokens::chip` is the saturated fill of a selection, for `on_accent`.)
+pub(super) fn chip_colours(t: &Tokens, strong: bool) -> (egui::Color32, egui::Color32) {
+    if strong {
+        (t.accent_soft, t.selected_ink)
+    } else {
+        (t.dialog_footer, t.form_dim)
+    }
+}
+
 /// A state or origin chip; `strong` marks read-only.
 fn chip(ui: &mut Ui, text: &str, strong: bool) -> egui::Response {
     let t = Tokens::get();
-    let (fill, ink) = if strong {
-        (t.selected_bg, t.selected_ink)
-    } else {
-        (t.chip, t.text)
-    };
+    let (fill, ink) = chip_colours(&t, strong);
     ui.add(
         egui::Button::new(RichText::new(text).size(t.font_label).color(ink))
             .fill(fill)

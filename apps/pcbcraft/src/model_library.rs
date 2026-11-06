@@ -129,6 +129,7 @@ pub fn family_label(family: FamilyKind) -> &'static str {
         FamilyKind::Grid => "grid array",
         FamilyKind::Tht => "through-hole",
         FamilyKind::Module => "module",
+        FamilyKind::UsbC => "USB-C receptacle",
     }
 }
 
@@ -434,7 +435,7 @@ impl ModelChooser {
             let invalid = matches!(self.results.as_ref().map(|r| &r.report), Some(Err(_)));
             let field = kit::search_field(
                 ui,
-                egui::Id::new("model-chooser-query"),
+                egui::Id::unique("model-chooser-query"),
                 &mut self.query,
                 "Find a 3D model: soic 8, pins:8 pitch:1.27, mount:tht",
                 invalid,
@@ -484,7 +485,7 @@ impl ModelChooser {
                                         let index = row * columns + column;
                                         let response = card(
                                             ui,
-                                            egui::Id::new(("model-hit", index)),
+                                            egui::Id::unique(("model-hit", index)),
                                             hit,
                                             index == self.highlighted,
                                         );
@@ -659,8 +660,9 @@ fn card(ui: &mut Ui, id: egui::Id, hit: &ModelHit, highlighted: bool) -> egui::R
         t.form_dim,
     );
     let label = format!("{} · {}", hit.name, hit_detail(hit));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
-    response.on_hover_text(hit_detail(hit))
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
+    // The name and detail lines may be cut: the hover has both in full.
+    response.on_hover_text(format!("{}\n{}", hit.name, hit_detail(hit)))
 }
 
 fn clipped(

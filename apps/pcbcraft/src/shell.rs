@@ -179,28 +179,68 @@ const SPLIT_ARROW: f32 = 12.0;
 /// Height of a split button's upper (run) part, as Solidcraft's.
 const SPLIT_TOP: f32 = 32.0;
 
-/// A ribbon button's width; a split button fits its widest variant and ▾.
+/// A ribbon button's width. A split button fits its label and ▾; one whose
+/// label is the chosen variant's ("Line") fits its widest variant, so the
+/// ribbon does not move when the choice changes.
 fn tool_width(ui: &Ui, tool: &Tool) -> f32 {
     if tool.menu.is_empty() {
         return button_width(ui, tool.label);
     }
     // The ▾ sits in the label's padding where it fits.
     let t = Tokens::get();
-    tool.menu
-        .iter()
-        .map(|v| {
-            let text = ui
-                .painter()
-                .layout_no_wrap(
-                    v.label.to_owned(),
-                    FontId::proportional(t.font_body),
-                    t.text,
-                )
-                .size()
-                .x;
-            (text + SPLIT_ARROW + BUTTON_LABEL_PADDING).max(BUTTON_MIN_WIDTH)
+    let split = |label: &str| {
+        let text = ui
+            .painter()
+            .layout_no_wrap(label.to_owned(), FontId::proportional(t.font_body), t.text)
+            .size()
+            .x;
+        (text + SPLIT_ARROW + BUTTON_LABEL_PADDING).max(BUTTON_MIN_WIDTH)
+    };
+    if tool.menu.iter().all(|v| v.label != tool.label) {
+        return split(tool.label);
+    }
+    tool.menu.iter().map(|v| split(v.label)).fold(0.0, f32::max)
+}
+
+#[cfg(test)]
+mod tool_width_tests {
+    use super::*;
+
+    /// N10: a family named apart from its variants (Label ▾) is as wide as
+    /// its name, so the gaps either side of it match its neighbours'; one
+    /// showing the chosen variant (Line ▾) keeps room for its widest.
+    #[test]
+    fn a_split_button_fits_its_own_name() {
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let variant = |id, label| Tool::new(id, "line", label);
+        let mut widths = (0.0, 0.0, 0.0);
+        ctx.run_ui(Default::default(), |ui| {
+            let long = "Hierarchical sheet label";
+            let named = Tool::family(
+                Tool::new("label", "line", "Label"),
+                vec![variant("net", "Net label"), variant("sheet", long)],
+            );
+            let shown = Tool::family(
+                Tool::new("short", "line", "Line"),
+                vec![variant("short", "Line"), variant("long", long)],
+            );
+            widths = (
+                tool_width(ui, &named),
+                tool_width(ui, &shown),
+                tool_width(ui, &Tool::new("plain", "line", long)),
+            );
         })
-        .fold(0.0, f32::max)
+        .textures_delta
+        .clear();
+        let (named, shown, plain) = widths;
+        assert_eq!(
+            named, BUTTON_MIN_WIDTH,
+            "Label ▾ takes no more than a button"
+        );
+        assert!(shown > BUTTON_MAX_WIDTH, "Line ▾ fits its widest: {shown}");
+        assert_eq!(plain, BUTTON_MAX_WIDTH);
+    }
 }
 
 fn group_width(ui: &Ui, group: &Group) -> f32 {
@@ -229,7 +269,7 @@ fn tool_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Response {
     crate::reveal::register(ui.ctx(), crate::reveal::Target::Tool(tool.id), rect);
     let response = ui.interact(
         rect,
-        ui.id().with(("tool", tool.id)),
+        ui.scope_id().with(("tool", tool.id)),
         if tool.enabled {
             Sense::click()
         } else {
@@ -268,7 +308,7 @@ fn tool_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Response {
         .galley(pos2(rect.center().x, rect.top() + 32.0), galley, ink);
     response.widget_info(|| {
         egui::WidgetInfo::selected(
-            egui::WidgetType::Button,
+            egui::Role::Button,
             tool.enabled,
             tool.selected,
             tool.label,
@@ -372,10 +412,10 @@ fn split_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Option<&'static str> {
     crate::reveal::register(ui.ctx(), crate::reveal::Target::Tool(tool.id), rect);
     let upper = Rect::from_min_max(rect.min, pos2(rect.right(), rect.top() + SPLIT_TOP));
     let lower = Rect::from_min_max(pos2(rect.left(), rect.top() + SPLIT_TOP - 2.0), rect.max);
-    let run = ui.interact(upper, ui.id().with(("tool", tool.id)), sense);
+    let run = ui.interact(upper, ui.scope_id().with(("tool", tool.id)), sense);
     let arrow = ui.interact(
         lower,
-        ui.id().with(("family", tool.menu.first().map(|v| v.id))),
+        ui.scope_id().with(("family", tool.menu.first().map(|v| v.id))),
         sense,
     );
     if tool.selected {
@@ -429,17 +469,19 @@ fn split_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Option<&'static str> {
         true,
         t.text_dim,
     );
+    // As Solidcraft names a family's parts: the upper part by the variant
+    // it runs ("Net label"), the label with ▾ by the family ("Label"),
+    // which opens the variants.
     let label = tool.label;
+    let shown = tool
+        .menu
+        .iter()
+        .find(|v| v.id == tool.id)
+        .map_or(label, |v| v.label);
     run.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, tool.enabled, tool.selected, label)
+        egui::WidgetInfo::selected(egui::Role::Button, tool.enabled, tool.selected, shown)
     });
-    arrow.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            tool.enabled,
-            format!("{label} options"),
-        )
-    });
+    arrow.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, tool.enabled, label));
     let mut clicked = None;
     let run = tool_tooltip(run, tool);
     if run.clicked() && tool.enabled {
@@ -534,7 +576,7 @@ fn issues_toggle(ui: &mut Ui, slot: Rect, toggle: &IssuesToggle) -> bool {
         (rect.top() + 4.0)..=(slot.bottom() - 6.0),
         separator,
     );
-    let response = ui.interact(rect, ui.id().with("issues-toggle"), Sense::click());
+    let response = ui.interact(rect, ui.scope_id().with("issues-toggle"), Sense::click());
     if toggle.expanded {
         ui.painter().rect_filled(rect, t.radius_sm, t.selected_bg);
     } else if response.hovered() {
@@ -575,7 +617,7 @@ fn issues_toggle(ui: &mut Ui, slot: Rect, toggle: &IssuesToggle) -> bool {
     );
     let label = format!("Issues: {words}");
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Button, true, toggle.expanded, &label)
+        egui::WidgetInfo::selected(egui::Role::Button, true, toggle.expanded, &label)
     });
     let tip = if toggle.expanded {
         "Hide the Issues list"
@@ -589,7 +631,7 @@ fn workspace_switcher(ui: &mut Ui, tile: Rect, workspace: Workspace) -> Option<W
     let ctx = ui.ctx().clone();
     let t = Tokens::get();
     let response = ui
-        .interact(tile, ui.id().with("workspace-switcher"), Sense::click())
+        .interact(tile, ui.scope_id().with("workspace-switcher"), Sense::click())
         .on_hover_text("Change workspace");
     if response.hovered() {
         ui.painter()
@@ -638,7 +680,7 @@ fn workspace_switcher(ui: &mut Ui, tile: Rect, workspace: Workspace) -> Option<W
         t.text_dim,
     );
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Change workspace")
+        egui::WidgetInfo::labeled(egui::Role::Button, true, "Change workspace")
     });
     let mut chosen = None;
     Container::new(&ctx, Surface::Popup)
@@ -691,7 +733,7 @@ fn workspace_item(ui: &mut Ui, workspace: Workspace, current: bool) -> Response 
     );
     response.widget_info(|| {
         egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
+            egui::Role::Button,
             true,
             current,
             workspace.label(),
@@ -724,7 +766,7 @@ fn tab_row(ui: &mut Ui, row: Rect, ribbon: &Ribbon) -> Option<&'static str> {
             break;
         }
         crate::reveal::register(ui.ctx(), crate::reveal::Target::Tab(tab.id), rect);
-        let response = ui.interact(rect, ui.id().with(("tab", tab.id)), Sense::click());
+        let response = ui.interact(rect, ui.scope_id().with(("tab", tab.id)), Sense::click());
         let (fill, ink) = if tab.active {
             (t.accent_soft, t.selected_ink)
         } else if response.hovered() {
@@ -741,7 +783,7 @@ fn tab_row(ui: &mut Ui, row: Rect, ribbon: &Ribbon) -> Option<&'static str> {
         ui.painter()
             .text(rect.center(), Align2::CENTER_CENTER, tab.label, font, ink);
         response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::Button, true, tab.active, tab.label)
+            egui::WidgetInfo::selected(egui::Role::Button, true, tab.active, tab.label)
         });
         if response.clicked() && !tab.active {
             clicked = Some(tab.id);
@@ -840,7 +882,7 @@ fn group_row(ui: &mut Ui, area: Rect, ribbon: &Ribbon) -> Option<&'static str> {
             vec2(OVERFLOW_WIDTH - TAB_INSET, BUTTON_HEIGHT),
         );
         let response = ui
-            .interact(rect, ui.id().with("ribbon-overflow"), Sense::click())
+            .interact(rect, ui.scope_id().with("ribbon-overflow"), Sense::click())
             .on_hover_text("More tools");
         if response.hovered() {
             ui.painter().rect_filled(rect, t.radius_sm, t.hover);
@@ -853,7 +895,7 @@ fn group_row(ui: &mut Ui, area: Rect, ribbon: &Ribbon) -> Option<&'static str> {
             t.text,
         );
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "More tools")
+            egui::WidgetInfo::labeled(egui::Role::Button, true, "More tools")
         });
         Container::new(ui.ctx(), Surface::Popup)
             .menu(&response)
@@ -940,7 +982,7 @@ fn overflow_item(ui: &mut Ui, tool: &Tool) -> Response {
     );
     response.widget_info(|| {
         egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
+            egui::Role::Button,
             tool.enabled,
             tool.selected,
             tool.label,
@@ -979,7 +1021,7 @@ pub fn icon_button_help(
         icon,
         if enabled { 1.0 } else { 0.35 },
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     if help.is_empty() {
         response.on_hover_text(label)
     } else {
@@ -1039,7 +1081,7 @@ pub fn card(
     let t = Tokens::get();
     let host = Container::new(ctx, Surface::Panel);
     let mut out = Resized::default();
-    host.area(egui::Id::new(id))
+    host.area(egui::Id::unique(id))
         .fixed_pos(rect.min)
         .movable(false)
         .order(egui::Order::Middle)
@@ -1073,10 +1115,10 @@ pub fn card(
             let rail =
                 Rect::from_x_y_ranges(card.right() - RESIZE_RAIL..=card.right(), card.y_range());
             let response = ui
-                .interact(rail, egui::Id::new((id, "resize")), Sense::drag())
+                .interact(rail, egui::Id::unique((id, "resize")), Sense::drag())
                 .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Resize"));
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, "Resize"));
             if response.dragged() {
                 let delta = ui.input(|i| i.pointer.delta().x);
                 let next = resized_width(*resize.width, delta, &resize.range);
@@ -1113,7 +1155,7 @@ pub fn column_card<R>(
         .inner_margin(egui::Margin::symmetric(COLUMN_CARD_INSET, inset));
     let inner = (rect.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);
     let shown = host
-        .area(egui::Id::new(id))
+        .area(egui::Id::unique(id))
         .fixed_pos(rect.min)
         .movable(false)
         .order(egui::Order::Middle)

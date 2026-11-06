@@ -1,6 +1,26 @@
 use super::*;
 use pcbcraft_core::Engine;
 
+/// The store's file, which its first snapshot reserved.
+fn own(store: &RecoveryStore) -> Result<&Path> {
+    store
+        .path()
+        .ok_or_else(|| Error::Invalid("no snapshot written".into()))
+}
+
+/// A session that never wrote a snapshot leaves no file at all, so one
+/// that ends without cleaning up (a crash, a kill) leaves nothing empty.
+#[test]
+fn a_session_without_a_snapshot_leaves_no_file() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let store = RecoveryStore::new(directory.path())?;
+    assert!(store.path().is_none());
+    store.remove_own()?;
+    drop(store);
+    assert_eq!(std::fs::read_dir(directory.path())?.count(), 0);
+    Ok(())
+}
+
 #[test]
 fn independent_sessions_survive_drop_and_restore_project_plus_unfinished_draft() -> Result<()> {
     let directory = tempfile::tempdir()?;
@@ -12,10 +32,10 @@ fn independent_sessions_survive_drop_and_restore_project_plus_unfinished_draft()
     let document = engine.to_file();
     let first = RecoveryStore::new(directory.path())?;
     let second = RecoveryStore::new(directory.path())?;
-    assert_ne!(first.path(), second.path());
     first.write(&document, Some(&original))?;
     second.write(&plain, None)?;
-    let path = first.path().to_path_buf();
+    assert_ne!(first.path(), second.path());
+    let path = own(&first)?.to_path_buf();
     drop(first);
     let entries = list(directory.path())?;
     assert_eq!(entries.len(), 2);
@@ -42,11 +62,11 @@ fn invalid_recovery_write_preserves_previous_valid_snapshot() -> Result<()> {
     let store = RecoveryStore::new(directory.path())?;
     let file = Engine::demo()?.to_file();
     store.write(&file, None)?;
-    let before = std::fs::read(store.path())?;
+    let before = std::fs::read(own(&store)?)?;
     let mut invalid = file;
     invalid.version = 999;
     assert!(store.write(&invalid, None).is_err());
-    assert_eq!(std::fs::read(store.path())?, before);
+    assert_eq!(std::fs::read(own(&store)?)?, before);
     store.remove_own()?;
     store.remove_own()?;
     store.write(&Engine::demo()?.to_file(), None)?;
@@ -117,20 +137,21 @@ fn snapshots_carry_assets_in_the_container_and_listing_skips_them() -> Result<()
     let asset = packed(noise(3 * 1024 * 1024, 11), "model/step");
     let document = with_assets(vec![asset.clone()])?;
     store.write(&document, None)?;
-    assert_eq!(read(store.path())?.document, document);
+    let path = own(&store)?;
+    assert_eq!(read(path)?.document, document);
     let entries = list(directory.path())?;
     assert_eq!(entries.len(), 1);
     assert!(entries[0].error.is_none());
 
     // Damage the stored asset bytes in place.
-    let mut bytes = std::fs::read(store.path())?;
+    let mut bytes = std::fs::read(path)?;
     let at = bytes
         .windows(32)
         .position(|w| w == &asset.data[..32])
         .ok_or_else(|| Error::Invalid("stored asset bytes".into()))?;
     bytes[at + 1000] ^= 0x5A;
-    std::fs::write(store.path(), &bytes)?;
-    assert!(read(store.path()).is_err());
+    std::fs::write(path, &bytes)?;
+    assert!(read(path).is_err());
     let entries = list(directory.path())?;
     assert_eq!(entries.len(), 1);
     assert!(entries[0].error.is_none());

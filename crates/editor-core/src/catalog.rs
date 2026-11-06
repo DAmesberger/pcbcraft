@@ -730,7 +730,7 @@ fn rated_nominal(
             (ValueType::Quantity { kind: k, .. }, FieldValue::Quantity { si, .. })
                 if k.id == kind && s.meaning == SpecMeaning::ExactNominal =>
             {
-                Some(*si)
+                Some(si.to_f64())
             }
             _ => None,
         }
@@ -962,9 +962,10 @@ fn requirement_of(
         .value_type
         .clone()
         .unwrap_or_else(|| rated.value_type.clone());
+    let decimal = |v: &f64| crate::quantity::Decimal::from_f64(*v).ok();
     let value = match (&test.test, &value_type) {
         (Test::Compare { op: Op::Eq, value }, ValueType::Quantity { .. }) => FieldValue::Quantity {
-            si: *value,
+            si: decimal(value)?,
             display_unit: None,
         },
         (Test::Compare { op: Op::Eq, value }, ValueType::Integer { .. })
@@ -973,12 +974,12 @@ fn requirement_of(
             FieldValue::Integer(*value as i64)
         }
         (Test::Compare { op: Op::Eq, value }, ValueType::Range { .. }) => FieldValue::Range {
-            min: *value,
-            max: *value,
+            min: decimal(value)?,
+            max: decimal(value)?,
         },
         (Test::Between { min, max }, ValueType::Range { .. }) => FieldValue::Range {
-            min: *min,
-            max: *max,
+            min: decimal(min)?,
+            max: decimal(max)?,
         },
         (
             Test::Tolerance {
@@ -988,9 +989,10 @@ fn requirement_of(
             },
             ValueType::Tolerance { .. },
         ) => FieldValue::Tolerance {
-            minus: *minus,
-            plus: *plus,
+            minus: decimal(minus)?,
+            plus: decimal(plus)?,
         },
+
         (Test::Choice { choice }, ValueType::Enum { .. }) => FieldValue::Enum(*choice),
         (Test::Boolean { value }, ValueType::Boolean) => FieldValue::Boolean(*value),
         _ => return None,
@@ -1066,6 +1068,18 @@ fn tier(entry: &CatalogEntry, folded: &Folded, query: &CatalogQuery) -> Option<M
                     .mpn
                     .as_ref()
                     .is_some_and(|m| m.contains(text.as_str()))
+                {
+                    return None;
+                }
+                None
+            }
+            Term::Implements {
+                component,
+                revision,
+            } => {
+                let pinned = entry.implements.filter(|_| entry.source == Source::Project);
+                if !pinned
+                    .is_some_and(|c| c.id == *component && revision.is_none_or(|r| c.revision == r))
                 {
                     return None;
                 }
@@ -1364,6 +1378,8 @@ impl Index {
                 tally.entries += 1;
                 *tally.values.entry(field.text.clone()).or_default() += 1;
                 if let FieldValue::Quantity { si, .. } = field.value {
+                    let si = si.to_f64();
+
                     tally.min = Some(tally.min.map_or(si, |m: f64| m.min(si)));
                     tally.max = Some(tally.max.map_or(si, |m: f64| m.max(si)));
                 }

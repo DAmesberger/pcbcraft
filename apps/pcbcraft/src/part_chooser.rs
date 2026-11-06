@@ -461,7 +461,7 @@ fn finding_row(ui: &mut Ui, blocking: bool, message: &str) {
         t.form_ink,
     );
     let label = format!("{} {message}", level.marker());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &label));
 }
 
 /// The check report's findings, then its bodies, materials and timing.
@@ -881,7 +881,7 @@ impl PartChooser {
                                             };
                                             let response = kit::search_row(
                                                 ui,
-                                                egui::Id::new(SHEET).with((*group, index)),
+                                                egui::Id::unique(SHEET).with((*group, index)),
                                                 &search,
                                             );
                                             if response.clicked() {

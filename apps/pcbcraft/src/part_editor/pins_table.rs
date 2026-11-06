@@ -159,12 +159,37 @@ pub fn chip_text(function: &Function) -> String {
     }
 }
 
-/// A terminal's class as the table shows it.
-fn class_text(terminal: &Terminal) -> &'static str {
-    match terminal.class {
-        TerminalClass::Electrical(_) => "Electrical",
-        TerminalClass::DeviceNc => "Device NC",
-        TerminalClass::Reserved => "Reserved",
+/// How a function's direction and signal read: "Bidirectional digital",
+/// and only "Power input" or "Passive" where the signal adds nothing. A
+/// ground pin is a power input in the model: it reads as one.
+pub fn kind_text(direction: Direction, signal: SignalKind) -> String {
+    let mut chars = direction.label().chars();
+    let name: String = chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default();
+    match signal {
+        SignalKind::Digital => format!("{name} digital"),
+        SignalKind::Analog => format!("{name} analog"),
+        SignalKind::Power | SignalKind::Unspecified => name,
+    }
+}
+
+/// A terminal's type as the table shows it: what its class says when it
+/// has no functions (`TerminalClass`: device NC, reserved), else the
+/// direction its functions have ("Power input"), or "Mixed" when they
+/// differ. The class "Electrical" alone would tell the rows nothing apart.
+pub fn type_text(terminal: &Terminal) -> String {
+    let functions = match &terminal.class {
+        TerminalClass::Electrical(functions) => functions,
+        TerminalClass::DeviceNc => return "Device NC".to_owned(),
+        TerminalClass::Reserved => return "Reserved".to_owned(),
+    };
+    let mut directions = functions.functions.iter().map(|f| f.direction);
+    match directions.next() {
+        None => "Electrical".to_owned(),
+        Some(first) if directions.all(|d| d == first) => kind_text(first, SignalKind::Unspecified),
+        Some(_) => "Mixed".to_owned(),
     }
 }
 
@@ -215,7 +240,7 @@ pub struct Lit {
 const COLUMNS: [(&str, f32); 7] = [
     ("#", 36.0),
     ("Name", 110.0),
-    ("Class", 84.0),
+    ("Type", 84.0),
     ("GPIO", 56.0),
     ("Functions (default bold)", 0.0),
     ("Pads", 84.0),
@@ -245,18 +270,26 @@ pub fn widths(width: f32) -> [f32; 7] {
     out
 }
 
+/// One cell's text on one line, cut with "…" and then shown in full on
+/// hover (`kit::text`).
 fn paint_cell(ui: &Ui, rect: Rect, text: &str, font: FontId, ink: Color32) {
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, ink, rect.width().max(1.0));
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    job.wrap.overflow_character = Some('\u{2026}');
-    let galley = painter.layout_job(job);
+    let galley = crate::kit::text::one_line(ui, text, font, ink, rect.width());
+    let cut = galley.elided;
     painter.galley(
         pos2(rect.left(), rect.center().y - galley.size().y / 2.0),
         galley,
         ink,
     );
+    if cut {
+        let id = ui.scope_id().with((
+            "pin-cell",
+            text,
+            rect.left().to_bits(),
+            rect.top().to_bits(),
+        ));
+        ui.interact(rect, id, Sense::hover()).on_hover_text(text);
+    }
 }
 
 /// The pin table over `rows` (indices into the terminals), with a header
@@ -354,7 +387,7 @@ fn row(
         t.form_dim,
     );
     paint_cell(ui, cell(1), &terminal.name, font.clone(), t.form_ink);
-    paint_cell(ui, cell(2), class_text(terminal), font.clone(), t.form_dim);
+    paint_cell(ui, cell(2), &type_text(terminal), font.clone(), t.form_dim);
     paint_cell(ui, cell(3), &gpio_text(terminal), font.clone(), t.form_dim);
     let pad_text = pads
         .get(&terminal.id)
@@ -430,12 +463,12 @@ fn chips(
         }
         let rect =
             Rect::from_min_size(pos2(x, cell.center().y - height / 2.0), vec2(width, height));
-        let id = ui.id().with(("chip", terminal.id.0, function.id.0));
+        let id = ui.scope_id().with(("chip", terminal.id.0, function.id.0));
         let response = ui
             .interact(rect, id, Sense::click())
             .on_hover_text(chip_tip(component, function, bold))
             .on_hover_cursor(egui::CursorIcon::PointingHand);
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &text));
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &text));
         let selected = lit.terminal == Some(terminal.id) && lit.function == Some(function.id);
         let fill = chip_fill(component, function);
         let painter = ui.painter().with_clip_rect(cell.intersect(ui.clip_rect()));
@@ -461,11 +494,11 @@ fn chips(
             vec2(height, height),
         );
         let response = ui
-            .interact(rect, ui.id().with(("add", terminal.id.0)), Sense::click())
+            .interact(rect, ui.scope_id().with(("add", terminal.id.0)), Sense::click())
             .on_hover_text("Add a function to this terminal")
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Add function")
+            egui::WidgetInfo::labeled(egui::Role::Button, true, "Add function")
         });
         let ink = if response.hovered() {
             t.form_ink
@@ -554,7 +587,7 @@ pub fn peripherals(ui: &mut Ui, component: &ComponentDefinition, lit: Lit) -> Op
                             tip: "Edit the peripheral",
                             ..Default::default()
                         };
-                        if kit::tree_row(ui, ui.id().with("head"), &row).clicked {
+                        if kit::tree_row(ui, ui.scope_id().with("head"), &row).clicked {
                             event = Some(TableEvent::Peripheral(resource.id));
                         }
                         for role in &resource.roles {
@@ -680,8 +713,10 @@ pub enum ColumnMap {
     /// The mux (alternate-function) codes of the row's functions, in the
     /// same order, split at the list separator ("AF7").
     Mux,
-    /// The pin's type: power, ground, input, output, I/O, analog, NC or
-    /// reserved ([`pin_type`]); power and ground rows get power functions.
+    /// The pin's type: power in or out, ground, input, output, I/O, open
+    /// drain, passive, analog, NC or reserved ([`pin_type`]); power and
+    /// ground rows get power functions. An unknown type imports as
+    /// passive, flagged uncertain.
     Type,
     /// The GPIO port, stated as data ("A").
     Port,
@@ -706,8 +741,8 @@ impl ColumnMap {
 /// What a Pin type cell says about its row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PinType {
-    /// Electrical, with every function of this direction and signal.
-    Electrical(Direction, SignalKind),
+    /// Electrical, with every function of this direction, signal and drive.
+    Electrical(Direction, SignalKind, Drive),
     /// Electrical with the mapping's direction, signal analog.
     Analog,
     /// Electrical with the mapping's direction and signal.
@@ -716,24 +751,59 @@ pub enum PinType {
     Reserved,
 }
 
-/// Read a Pin type cell, ignoring case: `power`/`supply`/`pwr`,
-/// `ground`/`gnd`, `input`/`in`/`i`, `output`/`out`/`o`, `i/o`/`io`,
-/// `analog`/`a`, `nc`, `reserved`/`rsv`, or empty. The person maps the
-/// column; the text is a stated pin type, not a name to guess from.
+/// The direction, signal and drive of a pin type the cell did not state
+/// in words [`pin_type`] knows: passive, which drives nothing.
+pub const NEUTRAL: (Direction, SignalKind, Drive) =
+    (Direction::Passive, SignalKind::Unspecified, Drive::None);
+
+/// The drive a function of `direction` gets unless its type says
+/// otherwise: push-pull for outputs and bidirectional pins (the usual
+/// GPIO), none for the rest, so every import is a valid combination.
+pub fn default_drive(direction: Direction) -> Drive {
+    match direction {
+        Direction::Output | Direction::Bidirectional => Drive::PushPull,
+        _ => Drive::None,
+    }
+}
+
+/// Read a Pin type cell, ignoring case, spacing, `-` and `_`: power
+/// (`power`, `power input`, `power in`, `supply`, `pwr`, `ground`,
+/// `gnd`, `vss`, `vdd`), `power output`/`power out`, `input`/`in`,
+/// `output`/`out`, `i/o`/`io`/`bidirectional`/`bidir`, `open drain`/
+/// `open collector` (output, open-drain), `passive`, `analog`, `nc`/
+/// `no connect`, `reserved`/`rsv`, or empty. The person maps the column;
+/// the text is a stated pin type, not a name to guess from.
 pub fn pin_type(text: &str) -> Option<PinType> {
-    let text = text.trim().to_ascii_lowercase();
+    let text = text
+        .to_ascii_lowercase()
+        .replace(['-', '_'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let electrical =
+        |direction| PinType::Electrical(direction, SignalKind::Digital, default_drive(direction));
     Some(match text.as_str() {
         "" => PinType::Unstated,
-        "power" | "supply" | "pwr" | "s" | "p" | "ground" | "gnd" => {
-            PinType::Electrical(Direction::PowerInput, SignalKind::Power)
+        "power" | "power input" | "power in" | "pwr" | "pwr in" | "supply" | "supply input"
+        | "s" | "p" | "ground" | "gnd" => {
+            PinType::Electrical(Direction::PowerInput, SignalKind::Power, Drive::None)
         }
-        "input" | "in" | "i" => PinType::Electrical(Direction::Input, SignalKind::Digital),
-        "output" | "out" | "o" => PinType::Electrical(Direction::Output, SignalKind::Digital),
-        "i/o" | "io" | "bidirectional" => {
-            PinType::Electrical(Direction::Bidirectional, SignalKind::Digital)
+        "power output" | "power out" | "pwr out" | "supply output" => {
+            PinType::Electrical(Direction::PowerOutput, SignalKind::Power, Drive::None)
         }
-        "analog" | "a" => PinType::Analog,
-        "nc" | "n/c" | "not connected" => PinType::DeviceNc,
+        "input" | "in" | "i" | "digital input" | "digital in" => electrical(Direction::Input),
+        "output" | "out" | "o" | "digital output" | "digital out" | "push pull" => {
+            electrical(Direction::Output)
+        }
+        "i/o" | "io" | "bidirectional" | "bidir" | "bi" | "b" | "inout" | "in/out" => {
+            electrical(Direction::Bidirectional)
+        }
+        "open drain" | "open collector" | "od" | "oc" => {
+            PinType::Electrical(Direction::Output, SignalKind::Digital, Drive::OpenDrain)
+        }
+        "passive" => PinType::Electrical(NEUTRAL.0, NEUTRAL.1, NEUTRAL.2),
+        "analog" | "analogue" | "a" => PinType::Analog,
+        "nc" | "n/c" | "not connected" | "no connect" | "no connection" => PinType::DeviceNc,
         "reserved" | "rsv" => PinType::Reserved,
         _ => return None,
     })
@@ -826,23 +896,82 @@ impl Default for Mapping {
 }
 
 /// The starting mapping for `columns` columns: number, name, then
-/// functions; the person changes any of them before anything is planned.
-pub fn initial_columns(columns: usize) -> Vec<ColumnMap> {
+/// functions, except that the first column captioned as a type ("Type",
+/// "Pin type", "Type (power, input)") is the Pin type column. `captions`
+/// is the table's first row when it holds captions. The person changes any
+/// of them before anything is planned.
+pub fn initial_columns(columns: usize, captions: Option<&[String]>) -> Vec<ColumnMap> {
+    let type_column = captions
+        .into_iter()
+        .flatten()
+        .position(|caption| is_type_caption(caption));
     (0..columns)
         .map(|i| match i {
             0 => ColumnMap::Number,
+            i if Some(i) == type_column => ColumnMap::Type,
             1 => ColumnMap::Name,
             _ => ColumnMap::Function,
         })
         .collect()
 }
 
-/// One row the mapping cannot turn into a pin.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Whether a column's caption has the word "type". This only starts the
+/// mapping the person reviews; a pin's name is never read this way.
+fn is_type_caption(caption: &str) -> bool {
+    caption
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| word.eq_ignore_ascii_case("type"))
+}
+
+/// One row the mapping cannot turn into a pin as stated.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowProblem {
     /// 1-based line among the pasted rows.
     pub line: usize,
     pub message: String,
+    /// The row still imports, flagged uncertain (an unknown pin type
+    /// imports as passive); otherwise it is left out.
+    pub kept: bool,
+}
+
+/// The import's account of `problems` for the toast: rows that need a
+/// type and rows left out, by line ("2 pins need a type: rows 3, 5");
+/// empty when there are none.
+pub fn problem_summary(problems: &[RowProblem]) -> String {
+    let lines = |kept: bool| -> Vec<String> {
+        problems
+            .iter()
+            .filter(|p| p.kept == kept && p.line > 0)
+            .map(|p| p.line.to_string())
+            .collect()
+    };
+    let rows = |lines: &[String]| {
+        format!(
+            "{} {}",
+            if lines.len() == 1 { "row" } else { "rows" },
+            lines.join(", ")
+        )
+    };
+    let mut parts = Vec::new();
+    let typed = lines(true);
+    if !typed.is_empty() {
+        let pins = if typed.len() == 1 {
+            "pin needs"
+        } else {
+            "pins need"
+        };
+        parts.push(format!("{} {pins} a type: {}", typed.len(), rows(&typed)));
+    }
+    let dropped = lines(false);
+    if !dropped.is_empty() {
+        let left = if dropped.len() == 1 {
+            "row left out"
+        } else {
+            "rows left out"
+        };
+        parts.push(format!("{} {left}: {}", dropped.len(), rows(&dropped)));
+    }
+    parts.join("; ")
 }
 
 /// Build the typed import document from `rows` and `mapping`: one variant
@@ -884,6 +1013,7 @@ pub fn document(
                 problems.push(RowProblem {
                     line: 0,
                     message: "The page is not a whole number from 1 to 65535".into(),
+                    kept: false,
                 });
                 return (None, problems);
             }
@@ -901,6 +1031,7 @@ pub fn document(
             problems.push(RowProblem {
                 line,
                 message: format!("Row {line} has no number"),
+                kept: false,
             });
             continue;
         }
@@ -908,6 +1039,7 @@ pub fn document(
             problems.push(RowProblem {
                 line,
                 message: format!("Row {line} repeats number {number}"),
+                kept: false,
             });
             continue;
         }
@@ -919,23 +1051,28 @@ pub fn document(
             problems.push(RowProblem {
                 line,
                 message: format!("Row {line} has a name longer than {MAX_LABEL} bytes"),
+                kept: false,
             });
             continue;
         }
-        let Some(kind) = pin_type(type_column.map(cell).unwrap_or("")) else {
-            problems.push(RowProblem {
-                line,
-                message: format!(
-                    "Row {line}'s pin type is not power, ground, input, output, I/O, analog, NC or reserved"
-                ),
-            });
-            continue;
+        let stated = type_column.map(cell).unwrap_or("");
+        let kind = pin_type(stated);
+        let untyped = kind.is_none();
+        let (direction, signal, drive) = match kind {
+            Some(PinType::Electrical(d, s, drive)) => (d, s, drive),
+            Some(PinType::Analog) => (
+                mapping.direction,
+                SignalKind::Analog,
+                default_drive(mapping.direction),
+            ),
+            None => NEUTRAL,
+            _ => (
+                mapping.direction,
+                mapping.signal,
+                default_drive(mapping.direction),
+            ),
         };
-        let (direction, signal) = match kind {
-            PinType::Electrical(d, s) => (d, s),
-            PinType::Analog => (mapping.direction, SignalKind::Analog),
-            _ => (mapping.direction, mapping.signal),
-        };
+        let kind = kind.unwrap_or(PinType::Unstated);
         let mut functions = Vec::new();
         let mut row_ok = true;
         for text in function_columns.iter().map(|i| cell(*i)) {
@@ -958,7 +1095,7 @@ pub fn document(
                     label: label.to_owned(),
                     direction,
                     signal,
-                    drive: Drive::None,
+                    drive,
                     peripheral: peripheral.map(str::to_owned),
                     role: role.map(str::to_owned),
                     mux: mux.map(str::to_owned),
@@ -970,6 +1107,7 @@ pub fn document(
             problems.push(RowProblem {
                 line,
                 message: format!("Row {line} has a function longer than {MAX_LABEL} bytes"),
+                kept: false,
             });
             continue;
         }
@@ -989,6 +1127,7 @@ pub fn document(
                         codes.len(),
                         functions.len()
                     ),
+                    kept: false,
                 });
                 continue;
             }
@@ -1007,20 +1146,19 @@ pub fn document(
             problems.push(RowProblem {
                 line,
                 message: format!("Row {line} is NC or reserved but lists functions"),
+                kept: false,
             });
             continue;
         }
-        // A power or ground row without a function cell gets one named
-        // after the pin, so it imports as a power input, never as I/O.
-        if class == PinoutClass::Electrical
-            && functions.is_empty()
-            && direction == Direction::PowerInput
-        {
+        // An electrical row without a function cell gets one named after
+        // the pin with the row's type, so a power row imports as power,
+        // never as I/O, and no terminal is left without a function.
+        if class == PinoutClass::Electrical && functions.is_empty() {
             functions.push(PinoutFunction {
                 label: name.to_owned(),
                 direction,
                 signal,
-                drive: Drive::None,
+                drive,
                 peripheral: None,
                 role: None,
                 mux: None,
@@ -1044,6 +1182,7 @@ pub fn document(
                         message: format!(
                             "Row {line}'s GPIO needs a port of at most 8 bytes and an index from 0 to 65535"
                         ),
+                        kept: false,
                     });
                     continue;
                 }
@@ -1052,6 +1191,7 @@ pub fn document(
                 problems.push(RowProblem {
                     line,
                     message: format!("Row {line} states a GPIO port or index without the other"),
+                    kept: false,
                 });
                 continue;
             }
@@ -1063,6 +1203,7 @@ pub fn document(
             problems.push(RowProblem {
                 line,
                 message: format!("Row {line}'s default {default} is not one of its functions"),
+                kept: false,
             });
             continue;
         }
@@ -1079,9 +1220,18 @@ pub fn document(
                 page: Some(page),
                 table: None,
             }),
-            uncertain: false,
+            uncertain: untyped,
             note: None,
         });
+        if untyped {
+            problems.push(RowProblem {
+                line,
+                message: format!(
+                    "Row {line}: pin type ‘{stated}’ is not known; it imports as passive, set its type"
+                ),
+                kept: true,
+            });
+        }
     }
     let title = mapping.source_title.trim();
     if title.is_empty() || pins.is_empty() {
@@ -1211,7 +1361,8 @@ impl PasteFlow {
         let rows = split_table(&self.text, self.delimiter)?;
         let width = rows.iter().map(Vec::len).max().unwrap_or(0);
         if self.mapping.columns.len() != width {
-            let initial = initial_columns(width);
+            let captions = rows.first().filter(|_| self.mapping.header);
+            let initial = initial_columns(width, captions.map(Vec::as_slice));
             self.mapping.columns.resize(width, ColumnMap::Ignore);
             if self.mapping.columns.iter().all(|c| *c == ColumnMap::Ignore) {
                 self.mapping.columns = initial;

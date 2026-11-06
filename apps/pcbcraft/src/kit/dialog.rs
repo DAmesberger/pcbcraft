@@ -202,10 +202,10 @@ fn header(ui: &mut Ui, icon: &str, title: &str, kind: &str) -> bool {
         vec2(t.form_close_size, t.form_close_size),
     );
     let close = ui
-        .interact(close_rect, ui.id().with("dialog_close"), Sense::click())
+        .interact(close_rect, ui.scope_id().with("dialog_close"), Sense::click())
         .on_hover_text("Close")
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    close.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close"));
+    close.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));
     if close.hovered() {
         ui.painter().rect_filled(close_rect, t.radius_sm, t.hover);
     }
@@ -245,17 +245,15 @@ fn header(ui: &mut Ui, icon: &str, title: &str, kind: &str) -> bool {
         pos2(left, rect.top()),
         pos2(name_right.max(left), rect.bottom()),
     );
-    let cut = super::rows::paint_clipped(
+    super::text::line(
         ui,
+        ui.scope_id().with("dialog_title"),
         title_rect,
         title,
+        "",
         fonts::semibold(t.font_heading),
         t.form_ink,
     );
-    if cut {
-        ui.interact(title_rect, ui.id().with("dialog_title"), Sense::hover())
-            .on_hover_text(title);
-    }
     t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);
     close.clicked()
 }
@@ -304,17 +302,15 @@ pub(super) fn footer(
             inner.min,
             pos2((actions_left - t.space_8).max(inner.left()), inner.bottom()),
         );
-        let cut = super::rows::paint_clipped(
+        super::text::line(
             ui,
+            ui.scope_id().with("dialog_status"),
             rect,
             status,
+            "",
             FontId::proportional(t.font_small),
             t.form_dim,
         );
-        if cut {
-            ui.interact(rect, ui.id().with("dialog_status"), Sense::hover())
-                .on_hover_text(status);
-        }
     }
     action
 }

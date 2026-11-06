@@ -20,10 +20,12 @@ mod package;
 pub mod package_fit;
 pub mod package_form;
 pub mod package_model;
+pub mod pad_table;
 mod part;
 pub mod pinout;
 mod publish;
 pub mod samples;
+pub mod standard_fields;
 mod symbol;
 pub mod symbol_style;
 pub mod templates;
@@ -50,7 +52,7 @@ pub use graphics::{
 pub use model3d::{LibraryModel, ModelDefinition};
 pub use package::{PackageDefinition, PackageTerminal};
 pub use package_form::{
-    ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, NoLeadForm, PackageForm,
+    ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, NoLeadForm, PackageForm, UsbCForm,
 };
 pub use package_model::{
     Axis, BodyRole, GeneratedMaterials, ModelPlacement, PackageEdit, PackageModel, QuickAction,
@@ -60,7 +62,9 @@ pub use part::{
     Basis, DistributorOffer, MAX_OFFERS, MAX_REFERENCES, MAX_URL, Origin, PartDefinition,
     Provenance, Reference, ReferenceKind,
 };
-pub use publish::{candidate, pending_revision, publish, publish_findings, stageable};
+pub use publish::{
+    MAX_PUBLISH_SET, candidate, pending_revision, publish, publish_findings, publish_set, stageable,
+};
 pub use symbol::{SymbolDefinition, Unit};
 pub use templates::catalog::PackageRowDefinition;
 

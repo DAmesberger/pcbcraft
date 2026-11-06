@@ -275,7 +275,7 @@ fn checked_row(
     hint: &str,
     problem: impl Fn(&str) -> Option<String>,
 ) -> Option<String> {
-    let key = ui.id().with(("checked", label));
+    let key = ui.scope_id().with(("checked", label));
     let mut text = ui
         .data(|d| d.get_temp::<String>(key))
         .unwrap_or_else(|| current.to_owned());
@@ -454,7 +454,7 @@ impl PartEditor {
                 ui.allocate_ui(vec2(field_width, t.control_height), |ui| {
                     kit::filter_field(
                         ui,
-                        ui.id().with("pins-filter"),
+                        ui.scope_id().with("pins-filter"),
                         &mut self.pins.table.query,
                         "Filter pins and functions",
                         false,
@@ -595,7 +595,7 @@ impl PartEditor {
     /// The Paste table… flow in the canvas: paste, map the columns, then
     /// Preview (`library.pinout_preview`) and Apply (`library.pinout_apply`).
     fn paste_dialog(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
-        let id = egui::Id::new("pins-paste-table");
+        let id = egui::Id::unique("pins-paste-table");
         let set = self.draft.as_ref()?;
         let lineage = self.lineage?;
         let device = set.metas.component.name.clone();
@@ -610,23 +610,34 @@ impl PartEditor {
             flow.refusal = Some(message);
             flow.sent = None;
         }
-        if let Some(sent) = flow.sent
-            && engine.revision() != sent
-        {
-            let rows = flow.plan.as_ref().map_or(0, |(d, _)| d.pins.len());
-            self.pins.table.paste = None;
-            self.pins.table.filter = Filter::Unreviewed;
-            self.tell(
-                Level::Ok,
-                format!("Imported {rows} pin rows; confirm each under Unreviewed"),
-            );
-            return None;
-        }
         let rows = flow.rows();
         let (document, problems) = match &rows {
             Ok(rows) => pins_table::document(rows, &flow.mapping, &device, &variant),
             Err(_) => (None, Vec::new()),
         };
+        if let Some(sent) = flow.sent
+            && engine.revision() != sent
+        {
+            let rows = flow.plan.as_ref().map_or(0, |(d, _)| {
+                d.pins
+                    .iter()
+                    .filter(|p| !flow.rejected.contains(&p.row))
+                    .count()
+            });
+            let summary = pins_table::problem_summary(&problems);
+            let (level, problems) = if summary.is_empty() {
+                (Level::Ok, String::new())
+            } else {
+                (Level::Warning, format!("; {summary}"))
+            };
+            self.pins.table.paste = None;
+            self.pins.table.filter = Filter::Unreviewed;
+            self.tell(
+                level,
+                format!("Imported {rows} pin rows{problems}; confirm each under Unreviewed"),
+            );
+            return None;
+        }
         if flow
             .plan
             .as_ref()
@@ -1254,15 +1265,7 @@ fn pin_summary(pin: &pcbcraft_core::library::pinout::PinoutPin) -> String {
         parts.push(format!("GPIO {}·{}", gpio.port, gpio.index));
     }
     if let Some(first) = pin.functions.first() {
-        parts.push(format!(
-            "{} {}",
-            sentence(first.direction.label()),
-            SIGNALS
-                .iter()
-                .find(|(k, _)| *k == first.signal)
-                .map_or("", |(_, l)| *l)
-                .to_lowercase()
-        ));
+        parts.push(pins_table::kind_text(first.direction, first.signal));
     }
     let functions: Vec<String> = pin
         .functions
@@ -1295,7 +1298,7 @@ fn paste_body(
     document: Option<&pcbcraft_core::library::pinout::PinoutDocument>,
     problems: &[pins_table::RowProblem],
 ) {
-    let text_id = ui.id().with("paste-text");
+    let text_id = ui.scope_id().with("paste-text");
     kit::note(
         ui,
         "Paste the pin table; imported rows stay unreviewed until confirmed",
@@ -1325,8 +1328,10 @@ fn paste_body(
     kit::choice_row(ui, "Separator", &mut flow.delimiter, &delimiters);
     kit::check_row(ui, "First row holds captions", &mut flow.mapping.header);
     let m = &mut flow.mapping;
-    kit::text_row(ui, "Datasheet", &mut m.source_title)
-        .on_hover_text("The document the table comes from, recorded as provenance");
+    kit::row(ui, "Datasheet", |ui| {
+        kit::text_field(ui, "Datasheet", &mut m.source_title, "Required", false)
+    })
+    .on_hover_text("The document the table comes from, recorded as provenance");
     kit::text_row(ui, "Revision", &mut m.source_revision);
     kit::text_row(ui, "Page", &mut m.page);
     let directions: Vec<_> = DIRECTIONS
@@ -1381,13 +1386,20 @@ fn paste_body(
     if let Some(first) = document.and_then(|d| d.pins.first()) {
         kit::value_row(ui, "First pin", &pin_summary(first));
     }
+    let summary = pins_table::problem_summary(problems);
+    if !summary.is_empty() {
+        kit::status(ui, &summary, kit::Tone::Note);
+    }
     for problem in problems.iter().take(kit::LIST_MAX_ROWS) {
         kit::status(ui, &problem.message, kit::Tone::Dim);
     }
     if problems.len() > kit::LIST_MAX_ROWS {
         kit::note(
             ui,
-            &format!("{} more rows left out", problems.len() - kit::LIST_MAX_ROWS),
+            &format!(
+                "{} more rows with problems",
+                problems.len() - kit::LIST_MAX_ROWS
+            ),
         );
     }
     let Some((document, plan)) = &flow.plan else {
@@ -1400,7 +1412,7 @@ fn paste_body(
         kit::value_row(ui, "Peripherals", &document.peripherals.len().to_string());
         kit::value_row(ui, "Changes", &plan.changes.len().to_string());
         kit::value_row(ui, "Findings", &plan.findings.len().to_string());
-        kit::value_row(ui, "To review", &plan.review.len().to_string());
+        kit::value_row(ui, "Flagged rows", &plan.review.len().to_string());
         kit::note(ui, "Untick a row to leave it out of the import");
         let count = document.pins.len();
         let max = if flow.all_rows {

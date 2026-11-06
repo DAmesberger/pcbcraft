@@ -341,8 +341,12 @@ fn a_label_on_a_wire_splits_it_and_removing_it_keeps_the_wires_joined() -> Resul
     run(&mut engine, C::RemoveLabel { label: id })?;
     let project = engine.project();
     assert!(project.labels.is_empty());
-    assert_eq!(project.junctions.len(), 1, "a bend point in its place");
-    assert_eq!(project.wires.len(), 2);
+    // The two halves merge back into one wire. A junction with two wires
+    // used to stay as a bend point; now a bend is a corner, and this one
+    // is in line, so it goes too.
+    assert!(project.junctions.is_empty());
+    assert_eq!(project.wires.len(), 1);
+    assert!(project.wires[0].corners.is_empty());
     assert_eq!(net_of(&engine, ep(u1, 2))?, net_of(&engine, ep(u2, 1))?);
     // The net keeps the name the label gave it.
     assert_eq!(net_name(&engine, ep(u1, 2))?, "MID");
@@ -395,7 +399,14 @@ fn renaming_a_labelled_net_renames_its_labels_and_keeps_its_id() -> Result<()> {
     assert!(matches!(refused, Err(Error::Conflict(_))), "{refused:?}");
     kept.assert_kept(&engine, "rename onto another net");
     // Renaming one label onto another net's name joins them deliberately.
-    label(&mut engine, s1, "SCL", global(), [0.0, 0.0], at(ep(u3, 1)))?;
+    label(
+        &mut engine,
+        s1,
+        "SCL",
+        global(),
+        [10.0, -10.0],
+        at(ep(u3, 1)),
+    )?;
     run(
         &mut engine,
         C::EditLabel {
@@ -816,6 +827,73 @@ fn net_places_list_a_nets_labels_and_pins_across_sheets() -> Result<()> {
     Ok(())
 }
 
+/// `project.rename`: the name reaches the title block, is one undo step,
+/// says nothing new when it is the same name, and a refused name changes
+/// nothing.
+#[test]
+fn renaming_the_project_is_one_undo_step() -> Result<()> {
+    let Two { mut engine, s2, .. } = two_sheets()?;
+    let was = engine.project().name.clone();
+    let start = engine.revision();
+    run(
+        &mut engine,
+        C::RenameProject {
+            name: "  ESP32 board  ".into(),
+        },
+    )?;
+    assert_eq!(engine.project().name, "ESP32 board", "trimmed");
+    assert_eq!(engine.revision(), start + 1);
+    let frame = scene::frame(engine.project(), s2);
+    assert!(frame.texts.iter().any(|t| t.text == "ESP32 board"));
+
+    // The same name: no new revision and no undo step.
+    run(
+        &mut engine,
+        C::RenameProject {
+            name: "ESP32 board ".into(),
+        },
+    )?;
+    assert_eq!(engine.revision(), start + 1);
+
+    let kept = engine.to_file();
+    let revision = engine.revision();
+    for bad in [
+        String::new(),
+        "   ".into(),
+        "two\nlines".into(),
+        "x".repeat(257),
+    ] {
+        let refused = run(&mut engine, C::RenameProject { name: bad.clone() });
+        assert!(matches!(refused, Err(Error::Invalid(_))), "{bad:?}");
+        assert_eq!(engine.revision(), revision);
+        assert_eq!(engine.to_file(), kept);
+    }
+    let longest = "x".repeat(256);
+    run(
+        &mut engine,
+        C::RenameProject {
+            name: longest.clone(),
+        },
+    )?;
+    assert_eq!(engine.project().name, longest);
+    assert!(
+        engine
+            .apply(start, op(C::RenameProject { name: "Old".into() }))
+            .is_err()
+    );
+    assert_eq!(engine.project().name, longest, "an outdated revision");
+
+    engine.undo()?;
+    assert_eq!(engine.project().name, "ESP32 board");
+    engine.undo()?;
+    assert_eq!(engine.project().name, was);
+    assert_eq!(
+        engine.redo().map(|()| engine.project().name.clone())?,
+        "ESP32 board"
+    );
+    Ok(())
+}
+
 #[test]
 fn the_title_block_shows_properties_and_the_page() -> Result<()> {
     let Two { mut engine, s2, .. } = two_sheets()?;
@@ -1038,7 +1116,8 @@ fn hundreds_of_labels_across_sheets_stay_consistent() -> Result<()> {
             sheet,
             &format!("S{}", k % 60),
             global(),
-            at_,
+            // Beside each pin: labels at one point would connect.
+            [at_[0] - 7.5, at_[1]],
             at(ep(id, 1)),
         )?;
         label(
@@ -1046,7 +1125,7 @@ fn hundreds_of_labels_across_sheets_stay_consistent() -> Result<()> {
             sheet,
             "GND",
             power(PowerStyle::Ground),
-            at_,
+            [at_[0] + 7.5, at_[1]],
             at(ep(id, 2)),
         )?;
         parts.push(id);

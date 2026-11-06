@@ -15,10 +15,13 @@
 //! body) are not copied into the opaque buffer: each definition mesh is one
 //! [`Instanced`] mesh drawn at every placement, with coarser levels for
 //! placements small on screen, and highlighted by drawing the selected
-//! placements again ([`Instanced::highlight`]). The material stream holds
-//! world vertices, so its copy of a placed body is one per placement:
-//! [`MAX_GRAPH_BYTES`] bounds that, and placements past it keep the plain
-//! colour of their instanced mesh.
+//! placements again ([`Instanced::highlight`]). The same shared triangles
+//! shade each placement through its look's material
+//! ([`InstancedMesh::graph`]), so a shared body costs no vertices per
+//! placement. Only large unplaced copper and laminate go into the stream as
+//! world vertices, because the faces a layer above covers are left out of
+//! the stream ([`covered`]); [`MAX_GRAPH_BYTES`] bounds those, and past it they
+//! keep the plain colour of their instanced mesh.
 //!
 //! The ground shadow follows Solidcraft's viewport `ground_shadow` (MIT,
 //! upstream revision 4f3ac07, unchanged in the pinned fork; see
@@ -46,7 +49,7 @@ pub const MAX_PBR_BYTES: usize = 88 << 20;
 
 /// Upper bound on the material stream per model. The unplaced bodies always
 /// fit (the same triangle bound as [`MAX_PBR_BYTES`], at the largest vertex);
-/// past it placed bodies are drawn in their plain colour, largest count last.
+/// past it large copper and laminate bodies are drawn in their plain colour.
 pub const MAX_GRAPH_BYTES: usize = 256 << 20;
 
 /// The plain colour of a look (sRGB8), which its faces show where the material
@@ -119,6 +122,9 @@ pub struct Instanced {
     pub colour: [u8; 4],
     /// A placement each, in `bodies` order.
     pub mesh: InstancedMesh,
+    /// The material its placements are shaded with, unless the stream draws
+    /// them ([`stream_shaded`]).
+    pub look: Option<Arc<LoweredLook>>,
     /// The index in [`ModelScene::geometry`] of each placement.
     pub bodies: Vec<usize>,
 }
@@ -129,6 +135,15 @@ const LOD_FROM: usize = 96;
 const LOD_MIN: usize = 16;
 
 impl Instanced {
+    /// `mesh`, placements of this group, shaded through its look in `scene`.
+    pub fn shaded(&self, scene: &mut GpuScene, mut mesh: InstancedMesh) -> InstancedMesh {
+        mesh.graph = self
+            .look
+            .as_ref()
+            .and_then(|look| scene.graphs.material(&look.ir, &look.words, &look.base).ok());
+        mesh
+    }
+
     /// The placements `keep` keeps, moved by `display`, as a mesh of the
     /// same triangles (their GPU buffers are kept).
     pub fn placed(
@@ -150,6 +165,7 @@ impl Instanced {
                 Vec::new()
             },
             closed: false,
+            graph: None,
         };
         for g in self.bodies.iter().filter_map(|i| geometry.get(*i)) {
             if !keep(g) {
@@ -184,6 +200,7 @@ impl Instanced {
             look: InstanceLook::Opaque,
             levels: Vec::new(),
             closed: false,
+            graph: None,
         };
         for g in self.bodies.iter().filter_map(|i| geometry.get(*i)) {
             let (Some(place), Some(item)) = (g.place, g.item) else {
@@ -225,6 +242,16 @@ pub fn streamed(g: &Geometry) -> bool {
     g.place.is_none() && g.mesh.triangles.len() < LARGE_BODY
 }
 
+/// Whether the material stream shades a body drawn instanced: the kinds a
+/// layer above can cover ([`covered`]), whose covered faces the stream leaves
+/// out. Other instanced bodies are shaded from their shared triangles.
+fn stream_shaded(g: &Geometry) -> bool {
+    matches!(
+        g.kind,
+        BodyKind::Substrate | BodyKind::CopperTrack | BodyKind::FillCopper
+    )
+}
+
 /// The placed and the large bodies of `geometry` grouped by definition
 /// mesh, material and view layer, with coarser levels of each mesh placed
 /// more than once.
@@ -236,7 +263,8 @@ pub fn instance_bodies(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> 
 fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
     let mut out: Vec<Instanced> = Vec::new();
     let mut palette = palette_of(geometry);
-    let mut by: HashMap<(usize, [u8; 4], ViewLayer), usize> = HashMap::new();
+    let mut by: HashMap<(usize, LookKey, ViewLayer), usize> = HashMap::new();
+    let mut looks = Looks::default();
     let mut tris: HashMap<usize, (Arc<SharedTris>, Levels)> = HashMap::new();
     let uses = {
         let mut uses: HashMap<usize, usize> = HashMap::new();
@@ -254,7 +282,13 @@ fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
         let layer = ViewLayer::of(g.kind, g.layer);
         let address = Arc::as_ptr(&g.mesh) as usize;
         let colour = plain_colour(g.surface);
-        let at = *by.entry((address, colour, layer)).or_insert_with(|| {
+        let look_key = look_graph::look_key(g.surface, g.detail);
+        let look = if stream_shaded(g) {
+            None
+        } else {
+            Some(looks.get(g)?)
+        };
+        let at = *by.entry((address, look_key, layer)).or_insert_with(|| {
             let (shared, levels) = tris
                 .entry(address)
                 .or_insert_with(|| {
@@ -279,7 +313,9 @@ fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
                     look: InstanceLook::Opaque,
                     levels,
                     closed: false,
+                    graph: None,
                 },
+                look,
                 bodies: Vec::new(),
             });
             out.len() - 1
@@ -509,8 +545,8 @@ fn covered(g: &Geometry, n: Vec3, view: &LayerView) -> bool {
 
 /// The opaque vertices of the streamed bodies of `geometry` that `view` shows
 /// ([`streamed`]), grouped by view layer, with each layer's run of bytes, and
-/// the material stream of those and of the placed bodies, `decals` too. See
-/// [`MAX_GRAPH_BYTES`] for placed bodies past the bound.
+/// the material stream of those and of the large copper and laminate, `decals`
+/// too. See [`MAX_GRAPH_BYTES`] for bodies past the bound.
 pub fn pack(
     geometry: &[Geometry],
     decals: &[Geometry],
@@ -584,9 +620,9 @@ fn stream_bytes(scene: &GpuScene) -> usize {
     scene.graphs.draws().iter().map(|d| d.vertices.len()).sum()
 }
 
-/// The placed bodies that `view` shows into the material stream, fewest
-/// placements of a definition first: past [`MAX_GRAPH_BYTES`] the vias of a
-/// large board are the ones left in plain colour, not its packages.
+/// The instanced bodies the stream shades ([`stream_shaded`]) that `view`
+/// shows, fewest placements of a definition first; past [`MAX_GRAPH_BYTES`]
+/// the rest keep their plain colour.
 fn pack_placed(
     scene: &mut GpuScene,
     looks: &mut Looks,
@@ -598,7 +634,7 @@ fn pack_placed(
     let placed: Vec<&Geometry> = geometry
         .iter()
         .chain(decals)
-        .filter(|g| !streamed(g) && view.draws(ViewLayer::of(g.kind, g.layer)))
+        .filter(|g| !streamed(g) && stream_shaded(g) && view.draws(ViewLayer::of(g.kind, g.layer)))
         .inspect(|g| *uses.entry(Arc::as_ptr(&g.mesh) as usize).or_default() += 1)
         .collect();
     let mut order: Vec<&Geometry> = placed;

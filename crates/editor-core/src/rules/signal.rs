@@ -10,7 +10,7 @@
 //! makes one.
 use super::{MAX_PROFILE_TEXT, ProjectRules, RulesCommand};
 use crate::diagnostics::{Error, Result};
-use crate::ids::Id;
+use crate::ids::{Endpoint, Id};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -124,6 +124,18 @@ pub struct DiffPair {
     pub name: String,
     pub positive: Id,
     pub negative: Id,
+    /// Where the pair's signal path runs, for skew and uncoupled length;
+    /// derived from the copper when unset (`layout::length::path`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<PairEndpoints>,
+}
+
+/// The pads a pair's signal path joins: `[start, end]` terminals per half.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PairEndpoints {
+    pub positive: [Endpoint; 2],
+    pub negative: [Endpoint; 2],
 }
 
 impl DiffPair {
@@ -328,6 +340,7 @@ pub(super) fn apply(rules: &mut ProjectRules, command: RulesCommand) -> Result<O
                 name: pair.name,
                 positive: pair.positive,
                 negative: pair.negative,
+                endpoints: None,
             });
             return Ok(Some(Added::Pair(id)));
         }

@@ -43,7 +43,7 @@ use std::sync::{Arc, Mutex};
 
 /// The panel's egui id: its window, its memory and its refusal origin.
 fn panel_id() -> egui::Id {
-    egui::Id::new("pin-mux")
+    egui::Id::unique("pin-mux")
 }
 
 /// Ranked alternatives of the last suggestion, staged over `base`.
@@ -516,16 +516,17 @@ fn receive(state: &mut State, result: Result<SuggestReport, String>, base: Stage
                     .message
                     .split_once(" It conflicts with ")
                     .map_or((blocker.message.as_str(), None), |(r, c)| (r, Some(c)));
+                // The refusal row cuts them, with the whole text on hover.
                 state
                     .blockers
-                    .push(refusal::clip(reason, pcbcraft_core::issues::MAX_TITLE));
+                    .push(refusal::clip(reason, refusal::MAX_SHOWN));
                 let Some(rest) = rest else { continue };
                 let (conflict, alternative) = rest
                     .split_once(" Alternative: ")
                     .map_or((rest, None), |(c, a)| (c, Some(a)));
                 state.blockers.push(refusal::clip(
                     &format!("Conflicts with {conflict}"),
-                    pcbcraft_core::issues::MAX_TITLE,
+                    refusal::MAX_SHOWN,
                 ));
                 if let (Some(text), Some(suggestion), None) =
                     (alternative, &blocker.alternative, &state.way_out)

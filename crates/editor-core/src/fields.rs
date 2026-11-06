@@ -8,7 +8,7 @@
 //! this module never sees `library` or `model` types.
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
 use crate::ids::{ChoiceId, DefinitionId, FieldRef, MAX_LABEL, QuantityKindRef, printable};
-use crate::quantity::{self, MAX_MAGNITUDE, MAX_SYMBOL, UnitSet};
+use crate::quantity::{self, Decimal, MAX_MAGNITUDE, MAX_SYMBOL, UnitSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -109,8 +109,10 @@ pub enum ToleranceBasis {
     Absolute { kind: QuantityKindRef },
 }
 
-/// A typed value. Quantities are stored in SI; `display_unit` is
-/// presentation and never changes `si`.
+/// A typed value. Numbers are exact decimals, so typed text such as
+/// `10 µF` or `±1%` is stored and shown without binary rounding.
+/// Quantities are stored in SI; `display_unit` is presentation and never
+/// changes `si`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(
     tag = "type",
@@ -120,7 +122,7 @@ pub enum ToleranceBasis {
 )]
 pub enum FieldValue {
     Quantity {
-        si: f64,
+        si: Decimal,
         display_unit: Option<String>,
     },
     Integer(i64),
@@ -129,12 +131,12 @@ pub enum FieldValue {
     Text(String),
     /// Magnitudes below and above the nominal value, both non-negative.
     Tolerance {
-        minus: f64,
-        plus: f64,
+        minus: Decimal,
+        plus: Decimal,
     },
     Range {
-        min: f64,
-        max: f64,
+        min: Decimal,
+        max: Decimal,
     },
 }
 
@@ -224,6 +226,10 @@ fn finite(value: f64) -> bool {
     value.is_finite() && value.abs() <= MAX_MAGNITUDE
 }
 
+fn bounded(value: Decimal) -> bool {
+    finite(value.to_f64())
+}
+
 impl ValueType {
     /// The quantity kind this value type is measured in, if any.
     pub fn kind(&self) -> Option<QuantityKindRef> {
@@ -261,13 +267,9 @@ impl FieldValue {
         }
     }
     /// Finite numbers: what a draft must respect to persist meaningfully.
+    /// Decimals are always finite.
     pub fn values_finite(&self) -> bool {
-        match self {
-            Self::Quantity { si, .. } => si.is_finite(),
-            Self::Tolerance { minus, plus } => minus.is_finite() && plus.is_finite(),
-            Self::Range { min, max } => min.is_finite() && max.is_finite(),
-            Self::Integer(_) | Self::Boolean(_) | Self::Enum(_) | Self::Text(_) => true,
-        }
+        true
     }
 }
 
@@ -331,18 +333,19 @@ pub fn check_value(
     let mismatch = || invalid(format!("this field expects a {} value", value_type.name()));
     match (value_type, value) {
         (ValueType::Quantity { min, max, .. }, FieldValue::Quantity { si, display_unit }) => {
-            if !finite(*si) {
+            if !bounded(*si) {
                 return Err(invalid(
                     "quantities must be finite and within ±1e100".into(),
                 ));
             }
-            if min.is_some_and(|m| *si < m) || max.is_some_and(|m| *si > m) {
+            let value_si = si.to_f64();
+            if min.is_some_and(|m| value_si < m) || max.is_some_and(|m| value_si > m) {
                 return Err(invalid(format!(
                     "{} is outside the allowed range{}{}",
                     display(value, value_type, kind),
-                    min.map(|m| format!(", minimum {}", quantity_text(m, kind)))
+                    min.map(|m| format!(", minimum {}", bound_text(m, kind)))
                         .unwrap_or_default(),
-                    max.map(|m| format!(", maximum {}", quantity_text(m, kind)))
+                    max.map(|m| format!(", maximum {}", bound_text(m, kind)))
                         .unwrap_or_default(),
                 )));
             }
@@ -373,7 +376,7 @@ pub fn check_value(
             }
         }
         (ValueType::Tolerance { .. }, FieldValue::Tolerance { minus, plus }) => {
-            if finite(*minus) && finite(*plus) && *minus >= 0.0 && *plus >= 0.0 {
+            if bounded(*minus) && bounded(*plus) && !minus.is_negative() && !plus.is_negative() {
                 Ok(())
             } else {
                 Err(invalid(
@@ -382,7 +385,7 @@ pub fn check_value(
             }
         }
         (ValueType::Range { .. }, FieldValue::Range { min, max }) => {
-            if finite(*min) && finite(*max) && min <= max {
+            if bounded(*min) && bounded(*max) && min.to_f64() <= max.to_f64() {
                 Ok(())
             } else {
                 Err(invalid(
@@ -426,7 +429,7 @@ pub fn parse_value(
         ValueType::Quantity { .. } => {
             let parsed = parse_quantity(trimmed, kind)?;
             FieldValue::Quantity {
-                si: parsed.quantity.value(),
+                si: parsed.si,
                 display_unit: parsed.unit,
             }
         }
@@ -455,8 +458,8 @@ pub fn parse_value(
                 return Err(invalid(format!("‘{trimmed}’ is not a range ‘min .. max’")));
             };
             FieldValue::Range {
-                min: parse_quantity(low.trim(), kind)?.quantity.value(),
-                max: parse_quantity(high.trim(), kind)?.quantity.value(),
+                min: parse_quantity(low.trim(), kind)?.si,
+                max: parse_quantity(high.trim(), kind)?.si,
             }
         }
     };
@@ -474,14 +477,14 @@ fn parse_tolerance(
     basis: &ToleranceBasis,
     kind: Option<&QuantityKind>,
 ) -> Result<FieldValue> {
-    let magnitude = |part: &str| -> Result<f64> {
+    let magnitude = |part: &str| -> Result<Decimal> {
         let part = part.trim();
         let value = match basis {
             ToleranceBasis::Relative => {
-                let (number, divisor) = if let Some(n) = part.strip_suffix('%') {
-                    (n, 100.0)
+                let (number, places) = if let Some(n) = part.strip_suffix('%') {
+                    (n, -2)
                 } else if let Some(n) = part.strip_suffix("ppm") {
-                    (n, 1e6)
+                    (n, -6)
                 } else {
                     return Err(invalid(format!(
                         "‘{part}’ needs a % or ppm suffix for a relative tolerance"
@@ -492,18 +495,18 @@ fn parse_tolerance(
                     return Err(invalid(format!("‘{part}’ is not a tolerance")));
                 }
                 number
-                    .parse::<f64>()
+                    .parse::<Decimal>()
                     .map_err(|_| invalid(format!("‘{part}’ is not a tolerance")))?
-                    / divisor
+                    .shift(places)?
             }
             ToleranceBasis::Absolute { .. } => {
                 if part.starts_with(['+', '-', '\u{2212}']) {
                     return Err(invalid(format!("‘{part}’ is not a tolerance")));
                 }
-                parse_quantity(part, kind)?.quantity.value()
+                parse_quantity(part, kind)?.si
             }
         };
-        if finite(value) && value >= 0.0 {
+        if bounded(value) && !value.is_negative() {
             Ok(value)
         } else {
             Err(invalid(format!("‘{part}’ is not a non-negative tolerance")))
@@ -646,31 +649,32 @@ pub fn tolerance_interval(
     }
 }
 
-fn quantity_text(si: f64, kind: Option<&QuantityKind>) -> String {
+fn bound_text(si: f64, kind: Option<&QuantityKind>) -> String {
     match kind {
         Some(kind) => quantity::format(si, &kind.units, &kind.default_unit, None),
         None => quantity::format_number(si),
     }
 }
 
+fn quantity_text(si: Decimal, kind: Option<&QuantityKind>, unit: Option<&str>) -> String {
+    match kind {
+        Some(kind) => quantity::format_decimal(si, &kind.units, &kind.default_unit, unit),
+        None => si.to_string(),
+    }
+}
+
 /// A value as text, in a form [`parse_value`] reads back.
 pub fn display(value: &FieldValue, value_type: &ValueType, kind: Option<&QuantityKind>) -> String {
-    let percent = |m: f64| match value_type {
+    let percent = |m: Decimal| match value_type {
         ValueType::Tolerance {
             basis: ToleranceBasis::Absolute { .. },
-        } => quantity_text(m, kind),
-        _ => format!("{}%", quantity::format_number(m * 100.0)),
+        } => quantity_text(m, kind, None),
+        _ => format!("{}%", m.shift(2).unwrap_or(m)),
     };
     match value {
-        FieldValue::Quantity { si, display_unit } => match kind {
-            Some(kind) => quantity::format(
-                *si,
-                &kind.units,
-                &kind.default_unit,
-                display_unit.as_deref(),
-            ),
-            None => quantity::format_number(*si),
-        },
+        FieldValue::Quantity { si, display_unit } => {
+            quantity_text(*si, kind, display_unit.as_deref())
+        }
         FieldValue::Integer(v) => v.to_string(),
         FieldValue::Boolean(v) => v.to_string(),
         FieldValue::Enum(id) => match value_type {
@@ -688,8 +692,8 @@ pub fn display(value: &FieldValue, value_type: &ValueType, kind: Option<&Quantit
         FieldValue::Range { min, max } => {
             format!(
                 "{} .. {}",
-                quantity_text(*min, kind),
-                quantity_text(*max, kind)
+                quantity_text(*min, kind, None),
+                quantity_text(*max, kind, None)
             )
         }
     }

@@ -15,7 +15,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 pub(super) const SCREEN: [f32; 2] = [900.0, 700.0];
 
 /// An RGBA picture, unpremultiplied bytes, row-major from the top left.
-pub(super) struct Picture {
+pub(crate) struct Picture {
     pub(super) width: usize,
     pub(super) height: usize,
     pixels: Vec<[f32; 4]>,
@@ -36,7 +36,7 @@ impl Picture {
         Some(Color32::from_rgb(byte(r), byte(g), byte(b)))
     }
 
-    pub(super) fn png(&self) -> Option<Vec<u8>> {
+    pub(crate) fn png(&self) -> Option<Vec<u8>> {
         let bytes: Vec<u8> = self
             .pixels
             .iter()
@@ -102,8 +102,9 @@ fn rasterize(
     output: egui::FullOutput,
     textures: &Textures,
     background: Color32,
+    size: [f32; 2],
 ) -> Picture {
-    let (width, height) = (SCREEN[0] as usize, SCREEN[1] as usize);
+    let (width, height) = (size[0] as usize, size[1] as usize);
     let bg = background.to_array().map(|v| f32::from(v) / 255.0);
     let mut pixels = vec![[bg[0], bg[1], bg[2], 1.0]; width * height];
     for clipped in ctx.tessellate(output.shapes, output.pixels_per_point) {
@@ -119,9 +120,9 @@ fn rasterize(
                 continue;
             }
             let min_x = a.x.min(b.x).min(c.x).max(clip.min.x).max(0.0).floor() as usize;
-            let max_x = a.x.max(b.x).max(c.x).min(clip.max.x).min(SCREEN[0]).ceil() as usize;
+            let max_x = a.x.max(b.x).max(c.x).min(clip.max.x).min(size[0]).ceil() as usize;
             let min_y = a.y.min(b.y).min(c.y).max(clip.min.y).max(0.0).floor() as usize;
-            let max_y = a.y.max(b.y).max(c.y).min(clip.max.y).min(SCREEN[1]).ceil() as usize;
+            let max_y = a.y.max(b.y).max(c.y).min(clip.max.y).min(size[1]).ceil() as usize;
             for y in min_y..max_y.min(height) {
                 for x in min_x..max_x.min(width) {
                     let p = egui::pos2(x as f32 + 0.5, y as f32 + 0.5);
@@ -163,30 +164,45 @@ fn rasterize(
 
 /// Draw the canvas twice (the first frame uploads the fonts) and fill it.
 pub(super) fn picture(editor: &mut PcbEditor, engine: &Engine) -> Picture {
+    picture_of(SCREEN, Tokens::get().viewport_bottom, |ui| {
+        editor.canvas(ui, engine);
+    })
+}
+
+/// Draw `ui` on the test screen over the viewport background. The schematic
+/// canvas uses it too.
+pub(crate) fn render(draw: impl FnMut(&mut egui::Ui)) -> Picture {
+    picture_of(SCREEN, Tokens::get().viewport_bottom, draw)
+}
+
+/// Draw `draw` in a `size` screen twice (the first frame uploads the fonts
+/// and icons) and fill it over `background`.
+pub(crate) fn picture_of(
+    size: [f32; 2],
+    background: Color32,
+    mut draw: impl FnMut(&mut egui::Ui),
+) -> Picture {
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let mut textures = Textures::default();
     let mut output = None;
-    for _ in 0..2 {
+    for _ in 0..3 {
         let mut frame = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(
                     Pos2::ZERO,
-                    egui::vec2(SCREEN[0], SCREEN[1]),
+                    egui::vec2(size[0], size[1]),
                 )),
                 ..Default::default()
             },
-            |ui| {
-                editor.canvas(ui, engine);
-            },
+            |ui| draw(ui),
         );
         textures.apply(&frame.textures_delta);
         frame.textures_delta.clear();
         output = Some(frame);
     }
-    let background = Tokens::get().viewport_bottom;
     match output {
-        Some(output) => rasterize(&ctx, output, &textures, background),
+        Some(output) => rasterize(&ctx, output, &textures, background, size),
         None => Picture {
             width: 0,
             height: 0,
@@ -469,5 +485,131 @@ fn layout_pictures() -> TestResult {
         let png = picture.png().ok_or("png encoding failed")?;
         std::fs::write(dir.join(format!("{name}.png")), png)?;
     }
+    Ok(())
+}
+
+/// Evidence of e2e findings 12 and 18, written only with
+/// `PCBCRAFT_PICTURES` set: the showcase seen from the top with the bottom
+/// layer active (its pour plain and with the pour's net highlighted), and
+/// half its parts staged beside the board by Update PCB.
+#[test]
+fn pour_and_staging_pictures() -> TestResult {
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Ok(());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(SCREEN[0], SCREEN[1]));
+    let save = |name: &str, editor: &mut PcbEditor, engine: &Engine| -> TestResult {
+        let png = picture(editor, engine).png().ok_or("png encoding failed")?;
+        std::fs::write(dir.join(format!("{name}.png")), png)?;
+        Ok(())
+    };
+    let engine = Engine::showcase()?;
+    let board = engine.project().board_size;
+    let mut editor = PcbEditor::default();
+    (editor.zoom, editor.pan) = frame_view(rect, board, [[0.0, 0.0], board], false);
+    picture(&mut editor, &engine);
+    for layer in [CopperLayer::Top, CopperLayer::Bottom] {
+        editor.layer = layer;
+        let side = if layer == CopperLayer::Top {
+            "top"
+        } else {
+            "bottom"
+        };
+        editor.set_selection(None, None, None);
+        save(&format!("pour-{side}-active"), &mut editor, &engine)?;
+        let net = engine
+            .project()
+            .fills
+            .iter()
+            .find(|f| f.layer == layer)
+            .and_then(|f| f.net);
+        editor.set_selection(None, None, net);
+        save(&format!("pour-{side}-active-net-lit"), &mut editor, &engine)?;
+    }
+    let mut project = engine.project().clone();
+    project.placements = project.placements.iter().step_by(2).cloned().collect();
+    let staged = with_project(&engine, project)?;
+    let mut staged = staged;
+    staged.apply(
+        staged.revision(),
+        pcbcraft_core::Operation::Layout(layout::LayoutCommand::Sync),
+    )?;
+    let boxes = layout::staging::part_boxes(staged.project());
+    let all = boxes
+        .values()
+        .fold(
+            pcbcraft_core::geometry::Bounds::point([0.0, 0.0]),
+            |a, b| a.union(*b),
+        )
+        .including(board);
+    let mut editor = PcbEditor::default();
+    (editor.zoom, editor.pan) = overview(rect, board, [all.min, all.max], false);
+    save("update-pcb-staged", &mut editor, &staged)?;
+    Ok(())
+}
+
+/// Finding 8 of the second UX run: the Route card, with every key shown,
+/// is taller than its slot; it stays inside the slot (its rows scroll)
+/// instead of rising over the ribbon and the title bar above it.
+#[test]
+fn the_route_card_stays_inside_its_slot() -> TestResult {
+    let engine = Engine::demo()?;
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    editor.route.keys_all = true;
+    let size = [400.0, 700.0];
+    // As in the app, the slot reaches almost to the window's bottom, so a
+    // card that outgrew it would be pushed up the window.
+    let slot = Rect::from_min_max(Pos2::new(60.0, 200.0), Pos2::new(340.0, 680.0));
+    let background = Tokens::get().viewport_bottom;
+    let shown = picture_of(size, background, |ui| {
+        crate::shell::column_card(
+            ui.ctx(),
+            "properties",
+            slot,
+            crate::shell::COLUMN_CARD_INSET,
+            |ui| editor.subject_slot(ui, &engine),
+        );
+    });
+    // Drawn: clearly unlike the background (the card's faint shadow is not
+    // the card).
+    let unlike = |c: Color32| {
+        [
+            (c.r(), background.r()),
+            (c.g(), background.g()),
+            (c.b(), background.b()),
+        ]
+        .iter()
+        .any(|(a, b)| a.abs_diff(*b) > 12)
+    };
+    let painted = |rows: std::ops::Range<usize>, columns: std::ops::Range<usize>| {
+        rows.flat_map(|y| columns.clone().map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                shown
+                    .at(Pos2::new(x as f32 + 0.5, y as f32 + 0.5))
+                    .is_some_and(unlike)
+            })
+            .count()
+    };
+    let (left, right) = (slot.left() as usize, slot.right() as usize);
+    assert!(
+        painted(slot.top() as usize..slot.bottom() as usize, left..right) > 1000,
+        "the card is drawn in its slot"
+    );
+    assert_eq!(
+        painted(0..slot.top() as usize - 1, 0..size[0] as usize),
+        0,
+        "nothing is drawn above the slot"
+    );
+    assert_eq!(
+        painted(
+            slot.bottom() as usize + 1..size[1] as usize,
+            0..size[0] as usize
+        ),
+        0,
+        "nothing is drawn below the slot"
+    );
     Ok(())
 }

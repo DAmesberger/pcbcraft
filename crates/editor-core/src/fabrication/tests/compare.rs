@@ -528,6 +528,24 @@ fn layers_carry_their_file_aperture_and_object_attributes() -> Fallible<()> {
             "NPTH".into()
         ])
     );
+    let tools: Vec<_> = set.drills.non_plated().collect();
+    assert!(!tools.is_empty(), "the board has non-plated holes");
+    assert_eq!(non.tools.len(), tools.len());
+    for t in tools {
+        let d = non.tools.get(&t.number).ok_or("tool missing")?;
+        assert!((d - t.diameter).abs() < 1e-9);
+    }
+    // E2E UX run finding 17: one number names one tool across the drill
+    // table and both files.
+    assert!(
+        non.tools.keys().all(|n| !plated.tools.contains_key(n)),
+        "plated {:?}, non-plated {:?}",
+        plated.tools,
+        non.tools
+    );
+    let numbers: Vec<u32> = set.drills.tools.iter().map(|t| t.number).collect();
+    let expected: Vec<u32> = (1..=u32::try_from(numbers.len())?).collect();
+    assert_eq!(numbers, expected, "numbered from 1 across both files");
     // The job file lists every Gerber and drill file in stackup order.
     let job: serde_json::Value = serde_json::from_str(text(&set, ".gbrjob")?)?;
     assert_eq!(job["GeneralSpecs"]["LayerNumber"], 4);

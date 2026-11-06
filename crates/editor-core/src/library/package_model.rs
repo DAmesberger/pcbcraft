@@ -220,6 +220,7 @@ impl QuickAction {
             Self::Seat => "Seat",
             Self::CentreOnPads => "Centre on pads",
             Self::Pin1ToPad1 => "Pin 1 to pad 1",
+            Self::CentreOnCourtyard => "Centre on courtyard",
         }
     }
 }
@@ -320,12 +321,21 @@ pub fn default_material(form: &PackageForm, role: BodyRole) -> MaterialId {
             ChipKind::Resistor => MaterialId::Alumina96,
             ChipKind::Capacitor => MaterialId::BariumTitanate,
             ChipKind::Inductor => MaterialId::Ferrite,
+            // A chip LED's white substrate (its lens is role `Lens`).
+            ChipKind::Led => MaterialId::Alumina96,
         },
         // A module: green board, nickel-silver can (role `Other`), gold
         // (ENIG) pads and castellations.
         (PackageForm::Module(_), BodyRole::Body) => MaterialId::SolderMaskGreen,
         (PackageForm::Module(_), BodyRole::Other) => MaterialId::NickelSilver,
         (PackageForm::Module(_), BodyRole::Lead | BodyRole::Termination | BodyRole::ExposedPad) => {
+            MaterialId::Gold
+        }
+        // A USB-C receptacle: LCP insulator and pegs, nickel-plated shell
+        // (role `Other`), gold solder tails.
+        (PackageForm::UsbC(_), BodyRole::Body) => MaterialId::Lcp,
+        (PackageForm::UsbC(_), BodyRole::Other) => MaterialId::Nickel,
+        (PackageForm::UsbC(_), BodyRole::Lead | BodyRole::Termination | BodyRole::ExposedPad) => {
             MaterialId::Gold
         }
         (PackageForm::Header(_), BodyRole::Body) => MaterialId::Pbt,
@@ -384,6 +394,9 @@ pub enum QuickAction {
     CentreOnPads,
     /// Rotate in quarter turns so terminal 1's lead lands on pad 1.
     Pin1ToPad1,
+    /// Centre the body over the footprint's courtyard (without one, over
+    /// its pads and holes) in x/y.
+    CentreOnCourtyard,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -415,7 +428,11 @@ impl PackageEdit {
     pub fn needs_footprint(&self) -> bool {
         matches!(
             self,
-            Self::ApplyQuick(QuickAction::CentreOnPads | QuickAction::Pin1ToPad1)
+            Self::ApplyQuick(
+                QuickAction::CentreOnPads
+                    | QuickAction::Pin1ToPad1
+                    | QuickAction::CentreOnCourtyard
+            )
         )
     }
 }
