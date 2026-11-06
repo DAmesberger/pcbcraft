@@ -73,6 +73,7 @@ pub(super) fn dispatchable(command: &Command, chord: Chord, typing: bool, popup:
                     | AppCommand::Cut
                     | AppCommand::Copy
                     | AppCommand::Paste
+                    | AppCommand::SelectAll
                     | AppCommand::ToggleBrowser
             )
         ))
@@ -197,6 +198,10 @@ impl App {
                     self.engine.project(),
                     app,
                 ),
+                AppCommand::SelectAll if self.workspace != Workspace::Schematic => {
+                    Err("Select All works on the schematic sheet".into())
+                }
+                AppCommand::SelectAll => self.schematic.can_select_all(),
                 AppCommand::New
                 | AppCommand::Open
                 | AppCommand::Save
@@ -310,6 +315,7 @@ impl App {
                 let operation = self.schematic.paste_at_pointer(&self.engine);
                 self.apply(ctx, crate::refusal::Origin::Command, operation);
             }
+            AppCommand::SelectAll => self.schematic.select_all(&self.engine),
             AppCommand::ToggleBrowser => self.toggle_browser(),
             AppCommand::ToggleIssues => self.issues.toggle(),
             AppCommand::Messages => self.messages_open = true,

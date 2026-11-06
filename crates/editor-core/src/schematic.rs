@@ -35,6 +35,7 @@ pub const MAX_WIRES: usize = 16384;
 pub const MAX_CORNERS: usize = 256;
 
 pub mod annotate;
+pub mod arrange;
 pub mod clipboard;
 pub mod labels;
 pub mod scene;
@@ -42,6 +43,7 @@ pub mod sheets;
 pub mod wire_edit;
 mod wiring;
 pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
+pub use arrange::Arrangement;
 pub use clipboard::{ClipObject, ClipSymbol, Pasted, PastedSymbol, SheetClip};
 pub use wiring::{
     JUNCTION_TOLERANCE_MM, MAX_JUNCTIONS, WirePoint, WireTarget, end_position, end_sheet,
@@ -67,6 +69,18 @@ pub enum SchematicCommand {
     /// horizontal or vertical. A pin moved onto a wire connects to it.
     #[serde(rename = "symbol.move_unit")]
     MoveUnit { occurrence: Id, position: Point },
+    /// Move, turn or mirror several sheet objects together, as one undo step.
+    /// A wire with both ends in the group keeps its shape and a wire with one
+    /// rubber-bands. A symbol brings all its units on the sheet; a named
+    /// wire brings its free ends and the junctions it ends on.
+    #[serde(rename = "schematic.arrange")]
+    Arrange {
+        /// The first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        objects: Vec<ClipObject>,
+        action: Arrangement,
+    },
     /// Set an occurrence's orientation about its origin: `mirror` reflects
     /// the unit across its local x-axis, then `rotation` turns it
     /// counter-clockwise. Presentation only; wires follow their pins.
@@ -299,6 +313,7 @@ pub enum SchematicCommand {
 declare_classes!(SchematicCommand {
     PlaceUnit "symbol.place_unit" Edit,
     MoveUnit "symbol.move_unit" Edit,
+    Arrange "schematic.arrange" Edit,
     OrientUnit "symbol.orient_unit" Edit,
     UnplaceUnit "symbol.unplace_unit" Edit,
     Connect "schematic.connect" Edit,
@@ -411,6 +426,16 @@ fn apply_command(
             occurrence,
             position,
         } => none(move_unit(project, occurrence, position)),
+        C::Arrange {
+            sheet,
+            objects,
+            action,
+        } => none(arrange::arrange(
+            project,
+            sheet.unwrap_or(first),
+            &objects,
+            action,
+        )),
         C::OrientUnit {
             occurrence,
             rotation,

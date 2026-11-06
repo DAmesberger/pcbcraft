@@ -12,7 +12,7 @@ use super::wiring::{JUNCTION_TOLERANCE_MM, end_position, simplified};
 use super::{MAX_CORNERS, Project};
 use crate::geometry::Point;
 use crate::ids::Id;
-use crate::model::{Corner, WireEnd};
+use crate::model::{Corner, Wire, WireEnd};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -137,6 +137,29 @@ pub(super) fn ends(project: &Project) -> Ends {
         .collect()
 }
 
+/// `wire`'s corners once its ends, drawn at `a` and `b` with these corners,
+/// are at `na` and `nb`; `None` past the corner limit.
+pub(super) fn followed(
+    wire: &Wire,
+    a: Point,
+    b: Point,
+    na: Point,
+    nb: Point,
+) -> Option<Vec<Corner>> {
+    let mut path = Vec::with_capacity(wire.corners.len() + 2);
+    path.push(a);
+    path.extend(wire.corners.iter().map(|c| c.at));
+    path.push(b);
+    let path = follow(&path, na, nb);
+    let corners: Vec<Corner> = path
+        .get(1..path.len().saturating_sub(1))
+        .unwrap_or_default()
+        .iter()
+        .map(|&at| Corner { at })
+        .collect();
+    (corners.len() <= MAX_CORNERS).then_some(corners)
+}
+
 /// Rubber-band every wire whose attached end moved since `before` was
 /// taken. A wire that would pass the corner limit keeps its corners.
 pub(super) fn follow_moved(project: &mut Project, before: &Ends) {
@@ -155,18 +178,7 @@ pub(super) fn follow_moved(project: &mut Project, before: &Ends) {
         if same(*a, na) && same(*b, nb) {
             continue;
         }
-        let mut path = Vec::with_capacity(wire.corners.len() + 2);
-        path.push(*a);
-        path.extend(wire.corners.iter().map(|c| c.at));
-        path.push(*b);
-        let path = follow(&path, na, nb);
-        let corners: Vec<Corner> = path
-            .get(1..path.len().saturating_sub(1))
-            .unwrap_or_default()
-            .iter()
-            .map(|&at| Corner { at })
-            .collect();
-        if corners.len() <= MAX_CORNERS {
+        if let Some(corners) = followed(wire, *a, *b, na, nb) {
             moved.push((index, corners));
         }
     }

@@ -24,7 +24,7 @@ use pcbcraft_core::schematic::PlacedUnit;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, ObjectRef, Operation,
     PhysicalChoice, Point, Project, Query, QueryResult, WireEnd,
-    schematic::{self, SchematicCommand, WirePoint, WireTarget},
+    schematic::{self, ClipObject, SchematicCommand, WirePoint, WireTarget},
     updates::{ApplyUpdate, Change, InstanceChange},
 };
 use solidcraft_ui_egui::theme::Tokens;
@@ -33,6 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod clipboard;
+mod group;
 mod instance_card;
 mod items_card;
 mod marking_row;
@@ -151,6 +152,8 @@ enum Subject {
     Instance(Id),
     /// A picked wire and its net.
     Wire(Id),
+    /// Several objects selected together.
+    Group,
     /// The Wire tool with nothing picked.
     Wiring,
     /// A picked label, sheet symbol, sheet pin or drawing.
@@ -228,6 +231,13 @@ pub struct SchematicEditor {
     selected: Option<Id>,
     selected_occurrence: Option<Id>,
     selected_wire: Option<Id>,
+    /// Two or more objects selected together; one object is the single
+    /// selection above.
+    group: group::Group,
+    /// The group being dragged.
+    group_drag: Option<group::GroupDrag>,
+    /// A selection rectangle being dragged out: where it started.
+    box_from: Option<Pos2>,
     /// What Copy or Cut put aside for Paste.
     clipboard: Option<clipboard::Clipboard>,
     /// The pointer over the canvas in sheet millimetres, snapped: where
@@ -340,6 +350,9 @@ impl Default for SchematicEditor {
             selected: None,
             selected_occurrence: None,
             selected_wire: None,
+            group: Default::default(),
+            group_drag: None,
+            box_from: None,
             clipboard: None,
             pointer: None,
             net_label: None,
@@ -795,6 +808,7 @@ impl SchematicEditor {
                 .map(|w| (w.id, w.sheet))
                 .collect();
             self.pin_marks = pin_marks(engine.project());
+            self.prune_group(engine.project());
             self.placed = Arc::new(
                 engine
                     .project()
@@ -822,7 +836,7 @@ impl SchematicEditor {
         use crate::shell::{Group, Ribbon, Tab, Tool as Button};
         let reviewing = self.update.is_open();
         let has_parts = !engine.project().library.components.is_empty();
-        let arrangeable = !reviewing && self.arranged(engine.project(), Arrange::Rotate).is_some();
+        let arrangeable = !reviewing && self.can_arrange(engine.project());
         Ribbon {
             tabs: vec![Tab {
                 id: "sheet",
@@ -979,8 +993,8 @@ impl SchematicEditor {
                 return self.annotation(engine);
             }
             "rotate" if self.item.is_some() => return self.rotated_item(engine.project()),
-            "rotate" => return self.arranged(engine.project(), Arrange::Rotate),
-            "mirror" => return self.arranged(engine.project(), Arrange::Mirror),
+            "rotate" => return self.arranged_selection(engine, Arrange::Rotate),
+            "mirror" => return self.arranged_selection(engine, Arrange::Mirror),
             "resolve" => {
                 if self.resolve.is_open() {
                     self.resolve.close();
@@ -1023,7 +1037,7 @@ impl SchematicEditor {
     pub fn can_delete(&self, project: &Project) -> bool {
         self.tool == Tool::Select
             && (self.selected_item(project).is_some()
-                || matches!(self.subject(project), Subject::Instance(_)))
+                || matches!(self.subject(project), Subject::Instance(_) | Subject::Group))
     }
 
     fn subject(&self, project: &Project) -> Subject {
@@ -1034,6 +1048,9 @@ impl SchematicEditor {
         // parts is a window, so neither is a subject of the card.
         if self.palette.is_open() && !self.palette.choosing() {
             return Subject::Place;
+        }
+        if !self.group.is_empty() {
+            return Subject::Group;
         }
         if let Some(id) = self.selected.filter(|id| project.instance(*id).is_some()) {
             return Subject::Instance(id);
@@ -1086,6 +1103,11 @@ impl SchematicEditor {
                     .map_or_else(|| "Wire".to_owned(), |n| n.name.clone());
                 Header::new("line", name, "Net")
             }
+            Subject::Group => Header::new(
+                "select",
+                format!("{} objects", self.group.len()),
+                "Selection",
+            ),
             Subject::Wiring if self.tool == Tool::Junction => {
                 Header::new("point", "Junction point", "Tool")
             }
@@ -1111,7 +1133,7 @@ impl SchematicEditor {
             subject: egui::Id::new(("schematic-card", subject)),
             footer: matches!(
                 subject,
-                Subject::Instance(_) | Subject::Wire(_) | Subject::Item(_)
+                Subject::Instance(_) | Subject::Wire(_) | Subject::Item(_) | Subject::Group
             ),
             issues: self.issue_slot(engine, subject),
         }
@@ -1253,6 +1275,8 @@ impl SchematicEditor {
         self.selected_occurrence = occurrence
             .or_else(|| id.and_then(|id| project.occurrences_of(id).next().map(|o| o.id)));
         self.selected_wire = None;
+        self.group = Default::default();
+        self.group_drag = None;
         self.item = None;
         self.item_drag = None;
         self.item_preview = None;
@@ -1374,6 +1398,10 @@ impl SchematicEditor {
                 let wire = project.wires.iter().find(|w| w.id == id)?;
                 self.net_section(ui, engine, wire)
             }
+            Subject::Group => {
+                self.group_section(ui, project);
+                None
+            }
             Subject::Wiring => {
                 self.wiring_section(ui, project);
                 None
@@ -1424,6 +1452,7 @@ impl SchematicEditor {
                     .then(|| self.remove_item(engine, item))
                     .flatten();
             }
+            Subject::Group => return self.group_footer(ui, engine),
             _ => None,
         }?;
         self.stage_update(engine, change)
@@ -1547,14 +1576,25 @@ impl SchematicEditor {
             };
             output = self.stage_update(engine, change).or(output);
         }
+        // Delete on a group opens the review that lists all of it.
+        if self.tool == Tool::Select
+            && !self.palette.is_open()
+            && !self.update.is_open()
+            && !ui.ctx().egui_wants_keyboard_input()
+            && !self.group.is_empty()
+            && crate::keys::pressed(ui.ctx(), "schematic.delete")
+        {
+            output = self.remove_group(engine).or(output);
+        }
         // Cmd/Ctrl+R and Shift+X as in the Component editor's symbol canvas.
         if !self.palette.is_open() && !ui.ctx().egui_wants_keyboard_input() {
             for (id, action) in [
                 ("schematic.rotate", Arrange::Rotate),
                 ("schematic.mirror", Arrange::Mirror),
             ] {
-                if let Some(op) = self.arranged(project, action)
+                if self.can_arrange(project)
                     && crate::keys::pressed(ui.ctx(), id)
+                    && let Some(op) = self.arranged_selection(engine, action)
                 {
                     output = Some(op);
                 }
@@ -1616,6 +1656,8 @@ impl SchematicEditor {
             self.rect_from = None;
             self.item_drag = None;
             self.item_preview = None;
+            self.group_drag = None;
+            self.box_from = None;
         }
         let origin = rect.center() + self.pan;
         let scale = self.scale;
@@ -1658,6 +1700,7 @@ impl SchematicEditor {
         };
         let wire_active = |id: Id| {
             self.selected_wire == Some(id)
+                || self.group.wires.contains(&id)
                 || selected_net.is_some_and(|n| self.wire_nets.get(&id) == Some(&n))
         };
         // Each drawn wire's screen path, for picking a wire or a point on it.
@@ -1677,6 +1720,9 @@ impl SchematicEditor {
                     if ends != (first, last) {
                         path = schematic::wire_edit::follow(&path, ends.0, ends.1);
                     }
+                }
+                if let Some(moved) = self.group_drag.as_ref().and_then(|d| d.wire(wire.id)) {
+                    path.clone_from(moved);
                 }
                 // A label sitting on its pin's end leaves its wire no length.
                 if path.windows(2).all(|s| s[0] == s[1]) {
@@ -1745,10 +1791,15 @@ impl SchematicEditor {
                 continue;
             };
             // A dragged occurrence is drawn and picked at its preview.
+            let dragged = self
+                .group_drag
+                .as_ref()
+                .filter(|_| self.group.instances.contains(&occurrence.instance))
+                .map_or([0.0, 0.0], group::GroupDrag::by);
             let delta = self
                 .preview
                 .filter(|(id, _)| *id == occurrence.id)
-                .map_or([0.0, 0.0], |(_, p)| {
+                .map_or(dragged, |(_, p)| {
                     [p[0] - occurrence.position[0], p[1] - occurrence.position[1]]
                 });
             if let Some(b) = self.placed_bounds.get(&occurrence.id) {
@@ -1770,7 +1821,9 @@ impl SchematicEditor {
             // A review that removes the instance previews the result: the
             // symbol is dimmed, not drawn as selected.
             let removed = removing.contains(&occurrence.instance);
-            let selected = !removed && self.selected == Some(occurrence.instance);
+            let selected = !removed
+                && (self.selected == Some(occurrence.instance)
+                    || self.group.instances.contains(&occurrence.instance));
             let dim = |c: egui::Color32| if removed { c.gamma_multiply(0.3) } else { c };
             symbol_view::paint(
                 &painter,
@@ -2050,6 +2103,24 @@ impl SchematicEditor {
                         .and_then(|(target, _)| Some((target, target_position(project, target)?)));
                     output = self.wire_click(ui.ctx(), engine, target, world(pointer));
                 }
+                Tool::Select if ui.input(|i| i.modifiers.shift) => {
+                    let id = pin.map(|p| p.instance).or(body_at(pointer).map(|b| b.0));
+                    let item = self.item_at(project, view.world(pointer), tolerance);
+                    let object = id
+                        .map(|id| ClipObject::Instance { id })
+                        .or(hit_wire.map(|id| ClipObject::Wire { id }))
+                        .or(item.and_then(group::item_object));
+                    if let Some(object) = object {
+                        self.toggle_object(object, project);
+                    } else if item.is_some() {
+                        kit::toast::post(
+                            ui.ctx(),
+                            kit::severity::Level::Info,
+                            "Sheet symbols and pins cannot join a group selection yet",
+                            Vec::new(),
+                        );
+                    }
+                }
                 Tool::Select => {
                     let body = body_at(pointer);
                     let id = pin.map(|p| p.instance).or(body.map(|b| b.0));
@@ -2098,11 +2169,35 @@ impl SchematicEditor {
             } else {
                 menu::Target::Sheet { at: world(pointer) }
             };
+            let target = self.group_target(target);
             self.menu_select(project, target);
             self.menu.open(pointer, target);
         }
+        // A drag from a selected object moves the group; from empty canvas,
+        // or with ⇧ from anywhere, it draws a selection rectangle.
         if self.tool == Tool::Select
             && !self.update.is_open()
+            && !self.palette.is_open()
+            && response.drag_started_by(egui::PointerButton::Primary)
+            && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
+        {
+            let body = body_at(pointer);
+            let item = self.item_at(project, view.world(pointer), tolerance);
+            let over_group = body.is_some_and(|(id, _)| self.group.instances.contains(&id))
+                || matches!(wire_point_at(pointer), Some((WireTarget::OnWire(on), _))
+                    if self.group.wires.contains(&on.wire))
+                || item.is_some_and(|i| self.group.contains_item(i));
+            if ui.input(|i| i.modifiers.shift) || (body.is_none() && item.is_none() && !over_group)
+            {
+                self.box_from = Some(pointer);
+            } else if over_group {
+                self.start_group_drag(view.world(pointer));
+            }
+        }
+        if self.tool == Tool::Select
+            && !self.update.is_open()
+            && self.group_drag.is_none()
+            && self.box_from.is_none()
             && response.drag_started_by(egui::PointerButton::Primary)
             && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
             && let Some((id, occurrence_id)) = body_at(pointer)
@@ -2118,6 +2213,8 @@ impl SchematicEditor {
         if self.tool == Tool::Select
             && !self.update.is_open()
             && self.drag.is_none()
+            && self.group_drag.is_none()
+            && self.box_from.is_none()
             && response.drag_started_by(egui::PointerButton::Primary)
             && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
             && body_at(pointer).is_none()
@@ -2128,6 +2225,28 @@ impl SchematicEditor {
             let p = view.world(pointer);
             self.select_item(Some(item), project);
             self.item_drag = Some((item, [p[0] - at[0], p[1] - at[1]]));
+        }
+        if self.group_drag.is_some()
+            && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
+        {
+            self.group_drag_to(project, view.world(pointer), grid);
+        }
+        let dragged_box = self
+            .box_from
+            .zip(ui.input(|i| i.pointer.latest_pos()))
+            .map(|(from, to)| solidcraft_ui_egui::selection::BoxSel::from_drag(from, to));
+        if let Some(bx) = dragged_box {
+            group::paint_box(&painter, bx);
+        }
+        if response.drag_stopped_by(egui::PointerButton::Primary) {
+            if let Some(op) = self.finish_group_drag() {
+                output = Some(op);
+            }
+            if let Some(bx) = dragged_box {
+                self.box_from = None;
+                let picked = self.box_pick(project, view, m, bx, &wire_paths);
+                self.finish_box(project, picked, ui.input(|i| i.modifiers.shift));
+            }
         }
         if let Some((item, offset)) = self.item_drag
             && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
@@ -2296,6 +2415,9 @@ impl SchematicEditor {
     /// dragged label moves or a dragged sheet symbol moves its pin.
     /// Junctions and free ends stay where they are.
     fn preview_end(&self, project: &Project, end: WireEnd, original: Point) -> Point {
+        if let Some(at) = self.group_drag.as_ref().and_then(|d| d.dot(end)) {
+            return at;
+        }
         match (end, self.item_preview) {
             (WireEnd::Terminal(endpoint), _) => self.preview_endpoint(project, endpoint, original),
             (WireEnd::Label(l), Some((Item::Label(id), to))) if l.label == id => to,
@@ -2419,6 +2541,9 @@ fn canvas_hint(editor: &SchematicEditor, project: &Project) -> Option<String> {
             "Click the other end · Esc cancels".to_owned()
         }
         Tool::Draw(_) => "Click to start · Esc ends".to_owned(),
+        Tool::Select if !editor.group.is_empty() => {
+            "Drag to move · Cmd+R rotates · Shift+X mirrors · Delete removes".to_owned()
+        }
         Tool::Select if editor.item.is_some() => "Drag to move · Delete removes".to_owned(),
         Tool::Select if editor.selected.is_some() => {
             "Drag to move · Cmd+R rotates · Shift+X mirrors".to_owned()
