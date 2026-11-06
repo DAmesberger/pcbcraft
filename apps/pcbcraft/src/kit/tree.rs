@@ -36,6 +36,8 @@ pub struct Row<'a> {
 #[derive(Default)]
 pub struct RowResponse {
     pub clicked: bool,
+    /// The second click of a double-click (its first click was `clicked`).
+    pub double: bool,
     pub fold: bool,
 }
 
@@ -188,6 +190,7 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
         (true, true) => response,
     };
     out.clicked = response.clicked() && !on_fold(response.interact_pointer_pos());
+    out.double = response.double_clicked() && !on_fold(response.interact_pointer_pos());
     out
 }
 

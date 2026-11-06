@@ -316,6 +316,59 @@ fn undo_to_the_saved_content_is_not_unsaved() -> Fallible {
     h.until("the close", Harness::closed)
 }
 
+/// Precision run finding 3: opening a published component for editing
+/// drafts it, but the project is not unsaved until the draft is edited.
+#[test]
+fn an_unedited_draft_is_not_unsaved() -> Fallible {
+    let mut h = Harness::new()?;
+    // Start from a saved project without drafts.
+    let ids: Vec<_> = h.engine.drafts().items.iter().map(|d| d.id).collect();
+    for id in ids {
+        h.engine.apply(
+            h.engine.revision(),
+            Operation::Library(pcbcraft_core::LibraryCommand::DiscardDraft { id }),
+        )?;
+    }
+    let path = h.dir.path().join("board.pcbcraft");
+    h.files.adopt(&h.engine, Some(path), false)?;
+    h.frame(vec![]);
+    assert!(!h.files.dirty());
+    let published = h
+        .engine
+        .project()
+        .library
+        .latest_components()
+        .into_iter()
+        .find(|c| h.engine.drafts().get(c.id).is_none())
+        .map(|c| pcbcraft_core::ComponentRef::new(c.id, c.revision))
+        .ok_or("a published component without a draft")?;
+    let before = h.engine.revision();
+    crate::part_editor::run(&mut h.engine, crate::part_editor::Request::Draft(published))?;
+    assert!(h.engine.revision() > before, "the draft was created");
+    h.frame(vec![]);
+    assert!(!h.files.dirty(), "an unedited draft is not unsaved work");
+    let mut draft = h
+        .engine
+        .drafts()
+        .get(published.id)
+        .cloned()
+        .ok_or("no draft")?;
+    draft.meta.name.push_str(" edited");
+    h.engine.apply(
+        h.engine.revision(),
+        Operation::Library(pcbcraft_core::LibraryCommand::Edit {
+            edits: vec![pcbcraft_core::library::DraftEdit {
+                id: draft.id,
+                meta: draft.meta,
+                definition: draft.definition,
+            }],
+        }),
+    )?;
+    h.frame(vec![]);
+    assert!(h.files.dirty(), "an edited draft is");
+    Ok(())
+}
+
 /// A clean quit leaves no file of this session behind, not even the empty
 /// reservation made at launch: after a project was opened, with Don't
 /// Save, and with nothing to save.

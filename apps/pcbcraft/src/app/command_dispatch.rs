@@ -91,6 +91,31 @@ pub(super) fn presses(ctx: &egui::Context) -> Vec<Chord> {
     })
 }
 
+/// Commands pressed while a text field had the keyboard, held for one
+/// frame so the field commits its edit first (`App::dispatch_keys`).
+#[derive(Default)]
+pub(super) struct AfterCommit(Vec<String>);
+
+impl AfterCommit {
+    /// The most commands held at once (a frame's own presses).
+    const MAX: usize = 8;
+
+    /// Take the keyboard from the focused field and hold `id` until the
+    /// next frame, which the field commits in.
+    pub(super) fn hold(&mut self, ctx: &egui::Context, id: String) {
+        ctx.memory_mut(egui::Memory::stop_text_input);
+        if self.0.len() < Self::MAX {
+            self.0.push(id);
+        }
+        ctx.request_repaint();
+    }
+
+    /// The held commands, in the order pressed.
+    pub(super) fn take(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.0)
+    }
+}
+
 impl App {
     /// The keyboard contexts in force, most specific first.
     pub(super) fn active_contexts(&self) -> Vec<Context> {
@@ -286,6 +311,11 @@ impl App {
     /// press runs the command it names in the active contexts, unless the
     /// canvas owns it ([`Handler::InPlace`]).
     pub(super) fn dispatch_keys(&mut self, ctx: &egui::Context) {
+        // Commands held while a field committed (see below): the field
+        // sent its edit this frame, so they act on the committed document.
+        for id in self.after_commit.take() {
+            self.run_command(ctx, &id);
+        }
         if self.palette.is_open() {
             return;
         }
@@ -302,7 +332,14 @@ impl App {
                 continue;
             };
             ctx.input_mut(|i| i.consume_key(chord.modifiers(), chord.key));
-            self.run_command(ctx, &id);
+            if typing {
+                // A ⌘ chord over a focused field: the field gives up the
+                // keyboard and commits on that focus loss, as Enter would,
+                // next frame; the command runs right after it.
+                self.after_commit.hold(ctx, id);
+            } else {
+                self.run_command(ctx, &id);
+            }
         }
     }
 

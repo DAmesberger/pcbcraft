@@ -549,12 +549,14 @@ impl App {
                 ..Default::default()
             },
             Workspace::Schematic => browser::Lit {
+                component: self.browser_component,
                 instance: self.schematic.selected_instance(),
                 net: self.schematic.selected_net(&self.engine),
                 sheet: Some(self.schematic.active_sheet()),
                 ..Default::default()
             },
             Workspace::Pcb => browser::Lit {
+                component: self.browser_component,
                 placement: self.pcb.selected_instance(),
                 track: self.pcb.selected_track(),
                 net: self.pcb.highlighted_net(),
@@ -568,8 +570,11 @@ impl App {
     /// Open a Browser row in its workspace and select it there.
     fn pick(&mut self, pick: browser::Pick) {
         use browser::Pick;
+        self.browser_component = None;
         match pick {
-            Pick::Component(id) => {
+            // Selecting a component changes no workspace and drafts nothing.
+            Pick::Component(id) => self.browser_component = Some(id),
+            Pick::EditComponent(id) => {
                 self.workspace = Workspace::Part;
                 self.part.open(id, &self.engine);
             }

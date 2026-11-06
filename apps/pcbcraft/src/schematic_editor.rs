@@ -1425,6 +1425,20 @@ impl SchematicEditor {
                 self.item = None;
             }
         }
+        // Delete or Backspace on a selected part opens the review its
+        // card's Remove… opens.
+        if self.tool == Tool::Select
+            && !self.palette.is_open()
+            && !self.update.is_open()
+            && !ui.ctx().egui_wants_keyboard_input()
+            && let Subject::Instance(instance) = self.subject(project)
+            && crate::keys::pressed(ui.ctx(), "schematic.delete")
+        {
+            let change = Change::Instance {
+                edit: InstanceChange::Remove { instance },
+            };
+            output = self.stage_update(engine, change).or(output);
+        }
         // Cmd/Ctrl+R and Shift+X as in the Component editor's symbol canvas.
         if !self.palette.is_open() && !ui.ctx().egui_wants_keyboard_input() {
             for (id, action) in [
@@ -3988,6 +4002,49 @@ mod tests {
         };
         assert!(click(&mut editor, &engine, &ctx, "Disconnect wire…")?.is_none());
         assert!(editor.update.is_open());
+        assert_eq!(engine.project(), &before);
+        Ok(())
+    }
+
+    /// Precision run finding 2: Delete and Backspace on a selected part open
+    /// the review its card's Remove… opens; nothing changes until it is
+    /// applied. A focused card field keeps the key.
+    #[test]
+    fn delete_and_backspace_open_the_remove_review() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let before = engine.project().clone();
+        let instance = engine.project().instances[0].id;
+        let canvas = |editor: &mut SchematicEditor, events: Vec<egui::Event>| {
+            let mut out = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| out = editor.canvas(ui, &engine),
+            );
+            output.textures_delta.clear();
+            out
+        };
+        for key in [egui::Key::Delete, egui::Key::Backspace] {
+            let mut editor = SchematicEditor::default();
+            editor.select_instance(Some(instance), engine.project());
+            canvas(&mut editor, vec![]);
+            assert!(canvas(&mut editor, vec![press(key, egui::Modifiers::NONE)]).is_none());
+            assert!(editor.update.is_open(), "{key:?}");
+            assert_eq!(editor.header(&engine).title, "Review change");
+        }
+        let mut editor = SchematicEditor::default();
+        editor.select_instance(Some(instance), engine.project());
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new("a card field")));
+        canvas(
+            &mut editor,
+            vec![press(egui::Key::Backspace, egui::Modifiers::NONE)],
+        );
+        assert!(!editor.update.is_open(), "typing keeps Backspace");
         assert_eq!(engine.project(), &before);
         Ok(())
     }

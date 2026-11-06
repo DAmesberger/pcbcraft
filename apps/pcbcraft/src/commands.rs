@@ -338,6 +338,18 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
     // The board shape sketch hides the Layout keys; of the Everywhere
     // keys, F is its Fillet.
     (Context::BoardShape, Chord::key(egui::Key::F), "view.fit"),
+    // Backspace takes back the last route step or outline point instead
+    // of deleting the selection.
+    (
+        Context::PcbRoute,
+        Chord::key(egui::Key::Backspace),
+        "pcb.delete",
+    ),
+    (
+        Context::PcbFill,
+        Chord::key(egui::Key::Backspace),
+        "pcb.delete",
+    ),
 ];
 
 /// The Fill tool's keys, handled by the PCB canvas (`fill_tool`).
@@ -1398,10 +1410,11 @@ fn defaults() -> Vec<Command> {
         .keywords("renumber reference designator"),
         key(
             "schematic.delete",
-            "Delete the selected label, sheet symbol or drawing",
+            "Delete the selected part, label, sheet symbol or drawing",
             C::Schematic,
             Chord::key(K::Delete),
-        ),
+        )
+        .also(&[Chord::key(K::Backspace)]),
         key(
             "schematic.cancel",
             "Cancel the tool",
@@ -1550,6 +1563,13 @@ fn defaults() -> Vec<Command> {
             C::PcbLayout,
             Chord::key(K::Escape),
         ),
+        key(
+            "pcb.delete",
+            "Delete the selected track, via or fill",
+            C::PcbLayout,
+            Chord::key(K::Delete),
+        )
+        .also(&[Chord::key(K::Backspace)]),
         view(
             "pcb.from-bottom",
             "View from bottom",
