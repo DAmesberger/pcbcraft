@@ -226,6 +226,7 @@ fn plan_of(
             name,
             designator_prefix: Some(prefix.to_owned()),
             symbol,
+            without_fields: false,
         },
         form,
         basis,
