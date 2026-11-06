@@ -1592,12 +1592,16 @@ impl SchematicEditor {
                 continue;
             }
             if let Some(mut path) = schematic::wire_path(project, wire) {
-                // A dragged unit's pins move the ends; corners stay.
-                if let Some(first) = path.first_mut() {
-                    *first = self.preview_end(project, wire.from, *first);
-                }
-                if let Some(last) = path.last_mut() {
-                    *last = self.preview_end(project, wire.to, *last);
+                // A dragged unit, label or sheet symbol moves the ends, and
+                // the path follows as the move will store it.
+                if let (Some(&first), Some(&last)) = (path.first(), path.last()) {
+                    let ends = (
+                        self.preview_end(project, wire.from, first),
+                        self.preview_end(project, wire.to, last),
+                    );
+                    if ends != (first, last) {
+                        path = schematic::wire_edit::follow(&path, ends.0, ends.1);
+                    }
                 }
                 // A label sitting on its pin's end leaves its wire no length.
                 if path.windows(2).all(|s| s[0] == s[1]) {
@@ -2163,14 +2167,23 @@ impl SchematicEditor {
             .unwrap_or(centre)
     }
 
-    /// Where a wire end is drawn while a dragged occurrence moves its pin.
-    /// Junctions stay where they are.
+    /// Where a wire end is drawn while a dragged occurrence moves its pin, a
+    /// dragged label moves or a dragged sheet symbol moves its pin.
+    /// Junctions and free ends stay where they are.
     fn preview_end(&self, project: &Project, end: WireEnd, original: Point) -> Point {
-        match end {
-            WireEnd::Terminal(endpoint) => self.preview_endpoint(project, endpoint, original),
-            WireEnd::Junction(_) | WireEnd::Label(_) | WireEnd::SheetPin(_) | WireEnd::Free(_) => {
-                original
-            }
+        match (end, self.item_preview) {
+            (WireEnd::Terminal(endpoint), _) => self.preview_endpoint(project, endpoint, original),
+            (WireEnd::Label(l), Some((Item::Label(id), to))) if l.label == id => to,
+            (WireEnd::SheetPin(p), Some((Item::SheetSymbol(id), to))) => project
+                .sheet_pin(p.sheet_pin)
+                .filter(|(symbol, _)| symbol.id == id)
+                .map_or(original, |(symbol, _)| {
+                    [
+                        original[0] + to[0] - symbol.position[0],
+                        original[1] + to[1] - symbol.position[1],
+                    ]
+                }),
+            _ => original,
         }
     }
 
@@ -3836,6 +3849,36 @@ mod tests {
             position
                 .iter()
                 .all(|v| ((v / grid).round() * grid - v).abs() < 1e-9)
+        );
+        Ok(())
+    }
+
+    /// Dragging a wired part up keeps its wire orthogonal: the straight wire
+    /// between the demo's resistors gets one corner instead of slanting.
+    #[test]
+    fn dragging_a_part_keeps_its_wires_orthogonal() -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        workspace_frame(&mut editor, &engine, &ctx, vec![]);
+        let from = pos2(400.0 - 12.0 * 12.0, 400.0);
+        // 5 mm up at 12 px/mm.
+        let operations = drag_between(&mut editor, &engine, &ctx, from, from + vec2(0.0, -60.0));
+        let [operation] = &operations[..] else {
+            return Err(format!("expected one move, got {operations:?}").into());
+        };
+        engine.apply(engine.revision(), operation.clone())?;
+        let project = engine.project();
+        let [wire] = &project.wires[..] else {
+            return Err("expected one wire".into());
+        };
+        let path = schematic::wire_path(project, wire).ok_or("path")?;
+        assert_eq!(path.len(), 3, "one corner: {path:?}");
+        assert!(
+            path.windows(2)
+                .all(|s| (s[0][0] - s[1][0]).abs() < 1e-9 || (s[0][1] - s[1][1]).abs() < 1e-9),
+            "{path:?}"
         );
         Ok(())
     }

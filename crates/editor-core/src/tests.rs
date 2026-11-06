@@ -21,6 +21,7 @@ mod orientation;
 mod part_authoring;
 mod parts;
 mod publish_sets;
+mod rubber_band;
 mod sheets;
 mod staged;
 pub(crate) mod support;

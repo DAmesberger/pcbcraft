@@ -161,7 +161,7 @@ pub fn nearest_on_wire(project: &Project, wire: Id, p: Point) -> Option<Point> {
 
 /// `corners` between `start` and `end` without corners that add nothing:
 /// one on the vertex before it, or one in line between its neighbours.
-fn simplified(start: Point, corners: Vec<Corner>, end: Point) -> Vec<Corner> {
+pub(super) fn simplified(start: Point, corners: Vec<Corner>, end: Point) -> Vec<Corner> {
     let mut kept: Vec<Point> = Vec::with_capacity(corners.len());
     let previous = |kept: &Vec<Point>| kept.last().copied().unwrap_or(start);
     for corner in corners.iter().map(|c| c.at).chain([end]) {

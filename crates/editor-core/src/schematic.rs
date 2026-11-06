@@ -38,6 +38,7 @@ pub mod annotate;
 pub mod labels;
 pub mod scene;
 pub mod sheets;
+pub mod wire_edit;
 mod wiring;
 pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
 pub use wiring::{
@@ -60,8 +61,8 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sheet: Option<SheetId>,
     },
-    /// Move a unit; wires follow its pins. A pin moved onto a wire
-    /// connects to it.
+    /// Move a unit; wires follow its pins, the segment on each pin staying
+    /// horizontal or vertical. A pin moved onto a wire connects to it.
     #[serde(rename = "symbol.move_unit")]
     MoveUnit { occurrence: Id, position: Point },
     /// Set an occurrence's orientation about its origin: `mirror` reflects
@@ -341,8 +342,34 @@ fn conflict(message: &str) -> Error {
 }
 
 /// Apply to a candidate the caller discards on failure. The engine then
-/// reconciles nets and validates the document.
+/// reconciles nets and validates the document. Wires on a part, label,
+/// sheet symbol or sheet pin that moves, turns or mirrors follow it in the
+/// same step ([`wire_edit`]).
 pub fn apply(
+    project: &mut Project,
+    command: SchematicCommand,
+    policy: EditPolicy,
+) -> Result<Applied> {
+    use SchematicCommand as C;
+    let moves = matches!(
+        command,
+        C::MoveUnit { .. }
+            | C::OrientUnit { .. }
+            | C::MoveLabel { .. }
+            | C::EditLabel { .. }
+            | C::MoveSheetSymbol { .. }
+            | C::ResizeSheetSymbol { .. }
+            | C::EditSheetPin { .. }
+    );
+    let before = moves.then(|| wire_edit::ends(project));
+    let applied = apply_command(project, command, policy)?;
+    if let Some(before) = before {
+        wire_edit::follow_moved(project, &before);
+    }
+    Ok(applied)
+}
+
+fn apply_command(
     project: &mut Project,
     command: SchematicCommand,
     policy: EditPolicy,
