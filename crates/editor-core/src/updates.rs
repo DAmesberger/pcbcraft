@@ -395,6 +395,7 @@ fn wire_end_label(project: &Project, end: WireEnd) -> String {
             || format!("sheet pin {}", p.sheet_pin),
             |(_, pin)| format!("sheet pin {}", pin.name),
         ),
+        WireEnd::Free(_) => "a free end".into(),
     }
 }
 
@@ -411,6 +412,7 @@ fn wire_end_name(project: &Project, end: WireEnd) -> String {
             || "a sheet pin".into(),
             |(_, pin)| format!("sheet pin {}", pin.name),
         ),
+        WireEnd::Free(_) => "a free end".into(),
     }
 }
 

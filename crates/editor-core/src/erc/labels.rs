@@ -1,5 +1,7 @@
-//! Label, hierarchy and power-port rules (docs/schematic-capture.md, "ERC").
+//! Label, hierarchy, power-port and wire-end rules
+//! (docs/schematic-capture.md, "ERC").
 //!
+//! - `erc.wire_end_free`: a wire end attached to nothing.
 //! - `erc.label_unconnected`: a label or power port with no wire on it.
 //! - `erc.global_label_single`: a global label whose name no other global
 //!   label or power port shares, so it joins nothing off its sheet.
@@ -82,6 +84,20 @@ pub(super) fn checks(
                     sheet_name(project, label.sheet)
                 ),
                 vec![ObjectRef::Label { id: label.id }],
+            ));
+        }
+    }
+    for wire in &project.wires {
+        for at in [wire.from, wire.to].into_iter().filter_map(WireEnd::free_point) {
+            out.push(Finding::new(
+                "erc.wire_end_free",
+                format!(
+                    "Wire end at ({}, {}) mm on {} is not connected.",
+                    at[0],
+                    at[1],
+                    sheet_name(project, wire.sheet)
+                ),
+                vec![ObjectRef::Wire { id: wire.id }],
             ));
         }
     }

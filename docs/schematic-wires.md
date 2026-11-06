@@ -1,6 +1,6 @@
 # Schematic wires as paths: design
 
-**Status:** proposal, 6 November 2026. Nothing here is built. The founder decided that a wire is one connected line made of straight and arc segments, like an SVG path, and that it must be easy to edit. This document plans that change. Items marked **Open question** need the founder's decision before the slice that depends on them starts. Estimates are agent hours.
+**Status:** slice 1 (1a path model, 1b Wire tool) built on 6 November 2026; slices 2–5 are not. See "Slice 1 as built" at the end for where the build differs from this plan. The founder decided that a wire is one connected line made of straight and arc segments, like an SVG path, and that it must be easy to edit. This document plans that change. Items marked **Open question** need the founder's decision before the slice that depends on them starts. Estimates are agent hours.
 
 Related: [schematic capture](schematic-capture.md) (today's wiring rules), [keyboard shortcuts](keyboard-shortcuts.md) (Route and Fill tool keys), [push-and-shove](push-and-shove.md) (the planned track drag). It follows the same independent-implementation policy as the rest of Pcbcraft: no other EDA tool's source was read.
 
@@ -179,3 +179,16 @@ All six recommendations were accepted:
 4. **Starting a wire in empty space** with a free end is allowed.
 5. **Postures:** 90° and free; no 45°.
 6. **Selection:** a click selects the whole path; segments are edited through handles.
+
+## Slice 1 as built
+
+Where the build made a smaller or different choice than the plan above:
+
+- **`Corner` has no `radius` yet.** It is `{ "at": [x, y] }`; slice 4 adds `radius` as a defaulted field, so files stay readable.
+- **`wire.draw` returns no wire ID.** The tidy that follows may merge the new wire into another path (a free end continuing a path), so an ID would not be reliable. Its `from` and `to` are `WireTarget`s, which gained the `{"free": [x, y]}` form; `schematic.connect` and `label.place` refuse it.
+- **Free ends meet exactly.** Free ends are held in whole nanometres, and two join only at the same point, not within a tolerance. The tool snaps them to the grid.
+- **`junction.remove` with one or two wire ends** no longer refuses at a bend: the point stops being placed and settles like any junction (two wires merge into one path). At three or more ends it pairs opposite legs as before and refuses a T.
+- **Validation.** The rule that two wires may not join the same pair of ends is gone, because a merge can legitimately produce such a pair; `schematic.connect` still refuses to join two already joined points. A wire may begin and end at the same point only when it has corners (a loop). After tidy, an unplaced junction has three or more wire ends and a placed one at least one, and validation checks that.
+- **Edge cases of the tidy rules.** A junction whose only wire ends on it twice (a loop) leaves both ends free. A wire of no length left with a free end, such as a label's wire to its pin after the label is removed, is removed. Two free ends of one wire at one point stay apart.
+- **Wire tool.** Its keys form a new keyboard context, Schematic › Wire tool (`WIRE_KEYS`), where F (Fit view) and Esc (`schematic.cancel`) are listed shadows. The card shows Start and Elbow; Posture, Arc and Radius arrive with slices 4 and 5. The success toast reads "Drew the wire: …". The drawing hint is shortened to "Click adds a corner · a pin or wire ends · double-click or Esc ends here": the planned wording was cut short on an 800-point canvas (`the_wire_hints_are_not_cut_short`).
+- **Hit testing** still measures every wire on the sheet each frame in screen space, as before; the bounds index is left for slice 3, which adds per-segment handles.

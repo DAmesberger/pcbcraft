@@ -193,7 +193,8 @@ pub fn wire_nets(project: &Project) -> BTreeMap<Id, Id> {
         .wires
         .iter()
         .filter_map(|w| {
-            let root = nodes.root(w.from)?;
+            // A free end joins nothing: take the other.
+            let root = nodes.root(w.from).or_else(|| nodes.root(w.to))?;
             Some((w.id, *root_net.get(&root)?))
         })
         .collect()
