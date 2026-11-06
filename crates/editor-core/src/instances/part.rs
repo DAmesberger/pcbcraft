@@ -117,8 +117,9 @@ fn requirements_for(
                 (ValueType::Quantity { kind: k, .. }, FieldValue::Quantity { si, .. })
                     if k.id == kind =>
                 {
-                    Some(*si)
+                    Some(si.to_f64())
                 }
+
                 _ => None,
             });
             match (measured.next(), measured.next()) {

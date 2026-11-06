@@ -90,6 +90,107 @@ fn formatting_uses_the_recorded_unit_or_an_engineering_prefix() {
     assert!(close(si(&text, &r, "Ω"), 4700.0));
 }
 
+fn exact(text: &str, units: &UnitSet, default: &str) -> String {
+    let parsed = parse(text, units, default).unwrap();
+    format_decimal(parsed.si, units, default, parsed.unit.as_deref())
+}
+
+fn farads() -> UnitSet {
+    UnitSet {
+        dimension: [-2, -1, 4, 2, 0, 0, 0],
+        units: vec![unit("F", &[], 1.0, true)],
+    }
+}
+
+#[test]
+fn typed_values_are_stored_and_shown_exactly() {
+    let f = farads();
+    // 10 × 10⁻⁶ in binary floating point is 9.999999999999999e-6.
+    let ten = parse("10 µF", &f, "F").unwrap();
+    assert_eq!(ten.si.to_string(), "0.00001");
+    assert_eq!(ten.si, "1e-5".parse().unwrap());
+    for (typed, shown) in [
+        ("10 µF", "10 µF"),
+        ("100nF", "100 nF"),
+        ("0.1 µF", "0.1 µF"),
+        ("0.3 µF", "0.3 µF"),
+        ("2.2 nF", "2.2 nF"),
+        ("4.7u", "4.7 µF"),
+        ("0.00001", "10 µF"),
+        ("1e-5", "10 µF"),
+    ] {
+        assert_eq!(exact(typed, &f, "F"), shown, "{typed}");
+    }
+    assert_eq!(exact("4.7k", &resistance(), "Ω"), "4.7 kΩ");
+    assert_eq!(exact("10.10 kΩ", &resistance(), "Ω"), "10.1 kΩ");
+    // Without a recorded unit: an exact engineering prefix.
+    let si = parse("0.0000047", &f, "F").unwrap().si;
+    assert_eq!(format_decimal(si, &f, "F", None), "4.7 µF");
+    // A unit scale that is not a power of ten rounds to 12 digits.
+    let inches = parse("2in", &length(), "m").unwrap();
+    assert_eq!(inches.si.to_string(), "0.0508");
+    assert_eq!(
+        format_decimal(inches.si, &length(), "m", Some("in")),
+        "2 in"
+    );
+}
+
+#[test]
+fn decimals_read_and_write_text_exactly_within_bounds() {
+    let d = |text: &str| text.parse::<Decimal>().unwrap();
+    for (text, shown) in [
+        ("0.3", "0.3"),
+        ("0.30", "0.3"),
+        ("-0", "0"),
+        ("+12.50", "12.5"),
+        (".5", "0.5"),
+        ("1000", "1000"),
+        ("1e-7", "1e-7"),
+        ("1.5E20", "1.5e20"),
+        ("123456789012345678", "1.23456789012345678e17"),
+        ("0.000001", "0.000001"),
+    ] {
+        assert_eq!(d(text).to_string(), shown, "{text}");
+        assert_eq!(d(shown), d(text));
+    }
+    // 0.1 + 0.2 is 0.30000000000000004 in f64; an f64 boundary rounds to
+    // 12 significant digits, and typed text never goes through f64.
+    assert_eq!(Decimal::from_f64(0.1 + 0.2).unwrap(), d("0.3"));
+    assert_eq!(
+        Decimal::from_f64(10.0 * 1e-6).unwrap().to_string(),
+        "0.00001"
+    );
+    assert_eq!(d("0.1").checked_mul(d("3")).unwrap(), d("0.3"));
+    for (bad, code) in [
+        ("1234567890123456789", "limit_exceeded"),
+        ("1e401", "limit_exceeded"),
+        ("1e-401", "limit_exceeded"),
+        ("1e12345", "invalid_input"),
+        ("", "invalid_input"),
+        (".", "invalid_input"),
+        ("1.2.3", "invalid_input"),
+        ("1e", "invalid_input"),
+        ("nan", "invalid_input"),
+        ("inf", "invalid_input"),
+        ("0x10", "invalid_input"),
+    ] {
+        assert_eq!(bad.parse::<Decimal>().unwrap_err().code(), code, "{bad}");
+    }
+    assert_eq!(
+        "1".repeat(129).parse::<Decimal>().unwrap_err().code(),
+        "limit_exceeded"
+    );
+    // Trailing zeros are not significant digits.
+    assert_eq!(d(&format!("1{}", "0".repeat(30))).to_string(), "1e30");
+    assert!(Decimal::from_f64(f64::NAN).is_err());
+    // Too many digits in a product is refused, not rounded.
+    let big = d("123456789012345678");
+    assert!(big.checked_mul(big).is_err());
+    let json = serde_json::to_string(&d("0.00001")).unwrap();
+    assert_eq!(json, "\"0.00001\"");
+    assert!(serde_json::from_str::<Decimal>("0.00001").is_err());
+}
+
 #[test]
 fn unit_sets_are_checked_once() {
     assert!(resistance().check().is_ok());

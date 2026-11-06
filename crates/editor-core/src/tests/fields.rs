@@ -84,8 +84,8 @@ fn publish_fields(engine: &mut Engine) -> Result<Fields> {
         "Tolerance",
         FieldDefinition {
             default: Some(FieldValue::Tolerance {
-                minus: 0.1,
-                plus: 0.1,
+                minus: dec(0.1),
+                plus: dec(0.1),
             }),
             ..field(ValueType::Tolerance {
                 basis: ToleranceBasis::Relative,
@@ -150,7 +150,7 @@ fn selections(f: &Fields) -> Vec<FieldSelection> {
     .map(select)
     .collect();
     all[0].default = Some(FieldValue::Quantity {
-        si: 1000.0,
+        si: dec(1000.0),
         display_unit: Some("kΩ".into()),
     });
     all
@@ -189,7 +189,7 @@ fn effective(engine: &Engine, instance: Id, field: FieldRef) -> Result<Effective
 
 fn si(field: &EffectiveField) -> Option<f64> {
     match field.value {
-        Some(FieldValue::Quantity { si, .. }) => Some(si),
+        Some(FieldValue::Quantity { si, .. }) => Some(si.to_f64()),
         _ => None,
     }
 }
@@ -221,7 +221,7 @@ fn quantity_text_is_parsed_in_core_with_the_documented_precedence() -> Result<()
         assert_eq!(
             resistance.value,
             Some(FieldValue::Quantity {
-                si: 10000.0,
+                si: dec(10000.0),
                 display_unit: Some(unit.into()),
             })
         );
@@ -273,7 +273,7 @@ fn assigned_zero_unset_and_inherit_are_distinct() -> Result<()> {
         (zero.value.clone(), zero.origin),
         (
             Some(FieldValue::Quantity {
-                si: 0.0,
+                si: dec(0.0),
                 display_unit: None
             }),
             Origin::Assigned
@@ -344,7 +344,7 @@ fn bounds_choices_types_and_text_length_are_rejected_atomically() -> Result<()> 
             vec![input(
                 f.resistance,
                 PropertyInput::Value(FieldValue::Quantity {
-                    si: 5.0,
+                    si: dec(5.0),
                     display_unit: Some("F".into()),
                 }),
             )],
@@ -413,8 +413,8 @@ fn tolerances_parse_to_fractions_and_give_hand_derived_intervals() -> Result<()>
     assert_eq!(
         tolerance.value,
         Some(FieldValue::Tolerance {
-            minus: 0.05,
-            plus: 0.05
+            minus: dec(0.05),
+            plus: dec(0.05)
         })
     );
     assert_eq!(tolerance.text.as_deref(), Some("±5%"));
@@ -423,10 +423,15 @@ fn tolerances_parse_to_fractions_and_give_hand_derived_intervals() -> Result<()>
     let Some(FieldValue::Tolerance { minus, plus }) = tolerance.value else {
         return Err(Error::Invalid("tolerance".into()));
     };
-    assert_eq!((minus, plus), (0.2, 0.8));
+    assert_eq!((minus, plus), (dec(0.2), dec(0.8)));
     let nominal = si(&effective(&engine, r1, f.capacitance)?).unwrap_or_default();
     // 10 µF − 20 % = 8 µF; 10 µF + 80 % = 18 µF.
-    let (low, high) = tolerance_interval(nominal, minus, plus, &ToleranceBasis::Relative)?;
+    let (low, high) = tolerance_interval(
+        nominal,
+        minus.to_f64(),
+        plus.to_f64(),
+        &ToleranceBasis::Relative,
+    )?;
     assert!((low - 8e-6).abs() < 1e-18 && (high - 18e-6).abs() < 1e-18);
     // The formatted text reads back to the same value.
     let shown = tolerance.text.unwrap_or_default();
@@ -434,8 +439,8 @@ fn tolerances_parse_to_fractions_and_give_hand_derived_intervals() -> Result<()>
     assert_eq!(
         effective(&engine, r1, f.tolerance)?.value,
         Some(FieldValue::Tolerance {
-            minus: 0.2,
-            plus: 0.8
+            minus: dec(0.2),
+            plus: dec(0.8)
         })
     );
     Ok(())
@@ -476,7 +481,7 @@ fn instances_are_independent_and_values_survive_undo_redo_and_reopen() -> Result
     assert_eq!(
         resistance.value,
         Some(FieldValue::Quantity {
-            si: 4700.0,
+            si: dec(4700.0),
             display_unit: Some("kΩ".into())
         })
     );
@@ -491,6 +496,46 @@ fn instances_are_independent_and_values_survive_undo_redo_and_reopen() -> Result
     assert_eq!(engine.document(), &before);
     engine.redo()?;
     assert_eq!(engine.document(), &after);
+    Ok(())
+}
+
+#[test]
+fn typed_values_survive_save_and_value_text_byte_exactly() -> Result<()> {
+    let Setup {
+        mut engine,
+        fields: f,
+        r1,
+        ..
+    } = setup()?;
+    set_properties(
+        &mut engine,
+        r1,
+        vec![
+            text(f.resistance, "4.7 kΩ"),
+            text(f.capacitance, "10 µF"),
+            text(f.tolerance, "±0.1%"),
+        ],
+    )?;
+    let saved = format::encode(&engine.to_file())?;
+    let json = String::from_utf8_lossy(&saved);
+    // 10 × 10⁻⁶ and 0.1 / 100 in f64 carry binary noise; the file does not.
+    assert!(json.contains("\"0.00001\"") && json.contains("\"0.001\""));
+    assert!(!json.contains("9.99999") && !json.contains("0.0010000"));
+    let reopened = Engine::from_file(format::decode(&saved)?)?;
+    assert_eq!(reopened.document(), engine.document());
+    assert_eq!(
+        effective(&reopened, r1, f.capacitance)?.value,
+        Some(FieldValue::Quantity {
+            si: "0.00001".parse()?,
+            display_unit: Some("µF".into())
+        })
+    );
+    let instance = reopened
+        .project()
+        .instance(r1)
+        .ok_or_else(|| Error::NotFound("R1".into()))?;
+    let shown = crate::instances::value_text(&reopened.project().library, instance)?;
+    assert_eq!(shown.as_deref(), Some("4.7 kΩ 10 µF ±0.1% true"));
     Ok(())
 }
 
@@ -921,7 +966,7 @@ fn publication_checks_field_kind_and_selection_rules() -> Result<()> {
     duplicate.push(select(f.count));
     let mut bad_default = selections(&f);
     bad_default[0].default = Some(FieldValue::Quantity {
-        si: -1.0,
+        si: dec(-1.0),
         display_unit: None,
     });
     for (fields, code) in [

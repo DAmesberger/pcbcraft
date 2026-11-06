@@ -14,13 +14,16 @@ const OHMS: QuantityKindRef = QuantityKindRef {
 
 fn quantity(si: f64) -> FieldValue {
     FieldValue::Quantity {
-        si,
+        si: dec(si),
         display_unit: None,
     }
 }
 
 fn tolerance(minus: f64, plus: f64) -> FieldValue {
-    FieldValue::Tolerance { minus, plus }
+    FieldValue::Tolerance {
+        minus: dec(minus),
+        plus: dec(plus),
+    }
 }
 
 fn requirement(value: FieldValue, value_type: ValueType) -> Requirement {
@@ -174,22 +177,22 @@ fn a_rated_range_meets_a_requirement_it_covers() {
     let range = ValueType::Range { kind: VOLTS };
     let need = requirement(
         FieldValue::Range {
-            min: -20.0,
-            max: 85.0,
+            min: dec(-20.0),
+            max: dec(85.0),
         },
         range,
     );
     let wide = spec(
         FieldValue::Range {
-            min: -40.0,
-            max: 125.0,
+            min: dec(-40.0),
+            max: dec(125.0),
         },
         SpecMeaning::MinimumRating,
     );
     let narrow = spec(
         FieldValue::Range {
-            min: -10.0,
-            max: 125.0,
+            min: dec(-10.0),
+            max: dec(125.0),
         },
         SpecMeaning::MinimumRating,
     );
@@ -226,4 +229,10 @@ fn other_lineages_unfit_meanings_and_other_readings_are_reported() {
     assert!(!SpecMeaning::MinimumRating.fits(&ValueType::Boolean));
     assert!(!SpecMeaning::ExactNominal.fits(&RELATIVE));
     assert!(SpecMeaning::MaximumTolerance.fits(&RELATIVE));
+}
+
+/// An exact decimal from a finite fixture literal.
+#[allow(clippy::expect_used)]
+pub fn dec(value: f64) -> crate::quantity::Decimal {
+    crate::quantity::Decimal::from_f64(value).expect("a finite literal")
 }

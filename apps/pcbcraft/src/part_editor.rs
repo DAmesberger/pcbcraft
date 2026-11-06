@@ -2729,7 +2729,7 @@ mod draft_tests {
             });
         assert!(matches!(
             committed.and_then(|f| f.default),
-            Some(FieldValue::Quantity { si, .. }) if (si - 10_000.0).abs() < 1e-9
+            Some(FieldValue::Quantity { si, .. }) if si.to_f64() == 10_000.0
         ));
         engine.undo()?;
         editor.commit(&ctx, &engine);
@@ -3018,7 +3018,7 @@ mod draft_tests {
             .and_then(|f| f.default.clone());
         assert!(matches!(
             default,
-            Some(FieldValue::Quantity { si, .. }) if (si - 10_000.0).abs() < 1e-9
+            Some(FieldValue::Quantity { si, .. }) if si.to_f64() == 10_000.0
         ));
         Ok(())
     }

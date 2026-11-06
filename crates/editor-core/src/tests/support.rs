@@ -884,3 +884,9 @@ pub fn show_demo_pin_numbers(engine: &mut Engine) -> Result<()> {
     )?;
     Ok(())
 }
+
+/// An exact decimal from a finite fixture literal.
+#[allow(clippy::expect_used)]
+pub fn dec(value: f64) -> crate::quantity::Decimal {
+    crate::quantity::Decimal::from_f64(value).expect("a finite literal")
+}

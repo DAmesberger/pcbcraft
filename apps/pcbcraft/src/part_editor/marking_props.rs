@@ -307,7 +307,7 @@ fn preview_inputs(
         };
         let text = fields::display(value, &view.field.definition.value_type, view.kind_body());
         let si = match value {
-            FieldValue::Quantity { si, .. } => Some(*si),
+            FieldValue::Quantity { si, .. } => Some(si.to_f64()),
             _ => None,
         };
         inputs.fields.insert(selection.field.id, (text, si));
@@ -1379,7 +1379,7 @@ mod tests {
             .clone();
         for selection in &mut component.definition.fields {
             selection.default = Some(FieldValue::Quantity {
-                si: 10_000.0,
+                si: pcbcraft_core::quantity::Decimal::from_f64(10_000.0)?,
                 display_unit: None,
             });
         }
