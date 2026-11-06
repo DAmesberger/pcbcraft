@@ -6,14 +6,15 @@ use crate::functions::rules::RuleFailureKind;
 use crate::functions::{Direction, Requirement, Resolution};
 use crate::ids::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, Endpoint, FootprintRef,
-    Id, PackageRef, Revision, SymbolRef, UnitId,
+    Id, PackageRef, Revision, SymbolRef, TerminalId, UnitId,
 };
 use crate::instances::{self, UnitState};
 use crate::library::{self, Draft, Drafts, Grid, Library};
-use crate::model::Project;
+use crate::model::{Project, WireEnd};
 use crate::nets;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 mod purchasing;
 pub use purchasing::{
@@ -127,6 +128,15 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
         });
     }
     let functions = instances::function_resolution(&project.library, item)?;
+    // Terminals of this instance a wire ends on.
+    let wired: BTreeSet<TerminalId> = project
+        .wires
+        .iter()
+        .flat_map(|w| [w.from, w.to])
+        .filter_map(WireEnd::terminal)
+        .filter(|e| e.instance == id)
+        .map(|e| e.terminal)
+        .collect();
     for terminal in &resolved.component.definition.terminals {
         let endpoint = Endpoint {
             instance: id,
@@ -138,6 +148,21 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
                 "instance.terminal_unaccounted",
                 format!(
                     "{} terminal ‘{}’ is neither connected nor marked no-connect.",
+                    item.designator, terminal.name
+                ),
+                object,
+                Stage::ElectricallyResolved,
+            ));
+        } else if item.no_connect.contains(&terminal.id)
+            && (wired.contains(&terminal.id)
+                || project
+                    .net_of(endpoint)
+                    .is_some_and(|net| net.terminals.len() >= 2))
+        {
+            findings.push(Finding::blocking(
+                "instance.no_connect_connected",
+                format!(
+                    "{} terminal ‘{}’ is marked no-connect but is connected.",
                     item.designator, terminal.name
                 ),
                 object,

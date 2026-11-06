@@ -610,23 +610,34 @@ impl PartEditor {
             flow.refusal = Some(message);
             flow.sent = None;
         }
-        if let Some(sent) = flow.sent
-            && engine.revision() != sent
-        {
-            let rows = flow.plan.as_ref().map_or(0, |(d, _)| d.pins.len());
-            self.pins.table.paste = None;
-            self.pins.table.filter = Filter::Unreviewed;
-            self.tell(
-                Level::Ok,
-                format!("Imported {rows} pin rows; confirm each under Unreviewed"),
-            );
-            return None;
-        }
         let rows = flow.rows();
         let (document, problems) = match &rows {
             Ok(rows) => pins_table::document(rows, &flow.mapping, &device, &variant),
             Err(_) => (None, Vec::new()),
         };
+        if let Some(sent) = flow.sent
+            && engine.revision() != sent
+        {
+            let rows = flow.plan.as_ref().map_or(0, |(d, _)| {
+                d.pins
+                    .iter()
+                    .filter(|p| !flow.rejected.contains(&p.row))
+                    .count()
+            });
+            let summary = pins_table::problem_summary(&problems);
+            let (level, problems) = if summary.is_empty() {
+                (Level::Ok, String::new())
+            } else {
+                (Level::Warning, format!("; {summary}"))
+            };
+            self.pins.table.paste = None;
+            self.pins.table.filter = Filter::Unreviewed;
+            self.tell(
+                level,
+                format!("Imported {rows} pin rows{problems}; confirm each under Unreviewed"),
+            );
+            return None;
+        }
         if flow
             .plan
             .as_ref()
@@ -1381,13 +1392,20 @@ fn paste_body(
     if let Some(first) = document.and_then(|d| d.pins.first()) {
         kit::value_row(ui, "First pin", &pin_summary(first));
     }
+    let summary = pins_table::problem_summary(problems);
+    if !summary.is_empty() {
+        kit::status(ui, &summary, kit::Tone::Note);
+    }
     for problem in problems.iter().take(kit::LIST_MAX_ROWS) {
         kit::status(ui, &problem.message, kit::Tone::Dim);
     }
     if problems.len() > kit::LIST_MAX_ROWS {
         kit::note(
             ui,
-            &format!("{} more rows left out", problems.len() - kit::LIST_MAX_ROWS),
+            &format!(
+                "{} more rows with problems",
+                problems.len() - kit::LIST_MAX_ROWS
+            ),
         );
     }
     let Some((document, plan)) = &flow.plan else {

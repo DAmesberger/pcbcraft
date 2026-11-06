@@ -582,13 +582,21 @@ fn paste_document_maps_type_mux_and_gpio_columns() -> TestResult {
     let (document, problems) = pins_table::document(&rows, &mapping, "EXM", "QFN-48");
     let document = document.ok_or("no document")?;
     let messages: Vec<&str> = problems.iter().map(|p| p.message.as_str()).collect();
-    assert_eq!(document.pins.len(), 3, "{messages:?}");
+    // PA10 is left out (half a GPIO); PB0's unknown type imports flagged.
+    assert_eq!(document.pins.len(), 4, "{messages:?}");
     assert!(
         messages
             .iter()
             .any(|m| m.contains("GPIO port or index without the other"))
     );
-    assert!(messages.iter().any(|m| m.contains("pin type is not")));
+    assert!(messages.iter().any(|m| m.contains("‘bogus’ is not known")));
+    let pb0 = &document.pins[3];
+    assert!(pb0.uncertain);
+    assert_eq!(pb0.functions[0].direction, Direction::Passive);
+    assert_eq!(
+        pins_table::problem_summary(&problems),
+        "1 pin needs a type: row 6; 1 row left out: row 5"
+    );
     let vdd = &document.pins[0];
     assert_eq!(vdd.functions.len(), 1);
     assert_eq!(vdd.functions[0].label, "VDD");
@@ -700,4 +708,167 @@ fn speeds_are_split_as_data() {
         speed_values(" low, high ,,very_high"),
         vec!["low".to_owned(), "high".into(), "very_high".into()]
     );
+}
+
+/// Common pin type spellings map, ignoring case, spacing, `-` and `_`.
+#[test]
+fn pin_type_synonyms_map() {
+    use pcbcraft_core::functions::{Direction as D, Drive, SignalKind as S};
+    use pins_table::PinType as T;
+    let power_in = T::Electrical(D::PowerInput, S::Power, Drive::None);
+    let power_out = T::Electrical(D::PowerOutput, S::Power, Drive::None);
+    let input = T::Electrical(D::Input, S::Digital, Drive::None);
+    let output = T::Electrical(D::Output, S::Digital, Drive::PushPull);
+    let io = T::Electrical(D::Bidirectional, S::Digital, Drive::PushPull);
+    let open_drain = T::Electrical(D::Output, S::Digital, Drive::OpenDrain);
+    let passive = T::Electrical(D::Passive, S::Unspecified, Drive::None);
+    let table: &[(&str, T)] = &[
+        ("power input", power_in),
+        ("Power In", power_in),
+        ("power_input", power_in),
+        ("pwr", power_in),
+        ("supply", power_in),
+        ("power", power_in),
+        ("ground", power_in),
+        ("GND", power_in),
+        ("power output", power_out),
+        ("Power-Out", power_out),
+        ("input", input),
+        ("in", input),
+        ("output", output),
+        ("OUT", output),
+        ("bidirectional", io),
+        ("bidir", io),
+        ("I/O", io),
+        ("io", io),
+        ("open drain", open_drain),
+        ("Open-Drain", open_drain),
+        ("open collector", open_drain),
+        ("passive", passive),
+        ("analog", T::Analog),
+        ("nc", T::DeviceNc),
+        ("NC", T::DeviceNc),
+        ("no connect", T::DeviceNc),
+        ("No-Connect", T::DeviceNc),
+        ("reserved", T::Reserved),
+        ("", T::Unstated),
+    ];
+    for (text, expected) in table {
+        assert_eq!(pins_table::pin_type(text), Some(*expected), "{text:?}");
+    }
+    assert_eq!(pins_table::pin_type("power-ish"), None);
+}
+
+fn mapping_of(columns: Vec<ColumnMap>) -> Mapping {
+    Mapping {
+        columns,
+        source_title: "Datasheet".into(),
+        ..Mapping::default()
+    }
+}
+
+/// The run's LDO table: five rows with "power input" and "power output"
+/// import five pins, power rows as power, and nothing is left out.
+#[test]
+fn ldo_paste_imports_every_row() -> TestResult {
+    use pcbcraft_core::functions::Direction;
+    use pcbcraft_core::library::pinout::PinoutClass;
+    let rows = pins_table::split_table(
+        "Pin\tName\tType\n1\tVIN\tpower input\n2\tGND\tground\n3\tEN\tinput\n4\tNC\tnc\n5\tVOUT\tpower output\n",
+        Delimiter::Auto,
+    )?;
+    let mapping = mapping_of(vec![ColumnMap::Number, ColumnMap::Name, ColumnMap::Type]);
+    let (document, problems) = pins_table::document(&rows, &mapping, "LDO", "SOT-23-5");
+    let document = document.ok_or("no document")?;
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(document.pins.len(), 5);
+    let direction = |i: usize| document.pins[i].functions.first().map(|f| f.direction);
+    assert_eq!(direction(0), Some(Direction::PowerInput));
+    assert_eq!(direction(2), Some(Direction::Input));
+    assert_eq!(document.pins[3].class, PinoutClass::DeviceNc);
+    assert_eq!(direction(4), Some(Direction::PowerOutput));
+    Ok(())
+}
+
+/// An unknown type never drops a row: it imports as passive, flagged
+/// uncertain, and the preview and toast name it by row.
+#[test]
+fn unknown_pin_types_import_flagged_not_dropped() -> TestResult {
+    let rows = pins_table::split_table(
+        "Pin;Name;Type\n1;VIN;power input\n2;X;weird\n3;Y;\n4;Z;mystery\n",
+        Delimiter::Auto,
+    )?;
+    let mapping = mapping_of(vec![ColumnMap::Number, ColumnMap::Name, ColumnMap::Type]);
+    let (document, problems) = pins_table::document(&rows, &mapping, "U", "SOIC-8");
+    let document = document.ok_or("no document")?;
+    assert_eq!(document.pins.len(), 4, "{problems:?}");
+    let flagged: Vec<&str> = document
+        .pins
+        .iter()
+        .filter(|p| p.uncertain)
+        .map(|p| p.name.as_str())
+        .collect();
+    assert_eq!(flagged, ["X", "Z"]);
+    assert!(problems.iter().all(|p| p.kept));
+    assert_eq!(
+        pins_table::problem_summary(&problems),
+        "2 pins need a type: rows 3, 5"
+    );
+    Ok(())
+}
+
+/// A plain MCU table previews without a single `function.combination`
+/// finding: untyped and I/O signals default to push-pull, power rows stay
+/// undriven, and a stated open-drain pin keeps its drive.
+#[test]
+fn mcu_paste_has_no_combination_findings() -> TestResult {
+    use pcbcraft_core::library::pinout::PinoutTarget;
+    let rows = pins_table::split_table(
+        "Pin\tName\tType\tFunction\n\
+         1\tPA05\t\tPA05\n2\tPA08\t\tPA08\n3\tPA09\tI/O\tPA09\n4\tPA14\toutput\tPA14\n\
+         5\tSDA\topen drain\tSDA\n6\tRESET\tinput\tRESET\n7\tVDD\tpower\t\n8\tGND\tgnd\t\n",
+        Delimiter::Auto,
+    )?;
+    let mapping = mapping_of(vec![
+        ColumnMap::Number,
+        ColumnMap::Name,
+        ColumnMap::Type,
+        ColumnMap::Function,
+    ]);
+    let (document, problems) = pins_table::document(&rows, &mapping, "MCU", "SOIC-8");
+    let document = document.ok_or("no document")?;
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(document.pins.len(), 8);
+    let engine = Engine::default();
+    let combination = |document: &pcbcraft_core::library::pinout::PinoutDocument| {
+        let plan = match engine.query(pcbcraft_core::Query::PinoutPreview {
+            target: PinoutTarget::New {
+                name: "MCU".into(),
+                row: None,
+            },
+            document: Box::new(document.clone()),
+        }) {
+            Ok(pcbcraft_core::QueryResult::PinoutPlan(plan)) => plan,
+            other => return Err(format!("unexpected {other:?}")),
+        };
+        Ok(plan
+            .findings
+            .iter()
+            .filter(|f| f.code == "function.combination")
+            .map(|f| f.message.clone())
+            .collect::<Vec<_>>())
+    };
+    let found = combination(&document)?;
+    assert!(found.is_empty(), "{found:?}");
+    // The check runs on the plan, and its row leads with the pin name.
+    let mut undriven = document.clone();
+    let pa05 = undriven.pins[0]
+        .functions
+        .first_mut()
+        .ok_or("no function")?;
+    pa05.drive = pcbcraft_core::functions::Drive::None;
+    let found = combination(&undriven)?;
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("PA05: function ‘PA05’"), "{found:?}");
+    Ok(())
 }

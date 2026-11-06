@@ -235,7 +235,7 @@ Command handlers in `commands` orchestrate: they look up, clone a candidate, cal
 
 | Rule | Owner | Called from |
 | --- | --- | --- |
-| Choices offered by the pinned component; unit IDs exist in the resolved representation; `Placed` and `Unused` exclusive; no-connect only on `Electrical` terminals; every wire endpoint's owning unit placed, `Electrical` and not project no-connect (so no-connect and wiring exclude each other); field values valid (slice 2); selections structurally valid and conflict-free, including availability in the chosen binding (slice 3) | `instances::check_instance(&Project, InstanceId)` | Every `instances::*` edit, `schematic::{connect, place_units}`, `layout::set_physical`, `updates::candidate`, `validate::project` |
+| Choices offered by the pinned component; unit IDs exist in the resolved representation; `Placed` and `Unused` exclusive; no-connect only on `Electrical` terminals; every wire endpoint's owning unit placed and `Electrical` (a wired project no-connect terminal is the completeness error `instance.no_connect_connected`, not a refusal); field values valid (slice 2); selections structurally valid and conflict-free, including availability in the chosen binding (slice 3) | `instances::check_instance(&Project, InstanceId)` | Every `instances::*` edit, `schematic::{connect, place_units}`, `layout::set_physical`, `updates::candidate`, `validate::project` |
 | Designators unique case-insensitively and well formed | `instances::check_designators(&Project)` | `instances::{place, set_designator}`, `validate::project` |
 | Unplacing a unit: direct only when no wire touches its terminals; consequential removes and lists those wires | `schematic::unplace_unit(&mut Project, occurrence, EditPolicy)` | `SchematicCommand::UnplaceUnit` with `Direct` or (through `Change::Schematic`) `Consequential`; dropped units in a component-revision update |
 | Creating a symbol occurrence within `MAX_OCCURRENCES` | `instances::add_occurrence` (unchecked constructor), composed by `schematic::place_units` and `instances::place`, which then check the instance | `SchematicCommand::PlaceUnit`, `component.place`, `RegroupAction::PlaceUnit` |
@@ -316,13 +316,13 @@ The spec's proposed `component.new` is served by `library.new_draft` with a comp
 | `instance.set_designator` | `InstanceCommand` | `{ instance, designator }` | `None` | Unique case-insensitively; 1–64 bytes, no whitespace or control characters. |
 | `instance.set_value` | `InstanceCommand` | `{ instance, value }` | `None` | Slice 1 only; removed in slice 2. |
 | `instance.set_unit_unused` | `InstanceCommand` | `{ instance, unit, unused }` | `None` | Rejected while the unit is placed. Never changes no-connect markers. |
-| `instance.set_no_connect` | `InstanceCommand` | `{ instance, terminals: Vec<TerminalId>, no_connect }` (1–256) | `None` | Project decision. Rejected for wired terminals by `instances::check_instance`. |
+| `instance.set_no_connect` | `InstanceCommand` | `{ instance, terminals: Vec<TerminalId>, no_connect }` (1–256) | `None` | Project decision. Accepted on a wired terminal; completeness then reports `instance.no_connect_connected`. |
 | `instance.set_physical` | `InstanceCommand` | `{ instance, choice: Option<PhysicalChoice> }` | `None` | `updates::stage(SetPhysical, Direct)`: direct only when the instance has no board placement. Otherwise use `Change::Instance`. |
 | `symbol.place_unit` | `SchematicCommand` | `{ instance, unit, position }` | `UnitPlaced` | Rejected if the unit is already placed or marked unused. |
 | `symbol.move_unit` | `SchematicCommand` | `{ occurrence, position }` | `None` | Presentation only. |
 | `symbol.orient_unit` | `SchematicCommand` | `{ occurrence, rotation: "r0"\|"r90"\|"r180"\|"r270", mirror: bool }` | `None` | Sets the occurrence's orientation about its origin: reflect across the unit's local x-axis if `mirror`, then turn counter-clockwise. Presentation only; wires reference terminals, so their ends follow the pins. One undo step; an unknown occurrence is `not_found` and changes nothing. A left-to-right flip on the sheet is `schematic::mirrored_on_sheet` (rotation 180° − r, mirror toggled). |
 | `symbol.unplace_unit` | `SchematicCommand` | `{ occurrence }` | `None` | Direct only when no wire touches the unit's terminals. Otherwise `conflict`, directing the caller to `Change::Schematic`. |
-| `schematic.connect`, `schematic.disconnect`, `schematic.net_rename` | `SchematicCommand` | Unchanged | `None` | Both endpoint units must be placed; device-NC and project no-connect terminals cannot be wired (`instances::check_instance`). |
+| `schematic.connect`, `schematic.disconnect`, `schematic.net_rename` | `SchematicCommand` | Unchanged | `None` | Both endpoint units must be placed; device-NC terminals cannot be wired (`instances::check_instance`). Wiring a project no-connect terminal is accepted and reported as `instance.no_connect_connected`. |
 | `layout.*` | `LayoutCommand` | Unchanged | `None` | `layout.sync` places only board-placeable instances, staged beside the board (`layout::staging`). A placement requires a resolvable physical choice. |
 | `project.preview_update` / `project.apply_update` | `Update` | `Change::{ComponentRevision { instances, target, resolutions }, Instance { edit: InstanceChange }, Schematic { command: SchematicCommand }, SyncPcb {}}` | `UpdatePlan` / `None` | `InstanceChange` is `Remove { instance }` or `SetPhysical { instance, choice }`, staged with `EditPolicy::Consequential`. `Change::Schematic` stages a schematic command the same way (for example, unplacing a wired unit). Plans list removed wires, affected nets and placements, and conflicting tracks, using the existing plan fields. |
 | `component.inspect` | `Query::InspectInstance` | `{ instance }` | `InstanceReport` | Exact pins and resolved choices; per-unit `Placed { occurrence }`/`Unplaced`/`Unused`; `occurrences`, `board_placements` (0 or 1), `bom_quantity` (always 1 per instance); completeness states and findings. |
@@ -413,7 +413,7 @@ The command and both queries are typed in core and reach CLI `stdio` and MCP thr
 **Electrical invariants:**
 
 - Every terminal of every instance has exactly one net, whatever its unit's state. This is unchanged from today.
-- A wire endpoint's owning unit must be placed. A wire endpoint must not be project no-connect or device NC (`instances::check_instance`).
+- A wire endpoint's owning unit must be placed. A wire endpoint must not be device NC (`instances::check_instance`). A wired project no-connect terminal is the blocking completeness finding `instance.no_connect_connected`.
 - `schematic::pin_position` is the terminal's pin connection end in its owning unit, mapped by `schematic::occurrence_transform` (the occurrence position).
 - `layout::pads` resolves the binding and footprint through `instances::resolve`. A placement exists only for a resolvable physical choice.
 
@@ -991,7 +991,7 @@ Expected values are hand-derived from the synthetic fixtures above. Tests drive 
 - **Wiring rules:**
   - A device-NC terminal cannot be wired.
   - A project no-connect cannot be set on device-NC.
-  - A wired terminal cannot be marked no-connect, and a no-connect terminal cannot be wired; both are rejected with the same `instances::check_instance` diagnostic.
+  - A wired terminal may be marked no-connect, and a no-connect terminal may be wired; either way completeness reports `instance.no_connect_connected` ("no-connect pin is connected"), which blocks electrical resolution.
 - **ERC baseline:** passive-only nets produce no findings. An unresolved terminal gives `erc.unchecked_terminal`.
 - **Persistence:** save/reopen preserves arrays, IDs and selections. The JSON schema exposes the structured function arrays.
 

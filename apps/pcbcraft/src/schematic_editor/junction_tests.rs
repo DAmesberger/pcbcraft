@@ -764,3 +764,141 @@ fn the_wire_hints_are_not_cut_short() -> TestResult {
     assert!(whole, "{hint}");
     Ok(())
 }
+
+/// Two crossing line segments centred on `p`: the no-connect cross.
+fn crossed(shapes: &[egui::Shape], p: Pos2) -> bool {
+    shapes
+        .iter()
+        .filter(|s| {
+            matches!(s, egui::Shape::LineSegment { points: [a, b], .. }
+                if (a.x - b.x).abs() > 1.0 && (a.y - b.y).abs() > 1.0
+                    && pos2((a.x + b.x) * 0.5, (a.y + b.y) * 0.5).distance(p) < 0.5)
+        })
+        .count()
+        == 2
+}
+
+/// e2e UX run 2 finding 1: N arms the No connect tool, which the palette
+/// finds by "no connect", "nc" and "unused". A click on an open pin marks
+/// it (a cross), a second click clears it, each one undo step; a wired pin
+/// is refused with a reason; a click on a symbol marks all its open pins.
+#[test]
+fn no_connect_tool_toggles_pins_with_one_undo_step_each() -> TestResult {
+    let registry = crate::commands::Registry::standard();
+    let active = crate::commands::active_contexts(crate::commands::Context::Schematic);
+    let command = registry
+        .resolve(crate::commands::Chord::key(egui::Key::N), &active)
+        .ok_or("N is unbound")?;
+    assert_eq!(command.id, "schematic.no-connect");
+    for query in ["no connect", "nc", "unused", "no-connect"] {
+        let first = registry
+            .search(query, &[], &active)
+            .first()
+            .map(|c| c.id.clone());
+        assert_eq!(first.as_deref(), Some("schematic.no-connect"), "{query}");
+    }
+    let (mut engine, [r90, _, r92, r93], _) = engine()?;
+    let pin = |engine: &Engine, e| schematic::pin_position(engine.project(), e).ok_or("pin");
+    let at = pin(&engine, ep(r92, 2))?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = centred(at, 12.0);
+    editor.on_tool("no-connect", &engine);
+    assert_eq!(editor.tool, Tool::NoConnect);
+    assert_eq!(editor.header(&engine).title, "No connect");
+    let ribbon = editor.ribbon(&engine);
+    let create = ribbon
+        .groups
+        .iter()
+        .find(|g| g.label == "Create")
+        .ok_or("Create")?;
+    assert!(
+        create
+            .tools
+            .iter()
+            .any(|t| t.id == "no-connect" && t.selected)
+    );
+
+    let marked = |engine: &Engine| {
+        engine
+            .project()
+            .instance(r92)
+            .is_some_and(|i| i.no_connect.contains(&pcbcraft_core::TerminalId(2)))
+    };
+    let target = screen(&editor, at);
+    let operation = click(&mut editor, &engine, &ctx, target).ok_or("nothing marked")?;
+    assert!(matches!(
+        &operation,
+        Operation::Instance(InstanceCommand::SetNoConnect { instance, terminals, no_connect: true })
+            if *instance == r92 && *terminals == [pcbcraft_core::TerminalId(2)]
+    ));
+    let unmarked = engine.document().clone();
+    engine.apply(engine.revision(), operation)?;
+    assert!(marked(&engine));
+    let (shapes, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(crossed(&shapes, target), "no cross drawn");
+    // A second click clears the mark; one undo restores it, another
+    // removes it.
+    let operation = click(&mut editor, &engine, &ctx, target).ok_or("nothing cleared")?;
+    engine.apply(engine.revision(), operation)?;
+    assert!(!marked(&engine));
+    engine.undo()?;
+    assert!(marked(&engine));
+    engine.undo()?;
+    assert_eq!(engine.document(), &unmarked);
+
+    // A wired pin is refused with a reason, and nothing is sent.
+    crate::kit::toast::take_posted(&ctx);
+    let wired = pin(&engine, ep(r90, 2))?;
+    let mut near_wire = centred(wired, 12.0);
+    near_wire.on_tool("no-connect", &engine);
+    let wired_at = screen(&near_wire, wired);
+    assert!(click(&mut near_wire, &engine, &ctx, wired_at).is_none());
+    let posted = crate::kit::toast::take_posted(&ctx);
+    assert!(
+        posted.iter().any(|p| p.text == no_connect::WIRED),
+        "{:?}",
+        posted.iter().map(|p| &p.text).collect::<Vec<_>>()
+    );
+
+    // A click on R93's body marks both its open pins at once.
+    let body = engine
+        .project()
+        .occurrences
+        .iter()
+        .find(|o| o.instance == r93)
+        .map(|o| o.position)
+        .ok_or("R93")?;
+    let mut symbol = centred(body, 12.0);
+    symbol.on_tool("no-connect", &engine);
+    let body_at = screen(&symbol, body);
+    let operation = click(&mut symbol, &engine, &ctx, body_at).ok_or("no body mark")?;
+    assert!(matches!(
+        &operation,
+        Operation::Instance(InstanceCommand::SetNoConnect { instance, terminals, no_connect: true })
+            if *instance == r93 && terminals.len() == 2
+    ));
+    // Far from any symbol: nothing, and the toast says what to click.
+    let empty = [body[0], body[1] + 20.0];
+    let empty_at = screen(&symbol, empty);
+    assert!(click(&mut symbol, &engine, &ctx, empty_at).is_none());
+    let posted = crate::kit::toast::take_posted(&ctx);
+    assert!(
+        posted.iter().any(|p| p.text == no_connect::MISS),
+        "{:?}",
+        posted.iter().map(|p| &p.text).collect::<Vec<_>>()
+    );
+    for text in [
+        no_connect::HINT,
+        no_connect::MISS,
+        no_connect::WIRED,
+        no_connect::NEEDS_NONE,
+        no_connect::ALL_DECIDED,
+    ] {
+        assert!(
+            pcbcraft_core::issues::style::check(text).is_empty(),
+            "{text}"
+        );
+    }
+    Ok(())
+}

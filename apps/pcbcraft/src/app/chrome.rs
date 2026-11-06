@@ -505,8 +505,18 @@ impl App {
     fn fix(&mut self, ctx: &egui::Context, fix: issues::Fix) {
         use issues::{Fix, FixDialog};
         match fix {
-            Fix::Apply { operation, .. } => {
+            Fix::Apply {
+                operation, done, ..
+            } => {
+                let before = self.engine.revision();
                 self.apply(ctx, crate::refusal::Origin::Command, Some(*operation));
+                if self.engine.revision() != before {
+                    self.say_with(
+                        crate::kit::severity::Level::Ok,
+                        done,
+                        vec![crate::kit::toast::ToastAction::Undo],
+                    );
+                }
             }
             Fix::Open { dialog, .. } => match dialog {
                 FixDialog::UpdatePcb => {

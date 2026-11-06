@@ -1288,6 +1288,16 @@ fn defaults() -> Vec<Command> {
         .icon("point")
         .keywords("dot join connect crossing"),
         tool(
+            "schematic.no-connect",
+            "No connect",
+            C::Schematic,
+            Workspace::Schematic,
+            "no-connect",
+        )
+        .chord(Chord::key(K::N))
+        .icon("close")
+        .keywords("nc no-connect unused unconnected not connected cross pin"),
+        tool(
             "schematic.rotate",
             "Rotate symbol",
             C::Schematic,
