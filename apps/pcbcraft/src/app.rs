@@ -93,9 +93,12 @@ pub struct App {
     settings_window: settings_window::SettingsWindow,
     /// Hold ⌘ for key badges, tap ⌥ for key tips.
     reveal: key_reveal::KeyReveal,
-    /// The macOS app menu, whose Quit asks about unsaved work.
+    /// The macOS menu bar, built from the registry (`crate::menu_bar`).
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
+    /// Commands chosen in the menu bar, run in the next update.
+    #[cfg(target_os = "macos")]
+    menu_runs: Vec<String>,
 }
 
 impl App {
@@ -156,7 +159,18 @@ impl App {
         crate::keys::publish(&cc.egui_ctx, &registry);
         quit_through_registry(&cc.egui_ctx);
         #[cfg(target_os = "macos")]
-        let native_menu = match crate::native_menu::NativeMenu::new(&cc.egui_ctx, &registry) {
+        let native_menu = match crate::native_menu::NativeMenu::new(
+            &cc.egui_ctx,
+            &crate::menu_bar::Now {
+                registry: &registry,
+                active: &crate::commands::active_contexts(crate::commands::Context::PcbLayout),
+                typing: false,
+                recording: false,
+                browser_shown: true,
+                issues_shown: false,
+                available: &|_| true,
+            },
+        ) {
             Ok(menu) => Some(menu),
             Err(error) => {
                 messages.push(
@@ -204,6 +218,8 @@ impl App {
             reveal: Default::default(),
             #[cfg(target_os = "macos")]
             native_menu,
+            #[cfg(target_os = "macos")]
+            menu_runs: Vec::new(),
         })
     }
 
@@ -1022,17 +1038,40 @@ impl App {
         }
     }
 
-    /// The app menu's commands (Quit), run as the registry's.
+    /// The menu bar's commands chosen since the last frame, run as the
+    /// registry's (after a focused field commits, as for a key), and the
+    /// menu's states brought up to date.
     fn native_menu(&mut self, ctx: &egui::Context) {
         #[cfg(target_os = "macos")]
-        if let Some(mut menu) = self.native_menu.take() {
-            for id in menu.take_commands(&self.registry) {
-                self.run_command(ctx, id);
+        {
+            for id in std::mem::take(&mut self.menu_runs) {
+                if let Some(id) = command_dispatch::route(ctx, &mut self.after_commit, id) {
+                    self.run_command(ctx, &id);
+                }
             }
-            self.native_menu = Some(menu);
+            if let Some(mut menu) = self.native_menu.take() {
+                self.menu_now(ctx, |now| menu.update(now));
+                self.native_menu = Some(menu);
+            }
         }
         #[cfg(not(target_os = "macos"))]
         let _ = ctx;
+    }
+
+    /// What the menus depend on now.
+    fn menu_now<R>(&self, ctx: &egui::Context, f: impl FnOnce(&crate::menu_bar::Now) -> R) -> R {
+        let active = self.active_contexts();
+        let available =
+            |command: &crate::commands::Command| self.availability(command, &[]).is_ok();
+        f(&crate::menu_bar::Now {
+            registry: &self.registry,
+            active: &active,
+            typing: ctx.egui_wants_keyboard_input(),
+            recording: self.settings_window.is_recording(),
+            browser_shown: self.browser_visible,
+            issues_shown: self.issues.expanded(),
+            available: &available,
+        })
     }
 }
 
@@ -1101,6 +1140,26 @@ impl eframe::App for App {
         if self.open_timing.pending() {
             ctx.request_repaint();
         }
+    }
+
+    /// Items chosen in the macOS menu bar, before egui reads this frame's
+    /// input: a field's own keys join the input; commands wait for `ui`,
+    /// and a press of the same key is dropped, so it runs once.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        #[cfg(target_os = "macos")]
+        if let Some(mut menu) = self.native_menu.take() {
+            let choices = self.menu_now(ctx, |now| menu.take(now));
+            self.native_menu = Some(menu);
+            for choice in choices {
+                crate::menu_bar::deliver(choice, &self.registry, raw, &mut self.menu_runs, || {
+                    arboard::Clipboard::new()
+                        .and_then(|mut clipboard| clipboard.get_text())
+                        .ok()
+                });
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = (ctx, raw);
     }
 
     /// The app ends without asking only when the system ends it (Dock ›

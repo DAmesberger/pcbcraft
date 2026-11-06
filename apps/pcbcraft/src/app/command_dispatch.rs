@@ -116,6 +116,19 @@ impl AfterCommit {
     }
 }
 
+/// A command chosen in a menu: over a focused field it is held until the
+/// field committed (as for its key, see `App::dispatch_keys`); otherwise
+/// it is returned to run now.
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn route(ctx: &egui::Context, held: &mut AfterCommit, id: String) -> Option<String> {
+    if ctx.egui_wants_keyboard_input() {
+        held.hold(ctx, id);
+        None
+    } else {
+        Some(id)
+    }
+}
+
 impl App {
     /// The keyboard contexts in force, most specific first.
     pub(super) fn active_contexts(&self) -> Vec<Context> {
@@ -138,7 +151,11 @@ impl App {
 
     /// Whether `command` can run now; `Err` says why not. `ribbons` are
     /// the workspaces' ribbon states, built once per frame by the caller.
-    fn availability(&self, command: &Command, ribbons: &[RibbonState]) -> Result<(), String> {
+    pub(super) fn availability(
+        &self,
+        command: &Command,
+        ribbons: &[RibbonState],
+    ) -> Result<(), String> {
         match command.action {
             Action::Key => Err("Press the key in its tool".to_owned()),
             Action::App(app) => match app {
@@ -258,7 +275,9 @@ impl App {
             }
             AppCommand::View3d(view) => self.view_3d(view),
             // The same request as the window's close button.
-            AppCommand::Quit => self.files.request(file_ui::Action::Close),
+            AppCommand::Quit | AppCommand::CloseWindow => {
+                self.files.request(file_ui::Action::Close)
+            }
         }
     }
 

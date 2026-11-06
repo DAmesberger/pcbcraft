@@ -3,7 +3,8 @@
 Every keyboard shortcut in the desktop app resolves through one registry (`apps/pcbcraft/src/commands.rs`). Each entry has an id, a title, a [shortcut context](../GLOSSARY.md), an optional default key and an action. The registry feeds these surfaces:
 
 - **Command palette.** ⌘P / Ctrl+P, or ⇧⌘P / Ctrl+Shift+P. It searches by title, keywords, context and id, and shows each command's key and context. With an empty query, recent commands come first and a line names the key reveal. ↑↓ skip unavailable rows, Enter runs, Esc closes. An unavailable command is dimmed, and its second line says why.
-- **Keyboard shortcuts sheet.** ⌘/ / Ctrl+/, or open it from the File menu. Its first line names the key reveal. It lists every key, grouped by context, with the contexts in force listed first. The sheet has a filter.
+- **Menus.** The macOS menu bar and the in-window File menu show each item's key and run its command (below, under Menus).
+- **Keyboard shortcuts sheet.** ⌘/ / Ctrl+/, or open it from the File menu or Help. Its first line names the key reveal. It lists every key, grouped by context, with the contexts in force listed first. The sheet has a filter.
 - **Tooltips and cards.** Ribbon buttons show their key, as in "Route (R)", in the same layout as Solidcraft's ribbon tooltip: the name, a key cap and the help line. App bar buttons show their key too. Tool cards (Route, Tune, Fill, symbol and footprint tools) list their keys from the registry.
 - **The key reveal.** Hold ⌘ for key badges, or tap ⌥ for ribbon key tips (below).
 - **The key dispatcher.** Each key runs the command it names in the active contexts.
@@ -23,7 +24,7 @@ A command runs the same event as its ribbon button, so document changes still go
 
 Key handling that matches raw events instead of calling these methods is not caught. Examples are the model nudge arrows, the model library grid and the 3D view's arrow keys. These are navigation and placement gestures, not commands.
 
-A focused text field keeps plain keys and its own ⌘Z, ⇧⌘Z and ⌘B. An open menu also keeps plain keys. A test (`the_default_keymap_has_no_conflicts`) rejects two commands that share a key where both could apply. A tool mode (Wire, Route, Fill, Tune, Board shape) may take a key from the contexts around it only when `commands::SHADOWS` lists it. Each entry names the mode, the key and the command it shadows, and a second test (`every_shadow_is_used`) rejects stale entries. The board shape sketch replaces the Layout keys entirely and keeps the global ones.
+A focused text field keeps plain keys and its own ⌘Z, ⇧⌘Z and clipboard keys (⌘X, ⌘C, ⌘V, ⌘A: `edit.cut`, `edit.copy`, `edit.paste` and `edit.select-all`, listed so the Edit menu shows them). The dispatcher also leaves it ⌘B; on macOS the View menu's ⌘B toggles the Browser over a field too. An open menu also keeps plain keys. A test (`the_default_keymap_has_no_conflicts`) rejects two commands that share a key where both could apply. A tool mode (Wire, Route, Fill, Tune, Board shape) may take a key from the contexts around it only when `commands::SHADOWS` lists it. Each entry names the mode, the key and the command it shadows, and a second test (`every_shadow_is_used`) rejects stale entries. The board shape sketch replaces the Layout keys entirely and keeps the global ones.
 
 While the Route tool is armed, its keys shadow these:
 
@@ -36,7 +37,30 @@ While the Route tool is armed, its keys shadow these:
 
 While the schematic's Wire tool is armed, F flips the elbow instead of fitting the view, and Esc ends the wire in progress before it cancels the tool. R, Route's own key, has no meaning inside Route mode and arms Route again. While the Tune tool is armed, F flips the meander's side instead of fitting the view. The Fill tool's Esc drops its outline first. The board shape's F is Fillet.
 
-**Quit** (`app.quit`, ⌘Q) is a registry command like the others, so it can be rebound. It makes the same request as the window's close button: unsaved work asks Save, Don't Save or Cancel first. egui's built-in quit key, which closed the window without asking, is turned off. On macOS the app menu (`native_menu.rs`, built with muda as in Solidcraft) replaces winit's default menu, whose Quit ended the app at once. Its Quit item runs `app.quit` and shows the command's effective key. The menu has no other key equivalents, so every other key still reaches the dispatcher.
+**Quit** (`app.quit`, ⌘Q) is a registry command like the others, so it can be rebound. It makes the same request as the window's close button: unsaved work asks Save, Don't Save or Cancel first. Close Window (`window.close`, ⌘W) makes the same request, since Pcbcraft has one window. egui's built-in quit key, which closed the window without asking, is turned off. Dock › Quit and logout still end the app without a prompt, keeping unsaved work for recovery.
+
+## Menus
+
+On macOS the menu bar (`native_menu.rs`, built with muda as in Solidcraft) replaces winit's default menu, whose Quit ended the app at once. Its items are listed in `menu_bar.rs`:
+
+| Menu | Items |
+|---|---|
+| Pcbcraft | About · Settings… ⌘, · Services · Hide, Hide Others, Show All · Quit ⌘Q |
+| File | New Project ⌘N · Open… ⌘O · Save ⌘S · Save As… ⇧⌘S · Export to Solidcraft… ⇧⌘E · Export Schematic PDF… · Library Sources… · Close Window ⌘W |
+| Edit | Undo ⌘Z · Redo ⇧⌘Z · Cut ⌘X · Copy ⌘C · Paste ⌘V · Delete · Select All ⌘A |
+| View | Component ⌘1 · Schematic ⌘2 · PCB ⌘3 · Switch Layout and 3D · Fit View · Show/Hide Browser ⌘B · Show/Hide Issues ⇧⌘I · Command Palette… ⌘P |
+| Window | Minimize, Zoom, Enter Full Screen · Messages… ⇧⌘M · Bring All to Front |
+| Help | Keyboard Shortcuts ⌘/ |
+
+Each item runs a registry command, and its key equivalent is that command's effective key. A rebinding moves it. An item is disabled while its command cannot run (Save while a file operation runs, Undo with nothing to undo). AppKit gives a key equivalent to the menu before the window, so these keys reach the app once, through the menu, also while a text field has the keyboard. A command chosen over a focused field waits until the field commits, as for its key. If a press of the same key also reaches egui in that frame, it is dropped.
+
+Some keys stay with egui:
+
+- An item takes its key only when the key is a ⌘ chord that the registry resolves to the item's command where the user is. A plain key (F for Fit View, Delete) is not a key equivalent, because the system menu would take it from text fields. A tool mode that takes a ⌘ chord for itself keeps it.
+- While Settings › Keyboard records a key, no item takes one.
+- Undo and Redo over a focused field, and Cut, Copy, Paste and Select All, are the field's own. The menu hands the field its input: ⌘Z, egui's copy or cut event, the clipboard's text, or ⌘A. The clipboard items are disabled when no field is focused, because the canvas has no clipboard yet. Delete hands the active canvas the key of its delete command (`pcb.delete`, `schematic.delete`, `footprint.delete` or `shape.delete`). None of these keys is one the dispatcher runs, so nothing runs twice.
+
+The in-window **File** menu is drawn like Solidcraft's: Solidcraft's menu rows with icon, label and key, separators between groups and no prose. It lists the File items, then Settings…, Keyboard shortcuts…, Messages… and Quit. Each row runs its registry command and is enabled when the command can run. The Browser and palette are on the application bar.
 
 Chords are named as in Solidcraft's keymap (`Ctrl+Shift+S`, where Ctrl is ⌘ on macOS). macOS shows ⌃⌥⇧⌘ glyphs, and other platforms show `Ctrl+Alt+Shift+K`. ⌘ below means Ctrl on Windows and Linux, and ⌥ means Alt.
 
@@ -89,7 +113,7 @@ The keymap is original. Letters are mnemonic where they can be: R route, V via, 
 
 | Context | Keys |
 | --- | --- |
-| Everywhere | ⌘P / ⇧⌘P palette · ⌘/ shortcuts · ⌘, settings · ⌘Q quit · ⌘N new · ⌘O open · ⌘S save · ⇧⌘S save as · ⇧⌘E export to Solidcraft · ⌘Z undo · ⇧⌘Z redo · ⌘B Browser · ⇧⌘I Issues · ⇧⌘M Messages · ⌘1 / ⌘2 / ⌘3 Component / Schematic / PCB · ⇧⌘U update PCB from schematic (opens PCB) · F fit view |
+| Everywhere | ⌘P / ⇧⌘P palette · ⌘/ shortcuts · ⌘, settings · ⌘Q quit · ⌘W close window · ⌘N new · ⌘O open · ⌘S save · ⇧⌘S save as · ⇧⌘E export to Solidcraft · ⌘Z undo · ⇧⌘Z redo · ⌘B Browser · ⇧⌘I Issues · ⇧⌘M Messages · ⌘1 / ⌘2 / ⌘3 Component / Schematic / PCB · ⇧⌘U update PCB from schematic (opens PCB) · F fit view |
 | Component | ⇧⌘N new component · ⇧⌘O open component · ⌘[ / ⌘] previous / next component |
 | Symbol tab | L line · ⇧L polyline · R rectangle · C circle · A arc · ⇧P polygon · ⇧T text · ⇧F field · N pin · ⌘R rotate · ⇧X mirror · ⌘D duplicate · Delete or Backspace · ⇧R repeat tool · Enter finish · Esc cancel |
 | Footprint tab | N pad · ⇧N pad row · H drill · ⇧H slot · L / A / C / R draw · D dimension · X construction ↔ silkscreen · Space turn pad · ⇧R repeat · Delete or Backspace · Esc |

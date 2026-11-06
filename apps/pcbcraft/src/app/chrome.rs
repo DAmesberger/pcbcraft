@@ -219,92 +219,23 @@ impl App {
         }
     }
 
+    /// The in-window File menu, as Solidcraft's: plain rows with their
+    /// keys, groups apart. Each row runs its registry command, as the menu
+    /// bar and the key do.
     fn file_menu(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let file = ui_kit::button(ui, "File", Button::Ghost);
-        let enabled = !self.files.busy();
+        let rows = self.menu_now(&ctx, |now| {
+            crate::menu_bar::rows(now, crate::menu_bar::IN_WINDOW_FILE)
+        });
+        let mut chosen = None;
         Container::new(&ctx, Surface::Popup)
             .menu(&file)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-            .show(|ui| {
-                kit::form(ui, |ui| {
-                    for (label, action, command) in [
-                        ("New project", Action::New, AppCommand::New),
-                        ("Open…", Action::Open, AppCommand::Open),
-                        ("Save", Action::Save, AppCommand::Save),
-                        ("Save as…", Action::SaveAs, AppCommand::SaveAs),
-                        ("Export to Solidcraft…", Action::Export, AppCommand::Export),
-                        (
-                            "Export schematic PDF…",
-                            Action::ExportSchematicPdf,
-                            AppCommand::ExportSchematicPdf,
-                        ),
-                    ] {
-                        let key = self.with_shortcut(label, command);
-                        if ui_kit::button(ui, label, Button::Enabled(enabled))
-                            .on_hover_text(key)
-                            .clicked()
-                        {
-                            self.files.request(action);
-                        }
-                    }
-                    kit::note(
-                        ui,
-                        "Export writes a native, parametric .solidcraft model of the board.",
-                    );
-                    kit::rule(ui);
-                    if ui_kit::button(ui, "Library sources…", Button::Normal)
-                        .on_hover_text("Add, rescan, turn on or off and remove library folders")
-                        .clicked()
-                    {
-                        self.sources.open_card();
-                    }
-                    let label = if self.browser_visible {
-                        "Hide Browser"
-                    } else {
-                        "Show Browser"
-                    };
-                    let key = self.with_shortcut(label, AppCommand::ToggleBrowser);
-                    if ui_kit::button(ui, label, Button::Normal)
-                        .on_hover_text(key)
-                        .clicked()
-                    {
-                        self.toggle_browser();
-                    }
-                    if ui_kit::button(ui, "Messages…", Button::Normal)
-                        .on_hover_text("Every message of this session, with the full text")
-                        .clicked()
-                    {
-                        self.messages_open = true;
-                    }
-                    kit::rule(ui);
-                    let key = self.with_shortcut("Find and run any command", AppCommand::Palette);
-                    if ui_kit::button(ui, "Command palette…", Button::Normal)
-                        .on_hover_text(key)
-                        .clicked()
-                    {
-                        self.palette.open();
-                    }
-                    let key = self.with_shortcut(
-                        "Every shortcut, grouped by where it applies",
-                        AppCommand::Shortcuts,
-                    );
-                    if ui_kit::button(ui, "Keyboard shortcuts…", Button::Normal)
-                        .on_hover_text(key)
-                        .clicked()
-                    {
-                        self.shortcut_sheet.open();
-                    }
-                    let key =
-                        self.with_shortcut("Change keys and the key reveal", AppCommand::Settings);
-                    if ui_kit::button(ui, "Settings…", Button::Normal)
-                        .on_hover_text(key)
-                        .clicked()
-                    {
-                        self.settings_window.open();
-                    }
-                });
-            });
+            .show(|ui| chosen = crate::menu_bar::show_rows(ui, &rows));
+        if let Some(id) = chosen {
+            self.run_command(&ctx, id);
+        }
     }
 
     pub(super) fn ribbon(&mut self, ui: &mut egui::Ui) {

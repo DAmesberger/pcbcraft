@@ -324,3 +324,126 @@ fn command_s_over_a_field_commits_the_field_then_saves() {
     f.frame(vec![key(egui::Key::Num2, egui::Modifiers::COMMAND)]);
     assert_eq!(f.ran.len(), 2);
 }
+
+/// Precision run finding 5: ⌘S chosen through the menu bar (its key
+/// equivalent, taken by the system menu before egui sees a key) over a
+/// focused card field. The field commits first, then Save runs once; the
+/// same key's press, had it reached egui too, is dropped, so the
+/// dispatcher does not save a second time.
+#[test]
+fn command_s_through_the_menu_commits_the_field_then_saves_once() -> Result<(), String> {
+    use crate::menu_bar::{self, Choice, Now};
+    let mut f = FieldFrame {
+        ctx: egui::Context::default(),
+        registry: Registry::standard(),
+        text: "10k".to_owned(),
+        committed: Vec::new(),
+        held: AfterCommit::default(),
+        ran: Vec::new(),
+    };
+    let mut text = f.text.clone();
+    run(&f.ctx, Default::default(), |ui| {
+        ui.add(egui::TextEdit::singleline(&mut text).id_salt("value"))
+            .request_focus();
+    });
+    f.frame(vec![egui::Event::Text("0".into())]);
+    assert_eq!(f.text, "10k0");
+    assert!(f.ctx.egui_wants_keyboard_input());
+    // The menu's ⌘S, as `App::raw_input_hook` delivers it.
+    let active = crate::commands::active_contexts(Context::PcbLayout);
+    let now = Now {
+        registry: &f.registry,
+        active: &active,
+        typing: f.ctx.egui_wants_keyboard_input(),
+        recording: false,
+        browser_shown: true,
+        issues_shown: false,
+        available: &|_| true,
+    };
+    let save = menu_bar::FILE
+        .iter()
+        .copied()
+        .find(|e| matches!(e, menu_bar::Entry::Command("file.save", _)))
+        .ok_or("no Save item")?;
+    let choice = menu_bar::choose(&now, save);
+    assert_eq!(choice, Choice::Run("file.save".into()));
+    let mut raw = egui::RawInput {
+        events: vec![key(egui::Key::S, egui::Modifiers::COMMAND)],
+        ..Default::default()
+    };
+    let mut runs = Vec::new();
+    menu_bar::deliver(choice, &f.registry, &mut raw, &mut runs, || None);
+    assert!(raw.events.is_empty(), "the key press is dropped");
+    // As `App::native_menu` runs it, after this frame's dispatcher.
+    f.frame(raw.events);
+    assert!(f.ran.is_empty(), "the dispatcher saw no ⌘S");
+    for id in runs {
+        if let Some(id) = route(&f.ctx, &mut f.held, id) {
+            f.ran.push((id, f.committed.clone()));
+        }
+    }
+    assert!(f.ran.is_empty(), "held while the field has the keyboard");
+    f.frame(vec![]);
+    f.frame(vec![]);
+    assert_eq!(f.committed, vec!["10k0".to_owned()]);
+    assert_eq!(
+        f.ran,
+        vec![("file.save".to_owned(), vec!["10k0".to_owned()])],
+        "saved once, after the commit"
+    );
+    // With no field focused, the menu's command runs at once.
+    assert_eq!(
+        route(&f.ctx, &mut f.held, "file.save".into()),
+        Some("file.save".to_owned())
+    );
+    Ok(())
+}
+
+/// A key the menu hands back to egui (Undo or Redo over a field, the
+/// clipboard keys, Delete) is never one the dispatcher runs: the field or
+/// canvas acts on it, and only once.
+#[test]
+fn keys_the_menu_hands_back_are_not_dispatched() {
+    use crate::menu_bar::{self, BAR, Choice, Now};
+    let registry = Registry::standard();
+    let mut handed = 0;
+    for context in [Context::PcbLayout, Context::Schematic, Context::Footprint] {
+        let active = crate::commands::active_contexts(context);
+        for typing in [false, true] {
+            let now = Now {
+                registry: &registry,
+                active: &active,
+                typing,
+                recording: false,
+                browser_shown: true,
+                issues_shown: false,
+                available: &|_| true,
+            };
+            for entry in BAR.iter().flat_map(|(_, e)| e.iter()).copied() {
+                let Choice::Inject(events) = menu_bar::choose(&now, entry) else {
+                    continue;
+                };
+                for event in events {
+                    let egui::Event::Key { key, modifiers, .. } = event else {
+                        continue;
+                    };
+                    handed += 1;
+                    let chord = Chord {
+                        key,
+                        command: modifiers.command,
+                        shift: modifiers.shift,
+                        alt: modifiers.alt,
+                    };
+                    if let Some(command) = registry.resolve(chord, &active) {
+                        assert!(
+                            !dispatchable(command, chord, typing, false),
+                            "{context:?} {entry:?}: {} would run twice",
+                            command.id
+                        );
+                    }
+                }
+            }
+        }
+    }
+    assert!(handed >= 9, "Undo, Redo, Select All and Delete: {handed}");
+}
