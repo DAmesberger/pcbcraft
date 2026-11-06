@@ -145,6 +145,12 @@ impl UpdatePreview {
         self.focus.clear();
     }
 
+    /// Cancel, as the panel's button does.
+    #[cfg(test)]
+    pub fn cancel(&mut self) {
+        self.close(Closed::Cancelled);
+    }
+
     /// How the last review closed, once.
     pub fn take_closed(&mut self) -> Option<Closed> {
         self.closed.take()
@@ -415,6 +421,9 @@ fn title(change: &Change, project: &Project) -> String {
         Change::Schematic {
             command: SchematicCommand::Disconnect { .. },
         } => "Disconnect wire".into(),
+        Change::Schematic {
+            command: SchematicCommand::RemoveLabel { .. },
+        } => "Remove label".into(),
         Change::Schematic { .. } => "Change schematic".into(),
     }
 }
@@ -444,6 +453,9 @@ pub(crate) fn applied_line(plan: &UpdatePlan) -> String {
         Change::Schematic {
             command: SchematicCommand::Disconnect { .. },
         } => "Disconnected the wire",
+        Change::Schematic {
+            command: SchematicCommand::RemoveLabel { .. },
+        } => "Removed the label",
         Change::Schematic { .. } => "Changed the schematic",
     };
     let summary = summary_of(plan);

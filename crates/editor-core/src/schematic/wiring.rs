@@ -761,7 +761,9 @@ fn join_touching(project: &mut Project) -> Result<()> {
 
 /// A free end on a connection point attaches to it; one on another wire's
 /// path, away from that wire's ends, attaches to a new junction there,
-/// which [`join_touching`] then splits that wire at (a T).
+/// which [`join_touching`] then splits that wire at (a T). One on a label's
+/// drawing attaches to the label (see [`label_under`]), keeping the point
+/// it reached as a corner.
 fn attach_free_ends(project: &mut Project) -> Result<()> {
     let free = |w: &Wire| matches!(w.from, WireEnd::Free(_)) || matches!(w.to, WireEnd::Free(_));
     if !project.wires.iter().any(free) {
@@ -793,6 +795,8 @@ fn attach_free_ends(project: &mut Project) -> Result<()> {
         .collect();
     // Junctions made here, so a second end at the same point shares one.
     let mut made: Vec<(SheetId, Point, WireEnd)> = Vec::new();
+    // Each sheet's label drawings, laid out when an end first needs them.
+    let mut drawings = LabelDrawings::new();
     for i in 0..project.wires.len() {
         for side in 0..2 {
             let (sheet, end) = match project.wires.get(i) {
@@ -833,16 +837,67 @@ fn attach_free_ends(project: &mut Project) -> Result<()> {
                     }
                 }
             };
-            if let (Some(to), Some(w)) = (found, project.wires.get_mut(i)) {
+            let reached = match found {
+                Some(_) => None,
+                None => label_under(project, &mut drawings, sheet, p),
+            };
+            let Some(to) = found.or(reached) else {
+                continue;
+            };
+            let Some(w) = project.wires.get(i) else {
+                continue;
+            };
+            let other = if side == 0 { w.to } else { w.from };
+            if reached.is_some() && (other == to || w.corners.len() >= MAX_CORNERS) {
+                continue;
+            }
+            let mut w = w.clone();
+            if side == 0 {
+                w.from = to;
+            } else {
+                w.to = to;
+            }
+            if reached.is_some() {
+                let corner = Corner { at: p };
                 if side == 0 {
-                    w.from = to;
+                    w.corners.insert(0, corner);
                 } else {
-                    w.to = to;
+                    w.corners.push(corner);
                 }
+                simplify(project, &mut w);
+            }
+            if let Some(slot) = project.wires.get_mut(i) {
+                *slot = w;
             }
         }
     }
     Ok(())
+}
+
+/// Each sheet's label drawings, by label.
+type LabelDrawings = BTreeMap<SheetId, Vec<(Id, super::scene::Drawing)>>;
+
+/// The end a wire takes for landing at `p` on a label's drawing, whose
+/// connection point may be away from it (a port on a pin stands off on a
+/// leader): the pin of a label placing itself, which leaves the label there,
+/// else the label. Text does not count; it is not a line a wire can touch.
+fn label_under(
+    project: &Project,
+    drawings: &mut LabelDrawings,
+    sheet: SheetId,
+    p: Point,
+) -> Option<WireEnd> {
+    let on_sheet = drawings
+        .entry(sheet)
+        .or_insert_with(|| super::scene::sheet_labels(project, sheet));
+    let (id, _) = on_sheet
+        .iter()
+        .find(|(_, d)| d.on_strokes(p, JUNCTION_TOLERANCE_MM))?;
+    let label = project.label(*id)?;
+    Some(match super::labels::attached_pin(project, label) {
+        Some(pin) => WireEnd::Terminal(pin),
+        None => WireEnd::label(*id),
+    })
 }
 
 /// Join wires `a` and `b` where both end at `at` (drawn at `point`): one

@@ -120,10 +120,15 @@ impl Drawing {
         self.texts
             .iter()
             .any(|t| t.bounds(m).inflated(tol).contains(p))
-            || self.strokes.iter().any(|s| {
-                s.shape.coarse_bounds(s.width).inflated(tol).contains(p)
-                    && s.shape.distance(p, s.filled) <= tol + s.width / 2.0
-            })
+            || self.on_strokes(p, tol)
+    }
+
+    /// Whether `p` lies on a stroke of the drawing, not counting its text.
+    pub fn on_strokes(&self, p: Point, tol: f64) -> bool {
+        self.strokes.iter().any(|s| {
+            s.shape.coarse_bounds(s.width).inflated(tol).contains(p)
+                && s.shape.distance(p, s.filled) <= tol + s.width / 2.0
+        })
     }
 }
 

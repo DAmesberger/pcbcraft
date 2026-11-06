@@ -324,10 +324,7 @@ impl SchematicEditor {
                 None
             }
             Act::RotateItem => self.rotated_item(project),
-            Act::RemoveItem(item) => {
-                self.item = None;
-                Some(sheet_ui::removed(item))
-            }
+            Act::RemoveItem(item) => self.remove_item(engine, item),
             Act::Paste(at) => self.paste_at(engine, Some(at)),
         }
     }
