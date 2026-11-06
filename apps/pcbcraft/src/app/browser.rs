@@ -1,7 +1,8 @@
 //! The project Browser: one tree over the whole design. Rows come from the
 //! project and drafts; clicking a row opens its workspace and selects it
-//! there. The tree reads state only; the app applies the returned
-//! [`Pick`] through the editors.
+//! there. A component row only selects on a click; a double-click opens it
+//! for editing (as Solidcraft's Browser does). The tree reads state only;
+//! the app applies the returned [`Pick`] through the editors.
 use crate::issues::{Badge, Badges};
 use crate::kit::{self, Row};
 use pcbcraft_core::catalog::{MAX_QUERY, MAX_RESULTS, UpdateAvailable};
@@ -26,7 +27,10 @@ pub struct Lit {
 /// A row the user picked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
+    /// Select a component row; the workspace stays and nothing is drafted.
     Component(DefinitionId),
+    /// Open a component in the Component workspace for editing.
+    EditComponent(DefinitionId),
     Instance(Id),
     Net(Id),
     Placement(Id),
@@ -242,6 +246,16 @@ fn issue_mark(badge: Option<&Badge>, tip: &str) -> (Option<kit::severity::Level>
     }
 }
 
+/// A click on a component (or one of its Parts) selects it; a
+/// double-click opens it for editing.
+fn component_pick(response: &kit::RowResponse, id: DefinitionId) -> Option<Pick> {
+    if response.double {
+        Some(Pick::EditComponent(id))
+    } else {
+        response.clicked.then_some(Pick::Component(id))
+    }
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     engine: &Engine,
@@ -372,8 +386,8 @@ pub fn show(
                     ..Default::default()
                 },
             );
-            if response.clicked {
-                pick = Some(Pick::Component(component.id));
+            if let Some(row) = component_pick(&response, component.id) {
+                pick = Some(row);
             }
             // The component's manufacturer Parts, opened in its Parts editor.
             for part in project.library.latest_parts() {
@@ -394,8 +408,8 @@ pub fn show(
                         ..Default::default()
                     },
                 );
-                if response.clicked {
-                    pick = Some(Pick::Component(component.id));
+                if let Some(row) = component_pick(&response, component.id) {
+                    pick = Some(row);
                 }
             }
         }
@@ -896,5 +910,61 @@ mod tests {
         let shown = frame(&ctx, &engine, vec![]);
         assert!(shown.iter().any(|t| t == "24"), "{shown:?}");
         Ok(())
+    }
+
+    /// Precision run finding 3, as in Solidcraft's Browser: a click on a
+    /// component row selects it; only a double-click opens it for editing.
+    #[test]
+    fn a_click_selects_a_component_and_a_double_click_edits_it() {
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let id = DefinitionId(7);
+        let at = egui::pos2(60.0, 12.0);
+        let mut picks = Vec::new();
+        let mut time = 0.0;
+        let mut row = |events: Vec<egui::Event>, picks: &mut Vec<Option<Pick>>| {
+            time += 0.05;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(300.0, 200.0),
+                    )),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let response = kit::tree_row(
+                        ui,
+                        egui::Id::new("component"),
+                        &Row {
+                            label: "Resistor",
+                            ..Default::default()
+                        },
+                    );
+                    picks.push(component_pick(&response, id));
+                },
+            );
+            output.textures_delta.clear();
+        };
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        row(vec![egui::Event::PointerMoved(at)], &mut picks);
+        row(vec![button(true)], &mut picks);
+        row(vec![button(false)], &mut picks);
+        row(vec![button(true)], &mut picks);
+        row(vec![button(false)], &mut picks);
+        let picked: Vec<Pick> = picks.into_iter().flatten().collect();
+        assert_eq!(
+            picked,
+            vec![Pick::Component(id), Pick::EditComponent(id)],
+            "click selects, the second click of a double-click edits"
+        );
     }
 }

@@ -394,10 +394,9 @@ impl FileUi {
             self.document = engine.document().clone();
             self.changed_at = now;
             if self.controller.dirty()
-                && self
-                    .saved_document
-                    .as_ref()
-                    .is_some_and(|saved| same_content(saved, &self.document))
+                && self.saved_document.as_ref().is_some_and(|saved| {
+                    same_content(saved, &self.document) || only_unedited_drafts(saved, engine)
+                })
             {
                 self.controller.back_at_saved();
                 self.clear_recovery(false);
@@ -1051,6 +1050,39 @@ fn proposed_file_name(path: Option<&Path>, project: &str) -> String {
     } else {
         format!("{stem}.pcbcraft")
     }
+}
+
+/// Whether the engine's document differs from `saved` only by drafts opened
+/// for editing and not yet changed: whole component working sets that still
+/// equal their published revisions. Opening a component is not an edit.
+fn only_unedited_drafts(saved: &Document, engine: &Engine) -> bool {
+    use crate::part_editor::WorkingSet;
+    use pcbcraft_core::DefinitionKind;
+    let now = engine.document();
+    let (old, new) = (&saved.drafts, &now.drafts);
+    if !Arc::ptr_eq(&saved.project, &now.project)
+        || old.grid != new.grid
+        || old.symbols != new.symbols
+        || !old.items.iter().all(|d| new.items.contains(d))
+    {
+        return false;
+    }
+    let added: Vec<_> = new
+        .items
+        .iter()
+        .filter(|d| !old.items.contains(d))
+        .collect();
+    let mut covered = std::collections::BTreeSet::new();
+    for draft in added
+        .iter()
+        .filter(|d| d.definition.kind() == DefinitionKind::Component)
+    {
+        match WorkingSet::of(new, draft.id) {
+            Some(set) if !set.unpublished(engine) => covered.extend(set.ids.all()),
+            _ => return false,
+        }
+    }
+    added.iter().all(|d| covered.contains(&d.id))
 }
 
 fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {

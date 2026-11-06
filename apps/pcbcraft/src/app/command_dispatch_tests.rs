@@ -219,3 +219,108 @@ fn command_s_saves_everywhere() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// A card field that commits on focus loss, and the dispatcher after it,
+/// as one app frame runs them.
+struct FieldFrame {
+    ctx: egui::Context,
+    registry: Registry,
+    text: String,
+    committed: Vec<String>,
+    held: AfterCommit,
+    /// Each command run, with the commits made before it.
+    ran: Vec<(String, Vec<String>)>,
+}
+
+impl FieldFrame {
+    fn frame(&mut self, events: Vec<egui::Event>) {
+        let Self {
+            ctx,
+            registry,
+            text,
+            committed,
+            held,
+            ran,
+        } = self;
+        let active = crate::commands::active_contexts(Context::PcbLayout);
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        run(ctx, input, |ui| {
+            let field = ui.add(egui::TextEdit::singleline(text).id_salt("value"));
+            if field.lost_focus() {
+                committed.push(text.clone());
+            }
+            for id in held.take() {
+                ran.push((id, committed.clone()));
+            }
+            let typing = ui.ctx().egui_wants_keyboard_input();
+            for chord in presses(ui.ctx()) {
+                if let Some(command) = registry
+                    .resolve(chord, &active)
+                    .filter(|c| dispatchable(c, chord, typing, false))
+                {
+                    if typing {
+                        held.hold(ui.ctx(), command.id.clone());
+                    } else {
+                        ran.push((command.id.clone(), committed.clone()));
+                    }
+                }
+            }
+        });
+    }
+}
+
+fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+/// Precision run finding 1: ⌘S over a focused card field takes the
+/// keyboard from the field, which commits on that focus loss in the next
+/// frame (as Enter would); the save is held until then, so it saves the
+/// committed edit. A plain letter (R, the Route tool) still types.
+#[test]
+fn command_s_over_a_field_commits_the_field_then_saves() {
+    let mut f = FieldFrame {
+        ctx: egui::Context::default(),
+        registry: Registry::standard(),
+        text: "10k".to_owned(),
+        committed: Vec::new(),
+        held: AfterCommit::default(),
+        ran: Vec::new(),
+    };
+    let mut text = f.text.clone();
+    run(&f.ctx, Default::default(), |ui| {
+        ui.add(egui::TextEdit::singleline(&mut text).id_salt("value"))
+            .request_focus();
+    });
+    f.frame(vec![
+        key(egui::Key::R, egui::Modifiers::NONE),
+        egui::Event::Text("r".into()),
+    ]);
+    assert_eq!(f.text, "10kr", "the letter went to the field");
+    assert!(f.ran.is_empty(), "the Route tool did not arm");
+    assert!(f.ctx.egui_wants_keyboard_input());
+    f.frame(vec![key(egui::Key::S, egui::Modifiers::COMMAND)]);
+    assert!(!f.ctx.egui_wants_keyboard_input(), "the field let go");
+    assert!(f.ran.is_empty() && f.committed.is_empty(), "held");
+    f.frame(vec![]);
+    assert_eq!(f.committed, vec!["10kr".to_owned()]);
+    assert_eq!(
+        f.ran,
+        vec![("file.save".to_owned(), vec!["10kr".to_owned()])],
+        "saved once, after the commit"
+    );
+    f.frame(vec![]);
+    assert_eq!(f.ran.len(), 1, "run once");
+    // ⌘2 with nothing focused switches at once.
+    f.frame(vec![key(egui::Key::Num2, egui::Modifiers::COMMAND)]);
+    assert_eq!(f.ran.len(), 2);
+}

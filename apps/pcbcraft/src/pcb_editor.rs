@@ -1346,6 +1346,23 @@ impl PcbEditor {
         }
     }
 
+    /// Delete or Backspace with the Select tool: the selected track, via or
+    /// fill is deleted by the command its card's Delete button sends, one
+    /// undo step (the engine refuses a locked one). `keys::pressed` never
+    /// takes a plain key from a focused text field.
+    fn delete_key(&self, ui: &Ui, project: &Project) -> Option<Operation> {
+        if self.tool != Tool::Select {
+            return None;
+        }
+        let operation = match self.inspected(project) {
+            Inspected::Track(id) => Operation::Layout(LayoutCommand::DeleteTrack { id }),
+            Inspected::Via(id) => Operation::Layout(LayoutCommand::DeleteVia { id }),
+            Inspected::Fill(id) => Operation::Fill(layout::fill::FillCommand::Delete { id }),
+            _ => return None,
+        };
+        crate::keys::pressed(ui.ctx(), "pcb.delete").then_some(operation)
+    }
+
     /// The two parts of each courtyard-overlap finding, with the side.
     fn courtyard_overlaps(&self) -> Vec<(Id, Id)> {
         self.issues
@@ -1637,6 +1654,9 @@ impl PcbEditor {
                 }
             ),
         );
+        if operation.is_none() {
+            operation = self.delete_key(ui, project);
+        }
         self.pills(ui, rect, project);
         operation
     }
@@ -4069,6 +4089,69 @@ mod tests {
             return Err("Delete track did nothing".into());
         };
         assert_eq!(id, track.id);
+        Ok(())
+    }
+
+    /// Precision run finding 2: Delete and Backspace delete the selected
+    /// track with the Delete track button's command, as one undo step;
+    /// with Route armed, Backspace is Route's own key.
+    #[test]
+    fn delete_and_backspace_delete_the_selected_track() -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = routed_board()?;
+        let track = engine.project().tracks[0].clone();
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let press = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for key in [egui::Key::Delete, egui::Key::Backspace] {
+            let mut editor = PcbEditor::default();
+            editor.set_selection(None, Some(track.id), Some(track.net));
+            canvas_frame(&mut editor, &engine, &ctx, vec![]);
+            let (_, operation) = canvas_frame(&mut editor, &engine, &ctx, vec![press(key)]);
+            assert!(
+                matches!(
+                    operation,
+                    Some(Operation::Layout(LayoutCommand::DeleteTrack { id })) if id == track.id
+                ),
+                "{key:?}"
+            );
+            // Nothing selected: the key does nothing.
+            editor.set_selection(None, None, None);
+            assert!(
+                canvas_frame(&mut editor, &engine, &ctx, vec![press(key)])
+                    .1
+                    .is_none()
+            );
+        }
+        let mut editor = PcbEditor::default();
+        editor.set_selection(None, Some(track.id), Some(track.net));
+        editor.tool = Tool::Route;
+        let (_, operation) = canvas_frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![press(egui::Key::Backspace)],
+        );
+        assert!(
+            !matches!(
+                operation,
+                Some(Operation::Layout(LayoutCommand::DeleteTrack { .. }))
+            ),
+            "Route keeps Backspace"
+        );
+        let before = engine.revision();
+        engine.apply(
+            before,
+            Operation::Layout(LayoutCommand::DeleteTrack { id: track.id }),
+        )?;
+        assert!(engine.project().tracks.iter().all(|t| t.id != track.id));
+        engine.undo()?;
+        assert!(engine.project().tracks.iter().any(|t| t.id == track.id));
         Ok(())
     }
 

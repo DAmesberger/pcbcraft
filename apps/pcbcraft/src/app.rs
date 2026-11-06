@@ -67,6 +67,9 @@ pub struct App {
     browser: chrome::BrowserMode,
     /// Whether the last layout showed the Browser.
     browser_visible: bool,
+    /// The component row selected in the Browser (a click selects it; a
+    /// double-click opens it for editing).
+    browser_component: Option<pcbcraft_core::DefinitionId>,
     /// The Browser's width as last dragged (kept per user in the
     /// settings); the layout clamps it to what the window fits.
     browser_width: f32,
@@ -84,6 +87,8 @@ pub struct App {
     /// Saved key changes that could not be applied (kept in the settings).
     keymap_problems: Vec<crate::keymap::Unapplied>,
     palette: command_palette::CommandPalette,
+    /// ⌘ commands pressed over a focused field, run once it committed.
+    after_commit: command_dispatch::AfterCommit,
     shortcut_sheet: shortcut_sheet::ShortcutSheet,
     settings_window: settings_window::SettingsWindow,
     /// Hold ⌘ for key badges, tap ⌥ for key tips.
@@ -184,6 +189,7 @@ impl App {
             undo_revision: None,
             browser: chrome::BrowserMode::Auto,
             browser_visible: false,
+            browser_component: None,
             browser_width,
             pending_import: None,
             closing: false,
@@ -192,6 +198,7 @@ impl App {
             registry,
             keymap_problems,
             palette: Default::default(),
+            after_commit: Default::default(),
             shortcut_sheet: Default::default(),
             settings_window: Default::default(),
             reveal: Default::default(),
