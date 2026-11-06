@@ -410,6 +410,9 @@ fn title(change: &Change, project: &Project) -> String {
             command: SchematicCommand::Connect { .. },
         } => "Connect pins".into(),
         Change::Schematic {
+            command: SchematicCommand::DrawWire { .. },
+        } => "Draw wire".into(),
+        Change::Schematic {
             command: SchematicCommand::Disconnect { .. },
         } => "Disconnect wire".into(),
         Change::Schematic { .. } => "Change schematic".into(),
@@ -429,6 +432,9 @@ pub(crate) fn applied_line(plan: &UpdatePlan) -> String {
         Change::Schematic {
             command: SchematicCommand::Connect { .. },
         } => "Connected pins",
+        Change::Schematic {
+            command: SchematicCommand::DrawWire { .. },
+        } => "Drew the wire",
         Change::Schematic {
             command: SchematicCommand::Disconnect { .. },
         } => "Disconnected the wire",

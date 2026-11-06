@@ -114,24 +114,43 @@ pub struct SymbolOccurrence {
     pub mirror: bool,
 }
 
-/// A wire between two connection points. It is drawn as the
-/// horizontal-first route `schematic::wire_route` gives. Crossing another
-/// wire never connects; a wire joins another only through a shared
-/// [`Junction`], terminal, label or sheet pin. `schematic::tidy` keeps it
-/// so: a connection point lying on a wire's path splits the wire there.
+/// A wire: one path from its `from` end through its `corners` to its `to`
+/// end, each pair of neighbouring vertices joined by a straight segment.
+/// Crossing another wire never connects, and neither does a corner lying on
+/// one. A wire joins another where an end of one lies on the other
+/// (`schematic::tidy` makes that a [`Junction`]), or through a shared
+/// terminal, label or sheet pin; a connection point lying on a wire's path
+/// splits the wire there.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Wire {
     pub id: Id,
+    /// The sheet it is drawn on. Stored, because a wire with two free ends
+    /// has no object to take its sheet from.
+    #[serde(default, skip_serializing_if = "SheetId::is_first")]
+    pub sheet: SheetId,
     pub from: WireEnd,
     pub to: WireEnd,
+    /// The vertices between its ends, in order from `from`, in sheet
+    /// millimetres; at most `schematic::MAX_CORNERS`. None: one straight
+    /// segment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub corners: Vec<Corner>,
+}
+
+/// An interior vertex of a wire's path: a sharp corner.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Corner {
+    pub at: Point,
 }
 
 /// One end of a wire: an instance terminal, a junction, a label (or power
-/// port) or a sheet pin. A terminal end is written as the terminal itself,
-/// `{"instance", "terminal"}`; a junction end as `{"junction"}`, a label end
-/// as `{"label"}` and a sheet-pin end as `{"sheet_pin"}`. Both ends of a
-/// wire lie on one sheet.
+/// port), a sheet pin, or a free end attached to nothing. A terminal end is
+/// written as the terminal itself, `{"instance", "terminal"}`; a junction
+/// end as `{"junction"}`, a label end as `{"label"}`, a sheet-pin end as
+/// `{"sheet_pin"}` and a free end as `{"free": [x, y]}`. An attached end
+/// lies on its wire's sheet.
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
@@ -141,6 +160,66 @@ pub enum WireEnd {
     Junction(JunctionRef),
     Label(LabelRef),
     SheetPin(SheetPinRef),
+    Free(FreeEnd),
+}
+
+/// A wire end attached to nothing, at a point on its wire's sheet. Written
+/// in millimetres; held in whole nanometres so ends compare exactly and a
+/// [`WireEnd`] stays a map key.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(deny_unknown_fields)]
+pub struct FreeEnd {
+    pub free: ExactPoint,
+}
+
+impl FreeEnd {
+    /// A free end at `p`; `None` off the sheet's range.
+    pub fn new(p: Point) -> Option<Self> {
+        ExactPoint::new(p).map(|free| Self { free })
+    }
+    pub fn point(self) -> Point {
+        self.free.point()
+    }
+}
+
+/// A sheet point in whole nanometres, written as `[x, y]` millimetres.
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(try_from = "Point", into = "Point")]
+#[schemars(with = "Point")]
+pub struct ExactPoint([i64; 2]);
+
+impl ExactPoint {
+    /// `p` to the nearest nanometre; `None` off the sheet's range.
+    pub fn new(p: Point) -> Option<Self> {
+        if !crate::geometry::point_valid(p) {
+            return None;
+        }
+        // Within ±10000 mm, so within ±1e10 nm: it fits.
+        Some(Self([
+            (p[0] * 1e6).round() as i64,
+            (p[1] * 1e6).round() as i64,
+        ]))
+    }
+    pub fn point(self) -> Point {
+        [self.0[0] as f64 / 1e6, self.0[1] as f64 / 1e6]
+    }
+}
+
+impl TryFrom<Point> for ExactPoint {
+    type Error = String;
+    fn try_from(p: Point) -> std::result::Result<Self, String> {
+        Self::new(p).ok_or_else(|| "A free wire end must be finite and within ±10000 mm.".into())
+    }
+}
+
+impl From<ExactPoint> for Point {
+    fn from(p: ExactPoint) -> Point {
+        p.point()
+    }
 }
 
 /// A wire end on a label or power port.
@@ -180,6 +259,17 @@ impl WireEnd {
     pub fn sheet_pin(id: Id) -> Self {
         Self::SheetPin(SheetPinRef { sheet_pin: id })
     }
+    /// A free end at `p`; `None` off the sheet's range.
+    pub fn free(p: Point) -> Option<Self> {
+        FreeEnd::new(p).map(Self::Free)
+    }
+    /// Where a free end is; `None` for an attached end.
+    pub fn free_point(self) -> Option<Point> {
+        match self {
+            Self::Free(f) => Some(f.point()),
+            _ => None,
+        }
+    }
     /// The terminal this end lands on, if it is a terminal end.
     pub fn terminal(self) -> Option<Endpoint> {
         match self {
@@ -214,11 +304,12 @@ impl From<Endpoint> for WireEnd {
 }
 
 /// A connection point on the sheet where wires meet away from a terminal:
-/// made where a wire end lands on another wire's segment, at the bends of
-/// a routed wire, or put on a wire or crossing with `junction.place`. Any
+/// made where a wire end lands on another wire (a T), or put on a wire or
+/// crossing with `junction.place`. Never a bend: bends are corners. Any
 /// wire running over it connects to it. The dot is derived where three or
-/// more conductors meet, and always drawn for a placed junction point. A
-/// junction always has at least two wires.
+/// more conductors meet, and always drawn for a placed junction point.
+/// After `schematic::tidy` an unplaced junction has three or more wire ends
+/// and a placed one at least one.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Junction {

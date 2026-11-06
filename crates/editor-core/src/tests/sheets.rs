@@ -341,8 +341,12 @@ fn a_label_on_a_wire_splits_it_and_removing_it_keeps_the_wires_joined() -> Resul
     run(&mut engine, C::RemoveLabel { label: id })?;
     let project = engine.project();
     assert!(project.labels.is_empty());
-    assert_eq!(project.junctions.len(), 1, "a bend point in its place");
-    assert_eq!(project.wires.len(), 2);
+    // The two halves merge back into one wire. A junction with two wires
+    // used to stay as a bend point; now a bend is a corner, and this one
+    // is in line, so it goes too.
+    assert!(project.junctions.is_empty());
+    assert_eq!(project.wires.len(), 1);
+    assert!(project.wires[0].corners.is_empty());
     assert_eq!(net_of(&engine, ep(u1, 2))?, net_of(&engine, ep(u2, 1))?);
     // The net keeps the name the label gave it.
     assert_eq!(net_name(&engine, ep(u1, 2))?, "MID");

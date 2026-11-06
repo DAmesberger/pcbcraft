@@ -202,6 +202,10 @@ pub enum ObjectRef {
     Sheet {
         sheet: crate::ids::SheetId,
     },
+    /// A schematic wire: its whole path.
+    Wire {
+        id: Id,
+    },
 }
 
 /// A derived completeness state a finding can block. Nothing stores these

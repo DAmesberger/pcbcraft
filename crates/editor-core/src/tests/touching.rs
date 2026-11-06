@@ -72,16 +72,17 @@ fn drawn(engine: &Engine) -> Vec<[[i64; 2]; 2]> {
     let project = engine.project();
     // (vertical?, the fixed coordinate) → spans along the line.
     let mut lines: std::collections::BTreeMap<(bool, i64), Vec<[i64; 2]>> = Default::default();
-    for (a, b) in project
+    for path in project
         .wires
         .iter()
-        .filter_map(|w| schematic::wire_ends(project, w))
+        .filter_map(|w| schematic::wire_path(project, w))
     {
-        let r = schematic::wire_route(a, b);
-        for [p, s] in [[q(r[0]), q(r[1])], [q(r[1]), q(r[2])]] {
+        for leg in path.windows(2) {
+            let (p, s) = (q(leg[0]), q(leg[1]));
             if p == s {
                 continue;
             }
+            assert!(p[0] == s[0] || p[1] == s[1], "a slanted segment");
             let vertical = p[0] == s[0];
             let (fixed, along) = if vertical {
                 (p[0], [p[1].min(s[1]), p[1].max(s[1])])
@@ -171,8 +172,10 @@ fn a_document_with_a_wire_over_pins_connects_them_when_normalised() -> Result<()
     let id = project.allocate()?;
     project.wires.push(crate::model::Wire {
         id,
+        sheet: Default::default(),
         from: ep(j1, 5).into(),
         to: ep(j1, 1).into(),
+        corners: Vec::new(),
     });
     schematic::tidy(&mut project)?;
     crate::nets::reconcile(&mut project)?;
@@ -222,16 +225,20 @@ fn a_new_wire_takes_the_other_l_or_a_dogleg_around_pins_it_does_not_end_on() -> 
     let (u1, _) = place(&mut engine, &resistor, "U1", 1, [0.0, 0.0])?;
     let (u2, _) = place(&mut engine, &resistor, "U2", 1, [40.0, 20.0])?;
     // TP1 sits on the corner of the horizontal-first L from U1.2 (5, 0)
-    // to U2.1 (35, 20): the wire takes the vertical-first L instead, its
-    // corner a junction point between two straight wires.
+    // to U2.1 (35, 20): the wire takes the vertical-first L instead. Its
+    // bend is a corner of the one wire, where it used to be a junction
+    // between two straight wires.
     let (tp1, _) = place(&mut engine, &point, "TP1", 1, [35.0, 0.0])?;
     connect(&mut engine, ep(u1, 2), ep(u2, 1))?;
     assert_eq!(net_of(&engine, ep(u1, 2))?, net_of(&engine, ep(u2, 1))?);
     assert_ne!(net_of(&engine, ep(tp1, 1))?, net_of(&engine, ep(u1, 2))?);
     let project = engine.project();
-    assert_eq!(project.junctions.len(), 1);
-    assert_eq!(project.junctions[0].position, [5.0, 20.0]);
-    assert_eq!(project.wires.len(), 2);
+    assert!(project.junctions.is_empty());
+    assert_eq!(project.wires.len(), 1);
+    assert_eq!(
+        project.wires[0].corners,
+        vec![crate::model::Corner { at: [5.0, 20.0] }]
+    );
     assert!(dots(&engine).is_empty(), "a bend has no dot");
     // With both L corners taken, a three-legged dogleg goes around.
     engine.undo()?;
@@ -241,17 +248,22 @@ fn a_new_wire_takes_the_other_l_or_a_dogleg_around_pins_it_does_not_end_on() -> 
     for tp in [tp1, tp2] {
         assert_ne!(net_of(&engine, ep(tp, 1))?, net_of(&engine, ep(u1, 2))?);
     }
+    // One wire with two corners (it used to be three wires and two
+    // junctions).
     let project = engine.project();
-    assert_eq!(project.junctions.len(), 2);
-    assert_eq!(project.wires.len(), 3);
-    for w in &project.wires {
-        let (a, b) = schematic::wire_ends(project, w).ok_or(Error::NotFound("ends".into()))?;
+    assert!(project.junctions.is_empty());
+    assert_eq!(project.wires.len(), 1);
+    assert_eq!(project.wires[0].corners.len(), 2);
+    let path =
+        schematic::wire_path(project, &project.wires[0]).ok_or(Error::NotFound("path".into()))?;
+    for leg in path.windows(2) {
+        let (a, b) = (leg[0], leg[1]);
         assert!(
             a[0] == b[0] || a[1] == b[1],
             "every leg is straight: {a:?} → {b:?}"
         );
     }
-    // Disconnecting one leg takes the whole run with its bends.
+    // Disconnecting the wire takes the whole path with its corners.
     let leg = project.wires[0].id;
     apply(
         &mut engine,
@@ -380,7 +392,7 @@ fn crossing_wires_join_only_through_a_junction_point_on_the_crossing() -> Result
 }
 
 #[test]
-fn a_junction_point_shows_on_a_lone_wire_and_is_refused_off_wires_and_at_bends() -> Result<()> {
+fn a_junction_point_shows_on_a_lone_wire_and_is_refused_off_wires() -> Result<()> {
     let mut engine = Engine::default();
     let resistor = two_pin(&mut engine)?;
     let (u1, _) = place(&mut engine, &resistor, "U1", 1, [0.0, 0.0])?;
@@ -400,21 +412,28 @@ fn a_junction_point_shows_on_a_lone_wire_and_is_refused_off_wires_and_at_bends()
         assert_eq!(result.err().map(|e| e.code()), Some(code), "{at:?}");
         kept.assert_kept(&engine, "refused junction");
     }
-    // The corner of the L is a bend once a point sits there: not removable.
+    // A point on the L's corner splits the wire there. Removing it used
+    // to be refused, because a bend needed a junction; now the corner
+    // simply stays a corner of the one wire.
     let corner = junction_place(&mut engine, [35.0, 0.0])?;
-    let kept = Snapshot::of(&engine);
-    let result = apply(
+    assert_eq!(dots(&engine), vec![[20.0, 0.0], [35.0, 0.0]]);
+    apply(
         &mut engine,
         Operation::Schematic(SchematicCommand::RemoveJunction { junction: corner }),
-    );
-    assert_eq!(result.err().map(|e| e.code()), Some("conflict"));
-    kept.assert_kept(&engine, "refused removal");
+    )?;
+    assert_eq!(dots(&engine), vec![[20.0, 0.0]]);
     apply(
         &mut engine,
         Operation::Schematic(SchematicCommand::RemoveJunction { junction }),
     )?;
-    // The placed corner point keeps its dot.
-    assert_eq!(dots(&engine), vec![[35.0, 0.0]]);
+    assert!(dots(&engine).is_empty());
+    let project = engine.project();
+    assert!(project.junctions.is_empty());
+    assert_eq!(project.wires.len(), 1);
+    assert_eq!(
+        project.wires[0].corners,
+        vec![crate::model::Corner { at: [35.0, 0.0] }]
+    );
     Ok(())
 }
 

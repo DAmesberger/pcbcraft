@@ -1,12 +1,12 @@
 //! Schematic capture over one or more sheets: symbol occurrences, wires,
 //! junctions, net labels and power ports ([`labels`]), sheets, hierarchical
 //! sheet symbols and sheet furniture ([`sheets`]), and designator
-//! annotation ([`annotate`]). Wire ends reference terminals, junctions,
-//! labels or sheet pins. A connection point that lies on a wire's path
-//! connects to it: every edit is normalised so the stored topology says so
-//! ([`tidy`]). Crossings join nothing without a junction point, new
-//! wires route around points they do not end on, and labels also join by
-//! name (`nets`).
+//! annotation ([`annotate`]). A wire is a path with corners; its ends
+//! reference terminals, junctions, labels or sheet pins, or are free. A
+//! connection point that lies on a wire's path connects to it: every edit
+//! is normalised so the stored topology says so ([`tidy`]). Crossings join
+//! nothing without a junction point, `schematic.connect` routes around
+//! points it does not end on, and labels also join by name (`nets`).
 //! [`placed_unit`] resolves what an occurrence draws, [`definition_unit`]
 //! what a unit being authored draws and [`scene`] everything else a sheet
 //! draws. See docs/schematic-capture.md.
@@ -22,7 +22,7 @@ use crate::library::{
     VAlign,
 };
 use crate::model::{
-    EditPolicy, Junction, LabelKind, Net, Paper, PaperOrientation, PortShape, Project,
+    Corner, EditPolicy, LabelKind, Net, Paper, PaperOrientation, PortShape, Project,
     ProjectProperties, SheetItem, SheetSide, SymbolOccurrence, Wire, WireEnd,
 };
 use crate::nets;
@@ -31,6 +31,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub const MAX_WIRES: usize = 16384;
+/// Corners one wire's path may have.
+pub const MAX_CORNERS: usize = 256;
 
 pub mod annotate;
 pub mod labels;
@@ -40,7 +42,7 @@ mod wiring;
 pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
 pub use wiring::{
     JUNCTION_TOLERANCE_MM, MAX_JUNCTIONS, WirePoint, WireTarget, end_position, end_sheet,
-    junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_route, wire_sheet,
+    junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_path,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -75,11 +77,28 @@ pub enum SchematicCommand {
     /// terminals; otherwise preview it as `Change::Schematic`.
     #[serde(rename = "symbol.unplace_unit")]
     UnplaceUnit { occurrence: Id },
-    /// Draw a wire between two targets: a terminal, a junction, or a point
-    /// on an existing wire, which splits that wire at a new junction. One
-    /// undo step.
+    /// Draw a wire between two targets: a terminal, a junction, a label, a
+    /// sheet pin, or a point on an existing wire, which splits that wire at
+    /// a new junction. The engine picks the path: the horizontal-first L,
+    /// or a detour around points in its way, with its bends as corners.
+    /// One undo step.
     #[serde(rename = "schematic.connect")]
     Connect { from: WireTarget, to: WireTarget },
+    /// Draw a wire along a given path: from `from` through `corners` to
+    /// `to`, each a target or a free end `{"free": [x, y]}`. No corners: one
+    /// straight segment. Connection points it runs over join it, as do
+    /// free ends it meets. One undo step.
+    #[serde(rename = "wire.draw")]
+    DrawWire {
+        /// The sheet of its attached ends; the first sheet when both are
+        /// free and it is omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        from: WireTarget,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        corners: Vec<Corner>,
+        to: WireTarget,
+    },
     #[serde(rename = "schematic.disconnect")]
     Disconnect { wire: Id },
     /// Put a junction point on the wires at `position`: on a wire's path it
@@ -265,6 +284,7 @@ declare_classes!(SchematicCommand {
     OrientUnit "symbol.orient_unit" Edit,
     UnplaceUnit "symbol.unplace_unit" Edit,
     Connect "schematic.connect" Edit,
+    DrawWire "wire.draw" Edit,
     Disconnect "schematic.disconnect" Edit,
     PlaceJunction "junction.place" Edit,
     RemoveJunction "junction.remove" Edit,
@@ -352,6 +372,12 @@ pub fn apply(
         } => none(orient_unit(project, occurrence, rotation, mirror)),
         C::UnplaceUnit { occurrence } => none(unplace_unit(project, occurrence, policy)),
         C::Connect { from, to } => none(connect(project, from, to)),
+        C::DrawWire {
+            sheet,
+            from,
+            corners,
+            to,
+        } => draw_wire(project, sheet, from, corners, to).map(|_| Applied::None),
         C::Disconnect { wire } => none(disconnect(project, wire)),
         C::PlaceJunction { sheet, position } => {
             wiring::place_junction(project, sheet.unwrap_or(first), position).map(Applied::Junction)
@@ -649,6 +675,11 @@ pub fn detach_instance(project: &mut Project, instance: Id, policy: EditPolicy) 
 /// The caller discards the candidate on failure, so a refused connect leaves
 /// no split behind.
 pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Result<()> {
+    if matches!(from, WireTarget::Free(_)) || matches!(to, WireTarget::Free(_)) {
+        return Err(invalid(
+            "schematic.connect joins two connection points; draw a free end with wire.draw.",
+        ));
+    }
     if let (WireTarget::OnWire(a), WireTarget::OnWire(b)) = (&from, &to)
         && a.wire == b.wire
     {
@@ -666,22 +697,18 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
     {
         return Err(conflict("These points are already connected by a wire."));
     }
-    if project.wires.len() >= MAX_WIRES {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 wires.".into(),
-        ));
-    }
-    if let (Some(a), Some(b)) = (end_sheet(project, from), end_sheet(project, to))
-        && a != b
-    {
-        return Err(invalid(
-            "A wire joins two points on one sheet; connect sheets with labels.",
-        ));
-    }
+    let sheet = match (end_sheet(project, from), end_sheet(project, to)) {
+        (Some(a), Some(b)) if a != b => {
+            return Err(invalid(
+                "A wire joins two points on one sheet; connect sheets with labels.",
+            ));
+        }
+        (a, b) => a.or(b).unwrap_or_else(|| project.sheets.first()),
+    };
     // The wire must not run over a connection point it does not end on,
     // which would join that point too: route around it, with each bend a
-    // junction point. A label's first wire to a pin attaches it: the label
-    // then sits on the pin's end and the wire has no length.
+    // corner. A label's first wire to a pin attaches it: the label then
+    // sits on the pin's end and the wire has no length.
     let attaches = |label: WireEnd, pin: WireEnd| {
         label
             .label_id()
@@ -691,45 +718,49 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
             && project.wires_at(label).next().is_none()
     };
     let path = match (
-        end_sheet(project, from),
         wiring::end_position(project, from),
         wiring::end_position(project, to),
     ) {
         _ if attaches(from, to) || attaches(to, from) => Vec::new(),
-        (Some(sheet), Some(a), Some(b)) => wiring::clean_route(project, sheet, a, b, [from, to])?
-            .into_iter()
-            .map(|p| (sheet, p))
-            .collect(),
+        (Some(a), Some(b)) => wiring::clean_route(project, sheet, a, b, [from, to])?,
         _ => Vec::new(),
     };
-    let bends = path.len().saturating_sub(2);
-    if project.wires.len() + bends + 1 > MAX_WIRES
-        || project.junctions.len() + bends > wiring::MAX_JUNCTIONS
-    {
+    let corners = path
+        .get(1..path.len().saturating_sub(1))
+        .unwrap_or_default()
+        .iter()
+        .map(|at| Corner { at: *at })
+        .collect();
+    add_wire(project, sheet, from, corners, to).map(|_| ())
+}
+
+/// Store a new wire, without corners that add nothing, then check the
+/// instances on its terminal ends.
+fn add_wire(
+    project: &mut Project,
+    sheet: SheetId,
+    from: WireEnd,
+    corners: Vec<Corner>,
+    to: WireEnd,
+) -> Result<Id> {
+    if project.wires.len() >= MAX_WIRES {
         return Err(Error::Limit(
-            "This edition supports at most 16384 wires and 16384 junctions.".into(),
+            "This edition supports at most 16384 wires.".into(),
         ));
     }
-    let mut stops = vec![from];
-    for (sheet, position) in path.iter().skip(1).take(bends) {
-        let junction = project.allocate()?;
-        project.junctions.push(Junction {
-            id: junction,
-            sheet: *sheet,
-            position: *position,
-            placed: false,
-        });
-        stops.push(WireEnd::junction(junction));
+    let id = project.allocate()?;
+    let mut wire = Wire {
+        id,
+        sheet,
+        from,
+        to,
+        corners,
+    };
+    wiring::simplify(project, &mut wire);
+    if wire.from == wire.to && wire.corners.is_empty() {
+        return Err(invalid("A wire must connect two different points."));
     }
-    stops.push(to);
-    for leg in stops.windows(2) {
-        let id = project.allocate()?;
-        project.wires.push(Wire {
-            id,
-            from: leg[0],
-            to: leg[1],
-        });
-    }
+    project.wires.push(wire);
     // `check_instance` owns terminal validity: instance, terminal, unit
     // placement and NC/no-connect exclusion.
     for end in [from, to] {
@@ -737,7 +768,50 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
             instances::check_instance(project, endpoint.instance)?;
         }
     }
-    Ok(())
+    Ok(id)
+}
+
+/// Draw a wire along a given path (`wire.draw`). Its sheet is that of its
+/// attached ends, which must agree with `sheet` when given; the first
+/// sheet when every end is free and none is given. A target on a wire's
+/// path splits that wire first; both targets on one wire are refused.
+pub fn draw_wire(
+    project: &mut Project,
+    sheet: Option<SheetId>,
+    from: WireTarget,
+    corners: Vec<Corner>,
+    to: WireTarget,
+) -> Result<Id> {
+    if corners.len() > MAX_CORNERS {
+        return Err(Error::Limit("A wire has at most 256 corners.".into()));
+    }
+    if !corners.iter().all(|c| point_valid(c.at)) {
+        return Err(invalid(
+            "Schematic position must be finite and within ±10000 mm.",
+        ));
+    }
+    if let (WireTarget::OnWire(a), WireTarget::OnWire(b)) = (&from, &to)
+        && a.wire == b.wire
+    {
+        return Err(invalid("A wire cannot join two points of the same wire."));
+    }
+    let from = wiring::resolve(project, from)?;
+    let to = wiring::resolve(project, to)?;
+    let mut sheets = [from, to]
+        .into_iter()
+        .filter_map(|end| end_sheet(project, end))
+        .chain(sheet);
+    let first = sheets.next();
+    if sheets.any(|s| Some(s) != first) {
+        return Err(invalid(
+            "A wire joins points on one sheet; connect sheets with labels.",
+        ));
+    }
+    let sheet = first.unwrap_or_else(|| project.sheets.first());
+    if project.sheet(sheet).is_none() {
+        return Err(not_found("Unknown sheet."));
+    }
+    add_wire(project, sheet, from, corners, to)
 }
 
 pub fn disconnect(project: &mut Project, wire: Id) -> Result<()> {
@@ -1379,9 +1453,7 @@ pub fn sheet_rows(project: &Project) -> Vec<SheetRow> {
     let depths = nets::sheet_depths(project);
     let mut wires: std::collections::BTreeMap<SheetId, usize> = Default::default();
     for wire in &project.wires {
-        if let Some(sheet) = wire_sheet(project, wire) {
-            *wires.entry(sheet).or_default() += 1;
-        }
+        *wires.entry(wire.sheet).or_default() += 1;
     }
     project
         .sheets

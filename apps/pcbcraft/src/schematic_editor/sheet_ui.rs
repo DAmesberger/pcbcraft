@@ -243,7 +243,7 @@ impl SchematicEditor {
         }
         if self.sheet != sheet {
             self.select(None, None, project);
-            self.wire_from = None;
+            self.wire = None;
             self.draw_from = None;
             self.fit_requested = true;
         }
@@ -255,7 +255,7 @@ impl SchematicEditor {
     /// The frame waits for the next canvas frame, whenever Schematic shows.
     pub fn document_opened(&mut self, project: &Project) {
         self.select(None, None, project);
-        self.wire_from = None;
+        self.wire = None;
         self.draw_from = None;
         self.frame_request = None;
         self.sheet = project.sheets.first();
@@ -266,7 +266,7 @@ impl SchematicEditor {
     pub(super) fn switch_sheet(&mut self, sheet: Option<SheetId>, project: &Project) {
         if let Some(sheet) = sheet.filter(|s| project.sheet(*s).is_some()) {
             if self.sheet != sheet {
-                self.wire_from = None;
+                self.wire = None;
                 self.draw_from = None;
             }
             self.sheet = sheet;

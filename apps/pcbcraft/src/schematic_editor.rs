@@ -39,7 +39,10 @@ mod net_card;
 mod no_connect;
 mod sheet_card;
 mod sheet_ui;
+mod wire_tool;
 use sheet_ui::{DrawTool, Item, LabelTool};
+pub use wire_tool::WIRE_KEYS;
+use wire_tool::WireDraft;
 
 /// An edit buffer for one field shown on the symbol: its lineage, label,
 /// the effective text when loaded and the text being typed.
@@ -222,8 +225,10 @@ pub struct SchematicEditor {
     selected_wire: Option<Id>,
     /// Net-name edit buffer for the selected wire's net.
     net_label: Option<(Id, String)>,
-    /// Where the Wire tool's wire starts.
-    wire_from: Option<WireTarget>,
+    /// The wire the Wire tool is drawing.
+    wire: Option<WireDraft>,
+    /// The Wire tool's elbow runs vertical first (F).
+    wire_flipped: bool,
     draft_reference: String,
     draft_fields: Vec<FieldBuffer>,
     draft_position: Point,
@@ -316,7 +321,8 @@ impl Default for SchematicEditor {
             selected_occurrence: None,
             selected_wire: None,
             net_label: None,
-            wire_from: None,
+            wire: None,
+            wire_flipped: false,
             draft_reference: String::new(),
             draft_fields: Vec::new(),
             draft_position: [0.0; 2],
@@ -607,7 +613,7 @@ impl SchematicEditor {
     fn stage_update(&mut self, engine: &Engine, change: Change) -> Option<Operation> {
         self.update.begin(engine, change);
         self.tool = Tool::Select;
-        self.wire_from = None;
+        self.wire = None;
         self.drag = None;
         self.preview = None;
         None
@@ -627,19 +633,24 @@ impl SchematicEditor {
             WireTarget::Label(l) => self.point_nets.get(&WireEnd::Label(l)).copied(),
             WireTarget::SheetPin(p) => self.point_nets.get(&WireEnd::SheetPin(p)).copied(),
             WireTarget::OnWire(p) => self.wire_nets.get(&p.wire).copied(),
+            WireTarget::Free(_) => None,
         }
     }
 
-    /// A wire drawn from `from` to `to`. An ordinary join applies at once,
-    /// one undo step, and says what changed in a status toast. The review
-    /// opens only when the join is risky: it touches routed copper (the
-    /// plan has blockers or conflicting tracks or vias), or it merges two
-    /// nets that both carry a name a person gave (a label or power port,
-    /// or a rename), such as VBUS and GND.
-    fn connect(&mut self, engine: &Engine, from: WireTarget, to: WireTarget) -> Option<Operation> {
-        let change = Change::Schematic {
-            command: SchematicCommand::Connect { from, to },
-        };
+    /// A wire `command` drawn from `from` to `to`. An ordinary join
+    /// applies at once, one undo step, and says what changed in a status
+    /// toast. The review opens only when the join is risky: it touches
+    /// routed copper (the plan has blockers or conflicting tracks or vias),
+    /// or it merges two nets that both carry a name a person gave (a label
+    /// or power port, or a rename), such as VBUS and GND.
+    fn join(
+        &mut self,
+        engine: &Engine,
+        command: SchematicCommand,
+        from: WireTarget,
+        to: WireTarget,
+    ) -> Option<Operation> {
+        let change = Change::Schematic { command };
         let plan = engine.preview_update(change.clone());
         let routed = !plan.blockers.is_empty()
             || !plan.conflicting_tracks.is_empty()
@@ -732,7 +743,7 @@ impl SchematicEditor {
                 .project()
                 .wires
                 .iter()
-                .filter_map(|w| Some((w.id, schematic::wire_sheet(engine.project(), w)?)))
+                .map(|w| (w.id, w.sheet))
                 .collect();
             self.pin_marks = pin_marks(engine.project());
             self.placed = Arc::new(
@@ -935,7 +946,7 @@ impl SchematicEditor {
             self.palette.close();
         }
         self.tool = next;
-        self.wire_from = None;
+        self.wire = None;
         self.draw_from = None;
         self.rect_from = None;
         None
@@ -1152,7 +1163,7 @@ impl SchematicEditor {
             .wires
             .iter()
             .find(|w| schematic::wire_net(project, w).is_some_and(|n| n.id == net));
-        let sheet = wire.and_then(|w| schematic::wire_sheet(project, w));
+        let sheet = wire.map(|w| w.sheet);
         self.switch_sheet(sheet, project);
         self.select(None, None, project);
         self.selected_wire = wire.map(|w| w.id);
@@ -1428,7 +1439,7 @@ impl SchematicEditor {
         {
             self.select(None, None, project);
             self.tool = Tool::Place;
-            self.wire_from = None;
+            self.wire = None;
             self.palette.open();
         }
         // A selected label turns with Cmd/Ctrl+R; Delete removes the
@@ -1519,8 +1530,11 @@ impl SchematicEditor {
             Some(PaletteAction::Close) => self.tool = Tool::Select,
             None => {}
         }
+        if let Some(op) = self.wire_keys(ui.ctx(), engine) {
+            output = Some(op);
+        }
         if crate::keys::pressed(ui.ctx(), "schematic.cancel") {
-            self.wire_from = None;
+            self.wire = None;
             self.tool = Tool::Select;
             self.drag = None;
             self.preview = None;
@@ -1563,7 +1577,7 @@ impl SchematicEditor {
         let removing = self.update.marks().map(|m| m.removed).unwrap_or_default();
         let mut hit_wire = None;
         // The net being wired from or the selected wire's net.
-        let selected_net: Option<Id> = match self.wire_from {
+        let selected_net: Option<Id> = match self.wire.as_ref().map(|d| d.from) {
             Some(target) => self.target_net(project, target),
             None => self.highlighted_net(),
         };
@@ -1572,22 +1586,27 @@ impl SchematicEditor {
                 || selected_net.is_some_and(|n| self.wire_nets.get(&id) == Some(&n))
         };
         // Each drawn wire's screen path, for picking a wire or a point on it.
-        let mut wire_paths: Vec<(Id, [Pos2; 3])> = Vec::with_capacity(project.wires.len());
+        let mut wire_paths: Vec<(Id, Vec<Pos2>)> = Vec::with_capacity(project.wires.len());
         for wire in &project.wires {
-            if self.wire_sheets.get(&wire.id) != Some(&self.sheet) {
+            if wire.sheet != self.sheet {
                 continue;
             }
-            if let Some((a, b)) = schematic::wire_ends(project, wire) {
-                let a = self.preview_end(project, wire.from, a);
-                let b = self.preview_end(project, wire.to, b);
+            if let Some(mut path) = schematic::wire_path(project, wire) {
+                // A dragged unit's pins move the ends; corners stay.
+                if let Some(first) = path.first_mut() {
+                    *first = self.preview_end(project, wire.from, *first);
+                }
+                if let Some(last) = path.last_mut() {
+                    *last = self.preview_end(project, wire.to, *last);
+                }
                 // A label sitting on its pin's end leaves its wire no length.
-                if a == b {
+                if path.windows(2).all(|s| s[0] == s[1]) {
                     continue;
                 }
-                let points = schematic::wire_route(a, b).map(screen);
+                let points: Vec<Pos2> = path.into_iter().map(screen).collect();
                 let active = wire_active(wire.id);
                 painter.add(egui::Shape::line(
-                    points.to_vec(),
+                    points.clone(),
                     Stroke::new(
                         if active { 2.5 } else { 1.5 },
                         if active { t.accent } else { t.form_success },
@@ -1622,6 +1641,7 @@ impl SchematicEditor {
         let point_hits: Vec<(WireTarget, Pos2)> = self
             .point_targets(project)
             .into_iter()
+            .chain(self.free_targets(project))
             .map(|(target, p)| (target, screen(p)))
             .collect();
         if self.tool == Tool::Place
@@ -1691,7 +1711,7 @@ impl SchematicEditor {
                     terminal: pin.terminal,
                 };
                 let p = view.screen(pin.end);
-                if self.wire_from == Some(WireTarget::Terminal(endpoint)) {
+                if self.wire.as_ref().map(|d| d.from) == Some(WireTarget::Terminal(endpoint)) {
                     painter.circle_stroke(p, 5.0, Stroke::new(1.5, t.accent));
                 } else {
                     paint_pin_mark(
@@ -1835,14 +1855,37 @@ impl SchematicEditor {
                         .line_segment([ghost.screen(pin.end), ghost.screen(pin.body_end)], stroke);
                 }
             }
-            if let Some(from) = self.wire_from.and_then(|e| target_position(project, e)) {
-                // The route core will draw: along x first, then y.
-                let a = screen(from);
-                let b = landing.map_or(pointer, |(_, p)| p);
-                painter.add(egui::Shape::line(
-                    vec![a, pos2(b.x, a.y), b],
-                    Stroke::new(1.5, t.accent),
-                ));
+            if self.tool == Tool::Wire
+                && let Some(draft) = &self.wire
+            {
+                // The corners fixed so far, then the elbow to where the
+                // pointer would land: what `wire.draw` will store.
+                let end = landing
+                    .and_then(|(target, _)| target_position(project, target))
+                    .unwrap_or_else(|| world(pointer));
+                let path: Vec<Pos2> = draft
+                    .path(end, self.wire_flipped)
+                    .into_iter()
+                    .map(screen)
+                    .collect();
+                // Connection points it runs over join it: ringed now.
+                let over = |p: Pos2| {
+                    p.distance(path[0]) > 1.0
+                        && path.last().is_some_and(|e| p.distance(*e) > 1.0)
+                        && path
+                            .windows(2)
+                            .any(|s| segment_distance(p, s[0], s[1]) < 1.0)
+                };
+                for p in pin_hits
+                    .iter()
+                    .map(|(_, p)| *p)
+                    .chain(junction_hits.iter().map(|(_, p)| *p))
+                    .chain(point_hits.iter().map(|(_, p)| *p))
+                    .filter(|p| over(*p))
+                {
+                    painter.circle_stroke(p, SNAP_MARKER_PX, Stroke::new(1.5, t.accent));
+                }
+                painter.add(egui::Shape::line(path, Stroke::new(1.5, t.accent)));
             }
         }
         if response.clicked()
@@ -1902,19 +1945,18 @@ impl SchematicEditor {
                         );
                     }
                 }
+                // The second click of a double-click ends the wire at the
+                // point the first one fixed, with a free end.
+                Tool::Wire if response.double_clicked() => {
+                    output = self.end_wire_here(engine);
+                }
                 Tool::NoConnect => {
                     output = self.no_connect_click(ui.ctx(), project, pin, body_at(pointer));
                 }
                 Tool::Wire => {
-                    if let Some((to, _)) = target_at(pointer) {
-                        if let Some(from) = self.wire_from.take() {
-                            if from != to {
-                                output = self.connect(engine, from, to);
-                            }
-                        } else {
-                            self.wire_from = Some(to);
-                        }
-                    }
+                    let target = target_at(pointer)
+                        .and_then(|(target, _)| Some((target, target_position(project, target)?)));
+                    output = self.wire_click(engine, target, world(pointer));
                 }
                 Tool::Select => {
                     let body = body_at(pointer);
@@ -2126,7 +2168,9 @@ impl SchematicEditor {
     fn preview_end(&self, project: &Project, end: WireEnd, original: Point) -> Point {
         match end {
             WireEnd::Terminal(endpoint) => self.preview_endpoint(project, endpoint, original),
-            WireEnd::Junction(_) | WireEnd::Label(_) | WireEnd::SheetPin(_) => original,
+            WireEnd::Junction(_) | WireEnd::Label(_) | WireEnd::SheetPin(_) | WireEnd::Free(_) => {
+                original
+            }
         }
     }
 
@@ -2217,10 +2261,10 @@ fn canvas_hint(editor: &SchematicEditor, project: &Project) -> Option<String> {
         return None;
     }
     Some(match editor.tool {
-        Tool::Wire if editor.wire_from.is_some() => {
-            "Click a terminal or wire to end · Esc cancels".to_owned()
+        Tool::Wire if editor.wire.is_some() => {
+            "Click adds a corner · a pin or wire ends · double-click or Esc ends here".to_owned()
         }
-        Tool::Wire => "Click a terminal or wire to start a wire".to_owned(),
+        Tool::Wire => "Click a pin, wire or empty space to start".to_owned(),
         Tool::Junction => {
             "Click a wire or a crossing to join there · click a junction point to remove it · Esc ends"
                 .to_owned()
@@ -2263,6 +2307,31 @@ impl crate::issues::Locate for SchematicEditor {
         // A label, sheet symbol, sheet pin or sheet: show its sheet and
         // select it there.
         for object in refs {
+            // A wire: select its whole path and frame its free ends (or the
+            // path when it has none).
+            if let ObjectRef::Wire { id } = *object
+                && let Some(wire) = project.wire(id)
+                && let Some(path) = schematic::wire_path(project, wire)
+            {
+                let free: Vec<Point> = [wire.from, wire.to]
+                    .into_iter()
+                    .filter_map(WireEnd::free_point)
+                    .collect();
+                let points = if free.is_empty() { path } else { free };
+                self.palette.close();
+                self.resolve.close();
+                self.switch_sheet(Some(wire.sheet), project);
+                self.select(None, None, project);
+                self.selected_wire = Some(id);
+                self.tool = Tool::Select;
+                self.frame_request = points
+                    .into_iter()
+                    .map(Bounds::point)
+                    .reduce(Bounds::union)
+                    .map(|b| b.inflated(15.0));
+                self.refresh_scene(engine);
+                return true;
+            }
             let item = match *object {
                 ObjectRef::Label { id } => Item::Label(id),
                 ObjectRef::SheetSymbol { id } => Item::SheetSymbol(id),
@@ -2343,7 +2412,7 @@ impl crate::issues::Locate for SchematicEditor {
             .reduce(Bounds::union);
         self.palette.close();
         self.resolve.close();
-        self.wire_from = None;
+        self.wire = None;
         match (first, net) {
             (Some((id, occurrence)), _) => {
                 let sheet = occurrence
@@ -2391,10 +2460,17 @@ impl SchematicEditor {
             return;
         }
         kit::section(ui, "wiring", "Wire", true, None, |ui| {
-            let start = self
-                .wire_from
-                .map_or_else(|| "Not started".to_owned(), |e| target_label(project, e));
+            let start = self.wire.as_ref().map_or_else(
+                || "Not started".to_owned(),
+                |d| target_label(project, d.from),
+            );
             kit::value_row(ui, "Start", &start);
+            let elbow = if self.wire_flipped {
+                "Vertical first (F)"
+            } else {
+                "Horizontal first (F)"
+            };
+            kit::value_row(ui, "Elbow", elbow);
             kit::hint(
                 ui,
                 "Crossing wires are not joined",
@@ -2537,6 +2613,7 @@ fn target_position(project: &Project, target: WireTarget) -> Option<Point> {
         WireTarget::Label(l) => schematic::end_position(project, WireEnd::Label(l)),
         WireTarget::SheetPin(p) => schematic::end_position(project, WireEnd::SheetPin(p)),
         WireTarget::OnWire(p) => Some(p.at),
+        WireTarget::Free(f) => Some(f.point()),
     }
 }
 
@@ -2551,6 +2628,7 @@ fn end_label(project: &Project, end: WireEnd) -> String {
         WireEnd::SheetPin(p) => project
             .sheet_pin(p.sheet_pin)
             .map_or_else(|| "Sheet pin".to_owned(), |(_, p)| p.name.clone()),
+        WireEnd::Free(_) => "Free end".to_owned(),
     }
 }
 
@@ -2567,6 +2645,7 @@ fn target_label(project: &Project, target: WireTarget) -> String {
                 .and_then(|w| schematic::wire_net(project, w));
             net.map_or_else(|| "Wire".to_owned(), |n| format!("Wire on {}", n.name))
         }
+        WireTarget::Free(f) => end_label(project, WireEnd::Free(f)),
     }
 }
 
@@ -2614,10 +2693,14 @@ mod tests {
         let r1 = engine.project().instances[0].id;
         let occurrence = engine.project().occurrences[0].id;
         let mut editor = SchematicEditor {
-            wire_from: Some(WireTarget::Terminal(Endpoint {
-                instance: r1,
-                terminal: pcbcraft_core::TerminalId(2),
-            })),
+            wire: Some(WireDraft {
+                from: WireTarget::Terminal(Endpoint {
+                    instance: r1,
+                    terminal: pcbcraft_core::TerminalId(2),
+                }),
+                start: [0.0, 0.0],
+                legs: Vec::new(),
+            }),
             drag: Some((occurrence, [0.0, 0.0])),
             preview: Some((occurrence, [10.0, 10.0])),
             ..Default::default()
@@ -2633,7 +2716,7 @@ mod tests {
                 .is_none()
         );
         assert!(editor.update.is_open());
-        assert!(editor.wire_from.is_none());
+        assert!(editor.wire.is_none());
         assert!(editor.drag.is_none());
         assert!(editor.preview.is_none());
         assert_eq!(engine.project(), &before);
@@ -3860,7 +3943,7 @@ mod tests {
         editor.on_tool("wire", &engine);
         click_at(&mut editor, &engine, &ctx, pin_one);
         assert_eq!(
-            editor.wire_from,
+            editor.wire.as_ref().map(|d| d.from),
             Some(WireTarget::Terminal(Endpoint {
                 instance: r1,
                 terminal: pcbcraft_core::TerminalId(1)

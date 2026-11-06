@@ -82,10 +82,12 @@ pub fn place(project: &mut Project, new: NewLabel) -> Result<Id> {
     };
     match new.attach {
         Some(WireTarget::OnWire(point)) => {
-            let (at, end) = wiring::on_route(project, point)?;
+            let (at, _, end) = wiring::on_path(project, point)?;
             label.position = at;
             project.labels.push(label);
             match end {
+                // The engine's tidy attaches a free end the label sits on.
+                Some(WireEnd::Free(_)) => {}
                 Some(end) => connect(project, WireTarget::Label(label_ref(id)), end.into())?,
                 None => {
                     wiring::split(

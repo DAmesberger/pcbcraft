@@ -5,7 +5,7 @@
 //! the screen and the print agree. Original geometry; the power port
 //! shapes repeat the ground and supply drawings of
 //! `library::symbol_style`.
-use super::{PlacedUnit, junction_dots, labels, placed_unit, wire_ends, wire_route, wiring};
+use super::{PlacedUnit, junction_dots, labels, placed_unit, wire_path, wiring};
 use crate::geometry::{Bounds, Point, Shape, Transform2};
 use crate::ids::Id;
 use crate::ids::SheetId;
@@ -808,8 +808,9 @@ pub struct SheetScene {
     pub frame: Drawing,
     /// Labels, power ports, sheet symbols and furniture.
     pub items: Drawing,
-    /// Each wire's drawn route.
-    pub wires: Vec<[Point; 3]>,
+    /// Each wire's drawn path: its ends and corners in order. A free end is
+    /// a plain line end.
+    pub wires: Vec<Vec<Point>>,
     /// Junction dots.
     pub dots: Vec<Point>,
     /// No-connect crosses on decided pins.
@@ -839,9 +840,9 @@ pub fn sheet_scene(project: &Project, sheet: SheetId) -> SheetScene {
     let wires = project
         .wires
         .iter()
-        .filter(|w| wiring::wire_sheet(project, w) == Some(sheet))
-        .filter_map(|w| wire_ends(project, w).filter(|(a, b)| a != b))
-        .map(|(a, b)| wire_route(a, b))
+        .filter(|w| w.sheet == sheet)
+        .filter_map(|w| wire_path(project, w))
+        .filter(|path| path.windows(2).any(|s| s[0] != s[1]))
         .collect();
     let dots = junction_dots(project)
         .into_iter()

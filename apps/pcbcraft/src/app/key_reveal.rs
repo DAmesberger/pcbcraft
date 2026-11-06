@@ -428,6 +428,7 @@ impl App {
         }
         let inner = active.first().copied().unwrap_or(Context::Global);
         let table = match inner {
+            Context::SchematicWire => Some(crate::schematic_editor::WIRE_KEYS),
             Context::PcbRoute => Some(crate::pcb_editor::ROUTE_KEYS),
             Context::PcbFill => Some(crate::commands::FILL_KEYS),
             Context::PcbTune => Some(crate::pcb_editor::TUNE_KEYS),

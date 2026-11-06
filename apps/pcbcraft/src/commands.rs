@@ -29,6 +29,8 @@ pub enum Context {
     /// The Component workspace's Footprint tab.
     Footprint,
     Schematic,
+    /// The Schematic canvas while the Wire tool is armed.
+    SchematicWire,
     /// Both PCB views.
     Pcb,
     PcbLayout,
@@ -45,12 +47,13 @@ pub enum Context {
 
 impl Context {
     /// Every context, in sheet order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Global,
         Self::Component,
         Self::Symbol,
         Self::Footprint,
         Self::Schematic,
+        Self::SchematicWire,
         Self::Pcb,
         Self::PcbLayout,
         Self::PcbRoute,
@@ -67,6 +70,7 @@ impl Context {
             Self::Symbol => "Component › Symbol",
             Self::Footprint => "Component › Footprint",
             Self::Schematic => "Schematic",
+            Self::SchematicWire => "Schematic › Wire tool",
             Self::Pcb => "PCB",
             Self::PcbLayout => "PCB › Layout",
             Self::PcbRoute => "PCB › Route tool",
@@ -82,6 +86,7 @@ impl Context {
             Self::Global => None,
             Self::Component | Self::Schematic | Self::Pcb => Some(Self::Global),
             Self::Symbol | Self::Footprint => Some(Self::Component),
+            Self::SchematicWire => Some(Self::Schematic),
             Self::PcbLayout | Self::Pcb3d => Some(Self::Pcb),
             Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape => {
                 Some(Self::PcbLayout)
@@ -94,7 +99,7 @@ impl Context {
     pub fn modal(self) -> bool {
         matches!(
             self,
-            Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape
+            Self::SchematicWire | Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape
         )
     }
 
@@ -321,6 +326,14 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
         Context::PcbRoute,
         Chord::key(egui::Key::M),
         "pcb.place-part",
+    ),
+    // Wiring: F flips the elbow instead of fitting the view, and Esc ends
+    // the wire before it cancels the tool.
+    (Context::SchematicWire, Chord::key(egui::Key::F), "view.fit"),
+    (
+        Context::SchematicWire,
+        Chord::key(egui::Key::Escape),
+        "schematic.cancel",
     ),
     // Tuning: F flips the meander's side instead of fitting the view.
     (Context::PcbTune, Chord::key(egui::Key::F), "view.fit"),
@@ -621,6 +634,7 @@ impl Registry {
             commands,
             custom: BTreeMap::new(),
         }
+        .with_keys(Context::SchematicWire, crate::schematic_editor::WIRE_KEYS)
         .with_keys(Context::PcbRoute, crate::pcb_editor::ROUTE_KEYS)
         .with_keys(Context::PcbFill, FILL_KEYS)
         .with_keys(Context::PcbTune, crate::pcb_editor::TUNE_KEYS)

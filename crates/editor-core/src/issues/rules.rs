@@ -104,6 +104,7 @@ pub fn group_title(code: &str) -> String {
         "erc.undriven_power_input" => "Power inputs without a supply",
         "erc.unchecked_terminal" => "Terminals not checked",
         "erc.label_unconnected" => "Labels without a wire",
+        "erc.wire_end_free" => "Wire ends not connected",
         "erc.global_label_single" => "Global labels used once",
         "erc.hierarchy_mismatch" => "Sheet pins and labels that do not match",
         "erc.label_conflict" => "Nets with conflicting labels",
@@ -214,6 +215,7 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         }
         "component.pin_missing" => "Add a pin for the terminal on the Symbol tab",
         "erc.label_unconnected" => "Wire the label or remove it",
+        "erc.wire_end_free" => "Connect the end or remove the wire",
         "erc.global_label_single" => "Use the name elsewhere or make it a local label",
         "erc.hierarchy_mismatch" => "Add the missing pin or hierarchical label",
         "erc.label_conflict" => "Rename the labels to one name",
@@ -483,6 +485,7 @@ pub const KNOWN_CODES: &[&str] = &[
     "erc.power_port_undriven",
     "erc.unchecked_terminal",
     "erc.undriven_power_input",
+    "erc.wire_end_free",
     "fill.clearance",
     "fill.empty",
     "fill.island_unconnected",

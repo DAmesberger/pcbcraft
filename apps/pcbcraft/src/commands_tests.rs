@@ -326,14 +326,15 @@ fn conflicts_are_refused_or_swapped() -> Result<(), String> {
     assert_eq!(chord(&registry, "pcb.tune"), Some(Chord::key(K::B)));
     assert_eq!(chord(&registry, "pcb.board-shape"), Some(Chord::key(K::T)));
     assert_eq!(registry.conflicts(), vec![]);
-    // Wire taking Fit view's F would hand W to Fit view, which applies
-    // everywhere and would clash with the Route tool's W: refused, and
-    // nothing changes.
+    // Wire taking Fit view's F is refused, and nothing changes. The Wire
+    // tool's own F (flip the elbow) now holds F inside the Schematic, so
+    // that is the clash named; before the tool had keys it was the Route
+    // tool's W that Fit view would have been handed.
     let mut three = Registry::standard();
     assert!(
         three
             .swap("schematic.wire", Chord::key(K::F))
-            .is_err_and(|why| why.contains("track width"))
+            .is_err_and(|why| why.contains("Flip the elbow corner"))
     );
     assert!(three.overrides().is_empty());
     Ok(())

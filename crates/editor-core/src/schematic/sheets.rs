@@ -2,7 +2,7 @@
 //! and deleting sheets; sheet symbols and their pins; notes, lines and
 //! rectangles; title-block properties; moving a unit to another sheet.
 use super::labels::{check_name, check_point, check_sheet, detach_point};
-use super::{Result, conflict, invalid, not_found, wiring};
+use super::{Result, conflict, invalid, not_found};
 use crate::diagnostics::Error;
 use crate::geometry::{Point, point_valid};
 use crate::ids::{Id, SheetId, printable};
@@ -148,11 +148,7 @@ pub fn delete(project: &mut Project, id: SheetId) -> Result<()> {
     let doomed: BTreeSet<Id> = project
         .wires
         .iter()
-        .filter(|w| {
-            wiring::wire_sheet(project, w) == Some(id)
-                || parent_pins.contains(&w.from)
-                || parent_pins.contains(&w.to)
-        })
+        .filter(|w| w.sheet == id || parent_pins.contains(&w.from) || parent_pins.contains(&w.to))
         .map(|w| w.id)
         .collect();
     project.wires.retain(|w| !doomed.contains(&w.id));

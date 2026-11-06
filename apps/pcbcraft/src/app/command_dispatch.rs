@@ -121,7 +121,7 @@ impl App {
     pub(super) fn active_contexts(&self) -> Vec<Context> {
         let inner = match self.workspace {
             Workspace::Part => self.part.shortcut_context(),
-            Workspace::Schematic => Context::Schematic,
+            Workspace::Schematic => self.schematic.shortcut_context(),
             Workspace::Pcb => self.pcb.shortcut_context(),
         };
         crate::commands::active_contexts(inner)

@@ -23,7 +23,7 @@ A command runs the same event as its ribbon button, so document changes still go
 
 Key handling that matches raw events instead of calling these methods is not caught. Examples are the model nudge arrows, the model library grid and the 3D view's arrow keys. These are navigation and placement gestures, not commands.
 
-A focused text field keeps plain keys and its own ⌘Z, ⇧⌘Z and ⌘B. An open menu also keeps plain keys. A test (`the_default_keymap_has_no_conflicts`) rejects two commands that share a key where both could apply. A tool mode (Route, Fill, Tune, Board shape) may take a key from the contexts around it only when `commands::SHADOWS` lists it. Each entry names the mode, the key and the command it shadows, and a second test (`every_shadow_is_used`) rejects stale entries. The board shape sketch replaces the Layout keys entirely and keeps the global ones.
+A focused text field keeps plain keys and its own ⌘Z, ⇧⌘Z and ⌘B. An open menu also keeps plain keys. A test (`the_default_keymap_has_no_conflicts`) rejects two commands that share a key where both could apply. A tool mode (Wire, Route, Fill, Tune, Board shape) may take a key from the contexts around it only when `commands::SHADOWS` lists it. Each entry names the mode, the key and the command it shadows, and a second test (`every_shadow_is_used`) rejects stale entries. The board shape sketch replaces the Layout keys entirely and keeps the global ones.
 
 While the Route tool is armed, its keys shadow these:
 
@@ -34,7 +34,7 @@ While the Route tool is armed, its keys shadow these:
 - P shadows the Fill tool: it switches pair routing off and on instead ([high-speed routing](high-speed-routing.md#differential-pair-routing)).
 - M shadows Place 3D part: it cycles the router instead.
 
-R, Route's own key, has no meaning inside Route mode and arms Route again. While the Tune tool is armed, F flips the meander's side instead of fitting the view. The Fill tool's Esc drops its outline first. The board shape's F is Fillet.
+While the schematic's Wire tool is armed, F flips the elbow instead of fitting the view, and Esc ends the wire in progress before it cancels the tool. R, Route's own key, has no meaning inside Route mode and arms Route again. While the Tune tool is armed, F flips the meander's side instead of fitting the view. The Fill tool's Esc drops its outline first. The board shape's F is Fillet.
 
 **Quit** (`app.quit`, ⌘Q) is a registry command like the others, so it can be rebound. It makes the same request as the window's close button: unsaved work asks Save, Don't Save or Cancel first. egui's built-in quit key, which closed the window without asking, is turned off. On macOS the app menu (`native_menu.rs`, built with muda as in Solidcraft) replaces winit's default menu, whose Quit ended the app at once. Its Quit item runs `app.quit` and shows the command's effective key. The menu has no other key equivalents, so every other key still reaches the dispatcher.
 
@@ -97,6 +97,7 @@ The keymap is original. Letters are mnemonic where they can be: R route, V via, 
 | PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills |
 | PCB Layout | R route · V via · T tune length · P fill · B board shape · M place 3D part ([mechanical parts](mechanical-parts.md)) · 1–9, 0 stackup layer 1–10 (the active layer; through a via while routing) · ⇧L layer focus (all layers, dim others, active only) · ⇧F view from bottom · H highlight complete net · Esc cancel |
 | PCB 3D | 1 front · 2 back · 3 left · 4 right · 5 top · 6 bottom · 7 home (isometric, fitted) · ⇧F fit and orbit around the selection · arrows turn the view 15° (⇧: 90°) · ⌘ arrows pan (arrows are navigation, read by the view, not rebindable) |
+| Wire tool (`WIRE_KEYS`) | Click corner; a pin, label, junction, free end or wire ends the wire · double-click or Enter end here with a free end · Esc end here (with no corner: cancel; again: Select) · Backspace remove the last corner · F flip the elbow |
 | Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–0 (the Layout's layer keys) via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W next / previous track width · D / ⇧D next / previous via size · P pair routing on or off · M / ⇧M next / previous router (shove, walkaround, ignore; [push-and-shove](push-and-shove.md)) |
 | Tune tool (`TUNE_KEYS`) | Click tune the segment · / trombone ↔ accordion · A / ⇧A amplitude up / down · S / ⇧S spacing wider / narrower · F flip the side |
 | Fill tool (`FILL_KEYS`) | A lines ↔ arcs · Enter close · Backspace take back a point · Esc drop the outline |

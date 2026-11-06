@@ -1,7 +1,8 @@
 //! Schematic canvas tests of connection marks: solid junction dots where
 //! three or more conductors meet (scaled with zoom), no open ring on a wired
-//! pin end, the to-do ring on an unconnected one, and the Wire tool landing a
-//! wire end on another wire's segment.
+//! pin end, the to-do ring on an unconnected one; and the Wire tool
+//! (docs/schematic-wires.md, "Drawing"): corners, ends, double-click,
+//! Enter, Esc, Backspace and F, one `wire.draw` per wire.
 use super::*;
 use egui::vec2;
 use pcbcraft_core::schematic::WirePoint;
@@ -17,11 +18,25 @@ fn canvas_frame(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> (Vec<egui::Shape>, Option<Operation>) {
+    canvas_frame_after(editor, engine, ctx, events, 0.4)
+}
+
+/// [`canvas_frame`] `seconds` after the last frame: 0.4 s apart, a press
+/// and release still click, and two clicks are never a double-click.
+fn canvas_frame_after(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    seconds: f64,
+) -> (Vec<egui::Shape>, Option<Operation>) {
     let mut operation = None;
+    let time = ctx.input(|i| i.time) + seconds;
     let mut output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(CANVAS),
             events,
+            time: Some(time),
             ..Default::default()
         },
         |ui| {
@@ -239,7 +254,8 @@ fn the_wire_tool_lands_a_wire_end_on_a_segment() -> TestResult {
     let end = screen(&editor, at) + vec2(0.4, 2.0);
     click(&mut editor, &engine, &ctx, start);
     let operation = click(&mut editor, &engine, &ctx, end);
-    let (from, to) = connect_of(operation)?;
+    let operation = operation.ok_or("nothing sent")?;
+    let (from, _, to) = draw_of(Some(operation.clone()))?;
     assert_eq!(from, WireTarget::Terminal(ep(r92, 1)));
     let WireTarget::OnWire(point) = to else {
         return Err(format!("not on the wire: {to:?}").into());
@@ -247,13 +263,10 @@ fn the_wire_tool_lands_a_wire_end_on_a_segment() -> TestResult {
     assert_eq!(point.wire, wire);
     let on = schematic::nearest_on_wire(engine.project(), wire, point.at).ok_or("on")?;
     assert!((on[0] - point.at[0]).hypot(on[1] - point.at[1]) < 1e-9);
-    // The review's change applies as one undo step that joins the nets.
+    // The wire applies as one undo step that joins the nets.
     let mut engine = engine;
     let before = engine.project().clone();
-    engine.apply(
-        engine.revision(),
-        Operation::Schematic(SchematicCommand::Connect { from, to }),
-    )?;
+    engine.apply(engine.revision(), operation)?;
     let net = |e| engine.project().net_of(e).map(|n| n.id);
     assert_eq!(
         net(ep(r92, 1)),
@@ -290,22 +303,24 @@ fn click(
     sent
 }
 
-/// The ends of the wire an ordinary join applied directly: one
-/// `ApplyUpdate` of a Connect, with no review opened.
-fn connect_of(
+/// The wire the Wire tool applied directly: one `ApplyUpdate` of one
+/// `wire.draw`, with no review opened; its ends and corners.
+fn draw_of(
     operation: Option<Operation>,
-) -> Result<(WireTarget, WireTarget), Box<dyn std::error::Error>> {
+) -> Result<(WireTarget, Vec<Point>, WireTarget), Box<dyn std::error::Error>> {
     let Some(Operation::Update(update)) = operation else {
         return Err(format!("no direct join: {operation:?}").into());
     };
     let Change::Schematic {
-        command: SchematicCommand::Connect { from, to },
+        command: SchematicCommand::DrawWire {
+            from, corners, to, ..
+        },
     } = update.change
     else {
-        return Err(format!("not a connect: {:?}", update.change).into());
+        return Err(format!("not a wire.draw: {:?}", update.change).into());
     };
     assert!(!update.remove_conflicting_tracks);
-    Ok((from, to))
+    Ok((from, corners.into_iter().map(|c| c.at).collect(), to))
 }
 
 #[test]
@@ -351,7 +366,10 @@ fn the_wire_tool_snaps_to_pin_ends_and_pin_lines_with_a_marker() -> TestResult {
         "{markers:?}"
     );
     assert!(click(&mut editor, &engine, &ctx, near).is_none());
-    assert_eq!(editor.wire_from, Some(WireTarget::Terminal(ep(r92, 2))));
+    assert_eq!(
+        editor.wire.as_ref().map(|d| d.from),
+        Some(WireTarget::Terminal(ep(r92, 2)))
+    );
     // Halfway along R93.1's drawn line, well away from its end: the wire
     // still lands on the connection end.
     let along = [
@@ -363,7 +381,7 @@ fn the_wire_tool_snaps_to_pin_ends_and_pin_lines_with_a_marker() -> TestResult {
         p.distance(screen(&editor, pin.end)) > SNAP_PX,
         "the pin is long enough"
     );
-    let (from, to) = connect_of(click(&mut editor, &engine, &ctx, p))?;
+    let (from, _, to) = draw_of(click(&mut editor, &engine, &ctx, p))?;
     assert_eq!(from, WireTarget::Terminal(ep(r92, 2)));
     assert_eq!(to, WireTarget::Terminal(ep(r93, 1)));
     Ok(())
@@ -400,7 +418,7 @@ fn an_ordinary_join_applies_directly_with_a_status_toast() -> TestResult {
     }
     let posted = crate::kit::toast::take_posted(&ctx);
     assert!(
-        posted.iter().any(|p| p.text.starts_with("Connected pins")
+        posted.iter().any(|p| p.text.starts_with("Drew the wire")
             && p.actions == vec![crate::kit::toast::ToastAction::Undo]),
         "{:?}",
         posted.iter().map(|p| &p.text).collect::<Vec<_>>()
@@ -442,13 +460,13 @@ fn merging_two_named_nets_opens_the_review() -> TestResult {
     let b = screen(&editor, end);
     let revision = engine.revision();
     assert!(click(&mut editor, &engine, &ctx, a).is_none());
-    assert!(editor.wire_from.is_some(), "not started");
+    assert!(editor.wire.is_some(), "not started");
     assert!(click(&mut editor, &engine, &ctx, b).is_none());
     assert!(editor.update.is_open());
     assert!(matches!(
         editor.update.change(),
         Some(Change::Schematic {
-            command: SchematicCommand::Connect { .. }
+            command: SchematicCommand::DrawWire { .. }
         })
     ));
     assert_eq!(engine.revision(), revision);
@@ -497,6 +515,257 @@ fn j_places_a_visible_junction_dot_and_a_miss_says_so() -> TestResult {
         posted.iter().map(|p| &p.text).collect::<Vec<_>>()
     );
     assert!(pcbcraft_core::issues::style::check(JUNCTION_MISS).is_empty());
+    Ok(())
+}
+
+/// Press `key` on the canvas; the operation it sent, if any.
+fn key(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    key: egui::Key,
+) -> Option<Operation> {
+    let event = egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
+    };
+    canvas_frame(editor, engine, ctx, vec![event]).1
+}
+
+/// Click at the sheet point `p`.
+fn tap(
+    editor: &mut SchematicEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    p: Point,
+) -> Option<Operation> {
+    let at = screen(editor, p);
+    click(editor, engine, ctx, at)
+}
+
+fn pin(engine: &Engine, e: Endpoint) -> Result<Point, Box<dyn std::error::Error>> {
+    Ok(schematic::pin_position(engine.project(), e).ok_or("pin")?)
+}
+
+/// The stored path of the one wire on `e`.
+fn path_at(engine: &Engine, e: Endpoint) -> Result<Vec<Point>, Box<dyn std::error::Error>> {
+    let project = engine.project();
+    let wire = project.wires_at(e).next().ok_or("no wire")?;
+    Ok(schematic::wire_path(project, wire).ok_or("path")?)
+}
+
+fn free(p: Point) -> Result<WireTarget, Box<dyn std::error::Error>> {
+    Ok(WireTarget::Free(
+        pcbcraft_core::model::FreeEnd::new(p).ok_or("off the sheet")?,
+    ))
+}
+
+/// The Wire tool armed over R92.2, the context fonts loaded.
+fn wiring(engine: &Engine, at: Point) -> (SchematicEditor, egui::Context) {
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = centred(at, 8.0);
+    editor.on_tool("wire", engine);
+    (editor, ctx)
+}
+
+#[test]
+fn the_wire_tool_draws_corners_and_ends_on_a_pin_in_one_undo_step() -> TestResult {
+    let (mut engine, [_, _, r92, r93], _) = engine()?;
+    let (a, b) = (pin(&engine, ep(r92, 2))?, pin(&engine, ep(r93, 1))?);
+    let up = [a[0], a[1] + 10.0];
+    let over = [b[0], a[1] + 10.0];
+    let (mut editor, ctx) = wiring(&engine, a);
+    let at = |p| screen(&editor, p);
+    let (sa, sup, sover, sb) = (at(a), at(up), at(over), at(b));
+    for p in [sa, sup, sover] {
+        assert!(click(&mut editor, &engine, &ctx, p).is_none(), "{p:?}");
+    }
+    assert_eq!(editor.wire.as_ref().map(|d| d.legs.len()), Some(2));
+    // The preview runs through the corners to the pointer.
+    let operation = click(&mut editor, &engine, &ctx, sb);
+    let (from, _, to) = draw_of(operation.clone())?;
+    assert_eq!(
+        (from, to),
+        (ep(r92, 2).into(), WireTarget::Terminal(ep(r93, 1)))
+    );
+    assert!(editor.wire.is_none());
+    assert_eq!(editor.tool, Tool::Wire);
+    let before = engine.project().clone();
+    engine.apply(engine.revision(), operation.ok_or("nothing sent")?)?;
+    assert_eq!(path_at(&engine, ep(r92, 2))?, vec![a, up, over, b]);
+    // The whole wire is one undo step.
+    engine.undo()?;
+    assert_eq!(engine.project(), &before);
+    Ok(())
+}
+
+#[test]
+fn a_double_click_ends_a_wire_with_a_free_end_that_survives_save_and_tidy() -> TestResult {
+    let (mut engine, [_, _, r92, _], _) = engine()?;
+    let a = pin(&engine, ep(r92, 2))?;
+    let up = [a[0], a[1] + 10.0];
+    let over = [a[0] + 10.0, a[1] + 10.0];
+    let (mut editor, ctx) = wiring(&engine, a);
+    for p in [a, up] {
+        assert!(tap(&mut editor, &engine, &ctx, p).is_none());
+    }
+    let s = screen(&editor, over);
+    assert!(click(&mut editor, &engine, &ctx, s).is_none());
+    // The second click follows the first at once: a double-click.
+    let button = |pressed| egui::Event::PointerButton {
+        pos: s,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    let mut operation = None;
+    for event in [button(true), button(false)] {
+        operation = canvas_frame_after(&mut editor, &engine, &ctx, vec![event], 0.05)
+            .1
+            .or(operation);
+    }
+    let (_, _, to) = draw_of(operation.clone())?;
+    assert_eq!(to, free(over)?);
+    engine.apply(engine.revision(), operation.ok_or("nothing sent")?)?;
+    assert_eq!(path_at(&engine, ep(r92, 2))?, vec![a, up, over]);
+    let bytes = pcbcraft_core::format::encode(&engine.to_file())?;
+    let opened = Engine::from_file(pcbcraft_core::format::decode(&bytes)?)?;
+    assert_eq!(opened.project(), engine.project());
+    let mut tidied = engine.project().clone();
+    schematic::tidy(&mut tidied)?;
+    assert_eq!(&tidied, engine.project());
+    // ERC reports the free end on this wire.
+    let wire = engine
+        .project()
+        .wires_at(ep(r92, 2))
+        .next()
+        .ok_or("wire")?
+        .id;
+    assert!(
+        pcbcraft_core::erc::checks(engine.project())
+            .iter()
+            .any(|f| f.code == "erc.wire_end_free"
+                && f.objects == vec![ObjectRef::Wire { id: wire }])
+    );
+    Ok(())
+}
+
+#[test]
+fn esc_ends_a_wire_with_corners_and_cancels_one_without() -> TestResult {
+    let (engine, [_, _, r92, _], _) = engine()?;
+    let a = pin(&engine, ep(r92, 2))?;
+    let up = [a[0], a[1] + 10.0];
+    let (mut editor, ctx) = wiring(&engine, a);
+    // No corner yet: Esc drops the wire and keeps the tool; again: Select.
+    assert!(tap(&mut editor, &engine, &ctx, a).is_none());
+    assert!(key(&mut editor, &engine, &ctx, egui::Key::Escape).is_none());
+    assert!(editor.wire.is_none());
+    assert_eq!(editor.tool, Tool::Wire);
+    assert!(key(&mut editor, &engine, &ctx, egui::Key::Escape).is_none());
+    assert_eq!(editor.tool, Tool::Select);
+    // With a corner fixed, Esc ends the wire there with a free end.
+    editor.on_tool("wire", &engine);
+    for p in [a, up] {
+        assert!(tap(&mut editor, &engine, &ctx, p).is_none());
+    }
+    let (from, _, to) = draw_of(key(&mut editor, &engine, &ctx, egui::Key::Escape))?;
+    assert_eq!((from, to), (ep(r92, 2).into(), free(up)?));
+    assert_eq!(editor.tool, Tool::Wire);
+    Ok(())
+}
+
+#[test]
+fn backspace_takes_back_a_corner_and_enter_ends_at_the_last_one() -> TestResult {
+    let (mut engine, [_, _, r92, _], _) = engine()?;
+    let a = pin(&engine, ep(r92, 2))?;
+    let up = [a[0], a[1] + 10.0];
+    let over = [a[0] + 10.0, a[1] + 10.0];
+    let (mut editor, ctx) = wiring(&engine, a);
+    for p in [a, up, over] {
+        assert!(tap(&mut editor, &engine, &ctx, p).is_none());
+    }
+    assert!(key(&mut editor, &engine, &ctx, egui::Key::Backspace).is_none());
+    assert_eq!(editor.wire.as_ref().map(|d| d.legs.len()), Some(1));
+    let operation = key(&mut editor, &engine, &ctx, egui::Key::Enter);
+    let (_, _, to) = draw_of(operation.clone())?;
+    assert_eq!(to, free(up)?);
+    engine.apply(engine.revision(), operation.ok_or("nothing sent")?)?;
+    assert_eq!(path_at(&engine, ep(r92, 2))?, vec![a, up]);
+    // Backspace with no corner left drops the wire.
+    assert!(tap(&mut editor, &engine, &ctx, over).is_none());
+    assert!(key(&mut editor, &engine, &ctx, egui::Key::Backspace).is_none());
+    assert!(editor.wire.is_none());
+    Ok(())
+}
+
+#[test]
+fn f_flips_the_elbow_to_vertical_first() -> TestResult {
+    let (mut engine, [_, _, r92, _], _) = engine()?;
+    let a = pin(&engine, ep(r92, 2))?;
+    let d = [a[0] + 10.0, a[1] + 10.0];
+    let (mut editor, ctx) = wiring(&engine, a);
+    assert!(tap(&mut editor, &engine, &ctx, a).is_none());
+    assert!(key(&mut editor, &engine, &ctx, egui::Key::F).is_none());
+    assert!(editor.wire_flipped);
+    assert!(tap(&mut editor, &engine, &ctx, d).is_none());
+    let operation = key(&mut editor, &engine, &ctx, egui::Key::Enter);
+    engine.apply(engine.revision(), operation.ok_or("nothing sent")?)?;
+    assert_eq!(path_at(&engine, ep(r92, 2))?, vec![a, [a[0], d[1]], d]);
+    Ok(())
+}
+
+#[test]
+fn a_wire_drawn_across_another_does_not_join_it() -> TestResult {
+    let (mut engine, [r90, _, r92, _], wire) = engine()?;
+    let c = pin(&engine, ep(r92, 1))?;
+    let y = middle(&engine, wire)?[1];
+    let below = [c[0], y - 10.0];
+    let (mut editor, ctx) = wiring(&engine, c);
+    for p in [c, below] {
+        assert!(tap(&mut editor, &engine, &ctx, p).is_none());
+    }
+    let operation = key(&mut editor, &engine, &ctx, egui::Key::Enter);
+    engine.apply(engine.revision(), operation.ok_or("nothing sent")?)?;
+    assert_eq!(path_at(&engine, ep(r92, 1))?, vec![c, below]);
+    let project = engine.project();
+    assert!(project.junctions.is_empty());
+    assert_ne!(
+        project.net_of(ep(r92, 1)).map(|n| n.id),
+        project.net_of(ep(r90, 2)).map(|n| n.id)
+    );
+    Ok(())
+}
+
+/// The canvas hint is painted whole at the tests' canvas width, idle and
+/// while drawing.
+#[test]
+fn the_wire_hints_are_not_cut_short() -> TestResult {
+    let (engine, [_, _, r92, _], _) = engine()?;
+    let a = pin(&engine, ep(r92, 2))?;
+    let (mut editor, ctx) = wiring(&engine, a);
+    let hint_whole = |shapes: &[egui::Shape], editor: &SchematicEditor| {
+        let hint = canvas_hint(editor, engine.project()).unwrap_or_default();
+        let found: Vec<bool> = shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::Text(t) if t.galley.job.text == hint => Some(t.galley.elided),
+                _ => None,
+            })
+            .collect();
+        (hint.clone(), found == vec![false])
+    };
+    let (shapes, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    let (hint, whole) = hint_whole(&shapes, &editor);
+    assert!(whole, "{hint}");
+    assert!(tap(&mut editor, &engine, &ctx, a).is_none());
+    let (shapes, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    let (hint, whole) = hint_whole(&shapes, &editor);
+    assert!(hint.contains("corner"), "{hint}");
+    assert!(whole, "{hint}");
     Ok(())
 }
 
