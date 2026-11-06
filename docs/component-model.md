@@ -471,15 +471,16 @@ Where the code had to settle something this contract left open, it chose the opt
   - `Tolerance { basis: Relative | Absolute { kind: QuantityKindRef } }`
   - `Range { kind: QuantityKindRef }`
 - `FieldValue` is one of:
-  - `Quantity { si: f64, display_unit: Option<String> }`
+  - `Quantity { si: Decimal, display_unit: Option<String> }`
   - `Integer(i64)`
   - `Boolean(bool)`
   - `Enum(ChoiceId)`
   - `Text(String)`
-  - `Tolerance { minus: f64, plus: f64 }` (fractions for relative: `5%` is 0.05 with percent semantics; SI for absolute)
-  - `Range { min: f64, max: f64 }`
+  - `Tolerance { minus: Decimal, plus: Decimal }` (fractions for relative: `5%` is 0.05 with percent semantics; SI for absolute)
+  - `Range { min: Decimal, max: Decimal }`
 
-  `display_unit` is presentation and never changes `si`.
+  `display_unit` is presentation and never changes `si`. A `quantity::Decimal` is exact (at most 18 significant digits, exponent within ±400) and is saved as text (`"0.00001"`), so typed values such as `10 µF` or `±1%` are stored and shown without binary rounding.
+
 - `ComponentDefinition.fields: Vec<FieldSelection { field: FieldRef, default: Option<FieldValue>, show_on_symbol: bool }>`. The component default overrides the field default and must satisfy the field's constraints.
 - `ComponentInstance.properties: InstanceFields` replaces `value`. It is a `BTreeMap<DefinitionId (field lineage), FieldOverride::{Assigned(FieldValue), Unset}>`. A missing key means inherited.
 - `fields::effective` returns `EffectiveField { field, value: Option<FieldValue>, origin: Assigned | ComponentDefault | FieldDefault | ExplicitlyUnset | NoValue }`. Assigned zero is a value and is distinct from `ExplicitlyUnset`.

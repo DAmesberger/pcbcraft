@@ -1,4 +1,6 @@
 """Build the dev board's parts in the session (stage 1)."""
+from decimal import Decimal
+
 from stage_lib import *
 
 PROV_NOTE = "Authored for the ESP32-S31 dev board e2e run from the manufacturer's public datasheet; checked by the author, not by a second reviewer."
@@ -31,7 +33,7 @@ def set_fields(s, comp, fields, name=None, prov=None):
 def part(s, mpn, manufacturer, comp, binding, specs, ds_title, ds_url, ds_rev=None, desc=""):
     body = {"next_local": 2, "manufacturer": manufacturer, "mpn": mpn,
             "component": {"id": comp, "revision": 1}, "binding": {"id": binding, "revision": 1},
-            "specs": [{"field": {"id": f, "revision": 1}, "value": {"type": "quantity", "value": {"si": v, "display_unit": None}},
+            "specs": [{"field": {"id": f, "revision": 1}, "value": {"type": "quantity", "value": {"si": format(Decimal(str(v)).normalize(), "f"), "display_unit": None}},
                        "meaning": m} for f, v, m in specs],
             "references": [{"id": 1, "kind": "datasheet", "title": ds_title, "url": ds_url, "document_revision": ds_rev,
                             "asset": None, "licence": None,

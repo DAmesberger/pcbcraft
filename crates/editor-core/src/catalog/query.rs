@@ -191,18 +191,18 @@ impl Test {
     pub fn accepts(&self, value: &FieldValue) -> bool {
         match (self, value) {
             (Self::Compare { op, value: bound }, FieldValue::Quantity { si, .. }) => {
-                op.holds(*si, *bound)
+                op.holds(si.to_f64(), *bound)
             }
             (Self::Compare { op, value: bound }, FieldValue::Integer(v)) => {
                 op.holds(*v as f64, *bound)
             }
             (Self::Compare { op, value: bound }, FieldValue::Range { min, max }) => match op {
-                Op::Eq => min <= bound && max >= bound,
-                Op::Gt | Op::Ge => op.holds(*max, *bound),
-                Op::Lt | Op::Le => op.holds(*min, *bound),
+                Op::Eq => min.to_f64() <= *bound && max.to_f64() >= *bound,
+                Op::Gt | Op::Ge => op.holds(max.to_f64(), *bound),
+                Op::Lt | Op::Le => op.holds(min.to_f64(), *bound),
             },
             (Self::Between { min, max }, FieldValue::Quantity { si, .. }) => {
-                Op::Ge.holds(*si, *min) && Op::Le.holds(*si, *max)
+                Op::Ge.holds(si.to_f64(), *min) && Op::Le.holds(si.to_f64(), *max)
             }
             (Self::Between { min, max }, FieldValue::Integer(v)) => {
                 Op::Ge.holds(*v as f64, *min) && Op::Le.holds(*v as f64, *max)
@@ -213,9 +213,9 @@ impl Test {
                     min: low,
                     max: high,
                 },
-            ) => Op::Le.holds(*low, *min) && Op::Ge.holds(*high, *max),
+            ) => Op::Le.holds(low.to_f64(), *min) && Op::Ge.holds(high.to_f64(), *max),
             (Self::Tolerance { op, minus, plus }, FieldValue::Tolerance { minus: m, plus: p }) => {
-                op.holds(*m, *minus) && op.holds(*p, *plus)
+                op.holds(m.to_f64(), *minus) && op.holds(p.to_f64(), *plus)
             }
             (Self::Choice { choice }, FieldValue::Enum(id)) => choice == id,
             (Self::Boolean { value }, FieldValue::Boolean(v)) => value == v,
@@ -816,7 +816,11 @@ fn field_test(
             };
             let shown = fields::display(&parsed, &field.value_type, kind.map(|k| &k.quantity));
             Ok(make(
-                Test::Tolerance { op, minus, plus },
+                Test::Tolerance {
+                    op,
+                    minus: minus.to_f64(),
+                    plus: plus.to_f64(),
+                },
                 format!("{} {shown}", op.symbol()),
             ))
         }

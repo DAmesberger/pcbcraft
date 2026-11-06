@@ -2,7 +2,7 @@
 //! the standard fields, redrawing a symbol, an envelope's default place and a
 //! tabbed form's datasheet land pattern. Expected geometry is by hand from the
 //! rows in each test.
-use super::support::{self, Fixture, Snapshot, Spec, apply, body, passive};
+use super::support::{self, Fixture, Snapshot, Spec, apply, body, dec, passive};
 use crate::fields;
 use crate::geometry::Bounds;
 use crate::library::bundle::content_hash;
@@ -503,21 +503,21 @@ fn the_standard_fields_import_in_one_step_and_read_their_units() -> Result<()> {
         fields::parse_value(text, &view.field.definition.value_type, view.kind_body())
     };
     let si = |value: fields::FieldValue| match value {
-        fields::FieldValue::Quantity { si, .. } => si,
-        _ => f64::NAN,
+        fields::FieldValue::Quantity { si, .. } => Some(si),
+        _ => None,
     };
-    assert!((si(read("Resistance", "4.7k")?) - 4700.0).abs() < 1e-9);
-    assert!((si(read("Capacitance", "100nF")?) - 100e-9).abs() < 1e-18);
-    assert!((si(read("Inductance", "10uH")?) - 10e-6).abs() < 1e-15);
-    assert!((si(read("Rated voltage", "16V")?) - 16.0).abs() < 1e-9);
-    assert!((si(read("Rated current", "500mA")?) - 0.5).abs() < 1e-9);
-    assert!((si(read("Rated power", "250mW")?) - 0.25).abs() < 1e-9);
-    assert!((si(read("Frequency", "40MHz")?) - 40e6).abs() < 1e-3);
+    assert_eq!(si(read("Resistance", "4.7k")?), Some(dec(4700.0)));
+    assert_eq!(si(read("Capacitance", "100nF")?), Some(dec(100e-9)));
+    assert_eq!(si(read("Inductance", "10uH")?), Some(dec(10e-6)));
+    assert_eq!(si(read("Rated voltage", "16V")?), Some(dec(16.0)));
+    assert_eq!(si(read("Rated current", "500mA")?), Some(dec(0.5)));
+    assert_eq!(si(read("Rated power", "250mW")?), Some(dec(0.25)));
+    assert_eq!(si(read("Frequency", "40MHz")?), Some(dec(40e6)));
     assert!(read("Rated voltage", "16A").is_err(), "another dimension");
     let fields::FieldValue::Tolerance { minus, plus } = read("Tolerance", "5%")? else {
         return Err(Error::Invalid("not a tolerance".into()));
     };
-    assert!((minus - 0.05).abs() < 1e-12 && (plus - 0.05).abs() < 1e-12);
+    assert_eq!((minus, plus), (dec(0.05), dec(0.05)));
 
     // Again: reused, and the document (revision, undo) is left alone.
     let before = Snapshot::of(&engine);

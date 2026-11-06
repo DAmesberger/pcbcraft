@@ -2047,7 +2047,7 @@ mod tests {
         editor.parts.request_new(vec![(
             field,
             fields::FieldValue::Quantity {
-                si: 4_700.0,
+                si: pcbcraft_core::quantity::Decimal::from_f64(4_700.0)?,
                 display_unit: None,
             },
         )]);
@@ -2060,7 +2060,7 @@ mod tests {
         assert!(matches!(
             &sent,
             Some(Operation::Library(LibraryCommand::NewDraft { definition: Definition::Part(p), .. }))
-                if p.specs.iter().any(|s| matches!(s.value, fields::FieldValue::Quantity { si, .. } if (si - 4_700.0).abs() < 1e-6))
+                if p.specs.iter().any(|s| matches!(s.value, fields::FieldValue::Quantity { si, .. } if si.to_f64() == 4_700.0))
         ));
         apply(&mut engine, sent)?;
         editor.commit(&ctx, &engine);
@@ -2290,7 +2290,7 @@ mod tests {
         part.specs.push(RatedSpec {
             field,
             value: fields::FieldValue::Quantity {
-                si: 10_000.0,
+                si: pcbcraft_core::quantity::Decimal::from_f64(10_000.0)?,
                 display_unit: None,
             },
             meaning: SpecMeaning::ExactNominal,
@@ -2333,7 +2333,7 @@ mod tests {
         let specs = rated(&engine, id).ok_or("no Part draft")?;
         assert!(matches!(
             specs.first().map(|s| &s.value),
-            Some(fields::FieldValue::Quantity { si, .. }) if (si - 22_000.0).abs() < 1e-6
+            Some(fields::FieldValue::Quantity { si, .. }) if si.to_f64() == 22_000.0
         ));
         editor.commit(&ctx, &engine);
         let shown = frame(&mut editor, &engine, &ctx, vec![]);

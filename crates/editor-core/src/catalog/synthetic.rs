@@ -19,7 +19,7 @@ use crate::library::{
     Published, Reference, ReferenceKind,
 };
 use crate::model::Project;
-use crate::quantity::{UnitOfMeasure, UnitSet};
+use crate::quantity::{Decimal, UnitOfMeasure, UnitSet};
 
 /// Parts one synthetic project holds; each takes three lineages.
 pub const MAX_PARTS: usize = 1000;
@@ -302,8 +302,9 @@ fn part(index: usize, fields: &Fields) -> Part {
             format!("-{}", lap + 1)
         }
     };
+    // Finite constants always have a decimal form.
     let quantity = |si: f64| FieldValue::Quantity {
-        si,
+        si: Decimal::from_f64(si).unwrap_or_default(),
         display_unit: None,
     };
     let cycle = |len: usize| round % len.max(1);
@@ -326,8 +327,8 @@ fn part(index: usize, fields: &Fields) -> Part {
                     (
                         fields.tolerance,
                         FieldValue::Tolerance {
-                            minus: tolerance,
-                            plus: tolerance,
+                            minus: Decimal::from_f64(tolerance).unwrap_or_default(),
+                            plus: Decimal::from_f64(tolerance).unwrap_or_default(),
                         },
                         false,
                     ),
@@ -563,9 +564,11 @@ fn exact_parts(
     resistor: (PackageRef, FootprintRef),
     capacitor: (PackageRef, FootprintRef),
 ) -> Result<()> {
-    let quantity = |si: f64| FieldValue::Quantity {
-        si,
-        display_unit: None,
+    let quantity = |si: f64| -> Result<FieldValue> {
+        Ok(FieldValue::Quantity {
+            si: Decimal::from_f64(si)?,
+            display_unit: None,
+        })
     };
     let r = generic(
         library,
@@ -584,15 +587,20 @@ fn exact_parts(
         &[fields.capacitance, fields.voltage],
     )?;
     let one_percent = FieldValue::Tolerance {
-        minus: 0.01,
-        plus: 0.01,
+        minus: Decimal::from_f64(0.01)?,
+        plus: Decimal::from_f64(0.01)?,
     };
+
     let parts = [
         exact_part(
             "EX-R0603-10K0-F",
             r,
             vec![
-                (fields.resistance, quantity(10e3), SpecMeaning::ExactNominal),
+                (
+                    fields.resistance,
+                    quantity(10e3)?,
+                    SpecMeaning::ExactNominal,
+                ),
                 (
                     fields.tolerance,
                     one_percent.clone(),
@@ -604,7 +612,11 @@ fn exact_parts(
             "EX-R0603-22K0-F",
             r,
             vec![
-                (fields.resistance, quantity(22e3), SpecMeaning::ExactNominal),
+                (
+                    fields.resistance,
+                    quantity(22e3)?,
+                    SpecMeaning::ExactNominal,
+                ),
                 (fields.tolerance, one_percent, SpecMeaning::MaximumTolerance),
             ],
         ),
@@ -614,10 +626,10 @@ fn exact_parts(
             vec![
                 (
                     fields.capacitance,
-                    quantity(100e-9),
+                    quantity(100e-9)?,
                     SpecMeaning::ExactNominal,
                 ),
-                (fields.voltage, quantity(16.0), SpecMeaning::MinimumRating),
+                (fields.voltage, quantity(16.0)?, SpecMeaning::MinimumRating),
             ],
         ),
         exact_part(
@@ -626,10 +638,10 @@ fn exact_parts(
             vec![
                 (
                     fields.capacitance,
-                    quantity(100e-9),
+                    quantity(100e-9)?,
                     SpecMeaning::ExactNominal,
                 ),
-                (fields.voltage, quantity(25.0), SpecMeaning::MinimumRating),
+                (fields.voltage, quantity(25.0)?, SpecMeaning::MinimumRating),
             ],
         ),
     ];

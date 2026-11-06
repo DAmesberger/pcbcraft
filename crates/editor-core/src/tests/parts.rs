@@ -40,7 +40,7 @@ fn units(dimension: crate::quantity::Dimension, symbol: &str) -> QuantityKind {
 
 fn quantity(si: f64) -> FieldValue {
     FieldValue::Quantity {
-        si,
+        si: dec(si),
         display_unit: None,
     }
 }
@@ -199,8 +199,8 @@ fn resistor(mpn: &str, s: &Setup, ohms: f64) -> PartDefinition {
             (
                 s.fields.tolerance,
                 FieldValue::Tolerance {
-                    minus: 0.01,
-                    plus: 0.01,
+                    minus: dec(0.01),
+                    plus: dec(0.01),
                 },
                 SpecMeaning::MaximumTolerance,
             ),
@@ -363,8 +363,8 @@ fn part_publication_checks_specs_records_and_pins() -> Result<()> {
                 specs: vec![RatedSpec {
                     field: s.fields.tolerance,
                     value: FieldValue::Tolerance {
-                        minus: 0.01,
-                        plus: 0.01,
+                        minus: dec(0.01),
+                        plus: dec(0.01),
                     },
                     meaning: SpecMeaning::MinimumRating,
                 }],

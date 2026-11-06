@@ -283,7 +283,7 @@ fn set_properties_through_json_returns_the_engine_effective_values() -> TestResu
     let outcome = engine.apply(engine.revision(), operation)?;
     assert_eq!(reply["result"]["outcome"], serde_json::to_value(&outcome)?);
     let effective = &reply["result"]["outcome"]["effective"][0];
-    assert_eq!(effective["value"]["value"]["si"], 4700.0);
+    assert_eq!(effective["value"]["value"]["si"], "4700");
     assert_eq!(effective["value"]["value"]["display_unit"], "kΩ");
     assert_eq!(effective["origin"], "assigned");
     assert_eq!(effective["text"], "4.7 kΩ");
