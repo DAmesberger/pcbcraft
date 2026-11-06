@@ -2521,6 +2521,7 @@ fn publish_from_template_is_one_atomic_step() -> crate::diagnostics::Result<()> 
             name: row.name.clone(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         };
         let outcome = apply(
             &mut engine,
@@ -2550,6 +2551,7 @@ fn publish_from_template_is_one_atomic_step() -> crate::diagnostics::Result<()> 
             name: "Nothing".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         })),
     );
     assert!(refused.is_err());
