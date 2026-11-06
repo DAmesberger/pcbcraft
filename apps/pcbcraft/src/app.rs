@@ -1011,11 +1011,30 @@ impl App {
         let Some(key) = self.model_key() else {
             let operation = match self.workspace {
                 Workspace::Part => self.part.canvas(ui, &self.engine),
-                Workspace::Schematic => self.schematic.canvas(ui, &self.engine),
+                Workspace::Schematic => {
+                    // The Place palette's template rows: the same form,
+                    // drawn over the sheet.
+                    let ctx = ui.ctx().clone();
+                    if let Some((hit, query)) = self.schematic.take_template_form() {
+                        self.part.open_template_to_place(&hit, query);
+                    }
+                    let sheet = self.part.template_sheet(&ctx, &self.engine);
+                    if let Some(component) = self.part.take_template_to_place() {
+                        self.schematic.arm_created(&ctx, &self.engine, component);
+                    }
+                    let canvas = self.schematic.canvas(ui, &self.engine);
+                    sheet.or(canvas)
+                }
                 Workspace::Pcb => self.pcb.canvas(ui, &self.engine),
             };
             let ctx = ui.ctx().clone();
             self.apply(&ctx, Origin::Canvas, operation);
+            if let Some(revision) = self.schematic.take_template_undo()
+                && revision == self.engine.revision()
+                && self.engine.undo().is_ok()
+            {
+                self.say(Level::Info, "Cancelled: the component was not kept");
+            }
             self.canvas_menu_requests(&ctx);
             return;
         };

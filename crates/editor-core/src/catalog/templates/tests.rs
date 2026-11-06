@@ -2363,3 +2363,58 @@ fn an_led_symbol_on_another_row_imports_nothing() -> Fallible<()> {
     assert!(engine.project().library.fields.is_empty());
     Ok(())
 }
+
+/// `library.publish_from_template` publishes all five definitions in one
+/// undo step and leaves no draft; every built-in row builds a component that
+/// way, so the Place palette can create any of them without a form.
+#[test]
+fn publish_from_template_is_one_atomic_step() -> crate::diagnostics::Result<()> {
+    let rows = starter::rows().map_err(|why| Error::Invalid(why.to_owned()))?;
+    let mut engine = Engine::default();
+    for row in rows {
+        let before = engine.project().library.components.len();
+        let request = NewFromTemplate {
+            row: RowSource::Starter {
+                name: row.name.clone(),
+            },
+            values: None,
+            skeleton: row.definition.skeleton,
+            name: row.name.clone(),
+            designator_prefix: None,
+            symbol: None,
+        };
+        let outcome = apply(
+            &mut engine,
+            LibraryCommand::PublishFromTemplate(Box::new(request)),
+        )?;
+        let Outcome::Published { revisions } = outcome else {
+            return Err(Error::Invalid(format!("{}: {outcome:?}", row.name)));
+        };
+        assert_eq!(revisions.len(), 5, "{}", row.name);
+        assert_eq!(engine.project().library.components.len(), before + 1);
+        assert!(engine.drafts().items.is_empty(), "{}", row.name);
+        engine.undo()?;
+        assert_eq!(engine.project().library.components.len(), before);
+        assert!(engine.drafts().items.is_empty());
+    }
+
+    // A refused request changes nothing and takes no undo step.
+    let revision = engine.revision();
+    let refused = apply(
+        &mut engine,
+        LibraryCommand::PublishFromTemplate(Box::new(NewFromTemplate {
+            row: RowSource::Starter {
+                name: "No such row".into(),
+            },
+            values: None,
+            skeleton: SkeletonHint::Blank,
+            name: "Nothing".into(),
+            designator_prefix: None,
+            symbol: None,
+        })),
+    );
+    assert!(refused.is_err());
+    assert_eq!(engine.revision(), revision);
+    assert!(engine.project().library.components.is_empty());
+    Ok(())
+}

@@ -10,6 +10,9 @@
 //! lineage the sheet offers Keep both / Update project copy / Cancel
 //! inline. Cmd+D marks the highlighted row a favourite; favourites and
 //! recents rank after the match tier and are kept per user by the app.
+//! Below every component, "From template" lists the template rows the same
+//! text finds (`template_gallery::find`); choosing one asks the editor to
+//! create the component and arm its placement.
 //!
 //! In *assign mode* the same search chooses a manufacturer part for one or
 //! more instances, as the docked Choose part dialog
@@ -24,7 +27,9 @@ use crate::kit::toast::ToastAction;
 use crate::kit::{self, Tone};
 use crate::library_sources::FolderPick;
 use crate::refusal::{self, Origin};
+use crate::template_gallery::{self, Found};
 use egui::{Rect, Ui, pos2};
+use pcbcraft_core::catalog::templates::TemplateHit;
 use pcbcraft_core::catalog::{
     self, CatalogContext, CatalogEntry, EntryKey, Hit, ItemReport, MAX_CONTEXT, MAX_QUERY,
     SearchReport, Source, UpdateAvailable,
@@ -47,6 +52,8 @@ const KEYS: &str = "↑↓ move   Enter place   Shift+Enter place & keep open   
 /// a folder Part places its component with the Part assigned.
 const KEYS_FOLDER: &str =
     "↑↓ move   Enter place   Shift+Enter place & keep open   Cmd+D favourite   Esc close";
+/// The footer on a template row.
+const KEYS_TEMPLATE: &str = "↑↓ move   Enter create and place   click pick   Esc close";
 /// The footer while the other-revision choice is open.
 const KEYS_CHOICE: &str = "Enter update project copy   Esc cancel";
 /// The footer while nothing can be placed.
@@ -74,7 +81,7 @@ pub enum Mode {
 }
 
 /// What the user chose in the palette.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PaletteAction {
     /// Place this revision now; keep the palette open with Shift+Enter.
     Place {
@@ -92,6 +99,12 @@ pub enum PaletteAction {
         instances: Vec<Id>,
         part: PartRef,
         target: ComponentRef,
+    },
+    /// A template row: create the component from it, then arm placement.
+    /// `query` is the search that found it, for the form if it takes one.
+    FromTemplate {
+        hit: Box<TemplateHit>,
+        query: String,
     },
     /// Esc: the palette closed without a choice.
     Close,
@@ -177,6 +190,8 @@ struct Results {
     context: (u64, u64),
     query: String,
     report: Result<SearchReport, String>,
+    /// Place mode: the template rows below the components.
+    templates: Found,
 }
 
 #[derive(Default)]
@@ -456,11 +471,16 @@ impl PlacePalette {
             Mode::Place => Vec::new(),
         };
         self.rows = RowContext::of(engine.project(), &self.context);
+        let templates = match &self.mode {
+            Mode::Place => template_gallery::find(engine, &self.query, ROWS, &self.context),
+            Mode::Assign { .. } => Found::default(),
+        };
         self.results = Some(Results {
             revision: engine.revision(),
             context: generations,
             query: self.query.clone(),
             report,
+            templates,
         });
     }
 
@@ -482,6 +502,31 @@ impl PlacePalette {
             Some(Ok(report)) => &report.results,
             _ => &[],
         }
+    }
+
+    /// The template rows below the components.
+    fn templates(&self) -> &[TemplateHit] {
+        self.results.as_ref().map_or(&[], |r| &r.templates.hits)
+    }
+
+    /// Components and template rows the highlight moves over.
+    fn row_count(&self) -> usize {
+        self.hits().len() + self.templates().len()
+    }
+
+    /// The highlighted template row, if the highlight is below the
+    /// components.
+    fn highlighted_template(&self) -> Option<&TemplateHit> {
+        self.templates()
+            .get(self.highlighted.checked_sub(self.hits().len())?)
+    }
+
+    /// The action of choosing the highlighted template row; closes the sheet.
+    fn choose_template(&mut self) -> Option<PaletteAction> {
+        let hit = Box::new(self.highlighted_template()?.clone());
+        let query = self.query.clone();
+        self.close();
+        Some(PaletteAction::FromTemplate { hit, query })
     }
 
     /// The highlighted result's exact revision.
@@ -596,7 +641,7 @@ impl PlacePalette {
             self.toggle_favourite(key);
             self.refresh(engine);
         }
-        let count = self.hits().len();
+        let count = self.row_count();
         if keys.down && count > 0 {
             self.highlighted = (self.highlighted + 1).min(count - 1);
             self.scroll = true;
@@ -609,7 +654,9 @@ impl PlacePalette {
         }
         self.highlighted = self.highlighted.min(count.saturating_sub(1));
         let mut action = None;
-        if keys.enter && self.highlighted_folder().is_some() {
+        if keys.enter && self.highlighted_template().is_some() {
+            action = self.choose_template();
+        } else if keys.enter && self.highlighted_folder().is_some() {
             action = self.place_folder(keys.keep);
         } else if keys.enter
             && let Some(component) = self.choose(placeable)
@@ -633,6 +680,8 @@ impl PlacePalette {
         let highlighted_entry = self.hits().get(self.highlighted).map(|h| &h.entry);
         let footer = if self.choice.is_some() {
             KEYS_CHOICE
+        } else if self.highlighted_template().is_some() {
+            KEYS_TEMPLATE
         } else if self.highlighted_folder().is_some() {
             KEYS_FOLDER
         } else if self.highlighted().is_some_and(placeable) {
@@ -646,8 +695,10 @@ impl PlacePalette {
             "Find a component: 10k 0603, res>=10k, tol<=1%",
             if self.loading {
                 "Searching…"
+            } else if self.query.trim().is_empty() {
+                "Type to find a component or a template"
             } else {
-                "No component matches"
+                "No component or template matches"
             },
             "In this project",
         );
@@ -688,7 +739,10 @@ impl PlacePalette {
                         .map(|h| format!("{} hidden ({})", h.count, h.reason))
                         .collect();
                     kit::search_chips(ui, &report.chips, &hidden.join(", "));
-                    if report.results.is_empty() {
+                    let found = self.results.as_ref().map(|r| &r.templates);
+                    let templates = found.map_or(&[][..], |f| &f.hits);
+                    let more = found.map_or(0, |f| f.more);
+                    if report.results.is_empty() && templates.is_empty() {
                         kit::search_message(ui, empty, false);
                     } else {
                         // One caption per group; a lone project group keeps
@@ -736,6 +790,36 @@ impl PlacePalette {
                                         picked = Some(i);
                                     }
                                 }
+                                if !templates.is_empty() {
+                                    kit::search_heading(
+                                        ui,
+                                        template_gallery::SEARCH_HEADING,
+                                        templates.len() + more,
+                                    );
+                                }
+                                let first = report.results.len();
+                                for (i, hit) in templates.iter().enumerate() {
+                                    let source = template_gallery::source_label(hit, |library| {
+                                        self.rows.name(library)
+                                    });
+                                    let response = template_gallery::search_row(
+                                        ui,
+                                        egui::Id::new("place-palette-template").with(i),
+                                        hit,
+                                        &self.query,
+                                        first + i == self.highlighted,
+                                        &source,
+                                    );
+                                    if scroll && first + i == self.highlighted {
+                                        response.scroll_to_me(None);
+                                    }
+                                    if response.clicked() {
+                                        picked = Some(first + i);
+                                    }
+                                }
+                                if more > 0 {
+                                    kit::note(ui, &format!("{more} more: narrow the search"));
+                                }
                             });
                     }
                 }
@@ -760,7 +844,9 @@ impl PlacePalette {
             && self.choice.is_none()
         {
             self.highlighted = i;
-            if self.highlighted_folder().is_some() {
+            if self.highlighted_template().is_some() {
+                action = self.choose_template();
+            } else if self.highlighted_folder().is_some() {
                 action = self.place_folder(false);
             } else if let Some(component) = self.choose(placeable) {
                 action = Some(PaletteAction::Pick(component));
@@ -1101,6 +1187,10 @@ impl PlacePalette {
         if matches!(self.mode, Mode::Assign { .. }) {
             return None;
         }
+        if let Some(hit) = self.highlighted_template() {
+            template_preview(ui, hit);
+            return None;
+        }
         if let Some(hit) = self
             .hits()
             .get(self.highlighted)
@@ -1176,6 +1266,22 @@ impl PlacePalette {
             self.close();
         }
     }
+}
+
+/// What choosing the highlighted template row makes.
+fn template_preview(ui: &mut Ui, hit: &TemplateHit) {
+    kit::section(ui, "palette-template", "From template", true, None, |ui| {
+        kit::value_row(ui, "Template", &hit.name);
+        for (label, value) in template_gallery::summary(hit, &hit.values) {
+            kit::value_row(ui, label, &value);
+        }
+        kit::value_row(ui, "Values", template_gallery::basis(hit));
+        kit::hint(
+            ui,
+            "Not a component yet: choosing it creates one, then you place it",
+            "",
+        );
+    });
 }
 
 /// The badges a row shows, always all four.
@@ -1736,6 +1842,7 @@ mod tests {
             context: (0, 0),
             query: palette.query.clone(),
             report: Ok(report),
+            templates: Found::default(),
         });
         // The canvas sheet is not drawn in assign mode.
         let mut sheet = None;
@@ -1951,6 +2058,7 @@ mod tests {
                 context: (0, 0),
                 query: palette.query.clone(),
                 report: Ok(report.clone()),
+                templates: Found::default(),
             });
         };
         let instance = engine.project().instances.first().ok_or("an instance")?.id;

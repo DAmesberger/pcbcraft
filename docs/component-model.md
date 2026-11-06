@@ -749,7 +749,7 @@ The "Component catalog, templates, pin functions and 3D library" design note of 
 
 | Kind | ID | Payload → result | Section |
 | --- | --- | --- | --- |
-| Library command | `library.new_from_template`, `library.package_from_template`, `library.save_package_row` | five drafts in one step; package, lands and generated model of a working set; a package-row draft | [libui](#component-workspace-catalog-and-package-templates-libui-as-built) |
+| Library command | `library.new_from_template`, `library.publish_from_template`, `library.package_from_template`, `library.save_package_row` | five drafts in one step; package, lands and generated model of a working set; a package-row draft | [libui](#component-workspace-catalog-and-package-templates-libui-as-built) |
 | Library command | `library.edit_copy`, `library.draft_closure` | import and draft a folder item's working set; draft a published one, each one step | libui |
 | Library command | `library.footprint_from_pads`, `library.restyle_symbol`, `library.import_standard_fields` | a footprint from a pad table; a symbol redrawn as a kind; the built-in fields, one step each | [part authoring](#part-authoring-from-tables-and-datasheets) |
 | Library command | `library.pinout_apply` | a previewed pinout document, one step | [pins](#pin-functions-peripherals-rules-pinout-import-and-firmware-c1c7-as-built) |
