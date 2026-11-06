@@ -422,6 +422,9 @@ fn title(change: &Change, project: &Project) -> String {
             command: SchematicCommand::Disconnect { .. },
         } => "Disconnect wire".into(),
         Change::Schematic {
+            command: SchematicCommand::RemoveWireSegment { .. },
+        } => "Split wire".into(),
+        Change::Schematic {
             command: SchematicCommand::RemoveLabel { .. },
         } => "Remove label".into(),
         Change::Schematic { .. } => "Change schematic".into(),
