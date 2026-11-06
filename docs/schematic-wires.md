@@ -169,11 +169,13 @@ Each slice is mergeable alone and keeps `cargo xtask ci` green. Slices 1a and 1b
 
 Total: about 17–20 agent hours. Slice 1 (1a + 1b) delivers the founder's original request. Before slice 2 lands, a moved part leaves the segment on its pin slanting; that is acceptable only briefly, so slice 2 should follow straight after.
 
-## Open questions for the founder
+## Founder decisions (2026-11-06)
 
-1. **Arc form:** a rounded corner with a radius at a vertex (recommended), or a free arc segment through a point?
-2. **A junction left with one path** after a deletion: keep a free end and warn (recommended), or delete the stub as today?
-3. **Two free ends meeting:** do they join into one path automatically (recommended)?
-4. **Starting a wire in empty space** with a free end: allowed (recommended)?
-5. **Postures:** 90° and free (recommended), or also 45° like Route?
-6. **Selection:** does a click select the whole path (recommended) or one segment?
+All six recommendations were accepted:
+
+1. **Arc form:** a rounded corner with a radius at a vertex.
+2. **A junction left with one path** after a deletion keeps a free end and warns.
+3. **Two free ends meeting** join into one path automatically.
+4. **Starting a wire in empty space** with a free end is allowed.
+5. **Postures:** 90° and free; no 45°.
+6. **Selection:** a click selects the whole path; segments are edited through handles.
