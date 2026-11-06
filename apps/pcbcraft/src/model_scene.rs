@@ -1403,7 +1403,8 @@ pub(crate) mod tests {
     /// Placed bodies join the material stream, one copy a placement, so their
     /// metal reflects the studio like the rest of the board.
     #[test]
-    fn placed_bodies_are_shaded_by_the_material_stream() -> Result<(), Box<dyn std::error::Error>> {
+    fn every_body_is_shaded_by_the_stream_or_from_its_shared_triangles()
+    -> Result<(), Box<dyn std::error::Error>> {
         let scene = demo_scene()?;
         let vertices: usize = scene
             .stream
@@ -1413,9 +1414,11 @@ pub(crate) mod tests {
             .map(|d| d.vertices.len() / if d.object { 40 } else { 28 })
             .sum();
         let view = LayerView::default();
+        let in_stream = |g: &&Geometry| streamed(g) || stream_shaded(g);
         let triangles: usize = scene
             .geometry
             .iter()
+            .filter(in_stream)
             .map(|g| {
                 let place = g.place.unwrap_or(Place::IDENTITY);
                 g.mesh
@@ -1433,6 +1436,14 @@ pub(crate) mod tests {
         assert_eq!(vertices, 3 * triangles);
         // A mask's own faces are drawn; the laminate's faces under it are not.
         assert!(triangles > 0);
+        // The rest: one look per group of placements, all of them in it.
+        let placed: usize = scene.instanced.iter().map(|i| i.mesh.count()).sum();
+        assert!(placed > 0);
+        for group in &scene.instanced {
+            for g in group.bodies.iter().filter_map(|i| scene.geometry.get(*i)) {
+                assert_eq!(group.look.is_some(), !stream_shaded(g), "{:?}", g.kind);
+            }
+        }
         Ok(())
     }
 

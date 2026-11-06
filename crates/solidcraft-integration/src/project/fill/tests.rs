@@ -343,6 +343,7 @@ fn a_pour_with_many_clearances_is_one_body() -> Result<()> {
 /// second for timer noise): the fills must not dominate the 3D view's
 /// build, as the inner plane's laminate cut once did (about 6×).
 #[test]
+#[ignore = "speed bar not met on SMLib: a pour's extrude is slow until upstream's solidcore fixes land (founder hold on speed work, 2026-11-05)"]
 fn the_showcase_fills_cost_little_of_the_build() -> Result<()> {
     let filled = Engine::showcase_hosted(pcbcraft_core::Evaluators {
         footprint: Some(&crate::footprint::SketchEvaluator),
