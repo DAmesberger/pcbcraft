@@ -1,14 +1,18 @@
 //! Slice A1: the Component workspace start page, shown whenever the
 //! workspace has no subject: a catalog search (the same `library.search`
 //! as the Place palette, project and every ready library source), Recent,
-//! New from a template, Create from datasheet… and Import pinout….
+//! New from a template, Create from datasheet… and Import pinout…. A search
+//! also lists the template rows it finds, below the components; choosing one
+//! opens the New from template form on it.
 use super::PartEditor;
 use super::identity::Subject;
 #[cfg(test)]
 use super::{Request, Template};
 use crate::kit;
 use crate::library_sources::FolderPick;
+use crate::template_gallery::{self, Found};
 use egui::{RichText, Ui};
+use pcbcraft_core::catalog::templates::TemplateHit;
 use pcbcraft_core::catalog::{CatalogEntry, Source};
 use pcbcraft_core::{DefinitionKind, Engine, Query, QueryResult};
 use solidcraft_ui_egui::ui_kit::{self, Button};
@@ -30,6 +34,14 @@ pub struct StartPage {
     all: bool,
     /// (query, engine revision, context generation, limit) → hits.
     results: Option<(Key, Answer)>,
+    /// The template rows of the same search.
+    templates: Found,
+}
+
+/// What a start page row asks for.
+enum Chosen {
+    Subject(Subject),
+    Template(Box<TemplateHit>),
 }
 
 type Key = (String, u64, u64, usize);
@@ -66,7 +78,7 @@ impl PartEditor {
                         );
                         ui.add_space(t.space_8);
                         let found = self.start_search(ui, engine);
-                        let recent = self.start_recents(ui, engine);
+                        let recent = self.start_recents(ui, engine).map(Chosen::Subject);
                         ui.add_space(t.space_16);
                         let new = start_new(ui, &mut self.assist);
                         self.assist.ui(ui);
@@ -77,8 +89,15 @@ impl PartEditor {
                 .inner
             })
             .inner;
-        if let Some(subject) = open {
-            self.open_subject(subject, engine);
+        if let Some(chosen) = open {
+            match chosen {
+                Chosen::Subject(subject) => self.open_subject(subject, engine),
+                Chosen::Template(hit) => {
+                    let query = self.start.query.clone();
+                    self.gallery
+                        .open_on(&hit, query, false, Some(super::model_body::form_rows));
+                }
+            }
         } else if new {
             self.open_template_gallery();
         }
@@ -94,8 +113,8 @@ impl PartEditor {
         self.request = Some(Request::Create(template));
     }
 
-    /// The search field and its results; the subject a click opens.
-    fn start_search(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Subject> {
+    /// The search field and its results; what a click chose.
+    fn start_search(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Chosen> {
         let focus = std::mem::take(&mut self.start.focus);
         kit::search_field(
             ui,
@@ -114,7 +133,10 @@ impl PartEditor {
             limit,
         );
         if self.start.results.as_ref().is_none_or(|(k, _)| *k != key) {
-            let answer = search(engine, &self.start.query, limit, &self.identity.context.1);
+            let context = &self.identity.context.1;
+            let answer = search(engine, &self.start.query, limit, context);
+            self.start.templates =
+                template_gallery::find(engine, &self.start.query, limit, context);
             self.start.results = Some((key, answer));
         }
         let mut open = None;
@@ -125,8 +147,11 @@ impl PartEditor {
         };
         match &self.start.results {
             Some((_, Ok((entries, total)))) => {
-                kit::search_heading(ui, "Components", *total);
-                if entries.is_empty() {
+                let templates = &self.start.templates;
+                if !entries.is_empty() || templates.hits.is_empty() {
+                    kit::search_heading(ui, "Components", *total);
+                }
+                if entries.is_empty() && templates.hits.is_empty() {
                     kit::search_message(ui, "Nothing matches; try fewer words", false);
                 }
                 for entry in entries {
@@ -145,13 +170,39 @@ impl PartEditor {
                     };
                     let id = egui::Id::new(("component-start-hit", entry.key()));
                     if kit::search_row(ui, id, &row).clicked() {
-                        open = subject_of(entry);
+                        open = subject_of(entry).map(Chosen::Subject);
                     }
                 }
                 if *total > entries.len()
                     && ui_kit::button(ui, format!("Show all {total}"), Button::Ghost).clicked()
                 {
                     show_all = true;
+                }
+                if !templates.hits.is_empty() {
+                    let count = templates.hits.len() + templates.more;
+                    kit::search_heading(ui, template_gallery::SEARCH_HEADING, count);
+                }
+                for (i, hit) in templates.hits.iter().enumerate() {
+                    let source =
+                        template_gallery::source_label(hit, |l| self.identity.library_name(l));
+                    let id = egui::Id::new("component-start-template").with(i);
+                    let query = &self.start.query;
+                    if template_gallery::search_row(ui, id, hit, query, false, &source).clicked() {
+                        open = Some(Chosen::Template(Box::new(hit.clone())));
+                    }
+                }
+                if templates.more > 0 {
+                    if self.start.all {
+                        kit::note(ui, &format!("{} more: narrow the search", templates.more));
+                    } else if ui_kit::button(
+                        ui,
+                        format!("Show all {}", templates.hits.len() + templates.more),
+                        Button::Ghost,
+                    )
+                    .clicked()
+                    {
+                        show_all = true;
+                    }
                 }
             }
             Some((_, Err(error))) => kit::search_message(ui, error, true),

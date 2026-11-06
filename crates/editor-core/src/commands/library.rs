@@ -227,6 +227,11 @@ pub enum LibraryCommand {
     /// one undo step. Needs the host's footprint evaluator.
     #[serde(rename = "library.new_from_template")]
     NewFromTemplate(Box<NewFromTemplate>),
+    /// `library.new_from_template`, then `library.publish` of its five
+    /// drafts (closing them), as one undo step: a component ready to place.
+    /// Any refusal changes nothing. Needs the host's footprint evaluator.
+    #[serde(rename = "library.publish_from_template")]
+    PublishFromTemplate(Box<NewFromTemplate>),
     /// B1: replace the package, footprint and generated model of a working
     /// set from a template row, as one undo step; a non-empty footprint is
     /// refused unless `replace`. Terminal mappings change only through
@@ -284,6 +289,7 @@ declare_classes!(LibraryCommand {
     EditPackage "library.edit_package" Edit,
     FitLeads "library.fit_leads" Edit,
     NewFromTemplate "library.new_from_template" Edit,
+    PublishFromTemplate "library.publish_from_template" Ask,
     PackageFromTemplate "library.package_from_template" Edit,
     SavePackageRow "library.save_package_row" Edit,
     PinoutApply "library.pinout_apply" Edit,
@@ -1085,6 +1091,24 @@ pub(crate) fn apply_library(
         }
         LibraryCommand::NewFromTemplate(request) => {
             super::templates::new_from_template(document, *request, evaluator)
+        }
+        LibraryCommand::PublishFromTemplate(request) => {
+            let drafts = match super::templates::new_from_template(document, *request, evaluator)? {
+                Outcome::DraftsCreated { ids } => ids,
+                _ => {
+                    return Err(Error::Invalid(
+                        "library.new_from_template returned an unexpected outcome".into(),
+                    ));
+                }
+            };
+            apply_library(
+                document,
+                LibraryCommand::Publish {
+                    drafts,
+                    close: true,
+                },
+                evaluator,
+            )
         }
         LibraryCommand::PackageFromTemplate(request) => {
             super::templates::package_from_template(document, *request, evaluator)

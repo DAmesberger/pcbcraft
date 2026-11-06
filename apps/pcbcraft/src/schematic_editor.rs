@@ -9,11 +9,14 @@
 //! Findings live in Issues; a refused field edit shows under its field.
 use crate::kit;
 use crate::kit::card::{CardResponse, Inspector, IssueSlot, Region};
+use crate::kit::severity::Level;
+use crate::kit::toast::ToastAction;
 use crate::place_palette::{ChooseAction, PaletteAction, PlacePalette};
 use crate::refusal::{self, Origin};
 use crate::resolve_parts::{self, ResolveAction, ResolveParts};
 use crate::symbol_view;
 use egui::{Pos2, Rect, Sense, Stroke, Vec2, pos2};
+use pcbcraft_core::catalog::templates::TemplateHit;
 use pcbcraft_core::completeness::{InstanceReport, PurchasingState};
 use pcbcraft_core::geometry::{Bounds, Transform2};
 use pcbcraft_core::instances::{self, NewInstance};
@@ -57,6 +60,9 @@ struct FieldBuffer {
     loaded: String,
     text: String,
 }
+
+/// The refusal origin of a template row sent from the Place palette.
+const PLACE_TEMPLATE: &str = "place-template";
 
 /// A sheet action on the selected occurrence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -298,6 +304,17 @@ pub struct SchematicEditor {
     wire_review: Option<(WireDraft, u64)>,
     /// Finds the component the Place tool puts down.
     palette: PlacePalette,
+    /// A template row sent for create-and-place: the revision it was sent
+    /// at and the component lineages then published.
+    template_sent: Option<(u64, Vec<DefinitionId>)>,
+    /// A template row that takes the form first, and the search it came from.
+    template_form: Option<(Box<TemplateHit>, String)>,
+    /// Placement armed on a just-created component, at the revision that
+    /// created it: Esc before anything else changed creates nothing.
+    template_armed: Option<u64>,
+    /// Esc cancelled that placement: the app undoes the create at this
+    /// revision.
+    template_undo: Option<u64>,
     /// The Resolve parts card.
     resolve: ResolveParts,
     /// New Part… was chosen: the app opens the component's Parts editor.
@@ -377,6 +394,10 @@ impl Default for SchematicEditor {
             update: Default::default(),
             wire_review: None,
             palette: PlacePalette::default(),
+            template_sent: None,
+            template_form: None,
+            template_armed: None,
+            template_undo: None,
             resolve: ResolveParts::default(),
             updates: Arc::default(),
             library_update: None,
@@ -540,6 +561,57 @@ impl SchematicEditor {
 
     /// The Place palette, for the app's library sources (S3): its context,
     /// its events and the other-revision choice.
+    /// A template row the palette chose that takes the form, once.
+    pub fn take_template_form(&mut self) -> Option<(Box<TemplateHit>, String)> {
+        self.template_form.take()
+    }
+
+    /// The create to undo because its placement was cancelled, once, with
+    /// the revision it is valid at.
+    pub fn take_template_undo(&mut self) -> Option<u64> {
+        self.template_undo.take()
+    }
+
+    /// A component just created from a template: arm placement of it.
+    pub fn arm_created(&mut self, ctx: &egui::Context, engine: &Engine, component: ComponentRef) {
+        let project = engine.project();
+        let name = project
+            .library
+            .component(component)
+            .map_or_else(|| "the component".to_owned(), |c| c.meta.name.clone());
+        if first_choices(project, component).is_none() {
+            let text = format!("Created {name}; it has no symbol to place");
+            kit::toast::post(ctx, Level::Warning, text, vec![ToastAction::Undo]);
+            return;
+        }
+        self.select(None, None, project);
+        self.component = Some(component);
+        self.tool = Tool::Place;
+        self.wire = None;
+        self.template_armed = Some(engine.revision());
+        let text = format!("Created {name}: click the sheet to place it, Esc to cancel");
+        kit::toast::post(ctx, Level::Ok, text, Vec::new());
+    }
+
+    /// The answer to a template row sent for create-and-place: a refusal
+    /// reopens the palette with it, success arms placement.
+    fn settle_template(&mut self, ctx: &egui::Context, engine: &Engine) {
+        let Some((revision, before)) = &self.template_sent else {
+            return;
+        };
+        if let Some(why) = refusal::claim(ctx, Origin::Dialog(egui::Id::new(PLACE_TEMPLATE))) {
+            self.template_sent = None;
+            self.tool = Tool::Place;
+            self.palette.refuse(why);
+        } else if engine.revision() != *revision {
+            let created = crate::template_gallery::new_component(engine, before);
+            self.template_sent = None;
+            if let Some(component) = created {
+                self.arm_created(ctx, engine, component);
+            }
+        }
+    }
+
     pub fn palette_mut(&mut self) -> &mut PlacePalette {
         &mut self.palette
     }
@@ -821,7 +893,6 @@ impl SchematicEditor {
     pub fn ribbon(&mut self, engine: &Engine) -> crate::shell::Ribbon {
         use crate::shell::{Group, Ribbon, Tab, Tool as Button};
         let reviewing = self.update.is_open();
-        let has_parts = !engine.project().library.components.is_empty();
         let arrangeable = !reviewing && self.arranged(engine.project(), Arrange::Rotate).is_some();
         Ribbon {
             tabs: vec![Tab {
@@ -842,7 +913,7 @@ impl SchematicEditor {
                     label: "Create",
                     tools: vec![
                         Button::new("place", "component", "Place")
-                            .enabled(has_parts && !reviewing)
+                            .enabled(!reviewing)
                             .selected(self.tool == Tool::Place)
                             .tip("Find a component and place it"),
                         Button::new("wire", "line", "Wire")
@@ -998,6 +1069,7 @@ impl SchematicEditor {
         if next != Tool::Select {
             self.select(None, None, engine.project());
         }
+        self.template_armed = None;
         if next == Tool::Place {
             // One tool owns the card: Place closes Resolve parts.
             self.resolve.close();
@@ -1507,7 +1579,6 @@ impl SchematicEditor {
         }
         if !self.palette.is_open()
             && !self.update.is_open()
-            && !project.library.components.is_empty()
             && !ui.ctx().egui_wants_keyboard_input()
             && !ui.ctx().any_popup_open()
             && crate::keys::pressed(ui.ctx(), "schematic.place")
@@ -1561,8 +1632,13 @@ impl SchematicEditor {
             }
         }
         // The palette owns Esc, arrows and Enter while it is open.
+        self.settle_template(ui.ctx(), engine);
         let placeable = |c: ComponentRef| first_choices(project, c).is_some();
-        match self.palette.show(ui, rect, engine, &placeable) {
+        let chosen = self.palette.show(ui, rect, engine, &placeable);
+        if chosen.is_some() {
+            self.template_armed = None;
+        }
+        match chosen {
             Some(PaletteAction::Place {
                 component,
                 keep_open,
@@ -1601,6 +1677,20 @@ impl SchematicEditor {
                     resolve_parts::update_and_assign(instances, part, target),
                 );
             }
+            Some(PaletteAction::FromTemplate { hit, query }) => {
+                self.tool = Tool::Select;
+                match crate::template_gallery::ready_request(&hit) {
+                    Some(operation) => {
+                        refusal::mark(ui.ctx(), Origin::Dialog(egui::Id::new(PLACE_TEMPLATE)));
+                        self.template_sent = Some((
+                            engine.revision(),
+                            crate::template_gallery::published_components(engine),
+                        ));
+                        output = Some(operation);
+                    }
+                    None => self.template_form = Some((hit, query)),
+                }
+            }
             Some(PaletteAction::Close) => self.tool = Tool::Select,
             None => {}
         }
@@ -1608,6 +1698,13 @@ impl SchematicEditor {
             output = Some(op);
         }
         if crate::keys::pressed(ui.ctx(), "schematic.cancel") {
+            if self.tool == Tool::Place
+                && let Some(revision) = self.template_armed.take()
+                && revision == engine.revision()
+            {
+                self.template_undo = Some(revision);
+                self.component = None;
+            }
             self.wire = None;
             self.tool = Tool::Select;
             self.drag = None;
@@ -2814,6 +2911,8 @@ mod part_tests;
 #[cfg(test)]
 mod sheet_tests;
 #[cfg(test)]
+mod template_tests;
+#[cfg(test)]
 mod wire_end_tests;
 #[cfg(test)]
 mod tests {
@@ -2913,7 +3012,7 @@ mod tests {
         }
     }
 
-    fn shown(output: &egui::FullOutput) -> Vec<(String, Pos2)> {
+    pub(super) fn shown(output: &egui::FullOutput) -> Vec<(String, Pos2)> {
         let mut out = Vec::new();
         for shape in &output.shapes {
             texts(&shape.shape, &mut out);
@@ -3458,7 +3557,7 @@ mod tests {
 
     /// One frame of the whole Schematic workspace: canvas (with the palette
     /// over it) and the properties panel, as the app lays them out.
-    fn workspace_frame(
+    pub(super) fn workspace_frame(
         editor: &mut SchematicEditor,
         engine: &Engine,
         ctx: &egui::Context,
@@ -3486,7 +3585,7 @@ mod tests {
         (output, operations)
     }
 
-    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    pub(super) fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
         egui::Event::Key {
             key,
             physical_key: None,
@@ -3496,7 +3595,7 @@ mod tests {
         }
     }
 
-    fn parts_engine() -> Result<Engine, Box<dyn std::error::Error>> {
+    pub(super) fn parts_engine() -> Result<Engine, Box<dyn std::error::Error>> {
         Ok(Engine::from_file(pcbcraft_core::format::EditorFile {
             version: pcbcraft_core::format::FILE_VERSION,
             project: pcbcraft_core::catalog::synthetic::project(24)?,
