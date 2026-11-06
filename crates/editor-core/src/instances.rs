@@ -448,17 +448,20 @@ pub fn effective_fields(
         .collect()
 }
 
-/// An instance's value text: the effective text of the first field its
-/// component selects with `show_on_symbol` and a value ("100 nF"), the
-/// value the schematic and the BOM show. `None` when no shown field has
-/// one; never the component name.
+/// An instance's value text: the effective text of every typed field its
+/// component selects that has a value, in selection order and
+/// space-separated, as the instance shows them ("10 µF 16 V", "22 kΩ ±1%").
+/// The one value source of the schematic and the BOM, so a BOM keeps every
+/// rating the part was specified with. `None` when no field has a value;
+/// never the component name.
 pub fn value_text(library: &Library, instance: &ComponentInstance) -> Result<Option<String>> {
-    Ok(effective_fields(library, instance)?
+    let texts: Vec<String> = effective_fields(library, instance)?
         .into_iter()
-        .filter(|f| f.show_on_symbol)
         .filter_map(|f| f.text)
         .map(|t| t.trim().to_owned())
-        .find(|t| !t.is_empty()))
+        .filter(|t| !t.is_empty())
+        .collect();
+    Ok((!texts.is_empty()).then(|| texts.join(" ")))
 }
 
 /// The effective value of every field `component` selects when nothing is

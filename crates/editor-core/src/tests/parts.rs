@@ -753,7 +753,7 @@ fn bom_and_resolve_groups_follow_requirements_footprint_and_parts() -> Result<()
 }
 
 /// E2E UX run finding 16: the BOM's Value is the value the schematic shows
-/// (the first shown field), else the Part's MPN, else the name of a part of
+/// (every typed field with a value, ratings included), else the Part's MPN, else the name of a part of
 /// more than two terminals, else empty, never a passive's component name.
 #[test]
 fn the_bom_value_is_the_shown_value_never_a_passive_component_name() -> Result<()> {
@@ -797,7 +797,7 @@ fn the_bom_value_is_the_shown_value_never_a_passive_component_name() -> Result<(
     assert_eq!(
         values,
         [
-            ("R1", "10 kΩ"),
+            ("R1", "10 kΩ 16 V ±1%"),
             ("R2", "EX-R0603-10K0-F"),
             ("R3", ""),
             ("U1", "Regulator EX-LDO")
@@ -805,7 +805,9 @@ fn the_bom_value_is_the_shown_value_never_a_passive_component_name() -> Result<(
     );
     let grouped = crate::fabrication::assembly::bom_csv(s.engine.project())?;
     assert!(
-        grouped.lines().any(|l| l.starts_with("1,1,R1,10 kΩ,")),
+        grouped
+            .lines()
+            .any(|l| l.starts_with("1,1,R1,10 kΩ 16 V ±1%,")),
         "{grouped}"
     );
     assert!(

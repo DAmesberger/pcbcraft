@@ -1,8 +1,8 @@
 Designator,Value,Package,Manufacturer,MPN,Fitted
-C1,10 µF,Capacitor 0805 package,Murata,GRM21BR61C106KE15L,yes
-C2,22 µF,Capacitor 0805 package,Murata,GRM21BR61A226ME51L,yes
-C3,100 nF,Capacitor 0603 package,Murata,GRM188R71C104KA01D,yes
-C4,1 µF,Capacitor 0603 package,Murata,GRM188R61C105KA93D,yes
+C1,10 µF 16 V,Capacitor 0805 package,Murata,GRM21BR61C106KE15L,yes
+C2,22 µF 10 V,Capacitor 0805 package,Murata,GRM21BR61A226ME51L,yes
+C3,100 nF 16 V,Capacitor 0603 package,Murata,GRM188R71C104KA01D,yes
+C4,1 µF 16 V,Capacitor 0603 package,Murata,GRM188R61C105KA93D,yes
 D1,APT1608SGC,APT1608SGC package,Kingbright,APT1608SGC,yes
 D2,APT1608SGC,APT1608SGC package,Kingbright,APT1608SGC,yes
 J1,USB4105-GF-A,USB4105-GF-A USB4105,GCT,USB4105-GF-A,yes

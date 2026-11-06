@@ -1,8 +1,8 @@
 Designator,Value,Package,X (mm),Y (mm),Rotation (deg),Side
-C1,10 µF,Capacitor 0805 package,7.0000,11.5000,90.000,Top
-C2,22 µF,Capacitor 0805 package,7.0000,15.5000,90.000,Top
-C3,100 nF,Capacitor 0603 package,6.6000,56.2000,90.000,Top
-C4,1 µF,Capacitor 0603 package,6.6000,50.3000,270.000,Top
+C1,10 µF 16 V,Capacitor 0805 package,7.0000,11.5000,90.000,Top
+C2,22 µF 10 V,Capacitor 0805 package,7.0000,15.5000,90.000,Top
+C3,100 nF 16 V,Capacitor 0603 package,6.6000,56.2000,90.000,Top
+C4,1 µF 16 V,Capacitor 0603 package,6.6000,50.3000,270.000,Top
 D1,APT1608SGC,APT1608SGC package,29.0000,12.5000,0.000,Top
 D2,APT1608SGC,APT1608SGC package,4.0000,47.0000,90.000,Top
 J1,USB4105-GF-A,USB4105-GF-A USB4105,20.0000,0.0000,0.000,Top
