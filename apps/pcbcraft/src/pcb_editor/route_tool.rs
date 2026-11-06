@@ -125,6 +125,10 @@ pub(super) struct RouteState {
     /// Revisions the fill worker made by storing fill copper (from, to):
     /// no track or via changed, so a route continues through them.
     pub(super) fill_stores: Vec<(u64, u64)>,
+    /// A route just finished without Esc (Enter, double-click,
+    /// right-click or a step onto the net's copper): the next Esc ends
+    /// nothing and keeps Route; the one after leaves it.
+    pub(super) ended: bool,
 }
 
 /// What a planned step was planned from.
@@ -277,6 +281,7 @@ impl PcbEditor {
             self.layer = from;
         }
         self.reset_route();
+        self.route.ended = true;
     }
 
     /// Settle a step or unwind sent last frame. Returns whether the
@@ -337,6 +342,7 @@ impl PcbEditor {
                 self.route_start = Some(to);
                 if finish {
                     self.reset_route();
+                    self.route.ended = true;
                 }
             }
             Commit::Unwind { .. } => {

@@ -251,6 +251,27 @@ fn a_route_continues_across_clicks_until_a_pad_of_the_net() -> TestResult {
     assert_eq!(editor.route_start, None, "finished");
     assert!(editor.route.steps.is_empty());
     assert!(editor.tool == Tool::Route, "Route stays armed");
+    // Esc after a route that finished on a pad keeps Route (the next pad
+    // click routes, not selects); a second Esc leaves it.
+    canvas.key(
+        &mut editor,
+        &engine,
+        R2_1,
+        egui::Key::Escape,
+        egui::Modifiers::NONE,
+    );
+    assert!(
+        editor.tool == Tool::Route,
+        "one Esc after a finish keeps Route"
+    );
+    canvas.key(
+        &mut editor,
+        &engine,
+        R2_1,
+        egui::Key::Escape,
+        egui::Modifiers::NONE,
+    );
+    assert!(editor.tool == Tool::Select, "the second Esc leaves Route");
     let project = engine.project();
     assert!(project.tracks.len() >= before + 3);
     assert!(

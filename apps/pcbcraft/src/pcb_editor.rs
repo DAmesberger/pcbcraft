@@ -649,6 +649,7 @@ impl PcbEditor {
     fn end_route(&mut self) {
         self.tool = Tool::Select;
         self.reset_route();
+        self.route.ended = false;
         self.fill_draw.clear();
         if let Some(net) = self.route_lit.take()
             && self.highlighted == Some(net)
@@ -1010,6 +1011,7 @@ impl PcbEditor {
             "route" => {
                 if self.tool != Tool::Route {
                     self.reset_route();
+                    self.route.ended = false;
                 }
                 self.tool = Tool::Route;
             }
@@ -1419,13 +1421,18 @@ impl PcbEditor {
             (None, false)
         };
         let mut operation = closed;
+        if self.route_start.is_some() {
+            self.route.ended = false;
+        }
         if response.hovered() && !fill_escaped {
             let typing = ui.ctx().egui_wants_keyboard_input();
             let end =
                 self.tool == Tool::Route && !typing && crate::keys::pressed(ui.ctx(), "route.end");
-            if end && self.route_start.is_some() {
-                // The first Esc ends the route; the next leaves Route.
+            if end && (self.route_start.is_some() || self.route.ended) {
+                // The first Esc ends the route, or follows one that has
+                // just finished, and keeps Route; the next leaves it.
                 self.finish_route();
+                self.route.ended = false;
             } else if end || crate::keys::pressed(ui.ctx(), "pcb.cancel") {
                 self.end_route();
                 self.cancel_drag();

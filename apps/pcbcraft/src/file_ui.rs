@@ -576,20 +576,15 @@ impl FileUi {
                 .set_file_name("schematic.pdf")
                 .add_filter("PDF document", &["pdf"])
         } else {
-            let filename = self
-                .controller
-                .path
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .and_then(|p| p.to_str())
-                .unwrap_or("untitled.pcbcraft");
+            let filename =
+                proposed_file_name(self.controller.path.as_deref(), &self.document.project.name);
             dialog
                 .set_title(if kind == Kind::Open {
                     "Open Pcbcraft project"
                 } else {
                     "Save Pcbcraft project"
                 })
-                .set_file_name(filename)
+                .set_file_name(&filename)
                 .add_filter("Pcbcraft project", &["pcbcraft", "PCBCRAFT"])
         };
         // Construct the parented native future on the event thread, just as
@@ -1039,6 +1034,25 @@ fn same_content(a: &Document, b: &Document) -> bool {
     Arc::ptr_eq(&a.project, &b.project) && Arc::ptr_eq(&a.drafts, &b.drafts)
 }
 
+/// The name the project panel proposes: the file's own, else the project's
+/// name ("USB sensor board.pcbcraft") without characters a file name
+/// cannot hold, else "untitled.pcbcraft".
+fn proposed_file_name(path: Option<&Path>, project: &str) -> String {
+    if let Some(name) = path.and_then(|p| p.file_name()).and_then(|n| n.to_str()) {
+        return name.to_owned();
+    }
+    let stem: String = project
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':') && !c.is_control())
+        .collect();
+    let stem = stem.trim().trim_start_matches('.');
+    if stem.is_empty() {
+        "untitled.pcbcraft".to_owned()
+    } else {
+        format!("{stem}.pcbcraft")
+    }
+}
+
 fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {
     if path.is_absolute() {
         Ok(path)
@@ -1116,6 +1130,34 @@ mod tests {
             recovery_label(&entry, 0),
             "Untitled · just now · 4 instances"
         );
+    }
+
+    /// Saving an untitled project proposes its name; a saved file keeps its
+    /// own; once saved, the path (whose stem the title bar shows) is the
+    /// chosen file.
+    #[test]
+    fn the_save_panel_proposes_the_project_name() -> Outcome<()> {
+        assert_eq!(
+            proposed_file_name(None, "USB sensor board"),
+            "USB sensor board.pcbcraft"
+        );
+        assert_eq!(proposed_file_name(None, " a/b:c "), "abc.pcbcraft");
+        assert_eq!(proposed_file_name(None, "  "), "untitled.pcbcraft");
+        assert_eq!(
+            proposed_file_name(Some(Path::new("/x/board.pcbcraft")), "USB sensor board"),
+            "board.pcbcraft"
+        );
+        let mut controller = Controller::new(1);
+        controller.observe(2);
+        let ticket = controller.start(Kind::Save, None)?;
+        let chosen = PathBuf::from("/x/USB sensor board.pcbcraft");
+        assert!(controller.saved(&ticket, chosen.clone()).is_some());
+        assert_eq!(controller.path.as_deref(), Some(chosen.as_path()));
+        assert_eq!(
+            chosen.file_stem().and_then(|s| s.to_str()),
+            Some("USB sensor board")
+        );
+        Ok(())
     }
 
     #[test]

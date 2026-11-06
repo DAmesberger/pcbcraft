@@ -156,6 +156,47 @@ fn ribbon_tooltips_include_shortcuts() -> Result<(), Box<dyn std::error::Error>>
     Ok(())
 }
 
+/// Finding 12 of the second UX run: ⇧⌘U is Update PCB from the schematic
+/// as from the PCB workspace, and the PCB ribbon lets it run from there
+/// (`run_command` enters PCB and opens the review).
+#[test]
+fn shift_command_u_updates_the_pcb_from_the_schematic() -> Result<(), Box<dyn std::error::Error>> {
+    // R3 on the schematic but not yet on the board: an update is pending.
+    let mut engine = Engine::demo()?;
+    let first = engine.project().instances[0].clone();
+    engine.apply(
+        engine.revision(),
+        pcbcraft_core::Operation::Instance(pcbcraft_core::InstanceCommand::Place(
+            pcbcraft_core::instances::NewInstance {
+                sheet: None,
+                component: first.component,
+                designator: Some("R3".into()),
+                properties: vec![],
+                representation: first.representation,
+                unit: pcbcraft_core::UnitId(1),
+                position: [30.0, 0.0],
+                physical: first.physical,
+            },
+        )),
+    )?;
+    let registry = Registry::standard();
+    let chord = Chord::cmd(egui::Key::U).with_shift();
+    for context in [Context::Schematic, Context::Pcb, Context::PcbLayout] {
+        let command = registry
+            .resolve(chord, &crate::commands::active_contexts(context))
+            .ok_or_else(|| format!("⇧⌘U does nothing in {context:?}"))?;
+        assert_eq!(command.id, "pcb.update", "{context:?}");
+        assert!(dispatchable(command, chord, false, false), "{context:?}");
+        let Action::Ribbon(Workspace::Pcb, event) = command.action else {
+            return Err("Update PCB is a PCB ribbon command".into());
+        };
+        let mut pcb = crate::pcb_editor::PcbEditor::default();
+        let state = RibbonState::of(Workspace::Pcb, &pcb.ribbon(&engine));
+        assert_eq!(state.allows(event, command.context), Ok(()), "{context:?}");
+    }
+    Ok(())
+}
+
 /// Finding 3 of the UI run: ⌘S is `file.save` in every context, the board
 /// shape sketch's exclusive mode included, and runs while a field is
 /// focused or a menu is open.

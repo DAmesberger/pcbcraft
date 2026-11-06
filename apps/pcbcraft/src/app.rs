@@ -1051,6 +1051,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.now = ctx.input(|i| i.time);
         follow_system_theme(&ctx, false);
+        crate::kit::text::fit_tooltips(&ctx);
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
         open_timing::report(self.open_timing.frame(pcb_3d, std::time::Instant::now()));
         self.scene.receive();

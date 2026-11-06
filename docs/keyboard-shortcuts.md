@@ -89,12 +89,12 @@ The keymap is original. Letters are mnemonic where they can be: R route, V via, 
 
 | Context | Keys |
 | --- | --- |
-| Everywhere | ⌘P / ⇧⌘P palette · ⌘/ shortcuts · ⌘, settings · ⌘Q quit · ⌘N new · ⌘O open · ⌘S save · ⇧⌘S save as · ⇧⌘E export to Solidcraft · ⌘Z undo · ⇧⌘Z redo · ⌘B Browser · ⇧⌘I Issues · ⇧⌘M Messages · ⌘1 / ⌘2 / ⌘3 Component / Schematic / PCB · F fit view |
+| Everywhere | ⌘P / ⇧⌘P palette · ⌘/ shortcuts · ⌘, settings · ⌘Q quit · ⌘N new · ⌘O open · ⌘S save · ⇧⌘S save as · ⇧⌘E export to Solidcraft · ⌘Z undo · ⇧⌘Z redo · ⌘B Browser · ⇧⌘I Issues · ⇧⌘M Messages · ⌘1 / ⌘2 / ⌘3 Component / Schematic / PCB · ⇧⌘U update PCB from schematic (opens PCB) · F fit view |
 | Component | ⇧⌘N new component · ⇧⌘O open component · ⌘[ / ⌘] previous / next component |
 | Symbol tab | L line · ⇧L polyline · R rectangle · C circle · A arc · ⇧P polygon · ⇧T text · ⇧F field · N pin · ⌘R rotate · ⇧X mirror · ⌘D duplicate · Delete or Backspace · ⇧R repeat tool · Enter finish · Esc cancel |
 | Footprint tab | N pad · ⇧N pad row · H drill · ⇧H slot · L / A / C / R draw · D dimension · X construction ↔ silkscreen · Space turn pad · ⇧R repeat · Delete or Backspace · Esc |
 | Schematic | P place · W wire · N no connect · L net label · ⇧L global label · H hierarchical label · ⇧P power port · ⇧S sheet symbol · T note · ⌘R rotate (symbol or label) · ⇧X mirror · Delete removes the selected label, sheet symbol or drawing · Esc cancel |
-| PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills · ⇧⌘U update PCB from schematic |
+| PCB (both views) | D Layout ↔ 3D · ⇧P refill all fills |
 | PCB Layout | R route · V via · T tune length · P fill · B board shape · M place 3D part ([mechanical parts](mechanical-parts.md)) · 1–9, 0 stackup layer 1–10 (the active layer; through a via while routing) · ⇧L layer focus (all layers, dim others, active only) · ⇧F view from bottom · H highlight complete net · Esc cancel |
 | PCB 3D | 1 front · 2 back · 3 left · 4 right · 5 top · 6 bottom · 7 home (isometric, fitted) · ⇧F fit and orbit around the selection · arrows turn the view 15° (⇧: 90°) · ⌘ arrows pan (arrows are navigation, read by the view, not rebindable) |
 | Route tool (`ROUTE_KEYS`) | Click corner · Enter finish · Esc end (again: Select) · Backspace remove the last segment · V / ⇧V via to the next / previous layer · 1–0 (the Layout's layer keys) via to that layer · / next mode (45°, 90°, free) · F (or ⇧F) flip the elbow · W / ⇧W next / previous track width · D / ⇧D next / previous via size · P pair routing on or off · M / ⇧M next / previous router (shove, walkaround, ignore; [push-and-shove](push-and-shove.md)) |
