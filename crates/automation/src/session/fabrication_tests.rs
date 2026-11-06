@@ -227,15 +227,23 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
         .collect();
     assert!(!blocking.is_empty());
     assert_eq!(report["result"]["blocking"], blocking.len());
-    // A waiver needs a reason.
+    // A reason is optional: without one the waiver keeps an empty reason.
     let revision = session.engine().revision();
-    let unreasoned = session.dispatch(json!({"command": "project.apply", "params": {
-        "expected_revision": revision,
-        "operation": {"editor": "Fabrication", "operation": {
-            "command": "fabrication.waive", "params": {"keys": [blocking[0]], "reason": " "}}},
-    }}));
-    assert_eq!(unreasoned["ok"], false);
-    assert_eq!(session.engine().revision(), revision);
+    ok(
+        &mut session,
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Fabrication", "operation": {
+                "command": "fabrication.waive", "params": {"keys": [blocking[0]]}}},
+        }}),
+    )?;
+    let waivers = &session.engine().project().production.waivers;
+    assert_eq!(waivers.len(), 1);
+    assert_eq!(waivers[0].reason, "");
+    ok(
+        &mut session,
+        json!({"command": "project.undo", "params": {}}),
+    )?;
     // One key that is not printable refuses the whole list.
     let revision = session.engine().revision();
     let mut bad = blocking.clone();
@@ -290,5 +298,40 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
         Some("no-such-profile"),
     ));
     assert_eq!(unknown["ok"], false);
+    Ok(())
+}
+
+/// A host that requires a reason (the app's setting) refuses a waiver
+/// without one, changing nothing; with a reason it is kept.
+#[test]
+fn a_required_reason_refuses_a_waiver_without_one() -> Fallible<()> {
+    let mut engine = Engine::default();
+    engine.require_waiver_reason(true);
+    let mut session = Session::new(engine);
+    let waive = |revision: u64, reason: Value| {
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Fabrication", "operation": {
+                "command": "fabrication.waive", "params": {"keys": ["k"], "reason": reason}}},
+        }})
+    };
+    let revision = session.engine().revision();
+    for reason in [json!(" "), json!("")] {
+        let refused = session.dispatch(waive(revision, reason));
+        assert_eq!(refused["ok"], false, "{refused}");
+        assert!(
+            refused["error"]
+                .to_string()
+                .contains("fabrication.waiver_reason"),
+            "{refused}"
+        );
+        assert_eq!(session.engine().revision(), revision);
+        assert!(session.engine().project().production.waivers.is_empty());
+    }
+    ok(&mut session, waive(revision, json!("prototype")))?;
+    assert_eq!(
+        session.engine().project().production.waivers[0].reason,
+        "prototype"
+    );
     Ok(())
 }

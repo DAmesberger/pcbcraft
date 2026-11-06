@@ -28,11 +28,16 @@ use std::collections::{BTreeMap, BTreeSet};
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum FabricationCommand {
     /// Accept pre-flight findings for fabrication, by their keys, with one
-    /// reason (required), as one undo step. Replaces earlier waivers of the
-    /// same keys. Refused whole, changing nothing, when any key or the
-    /// reason is empty, too long or not printable.
+    /// optional reason, as one undo step. Replaces earlier waivers of the
+    /// same keys. Refused whole, changing nothing, when any key is empty,
+    /// a key or the reason is too long or not printable, or the host
+    /// requires a reason and none is given.
     #[serde(rename = "fabrication.waive")]
-    Waive { keys: Vec<String>, reason: String },
+    Waive {
+        keys: Vec<String>,
+        #[serde(default)]
+        reason: String,
+    },
     /// Remove the waiver of a key.
     #[serde(rename = "fabrication.unwaive")]
     Unwaive { key: String },
@@ -44,17 +49,28 @@ declare_classes!(FabricationCommand {
     Unwaive "fabrication.unwaive" Edit,
 });
 
-/// Apply one waiver command. A refused command leaves `production`
+/// Apply one waiver command; `reason_required` refuses a waiver without a
+/// reason (a host setting). A refused command leaves `production`
 /// unchanged.
-pub fn apply(production: &mut Production, command: FabricationCommand) -> Result<()> {
+pub fn apply(
+    production: &mut Production,
+    command: FabricationCommand,
+    reason_required: bool,
+) -> Result<()> {
     let waivers = &mut production.waivers;
     match command {
         FabricationCommand::Waive { keys, reason } => {
             let reason = reason.trim().to_string();
             let keys: BTreeSet<String> = keys.iter().map(|k| k.trim().to_string()).collect();
-            if keys.is_empty() || keys.contains("") || reason.is_empty() {
+            if keys.is_empty() || keys.contains("") {
                 return Err(Error::Invalid(
-                    "fabrication.waiver_reason: a waiver needs a finding key and a reason".into(),
+                    "fabrication.waiver_key: a waiver needs a finding key".into(),
+                ));
+            }
+            if reason_required && reason.is_empty() {
+                return Err(Error::Invalid(
+                    "fabrication.waiver_reason: a reason is required to waive findings (Settings)"
+                        .into(),
                 ));
             }
             if keys.len() > MAX_WAIVERS

@@ -261,6 +261,38 @@ fn an_unwaived_error_blocks_export_and_a_waiver_unblocks_it() -> TestResult {
     Ok(())
 }
 
+/// By default a reason is optional: Waive commits with none, and the
+/// waived row's tip reads "Waived" without an empty reason.
+#[test]
+fn a_waiver_without_a_reason_is_committed_by_default() -> TestResult {
+    let mut engine = Engine::showcase()?;
+    let mut editor = open(&engine)?;
+    let ctx = context();
+    dialog(&mut editor)?.report = Some((
+        engine.revision(),
+        Pick::Board,
+        Ok(report_with_error(&engine)),
+    ));
+    hover(
+        &mut editor,
+        &engine,
+        &ctx,
+        "Via on GND too close to via on VCC",
+    )?;
+    assert!(click(&mut editor, &engine, &ctx, "Waive…")?.is_none());
+    let op = click(&mut editor, &engine, &ctx, "Waive 1 finding")?.ok_or("no waiver edit")?;
+    assert!(matches!(
+        &op,
+        Operation::Fabrication(FabricationCommand::Waive { reason, .. }) if reason.is_empty()
+    ));
+    engine.apply(engine.revision(), op)?;
+    let report = report_with_error(&engine);
+    let item = report.items.first().ok_or("item")?;
+    assert_eq!(item.waiver.as_ref().map(|w| w.reason.as_str()), Some(""));
+    assert_eq!(row_tip(item), "Waived\nMove one via");
+    Ok(())
+}
+
 #[test]
 fn export_writes_the_set_off_the_ui_thread() -> TestResult {
     let engine = Engine::showcase()?;
@@ -381,6 +413,8 @@ fn at(output: &egui::FullOutput, label: &str) -> Result<Pos2, Box<dyn std::error
 #[test]
 fn a_whole_group_is_waived_with_one_reason_in_one_undo_step() -> TestResult {
     let mut engine = Engine::showcase()?;
+    // Settings: "Require a reason to waive errors".
+    engine.require_waiver_reason(true);
     let mut editor = open(&engine)?;
     let ctx = context();
     dialog(&mut editor)?.report = Some((
@@ -413,8 +447,23 @@ fn a_whole_group_is_waived_with_one_reason_in_one_undo_step() -> TestResult {
         header.y < reason.y && reason.y < next.y,
         "the form is under its group, before the next: {header:?} {reason:?} {next:?}"
     );
-    // The reason is required: without one, Waive does nothing.
+    // The reason is required by the setting: without one, Waive does
+    // nothing, and the engine refuses such a waiver unchanged.
     assert!(click(&mut editor, &engine, &ctx, "Waive 9 findings")?.is_none());
+    let revision = engine.revision();
+    let keys: Vec<String> = dialog(&mut editor)?
+        .waiving
+        .ticked
+        .iter()
+        .cloned()
+        .collect();
+    let unreasoned = Operation::Fabrication(FabricationCommand::Waive {
+        keys,
+        reason: String::new(),
+    });
+    assert!(engine.apply(revision, unreasoned).is_err());
+    assert_eq!(engine.revision(), revision);
+    assert!(engine.project().production.waivers.is_empty());
     "prototype".clone_into(&mut dialog(&mut editor)?.waiving.reason);
     let op = click(&mut editor, &engine, &ctx, "Waive 9 findings")?.ok_or("no waiver edit")?;
     let Operation::Fabrication(FabricationCommand::Waive { keys, reason }) = &op else {

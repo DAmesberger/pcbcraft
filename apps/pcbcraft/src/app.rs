@@ -100,7 +100,7 @@ impl App {
         follow_system_theme(&cc.egui_ctx, true);
         fonts::setup_bundled_fonts(&cc.egui_ctx);
         let render_state = cc.wgpu_render_state.as_ref().ok_or("wgpu is required")?;
-        let engine = Engine::demo()?;
+        let mut engine = Engine::demo()?;
         let mut files = FileUi::new(cc, &engine);
         // `pcbcraft FILE.pcbcraft` opens that project through the file workflow.
         if let Some(path) = std::env::args_os()
@@ -163,6 +163,7 @@ impl App {
             }
         };
         let browser_width = sources.browser_width().unwrap_or(chrome::BROWSER_WIDTH);
+        engine.require_waiver_reason(sources.require_waiver_reason());
         Ok(Self {
             scene: SceneController::new(
                 cc.egui_ctx.clone(),

@@ -3,6 +3,8 @@
 //! the shortcuts sheet, tooltips, tool cards, the key dispatcher and the
 //! reveal overlays all read, and the key-reveal options. Changes apply at
 //! once and are kept per user (`pcbcraft_io::settings::KeyboardSettings`).
+//! The Production section's "Require a reason to waive errors" sets the
+//! engine's `require_waiver_reason` (kept in `UserSettings`).
 //!
 //! A key is recorded by clicking its cap and pressing the new chord (Esc
 //! cancels). A chord another command already takes where both apply (the
@@ -163,22 +165,32 @@ impl SettingsWindow {
         }
     }
 
-    /// Draw the window while open. Returns what to do with the keymap and
-    /// whether the reveal settings changed.
+    /// Draw the window while open. Returns what to do with the keymap,
+    /// whether the reveal settings changed and whether the waiver-reason
+    /// setting changed.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         registry: &Registry,
         reveal: &mut RevealSettings,
+        require_waiver_reason: &mut bool,
         unapplied: &[Unapplied],
-    ) -> (Option<KeyAction>, bool) {
+    ) -> (Option<KeyAction>, bool, bool) {
         if !self.open {
-            return (None, false);
+            return (None, false, false);
         }
         let mut action = None;
         let mut reveal_changed = false;
+        let mut waiver_changed = false;
         let closed = ui_kit::Window::new(egui::Id::new("app-settings"), "params", "Settings")
             .show_body(ctx, |ui| {
+                kit::section(ui, "settings-production", "Production", true, None, |ui| {
+                    waiver_changed = kit::check_row(
+                        ui,
+                        "Require a reason to waive errors",
+                        require_waiver_reason,
+                    );
+                });
                 kit::section(ui, "settings-reveal", "Key reveal", true, None, |ui| {
                     reveal_changed |= reveal_rows(ui, reveal);
                 });
@@ -191,7 +203,7 @@ impl SettingsWindow {
             self.recording = None;
             self.pending = None;
         }
-        (action, reveal_changed)
+        (action, reveal_changed, waiver_changed)
     }
 
     fn keyboard(
@@ -430,14 +442,22 @@ impl super::App {
     /// The Settings window while open.
     pub(super) fn settings(&mut self, ctx: &egui::Context) {
         let mut keyboard = self.sources.keyboard().clone();
-        let (action, reveal_changed) = self.settings_window.show(
+        let mut require_reason = self.sources.require_waiver_reason();
+        let (action, reveal_changed, waiver_changed) = self.settings_window.show(
             ctx,
             &self.registry,
             &mut keyboard.reveal,
+            &mut require_reason,
             &self.keymap_problems,
         );
         if reveal_changed && let Err(reason) = self.sources.set_keyboard(keyboard) {
             self.say(crate::kit::severity::Level::Warning, reason);
+        }
+        if waiver_changed {
+            // The engine refuses a waiver without a reason in every path of
+            // this app (panels, assistant), not only at the Waive button.
+            self.sources.set_require_waiver_reason(require_reason);
+            self.engine.require_waiver_reason(require_reason);
         }
         if let Some(action) = action {
             self.key_action(ctx, action);

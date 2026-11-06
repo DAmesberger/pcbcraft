@@ -7,7 +7,8 @@
 //! Gerber, drill, job, assembly and drawing files as a folder or one ZIP
 //! through `pcbcraft_io::fabrication::export`, the call the CLI and
 //! automation use too. Findings are ticked one by one, as a Shift-click
-//! run or as a whole group, and waived with one reason: the reason form
+//! run or as a whole group, and waived with one optional reason (required
+//! when Settings says so): the reason form
 //! opens under the row or group where the waiving started, and one
 //! `fabrication.waive` with every ticked key is one undo step. Restore
 //! (`fabrication.unwaive`) undoes one waiver. Writing files is an external
@@ -602,7 +603,7 @@ fn body(
                 Some(Err(_)) => {}
                 Some(Ok(report)) => {
                     kit::value_row(ui, "Result", &report_summary(report));
-                    op = findings(dialog, ui, report);
+                    op = findings(dialog, ui, report, engine.waiver_reason_required());
                 }
             }
         },
@@ -842,6 +843,7 @@ fn findings(
     dialog: &mut ProductionDialog,
     ui: &mut Ui,
     report: &PreflightReport,
+    required: bool,
 ) -> Option<Operation> {
     let w = &mut dialog.waiving;
     // Keep only ticks of findings that can still be waived.
@@ -944,7 +946,7 @@ fn findings(
                     }
                 }
             }
-            Some(Entry::Form) => form = reason_form(ui, reason, count, reveal),
+            Some(Entry::Form) => form = reason_form(ui, reason, count, reveal, required),
             None => {}
         }
     });
@@ -1000,7 +1002,7 @@ fn findings(
         (true, _) => {
             let keys: Vec<String> = w.ticked.iter().cloned().collect();
             let reason = w.reason.trim().to_owned();
-            if !keys.is_empty() && !reason.is_empty() {
+            if !keys.is_empty() && (!required || !reason.is_empty()) {
                 op = Some(Operation::Fabrication(FabricationCommand::Waive {
                     keys,
                     reason,
@@ -1018,7 +1020,11 @@ fn findings(
 fn row_tip(item: &PreflightItem) -> String {
     let mut tip = Vec::new();
     if let Some(waiver) = &item.waiver {
-        tip.push(format!("Waived: {}", waiver.reason));
+        tip.push(if waiver.reason.is_empty() {
+            "Waived".to_owned()
+        } else {
+            format!("Waived: {}", waiver.reason)
+        });
     }
     if let Some(fix) = &item.fix {
         tip.push(fix.clone());
@@ -1065,7 +1071,13 @@ fn tick_row(w: &mut Waiving, groups: &[(&str, Vec<&PreflightItem>)], key: &str, 
 
 /// The reason form under the row or group it was opened from: the reason,
 /// then Cancel and "Waive n". Returns (waive, cancel).
-fn reason_form(ui: &mut Ui, reason: &mut String, count: usize, reveal: bool) -> (bool, bool) {
+fn reason_form(
+    ui: &mut Ui,
+    reason: &mut String,
+    count: usize,
+    reveal: bool,
+    required: bool,
+) -> (bool, bool) {
     let t = Tokens::get();
     let top = ui.cursor().top();
     ui.add_space(t.space_4);
@@ -1074,11 +1086,15 @@ fn reason_form(ui: &mut Ui, reason: &mut String, count: usize, reveal: bool) -> 
             ui,
             "waive-reason",
             reason,
-            "Why this is acceptable for this build",
+            if required {
+                "Why this is acceptable for this build"
+            } else {
+                "Why this is acceptable (optional)"
+            },
             false,
         )
     });
-    let ready = !reason.trim().is_empty();
+    let ready = !required || !reason.trim().is_empty();
     let mut out = (false, false);
     let label = if count == 1 {
         "Waive 1 finding".to_owned()

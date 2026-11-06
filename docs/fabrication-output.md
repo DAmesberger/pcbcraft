@@ -11,7 +11,7 @@ The Gerber writer follows Ucamco's public Gerber Layer Format Specification. The
 - **MCP:** the same request reaches MCP through the generic catalog.
 - **Desktop:** PCB workspace → ribbon Output → Production, or "Production files…" in the command palette.
   - The dialog shows a profile picker, Folder or ZIP output, an output toggle for each group and the placement convention.
-  - It lists the pre-flight report, computed on a worker, grouped by kind of finding. Tick findings (Shift-click ticks a run, a group's box ticks the whole group), or use a row's or a group's Waive…. The reason form opens under that row or group, and Waive applies one reason to every ticked finding as one undo step. A waived finding offers Restore.
+  - It lists the pre-flight report, computed on a worker, grouped by kind of finding. Tick findings (Shift-click ticks a run, a group's box ticks the whole group), or use a row's or a group's Waive…. The reason form opens under that row or group, and Waive applies one optional reason to every ticked finding as one undo step. A waived finding offers Restore.
   - Export runs on a worker and shows progress; the result lists the written files.
 - **Shared path:** all of these call `pcbcraft_io::fabrication::export`. The pure generation is `pcbcraft_core::fabrication::generate`, the PDF drawings are `pcbcraft_io::fab_drawings`, and `pcbcraft_io::pdf` is a small generic PDF canvas that schematic printing can reuse.
 - **Writing:** a folder is written to a sibling staging folder and then renamed into place. A ZIP is written atomically, entries in set order with a fixed timestamp.
@@ -40,7 +40,7 @@ The check reports every project issue under the chosen fabrication profile. Over
 
 **Waivers:**
 - An unwaived error blocks export, and nothing is written.
-- `fabrication.waive {keys, reason}` waives one or more findings with one reason, and `fabrication.unwaive {key}` restores one. Each is a document operation and one undo step. A waiver needs a reason; a list with one empty or unprintable key is refused whole.
+- `fabrication.waive {keys, reason?}` waives one or more findings with one optional reason, and `fabrication.unwaive {key}` restores one. Each is a document operation and one undo step. A list with one empty or unprintable key is refused whole. The desktop setting "Require a reason to waive errors" (Settings → Production, off by default) makes the app's engine refuse a waiver without a reason, from the dialog and the in-app assistant alike; headless CLI and MCP sessions keep the reason optional.
 - Waivers are saved in the project (`Project.production.waivers`, keyed by finding code plus the objects it names). A finding that changes identity needs a new waiver.
 
 ## Files

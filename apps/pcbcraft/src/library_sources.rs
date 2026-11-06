@@ -772,6 +772,19 @@ impl LibrarySources {
         Ok(())
     }
 
+    /// Whether the app's waivers need a reason (Settings).
+    pub fn require_waiver_reason(&self) -> bool {
+        self.settings.require_waiver_reason
+    }
+
+    /// Keep the waiver-reason setting per user.
+    pub fn set_require_waiver_reason(&mut self, required: bool) {
+        if required != self.settings.require_waiver_reason {
+            self.settings.require_waiver_reason = required;
+            self.persist();
+        }
+    }
+
     #[cfg(test)]
     pub fn is_favourite(&self, key: &EntryKey) -> bool {
         self.settings.favourites.contains(key)

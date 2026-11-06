@@ -455,9 +455,23 @@ pub struct Engine {
     revision: u64,
     undo: VecDeque<Document>,
     redo: Vec<Document>,
+    /// `fabrication.waive` refuses a waiver without a reason (a host
+    /// setting; off by default).
+    waiver_reason_required: bool,
 }
 
 impl Engine {
+    /// Whether `fabrication.waive` needs a reason in this engine. The app
+    /// sets it from its settings; headless hosts keep the default (off).
+    pub fn require_waiver_reason(&mut self, required: bool) {
+        self.waiver_reason_required = required;
+    }
+
+    /// Whether `fabrication.waive` needs a reason in this engine.
+    pub fn waiver_reason_required(&self) -> bool {
+        self.waiver_reason_required
+    }
+
     /// An engine for an already validated file, with empty history.
     pub fn from_file(file: format::EditorFile) -> Result<Self> {
         let mut engine = Self::default();
@@ -1052,7 +1066,7 @@ impl Engine {
             }
             Operation::Fabrication(command) => {
                 let mut next = candidate.project.production.clone();
-                fabrication::preflight::apply(&mut next, command)?;
+                fabrication::preflight::apply(&mut next, command, self.waiver_reason_required)?;
                 if next != candidate.project.production {
                     Arc::make_mut(&mut candidate.project).production = next;
                 }
