@@ -452,6 +452,20 @@ fn a_focused_field_keeps_paste_and_the_sheet_gets_it_otherwise() -> Result<(), S
     Ok(())
 }
 
+/// ⌘A runs Select All off a field; a focused field keeps the key for its own
+/// text.
+#[test]
+fn select_all_leaves_the_key_to_a_focused_field() -> Result<(), Box<dyn std::error::Error>> {
+    let registry = Registry::standard();
+    let active = crate::commands::active_contexts(Context::Schematic);
+    let chord = Chord::cmd(egui::Key::A);
+    let command = registry.resolve(chord, &active).ok_or("key")?;
+    assert_eq!(command.id, "edit.select-all");
+    assert!(dispatchable(command, chord, false, false));
+    assert!(!dispatchable(command, chord, true, false));
+    Ok(())
+}
+
 /// Cut, Copy and Paste are the schematic sheet's: elsewhere they say so and
 /// stay disabled, whatever the sheet holds.
 #[test]

@@ -425,6 +425,7 @@ fn title(change: &Change, project: &Project) -> String {
             command: SchematicCommand::RemoveLabel { .. },
         } => "Remove label".into(),
         Change::Schematic { .. } => "Change schematic".into(),
+        Change::RemoveObjects { objects } => format!("Remove {} objects", objects.len()),
     }
 }
 
@@ -457,6 +458,7 @@ pub(crate) fn applied_line(plan: &UpdatePlan) -> String {
             command: SchematicCommand::RemoveLabel { .. },
         } => "Removed the label",
         Change::Schematic { .. } => "Changed the schematic",
+        Change::RemoveObjects { .. } => "Removed the objects",
     };
     let summary = summary_of(plan);
     let mut chars = summary.chars();

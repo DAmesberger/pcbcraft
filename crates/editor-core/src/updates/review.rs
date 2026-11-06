@@ -62,6 +62,10 @@ pub enum ChangeObject {
     Instance,
     Placement,
     Wire,
+    /// A net label or power port.
+    Label,
+    /// A note, line or rectangle on the sheet.
+    Drawing,
     Net,
     /// A symbol occurrence on the sheet.
     Symbol,
@@ -93,6 +97,8 @@ impl ChangeObject {
             Self::Pad => ("pad", "pads"),
             Self::Symbol => ("sheet symbol", "sheet symbols"),
             Self::Wire => ("wire", "wires"),
+            Self::Label => ("label", "labels"),
+            Self::Drawing => ("drawing", "drawings"),
             Self::Net => ("net", "nets"),
             Self::Placement => ("placement", "placements"),
         };

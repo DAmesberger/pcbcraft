@@ -94,7 +94,13 @@ A sheet symbol (`sheet_symbol.place`, with an existing `child` or a new sheet) s
 
 The query `schematic.copy { sheet, objects }` reads symbols, labels, drawings and wires into a self-contained clip, which keeps what it needs after the objects are gone (a cut). A wire comes along when it is named or when both its ends are on named symbols or labels; an end on anything else becomes a free end where it is. `schematic.paste { sheet, clip, offset }` recreates the clip as one undo step. A symbol becomes a new instance of the same component with the next free designator ([annotation](#annotation)) and keeps its field values and other instance choices, with its units on that sheet; units elsewhere stay unplaced. A label keeps its name, so it joins that net as any label does. Sheet symbols and sheet pins are not copied.
 
-The desktop keeps a clip as its buffer. ⌘C and ⌘X work on the single selected object, because the sheet selects one object at a time. ⌘V pastes at the pointer; off the canvas, or again at the same point, it moves on two grid steps from the last paste. The first pasted object stays selected. Cut removes as Delete does, so a symbol or wire goes through the review. A focused text field keeps these keys. PCB Layout has no copy or paste: parts come from the schematic.
+The desktop keeps a clip as its buffer. ⌘C and ⌘X work on the selection, one object or a group. ⌘V pastes at the pointer; off the canvas, or again at the same point, it moves on two grid steps from the last paste. What was pasted stays selected. Cut removes as Delete does, so a symbol, wire or group goes through the review. A focused text field keeps these keys. PCB Layout has no copy or paste: parts come from the schematic.
+
+## Selecting several objects
+
+With the Select tool, a drag from empty canvas draws a rectangle, by Solidcraft's rule: left to right takes what is wholly inside, right to left what it touches. ⇧ adds a rectangle to the selection, and ⇧-click adds or removes one object. ⌘A takes everything on the sheet when no text field has focus. Symbols (with all their units on the sheet), labels, power ports, drawings and wires can be selected; sheet symbols and pins cannot join a group.
+
+`schematic.arrange { sheet, objects, action }` moves (`by`), turns (`about`) or mirrors (`about`) the group as one undo step; the desktop turns about the middle of the group's pins and vertices, snapped to the symbol grid. A wire with both ends in the group keeps its shape, and any other wire on a moved object rubber-bands. An end is in the group when it is on a named symbol or label, on a label placing itself on a named symbol's pin, on a junction a named wire ends on, or a free end of a named wire. So junctions come along with wires only. A group's Delete is the reviewed update `Change::RemoveObjects { objects }`, listing everything it removes.
 
 ## Navigation and queries
 
@@ -126,5 +132,6 @@ The existing net rules (driver conflicts, input-only nets, undriven power inputs
 - Buses (bus wires, bus entries, vector names such as `D[0..7]`) are not implemented.
 - Reusable child sheets instanced more than once (see above).
 - Labels do not yet draw with per-label font size or justification overrides.
-- The sheet has no multi-select (rectangle or ⇧-click), so the desktop copies one object at a time; `schematic.copy` already takes several.
+- Sheet symbols and sheet pins cannot join a group selection yet, as they cannot be copied.
+- Arrow keys do not nudge sheet objects, one or several.
 - A pasted object does not follow the pointer until clicked; it is pasted in place and selected.
