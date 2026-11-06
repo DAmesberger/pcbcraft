@@ -1372,7 +1372,51 @@ mod font_tests {
         let sans = egui::FontId::proportional(13.0);
         let mono = egui::FontId::monospace(13.0);
         assert!(!draws(&ctx, &sans), "the bundled faces lack CJK");
-        fonts::load_system_fonts_in_background(&ctx);
+        install_system_fonts(&ctx);
+        frame(&ctx);
+        assert!(draws(&ctx, &sans) && draws(&ctx, &mono));
+    }
+
+    /// Hiragino's ⇧ stands half as tall again as a capital; the status line
+    /// and menus show it beside letters, so it must keep to their size, with
+    /// one point for rounding. Measured on the glyphs as rasterized, for each
+    /// family that shows shortcuts.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn the_shift_glyph_stays_the_size_of_a_capital_with_the_system_fonts() {
+        let ctx = egui::Context::default();
+        install_system_fonts(&ctx);
+        ctx.run_ui(Default::default(), |_| {})
+            .textures_delta
+            .clear();
+        for font in [
+            egui::FontId::proportional(13.0),
+            egui::FontId::proportional(11.0),
+            fonts::semibold(13.0),
+            egui::FontId::monospace(13.0),
+        ] {
+            let galley = ctx.fonts_mut(|f| {
+                f.layout_no_wrap("L⇧".to_owned(), font.clone(), egui::Color32::WHITE)
+            });
+            let heights: Vec<f32> = galley.rows[0]
+                .row
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.uv_rect.size.y)
+                .collect();
+            assert_eq!(heights.len(), 2, "{font:?}");
+            let (capital, shift) = (heights[0], heights[1]);
+            assert!(
+                capital > 0.0 && shift <= capital + 1.0,
+                "{font:?}: ⇧ is {shift} tall beside L at {capital}"
+            );
+        }
+    }
+
+    /// The system's fallback fonts in `ctx`, once the search found them.
+    #[cfg(target_os = "macos")]
+    fn install_system_fonts(ctx: &egui::Context) {
+        fonts::load_system_fonts_in_background(ctx);
         for _ in 0..600 {
             if fonts::system_fonts_ready() {
                 break;
@@ -1380,9 +1424,7 @@ mod font_tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(fonts::system_fonts_ready(), "the search finished");
-        fonts::setup_fonts_without_waiting(&ctx, "en", "");
-        frame(&ctx);
-        assert!(draws(&ctx, &sans) && draws(&ctx, &mono));
+        fonts::setup_fonts_without_waiting(ctx, "en", "");
     }
 }
 
