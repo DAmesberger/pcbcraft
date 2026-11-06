@@ -51,6 +51,10 @@ pub(crate) struct SettingsWindow {
 }
 
 impl SettingsWindow {
+    #[cfg(test)]
+    pub fn open(&mut self) {
+        self.open = true;
+    }
     pub fn toggle(&mut self) {
         self.open = !self.open;
         if !self.open {
