@@ -111,7 +111,11 @@ impl SettingsWindow {
             i.events.retain(|e| {
                 !matches!(
                     e,
-                    egui::Event::Key { .. } | egui::Event::Text(_) | egui::Event::Copy
+                    egui::Event::Key { .. }
+                        | egui::Event::Text(_)
+                        | egui::Event::Copy
+                        | egui::Event::Cut
+                        | egui::Event::Paste(_)
                 )
             });
             first

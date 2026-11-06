@@ -24,7 +24,10 @@ pub(super) enum Target {
     },
     /// A label, sheet symbol, sheet pin or drawing.
     Item(Item),
-    Sheet,
+    /// The empty sheet, and the point under the pointer.
+    Sheet {
+        at: Point,
+    },
 }
 
 /// A sheet menu row's own action.
@@ -43,6 +46,7 @@ pub(super) enum Act {
     EditItem(Item),
     RotateItem,
     RemoveItem(Item),
+    Paste(Point),
 }
 
 /// What the app does for a sheet menu row it runs itself.
@@ -82,7 +86,7 @@ impl SchematicEditor {
                     self.select_item(Some(item), project);
                 }
             }
-            Target::Sheet => {}
+            Target::Sheet { .. } => {}
         }
     }
 
@@ -220,7 +224,7 @@ impl SchematicEditor {
                     ),
                 ]
             }
-            Target::Sheet => {
+            Target::Sheet { at } => {
                 let ribbon = self.ribbon(engine);
                 let on = |id: &str| {
                     ribbon
@@ -242,6 +246,11 @@ impl SchematicEditor {
                     )),
                     Some(Entry::command(ctx, "schematic.wire", "Wire", on("wire"))),
                     Some(Entry::command(ctx, "schematic.label", "Label", on("label"))),
+                    None,
+                    Some(
+                        Entry::act("Paste", "paste", Act::Paste(at), self.can_paste().is_ok())
+                            .key_of(ctx, "edit.paste"),
+                    ),
                     None,
                     Some(Entry::command(ctx, "view.fit", "Fit view", true)),
                 ]
@@ -319,6 +328,7 @@ impl SchematicEditor {
                 self.item = None;
                 Some(sheet_ui::removed(item))
             }
+            Act::Paste(at) => self.paste_at(engine, Some(at)),
         }
     }
 

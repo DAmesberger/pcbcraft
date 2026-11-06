@@ -271,7 +271,12 @@ impl App {
                 board: crate::pcb_editor::board_shape::host_evaluator(),
             },
         ) {
-            Ok(_) => self.clear_error(),
+            Ok(outcome) => {
+                if let pcbcraft_core::Outcome::Pasted { report } = &outcome {
+                    self.schematic.select_pasted(self.engine.project(), report);
+                }
+                self.clear_error();
+            }
             Err(error) => self.refuse(ctx, origin, error),
         }
     }

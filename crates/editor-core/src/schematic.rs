@@ -35,12 +35,14 @@ pub const MAX_WIRES: usize = 16384;
 pub const MAX_CORNERS: usize = 256;
 
 pub mod annotate;
+pub mod clipboard;
 pub mod labels;
 pub mod scene;
 pub mod sheets;
 pub mod wire_edit;
 mod wiring;
 pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
+pub use clipboard::{ClipObject, ClipSymbol, Pasted, PastedSymbol, SheetClip};
 pub use wiring::{
     JUNCTION_TOLERANCE_MM, MAX_JUNCTIONS, WirePoint, WireTarget, end_position, end_sheet,
     junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_path,
@@ -276,6 +278,21 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         sheets: Vec<SheetId>,
     },
+    /// Create what `clip` (from the `schematic.copy` query) holds on a
+    /// sheet, shifted by `offset`, as one undo step. A symbol becomes a new
+    /// instance of the same component with the next free designator and
+    /// its field values; a label keeps its name, so it joins that net as
+    /// any label would. Wires follow the pasted objects at the ends the
+    /// clip keeps.
+    #[serde(rename = "schematic.paste")]
+    Paste {
+        /// The sheet to paste on; the first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        clip: Box<SheetClip>,
+        /// Added to every position, in mm.
+        offset: Point,
+    },
 }
 
 // A new command chooses its permission class here.
@@ -315,6 +332,7 @@ declare_classes!(SchematicCommand {
     SetProperties "project.set_properties" Edit,
     RenameProject "project.rename" Edit,
     Annotate "schematic.annotate" Edit,
+    Paste "schematic.paste" Edit,
 });
 
 /// What a schematic command created or changed, for the engine's outcome.
@@ -329,6 +347,7 @@ pub enum Applied {
     SheetPins(Vec<Id>),
     Drawing(Id),
     Annotated(Vec<Renumbered>),
+    Pasted(Pasted),
 }
 
 fn invalid(message: &str) -> Error {
@@ -520,6 +539,11 @@ fn apply_command(
             numbering,
             sheets,
         } => annotate::annotate(project, order, mode, numbering, &sheets).map(Applied::Annotated),
+        C::Paste {
+            sheet,
+            clip,
+            offset,
+        } => clipboard::paste(project, sheet.unwrap_or(first), *clip, offset).map(Applied::Pasted),
     }
 }
 

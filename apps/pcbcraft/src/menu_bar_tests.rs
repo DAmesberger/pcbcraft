@@ -65,8 +65,8 @@ fn every_item_is_a_registry_command_with_its_key() -> TestResult {
             "{id}: the menu takes the registry's ⌘ key"
         );
         assert_eq!(shown.shown, registry.shortcut(command), "{id}");
-        // The clipboard items wait for a focused field.
-        assert_eq!(shown.enabled, text_edit(id).is_none(), "{id}");
+        // Select All waits for a focused field.
+        assert_eq!(shown.enabled, id != "edit.select-all", "{id}");
     }
     for (id, key) in [
         ("app.settings", Chord::cmd(K::Comma)),
@@ -177,14 +177,20 @@ fn no_two_items_take_the_same_key() {
 }
 
 /// Enabled follows the command's availability; Undo and Redo stay
-/// enabled while typing (they are the field's then); the clipboard items
-/// are enabled only while typing; Delete only where a canvas deletes and
-/// nothing is being typed. A disabled item keeps showing its key.
+/// enabled while typing (they are the field's then); Cut, Copy and Paste
+/// while typing or where they can run; Select All only while typing; Delete
+/// only where a canvas deletes and nothing is being typed. A disabled item
+/// keeps showing its key.
 #[test]
 fn enabled_follows_availability() -> TestResult {
     let registry = Registry::standard();
     let active = active_contexts(Context::PcbLayout);
-    let busy = |c: &Command| !matches!(c.id.as_str(), "file.save" | "edit.undo");
+    let busy = |c: &Command| {
+        !matches!(
+            c.id.as_str(),
+            "file.save" | "edit.undo" | "edit.cut" | "edit.copy" | "edit.paste"
+        )
+    };
     let idle = now(&registry, &active, false, &busy);
     let save = item(&idle, "file.save")?;
     assert!(!save.enabled);
@@ -201,6 +207,13 @@ fn enabled_follows_availability() -> TestResult {
         assert!(item(&typing, id)?.enabled, "{id} in a field");
     }
     assert!(state(&typing, Entry::Delete).is_some_and(|s| !s.enabled));
+    // Where the sheet can cut, copy or paste, off a field; Select All stays
+    // the field's alone.
+    let sheet = now(&registry, &active, false, &all);
+    for id in ["edit.cut", "edit.copy", "edit.paste"] {
+        assert!(item(&sheet, id)?.enabled, "{id} on the sheet");
+    }
+    assert!(!item(&sheet, "edit.select-all")?.enabled);
     // Nothing deletes in the Global context alone.
     let global = active_contexts(Context::Global);
     let nowhere = now(&registry, &global, false, &all);
@@ -304,7 +317,26 @@ fn choosing_an_item_runs_its_command_or_hands_the_key_back() {
         choose(&typing, C("edit.select-all", "Select All")),
         Choice::Inject(vec![cmd(K::A, false)])
     );
-    assert_eq!(choose(&idle, C("edit.copy", "Copy")), Choice::Nothing);
+    // Off a field they are the sheet's commands; unavailable, nothing.
+    assert_eq!(
+        choose(&idle, C("edit.copy", "Copy")),
+        Choice::Run("edit.copy".into())
+    );
+    assert_eq!(
+        choose(&idle, C("edit.cut", "Cut")),
+        Choice::Run("edit.cut".into())
+    );
+    assert_eq!(
+        choose(&idle, C("edit.paste", "Paste")),
+        Choice::Run("edit.paste".into())
+    );
+    assert_eq!(
+        choose(&idle, C("edit.select-all", "Select All")),
+        Choice::Nothing
+    );
+    let none = |_: &Command| false;
+    let off = now(&registry, &active, false, &none);
+    assert_eq!(choose(&off, C("edit.copy", "Copy")), Choice::Nothing);
     assert_eq!(
         choose(&idle, Entry::Delete),
         Choice::Inject(vec![press(K::Delete, egui::Modifiers::NONE)])

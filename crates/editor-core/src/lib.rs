@@ -298,6 +298,18 @@ pub enum Query {
     /// label's other occurrences).
     #[serde(rename = "schematic.net_places")]
     NetPlaces { net: Id },
+    /// What `schematic.paste` needs to recreate these sheet objects: the
+    /// symbols' instances, labels, drawings, the wires named and the wires
+    /// with both ends on named objects. A wire end on anything else reads
+    /// as a free end. Changes nothing, so a transport or the app can keep
+    /// the result as its copy buffer.
+    #[serde(rename = "schematic.copy")]
+    SheetCopy {
+        /// The sheet they are on; the first sheet when omitted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<SheetId>,
+        objects: Vec<schematic::ClipObject>,
+    },
     /// Everything one sheet draws, resolved to shapes and text in sheet
     /// millimetres: page frame and title block, labels, power ports, sheet
     /// symbols, furniture, wires, junction dots and units.
@@ -378,6 +390,7 @@ declare_classes!(Query {
     FillStatus "fill.status" Read,
     Sheets "schematic.sheets" Read,
     NetPlaces "schematic.net_places" Read,
+    SheetCopy "schematic.copy" Read,
     SheetScene "schematic.scene" Read,
     ImpedanceCalculate "impedance.calculate" Read,
     ImpedanceTable "impedance.table" Read,
@@ -422,6 +435,7 @@ pub enum QueryResult {
     FillStatus(Vec<layout::fill::FillStatus>),
     Sheets(Vec<schematic::SheetRow>),
     NetPlaces(Box<schematic::NetPlaces>),
+    SheetClip(Box<schematic::SheetClip>),
     SheetScene(Box<schematic::scene::SheetScene>),
     Impedance(Box<layout::impedance::ImpedanceResult>),
     ImpedanceTable(Box<layout::impedance::ImpedanceTable>),
@@ -979,6 +993,7 @@ impl Engine {
                     schematic::Applied::SheetPins(pins) => Outcome::SheetPinsAdded { pins },
                     schematic::Applied::Drawing(drawing) => Outcome::DrawingAdded { drawing },
                     schematic::Applied::Annotated(changes) => Outcome::Annotated { changes },
+                    schematic::Applied::Pasted(report) => Outcome::Pasted { report },
                 }
             }
             // Restating the current fabrication changes nothing, so it
@@ -1294,6 +1309,13 @@ impl Engine {
             ))),
             Query::Sheets {} => Ok(QueryResult::Sheets(schematic::sheet_rows(
                 &self.document.project,
+            ))),
+            Query::SheetCopy { sheet, objects } => Ok(QueryResult::SheetClip(Box::new(
+                schematic::clipboard::copy(
+                    &self.document.project,
+                    sheet.unwrap_or_else(|| self.document.project.sheets.first()),
+                    &objects,
+                )?,
             ))),
             Query::NetPlaces { net } => Ok(QueryResult::NetPlaces(Box::new(
                 schematic::net_places(&self.document.project, net)?,

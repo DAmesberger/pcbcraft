@@ -20,6 +20,7 @@ mod net_classes;
 mod orientation;
 mod part_authoring;
 mod parts;
+mod paste;
 mod publish_sets;
 mod rubber_band;
 mod sheets;

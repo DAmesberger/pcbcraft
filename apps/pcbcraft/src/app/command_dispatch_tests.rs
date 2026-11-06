@@ -399,6 +399,73 @@ fn command_s_through_the_menu_commits_the_field_then_saves_once() -> Result<(), 
     Ok(())
 }
 
+/// ⌘V reaches a focused field as egui-winit delivers it, and pastes there:
+/// the sheet's Paste does not run. Off the field the same event is the
+/// sheet's ⌘V, and ⌘X and ⌘C the same; a rebinding moves them.
+#[test]
+fn a_focused_field_keeps_paste_and_the_sheet_gets_it_otherwise() -> Result<(), String> {
+    let registry = Registry::standard();
+    let active = crate::commands::active_contexts(Context::Schematic);
+    let ctx = egui::Context::default();
+    let mut text = "10".to_owned();
+    run(&ctx, Default::default(), |ui| {
+        ui.add(egui::TextEdit::singleline(&mut text).id_salt("value"))
+            .request_focus();
+    });
+    let paste = egui::RawInput {
+        events: vec![egui::Event::Paste("k".into())],
+        ..Default::default()
+    };
+    let mut seen = (false, Vec::new());
+    run(&ctx, paste, |ui| {
+        ui.add(egui::TextEdit::singleline(&mut text).id_salt("value"));
+        seen = (ui.ctx().egui_wants_keyboard_input(), presses(ui.ctx()));
+    });
+    assert_eq!(text, "10k", "the field pasted");
+    let (typing, chords) = seen;
+    assert!(typing);
+    let v = Chord::cmd(egui::Key::V);
+    assert_eq!(chords, vec![v]);
+    let command = registry.resolve(v, &active).ok_or("⌘V")?;
+    assert_eq!(command.id, "edit.paste");
+    assert!(!dispatchable(command, v, true, false), "the field's");
+    assert!(dispatchable(command, v, false, false), "the sheet's");
+    for (event, key, id) in [
+        (egui::Event::Cut, egui::Key::X, "edit.cut"),
+        (egui::Event::Copy, egui::Key::C, "edit.copy"),
+    ] {
+        assert_eq!(
+            crate::menu_bar::clipboard_chord(&event),
+            Some(Chord::cmd(key))
+        );
+        let command = registry.resolve(Chord::cmd(key), &active).ok_or("key")?;
+        assert_eq!(command.id, id);
+        assert!(!dispatchable(command, Chord::cmd(key), true, false));
+        assert!(dispatchable(command, Chord::cmd(key), false, false));
+    }
+    Ok(())
+}
+
+/// Cut, Copy and Paste are the schematic sheet's: elsewhere they say so and
+/// stay disabled, whatever the sheet holds.
+#[test]
+fn the_clipboard_is_disabled_outside_the_schematic() -> Result<(), Box<dyn std::error::Error>> {
+    let engine = Engine::demo()?;
+    let ctx = egui::Context::default();
+    let mut schematic = crate::schematic_editor::SchematicEditor::default();
+    let project = engine.project();
+    let r1 = project.instances[0].id;
+    schematic.select_instance(Some(r1), project);
+    schematic.copy_selection(&ctx, &engine)?;
+    for app in [AppCommand::Cut, AppCommand::Copy, AppCommand::Paste] {
+        assert!(clipboard_availability(Workspace::Schematic, &schematic, project, app).is_ok());
+        for workspace in [Workspace::Pcb, Workspace::Part] {
+            assert!(clipboard_availability(workspace, &schematic, project, app).is_err());
+        }
+    }
+    Ok(())
+}
+
 /// A key the menu hands back to egui (Undo or Redo over a field, the
 /// clipboard keys, Delete) is never one the dispatcher runs: the field or
 /// canvas acts on it, and only once.
