@@ -129,6 +129,8 @@ pub(super) struct RouteState {
     /// right-click or a step onto the net's copper): the next Esc ends
     /// nothing and keeps Route; the one after leaves it.
     pub(super) ended: bool,
+    /// Why the last click was refused or stopped short, for a toast.
+    pub(super) refused: Option<String>,
 }
 
 /// What a planned step was planned from.
@@ -261,7 +263,105 @@ fn by_value(a: &f64, b: &f64) -> Ordering {
     }
 }
 
+/// What a click's plan owes the user: why nothing was added, or why the
+/// step stopped short. `None` when it reached the click.
+pub(super) fn refusal(
+    reached: bool,
+    blocked: Option<&str>,
+    edits: &RouteEditSet,
+) -> Option<String> {
+    if reached {
+        return None;
+    }
+    let why = blocked.unwrap_or("no legal way to that point on this layer");
+    Some(if edits.add.is_empty() && edits.vias.is_empty() {
+        format!("Can't route there: {why}")
+    } else {
+        format!("Route stopped short: {why}")
+    })
+}
+
+/// The point of the segment `a`–`b` nearest `p`.
+fn nearest_on_segment(p: Point, a: Point, b: Point) -> Point {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let length = d[0] * d[0] + d[1] * d[1];
+    if length <= 0.0 {
+        return a;
+    }
+    let t = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / length).clamp(0.0, 1.0);
+    [a[0] + d[0] * t, a[1] + d[1] * t]
+}
+
 impl PcbEditor {
+    /// During a route, the nearest point within 8 pixels of `at` on a track
+    /// of the routed net on the routing layer that this route did not add:
+    /// a click just beside the track ends on it, not on the grid next to it.
+    pub(super) fn net_track_point(
+        &self,
+        project: &Project,
+        at: Point,
+        scale: f32,
+    ) -> Option<Point> {
+        self.route_start?;
+        let net = self.net?;
+        let reach = f64::from(8.0 / scale);
+        let own = |id: Id| self.route.steps.iter().any(|s| s.tracks.contains(&id));
+        project
+            .tracks
+            .iter()
+            .filter(|t| t.net == net && t.layer == self.layer && !own(t.id))
+            .map(|t| nearest_on_segment(at, t.start, t.end))
+            .map(|p| (p, pcbcraft_core::geometry::distance(p, at)))
+            .filter(|(_, d)| *d < reach)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(p, _)| p)
+    }
+
+    /// What a route's first click starts on, whatever net the card still
+    /// shows: a pad on this layer, a via, a visible track (this layer's
+    /// first) within 8 pixels, or a visible pad on another layer, which
+    /// the route moves to. Its net, the head and the layer.
+    fn route_start_on(
+        &self,
+        project: &Project,
+        at: Point,
+        scale: f32,
+    ) -> Option<(Id, Point, CopperLayer)> {
+        if let Some(pad) = self.route_snap(at, scale)
+            && let Some(net) = pad.net
+        {
+            return Some((net, pad.center(), self.layer));
+        }
+        if let Some(via) = self.pick_via(project, at) {
+            return Some((via.net, via.position, self.layer));
+        }
+        let reach = f64::from(8.0 / scale);
+        let seen = self.seen();
+        let track = project
+            .tracks
+            .iter()
+            .filter(|t| seen.copper_layer(t.layer))
+            .map(|t| {
+                let end = [t.start, t.end]
+                    .into_iter()
+                    .find(|e| pcbcraft_core::geometry::distance(*e, at) < reach);
+                let on = end.unwrap_or_else(|| nearest_on_segment(at, t.start, t.end));
+                (t, on, pcbcraft_core::geometry::distance(on, at))
+            })
+            .filter(|(_, _, d)| *d < reach)
+            .min_by(|a, b| {
+                (a.0.layer != self.layer)
+                    .cmp(&(b.0.layer != self.layer))
+                    .then(a.2.total_cmp(&b.2))
+            });
+        if let Some((t, on, _)) = track {
+            return Some((t.net, on, t.layer));
+        }
+        let pad = self.pick_pad(at, |p| seen.pad(p))?;
+        let layer = self.stack.iter().copied().find(|l| pad_on(pad, *l))?;
+        Some((pad.net?, pad.center(), layer))
+    }
+
     /// Drop the route in progress: its head, pending via and steps. The
     /// tool, net and settings stay.
     pub(super) fn reset_route(&mut self) {
@@ -590,22 +690,38 @@ impl PcbEditor {
         if self.route.pair.is_some() {
             return self.pair_click(project, revision, at, scale);
         }
-        let snapped = self.route_snap(at, scale).map(|p| (p.center(), p.net));
-        let destination = snapped
-            .map(|(c, _)| c)
-            .unwrap_or_else(|| self.route_point(at, scale));
         if self.route_start.is_none() {
-            if let Some((_, Some(net))) = snapped {
-                self.net = Some(net);
-                self.route_highlight(self.net);
-            }
-            if self.net.is_some() {
-                self.follow_class_width(project);
-                self.route_start = Some(destination);
-                self.route.steps.clear();
+            let start = self.route_start_on(project, at, scale);
+            let head = match start {
+                Some((net, head, layer)) => {
+                    self.net = Some(net);
+                    self.layer = layer;
+                    self.route_highlight(self.net);
+                    Some(head)
+                }
+                None => self.net.map(|_| self.route_point(project, at, scale)),
+            };
+            match head {
+                Some(head) => {
+                    self.follow_class_width(project);
+                    self.route_start = Some(head);
+                    self.route.steps.clear();
+                }
+                None => {
+                    self.route.refused = Some(
+                        "Can't start a route here: click a pad, track or via, or choose a Net"
+                            .to_owned(),
+                    );
+                }
             }
             return None;
         }
+        let snapped = self
+            .route_pad(project, at, scale)
+            .map(|p| (p.center(), p.net));
+        let destination = snapped
+            .map(|(c, _)| c)
+            .unwrap_or_else(|| self.route_point(project, at, scale));
         let net = self.net?;
         self.follow_class_width(project);
         let finish = snapped.is_some_and(|(_, n)| n == Some(net))
@@ -615,6 +731,7 @@ impl PcbEditor {
         let Planned::Single(plan) = planned.as_ref() else {
             return None;
         };
+        self.route.refused = refusal(plan.reached, plan.blocked.as_deref(), &plan.edits);
         if plan.edits.add.is_empty() && plan.edits.vias.is_empty() {
             if finish && plan.reached {
                 self.finish_route();

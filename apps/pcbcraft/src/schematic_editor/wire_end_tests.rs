@@ -419,3 +419,40 @@ fn deleting_a_label_on_routed_copper_opens_the_review() -> TestResult {
     assert!(engine.project().label(label).is_none());
     Ok(())
 }
+
+/// Run 3, finding 22: a wire can't start on a pin the part leaves
+/// unconnected; the first click says so and no wire starts.
+#[test]
+fn a_wire_does_not_start_on_a_device_nc_pin() -> TestResult {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    );
+    let mut engine = Engine::demo()?;
+    engine.replace_document(pcbcraft_io::read_project(std::path::Path::new(path))?)?;
+    let project = engine.project();
+    let u2 = project.instance_by_designator("U2").ok_or("U2")?;
+    let component = project
+        .library
+        .component(u2.component)
+        .ok_or("U2's component")?;
+    let nc = component
+        .definition
+        .terminals
+        .iter()
+        .find(|t| !t.is_electrical())
+        .ok_or("U2 has no device-NC pin")?;
+    let nc = Endpoint {
+        instance: u2.id,
+        terminal: nc.id,
+    };
+    let end = schematic::pin_position(project, nc).ok_or("pin")?;
+    let (mut editor, ctx) = wiring(&engine, end);
+    assert!(click_at(&mut editor, &engine, &ctx, end).is_none());
+    assert_eq!(editor.wire, None, "no wire starts");
+    let posted = toast::take_posted(&ctx);
+    let said = posted.first().map(|p| p.text.as_str()).ok_or("no toast")?;
+    assert!(said.contains("cannot be wired"), "{said}");
+    assert_eq!(pcbcraft_core::issues::style::check(said), vec![], "{said}");
+    Ok(())
+}

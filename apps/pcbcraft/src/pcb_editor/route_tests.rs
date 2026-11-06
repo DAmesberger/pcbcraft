@@ -816,3 +816,112 @@ fn the_route_card_keys_wrap_and_cut_text_shows_on_hover() -> TestResult {
     assert!(missing.is_empty(), "cut without a hover: {missing:?}");
     Ok(())
 }
+
+/// Run 3, finding 4: a click the router can't reach says why in a toast, in
+/// the default Shove mode as in the others.
+#[test]
+fn a_click_the_router_cannot_reach_says_why() -> TestResult {
+    let engine = pcbcraft_core::Engine::demo()?;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    start(&mut canvas, &mut editor, &engine)?;
+    crate::kit::toast::take_posted(&canvas.ctx);
+    // R2's far pad is another net, behind R2's near pad.
+    canvas.click(&mut editor, &engine, [16.8, 8.0]);
+    let posted = crate::kit::toast::take_posted(&canvas.ctx);
+    let said = posted.first().map(|p| p.text.as_str()).ok_or("no toast")?;
+    assert!(
+        said.starts_with("Can't route there:") || said.starts_with("Route stopped short:"),
+        "{said}"
+    );
+    // A first click on nothing, with no net chosen, says so too.
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    canvas.click(&mut editor, &engine, [30.0, 30.0]);
+    assert_eq!(editor.route_start, None);
+    let posted = crate::kit::toast::take_posted(&canvas.ctx);
+    let said = posted.first().map(|p| p.text.as_str()).ok_or("no toast")?;
+    assert!(said.starts_with("Can't start a route here"), "{said}");
+    Ok(())
+}
+
+/// Run 3, finding 5: an end click just beside a track of the net, off the
+/// grid, lands on the track and ends the route instead of adding a corner.
+#[test]
+fn an_end_click_beside_a_track_of_the_net_finishes_on_it() -> TestResult {
+    let mut engine = pcbcraft_core::Engine::demo()?;
+    let net = shared_net(&engine)?;
+    // Off the 0.5 mm grid: the nearest grid point misses it by 0.25 mm.
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route {
+            request: pcbcraft_core::layout::RouteRequest {
+                net,
+                start: [12.25, 4.0],
+                end: [12.25, 6.0],
+                width: 0.2,
+                layer: CopperLayer::Top,
+            },
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    start(&mut canvas, &mut editor, &engine)?;
+    let step = canvas.click(&mut editor, &engine, [12.3, 5.0]);
+    let added = edits(&step)?.add.last().ok_or("a step")?.end;
+    assert!((added[0] - 12.25).abs() < 1e-9, "{added:?} is on the track");
+    canvas.apply(&mut editor, &mut engine, step)?;
+    assert_eq!(editor.route_start, None, "the route ended on the track");
+    assert!(editor.tool == Tool::Route, "Route stays armed");
+    Ok(())
+}
+
+/// Run 3, finding 5: a new route takes the net of what it starts on, not the
+/// one the card still shows: a pad on another layer, or a track.
+#[test]
+fn a_new_route_starts_on_the_clicked_copper_net() -> TestResult {
+    let mut engine = pcbcraft_core::Engine::demo()?;
+    let net = shared_net(&engine)?;
+    let stale = engine
+        .project()
+        .nets
+        .iter()
+        .map(|n| n.id)
+        .find(|n| *n != net)
+        .ok_or("another net")?;
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route {
+            request: pcbcraft_core::layout::RouteRequest {
+                net,
+                start: [12.25, 1.0],
+                end: [12.25, 7.0],
+                width: 0.2,
+                layer: CopperLayer::Top,
+            },
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    // A pad of the other layer, with Bottom active and the old net chosen.
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    editor.net = Some(stale);
+    editor.layer = CopperLayer::Bottom;
+    canvas.click(&mut editor, &engine, R1_2);
+    assert_eq!(editor.net, Some(net));
+    assert_eq!(editor.layer, CopperLayer::Top);
+    assert!(editor.route_start.is_some_and(|h| close(h, R1_2)));
+    // The middle of a track of that net.
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    editor.net = Some(stale);
+    canvas.click(&mut editor, &engine, [12.25, 4.0]);
+    assert_eq!(editor.net, Some(net));
+    let head = editor.route_start.ok_or("started")?;
+    assert!((head[0] - 12.25).abs() < 1e-9, "{head:?} is on the track");
+    assert!((head[1] - 4.0).abs() < 0.2, "{head:?} is at the click");
+    Ok(())
+}

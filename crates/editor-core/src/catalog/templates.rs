@@ -223,9 +223,10 @@ pub(crate) fn source_rows(
 /// One searchable row with its folded text.
 struct Candidate {
     hit: TemplateHit,
-    /// 0 when a bare text term is the row's imperial size code, 1 when it
-    /// is only its metric one, else 2: "0603" lists the imperial 0603
-    /// before the metric 0603 (an 0201).
+    /// 0 when a bare text term is the row's imperial size code, its exact
+    /// grid ("1x4", not 1×40) or its lead count ("soic 8"), 1 when it is
+    /// only its metric code, else 2: "0603" lists the imperial 0603 before
+    /// the metric 0603 (an 0201).
     code_rank: u8,
     name: String,
     words: Vec<String>,
@@ -281,11 +282,17 @@ impl Candidate {
         }
     }
 
+    /// Whether `text` is this header's rows × pins per row ("1x4", "2×5").
+    fn grid_is(&self, text: &str) -> bool {
+        let PackageForm::Header(header) = &self.hit.values else {
+            return false;
+        };
+        let spelled = |sign: char| format!("{}{sign}{}", header.rows, header.pins_per_row);
+        text == spelled('x') || text == spelled('×')
+    }
+
     /// See [`Candidate::code_rank`].
     fn code_rank(&self, terms: &[Term]) -> u8 {
-        let Some(code) = &self.hit.size_code else {
-            return 2;
-        };
         let texts = terms.iter().filter_map(|t| match t {
             Term::Text { text } | Term::Value { text, .. } | Term::Package { text } => {
                 Some(text.as_str())
@@ -294,9 +301,13 @@ impl Candidate {
         });
         let mut rank = 2;
         for text in texts {
-            if code.imperial == text {
+            let code = self.hit.size_code.as_ref();
+            if code.is_some_and(|c| c.imperial == text)
+                || self.grid_is(text)
+                || self.hit.shape.is_some_and(|s| text.parse() == Ok(s.pins))
+            {
                 rank = 0;
-            } else if code.metric == text {
+            } else if code.is_some_and(|c| c.metric == text) {
                 rank = rank.min(1);
             }
         }
@@ -575,9 +586,10 @@ fn natural(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-/// `library.templates`: rows matching `query`; rows before custom
-/// entries, then by match tier, a bare size code's imperial meaning
-/// before its metric one, the project before sources, then folded name in
+/// `library.templates`: rows matching `query`; rows before custom entries,
+/// then rows whose size or lead count a bare term names exactly (a size
+/// code's imperial meaning before its metric one), then by match tier,
+/// the project before sources, then folded name in
 /// natural order ("DFN-8" before "DFN-10") and source row. At most
 /// `limit` (1–500) hits; `more` counts the rest. Equal inputs always give
 /// the same order.
@@ -602,8 +614,8 @@ pub fn search(
         a.hit
             .is_custom()
             .cmp(&b.hit.is_custom())
-            .then_with(|| a.hit.tier.cmp(&b.hit.tier))
             .then_with(|| a.code_rank.cmp(&b.code_rank))
+            .then_with(|| a.hit.tier.cmp(&b.hit.tier))
             .then_with(|| a.hit.source.cmp(&b.hit.source))
             .then_with(|| a.hit.is_starter().cmp(&b.hit.is_starter()))
             .then_with(|| natural(&a.name, &b.name))

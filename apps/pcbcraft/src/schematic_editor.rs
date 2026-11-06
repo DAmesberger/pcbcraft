@@ -706,6 +706,11 @@ impl SchematicEditor {
         self.update.begin_choosing(engine, change, note);
     }
 
+    /// The docked update review, for the app's Esc.
+    pub fn review_mut(&mut self) -> &mut crate::update_preview::UpdatePreview {
+        &mut self.update
+    }
+
     /// How the last update review closed, once.
     pub fn take_review_closed(&mut self) -> Option<crate::update_preview::Closed> {
         self.update.take_closed()
@@ -1015,8 +1020,8 @@ impl SchematicEditor {
                     label: "Arrange",
                     tools: vec![
                         Button::new("rotate", "spin", "Rotate")
-                            .enabled(arrangeable)
-                            .tip("Turn the selected symbol 90° counter-clockwise"),
+                            .enabled(arrangeable || matches!(self.item, Some(Item::Label(_))))
+                            .tip("Turn the selected symbol or label 90° counter-clockwise"),
                         Button::new("mirror", "mirror", "Mirror")
                             .enabled(arrangeable)
                             .tip("Mirror the selected symbol left to right"),
@@ -1109,7 +1114,10 @@ impl SchematicEditor {
     pub fn can_delete(&self, project: &Project) -> bool {
         self.tool == Tool::Select
             && (self.selected_item(project).is_some()
-                || matches!(self.subject(project), Subject::Instance(_) | Subject::Group))
+                || matches!(
+                    self.subject(project),
+                    Subject::Instance(_) | Subject::Group | Subject::Wire(_)
+                ))
     }
 
     fn subject(&self, project: &Project) -> Subject {
@@ -1624,28 +1632,35 @@ impl SchematicEditor {
             && !ui.ctx().egui_wants_keyboard_input()
             && let Some(item) = self.selected_item(project)
         {
-            if let Some(op) = self.rotated_item(project)
-                && crate::keys::pressed(ui.ctx(), "schematic.rotate")
+            if matches!(item, Item::Label(_)) && crate::keys::pressed(ui.ctx(), "schematic.rotate")
             {
-                output = Some(op);
+                output = self.rotated_item(project).or(output);
             }
             if crate::keys::pressed(ui.ctx(), "schematic.delete") {
                 output = self.remove_item(engine, item);
             }
         }
-        // Delete or Backspace on a selected part opens the review its
-        // card's Remove… opens.
+        // Delete or Backspace on a selected part or wire opens the review
+        // its card's Remove… or Disconnect wire… opens.
         if self.tool == Tool::Select
             && !self.palette.is_open()
             && !self.update.is_open()
             && !ui.ctx().egui_wants_keyboard_input()
-            && let Subject::Instance(instance) = self.subject(project)
-            && crate::keys::pressed(ui.ctx(), "schematic.delete")
         {
-            let change = Change::Instance {
-                edit: InstanceChange::Remove { instance },
+            let change = match self.subject(project) {
+                Subject::Instance(instance) => Some(Change::Instance {
+                    edit: InstanceChange::Remove { instance },
+                }),
+                Subject::Wire(wire) => Some(Change::Schematic {
+                    command: SchematicCommand::Disconnect { wire },
+                }),
+                _ => None,
             };
-            output = self.stage_update(engine, change).or(output);
+            if let Some(change) = change
+                && crate::keys::pressed(ui.ctx(), "schematic.delete")
+            {
+                output = self.stage_update(engine, change).or(output);
+            }
         }
         // Delete on a group opens the review that lists all of it.
         if self.tool == Tool::Select

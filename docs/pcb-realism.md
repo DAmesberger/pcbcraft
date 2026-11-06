@@ -91,7 +91,8 @@ Materials, heights and looks are in [materials](materials.md).
 
 - `BoardCopper::of` includes the vias as copper on every layer, so connectivity, airwires
   and `board.clearance` run through them.
-- A via that joins nothing of its net is reported as `board.via_dangling`.
+- A via that joins nothing of its net is reported as `board.via_dangling`, and a track end
+  that meets no copper of its net as the warning `board.track_dangling`.
 
 **Checks** (`layout/via.rs`)
 

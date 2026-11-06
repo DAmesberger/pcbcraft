@@ -1481,6 +1481,11 @@ impl PartEditor {
         }
     }
 
+    /// The docked update review, for the app's Esc.
+    pub fn review_mut(&mut self) -> &mut crate::update_preview::UpdatePreview {
+        &mut self.update
+    }
+
     /// A subject that fills the slot without a Properties card: `Some`
     /// with the operation it sends this frame, `None` for the card.
     fn slot_subject(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Option<Operation>> {

@@ -45,7 +45,9 @@ def pinout(s, name, ds, variant, count, pins):
 
 
 def from_template(s, row, name, skeleton, symbol=None, prefix=None):
-    p = {"row": {"source": "starter", "name": row}, "skeleton": skeleton, "name": name}
+    # This board types its own fields, so a chip row brings none of the standard ones.
+    p = {"without_fields": True} if row.startswith("Chip ") else {}
+    p |= {"row": {"source": "starter", "name": row}, "skeleton": skeleton, "name": name}
     if symbol:
         p["symbol"] = symbol
     if prefix:

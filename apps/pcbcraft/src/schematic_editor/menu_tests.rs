@@ -437,3 +437,107 @@ fn a_symbols_rows_send_what_its_card_sends() -> TestResult {
     assert!(!editor.menu.is_open());
     Ok(())
 }
+
+/// Run 3, finding 3: ⌘R and the ribbon's Rotate turn a port on a pin a
+/// quarter from the way it is drawn: its first press always shows.
+#[test]
+fn rotate_turns_a_port_on_a_pin_from_its_drawn_rotation() -> TestResult {
+    let mut engine = Engine::demo()?;
+    let ctx = context();
+    let mut editor = SchematicEditor::default();
+    let r1 = engine.project().instances[0].id;
+    let Outcome::LabelPlaced { label } = engine.apply(
+        engine.revision(),
+        Operation::Schematic(SchematicCommand::PlaceLabel {
+            sheet: None,
+            name: "GND".into(),
+            kind: LabelKind::Power {
+                style: pcbcraft_core::model::PowerStyle::Ground,
+            },
+            position: [0.0, 0.0],
+            rotation: Rotation::R0,
+            attach: Some(WireTarget::Terminal(Endpoint {
+                instance: r1,
+                terminal: TerminalId(1),
+            })),
+        }),
+    )?
+    else {
+        return Err("a label".into());
+    };
+    frame(&mut editor, &engine, &ctx, vec![]);
+    editor.menu_select(engine.project(), Target::Item(Item::Label(label)));
+    let tools = editor.ribbon(&engine);
+    let rotate = tools
+        .groups
+        .iter()
+        .flat_map(|g| &g.tools)
+        .find(|t| t.id == "rotate")
+        .ok_or("Rotate")?;
+    assert!(rotate.enabled, "the ribbon's Rotate takes a port");
+    let drawn = pcbcraft_core::schematic::labels::current_rotation(engine.project(), label)?;
+    let Some(Operation::Schematic(SchematicCommand::EditLabel { rotation, .. })) =
+        editor.on_tool("rotate", &engine)
+    else {
+        return Err("Rotate sends the turn".into());
+    };
+    assert_eq!(rotation, Some(drawn.turned(1)));
+    let (_, sent) = frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![Event::Key {
+            key: egui::Key::R,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }],
+    );
+    let Some(Operation::Schematic(SchematicCommand::EditLabel { rotation, .. })) = sent else {
+        return Err("⌘R sends the turn".into());
+    };
+    assert_eq!(rotation, Some(drawn.turned(1)));
+    Ok(())
+}
+
+/// Run 3, finding 7: Delete and Backspace on a wire open the review the
+/// menu's Delete… opens; nothing changes until it is applied.
+#[test]
+fn delete_on_a_wire_opens_the_disconnect_review() -> TestResult {
+    let engine = Engine::demo()?;
+    let ctx = context();
+    let wire = engine.project().wires[0].id;
+    let before = engine.revision();
+    for key in [egui::Key::Delete, egui::Key::Backspace] {
+        let mut editor = SchematicEditor::default();
+        frame(&mut editor, &engine, &ctx, vec![]);
+        editor.menu_select(
+            engine.project(),
+            Target::Wire {
+                wire,
+                at: [0.0, 0.0],
+            },
+        );
+        assert!(editor.can_delete(engine.project()));
+        let (_, sent) = frame(
+            &mut editor,
+            &engine,
+            &ctx,
+            vec![Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(sent.is_none(), "{key:?} sends nothing yet");
+        assert!(editor.update.is_open(), "{key:?} opens the review");
+        assert_eq!(engine.revision(), before);
+        let same = editor.menu_act(&engine, Act::Disconnect(wire));
+        assert!(same.is_none());
+        assert!(editor.update.is_open());
+    }
+    Ok(())
+}

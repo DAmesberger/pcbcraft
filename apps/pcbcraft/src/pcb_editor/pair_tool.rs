@@ -182,9 +182,9 @@ impl PcbEditor {
         scale: f32,
     ) -> Option<Operation> {
         let end = self
-            .route_snap(at, scale)
+            .route_pad(project, at, scale)
             .map(PlacedPad::center)
-            .unwrap_or_else(|| self.route_point(at, scale));
+            .unwrap_or_else(|| self.route_point(project, at, scale));
         let (to, finish) = self.pair_target(end);
         let request = self.pair_request(project, to, finish)?;
         let planned = self.route_plan(project, revision, end)?;
@@ -192,6 +192,8 @@ impl PcbEditor {
             return None;
         };
         let step = &plan.step;
+        self.route.refused =
+            super::route_tool::refusal(plan.reached, plan.blocked.as_deref(), &step.edits);
         if step.edits.add.is_empty() && step.edits.vias.is_empty() {
             return None;
         }

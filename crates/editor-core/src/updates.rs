@@ -2339,10 +2339,12 @@ fn findings(project: &Project) -> Vec<Finding> {
     out
 }
 
-/// [`findings`] of `next` without the copper past the board edge of the
-/// parts the update stages beside the board (placed in `next`, not in
-/// `project`): off the board is their staging area, not news of the
-/// update. The board checks still report them until they are placed.
+/// [`findings`] of `next` without what merely follows from the parts the
+/// update stages beside the board (placed in `next`, not in `project`):
+/// their copper past the board edge, which is their staging area, and the
+/// other pads of a net they join, which report unrouted only because a
+/// staged pad is not connected yet (a routed GND listed every pad for one
+/// new capacitor). The board checks still report them until they are placed.
 fn findings_after(project: &Project, next: &Project) -> Vec<Finding> {
     let staged: BTreeSet<Id> = next
         .placements
@@ -2360,9 +2362,30 @@ fn findings_after(project: &Project, next: &Project) -> Vec<Finding> {
                 _ => false,
             })
     };
-    findings(next)
-        .into_iter()
-        .filter(|f| !off_board(f))
+    let all = findings(next);
+    let staged_pad = |f: &Finding| {
+        f.objects
+            .iter()
+            .any(|o| matches!(o, ObjectRef::Pad { instance, .. } if staged.contains(instance)))
+    };
+    let net_of = |f: &Finding| {
+        f.objects.iter().find_map(|o| match o {
+            ObjectRef::Net { id } => Some(*id),
+            _ => None,
+        })
+    };
+    let staged_nets: BTreeSet<Id> = all
+        .iter()
+        .filter(|f| f.code == "board.unrouted" && staged_pad(f))
+        .filter_map(net_of)
+        .collect();
+    let follows = |f: &Finding| {
+        f.code == "board.unrouted"
+            && !staged_pad(f)
+            && net_of(f).is_some_and(|n| staged_nets.contains(&n))
+    };
+    all.into_iter()
+        .filter(|f| !off_board(f) && !follows(f))
         .collect()
 }
 

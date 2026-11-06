@@ -1146,9 +1146,16 @@ impl App {
     fn native_menu(&mut self, ctx: &egui::Context) {
         #[cfg(target_os = "macos")]
         {
-            for id in std::mem::take(&mut self.menu_runs) {
-                if let Some(id) = command_dispatch::route(ctx, &mut self.after_commit, id) {
-                    self.run_command(ctx, &id);
+            let runs = std::mem::take(&mut self.menu_runs);
+            // A menu-bar key (⌘Z) with a right-click menu open only closes
+            // the menu; nothing acts underneath it.
+            if !runs.is_empty() && crate::context_menu::is_open(ctx) {
+                crate::context_menu::close_all(ctx);
+            } else {
+                for id in runs {
+                    if let Some(id) = command_dispatch::route(ctx, &mut self.after_commit, id) {
+                        self.run_command(ctx, &id);
+                    }
                 }
             }
             if let Some(mut menu) = self.native_menu.take() {
@@ -1158,6 +1165,25 @@ impl App {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = ctx;
+    }
+
+    /// Esc closes the shown workspace's review card, before a canvas sees
+    /// it. A window, popup or field over the review keeps its own Esc.
+    fn escape_review(&mut self, ctx: &egui::Context) {
+        if self.palette.is_open()
+            || self.settings_window.is_open()
+            || self.shortcut_sheet.is_open()
+            || ctx.any_popup_open()
+            || ctx.egui_wants_keyboard_input()
+        {
+            return;
+        }
+        let review = match self.workspace {
+            Workspace::Part => self.part.review_mut(),
+            Workspace::Schematic => self.schematic.review_mut(),
+            Workspace::Pcb => self.pcb.review_mut(),
+        };
+        review.escape(ctx);
     }
 
     /// What the menus depend on now.
@@ -1215,6 +1241,8 @@ impl eframe::App for App {
         follow_system_theme(&ctx, false);
         self.system_fonts(&ctx);
         crate::kit::text::fit_tooltips(&ctx);
+        // An open right-click menu owns the keys; before anyone reads them.
+        crate::context_menu::hold_keys(&ctx);
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
         open_timing::report(self.open_timing.frame(pcb_3d, std::time::Instant::now()));
         self.scene.receive();
@@ -1233,6 +1261,7 @@ impl eframe::App for App {
         self.early_keys(&ctx);
         self.command_palette(&ctx);
         self.system_windows(&ctx);
+        self.escape_review(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);

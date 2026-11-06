@@ -91,6 +91,15 @@ impl PcbEditor {
                 &format!("{} mm", kit::number_text(round(length(track)))),
             );
             kit::value_row(ui, "Ends", &self.track_ends(project, track));
+            let at = |p: Point| {
+                format!(
+                    "{}, {} mm",
+                    kit::number_text(round(p[0])),
+                    kit::number_text(round(p[1]))
+                )
+            };
+            kit::value_row(ui, "Start", &at(track.start));
+            kit::value_row(ui, "End", &at(track.end));
             let mut lock = locked;
             if kit::check_row(ui, "Locked", &mut lock) {
                 action = Some((

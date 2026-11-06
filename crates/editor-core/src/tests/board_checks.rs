@@ -966,3 +966,81 @@ fn a_waived_finding_leaves_issues_and_stays_waived_in_production() -> Result<()>
     assert_eq!(production.waived, 1);
     Ok(())
 }
+
+/// Run 3, finding 8: a track end that meets nothing of its net is a warning
+/// that leads with the track and names it to Locate; an end on a pad, on
+/// another track or on a via is not, and export isn't blocked.
+#[test]
+fn a_dangling_track_end_warns_and_a_connected_one_does_not() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let net = engine
+        .project()
+        .nets
+        .first()
+        .map(|n| n.id)
+        .ok_or_else(|| Error::NotFound("net".into()))?;
+    let id = engine.project().next_id;
+    let route = |engine: &mut Engine, start: Point, end: Point| {
+        engine
+            .apply(
+                engine.revision(),
+                Operation::Layout(LayoutCommand::Route {
+                    request: RouteRequest {
+                        net,
+                        start,
+                        end,
+                        width: 0.3,
+                        layer: CopperLayer::Top,
+                    },
+                }),
+            )
+            .map(|_| ())
+    };
+    let dangling = |engine: &Engine| -> Vec<Finding> {
+        crate::layout::checks(engine.project())
+            .into_iter()
+            .filter(|f| f.code == "board.track_dangling")
+            .collect()
+    };
+    assert_eq!(dangling(&engine), Vec::new());
+    // Free in space: both ends, in one finding.
+    route(&mut engine, [20.0, 20.0], [25.0, 20.0])?;
+    let found = dangling(&engine);
+    let [both] = found.as_slice() else {
+        return Err(Error::Invalid(format!("one finding: {found:?}")));
+    };
+    assert!(both.message.starts_with("Track on "), "{}", both.message);
+    assert!(
+        both.message.contains("(20, 20) mm and (25, 20) mm"),
+        "{}",
+        both.message
+    );
+    assert!(both.objects.contains(&crate::ObjectRef::Track { id }));
+    // A second segment joins one end: only the far ends stay open.
+    route(&mut engine, [25.0, 20.0], [25.0, 25.0])?;
+    let open = dangling(&engine);
+    assert_eq!(open.len(), 2, "{open:?}");
+    assert!(
+        open.iter().all(|f| !f.message.contains("(25, 20) mm")),
+        "{open:?}"
+    );
+    // A via of the net closes the last one.
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::AddVia {
+            via: ViaRequest::through(net, [25.0, 25.0]),
+        }),
+    )?;
+    let open = dangling(&engine);
+    assert_eq!(open.len(), 1, "{open:?}");
+    // The production check lists it as a warning: export isn't blocked by it.
+    let report = crate::fabrication::preflight::report(engine.project(), engine.drafts(), None)?;
+    let item = report
+        .items
+        .iter()
+        .find(|i| i.code == "board.track_dangling")
+        .ok_or_else(|| Error::NotFound("preflight item".into()))?;
+    assert_eq!(item.severity, crate::issues::Severity::Warning);
+    assert!(!item.blocks());
+    Ok(())
+}
