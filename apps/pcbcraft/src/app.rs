@@ -31,9 +31,6 @@ use solidcraft_ui_egui::{fonts, theme};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// The longest toast text; Messages keeps the whole message.
-const MAX_TOAST_CHARS: usize = pcbcraft_core::issues::MAX_TITLE;
-
 /// An import made for an update review that is still open.
 struct PendingImport {
     /// The engine revision right after the import.
@@ -399,7 +396,8 @@ impl App {
     fn say_with(&mut self, level: Level, text: impl Into<String>, actions: Vec<ToastAction>) {
         let text = text.into();
         self.messages.push(level, &text, self.now);
-        let shown = refusal::clip(text.lines().next().unwrap_or_default(), MAX_TOAST_CHARS);
+        // The toast wraps it and shows all of it on hover (`kit::toast`).
+        let shown = refusal::clip(text.lines().next().unwrap_or_default(), refusal::MAX_SHOWN);
         if actions.contains(&ToastAction::Undo) {
             self.undo_revision = Some(self.engine.revision());
         }
@@ -1103,10 +1101,24 @@ impl App {
     }
 
     /// What the menus depend on now.
+    /// Whether the shown canvas has a selection its delete key removes.
+    fn can_delete(&self) -> bool {
+        match self.workspace {
+            Workspace::Part => self.part.can_delete(),
+            Workspace::Schematic => self.schematic.can_delete(self.engine.project()),
+            Workspace::Pcb => self.pcb.can_delete(self.engine.project()),
+        }
+    }
+
     fn menu_now<R>(&self, ctx: &egui::Context, f: impl FnOnce(&crate::menu_bar::Now) -> R) -> R {
         let active = self.active_contexts();
-        let available =
-            |command: &crate::commands::Command| self.availability(command, &[]).is_ok();
+        let available = |command: &crate::commands::Command| {
+            if command.id.ends_with(".delete") {
+                self.can_delete()
+            } else {
+                self.availability(command, &[]).is_ok()
+            }
+        };
         f(&crate::menu_bar::Now {
             registry: &self.registry,
             active: &active,

@@ -26,14 +26,23 @@ pub(crate) fn groups(registry: &Registry, filter: &str, active: &[Context]) -> V
     contexts
         .into_iter()
         .filter_map(|context| {
-            let mut seen = std::collections::BTreeSet::new();
-            let rows: Vec<(String, String)> = registry
-                .commands()
-                .iter()
-                .filter(|c| c.context == context)
-                .filter_map(|c| Some((c.title.clone(), registry.shortcut(c)?)))
-                // One line per name and key (the palette's two keys).
-                .filter(|row| seen.insert(row.clone()))
+            // One line per name, with all its keys (the palette's two).
+            let mut named: Vec<(String, String)> = Vec::new();
+            for command in registry.commands().iter().filter(|c| c.context == context) {
+                let Some(key) = registry.shortcut(command) else {
+                    continue;
+                };
+                match named.iter_mut().find(|(title, _)| *title == command.title) {
+                    Some((_, keys)) if keys.split(", ").any(|k| k == key) => {}
+                    Some((_, keys)) => {
+                        keys.push_str(", ");
+                        keys.push_str(&key);
+                    }
+                    None => named.push((command.title.clone(), key)),
+                }
+            }
+            let rows: Vec<(String, String)> = named
+                .into_iter()
                 .filter(|(title, key)| {
                     filter.is_empty()
                         || title.to_lowercase().contains(&filter)

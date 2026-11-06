@@ -164,7 +164,9 @@ impl Toasts {
         }
         let at = egui::pos2(canvas.center().x, canvas.bottom() - t.space_8);
         let host = Container::new(ctx, Surface::Toast);
-        let frame = host.frame(ctx, t.panel, Side::Left);
+        let frame = host
+            .frame(ctx, t.panel, Side::Left)
+            .inner_margin(toast_margin());
         let mut event = None;
         host.area(egui::Id::new("toasts"))
             .pivot(egui::Align2::CENTER_BOTTOM)
@@ -184,6 +186,12 @@ impl Toasts {
             });
         event
     }
+}
+
+/// The room between a toast's box and its text.
+fn toast_margin() -> egui::Margin {
+    let t = Tokens::get();
+    egui::Margin::symmetric(t.space_10 as i8, t.space_6 as i8)
 }
 
 /// The text a toast shows: its message and a repeat count.

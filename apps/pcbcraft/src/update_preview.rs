@@ -422,6 +422,15 @@ fn title(change: &Change, project: &Project) -> String {
 /// The success toast: "Updated PCB: adds 2 placements".
 pub(crate) fn applied_line(plan: &UpdatePlan) -> String {
     use pcbcraft_core::schematic::SchematicCommand;
+    // One wire drawn is one wire, whatever segments it splits to join.
+    if matches!(
+        &plan.change,
+        Change::Schematic {
+            command: SchematicCommand::DrawWire { .. }
+        }
+    ) {
+        return "Drew the wire".to_owned();
+    }
     let done = match &plan.change {
         Change::SyncPcb {} => "Updated PCB",
         Change::ComponentRevision { .. } => "Updated instances",
@@ -432,9 +441,6 @@ pub(crate) fn applied_line(plan: &UpdatePlan) -> String {
         Change::Schematic {
             command: SchematicCommand::Connect { .. },
         } => "Connected pins",
-        Change::Schematic {
-            command: SchematicCommand::DrawWire { .. },
-        } => "Drew the wire",
         Change::Schematic {
             command: SchematicCommand::Disconnect { .. },
         } => "Disconnected the wire",
@@ -524,7 +530,7 @@ pub fn content(
         let (line, objects) = match plan.blocker_lines.get(n) {
             Some(line) => (line.line.clone(), line.refs.clone()),
             None => (
-                refusal::presentable(blocker).unwrap_or_else(|| "The update is blocked".into()),
+                refusal::whole_sentence(blocker).unwrap_or_else(|| "The update is blocked".into()),
                 Vec::new(),
             ),
         };
@@ -596,7 +602,7 @@ pub fn content(
             }
             Some(line) => (line.line.clone(), line.refs.clone()),
             None => (
-                refusal::presentable(warning).unwrap_or_else(|| "Check this update".into()),
+                refusal::whole_sentence(warning).unwrap_or_else(|| "Check this update".into()),
                 Vec::new(),
             ),
         };

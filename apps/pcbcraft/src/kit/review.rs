@@ -21,7 +21,7 @@ use solidcraft_ui_egui::ui_kit;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReviewLine {
     pub level: Level,
-    /// One line, at most 80 characters, naming objects.
+    /// One line naming objects, cut with its full text on hover.
     pub title: String,
     /// The acknowledgement that clears this blocker ("Remove that track
     /// (Top, 4.2 mm)"), if one does.

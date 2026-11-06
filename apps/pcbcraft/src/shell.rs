@@ -179,28 +179,68 @@ const SPLIT_ARROW: f32 = 12.0;
 /// Height of a split button's upper (run) part, as Solidcraft's.
 const SPLIT_TOP: f32 = 32.0;
 
-/// A ribbon button's width; a split button fits its widest variant and ▾.
+/// A ribbon button's width. A split button fits its label and ▾; one whose
+/// label is the chosen variant's ("Line") fits its widest variant, so the
+/// ribbon does not move when the choice changes.
 fn tool_width(ui: &Ui, tool: &Tool) -> f32 {
     if tool.menu.is_empty() {
         return button_width(ui, tool.label);
     }
     // The ▾ sits in the label's padding where it fits.
     let t = Tokens::get();
-    tool.menu
-        .iter()
-        .map(|v| {
-            let text = ui
-                .painter()
-                .layout_no_wrap(
-                    v.label.to_owned(),
-                    FontId::proportional(t.font_body),
-                    t.text,
-                )
-                .size()
-                .x;
-            (text + SPLIT_ARROW + BUTTON_LABEL_PADDING).max(BUTTON_MIN_WIDTH)
+    let split = |label: &str| {
+        let text = ui
+            .painter()
+            .layout_no_wrap(label.to_owned(), FontId::proportional(t.font_body), t.text)
+            .size()
+            .x;
+        (text + SPLIT_ARROW + BUTTON_LABEL_PADDING).max(BUTTON_MIN_WIDTH)
+    };
+    if tool.menu.iter().all(|v| v.label != tool.label) {
+        return split(tool.label);
+    }
+    tool.menu.iter().map(|v| split(v.label)).fold(0.0, f32::max)
+}
+
+#[cfg(test)]
+mod tool_width_tests {
+    use super::*;
+
+    /// N10: a family named apart from its variants (Label ▾) is as wide as
+    /// its name, so the gaps either side of it match its neighbours'; one
+    /// showing the chosen variant (Line ▾) keeps room for its widest.
+    #[test]
+    fn a_split_button_fits_its_own_name() {
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let variant = |id, label| Tool::new(id, "line", label);
+        let mut widths = (0.0, 0.0, 0.0);
+        ctx.run_ui(Default::default(), |ui| {
+            let long = "Hierarchical sheet label";
+            let named = Tool::family(
+                Tool::new("label", "line", "Label"),
+                vec![variant("net", "Net label"), variant("sheet", long)],
+            );
+            let shown = Tool::family(
+                Tool::new("short", "line", "Line"),
+                vec![variant("short", "Line"), variant("long", long)],
+            );
+            widths = (
+                tool_width(ui, &named),
+                tool_width(ui, &shown),
+                tool_width(ui, &Tool::new("plain", "line", long)),
+            );
         })
-        .fold(0.0, f32::max)
+        .textures_delta
+        .clear();
+        let (named, shown, plain) = widths;
+        assert_eq!(
+            named, BUTTON_MIN_WIDTH,
+            "Label ▾ takes no more than a button"
+        );
+        assert!(shown > BUTTON_MAX_WIDTH, "Line ▾ fits its widest: {shown}");
+        assert_eq!(plain, BUTTON_MAX_WIDTH);
+    }
 }
 
 fn group_width(ui: &Ui, group: &Group) -> f32 {

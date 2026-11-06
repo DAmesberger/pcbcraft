@@ -1265,15 +1265,7 @@ fn pin_summary(pin: &pcbcraft_core::library::pinout::PinoutPin) -> String {
         parts.push(format!("GPIO {}·{}", gpio.port, gpio.index));
     }
     if let Some(first) = pin.functions.first() {
-        parts.push(format!(
-            "{} {}",
-            sentence(first.direction.label()),
-            SIGNALS
-                .iter()
-                .find(|(k, _)| *k == first.signal)
-                .map_or("", |(_, l)| *l)
-                .to_lowercase()
-        ));
+        parts.push(pins_table::kind_text(first.direction, first.signal));
     }
     let functions: Vec<String> = pin
         .functions
@@ -1336,8 +1328,10 @@ fn paste_body(
     kit::choice_row(ui, "Separator", &mut flow.delimiter, &delimiters);
     kit::check_row(ui, "First row holds captions", &mut flow.mapping.header);
     let m = &mut flow.mapping;
-    kit::text_row(ui, "Datasheet", &mut m.source_title)
-        .on_hover_text("The document the table comes from, recorded as provenance");
+    kit::row(ui, "Datasheet", |ui| {
+        kit::text_field(ui, "Datasheet", &mut m.source_title, "Required", false)
+    })
+    .on_hover_text("The document the table comes from, recorded as provenance");
     kit::text_row(ui, "Revision", &mut m.source_revision);
     kit::text_row(ui, "Page", &mut m.page);
     let directions: Vec<_> = DIRECTIONS
@@ -1418,7 +1412,7 @@ fn paste_body(
         kit::value_row(ui, "Peripherals", &document.peripherals.len().to_string());
         kit::value_row(ui, "Changes", &plan.changes.len().to_string());
         kit::value_row(ui, "Findings", &plan.findings.len().to_string());
-        kit::value_row(ui, "To review", &plan.review.len().to_string());
+        kit::value_row(ui, "Flagged rows", &plan.review.len().to_string());
         kit::note(ui, "Untick a row to leave it out of the import");
         let count = document.pins.len();
         let max = if flow.all_rows {

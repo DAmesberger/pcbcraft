@@ -191,7 +191,12 @@ pub fn search_field(
         "zoom",
         1.0,
     );
-    let key_width = key_cap(ui, r.right_center() - vec2(t.space_10, 0.0), "Esc");
+    let key_width = key_cap(
+        ui,
+        r.right_center() - vec2(t.space_10, 0.0),
+        "Esc",
+        t.form_dim,
+    );
     let editor_left = (r.left() + t.space_12 + t.space_16 + t.space_12).min(r.right());
     let editor = Rect::from_min_max(
         pos2(editor_left, r.top()),
@@ -352,14 +357,12 @@ pub fn search_message(ui: &mut Ui, text: &str, error: bool) {
 }
 
 /// A key cap right-aligned at `right`; returns its width.
-fn key_cap(ui: &Ui, right: egui::Pos2, label: &str) -> f32 {
+fn key_cap(ui: &Ui, right: egui::Pos2, label: &str, ink: egui::Color32) -> f32 {
     let t = Tokens::get();
     let padding = t.space_10;
-    let galley = ui.painter().layout_no_wrap(
-        label.to_owned(),
-        FontId::monospace(t.font_small),
-        t.form_dim,
-    );
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), FontId::monospace(t.font_small), ink);
     let size = galley.size() + vec2(padding, t.space_4);
     let r = Rect::from_min_size(pos2(right.x - size.x, right.y - size.y / 2.0), size);
     t.container_rect(
@@ -370,7 +373,7 @@ fn key_cap(ui: &Ui, right: egui::Pos2, label: &str) -> f32 {
         t.dialog_rule,
     );
     ui.painter()
-        .galley(r.min + vec2(padding / 2.0, t.space_2), galley, t.form_dim);
+        .galley(r.min + vec2(padding / 2.0, t.space_2), galley, ink);
     size.x
 }
 
@@ -733,15 +736,6 @@ pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response 
         row.icon,
         opacity,
     );
-    let right = match row.shortcut {
-        Some(key) => {
-            let width = key_cap(ui, r.right_center() - vec2(t.space_8, 0.0), key);
-            r.right() - t.space_8 - width - t.space_8
-        }
-        None => r.right() - t.space_8,
-    };
-    let left = tile.right() + t.space_10;
-    let width = (right - left).max(0.0);
     let (ink, dim) = if row.enabled {
         (t.form_ink, t.form_dim)
     } else {
@@ -750,6 +744,15 @@ pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response 
             t.form_dim.gamma_multiply(0.7),
         )
     };
+    let right = match row.shortcut {
+        Some(key) => {
+            let width = key_cap(ui, r.right_center() - vec2(t.space_8, 0.0), key, dim);
+            r.right() - t.space_8 - width - t.space_8
+        }
+        None => r.right() - t.space_8,
+    };
+    let left = tile.right() + t.space_10;
+    let width = (right - left).max(0.0);
     let normal = egui::TextFormat::simple(FontId::proportional(t.font_label), ink);
     let mut job = egui::text::LayoutJob::default();
     match highlight(row.label, row.query) {

@@ -64,7 +64,7 @@ fn every_item_is_a_registry_command_with_its_key() -> TestResult {
             chord.filter(|c| c.command),
             "{id}: the menu takes the registry's ⌘ key"
         );
-        assert_eq!(shown.shown, registry.shortcut(command), "{id}");
+        assert_eq!(shown.shown, registry.menu_shortcut(command), "{id}");
         // Select All waits for a focused field.
         assert_eq!(shown.enabled, id != "edit.select-all", "{id}");
     }
@@ -214,6 +214,9 @@ fn enabled_follows_availability() -> TestResult {
         assert!(item(&sheet, id)?.enabled, "{id} on the sheet");
     }
     assert!(!item(&sheet, "edit.select-all")?.enabled);
+    // With nothing to delete it is greyed, whatever the keyboard.
+    let empty = now(&registry, &active, false, &|_| false);
+    assert!(state(&empty, Entry::Delete).is_some_and(|s| !s.enabled));
     // Nothing deletes in the Global context alone.
     let global = active_contexts(Context::Global);
     let nowhere = now(&registry, &global, false, &all);

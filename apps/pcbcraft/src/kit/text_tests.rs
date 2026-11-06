@@ -684,3 +684,202 @@ fn the_kit_widgets_picture() -> Result<(), Box<dyn std::error::Error>> {
     write("kit-hover-pick-row", &harness, &hovered)?;
     Ok(())
 }
+
+/// The strongest contrast with `page` of any pixel of `rect` in an RGBA
+/// frame: how much its ink stands out, in either theme.
+fn strongest_ink(rgba: &[u8], width: usize, rect: Rect, page: Color32) -> f32 {
+    let mut best = 1.0_f32;
+    for y in rect.top() as usize..rect.bottom() as usize {
+        for x in rect.left() as usize..rect.right() as usize {
+            let at = (y * width + x) * 4;
+            if let Some(px) = rgba.get(at..at + 3) {
+                let ink = Color32::from_rgb(px[0], px[1], px[2]);
+                best = best.max(contrast(ink, page));
+            }
+        }
+    }
+    best
+}
+
+/// F5: a command that cannot run reads as off in both themes: its name,
+/// reason and key all stand out less than a command's that can, measured
+/// on the raster.
+#[test]
+fn an_unavailable_command_row_is_dimmed_to_the_key() {
+    for dark in [false, true] {
+        solidcraft_ui_egui::theme::set_dark(dark);
+        let screen = Screen::new(egui::vec2(420.0, 90.0));
+        let row = |ui: &mut Ui, name: &str, enabled: bool| {
+            let row = CommandRow {
+                icon: "plane",
+                label: name,
+                query: "",
+                detail: "PCB",
+                shortcut: Some("D"),
+                enabled,
+                highlighted: false,
+            };
+            command_row(ui, egui::Id::new(name), &row).rect
+        };
+        let mut rects = Vec::new();
+        let mut draw = |ui: &mut Ui| {
+            rects = vec![row(ui, "Available", true), row(ui, "Unavailable", false)];
+        };
+        screen.run(vec![], &mut draw);
+        let output = screen.run(vec![], &mut draw);
+        let rgba = screen.rgba(&output);
+        let page = Tokens::get().panel;
+        let ink = |rect: Rect| strongest_ink(&rgba, screen.size.x as usize, rect, page);
+        let name = |rect: Rect| {
+            Rect::from_min_max(
+                rect.min + egui::vec2(50.0, 0.0),
+                egui::pos2(rect.right() - 40.0, rect.center().y),
+            )
+        };
+        let detail = |rect: Rect| {
+            Rect::from_min_max(
+                egui::pos2(rect.left() + 50.0, rect.center().y),
+                egui::pos2(rect.right() - 40.0, rect.bottom()),
+            )
+        };
+        let key = |rect: Rect| {
+            Rect::from_min_max(egui::pos2(rect.right() - 24.0, rect.top()), rect.max).shrink(8.0)
+        };
+        let (on, off) = (rects[0], rects[1]);
+        for (part, on, off) in [
+            ("name", ink(name(on)), ink(name(off))),
+            ("detail", ink(detail(on)), ink(detail(off))),
+            ("key", ink(key(on)), ink(key(off))),
+        ] {
+            assert!(off < on * 0.9, "dark {dark}, {part}: {off} against {on}");
+            assert!(off > 1.3, "dark {dark}, {part} still shows: {off}");
+        }
+    }
+}
+
+/// F8: hovered, a group title keeps its lines: "Waive all…" takes its room
+/// by cutting a line with "…", never by wrapping in the middle of a word,
+/// and the row stays as tall. The whole title then shows on hover.
+#[test]
+fn a_hovered_group_title_keeps_its_lines() {
+    let mut harness = Harness::new(190.0, 120.0);
+    let title = "Unconnected terminals and more";
+    let height = std::cell::Cell::new(0.0_f32);
+    let mut draw = |ui: &mut Ui| {
+        let before = ui.cursor().top();
+        pick_row(
+            ui,
+            egui::Id::new("group"),
+            &PickRow {
+                level: Level::Error,
+                title,
+                tip: "",
+                depth: 0,
+                fold: Some(false),
+                count: Some(3),
+                tick: Some(Tick::Off),
+                action: Some("Waive all…"),
+            },
+        );
+        height.set(ui.cursor().top() - before);
+    };
+    let rest = harness.frame(vec![Event::PointerGone], &mut draw);
+    let at_rest = height.get();
+    let rest = rest.iter().find(|p| p.text == title).map(|p| p.rows);
+    assert_eq!(rest, Some(2), "the narrow column wraps it at rest");
+    let hovered = harness.frame(vec![Event::PointerMoved(Pos2::new(120.0, 12.0))], &mut draw);
+    let hovered = harness
+        .frame(vec![], &mut draw)
+        .into_iter()
+        .chain(hovered)
+        .collect::<Vec<_>>();
+    assert_eq!(height.get(), at_rest, "the row does not change height");
+    let lines: Vec<&crate::kit::rows::tests::Painted> = hovered
+        .iter()
+        .filter(|p| title.contains(p.text.trim()) && !p.text.trim().is_empty())
+        .collect();
+    assert!(!lines.is_empty());
+    for line in lines {
+        assert_eq!(line.rows, 1, "{line:?}");
+        // Each painted line is whole words of the title.
+        assert!(
+            line.text
+                .split_whitespace()
+                .all(|word| title.split(' ').any(|w| w == word)),
+            "split a word: {line:?}"
+        );
+    }
+}
+
+/// F7: a refusal's whole sentence reaches the place it shows. A field's
+/// refusal wraps all of it; a one-line place cuts it with its hover.
+#[test]
+fn a_long_refusal_is_read_in_full_where_it_shows() {
+    let long = "100 tracks on USB_DP, USB_DN and 19 more nets and 27 vias on USB_DN, GND and 19 \
+                more nets would lie outside 20 × 64 mm";
+    let shown = crate::refusal::shown_error(&pcbcraft_core::Error::Invalid(long.to_owned()));
+    assert_eq!(shown, long, "nothing is cut before it is shown");
+    let screen = Screen::new(egui::vec2(240.0, 200.0));
+    let output = screen.run(vec![], |ui| {
+        let field = ui.label("field");
+        field_refused(ui, &field, &shown);
+    });
+    assert!(shows_in_full(&output, long));
+    assert!(cuts(&output).is_empty());
+    let mut draw = |ui: &mut Ui| {
+        refusal(ui, &shown);
+    };
+    let (found, missing) = cuts_without_hover(&screen.ctx, |events| screen.run(events, &mut draw));
+    assert_eq!((found, missing), (1, Vec::<String>::new()));
+}
+
+/// N5: a toast's text keeps clear of its box on every side, measured on
+/// the raster: a margin of the box's fill runs round the ink.
+#[test]
+fn a_toast_has_room_round_its_text() -> Result<(), &'static str> {
+    use crate::kit::toast::Toasts;
+    let t = Tokens::get();
+    let screen = Screen::new(egui::vec2(500.0, 200.0));
+    let mut toasts = Toasts::default();
+    toasts.push(Level::Ok, "Marked no-connect", vec![], 0.0);
+    let canvas = Rect::from_min_size(Pos2::ZERO, screen.size);
+    let mut draw = |ui: &mut Ui| {
+        ui.painter().rect_filled(canvas, 0.0, Color32::BLACK);
+        toasts.show(ui.ctx(), canvas, 0.0);
+    };
+    screen.run(vec![], &mut draw);
+    let output = screen.run(vec![], &mut draw);
+    let text = painted(&output)
+        .into_iter()
+        .find(|(text, ..)| text == "Marked no-connect")
+        .map(|(_, rect, ..)| rect)
+        .ok_or("the toast's text")?;
+    let rgba = screen.rgba(&output);
+    let width = screen.size.x as usize;
+    let filled = |x: f32, y: f32| {
+        let at = (y as usize * width + x as usize) * 4;
+        rgba.get(at..at + 3).is_some_and(|p| p != [0, 0, 0])
+    };
+    let y = text.center().y;
+    let room = t.space_8;
+    assert!(filled(text.right() + room, y), "right of the text");
+    assert!(filled(text.center().x, text.top() - t.space_4), "above it");
+    assert!(
+        filled(text.center().x, text.bottom() + t.space_4),
+        "below it"
+    );
+    Ok(())
+}
+
+/// N11: the PCB status line fits beside the canvas buttons in the window
+/// the check ran in (1380 points wide: a canvas of 830), with the longest
+/// tool name and layer focus it had.
+#[test]
+fn the_route_status_line_is_not_cut() {
+    let screen = Screen::new(egui::vec2(830.0, 200.0));
+    let line = "Route · Top copper · All layers (⇧L) · grid 0.5 mm · 0 airwires";
+    let output = screen.run(vec![], |ui| {
+        canvas_hint(ui.painter(), ui.ctx().content_rect(), 16.0, line);
+    });
+    assert!(shows_in_full(&output, line), "{:?}", cuts(&output));
+}

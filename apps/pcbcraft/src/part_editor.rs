@@ -804,6 +804,17 @@ impl PartEditor {
         }
     }
 
+    /// Whether the shown canvas has a selection its delete key removes.
+    pub fn can_delete(&self) -> bool {
+        match self.view {
+            View::Symbol => !self.selection.is_empty(),
+            View::Footprint => {
+                !self.footprint_tool.selection.is_empty() || self.footprint_dims.selected.is_some()
+            }
+            _ => false,
+        }
+    }
+
     pub fn on_tab(&mut self, tab: &str) {
         self.view = match tab {
             "details" => View::Details,

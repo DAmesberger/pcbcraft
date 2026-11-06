@@ -418,7 +418,8 @@ fn an_ordinary_join_applies_directly_with_a_status_toast() -> TestResult {
     }
     let posted = crate::kit::toast::take_posted(&ctx);
     assert!(
-        posted.iter().any(|p| p.text.starts_with("Drew the wire")
+        // One wire drawn, though the T splits the wire it ends on (N6).
+        posted.iter().any(|p| p.text == "Drew the wire"
             && p.actions == vec![crate::kit::toast::ToastAction::Undo]),
         "{:?}",
         posted.iter().map(|p| &p.text).collect::<Vec<_>>()

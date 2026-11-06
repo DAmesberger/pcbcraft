@@ -1357,6 +1357,22 @@ impl PcbEditor {
     /// fill is deleted by the command its card's Delete button sends, one
     /// undo step (the engine refuses a locked one). `keys::pressed` never
     /// takes a plain key from a focused text field.
+    /// Whether a selection is there that the delete key removes.
+    pub fn can_delete(&self, project: &Project) -> bool {
+        if self.view_3d {
+            return false;
+        }
+        if self.shape.active {
+            return self.shape.tool == board_shape::ShapeTool::Select
+                && !self.shape.selection.is_empty();
+        }
+        self.tool == Tool::Select
+            && matches!(
+                self.inspected(project),
+                Inspected::Track(_) | Inspected::Via(_) | Inspected::Fill(_)
+            )
+    }
+
     fn delete_key(&self, ui: &Ui, project: &Project) -> Option<Operation> {
         if self.tool != Tool::Select {
             return None;
@@ -1657,10 +1673,10 @@ impl PcbEditor {
             &format!(
                 "{} · {} copper · {focus} · grid 0.5 mm · {} airwires{}",
                 match self.tool {
-                    Tool::Route => "Route (keys in the Route card)",
+                    Tool::Route => "Route",
                     Tool::Via => "Via",
                     Tool::Fill => "Fill (A arcs, Enter closes)",
-                    Tool::Tune => "Tune (keys in the Tune card)",
+                    Tool::Tune => "Tune",
                     Tool::Select => "Select / move",
                 },
                 self.layer.name(),

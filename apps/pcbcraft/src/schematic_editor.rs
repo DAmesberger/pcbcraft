@@ -992,6 +992,13 @@ impl SchematicEditor {
     }
 
     /// What the Properties card shows now.
+    /// Whether a selection is there that the delete key removes.
+    pub fn can_delete(&self, project: &Project) -> bool {
+        self.tool == Tool::Select
+            && (self.selected_item(project).is_some()
+                || matches!(self.subject(project), Subject::Instance(_)))
+    }
+
     fn subject(&self, project: &Project) -> Subject {
         if self.update.is_open() {
             return Subject::Review;

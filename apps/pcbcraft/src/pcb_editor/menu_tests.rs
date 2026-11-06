@@ -229,13 +229,19 @@ fn a_track_or_via_offers_delete_and_its_net() -> TestResult {
     let ctx = context();
     let mut editor = PcbEditor::default();
     frame(&mut editor, &engine, &ctx, vec![]);
+    // N8: Edit › Delete has something to delete only with a selection.
+    assert!(!editor.can_delete(engine.project()));
+    editor.via = Some(via);
+    assert!(editor.can_delete(engine.project()));
+    editor.via = None;
     let rows = editor.menu_rows(&ctx, &engine, Target::Track(track));
     assert_eq!(
         labels(&rows),
         ["Delete", "—", "Select net", "Highlight net"]
     );
     let delete = rows.iter().flatten().next().ok_or("Delete")?;
-    assert_eq!(delete.key, crate::keys::shown(&ctx, "pcb.delete"));
+    assert_eq!(delete.key, crate::keys::menu_key(&ctx, "pcb.delete"));
+    assert!(delete.key.as_ref().is_some_and(|k| !k.contains(", ")));
     assert_op!(
         editor.menu_act(&engine, Act::DeleteTrack(track)),
         Some(Operation::Layout(LayoutCommand::DeleteTrack { id: track }))

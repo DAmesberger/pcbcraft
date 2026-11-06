@@ -112,6 +112,12 @@ fn ribbon_commands_dispatch_to_the_editor_and_report_why_not()
     let line = registry.get("shape.bs-line").ok_or("line")?;
     let refused = state.allows(RibbonEvent::Tool("bs-line"), line.context);
     assert!(refused.is_err_and(|why| why.contains("Board shape")));
+    // One that applies everywhere names no place: "here" and "Everywhere"
+    // would contradict each other.
+    assert_eq!(
+        state.allows(RibbonEvent::Tool("bs-line"), Context::Global),
+        Err("Not available here".to_owned())
+    );
     Ok(())
 }
 

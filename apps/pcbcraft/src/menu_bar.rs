@@ -313,14 +313,14 @@ pub fn state(now: &Now, entry: Entry) -> Option<State> {
                 label,
                 enabled,
                 key: key_equivalent(now, command),
-                shown: now.registry.shortcut(command),
+                shown: now.registry.menu_shortcut(command),
             })
         }
         Entry::Delete => {
             let target = delete_target(now);
             Some(State {
                 label: "Delete".to_owned(),
-                enabled: target.is_some() && !now.typing,
+                enabled: target.is_some_and(|(command, _)| (now.available)(command)) && !now.typing,
                 key: None,
                 shown: target.map(|(_, chord)| chord.shown()),
             })
