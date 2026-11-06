@@ -29,6 +29,9 @@ pub const WIRE_KEYS: &[KeyDecl] = &[
     KeyDecl::new("wire.flip", "F", "Flip the elbow corner"),
 ];
 
+/// A refused wire whose engine text cannot be shown.
+const WIRE_REFUSED: &str = "A wire cannot end there";
+
 /// A wire being drawn: its start and the points fixed so far.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct WireDraft {
@@ -89,25 +92,30 @@ impl SchematicEditor {
             return None;
         }
         if crate::keys::pressed(ctx, "wire.finish") || crate::keys::pressed(ctx, "wire.end") {
-            return self.end_wire_here(engine);
+            return self.end_wire_here(ctx, engine);
         }
         None
     }
 
     /// End the wire at its last fixed point with a free end; with no corner
     /// fixed, drop it.
-    pub(super) fn end_wire_here(&mut self, engine: &Engine) -> Option<Operation> {
+    pub(super) fn end_wire_here(
+        &mut self,
+        ctx: &egui::Context,
+        engine: &Engine,
+    ) -> Option<Operation> {
         let draft = self.wire.take()?;
         let mut corners: Vec<Point> = draft.legs.iter().flatten().copied().collect();
         let end = corners.pop()?;
         let to = WireTarget::Free(FreeEnd::new(end)?);
-        self.send_wire(engine, &draft, corners, to)
+        self.send_wire(ctx, engine, &draft, corners, to)
     }
 
     /// A Wire tool click at the snapped sheet point `at`, landing on
     /// `target` (a connection point, free end or wire) or in empty space.
     pub(super) fn wire_click(
         &mut self,
+        ctx: &egui::Context,
         engine: &Engine,
         target: Option<(WireTarget, Point)>,
         at: Point,
@@ -134,7 +142,7 @@ impl SchematicEditor {
                 }
                 let mut corners: Vec<Point> = draft.legs.iter().flatten().copied().collect();
                 corners.push(elbow(draft.last(), end, self.wire_flipped));
-                self.send_wire(engine, &draft, corners, to)
+                self.send_wire(ctx, engine, &draft, corners, to)
             }
             // Empty space fixes the elbow and continues from the click.
             None => {
@@ -150,9 +158,12 @@ impl SchematicEditor {
 
     /// The finished wire as one `wire.draw`: applied at once, or reviewed
     /// when it touches routed copper or merges two named nets
-    /// ([`Self::join`]).
+    /// ([`Self::join`]). A wire that cannot exist (it ends on a pin the part
+    /// leaves unconnected) has nothing to review: a toast says why and the
+    /// drawing goes on. Cancelling a review goes back to the drawing too.
     fn send_wire(
         &mut self,
+        ctx: &egui::Context,
         engine: &Engine,
         draft: &WireDraft,
         corners: Vec<Point>,
@@ -164,7 +175,36 @@ impl SchematicEditor {
             corners: corners.into_iter().map(|at| Corner { at }).collect(),
             to,
         };
-        self.join(engine, command, draft.from, to)
+        let plan = engine.preview_update(Change::Schematic { command });
+        if let Some(blocker) = plan.blocker_lines.first() {
+            kit::toast::post(
+                ctx,
+                kit::severity::Level::Warning,
+                refusal::presentable(&blocker.detail).unwrap_or_else(|| WIRE_REFUSED.to_owned()),
+                Vec::new(),
+            );
+            self.wire = Some(draft.clone());
+            return None;
+        }
+        let operation = self.join(engine, plan, draft.from, to);
+        if self.update.is_open() {
+            self.wire_review = Some((draft.clone(), engine.revision()));
+        }
+        operation
+    }
+
+    /// Back to drawing the wire whose review was cancelled. A review that
+    /// applied moved the revision, and the wire is done.
+    pub(super) fn resume_wire(&mut self, engine: &Engine) {
+        if self.update.is_open() {
+            return;
+        }
+        if let Some((draft, revision)) = self.wire_review.take()
+            && revision == engine.revision()
+        {
+            self.tool = Tool::Wire;
+            self.wire = Some(draft);
+        }
     }
 
     /// The free wire ends drawn on the active sheet, as Wire tool targets.

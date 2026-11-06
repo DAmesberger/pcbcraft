@@ -1286,6 +1286,12 @@ impl PcbEditor {
         }
     }
 
+    /// Whether an update review is open.
+    #[cfg(test)]
+    pub(crate) fn reviewing(&self) -> bool {
+        self.update.is_open()
+    }
+
     /// Return the layout view to its fitted scale.
     pub fn fit(&mut self) {
         self.zoom = 1.0;

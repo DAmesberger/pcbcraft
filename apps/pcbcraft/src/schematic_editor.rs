@@ -287,6 +287,9 @@ pub struct SchematicEditor {
     /// in its own frame, resolved once per component and revision.
     ghost: Option<(ComponentRef, u64, PlacedUnit)>,
     update: crate::update_preview::UpdatePreview,
+    /// The wire a review was opened for, at this revision: cancelling the
+    /// review goes back to drawing it.
+    wire_review: Option<(WireDraft, u64)>,
     /// Finds the component the Place tool puts down.
     palette: PlacePalette,
     /// The Resolve parts card.
@@ -364,6 +367,7 @@ impl Default for SchematicEditor {
             view: Vec2::ZERO,
             ghost: None,
             update: Default::default(),
+            wire_review: None,
             palette: PlacePalette::default(),
             resolve: ResolveParts::default(),
             updates: Arc::default(),
@@ -651,24 +655,21 @@ impl SchematicEditor {
         }
     }
 
-    /// A wire `command` drawn from `from` to `to`. An ordinary join
-    /// applies at once, one undo step, and says what changed in a status
-    /// toast. The review opens only when the join is risky: it touches
-    /// routed copper (the plan has blockers or conflicting tracks or vias),
-    /// or it merges two nets that both carry a name a person gave (a label
-    /// or power port, or a rename), such as VBUS and GND.
+    /// A wire `command` drawn from `from` to `to`, whose plan is not
+    /// blocked. An ordinary join applies at once, one undo step, and says
+    /// what changed in a status toast. The review opens only when the join
+    /// is risky: it touches routed copper (the plan has conflicting tracks
+    /// or vias), or it merges two nets that both carry a name a person gave
+    /// (a label or power port, or a rename), such as VBUS and GND.
     fn join(
         &mut self,
         engine: &Engine,
-        command: SchematicCommand,
+        plan: pcbcraft_core::updates::UpdatePlan,
         from: WireTarget,
         to: WireTarget,
     ) -> Option<Operation> {
-        let change = Change::Schematic { command };
-        let plan = engine.preview_update(change.clone());
-        let routed = !plan.blockers.is_empty()
-            || !plan.conflicting_tracks.is_empty()
-            || !plan.conflicting_vias.is_empty();
+        let change = plan.change.clone();
+        let routed = !plan.conflicting_tracks.is_empty() || !plan.conflicting_vias.is_empty();
         if routed || self.joins_named_nets(engine.project(), from, to) {
             return self.stage_update(engine, change);
         }
@@ -716,6 +717,32 @@ impl SchematicEditor {
             }
             _ => false,
         }
+    }
+
+    /// Select `label` and give its name field the keyboard, as the menu's
+    /// Edit does.
+    #[cfg(test)]
+    pub(crate) fn edit_label(&mut self, project: &Project, label: Id) {
+        self.select_item(Some(Item::Label(label)), project);
+        self.focus_field = Some(format!("label/{label}/name"));
+    }
+
+    /// Delete a label, sheet symbol, sheet pin or drawing. It applies at
+    /// once, unless it would take terminals off a routed net: that opens the
+    /// review, as removing a part or a wire does, and keeps the selection.
+    fn remove_item(&mut self, engine: &Engine, item: Item) -> Option<Operation> {
+        let operation = sheet_ui::removed(item);
+        if let Operation::Schematic(command) = &operation {
+            let change = Change::Schematic {
+                command: command.clone(),
+            };
+            let plan = engine.preview_update(change.clone());
+            if !plan.conflicting_tracks.is_empty() || !plan.conflicting_vias.is_empty() {
+                return self.stage_update(engine, change);
+            }
+        }
+        self.item = None;
+        Some(operation)
     }
 
     /// Say a directly applied join once the engine took it.
@@ -1379,7 +1406,8 @@ impl SchematicEditor {
                 return ui_kit::button(ui, "Remove", Button::Normal)
                     .on_hover_text("Remove it; wires through it stay joined")
                     .clicked()
-                    .then(|| sheet_ui::removed(item));
+                    .then(|| self.remove_item(engine, item))
+                    .flatten();
             }
             _ => None,
         }?;
@@ -1412,6 +1440,7 @@ impl SchematicEditor {
         self.refresh_connectivity(engine);
         self.say_notices(ui.ctx(), engine);
         self.say_join(ui.ctx(), engine);
+        self.resume_wire(engine);
         self.resolve_window(ui.ctx(), engine);
         let project = engine.project();
         let t = Tokens::get();
@@ -1486,8 +1515,7 @@ impl SchematicEditor {
                 output = Some(op);
             }
             if crate::keys::pressed(ui.ctx(), "schematic.delete") {
-                output = Some(sheet_ui::removed(item));
-                self.item = None;
+                output = self.remove_item(engine, item);
             }
         }
         // Delete or Backspace on a selected part opens the review its
@@ -1813,10 +1841,22 @@ impl SchematicEditor {
                 .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
                 .and_then(|(e, p)| Some((e.junction_id()?, *p)))
         };
+        // The label drawn under the pointer: its connection point may be
+        // away from its drawing (a port on a pin stands off on a leader).
+        let label_under = if wiring {
+            response
+                .interact_pointer_pos()
+                .or(response.hover_pos())
+                .and_then(|p| self.label_target_at(project, view.world(p), tolerance))
+                .map(|(target, p)| (target, screen(p)))
+        } else {
+            None
+        };
         let target_at = |pointer: Pos2| -> Option<(WireTarget, Pos2)> {
             // The nearest connection point within the snap radius, a pin
             // end winning a tie; else a pin whose drawn line is under the
-            // pointer, landing on its connection end.
+            // pointer, landing on its connection end; else a label's
+            // drawing, landing on its connection point.
             let points = pin_hits
                 .iter()
                 .map(|(e, p)| (WireTarget::Terminal(*e), *p, 0))
@@ -1844,6 +1884,7 @@ impl SchematicEditor {
                         .min_by(|a, b| a.2.total_cmp(&b.2))
                         .map(|(e, end, _)| (WireTarget::Terminal(*e), *end))
                 })
+                .or(label_under)
                 .or_else(|| wire_point_at(pointer))
         };
         if let Some(pointer) = response.hover_pos() {
@@ -1983,7 +2024,7 @@ impl SchematicEditor {
                 // The second click of a double-click ends the wire at the
                 // point the first one fixed, with a free end.
                 Tool::Wire if response.double_clicked() => {
-                    output = self.end_wire_here(engine);
+                    output = self.end_wire_here(ui.ctx(), engine);
                 }
                 Tool::NoConnect => {
                     output = self.no_connect_click(ui.ctx(), project, pin, body_at(pointer));
@@ -1991,7 +2032,7 @@ impl SchematicEditor {
                 Tool::Wire => {
                     let target = target_at(pointer)
                         .and_then(|(target, _)| Some((target, target_position(project, target)?)));
-                    output = self.wire_click(engine, target, world(pointer));
+                    output = self.wire_click(ui.ctx(), engine, target, world(pointer));
                 }
                 Tool::Select => {
                     let body = body_at(pointer);
@@ -2756,6 +2797,8 @@ mod junction_tests;
 mod part_tests;
 #[cfg(test)]
 mod sheet_tests;
+#[cfg(test)]
+mod wire_end_tests;
 #[cfg(test)]
 mod tests {
     use super::*;

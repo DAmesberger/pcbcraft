@@ -642,7 +642,7 @@ pub fn unplace_unit(project: &mut Project, occurrence: Id, policy: EditPolicy) -
     if !wires.is_empty() {
         if policy == EditPolicy::Direct {
             return Err(conflict(
-                "This unit is wired. Preview unplacing it with project.preview_update (Change::Schematic) to review the wires it removes.",
+                "This unit is wired. Review unplacing it first: the review lists the wires it removes.",
             ));
         }
         project.wires.retain(|w| !wires.contains(&w.id));
@@ -668,7 +668,7 @@ pub fn disconnect_terminals(
     if project.wires.iter().any(touches) {
         if policy == EditPolicy::Direct {
             return Err(conflict(
-                "These terminals are wired. Preview the change with project.preview_update to review the wires it removes.",
+                "These terminals are wired. Review the change first: the review lists the wires it removes.",
             ));
         }
         project.wires.retain(|w| !touches(w));
@@ -688,7 +688,7 @@ pub fn detach_instance(project: &mut Project, instance: Id, policy: EditPolicy) 
     if wired {
         if policy == EditPolicy::Direct {
             return Err(conflict(
-                "This instance is wired. Preview its removal with project.preview_update (Change::Instance) to review the wires it removes.",
+                "This instance is wired. Review its removal first: the review lists the wires it removes.",
             ));
         }
         project.wires.retain(|w| !on_instance(w));
@@ -890,7 +890,7 @@ pub fn protect_routed_nets(before: &Project, after: &Project) -> Result<()> {
         let b = after.net(id).map(|net| &net.terminals);
         if a != b {
             return Err(conflict(
-                "This connectivity change affects routed copper. Preview it with project.preview_update and apply the reviewed track removals through project.apply_update.",
+                "This connectivity change affects routed copper. Review it first: the review lists the tracks and vias it removes.",
             ));
         }
     }

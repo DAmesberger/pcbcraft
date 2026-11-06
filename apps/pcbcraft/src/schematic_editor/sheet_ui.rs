@@ -367,6 +367,34 @@ impl SchematicEditor {
             })
     }
 
+    /// The wire target a label drawn under `p` stands for, with its sheet
+    /// position. A label placing itself on a pin stands for that pin, so a
+    /// new wire leaves it on its pin (a second wire on the label itself
+    /// would end its self-placing).
+    pub(super) fn label_target_at(
+        &self,
+        project: &Project,
+        p: Point,
+        tol: f64,
+    ) -> Option<(WireTarget, Point)> {
+        let scene = self.scene.as_ref()?;
+        let m = TextMetric::default();
+        let id = scene
+            .items
+            .iter()
+            .rev()
+            .find_map(|(item, drawing)| match item {
+                Item::Label(id) if drawing.hit(p, tol, m) => Some(*id),
+                _ => None,
+            })?;
+        let label = project.label(id)?;
+        let target = match schematic::labels::attached_pin(project, label) {
+            Some(pin) => WireTarget::Terminal(pin),
+            None => WireTarget::from(WireEnd::label(id)),
+        };
+        Some((target, super::target_position(project, target)?))
+    }
+
     /// The labels and sheet pins of the active sheet as wire targets, with
     /// their sheet positions.
     pub(super) fn point_targets(&self, project: &Project) -> Vec<(WireTarget, Point)> {

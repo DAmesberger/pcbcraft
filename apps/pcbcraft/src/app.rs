@@ -42,6 +42,19 @@ struct PendingImport {
     target: pcbcraft_core::Revision,
 }
 
+/// What [`App::with_parts`] builds the app around.
+struct Parts {
+    engine: Engine,
+    files: FileUi,
+    sources: LibrarySources,
+    registry: Arc<crate::commands::Registry>,
+    keymap_problems: Vec<crate::keymap::Unapplied>,
+    messages: Messages,
+    browser_width: f32,
+    #[cfg(target_os = "macos")]
+    native_menu: Option<crate::native_menu::NativeMenu>,
+}
+
 pub struct App {
     engine: Engine,
     workspace: Workspace,
@@ -192,12 +205,40 @@ impl App {
         };
         let browser_width = sources.browser_width().unwrap_or(chrome::BROWSER_WIDTH);
         engine.require_waiver_reason(sources.require_waiver_reason());
-        Ok(Self {
-            scene: SceneController::new(
-                cc.egui_ctx.clone(),
-                viewport::Viewport::new(render_state, &cc.egui_ctx),
-            ),
-            fills: crate::fill_worker::FillWorker::start(cc.egui_ctx.clone()),
+        Ok(Self::with_parts(
+            &cc.egui_ctx,
+            viewport::Viewport::new(render_state, &cc.egui_ctx),
+            Parts {
+                engine,
+                files,
+                sources,
+                registry,
+                keymap_problems,
+                messages,
+                browser_width,
+                #[cfg(target_os = "macos")]
+                native_menu,
+            },
+        ))
+    }
+
+    /// The app around what [`Self::new`] set up (a window's; a test's has
+    /// none).
+    fn with_parts(ctx: &egui::Context, viewport: viewport::Viewport, parts: Parts) -> Self {
+        let Parts {
+            engine,
+            files,
+            sources,
+            registry,
+            keymap_problems,
+            messages,
+            browser_width,
+            #[cfg(target_os = "macos")]
+            native_menu,
+        } = parts;
+        Self {
+            scene: SceneController::new(ctx.clone(), viewport),
+            fills: crate::fill_worker::FillWorker::start(ctx.clone()),
             files,
             sources,
             engine,
@@ -232,7 +273,7 @@ impl App {
             native_menu,
             #[cfg(target_os = "macos")]
             menu_runs: Vec::new(),
-        })
+        }
     }
 
     /// The one path from UI gestures to document changes. It carries the
@@ -1164,6 +1205,9 @@ impl eframe::App for App {
         self.library_requests(&ctx);
         let draft = self.part.commit(&ctx, &self.engine);
         self.apply(&ctx, Origin::Command, draft);
+        // A command held for a field's commit runs next: the file workflow
+        // must already hold the document the field committed to.
+        self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.dispatch_keys(&ctx);
         self.native_menu(&ctx);
         guard_close(&ctx, &mut self.files, self.closing);
@@ -1263,6 +1307,10 @@ pub(crate) fn sheet_rows(
         .flat_map(|g| g.rows)
         .collect()
 }
+
+#[cfg(test)]
+#[path = "app/flow_tests.rs"]
+mod flow_tests;
 
 #[cfg(test)]
 mod font_tests {

@@ -148,7 +148,7 @@ pub(super) fn remove(project: &mut Project, instance: Id) -> Result<()> {
     mechanical_instance(project, instance)?;
     if project.occurrences_of(instance).next().is_some() || connected(project, instance) {
         return Err(Error::Conflict(
-            "part.connected: the part is on a sheet or connected; preview its removal with project.preview_update (Change::Instance)".into(),
+            "part.connected: the part is on a sheet or connected; review its removal first".into(),
         ));
     }
     if project

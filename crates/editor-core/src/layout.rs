@@ -495,7 +495,7 @@ pub fn set_physical(
     let placed = project.placement_of(instance).is_some();
     if placed && policy == EditPolicy::Direct {
         return Err(Error::Conflict(
-            "This instance is on the board. Preview the change with project.preview_update (Change::Instance) to review its copper impact.".into(),
+            "This instance is on the board. Review the change first: the review shows what it does to the copper.".into(),
         ));
     }
     let target = instances::instance_mut(project, instance)?;
@@ -513,7 +513,7 @@ pub fn detach_instance(project: &mut Project, instance: Id, policy: EditPolicy) 
     if project.placement_of(instance).is_some() {
         if policy == EditPolicy::Direct {
             return Err(Error::Conflict(
-                "Remove the PCB placement first, or preview the removal with project.preview_update (Change::Instance).".into(),
+                "Remove the PCB placement first, or review the removal.".into(),
             ));
         }
         project.placements.retain(|p| p.instance != instance);

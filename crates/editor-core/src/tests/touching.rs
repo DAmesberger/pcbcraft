@@ -477,3 +477,117 @@ fn the_showcase_keeps_its_netlist_and_no_wire_runs_over_a_pin() -> Result<()> {
     assert_eq!(again.wires, project.wires);
     Ok(())
 }
+
+/// The end of the label's drawing farthest from its connection point.
+fn far_end_of(engine: &Engine, label: Id) -> Result<Point> {
+    let project = engine.project();
+    let at = project
+        .label(label)
+        .ok_or(Error::Invalid("no label".into()))?;
+    let anchor = schematic::labels::anchor(project, at);
+    let drawings = schematic::scene::sheet_labels(project, at.sheet);
+    let (_, drawing) = drawings
+        .iter()
+        .find(|(id, _)| *id == label)
+        .ok_or(Error::Invalid("no drawing".into()))?;
+    drawing
+        .strokes
+        .iter()
+        .filter_map(|s| match s.shape {
+            crate::geometry::Shape::Line { a, b } => Some([a, b]),
+            _ => None,
+        })
+        .flatten()
+        .max_by(|p, q| {
+            let d = |r: &Point| (r[0] - anchor[0]).hypot(r[1] - anchor[1]);
+            d(p).total_cmp(&d(q))
+        })
+        .ok_or(Error::Invalid("no line".into()))
+}
+
+/// e2e batch F2: a free end landing on a port's drawing is on that port: it
+/// attaches, though the port's connection point is elsewhere. A port on a
+/// pin stays there: the wire takes the pin. One standing alone takes the
+/// wire itself. The wire keeps the point it reached.
+#[test]
+fn a_free_end_on_a_ports_drawing_attaches_to_it() -> Result<()> {
+    let mut engine = Engine::default();
+    let resistor = two_pin(&mut engine)?;
+    let (r1, _) = place(&mut engine, &resistor, "R1", 1, [0.0, 0.0])?;
+    let port = |name: &str, position, attach| {
+        Operation::Schematic(SchematicCommand::PlaceLabel {
+            sheet: None,
+            name: name.into(),
+            kind: LabelKind::Power {
+                style: crate::model::PowerStyle::Ground,
+            },
+            position,
+            rotation: Default::default(),
+            attach,
+        })
+    };
+    apply(
+        &mut engine,
+        port(
+            "GND",
+            [0.0, 0.0],
+            Some(schematic::WireTarget::Terminal(ep(r1, 2))),
+        ),
+    )?;
+    let on_pin = engine.project().labels[0].id;
+    apply(&mut engine, port("AGND", [40.0, 0.0], None))?;
+    let alone = engine.project().labels[1].id;
+    let draw = |engine: &mut Engine, end: Point| {
+        let free = |p: Point| {
+            crate::model::FreeEnd::new(p)
+                .map(schematic::WireTarget::Free)
+                .ok_or(Error::Invalid("free".into()))
+        };
+        apply(
+            engine,
+            Operation::Schematic(SchematicCommand::DrawWire {
+                sheet: None,
+                from: free([end[0], end[1] - 30.0])?,
+                corners: vec![],
+                to: free(end)?,
+            }),
+        )
+    };
+    let on_ink = far_end_of(&engine, on_pin)?;
+    assert!(!near(
+        on_ink,
+        schematic::pin_position(engine.project(), ep(r1, 2)).ok_or(Error::Invalid("pin".into()))?
+    ));
+    draw(&mut engine, on_ink)?;
+    let project = engine.project();
+    let wire = project
+        .wires_at(WireEnd::Terminal(ep(r1, 2)))
+        .find(|w| w.corners.iter().any(|c| near(c.at, on_ink)))
+        .ok_or(Error::Invalid("the wire did not attach to the pin".into()))?;
+    assert!(matches!(wire.from, WireEnd::Free(_)));
+    let label = project
+        .label(on_pin)
+        .ok_or(Error::Invalid("port gone".into()))?;
+    assert_eq!(
+        schematic::labels::attached_pin(project, label),
+        Some(ep(r1, 2)),
+        "the port stays on its pin"
+    );
+    let on_ink = far_end_of(&engine, alone)?;
+    draw(&mut engine, on_ink)?;
+    assert_eq!(
+        engine.project().wires_at(WireEnd::label(alone)).count(),
+        1,
+        "the wire did not attach to the port standing alone"
+    );
+    // Nearby but off the drawing stays free.
+    draw(&mut engine, [70.0, 5.0])?;
+    assert!(
+        engine
+            .project()
+            .wires
+            .iter()
+            .any(|w| matches!(w.to, WireEnd::Free(_))),
+    );
+    Ok(())
+}
