@@ -143,6 +143,7 @@ pub fn pick_row(ui: &mut Ui, id: egui::Id, row: &PickRow<'_>) -> PickResponse {
     );
     x += t.space_14 + t.space_6;
     let mut right = rect.right() - t.space_6;
+    let mut action_button = None;
     if let Some(action) = row.action.filter(|_| hovered) {
         let slot = Rect::from_min_max(pos2(x.min(right), first.top()), pos2(right, first.bottom()));
         let mut child = ui.new_child(
@@ -154,6 +155,7 @@ pub fn pick_row(ui: &mut Ui, id: egui::Id, row: &PickRow<'_>) -> PickResponse {
         let button = ui_kit::button(&mut child, action, ui_kit::Button::Small);
         out.action = button.clicked();
         right = button.rect.left() - t.space_6;
+        action_button = Some(button);
     }
     let title = if row.action.is_some() && hovered {
         super::text::wrapped(
@@ -193,6 +195,15 @@ pub fn pick_row(ui: &mut Ui, id: egui::Id, row: &PickRow<'_>) -> PickResponse {
         out.folded |= title_response.clicked();
     }
     super::text::hover(title_response, row.title, row.tip, cut);
+    // In a narrow column the action covers where the cut title was: it
+    // then shows the whole title too, so the row's text is never lost.
+    if cut && let Some(button) = action_button {
+        button.on_hover_text(if row.tip.is_empty() {
+            row.title.to_owned()
+        } else {
+            format!("{}\n{}", row.title, row.tip)
+        });
+    }
     out
 }
 

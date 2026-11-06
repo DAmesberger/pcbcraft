@@ -58,6 +58,14 @@ impl SettingsWindow {
             self.pending = None;
         }
     }
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+    pub fn close(&mut self) {
+        if self.open {
+            self.toggle();
+        }
+    }
     pub fn is_recording(&self) -> bool {
         self.open && self.recording.is_some()
     }
@@ -436,6 +444,30 @@ impl super::App {
         }
     }
 
+    /// One system window at a time, the newest; Esc closes it unless a
+    /// key is being recorded in Settings.
+    pub(super) fn system_windows(&mut self, ctx: &egui::Context) {
+        let now = [
+            self.messages_open,
+            self.shortcut_sheet.is_open(),
+            self.settings_window.is_open(),
+        ];
+        let escape = now.contains(&true)
+            && !self.palette.is_open()
+            && !self.settings_window.is_recording()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let [messages, shortcuts, settings] =
+            super::system_windows::one_window(self.system_windows, now, escape);
+        self.messages_open = messages;
+        if !shortcuts {
+            self.shortcut_sheet.close();
+        }
+        if !settings {
+            self.settings_window.close();
+        }
+        self.system_windows = [messages, shortcuts, settings];
+    }
+
     /// The Settings window while open.
     pub(super) fn settings(&mut self, ctx: &egui::Context) {
         let mut keyboard = self.sources.keyboard().clone();
@@ -512,6 +544,71 @@ mod tests {
         .textures_delta
         .clear();
         out
+    }
+
+    /// Settings is taller than its window: the body scrolls, and wheel
+    /// scrolling brings its last row fully into view instead of leaving
+    /// it cut at the window's bottom edge.
+    #[test]
+    fn the_settings_body_scrolls_to_its_last_row() {
+        fn texts(shape: &egui::Shape, clip: egui::Rect, out: &mut Vec<(egui::Rect, egui::Rect)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.rect.translate(t.pos.to_vec2()), clip)),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, clip, out)),
+                _ => {}
+            }
+        }
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let registry = Registry::standard();
+        let mut window = SettingsWindow::default();
+        window.open();
+        let (mut reveal, mut reason) = (RevealSettings::default(), false);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1380.0, 900.0));
+        let mut frame = |events: Vec<egui::Event>| {
+            let mut out = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    window.show(ui.ctx(), &registry, &mut reveal, &mut reason, &[]);
+                },
+            );
+            out.textures_delta.clear();
+            let mut all = Vec::new();
+            for shape in &out.shapes {
+                texts(&shape.shape, shape.clip_rect, &mut all);
+            }
+            all
+        };
+        for _ in 0..3 {
+            frame(vec![]);
+        }
+        let below = |all: &[(egui::Rect, egui::Rect)]| {
+            all.iter()
+                .filter(|(text, clip)| text.bottom() > clip.bottom() + 0.5)
+                .count()
+        };
+        assert!(
+            below(&frame(vec![])) > 0,
+            "the body is taller than the window"
+        );
+        let center = ctx
+            .memory(|m| m.area_rect(egui::Id::new("app-settings")))
+            .map_or(screen.center(), |r| r.center());
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -400.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        };
+        for _ in 0..30 {
+            frame(vec![egui::Event::PointerMoved(center), wheel.clone()]);
+        }
+        let end = frame(vec![]);
+        assert_eq!(below(&end), 0, "every row is reachable");
     }
 
     /// Clicking a key cap records the next chord, which no one else sees;

@@ -700,6 +700,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             if !point_valid(size) || !size.iter().all(|v| (5.0..=1000.0).contains(v)) {
                 return invalid("board dimensions must be 5–1000 mm");
             }
+            copper_fits(project, size)?;
             project.board_size = size;
         }
         LayoutCommand::PlacePart {
@@ -1273,13 +1274,72 @@ pub fn track_contains(track: &Track, point: Point, tolerance: f64) -> bool {
 
 /// Whether a track's whole copper, round caps included, lies on the board.
 fn track_inside_board(project: &Project, track: &Track) -> bool {
+    track_within(track, project.board_size)
+}
+
+/// Whether a track's whole copper lies on a board of `size`.
+fn track_within(track: &Track, size: Point) -> bool {
     let half = track.width * 0.5;
     [track.start, track.end].iter().all(|p| {
         p[0] - half >= -EPS
             && p[1] - half >= -EPS
-            && p[0] + half <= project.board_size[0] + EPS
-            && p[1] + half <= project.board_size[1] + EPS
+            && p[0] + half <= size[0] + EPS
+            && p[1] + half <= size[1] + EPS
     })
+}
+
+/// Refuse a board `size` that would leave tracks or vias off the board,
+/// naming them by count and net ("2 tracks on GND and CC2 would lie
+/// outside 38 × 64 mm"), so a designer knows what to move or remove.
+pub(crate) fn copper_fits(project: &Project, size: Point) -> Result<()> {
+    let tracks: Vec<Id> = project
+        .tracks
+        .iter()
+        .filter(|t| !track_within(t, size))
+        .map(|t| t.net)
+        .collect();
+    let vias: Vec<Id> = project
+        .vias
+        .iter()
+        .filter(|v| {
+            let (r, [x, y]) = (v.diameter / 2.0, v.position);
+            x - r < -EPS || y - r < -EPS || x + r > size[0] + EPS || y + r > size[1] + EPS
+        })
+        .map(|v| v.net)
+        .collect();
+    let counted = |nets: &[Id], one: &str, many: &str| -> Option<String> {
+        let mut names: Vec<&str> = Vec::new();
+        for net in nets {
+            let name = project.net_name(*net);
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        let shown = match names.as_slice() {
+            [] => return None,
+            [a] => (*a).to_owned(),
+            [a, b] => format!("{a} and {b}"),
+            [a, b, rest @ ..] => format!("{a}, {b} and {} more nets", rest.len()),
+        };
+        let kind = if nets.len() == 1 { one } else { many };
+        Some(format!("{} {kind} on {shown}", nets.len()))
+    };
+    let parts: Vec<String> = [
+        counted(&tracks, "track", "tracks"),
+        counted(&vias, "via", "vias"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if parts.is_empty() {
+        return Ok(());
+    }
+    Err(Error::Invalid(format!(
+        "{} would lie outside {} × {} mm",
+        parts.join(" and "),
+        limits::mm(size[0]),
+        limits::mm(size[1])
+    )))
 }
 
 fn add(a: Point, b: Point) -> Point {

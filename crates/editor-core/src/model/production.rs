@@ -19,6 +19,13 @@ pub struct Waiver {
     pub reason: String,
 }
 
+/// The waiver key of a finding: its code and the objects it names
+/// (`fabrication::preflight::key`).
+pub fn waiver_key(code: &str, objects: &[crate::diagnostics::ObjectRef]) -> String {
+    let objects = serde_json::to_string(objects).unwrap_or_default();
+    format!("{code} {objects}")
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Production {

@@ -711,6 +711,7 @@ fn commit(
     }
     expressions_evaluated(project, &evaluation)?;
     let size = sketch_size(&evaluation.solved)?;
+    super::copper_fits(project, size)?;
     sketch.solve = evaluation.solve;
     sketch.solved = evaluation.solved;
     if let Some(blob) = evaluation.sketch_out {

@@ -95,7 +95,8 @@ pub(crate) fn solve(stored: &Sketch, values: &Values) -> Outcome<(Sketch, usize)
     if !report.ok() {
         return Err(problem(
             "footprint.solve_failed",
-            report.failure(|c| format!("constraints {c} cannot be satisfied")),
+            report
+                .failure(|_| format!("{} cannot be satisfied", conflict(stored, &report.failing))),
         ));
     }
     if !report.folded.is_empty() {
@@ -109,6 +110,40 @@ pub(crate) fn solve(stored: &Sketch, values: &Values) -> Outcome<(Sketch, usize)
         return Err(problem("footprint.flipped", flips.join(", ")));
     }
     Ok((sketch, report.dof))
+}
+
+/// The violated constraints `failing` (sketch ids) as a person names
+/// them: the dimensions by the value that drives them ("the dimension
+/// ‘width’"), the rest counted, never by id.
+fn conflict(sketch: &Sketch, failing: &[String]) -> String {
+    let mut named: Vec<&str> = Vec::new();
+    let mut others = 0usize;
+    for id in failing {
+        match sketch
+            .constraints
+            .iter()
+            .find(|c| c.id == *id)
+            .and_then(|c| c.param.as_deref())
+        {
+            Some(param) if !named.contains(&param) => named.push(param),
+            Some(_) => {}
+            None => others += 1,
+        }
+    }
+    let quoted: Vec<String> = named.iter().take(3).map(|n| format!("‘{n}’")).collect();
+    let rest = named.len().saturating_sub(quoted.len());
+    let list = match (quoted.as_slice(), rest) {
+        ([], _) => String::new(),
+        ([one], _) => format!("the dimension {one}"),
+        (many, 0) => format!("the dimensions {}", many.join(", ")),
+        (many, more) => format!("the dimensions {} and {more} more", many.join(", ")),
+    };
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    match (list.is_empty(), others) {
+        (true, n) => format!("{n} sketch constraint{} together", plural(n)),
+        (false, 0) => list,
+        (false, n) => format!("{list} with {n} other constraint{}", plural(n)),
+    }
 }
 
 fn point_at(sk: &Sketch, id: &str, code: &'static str) -> Outcome<Vec2> {

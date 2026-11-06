@@ -1071,6 +1071,9 @@ impl PcbEditor {
                             }
                             Err(why) => rows.error = Some((Some(param.name.clone()), why)),
                         }
+                    } else if field.lost_focus() && failed {
+                        // Back at the stored value: the earlier text's error goes.
+                        rows.error = None;
                     }
                     let refused = rows
                         .refused

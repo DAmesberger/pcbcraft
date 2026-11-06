@@ -883,3 +883,86 @@ fn the_default_rules_keep_every_former_verdict() -> Result<()> {
     );
     Ok(())
 }
+
+/// A board too small for its copper is refused naming what lies outside,
+/// by count and net, and the size it was asked for.
+#[test]
+fn shrinking_the_board_names_the_copper_left_outside() -> Result<()> {
+    let mut project = Engine::showcase()?.project().clone();
+    crate::layout::copper_fits(&project, project.board_size)?;
+    let net = project
+        .nets
+        .first()
+        .map(|n| n.id)
+        .ok_or_else(|| Error::NotFound("a net".into()))?;
+    project.tracks = vec![
+        track(1, net, [10.0, 10.0], [30.0, 10.0], 0.2),
+        track(2, net, [30.0, 10.0], [30.0, 20.0], 0.2),
+        track(3, net, [2.0, 2.0], [4.0, 2.0], 0.2),
+    ];
+    project.vias = vec![via(4, net, [30.0, 20.0], 0.3, 0.6)];
+    let name = project.net_name(net).to_owned();
+    let error = crate::layout::copper_fits(&project, [25.0, 64.0])
+        .err()
+        .ok_or_else(|| Error::NotFound("a refusal".into()))?
+        .to_string();
+    assert!(
+        error.contains(&format!(
+            "2 tracks on {name} and 1 via on {name} would lie outside 25 × 64 mm"
+        )),
+        "{error}"
+    );
+    crate::layout::copper_fits(&project, [31.0, 64.0])?;
+    Ok(())
+}
+
+/// A finding waived for production is accepted: Issues and its counts
+/// leave it out, while the production check still lists it as waived.
+#[test]
+fn a_waived_finding_leaves_issues_and_stays_waived_in_production() -> Result<()> {
+    use crate::fabrication::preflight;
+    use crate::issues::{self, IssueArea, IssueScope};
+    use crate::model::production::Waiver;
+    let mut project = Engine::showcase()?.project().clone();
+    // Two parts on one spot: their courtyards overlap.
+    let at = project
+        .placements
+        .first()
+        .map(|p| p.position)
+        .ok_or_else(|| Error::NotFound("a placement".into()))?;
+    if let Some(second) = project.placements.get_mut(1) {
+        second.position = at;
+    }
+    let drafts = Default::default();
+    let before = issues::report(&project, &drafts, &IssueScope::All)?;
+    let row = before
+        .rows
+        .iter()
+        .find(|r| {
+            r.area == IssueArea::Board
+                && r.blocks().is_none()
+                && r.severity != issues::Severity::Info
+        })
+        .ok_or_else(|| Error::NotFound("a board finding".into()))?;
+    let key = preflight::key(&row.finding.code, &row.finding.objects);
+    project.production.waivers.push(Waiver {
+        key: key.clone(),
+        reason: "Accepted".into(),
+    });
+    let after = issues::report(&project, &drafts, &IssueScope::All)?;
+    let keyed = |r: &issues::IssueRow| preflight::key(&r.finding.code, &r.finding.objects);
+    assert!(!after.rows.iter().any(|r| keyed(r) == key));
+    assert_eq!(after.rows.len() + 1, before.rows.len());
+    let total = |c: issues::IssueCounts| c.error + c.warning + c.to_do + c.info;
+    assert_eq!(total(after.counts) + 1, total(before.counts));
+    let production = preflight::report(&project, &drafts, None)?;
+    assert!(
+        production
+            .items
+            .iter()
+            .any(|i| i.key == key && i.waiver.is_some()),
+        "the production check lists it waived"
+    );
+    assert_eq!(production.waived, 1);
+    Ok(())
+}

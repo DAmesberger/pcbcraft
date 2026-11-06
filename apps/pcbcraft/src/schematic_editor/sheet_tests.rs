@@ -359,6 +359,41 @@ fn the_registry_arms_the_label_tools() -> TestResult {
     Ok(())
 }
 
+/// Label ▾ is a split button: its ▾ part lists Net, Global and
+/// Hierarchical label, and its upper part arms the kind used last.
+#[test]
+fn label_arms_the_last_label_kind_and_its_menu_lists_every_kind() -> TestResult {
+    let engine = Engine::demo()?;
+    let mut editor = SchematicEditor::default();
+    let label = |editor: &mut SchematicEditor| -> Result<(String, Vec<String>), String> {
+        let ribbon = editor.ribbon(&engine);
+        let tool = ribbon
+            .groups
+            .iter()
+            .flat_map(|g| g.tools.iter())
+            .find(|t| t.label == "Label")
+            .ok_or("no Label button")?;
+        Ok((
+            tool.id.to_owned(),
+            tool.menu.iter().map(|v| v.label.to_owned()).collect(),
+        ))
+    };
+    let (shown, menu) = label(&mut editor)?;
+    assert_eq!(shown, "label", "a net label at first");
+    assert_eq!(menu, ["Net label", "Global label", "Hierarchical label"]);
+    editor.on_tool("global-label", &engine);
+    editor.on_tool("select", &engine);
+    assert_eq!(label(&mut editor)?.0, "global-label");
+    // The upper part runs the shown id: the global label tool again.
+    let shown = label(&mut editor)?.0;
+    editor.on_tool(&shown, &engine);
+    assert_eq!(editor.tool, Tool::Label(LabelTool::Global));
+    // A power port is no label kind of this button.
+    editor.on_tool("power", &engine);
+    assert_eq!(label(&mut editor)?.0, "global-label");
+    Ok(())
+}
+
 /// Render the Properties card and click the text `label` in it.
 fn card_click(
     editor: &mut SchematicEditor,

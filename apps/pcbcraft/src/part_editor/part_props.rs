@@ -202,6 +202,27 @@ pub struct PartProps {
 }
 
 /// Part drafts and published Parts of one component lineage, by lineage.
+/// One Parts row: its label, shortened with "…" where the column is
+/// narrow, with the whole label and what a click does on hover.
+fn part_row(ui: &mut Ui, label: &str, selected: bool) -> egui::Response {
+    let response = ui.selectable_label(selected, label);
+    let room = response.rect.width() - 2.0 * ui.spacing().button_padding.x;
+    let width = ui
+        .painter()
+        .layout_no_wrap(
+            label.to_owned(),
+            egui::TextStyle::Button.resolve(ui.style()),
+            ui.visuals().text_color(),
+        )
+        .size()
+        .x;
+    if width > room + 0.5 {
+        response.on_hover_text(format!("{label}\nOpen this Part"))
+    } else {
+        response.on_hover_text("Open this Part")
+    }
+}
+
 fn listed(engine: &Engine, component: DefinitionId) -> Vec<Listed> {
     let mut out: BTreeMap<DefinitionId, Listed> = BTreeMap::new();
     for part in engine.project().library.latest_parts() {
@@ -756,9 +777,7 @@ impl PartProps {
             };
             let shown = kit::list_frame(ui, listed.len(), rows, |ui, index| {
                 if let Some(item) = listed.get(index)
-                    && ui
-                        .selectable_label(self.dialog && self.open == Some(item.id), item.label())
-                        .on_hover_text("Open this Part")
+                    && part_row(ui, &item.label(), self.dialog && self.open == Some(item.id))
                         .clicked()
                 {
                     opened = Some(item.id);

@@ -13,6 +13,7 @@ mod key_reveal;
 mod open_timing;
 mod settings_window;
 mod shortcut_sheet;
+mod system_windows;
 
 use crate::file_ui::{self, Effect, FileUi};
 use crate::kit::messages::Messages;
@@ -58,6 +59,11 @@ pub struct App {
     /// Every message of this run, with the full engine text.
     messages: Messages,
     messages_open: bool,
+    /// Messages, Keyboard shortcuts and Settings open last frame, in that
+    /// order (`system_windows`).
+    system_windows: [bool; 3],
+    /// The system's fallback fonts (CJK and others) are installed.
+    system_fonts: bool,
     /// The Issues card, canvas badge and pill, and their cached answers.
     issues: crate::issues::Surface,
     /// The engine revision a toast's Undo would undo; Undo is withdrawn
@@ -107,6 +113,7 @@ impl App {
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         follow_system_theme(&cc.egui_ctx, true);
         fonts::setup_bundled_fonts(&cc.egui_ctx);
+        fonts::load_system_fonts_in_background(&cc.egui_ctx);
         let render_state = cc.wgpu_render_state.as_ref().ok_or("wgpu is required")?;
         let mut engine = Engine::demo()?;
         let mut files = FileUi::new(cc, &engine);
@@ -199,6 +206,8 @@ impl App {
             toasts: Toasts::default(),
             messages,
             messages_open: false,
+            system_windows: [false; 3],
+            system_fonts: false,
             issues: Default::default(),
             undo_revision: None,
             browser: chrome::BrowserMode::Auto,
@@ -437,6 +446,16 @@ impl App {
                 action: ToastAction::Show,
                 ..
             } => self.issues.open(),
+        }
+    }
+
+    /// The system's fallback fonts once a background search found them, as
+    /// Solidcraft installs them: CJK, Hangul, Thai, Hebrew and Arabic text
+    /// then draws instead of empty boxes. Nothing is bundled for them.
+    fn system_fonts(&mut self, ctx: &egui::Context) {
+        if !self.system_fonts && fonts::system_fonts_ready() {
+            self.system_fonts = true;
+            fonts::setup_fonts_without_waiting(ctx, "en", "");
         }
     }
 
@@ -1097,6 +1116,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.now = ctx.input(|i| i.time);
         follow_system_theme(&ctx, false);
+        self.system_fonts(&ctx);
         crate::kit::text::fit_tooltips(&ctx);
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
         open_timing::report(self.open_timing.frame(pcb_3d, std::time::Instant::now()));
@@ -1115,6 +1135,7 @@ impl eframe::App for App {
         // The palette's keys come before any canvas sees them.
         self.early_keys(&ctx);
         self.command_palette(&ctx);
+        self.system_windows(&ctx);
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
@@ -1221,6 +1242,44 @@ pub(crate) fn sheet_rows(
         .into_iter()
         .flat_map(|g| g.rows)
         .collect()
+}
+
+#[cfg(test)]
+mod font_tests {
+    use solidcraft_ui_egui::fonts;
+
+    /// The bundled faces have no CJK glyphs; the system fallbacks the app
+    /// installs once found do (macOS ships Hiragino), in every family a
+    /// name may use, the monospace of fields too.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn japanese_names_draw_with_the_system_fonts() {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let frame = |ctx: &egui::Context| {
+            ctx.run_ui(Default::default(), |_| {})
+                .textures_delta
+                .clear();
+        };
+        frame(&ctx);
+        let draws = |ctx: &egui::Context, font: &egui::FontId| {
+            ctx.fonts_mut(|f| f.has_glyphs(font, "日本語"))
+        };
+        let sans = egui::FontId::proportional(13.0);
+        let mono = egui::FontId::monospace(13.0);
+        assert!(!draws(&ctx, &sans), "the bundled faces lack CJK");
+        fonts::load_system_fonts_in_background(&ctx);
+        for _ in 0..600 {
+            if fonts::system_fonts_ready() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(fonts::system_fonts_ready(), "the search finished");
+        fonts::setup_fonts_without_waiting(&ctx, "en", "");
+        frame(&ctx);
+        assert!(draws(&ctx, &sans) && draws(&ctx, &mono));
+    }
 }
 
 #[cfg(test)]

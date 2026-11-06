@@ -597,8 +597,9 @@ fn a_refused_board_parameter_keeps_its_value_and_shows_the_whole_reason() -> Fal
         .ok_or("an 8 mm board took the track")?;
     assert_eq!(engine.revision(), revision);
     let reason = refusal::shown_error(&error);
+    // It names the copper in the way and the size asked for.
     assert!(
-        reason.to_lowercase().contains("track copper lies outside"),
+        reason.contains("1 track on") && reason.contains("would lie outside 8 × "),
         "{reason}"
     );
     // The app hands the refusal back to the field on the next frame.
@@ -630,6 +631,84 @@ fn a_refused_board_parameter_keeps_its_value_and_shows_the_whole_reason() -> Fal
     let (output, _, _) = frame(&mut editor, &engine, vec![]);
     let shown: Vec<String> = visible_texts(&output).into_iter().map(|(t, _)| t).collect();
     assert!(!shown.contains(&reason), "{shown:?}");
+    Ok(())
+}
+
+/// An invalid board parameter is marked; typing the stored, valid value
+/// back clears the mark and its note, though nothing is committed.
+#[test]
+fn a_valid_value_clears_a_board_parameter_error() -> Fallible {
+    let engine = sketched_demo()?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    let frame = |editor: &mut PcbEditor, events| {
+        let mut command = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 1200.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| command = editor.subject_slot(ui, &engine).output,
+        );
+        output.textures_delta.clear();
+        (output, command)
+    };
+    let key = |key, modifiers| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    let stored = format!("{} mm", kit::number_text(engine.project().board_size[0]));
+    let (output, _) = frame(&mut editor, vec![]);
+    let field = visible_texts(&output)
+        .into_iter()
+        .find(|(t, _)| *t == stored)
+        .map(|(_, p)| p)
+        .ok_or_else(|| format!("no width field showing {stored}"))?;
+    let enter = |editor: &mut PcbEditor, text: &str| {
+        frame(
+            editor,
+            vec![
+                egui::Event::PointerMoved(field),
+                egui::Event::PointerButton {
+                    pos: field,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos: field,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        frame(
+            editor,
+            vec![
+                key(egui::Key::A, egui::Modifiers::COMMAND),
+                egui::Event::Text(text.into()),
+            ],
+        );
+        let (_, op) = frame(editor, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        let (output, _) = frame(editor, vec![]);
+        (output, op)
+    };
+    let (output, op) = enter(&mut editor, "abc");
+    assert!(op.is_none(), "an invalid value is not committed");
+    let shown: Vec<String> = visible_texts(&output).into_iter().map(|(t, _)| t).collect();
+    assert!(shown.iter().any(|t| t.contains("abc")), "{shown:?}");
+    assert!(red_rings(&output), "the field is marked");
+    let (output, op) = enter(&mut editor, &stored);
+    assert!(op.is_none(), "the stored value needs no commit");
+    let shown: Vec<String> = visible_texts(&output).into_iter().map(|(t, _)| t).collect();
+    assert!(!shown.iter().any(|t| t.contains("abc")), "{shown:?}");
+    assert!(!red_rings(&output), "the mark went");
     Ok(())
 }
 

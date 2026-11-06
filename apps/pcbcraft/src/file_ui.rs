@@ -341,6 +341,9 @@ pub struct FileUi {
     /// own recovery snapshot of the restored document (so the work is never
     /// in no file at all).
     restored_source: Option<PathBuf>,
+    /// The file a restored session was opened from: until the project has
+    /// a path, the save panel proposes its name and folder.
+    restored_origin: Option<PathBuf>,
     recovery_choice_pending: bool,
     changed_at: f64,
     recovery_retry_at: f64,
@@ -380,6 +383,7 @@ impl FileUi {
             recoveries: vec![],
             recovery_selected: 0,
             restored_source: None,
+            restored_origin: None,
             recovery_choice_pending: false,
             changed_at: 0.0,
             recovery_retry_at: 0.0,
@@ -426,6 +430,9 @@ impl FileUi {
         recovered: bool,
     ) -> Outcome<()> {
         self.controller.adopt(engine.revision(), path, recovered)?;
+        if !recovered {
+            self.restored_origin = None;
+        }
         self.document = engine.document().clone();
         self.saved_document = (!recovered).then(|| self.document.clone());
         self.changed_at = self.now;
@@ -562,8 +569,24 @@ impl FileUi {
             self.pick(ticket, Kind::Save);
         }
     }
+    /// The folder and file name the project's save panel proposes: its
+    /// own file's, else (a restored session) the file it was restored
+    /// from, else the project's name in the last folder used.
+    fn save_proposal(&self) -> (&Path, String) {
+        let origin = self
+            .restored_origin
+            .as_deref()
+            .filter(|_| self.controller.path.is_none());
+        let folder = origin.and_then(Path::parent).unwrap_or(&self.folder);
+        let name = proposed_file_name(
+            self.controller.path.as_deref().or(origin),
+            &self.document.project.name,
+        );
+        (folder, name)
+    }
     fn pick(&mut self, ticket: Ticket, kind: Kind) {
-        let dialog = self.picker.clone().set_directory(&self.folder);
+        let (folder, filename) = self.save_proposal();
+        let dialog = self.picker.clone().set_directory(folder);
         let dialog = if kind == Kind::Export {
             dialog
                 .set_title("Export PCB to Solidcraft")
@@ -575,8 +598,6 @@ impl FileUi {
                 .set_file_name("schematic.pdf")
                 .add_filter("PDF document", &["pdf"])
         } else {
-            let filename =
-                proposed_file_name(self.controller.path.as_deref(), &self.document.project.name);
             dialog
                 .set_title(if kind == Kind::Open {
                     "Open Pcbcraft project"
@@ -844,6 +865,11 @@ impl FileUi {
                 }
                 match result {
                     Ok(document) => {
+                        self.restored_origin = self
+                            .recoveries
+                            .iter()
+                            .find(|e| e.path == path)
+                            .and_then(|e| e.original_path.clone());
                         self.recoveries.retain(|e| e.path != path);
                         self.recovery_selected = 0;
                         self.restored_source = Some(path);

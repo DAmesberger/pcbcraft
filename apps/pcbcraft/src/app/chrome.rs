@@ -20,6 +20,10 @@ use solidcraft_ui_egui::{
 /// Gap between the viewport edge and floating cards (Solidcraft's
 /// crate-private `shell::SHELL_GAP`).
 const SHELL_GAP: f32 = 7.0;
+/// Application-bar room the document tab leaves to drag the window by.
+const TAB_DRAG_ROOM: f32 = 96.0;
+/// The document tab's narrowest width.
+const TAB_MIN_WIDTH: f32 = 96.0;
 /// The browser shows when the viewport fits it beside the canvas and the
 /// properties card.
 const BROWSER_MIN_VIEWPORT_CARDS: f32 = 3.5;
@@ -186,7 +190,6 @@ impl App {
 
     /// The open document as an application-bar tab, with the unsaved dot.
     fn document_tab(&self, ui: &mut egui::Ui) {
-        let t = Tokens::get();
         let name = self
             .files
             .path()
@@ -198,25 +201,12 @@ impl App {
         } else {
             name
         };
-        let galley = ui.painter().layout_no_wrap(
-            label.clone(),
-            fonts::semibold(t.font_label),
-            t.app_bar_text,
-        );
-        let size = vec2(
-            galley.size().x + 2.0 * t.space_12,
-            APP_BAR_HEIGHT - t.space_8,
-        );
-        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
-        ui.painter()
-            .rect_filled(rect, t.radius_md, t.app_bar_tab_active);
-        ui.painter()
-            .galley(rect.center() - galley.size() / 2.0, galley, t.app_bar_text);
-        if let Some(path) = self.files.path() {
-            response.on_hover_text(path.display().to_string());
-        } else if self.files.dirty() {
-            response.on_hover_text("Unsaved project");
-        }
+        let tip = match self.files.path() {
+            Some(path) => path.display().to_string(),
+            None if self.files.dirty() => "Unsaved project".to_owned(),
+            None => String::new(),
+        };
+        tab(ui, &label, &tip);
     }
 
     /// The in-window File menu, as Solidcraft's: plain rows with their
@@ -635,6 +625,31 @@ impl App {
     }
 }
 
+/// The document tab showing `label`: a long name ends in "…", keeping room
+/// to drag the window by, and shows in full on hover above `tip`.
+fn tab(ui: &mut egui::Ui, label: &str, tip: &str) -> egui::Response {
+    let t = Tokens::get();
+    let room = (ui.available_width() - TAB_DRAG_ROOM).max(TAB_MIN_WIDTH);
+    let galley = kit::text::one_line(
+        ui,
+        label,
+        fonts::semibold(t.font_label),
+        t.app_bar_text,
+        room - 2.0 * t.space_12,
+    );
+    let cut = galley.elided;
+    let size = vec2(
+        galley.size().x + 2.0 * t.space_12,
+        APP_BAR_HEIGHT - t.space_8,
+    );
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, t.radius_md, t.app_bar_tab_active);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, t.app_bar_text);
+    kit::text::hover(response, label, tip, cut)
+}
+
 /// Where toasts may go in `canvas`: above the navigation bar (its height
 /// and gap, see `navigation_bar`).
 fn toast_area(canvas: Rect) -> Rect {
@@ -652,6 +667,37 @@ fn toast_area(canvas: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 170-character file name in a narrow application bar: the tab
+    /// stays inside the bar with room left to drag the window by, ends in
+    /// "…" and shows the whole name and the path on hover.
+    #[test]
+    fn a_long_tab_title_is_cut_with_its_full_name_on_hover() {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let name = "ESP32-S31 sensor board ".repeat(8);
+        let path = format!("/Users/agent/prec/{name}.pcbcraft");
+        let bar = Rect::from_min_size(pos2(0.0, 0.0), vec2(700.0, APP_BAR_HEIGHT));
+        let mut tab_rect = Rect::NOTHING;
+        let (cuts, missing) = kit::text::tests::cuts_without_hover(&ctx, |events| {
+            let input = egui::RawInput {
+                screen_rect: Some(bar),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.horizontal(|ui| tab_rect = tab(ui, &name, &path).rect);
+            });
+            output.textures_delta.clear();
+            output
+        });
+        assert_eq!(cuts, 1, "the name is cut");
+        assert!(missing.is_empty(), "{missing:?}");
+        assert!(
+            tab_rect.right() <= bar.right() - TAB_DRAG_ROOM + 1.0,
+            "{tab_rect:?}"
+        );
+    }
 
     #[test]
     fn toasts_stay_above_the_navigation_bar() {

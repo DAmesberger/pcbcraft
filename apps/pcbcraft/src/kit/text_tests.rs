@@ -113,6 +113,9 @@ fn widgets(ui: &mut Ui) {
             ui.label("value");
         });
         value_row(ui, "Body L × W × H", "8.65 × 6 × 1.625 mm");
+        // A field not being edited: its long text ends in "…".
+        let mut project = "ESP32-S31 sensor development board, long name".to_owned();
+        text_row(ui, "Project", &mut project);
         value_row(ui, "Result", &long.repeat(3));
         summary_row(
             ui,
@@ -265,6 +268,55 @@ fn issue_rows_and_groups_show_their_whole_title_on_hover() {
     });
     assert!(cut >= 3, "{cut}");
     assert!(missing.is_empty(), "cut without a hover: {missing:?}");
+}
+
+/// In a column so narrow that a hovered row's action covers where its
+/// cut title was, the full title still shows on hover.
+#[test]
+fn a_row_action_over_the_cut_title_still_shows_it_in_full() -> Result<(), String> {
+    let mut harness = Harness::new(150.0, 300.0);
+    tooltips_at_once(harness.ctx());
+    let title = "J1 ↔ R4 courtyards overlap on the top side";
+    let draw = |ui: &mut Ui| {
+        form(ui, |ui| {
+            pick_row(
+                ui,
+                egui::Id::new("narrow"),
+                &PickRow {
+                    level: Level::Error,
+                    title,
+                    tip: "",
+                    depth: 1,
+                    fold: None,
+                    count: None,
+                    tick: Some(Tick::Off),
+                    action: Some("Waive…"),
+                },
+            );
+        });
+    };
+    let rest = harness.output(vec![], draw);
+    let at = cuts(&rest)
+        .into_iter()
+        .find(|c| c.text == title)
+        .map(|c| c.at)
+        .ok_or("the title is cut at rest")?;
+    // The pointer rests where the cut title was; Waive… now sits there.
+    harness.output(vec![Event::PointerMoved(at)], draw);
+    let hovered = harness.output(vec![], draw);
+    let waive = painted(&hovered)
+        .into_iter()
+        .find(|(t, ..)| t == "Waive…")
+        .map(|(_, rect, ..)| rect)
+        .ok_or("Waive… shows on hover")?;
+    assert!(waive.expand(8.0).contains(at), "{waive:?} covers {at:?}");
+    // One tooltip per window: the title's own closes, then Waive… shows
+    // the whole title, and keeps it while the pointer rests.
+    let frames: Vec<bool> = (0..4)
+        .map(|_| shows_in_full(&harness.output(vec![], draw), title))
+        .collect();
+    assert_eq!(frames[2..], [true, true], "{frames:?}");
+    Ok(())
 }
 
 #[test]
