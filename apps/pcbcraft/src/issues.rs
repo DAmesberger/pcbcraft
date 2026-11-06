@@ -484,6 +484,26 @@ pub struct Surface {
     selection: Slot,
     names: Option<Names>,
     badges: Option<((u64, usize), Arc<Badges>)>,
+    /// A row's right-click menu, by the row's key.
+    menu: crate::context_menu::State<String>,
+}
+
+/// An issue row menu's actions: the row's own Locate and Fix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowAct {
+    Locate,
+    Fix,
+}
+
+/// The rows of an issue row's menu: Locate, and the row's Fix when the
+/// row offers one (a Fix for its whole group sits on the group header).
+pub fn row_menu(row: &IssueRow) -> crate::context_menu::Rows<RowAct> {
+    use crate::context_menu::Entry;
+    let mut rows = vec![Some(Entry::act("Locate", "zoom", RowAct::Locate, true))];
+    if let Some(fix) = fix(row).filter(|f| !f.group_wide()) {
+        rows.push(Some(Entry::act(fix.label(), "update", RowAct::Fix, true)));
+    }
+    rows
 }
 
 impl Surface {
@@ -713,8 +733,23 @@ impl Surface {
                 detail: row.detail.clone(),
                 objects: names.get(index).cloned().unwrap_or_default(),
             }
-        })?;
-        match event {
+        });
+        // The open row menu, about the row it opened on; a row gone from
+        // the list closes it.
+        let menu_row = self
+            .menu
+            .target()
+            .and_then(|key| report.rows.iter().find(|r| row_key(r) == *key));
+        let rows = menu_row.map(row_menu).unwrap_or_default();
+        if let Some(crate::context_menu::Run::Act(act)) = self.menu.show(ui.ctx(), &rows)
+            && let Some(row) = menu_row
+        {
+            return match act {
+                RowAct::Locate => Some(self.show(row)),
+                RowAct::Fix => fix(row).map(Request::Fix),
+            };
+        }
+        match event? {
             IssueListEvent::Group(g) => {
                 let key = &groups[g].key;
                 if !self.toggled.remove(key) {
@@ -725,6 +760,12 @@ impl Surface {
             IssueListEvent::GroupFix(g) => groups[g].fix.clone().map(Request::Fix),
             IssueListEvent::Row { group, row, action } => {
                 let issue = &report.rows[groups[group].rows[row]];
+                if let Some(at) = action.menu {
+                    self.menu.open(at, row_key(issue));
+                    // It draws from the next frame.
+                    ui.ctx().request_repaint();
+                    return None;
+                }
                 if action.toggle {
                     let key = row_key(issue);
                     if !self.open.remove(&key) {

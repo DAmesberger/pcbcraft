@@ -787,3 +787,95 @@ fn an_unconnected_pin_row_marks_it_no_connect_with_one_undo() -> Fallible<()> {
     assert!(row_of(&engine, "instance.no_connect_connected")?.is_none());
     Ok(())
 }
+
+/// A row's right-click menu offers the row's own Locate and Fix: a click on
+/// each sends the request the row's own buttons send; nothing is applied.
+#[test]
+fn a_rows_right_click_menu_offers_locate_and_its_fix() -> Fallible<()> {
+    let engine = Engine::demo()?;
+    let all = report(&engine, IssueScope::All)?;
+    let group = groups(&all, None)
+        .into_iter()
+        .find(|g| all.rows[g.rows[0]].group.code == "instance.terminal_unaccounted")
+        .ok_or("no unconnected group")?;
+    let row = &all.rows[group.rows[0]];
+    let labels: Vec<String> = row_menu(row)
+        .into_iter()
+        .flatten()
+        .map(|e| e.label)
+        .collect();
+    assert_eq!(labels, ["Locate", "Mark no-connect"]);
+
+    let mut surface = Surface {
+        scope: Scope::All,
+        ..Default::default()
+    };
+    surface.open();
+    if !surface.is_open(&group) {
+        surface.toggled.insert(group.key.clone());
+    }
+    let mut h = Harness::new();
+    let (_, painted) = h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Schematic, &[])
+    });
+    let title = at(&painted, &row.title).ok_or("row title")?.center();
+    let revision = engine.revision();
+    let right_click = |h: &mut Harness, surface: &mut Surface| {
+        let button = |pressed| Event::PointerButton {
+            pos: title,
+            button: PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        for events in [
+            vec![Event::PointerMoved(title)],
+            vec![button(true)],
+            vec![button(false)],
+        ] {
+            let (request, _) = h.frame(events, |ui| {
+                surface.card(ui, &engine, Workspace::Schematic, &[])
+            });
+            assert!(request.is_none(), "a right-click alone requests nothing");
+        }
+        // The menu's first frame measures it; the next shows it.
+        h.frame(Vec::new(), |ui| {
+            surface.card(ui, &engine, Workspace::Schematic, &[])
+        });
+        h.frame(Vec::new(), |ui| {
+            surface.card(ui, &engine, Workspace::Schematic, &[])
+        })
+        .1
+    };
+    let painted = right_click(&mut h, &mut surface);
+    // The menu's row: painted last, on top (the hovered row shows its own
+    // Fix button too).
+    let fix_row = painted
+        .iter()
+        .rfind(|(t, _)| t == "Mark no-connect")
+        .map(|(_, r)| r.center())
+        .ok_or("the Fix row")?;
+    let request = h.click(fix_row, |ui| {
+        surface.card(ui, &engine, Workspace::Schematic, &[])
+    });
+    assert!(
+        matches!(
+            request,
+            Some(Request::Fix(Fix::Apply {
+                label: "Mark no-connect",
+                ..
+            }))
+        ),
+        "{request:?}"
+    );
+    let painted = right_click(&mut h, &mut surface);
+    let locate = at(&painted, "Locate").ok_or("the Locate row")?.center();
+    let request = h.click(locate, |ui| {
+        surface.card(ui, &engine, Workspace::Schematic, &[])
+    });
+    assert!(
+        matches!(request, Some(Request::Locate { .. })),
+        "{request:?}"
+    );
+    assert_eq!(engine.revision(), revision, "nothing was applied");
+    Ok(())
+}

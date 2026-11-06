@@ -113,6 +113,11 @@ const EXCEPTIONS: &[(&str, usize, &str)] = &[
     ),
     ("kit/form.rs", 1, "text field: Esc reverts a form row"),
     (
+        "context_menu.rs",
+        1,
+        "menu: Esc closes the open context menu",
+    ),
+    (
         "model_library.rs",
         1,
         "grid: arrows move the highlighted tile",

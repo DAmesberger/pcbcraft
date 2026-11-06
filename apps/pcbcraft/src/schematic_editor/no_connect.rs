@@ -32,7 +32,7 @@ pub(super) fn section(ui: &mut egui::Ui) {
 }
 
 /// The operation a click sends, or why it sends none.
-fn click(
+pub(super) fn click(
     project: &Project,
     marks: &std::collections::BTreeMap<Endpoint, PinMark>,
     pins_of: impl FnOnce() -> Vec<TerminalId>,

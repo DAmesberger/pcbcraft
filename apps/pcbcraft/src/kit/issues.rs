@@ -63,7 +63,7 @@ impl IssueRowView {
 }
 
 /// What a row's click did.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct IssueRowResponse {
     /// The row itself or its locate button: select and frame every
     /// referenced object.
@@ -74,6 +74,8 @@ pub struct IssueRowResponse {
     /// An object chip: select and frame only that object (an index into
     /// [`IssueRowView::objects`]).
     pub object: Option<usize>,
+    /// A right-click on the row: where, for its context menu.
+    pub menu: Option<egui::Pos2>,
 }
 
 /// One issue row. `id` keeps its interaction stable while the list scrolls.
@@ -158,6 +160,10 @@ fn row_at(ui: &mut Ui, id: egui::Id, row: &IssueRowView, indent: f32) -> IssueRo
         response
     };
     out.locate |= response.clicked();
+    out.menu = response
+        .secondary_clicked()
+        .then(|| response.interact_pointer_pos())
+        .flatten();
 
     if row.open && row.disclosable() {
         let inset = x - rect.left();
@@ -305,7 +311,7 @@ pub struct IssueGroupView {
 }
 
 /// What happened in the list this frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum IssueListEvent {
     /// A group header's disclosure.
     Group(usize),

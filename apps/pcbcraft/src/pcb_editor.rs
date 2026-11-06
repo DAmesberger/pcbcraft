@@ -52,6 +52,7 @@ mod hold_mark;
 mod hold_tests;
 mod impedance_view;
 mod layer_focus;
+mod menu;
 #[cfg(test)]
 use layer_focus::OTHER_SHADE;
 use layer_focus::{FAR_SHADE, LayerFocus, Look};
@@ -463,6 +464,10 @@ pub struct PcbEditor {
     signals: Option<signal_card::SignalCard>,
     /// The Tune tool's settings and preview (`tune_tool`).
     tune: tune_tool::TuneState,
+    /// The right-click menu and what it is about (`menu`).
+    menu: crate::context_menu::State<menu::Target>,
+    /// A registry command a menu row asked the app to run.
+    menu_command: Option<&'static str>,
 }
 
 impl Default for PcbEditor {
@@ -545,6 +550,8 @@ impl Default for PcbEditor {
             edge: Default::default(),
             signals: None,
             tune: Default::default(),
+            menu: Default::default(),
+            menu_command: None,
         }
     }
 }
@@ -1561,6 +1568,17 @@ impl PcbEditor {
                 layer: placement.layer,
             }));
         }
+        // A right-click with Select opens the menu of what a click there
+        // picks, selecting it first unless it is selected.
+        if self.tool == Tool::Select
+            && !self.update.is_open()
+            && response.clicked_by(PointerButton::Secondary)
+            && let (Some(at), Some(p)) = (cursor, pointer)
+        {
+            let hit = self.hit_at(project, at, tolerance, metric);
+            let target = self.menu_select(hit);
+            self.menu.open(p, target);
+        }
         if response.clicked_by(PointerButton::Primary)
             && let Some(at) = cursor
         {
@@ -1658,6 +1676,9 @@ impl PcbEditor {
             operation = self.delete_key(ui, project);
         }
         self.pills(ui, rect, project);
+        if let Some(menu) = self.show_menu(ui.ctx(), engine) {
+            operation = Some(menu);
+        }
         operation
     }
 
@@ -1819,24 +1840,48 @@ impl PcbEditor {
     /// layers: a pad (and its net), a track, then a part by its graphics or
     /// outline; empty board clears the selection.
     fn select_at(&mut self, project: &Project, at: Point, tolerance: f64, metric: TextMetric) {
+        let hit = self.hit_at(project, at, tolerance, metric);
+        self.select_hit(hit);
+    }
+
+    /// What a click at `at` picks: a visible pad, via, track, part body,
+    /// then fill.
+    fn hit_at(
+        &self,
+        project: &Project,
+        at: Point,
+        tolerance: f64,
+        metric: TextMetric,
+    ) -> menu::Hit {
+        use menu::Hit;
         let layers = self.seen();
         if let Some(pad) = self.pick_pad(at, |p| layers.pad(p)) {
-            let (instance, net) = (pad.instance, pad.net);
-            self.set_selection(Some(instance), None, net);
+            Hit::Pad(pad.instance, pad.net)
         } else if let Some(via) = self.pick_via(project, at) {
-            let (id, net) = (via.id, via.net);
-            self.select_via(id, Some(net));
+            Hit::Via(via.id, via.net)
         } else if let Some(track) = project.tracks.iter().rev().find(|track| {
             layers.copper_layer(track.layer) && layout::track_contains(track, at, 0.0)
         }) {
-            self.set_selection(None, Some(track.id), Some(track.net));
+            Hit::Track(track.id, track.net)
         } else if let Some(instance) = self.pick_instance(project, at, tolerance, metric) {
-            self.set_selection(Some(instance), None, None);
+            Hit::Part(instance)
         } else if let Some(fill) = self.pick_fill(project, at, tolerance) {
-            let (id, net) = (fill.id, fill.net);
-            self.select_fill(id, net);
+            Hit::Fill(fill.id, fill.net)
         } else {
-            self.set_selection(None, None, None);
+            Hit::Nothing
+        }
+    }
+
+    /// Select what `hit` picked (nothing clears the selection).
+    fn select_hit(&mut self, hit: menu::Hit) {
+        use menu::Hit;
+        match hit {
+            Hit::Pad(instance, net) => self.set_selection(Some(instance), None, net),
+            Hit::Via(id, net) => self.select_via(id, Some(net)),
+            Hit::Track(id, net) => self.set_selection(None, Some(id), Some(net)),
+            Hit::Part(instance) => self.set_selection(Some(instance), None, None),
+            Hit::Fill(id, net) => self.select_fill(id, net),
+            Hit::Nothing => self.set_selection(None, None, None),
         }
     }
 

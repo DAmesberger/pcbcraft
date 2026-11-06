@@ -39,6 +39,8 @@ pub struct RowResponse {
     /// The second click of a double-click (its first click was `clicked`).
     pub double: bool,
     pub fold: bool,
+    /// A right-click on the row: where, for its context menu.
+    pub menu: Option<egui::Pos2>,
 }
 
 /// Draw one Browser row with a stable `id` (a press and its release stay on
@@ -191,6 +193,10 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
     };
     out.clicked = response.clicked() && !on_fold(response.interact_pointer_pos());
     out.double = response.double_clicked() && !on_fold(response.interact_pointer_pos());
+    out.menu = response
+        .secondary_clicked()
+        .then(|| response.interact_pointer_pos())
+        .flatten();
     out
 }
 

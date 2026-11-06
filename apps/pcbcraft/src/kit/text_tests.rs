@@ -560,6 +560,20 @@ impl Screen {
         out
     }
 
+    /// `output` rasterized at one pixel per point, as RGBA rows from the
+    /// top left.
+    pub(crate) fn rgba(&self, output: &FullOutput) -> Vec<u8> {
+        let primitives = self.ctx.tessellate(output.shapes.clone(), 1.0);
+        let size = (self.size.x as usize, self.size.y as usize);
+        rasterize(
+            &primitives,
+            &self.atlas.borrow().0,
+            size,
+            1.0,
+            Tokens::get().panel,
+        )
+    }
+
     /// With `PCBCRAFT_TEXT_PICTURES=<dir>`, write `output` there as
     /// `<name>.png` at `ppp` pixels per point.
     pub(crate) fn picture(

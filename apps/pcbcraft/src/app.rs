@@ -76,6 +76,8 @@ pub struct App {
     /// The component row selected in the Browser (a click selects it; a
     /// double-click opens it for editing).
     browser_component: Option<pcbcraft_core::DefinitionId>,
+    /// A Browser row's right-click menu.
+    browser_menu: crate::context_menu::State<browser::MenuTarget>,
     /// The Browser's width as last dragged (kept per user in the
     /// settings); the layout clamps it to what the window fits.
     browser_width: f32,
@@ -213,6 +215,7 @@ impl App {
             browser: chrome::BrowserMode::Auto,
             browser_visible: false,
             browser_component: None,
+            browser_menu: Default::default(),
             browser_width,
             pending_import: None,
             closing: false,
@@ -967,7 +970,9 @@ impl App {
                 Workspace::Schematic => self.schematic.canvas(ui, &self.engine),
                 Workspace::Pcb => self.pcb.canvas(ui, &self.engine),
             };
-            self.apply(&ui.ctx().clone(), Origin::Canvas, operation);
+            let ctx = ui.ctx().clone();
+            self.apply(&ctx, Origin::Canvas, operation);
+            self.canvas_menu_requests(&ctx);
             return;
         };
         let display = self.scene.display(&key);
@@ -1054,6 +1059,21 @@ impl App {
                 }
                 None => self.pcb.set_selection(None, None, None),
             }
+        }
+    }
+
+    /// What a canvas's right-click menu asked the app to run: a registry
+    /// command, as from the palette, or Edit component, as the Browser's
+    /// double-click.
+    fn canvas_menu_requests(&mut self, ctx: &egui::Context) {
+        use schematic_editor::MenuRequest;
+        match self.schematic.take_menu_request() {
+            Some(MenuRequest::Command(id)) => self.run_command(ctx, id),
+            Some(MenuRequest::EditComponent(id)) => self.pick(browser::Pick::EditComponent(id)),
+            None => {}
+        }
+        if let Some(id) = self.pcb.take_menu_command() {
+            self.run_command(ctx, id);
         }
     }
 

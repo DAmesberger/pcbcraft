@@ -152,6 +152,8 @@ impl SchematicEditor {
         multiline: bool,
         problem: fn(&str) -> Option<&'static str>,
     ) -> Option<String> {
+        // The menu's Edit gives this field the keyboard once.
+        let focus = self.focus_field.as_deref() == Some(key.as_str());
         let index = match self.item_text.iter().position(|(k, _, _)| *k == key) {
             Some(i) => i,
             None => {
@@ -171,6 +173,10 @@ impl SchematicEditor {
         } else {
             kit::text_row(ui, label, &mut entry.2)
         };
+        if focus {
+            self.focus_field = None;
+            response.request_focus();
+        }
         let changed = entry.2.trim() != current;
         match live(ui, &response, &mut self.refused, changed, invalid) {
             Live::Commit => {

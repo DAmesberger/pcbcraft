@@ -32,12 +32,39 @@ pub enum Pick {
     /// Open a component in the Component workspace for editing.
     EditComponent(DefinitionId),
     Instance(Id),
+    /// Select an instance and bring it into view on its sheet.
+    Locate(Id),
     Net(Id),
     Placement(Id),
     Track(Id),
     Board,
     /// A schematic sheet: show it.
     Sheet(SheetId),
+}
+
+/// What a Browser row's right-click menu is about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuTarget {
+    Component(DefinitionId),
+    Instance(Id),
+}
+
+/// The rows of a Browser row's menu: each picks what the row's click or
+/// double-click picks, or locates as Issues does.
+pub fn menu_rows(target: MenuTarget) -> crate::context_menu::Rows<Pick> {
+    use crate::context_menu::Entry;
+    match target {
+        MenuTarget::Component(id) => vec![Some(Entry::act(
+            "Edit component",
+            "component",
+            Pick::EditComponent(id),
+            true,
+        ))],
+        MenuTarget::Instance(id) => vec![
+            Some(Entry::act("Select", "select", Pick::Instance(id), true)),
+            Some(Entry::act("Locate", "zoom", Pick::Locate(id), true)),
+        ],
+    }
 }
 
 /// One component lineage as the Browser lists it.
@@ -262,6 +289,33 @@ pub fn show(
     lit: Lit,
     updates: &[UpdateAvailable],
     badges: &Badges,
+    menu: &mut crate::context_menu::State<MenuTarget>,
+) -> Option<Pick> {
+    let pick = tree(ui, engine, lit, updates, badges, menu);
+    // The open row menu; a row gone from the project closes it.
+    let rows = match menu.target() {
+        Some(MenuTarget::Component(id)) if !components(engine).iter().any(|c| c.id == *id) => {
+            Vec::new()
+        }
+        Some(MenuTarget::Instance(id)) if engine.project().instance(*id).is_none() => Vec::new(),
+        Some(target) => menu_rows(*target),
+        None => Vec::new(),
+    };
+    match menu.show(ui.ctx(), &rows) {
+        Some(crate::context_menu::Run::Act(chosen)) => Some(chosen),
+        _ => pick,
+    }
+}
+
+/// The tree's rows; a right-click on a component or instance row opens
+/// its menu.
+fn tree(
+    ui: &mut egui::Ui,
+    engine: &Engine,
+    lit: Lit,
+    updates: &[UpdateAvailable],
+    badges: &Badges,
+    menu: &mut crate::context_menu::State<MenuTarget>,
 ) -> Option<Pick> {
     let project = engine.project();
     let mut pick = None;
@@ -389,6 +443,9 @@ pub fn show(
             if let Some(row) = component_pick(&response, component.id) {
                 pick = Some(row);
             }
+            if let Some(at) = response.menu {
+                menu.open(at, MenuTarget::Component(component.id));
+            }
             // The component's manufacturer Parts, opened in its Parts editor.
             for part in project.library.latest_parts() {
                 if part.definition.component.id != component.id {
@@ -469,6 +526,9 @@ pub fn show(
                 );
                 if response.clicked {
                     pick = Some(Pick::Instance(instance.id));
+                }
+                if let Some(at) = response.menu {
+                    menu.open(at, MenuTarget::Instance(instance.id));
                 }
             }
         }
@@ -778,7 +838,14 @@ mod tests {
             },
             |ui| {
                 kit::form(ui, |ui| {
-                    show(ui, engine, Lit::default(), &[], &Badges::default())
+                    show(
+                        ui,
+                        engine,
+                        Lit::default(),
+                        &[],
+                        &Badges::default(),
+                        &mut Default::default(),
+                    )
                 });
             },
         );
@@ -909,6 +976,75 @@ mod tests {
         assert_eq!(text().as_deref(), Some(""));
         let shown = frame(&ctx, &engine, vec![]);
         assert!(shown.iter().any(|t| t == "24"), "{shown:?}");
+        Ok(())
+    }
+
+    /// A right-click on a component or instance row opens its menu and
+    /// selects nothing; a row picks what the row's double-click picks, or
+    /// locates.
+    #[test]
+    fn a_rows_right_click_menu_picks() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::context_menu::{Run, State};
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let engine = Engine::demo()?;
+        let r1 = engine.project().instances[0].clone();
+        let mut menu = State::default();
+        let run = |events: Vec<egui::Event>, menu: &mut State<MenuTarget>| {
+            let mut pick = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(400.0, 1200.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    pick = kit::form(ui, |ui| {
+                        show(ui, &engine, Lit::default(), &[], &Badges::default(), menu)
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            (crate::kit::text::tests::painted(&output), pick)
+        };
+        let (painted, _) = run(vec![], &mut menu);
+        let row = painted
+            .iter()
+            .find(|(t, ..)| *t == r1.designator)
+            .map(|(_, rect, ..)| rect.center())
+            .ok_or("the instance row")?;
+        let button = |at, which, pressed| egui::Event::PointerButton {
+            pos: at,
+            button: which,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        use egui::PointerButton::{Primary, Secondary};
+        run(vec![egui::Event::PointerMoved(row)], &mut menu);
+        assert_eq!(run(vec![button(row, Secondary, true)], &mut menu).1, None);
+        assert_eq!(run(vec![button(row, Secondary, false)], &mut menu).1, None);
+        assert_eq!(menu.target(), Some(&MenuTarget::Instance(r1.id)));
+        let (painted, _) = run(vec![], &mut menu);
+        let locate = painted
+            .iter()
+            .find(|(t, ..)| t == "Locate")
+            .map(|(_, rect, ..)| rect.center())
+            .ok_or("the Locate row")?;
+        run(vec![egui::Event::PointerMoved(locate)], &mut menu);
+        run(vec![button(locate, Primary, true)], &mut menu);
+        assert_eq!(
+            run(vec![button(locate, Primary, false)], &mut menu).1,
+            Some(Pick::Locate(r1.id))
+        );
+        assert!(!menu.is_open());
+        // A component's row edits it.
+        let edit = menu_rows(MenuTarget::Component(r1.component.id));
+        let edit = edit.into_iter().flatten().next().ok_or("Edit component")?;
+        assert_eq!(edit.label, "Edit component");
+        assert_eq!(edit.run, Run::Act(Pick::EditComponent(r1.component.id)));
         Ok(())
     }
 

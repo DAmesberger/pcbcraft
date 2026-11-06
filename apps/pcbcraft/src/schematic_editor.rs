@@ -35,11 +35,13 @@ use std::sync::Arc;
 mod instance_card;
 mod items_card;
 mod marking_row;
+mod menu;
 mod net_card;
 mod no_connect;
 mod sheet_card;
 mod sheet_ui;
 mod wire_tool;
+pub use menu::Request as MenuRequest;
 use sheet_ui::{DrawTool, Item, LabelTool};
 pub use wire_tool::WIRE_KEYS;
 use wire_tool::WireDraft;
@@ -296,6 +298,12 @@ pub struct SchematicEditor {
     /// An instance's Update… for a revision only a library source holds:
     /// the app copies it in, then opens the review for that instance.
     library_update: Option<(Id, crate::library_sources::FolderPick)>,
+    /// The right-click menu and what it is about.
+    menu: crate::context_menu::State<menu::Target>,
+    /// A menu row the app runs (a registry command, Edit component).
+    menu_request: Option<menu::Request>,
+    /// A card field the menu's Edit gives the keyboard to, by its key.
+    focus_field: Option<String>,
 }
 
 impl Default for SchematicEditor {
@@ -361,6 +369,9 @@ impl Default for SchematicEditor {
             updates: Arc::default(),
             library_update: None,
             new_part: None,
+            menu: Default::default(),
+            menu_request: None,
+            focus_field: None,
         }
     }
 }
@@ -1999,6 +2010,40 @@ impl SchematicEditor {
                 }
             }
         }
+        // A right-click opens the menu of what is under the pointer, in
+        // the order a click picks: a pin, a symbol, a wire, a sheet item,
+        // else the sheet. It selects that first unless it is selected.
+        if response.secondary_clicked()
+            && self.tool == Tool::Select
+            && !self.palette.is_open()
+            && !self.update.is_open()
+            && let Some(pointer) = response.interact_pointer_pos()
+        {
+            let pin = pin_hits
+                .iter()
+                .filter(|(_, p)| p.distance(pointer) < PIN_HIT_PX)
+                .min_by(|a, b| a.1.distance(pointer).total_cmp(&b.1.distance(pointer)))
+                .map(|(e, _)| *e);
+            let target = if let Some(pin) = pin {
+                menu::Target::Pin(pin)
+            } else if let Some((instance, occurrence)) = body_at(pointer) {
+                menu::Target::Symbol {
+                    instance,
+                    occurrence,
+                }
+            } else if let Some((WireTarget::OnWire(on), _)) = wire_point_at(pointer) {
+                menu::Target::Wire {
+                    wire: on.wire,
+                    at: on.at,
+                }
+            } else if let Some(item) = self.item_at(project, view.world(pointer), tolerance) {
+                menu::Target::Item(item)
+            } else {
+                menu::Target::Sheet
+            };
+            self.menu_select(project, target);
+            self.menu.open(pointer, target);
+        }
         if self.tool == Tool::Select
             && !self.update.is_open()
             && response.drag_started_by(egui::PointerButton::Primary)
@@ -2103,6 +2148,9 @@ impl SchematicEditor {
         }
         if let Some(hint) = canvas_hint(self, project) {
             paint_canvas_hint(&painter, rect, &hint);
+        }
+        if let Some(op) = self.show_menu(ui.ctx(), engine) {
+            output = Some(op);
         }
         output
     }

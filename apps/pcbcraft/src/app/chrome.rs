@@ -288,7 +288,14 @@ impl App {
                         }),
                         |ui| kit::card_title(ui, "Browser", &summary),
                         |ui| {
-                            pick = browser::show(ui, &self.engine, lit, &updates, &badges);
+                            pick = browser::show(
+                                ui,
+                                &self.engine,
+                                lit,
+                                &updates,
+                                &badges,
+                                &mut self.browser_menu,
+                            );
                             source_pick = browser::show_sources(ui, self.sources.sources());
                         },
                     );
@@ -298,7 +305,17 @@ impl App {
                     if resized.stopped {
                         self.sources.set_browser_width(self.browser_width);
                     }
-                    if let Some(pick) = pick {
+                    if let Some(browser::Pick::Locate(id)) = pick {
+                        // As an issue's locate: select and frame it.
+                        self.issue_request(
+                            &ctx,
+                            Some(issues::Request::Locate {
+                                refs: vec![pcbcraft_core::ObjectRef::Instance { id }],
+                                area: issues::area(Workspace::Schematic),
+                                pin_mux: None,
+                            }),
+                        );
+                    } else if let Some(pick) = pick {
                         self.pick(pick);
                         // An overlay Browser gives the canvas back once used.
                         if layout.overlay {
@@ -499,7 +516,7 @@ impl App {
     }
 
     /// Open a Browser row in its workspace and select it there.
-    fn pick(&mut self, pick: browser::Pick) {
+    pub(super) fn pick(&mut self, pick: browser::Pick) {
         use browser::Pick;
         self.browser_component = None;
         match pick {
@@ -509,7 +526,7 @@ impl App {
                 self.workspace = Workspace::Part;
                 self.part.open(id, &self.engine);
             }
-            Pick::Instance(id) => {
+            Pick::Instance(id) | Pick::Locate(id) => {
                 self.workspace = Workspace::Schematic;
                 self.schematic
                     .select_instance(Some(id), self.engine.project());
