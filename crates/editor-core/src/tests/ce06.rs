@@ -1153,8 +1153,8 @@ fn device_nc_and_reserved_terminals_and_no_connect_exclude_wiring() -> Result<()
                 .any(|f| f.objects == [terminal(x, t)])
         );
     }
-    // A wired terminal cannot become no-connect, and a no-connect terminal
-    // cannot be wired: the same diagnostic.
+    // A wired terminal may become no-connect, and a no-connect terminal may
+    // be wired: either way the same completeness error says so.
     connect(&mut engine, ep(x, 1), ep(p, 1))?;
     let no_connect = |engine: &mut Engine, t: u32| {
         apply(
@@ -1166,17 +1166,21 @@ fn device_nc_and_reserved_terminals_and_no_connect_exclude_wiring() -> Result<()
             }),
         )
     };
-    let wired = no_connect(&mut engine, 1).err();
+    no_connect(&mut engine, 1)?;
     no_connect(&mut engine, 4)?;
-    let marked = connect(&mut engine, ep(x, 4), ep(q, 1)).err();
-    let (Some(wired), Some(marked)) = (wired, marked) else {
-        return Err(Error::Invalid("both edits must be rejected".into()));
-    };
-    assert_eq!(wired.code(), marked.code());
-    assert_eq!(
-        wired.to_string().replace("terminal ‘A’", "terminal N"),
-        marked.to_string().replace("terminal ‘D’", "terminal N")
-    );
+    connect(&mut engine, ep(x, 4), ep(q, 1))?;
+    let report = inspect(&engine, x)?;
+    for t in [1, 4] {
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "instance.no_connect_connected"
+                    && f.objects == [terminal(x, t)]),
+            "terminal {t}: {:?}",
+            report.findings
+        );
+    }
     // A passive-only net has no ERC finding.
     let net = net_of(&engine, ep(x, 1))?;
     assert_eq!(erc_on(&engine, net), Vec::<String>::new());

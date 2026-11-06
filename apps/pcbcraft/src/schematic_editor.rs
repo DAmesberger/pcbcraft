@@ -36,6 +36,7 @@ mod instance_card;
 mod items_card;
 mod marking_row;
 mod net_card;
+mod no_connect;
 mod sheet_card;
 mod sheet_ui;
 use sheet_ui::{DrawTool, Item, LabelTool};
@@ -101,7 +102,14 @@ fn pin_marks(project: &Project) -> BTreeMap<Endpoint, PinMark> {
     pcbcraft_core::nets::terminals(project)
         .into_iter()
         .map(|e| {
-            let mark = if wired.contains(&e) {
+            let marked = project
+                .instance(e.instance)
+                .is_some_and(|i| i.no_connect.contains(&e.terminal));
+            // A wired no-connect pin keeps its cross, as the print does:
+            // Issues reports the conflict.
+            let mark = if marked {
+                PinMark::NoConnect
+            } else if wired.contains(&e) {
                 PinMark::Wired
             } else if pcbcraft_core::nets::accounted_for(project, e) {
                 PinMark::NoConnect
@@ -145,6 +153,8 @@ enum Subject {
     LabelTool(LabelTool),
     /// The sheet-symbol tool.
     SheetTool,
+    /// The No connect tool.
+    NoConnectTool,
     /// A note, line or rectangle tool.
     DrawTool(DrawTool),
     /// Nothing selected: the sheet.
@@ -159,6 +169,8 @@ enum Tool {
     Wire,
     /// Put junction points on wires and crossings, or remove them.
     Junction,
+    /// Mark pins intentionally unused (no-connect), or clear the mark.
+    NoConnect,
     Label(LabelTool),
     SheetSymbol,
     Draw(DrawTool),
@@ -781,6 +793,10 @@ impl SchematicEditor {
                             .enabled(!reviewing)
                             .selected(self.tool == Tool::Junction)
                             .tip("Join wires at a point, or remove a junction point"),
+                        Button::new("no-connect", "close", "No connect")
+                            .enabled(!reviewing)
+                            .selected(self.tool == Tool::NoConnect)
+                            .tip("Mark a pin intentionally unused, or clear the mark"),
                         Button::family(
                             Button::new("label", "point", "Label")
                                 .enabled(!reviewing)
@@ -870,6 +886,7 @@ impl SchematicEditor {
             "place" => Tool::Place,
             "wire" => Tool::Wire,
             "junction" => Tool::Junction,
+            "no-connect" => Tool::NoConnect,
             "label" => Tool::Label(LabelTool::Local),
             "global-label" => Tool::Label(LabelTool::Global),
             "hierarchical-label" => Tool::Label(LabelTool::Hierarchical),
@@ -949,6 +966,7 @@ impl SchematicEditor {
         match self.tool {
             Tool::Place => Subject::Place,
             Tool::Wire | Tool::Junction => Subject::Wiring,
+            Tool::NoConnect => Subject::NoConnectTool,
             Tool::Label(tool) => Subject::LabelTool(tool),
             Tool::SheetSymbol => Subject::SheetTool,
             Tool::Draw(tool) => Subject::DrawTool(tool),
@@ -991,6 +1009,7 @@ impl SchematicEditor {
             Subject::Item(item) => items_card::header(project, item),
             Subject::LabelTool(tool) => Header::new("point", tool.title(), "Tool"),
             Subject::SheetTool => Header::new("folder", "Sheet symbol", "Tool"),
+            Subject::NoConnectTool => Header::new("close", "No connect", "Tool"),
             Subject::DrawTool(DrawTool::Note) => Header::new("list", "Note", "Tool"),
             Subject::DrawTool(DrawTool::Line) => Header::new("line", "Line", "Tool"),
             Subject::DrawTool(DrawTool::Rect) => Header::new("rect", "Rectangle", "Tool"),
@@ -1282,6 +1301,10 @@ impl SchematicEditor {
             }
             Subject::SheetTool => {
                 self.sheet_tool_section(ui);
+                None
+            }
+            Subject::NoConnectTool => {
+                no_connect::section(ui);
                 None
             }
             Subject::DrawTool(tool) => {
@@ -1865,6 +1888,9 @@ impl SchematicEditor {
                         );
                     }
                 }
+                Tool::NoConnect => {
+                    output = self.no_connect_click(ui.ctx(), project, pin, body_at(pointer));
+                }
                 Tool::Wire => {
                     if let Some((to, _)) = target_at(pointer) {
                         if let Some(from) = self.wire_from.take() {
@@ -2185,6 +2211,7 @@ fn canvas_hint(editor: &SchematicEditor, project: &Project) -> Option<String> {
             "Click a wire or a crossing to join there · click a junction point to remove it · Esc ends"
                 .to_owned()
         }
+        Tool::NoConnect => no_connect::HINT.to_owned(),
         Tool::Place => match editor.component.and_then(|c| project.library.component(c)) {
             Some(component) => format!("Click to place {} · Esc ends", component.meta.name),
             None => "Publish a component to place it".to_owned(),

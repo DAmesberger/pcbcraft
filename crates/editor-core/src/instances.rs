@@ -317,12 +317,6 @@ fn check_with<'a>(
                 "A device-NC or reserved terminal cannot be wired.".into(),
             ));
         }
-        if instance.no_connect.contains(&terminal.id) {
-            return Err(Error::Conflict(format!(
-                "{name} terminal ‘{}’ is marked no-connect; a no-connect terminal cannot be wired.",
-                terminal.name
-            )));
-        }
         let unit = owning_unit(symbol, terminal.id).ok_or_else(|| {
             invalid(format!(
                 "{name}: terminal ‘{}’ has no pin in its representation.",
@@ -488,8 +482,9 @@ pub fn default_fields(
 
 /// Choices offered by the pinned component; unit IDs exist in the resolved
 /// representation; placed and unused exclusive; no-connect only on
-/// electrical terminals; every wire endpoint's unit placed, electrical and
-/// not project no-connect, so no-connect and wiring exclude each other;
+/// electrical terminals; every wire endpoint's unit placed and electrical
+/// (a wired no-connect terminal is a completeness error, not a refusal:
+/// `instance.no_connect_connected`);
 /// field values valid; function selections structurally valid and
 /// conflict-free, including availability in the chosen binding.
 pub fn check_instance(project: &Project, id: Id) -> Result<()> {
