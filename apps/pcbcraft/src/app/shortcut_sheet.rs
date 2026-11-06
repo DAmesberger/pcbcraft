@@ -57,9 +57,6 @@ pub(crate) struct ShortcutSheet {
 }
 
 impl ShortcutSheet {
-    pub fn open(&mut self) {
-        self.open = true;
-    }
     pub fn close(&mut self) {
         self.open = false;
     }

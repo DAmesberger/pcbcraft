@@ -34,7 +34,7 @@ fn walk(shape: &Shape, clip: Rect, out: &mut Vec<(String, Rect, bool, Rect)>) {
     }
 }
 
-fn painted(output: &FullOutput) -> Vec<(String, Rect, bool, Rect)> {
+pub(crate) fn painted(output: &FullOutput) -> Vec<(String, Rect, bool, Rect)> {
     let mut out = Vec::new();
     for shape in &output.shapes {
         walk(&shape.shape, shape.clip_rect, &mut out);

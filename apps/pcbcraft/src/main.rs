@@ -10,6 +10,7 @@ mod kit;
 mod layer_view;
 mod library_sources;
 mod lighting;
+mod menu_bar;
 mod model_library;
 mod model_scene;
 #[cfg(target_os = "macos")]

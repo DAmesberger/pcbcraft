@@ -416,6 +416,8 @@ pub enum AppCommand {
     View3d(View3d),
     /// Quit the app: unsaved work asks Save, Don't Save or Cancel first.
     Quit,
+    /// Close the window: the app's one window, so the same request as Quit.
+    CloseWindow,
 }
 
 /// The PCB 3D view's standard views (the navigation cube's targets).
@@ -1077,6 +1079,10 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::cmd(K::Q))
             .icon("close")
             .keywords("exit close window"),
+        app("window.close", "Close window", A::CloseWindow)
+            .chord(Chord::cmd(K::W))
+            .icon("close")
+            .keywords("exit quit"),
         app("file.new", "New project", A::New)
             .chord(Chord::cmd(K::N))
             .icon("new"),
@@ -1106,6 +1112,21 @@ fn defaults() -> Vec<Command> {
         app("edit.redo", "Redo", A::Redo)
             .chord(Chord::cmd(K::Z).with_shift())
             .icon("redo"),
+        // A text field's own clipboard keys (egui handles them in the
+        // field); listed so the Edit menu shows and takes them. Nothing on
+        // the canvas is cut, copied or pasted yet.
+        key("edit.cut", "Cut", C::Global, Chord::cmd(K::X))
+            .icon("cut")
+            .keywords("clipboard text field"),
+        key("edit.copy", "Copy", C::Global, Chord::cmd(K::C))
+            .icon("copy")
+            .keywords("clipboard text field"),
+        key("edit.paste", "Paste", C::Global, Chord::cmd(K::V))
+            .icon("paste")
+            .keywords("clipboard text field"),
+        key("edit.select-all", "Select all", C::Global, Chord::cmd(K::A))
+            .icon("select")
+            .keywords("text field"),
         app("view.browser", "Show or hide the Browser", A::ToggleBrowser)
             .chord(Chord::cmd(K::B))
             .icon("list")

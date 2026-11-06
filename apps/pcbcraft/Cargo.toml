@@ -34,10 +34,12 @@ rfd = "0.17"
 pollster = "0.4"
 spade = "2.15"
 
-# The macOS app menu (src/native_menu.rs), as Solidcraft's: its Quit asks
-# about unsaved work instead of ending the app at once.
+# The macOS menu bar (src/native_menu.rs), as Solidcraft's: its Quit asks
+# about unsaved work instead of ending the app at once. Its Paste reads the
+# clipboard with arboard, which egui-winit already uses.
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { version = "0.21.2", default-features = false }
+arboard = { version = "3.7", default-features = false }
 # Files opened from Finder and the Dock (src/open_documents.rs), as Solidcraft's;
 # all already come with eframe and rfd.
 objc2 = "0.6"

@@ -1,90 +1,129 @@
-//! The macOS app menu, owned on eframe's main thread, as in Solidcraft's
-//! `apps/solidcraft/src/native_menu.rs`.
+//! The macOS menu bar, owned and updated on eframe's main thread, as in
+//! Solidcraft's `apps/solidcraft/src/native_menu.rs`. Its items, their
+//! keys and their states come from [`crate::menu_bar`] and the command
+//! registry.
 //!
 //! It replaces winit's default menu, whose Quit (⌘Q) sends AppKit's
 //! `terminate:` and ends the app at once, without asking about unsaved
-//! work. This menu's Quit runs the registry's `app.quit` instead, the same
-//! request as the window's close button. Its key equivalent is that
-//! command's effective key, so a rebinding in Settings › Keyboard moves it.
-//! Every other key still reaches the app's own dispatcher: the menu has no
-//! File or Edit items of its own.
-use crate::commands::{Chord, Registry};
+//! work: this menu's Quit runs the registry's `app.quit`, the same request
+//! as the window's close button. AppKit gives a key equivalent to the menu
+//! before the window sees it, so a ⌘ chord the menu takes reaches the app
+//! once, through the menu, also while a text field has the keyboard.
+use crate::commands::Chord;
+use crate::menu_bar::{self, BAR, Choice, Entry, Now, System};
 use muda::{
-    AboutMetadata, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu,
+    AboutMetadata, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
     accelerator::{Accelerator, Code, Modifiers},
 };
 use std::sync::mpsc::{Receiver, sync_channel};
 
-/// The registry command the menu's Quit runs.
-pub const QUIT: &str = "app.quit";
+/// The most menu events read in one frame.
+const MAX_EVENTS: usize = 64;
+
+/// A menu item and what it shows now.
+struct Item {
+    item: MenuItem,
+    entry: Entry,
+    shown: menu_bar::State,
+}
 
 pub struct NativeMenu {
     menu: Menu,
-    quit: MenuItem,
-    /// The key the Quit item shows and takes.
-    quit_chord: Option<Chord>,
+    items: Vec<Item>,
     events: Receiver<MenuEvent>,
 }
 
 impl NativeMenu {
-    pub fn new(ctx: &egui::Context, registry: &Registry) -> muda::Result<Self> {
+    pub fn new(ctx: &egui::Context, now: &Now) -> muda::Result<Self> {
         let menu = Menu::new();
-        let application = Submenu::new("Pcbcraft", true);
-        let quit_chord = effective(registry, QUIT);
-        let quit = MenuItem::new("Quit Pcbcraft", true, quit_chord.and_then(accelerator));
-        application.append_items(&[
-            &PredefinedMenuItem::about(
-                Some("About Pcbcraft"),
-                Some(AboutMetadata {
-                    name: Some("Pcbcraft".into()),
-                    version: Some(env!("CARGO_PKG_VERSION").into()),
-                    ..Default::default()
-                }),
-            ),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::services(None),
-            &PredefinedMenuItem::separator(),
-            &PredefinedMenuItem::hide(Some("Hide Pcbcraft")),
-            &PredefinedMenuItem::hide_others(None),
-            &PredefinedMenuItem::show_all(None),
-            &PredefinedMenuItem::separator(),
-            &quit,
-        ])?;
-        menu.append(&application)?;
-        let (sender, events) = sync_channel(16);
+        let mut items = Vec::new();
+        let mut submenus = Vec::new();
+        for (title, entries) in BAR {
+            let submenu = Submenu::new(*title, true);
+            for entry in *entries {
+                match entry {
+                    Entry::Separator => submenu.append(&PredefinedMenuItem::separator())?,
+                    Entry::System(system) => submenu.append(&predefined(*system))?,
+                    Entry::Command(..) | Entry::Delete => {
+                        let Some(state) = menu_bar::state(now, *entry) else {
+                            continue;
+                        };
+                        let item = MenuItem::new(
+                            &state.label,
+                            state.enabled,
+                            state.key.and_then(accelerator),
+                        );
+                        submenu.append(&item)?;
+                        items.push(Item {
+                            item,
+                            entry: *entry,
+                            shown: state,
+                        });
+                    }
+                }
+            }
+            menu.append(&submenu)?;
+            submenus.push((*title, submenu));
+        }
+        let (sender, events) = sync_channel(MAX_EVENTS);
         let ctx = ctx.clone();
         MenuEvent::set_event_handler(Some(move |event| {
             let _ = sender.try_send(event);
             ctx.request_repaint();
         }));
         menu.init_for_nsapp();
+        for (title, submenu) in &submenus {
+            match *title {
+                "Window" => submenu.set_as_windows_menu_for_nsapp(),
+                "Help" => submenu.set_as_help_menu_for_nsapp(),
+                _ => {}
+            }
+        }
         Ok(Self {
             menu,
-            quit,
-            quit_chord,
+            items,
             events,
         })
     }
 
-    /// The registry commands chosen in the menu since the last frame. Keeps
-    /// the Quit item's key in step with `registry`.
-    pub fn take_commands(&mut self, registry: &Registry) -> Vec<&'static str> {
-        let chord = effective(registry, QUIT);
-        if chord != self.quit_chord
-            && self
-                .quit
-                .set_accelerator(chord.and_then(accelerator))
-                .is_ok()
-        {
-            self.quit_chord = chord;
-        }
-        let quit = self.quit.id().clone();
-        self.events
+    /// The items chosen since the last frame, as what each does now.
+    pub fn take(&mut self, now: &Now) -> Vec<Choice> {
+        let chosen: Vec<MenuId> = self
+            .events
             .try_iter()
-            .take(16)
-            .filter(|event| event.id == quit)
-            .map(|_| QUIT)
+            .take(MAX_EVENTS)
+            .map(|event| event.id)
+            .collect();
+        chosen
+            .iter()
+            .filter_map(|id| self.items.iter().find(|i| i.item.id() == id))
+            .map(|i| menu_bar::choose(now, i.entry))
             .collect()
+    }
+
+    /// Bring every item's label, enabled state and key up to date.
+    pub fn update(&mut self, now: &Now) {
+        for item in &mut self.items {
+            let Some(state) = menu_bar::state(now, item.entry) else {
+                continue;
+            };
+            if state.label != item.shown.label {
+                item.item.set_text(&state.label);
+            }
+            if state.enabled != item.shown.enabled {
+                item.item.set_enabled(state.enabled);
+            }
+            if state.key != item.shown.key
+                && item
+                    .item
+                    .set_accelerator(state.key.and_then(accelerator))
+                    .is_err()
+            {
+                // Try again next frame.
+                continue;
+            }
+            item.shown = state;
+        }
     }
 }
 
@@ -95,9 +134,25 @@ impl Drop for NativeMenu {
     }
 }
 
-/// The command `id`'s effective key.
-fn effective(registry: &Registry, id: &str) -> Option<Chord> {
-    registry.get(id).and_then(|command| registry.chord(command))
+fn predefined(system: System) -> PredefinedMenuItem {
+    match system {
+        System::About => PredefinedMenuItem::about(
+            Some("About Pcbcraft"),
+            Some(AboutMetadata {
+                name: Some("Pcbcraft".into()),
+                version: Some(env!("CARGO_PKG_VERSION").into()),
+                ..Default::default()
+            }),
+        ),
+        System::Services => PredefinedMenuItem::services(None),
+        System::Hide => PredefinedMenuItem::hide(Some("Hide Pcbcraft")),
+        System::HideOthers => PredefinedMenuItem::hide_others(None),
+        System::ShowAll => PredefinedMenuItem::show_all(None),
+        System::Minimize => PredefinedMenuItem::minimize(None),
+        System::Zoom => PredefinedMenuItem::maximize(None),
+        System::Fullscreen => PredefinedMenuItem::fullscreen(None),
+        System::BringAllToFront => PredefinedMenuItem::bring_all_to_front(None),
+    }
 }
 
 /// A chord as a menu key equivalent; `None` for a key the menu cannot
@@ -141,6 +196,17 @@ pub fn accelerator(chord: Chord) -> Option<Accelerator> {
         K::Num7 => Code::Digit7,
         K::Num8 => Code::Digit8,
         K::Num9 => Code::Digit9,
+        K::Comma => Code::Comma,
+        K::Period => Code::Period,
+        K::Slash => Code::Slash,
+        K::Backslash => Code::Backslash,
+        K::Semicolon => Code::Semicolon,
+        K::Quote => Code::Quote,
+        K::Minus => Code::Minus,
+        K::Equals => Code::Equal,
+        K::OpenBracket => Code::BracketLeft,
+        K::CloseBracket => Code::BracketRight,
+        K::Backtick => Code::Backquote,
         _ => return None,
     };
     let mut modifiers = Modifiers::empty();
@@ -159,26 +225,48 @@ pub fn accelerator(chord: Chord) -> Option<Accelerator> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::{Context, Registry, active_contexts};
 
-    /// The menu's Quit takes the registry's key for `app.quit`: ⌘Q by
-    /// default, and the new key after a rebinding.
+    /// Every key equivalent the bar takes by default converts to a menu
+    /// accelerator, with ⌘ as META: none silently falls back to egui.
     #[test]
-    fn quit_shows_the_registry_key() -> Result<(), String> {
-        let mut registry = Registry::standard();
-        let quit = effective(&registry, QUIT).ok_or("app.quit has no key")?;
-        assert_eq!(quit, Chord::cmd(egui::Key::Q));
+    fn every_menu_key_is_an_accelerator() -> Result<(), String> {
+        let registry = Registry::standard();
+        let active = active_contexts(Context::PcbLayout);
+        let now = Now {
+            registry: &registry,
+            active: &active,
+            typing: false,
+            recording: false,
+            browser_shown: true,
+            issues_shown: false,
+            available: &|_| true,
+        };
+        for (_, entries) in BAR {
+            for entry in *entries {
+                let Some(key) = menu_bar::state(&now, *entry).and_then(|s| s.key) else {
+                    continue;
+                };
+                let accelerator = accelerator(key).ok_or(format!("{entry:?}: {key:?}"))?;
+                assert!(
+                    accelerator.modifiers().contains(Modifiers::META),
+                    "{entry:?}"
+                );
+            }
+        }
         assert_eq!(
-            accelerator(quit),
+            accelerator(Chord::cmd(egui::Key::Q)),
             Some(Accelerator::new(Modifiers::META, Code::KeyQ))
         );
-        let other = Chord::cmd(egui::Key::Q).with_shift();
-        registry.rebind(QUIT, Some(other))?;
-        assert_eq!(effective(&registry, QUIT), Some(other));
         assert_eq!(
-            accelerator(other),
+            accelerator(Chord::cmd(egui::Key::Comma)),
+            Some(Accelerator::new(Modifiers::META, Code::Comma))
+        );
+        assert_eq!(
+            accelerator(Chord::cmd(egui::Key::S).with_shift()),
             Some(Accelerator::new(
                 Modifiers::META | Modifiers::SHIFT,
-                Code::KeyQ
+                Code::KeyS
             ))
         );
         assert_eq!(accelerator(Chord::key(egui::Key::Escape)), None);
