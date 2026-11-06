@@ -99,11 +99,7 @@ impl Context {
     pub fn modal(self) -> bool {
         matches!(
             self,
-            Self::SchematicWire
-                | Self::PcbRoute
-                | Self::PcbFill
-                | Self::PcbTune
-                | Self::BoardShape
+            Self::SchematicWire | Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape
         )
     }
 

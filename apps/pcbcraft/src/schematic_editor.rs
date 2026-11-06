@@ -1858,7 +1858,9 @@ impl SchematicEditor {
                 let over = |p: Pos2| {
                     p.distance(path[0]) > 1.0
                         && path.last().is_some_and(|e| p.distance(*e) > 1.0)
-                        && path.windows(2).any(|s| segment_distance(p, s[0], s[1]) < 1.0)
+                        && path
+                            .windows(2)
+                            .any(|s| segment_distance(p, s[0], s[1]) < 1.0)
                 };
                 for p in pin_hits
                     .iter()
@@ -2444,10 +2446,10 @@ impl SchematicEditor {
             return;
         }
         kit::section(ui, "wiring", "Wire", true, None, |ui| {
-            let start = self
-                .wire
-                .as_ref()
-                .map_or_else(|| "Not started".to_owned(), |d| target_label(project, d.from));
+            let start = self.wire.as_ref().map_or_else(
+                || "Not started".to_owned(),
+                |d| target_label(project, d.from),
+            );
             kit::value_row(ui, "Start", &start);
             let elbow = if self.wire_flipped {
                 "Vertical first (F)"

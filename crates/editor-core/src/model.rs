@@ -199,7 +199,10 @@ impl ExactPoint {
             return None;
         }
         // Within ±10000 mm, so within ±1e10 nm: it fits.
-        Some(Self([(p[0] * 1e6).round() as i64, (p[1] * 1e6).round() as i64]))
+        Some(Self([
+            (p[0] * 1e6).round() as i64,
+            (p[1] * 1e6).round() as i64,
+        ]))
     }
     pub fn point(self) -> Point {
         [self.0[0] as f64 / 1e6, self.0[1] as f64 / 1e6]

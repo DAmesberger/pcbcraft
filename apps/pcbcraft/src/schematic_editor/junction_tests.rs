@@ -312,10 +312,9 @@ fn draw_of(
         return Err(format!("no direct join: {operation:?}").into());
     };
     let Change::Schematic {
-        command:
-            SchematicCommand::DrawWire {
-                from, corners, to, ..
-            },
+        command: SchematicCommand::DrawWire {
+            from, corners, to, ..
+        },
     } = update.change
     else {
         return Err(format!("not a wire.draw: {:?}", update.change).into());
@@ -640,7 +639,12 @@ fn a_double_click_ends_a_wire_with_a_free_end_that_survives_save_and_tidy() -> T
     schematic::tidy(&mut tidied)?;
     assert_eq!(&tidied, engine.project());
     // ERC reports the free end on this wire.
-    let wire = engine.project().wires_at(ep(r92, 2)).next().ok_or("wire")?.id;
+    let wire = engine
+        .project()
+        .wires_at(ep(r92, 2))
+        .next()
+        .ok_or("wire")?
+        .id;
     assert!(
         pcbcraft_core::erc::checks(engine.project())
             .iter()

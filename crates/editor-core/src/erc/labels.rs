@@ -88,7 +88,10 @@ pub(super) fn checks(
         }
     }
     for wire in &project.wires {
-        for at in [wire.from, wire.to].into_iter().filter_map(WireEnd::free_point) {
+        for at in [wire.from, wire.to]
+            .into_iter()
+            .filter_map(WireEnd::free_point)
+        {
             out.push(Finding::new(
                 "erc.wire_end_free",
                 format!(

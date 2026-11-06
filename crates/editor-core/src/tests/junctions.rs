@@ -281,7 +281,10 @@ fn removing_wires_tidies_junctions_into_corners_or_away() -> Result<()> {
     assert!(engine.project().junctions.is_empty());
     assert_eq!(engine.project().wires.len(), 1);
     assert_eq!(
-        engine.project().wire(wire).map(|w| (w.from, w.to, w.corners.len())),
+        engine
+            .project()
+            .wire(wire)
+            .map(|w| (w.from, w.to, w.corners.len())),
         Some((ep(u[0], 2).into(), ep(u[1], 1).into(), 0))
     );
     assert!(dots(&engine).is_empty());
@@ -543,14 +546,24 @@ fn refused_wire_draws_leave_the_document_unchanged() -> Result<()> {
         .map(|i| [f64::from(i % 2) * 5.0 + 50.0, f64::from(i)])
         .collect();
     for (from, corners, to, code) in [
-        (free([50.0, 0.0])?, many, free([60.0, 0.0])?, "limit_exceeded"),
+        (
+            free([50.0, 0.0])?,
+            many,
+            free([60.0, 0.0])?,
+            "limit_exceeded",
+        ),
         (
             ep(u[2], 1).into(),
             vec![[f64::NAN, 0.0]],
             free([60.0, 0.0])?,
             "invalid_input",
         ),
-        (free([50.0, 0.0])?, vec![], free([50.0, 0.0])?, "invalid_input"),
+        (
+            free([50.0, 0.0])?,
+            vec![],
+            free([50.0, 0.0])?,
+            "invalid_input",
+        ),
         (
             on(wire, [10.0, 0.0]),
             vec![[10.0, 10.0], [20.0, 10.0]],

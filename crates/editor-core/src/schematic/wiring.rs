@@ -223,7 +223,10 @@ pub(super) fn resolve(project: &mut Project, target: WireTarget) -> Result<WireE
 
 /// Where a point on a wire lies on its path: the path point, the segment
 /// it is on, and the wire end it is, if it is one.
-pub(super) fn on_path(project: &Project, point: WirePoint) -> Result<(Point, usize, Option<WireEnd>)> {
+pub(super) fn on_path(
+    project: &Project,
+    point: WirePoint,
+) -> Result<(Point, usize, Option<WireEnd>)> {
     if !point_valid(point.at) {
         return Err(invalid(
             "Schematic position must be finite and within ±10000 mm.",
@@ -445,8 +448,7 @@ impl LineIndex {
             );
             let within = |i: &usize| {
                 points.get(*i).is_some_and(|(_, p, _)| {
-                    (lo[0] - JUNCTION_TOLERANCE_MM..=hi[0] + JUNCTION_TOLERANCE_MM)
-                        .contains(&p[0])
+                    (lo[0] - JUNCTION_TOLERANCE_MM..=hi[0] + JUNCTION_TOLERANCE_MM).contains(&p[0])
                         && (lo[1] - JUNCTION_TOLERANCE_MM..=hi[1] + JUNCTION_TOLERANCE_MM)
                             .contains(&p[1])
                 })
@@ -611,6 +613,8 @@ pub(super) fn clean_route(
 /// zero-length wire. Crossing wires have no point at the crossing, so they
 /// stay apart. Idempotent: afterwards no point lies inside any wire's path.
 fn join_touching(project: &mut Project) -> Result<()> {
+    /// Points inside a path, with their distance along it.
+    type Stops = Vec<(f64, WireEnd)>;
     if project.wires.is_empty() {
         return Ok(());
     }
@@ -618,7 +622,7 @@ fn join_touching(project: &mut Project) -> Result<()> {
     let index = LineIndex::new(&points);
     // Per wire: its path, and the points inside it with their distance
     // along it; the points on either end.
-    let mut splits: BTreeMap<Id, (Vec<Point>, Vec<(f64, WireEnd)>)> = BTreeMap::new();
+    let mut splits: BTreeMap<Id, (Vec<Point>, Stops)> = BTreeMap::new();
     let mut joins: Vec<(SheetId, WireEnd, WireEnd)> = Vec::new();
     let mut hits = Vec::new();
     for wire in &project.wires {
@@ -646,9 +650,7 @@ fn join_touching(project: &mut Project) -> Result<()> {
                     joins.push((wire.sheet, wire.to, *end));
                 } else {
                     // The first time along the path it is passed.
-                    inside
-                        .entry(*end)
-                        .or_insert(walked + distance(leg[0], *p));
+                    inside.entry(*end).or_insert(walked + distance(leg[0], *p));
                 }
             }
             walked += distance(leg[0], leg[1]);
@@ -815,13 +817,10 @@ fn attach_free_ends(project: &mut Project) -> Result<()> {
                         }
                         let (q, _) = nearest_on_path(path, p)?;
                         let inside = distance(q, p) <= JUNCTION_TOLERANCE_MM
-                            && path
-                                .first()
-                                .zip(path.last())
-                                .is_some_and(|(a, b)| {
-                                    distance(*a, q) > JUNCTION_TOLERANCE_MM
-                                        && distance(*b, q) > JUNCTION_TOLERANCE_MM
-                                });
+                            && path.first().zip(path.last()).is_some_and(|(a, b)| {
+                                distance(*a, q) > JUNCTION_TOLERANCE_MM
+                                    && distance(*b, q) > JUNCTION_TOLERANCE_MM
+                            });
                         inside.then_some(q)
                     });
                     match on {
@@ -982,10 +981,13 @@ fn settle_junctions(project: &mut Project) -> Result<()> {
                 gone.insert(id);
                 // A wire of no length (a label's on its pin) then draws
                 // and joins nothing: it goes.
-                let empty = project.wire(a).and_then(|w| wire_path(project, w)).is_some_and(|p| {
-                    p.windows(2)
-                        .all(|s| distance(s[0], s[1]) <= JUNCTION_TOLERANCE_MM)
-                });
+                let empty = project
+                    .wire(a)
+                    .and_then(|w| wire_path(project, w))
+                    .is_some_and(|p| {
+                        p.windows(2)
+                            .all(|s| distance(s[0], s[1]) <= JUNCTION_TOLERANCE_MM)
+                    });
                 if empty {
                     project.wires.retain(|w| w.id != a);
                 }

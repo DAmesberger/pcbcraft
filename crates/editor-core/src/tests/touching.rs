@@ -254,8 +254,8 @@ fn a_new_wire_takes_the_other_l_or_a_dogleg_around_pins_it_does_not_end_on() -> 
     assert!(project.junctions.is_empty());
     assert_eq!(project.wires.len(), 1);
     assert_eq!(project.wires[0].corners.len(), 2);
-    let path = schematic::wire_path(project, &project.wires[0])
-        .ok_or(Error::NotFound("path".into()))?;
+    let path =
+        schematic::wire_path(project, &project.wires[0]).ok_or(Error::NotFound("path".into()))?;
     for leg in path.windows(2) {
         let (a, b) = (leg[0], leg[1]);
         assert!(

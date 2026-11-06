@@ -148,11 +148,7 @@ pub fn delete(project: &mut Project, id: SheetId) -> Result<()> {
     let doomed: BTreeSet<Id> = project
         .wires
         .iter()
-        .filter(|w| {
-            w.sheet == id
-                || parent_pins.contains(&w.from)
-                || parent_pins.contains(&w.to)
-        })
+        .filter(|w| w.sheet == id || parent_pins.contains(&w.from) || parent_pins.contains(&w.to))
         .map(|w| w.id)
         .collect();
     project.wires.retain(|w| !doomed.contains(&w.id));
