@@ -335,6 +335,13 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
         Chord::key(egui::Key::Escape),
         "schematic.cancel",
     ),
+    // Backspace takes back the last corner instead of deleting the
+    // selection.
+    (
+        Context::SchematicWire,
+        Chord::key(egui::Key::Backspace),
+        "schematic.delete",
+    ),
     // Tuning: F flips the meander's side instead of fitting the view.
     (Context::PcbTune, Chord::key(egui::Key::F), "view.fit"),
     (
