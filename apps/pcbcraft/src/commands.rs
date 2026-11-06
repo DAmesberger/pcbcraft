@@ -1462,10 +1462,11 @@ fn defaults() -> Vec<Command> {
         .keywords("zoom selected frame orbit pivot focus"),
     );
     v.extend([
+        // Global, so ⇧⌘U runs it from the schematic too (it opens PCB).
         tool(
             "pcb.update",
             "Update PCB from schematic",
-            C::Pcb,
+            C::Global,
             Workspace::Pcb,
             "update",
         )

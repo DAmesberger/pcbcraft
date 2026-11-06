@@ -621,3 +621,36 @@ fn production_check_text_cut_short_shows_in_full_on_hover() -> TestResult {
     screen.picture("production-waive-group-form", &form, 2.0)?;
     Ok(())
 }
+
+/// In the run's narrow column (240 points less the card inset), a group's
+/// title is never cut at rest: it wraps to a second line, its count after
+/// it. (Hovered, Waive all… may cut it; its hover then shows it in full.)
+#[test]
+fn group_titles_fit_a_narrow_column() -> TestResult {
+    use crate::kit::text::tests::{Screen, cuts};
+    let engine = Engine::showcase()?;
+    let mut editor = run_dialog(&engine)?;
+    let screen = Screen::new(egui::vec2(224.0, 1100.0));
+    let run = |editor: &mut PcbEditor, events: Vec<egui::Event>| {
+        screen.run(events, |ui| {
+            editor.subject_slot(ui, &engine);
+        })
+    };
+    run(&mut editor, vec![egui::Event::PointerGone]);
+    let rest = run(&mut editor, vec![]);
+    screen.picture("production-narrow-groups", &rest, 2.0)?;
+    let report = report_like_the_run(&engine);
+    let titles: Vec<String> = groups(&report)
+        .iter()
+        .filter(|(_, items)| items.len() > 1)
+        .map(|(code, _)| pcbcraft_core::issues::group_title(code))
+        .collect();
+    assert!(titles.len() >= 2, "{titles:?}");
+    let cut: Vec<String> = cuts(&rest).into_iter().map(|c| c.text).collect();
+    let shown = texts(&rest);
+    for title in &titles {
+        assert!(!cut.contains(title), "{title} is cut: {cut:?}");
+        assert!(shown.contains(title), "{title} is not shown: {shown:?}");
+    }
+    Ok(())
+}

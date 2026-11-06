@@ -65,6 +65,19 @@ pub fn hover(response: Response, text: &str, tip: &str, cut: bool) -> Response {
     }
 }
 
+/// egui's tooltip width (500 points), never more than fits the window:
+/// tooltips wrap at it, and a tooltip wider than the window runs off its
+/// edge. Call once per frame, before anything shows a tooltip.
+pub fn fit_tooltips(ctx: &egui::Context) {
+    const TOOLTIP_WIDTH: f32 = 500.0;
+    // The tooltip's frame and its distance from the window's edges.
+    const ROOM: f32 = 32.0;
+    let width = TOOLTIP_WIDTH.min((ctx.content_rect().width() - ROOM).max(ROOM));
+    if (ctx.global_style().spacing.tooltip_width - width).abs() > 0.5 {
+        ctx.global_style_mut(|s| s.spacing.tooltip_width = width);
+    }
+}
+
 /// Paint `text` on one line in `rect` with its own hover (`id`): the full
 /// text when it was cut, else `tip`. For text with no widget of its own
 /// (a header title, a footer status).

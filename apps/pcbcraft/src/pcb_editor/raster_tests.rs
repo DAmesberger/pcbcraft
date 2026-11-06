@@ -549,3 +549,67 @@ fn pour_and_staging_pictures() -> TestResult {
     save("update-pcb-staged", &mut editor, &staged)?;
     Ok(())
 }
+
+/// Finding 8 of the second UX run: the Route card, with every key shown,
+/// is taller than its slot; it stays inside the slot (its rows scroll)
+/// instead of rising over the ribbon and the title bar above it.
+#[test]
+fn the_route_card_stays_inside_its_slot() -> TestResult {
+    let engine = Engine::demo()?;
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    editor.route.keys_all = true;
+    let size = [400.0, 700.0];
+    // As in the app, the slot reaches almost to the window's bottom, so a
+    // card that outgrew it would be pushed up the window.
+    let slot = Rect::from_min_max(Pos2::new(60.0, 200.0), Pos2::new(340.0, 680.0));
+    let background = Tokens::get().viewport_bottom;
+    let shown = picture_of(size, background, |ui| {
+        crate::shell::column_card(
+            ui.ctx(),
+            "properties",
+            slot,
+            crate::shell::COLUMN_CARD_INSET,
+            |ui| editor.subject_slot(ui, &engine),
+        );
+    });
+    // Drawn: clearly unlike the background (the card's faint shadow is not
+    // the card).
+    let unlike = |c: Color32| {
+        [
+            (c.r(), background.r()),
+            (c.g(), background.g()),
+            (c.b(), background.b()),
+        ]
+        .iter()
+        .any(|(a, b)| a.abs_diff(*b) > 12)
+    };
+    let painted = |rows: std::ops::Range<usize>, columns: std::ops::Range<usize>| {
+        rows.flat_map(|y| columns.clone().map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                shown
+                    .at(Pos2::new(x as f32 + 0.5, y as f32 + 0.5))
+                    .is_some_and(unlike)
+            })
+            .count()
+    };
+    let (left, right) = (slot.left() as usize, slot.right() as usize);
+    assert!(
+        painted(slot.top() as usize..slot.bottom() as usize, left..right) > 1000,
+        "the card is drawn in its slot"
+    );
+    assert_eq!(
+        painted(0..slot.top() as usize - 1, 0..size[0] as usize),
+        0,
+        "nothing is drawn above the slot"
+    );
+    assert_eq!(
+        painted(
+            slot.bottom() as usize + 1..size[1] as usize,
+            0..size[0] as usize
+        ),
+        0,
+        "nothing is drawn below the slot"
+    );
+    Ok(())
+}

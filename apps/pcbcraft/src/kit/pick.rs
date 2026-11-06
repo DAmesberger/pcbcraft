@@ -58,20 +58,55 @@ pub struct PickResponse {
 pub fn pick_row(ui: &mut Ui, id: egui::Id, row: &PickRow<'_>) -> PickResponse {
     let t = Tokens::get();
     let mut out = PickResponse::default();
+    let icon = t.form_section_icon_size;
+    let count = row.count.map(|n| {
+        ui.painter().layout_no_wrap(
+            super::severity::grouped(n),
+            FontId::proportional(t.font_small),
+            t.form_dim,
+        )
+    });
+    let count_width = count.as_ref().map_or(0.0, |c| c.size().x + t.space_6);
+    let font = if row.fold.is_some() {
+        fonts::semibold(t.font_label)
+    } else {
+        FontId::proportional(t.font_label)
+    };
+    // A group header's title wraps to a second line rather than being cut
+    // at rest: the row is as tall as the title needs (two lines at most).
+    let width = ui.available_width().max(0.0);
+    let lead = t.space_6
+        + PICK_INDENT * row.depth as f32
+        + row.fold.map_or(0.0, |_| icon + t.space_4)
+        + row.tick.map_or(0.0, |_| t.space_14 + t.space_6)
+        + t.space_14
+        + t.space_6;
+    let max_rows = if row.fold.is_some() { 2 } else { 1 };
+    let rest = super::text::wrapped(
+        ui,
+        row.title,
+        font.clone(),
+        t.text,
+        width - lead - t.space_6 - count_width,
+        max_rows,
+    );
+    let line = rest.size().y / rest.rows.len().max(1) as f32;
+    let extra = line * rest.rows.len().saturating_sub(1) as f32;
     let (rect, _) = ui.allocate_exact_size(
-        vec2(
-            ui.available_width().max(0.0),
-            super::issues::ISSUE_ROW_HEIGHT,
-        ),
+        vec2(width, super::issues::ISSUE_ROW_HEIGHT + extra),
         Sense::hover(),
     );
     let hovered = ui.rect_contains_pointer(rect);
     if hovered {
         ui.painter().rect_filled(rect, t.radius_sm, t.hover);
     }
-    let cy = rect.center().y;
+    // The chevron, tick, glyph and action keep to the first line.
+    let first = Rect::from_min_size(
+        rect.min,
+        vec2(rect.width(), super::issues::ISSUE_ROW_HEIGHT),
+    );
+    let cy = first.center().y;
     let mut x = rect.left() + t.space_6 + PICK_INDENT * row.depth as f32;
-    let icon = t.form_section_icon_size;
     if let Some(open) = row.fold {
         let chevron = Rect::from_min_size(pos2(x, cy - icon / 2.0), vec2(icon, icon));
         super::chevron(ui.painter(), chevron, open, t.text_dim);
@@ -109,7 +144,7 @@ pub fn pick_row(ui: &mut Ui, id: egui::Id, row: &PickRow<'_>) -> PickResponse {
     x += t.space_14 + t.space_6;
     let mut right = rect.right() - t.space_6;
     if let Some(action) = row.action.filter(|_| hovered) {
-        let slot = Rect::from_min_max(pos2(x.min(right), rect.top()), pos2(right, rect.bottom()));
+        let slot = Rect::from_min_max(pos2(x.min(right), first.top()), pos2(right, first.bottom()));
         let mut child = ui.new_child(
             UiBuilder::new()
                 .id_salt(id.with("action"))
@@ -120,26 +155,28 @@ pub fn pick_row(ui: &mut Ui, id: egui::Id, row: &PickRow<'_>) -> PickResponse {
         out.action = button.clicked();
         right = button.rect.left() - t.space_6;
     }
-    let count = row.count.map(|n| {
-        ui.painter().layout_no_wrap(
-            super::severity::grouped(n),
-            FontId::proportional(t.font_small),
-            t.form_dim,
+    let title = if row.action.is_some() && hovered {
+        super::text::wrapped(
+            ui,
+            row.title,
+            font,
+            t.text,
+            right - x - count_width,
+            max_rows,
         )
-    });
-    let count_width = count.as_ref().map_or(0.0, |c| c.size().x + t.space_6);
-    let font = if row.fold.is_some() {
-        fonts::semibold(t.font_label)
     } else {
-        FontId::proportional(t.font_label)
+        rest
     };
-    let title = super::text::one_line(ui, row.title, font, t.text, right - x - count_width);
     let cut = title.elided;
-    let title_rect = Rect::from_min_size(pos2(x, cy - title.size().y / 2.0), title.size());
-    ui.painter().galley(title_rect.min, title, t.text);
+    let top = cy - line / 2.0;
+    // The count follows the title's last line.
+    let end = title.rows.last().map_or(pos2(x, cy), |r| {
+        pos2(x + r.rect().right(), top + r.rect().center().y)
+    });
+    ui.painter().galley(pos2(x, top), title, t.text);
     if let Some(count) = count {
         ui.painter().galley(
-            pos2(title_rect.right() + t.space_6, cy - count.size().y / 2.0),
+            pos2(end.x + t.space_6, end.y - count.size().y / 2.0),
             count,
             t.form_dim,
         );

@@ -524,6 +524,68 @@ impl Screen {
     }
 }
 
+/// Finding 9 of the second UX run: a long tooltip near the window's right
+/// edge wraps inside the window instead of running off it, in a window as
+/// wide as the run's and in one narrower than egui's tooltip width.
+#[test]
+fn a_tooltip_at_the_window_edge_stays_inside_the_window() -> Result<(), String> {
+    let title = "Function ‘PA05’ of terminal ‘PA05’: bidirectional with digital \
+                 signal and no drive";
+    let tip = "Set the Drive of the function (push-pull, open drain or open source) \
+               in the Function card, or change its direction";
+    for (width, column) in [(1380.0, 240.0), (300.0, 200.0)] {
+        let mut harness = Harness::new(width, 400.0);
+        let ctx = harness.ctx().clone();
+        tooltips_at_once(&ctx);
+        let mut draw = |ui: &mut Ui| {
+            // As the app does at the start of every frame.
+            fit_tooltips(ui.ctx());
+            let rect =
+                Rect::from_min_size(Pos2::new(width - column, 40.0), egui::vec2(column, 300.0));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+            form(&mut child, |ui| {
+                pick_row(
+                    ui,
+                    egui::Id::new("pick"),
+                    &PickRow {
+                        level: Level::Error,
+                        title,
+                        tip,
+                        depth: 0,
+                        fold: None,
+                        count: None,
+                        tick: None,
+                        action: None,
+                    },
+                );
+            });
+        };
+        let rest = harness.output(vec![], &mut draw);
+        let at = cuts(&rest)
+            .into_iter()
+            .find(|c| c.text == title)
+            .map(|c| c.at)
+            .ok_or("the title is cut in the column")?;
+        harness.output(vec![Event::PointerMoved(at)], &mut draw);
+        harness.output(vec![], &mut draw);
+        let shown = harness.output(vec![], &mut draw);
+        let tooltip = painted(&shown)
+            .into_iter()
+            .find(|(t, _, elided, _)| !elided && t.contains(tip))
+            .ok_or("no tooltip")?;
+        let (_, rect, _, clip) = tooltip;
+        assert!(
+            rect.left() >= 0.0 && rect.right() <= width + 0.5,
+            "{width}: the tooltip runs off the window: {rect:?}"
+        );
+        assert!(
+            clip.contains_rect(rect.shrink(0.5)),
+            "{width}: the tooltip is clipped: {rect:?} in {clip:?}"
+        );
+    }
+    Ok(())
+}
+
 /// The kit's widgets at rest and with a cut row hovered; with
 /// `PCBCRAFT_TEXT_PICTURES=<dir>` it writes both pictures.
 #[test]

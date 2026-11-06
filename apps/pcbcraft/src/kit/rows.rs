@@ -52,6 +52,7 @@ pub struct ToolCardResponse {
 pub fn tool_card(ui: &mut Ui, card: &ToolCard<'_>, rows: impl FnOnce(&mut Ui)) -> ToolCardResponse {
     let t = Tokens::get();
     let mut out = ToolCardResponse::default();
+    let slot = ui.available_rect_before_wrap();
     let (rect, _) = ui.allocate_exact_size(
         vec2(
             ui.available_width().max(0.0),
@@ -125,12 +126,31 @@ pub fn tool_card(ui: &mut Ui, card: &ToolCard<'_>, rows: impl FnOnce(&mut Ui)) -
         }
     }
     t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);
-    super::form(ui, |ui| {
-        rows(ui);
-        if !card.hint.is_empty() {
-            hint(ui, card.hint, card.tip);
-        }
-    });
+    // The rows scroll within the slot, so a tall card never grows past it
+    // (its area would otherwise be pushed up over the ribbon).
+    let footer = if card.finish.is_some() {
+        super::card::FOOTER_HEIGHT
+    } else {
+        0.0
+    };
+    let room = if slot.bottom().is_finite() {
+        (slot.bottom() - ui.cursor().top() - footer).max(0.0)
+    } else {
+        f32::INFINITY
+    };
+    egui::ScrollArea::vertical()
+        .id_salt(("tool_card_body", card.name))
+        .min_scrolled_height(0.0)
+        .max_height(room)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            super::form(ui, |ui| {
+                rows(ui);
+                if !card.hint.is_empty() {
+                    hint(ui, card.hint, card.tip);
+                }
+            });
+        });
     if let Some(finish) = card.finish {
         let action =
             super::dialog::footer(ui, finish, super::dialog::PrimaryKind::Normal, None, None);
