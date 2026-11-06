@@ -174,7 +174,7 @@ impl<'a> DialogPanel<'a> {
 
 /// Esc cancels and Enter gives an enabled primary, consuming the key
 /// (upstream `actions::keyboard`).
-fn keyboard(ctx: &egui::Context, primary: bool) -> Option<DialogAction> {
+pub(crate) fn keyboard(ctx: &egui::Context, primary: bool) -> Option<DialogAction> {
     ctx.input_mut(|i| {
         if i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) {
             Some(DialogAction::Cancel)

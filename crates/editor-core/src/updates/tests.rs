@@ -1276,3 +1276,43 @@ fn the_impact_plan_reads_net_class_clearances() -> Result<()> {
     assert_eq!(conflict.reason, ConflictReason::Clearance);
     Ok(())
 }
+
+/// Run 3, finding 9: a new part joining a routed net reports its own pads
+/// as new, not every pad of the net that was fine before the update.
+#[test]
+fn a_part_joining_a_routed_net_reports_only_its_own_pads_as_new() -> Result<()> {
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let r2 = by_designator(&engine, "R2")?;
+    let (id, _) = place(&mut engine, &f, "R3", 1, [30.0, 0.0])?;
+    let wired = engine.preview_update(Change::Schematic {
+        command: SchematicCommand::Connect {
+            from: crate::schematic::WireTarget::Terminal(ep(id, 1)),
+            to: crate::schematic::WireTarget::Terminal(ep(r1, 2)),
+        },
+    });
+    engine.apply_update(wired.revision, wired.change, false)?;
+    let plan = engine.preview_update(Change::SyncPcb {});
+    let unrouted: Vec<_> = plan
+        .findings
+        .new
+        .iter()
+        .filter(|f| f.code == "board.unrouted")
+        .collect();
+    assert_eq!(unrouted.len(), 1, "{unrouted:?}");
+    assert!(unrouted[0].message.contains("R3"), "{unrouted:?}");
+    for other in [r1, r2] {
+        assert!(
+            !unrouted[0]
+                .objects
+                .iter()
+                .any(|o| matches!(o, ObjectRef::Pad { instance, .. } if *instance == other)),
+            "{unrouted:?}"
+        );
+    }
+    Ok(())
+}

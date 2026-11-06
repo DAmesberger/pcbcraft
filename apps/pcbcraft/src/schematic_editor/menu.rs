@@ -209,13 +209,8 @@ impl SchematicEditor {
                 vec![
                     Some(Entry::act("Edit", "edit", Act::EditItem(item), label)),
                     Some(
-                        Entry::act(
-                            "Rotate",
-                            "spin",
-                            Act::RotateItem,
-                            self.rotated_item(project).is_some(),
-                        )
-                        .key_of(ctx, "schematic.rotate"),
+                        Entry::act("Rotate", "spin", Act::RotateItem, label)
+                            .key_of(ctx, "schematic.rotate"),
                     ),
                     None,
                     Some(

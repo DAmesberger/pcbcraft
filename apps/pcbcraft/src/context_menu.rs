@@ -12,6 +12,10 @@
 //! as from the palette) or one of its own typed commands ([`Run::Act`],
 //! the same operation its key or card button sends). Nothing here changes
 //! the document.
+//!
+//! An open menu owns the keyboard: a canvas runs before its menu in a frame
+//! and would take Esc for itself, and ⌘Z would act underneath, so the app
+//! calls [`hold_keys`] before any of them.
 use egui::{Pos2, Vec2, vec2};
 use solidcraft_ui_egui::context_menu::{Item, LIST_W, list_row, menu_frame, place};
 use solidcraft_ui_egui::ui_kit::{Container, Surface};
@@ -102,6 +106,53 @@ fn height<A>(rows: &[Option<Entry<A>>]) -> f32 {
         .sum::<f32>()
 }
 
+/// Temp memory: the pass that last drew a menu.
+fn drawn_id() -> egui::Id {
+    egui::Id::new("pcbcraft-context-menu-drawn")
+}
+
+/// Temp memory: the pass that asked every menu to close.
+fn close_id() -> egui::Id {
+    egui::Id::new("pcbcraft-context-menu-close")
+}
+
+/// Whether a menu was on screen in the last pass.
+pub fn is_open(ctx: &egui::Context) -> bool {
+    let drawn = ctx.data(|d| d.get_temp::<u64>(drawn_id()));
+    drawn.is_some_and(|pass| pass.saturating_add(1) >= ctx.cumulative_pass_nr())
+}
+
+/// Ask the open menu to close when it next draws.
+pub fn close_all(ctx: &egui::Context) {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(close_id(), pass));
+}
+
+/// While a menu is open, take this frame's key presses and clipboard events
+/// so nothing underneath acts on them; Esc closes the menu. Call before
+/// anything else reads keys.
+pub fn hold_keys(ctx: &egui::Context) {
+    if !is_open(ctx) {
+        return;
+    }
+    let escape = ctx.input_mut(|i| {
+        let escape = i.key_pressed(egui::Key::Escape);
+        i.events.retain(|event| {
+            !matches!(
+                event,
+                egui::Event::Key { pressed: true, .. }
+                    | egui::Event::Copy
+                    | egui::Event::Cut
+                    | egui::Event::Paste(_)
+            )
+        });
+        escape
+    });
+    if escape {
+        close_all(ctx);
+    }
+}
+
 impl<T> State<T> {
     /// Open the menu about `target` at `at` (a menu already open closes).
     pub fn open(&mut self, at: Pos2, target: T) {
@@ -127,7 +178,7 @@ impl<T> State<T> {
 
     /// Draw the open menu with `rows` (built from [`Self::target`] this
     /// frame). Returns the enabled row clicked. The menu closes when a row
-    /// is chosen, on Esc, on a press outside it and when it has no rows.
+    /// is chosen, on Esc ([`hold_keys`]), on a press outside it and when it has no rows.
     pub fn show<A: Clone>(
         &mut self,
         ctx: &egui::Context,
@@ -136,8 +187,12 @@ impl<T> State<T> {
         let open = self.0.as_mut()?;
         let pass = ctx.cumulative_pass_nr();
         let stale = open.drawn.is_some_and(|last| last.saturating_add(1) < pass);
-        if rows.is_empty() || stale {
+        let asked = ctx
+            .data_mut(|d| d.remove_temp::<u64>(close_id()))
+            .is_some_and(|at| at.saturating_add(1) >= pass);
+        if rows.is_empty() || stale || asked {
             self.0 = None;
+            ctx.data_mut(|d| d.remove::<u64>(drawn_id()));
             return None;
         }
         let screen = ctx.content_rect();
@@ -172,14 +227,13 @@ impl<T> State<T> {
         let shown = open.drawn.replace(pass).is_some();
         let pointer = ctx.input(|i| i.pointer.latest_pos());
         let inside = pointer.is_some_and(|p| response.response.rect.contains(p));
-        let (press, escape) = ctx.input(|i| {
-            (
-                shown && (i.pointer.primary_pressed() || i.pointer.secondary_pressed()),
-                i.key_pressed(egui::Key::Escape),
-            )
-        });
-        if picked.is_some() || escape || (press && !inside) {
+        let press =
+            ctx.input(|i| shown && (i.pointer.primary_pressed() || i.pointer.secondary_pressed()));
+        if picked.is_some() || (press && !inside) {
             self.0 = None;
+            ctx.data_mut(|d| d.remove::<u64>(drawn_id()));
+        } else {
+            ctx.data_mut(|d| d.insert_temp(drawn_id(), pass));
         }
         picked
     }

@@ -808,3 +808,52 @@ fn pair_endpoints_round_trip_and_stay_out_of_unset_files() -> Result<()> {
     assert_eq!(back, set);
     Ok(())
 }
+
+/// Run 3, finding 8: a pair with no limit set still warns past the named
+/// default, says the limit is the default, and leads with the pair; a limit
+/// the class sets replaces it. Lengths are the meander's added amount.
+#[test]
+fn skew_past_the_default_limit_warns_when_no_limit_is_set() -> Result<()> {
+    for (signal, findings, cites) in [
+        (SignalRules::default(), 1, "default limit"),
+        (
+            SignalRules {
+                pair_max_skew: Some(5.0),
+                ..SignalRules::default()
+            },
+            0,
+            "",
+        ),
+    ] {
+        let mut usb = usb(signal)?;
+        let legs = straight(&usb);
+        routed(&mut usb, legs)?;
+        assert!(!board_codes(&usb.engine).contains(&"pair.skew".to_owned()));
+        let track = longest(&usb.engine, usb.nets[1])?;
+        apply(
+            &mut usb.engine,
+            Operation::Layout(LayoutCommand::TuneLength {
+                request: TuneRequest {
+                    track,
+                    amount: TuneAmount::Add {
+                        mm: crate::rules::signal::DEFAULT_PAIR_MAX_SKEW_MM + 0.5,
+                    },
+                    style: MeanderStyle::Trombone,
+                    amplitude: Some(1.0),
+                    spacing: None,
+                    side: None,
+                },
+            }),
+        )?;
+        let skews: Vec<_> = layout::checks(usb.engine.project())
+            .into_iter()
+            .filter(|f| f.code == "pair.skew")
+            .collect();
+        assert_eq!(skews.len(), findings, "{skews:?}");
+        for skew in skews {
+            assert!(skew.message.starts_with("USB_D"), "{}", skew.message);
+            assert!(skew.message.contains(cites), "{}", skew.message);
+        }
+    }
+    Ok(())
+}

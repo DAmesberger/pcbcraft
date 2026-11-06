@@ -349,6 +349,7 @@ pub fn new_request(
         name: name.trim().to_owned(),
         designator_prefix: (!prefix.is_empty()).then(|| prefix.to_owned()),
         symbol: None,
+        without_fields: false,
     })))
 }
 
@@ -697,11 +698,12 @@ impl TemplateGallery {
         let Some(open) = &mut self.open else {
             return;
         };
-        let fresh = open.results.as_ref().is_some_and(|r| {
-            r.revision == engine.revision()
-                && r.context == self.context_generation
-                && r.query == open.query
-        });
+        // New text starts at the new best match, never the old row.
+        let retyped = field_changed(open);
+        let fresh = !retyped
+            && open.results.as_ref().is_some_and(|r| {
+                r.revision == engine.revision() && r.context == self.context_generation
+            });
         if fresh {
             return;
         }
@@ -722,7 +724,7 @@ impl TemplateGallery {
             query: open.query.clone(),
             report,
         });
-        let kept = open.kept.clone();
+        let kept = open.kept.clone().filter(|_| !retyped);
         let index = kept.and_then(|(family, name)| {
             open.shown()
                 .iter()
@@ -1961,6 +1963,42 @@ mod tests {
         assert!(gallery.is_open());
         frame(&ctx, &mut gallery, &engine, vec![key(egui::Key::Escape)]);
         assert!(!gallery.is_open(), "Esc closes");
+        Ok(())
+    }
+
+    /// Run 3, finding 1: typing on from "resistor" to "resistor 0603" moves
+    /// the highlight to the new top row, the one Enter creates, even though
+    /// the old top row (an 0201, "0603 metric") still matches.
+    #[test]
+    fn new_text_highlights_the_new_best_match() -> TestResult {
+        let ctx = context();
+        let engine = Engine::demo()?;
+        for (first, then, expected) in [
+            (
+                "resistor",
+                "resistor 0603",
+                "Chip resistor 0603 (1608 metric)",
+            ),
+            ("header 1x", "header 1x4", "Pin header 1×4 2.54 mm"),
+        ] {
+            let mut gallery = TemplateGallery::default();
+            gallery.open_new(None);
+            frame(&ctx, &mut gallery, &engine, vec![]);
+            for query in [first, then] {
+                gallery.open.as_mut().ok_or("open")?.query = query.into();
+                frame(&ctx, &mut gallery, &engine, vec![]);
+                frame(&ctx, &mut gallery, &engine, vec![]);
+            }
+            let open = gallery.open.as_ref().ok_or("open")?;
+            assert_eq!(open.highlighted, 0, "{then}");
+            assert_eq!(open.hit().ok_or("a hit")?.name, expected);
+            let Some(Operation::Library(LibraryCommand::NewFromTemplate(request))) =
+                frame(&ctx, &mut gallery, &engine, vec![key(egui::Key::Enter)])
+            else {
+                return Err("Enter creates".into());
+            };
+            assert_eq!(request.name, expected);
+        }
         Ok(())
     }
 

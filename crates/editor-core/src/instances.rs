@@ -314,7 +314,7 @@ fn check_with<'a>(
             .ok_or_else(|| invalid("A wire references a missing terminal.".into()))?;
         if !terminal.is_electrical() {
             return Err(Error::Conflict(
-                "A device-NC or reserved terminal cannot be wired.".into(),
+                "An NC or reserved pin cannot be wired.".into(),
             ));
         }
         let unit = owning_unit(symbol, terminal.id).ok_or_else(|| {

@@ -88,6 +88,12 @@ impl PcbEditor {
                 self.route.vias_stay = !move_vias;
             }
         }
+        if self.route.mode == RouteMode::Ignore {
+            kit::note(
+                ui,
+                "Ignore goes straight to the click without shoving; a step too close to other copper is still refused",
+            );
+        }
         kit::keyed(ui, mode_key, |ui| {
             kit::choice_row(ui, "Mode", &mut self.route.posture, &modes)
         });

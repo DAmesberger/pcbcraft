@@ -48,6 +48,19 @@ pub(super) fn elbow(a: Point, b: Point, flipped: bool) -> Point {
     if flipped { [a[0], b[1]] } else { [b[0], a[1]] }
 }
 
+/// Why a wire can't start on an NC or reserved pin; the engine's wording
+/// for one that would end there.
+const NOT_WIREABLE: &str = "An NC or reserved pin cannot be wired";
+
+/// Whether `pin`'s terminal is electrical (not device NC or reserved).
+fn wireable(project: &pcbcraft_core::Project, pin: pcbcraft_core::Endpoint) -> bool {
+    project
+        .instance(pin.instance)
+        .and_then(|i| project.library.component(i.component))
+        .and_then(|c| c.definition.terminal(pin.terminal))
+        .is_none_or(|t| t.is_electrical())
+}
+
 impl WireDraft {
     /// The last fixed point.
     pub(super) fn last(&self) -> Point {
@@ -121,8 +134,13 @@ impl SchematicEditor {
         at: Point,
     ) -> Option<Operation> {
         let Some(mut draft) = self.wire.take() else {
-            // Start: on a target, or in empty space with a free end.
+            // Start: on a target, or in empty space with a free end. A pin
+            // that can never be wired refuses here, not at the wire's end.
             let (from, start) = match target {
+                Some((WireTarget::Terminal(pin), _)) if !wireable(engine.project(), pin) => {
+                    kit::toast::post(ctx, kit::severity::Level::Warning, NOT_WIREABLE, Vec::new());
+                    return None;
+                }
                 Some(hit) => hit,
                 None => (WireTarget::Free(FreeEnd::new(at)?), at),
             };

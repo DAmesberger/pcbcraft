@@ -19,7 +19,7 @@ use crate::library::templates::catalog::{
 use crate::library::templates::footprint;
 use crate::library::templates::footprint_family;
 use crate::library::{
-    ChipKind, Definition, DraftEdit, FootprintDefinition, FootprintEvaluator, GeneratedMaterials,
+    Definition, DraftEdit, FootprintDefinition, FootprintEvaluator, GeneratedMaterials,
     ModelPlacement, PackageDefinition, PackageForm, PackageModel, PackageTerminal, drafts,
     standard_fields,
 };
@@ -28,10 +28,11 @@ use std::sync::Arc;
 
 /// `library.new_from_template`: five drafts in one undo step
 /// (`Outcome::DraftsCreated`, component first). The drafts are new
-/// lineages and nothing is published. A chip LED's component selects the
-/// standard `Colour` and `Forward voltage` fields, importing the standard
-/// fields in the same step when the project lacks them; nothing else is
-/// imported.
+/// lineages and nothing is published. A chip component selects its standard
+/// fields (a passive's value, rating and tolerance; an LED's `Colour` and
+/// `Forward voltage`), importing the standard fields in the same step when
+/// the project lacks them, unless the request says `without_fields`;
+/// nothing else is imported.
 pub(crate) fn new_from_template(
     document: &mut Document,
     request: NewFromTemplate,
@@ -58,13 +59,16 @@ pub(crate) fn new_from_template(
         &rules,
         document.drafts.symbols,
     )?;
-    let led = edits.iter().any(|edit| {
-        matches!(&edit.definition, Definition::Package(p)
-            if matches!(&p.form, PackageForm::Chip(c) if c.kind == ChipKind::Led))
+    let chip = edits.iter().find_map(|edit| match &edit.definition {
+        Definition::Package(PackageDefinition {
+            form: PackageForm::Chip(c),
+            ..
+        }) => Some(c.kind),
+        _ => None,
     });
-    if led {
+    if let Some(kind) = chip.filter(|_| !request.without_fields) {
         super::library::import_bundle(document, &standard_fields::bundle()?)?;
-        let selections = standard_fields::led_fields(&document.project.library)?;
+        let selections = standard_fields::chip_fields(&document.project.library, kind)?;
         for edit in &mut edits {
             if let Definition::Component(body) = &mut edit.definition {
                 body.fields.clone_from(&selections);

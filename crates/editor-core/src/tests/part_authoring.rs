@@ -749,6 +749,7 @@ fn a_tabbed_form_s_land_pattern_builds_the_pads() -> Result<()> {
         name: name.into(),
         designator_prefix: None,
         symbol: None,
+        without_fields: false,
     };
     let footprint_of = |engine: &mut Engine, request| -> Result<FootprintDefinition> {
         let Outcome::DraftsCreated { ids } =

@@ -265,8 +265,12 @@ fn labels_on_all_four_sides_face_away_and_clear_bodies_and_each_other() -> Resul
             .bounds(m)
             .ok_or_else(|| Error::Invalid("ink".into()))?;
         let c = extent.center();
+        // A port standing upright on a horizontal pin lies across it.
+        let upright = labels::current_rotation(project, id)? == Rotation::R0
+            && matches!(label.kind, LabelKind::Power { .. })
+            && d[0] != 0.0;
         assert!(
-            (c[0] - end[0]) * d[0] + (c[1] - end[1]) * d[1] > 0.5,
+            upright || (c[0] - end[0]) * d[0] + (c[1] - end[1]) * d[1] > 0.5,
             "{} lies beyond its pin",
             label.name
         );
@@ -287,7 +291,7 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
     };
     let moved = attach(&mut engine, "GND", ground, u, 1)?;
     let turned = attach(&mut engine, "SDA", LabelKind::Local, u, 4)?;
-    // Pin 1 on the left: the ground faces left (a quarter turn clockwise).
+    // Pin 1 on the left, with other pins' text beside it.
     let project = engine.project();
     let before = project
         .label(moved)
@@ -295,6 +299,7 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
     let (_, d) =
         labels::pin_frame(project, before).ok_or_else(|| Error::Invalid("frame".into()))?;
     assert_eq!(d, [-1.0, 0.0]);
+    let faced = labels::current_rotation(project, moved)?;
     // In line with pin 1, so its wire runs over no other pin (which would
     // connect to it).
     run(
@@ -319,7 +324,7 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
         .ok_or_else(|| Error::Invalid("label".into()))?;
     assert!(after.manual);
     assert_eq!(labels::anchor(project, after), [-20.0, -2.5]);
-    assert_eq!(after.rotation, Rotation::R270, "keeps the way it faced");
+    assert_eq!(after.rotation, faced, "keeps the way it faced");
     let turned_label = project
         .label(turned)
         .ok_or_else(|| Error::Invalid("label".into()))?;
@@ -441,5 +446,79 @@ fn facing_labels_without_room_between_them_do_not_overlap() -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+/// One pin on each side of the 6 mm body: 1 left, 2 right, with room around.
+fn two_sides(engine: &mut Engine) -> Result<Fixture> {
+    let spec = Spec {
+        name: "Two sides",
+        terminals: vec![(1, "P1", passive()), (2, "P2", passive())],
+        units: vec![(1, "A", vec![(1, [-5.0, 0.0]), (2, [5.0, 0.0])])],
+        package: vec![(1, "1"), (2, "2")],
+        mapping: vec![(1, 1), (2, 2)],
+        physical: true,
+    };
+    let f = draft(engine, &spec)?;
+    with(engine, f.symbol, symbol_body, |s| {
+        let id = GraphicId(s.next_local);
+        s.next_local += 1;
+        if let Some(unit) = s.units.first_mut() {
+            unit.graphics.push(body_rect(id, BODY));
+        }
+    })?;
+    publish(engine, f.all())?;
+    Ok(f)
+}
+
+/// Run 3, finding 3: a port on a horizontal pin comes in upright on either
+/// side of the symbol, a ground below the pin's end and a supply above it,
+/// and a turn starts from that. With a neighbour's pin in the stem's way it
+/// faces along its own pin; on a vertical pin it runs on along the pin.
+#[test]
+fn ports_on_horizontal_pins_stand_upright_where_they_have_room() -> Result<()> {
+    let ground = LabelKind::Power {
+        style: PowerStyle::Ground,
+    };
+    let supply = LabelKind::Power {
+        style: PowerStyle::Bar,
+    };
+    for (kind, name, sign) in [(ground, "GND", -1.0), (supply, "+3V3", 1.0)] {
+        for terminal in [1, 2] {
+            let mut engine = Engine::default();
+            let f = two_sides(&mut engine)?;
+            let u = place(&mut engine, &f, "U1", [0.0, 0.0])?;
+            let id = attach(&mut engine, name, kind, u, terminal)?;
+            let project = engine.project();
+            assert_eq!(labels::current_rotation(project, id)?, Rotation::R0);
+            let end = crate::schematic::pin_position(project, ep(u, terminal))
+                .ok_or_else(|| Error::Invalid("pin".into()))?;
+            let drawn = scene::sheet_labels(project, project.sheets.first());
+            let extent = drawn
+                .iter()
+                .find(|(l, _)| *l == id)
+                .and_then(|(_, d)| d.bounds(TextMetric::default()))
+                .ok_or_else(|| Error::Invalid("ink".into()))?;
+            assert!(
+                (extent.center()[1] - end[1]) * sign > 1.0,
+                "{name} on pin {terminal}: {extent:?} from {end:?}"
+            );
+        }
+    }
+    // The middle pin of a row: the stem would cross the next pin.
+    let mut engine = Engine::default();
+    let f = four_sides(&mut engine)?;
+    let u = place(&mut engine, &f, "U1", [0.0, 0.0])?;
+    let id = attach(&mut engine, "GND", ground, u, 2)?;
+    assert_eq!(
+        labels::current_rotation(engine.project(), id)?,
+        labels::auto_rotation(ground, [-1.0, 0.0])
+    );
+    // Pin 8 on top points up: the port continues up it, not over the body.
+    let id = attach(&mut engine, "GND", ground, u, 8)?;
+    assert_eq!(
+        labels::current_rotation(engine.project(), id)?,
+        labels::auto_rotation(ground, [0.0, 1.0])
+    );
     Ok(())
 }

@@ -99,6 +99,11 @@ impl SignalRules {
     }
 }
 
+/// The skew a pair is warned past when its net class sets no limit, mm: a
+/// generous design-review threshold (about 15 ps on FR-4), not a limit from
+/// any interface's specification. Set `pair_max_skew` for the real one.
+pub const DEFAULT_PAIR_MAX_SKEW_MM: f64 = 2.5;
+
 /// Project-local identity of a differential pair; never reused.
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,

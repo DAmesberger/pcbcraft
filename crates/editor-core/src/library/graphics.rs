@@ -878,10 +878,32 @@ impl Pin {
         )
     }
 
-    /// Where a pin number sits: centred along the stub, on its upper (or,
-    /// for vertical pins, left) side.
-    pub fn number_anchor(&self) -> (Point, f64, Justify) {
+    /// Where a pin number `width` long sits: centred along the stub, on its
+    /// upper (or, for vertical pins, left) side. One longer than the stub
+    /// (stacked pads, "A4B9,B4A9") starts at the body and runs on past the
+    /// pin's end, clear of the name inside the body.
+    pub fn number_anchor(&self, width: f64) -> (Point, f64, Justify) {
         let body = self.body_end();
+        if width > self.length {
+            let o = self.number.offset;
+            let (at, rotation) = if self.direction.is_horizontal() {
+                ([body[0], body[1] + o], 0.0)
+            } else {
+                ([body[0] - o, body[1]], 90.0)
+            };
+            let h = match self.direction {
+                PinDirection::Right | PinDirection::Up => HAlign::Right,
+                PinDirection::Left | PinDirection::Down => HAlign::Left,
+            };
+            return (
+                at,
+                rotation,
+                Justify {
+                    h,
+                    v: VAlign::Bottom,
+                },
+            );
+        }
         let mid = [
             (self.position[0] + body[0]) / 2.0,
             (self.position[1] + body[1]) / 2.0,

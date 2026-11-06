@@ -255,6 +255,27 @@ fn a_size_code_matches_both_meanings_unless_a_system_is_named() -> Fallible<()> 
     Ok(())
 }
 
+/// Run 3, finding 1: the row the query's size or pin count names comes
+/// first, so Enter creates it; the starter tables' own names and aliases
+/// (a 1×40's "1x40 2.54" prefixes "1x4") must not outrank it.
+#[test]
+fn the_named_size_or_pin_count_ranks_first() -> Fallible<()> {
+    let engine = Engine::default();
+    let top = |query: &str| -> Fallible<String> {
+        let report = templates_with(&engine, query, &CatalogContext::default())?;
+        Ok(names(&report).first().ok_or("a hit")?.to_string())
+    };
+    assert_eq!(top("resistor 0603")?, "Chip resistor 0603 (1608 metric)");
+    assert_eq!(top("capacitor 0603")?, "Chip capacitor 0603 (1608 metric)");
+    assert_eq!(top("header 1x4")?, "Pin header 1×4 2.54 mm");
+    assert_eq!(top("1x4")?, "Pin header 1×4 2.54 mm");
+    assert_eq!(top("header 1×40")?, "Pin header 1×40 2.54 mm");
+    assert!(top("header 2x5")?.starts_with("Pin header 2×5 "));
+    let soic = top("soic 8")?;
+    assert!(soic.starts_with("SOIC-8"), "{soic}");
+    Ok(())
+}
+
 #[test]
 fn template_queries_refuse_component_filters_and_bad_values() -> Fallible<()> {
     let engine = rows_engine()?;
@@ -361,6 +382,7 @@ fn folder_rows_are_indexed_and_searched_with_their_source_revision() -> Fallible
             name: "Resistor 0603".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         })),
     )?
     else {
@@ -408,6 +430,7 @@ fn a_component_from_a_cited_row_is_one_undo_step_and_publishes() -> Fallible<()>
             name: "Controller QFN-32".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         },
     )?;
     assert_eq!(engine.revision(), revision + 1, "one operation");
@@ -488,6 +511,7 @@ fn every_custom_family_builds_a_publishable_component() -> Fallible<()> {
                 name: format!("{} part", family.label()),
                 designator_prefix: Some("X".into()),
                 symbol: None,
+                without_fields: false,
             },
         )?;
         let published = apply(
@@ -532,6 +556,7 @@ fn refused_template_requests_leave_the_document_unchanged() -> Fallible<()> {
         name: "U".into(),
         designator_prefix: None,
         symbol: None,
+        without_fields: false,
     };
     let refused = [
         NewFromTemplate {
@@ -601,6 +626,7 @@ fn edited_values_make_a_custom_package_with_estimated_lands() -> Fallible<()> {
             name: "Thin QFN".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         },
     )?;
     let package = engine.drafts().get(ids[2]).ok_or("package")?;
@@ -657,6 +683,7 @@ fn package_from_template_previews_and_replaces_in_one_step() -> Fallible<()> {
             name: "Bridge".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         },
     )?;
     let package = ids[2];
@@ -780,6 +807,7 @@ fn a_package_row_is_saved_as_a_draft_and_publishes() -> Fallible<()> {
             name: "QFN".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         },
     )?;
     let Outcome::DraftCreated { id } = apply(
@@ -1061,6 +1089,7 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
                 name: name.clone(),
                 designator_prefix: None,
                 symbol: None,
+                without_fields: false,
             },
         )?;
         let draft = |k: usize| {
@@ -1186,6 +1215,7 @@ fn built_drafts_record_the_row_identity() -> Fallible<()> {
             name: "U".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         },
     )?;
     let provenance = |engine: &Engine, id: DefinitionId| {
@@ -1209,6 +1239,7 @@ fn built_drafts_record_the_row_identity() -> Fallible<()> {
             name: "U2".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         },
     )?;
     let text = provenance(&engine, ids[0]);
@@ -1247,6 +1278,7 @@ fn a_replaced_package_is_designated_from_the_new_form() -> Fallible<()> {
             name: "U".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         },
     )?;
     let request = PackageFromTemplate {
@@ -1507,6 +1539,7 @@ fn bridge(engine: &mut Engine) -> Fallible<Vec<DefinitionId>> {
             name: "Bridge".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         },
     )
 }
@@ -1777,6 +1810,7 @@ fn no_lead_and_chip_starter_rows_keep_the_mask_web() -> Fallible<()> {
                 name: starter.name.clone(),
                 designator_prefix: None,
                 symbol: None,
+                without_fields: false,
             },
         )?;
         let Some(Definition::Footprint(footprint)) =
@@ -1888,6 +1922,7 @@ fn starter_build(
             name: name.into(),
             designator_prefix: prefix.map(str::to_owned),
             symbol,
+            without_fields: false,
         },
     )?;
     let draft = |k: usize| {
@@ -2073,6 +2108,7 @@ fn a_usb_c_receptacle_is_found_built_mapped_and_published() -> Fallible<()> {
             name: "USB-C".into(),
             designator_prefix: None,
             symbol: None,
+            without_fields: false,
         },
     )?;
     let draft = |k: usize| {
@@ -2221,6 +2257,67 @@ fn a_usb_c_receptacle_is_found_built_mapped_and_published() -> Fallible<()> {
     Ok(())
 }
 
+/// Run 3, finding 2: a passive template brings its typed value fields, all
+/// settable per instance, imported in the template's own undo step.
+#[test]
+fn chip_passives_carry_their_value_fields() -> Fallible<()> {
+    for (name, expected, typed) in [
+        (
+            "Chip resistor 0603 (1608 metric)",
+            ["Resistance", "Rated voltage", "Tolerance"],
+            "5.1 kΩ",
+        ),
+        (
+            "Chip capacitor 0603 (1608 metric)",
+            ["Capacitance", "Rated voltage", "Tolerance"],
+            "100 nF",
+        ),
+    ] {
+        let mut engine = Engine::default();
+        let before = engine.to_file();
+        let ids = {
+            let row = crate::library::templates::starter::row(name)?;
+            new_from(
+                &mut engine,
+                NewFromTemplate {
+                    row: RowSource::Starter { name: name.into() },
+                    values: None,
+                    skeleton: row.definition.skeleton,
+                    name: name.into(),
+                    designator_prefix: None,
+                    symbol: None,
+                    without_fields: false,
+                },
+            )?
+        };
+        let draft = ids
+            .first()
+            .and_then(|id| engine.drafts().get(*id))
+            .ok_or("component draft")?;
+        let Definition::Component(component) = &draft.definition else {
+            return Err("component".into());
+        };
+        let library = &engine.project().library;
+        let selected: Vec<&str> = component
+            .fields
+            .iter()
+            .filter_map(|s| library.field(s.field))
+            .map(|f| f.meta.name.as_str())
+            .collect();
+        assert_eq!(selected, expected, "{name}");
+        assert!(component.fields.iter().all(|s| s.show_on_symbol), "{name}");
+        let value = component.fields.first().ok_or("value field")?;
+        let view = library.field_view(value.field).ok_or("field view")?;
+        let parsed =
+            crate::fields::parse_value(typed, &view.field.definition.value_type, view.kind_body())?;
+        assert!(matches!(parsed, crate::fields::FieldValue::Quantity { .. }));
+        assert_eq!(draft_findings(&engine)?, Vec::<String>::new(), "{name}");
+        engine.undo()?;
+        assert_eq!(engine.to_file(), before, "{name}: one undo step");
+    }
+    Ok(())
+}
+
 /// The designer's path for an LED: search finds it, Create draws the LED
 /// (not a plain diode) with its cathode and anode named and pad 1 marked,
 /// the drawing's lands, and the typed colour and forward voltage fields.
@@ -2349,16 +2446,58 @@ fn a_chip_led_is_found_drawn_marked_and_carries_its_fields() -> Fallible<()> {
     Ok(())
 }
 
-/// A request naming the LED symbol on another row keeps that row's fields
-/// (none): the fields follow the LED construction, not a drawing choice.
+/// A request naming the LED symbol on another row keeps that row's fields:
+/// the fields follow the construction, not a drawing choice.
 #[test]
-fn an_led_symbol_on_another_row_imports_nothing() -> Fallible<()> {
+fn an_led_symbol_on_another_row_keeps_that_rows_fields() -> Fallible<()> {
     let mut engine = Engine::default();
-    starter_build(
+    let name = "Chip capacitor 0603 (1608 metric)";
+    let row = crate::library::templates::starter::row(name)?;
+    let ids = new_from(
         &mut engine,
-        "Chip capacitor 0603 (1608 metric)",
-        Some("D"),
-        Some(SymbolKind::Led),
+        NewFromTemplate {
+            row: RowSource::Starter { name: name.into() },
+            values: None,
+            skeleton: row.definition.skeleton,
+            name: name.into(),
+            designator_prefix: Some("D".into()),
+            symbol: Some(SymbolKind::Led),
+            without_fields: false,
+        },
+    )?;
+    let Some(Definition::Component(component)) = ids
+        .first()
+        .and_then(|id| engine.drafts().get(*id))
+        .map(|d| &d.definition)
+    else {
+        return Err("component".into());
+    };
+    let library = &engine.project().library;
+    let first = component
+        .fields
+        .first()
+        .and_then(|s| library.field(s.field));
+    assert_eq!(first.map(|f| f.meta.name.as_str()), Some("Capacitance"));
+    Ok(())
+}
+
+/// A client that types its own fields asks for none: nothing is imported.
+#[test]
+fn without_fields_imports_nothing() -> Fallible<()> {
+    let mut engine = Engine::default();
+    let name = "Chip resistor 0603 (1608 metric)";
+    let row = crate::library::templates::starter::row(name)?;
+    new_from(
+        &mut engine,
+        NewFromTemplate {
+            row: RowSource::Starter { name: name.into() },
+            values: None,
+            skeleton: row.definition.skeleton,
+            name: name.into(),
+            designator_prefix: None,
+            symbol: None,
+            without_fields: true,
+        },
     )?;
     assert!(engine.project().library.fields.is_empty());
     Ok(())

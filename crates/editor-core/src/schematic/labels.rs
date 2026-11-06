@@ -6,7 +6,8 @@
 //! A label attached to a pin places itself: until a person moves or turns
 //! it, a label whose only wire goes to a pin on its sheet sits on that pin's
 //! end ([`anchor`]) and faces away from the symbol ([`outward`],
-//! [`auto_rotation`]); [`super::scene::sheet_labels`] draws it clear of
+//! [`auto_rotation`]), except that a power port on a horizontal pin stands
+//! upright where it has room; [`super::scene::sheet_labels`] draws it clear of
 //! symbols and other labels. Nothing of that placement is stored.
 use super::wiring::{self, WirePoint, WireTarget};
 use super::{PlacedUnit, Result, connect, invalid, not_found, placed_unit};
@@ -266,12 +267,14 @@ pub fn pin_frame(project: &Project, label: &Label) -> Option<(Point, Point)> {
 }
 
 /// The rotation a label is drawn with now.
-pub(super) fn current_rotation(project: &Project, id: Id) -> Result<Rotation> {
+pub fn current_rotation(project: &Project, id: Id) -> Result<Rotation> {
     let label = project
         .label(id)
         .ok_or_else(|| not_found("Unknown label."))?;
     Ok(match pin_frame(project, label) {
-        Some((_, d)) => auto_rotation(label.kind, d),
+        Some((_, d)) => {
+            super::scene::drawn_rotation(project, label).unwrap_or(auto_rotation(label.kind, d))
+        }
         None => label.rotation,
     })
 }

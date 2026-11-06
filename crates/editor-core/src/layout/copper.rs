@@ -516,6 +516,48 @@ impl BoardCopper {
                 ));
             }
         }
+        for (track, ring) in project.tracks.iter().zip(&track_rings) {
+            let in_fill = self
+                .fill_links
+                .iter()
+                .flatten()
+                .any(|o| *o == ObjectRef::Track { id: track.id });
+            if in_fill {
+                continue;
+            }
+            let open: Vec<String> = [track.start, track.end]
+                .into_iter()
+                .filter(|end| {
+                    let cap = CopperRing::of_circle(*end, track.width);
+                    let Some(bounds) = cap.bounds else {
+                        return false;
+                    };
+                    grid.near(&bounds, reach, &mut near);
+                    !near.iter().filter_map(|j| shapes.get(*j)).any(|other| {
+                        other.net == track.net
+                            && (other.layer == track.layer || other.through)
+                            && !std::ptr::eq(other.ring, ring)
+                            && other.ring.touches(&cap)
+                    })
+                })
+                .map(|end| format!("({}, {}) mm", mm(end[0]), mm(end[1])))
+                .collect();
+            if !open.is_empty() {
+                issues.push(Finding::new(
+                    "board.track_dangling",
+                    format!(
+                        "Track on {} ({}) ends at {} joining nothing",
+                        project.net_name(track.net),
+                        track.layer.name(),
+                        open.join(" and ")
+                    ),
+                    vec![
+                        ObjectRef::Track { id: track.id },
+                        ObjectRef::Net { id: track.net },
+                    ],
+                ));
+            }
+        }
         issues.extend(super::via::findings(self, project));
         issues.extend(courtyard::findings(project));
         issues

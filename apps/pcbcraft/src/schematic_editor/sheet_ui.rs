@@ -563,17 +563,18 @@ impl SchematicEditor {
         }))
     }
 
-    /// Turn the selected label a quarter counter-clockwise.
+    /// Turn the selected label a quarter counter-clockwise from the way it
+    /// is drawn (a port on a pin faces by itself until it is first turned).
     pub(super) fn rotated_item(&self, project: &Project) -> Option<Operation> {
         let Some(Item::Label(id)) = self.item else {
             return None;
         };
-        let label = project.label(id)?;
+        let rotation = pcbcraft_core::schematic::labels::current_rotation(project, id).ok()?;
         Some(Operation::Schematic(SchematicCommand::EditLabel {
             label: id,
             name: None,
             kind: None,
-            rotation: Some(label.rotation.turned(1)),
+            rotation: Some(rotation.turned(1)),
         }))
     }
 

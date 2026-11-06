@@ -146,9 +146,20 @@ impl UpdatePreview {
     }
 
     /// Cancel, as the panel's button does.
-    #[cfg(test)]
     pub fn cancel(&mut self) {
         self.close(Closed::Cancelled);
+    }
+
+    /// Esc on an open review cancels it and takes the key.
+    pub fn escape(&mut self, ctx: &egui::Context) {
+        if self.is_open()
+            && matches!(
+                crate::kit::dialog::keyboard(ctx, false),
+                Some(crate::kit::dialog::DialogAction::Cancel)
+            )
+        {
+            self.cancel();
+        }
     }
 
     /// How the last review closed, once.
@@ -1269,6 +1280,44 @@ mod tests {
         let none = content(&plan, engine.project(), None, &[(1, "R1".into(), false)]);
         assert_eq!(none.lines[0].title, "Check at least one instance to update");
         assert_eq!(none.lines[0].level, Level::Error);
+        Ok(())
+    }
+
+    /// Run 3, finding 6: Esc cancels an open review, as its Cancel button
+    /// does, and leaves the key alone when none is open.
+    #[test]
+    fn esc_cancels_an_open_review() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = with_unplaced()?;
+        let before = engine.revision();
+        let ctx = egui::Context::default();
+        let esc = || egui::RawInput {
+            events: vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..Default::default()
+        };
+        let mut review = UpdatePreview::default();
+        review.begin(&engine, Change::SyncPcb {});
+        let mut left = true;
+        let mut output = ctx.run_ui(esc(), |ui| {
+            review.escape(ui.ctx());
+            left = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        });
+        output.textures_delta.clear();
+        assert!(!review.is_open());
+        assert!(!left, "the key is taken");
+        assert_eq!(review.take_closed(), Some(Closed::Cancelled));
+        assert_eq!(engine.revision(), before);
+        let mut output = ctx.run_ui(esc(), |ui| {
+            review.escape(ui.ctx());
+            left = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        });
+        output.textures_delta.clear();
+        assert!(left, "no review, the key goes on");
         Ok(())
     }
 

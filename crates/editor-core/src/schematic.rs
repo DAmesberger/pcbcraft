@@ -1311,7 +1311,9 @@ fn draw(
                 .and_then(|(binding, package)| pin_numbers(binding, package, pin.terminal))
                 .filter(|_| pin.number.visible)
                 .map(|text| {
-                    let (at, rotation, justify) = pin.number_anchor();
+                    let width =
+                        text.chars().count() as f64 * TextMetric::default().advance * height;
+                    let (at, rotation, justify) = pin.number_anchor(width);
                     place(None, text, at, height, rotation, justify)
                 });
             // A name that only repeats the number ("1" on pin 1) says
