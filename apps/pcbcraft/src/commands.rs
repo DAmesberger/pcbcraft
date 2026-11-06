@@ -1480,11 +1480,18 @@ fn defaults() -> Vec<Command> {
         .keywords("renumber reference designator"),
         key(
             "schematic.delete",
-            "Delete the selected part, label, sheet symbol or drawing",
+            "Delete the selected part, wire, wire corner, label, sheet symbol or drawing",
             C::Schematic,
             Chord::key(K::Delete),
         )
         .also(&[Chord::key(K::Backspace)]),
+        key(
+            "schematic.split-wire",
+            "Split the selected wire at the segment under the pointer",
+            C::Schematic,
+            Chord::key(K::Delete).with_shift(),
+        )
+        .also(&[Chord::key(K::Backspace).with_shift()]),
         key(
             "schematic.cancel",
             "Cancel the tool",

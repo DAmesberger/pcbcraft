@@ -43,6 +43,7 @@ mod marking_row;
 mod menu;
 mod net_card;
 mod no_connect;
+mod path_edit;
 mod sheet_card;
 mod sheet_ui;
 mod wire_tool;
@@ -237,6 +238,12 @@ pub struct SchematicEditor {
     selected: Option<Id>,
     selected_occurrence: Option<Id>,
     selected_wire: Option<Id>,
+    /// The selected path's picked corner, for Delete.
+    selected_corner: Option<(Id, usize)>,
+    /// The path's corner, free end or segment being dragged.
+    path_drag: Option<path_edit::PathDrag>,
+    /// The wire and segment under the pointer, as of the last frame.
+    hovered_segment: Option<(Id, usize)>,
     /// Two or more objects selected together; one object is the single
     /// selection above.
     group: group::Group,
@@ -367,6 +374,9 @@ impl Default for SchematicEditor {
             selected: None,
             selected_occurrence: None,
             selected_wire: None,
+            selected_corner: None,
+            path_drag: None,
+            hovered_segment: None,
             group: Default::default(),
             group_drag: None,
             box_from: None,
@@ -1116,7 +1126,7 @@ impl SchematicEditor {
             && (self.selected_item(project).is_some()
                 || matches!(
                     self.subject(project),
-                    Subject::Instance(_) | Subject::Group | Subject::Wire(_)
+                    Subject::Instance(_) | Subject::Wire(_) | Subject::Group
                 ))
     }
 
@@ -1651,9 +1661,6 @@ impl SchematicEditor {
                 Subject::Instance(instance) => Some(Change::Instance {
                     edit: InstanceChange::Remove { instance },
                 }),
-                Subject::Wire(wire) => Some(Change::Schematic {
-                    command: SchematicCommand::Disconnect { wire },
-                }),
                 _ => None,
             };
             if let Some(change) = change
@@ -1661,6 +1668,17 @@ impl SchematicEditor {
             {
                 output = self.stage_update(engine, change).or(output);
             }
+        }
+        // Delete on the selected path removes its picked corner, else the
+        // whole path through the disconnect review; ⇧Delete splits it.
+        if self.tool == Tool::Select
+            && !self.palette.is_open()
+            && !self.update.is_open()
+            && !ui.ctx().egui_wants_keyboard_input()
+            && let Subject::Wire(wire) = self.subject(project)
+            && let Some(op) = self.path_keys(ui.ctx(), engine, wire)
+        {
+            output = Some(op);
         }
         // Delete on a group opens the review that lists all of it.
         if self.tool == Tool::Select
@@ -1770,6 +1788,7 @@ impl SchematicEditor {
             self.item_preview = None;
             self.group_drag = None;
             self.box_from = None;
+            self.path_drag = None;
         }
         let origin = rect.center() + self.pan;
         let scale = self.scale;
@@ -1835,6 +1854,10 @@ impl SchematicEditor {
                 }
                 if let Some(moved) = self.group_drag.as_ref().and_then(|d| d.wire(wire.id)) {
                     path.clone_from(moved);
+                }
+                // A dragged corner, free end or segment: what it will store.
+                if let Some(drag) = self.path_drag.as_ref().filter(|d| d.wire == wire.id) {
+                    path.clone_from(&drag.now);
                 }
                 // A label sitting on its pin's end leaves its wire no length.
                 if path.windows(2).all(|s| s[0] == s[1]) {
@@ -2004,14 +2027,7 @@ impl SchematicEditor {
                 })
                 .filter(|(_, d)| *d < WIRE_HIT_PX)
                 .min_by(|a, b| a.1.total_cmp(&b.1))?;
-            let here = view.world(pointer);
-            let on = schematic::nearest_on_wire(project, wire, here)?;
-            let snapped = snap(on, grid);
-            let at = schematic::nearest_on_wire(project, wire, snapped)
-                .filter(|p| {
-                    (p[0] - snapped[0]).hypot(p[1] - snapped[1]) <= schematic::JUNCTION_TOLERANCE_MM
-                })
-                .map_or(on, |_| snapped);
+            let at = path_edit::on_wire_snapped(project, wire, view.world(pointer), grid)?;
             Some((WireTarget::OnWire(WirePoint { wire, at }), screen(at)))
         };
         // The junction point under `pointer`, for the Junction tool.
@@ -2024,7 +2040,11 @@ impl SchematicEditor {
         };
         // The label drawn under the pointer: its connection point may be
         // away from its drawing (a port on a pin stands off on a leader).
-        let label_under = if wiring {
+        let ends_on_label = matches!(
+            self.path_drag.as_ref().map(|d| d.grab),
+            Some(path_edit::Grab::End(_))
+        );
+        let label_under = if wiring || ends_on_label {
             response
                 .interact_pointer_pos()
                 .or(response.hover_pos())
@@ -2033,11 +2053,9 @@ impl SchematicEditor {
         } else {
             None
         };
-        let target_at = |pointer: Pos2| -> Option<(WireTarget, Pos2)> {
-            // The nearest connection point within the snap radius, a pin
-            // end winning a tie; else a pin whose drawn line is under the
-            // pointer, landing on its connection end; else a label's
-            // drawing, landing on its connection point.
+        // The nearest connection point within the snap radius, a pin end
+        // winning a tie.
+        let point_at = |pointer: Pos2| -> Option<(WireTarget, Pos2)> {
             let points = pin_hits
                 .iter()
                 .map(|(e, p)| (WireTarget::Terminal(*e), *p, 0))
@@ -2055,6 +2073,12 @@ impl SchematicEditor {
                         .then(a.2.cmp(&b.2))
                 })
                 .map(|(target, p, _)| (target, p))
+        };
+        let target_at = |pointer: Pos2| -> Option<(WireTarget, Pos2)> {
+            // A connection point; else a pin whose drawn line is under the
+            // pointer, landing on its connection end; else a label's
+            // drawing, landing on its connection point.
+            point_at(pointer)
                 .or_else(|| {
                     pin_lines
                         .iter()
@@ -2126,25 +2150,57 @@ impl SchematicEditor {
                     .map(screen)
                     .collect();
                 // Connection points it runs over join it: ringed now.
-                let over = |p: Pos2| {
-                    p.distance(path[0]) > 1.0
-                        && path.last().is_some_and(|e| p.distance(*e) > 1.0)
-                        && path
-                            .windows(2)
-                            .any(|s| segment_distance(p, s[0], s[1]) < 1.0)
-                };
-                for p in pin_hits
-                    .iter()
-                    .map(|(_, p)| *p)
-                    .chain(junction_hits.iter().map(|(_, p)| *p))
-                    .chain(point_hits.iter().map(|(_, p)| *p))
-                    .filter(|p| over(*p))
-                {
-                    painter.circle_stroke(p, SNAP_MARKER_PX, Stroke::new(1.5, t.accent));
-                }
+                path_edit::ring_run_over(
+                    &painter,
+                    &path,
+                    pin_hits
+                        .iter()
+                        .map(|(_, p)| *p)
+                        .chain(junction_hits.iter().map(|(_, p)| *p))
+                        .chain(point_hits.iter().map(|(_, p)| *p)),
+                );
                 painter.add(egui::Shape::line(path, Stroke::new(1.5, t.accent)));
             }
         }
+        // Hovering a path highlights it, in the order a click picks: a pin
+        // or symbol goes first.
+        self.hovered_segment = response
+            .hover_pos()
+            .filter(|_| {
+                self.tool == Tool::Select
+                    && self.path_drag.is_none()
+                    && self.drag.is_none()
+                    && self.item_drag.is_none()
+                    && self.group_drag.is_none()
+                    && self.box_from.is_none()
+            })
+            .filter(|p| {
+                body_at(*p).is_none() && pin_hits.iter().all(|(_, q)| q.distance(*p) >= PIN_HIT_PX)
+            })
+            .and_then(|p| path_edit::hovered(&wire_paths, p));
+        if let Some((wire, segment)) = self.hovered_segment
+            && let Some((_, points)) = wire_paths.iter().find(|(id, _)| *id == wire)
+        {
+            path_edit::paint_hover(&painter, points, segment);
+        }
+        // What the path being dragged would land on and run over.
+        if let Some(drag) = &self.path_drag {
+            let path: Vec<Pos2> = drag.now.iter().copied().map(screen).collect();
+            path_edit::ring_run_over(
+                &painter,
+                &path,
+                pin_hits
+                    .iter()
+                    .map(|(_, p)| *p)
+                    .chain(junction_hits.iter().map(|(_, p)| *p))
+                    .chain(point_hits.iter().map(|(_, p)| *p)),
+            );
+            if let Some((_, p)) = drag.landing {
+                painter.circle_stroke(screen(p), SNAP_MARKER_PX, Stroke::new(1.5, t.accent));
+                painter.circle_filled(screen(p), 2.0, t.accent);
+            }
+        }
+        self.paint_path_handles(&painter, project, &wire_paths);
         if response.clicked()
             && let Some(pointer) = response.interact_pointer_pos()
         {
@@ -2237,7 +2293,20 @@ impl SchematicEditor {
                     let body = body_at(pointer);
                     let id = pin.map(|p| p.instance).or(body.map(|b| b.0));
                     let item = self.item_at(project, view.world(pointer), tolerance);
-                    if id.is_some() {
+                    // A square is on top of everything; a segment under a
+                    // symbol is the symbol's.
+                    let grab = self
+                        .path_grab(project, &wire_paths, pointer)
+                        .filter(|(_, g)| id.is_none() || !matches!(g, path_edit::Grab::Segment(_)));
+                    if let Some(grab) = grab {
+                        output = self.path_click(
+                            ui.ctx(),
+                            engine,
+                            grab,
+                            view.world(pointer),
+                            response.double_clicked(),
+                        );
+                    } else if id.is_some() {
                         self.select(id, body.map(|b| b.1), project);
                     } else if hit_wire.is_none()
                         && let Some(item) = item
@@ -2285,11 +2354,22 @@ impl SchematicEditor {
             self.menu_select(project, target);
             self.menu.open(pointer, target);
         }
+        // A drag from the selected path's square or segment edits it.
+        if self.tool == Tool::Select
+            && response.drag_started_by(egui::PointerButton::Primary)
+            && !ui.input(|i| i.modifiers.shift)
+            && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
+            && let Some((wire, grab)) = self.path_grab(project, &wire_paths, pointer)
+            && (!matches!(grab, path_edit::Grab::Segment(_)) || body_at(pointer).is_none())
+        {
+            self.start_path_drag(project, wire, grab, view.world(pointer));
+        }
         // A drag from a selected object moves the group; from empty canvas,
         // or with ⇧ from anywhere, it draws a selection rectangle.
         if self.tool == Tool::Select
             && !self.update.is_open()
             && !self.palette.is_open()
+            && self.path_drag.is_none()
             && response.drag_started_by(egui::PointerButton::Primary)
             && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
         {
@@ -2310,6 +2390,7 @@ impl SchematicEditor {
             && !self.update.is_open()
             && self.group_drag.is_none()
             && self.box_from.is_none()
+            && self.path_drag.is_none()
             && response.drag_started_by(egui::PointerButton::Primary)
             && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
             && let Some((id, occurrence_id)) = body_at(pointer)
@@ -2327,6 +2408,7 @@ impl SchematicEditor {
             && self.drag.is_none()
             && self.group_drag.is_none()
             && self.box_from.is_none()
+            && self.path_drag.is_none()
             && response.drag_started_by(egui::PointerButton::Primary)
             && let Some(pointer) = ui.input(|i| i.pointer.press_origin())
             && body_at(pointer).is_none()
@@ -2343,6 +2425,28 @@ impl SchematicEditor {
         {
             self.group_drag_to(project, view.world(pointer), grid);
         }
+        // A corner lands on a connection point (a T), a free end on any
+        // target; a segment follows the grid. None lands on its own wire.
+        if let Some(drag) = &self.path_drag
+            && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
+        {
+            let own = project.wire(drag.wire).map(|w| (w.id, w.from, w.to));
+            let landing = match drag.grab {
+                path_edit::Grab::Corner(_) => point_at(pointer),
+                path_edit::Grab::End(_) => target_at(pointer),
+                path_edit::Grab::Segment(_) => None,
+            }
+            .filter(|(target, _)| match *target {
+                WireTarget::OnWire(on) => own.is_none_or(|o| o.0 != on.wire),
+                WireTarget::Free(f) => {
+                    own.is_none_or(|o| o.1 != WireEnd::Free(f) && o.2 != WireEnd::Free(f))
+                }
+                _ => true,
+            })
+            .and_then(|(target, _)| Some((target, target_position(project, target)?)));
+            let free = ui.input(|i| i.modifiers.alt);
+            self.path_drag_to(view.world(pointer), grid, landing, free);
+        }
         let dragged_box = self
             .box_from
             .zip(ui.input(|i| i.pointer.latest_pos()))
@@ -2352,6 +2456,9 @@ impl SchematicEditor {
         }
         if response.drag_stopped_by(egui::PointerButton::Primary) {
             if let Some(op) = self.finish_group_drag() {
+                output = Some(op);
+            }
+            if let Some(op) = self.finish_path_drag(ui.ctx(), engine) {
                 output = Some(op);
             }
             if let Some(bx) = dragged_box {
@@ -2655,6 +2762,9 @@ fn canvas_hint(editor: &SchematicEditor, project: &Project) -> Option<String> {
         Tool::Draw(_) => "Click to start · Esc ends".to_owned(),
         Tool::Select if !editor.group.is_empty() => {
             "Drag to move · Cmd+R rotates · Shift+X mirrors · Delete removes".to_owned()
+        }
+        Tool::Select if editor.edited_path(project).is_some() => {
+            "Drag reshapes · double-click adds or drops a corner · ⇧Delete splits".to_owned()
         }
         Tool::Select if editor.item.is_some() => "Drag to move · Delete removes".to_owned(),
         Tool::Select if editor.selected.is_some() => {
@@ -3048,6 +3158,8 @@ mod canvas_pictures;
 mod junction_tests;
 #[cfg(test)]
 mod part_tests;
+#[cfg(test)]
+mod path_edit_tests;
 #[cfg(test)]
 mod sheet_tests;
 #[cfg(test)]

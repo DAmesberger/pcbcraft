@@ -562,3 +562,80 @@ fn write_readability_pictures() -> TestResult {
     std::fs::write(dir.join("readability.pdf"), pdf)?;
     Ok(())
 }
+
+/// The selected path's handles at the working zoom and at a page-fit zoom, on
+/// a path with long segments, one-grid steps and a free end.
+#[test]
+#[ignore = "writes schematic canvas pictures"]
+fn write_path_handle_pictures() -> TestResult {
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/schematic-pictures");
+    std::fs::create_dir_all(&dir)?;
+    let mut engine = Engine::demo()?;
+    let first = engine.project().instances[0].clone();
+    engine.apply(
+        engine.revision(),
+        Operation::Instance(InstanceCommand::Place(NewInstance {
+            sheet: None,
+            component: first.component,
+            designator: Some("R90".into()),
+            properties: vec![],
+            representation: first.representation,
+            unit: pcbcraft_core::UnitId(1),
+            position: [0.0, -400.0],
+            physical: None,
+        })),
+    )?;
+    let r90 = engine
+        .project()
+        .instance_by_designator("R90")
+        .map(|i| i.id)
+        .ok_or("placed")?;
+    let from = Endpoint {
+        instance: r90,
+        terminal: pcbcraft_core::TerminalId(2),
+    };
+    let a = schematic::pin_position(engine.project(), from).ok_or("pin")?;
+    let corners = [
+        [a[0] + 10.0, a[1]],
+        [a[0] + 10.0, a[1] + 2.5],
+        [a[0] + 12.5, a[1] + 2.5],
+        [a[0] + 12.5, a[1] + 5.0],
+        [a[0] + 25.0, a[1] + 5.0],
+    ];
+    let end = pcbcraft_core::model::FreeEnd::new([a[0] + 25.0, a[1] - 10.0]).ok_or("free")?;
+    engine.apply(
+        engine.revision(),
+        Operation::Schematic(SchematicCommand::DrawWire {
+            sheet: None,
+            from: from.into(),
+            corners: corners
+                .iter()
+                .map(|&at| pcbcraft_core::model::Corner { at })
+                .collect(),
+            to: WireTarget::Free(end),
+        }),
+    )?;
+    let wire = engine
+        .project()
+        .wires_at(from)
+        .next()
+        .map(|w| w.id)
+        .ok_or("wire")?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut textures = HashMap::new();
+    for (scale, name) in [(12.0_f32, "working"), (4.0, "fit")] {
+        let centre = [a[0] + 12.5, a[1]];
+        let mut editor = SchematicEditor {
+            scale,
+            pan: vec2(-(centre[0] as f32) * scale, centre[1] as f32 * scale),
+            selected_wire: Some(wire),
+            ..Default::default()
+        };
+        let _ = picture(&mut editor, &engine, &ctx, &mut textures, vec![], 2.0, &[])?;
+        let png = picture(&mut editor, &engine, &ctx, &mut textures, vec![], 2.0, &[])?;
+        std::fs::write(dir.join(format!("path-handles-{name}.png")), png)?;
+    }
+    Ok(())
+}
