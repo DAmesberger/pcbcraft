@@ -90,6 +90,12 @@ A sheet symbol (`sheet_symbol.place`, with an existing `child` or a new sheet) s
 
 `schematic.annotate { order, mode, numbering, sheets }` numbers designators across sheets in page order, then by position on the sheet at each instance's first placed unit (`rows`: top to bottom then left to right; `columns`: left to right then top to bottom); unplaced instances come last. An annotated designator is the component's prefix plus a number without leading zeros (`R12`). Mode `unannotated` (default) numbers only the others (`R?`, `R`) with the lowest free numbers, so existing designators stay stable; `all` renumbers every visited instance. `numbering: sheet_hundreds` starts each page at 100 × page + 1. The outcome lists every change.
 
+## Copy and paste
+
+The query `schematic.copy { sheet, objects }` reads symbols, labels, drawings and wires into a self-contained clip, which keeps what it needs after the objects are gone (a cut). A wire comes along when it is named or when both its ends are on named symbols or labels; an end on anything else becomes a free end where it is. `schematic.paste { sheet, clip, offset }` recreates the clip as one undo step. A symbol becomes a new instance of the same component with the next free designator ([annotation](#annotation)) and keeps its field values and other instance choices, with its units on that sheet; units elsewhere stay unplaced. A label keeps its name, so it joins that net as any label does. Sheet symbols and sheet pins are not copied.
+
+The desktop keeps a clip as its buffer. ⌘C and ⌘X work on the single selected object, because the sheet selects one object at a time. ⌘V pastes at the pointer; off the canvas, or again at the same point, it moves on two grid steps from the last paste. The first pasted object stays selected. Cut removes as Delete does, so a symbol or wire goes through the review. A focused text field keeps these keys. PCB Layout has no copy or paste: parts come from the schematic.
+
 ## Navigation and queries
 
 `schematic.sheets` lists the sheets in page order with parent symbol, depth and counts. `schematic.net_places { net }` lists where a net appears across sheets (labels, sheet pins, placed terminals, with sheet and position), which the desktop uses to jump between a label's other occurrences. `schematic.scene { sheet }` returns everything a sheet draws (page frame and title block, labels, ports, sheet symbols, furniture, wires, dots, no-connect crosses and units) as shapes and text in millimetres (`schematic::scene`); the canvas and the PDF export draw from it.
@@ -120,3 +126,5 @@ The existing net rules (driver conflicts, input-only nets, undriven power inputs
 - Buses (bus wires, bus entries, vector names such as `D[0..7]`) are not implemented.
 - Reusable child sheets instanced more than once (see above).
 - Labels do not yet draw with per-label font size or justification overrides.
+- The sheet has no multi-select (rectangle or ⇧-click), so the desktop copies one object at a time; `schematic.copy` already takes several.
+- A pasted object does not follow the pointer until clicked; it is pasted in place and selected.

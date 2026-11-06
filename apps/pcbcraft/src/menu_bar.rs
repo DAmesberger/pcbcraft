@@ -11,7 +11,7 @@
 //! stays with the tool. While Settings records a key, no item takes one.
 //!
 //! A chosen item ([`choose`]) runs its registry command, or, for the keys
-//! a focused field owns (Undo and Redo while typing, Cut, Copy, Paste and
+//! a focused field owns (Undo, Redo, Cut, Copy and Paste while typing, and
 //! Select All) and the canvas's own Delete, hands the key back to egui:
 //! the same input the field or canvas would have had without the menu,
 //! never a second run of a command.
@@ -211,6 +211,25 @@ enum TextEdit {
     SelectAll,
 }
 
+/// Cut, Copy or Paste: while typing they are the field's own; otherwise
+/// they run where the command is available.
+fn clipboard(command: &Command) -> bool {
+    matches!(
+        command.action,
+        Action::App(AppCommand::Cut | AppCommand::Copy | AppCommand::Paste)
+    )
+}
+
+/// The ⌘ key egui-winit turns into a clipboard event instead of a key press.
+pub fn clipboard_chord(event: &egui::Event) -> Option<Chord> {
+    match event {
+        egui::Event::Cut => Some(Chord::cmd(egui::Key::X)),
+        egui::Event::Copy => Some(Chord::cmd(egui::Key::C)),
+        egui::Event::Paste(_) => Some(Chord::cmd(egui::Key::V)),
+        _ => None,
+    }
+}
+
 /// Undo or Redo: while typing they are the field's own.
 fn history(command: &Command) -> Option<bool> {
     match command.action {
@@ -281,7 +300,9 @@ pub fn state(now: &Now, entry: Entry) -> Option<State> {
                     shown: None,
                 });
             };
-            let enabled = if text_edit(id).is_some() {
+            let enabled = if clipboard(command) {
+                now.typing || (now.available)(command)
+            } else if text_edit(id).is_some() {
                 now.typing
             } else if history(command).is_some() && now.typing {
                 true
@@ -384,7 +405,8 @@ pub fn choose(now: &Now, entry: Entry) -> Choice {
     }
     match entry {
         Entry::Command(id, _) => {
-            if let Some(edit) = text_edit(id) {
+            let field = now.typing || !now.registry.get(id).is_some_and(clipboard);
+            if let Some(edit) = text_edit(id).filter(|_| field) {
                 return match edit {
                     TextEdit::Cut => Choice::Inject(vec![egui::Event::Cut]),
                     TextEdit::Copy => Choice::Inject(vec![egui::Event::Copy]),
@@ -435,6 +457,7 @@ pub fn deliver(
                 raw.events.retain(|event| {
                     !matches!(event, egui::Event::Key { key, pressed: true, modifiers, .. }
                         if *key == chord.key && chord.matches(*modifiers))
+                        && clipboard_chord(event) != Some(chord)
                 });
             }
             if runs.len() < MAX_RUNS {

@@ -266,7 +266,7 @@ pub fn pin_frame(project: &Project, label: &Label) -> Option<(Point, Point)> {
 }
 
 /// The rotation a label is drawn with now.
-fn current_rotation(project: &Project, id: Id) -> Result<Rotation> {
+pub(super) fn current_rotation(project: &Project, id: Id) -> Result<Rotation> {
     let label = project
         .label(id)
         .ok_or_else(|| not_found("Unknown label."))?;

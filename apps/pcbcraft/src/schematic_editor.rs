@@ -32,6 +32,7 @@ use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+mod clipboard;
 mod instance_card;
 mod items_card;
 mod marking_row;
@@ -227,6 +228,11 @@ pub struct SchematicEditor {
     selected: Option<Id>,
     selected_occurrence: Option<Id>,
     selected_wire: Option<Id>,
+    /// What Copy or Cut put aside for Paste.
+    clipboard: Option<clipboard::Clipboard>,
+    /// The pointer over the canvas in sheet millimetres, snapped: where
+    /// ⌘V pastes.
+    pointer: Option<Point>,
     /// Net-name edit buffer for the selected wire's net.
     net_label: Option<(Id, String)>,
     /// The wire the Wire tool is drawing.
@@ -331,6 +337,8 @@ impl Default for SchematicEditor {
             selected: None,
             selected_occurrence: None,
             selected_wire: None,
+            clipboard: None,
+            pointer: None,
             net_label: None,
             wire: None,
             wire_flipped: false,
@@ -1582,6 +1590,7 @@ impl SchematicEditor {
         // on it too.
         let grid = engine.drafts().grid.symbol_mm;
         let world = |p: Pos2| snap(view.world(p), grid);
+        self.pointer = response.hover_pos().map(world);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0, t.viewport_bottom);
         let step = 5.0 * scale;
@@ -2039,7 +2048,7 @@ impl SchematicEditor {
             } else if let Some(item) = self.item_at(project, view.world(pointer), tolerance) {
                 menu::Target::Item(item)
             } else {
-                menu::Target::Sheet
+                menu::Target::Sheet { at: world(pointer) }
             };
             self.menu_select(project, target);
             self.menu.open(pointer, target);

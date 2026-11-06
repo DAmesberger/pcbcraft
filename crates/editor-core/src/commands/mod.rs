@@ -193,6 +193,10 @@ pub enum Outcome {
     Annotated {
         changes: Vec<crate::schematic::Renumbered>,
     },
+    /// What `schematic.paste` created.
+    Pasted {
+        report: crate::schematic::Pasted,
+    },
     /// The pair `diff_pair.add` created.
     DiffPairAdded {
         pair: crate::rules::signal::DiffPairId,

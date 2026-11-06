@@ -51,7 +51,7 @@ impl RibbonState {
 }
 
 /// Whether a pressed chord may run `command` now: a focused text field
-/// keeps plain keys and its own undo, redo and ⌘B; an open menu keeps plain
+/// keeps plain keys and its own undo, redo, clipboard and ⌘B; an open menu keeps plain
 /// keys; canvas keys run where they are handled.
 pub(super) fn dispatchable(command: &Command, chord: Chord, typing: bool, popup: bool) -> bool {
     if command.handler != Handler::Registry || !command.runnable() {
@@ -63,11 +63,37 @@ pub(super) fn dispatchable(command: &Command, chord: Chord, typing: bool, popup:
     !(typing
         && matches!(
             command.action,
-            Action::App(AppCommand::Undo | AppCommand::Redo | AppCommand::ToggleBrowser)
+            Action::App(
+                AppCommand::Undo
+                    | AppCommand::Redo
+                    | AppCommand::Cut
+                    | AppCommand::Copy
+                    | AppCommand::Paste
+                    | AppCommand::ToggleBrowser
+            )
         ))
 }
 
-/// The key presses of this frame no one consumed, as chords.
+/// Whether Cut, Copy or Paste can run in `workspace`: on the schematic
+/// sheet only. Parts come from the schematic, so the board has none to paste.
+pub(super) fn clipboard_availability(
+    workspace: Workspace,
+    schematic: &crate::schematic_editor::SchematicEditor,
+    project: &pcbcraft_core::Project,
+    app: AppCommand,
+) -> Result<(), String> {
+    if workspace != Workspace::Schematic {
+        return Err("Copy and paste work on the schematic sheet".into());
+    }
+    match app {
+        AppCommand::Cut => schematic.can_cut(project),
+        AppCommand::Copy => schematic.can_copy(project),
+        _ => schematic.can_paste(),
+    }
+}
+
+/// The key presses of this frame no one consumed, as chords. egui-winit
+/// delivers ⌘X, ⌘C and ⌘V as clipboard events rather than keys.
 pub(super) fn presses(ctx: &egui::Context) -> Vec<Chord> {
     ctx.input(|i| {
         i.events
@@ -85,7 +111,7 @@ pub(super) fn presses(ctx: &egui::Context) -> Vec<Chord> {
                     shift: modifiers.shift,
                     alt: modifiers.alt,
                 }),
-                _ => None,
+                other => crate::menu_bar::clipboard_chord(other),
             })
             .collect()
     })
@@ -161,6 +187,12 @@ impl App {
             Action::App(app) => match app {
                 AppCommand::Undo if !self.engine.can_undo() => Err("Nothing to undo".into()),
                 AppCommand::Redo if !self.engine.can_redo() => Err("Nothing to redo".into()),
+                AppCommand::Cut | AppCommand::Copy | AppCommand::Paste => clipboard_availability(
+                    self.workspace,
+                    &self.schematic,
+                    self.engine.project(),
+                    app,
+                ),
                 AppCommand::New
                 | AppCommand::Open
                 | AppCommand::Save
@@ -217,7 +249,7 @@ impl App {
             return;
         }
         match command.action {
-            Action::App(app) => self.app_command(app),
+            Action::App(app) => self.app_command(ctx, app),
             Action::Ribbon(workspace, event) => {
                 self.enter(workspace);
                 self.ribbon_event(ctx, event);
@@ -241,7 +273,7 @@ impl App {
         }
     }
 
-    fn app_command(&mut self, app: AppCommand) {
+    fn app_command(&mut self, ctx: &egui::Context, app: AppCommand) {
         match app {
             AppCommand::Palette => {
                 self.shortcut_sheet.close();
@@ -261,6 +293,19 @@ impl App {
             }
             AppCommand::Undo => self.history(false),
             AppCommand::Redo => self.history(true),
+            AppCommand::Copy => {
+                if let Err(error) = self.schematic.copy_selection(ctx, &self.engine) {
+                    self.command_refused(error, true);
+                }
+            }
+            AppCommand::Cut => match self.schematic.cut_selection(ctx, &self.engine) {
+                Ok(operation) => self.apply(ctx, crate::refusal::Origin::Command, operation),
+                Err(error) => self.command_refused(error, true),
+            },
+            AppCommand::Paste => {
+                let operation = self.schematic.paste_at_pointer(&self.engine);
+                self.apply(ctx, crate::refusal::Origin::Command, operation);
+            }
             AppCommand::ToggleBrowser => self.toggle_browser(),
             AppCommand::ToggleIssues => self.issues.toggle(),
             AppCommand::Messages => self.messages_open = true,

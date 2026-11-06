@@ -201,6 +201,47 @@ fn input(field: FieldRef, input: PropertyInput) -> PropertyEdit {
     }
 }
 
+/// A pasted symbol keeps the field values of the one it was copied from,
+/// and the two stay independent.
+#[test]
+fn a_pasted_symbol_keeps_its_field_values() -> Result<()> {
+    use crate::schematic::{ClipObject, SchematicCommand};
+    let Setup {
+        mut engine,
+        fields: f,
+        r1,
+        ..
+    } = setup()?;
+    set_properties(&mut engine, r1, vec![text(f.resistance, "22k")])?;
+    let crate::QueryResult::SheetClip(clip) = engine.query(crate::Query::SheetCopy {
+        sheet: None,
+        objects: vec![ClipObject::Instance { id: r1 }],
+    })?
+    else {
+        return Err(Error::Invalid("not a clip".into()));
+    };
+    let crate::Outcome::Pasted { report } = apply(
+        &mut engine,
+        crate::Operation::Schematic(SchematicCommand::Paste {
+            sheet: None,
+            clip,
+            offset: [0.0, -30.0],
+        }),
+    )?
+    else {
+        return Err(Error::Invalid("not pasted".into()));
+    };
+    let new = report
+        .symbols
+        .first()
+        .map(|s| s.instance)
+        .ok_or_else(|| Error::Invalid("no symbol".into()))?;
+    assert_eq!(si(&effective(&engine, new, f.resistance)?), Some(22_000.0));
+    set_properties(&mut engine, new, vec![text(f.resistance, "47k")])?;
+    assert_eq!(si(&effective(&engine, r1, f.resistance)?), Some(22_000.0));
+    Ok(())
+}
+
 #[test]
 fn quantity_text_is_parsed_in_core_with_the_documented_precedence() -> Result<()> {
     let Setup {

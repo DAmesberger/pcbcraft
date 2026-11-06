@@ -359,19 +359,25 @@ fn a_right_click_selects_and_a_row_runs_its_command() -> TestResult {
     let empty = pos2(700.0, 100.0);
     editor.select_instance(Some(r1), engine.project());
     click(&mut editor, &engine, &ctx, empty, PointerButton::Secondary);
-    assert_eq!(editor.menu.target(), Some(&Target::Sheet));
+    let target = editor.menu.target().copied().ok_or("no menu")?;
+    assert!(matches!(target, Target::Sheet { .. }));
     assert_eq!(editor.selected_instance(), Some(r1), "selection kept");
-    let rows = editor.menu_rows(&ctx, &engine, Target::Sheet);
+    let rows = editor.menu_rows(&ctx, &engine, target);
     assert_eq!(
         labels(&rows),
-        ["Place part", "Wire", "Label", "—", "Fit view"]
+        ["Place part", "Wire", "Label", "—", "Paste", "—", "Fit view"]
     );
-    assert!(rows.iter().flatten().all(|e| e.enabled));
-    assert!(
-        rows.iter()
-            .flatten()
-            .all(|e| matches!(e.run, Run::Command(_)))
-    );
+    // Everything is a registry command but Paste, which pastes at the
+    // click and has nothing to paste yet.
+    for entry in rows.iter().flatten() {
+        assert_eq!(entry.enabled, entry.label != "Paste", "{}", entry.label);
+        assert_eq!(
+            matches!(entry.run, Run::Command(_)),
+            entry.label != "Paste",
+            "{}",
+            entry.label
+        );
+    }
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
     let fit = text_at(&output, "Fit view")?;
     click(&mut editor, &engine, &ctx, fit, PointerButton::Primary);

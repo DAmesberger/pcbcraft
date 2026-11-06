@@ -422,6 +422,10 @@ pub enum AppCommand {
     ExportSchematicPdf,
     Undo,
     Redo,
+    /// The sheet's selection or, while typing, the field's own text.
+    Cut,
+    Copy,
+    Paste,
     ToggleBrowser,
     ToggleIssues,
     Messages,
@@ -1133,18 +1137,20 @@ fn defaults() -> Vec<Command> {
         app("edit.redo", "Redo", A::Redo)
             .chord(Chord::cmd(K::Z).with_shift())
             .icon("redo"),
-        // A text field's own clipboard keys (egui handles them in the
-        // field); listed so the Edit menu shows and takes them. Nothing on
-        // the canvas is cut, copied or pasted yet.
-        key("edit.cut", "Cut", C::Global, Chord::cmd(K::X))
+        // The schematic sheet's; over a focused field the field keeps these
+        // keys (`command_dispatch::dispatchable`).
+        app("edit.cut", "Cut", A::Cut)
+            .chord(Chord::cmd(K::X))
             .icon("cut")
-            .keywords("clipboard text field"),
-        key("edit.copy", "Copy", C::Global, Chord::cmd(K::C))
+            .keywords("clipboard text field schematic"),
+        app("edit.copy", "Copy", A::Copy)
+            .chord(Chord::cmd(K::C))
             .icon("copy")
-            .keywords("clipboard text field"),
-        key("edit.paste", "Paste", C::Global, Chord::cmd(K::V))
+            .keywords("clipboard text field schematic duplicate"),
+        app("edit.paste", "Paste", A::Paste)
+            .chord(Chord::cmd(K::V))
             .icon("paste")
-            .keywords("clipboard text field"),
+            .keywords("clipboard text field schematic duplicate"),
         key("edit.select-all", "Select all", C::Global, Chord::cmd(K::A))
             .icon("select")
             .keywords("text field"),
