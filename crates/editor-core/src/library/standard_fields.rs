@@ -124,6 +124,26 @@ pub const LED_COLOURS: [&str; 8] = [
     "White",
 ];
 
+/// The units of a standard quantity field, by its name.
+pub fn units(field: &str) -> Option<UnitSet> {
+    STANDARD
+        .iter()
+        .find(|s| s.field_name == field)
+        .map(unit_set)
+}
+
+fn unit_set(s: &Standard) -> UnitSet {
+    UnitSet {
+        dimension: s.dimension,
+        units: vec![UnitOfMeasure {
+            symbol: s.symbol.into(),
+            aliases: s.aliases.iter().map(|a| (*a).into()).collect(),
+            scale: 1.0,
+            si_prefixes: true,
+        }],
+    }
+}
+
 /// The built-in source's identity, as origins of imported copies record it.
 pub fn library_id() -> Option<LibraryId> {
     LibraryId::parse(LIBRARY)
@@ -182,15 +202,7 @@ pub fn bundle() -> Result<Bundle> {
     let mut records = Vec::with_capacity(2 * STANDARD.len() + 1);
     for s in &STANDARD {
         let kind = QuantityKind {
-            units: UnitSet {
-                dimension: s.dimension,
-                units: vec![UnitOfMeasure {
-                    symbol: s.symbol.into(),
-                    aliases: s.aliases.iter().map(|a| (*a).into()).collect(),
-                    scale: 1.0,
-                    si_prefixes: true,
-                }],
-            },
+            units: unit_set(s),
             default_unit: s.symbol.into(),
         };
         records.push(to_record(

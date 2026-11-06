@@ -312,6 +312,9 @@ pub struct SchematicEditor {
     /// Placement armed on a just-created component, at the revision that
     /// created it: Esc before anything else changed creates nothing.
     template_armed: Option<u64>,
+    /// The values each instance placed now takes: what a generic part's
+    /// search text named.
+    place_values: Vec<pcbcraft_core::library::templates::generic::GenericValue>,
     /// Esc cancelled that placement: the app undoes the create at this
     /// revision.
     template_undo: Option<u64>,
@@ -397,6 +400,7 @@ impl Default for SchematicEditor {
             template_sent: None,
             template_form: None,
             template_armed: None,
+            place_values: Vec::new(),
             template_undo: None,
             resolve: ResolveParts::default(),
             updates: Arc::default(),
@@ -1637,6 +1641,7 @@ impl SchematicEditor {
         let chosen = self.palette.show(ui, rect, engine, &placeable);
         if chosen.is_some() {
             self.template_armed = None;
+            self.place_values.clear();
         }
         match chosen {
             Some(PaletteAction::Place {
@@ -1691,6 +1696,22 @@ impl SchematicEditor {
                     None => self.template_form = Some((hit, query)),
                 }
             }
+            Some(PaletteAction::Generic(candidate)) => {
+                self.place_values.clone_from(&candidate.values);
+                if let Some(component) = candidate.component() {
+                    self.component = Some(component);
+                    self.tool = Tool::Place;
+                } else if let Some(operation) = crate::template_gallery::generic_request(&candidate)
+                {
+                    self.tool = Tool::Select;
+                    refusal::mark(ui.ctx(), Origin::Dialog(egui::Id::new(PLACE_TEMPLATE)));
+                    self.template_sent = Some((
+                        engine.revision(),
+                        crate::template_gallery::published_components(engine),
+                    ));
+                    output = Some(operation);
+                }
+            }
             Some(PaletteAction::Close) => self.tool = Tool::Select,
             None => {}
         }
@@ -1705,6 +1726,7 @@ impl SchematicEditor {
                 self.template_undo = Some(revision);
                 self.component = None;
             }
+            self.place_values.clear();
             self.wire = None;
             self.tool = Tool::Select;
             self.drag = None;
@@ -2100,6 +2122,11 @@ impl SchematicEditor {
                         output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
                             sheet: Some(self.sheet),
                             position: world(pointer),
+                            properties: pcbcraft_core::library::templates::generic::properties(
+                                &project.library,
+                                request.component,
+                                &self.place_values,
+                            ),
                             ..request
                         })));
                     }

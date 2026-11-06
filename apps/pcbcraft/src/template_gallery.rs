@@ -45,6 +45,10 @@
 //! on that row; from the Place palette the primary creates and publishes the
 //! component ([`publish_request`]) so the host can arm placement of it
 //! ([`TemplateGallery::take_to_place`]).
+//!
+//! The same lists also show the on-demand generic parts a text reads as
+//! ([`find_generic`], [`generic_row`]): the part itself when the project holds
+//! it, else a "not yet created" row that needs no form.
 use crate::kit::severity::Level;
 use crate::kit::toast::{ToastAction, post};
 use crate::kit::{self, Tone};
@@ -52,6 +56,7 @@ use crate::library_sources::FolderPick;
 use crate::refusal::{self, Origin};
 use crate::symbol_view::{self, View};
 use egui::{Align, Layout, Rect, Sense, Stroke, Ui, pos2, vec2};
+use pcbcraft_core::catalog::generic::GenericCandidate;
 use pcbcraft_core::catalog::templates::{TemplateHit, TemplateReport};
 use pcbcraft_core::catalog::{CatalogContext, MAX_QUERY, Source};
 use pcbcraft_core::library::footprint_source::ParamValue;
@@ -61,6 +66,7 @@ use pcbcraft_core::library::templates::catalog::{
     self, FamilyKind, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan, RowCitation,
     RowFrom, RowSource, SavePackageRow, SkeletonHint, TerminalMatch,
 };
+use pcbcraft_core::library::templates::generic::GenericState;
 use pcbcraft_core::library::{
     Bundle, Definition, MAX_DESIGNATOR_PREFIX, MAX_LABEL, PackageDefinition, PackageForm,
     PackageTerminal, Pad, PadKind, Provenance,
@@ -193,6 +199,87 @@ pub fn find(engine: &Engine, query: &str, limit: usize, context: &CatalogContext
         },
         _ => Found::default(),
     }
+}
+
+/// `library.generic_parts` for the text of a component search.
+pub fn find_generic(engine: &Engine, query: &str) -> Vec<GenericCandidate> {
+    let request = Query::GenericParts {
+        query: query.to_owned(),
+    };
+    match engine.query(request) {
+        Ok(QueryResult::GenericParts(report)) => report.candidates,
+        _ => Vec::new(),
+    }
+}
+
+/// A text that reads as the part of a template row lists it once.
+pub fn drop_covered(found: &mut Found, candidates: &[GenericCandidate]) {
+    found.hits.retain(|hit| {
+        !candidates
+            .iter()
+            .any(|c| c.covers_row.is_some() && c.covers_row == hit.starter)
+    });
+}
+
+/// The operation that creates a generic part that is not yet created.
+pub fn generic_request(candidate: &GenericCandidate) -> Option<Operation> {
+    let request = candidate.would_create.clone()?;
+    Some(Operation::Library(LibraryCommand::PublishFromTemplate(
+        Box::new(request),
+    )))
+}
+
+/// One generic part of a component search list: its name, its detail (or why
+/// its family refuses it), badges saying how the text was read, and a chip
+/// saying where it stands.
+pub fn generic_row(
+    ui: &mut Ui,
+    id: egui::Id,
+    candidate: &GenericCandidate,
+    query: &str,
+    highlighted: bool,
+) -> egui::Response {
+    let badges: Vec<kit::SearchBadge<'_>> = candidate
+        .badges
+        .iter()
+        .map(|b| kit::SearchBadge {
+            label: &b.label,
+            present: true,
+            tip: &b.tip,
+        })
+        .collect();
+    let chip = match candidate.state {
+        GenericState::Existing { .. } => None,
+        GenericState::NotCreated => Some(kit::RowChip {
+            label: "not yet created",
+            warning: false,
+        }),
+        GenericState::Draft { .. } => Some(kit::RowChip {
+            label: "draft",
+            warning: true,
+        }),
+        GenericState::Refused { .. } => Some(kit::RowChip {
+            label: "cannot be made",
+            warning: true,
+        }),
+    };
+    kit::search_row_marked(
+        ui,
+        id,
+        &kit::SearchRow {
+            icon: if candidate.component().is_some() {
+                "component"
+            } else {
+                "new"
+            },
+            label: &candidate.name,
+            query,
+            detail: &candidate.detail,
+            badges: &badges,
+            highlighted,
+        },
+        kit::RowMarks { star: false, chip },
+    )
 }
 
 /// One template row of a component search list: the row's name and detail,

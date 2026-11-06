@@ -127,6 +127,13 @@ pub enum Outcome {
         import: crate::library::import::ImportReport,
         drafted: Vec<DefinitionId>,
     },
+    /// `library.find_or_create`: the part, whether this command made it, and
+    /// the text's values for `component.place`.
+    GenericPart {
+        component: ComponentRef,
+        created: bool,
+        properties: Vec<crate::fields::PropertyEdit>,
+    },
     /// B1 `library.package_from_template`: what changed.
     PackageReplaced {
         plan: crate::library::templates::catalog::PackagePlan,

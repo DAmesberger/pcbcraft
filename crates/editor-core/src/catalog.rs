@@ -8,6 +8,7 @@
 //! loaded ([`SourceCatalog`], tagged by [`Source`]). Nothing
 //! here branches on a component category, field name or unit: filters come
 //! from the field definitions and quantity kinds the data carries.
+pub mod generic;
 pub mod models;
 pub mod preview;
 mod query;
@@ -1133,7 +1134,7 @@ pub struct Hit {
 }
 
 /// `library.search`: ranked results and how the query was read.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct SearchReport {
     /// The parsed terms, as the palette shows them.
     pub chips: Vec<String>,
