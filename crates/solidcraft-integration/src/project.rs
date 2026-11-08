@@ -1410,8 +1410,8 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     b.params(&object_params(project, &pads)?)?;
     // What an edit rarely changes comes first in the design's history, so
     // evaluating an edit reuses it: the generated and library package
-    // models and the via definitions, then the parts and copper. The
-    // laminate comes last (see there).
+    // models and the via definitions, then the fills, then the parts and
+    // copper. The laminate comes last (see there).
     for placement in &project.placements {
         let Some(physical) = project
             .instance(placement.instance)
@@ -1440,6 +1440,12 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     let mut parts = vec![];
     // Board joints of every part, made at the end (see there).
     let mut joints: Vec<(BoardJoint, JointFrame, Option<String>)> = vec![];
+    // The fills before the parts, pads, tracks and vias: a fill's body
+    // reads only its own sketch and the stackup's parameters, never the
+    // copper built before it, but Solidcraft keys each feature's cached
+    // result on every body made before it. After the parts and tracks,
+    // every edit to them would extrude every fill again.
+    let fills = fill::build(&mut b, project, board, &mut sources, &mut joints)?;
     for placement in &project.placements {
         let instance = project
             .instance(placement.instance)
@@ -1780,7 +1786,6 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     }
     let display = appearance::Board::of(project);
     let marks = vias(&mut b, project, &mut styles, &mut sources)?;
-    let fills = fill::build(&mut b, project, board, &mut sources, &mut joints)?;
     for mark in &marks {
         lands.extend(mark.lands(&display));
     }
