@@ -8,7 +8,7 @@
 //! what the refill fixes, so they are not listed one by one.
 //!
 //! The joins of stale copper do not count in board connectivity
-//! ([`links`]): an airwire shows as soon as a joined pad or via moves off
+//! ([`links`], read by the copper graph): an airwire shows as soon as a joined pad or via moves off
 //! the pour, not after the refill lands.
 use super::FILL_CHORD_MM;
 use super::compute::{Ctx, pad_on};
@@ -42,9 +42,23 @@ fn regions_of(fill: &Fill) -> Vec<Region> {
         .collect()
 }
 
-/// Groups of copper objects each fill island connects: every pad, via and
-/// track joined to one island. The board connectivity unions each group.
-pub(crate) fn links(project: &Project) -> Vec<Vec<ObjectRef>> {
+/// One island of a fresh fill and the copper its stored joins name.
+///
+/// Temporary adapter for the copper graph (`docs/copper-graph.md`, slice
+/// 1): the graph reads fill islands from the joins fill compute stored.
+/// Slice 3 removes it, when the graph joins fresh fill islands by the one
+/// joining rule.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FillLink {
+    pub fill: Id,
+    /// Index into the fill's computed regions.
+    pub region: u32,
+    pub members: Vec<ObjectRef>,
+}
+
+/// Every island of every fresh fill with the pads, vias and tracks it
+/// joins. Stale copper joins nothing until it is refilled.
+pub(crate) fn links(project: &Project) -> Vec<FillLink> {
     let mut out = Vec::new();
     if project.fills.iter().all(|f| f.computed.is_none()) {
         return out;
@@ -70,7 +84,11 @@ pub(crate) fn links(project: &Project) -> Vec<Vec<ObjectRef>> {
             };
             groups.entry(region).or_default().push(object);
         }
-        out.extend(groups.into_values());
+        out.extend(groups.into_iter().map(|(region, members)| FillLink {
+            fill: fill.id,
+            region,
+            members,
+        }));
     }
     out
 }

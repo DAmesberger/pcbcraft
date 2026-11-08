@@ -1,4 +1,5 @@
 use super::*;
+use crate::layout::CopperGraph;
 use crate::layout::LayoutCommand;
 use crate::model::{Stackup, Track};
 use crate::{Engine, Operation, Outcome};
@@ -513,17 +514,34 @@ fn ten_thousand_vias_are_all_checked_within_a_budget() -> Result<()> {
     let (first, last) = (project.vias[n - 2].id, project.vias[n - 1].id);
     let engine = engine_for(project)?;
     let project = engine.project();
-    // Best of three: the machine is shared with other builds.
-    let mut best = Duration::MAX;
+    // Best of five: the machine is shared with other builds. The copper
+    // graph's build, its connectivity findings and airwires are timed on
+    // their own, then the whole board check (graph included).
+    let mut best = [Duration::MAX; 4];
     let mut findings = Vec::new();
-    for _ in 0..3 {
+    for _ in 0..5 {
         let start = Instant::now();
-        let copper = BoardCopper::of(project);
-        findings = copper.checks(project);
-        let _ = copper.airwires(&project.tracks);
-        best = best.min(start.elapsed());
+        let graph = CopperGraph::of(project);
+        let built = start.elapsed();
+        let _ = graph.findings(project);
+        let found = start.elapsed();
+        let _ = graph.airwires();
+        let wired = start.elapsed();
+        findings = BoardCopper::of(project).checks(project, &graph);
+        let checked = start.elapsed();
+        for (slot, time) in
+            best.iter_mut()
+                .zip([built, found - built, wired - found, checked - wired + built])
+        {
+            *slot = (*slot).min(time);
+        }
     }
-    eprintln!("10,000 vias, 2,000 tracks: checks and airwires in {best:?}");
+    let [build, connectivity, wires, checks] = best;
+    eprintln!(
+        "10,000 vias, 2,000 tracks: copper graph built in {build:?}, its findings in \
+         {connectivity:?}, airwires in {wires:?}; board checks (graph included) in {checks:?}"
+    );
+    let best = checks + wires;
     assert!(
         !findings.iter().any(|f| f.code == "board.check_limit"),
         "the checks stopped at a limit"

@@ -193,7 +193,18 @@ pub struct IssueReport {
 /// board checks (Board). Rows are uncapped and sorted most severe first,
 /// grouped by [`IssueGroup`].
 pub fn report(project: &Project, drafts: &Drafts, scope: &IssueScope) -> Result<IssueReport> {
-    report_with(project, drafts, scope, false)
+    report_on(project, drafts, scope, &layout::CopperGraph::of(project))
+}
+
+/// [`report`] with `graph`, the copper graph of `project` (the engine's
+/// per-revision one).
+pub fn report_on(
+    project: &Project,
+    drafts: &Drafts,
+    scope: &IssueScope,
+    graph: &layout::CopperGraph,
+) -> Result<IssueReport> {
+    report_in(project, drafts, scope, false, graph)
 }
 
 /// [`report`], keeping the findings waived for production when
@@ -206,6 +217,22 @@ pub(crate) fn report_with(
     scope: &IssueScope,
     waived: bool,
 ) -> Result<IssueReport> {
+    report_in(
+        project,
+        drafts,
+        scope,
+        waived,
+        &layout::CopperGraph::of(project),
+    )
+}
+
+fn report_in(
+    project: &Project,
+    drafts: &Drafts,
+    scope: &IssueScope,
+    waived: bool,
+    graph: &layout::CopperGraph,
+) -> Result<IssueReport> {
     if let IssueScope::Selection { objects } = scope
         && objects.len() > MAX_SCOPE_OBJECTS
     {
@@ -215,7 +242,7 @@ pub(crate) fn report_with(
     }
     let names = names::Names::new(project, drafts);
     let mut all = Vec::new();
-    for (area, merged) in collect(project, drafts)? {
+    for (area, merged) in collect(project, drafts, graph)? {
         all.push(row(&names, area, merged));
     }
     if !waived && !project.production.waivers.is_empty() {
@@ -400,7 +427,11 @@ fn row(names: &names::Names<'_>, area: IssueArea, merged: Vec<Finding>) -> Issue
 
 /// Every finding of the project, by area, with same-cause findings merged
 /// into one entry (primary first).
-fn collect(project: &Project, drafts: &Drafts) -> Result<Vec<(IssueArea, Vec<Finding>)>> {
+fn collect(
+    project: &Project,
+    drafts: &Drafts,
+    graph: &layout::CopperGraph,
+) -> Result<Vec<(IssueArea, Vec<Finding>)>> {
     let mut out = Vec::new();
     let mut component = Vec::new();
     for report in completeness::drafts(project, drafts)? {
@@ -444,7 +475,7 @@ fn collect(project: &Project, drafts: &Drafts) -> Result<Vec<(IssueArea, Vec<Fin
             .map(|m| (IssueArea::Schematic, m)),
     );
     out.extend(
-        merge::board(layout::checks(project))
+        merge::board(layout::checks_with(project, graph))
             .into_iter()
             .map(|m| (IssueArea::Board, m)),
     );

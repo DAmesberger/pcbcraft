@@ -25,7 +25,7 @@ mod geom;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use checks::links;
+pub(crate) use checks::{FillLink, links};
 pub use checks::{fill_label, findings};
 
 /// The chord tolerance computed fill copper is flattened at, mm.

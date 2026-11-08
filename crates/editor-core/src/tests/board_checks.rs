@@ -967,9 +967,11 @@ fn a_waived_finding_leaves_issues_and_stays_waived_in_production() -> Result<()>
     Ok(())
 }
 
-/// Run 3, finding 8: a track end that meets nothing of its net is a warning
-/// that leads with the track and names it to Locate; an end on a pad, on
-/// another track or on a via is not, and export isn't blocked.
+/// Run 3, finding 8: copper that leads to no pad is a warning that leads
+/// with the track and names it to Locate; export isn't blocked. One stub is
+/// one finding however many tracks it has, and a via is a joint, not a
+/// termination: a via joining nothing else is named in the stub
+/// (`docs/copper-graph.md`, slice 1).
 #[test]
 fn a_dangling_track_end_warns_and_a_connected_one_does_not() -> Result<()> {
     let mut engine = Engine::demo()?;
@@ -1016,23 +1018,50 @@ fn a_dangling_track_end_warns_and_a_connected_one_does_not() -> Result<()> {
         both.message
     );
     assert!(both.objects.contains(&crate::ObjectRef::Track { id }));
-    // A second segment joins one end: only the far ends stay open.
+    // A second segment joins one end: the joined ends are no longer open,
+    // and the two tracks are one stub with both far ends.
+    let second = engine.project().next_id;
     route(&mut engine, [25.0, 20.0], [25.0, 25.0])?;
     let open = dangling(&engine);
-    assert_eq!(open.len(), 2, "{open:?}");
+    let [stub] = open.as_slice() else {
+        return Err(Error::Invalid(format!("one stub: {open:?}")));
+    };
+    assert!(!stub.message.contains("(25, 20) mm"), "{open:?}");
     assert!(
-        open.iter().all(|f| !f.message.contains("(25, 20) mm")),
+        stub.message.contains("(20, 20) mm and (25, 25) mm"),
         "{open:?}"
     );
-    // A via of the net closes the last one.
-    engine.apply(
+    assert!(
+        stub.objects
+            .contains(&crate::ObjectRef::Track { id: second })
+    );
+    // A via of the net joining nothing else does not end the stub: it is
+    // named in it, at the end it closes.
+    let outcome = engine.apply(
         engine.revision(),
         Operation::Layout(LayoutCommand::AddVia {
             via: ViaRequest::through(net, [25.0, 25.0]),
         }),
     )?;
     let open = dangling(&engine);
-    assert_eq!(open.len(), 1, "{open:?}");
+    let [stub] = open.as_slice() else {
+        return Err(Error::Invalid(format!("one stub: {open:?}")));
+    };
+    assert!(
+        stub.message
+            .contains("(20, 20) mm and a via at (25, 25) mm"),
+        "{}",
+        stub.message
+    );
+    let crate::Outcome::ViaAdded { via } = outcome else {
+        return Err(Error::Invalid(format!("{outcome:?}")));
+    };
+    assert!(stub.objects.contains(&crate::ObjectRef::Via { id: via }));
+    assert!(
+        !crate::layout::checks(engine.project())
+            .iter()
+            .any(|f| f.code == "board.via_dangling")
+    );
     // The production check lists it as a warning: export isn't blocked by it.
     let report = crate::fabrication::preflight::report(engine.project(), engine.drafts(), None)?;
     let item = report
