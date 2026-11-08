@@ -214,11 +214,6 @@ pub fn via_pad_clearance_conflict(
         )
 }
 
-/// Whether a via's copper touches a pad's exact outline on a shared layer.
-pub fn via_touches_pad(via: &Via, pad: &WorldPad, layers: &[CopperLayer]) -> bool {
-    shares_layer(via, pad, layers) && CopperRing::of_via(via).touches(&CopperRing::of_pad(pad))
-}
-
 fn budget(pairs: &mut usize) -> Result<()> {
     *pairs += 1;
     if *pairs > MAX_CHECK_PAIRS {

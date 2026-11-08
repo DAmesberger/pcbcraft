@@ -1105,6 +1105,7 @@ impl Engine {
             Operation::Update(update) => {
                 candidate.project = Arc::new(updates::candidate(
                     &self.document.project,
+                    &self.copper_graph(),
                     self.revision,
                     *update,
                 )?);
@@ -1429,7 +1430,13 @@ impl Engine {
     }
 
     pub fn preview_update(&self, change: updates::Change) -> updates::UpdatePlan {
-        updates::preview(&self.document.project, self.revision, change).0
+        updates::preview(
+            &self.document.project,
+            &self.copper_graph(),
+            self.revision,
+            change,
+        )
+        .0
     }
 
     pub fn apply_update(

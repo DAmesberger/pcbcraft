@@ -378,12 +378,40 @@ fn the_board_cannot_shrink_past_a_via() -> Result<()> {
     Ok(())
 }
 
+/// Splitting a net offers for removal the vias of the copper that would
+/// join pads now on different nets; a via joining no pad stays (slice 4 of
+/// `docs/copper-graph.md`).
 #[test]
 fn electrical_changes_to_a_net_with_vias_are_reviewed_updates() -> Result<()> {
     use crate::updates::{ApplyUpdate, Change};
     let mut engine = Engine::demo()?;
     let net = shared(&engine)?;
-    let Outcome::ViaAdded { via } = layout(
+    // R1.2 to R2.1 through two vias, as a layer change routes it.
+    let mut routed = Vec::new();
+    for command in [
+        change(
+            net,
+            CopperLayer::Top,
+            [8.8, 8.0],
+            [11.0, 10.0],
+            CopperLayer::Bottom,
+            [13.0, 10.0],
+        ),
+        change(
+            net,
+            CopperLayer::Bottom,
+            [12.5, 10.0],
+            [13.0, 10.0],
+            CopperLayer::Top,
+            [15.2, 8.0],
+        ),
+    ] {
+        let Outcome::ViaAdded { via } = layout(&mut engine, command)? else {
+            return Err(Error::Invalid("no via outcome".into()));
+        };
+        routed.push(via);
+    }
+    let Outcome::ViaAdded { via: lone } = layout(
         &mut engine,
         LayoutCommand::AddVia {
             via: ViaRequest::through(net, [12.0, 20.0]),
@@ -405,7 +433,8 @@ fn electrical_changes_to_a_net_with_vias_are_reviewed_updates() -> Result<()> {
         command: disconnect,
     };
     let plan = engine.preview_update(change.clone());
-    assert_eq!(plan.conflicting_vias, [via]);
+    assert_eq!(plan.conflicting_vias, routed);
+    assert_eq!(plan.conflicting_tracks.len(), 4);
     let update = |remove| {
         Operation::Update(Box::new(ApplyUpdate {
             expected_revision: engine.revision(),
@@ -417,7 +446,16 @@ fn electrical_changes_to_a_net_with_vias_are_reviewed_updates() -> Result<()> {
     let remove = update(true);
     assert!(engine.apply(engine.revision(), keep).is_err());
     engine.apply(engine.revision(), remove)?;
-    assert!(engine.project().vias.is_empty());
+    assert!(engine.project().tracks.is_empty());
+    assert_eq!(
+        engine
+            .project()
+            .vias
+            .iter()
+            .map(|v| v.id)
+            .collect::<Vec<_>>(),
+        [lone]
+    );
     Ok(())
 }
 
@@ -491,6 +529,58 @@ fn engine_for(project: Project) -> Result<Engine> {
     let mut file = Engine::showcase()?.to_file();
     file.project = project;
     Engine::from_file(file)
+}
+
+/// Update PCB on the 10,000-via board: disconnecting a wire of a net with
+/// 5,000 vias builds the updated board's copper graph once and previews
+/// within a budget (slice 4 of `docs/copper-graph.md`).
+#[test]
+fn an_update_preview_on_ten_thousand_vias_stays_quick() -> Result<()> {
+    use crate::updates::Change;
+    use std::time::{Duration, Instant};
+    let engine = engine_for(via_board(10_000, 2_000)?)?;
+    let net = engine.project().nets[0].id;
+    let wire = engine
+        .project()
+        .wires
+        .iter()
+        .find(|w| {
+            [w.from, w.to].into_iter().any(|end| {
+                end.terminal()
+                    .and_then(|t| engine.project().net_of(t))
+                    .is_some_and(|n| n.id == net)
+            })
+        })
+        .map(|w| w.id)
+        .ok_or_else(|| Error::NotFound("a wire on the first net".into()))?;
+    let change = Change::Schematic {
+        command: crate::schematic::SchematicCommand::Disconnect { wire },
+    };
+    let graph = engine.copper_graph();
+    let pads = graph.pads().to_vec();
+    let (mut build, mut preview) = (Duration::MAX, Duration::MAX);
+    let mut plan = None;
+    for _ in 0..5 {
+        let start = Instant::now();
+        let _ = CopperGraph::with_pads(engine.project(), pads.clone());
+        build = build.min(start.elapsed());
+        let start = Instant::now();
+        plan = Some(engine.preview_update(change.clone()));
+        preview = preview.min(start.elapsed());
+    }
+    eprintln!(
+        "10,000 vias, 2,000 tracks: updated board's copper graph in {build:?}, \
+         Update PCB preview (both graphs' checks included) in {preview:?}"
+    );
+    let plan = plan.ok_or_else(|| Error::NotFound("plan".into()))?;
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    eprintln!(
+        "offered for removal: {} tracks, {} vias",
+        plan.conflicting_tracks.len(),
+        plan.conflicting_vias.len()
+    );
+    assert!(preview < Duration::from_secs(1), "preview took {preview:?}");
+    Ok(())
 }
 
 /// Every via of a 10,000-via, 2,000-track board is checked (the checks

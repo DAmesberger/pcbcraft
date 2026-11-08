@@ -6,7 +6,7 @@ use crate::geometry::{Point, polygon_contains, segment_distance, segments_cross}
 use crate::ids::{Id, PadId};
 use crate::layout::copper::{CURVE_SLACK_MM, CopperRing};
 use crate::layout::grid::BoundsGrid;
-use crate::layout::{MAX_CHECK_PAIRS, fill};
+use crate::layout::{MAX_CHECK_PAIRS, WorldPad, fill};
 use crate::model::{CopperLayer, Project};
 use std::collections::{BTreeMap, HashMap};
 
@@ -228,8 +228,15 @@ impl CopperGraph {
     /// Build the graph of `project`'s copper. The engine caches it per
     /// revision ([`crate::Engine::copper_graph`]).
     pub fn of(project: &Project) -> Self {
+        Self::with_pads(project, crate::layout::pads(project))
+    }
+
+    /// The graph of `project`'s copper with `pads` as its connected pads,
+    /// each on the net it carries. Update PCB builds the updated board with
+    /// every pad on the net its copper had, to ask which pads that copper
+    /// would join after the update.
+    pub fn with_pads(project: &Project, pads: Vec<WorldPad>) -> Self {
         let layers = project.stackup.layers();
-        let pads = crate::layout::pads(project);
         let tracks = project.tracks.clone();
         let vias = project.vias.clone();
         let mut elements = Vec::new();

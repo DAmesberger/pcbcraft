@@ -20,10 +20,12 @@
 //! ([`super::fill::links`]); slice 3 of the design replaces that adapter
 //! with the joining rule.
 mod build;
+mod islands;
 mod queries;
 #[cfg(test)]
 mod tests;
 
+pub use islands::Island;
 pub use queries::Stub;
 
 use super::WorldPad;

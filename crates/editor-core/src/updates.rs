@@ -2334,7 +2334,12 @@ fn count_of(n: usize, one: &str, many: &str) -> String {
 
 /// Board and electrical findings of one project state.
 fn findings(project: &Project) -> Vec<Finding> {
-    let mut out = layout::checks(project);
+    findings_with(project, &layout::CopperGraph::of(project))
+}
+
+/// [`findings`] with `graph`, the copper graph of `project`.
+fn findings_with(project: &Project, graph: &layout::CopperGraph) -> Vec<Finding> {
+    let mut out = layout::checks_with(project, graph);
     out.extend(erc::checks(project));
     out
 }
@@ -2431,8 +2436,11 @@ fn removed_sheet_objects(plan: &mut UpdatePlan, project: &Project, next: &Projec
     }
 }
 
+/// `graph` is the copper graph of `project`
+/// ([`crate::Engine::copper_graph`]).
 pub(crate) fn preview(
     project: &Project,
+    graph: &layout::CopperGraph,
     revision: u64,
     change: Change,
 ) -> (UpdatePlan, Option<Project>) {
@@ -2757,8 +2765,9 @@ pub(crate) fn preview(
             );
         }
     }
-    let old_pads: BTreeMap<_, _> = layout::pads(project)
-        .into_iter()
+    let old_pads: BTreeMap<_, _> = graph
+        .pads()
+        .iter()
         .map(|pad| ((pad.instance, pad.pad), pad))
         .collect();
     let new_pads: BTreeMap<_, _> = layout::pads(&next)
@@ -2785,32 +2794,104 @@ pub(crate) fn preview(
         pad: key.1,
     };
     let track_ref = |track: &crate::model::Track| ObjectRef::Track { id: track.id };
-    let mut conflicts: BTreeMap<Id, (ConflictReason, Option<(Id, crate::ids::PadId)>)> = project
-        .tracks
-        .iter()
-        .filter(|t| electrical_changes.contains(&t.net))
-        .map(|t| (t.id, (ConflictReason::NetChanged, None)))
-        .collect();
-    let mut affected_tracks: BTreeSet<Id> = conflicts.keys().copied().collect();
-    let mut via_conflicts: BTreeSet<Id> = project
-        .vias
-        .iter()
-        .filter(|v| electrical_changes.contains(&v.net))
-        .map(|v| v.id)
-        .collect();
     let via_ref = |via: &crate::model::Via| ObjectRef::Via { id: via.id };
-    let layers = next.stackup.layers();
+    // The updated board with every pad on the net its copper had (a pad
+    // new to the board on its new net): each island is the copper of one
+    // net and the pads it would join after the update. The one copper
+    // graph decides what joins; nothing here tests touches of its own.
+    let carried: Vec<layout::WorldPad> = new_pads
+        .values()
+        .map(|pad| {
+            let mut pad = pad.clone();
+            if let Some(old) = old_pads.get(&(pad.instance, pad.pad)) {
+                pad.net = old.net;
+            }
+            pad
+        })
+        .collect();
+    let after = layout::CopperGraph::with_pads(&next, carried);
+    let islands = after.islands();
+    let key_of = |pad: &layout::WorldPad| (pad.instance, pad.pad);
+    let mut conflicts: BTreeMap<Id, (ConflictReason, Option<(Id, crate::ids::PadId)>)> =
+        BTreeMap::new();
+    let mut via_conflicts: BTreeSet<Id> = BTreeSet::new();
+    // Copper of a net the update removes has no net to stay on.
+    for track in &project.tracks {
+        if !new_nets.contains_key(&track.net) {
+            conflicts.insert(track.id, (ConflictReason::NetChanged, None));
+        }
+    }
+    via_conflicts.extend(
+        project
+            .vias
+            .iter()
+            .filter(|v| !new_nets.contains_key(&v.net))
+            .map(|v| v.id),
+    );
+    // Copper of a changed net that would join a pad now on another net:
+    // its whole island joins pads the net no longer joins. Copper of a net
+    // that only lost a pad elsewhere stays.
+    for island in &islands {
+        let Some(net) = island.net.filter(|n| electrical_changes.contains(n)) else {
+            continue;
+        };
+        let foreign = island
+            .pads
+            .iter()
+            .filter_map(|i| after.pads().get(*i))
+            .map(key_of)
+            .find(|key| new_pads.get(key).is_some_and(|p| p.net != net));
+        if let Some(key) = foreign {
+            for id in &island.tracks {
+                conflicts
+                    .entry(*id)
+                    .or_insert((ConflictReason::NetChanged, Some(key)));
+            }
+            via_conflicts.extend(island.vias.iter().copied());
+        }
+    }
+    let mut affected_tracks: BTreeSet<Id> = conflicts.keys().copied().collect();
     // The candidate's effective rules: profile, overrides, net classes
     // and class pairs, as the board checks read them.
     let rules = layout::limits::BoardRules::of(&next);
-    let mut pairs = 0usize;
-    for key in pad_ids {
-        let before = old_pads.get(&key);
-        let after = new_pads.get(&key);
-        if before == after {
-            continue;
+    let changed: Vec<_> = pad_ids
+        .iter()
+        .filter(|key| old_pads.get(*key).copied() != new_pads.get(*key))
+        .copied()
+        .collect();
+    let moved: Vec<layout::WorldPad> = changed
+        .iter()
+        .filter_map(|key| new_pads.get(key).cloned())
+        .collect();
+    let (near_tracks, near_vias) = layout::pad_clearance_conflicts(project, &moved, &rules);
+    for (id, pad) in near_tracks {
+        if let Some(pad) = moved.get(pad) {
+            conflicts
+                .entry(id)
+                .or_insert((ConflictReason::Clearance, Some(key_of(pad))));
         }
-        let (kind, line) = match (before, after) {
+        affected_tracks.insert(id);
+    }
+    via_conflicts.extend(near_vias.into_iter().map(|(id, _)| id));
+    let index = |pads: &[layout::WorldPad]| -> BTreeMap<_, _> {
+        pads.iter()
+            .enumerate()
+            .map(|(i, pad)| (key_of(pad), i))
+            .collect()
+    };
+    let (before_index, after_index) = (index(graph.pads()), index(after.pads()));
+    let mut track_island = BTreeMap::new();
+    let mut via_island = BTreeMap::new();
+    for (n, island) in islands.iter().enumerate() {
+        track_island.extend(island.tracks.iter().map(|id| (*id, n)));
+        via_island.extend(island.vias.iter().map(|id| (*id, n)));
+    }
+    let tracks_by_id: BTreeMap<Id, &crate::model::Track> =
+        project.tracks.iter().map(|t| (t.id, t)).collect();
+    for key in changed {
+        let before = old_pads.get(&key).copied();
+        let after_pad = new_pads.get(&key);
+        let (kind, line) = match (before, after_pad) {
             (None, _) => (K::Add, format!("{} is added on the board", pad_label(&key))),
             (_, None) => (K::Remove, format!("{} leaves the board", pad_label(&key))),
             (Some(b), Some(a)) if b.net != a.net => (
@@ -2833,34 +2914,26 @@ pub(crate) fn preview(
                 "{} world geometry: {} → {}.",
                 pad_label(&key),
                 world_pad(before),
-                world_pad(after)
+                world_pad(after_pad)
             ),
         );
-        for track in &project.tracks {
-            pairs += 1;
-            if pairs > 100_000 {
-                plan.block(
-                    "Too much copper to check; update fewer instances at a time",
-                    "Impact geometry budget exceeded; update fewer instances at a time.".into(),
-                    vec![],
-                );
-                break;
-            }
-            let touched_before = before.is_some_and(|p| layout::track_touches_pad(track, p));
-            let touched_after = after.is_some_and(|p| layout::track_touches_pad(track, p));
-            if touched_before || touched_after {
-                affected_tracks.insert(track.id);
-            }
-            if after.is_some_and(|p| layout::track_pad_clearance_conflict(track, p, &rules)) {
-                conflicts
-                    .entry(track.id)
-                    .or_insert((ConflictReason::Clearance, Some(key)));
-                affected_tracks.insert(track.id);
-            }
-            // The part stays placed but this pad is gone or unconnected.
-            let retired = after.is_none() && next.placements.iter().any(|p| p.instance == key.0);
+        // The copper on the pad before and after, read off the two graphs.
+        let (tracks_before, vias_before) = before_index
+            .get(&key)
+            .map(|i| graph.copper_at_pad(*i))
+            .unwrap_or_default();
+        let after_at = after_index.get(&key).copied();
+        if let Some(i) = after_at {
+            affected_tracks.extend(after.copper_at_pad(i).0);
+        }
+        affected_tracks.extend(tracks_before.iter().copied());
+        // Copper still joined to the pad after the update, maybe through
+        // other copper, is not detached from it.
+        let pad_island = after_at.and_then(|i| after.pad_island(i));
+        let joined = |island: Option<&usize>| pad_island.is_some() && island == pad_island.as_ref();
+        for track in tracks_before.iter().filter_map(|id| tracks_by_id.get(id)) {
             let net = project.net_name(track.net);
-            if touched_before && retired {
+            if after_pad.is_none() {
                 plan.warn(
                     &format!("A track on {net} loses {}; it stays for rerouting", pad_label(&key)),
                     format!(
@@ -2869,7 +2942,7 @@ pub(crate) fn preview(
                     ),
                     vec![track_ref(track), pad_ref(&key)],
                 );
-            } else if touched_before && !touched_after && !conflicts.contains_key(&track.id) {
+            } else if !joined(track_island.get(&track.id)) && !conflicts.contains_key(&track.id) {
                 plan.warn(
                     &format!("A track on {net} is detached from {}", pad_label(&key)),
                     format!(
@@ -2880,29 +2953,19 @@ pub(crate) fn preview(
                 );
             }
         }
-        for via in &project.vias {
-            pairs += 1;
-            if pairs > 100_000 {
-                break;
+        for via in vias_before.iter().filter_map(|id| project.via(*id)) {
+            if via_conflicts.contains(&via.id) || joined(via_island.get(&via.id)) {
+                continue;
             }
-            if after.is_some_and(|p| layout::via_pad_clearance_conflict(via, p, &layers, &rules)) {
-                via_conflicts.insert(via.id);
-            } else if before.is_some_and(|p| layout::via_touches_pad(via, p, &layers))
-                && !after.is_some_and(|p| layout::via_touches_pad(via, p, &layers))
-            {
-                let net = project.net_name(via.net);
-                plan.warn(
-                    &format!("A via on {net} is detached from {}", pad_label(&key)),
-                    format!(
-                        "A via on {net} is detached from {} after its geometry changes; copper stays in place for rerouting.",
-                        pad_label(&key)
-                    ),
-                    vec![via_ref(via), pad_ref(&key)],
-                );
-            }
-        }
-        if pairs > 100_000 {
-            break;
+            let net = project.net_name(via.net);
+            plan.warn(
+                &format!("A via on {net} is detached from {}", pad_label(&key)),
+                format!(
+                    "A via on {net} is detached from {} after its geometry changes; copper stays in place for rerouting.",
+                    pad_label(&key)
+                ),
+                vec![via_ref(via), pad_ref(&key)],
+            );
         }
     }
     for via in &project.vias {
@@ -3009,7 +3072,10 @@ pub(crate) fn preview(
             change_refs(&change),
         );
     }
-    plan.findings = review::findings_diff(findings(project), findings_after(project, &next));
+    plan.findings = review::findings_diff(
+        findings_with(project, graph),
+        findings_after(project, &next),
+    );
     plan.findings.new_rows = crate::issues::finding_rows(&next, &plan.findings.new);
     plan.findings.resolved_rows = crate::issues::finding_rows(project, &plan.findings.resolved);
     plan.planned_placements = next
@@ -3139,14 +3205,19 @@ fn name_added_placements(plan: &mut UpdatePlan, project: &Project, next: &Projec
     }
 }
 
-pub(crate) fn candidate(project: &Project, revision: u64, update: ApplyUpdate) -> Result<Project> {
+pub(crate) fn candidate(
+    project: &Project,
+    graph: &layout::CopperGraph,
+    revision: u64,
+    update: ApplyUpdate,
+) -> Result<Project> {
     if update.expected_revision != revision {
         return Err(Error::Stale {
             expected: update.expected_revision,
             actual: revision,
         });
     }
-    let (plan, candidate) = preview(project, revision, update.change);
+    let (plan, candidate) = preview(project, graph, revision, update.change);
     if !plan.blockers.is_empty() {
         return Err(Error::Conflict(plan.blockers.join("\n")));
     }

@@ -63,7 +63,6 @@ pub use placed::{
 pub use via::{
     DEFAULT_VIA_DIAMETER_MM, DEFAULT_VIA_DRILL_MM, DRILL_TO_COPPER_MM, HOLE_TO_HOLE_MM,
     LayerChangeRequest, MIN_ANNULAR_RING_MM, ViaRequest, via_pad_clearance_conflict,
-    via_touches_pad,
 };
 /// Most nearby copper pairs one check compares (shapes whose bounds come
 /// within [`copper::check_reach`]; farther pairs are never compared, so
@@ -1389,9 +1388,54 @@ pub fn track_pad_clearance_conflict(
         )
 }
 
-/// Whether a track's copper touches a pad's exact outline on its layer.
-pub fn track_touches_pad(track: &Track, pad: &WorldPad) -> bool {
-    pad.on(track.layer) && CopperRing::of_track(track).touches(&CopperRing::of_pad(pad))
+/// A track or via by ID, with the index of a pad it comes too close to.
+pub type PadHit = (Id, usize);
+
+/// The tracks and vias of `project` closer than the clearance rule to a
+/// pad of another net among `pads` ([`track_pad_clearance_conflict`],
+/// [`via_pad_clearance_conflict`]), each with the index of the first such
+/// pad. Only copper near each pad is compared.
+pub fn pad_clearance_conflicts(
+    project: &Project,
+    pads: &[WorldPad],
+    rules: &limits::BoardRules<'_>,
+) -> (Vec<PadHit>, Vec<PadHit>) {
+    let layers = project.stackup.layers();
+    let reach = rules.max_clearance() + 2.0 * copper::CURVE_SLACK_MM;
+    let tracks = grid::BoundsGrid::new(
+        project
+            .tracks
+            .iter()
+            .map(|t| CopperRing::of_track(t).bounds),
+        reach,
+    );
+    let vias = grid::BoundsGrid::new(
+        project.vias.iter().map(|v| CopperRing::of_via(v).bounds),
+        reach,
+    );
+    let (mut track_hits, mut via_hits) = (BTreeMap::new(), BTreeMap::new());
+    let mut near = Vec::new();
+    for (index, pad) in pads.iter().enumerate() {
+        let Some(bounds) = CopperRing::of_pad(pad).bounds else {
+            continue;
+        };
+        tracks.near(&bounds, reach, &mut near);
+        for track in near.iter().filter_map(|i| project.tracks.get(*i)) {
+            if track_pad_clearance_conflict(track, pad, rules) {
+                track_hits.entry(track.id).or_insert(index);
+            }
+        }
+        vias.near(&bounds, reach, &mut near);
+        for via in near.iter().filter_map(|i| project.vias.get(*i)) {
+            if via_pad_clearance_conflict(via, pad, &layers, rules) {
+                via_hits.entry(via.id).or_insert(index);
+            }
+        }
+    }
+    (
+        track_hits.into_iter().collect(),
+        via_hits.into_iter().collect(),
+    )
 }
 
 /// Every board check: clearance and edges over the exact outlines

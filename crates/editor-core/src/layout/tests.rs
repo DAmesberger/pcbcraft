@@ -728,7 +728,19 @@ fn round_pad_clearance_holds_either_side_of_the_rule() -> Result<()> {
         &pad,
         &limits::BoardRules::of(&project)
     ));
-    assert!(!track_touches_pad(&track, &pad));
+    // Clear of the pad, the track joins it in no island of the graph.
+    let graph = CopperGraph::of(&project);
+    let index = graph
+        .pads()
+        .iter()
+        .position(|p| p == &pad)
+        .ok_or_else(|| Error::NotFound("R1 pad 1 in the graph".into()))?;
+    assert!(
+        graph
+            .islands()
+            .iter()
+            .all(|i| !(i.pads.contains(&index) && i.tracks.contains(&track.id)))
+    );
     Ok(())
 }
 
