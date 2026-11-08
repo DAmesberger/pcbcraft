@@ -483,6 +483,9 @@ pub struct Engine {
     /// `fabrication.waive` refuses a waiver without a reason (a host
     /// setting; off by default).
     waiver_reason_required: bool,
+    /// The copper graph of this revision, built on first use and dropped
+    /// with every new revision ([`Engine::copper_graph`]).
+    copper: std::sync::OnceLock<Arc<layout::CopperGraph>>,
 }
 
 impl Engine {
@@ -913,7 +916,7 @@ impl Engine {
         file.validate()?;
         let revision = self.next_revision()?;
         self.document = file.into_document();
-        self.revision = revision;
+        self.set_revision(revision);
         self.undo.clear();
         self.redo.clear();
         self.last_step = None;
@@ -1371,10 +1374,11 @@ impl Engine {
                     layout::meander::plan(project, &obstacles, &request)?.preview(),
                 )))
             }
-            Query::Issues { scope } => Ok(QueryResult::Issues(issues::report(
+            Query::Issues { scope } => Ok(QueryResult::Issues(issues::report_on(
                 &self.document.project,
                 &self.document.drafts,
                 &scope,
+                &self.copper_graph(),
             )?)),
             Query::Templates { query, limit } => {
                 Ok(QueryResult::Templates(catalog::templates::search(
@@ -1486,7 +1490,7 @@ impl Engine {
         layout::fill::validate(&project)?;
         let revision = self.next_revision()?;
         self.document.project = Arc::new(project);
-        self.revision = revision;
+        self.set_revision(revision);
         Ok(fresh.len())
     }
 
@@ -1498,7 +1502,7 @@ impl Engine {
             .ok_or_else(|| Error::History("nothing to undo".into()))?;
         self.redo
             .push(std::mem::replace(&mut self.document, previous));
-        self.revision = revision;
+        self.set_revision(revision);
         self.last_step = None;
         Ok(())
     }
@@ -1511,7 +1515,7 @@ impl Engine {
             .ok_or_else(|| Error::History("nothing to redo".into()))?;
         self.undo
             .push_back(std::mem::replace(&mut self.document, next));
-        self.revision = revision;
+        self.set_revision(revision);
         self.last_step = None;
         Ok(())
     }
@@ -1535,6 +1539,20 @@ impl Engine {
         Ok(())
     }
 
+    /// The copper graph of the current revision: built once, on first use,
+    /// and shared by the checks, the Issues query and the desktop.
+    pub fn copper_graph(&self) -> Arc<layout::CopperGraph> {
+        self.copper
+            .get_or_init(|| Arc::new(layout::CopperGraph::of(&self.document.project)))
+            .clone()
+    }
+
+    /// Move to `revision`: every derived result of the old one is dropped.
+    fn set_revision(&mut self, revision: u64) {
+        self.revision = revision;
+        self.copper = std::sync::OnceLock::new();
+    }
+
     fn next_revision(&self) -> Result<u64> {
         self.revision
             .checked_add(1)
@@ -1550,7 +1568,7 @@ impl Engine {
             .push_back(std::mem::replace(&mut self.document, candidate));
         self.redo.clear();
         self.last_step = Some(self.revision);
-        self.revision = revision;
+        self.set_revision(revision);
         Ok(())
     }
 }

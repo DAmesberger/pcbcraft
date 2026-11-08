@@ -21,8 +21,8 @@ use pcbcraft_core::{
     instances,
     issues::{IssueArea, IssueScope},
     layout::{
-        self, BoardCopper, BoardDrawing, LayoutCommand, PlacedGraphic, PlacedHole, PlacedItem,
-        PlacedPad, WorldPad,
+        self, BoardCopper, BoardDrawing, CopperGraph, LayoutCommand, PlacedGraphic, PlacedHole,
+        PlacedItem, PlacedPad, WorldPad,
     },
     library::{PadKind, PlacedText, TextMetric},
     updates::Change,
@@ -32,6 +32,7 @@ use solidcraft_ui_egui::{
     theme::{self, Tokens},
 };
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 mod board_card;
 pub(crate) mod board_shape;
@@ -376,9 +377,12 @@ pub struct PcbEditor {
     drag_airwires: Option<DragAirwires>,
     show_airwires: bool,
     cached_revision: Option<u64>,
-    /// Connected pads with their exact outlines, built once per revision;
-    /// the checks, airwires and drag preview read it.
+    /// Connected pads with their exact outlines, built once per revision,
+    /// for the clearance checks.
     copper: BoardCopper,
+    /// The engine's copper graph of the cached revision: the checks'
+    /// connectivity, the airwires and the drag preview read it.
+    graph: Arc<CopperGraph>,
     airwires: Vec<(WorldPad, WorldPad)>,
     issues: Vec<pcbcraft_core::Finding>,
     board_pads: Vec<BoardPad>,
@@ -512,6 +516,7 @@ impl Default for PcbEditor {
             show_airwires: true,
             cached_revision: None,
             copper: BoardCopper::default(),
+            graph: Arc::default(),
             airwires: vec![],
             issues: vec![],
             board_pads: vec![],
@@ -754,8 +759,9 @@ impl PcbEditor {
                 self.fill = None;
             }
             self.copper = BoardCopper::of(engine.project());
-            self.airwires = self.copper.airwires(&engine.project().tracks);
-            self.issues = self.copper.checks(engine.project());
+            self.graph = engine.copper_graph();
+            self.airwires = self.graph.airwires();
+            self.issues = self.copper.checks(engine.project(), &self.graph);
             self.cache_board(engine.project());
             self.cached_revision = Some(engine.revision());
             // An instance without a placement stays selected: the card
@@ -866,10 +872,10 @@ impl PcbEditor {
         self.drag_airwires = None;
     }
 
-    /// Recompute only when the snapped position changes. The same bounded
-    /// connectivity kernel used by the committed board, over the revision's
-    /// cached copper with the dragged part's outlines moved, detects newly
-    /// detached routed pads as well as moving existing airwire endpoints.
+    /// Recompute only when the snapped position changes. The revision's
+    /// copper graph, with only the dragged part's pads joined again at
+    /// their moved outlines, detects newly detached routed pads as well as
+    /// moving existing airwire endpoints.
     /// The preview never enters Engine history, and is discarded on release
     /// or Escape.
     fn refresh_drag_airwires(&mut self, engine: &Engine) {
@@ -896,10 +902,7 @@ impl PcbEditor {
         ];
         self.drag_airwires = Some(DragAirwires {
             key,
-            connections: self
-                .copper
-                .moved(placement.instance, delta)
-                .airwires(&engine.project().tracks),
+            connections: self.graph.moved_airwires(placement.instance, delta),
         });
     }
 

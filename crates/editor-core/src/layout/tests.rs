@@ -2,12 +2,12 @@ use super::*;
 use crate::tests::support::{by_designator, demo_fixture, ep};
 use crate::{Engine, Operation, PadId, TerminalId, UnitId, instances, nets};
 
-fn ids() -> Result<(Id, Id)> {
+pub(crate) fn ids() -> Result<(Id, Id)> {
     let engine = Engine::demo()?;
     Ok((by_designator(&engine, "R1")?, by_designator(&engine, "R2")?))
 }
 
-fn fixture() -> Result<Project> {
+pub(crate) fn fixture() -> Result<Project> {
     let mut project = Engine::demo()?.project().clone();
     let (r1, r2) = ids()?;
     let net = |terminal| project.net_of(ep(r1, terminal)).map(|n| n.id);
@@ -28,7 +28,7 @@ fn fixture() -> Result<Project> {
 
 /// Demo net IDs: R1 terminals got 1 and 2, R2 got 3 and 4; connecting
 /// R1.2–R2.1 merged 3 into the older 2.
-const SHARED: Id = 2;
+pub(crate) const SHARED: Id = 2;
 const R1_1: Id = 1;
 
 fn request() -> RouteRequest {
@@ -850,9 +850,9 @@ fn board_outlines_match_the_placed_pad_outlines() -> Result<()> {
 fn moved_copper_gives_the_same_airwires_as_a_moved_placement() -> Result<()> {
     let mut project = with_pad_shape(fixture()?, circle());
     apply(&mut project, shared_track([11.2, 10.0], [23.8, 10.0]))?;
-    let copper = BoardCopper::of(&project);
-    assert_eq!(copper.airwires(&project.tracks), airwires(&project));
-    assert!(copper.airwires(&project.tracks).is_empty());
+    let graph = CopperGraph::of(&project);
+    assert_eq!(graph.airwires(), airwires(&project));
+    assert!(graph.airwires().is_empty());
     let r2 = ids()?.1;
     for delta in [[0.0, 0.3], [0.0, 0.7], [1.0, -2.0]] {
         let mut candidate = project.clone();
@@ -864,10 +864,8 @@ fn moved_copper_gives_the_same_airwires_as_a_moved_placement() -> Result<()> {
                 ];
             }
         }
-        let preview = copper.moved(r2, delta);
-        assert_eq!(preview.pads(), BoardCopper::of(&candidate).pads());
         assert_eq!(
-            preview.airwires(&candidate.tracks),
+            graph.moved_airwires(r2, delta),
             airwires(&candidate),
             "{delta:?}"
         );
@@ -875,16 +873,8 @@ fn moved_copper_gives_the_same_airwires_as_a_moved_placement() -> Result<()> {
     // Moved up 0.3 mm the round pad still overlaps the track's upper edge
     // (y 10.15); at 0.7 mm it clears it by 0.05 mm, where the old 1.4 mm
     // tall extent would still have connected.
-    assert!(
-        copper
-            .moved(r2, [0.0, 0.3])
-            .airwires(&project.tracks)
-            .is_empty()
-    );
-    assert_eq!(
-        copper.moved(r2, [0.0, 0.7]).airwires(&project.tracks).len(),
-        1
-    );
+    assert!(graph.moved_airwires(r2, [0.0, 0.3]).is_empty());
+    assert_eq!(graph.moved_airwires(r2, [0.0, 0.7]).len(), 1);
     Ok(())
 }
 

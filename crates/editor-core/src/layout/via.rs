@@ -4,7 +4,8 @@
 //! and mounting holes against vias and copper). Every limit comes from the
 //! project's design rules and net classes ([`BoardRules`]); the constants
 //! here are the default profile's values. Connectivity through vias lives
-//! in [`BoardCopper`], which treats a through via as copper on every layer.
+//! in the copper graph ([`super::connectivity`]): one land per layer the
+//! via reaches, joined by its barrel.
 use super::board_edge::{BoardEdges, EdgeVerdict};
 use super::copper::check_reach;
 use super::grid::BoundsGrid;
@@ -279,8 +280,9 @@ pub(super) fn check_clearance(project: &Project, id: Id) -> Result<()> {
 /// hole to hole and drill to board edge; then each mounting hole of the
 /// board shape against via drills and all copper. Every limit is the
 /// project's ([`BoardRules`]); pairs are found through bounds grids that
-/// reach as far as the largest clearance. Copper clearance and
-/// connectivity through vias are part of [`BoardCopper::checks`].
+/// reach as far as the largest clearance. Copper clearance is part of
+/// [`BoardCopper::checks`]; connectivity through vias is the copper
+/// graph's.
 pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> {
     let tracks = &project.tracks;
     let limits = BoardRules::of(project);

@@ -27,6 +27,7 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 pub const WORKING_AREA_MM: [f64; 2] = [-1000.0, 2000.0];
 
 pub mod board_edge;
+pub mod connectivity;
 mod copper;
 pub mod courtyard;
 pub mod fill;
@@ -47,6 +48,7 @@ pub mod router;
 pub mod showcase;
 pub mod staging;
 pub mod via;
+pub use connectivity::CopperGraph;
 #[cfg(test)]
 pub(crate) use copper::limit_finding as copper_limit_finding;
 pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
@@ -1392,11 +1394,18 @@ pub fn track_touches_pad(track: &Track, pad: &WorldPad) -> bool {
     pad.on(track.layer) && CopperRing::of_track(track).touches(&CopperRing::of_pad(pad))
 }
 
-/// Basic geometric connectivity and clearance checks over the exact pad
-/// outlines; see [`BoardCopper::checks`]. Callers holding a per-revision
-/// [`BoardCopper`] call that instead.
+/// Every board check: clearance and edges over the exact outlines
+/// ([`BoardCopper::checks`]), connectivity from the copper graph, fills,
+/// outline and lengths. Builds the copper graph; callers holding the
+/// revision's graph ([`crate::Engine::copper_graph`]) call
+/// [`checks_with`].
 pub fn checks(project: &Project) -> Vec<Finding> {
-    let mut findings = BoardCopper::of(project).checks(project);
+    checks_with(project, &CopperGraph::of(project))
+}
+
+/// [`checks`] with `graph`, the copper graph of `project`.
+pub fn checks_with(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
+    let mut findings = BoardCopper::of(project).checks(project, graph);
     findings.extend(fill::findings(project));
     findings.extend(outline::checks(project));
     findings.extend(length::checks(project));
@@ -1404,9 +1413,9 @@ pub fn checks(project: &Project) -> Vec<Finding> {
 }
 
 /// Airwires between physically disconnected copper islands; see
-/// [`BoardCopper::airwires`].
+/// [`CopperGraph::airwires`].
 pub fn airwires(project: &Project) -> Vec<(WorldPad, WorldPad)> {
-    BoardCopper::of(project).airwires(&project.tracks)
+    CopperGraph::of(project).airwires()
 }
 
 #[cfg(test)]

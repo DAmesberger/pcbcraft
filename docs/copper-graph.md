@@ -1,6 +1,6 @@
 # One copper graph (design)
 
-Design for review, 8 November 2026. It changes no code. Base: `component-model` at 32116be.
+Design for review, 8 November 2026. Base: `component-model` at 32116be. Approved by the founder with all its recommendations. Slice 1 is built; see [Slice 1 as built](#slice-1-as-built).
 
 The founder's requirement: "single copper graph. there is no excuse for duplication. everything needs to be single source of truth." His ruling on pairs: "what is a pin-to-pin link other than a track between two pins". So this design keeps no separate link or branch concept. Copper off a pair's signal path is ordinary net copper. Where it ends at a pin, it is a track between pins. Where it ends at no pad, it is a stub.
 
@@ -279,3 +279,63 @@ After S5, the only joining rule is `connectivity::joins`. `cargo xtask` could en
 6. **Q6: Incremental update.** Only if S1 measures the full build above about 10 ms on the 10,000-via board. *Recommendation: defer.* Keep the `ObjectRef`-keyed seam so it can be added without changing a query.
 7. **Q7: Enforcement.** Add an `xtask` gate so that nothing outside `layout/connectivity` calls the touch primitive. *Recommendation: yes, in S5.* It turns "single source of truth" into a check.
 8. **Q8: Update PCB conflicts.** Should only the copper that would join terminals of different nets be offered for removal, instead of every track on the changed net? *Recommendation: yes.* That is what the message already says, and the rest of the copper stays valid under persistent net IDs.
+
+## Slice 1 as built
+
+Built on `component-model` at ce259f8, 8 November 2026.
+
+### What exists
+
+- **`layout/connectivity.rs`** with `connectivity/build.rs` (elements, the joining rule, joints with stations, vertices, edges, islands), `connectivity/queries.rs` (stubs, findings, airwires, drag preview) and `connectivity/tests.rs`. `cargo xtask core-modules` needed no map change.
+- **Elements:** one per track; one land per layer a via reaches (`Via::on`, so a `ViaSpan::Between` via has lands only within its span), joined by barrel edges; one land per layer a pad reaches, a plated pad's lands joined by plated edges; one per island of a fresh fill.
+- **The one joining rule** is `connectivity::build::joins`: same layer, same net, exact copper within `JOIN_EPS` = 1e-6 mm plus curve slack. Tracks and via lands are exact capsules and discs (`CopperRing::capsule`). Each outline is tested once per same-net neighbour, and a joint is made on every layer both outlines have a land on.
+- **Stations:** a track end whose copper meets the other element joins at that end (0 or L); otherwise the track joins at its nearest station (a crossing, the nearest points of two segments, or the station nearest a land's centre). Stations within 1 µm merge. A track is a chain of vertices at its stations, joined by stretch edges.
+- **Stubs:** dead ends that are not pads are peeled until none is left; pads and fill islands are never peeled. An island with no pad is removed whole, so a floating loop is caught too. A via that keeps a land on copper leading to a pad is not part of a stub; what hangs off it is a separate stub.
+- **Findings** (`CopperGraph::findings`): `board.unrouted` per pad of a net whose pads lie in more than one island (message unchanged); one `board.track_dangling` per stub with tracks, naming its tracks, then its vias, then the net, with its open ends and the vias it ends at ("Track on N2 (Top) ends at (20, 20) mm and a via at (25, 25) mm joining nothing"); `board.via_dangling` for a via no stub names that joins nothing ("joins no copper of its net") or whose island holds no pad ("reaches no pad of its net"). A partial graph reports one `board.check_limit` and nothing else.
+- **Airwires** (`CopperGraph::airwires`): per net, Prim's minimum spanning tree over the islands, each airwire joining the nearest pads of the tree and a new island. Ties go to the earlier pad, so the result depends only on which pads share an island.
+- **Drag preview** (`CopperGraph::moved_airwires`): the graph's island forest without the moved pads' joints, plus joints found again for the moved outlines against their neighbours in the net's grid. The graph is not rebuilt. Fill joins stay as stored, as the old preview kept them.
+- **Engine cache:** `Engine::copper_graph()` builds the graph on first use per revision (a `OnceLock<Arc<CopperGraph>>` reset whenever the revision changes: apply, undo, redo, replace and refill). The Issues query (`issues::report_on`) and the desktop (`PcbEditor::graph`, for its checks, airwires and drag preview) read the same build. Pure callers use `CopperGraph::of`, `layout::checks` and `layout::airwires`; `layout::checks_with` takes a graph.
+- **Limits:** the joining scan stops past `MAX_CHECK_PAIRS` candidate pairs or 4 joints per element. The partial graph is marked; the checks report `board.check_limit`; airwires are drawn from what was joined and the check says they are incomplete. Nothing stops silently.
+
+### Deleted
+
+From `layout/copper.rs`: the union-find (`find`, `union`), `join_fills`, `fill_key`, the fill-link field, the same-net touch branch of the scan, the D1b dangling-end disc test, `BoardCopper::airwires` (D2) and `BoardCopper::moved`. `BoardCopper` now does placement, edge and clearance checks only. The desktop's own connectivity build is gone; it holds the engine's graph.
+
+### Temporary adapter
+
+- **`fill::links` → `FillLink { fill, region, members }`.** The graph reads fresh fill islands from the joins fill compute stored, and finds where a joined track meets the island from the stored island polygon (each end within reach, else the nearest station). Slice 3 removes it, when fill islands join by the one rule.
+
+No other adapter was needed: pair measurement (D3), net length (D4), Update PCB (D6), the router (D7), the route tool (D8) and the meander (D9) decide nothing that slice 1 changed, and stay as they are until slices 2, 4 and 5.
+
+### Deviations from the design
+
+- **Pads keep their flattened outline.** The design's "convex core ⊕ disc" for exact round pads was not built; circle, oblong and rounded pads still join within `CURVE_SLACK_MM`, as before. Tracks and vias are exact.
+- **Barrel edges carry no length yet.** Slice 2, which moves lengths onto the graph, adds the mid-plane distance.
+- **The joint limit is the per-element budget** (`MAX_JOINTS_PER_ELEMENT` = 4), as designed, with no separate constant.
+
+### Behaviour changes and test corrections
+
+Every disagreement case is a test in `connectivity/tests.rs` with the right answer: `c0_a_straight_track_joins_the_pads`, `c1_tracks_crossing_mid_span_join_and_their_overhangs_are_stubs` (routed; two stubs), `c2_track_ends_off_a_via_centre_join_it` (routed; nothing open), `c3_a_track_to_a_lone_via_is_one_stub` (unrouted; one stub naming track and via; no `via_dangling`), `c4_a_blind_via_joins_only_the_layers_it_spans` (unrouted), `c5_a_track_leaving_a_fill_to_an_open_end_is_a_stub` (routed through the fill; the open end is a stub; stale, the fill joins nothing), `c6_tracks_overlapping_side_by_side_join` (routed; no stub). Further tests cover a branch to no pad, dangling vias, the nearest-pad airwires, the partial graph and the engine cache.
+
+C4 shows one more consequence of the stub rule: with the blind via open, the copper from the blind via on to R2.1 (a Bottom track, a through via and a Top track) reaches one pad only, so it is one stub, as is the Top track and blind via from R1.2.
+
+Changed expectations in existing tests, each a correction:
+
+- `tests/board_checks.rs::a_dangling_track_end_warns_and_a_connected_one_does_not`. Two floating tracks joined end to end were two findings, one per track; they are now **one** stub finding naming both tracks and both far ends. One fault, one finding. A via added at the last open end used to close it, leaving one finding for the first track; the via joins nothing else, so it is a joint, not a termination, and is now named in the one stub finding ("… and a via at (25, 25) mm"), with no `board.via_dangling`. This is the via gap (C3) closed.
+- `layout/tests.rs::moved_copper_gives_the_same_airwires_as_a_moved_placement` now calls `CopperGraph::moved_airwires`. Its expected airwires are unchanged. The assertion that the moved `BoardCopper`'s pads equal the rebuilt ones went with `BoardCopper::moved`; the moved pads are still compared, inside the airwires the test checks.
+- `layout/via/tests.rs::ten_thousand_vias_are_all_checked_within_a_budget` times the graph build, its findings, the airwires and the board checks separately. Its assertions are unchanged.
+
+No other expectation changed. The ESP32 reference board stays at 0 issues, and its fab output is byte-identical (`regenerate.sh`).
+
+### Measured
+
+On `via_board(10_000, 2_000)` (10,000 through vias on 4 layers, 2,000 tracks, the showcase's pours), `test` profile, Apple M5 Max shared with other builds, best of 5 in each of three runs (they agree within 0.3 ms):
+
+| Work | Time | Target |
+| --- | --- | --- |
+| `CopperGraph::of` (40,000 via lands, the pads, 2,000 tracks, fill joins) | 5.5 ms (7.0 ms with other builds running) | ≤ 10 ms: met |
+| `CopperGraph::findings` (peel, stubs, unrouted, dangling vias) | 3.7 ms | — |
+| `CopperGraph::airwires` | 5 µs | — |
+| `BoardCopper::checks` with a fresh graph (graph, clearance, edge, via and courtyard checks) | 23.5 ms | — |
+
+The first version filed every land separately and built in about 30 ms; testing each outline once and joining its lands on the common layers brought it under the target. Incremental update (Q6) is not needed and was not built. The board checks with the graph (23.5 ms) cost about what the old checks did (23.2 ms, plus 5.0 ms for the separate airwire scan), and the graph now also finds stations, stubs and per-layer lands. The engine shares one build between the Issues query and the desktop editor, where there were two scans per revision. Memory was not measured.

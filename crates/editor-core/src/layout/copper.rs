@@ -1,10 +1,8 @@
 //! Board copper as exact outlines: every connected pad is its core pad
 //! outline ([`WorldPad::outline`], built on `library/footprint/geometry.rs`)
 //! and every track its round-capped stadium ([`super::track_shape`]).
-//! Connectivity, clearance,
-//! airwires and routing checks all measure these rings. A [`BoardCopper`]
-//! is built once per document revision and reused, including for the
-//! placement drag preview ([`BoardCopper::moved`]).
+//! Clearance, edge and routing checks measure these rings; which copper is
+//! joined is the copper graph's alone ([`super::connectivity`]).
 //!
 //! Curved edges are flattened within [`CURVE_SLACK_MM`]. Each ring records
 //! that slack, so the checks stay exact for straight-sided copper. On
@@ -14,6 +12,7 @@
 //! caps are exact instead: its gaps are measured from its centre line less
 //! its half-width.
 use super::board_edge::{BoardEdges, EdgeVerdict};
+use super::connectivity::CopperGraph;
 use super::grid::BoundsGrid;
 use super::limits::{BoardRules, mm};
 use super::{CLEARANCE_MM, EPS, MAX_CHECK_PAIRS, WorldPad, courtyard, pad_labels, sync_preview};
@@ -26,7 +25,6 @@ use crate::ids::Id;
 use crate::library::{PAD_ARC_TOLERANCE_MM, PadShape, Segment};
 use crate::model::{CopperLayer, Project, Track, Via};
 use crate::rules::CopperObject;
-use std::collections::{BTreeMap, BTreeSet};
 
 /// The chord tolerance curved copper edges are flattened at, in mm, and so
 /// the most a measured gap on a curved edge differs from the exact one.
@@ -125,7 +123,23 @@ impl CopperRing {
         }
     }
 
-    fn translated(&self, delta: Point) -> Self {
+    /// The points within `radius` of segment `a`–`b` (a disc when they
+    /// coincide), measured exactly from its spine. It carries no flattened
+    /// ring, so it is only compared with other outlines through
+    /// [`Self::gap`], which reads the spine.
+    pub(super) fn capsule(a: Point, b: Point, radius: f64) -> Self {
+        Self {
+            ring: Vec::new(),
+            bounds: Some(Bounds {
+                min: [a[0].min(b[0]) - radius, a[1].min(b[1]) - radius],
+                max: [a[0].max(b[0]) + radius, a[1].max(b[1]) + radius],
+            }),
+            slack: 0.0,
+            spine: Some((a, b, radius)),
+        }
+    }
+
+    pub(super) fn translated(&self, delta: Point) -> Self {
         let shift = |p: Point| [p[0] + delta[0], p[1] + delta[1]];
         Self {
             ring: self.ring.iter().map(|p| shift(*p)).collect(),
@@ -219,16 +233,13 @@ fn curved(shape: &PadShape) -> bool {
 }
 
 /// The connected pads and the vias of a board with their copper outlines,
-/// built once per document revision.
+/// built once per document revision, for the clearance and edge checks.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BoardCopper {
     pads: Vec<WorldPad>,
     rings: Vec<CopperRing>,
     vias: Vec<Via>,
     via_rings: Vec<CopperRing>,
-    /// Copper each fill island joins (`fill::links`): connected through
-    /// the fill.
-    fill_links: Vec<Vec<ObjectRef>>,
 }
 
 /// One copper shape the checks compare: a pad, a via or a track.
@@ -239,7 +250,6 @@ struct Copper<'a> {
     through: bool,
     ring: &'a CopperRing,
     object: ObjectRef,
-    pad: Option<usize>,
 }
 
 impl BoardCopper {
@@ -255,33 +265,6 @@ impl BoardCopper {
             rings,
             vias,
             via_rings,
-            fill_links: super::fill::links(project),
-        }
-    }
-
-    /// Union the shapes each fill island joins, marking them joined.
-    fn join_fills(&self, shapes: &[Copper<'_>], parents: &mut [usize], joined: &mut [bool]) {
-        if self.fill_links.is_empty() {
-            return;
-        }
-        let index: BTreeMap<(u8, Id, u32), usize> = shapes
-            .iter()
-            .enumerate()
-            .filter_map(|(i, s)| fill_key(&s.object).map(|k| (k, i)))
-            .collect();
-        for group in &self.fill_links {
-            let members: Vec<usize> = group
-                .iter()
-                .filter_map(|o| fill_key(o).and_then(|k| index.get(&k).copied()))
-                .collect();
-            for &m in &members {
-                if let Some(flag) = joined.get_mut(m) {
-                    *flag = true;
-                }
-            }
-            for pair in members.windows(2) {
-                union(parents, pair[0], pair[1]);
-            }
         }
     }
 
@@ -305,37 +288,18 @@ impl BoardCopper {
         self.rings.get(index)
     }
 
-    /// The same copper with one placement's pads moved by `delta`: what a
-    /// pure move of that placement gives, without rebuilding the outlines.
-    pub fn moved(&self, instance: Id, delta: Point) -> Self {
-        let mut moved = self.clone();
-        for (pad, ring) in moved.pads.iter_mut().zip(moved.rings.iter_mut()) {
-            if pad.instance == instance {
-                pad.position = [pad.position[0] + delta[0], pad.position[1] + delta[1]];
-                *ring = ring.translated(delta);
-            }
-        }
-        moved
-    }
-
     fn shapes<'a>(&'a self, tracks: &[Track], track_rings: &'a [CopperRing]) -> Vec<Copper<'a>> {
-        let pads = self
-            .pads
-            .iter()
-            .zip(&self.rings)
-            .enumerate()
-            .map(|(i, (pad, ring))| Copper {
-                kind: CopperObject::Pad,
-                net: pad.net,
-                layer: pad.layer.into(),
-                through: pad.through,
-                ring,
-                object: ObjectRef::Pad {
-                    instance: pad.instance,
-                    pad: pad.pad,
-                },
-                pad: Some(i),
-            });
+        let pads = self.pads.iter().zip(&self.rings).map(|(pad, ring)| Copper {
+            kind: CopperObject::Pad,
+            net: pad.net,
+            layer: pad.layer.into(),
+            through: pad.through,
+            ring,
+            object: ObjectRef::Pad {
+                instance: pad.instance,
+                pad: pad.pad,
+            },
+        });
         // A through via has copper on every layer, as a plated barrel pad.
         let vias = self
             .vias
@@ -348,7 +312,6 @@ impl BoardCopper {
                 through: true,
                 ring,
                 object: ObjectRef::Via { id: v.id },
-                pad: None,
             });
         let tracks = tracks.iter().zip(track_rings).map(|(t, ring)| Copper {
             kind: CopperObject::Track,
@@ -357,15 +320,14 @@ impl BoardCopper {
             through: false,
             ring,
             object: ObjectRef::Track { id: t.id },
-            pad: None,
         });
         pads.chain(vias).chain(tracks).collect()
     }
 
-    /// Geometric connectivity and clearance checks. Net membership does not
-    /// join separated copper: copper joins only where same-layer outlines
-    /// touch, and no interconnect through a component is assumed.
-    pub fn checks(&self, project: &Project) -> Vec<Finding> {
+    /// The board checks: placement, edge and clearance from these outlines,
+    /// then the connectivity findings of `graph` (the same revision's
+    /// copper graph), the via and the courtyard checks.
+    pub fn checks(&self, project: &Project, graph: &CopperGraph) -> Vec<Finding> {
         let mut issues = Vec::new();
         for id in sync_preview(project) {
             let reference = project
@@ -398,8 +360,6 @@ impl BoardCopper {
         let track_rings: Vec<CopperRing> =
             project.tracks.iter().map(CopperRing::of_track).collect();
         let shapes = self.shapes(&project.tracks, &track_rings);
-        let mut parents = (0..shapes.len()).collect::<Vec<_>>();
-        let mut joined = vec![false; shapes.len()];
         let limits = BoardRules::of(project);
         let reach = check_reach(&limits);
         let grid = BoundsGrid::new(shapes.iter().map(|s| s.ring.bounds), reach);
@@ -444,10 +404,10 @@ impl BoardCopper {
                 continue;
             };
             grid.near(&bounds, reach, &mut near);
-            for (j, b) in near
+            for b in near
                 .iter()
                 .filter(|j| **j > i)
-                .filter_map(|j| Some((*j, shapes.get(*j)?)))
+                .filter_map(|j| shapes.get(*j))
             {
                 pairs += 1;
                 if pairs > MAX_CHECK_PAIRS {
@@ -458,18 +418,9 @@ impl BoardCopper {
                     continue;
                 }
                 let (an, bn) = class_nets(a, b);
-                if a.net == b.net {
-                    if a.ring.touches(b.ring) {
-                        union(&mut parents, i, j);
-                        for k in [i, j] {
-                            if let Some(flag) = joined.get_mut(k) {
-                                *flag = true;
-                            }
-                        }
-                    }
-                } else if a
-                    .ring
-                    .closer_than(b.ring, limits.clearance(a.kind, an, b.kind, bn))
+                if a.net != b.net
+                    && a.ring
+                        .closer_than(b.ring, limits.clearance(a.kind, an, b.kind, bn))
                 {
                     let need = limits.clearance_need(a.kind, an, b.kind, bn);
                     issues.push(Finding::new(
@@ -486,137 +437,10 @@ impl BoardCopper {
                 }
             }
         }
-        self.join_fills(&shapes, &mut parents, &mut joined);
-        let mut groups: BTreeMap<Id, BTreeSet<usize>> = BTreeMap::new();
-        for (i, shape) in shapes.iter().enumerate().filter(|(_, s)| s.pad.is_some()) {
-            groups
-                .entry(shape.net)
-                .or_default()
-                .insert(find(&parents, i));
-        }
-        for shape in &shapes {
-            if shape.pad.is_some() && groups.get(&shape.net).is_some_and(|g| g.len() > 1) {
-                issues.push(Finding::new(
-                    "board.unrouted",
-                    format!(
-                        "Unrouted: {} ({})",
-                        label(shape),
-                        project.net_name(shape.net)
-                    ),
-                    vec![shape.object, ObjectRef::Net { id: shape.net }],
-                ));
-            }
-        }
-        for (shape, joined) in shapes.iter().zip(&joined) {
-            if let (ObjectRef::Via { .. }, false) = (shape.object, joined) {
-                issues.push(Finding::new(
-                    "board.via_dangling",
-                    format!("{} joins no copper of its net", label(shape)),
-                    vec![shape.object, ObjectRef::Net { id: shape.net }],
-                ));
-            }
-        }
-        for (track, ring) in project.tracks.iter().zip(&track_rings) {
-            let in_fill = self
-                .fill_links
-                .iter()
-                .flatten()
-                .any(|o| *o == ObjectRef::Track { id: track.id });
-            if in_fill {
-                continue;
-            }
-            let open: Vec<String> = [track.start, track.end]
-                .into_iter()
-                .filter(|end| {
-                    let cap = CopperRing::of_circle(*end, track.width);
-                    let Some(bounds) = cap.bounds else {
-                        return false;
-                    };
-                    grid.near(&bounds, reach, &mut near);
-                    !near.iter().filter_map(|j| shapes.get(*j)).any(|other| {
-                        other.net == track.net
-                            && (other.layer == track.layer || other.through)
-                            && !std::ptr::eq(other.ring, ring)
-                            && other.ring.touches(&cap)
-                    })
-                })
-                .map(|end| format!("({}, {}) mm", mm(end[0]), mm(end[1])))
-                .collect();
-            if !open.is_empty() {
-                issues.push(Finding::new(
-                    "board.track_dangling",
-                    format!(
-                        "Track on {} ({}) ends at {} joining nothing",
-                        project.net_name(track.net),
-                        track.layer.name(),
-                        open.join(" and ")
-                    ),
-                    vec![
-                        ObjectRef::Track { id: track.id },
-                        ObjectRef::Net { id: track.net },
-                    ],
-                ));
-            }
-        }
+        issues.extend(graph.findings(project));
         issues.extend(super::via::findings(self, project));
         issues.extend(courtyard::findings(project));
         issues
-    }
-
-    /// Airwires between physically disconnected copper islands of each net,
-    /// against `tracks`. The bounded scan conservatively leaves extra
-    /// guides when it cannot prove connectivity.
-    pub fn airwires(&self, tracks: &[Track]) -> Vec<(WorldPad, WorldPad)> {
-        let track_rings: Vec<CopperRing> = tracks.iter().map(CopperRing::of_track).collect();
-        let shapes = self.shapes(tracks, &track_rings);
-        let mut parents = (0..shapes.len()).collect::<Vec<_>>();
-        // Only touching joins copper here, so no clearance widens the reach.
-        let reach = TOUCH_REACH_MM;
-        let grid = BoundsGrid::new(shapes.iter().map(|s| s.ring.bounds), reach);
-        let mut near = Vec::new();
-        let mut pairs = 0usize;
-        'scan: for (i, a) in shapes.iter().enumerate() {
-            let Some(bounds) = a.ring.bounds else {
-                continue;
-            };
-            grid.near(&bounds, reach, &mut near);
-            for (j, b) in near
-                .iter()
-                .filter(|j| **j > i)
-                .filter_map(|j| Some((*j, shapes.get(*j)?)))
-            {
-                pairs += 1;
-                if pairs > MAX_CHECK_PAIRS {
-                    break 'scan;
-                }
-                if a.net == b.net
-                    && (a.layer == b.layer || a.through || b.through)
-                    && a.ring.touches(b.ring)
-                {
-                    union(&mut parents, i, j);
-                }
-            }
-        }
-        let mut joined = vec![false; shapes.len()];
-        self.join_fills(&shapes, &mut parents, &mut joined);
-        let mut islands: BTreeMap<Id, BTreeMap<usize, usize>> = BTreeMap::new();
-        for (i, pad) in self.pads.iter().enumerate() {
-            islands
-                .entry(pad.net)
-                .or_default()
-                .entry(find(&parents, i))
-                .or_insert(i);
-        }
-        let mut result = Vec::new();
-        for representatives in islands.values() {
-            let ids = representatives.values().copied().collect::<Vec<_>>();
-            for pair in ids.windows(2) {
-                if let (Some(a), Some(b)) = (self.pads.get(pair[0]), self.pads.get(pair[1])) {
-                    result.push((a.clone(), b.clone()));
-                }
-            }
-        }
-        result
     }
 }
 
@@ -631,33 +455,6 @@ fn class_nets(a: &Copper<'_>, b: &Copper<'_>) -> (Option<Id>, Option<Id>) {
             (None, None)
         }
         _ => (Some(a.net), Some(b.net)),
-    }
-}
-
-/// The identity a fill join names: (kind, id, pad).
-fn fill_key(object: &ObjectRef) -> Option<(u8, Id, u32)> {
-    match *object {
-        ObjectRef::Pad { instance, pad } => Some((0, instance, pad.0)),
-        ObjectRef::Via { id } => Some((1, id, 0)),
-        ObjectRef::Track { id } => Some((2, id, 0)),
-        _ => None,
-    }
-}
-
-fn find(parents: &[usize], mut at: usize) -> usize {
-    while let Some(&parent) = parents.get(at)
-        && parent != at
-    {
-        at = parent;
-    }
-    at
-}
-
-fn union(parents: &mut [usize], a: usize, b: usize) {
-    let a = find(parents, a);
-    let b = find(parents, b);
-    if let Some(parent) = parents.get_mut(b) {
-        *parent = a;
     }
 }
 
