@@ -68,7 +68,34 @@ The formulas are our own implementation of published equations (`layout::impedan
 2. otherwise derived (`derived`): of the parts both halves reach, the two farthest apart along the copper, each half taking the shortest path between them, so a part in line, such as ESD diodes, is passed through. When the halves share fewer than two parts, each takes its longest pad-to-pad path;
 3. otherwise, for a route still unfinished, each half's total copper as before (`copper`). A half past 2,048 tracks or 64 pads is also measured this way; both are target bounds.
 
-Everything off the path is a **stub**, one per branch, with its length (via barrels included), tracks and the pads it reaches. A two-pin half has no stubs and its path equals its total copper. A stale set endpoint, whose pad left the net in a schematic edit, is ignored and the row reads `derived`.
+A two-pin half has no copper off its path, and its path equals its total copper. A stale set endpoint, whose pad left the net in a schematic edit, is ignored and the row reads `derived`.
+
+### Copper off the signal path
+
+These terms mean the same on every net, paired or not:
+
+- A **stub** is copper that ends at no pad. It is a fault on any net, and the board check reports it as the warning `board.track_dangling`. Nothing else calls copper a stub.
+- Copper whose ends reach pins is **terminated**. A pin is a termination. Whether a contact is open in operation, such as a USB-C receptacle's unused plug orientation or an unpopulated part, is a property of the connector or part, which routing does not know. Terminated copper is not a stub and raises nothing.
+
+**Which code decides.** The board's copper connectivity is `BoardCopper` (`layout/copper.rs`): the exact copper outlines, fills included, in a grid index sized for the 10,000-via target. The board check reads it for `board.unrouted`, `board.via_dangling` and `board.track_dangling`; airwires read it for the islands they join. Only `board.track_dangling` decides that copper is a stub: a track end whose round cap meets no other copper of its net, unless a fill joins the track.
+
+The pair measurement builds a graph per half (`layout/length/path.rs`), above, because it needs what connectivity does not: where along a track each joint lies, a via's barrel per layer, and shortest paths. It reports no finding and decides no fault.
+
+**Branches.** A half's copper off its signal path is split into **branches** (`PairBranch`), one per connected piece. Each has its net, its length (via barrels included), its tracks and the `pins` it reaches. A branch's ends are classified by pins only:
+
+- A branch that reaches a pin is a **link** to it. On the ESP32 board the USB-C receptacle J1 has two contacts per signal, and each half links them: USB_DP by 2.245 mm to J1.A6, and USB_DN by 6.98 mm to J1.A7, through two vias and the bottom layer.
+- A branch that reaches no pin ends at no pad, unless it only rejoins the path; the board check reports that end as a stub. A link with an open spur is still a link; its spur's end is reported the same way.
+
+Branches count in neither skew nor uncoupled length. Their copper stays in the net's total length.
+
+**What is shown.** The length report lists each pair's `branches` with their net, length, tracks and pins. The High speed card shows one plain row per branch below the halves, labelled with its net: "Link to J1.A7 · 6.98 mm", or "Branch to no pin · 0.5 mm". Neither raises a warning; an open end is in Issues as `board.track_dangling`.
+
+**Not built.** No rule limits a branch's length, and parts do not yet say which contacts are open in some state. A future branch-length rule would be a net-class setting sourced from an interface's specification, unchecked by default. It would need those connector and part properties, since only a link to a contact that is open in operation acts as a stub electrically.
+
+**Known gaps.**
+
+- Connectivity is computed three times: the board check and airwires each run the same union-find scan over `BoardCopper`, and the pair graph joins copper by its own tests (exact centre-line joints, a track end on another track's copper, the nearest leg into a pad) and ignores fills. They agree on the tested boards. One copper graph per net in `layout`, built from `BoardCopper`'s indexed touches with the joint positions the pair needs, would let all three read one structure. It is deferred: it changes established check results at the edges (a cap overlapping another track's copper, fills) and must keep the 10,000-via target.
+- `board.track_dangling` tests track ends only. A track that ends at a via joining nothing else is not reported: the via counts as joined, and the track end touches it.
 
 **Targets.** A net's target is the most demanding of its length groups' targets (explicit, or the longest member) and, when its pair has a skew limit, its partner's length.
 
