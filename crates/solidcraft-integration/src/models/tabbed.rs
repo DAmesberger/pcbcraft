@@ -326,17 +326,6 @@ mod tests {
         ))
     }
 
-    fn volume(native: &Native, name: &str) -> Result<f64> {
-        let state = native.session().model.state();
-        let body = state
-            .body(name)
-            .ok_or_else(|| Error::Verification(format!("no body {name}")))?;
-        Ok(body
-            .measure()
-            .map_err(|e| Error::Verification(e.to_string()))?
-            .volume)
-    }
-
     /// Lead bodies in terminal order stand over the core's lead points,
     /// reach the seating plane, and every body is disjoint from the others.
     fn leads_stand_on_their_points(form: TabbedForm) -> Result<ModelDefinition> {
@@ -359,25 +348,7 @@ mod tests {
             }
             assert!(lo[2].abs() <= 1e-6, "{} on the seating plane", lead.name);
         }
-        let total: f64 = def
-            .bodies
-            .iter()
-            .map(|b| volume(&native, &b.name))
-            .sum::<Result<f64>>()?;
-        let names: Vec<&str> = def.bodies.iter().map(|b| b.name.as_str()).collect();
-        let Some((first, rest)) = names.split_first() else {
-            return Err(Error::Verification("no bodies".into()));
-        };
-        native.call(
-            "solid.combine",
-            serde_json::json!({"target": first, "tools": rest, "operation": "join",
-                "keep_tools": true, "new_component": false}),
-        )?;
-        let union = volume(&native, first)?;
-        assert!(
-            (union - total).abs() < 1e-6 * total.max(1.0),
-            "bodies overlap: {total} mm³ apart, {union} mm³ joined"
-        );
+        super::super::tests::disjoint_within(&mut native, &def, 1e-6)?;
         Ok(def)
     }
 

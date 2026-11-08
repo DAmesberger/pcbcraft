@@ -428,10 +428,8 @@ mod tests {
             }
             // Within the envelope, and disjoint.
             let env = pkg.form.envelope().unwrap_or_default();
-            let mut total = 0.0;
             for body in &def.bodies {
-                let (lo, hi, v) = measure(&native, &body.name)?;
-                total += v;
+                let (lo, hi, _) = measure(&native, &body.name)?;
                 for axis in 0..2 {
                     assert!(
                         hi[axis] - lo[axis] <= env[axis] + 1e-6,
@@ -441,25 +439,13 @@ mod tests {
                 }
                 assert!(hi[2] <= env[2] + 1e-6, "{lead:?} {} height", body.name);
             }
-            let names: Vec<&str> = def.bodies.iter().map(|b| b.name.as_str()).collect();
-            let Some((first, rest)) = names.split_first() else {
-                return Err(Error::Verification("no bodies".into()));
-            };
-            native.call(
-                "solid.combine",
-                serde_json::json!({"target": first, "tools": rest, "operation": "join",
-                    "keep_tools": true, "new_component": false}),
-            )?;
-            let (_, _, union) = measure(&native, first)?;
-            // An overlap makes the union smaller than the sum. Curved
-            // (MELF) faces are measured through their tessellation, so the
-            // two volumes agree to about 1e-5 relative there (the smallest
-            // body, a 0.06 mm³ band ring, is still 100 × the tolerance).
+            // Curved (MELF) faces are measured through their tessellation,
+            // so the two volumes agree to about 1e-5 relative there (the
+            // smallest body, a 0.06 mm³ band ring, is still 100 × the
+            // tolerance).
             let tolerance = if lead == MoldedLead::Melf { 1e-4 } else { 1e-6 };
-            assert!(
-                (union - total).abs() < tolerance * total.max(1.0),
-                "{lead:?}: bodies overlap: {total} apart, {union} joined"
-            );
+            super::super::tests::disjoint_within(&mut native, &def, tolerance)
+                .map_err(|e| Error::Verification(format!("{lead:?}: {e}")))?;
         }
         Ok(())
     }
