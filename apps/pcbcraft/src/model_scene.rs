@@ -137,10 +137,12 @@ const LOD_MIN: usize = 16;
 impl Instanced {
     /// `mesh`, placements of this group, shaded through its look in `scene`.
     pub fn shaded(&self, scene: &mut GpuScene, mut mesh: InstancedMesh) -> InstancedMesh {
-        mesh.graph = self
-            .look
-            .as_ref()
-            .and_then(|look| scene.graphs.material(&look.ir, &look.words, &look.base).ok());
+        mesh.graph = self.look.as_ref().and_then(|look| {
+            scene
+                .graphs
+                .material(&look.ir, &look.words, &look.base)
+                .ok()
+        });
         mesh
     }
 

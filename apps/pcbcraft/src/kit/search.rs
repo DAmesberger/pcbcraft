@@ -294,9 +294,8 @@ pub fn filter_field(
             .line_segment([c - vec2(arm, arm), c + vec2(arm, arm)], stroke);
         ui.painter()
             .line_segment([c + vec2(-arm, arm), c + vec2(arm, -arm)], stroke);
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Button, true, "Clear filter")
-        });
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Clear filter"));
         if response.clicked() {
             value.clear();
             changed = true;
@@ -789,9 +788,7 @@ pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response 
         detail,
         dim,
     );
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::Role::Button, row.enabled, row.label)
-    });
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, row.enabled, row.label));
     if row.enabled {
         super::text::hover(response, &full_row(row.label, row.detail), "", cut)
     } else {

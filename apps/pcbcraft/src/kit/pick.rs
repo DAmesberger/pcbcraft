@@ -11,8 +11,8 @@
 //! alike.
 use super::severity::{Level, severity_glyph};
 use egui::{
-    Align, CursorIcon, FontId, Layout, Rect, Sense, Stroke, Ui, UiBuilder, WidgetInfo, Role,
-    pos2, vec2,
+    Align, CursorIcon, FontId, Layout, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo, pos2,
+    vec2,
 };
 use solidcraft_ui_egui::{fonts, theme::Tokens, ui_kit};
 
@@ -115,9 +115,7 @@ pub fn pick_row(ui: &mut Ui, id: egui::Id, row: &PickRow<'_>) -> PickResponse {
         let fold = ui
             .interact(chevron.expand(t.space_2), id.with("fold"), Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
-        fold.widget_info(|| {
-            WidgetInfo::selected(Role::DisclosureTriangle, true, open, row.title)
-        });
+        fold.widget_info(|| WidgetInfo::selected(Role::DisclosureTriangle, true, open, row.title));
         out.folded |= fold.clicked();
         x += icon + t.space_4;
     }

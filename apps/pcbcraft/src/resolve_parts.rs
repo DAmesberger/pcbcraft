@@ -504,12 +504,15 @@ impl ResolveParts {
         let cards = ((ctx.content_rect().width() - t.space_24 * 2.0) / t.form_card_width.max(1.0))
             .clamp(MIN_CARDS, MAX_CARDS);
         let mut action = None;
-        let closed =
-            ui_kit::Window::new(egui::Id::unique("resolve-parts"), "component", "Resolve parts")
-                .cards(cards)
-                .show_body(ctx, |ui| {
-                    kit::form(ui, |ui| action = self.body(ui, engine));
-                });
+        let closed = ui_kit::Window::new(
+            egui::Id::unique("resolve-parts"),
+            "component",
+            "Resolve parts",
+        )
+        .cards(cards)
+        .show_body(ctx, |ui| {
+            kit::form(ui, |ui| action = self.body(ui, engine));
+        });
         if closed {
             action = Some(ResolveAction::Close);
         }

@@ -1191,8 +1191,12 @@ impl Viewport {
         {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             let (cube, _) = nav_cube::layout(rect);
-            ui.interact(cube, ui.scope_id().with("pcb-3d-cube"), egui::Sense::hover())
-                .on_hover_text_at_pointer(nav_cube::tooltip(target));
+            ui.interact(
+                cube,
+                ui.scope_id().with("pcb-3d-cube"),
+                egui::Sense::hover(),
+            )
+            .on_hover_text_at_pointer(nav_cube::tooltip(target));
         }
     }
 }

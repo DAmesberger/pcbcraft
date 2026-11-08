@@ -103,9 +103,8 @@ impl Messages {
         let now = ctx.input(|i| i.time);
         let mut out = MessagesResponse::default();
         let any = !self.entries.is_empty();
-        out.closed = ui_kit::Window::new(egui::Id::unique("messages"), "list", "Messages").show_body(
-            ctx,
-            |ui| {
+        out.closed = ui_kit::Window::new(egui::Id::unique("messages"), "list", "Messages")
+            .show_body(ctx, |ui| {
                 super::actions(ui, |ui| {
                     out.copy_all =
                         ui_kit::button(ui, "Copy all", ui_kit::Button::Enabled(any)).clicked();
@@ -143,8 +142,7 @@ impl Messages {
                         );
                     });
                 }
-            },
-        );
+            });
         if out.cleared {
             self.clear();
         }

@@ -172,12 +172,7 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
     let elided = galley.elided;
     clip.galley(pos2(x, cy - galley.size().y / 2.0), galley, ink);
     response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::Role::Button,
-            true,
-            row.selected,
-            row.label,
-        )
+        egui::WidgetInfo::selected(egui::Role::Button, true, row.selected, row.label)
     });
     let full = match (elided, secondary_cut) {
         (true, true) => format!("{}\n{}", row.label, row.secondary),

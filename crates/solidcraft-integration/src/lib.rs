@@ -35,7 +35,7 @@ mod fixtures;
 /// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-font-order`
 /// branch of the DAmesberger/solidcraft fork (upstream 4f3ac07 plus the
 /// opt-in product look, via scaling and a font-order fix).
-pub const SOLIDCRAFT_REVISION: &str = "17a92306d8f096d39d0807c7733e394e80e8a8cb";
+pub const SOLIDCRAFT_REVISION: &str = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

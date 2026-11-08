@@ -239,7 +239,9 @@ impl PartEditor {
                         },
                         ..Default::default()
                     };
-                    if kit::tree_row(ui, ui.scope_id().with(("terminal", terminal.id.0)), &row).clicked {
+                    if kit::tree_row(ui, ui.scope_id().with(("terminal", terminal.id.0)), &row)
+                        .clicked
+                    {
                         clicked = Some(terminal.id);
                     }
                 });

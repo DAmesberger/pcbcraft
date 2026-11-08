@@ -17,8 +17,8 @@
 //! public tokens and fonts.
 use super::severity::{Level, severity_glyph};
 use egui::{
-    Align, Color32, CursorIcon, FontId, Galley, Layout, Rect, Response, RichText, Sense, Stroke,
-    Ui, UiBuilder, WidgetInfo, Role, pos2, vec2,
+    Align, Color32, CursorIcon, FontId, Galley, Layout, Rect, Response, RichText, Role, Sense,
+    Stroke, Ui, UiBuilder, WidgetInfo, pos2, vec2,
 };
 use pcbcraft_core::issues::{IssueCounts, IssueDetail};
 use solidcraft_ui_egui::{fonts, theme::Tokens, ui_kit};
@@ -466,9 +466,8 @@ fn group_header(ui: &mut Ui, id: egui::Id, group: &IssueGroupView) -> (bool, boo
     ui.painter()
         .galley(pos2(count_x, cy - count.size().y / 2.0), count, t.form_dim);
     let label = format!("{}: {}", group.title, group.level.count_words(group.rows));
-    response.widget_info(|| {
-        WidgetInfo::selected(Role::DisclosureTriangle, true, group.open, &label)
-    });
+    response
+        .widget_info(|| WidgetInfo::selected(Role::DisclosureTriangle, true, group.open, &label));
     let response = response.on_hover_cursor(CursorIcon::PointingHand);
     let response = if elided {
         response.on_hover_text(&group.title)
@@ -688,8 +687,7 @@ pub fn issues_bar(
             .galley(pos2(text_x, cy - text.size().y / 2.0), text, t.text_dim);
         name = format!("{name}; {elsewhere}");
     }
-    response
-        .widget_info(|| WidgetInfo::selected(Role::Button, ui.is_enabled(), expanded, &name));
+    response.widget_info(|| WidgetInfo::selected(Role::Button, ui.is_enabled(), expanded, &name));
     response
         .on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text(&name)

@@ -202,7 +202,11 @@ fn header(ui: &mut Ui, icon: &str, title: &str, kind: &str) -> bool {
         vec2(t.form_close_size, t.form_close_size),
     );
     let close = ui
-        .interact(close_rect, ui.scope_id().with("dialog_close"), Sense::click())
+        .interact(
+            close_rect,
+            ui.scope_id().with("dialog_close"),
+            Sense::click(),
+        )
         .on_hover_text("Close")
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     close.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));

@@ -267,7 +267,7 @@ fn luminance(p: &[u8]) -> f64 {
 /// views, as metal from a typical view, and never black. Discrete lights
 /// alone could not (see `docs/editor-evidence.md`).
 #[test]
-#[ignore = "bar set on the old studio; the look needs its review on the calibrated STU-005 rig (measured in the repin report)"]
+#[ignore = "upstream renderer's studio: lowest 0.17, median 0.21, brightest 0.24 against the 0.30 bar (fork 21ac01f4a); the look awaits review"]
 fn exposed_gold_reflects_the_studio_from_every_side() -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut gpu) = Gpu::new() else {
         // A machine that has a GPU sets PCBCRAFT_REQUIRE_GPU, so a missing
@@ -318,7 +318,7 @@ fn exposed_gold_reflects_the_studio_from_every_side() -> Result<(), Box<dyn std:
 /// brightest board pixels stand well above the typical ones, while almost
 /// nothing clips to white.
 #[test]
-#[ignore = "bar set on the old studio; the look needs its review on the calibrated STU-005 rig (measured in the repin report)"]
+#[ignore = "REGRESSION on the upstream renderer (fork 21ac01f4a): the top mask draws grey, not green, at overview pixel density (median 0.20, 95th 0.21); open, see the repin report"]
 fn the_overview_shows_a_sheen_on_the_mask_without_clipping()
 -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut gpu) = Gpu::new() else {

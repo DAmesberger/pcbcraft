@@ -1006,7 +1006,10 @@ mod tests {
         feed.folder = Some(OpenFolder { pick, report: None });
         publish(&ctx, Some(feed));
         ctx.data_mut(|d| {
-            d.insert_persisted(egui::Id::unique(("browser-open", "catalog-favourites")), true);
+            d.insert_persisted(
+                egui::Id::unique(("browser-open", "catalog-favourites")),
+                true,
+            );
         });
         let (_, shown) = frame(&ctx, &engine);
         assert!(shown.iter().any(|t| t == "Favourites"), "{shown:?}");

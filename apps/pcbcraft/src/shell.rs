@@ -307,12 +307,7 @@ fn tool_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Response {
     ui.painter()
         .galley(pos2(rect.center().x, rect.top() + 32.0), galley, ink);
     response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::Role::Button,
-            tool.enabled,
-            tool.selected,
-            tool.label,
-        )
+        egui::WidgetInfo::selected(egui::Role::Button, tool.enabled, tool.selected, tool.label)
     });
     tool_tooltip(response, tool)
 }
@@ -415,7 +410,8 @@ fn split_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Option<&'static str> {
     let run = ui.interact(upper, ui.scope_id().with(("tool", tool.id)), sense);
     let arrow = ui.interact(
         lower,
-        ui.scope_id().with(("family", tool.menu.first().map(|v| v.id))),
+        ui.scope_id()
+            .with(("family", tool.menu.first().map(|v| v.id))),
         sense,
     );
     if tool.selected {
@@ -631,7 +627,11 @@ fn workspace_switcher(ui: &mut Ui, tile: Rect, workspace: Workspace) -> Option<W
     let ctx = ui.ctx().clone();
     let t = Tokens::get();
     let response = ui
-        .interact(tile, ui.scope_id().with("workspace-switcher"), Sense::click())
+        .interact(
+            tile,
+            ui.scope_id().with("workspace-switcher"),
+            Sense::click(),
+        )
         .on_hover_text("Change workspace");
     if response.hovered() {
         ui.painter()
@@ -679,9 +679,8 @@ fn workspace_switcher(ui: &mut Ui, tile: Rect, workspace: Workspace) -> Option<W
         true,
         t.text_dim,
     );
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::Role::Button, true, "Change workspace")
-    });
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Change workspace"));
     let mut chosen = None;
     Container::new(&ctx, Surface::Popup)
         .menu(&response)
@@ -732,12 +731,7 @@ fn workspace_item(ui: &mut Ui, workspace: Workspace, current: bool) -> Response 
         t.text_dim,
     );
     response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::Role::Button,
-            true,
-            current,
-            workspace.label(),
-        )
+        egui::WidgetInfo::selected(egui::Role::Button, true, current, workspace.label())
     });
     response
 }
@@ -894,9 +888,7 @@ fn group_row(ui: &mut Ui, area: Rect, ribbon: &Ribbon) -> Option<&'static str> {
             FontId::proportional(t.font_panel),
             t.text,
         );
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Button, true, "More tools")
-        });
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "More tools"));
         Container::new(ui.ctx(), Surface::Popup)
             .menu(&response)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
@@ -981,12 +973,7 @@ fn overflow_item(ui: &mut Ui, tool: &Tool) -> Response {
         ink,
     );
     response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::Role::Button,
-            tool.enabled,
-            tool.selected,
-            tool.label,
-        )
+        egui::WidgetInfo::selected(egui::Role::Button, tool.enabled, tool.selected, tool.label)
     });
     tool_tooltip(response, tool)
 }
@@ -1117,8 +1104,7 @@ pub fn card(
             let response = ui
                 .interact(rail, egui::Id::unique((id, "resize")), Sense::drag())
                 .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
-            response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, "Resize"));
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, "Resize"));
             if response.dragged() {
                 let delta = ui.input(|i| i.pointer.delta().x);
                 let next = resized_width(*resize.width, delta, &resize.range);

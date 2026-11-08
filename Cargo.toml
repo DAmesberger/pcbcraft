@@ -39,11 +39,11 @@ rhai = { version = "=1.27.0", default-features = false, features = ["std", "sync
 egui = "0.37"
 egui-wgpu = "0.37"
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland", "accesskit"] }
-solidcraft-ui-egui = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
-solidcraft-engine = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
+solidcraft-ui-egui = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63" }
+solidcraft-engine = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63" }
 # The vector types of Solidcraft's public API live in solidcore's record crate. The same pin as
 # Solidcraft's workspace; a mismatch fails to compile.
-solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "f5e8e9a29e0c9b7cf6c4040a5bc8878382b3c62f" }
+solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "a445bdaac60a980b0e9d1dba3ee28eb7ada44f50" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -78,5 +78,5 @@ debug = false
 # Cargo does not inherit a dependency workspace's patches. Keep Solidcraft's
 # geometry fixes pinned to the exact same revision as its engine.
 [patch.crates-io]
-egui-wgpu = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
-winit = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "d53b131e3d1cf0b9489e9c048c60af787b14cc47" }
+egui-wgpu = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63" }
+winit = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63" }

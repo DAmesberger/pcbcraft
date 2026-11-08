@@ -494,12 +494,15 @@ fn chips(
             vec2(height, height),
         );
         let response = ui
-            .interact(rect, ui.scope_id().with(("add", terminal.id.0)), Sense::click())
+            .interact(
+                rect,
+                ui.scope_id().with(("add", terminal.id.0)),
+                Sense::click(),
+            )
             .on_hover_text("Add a function to this terminal")
             .on_hover_cursor(egui::CursorIcon::PointingHand);
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::Role::Button, true, "Add function")
-        });
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Add function"));
         let ink = if response.hovered() {
             t.form_ink
         } else {
