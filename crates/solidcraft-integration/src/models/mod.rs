@@ -248,7 +248,7 @@ pub(crate) struct Build<'a> {
 
 /// `value` millimetres as a Solidcraft expression.
 fn mm(value: f64) -> String {
-    format!("({value} mm)")
+    format!("({})", crate::native::mm(value))
 }
 
 impl Build<'_> {
@@ -260,7 +260,7 @@ impl Build<'_> {
     /// Add a length parameter; returns its name.
     fn length(&mut self, name: &str, value: f64) -> Result<String> {
         let p = self.p(name);
-        self.native.parameter(&p, format!("{value} mm"))?;
+        self.native.parameter(&p, crate::native::mm(value))?;
         Ok(p)
     }
 

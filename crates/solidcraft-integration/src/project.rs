@@ -13,7 +13,9 @@ use crate::geom::prelude::*;
 use crate::material::{self, BodyKind, Detail};
 use crate::models::imported::{LibraryDefinition, SourceCache};
 use crate::models::{self, ModelDefinition, look};
-use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody};
+use crate::native::{
+    self, BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody,
+};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
 use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
@@ -1408,8 +1410,8 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     b.params(&object_params(project, &pads)?)?;
     // What an edit rarely changes comes first in the design's history, so
     // evaluating an edit reuses it: the generated and library package
-    // models and the via definitions, then the parts and copper. The
-    // laminate comes last (see there).
+    // models and the via definitions, then the fills, then the parts and
+    // copper. The laminate comes last (see there).
     for placement in &project.placements {
         let Some(physical) = project
             .instance(placement.instance)
@@ -1438,6 +1440,12 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     let mut parts = vec![];
     // Board joints of every part, made at the end (see there).
     let mut joints: Vec<(BoardJoint, JointFrame, Option<String>)> = vec![];
+    // The fills before the parts, pads, tracks and vias: a fill's body
+    // reads only its own sketch and the stackup's parameters, never the
+    // copper built before it, but Solidcraft keys each feature's cached
+    // result on every body made before it. After the parts and tracks,
+    // every edit to them would extrude every fill again.
+    let fills = fill::build(&mut b, project, board, &mut sources, &mut joints)?;
     for placement in &project.placements {
         let instance = project
             .instance(placement.instance)
@@ -1690,11 +1698,9 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         }
         // Rounded to a nanometre, so moving a part (whose offsets carry
         // rounding of its position) leaves the joint as it was.
-        let [dx, dy] = pad.offset().map(|v| (v * 1e9).round() / 1e9);
-        let x =
-            format!("{prefix}_x + cos({prefix}_angle) * {dx} mm - sin({prefix}_angle) * {dy} mm");
-        let y =
-            format!("{prefix}_y + sin({prefix}_angle) * {dx} mm + cos({prefix}_angle) * {dy} mm");
+        let [dx, dy] = pad.offset().map(|v| native::mm((v * 1e9).round() / 1e9));
+        let x = format!("{prefix}_x + cos({prefix}_angle) * {dx} - sin({prefix}_angle) * {dy}");
+        let y = format!("{prefix}_y + sin({prefix}_angle) * {dx} + cos({prefix}_angle) * {dy}");
         joints.push((
             BoardJoint {
                 board,
@@ -1780,7 +1786,6 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     }
     let display = appearance::Board::of(project);
     let marks = vias(&mut b, project, &mut styles, &mut sources)?;
-    let fills = fill::build(&mut b, project, board, &mut sources, &mut joints)?;
     for mark in &marks {
         lands.extend(mark.lands(&display));
     }

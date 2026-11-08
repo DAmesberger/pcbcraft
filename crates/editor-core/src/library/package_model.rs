@@ -71,13 +71,14 @@ impl PartValue {
 
     /// The value as a Solidcraft literal expression (`3.1 mm`, `45 deg`,
     /// `25`). Rust's float display is shortest round-trip and never uses
-    /// an exponent, so the literal reads back exactly.
+    /// an exponent, so the literal reads back exactly. A negative zero is
+    /// written as `0`, so an unchanged value never reads as changed.
     pub fn expression(self) -> String {
         match self {
-            Self::Mm(v) => format!("{v} mm"),
-            Self::Deg(v) => format!("{v} deg"),
+            Self::Mm(v) => format!("{} mm", v + 0.0),
+            Self::Deg(v) => format!("{} deg", v + 0.0),
             Self::Count(n) => n.to_string(),
-            Self::Number(v) => v.to_string(),
+            Self::Number(v) => (v + 0.0).to_string(),
         }
     }
 

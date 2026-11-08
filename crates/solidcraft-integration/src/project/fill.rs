@@ -3,9 +3,10 @@
 //! layer, one body per region in one component per fill, each extruded
 //! once from its boundary and holes (inserted into the sketch in one
 //! command, [`crate::native::Native::batched_body`]), so pad clearances
-//! cost no Boolean and no command each. The bodies come after the rest of
-//! the board's copper and before the laminate, and their components are
-//! joined to the board with every other part's joint at the end. Over an
+//! cost no Boolean and no command each. The bodies come before the parts
+//! and the rest of the board's copper, which they do not read (so an edit
+//! to those reuses them), and the laminate comes last; their components
+//! are joined to the board with every other part's joint at the end. Over an
 //! outer-layer fill the display-only mask conforms as a cap, as over a
 //! track; it is never saved.
 //!

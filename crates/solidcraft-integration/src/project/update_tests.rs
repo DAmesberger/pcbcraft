@@ -244,6 +244,71 @@ fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
     Ok(())
 }
 
+/// Every part turned by 90° and back (an edit and its undo) updates the
+/// model in place, as a fresh build would: a pad offset that rounds to a
+/// negative zero after the turn writes the same joint expression as before
+/// (`0 mm`, not `-0 mm`), so the board is not built anew.
+#[test]
+fn a_part_turn_and_its_undo_update_in_place() -> Result<()> {
+    let mut project = board()?;
+    let mut model = build(&project)?;
+    for (what, turn) in [("turned", 90.0), ("turned back", -90.0)] {
+        for placement in &mut project.placements {
+            placement.rotation_deg = (placement.rotation_deg + turn).rem_euclid(360.0);
+        }
+        let (next, how) = updated(model, &project)?;
+        assert!(
+            matches!(how, Rebuilt::InPlace(n) if n > 0),
+            "{what}: {how:?}"
+        );
+        model = next;
+    }
+    Ok(())
+}
+
+/// A track edit leaves every pour's body as it was: the fills come before
+/// the tracks in the design's history and read none of them, so their
+/// extrusions are not evaluated again (the same bodies, not equal ones).
+#[test]
+fn a_track_edit_does_not_extrude_the_fills_again() -> Result<()> {
+    let mut project = Engine::showcase_hosted(pcbcraft_core::Evaluators {
+        footprint: Some(&crate::footprint::SketchEvaluator),
+        board: Some(&crate::board::SketchBoardEvaluator),
+    })
+    .map_err(|e| Error::Verification(e.to_string()))?
+    .project()
+    .clone();
+    let model = build(&project)?;
+    let fills = |m: &NativeModel| -> Vec<(String, solidcraft_engine::kernel::Body)> {
+        m.native()
+            .session()
+            .model
+            .state()
+            .bodies
+            .iter()
+            .filter(|b| b.name.starts_with("fill_"))
+            .map(|b| (b.name.clone(), b.body.clone()))
+            .collect()
+    };
+    let before = fills(&model);
+    assert!(!before.is_empty(), "the showcase has poured copper");
+    let track = project
+        .tracks
+        .iter_mut()
+        .find(|t| t.layer.side().is_some())
+        .ok_or_else(|| Error::Verification("an outer track".into()))?;
+    track.width += 0.01;
+    let (model, how) = updated(model, &project)?;
+    assert!(matches!(how, Rebuilt::InPlace(n) if n > 0), "{how:?}");
+    let after = fills(&model);
+    assert_eq!(after.len(), before.len());
+    for ((name, was), (again, now)) in before.iter().zip(&after) {
+        assert_eq!(name, again);
+        assert!(now.same(was), "{name} was extruded again");
+    }
+    Ok(())
+}
+
 /// A model whose build a newer request cancelled after it finished still
 /// updates: the flag stopped that build, not the model it made.
 #[test]
