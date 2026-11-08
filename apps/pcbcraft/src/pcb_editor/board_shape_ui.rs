@@ -689,9 +689,22 @@ impl PcbEditor {
                 .iter()
                 .find(|(k, _)| *k == layout.id)
                 .map_or_else(String::new, |(_, s)| s.clone());
-            let centre = view.screen(layout.text);
             let galley = painter.layout_no_wrap(text.clone(), font.clone(), color);
-            let r = Rect::from_center_size(centre, galley.size() + vec2(6.0, 2.0));
+            let r =
+                Rect::from_center_size(view.screen(layout.text), galley.size() + vec2(6.0, 2.0));
+            // Two dimensions meeting at a corner (insets to one hole) would
+            // stack their labels: slide this one along its own line clear.
+            let along = layout
+                .arrows
+                .first()
+                .map(|(tip, dir)| {
+                    view.screen([tip[0] + dir[0], tip[1] + dir[1]]) - view.screen(*tip)
+                })
+                .filter(|d| d.length() > 1e-6)
+                .map_or(vec2(1.0, 0.0), |d| d.normalized());
+            let placed: Vec<Rect> = rects.iter().map(|(_, r)| *r).collect();
+            let r = clear_of(r, along, &placed);
+            let centre = r.center();
             painter.rect_filled(r, 2.0, t.panel);
             painter.text(centre, Align2::CENTER_CENTER, text, font.clone(), color);
             rects.push((layout.id.clone(), r));
@@ -1266,6 +1279,24 @@ fn bump_name(name: &str) -> String {
     let digits = name.trim_end_matches(|c: char| c.is_ascii_digit());
     let n: u32 = name[digits.len()..].parse().unwrap_or(1);
     format!("{digits}{}", n.saturating_add(1))
+}
+
+/// A dimension label box `r` moved along its dimension's screen direction
+/// `along` (a unit vector), by whole steps alternating forward and back,
+/// to the nearest place clear of the `placed` labels; `r` itself when it is
+/// clear or no step within reach is.
+pub(super) fn clear_of(r: Rect, along: egui::Vec2, placed: &[Rect]) -> Rect {
+    let free = |r: &Rect| placed.iter().all(|p| !p.intersects(*r));
+    if free(&r) {
+        return r;
+    }
+    // One step clears a box of the same size beside it along `along`.
+    let step = along.x.abs() * r.width() + along.y.abs() * r.height() + 2.0;
+    (1..=6u8)
+        .flat_map(|k| [f32::from(k), -f32::from(k)])
+        .map(|k| r.translate(along * step * k))
+        .find(free)
+        .unwrap_or(r)
 }
 
 /// Where an edge's name goes on screen: centred on the edge `line` just

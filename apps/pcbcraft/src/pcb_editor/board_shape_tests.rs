@@ -947,6 +947,26 @@ fn the_shape_mode_leaves_command_s_for_the_dispatcher() -> Fallible {
     Ok(())
 }
 
+/// Run 3, finding 18: the two inset dimensions to a corner hole put their
+/// labels on one spot; the second slides along its own line, clear of the
+/// first, and a clear label stays where its dimension put it.
+#[test]
+fn corner_dimension_labels_do_not_overlap() {
+    use crate::pcb_editor::board_shape_ui::clear_of;
+    use egui::{Rect, vec2};
+    // The horizontal inset's label at the corner, then the vertical one's
+    // nearly on top of it (as in the run's top-left corner).
+    let horizontal = Rect::from_center_size(Pos2::new(330.0, 412.0), vec2(56.0, 16.0));
+    let vertical = Rect::from_center_size(Pos2::new(352.0, 415.0), vec2(56.0, 16.0));
+    let moved = clear_of(vertical, vec2(0.0, 1.0), &[horizontal]);
+    assert!(!moved.intersects(horizontal), "{moved:?}");
+    // It moved along its own (vertical) line only, by the least it needed.
+    assert!((moved.center().x - vertical.center().x).abs() < 1e-3);
+    assert!((moved.center().y - vertical.center().y).abs() <= 18.0 + 1e-3);
+    let clear = Rect::from_center_size(Pos2::new(600.0, 600.0), vec2(56.0, 16.0));
+    assert_eq!(clear_of(clear, vec2(1.0, 0.0), &[horizontal]), clear);
+}
+
 /// Edge names sit at the middle of their edge, outside the outline, apart
 /// from each other; a name whose place is taken (a dimension label, a part)
 /// slides clear of it.
