@@ -742,6 +742,24 @@ fn rated_nominal(
     }
 }
 
+/// Whether lineage `id` has unpublished draft changes: a draft that
+/// differs from its base revision, or has none. A draft kept open after
+/// publishing equals its base and is no change.
+fn unpublished(library: &Library, drafts: &Drafts, id: DefinitionId) -> bool {
+    drafts.get(id).is_some_and(|draft| {
+        let Some(revision) = draft.base else {
+            return true;
+        };
+        library
+            .definition(DefinitionRef {
+                kind: draft.definition.kind(),
+                id,
+                revision,
+            })
+            .is_none_or(|(meta, definition)| meta != draft.meta || definition != draft.definition)
+    })
+}
+
 /// Every component lineage of the project, then every Part lineage:
 /// published lineages at their latest revision, then draft-only lineages,
 /// each in lineage order.
@@ -764,7 +782,7 @@ pub fn entries(project: &Project, drafts: &Drafts) -> Vec<CatalogEntry> {
         .into_iter()
         .map(|c| {
             let mut entry = entry_of(library, c.id, Some(c.revision), &c.meta, &c.definition);
-            entry.draft = drafts.get(c.id).is_some();
+            entry.draft = unpublished(library, drafts, c.id);
             entry.used = used.get(&c.id).copied().unwrap_or(0);
             entry.badges.mpn = implemented.contains(&c.id);
             entry
@@ -782,7 +800,7 @@ pub fn entries(project: &Project, drafts: &Drafts) -> Vec<CatalogEntry> {
     }
     for p in latest_parts {
         let mut entry = part_entry(library, p.id, Some(p.revision), &p.meta, &p.definition);
-        entry.draft = drafts.get(p.id).is_some();
+        entry.draft = unpublished(library, drafts, p.id);
         entry.used = used.get(&p.id).copied().unwrap_or(0);
         out.push(entry);
     }
@@ -1582,7 +1600,7 @@ pub fn inspect(
         })?;
     let definition = &published.definition;
     let mut entry = entry_of(library, lineage, Some(wanted), &published.meta, definition);
-    entry.draft = drafts.get(lineage).is_some();
+    entry.draft = unpublished(library, drafts, lineage);
     entry.used = project
         .instances
         .iter()

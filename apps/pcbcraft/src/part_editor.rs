@@ -410,6 +410,10 @@ impl PartEditor {
                 ),
             };
             self.tell(Level::Ok, text);
+            // Publishing clears the import review: Unreviewed is empty now.
+            if self.pins.table.filter == pins_table::Filter::Unreviewed {
+                self.pins.table.filter = pins_table::Filter::All;
+            }
         }
         self.publishing = false;
         if self.fit_on_build && set.as_ref().is_some_and(|s| !s.footprint.pads.is_empty()) {
@@ -2622,6 +2626,43 @@ mod draft_tests {
                 .any(|p| p.level == Level::Ok && p.text.starts_with("Published Resistor r2")),
             "{posted:?}"
         );
+        Ok(())
+    }
+
+    /// Run 3, finding 17: after publishing, the Browser no longer calls the
+    /// component a draft (its drafts equal what was published), and the Pins
+    /// filter leaves the emptied Unreviewed list.
+    #[test]
+    fn after_publishing_the_browser_and_pins_filter_agree() -> pcbcraft_core::Result<()> {
+        let ctx = egui::Context::default();
+        let mut engine = Engine::demo()?;
+        let mut editor = PartEditor::default();
+        editor.open_first(&engine);
+        editor.commit(&ctx, &engine);
+        let browser_draft = |engine: &Engine, editor: &PartEditor| {
+            let id = editor.draft.as_ref().map(|s| s.ids.component);
+            pcbcraft_core::catalog::entries(engine.project(), engine.drafts())
+                .into_iter()
+                .find(|e| Some(e.lineage) == id)
+                .map(|e| e.draft)
+        };
+        assert_eq!(browser_draft(&engine, &editor), Some(false), "opened only");
+        if let Some(set) = &mut editor.draft {
+            set.footprint.pads[0].position = [-1.5, 0.0];
+        }
+        if let Some(operation) = editor.commit(&ctx, &engine) {
+            engine.apply(engine.revision(), operation)?;
+        }
+        editor.sync(&engine);
+        assert_eq!(browser_draft(&engine, &editor), Some(true), "edited");
+        editor.pins.table.filter = pins_table::Filter::Unreviewed;
+        if let Some(operation) = editor.publish(&engine) {
+            engine.apply(engine.revision(), operation)?;
+        }
+        editor.sync(&engine);
+        assert!(!editor.unpublished(&engine));
+        assert_eq!(browser_draft(&engine, &editor), Some(false), "published");
+        assert_eq!(editor.pins.table.filter, pins_table::Filter::All);
         Ok(())
     }
 
