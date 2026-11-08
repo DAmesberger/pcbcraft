@@ -48,17 +48,17 @@ pub(super) fn elbow(a: Point, b: Point, flipped: bool) -> Point {
     if flipped { [a[0], b[1]] } else { [b[0], a[1]] }
 }
 
-/// Why a wire can't start on an NC or reserved pin; the engine's wording
-/// for one that would end there.
-const NOT_WIREABLE: &str = "An NC or reserved pin cannot be wired";
-
-/// Whether `pin`'s terminal is electrical (not device NC or reserved).
-fn wireable(project: &pcbcraft_core::Project, pin: pcbcraft_core::Endpoint) -> bool {
-    project
-        .instance(pin.instance)
-        .and_then(|i| project.library.component(i.component))
-        .and_then(|c| c.definition.terminal(pin.terminal))
-        .is_none_or(|t| t.is_electrical())
+/// Why a wire can't start on `pin` (device NC or reserved), in the
+/// engine's wording for one that would end there; `None` when it can.
+fn unwireable(project: &pcbcraft_core::Project, pin: pcbcraft_core::Endpoint) -> Option<String> {
+    let instance = project.instance(pin.instance)?;
+    let terminal = project
+        .library
+        .component(instance.component)?
+        .definition
+        .terminal(pin.terminal)?;
+    (!terminal.is_electrical())
+        .then(|| pcbcraft_core::instances::unwireable(&instance.designator, &terminal.name))
 }
 
 impl WireDraft {
@@ -137,8 +137,10 @@ impl SchematicEditor {
             // Start: on a target, or in empty space with a free end. A pin
             // that can never be wired refuses here, not at the wire's end.
             let (from, start) = match target {
-                Some((WireTarget::Terminal(pin), _)) if !wireable(engine.project(), pin) => {
-                    kit::toast::post(ctx, kit::severity::Level::Warning, NOT_WIREABLE, Vec::new());
+                Some((WireTarget::Terminal(pin), _))
+                    if let Some(why) = unwireable(engine.project(), pin) =>
+                {
+                    kit::toast::post(ctx, kit::severity::Level::Warning, why, Vec::new());
                     return None;
                 }
                 Some(hit) => hit,

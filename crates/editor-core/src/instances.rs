@@ -239,6 +239,12 @@ pub fn display_label(project: &Project, instance: &ComponentInstance, unit: Unit
     }
 }
 
+/// Why a wire can't touch `pin` of `designator`: the part says to leave
+/// it unconnected (device NC or reserved). Plain words, no final stop.
+pub fn unwireable(designator: &str, pin: &str) -> String {
+    format!("{designator} pin ‘{pin}’ must stay unconnected, so it cannot be wired")
+}
+
 /// 1–64 bytes without whitespace or control characters.
 pub fn designator_valid(designator: &str) -> bool {
     !designator.is_empty()
@@ -313,9 +319,10 @@ fn check_with<'a>(
             .terminal(endpoint.terminal)
             .ok_or_else(|| invalid("A wire references a missing terminal.".into()))?;
         if !terminal.is_electrical() {
-            return Err(Error::Conflict(
-                "An NC or reserved pin cannot be wired.".into(),
-            ));
+            return Err(Error::Conflict(format!(
+                "{}.",
+                unwireable(name, &terminal.name)
+            )));
         }
         let unit = owning_unit(symbol, terminal.id).ok_or_else(|| {
             invalid(format!(

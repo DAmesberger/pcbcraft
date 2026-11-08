@@ -314,6 +314,9 @@ fn a_device_nc_pin_refuses_the_wire_and_keeps_the_drawing() -> TestResult {
     let posted = toast::take_posted(&ctx);
     let said = posted.first().map(|p| p.text.as_str()).ok_or("no toast")?;
     assert!(said.contains("cannot be wired"), "{said}");
+    // Plain words that name the pin, not "device-NC or reserved terminal".
+    assert!(said.starts_with("U2 pin ‘"), "{said}");
+    assert!(said.contains("must stay unconnected"), "{said}");
     assert_eq!(pcbcraft_core::issues::style::check(said), vec![], "{said}");
     Ok(())
 }
@@ -453,6 +456,9 @@ fn a_wire_does_not_start_on_a_device_nc_pin() -> TestResult {
     let posted = toast::take_posted(&ctx);
     let said = posted.first().map(|p| p.text.as_str()).ok_or("no toast")?;
     assert!(said.contains("cannot be wired"), "{said}");
+    // Plain words that name the pin, not "device-NC or reserved terminal".
+    assert!(said.starts_with("U2 pin ‘"), "{said}");
+    assert!(said.contains("must stay unconnected"), "{said}");
     assert_eq!(pcbcraft_core::issues::style::check(said), vec![], "{said}");
     Ok(())
 }
