@@ -601,7 +601,8 @@ impl SchematicEditor {
 
     /// Delete on the selected path: its picked corner, else the whole path
     /// through the disconnect review. ⇧Delete removes the hovered segment. A
-    /// rounds the picked corner by the Wire tool's radius, or makes it sharp.
+    /// rounds the picked corner by the Wire tool's radius, or by the most that
+    /// fits and says so, or makes it sharp.
     pub(super) fn path_keys(
         &mut self,
         ctx: &egui::Context,
@@ -612,20 +613,18 @@ impl SchematicEditor {
             let project = engine.project();
             let found = project.wire(wire)?;
             let index = self.picked_corner(found)?;
+            let mut reduced = false;
             let radius = if found.corners.get(index)?.radius > 0.0 {
                 0.0
             } else {
                 // As large as fits, up to the tool's radius; nothing fits a
                 // corner in line, and the refusal says so.
                 let path = schematic::wire_vertices(project, found)?;
-                let limit = wire_edit::radius_limit(&path, index)?;
-                if limit > 0.0 {
-                    self.wire_radius.min(limit)
-                } else {
-                    self.wire_radius
-                }
+                let limit = wire_tool::whole_micrometres(wire_edit::radius_limit(&path, index)?);
+                reduced = limit > 0.0 && limit < self.wire_radius;
+                if reduced { limit } else { self.wire_radius }
             };
-            return self.send_path_edit(
+            let sent = self.send_path_edit(
                 ctx,
                 engine,
                 wire,
@@ -636,6 +635,10 @@ impl SchematicEditor {
                 },
                 None,
             );
+            if reduced && sent.is_some() {
+                wire_tool::post_reduced(ctx, &[radius]);
+            }
+            return sent;
         }
         if crate::keys::pressed(ctx, "schematic.split-wire") {
             let (_, index) = self.hovered_segment.filter(|(id, _)| *id == wire)?;

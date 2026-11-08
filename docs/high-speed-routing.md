@@ -82,7 +82,8 @@ Everything off the path is a **stub**, one per branch, with its length (via barr
 
 | Code | Finding |
 | --- | --- |
-| `pair.skew` | The halves' measured lengths differ by more than the class's max skew (both routed) |
+| `pair.skew` | The halves' measured lengths differ by more than the class's max skew, or by more than the default 2.5 mm (`DEFAULT_PAIR_MAX_SKEW_MM`) when the class sets none (both routed) |
+| `pair.stub` | A stub (copper off a half's signal path: a branch, or a jumper to a receptacle's second contact) longer than the default 2.5 mm, whatever the class's max skew; open stubs are also `board.track_dangling` |
 | `pair.uncoupled` | A half's signal path runs uncoupled longer than the class's max uncoupled length |
 | `pair.gap` | Parallel stretches of the halves closer than the pair gap (worst per layer) |
 | `length.mismatch` | A routed group member outside its window |

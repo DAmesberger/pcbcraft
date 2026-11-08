@@ -753,8 +753,9 @@ fn bom_and_resolve_groups_follow_requirements_footprint_and_parts() -> Result<()
 }
 
 /// E2E UX run finding 16: the BOM's Value is the value the schematic shows
-/// (every typed field with a value, ratings included), else the Part's MPN, else the name of a part of
-/// more than two terminals, else empty, never a passive's component name.
+/// (every typed field with a value, ratings included), else the Part's MPN,
+/// else empty, never a component name (run 3, finding 25: an IC without a
+/// Part shows nothing rather than its description).
 #[test]
 fn the_bom_value_is_the_shown_value_never_a_passive_component_name() -> Result<()> {
     let mut s = setup()?;
@@ -800,7 +801,7 @@ fn the_bom_value_is_the_shown_value_never_a_passive_component_name() -> Result<(
             ("R1", "10 kΩ 16 V ±1%"),
             ("R2", "EX-R0603-10K0-F"),
             ("R3", ""),
-            ("U1", "Regulator EX-LDO")
+            ("U1", "")
         ]
     );
     let grouped = crate::fabrication::assembly::bom_csv(s.engine.project())?;

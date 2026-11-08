@@ -51,6 +51,37 @@ pub(super) fn rounded(vertices: &[Point], radius: f64) -> Vec<Corner> {
     wire_edit::fitted(&path)
 }
 
+/// `mm` rounded down to the micrometre, as [`wire_edit::fitted`] stores it.
+pub(super) fn whole_micrometres(mm: f64) -> f64 {
+    ((mm * 1000.0 + 1e-3).floor() / 1000.0).max(0.0)
+}
+
+/// Say that corners were rounded by less than the card's radius, because
+/// that is the most their segments take: "Rounded with 1 mm, the most that
+/// fits". Nothing when `radii` is empty.
+pub(super) fn post_reduced(ctx: &egui::Context, radii: &[f64]) {
+    let low = radii.iter().copied().reduce(f64::min);
+    let high = radii.iter().copied().reduce(f64::max);
+    let (Some(low), Some(high)) = (low, high) else {
+        return;
+    };
+    let mm = |v: f64| {
+        let text = format!("{v:.3}");
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    };
+    let with = if high - low < 1e-9 {
+        mm(low)
+    } else {
+        format!("{} to {}", mm(low), mm(high))
+    };
+    kit::toast::post(
+        ctx,
+        kit::severity::Level::Info,
+        format!("Rounded with {with} mm, the most that fits"),
+        Vec::new(),
+    );
+}
+
 /// A refused wire whose engine text cannot be shown.
 const WIRE_REFUSED: &str = "A wire cannot end there";
 
@@ -238,9 +269,18 @@ impl SchematicEditor {
             self.wire = Some(draft.clone());
             return None;
         }
+        let radius = self.new_radius();
+        let reduced: Vec<f64> = path
+            .iter()
+            .map(|c| c.radius)
+            .filter(|&r| r > 0.0 && r < radius)
+            .collect();
         let operation = self.join(engine, plan, draft.from, to);
         if self.update.is_open() {
             self.wire_review = Some((draft.clone(), engine.revision()));
+        }
+        if operation.is_some() || self.update.is_open() {
+            post_reduced(ctx, &reduced);
         }
         operation
     }

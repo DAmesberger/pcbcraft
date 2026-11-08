@@ -736,10 +736,6 @@ impl SchematicEditor {
             kit::value_row(ui, "Symbols", &symbols.to_string());
             kit::value_row(ui, "Wires", &wires.to_string());
             kit::value_row(ui, "Labels", &labels.to_string());
-            let connected = self.nets.iter().filter(|n| n.terminals.len() >= 2).count();
-            ui.scope(|ui| kit::value_row(ui, "Nets", &connected.to_string()))
-                .response
-                .on_hover_text("Nets of the whole design that join two or more terminals");
             let unresolved = super::sheet_card::unresolved_parts(project);
             if unresolved == 0 {
                 kit::value_row(ui, "Parts", "All resolved");
@@ -777,6 +773,12 @@ impl SchematicEditor {
             {
                 output = op(SchematicCommand::DeleteSheet { sheet: sheet.id });
             }
+        });
+        kit::section(ui, "design", "Design", true, None, |ui| {
+            let connected = self.nets.iter().filter(|n| n.terminals.len() >= 2).count();
+            ui.scope(|ui| kit::value_row(ui, "Connected nets", &connected.to_string()))
+                .response
+                .on_hover_text("Nets of the whole design that join two or more terminals");
         });
         let props = project.properties.clone();
         kit::section(ui, "title-block", "Title block", true, None, |ui| {

@@ -33,10 +33,9 @@ fn every_placed_part_has_one_row_at_its_placement_origin() -> Fallible<()> {
         assert!(close(r.x, placement.position[0]) && close(r.y, placement.position[1]));
         assert_eq!(r.side, placement.layer);
         assert!(!r.package.is_empty(), "{r:?}");
-        // No value is set and no Part chosen: J1, U1 and U2 read their
-        // component name, the two-terminal passives read nothing.
-        let passive = ["C", "R"].iter().any(|p| r.designator.starts_with(p));
-        assert_eq!(r.value.is_empty(), passive, "{r:?}");
+        // No value is set and no Part chosen: every part reads nothing,
+        // never its component name (run 3, finding 25).
+        assert!(r.value.is_empty(), "{r:?}");
     }
     let order: Vec<&str> = rows.iter().map(|r| r.designator.as_str()).collect();
     assert_eq!(

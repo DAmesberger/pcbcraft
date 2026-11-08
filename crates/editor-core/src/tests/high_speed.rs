@@ -857,3 +857,75 @@ fn skew_past_the_default_limit_warns_when_no_limit_is_set() -> Result<()> {
     }
     Ok(())
 }
+
+/// Run 3, finding 8: the production check warns on a pair's stub past the
+/// 2.5 mm default, whatever skew limit its class sets, and on skew past the
+/// default when its class sets none; a class's skew limit replaces that. The
+/// branch is a hand-derived 4 mm, past 2.5 mm; the skew 3.5 mm, inside 5 mm.
+#[test]
+fn the_production_check_warns_on_pair_stubs_and_skew() -> Result<()> {
+    use crate::fabrication::preflight;
+    use crate::issues::Severity;
+    for (signal, warned) in [
+        (SignalRules::default(), true),
+        (
+            SignalRules {
+                pair_max_skew: Some(5.0),
+                ..SignalRules::default()
+            },
+            false,
+        ),
+    ] {
+        let mut usb = usb(signal)?;
+        let legs = straight(&usb);
+        routed(&mut usb, legs)?;
+        let net = usb.nets[0];
+        let at = on_run(&usb, net)?;
+        let away = if at[1] > mid(usb.start[0], usb.start[1])[1] {
+            4.0
+        } else {
+            -4.0
+        };
+        branch(&mut usb, net, at, [at[0], at[1] + away])?;
+        let warnings = |engine: &Engine, code: &str| -> Result<Vec<String>> {
+            let report = preflight::report(engine.project(), &Default::default(), None)?;
+            Ok(report
+                .items
+                .into_iter()
+                .filter(|i| i.code == code && i.severity == Severity::Warning)
+                .map(|i| i.title)
+                .collect())
+        };
+        let stubs = warnings(&usb.engine, "pair.stub")?;
+        let [stub] = stubs.as_slice() else {
+            return Err(Error::Invalid(format!("{stubs:?}")));
+        };
+        assert!(stub.starts_with("USB_D: 4 mm stub on USB_D+"), "{stub}");
+        // The finding states the limit it was checked against.
+        let cited = layout::checks(usb.engine.project())
+            .into_iter()
+            .filter(|f| f.code == "pair.stub")
+            .all(|f| f.message.contains("needs at most 2.5 mm (default limit)"));
+        assert!(cited);
+        // Skew 1 mm past the default: warned only without a class limit.
+        let track = longest(&usb.engine, usb.nets[1])?;
+        apply(
+            &mut usb.engine,
+            Operation::Layout(LayoutCommand::TuneLength {
+                request: TuneRequest {
+                    track,
+                    amount: TuneAmount::Add {
+                        mm: crate::rules::signal::DEFAULT_PAIR_MAX_SKEW_MM + 1.0,
+                    },
+                    style: MeanderStyle::Trombone,
+                    amplitude: Some(1.0),
+                    spacing: None,
+                    side: None,
+                },
+            }),
+        )?;
+        let skews = warnings(&usb.engine, "pair.skew")?;
+        assert_eq!(skews.len(), usize::from(warned), "{skews:?}");
+    }
+    Ok(())
+}
