@@ -12,7 +12,7 @@ The founder asked for controlled impedance from the stackup, differential pairs 
 
 ## Data
 
-- **Net class signal rules** (`rules/signal.rs`, `SignalRules` on `NetClass.signal`): single-ended `impedance` (10–200 Ω), differential `diff_impedance` (20–300 Ω), `impedance_tolerance` (0.5–50 %, 10 % when unset), `pair_max_uncoupled` and `pair_max_skew` (mm). The class's `diff_pair_width` and `diff_pair_gap`, reserved before, now set the pair width and gap; with a differential target, whichever is unset is derived.
+- **Net class signal rules** (`rules/signal.rs`, `SignalRules` on `NetClass.signal`): single-ended `impedance` (10–200 Ω), differential `diff_impedance` (20–300 Ω), `impedance_tolerance` (0.5–50 %, 10 % when unset), `pair_max_uncoupled` and `pair_max_skew` (mm; each unchecked when unset). The class's `diff_pair_width` and `diff_pair_gap`, reserved before, now set the pair width and gap; with a differential target, whichever is unset is derived.
 - **Differential pairs** (`DiffPair`): a name, a positive and a negative net, and optional endpoints (`PairEndpoints`: `[start, end]` terminals per half, set through `diff_pair.edit`; each must be a pad of its half's net). A net is in at most one pair, and the two nets differ. The positive net's class supplies the pair's rules. Pairs follow nets through merges (`rules::signal::follow_nets`, called where net-class assignments follow): a merged-away net is replaced by its survivor, and a pair whose halves became one net, or lost one, is removed.
 - **Length groups** (`LengthGroup`): nets and pairs (a pair contributes both halves), an optional `target` and a `tolerance`. With a target, every routed member must lie within `target ± tolerance`; without one, within `tolerance` below the longest member. A group of one pair matches the pair's halves.
 - **Stackup** (`model/stackup.rs`): `Dielectric.dk` is the fabricator's Dk; when absent, `Dielectric::permittivity` uses a generic estimate by glass style (106: 3.8, 1080: 4.0, 2116: 4.3, 7628: 4.6, typical published FR-4 values near 1 GHz, not fabricator data). `CopperFoil.plane` marks a ground or power plane. `layout.set_stackup` validates Dk in 1–20.
@@ -109,7 +109,7 @@ Branches count in neither skew nor uncoupled length. Their copper stays in the n
 
 | Code | Finding |
 | --- | --- |
-| `pair.skew` | The halves' measured lengths differ by more than the class's max skew, or by more than the default 2.5 mm (`DEFAULT_PAIR_MAX_SKEW_MM`) when the class sets none (both routed) |
+| `pair.skew` | The halves' measured lengths differ by more than the class's max skew (both routed). A class that sets no max skew has no limit, and skew is not checked |
 | `pair.uncoupled` | A half's signal path runs uncoupled longer than the class's max uncoupled length |
 | `pair.gap` | Parallel stretches of the halves closer than the pair gap (worst per layer) |
 | `length.mismatch` | A routed group member outside its window |
