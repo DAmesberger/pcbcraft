@@ -7,7 +7,7 @@ use crate::{Error, Result};
 use pcbcraft_core::Point;
 use pcbcraft_core::geometry::Shape;
 use pcbcraft_core::library::{
-    Hole, HoleShape, Outline, Pad, PadDefaults, PadKind, PadShape, Segment, offset_polygon,
+    Hole, HoleShape, Outline, Pad, PadDefaults, PadShape, Segment, offset_polygon,
 };
 
 /// Plated barrel wall: copper plated onto a drilled hole's wall (an
@@ -328,25 +328,6 @@ pub fn hole_contour(hole: &Hole, grow: f64) -> Option<Contour> {
 /// a plated hole.
 pub fn bore(hole: &Hole) -> Option<Contour> {
     hole_contour(hole, if hole.plated { -PLATING_MM } else { 0.0 })
-}
-
-/// Which copper a pad has.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Copper {
-    /// No copper (a non-plated hole).
-    None,
-    /// A land on the pad's own side.
-    OneSide,
-    /// Lands on both outer layers joined by a plated barrel.
-    Through,
-}
-
-pub fn copper(pad: &Pad) -> Copper {
-    match pad.kind {
-        PadKind::NonPlatedHole => Copper::None,
-        PadKind::PlatedThrough => Copper::Through,
-        PadKind::Smd | PadKind::Fiducial | PadKind::Mechanical => Copper::OneSide,
-    }
 }
 
 /// The solder-mask opening of a pad in the pad frame, or `None` when the

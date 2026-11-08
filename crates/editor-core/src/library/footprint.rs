@@ -202,10 +202,33 @@ impl PadKind {
             Self::Mechanical => "mechanical",
         }
     }
-    /// Whether this kind carries a plated hole and spans all copper layers.
+    /// Whether this kind is drilled through the board (plated or bare).
+    /// Its copper is [`Self::copper`].
     pub fn through_hole(self) -> bool {
         matches!(self, Self::PlatedThrough | Self::NonPlatedHole)
     }
+
+    /// Which copper a pad of this kind has: the one definition, which
+    /// `layout::pad_copper_on` turns into copper layers. A bare hole has
+    /// none.
+    pub fn copper(self) -> PadCopper {
+        match self {
+            Self::NonPlatedHole => PadCopper::None,
+            Self::PlatedThrough => PadCopper::Through,
+            Self::Smd | Self::Fiducial | Self::Mechanical => PadCopper::OneSide,
+        }
+    }
+}
+
+/// Which copper a pad has ([`PadKind::copper`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PadCopper {
+    /// No copper: a bare drilled hole.
+    None,
+    /// A land on the pad's own side.
+    OneSide,
+    /// A land on every copper layer, joined by a plated barrel.
+    Through,
 }
 
 /// The copper side of a surface pad, relative to the placed component.

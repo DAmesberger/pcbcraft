@@ -10,7 +10,7 @@
 use super::Fallible;
 use super::raster::{Bitmap, Shape, arc_points};
 use crate::geometry::{Point, Shape as CoreShape};
-use crate::layout::{self, PlacedPad};
+use crate::layout;
 use crate::library::{MaskRule, PadKind, PasteRule};
 use crate::model::board::{CutoutKind, flatten};
 use crate::model::{CopperLayer, Layer, Project};
@@ -42,15 +42,6 @@ pub(crate) fn raster_shape(shape: &CoreShape) -> Shape {
     }
 }
 
-/// Whether a placed pad has copper on `layer` (plated through pads on
-/// every layer, surface kinds on their own side, bare holes on none).
-fn pad_on(pad: &PlacedPad, layer: CopperLayer) -> bool {
-    match layer.side() {
-        Some(side) => pad.on_copper(side),
-        None => pad.pad.kind == PadKind::PlatedThrough,
-    }
-}
-
 /// The copper of `layer`, dark on `bitmap`.
 pub(crate) fn copper(project: &Project, layer: CopperLayer, bitmap: &mut Bitmap) -> Fallible<()> {
     for fill in project.fills.iter().filter(|f| f.layer == layer) {
@@ -64,7 +55,7 @@ pub(crate) fn copper(project: &Project, layer: CopperLayer, bitmap: &mut Bitmap)
         }
     }
     for pad in layout::placed_pads(project) {
-        if pad_on(&pad, layer) {
+        if pad.on_copper(layer) {
             bitmap.render(&raster_shape(&pad.outline()), true);
         }
     }

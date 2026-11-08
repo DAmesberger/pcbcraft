@@ -301,8 +301,10 @@ These are never saved:
 - Routing is continuous. Each click sends one step as one `layout.route_apply` and one
   undo step: an elbow in the chosen mode (45°, 90° or free; `layout::posture`, which the
   preview shares), and with a layer change also the via. Once the engine takes the step,
-  the route continues from its end. A click on a pad, track or via of the net finishes the
-  route, and so do Enter and a double-click. Esc or a right-click ends it, and Esc again
+  the route continues from its end. A click on a pad of the net, or on its track or via
+  copper on the routing layer in another island than the route's head (the copper graph's
+  `islands_at`), finishes the route, and so do Enter and a double-click. Copper the head is
+  already joined to, such as the start pad's fan-out, is a corner, not a finish. Esc or a right-click ends it, and Esc again
   returns to Select. Backspace sends one `layout.route_apply` that removes exactly the
   last step's tracks and via, and moves the head back. Any other document change ends the
   route.
@@ -310,8 +312,9 @@ These are never saved:
   Tent vias and the net. It lists the keys (`route_tool::ROUTE_KEYS`). While routing, V
   (Shift+V backwards) or a layer's number (1 to 9) puts a via at the pointer, snapped to a
   track end of the net within reach or to the grid, and the route continues on that layer.
-  The next click places the via. No via is added where the net's via or through-hole pad
-  already joins both layers. `/` cycles the mode and F flips the elbow. W and D step
+  The next click places the via. No via is added where the net's copper at the head
+  already joins both layers: one island of the copper graph has copper on both there (a
+  via whose span reaches both, a plated through-hole pad). `/` cycles the mode and F flips the elbow. W and D step
   through the width and via presets of the rules (`layout::route_widths`,
   `layout::via_sizes`). A via size typed below the rules' drill or annular ring is marked
   and not used. Without a route, V only changes the layer.

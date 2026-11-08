@@ -265,17 +265,6 @@ fn pad_function(pad: &PlacedPad) -> &'static str {
     }
 }
 
-/// Whether a placed pad has copper on `layer`.
-fn pad_on(pad: &PlacedPad, layer: CopperLayer) -> bool {
-    match pad.pad.kind {
-        PadKind::PlatedThrough => true,
-        PadKind::NonPlatedHole => false,
-        PadKind::Smd | PadKind::Fiducial | PadKind::Mechanical => {
-            CopperLayer::from(pad.layer) == layer
-        }
-    }
-}
-
 fn copper(board: &Board<'_>, layer: CopperLayer, attributes: &[(&str, String)]) -> Result<Vec<u8>> {
     let project = board.project;
     let mut w = Writer::new(attributes);
@@ -317,7 +306,7 @@ fn copper(board: &Board<'_>, layer: CopperLayer, attributes: &[(&str, String)]) 
             w.flash(d, hole.at)?;
         }
     }
-    for pad in board.pads.iter().filter(|p| pad_on(p, layer)) {
+    for pad in board.pads.iter().filter(|p| p.on_copper(layer)) {
         let Some(shape) = pad.pad.shape.grown(0.0, CHECK_CHORD_MM) else {
             continue;
         };

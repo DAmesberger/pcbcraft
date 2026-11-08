@@ -50,11 +50,11 @@ The engine's `layout.route_apply` checks remain the authority. The router's coll
 
 1. The step's copper is fixed. Each collision with movable copper pushes it, and each piece that moved pushes in turn, breadth first.
 2. Limits: depth 8, 96 single pushes, and 1,500 collision queries per shove.
-3. A pushed track moves as its chain: tracks of one net, layer and width, joined end to end where no via, pad or third track meets. The chain's ends stay put.
+3. A pushed track moves as its chain: tracks of one net, layer and width, joined end to end where no via, pad or third track meets. The [copper graph](copper-graph.md) decides this: a chain runs on through a track end only where that end has exactly one joint, end to end with another track whose end meets nothing else (a fill joint aside, since the pour is refilled round moved copper). The chain's ends stay put. So do its **pins**: every point where other copper joins one of its tracks in mid-span (a T, a via on the track). A result, and every corner shortcut of the cleanup, must pass through each pin; a side that does not is not taken.
 4. The part of the chain inside the pusher's hull is replaced by the hull's boundary on one side or the other. The chain uses octagons for 45° and free chains and rectangles for 90° chains, so it keeps its posture.
 5. The side whose result is clear of immovable copper wins, the shorter if both are. Immovable copper that a side would touch merges into the hull, and the choice is made again, up to four times.
 6. Cleanup: the pushed span (and only that span) is tidied. Short legs are dropped, collinear legs merged and loops cut, and corners are replaced by posture paths that touch nothing. A result with an acute corner is refused.
-7. A pushed via moves the least distance, in a 45° multiple, that clears the pusher. The chains ending on it follow with a 45° elbow that keeps their last leg's direction.
+7. A pushed via moves the least distance, in a 45° multiple, that clears the pusher. The chains ending on it follow with a 45° elbow that keeps their last leg's direction, each end keeping its offset from the via's centre. A via that the copper graph joins to anything else (a pad, another via, a track in mid-span) does not move: moving it would detach that copper.
 8. Never moved: pads, keepouts, the board edge, locked tracks and vias, the routed net's own copper, and vias when *Shove vias* is off. A push into any of these fails the whole shove.
 
 **Shove fallbacks** (`router::shove_plan`), in order:
@@ -78,7 +78,7 @@ A pair is pushed as one unit or not at all (`router/shove/pair.rs`). Pushing eac
 2. Its centre line bends round a hull grown by half the pair's whole width, as one chain, with the same sides, merges and cleanup as a single chain. The window's ends keep their direction for one pitch, so the halves join their fan-outs where they left them.
 3. Both halves are laid back along the new centre line at their old distance, with mitred corners. Coupling and gap hold by construction. Both halves are then checked at the exact clearances, and pushed copper pushes on as usual.
 
-On a 45° grid the halves' extra lengths cancel across a bend's opposite corners, so skew does not change. Off the grid they cancel only roughly, and one push may add at most half the class's max skew (half of 0.05 mm when the class sets none).
+On a 45° grid the halves' extra lengths cancel across a bend's opposite corners, so skew does not change. Off the grid they cancel only roughly, and one push may add at most half the class's max skew. A class that sets no max skew allows no added skew beyond rounding (1 µm): no limit is assumed that neither a source nor the user set. (Before slice 5 of the copper graph an invented 0.05 mm stood in for a missing class limit.)
 
 **Refused, with the pair left where it was:** a pusher reaching a stretch where the halves do not run coupled (a fan-out, a meander, a half with no partner yet), the window's end inside the pusher's hull, a bend tighter than the pitch, a locked track, a partner being routed on its own, or any via of a pair. The usual fallbacks then apply: walk round, or stop at the last legal point. `RoutePlan.note` and `PairPlan.note` say "Pair USB can't move as one here, so it stays put"; `layout.route_preview` returns it, `blocked` repeats it when the head stops short, and the desktop paints it at the pointer in the warning colour.
 
@@ -101,7 +101,8 @@ Core (`layout/router/tests.rs`, `hull.rs`, `clean.rs`). Every proposal goes thro
 - posture cleanup: a 90° chain stays on the axes with no collinear neighbours; a 45° chain keeps 45° multiples with no acute corner;
 - clearance always honoured over 30 random fields of vias and 45° tracks, in both modes (at least 100 steps; at least half arrive);
 - a coupled pair shoving a track and walking round a via;
-- a pair pushed as one unit (`tests/pair_shove.rs`): a track ending between the halves, a sweep of 240 heads across the pair, a pushed track passing the push on, a pair that cannot bend held with a message, a pair via that stays where another net's would move, and a half being routed that leaves its partner alone. On the real board, `crates/io/tests/esp32_pair.rs` sweeps 240 steps across the USB pair;
+- a pair pushed as one unit (`tests/pair_shove.rs`): a track ending between the halves, a sweep of 240 heads across the pair, a pushed track passing the push on, a pair that cannot bend held with a message, a pair via that stays where another net's would move, a half being routed that leaves its partner alone, and a pair off the 45° grid that a push moves only within half its class's max skew, and not at all without one (`a_push_adds_skew_only_within_the_class_limit`). On the real board, `crates/io/tests/esp32_pair.rs` sweeps 240 steps across the USB pair;
+- mid-span joints (`tests/joints.rs`): a T on a pushed track pins it, so the run bends round the head and comes back through the T, which a push without the T would have left in open board; a far pin leaves the rest free to bend; a via with a track running through it stays put, where without that track the push would have moved it clear of it;
 - `layout.route_step` as one transaction: one revision, undo and redo restore every shoved track and via exactly, the preview query agrees, the plan's undo edits restore the board, and a step that cannot move is refused without change;
 - Ignore proposes exactly `posture::step`.
 
@@ -140,7 +141,7 @@ The seam (`Line`, `State`, `shove`, the undo edits) is in place.
 - **Board outline.** A concave outer outline is not hugged; the head stops at it. Cutouts and keepouts are hulled convexly.
 - **Fills.** Fills are not obstacles and never move; a refill flows round the new copper, as before.
 - **Pair moved as a unit.** A pair moves only inside its coupled window; the window's fan-outs, its vias and any meander on it stay. A push has no length limit beyond the rules: a head far past the pair drags it along in the preview, coupled, and a length group warns if that breaks its target. `layout.route_step`'s outcome does not carry the note; `layout.route_preview` does.
-- **Shove scope.** A chain's ends never move, so a pusher reaching a chain's end at a pad or via fails rather than dragging the joint. A via moves only when it is the obstacle hit, not to make room for a chain. Shoves stay on the pushed copper's layer.
+- **Shove scope.** A chain's ends and pins never move, so a pusher reaching a chain's end at a pad or via, or a mid-span joint, fails rather than dragging the joint. A via moves only when it is the obstacle hit, not to make room for a chain. Shoves stay on the pushed copper's layer.
 - **Stateless preview.** Each move plans from the committed board. A head swept along a long track re-decides the push side each frame from geometry; the shorter clear side wins, which is stable in practice but not hysteretic.
 - **Pairs.** The pair router commits through `layout.route_apply` with the plan's edits. There is no serialisable `layout.route_pair_step` for CLI and MCP yet; `layout.route_pair` routes a whole pair without shove. The fan-out limits of [high-speed routing](high-speed-routing.md#limits-and-follow-ups) remain.
 - **Track drag** is planned, above.

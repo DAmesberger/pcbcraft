@@ -6,8 +6,8 @@ use crate::instances;
 use crate::library::graphics::{
     DrawingLayer, Fill, Item, PlacedText, Side, TextContent, TextMetric,
 };
-use crate::library::{Datum, PAD_ARC_TOLERANCE_MM, Pad, PadKind, PadSide};
-use crate::model::{Layer, Placement, Project};
+use crate::library::{Datum, PAD_ARC_TOLERANCE_MM, Pad, PadSide};
+use crate::model::{CopperLayer, Layer, Placement, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -329,14 +329,11 @@ impl PlacedPad {
         self.pad.frame().then(&self.transform)
     }
 
-    /// Whether the pad has copper on `layer`: plated through-hole pads on
-    /// every layer, surface kinds on their own, a bare hole on none.
-    pub fn on_copper(&self, layer: Layer) -> bool {
-        match self.pad.kind {
-            PadKind::PlatedThrough => true,
-            PadKind::NonPlatedHole => false,
-            PadKind::Smd | PadKind::Fiducial | PadKind::Mechanical => self.layer == layer,
-        }
+    /// Whether the pad has copper on `layer` ([`super::pad_copper_on`]):
+    /// plated through-hole pads on every layer, surface kinds on their own,
+    /// a bare hole on none.
+    pub fn on_copper(&self, layer: impl Into<CopperLayer>) -> bool {
+        super::pad_copper_on(self.pad.kind, self.layer, layer.into())
     }
 
     /// The copper (or, for a bare hole, keep-out) outline on the board.

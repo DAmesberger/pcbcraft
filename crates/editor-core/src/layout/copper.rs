@@ -35,12 +35,12 @@ pub const CURVE_SLACK_MM: f64 = PAD_ARC_TOLERANCE_MM;
 /// both outlines' curve slack. Shapes farther apart are never compared,
 /// which [`CopperRing::gap`] would reject by their bounds anyway.
 pub(super) fn check_reach(limits: &BoardRules<'_>) -> f64 {
-    limits.max_clearance() + TOUCH_REACH_MM
+    limits.max_clearance() + SLACK_REACH_MM
 }
 
-/// The farthest apart two outlines' bounds may be and still touch within
-/// both outlines' curve slack.
-const TOUCH_REACH_MM: f64 = 2.0 * CURVE_SLACK_MM + 1e-6;
+/// How far two outlines' measured gaps may stray from the exact ones: both
+/// outlines' curve slack, and rounding.
+const SLACK_REACH_MM: f64 = 2.0 * CURVE_SLACK_MM + 1e-6;
 
 /// One copper outline in board coordinates: a closed ring, the exact
 /// bounds of the shape it approximates, and how far the ring may stray from
@@ -179,12 +179,6 @@ impl CopperRing {
             closed.push(*first);
         }
         polyline_polygon_distance(&closed, &other.ring)
-    }
-
-    /// Whether the two outlines touch or overlap (same-net copper joins).
-    pub fn touches(&self, other: &CopperRing) -> bool {
-        let slack = self.slack + other.slack;
-        self.gap(other, EPS + slack + EPS) <= EPS + slack
     }
 
     /// Whether the two outlines are closer than the default profile's

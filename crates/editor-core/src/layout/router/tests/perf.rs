@@ -5,6 +5,8 @@
 //! (`cargo test -p pcbcraft-core --release route_plan_timings --
 //! --ignored --nocapture`); the other test runs in every build and
 //! guards against runaway work and illegal proposals on the dense board.
+//! The timings share one copper graph per board, built and timed apart, as
+//! the desktop and the engine share theirs per revision.
 use super::super::*;
 use crate::layout::LayoutCommand;
 use crate::model::CopperLayer::Top;
@@ -200,10 +202,14 @@ fn route_plan_timings() -> Fallible {
     let p = dense()?;
     let built = start.elapsed();
     let start = Instant::now();
-    let index = RouteIndex::of(&p);
+    let graph = std::sync::Arc::new(layout::CopperGraph::of(&p));
+    let graphed = start.elapsed();
+    let start = Instant::now();
+    let index = RouteIndex::with_graph(&p, graph);
     let indexed = start.elapsed();
     eprintln!(
-        "dense board: {} vias, {} tracks; fixture {built:?}, route index {indexed:?}",
+        "dense board: {} vias, {} tracks; fixture {built:?}, copper graph {graphed:?}, \
+         route index {indexed:?}",
         p.vias.len(),
         p.tracks.len()
     );
@@ -222,8 +228,14 @@ fn route_plan_timings() -> Fallible {
     }
     let showcase = Engine::showcase()?.project().clone();
     let start = Instant::now();
-    let index = RouteIndex::of(&showcase);
-    eprintln!("showcase route index {:?}", start.elapsed());
+    let graph = std::sync::Arc::new(layout::CopperGraph::of(&showcase));
+    let graphed = start.elapsed();
+    let start = Instant::now();
+    let index = RouteIndex::with_graph(&showcase, graph);
+    eprintln!(
+        "showcase copper graph {graphed:?}, route index {:?}",
+        start.elapsed()
+    );
     for mode in [RouteMode::Walkaround, RouteMode::Shove] {
         let mut all = Vec::new();
         for (net, head, targets) in showcase_sweep(&showcase) {

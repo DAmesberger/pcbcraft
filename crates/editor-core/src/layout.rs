@@ -4,7 +4,7 @@ use crate::diagnostics::{Error, Finding, Result};
 use crate::geometry::{Point, Shape, Transform2, point_valid};
 use crate::ids::{Endpoint, Id, PadId};
 use crate::instances;
-use crate::library::{PAD_ARC_TOLERANCE_MM, PadKind, PadShape, PadSide};
+use crate::library::{PAD_ARC_TOLERANCE_MM, PadCopper, PadKind, PadShape, PadSide};
 use crate::model::{
     CopperLayer, EditPolicy, Fabrication, Layer, PhysicalChoice, Placement, Project, Stackup, Track,
 };
@@ -325,10 +325,27 @@ pub struct WorldPad {
     pub mirrored: bool,
 }
 
+/// Whether a pad of `kind` whose copper side is `side` has copper on
+/// `layer`: a plated through pad on every layer, a surface pad on its own
+/// side, a bare hole on none. The one answer to which copper layers a pad
+/// has; every pad type below asks it.
+pub fn pad_copper_on(kind: PadKind, side: Layer, layer: CopperLayer) -> bool {
+    match kind.copper() {
+        PadCopper::None => false,
+        PadCopper::Through => true,
+        PadCopper::OneSide => CopperLayer::from(side) == layer,
+    }
+}
+
 impl WorldPad {
-    /// Whether the pad has copper on `layer`.
+    /// Whether the pad has copper on `layer` ([`pad_copper_on`]).
     pub fn on(&self, layer: impl Into<CopperLayer>) -> bool {
-        self.through || layer.into() == self.layer
+        let kind = if self.through {
+            PadKind::PlatedThrough
+        } else {
+            PadKind::Smd
+        };
+        pad_copper_on(kind, self.layer, layer.into())
     }
 
     /// Pad frame to board coordinates (reflected first on the bottom).
@@ -394,6 +411,10 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
         let footprint = &physical.footprint.definition;
         let datum = &footprint.datum;
         for pad in &footprint.pads {
+            // A bare hole has no copper, so it joins nothing.
+            if pad.kind.copper() == PadCopper::None {
+                continue;
+            }
             let Some(electrical) = pad
                 .terminal
                 .and_then(|t| physical.binding.definition.terminal_of(t))
@@ -431,7 +452,7 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
                     PadSide::Top => placement.layer,
                     PadSide::Bottom => placed::opposite(placement.layer),
                 },
-                through: pad.kind == PadKind::PlatedThrough,
+                through: pad.kind.copper() == PadCopper::Through,
                 mirrored: placement.layer == Layer::Bottom,
             });
         }
@@ -694,7 +715,8 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
         }
         LayoutCommand::TuneLength { request } => {
             let obstacles = obstacles::Obstacles::of(project);
-            let plan = meander::plan(project, &obstacles, &request)?;
+            let graph = CopperGraph::of(project);
+            let plan = meander::plan(project, &obstacles, &graph, &request)?;
             apply_routes(project, plan.edits)?;
         }
         LayoutCommand::SetBoardSize { size } => {

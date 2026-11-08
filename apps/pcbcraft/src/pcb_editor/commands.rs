@@ -5,7 +5,7 @@
 use super::{PcbEditor, Tool, board_shape::ShapeTool};
 use crate::commands::{Chord, Context, KeyDecl, PcbView, ToolEntry};
 use crate::layer_view::ViewLayer;
-use pcbcraft_core::{CopperLayer, Project};
+use pcbcraft_core::CopperLayer;
 
 /// The board shape sketch's tools for the registry, with the keys its
 /// canvas handles (`board_shape_ui`).
@@ -115,9 +115,9 @@ impl PcbEditor {
     /// and Fill tools use. While routing, the route changes to it through
     /// a via at the pointer (at the head when the pointer is off the
     /// canvas), as V does. A layer the stackup lacks changes nothing.
-    pub fn select_layer(&mut self, project: &Project, index: usize) {
+    pub fn select_layer(&mut self, index: usize) {
         if let Ok(layer) = self.layer_at(index) {
-            self.change_layer_to(project, layer, self.hover_at);
+            self.change_layer_to(layer, self.hover_at);
         }
     }
 

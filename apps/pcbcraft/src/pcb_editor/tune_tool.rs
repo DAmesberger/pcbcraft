@@ -97,11 +97,7 @@ impl PcbEditor {
         match self.tune.net_target {
             Some((r, cached)) if r == revision && cached.0 == net => Some(cached),
             _ => {
-                // The revision's graph when the editor holds it.
-                let graph = match self.cached_revision {
-                    Some(r) if r == revision => self.graph.clone(),
-                    _ => std::sync::Arc::new(pcbcraft_core::layout::CopperGraph::of(project)),
-                };
+                let graph = self.revision_graph(project, revision);
                 let length = length::signal_length_with(project, &graph, net);
                 let target = length::tune_target_with(project, &graph, net);
                 let cached = (net, length, target);
@@ -140,8 +136,9 @@ impl PcbEditor {
             if self.tune.obstacles.as_ref().map(|(r, _)| *r) != Some(revision) {
                 self.tune.obstacles = Some((revision, Obstacles::of(project)));
             }
+            let graph = self.revision_graph(project, revision);
             let plan = match &self.tune.obstacles {
-                Some((_, obstacles)) => meander::plan(project, obstacles, &request)
+                Some((_, obstacles)) => meander::plan(project, obstacles, &graph, &request)
                     .map(|p| p.preview())
                     .map_err(|e| crate::refusal::shown_error(&e)),
                 None => Err("No board".to_owned()),

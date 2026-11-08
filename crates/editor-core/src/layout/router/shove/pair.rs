@@ -6,8 +6,10 @@
 //! as wide as the pair, and lays both halves back along it at their
 //! distance from it, with mitred corners. Coupling and gap hold by
 //! construction, and the halves' extra lengths cancel at the opposite
-//! corners of the bend, so skew stays within a small allowance
-//! ([`ADDED_SKEW_SHARE`]) or the push is refused.
+//! corners of the bend. A push may add skew only within a share
+//! ([`ADDED_SKEW_SHARE`]) of the class's max skew; a class that sets none
+//! allows no added skew beyond rounding ([`LENGTH_TOLERANCE_MM`]). Past
+//! that, the push is refused.
 //!
 //! A push that cannot keep the pair whole is refused: a pusher reaching a
 //! stretch where the halves do not run coupled (a fan-out, a meander), a
@@ -22,6 +24,7 @@ use crate::geometry::{Point, distance, segment_distance, segments_cross};
 use crate::ids::Id;
 use crate::layout::impedance;
 use crate::layout::length::gap_tolerance;
+use crate::layout::meander::LENGTH_TOLERANCE_MM;
 use crate::layout::pair::{left, mitre};
 use crate::layout::posture::Posture;
 use crate::layout::router::hull::{Facets, Hull};
@@ -38,8 +41,6 @@ const SAME_PITCH_MM: f64 = 2e-6;
 /// The share of the class's max skew one push may add (a bend off the
 /// 45° grid does not cancel exactly).
 const ADDED_SKEW_SHARE: f64 = 0.5;
-/// The skew limit assumed for a class that sets none, mm.
-const DEFAULT_SKEW_MM: f64 = 0.05;
 
 fn unit(a: Point, b: Point) -> Option<Point> {
     let l = distance(a, b);
@@ -411,6 +412,8 @@ fn bend(
             match probes(&bent.a, line).or_else(|| probes(&bent.b, other)) {
                 None if !has_acute(&bent.a)
                     && !has_acute(&bent.b)
+                    && line.keeps_pins(&bent.a)
+                    && other.keeps_pins(&bent.b)
                     && (length(&bent.a) - length(&bent.b)).abs() - skew_before <= limit
                     && apart(ctx, line, other, &bent)
                     && best.as_ref().is_none_or(|(l, _)| total < *l) =>
@@ -469,12 +472,13 @@ fn apart(ctx: &Ctx<'_>, line: &Line, other: &Line, bent: &Bent) -> bool {
     })
 }
 
+/// The skew one push may add, mm: a share of the class's max skew, or,
+/// when the class sets none, nothing beyond rounding. No limit is assumed
+/// that neither a source nor the user set.
 fn added_skew_limit(ctx: &Ctx<'_>, pair: &DiffPair) -> f64 {
     let class = crate::layout::net_class(ctx.project, pair.positive);
-    ctx.project
-        .rules
-        .signal(class)
-        .pair_max_skew
-        .unwrap_or(DEFAULT_SKEW_MM)
-        * ADDED_SKEW_SHARE
+    match ctx.project.rules.signal(class).pair_max_skew {
+        Some(max) => max * ADDED_SKEW_SHARE,
+        None => LENGTH_TOLERANCE_MM,
+    }
 }

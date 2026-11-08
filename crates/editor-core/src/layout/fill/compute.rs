@@ -101,17 +101,6 @@ fn bounds_of(points: &[Point]) -> Option<[Point; 2]> {
     Some(b)
 }
 
-/// Whether a placed pad has copper on `layer`.
-pub(crate) fn pad_on(pad: &PlacedPad, layer: CopperLayer) -> bool {
-    match pad.pad.kind {
-        PadKind::PlatedThrough => true,
-        PadKind::NonPlatedHole => false,
-        PadKind::Smd | PadKind::Fiducial | PadKind::Mechanical => {
-            CopperLayer::from(pad.layer) == layer
-        }
-    }
-}
-
 /// The board's keepouts and every placed footprint keep-out
 /// ([`super::super::placed_keepouts`]), the latter with their instance.
 pub(crate) fn effective_keepouts(project: &Project) -> Vec<(crate::model::Keepout, Option<Id>)> {
@@ -231,7 +220,7 @@ impl<'a> Ctx<'a> {
         for (i, pad) in self.pads.iter().enumerate() {
             // A bare hole clears fills on every layer.
             let holes = pad.pad.hole.is_some() || !pad.pad.vias.is_empty();
-            if (pad_on(pad, layer) || holes) && near(self.pad_bounds.get(i).copied().flatten()) {
+            if (pad.on_copper(layer) || holes) && near(self.pad_bounds.get(i).copied().flatten()) {
                 out.pads.push(i);
             }
         }
@@ -429,7 +418,7 @@ impl<'a> Ctx<'a> {
             let Some(pad) = self.pads.get(i) else {
                 continue;
             };
-            let on = pad_on(pad, fill.layer);
+            let on = pad.on_copper(fill.layer);
             let connection = if same(pad.net) && on {
                 self.connection(fill, Some(pad.pad.kind))
             } else {
@@ -562,7 +551,7 @@ impl<'a> Ctx<'a> {
                     }
                 };
                 for pad in rel.pads.iter().filter_map(|i| self.pads.get(*i)) {
-                    if pad.net == Some(net) && pad_on(pad, fill.layer) {
+                    if pad.net == Some(net) && pad.on_copper(fill.layer) {
                         mark(&CopperRing::of_placed_pad(pad));
                     }
                 }

@@ -47,7 +47,7 @@ impl PcbEditor {
         self.board_pads
             .iter()
             .map(|b| &b.placed)
-            .filter(|p| p.net == Some(net) && super::pad_on(p, self.layer))
+            .filter(|p| p.net == Some(net) && p.on_copper(self.layer))
             .min_by(|a, b| {
                 let key =
                     |p: &PlacedPad| (p.instance != instance, geometry::distance(p.center(), near));

@@ -13,7 +13,7 @@
 //! refill lands. The graph also reports islands that join nothing
 //! (`fill.island_unconnected`).
 use super::FILL_CHORD_MM;
-use super::compute::{Ctx, pad_on};
+use super::compute::Ctx;
 use super::geom::{self, Region, RegionIndex};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Point, polygons_overlap};
@@ -143,7 +143,7 @@ fn clearance(ctx: &mut Ctx<'_>, fill: &Fill, label: &str, out: &mut Vec<Finding>
     // (object, outline ring, required gap)
     let mut objects: Vec<(ObjectRef, Vec<Point>, f64)> = Vec::new();
     for pad in &ctx.pads {
-        if pad_on(pad, fill.layer) && other(pad.net) {
+        if pad.on_copper(fill.layer) && other(pad.net) {
             let gap = ctx.required(fill, CopperObject::Pad, pad.net);
             objects.push((
                 ObjectRef::Pad {
@@ -275,7 +275,7 @@ fn keepouts(ctx: &Ctx<'_>, out: &mut Vec<Finding>) {
         }
         if k.forbid.pads {
             for pad in ctx.pads.iter().filter(|p| Some(p.instance) != *owner) {
-                let on = ctx.layers.iter().any(|l| k.on(*l) && pad_on(pad, *l));
+                let on = ctx.layers.iter().any(|l| k.on(*l) && pad.on_copper(*l));
                 if on && inside(&pad.outline().flatten(FILL_CHORD_MM)) {
                     out.push(Finding::new(
                         "keepout.pad",

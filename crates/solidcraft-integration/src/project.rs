@@ -16,13 +16,13 @@ use crate::models::{self, ModelDefinition, look};
 use crate::native::{
     self, BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody,
 };
-use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
+use crate::pad_outline::{self, Contour, FLATTEN_TOLERANCE_MM, PLATING_MM};
 use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
 use pcbcraft_core::library::model3d::{LibraryModel, ModelDefinition as LibraryModelDefinition};
 use pcbcraft_core::library::{
-    ModelPlacement, PackageDefinition, PackageModel, Pad, PadDefaults, PadShape,
+    ModelPlacement, PackageDefinition, PackageModel, Pad, PadCopper, PadDefaults, PadShape,
 };
 use pcbcraft_core::{
     CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, Stackup, ViaSpan,
@@ -1585,12 +1585,12 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     for pad in &pads {
         let local = pad.pad();
         let pick = next_pick(&sources);
-        let copper = pad_outline::copper(local);
-        let layers: Vec<Layer> = match copper {
-            Copper::None => vec![],
-            Copper::OneSide => vec![pad.placed.layer],
-            Copper::Through => vec![pad.placed.layer, other(pad.placed.layer)],
-        };
+        let copper = local.kind.copper();
+        // The outer layers the pad has copper on, its own side first.
+        let layers: Vec<Layer> = [pad.placed.layer, other(pad.placed.layer)]
+            .into_iter()
+            .filter(|l| pad.placed.on_copper(*l))
+            .collect();
         // Display: copper, bores and mask openings per outer layer.
         let shape = pad_outline::shape_contour(&local.shape, 0.0);
         let mask = pad_outline::mask_opening(local, &pad.defaults);
@@ -1600,7 +1600,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             .map(|d| flat(&pad.board(d)))
             .collect::<Result<_>>()?;
         let bores = pad.bores();
-        let opening_layers = if drills.is_empty() && copper != Copper::None {
+        let opening_layers = if drills.is_empty() && copper != PadCopper::None {
             layers.clone()
         } else {
             vec![Layer::Top, Layer::Bottom]
@@ -1608,7 +1608,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         for layer in opening_layers {
             let has_copper = layers.contains(&layer);
             let mut openings = drills.clone();
-            if (has_copper || copper == Copper::None)
+            if (has_copper || copper == PadCopper::None)
                 && let Some(mask) = &mask
             {
                 openings.push(flat(&pad.board(mask))?);
@@ -1631,7 +1631,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
                 openings,
             });
         }
-        if copper == Copper::None {
+        if copper == PadCopper::None {
             continue;
         }
         let Some(shape) = shape else {
@@ -1678,7 +1678,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             }
             None => land(&mut b, &pp, 0.into(), &near_copper)?,
         }
-        if copper == Copper::Through {
+        if copper == PadCopper::Through {
             land(
                 &mut b,
                 &format!("{pp}_opposite"),
@@ -2123,7 +2123,7 @@ fn object_params(
     }
     for pad in pads {
         let local = pad.pad();
-        if pad_outline::copper(local) == Copper::None
+        if local.kind.copper() == PadCopper::None
             || pad_outline::shape_contour(&local.shape, 0.0).is_none()
             || axis_box(pad).is_none()
         {

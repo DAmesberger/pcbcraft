@@ -48,7 +48,7 @@ impl Canvas {
             },
             |ui| {
                 command = editor.canvas(ui, engine);
-                dispatch_layer_keys(ui.ctx(), editor, engine);
+                dispatch_layer_keys(ui.ctx(), editor);
             },
         );
         output.textures_delta.clear();
@@ -126,7 +126,7 @@ impl Canvas {
 /// The app's dispatcher for the layer keys (`App::dispatch_keys`): each
 /// press the canvas left resolves in the editor's contexts, and a layer
 /// command runs as `App::run_command` runs it.
-fn dispatch_layer_keys(ctx: &egui::Context, editor: &mut PcbEditor, engine: &Engine) {
+fn dispatch_layer_keys(ctx: &egui::Context, editor: &mut PcbEditor) {
     use crate::commands::{Action, Chord, Handler, active_contexts};
     let registry = crate::keys::registry(ctx);
     let active = active_contexts(editor.shortcut_context());
@@ -154,7 +154,7 @@ fn dispatch_layer_keys(ctx: &egui::Context, editor: &mut PcbEditor, engine: &Eng
             && command.handler == Handler::Registry
             && let Action::PcbLayer(index) = command.action
         {
-            editor.select_layer(engine.project(), index);
+            editor.select_layer(index);
         }
     }
 }
@@ -874,6 +874,42 @@ fn an_end_click_beside_a_track_of_the_net_finishes_on_it() -> TestResult {
     canvas.apply(&mut editor, &mut engine, step)?;
     assert_eq!(editor.route_start, None, "the route ended on the track");
     assert!(editor.tool == Tool::Route, "Route stays armed");
+    Ok(())
+}
+
+/// A click on copper the route's head is already joined to (the start
+/// pad's own fan-out) is a corner, not a finish: the copper graph puts it
+/// in the head's island. A click on copper of the net in another island
+/// finishes (see `an_end_click_beside_a_track_of_the_net_finishes_on_it`).
+#[test]
+fn a_click_on_the_routes_own_island_does_not_finish_it() -> TestResult {
+    let mut engine = pcbcraft_core::Engine::demo()?;
+    let net = shared_net(&engine)?;
+    // A fan-out of R1 pad 2, already on the board.
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route {
+            request: pcbcraft_core::layout::RouteRequest {
+                net,
+                start: R1_2,
+                end: [8.8, 3.0],
+                width: 0.2,
+                layer: CopperLayer::Top,
+            },
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    start(&mut canvas, &mut editor, &engine)?;
+    let first = canvas.click(&mut editor, &engine, [11.0, 5.0]);
+    canvas.apply(&mut editor, &mut engine, first)?;
+    assert_eq!(editor.route_start, Some([11.0, 5.0]));
+    let back = canvas.click(&mut editor, &engine, [8.8, 4.0]);
+    canvas.apply(&mut editor, &mut engine, back)?;
+    assert!(
+        editor.route_start.is_some(),
+        "the fan-out is the route's own copper: the route goes on"
+    );
     Ok(())
 }
 

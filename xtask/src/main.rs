@@ -1,4 +1,5 @@
 mod clean_room;
+mod connectivity;
 mod core_modules;
 mod layers;
 mod licences;
@@ -52,6 +53,7 @@ fn run() -> Result<()> {
             cargo(&["fmt", "--all", "--", "--check"])?;
             layers::check()?;
             core_modules::check()?;
+            connectivity::check()?;
             licences::check()?;
             clean_room::check()?;
             ui_containers::check()?;
@@ -79,13 +81,14 @@ fn run() -> Result<()> {
         "wasm-footprint" => wasm_tests("pcbcraft-solidcraft", "footprint::tests", "footprint"),
         "layers" => layers::check(),
         "core-modules" => core_modules::check(),
+        "connectivity" => connectivity::check(),
         "clean-room" => clean_room::check(),
         "licences --check" => licences::check(),
         "ui-containers" => ui_containers::check(),
         "ui-forms" => ui_forms::check(),
         "raw-keys" => raw_keys::check(),
         _ => Err(
-            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules \
+            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity \
              | licences --check | clean-room | ui-containers | ui-forms | raw-keys"
                 .into(),
         ),

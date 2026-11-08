@@ -244,3 +244,109 @@ fn a_half_being_routed_does_not_push_its_partner() -> Fallible {
     );
     Ok(())
 }
+
+/// A pair at `deg` from the x-axis through (30, 20), 20 mm long, its class
+/// setting `skew` as the max skew when given.
+fn sloped(deg: f64, skew: Option<f64>) -> Fallible<(Project, DiffPair)> {
+    let (mut p, pair, _) = paired()?;
+    p.tracks.retain(|t| !pair.has(t.net));
+    if let Some(mm) = skew {
+        let class = crate::rules::apply(
+            &mut p.rules,
+            RulesCommand::AddNetClass {
+                class: crate::rules::NetClassSpec {
+                    name: "USB".into(),
+                    signal: crate::rules::signal::SignalRules {
+                        pair_max_skew: Some(mm),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            },
+        )?;
+        crate::rules::apply(
+            &mut p.rules,
+            RulesCommand::AssignNets {
+                nets: vec![A, B],
+                class,
+            },
+        )?;
+    }
+    let (_, gap) = impedance::pair_width_gap(&p, A, Top);
+    let half = (WIDTH + gap) / 2.0;
+    let (s, c) = deg.to_radians().sin_cos();
+    for (net, side) in [(A, 1.0), (B, -1.0)] {
+        let off = [-s * half * side, c * half * side];
+        track(
+            &mut p,
+            net,
+            [30.0 - 10.0 * c + off[0], 20.0 - 10.0 * s + off[1]],
+            [30.0 + 10.0 * c + off[0], 20.0 + 10.0 * s + off[1]],
+        )?;
+    }
+    Ok((p, pair))
+}
+
+fn half_lengths(p: &Project) -> (f64, f64) {
+    let of = |n: Id| {
+        p.tracks
+            .iter()
+            .filter(|t| t.net == n)
+            .map(|t| distance(t.start, t.end))
+            .sum::<f64>()
+    };
+    (of(A), of(B))
+}
+
+/// The most skew any push across the pair at `deg` adds, over the pushes
+/// that moved the pair, and how many moved it.
+fn added_skew(deg: f64, limit: Option<f64>) -> Fallible<(usize, f64)> {
+    let (p, pair) = sloped(deg, limit)?;
+    let index = RouteIndex::of(&p);
+    let (a0, b0) = half_lengths(&p);
+    let (mut moved, mut worst) = (0, 0.0f64);
+    for k in 0..15 {
+        let x = 22.0 + 1.1 * f64::from(k);
+        let y = 20.0 + (x - 30.0) * deg.to_radians().tan();
+        for dy in [0.6, 0.0] {
+            let plan = plan(
+                &p,
+                &index,
+                &request(C, [x, y + 7.0], [x + 0.3, y + dy], RouteMode::Shove),
+            );
+            if !p
+                .tracks
+                .iter()
+                .any(|t| plan.shoved.contains(&t.id) && pair.has(t.net))
+            {
+                continue;
+            }
+            let mut q = p.clone();
+            commit(&mut q, &plan)?;
+            let (a, b) = half_lengths(&q);
+            moved += 1;
+            worst = worst.max((a - b).abs() - (a0 - b0).abs());
+        }
+    }
+    Ok((moved, worst))
+}
+
+/// Bending a pair that runs off the 45° grid adds skew (its corners do
+/// not cancel exactly). Its class's max skew decides how much: a push may
+/// add half of it. A class that sets none allows no added skew at all,
+/// not an assumed allowance, so the pair does not move.
+#[test]
+fn a_push_adds_skew_only_within_the_class_limit() -> Fallible {
+    let deg = 20.0;
+    let (moved, worst) = added_skew(deg, Some(1.0))?;
+    assert!(moved > 0, "the pushes move the pair");
+    assert!(worst > 1e-3 && worst <= 0.5, "{worst}");
+    let (moved, worst) = added_skew(deg, Some(0.1))?;
+    assert!(
+        worst <= 0.05,
+        "half of 0.1 mm at most: {worst} over {moved}"
+    );
+    let (moved, worst) = added_skew(deg, None)?;
+    assert_eq!(moved, 0, "no class limit: no push adds skew ({worst})");
+    Ok(())
+}

@@ -2,7 +2,7 @@ use super::*;
 use crate::geometry::distance;
 use crate::library::ApertureId;
 use crate::library::{
-    CornerMask, FootprintGraphic, Hole, HoleShape, Outline, PadShape, PadVia, Segment,
+    CornerMask, FootprintGraphic, Hole, HoleShape, Outline, PadKind, PadShape, PadVia, Segment,
     designator_placeholder,
 };
 use crate::tests::support::by_designator;
@@ -281,5 +281,42 @@ fn graphics_place_mirrored_on_the_bottom_and_pick_by_stroke_and_text_box() -> Re
     let courtyard = pick_graphic(&graphics, [12.0, 10.0], 0.01, m, |_| true)
         .ok_or_else(|| Error::NotFound("courtyard pick".into()))?;
     assert_eq!(courtyard.graphic, crate::GraphicId(12));
+    Ok(())
+}
+
+/// A bare hole has no copper on any layer, even when its footprint still
+/// lands a terminal on it (an error the footprint check reports). One rule
+/// (`layout::pad_copper_on`) answers for the placed pad, which fill
+/// compute and fabrication read, and for the connected pads, which the
+/// copper graph reads. The graph used to count such a hole as a land on
+/// its side, where fill compute saw no copper.
+#[test]
+fn a_bare_hole_has_no_copper_on_any_layer() -> Result<()> {
+    let (project, r1) = board([10.0, 10.0], 0.0, Layer::Top, |f| {
+        f.pads[1].kind = PadKind::NonPlatedHole;
+        f.pads[1].hole = Some(Hole {
+            shape: HoleShape::Round { diameter: 1.0 },
+            plated: false,
+            offset: [0.0, 0.0],
+        });
+    })?;
+    let hole = placed_pads(&project)
+        .into_iter()
+        .find(|p| p.instance == r1 && p.pad.kind == PadKind::NonPlatedHole)
+        .ok_or_else(|| Error::NotFound("the hole".into()))?;
+    assert!(
+        hole.net.is_some(),
+        "the hole still carries its terminal's net"
+    );
+    for layer in project.stackup.layers() {
+        assert!(!hole.on_copper(layer), "{layer:?}");
+    }
+    let is_hole = |w: &crate::layout::WorldPad| w.instance == r1 && w.pad == hole.pad.id;
+    assert!(!crate::layout::pads(&project).iter().any(is_hole));
+    let graph = crate::layout::CopperGraph::of(&project);
+    assert!(
+        !graph.pads().iter().any(is_hole),
+        "the graph has no land for it"
+    );
     Ok(())
 }

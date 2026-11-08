@@ -1,6 +1,6 @@
 # One copper graph (design)
 
-Design for review, 8 November 2026. Base: `component-model` at 32116be. Approved by the founder with all its recommendations. Slices 1 to 4 are built; see [Slice 1 as built](#slice-1-as-built), [Slice 2 as built](#slice-2-as-built), [Slice 3 as built](#slice-3-as-built) and [Slice 4 as built](#slice-4-as-built).
+Design for review, 8 November 2026. Base: `component-model` at 32116be. Approved by the founder with all its recommendations. All five slices are built; see [Slice 1 as built](#slice-1-as-built) to [Slice 5 as built](#slice-5-as-built), and [Where connectivity lives](#where-connectivity-lives) for the final state.
 
 The founder's requirement: "single copper graph. there is no excuse for duplication. everything needs to be single source of truth." His ruling on pairs: "what is a pin-to-pin link other than a track between two pins". So this design keeps no separate link or branch concept. Copper off a pair's signal path is ordinary net copper. Where it ends at a pin, it is a track between pins. Where it ends at no pad, it is a stub.
 
@@ -512,3 +512,99 @@ These timings are on `via_board(10_000, 2_000)`, test profile, Apple M5 Max shar
 
 The preview builds one extra graph; it reuses the engine's graph for the current board and its findings. Most of the preview is the two boards' full checks, as before.
 
+
+## Slice 5 as built
+
+Built on `component-model` at 804cb20, 8 November 2026.
+
+### What exists
+
+- **Joint queries** in `connectivity/joints.rs`:
+  - `CopperGraph::joints_on(track)`: every joint on a board track, in station order. Each `TrackJoint` gives the station, the point on the centre line, whether it is at an end, what it meets (`Meets::Track { index, station, end }`, `Via`, `Pad` or `Fill`) and `end_to_end` (the two tracks' ends are one point, a polyline corner).
+  - `CopperGraph::joints_of_via(via)`: what joins a via on any of its lands. Its own barrel does not count.
+  - `CopperGraph::islands_at(point, layer, net)`: the islands of a net's tracks, vias and pads on a layer whose copper holds a point, by the one joining rule.
+  - `connectivity::keeps_joint(polyline, at)`: whether a new centre line still passes through a joint's point, so it keeps the joint. The other copper met the old copper within its half-width of that point.
+
+  These replace the design's `joints_on`, `tracks_at`, `element_at` and `layers_at`. `tracks_at` is `joints_of_via`, filtered to tracks, and `element_at` with `layers_at` is `islands_at`.
+- **Shove chains** (`router/shove.rs::adopt_line`) are read off the graph. A chain runs on through a track end only where the graph has exactly one joint there. That joint must be end to end with a track of the same width whose end meets nothing else. A joint with a fill is ignored here and below, because the pour is refilled round moved copper.
+- **Pins.** Every mid-span joint on a chain's tracks (a T, a via on the track, a crossing) becomes one of the chain's pins (`Line::pins`). A shoved chain must pass through each pin, which `keeps_joint` checks. This applies to single chains (`push_line`), to both halves of a pushed pair (`pair::bend`) and to every corner shortcut of the cleanup (`tidy`), so the cleanup cannot cut a pin off. A side that loses a pin is not taken. When neither side keeps it, the push fails, and so does the shove.
+- **Via followers** (`follow`) come from `joints_of_via`. The tracks joined at an end follow the via, and each end keeps its offset from the via's centre, so an off-centre end follows as well. A via that is joined to anything else does not move, because moving it would detach that copper. That covers a pad, another via and a track in mid-span.
+- **Router graph.** `RouteIndex` holds the revision's graph. `RouteIndex::with_graph` takes the engine's graph (`layout.route_preview`) or the editor's (the desktop Route tool). `RouteIndex::of` builds the graph on the first shove that needs one (`layout.route_step`, tests).
+- **The meander** (`meander::plan`, now given the graph) finds the track's mid-span joints with `joints_on` and goes in the longest stretch between them. Its straight lead-in and lead-out keep it a leg spacing off each joint, and the joints stay on the straight leads. When no stretch is long enough, the tuning is refused and names the joints: "Copper joins this segment at 2.5, 5, 7.5 mm from its start; tune between joints, which needs at least …". `meander::wanted` measures on the same graph. `layout.tune_length` builds the graph, `layout.tune_preview` uses the engine's, and the Tune tool uses the editor's (`PcbEditor::revision_graph`).
+- **Route tool.** A click finishes the route when it lands on copper of the net, on the routing layer, in another island than the head's (`islands_at`; the helper is now `reaches_another_island`). A layer change needs no via when one island has copper at the head on both layers (`head_spans_layers`). A click on a pad of the net still finishes the route, as before.
+- **Pair skew** (`router/shove/pair.rs`). `DEFAULT_SKEW_MM` = 0.05 is gone. With a class max skew, a push may add half of it (`ADDED_SKEW_SHARE`, unchanged). With none, it may add nothing beyond rounding (`meander::LENGTH_TOLERANCE_MM`, 1 µm), so a push that would add skew is refused.
+- **One definition of a pad's copper.** `PadKind::copper()` (library) answers `PadCopper::None`, `OneSide` or `Through`, and `layout::pad_copper_on(kind, side, layer)` turns that into copper layers. `PlacedPad::on_copper` and `WorldPad::on` call it, and the via-to-pad layer test (`via::shares_layer`) asks `WorldPad::on`. `layout::pads` leaves out a pad with no copper, so the graph never has a land for a bare hole. The 3D model reads `PadKind::copper()` and `PlacedPad::on_copper` as well.
+- **Enforcement:** `cargo xtask connectivity`, part of `cargo xtask ci` (below).
+
+### Deleted
+
+- `Ctx::track_ends_at` and `Ctx::joint_at` (`router/world.rs`), together with the centre-coincidence chain and follower tests in `adopt_line` and `follow`.
+- The desktop's own joining rules in `joins_net_copper` and `head_joins_layers`: the same-net track and via-disc tests, and the pad test through the desktop's hit outlines.
+- The meander's implicit "the ends are the only joints".
+- `DEFAULT_SKEW_MM`.
+- Five copies of the pad-layer rule: fill compute's `pad_on`, fabrication's `pad_on`, its test oracle's `pad_on`, the desktop's `pad_on` and the 3D model's `pad_outline::Copper` with `copper()`. The desktop's copy counted a bare hole as copper on every layer.
+- `CopperRing::touches`, the last touch predicate outside the module, which only one test used. That test now checks the tangent gap directly. `TOUCH_REACH_MM`, the clearance reach in `copper.rs`, is renamed `SLACK_REACH_MM`, since it has nothing to do with touching.
+- The `project` parameters that only the old route-tool helpers needed: `change_layer_to`, `next_layer` and `select_layer`.
+
+### Enforcement: `cargo xtask connectivity`
+
+Joining means "same net, and the copper meets". Clearance is the opposite question: "different nets, and the copper comes closer than a rule". The check (`xtask/src/connectivity.rs`) parses every crate's and app's sources outside `layout/connectivity` and skips test code. It rejects:
+
+- the joining tolerances by name (`JOIN_EPS`, `JOIN_REACH_MM`);
+- a function that both compares a net for equality (`a.net == b`, `net == Some(n)`) and tests copper for contact. A contact test is a comparison with a contact tolerance (a float literal from 1e-8 up to 0.001 mm) or a call to `touches`, `track_contains` or `polygon_contains`.
+
+A clearance test compares nets for inequality and gaps against a rule, so it passes. Literals below 1e-8 test float identity, such as finding a track a step just wrote by its end point or skipping a degenerate segment, so they pass too. The first version flagged three functions of that kind (`pair_tool::settle_pair`, `pair::route`, `length::pair_coupling`), which is why the lower bound exists. Counted, reasoned exceptions name functions that match the shape but decide nothing. A stale exception fails the check. None is needed today.
+
+On the code before slices 1 to 5, the check finds D1 and D2 (`BoardCopper::checks`, `BoardCopper::airwires`), D7 (`track_ends_at`, `joint_at`) and D8's `joins_net_copper`. It misses D8's `head_joins_layers`, which compared a via's distance with its radius and called the desktop's pad hit test, and D6, which called named helpers. A rule that caught those would also flag picking code. Its unit tests cover a track-end coincidence, a point on a track of the net, a clearance test, a pick, float identity and test code.
+
+### Behaviour changes and test corrections
+
+Every change is a correction. No existing expectation changed: the router, pair, meander, high-speed, fill, Update PCB, desktop and ESP32 tests pass unchanged.
+
+- **Shove with a mid-span joint.** Before, a T or a via on a pushed track was invisible to the chain, so a push could bend the track off it. Now the chain is pinned there. New tests in `router/tests/joints.rs`:
+  - `a_shove_keeps_a_t_on_the_pushed_track_joined`. A 1.5 mm head pushes a run at (25–31, 19.6). Without the branch, the run's ramp back down misses (32.3, 20). With the branch it comes back down before the T and passes through it, and every track of the net stays in one island.
+  - `a_pinned_chain_still_bends_elsewhere`. With the T at (38, 20), the run still bends round the head and passes through the T.
+  - `a_shove_does_not_move_a_via_a_track_runs_through`. Without the through track, the via moves 0.65 mm, past its radius plus that track's half-width. With it, the via stays, the head goes round, and the via and both tracks stay in one island.
+- **Meander with a mid-span joint.** Before, the meander was centred on the segment and could bump over a via, detaching it. New tests in `meander.rs`:
+  - `a_meander_keeps_a_via_in_mid_span_joined`. A via at x = 30 on a 20–40 mm track: the whole-segment meander bumps over it, and the planned one keeps it on a straight lead. After `layout.tune_length`, everything is still one island, and the added length is exact.
+  - `joints_too_close_together_refuse_the_meander`. Three T's at 2.5 mm spacing on a 10 mm track refuse the meander, naming the joints.
+- **Route tool.** A click on copper already joined to the head, such as the start pad's fan-out, used to finish the route. It is now a corner (`a_click_on_the_routes_own_island_does_not_finish_it`). A via whose span misses the routing layer no longer counts as joining it. That case is latent, since commands refuse `ViaSpan::Between`.
+- **Pair skew without a class limit.** Before, a push could add up to 0.025 mm of skew to a pair whose class set no limit, half of an invented 0.05 mm. It now adds none. `a_push_adds_skew_only_within_the_class_limit` builds a pair at 20°, off the 45° grid, where every push adds about 0.09–0.14 mm of skew:
+  - with a 1 mm class limit, pushes move it and add more than 0.001 mm and at most 0.5 mm;
+  - with 0.1 mm, no push adds more than 0.05 mm;
+  - with no limit, no push moves it.
+
+  Pairs on the 45° grid still shove without a limit, with skew unchanged within 1e-6 mm, as the existing pair tests assert.
+- **A bare hole carrying a terminal** (a footprint error that `footprint.terminal_forbidden` reports) was a land on its side in the graph. It is now no copper anywhere (`placed/tests.rs::a_bare_hole_has_no_copper_on_any_layer`).
+
+The ESP32 reference board stays at 0 issues (`project.issues`: 0 errors, 0 warnings). `regenerate.sh` reproduces its `.pcbcraft` and `fab/` byte for byte. The schematic PDF it rewrote was restored to the committed file.
+
+### Measured
+
+`route_plan_timings` (`router/tests/perf.rs`), `ci` profile (opt-level 1, dependencies 2), Apple M5 Max shared with other agents' builds, three runs each. The timing now builds the copper graph once per board and hands it to the index, as the engine and the editor do, and reports the build separately.
+
+| Work | Before (804cb20) | Slice 5 |
+| --- | --- | --- |
+| Dense board (10,000 vias, 1,500 tracks), Shove: median / p95 / max over 400 moves | 333–334 µs / 3.92–3.98 ms / 6.79–6.90 ms | 336–341 µs / 3.90–4.06 ms / 6.78–6.86 ms |
+| Dense board, Walkaround: median / p95 | 57 µs / 134–136 µs | 57–58 µs / 132–135 µs |
+| Showcase, Shove: median / p95 / max over 200 moves | 13.6 µs / 311–317 µs / 887–899 µs | 13.8–14.5 µs / 312–318 µs / 0.93–1.03 ms |
+| Showcase, Walkaround: median / p95 | 13.6–14.0 µs / 55 µs | 13.7–14.1 µs / 54–55 µs |
+| Dense board: shoving moves / moves reached | 334 / 160 | 334 / 160 |
+| Copper graph build (once per revision, shared) | — | dense 3.6 ms; showcase 0.5 ms |
+
+Routing and shove speed are unchanged within the noise, and the sweep shoves and reaches exactly as before. The graph is built once per revision and shared with the checks, so the router adds no build where the engine or the editor already holds one. `layout.route_step` builds it on its first shove (3.6 ms on the dense board).
+
+## Where connectivity lives
+
+Whether copper touches or joins is decided in one place: `crates/editor-core/src/layout/connectivity` (`connectivity.rs`, `build.rs`, `islands.rs`, `joints.rs`, `lengths.rs`, `queries.rs`). The rule is `build::joins`: same layer, same net, copper within `JOIN_EPS` (1 µm) plus curve slack. `islands_joined` applies the same rule to fill copper. The graph is built once per revision (`Engine::copper_graph`, or `CopperGraph::of` for pure callers). Every consumer asks it:
+
+- the board checks and Issues (`findings`, `stubs`);
+- airwires and the drag preview;
+- net lengths, pair paths and signal length;
+- fill compute (`islands_joined`);
+- Update PCB (`with_pads`, `islands`, `copper_at_pad`);
+- shove chains and via followers (`joints_on`, `joints_of_via`);
+- the meander (`joints_on`);
+- the Route tool (`islands_at`).
+
+Which copper layers a pad has is decided once too: `PadKind::copper()` and `layout::pad_copper_on`. `cargo xtask connectivity` rejects joining code anywhere else. What remains outside the module are clearance tests (different nets against a rule), picking (what lies under the pointer) and polyline bookkeeping (finding a track a step just wrote by its end point). None of them decides connectivity.

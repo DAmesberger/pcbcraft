@@ -10,6 +10,7 @@ use crate::layout::{self, LayoutCommand, apply};
 use crate::model::CopperLayer::Top;
 use crate::{Engine, Operation, Query, QueryResult};
 
+mod joints;
 mod pair_shove;
 mod perf;
 

@@ -110,7 +110,7 @@ impl PcbEditor {
         }) {
             // During a route this is a layer change through a via at the
             // head, as a layer key is.
-            self.change_layer_to(project, layer, None);
+            self.change_layer_to(layer, None);
         }
         self.via_rows(ui, project);
         kit::check_row(ui, "Tent vias", &mut self.via_tented);

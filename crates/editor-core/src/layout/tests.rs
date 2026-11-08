@@ -910,8 +910,8 @@ fn copper_ring_gaps_are_exact_for_straight_edges_and_bounded_for_curves() {
     assert!((0.25..=0.25 + CURVE_SLACK_MM).contains(&gap), "{gap}");
     assert!(!square.violates_clearance(&disc(1.75)));
     assert!(square.violates_clearance(&disc(1.65)));
-    assert!(square.touches(&disc(1.5)), "tangent");
-    assert!(!square.touches(&disc(1.51)));
+    assert!(square.gap(&disc(1.5), 1.0) <= CURVE_SLACK_MM, "tangent");
+    assert!(square.gap(&disc(1.51), 1.0) > CURVE_SLACK_MM);
     // Bounds alone settle distant pairs.
     assert!(square.gap(&disc(9.0), 0.3) >= 0.3);
     let empty = CopperRing::of_shape(&Shape::polygon(Vec::new()), false);

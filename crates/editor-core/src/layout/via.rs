@@ -188,7 +188,7 @@ pub(super) fn route_layer_change(project: &mut Project, request: LayerChangeRequ
 
 /// Whether a via has copper on any layer a pad has copper on.
 fn shares_layer(via: &Via, pad: &WorldPad, layers: &[CopperLayer]) -> bool {
-    pad.through || via.on(pad.layer.into(), layers)
+    layers.iter().any(|l| pad.on(*l) && via.on(*l, layers))
 }
 
 /// Whether a via is closer than the effective clearance (rules, net

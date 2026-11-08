@@ -5,10 +5,16 @@
 //! the height is then solved (by bisection on the built polyline, so the
 //! added length is exact to well under a micrometre) and the side with
 //! room is chosen through the obstacle index ([`super::obstacles`]).
+//! Copper joined to the track in mid-span (a T, a via on the track, as
+//! the copper graph finds it) stays joined: the meander goes in the
+//! longest stretch between those joints, with straight leads through
+//! them.
 //! Spacing between legs is at least the track width plus the track
 //! clearance. The same pure [`plan`] drives the Tune tool's live preview
 //! and `layout.tune_length`, and a future shove router can take its edit
 //! set as a proposal.
+use super::CopperGraph;
+use super::connectivity::Meets;
 use super::limits::BoardRules;
 use super::obstacles::Obstacles;
 use super::posture::MIN_SEGMENT_MM;
@@ -234,7 +240,8 @@ fn polyline_length(points: &[Point]) -> f64 {
         .sum()
 }
 
-/// Board coordinates of a local meander along `track`.
+/// Board coordinates of a local meander along `track`, its first and last
+/// legs drawn out to the track's ends.
 fn placed(track: &Track, local: &[Point]) -> Vec<Point> {
     let length = crate::geometry::distance(track.start, track.end).max(1e-12);
     let u = [
@@ -251,7 +258,7 @@ fn placed(track: &Track, local: &[Point]) -> Vec<Point> {
             ]
         })
         .collect();
-    // The ends are exactly the track's, so its joints stay joined.
+    // The ends are exactly the track's, so the joints there stay joined.
     if let Some(first) = out.first_mut() {
         *first = track.start;
     }
@@ -333,15 +340,21 @@ fn tuned_track(project: &Project, id: Id) -> Result<&Track> {
     Ok(track)
 }
 
-/// The length to add for `amount` on `track`'s net.
-pub fn wanted(project: &Project, track: &Track, amount: TuneAmount) -> Result<f64> {
+/// The length to add for `amount` on `track`'s net, measured on `graph`,
+/// the copper graph of `project`.
+pub fn wanted(
+    project: &Project,
+    graph: &CopperGraph,
+    track: &Track,
+    amount: TuneAmount,
+) -> Result<f64> {
     let want = match amount {
         TuneAmount::Add { mm } => mm,
         TuneAmount::Target { mm } => {
             if !mm.is_finite() {
                 return Err(Error::Invalid("Target length must be a number".into()));
             }
-            mm - super::length::signal_length(project, track.net)
+            mm - super::length::signal_length_with(project, graph, track.net)
         }
     };
     if !want.is_finite() || want > super::length::MAX_TUNE_MM {
@@ -358,17 +371,44 @@ pub fn wanted(project: &Project, track: &Track, amount: TuneAmount) -> Result<f6
     Ok(want)
 }
 
+/// The stretch of `track` (at `index` on the board) between the joints
+/// that meet it in mid-span on `graph` where a meander goes: the longest
+/// one, as stations (from, to), and the joint stations. A fill joint
+/// holds nothing: the pour is refilled round the meander.
+fn free_stretch(graph: &CopperGraph, index: usize, length: f64) -> ((f64, f64), Vec<f64>) {
+    let mut joints: Vec<f64> = graph
+        .joints_on(index)
+        .into_iter()
+        .filter(|j| j.end.is_none() && j.meets != Meets::Fill)
+        .map(|j| j.station.clamp(0.0, length))
+        .collect();
+    joints.sort_by(f64::total_cmp);
+    joints.dedup();
+    let mut cuts = vec![0.0];
+    cuts.extend(joints.iter().copied());
+    cuts.push(length);
+    let stretch = cuts
+        .windows(2)
+        .map(|w| (w[0], w[1]))
+        .max_by(|a, b| (a.1 - a.0).total_cmp(&(b.1 - b.0)))
+        .unwrap_or((0.0, length));
+    (stretch, joints)
+}
+
 /// Plan a meander that adds the requested length to one track segment
-/// without coming closer to other nets' copper than the rules allow and
-/// without leaving the board. Tries the fewest bumps within the
-/// amplitude, then the other side, then lower amplitudes.
+/// without coming closer to other nets' copper than the rules allow,
+/// without leaving the board and without detaching copper joined to the
+/// track in mid-span (`graph` is the copper graph of `project`). Tries the
+/// fewest bumps within the amplitude, then the other side, then lower
+/// amplitudes.
 pub fn plan(
     project: &Project,
     obstacles: &Obstacles,
+    graph: &CopperGraph,
     request: &TuneRequest,
 ) -> Result<MeanderPlan> {
     let track = tuned_track(project, request.track)?;
-    let want = wanted(project, track, request.amount)?;
+    let want = wanted(project, graph, track, request.amount)?;
     let width = track.width;
     let s_min = min_spacing(project, width);
     let s = request
@@ -387,17 +427,32 @@ pub fn plan(
         ));
     }
     let length = crate::geometry::distance(track.start, track.end);
+    let index = project
+        .tracks
+        .iter()
+        .position(|t| t.id == track.id)
+        .ok_or_else(|| Error::NotFound("unknown track".into()))?;
+    let ((from, to), joints) = free_stretch(graph, index, length);
+    let span = to - from;
     // Straight lead-in and lead-out keep the meander off the joints.
     let margin = s.max(width);
-    let room = length - 2.0 * margin;
+    let room = span - 2.0 * margin;
     let max_bumps = match request.style {
         MeanderStyle::Trombone => ((room + s) / (2.0 * s)).floor(),
         MeanderStyle::Accordion => (room / s).floor(),
     };
     if max_bumps.is_nan() || max_bumps < 1.0 {
+        let need = super::limits::mm(2.0 * margin + s);
+        if joints.is_empty() {
+            return Err(Error::Invalid(format!(
+                "This segment is too short to tune: needs at least {need} mm"
+            )));
+        }
+        let at: Vec<String> = joints.iter().map(|j| super::limits::mm(*j)).collect();
         return Err(Error::Invalid(format!(
-            "This segment is too short to tune: needs at least {} mm",
-            super::limits::mm(2.0 * margin + s)
+            "Copper joins this segment at {} mm from its start; tune between joints, \
+             which needs at least {need} mm",
+            at.join(", ")
         )));
     }
     let max_bumps = (max_bumps as usize).min(MAX_BUMPS);
@@ -416,23 +471,24 @@ pub fn plan(
     }
     let mut refusal = None;
     for cap in caps {
-        let Some((bumps, a)) = fewest(request.style, length, max_bumps, s, cap, want) else {
+        let Some((bumps, a)) = fewest(request.style, span, max_bumps, s, cap, want) else {
             continue;
         };
         if a < MIN_AMPLITUDE_MM {
             return Err(Error::Invalid(format!(
                 "Too little to tune: a meander adds at least {} mm",
                 super::limits::mm(
-                    polyline_length(&local(request.style, length, 1, MIN_AMPLITUDE_MM, s, 1.0))
-                        - length
+                    polyline_length(&local(request.style, span, 1, MIN_AMPLITUDE_MM, s, 1.0))
+                        - span
                 )
             )));
         }
         for side in &sides {
-            let points = placed(
-                track,
-                &local(request.style, length, bumps, a, s, side.sign()),
-            );
+            let mut stretch = local(request.style, span, bumps, a, s, side.sign());
+            for p in &mut stretch {
+                p[0] += from;
+            }
+            let points = placed(track, &stretch);
             match check(project, obstacles, &rules, track, &points) {
                 Ok(()) => {
                     let added = polyline_length(&points) - length;
@@ -519,6 +575,132 @@ fn edits(track: &Track, points: &[Point]) -> RouteEditSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout::connectivity::keeps_joint;
+    use crate::layout::{LayoutCommand, ViaRequest, apply};
+    use crate::model::CopperLayer;
+
+    type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+    /// The demo's net 1.
+    const NET: Id = 1;
+
+    fn track(p: &mut Project, a: Point, b: Point) -> Fallible<Id> {
+        apply(
+            p,
+            LayoutCommand::Route {
+                request: RouteRequest {
+                    net: NET,
+                    start: a,
+                    end: b,
+                    width: 0.3,
+                    layer: CopperLayer::Top,
+                },
+            },
+        )?;
+        Ok(p.tracks.last().map(|t| t.id).ok_or("no track")?)
+    }
+
+    fn via(p: &mut Project, at: Point) -> Fallible<Id> {
+        apply(
+            p,
+            LayoutCommand::AddVia {
+                via: ViaRequest::through(NET, at),
+            },
+        )?;
+        Ok(p.vias.last().map(|v| v.id).ok_or("no via")?)
+    }
+
+    fn tune(p: &Project, track: Id) -> Result<MeanderPlan> {
+        plan(
+            p,
+            &Obstacles::of(p),
+            &CopperGraph::of(p),
+            &TuneRequest {
+                track,
+                amount: TuneAmount::Add { mm: 1.0 },
+                style: MeanderStyle::Trombone,
+                amplitude: Some(1.0),
+                spacing: None,
+                side: None,
+            },
+        )
+    }
+
+    /// Whether every track and via of the net is in one island.
+    fn joined(p: &Project) -> bool {
+        let tracks: Vec<Id> = p
+            .tracks
+            .iter()
+            .filter(|t| t.net == NET)
+            .map(|t| t.id)
+            .collect();
+        let vias: Vec<Id> = p
+            .vias
+            .iter()
+            .filter(|v| v.net == NET)
+            .map(|v| v.id)
+            .collect();
+        CopperGraph::of(p).islands().iter().any(|i| {
+            tracks.iter().all(|t| i.tracks.contains(t)) && vias.iter().all(|v| i.vias.contains(v))
+        })
+    }
+
+    /// A via in mid-span of the tuned segment, at x = 30 on 20–40 mm. A
+    /// meander over the whole segment is centred there and bumps over
+    /// the via, which would leave it joined to nothing. The meander goes in
+    /// a stretch between joints instead (30–40 mm here), with a
+    /// straight lead through the via, and everything stays joined.
+    #[test]
+    fn a_meander_keeps_a_via_in_mid_span_joined() -> Fallible {
+        let mut p = crate::Engine::demo()?.project().clone();
+        let id = track(&mut p, [20.0, 20.0], [40.0, 20.0])?;
+        let bare = tune(&p, id)?;
+        let at = [30.0, 20.0];
+        assert!(!keeps_joint(&bare.points, at), "{:?}", bare.points);
+        via(&mut p, at)?;
+        assert!(joined(&p));
+        let planned = tune(&p, id)?;
+        assert!(keeps_joint(&planned.points, at), "{:?}", planned.points);
+        assert!((planned.added - 1.0).abs() < LENGTH_TOLERANCE_MM);
+        assert!(
+            planned.points.iter().all(|q| q[0] >= at[0] || q[1] == 20.0),
+            "the bumps are past the via: {:?}",
+            planned.points
+        );
+        apply(
+            &mut p,
+            LayoutCommand::TuneLength {
+                request: TuneRequest {
+                    track: id,
+                    amount: TuneAmount::Add { mm: 1.0 },
+                    style: MeanderStyle::Trombone,
+                    amplitude: Some(1.0),
+                    spacing: None,
+                    side: None,
+                },
+            },
+        )?;
+        assert!(joined(&p), "the via stays joined");
+        Ok(())
+    }
+
+    /// A T in mid-span counts the same, and when the joints leave no
+    /// stretch long enough the tuning is refused and names them.
+    #[test]
+    fn joints_too_close_together_refuse_the_meander() -> Fallible {
+        let mut p = crate::Engine::demo()?.project().clone();
+        let id = track(&mut p, [20.0, 20.0], [30.0, 20.0])?;
+        assert!(tune(&p, id).is_ok());
+        for x in [22.5, 25.0, 27.5] {
+            track(&mut p, [x, 20.0], [x, 23.0])?;
+        }
+        let refused = tune(&p, id).err().ok_or("refused")?.to_string();
+        assert!(
+            refused.contains("2.5, 5, 7.5 mm") && refused.contains("tune between joints"),
+            "{refused}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn the_meander_adds_exactly_the_solved_length() {

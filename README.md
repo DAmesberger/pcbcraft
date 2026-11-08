@@ -31,7 +31,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 | `pcbcraft-assist` | The datasheet assistant: a tool loop over the automation session that drafts a part from its datasheets, on a model you configure (Anthropic Messages or any OpenAI-compatible endpoint, hosted or local), with cost, token, time and request caps ([as built](docs/datasheet-assistant.md)). |
 | `pcbcraft`, `pcbcraft-cli` | Desktop editor and command line. |
 
-`cargo xtask layers` enforces this direction; `cargo xtask ui-containers` rejects raw egui windows, areas and panels outside Solidcraft's `ui_kit::Container`. `cargo xtask core-modules` enforces the core module map in [component model](docs/component-model.md). `cargo xtask licences --check` rejects dependencies that require GPL-family or unreviewed licenses, and `cargo xtask clean-room` rejects EDA library files and data in the repository. All of these run in `cargo xtask ci`.
+`cargo xtask layers` enforces this direction; `cargo xtask ui-containers` rejects raw egui windows, areas and panels outside Solidcraft's `ui_kit::Container`. `cargo xtask core-modules` enforces the core module map in [component model](docs/component-model.md), and `cargo xtask connectivity` that only `layout/connectivity` decides whether copper joins ([copper graph](docs/copper-graph.md#where-connectivity-lives)). `cargo xtask licences --check` rejects dependencies that require GPL-family or unreviewed licenses, and `cargo xtask clean-room` rejects EDA library files and data in the repository. All of these run in `cargo xtask ci`.
 
 ## CLI, JSON lines and MCP
 

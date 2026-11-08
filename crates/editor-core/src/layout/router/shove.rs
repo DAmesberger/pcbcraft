@@ -23,6 +23,8 @@ use super::clean::{has_acute, length, posture_of, simplify};
 use super::hull::{DIRS, Facets, Hull};
 use super::world::{Ctx, Hit, Line, MovedVia, Piece, State, Target};
 use crate::geometry::{Point, distance};
+use crate::layout::CopperGraph;
+use crate::layout::connectivity::{Meets, TrackEnd, TrackJoint, keeps_joint};
 use crate::layout::posture::{self, Posture};
 use crate::rules::CopperObject;
 use std::collections::VecDeque;
@@ -180,62 +182,89 @@ fn push(ctx: &Ctx<'_>, state: &mut State, hit: Hit, pusher: &Piece) -> Option<Ve
     }
 }
 
-/// Take the chain of board track `k` into the overlay; its index.
+/// The one joint at `end` of board track `track`, fills aside: a fill is
+/// refilled round moved copper, so it holds nothing in place.
+fn only_joint(graph: &CopperGraph, track: usize, end: TrackEnd) -> Option<TrackJoint> {
+    let mut at = graph
+        .joints_on(track)
+        .into_iter()
+        .filter(|j| j.end == Some(end) && j.meets != Meets::Fill);
+    let joint = at.next()?;
+    at.next().is_none().then_some(joint)
+}
+
+fn other_end(end: TrackEnd) -> TrackEnd {
+    match end {
+        TrackEnd::Start => TrackEnd::End,
+        TrackEnd::End => TrackEnd::Start,
+    }
+}
+
+fn end_point(track: &crate::model::Track, end: TrackEnd) -> Point {
+    match end {
+        TrackEnd::Start => track.start,
+        TrackEnd::End => track.end,
+    }
+}
+
+/// Take the chain of board track `k` into the overlay; its index. The
+/// chain runs on through a track end only where the copper graph has
+/// exactly one joint there, end to end with another track of the same
+/// width whose end meets nothing else. Joints on its tracks in mid-span
+/// become its pins.
 fn adopt_line(ctx: &Ctx<'_>, state: &mut State, k: usize) -> Option<usize> {
     let track = ctx.base_track(k)?;
     if track.locked || state.frozen.contains(&track.net) || state.hidden.contains(&k) {
         return None;
     }
+    let graph = ctx.graph();
     let (net, layer, width) = (track.net, track.layer, track.width);
-    // The neighbour continuing the chain at `p` from `from`, and its far end.
-    let next = |state: &State, from: usize, p: Point| -> Option<(usize, Point)> {
-        if ctx.joint_at(net, layer, p) {
+    // The track continuing the chain past `end` of `from`, and the end of
+    // it the chain leaves by.
+    let next = |state: &State, from: usize, end: TrackEnd| -> Option<(usize, TrackEnd)> {
+        let link = only_joint(graph, from, end)?;
+        let Meets::Track {
+            index: other,
+            end: Some(back),
+            ..
+        } = link.meets
+        else {
+            return None;
+        };
+        let back_link = only_joint(graph, other, back)?;
+        if !link.end_to_end
+            || !matches!(back_link.meets, Meets::Track { index, .. } if index == from)
+        {
             return None;
         }
-        let ends = ctx.track_ends_at(net, layer, p);
-        if ends.len() != 2 {
-            return None;
-        }
-        let other = ends.into_iter().find(|e| *e != from)?;
         let t = ctx.base_track(other)?;
         if t.locked || (t.width - width).abs() > 1e-9 || state.hidden.contains(&other) {
             return None;
         }
-        Some((
-            other,
-            if distance(t.start, p) < 1e-6 {
-                t.end
-            } else {
-                t.start
-            },
-        ))
+        Some((other, other_end(back)))
     };
     let mut base = vec![k];
     let mut points = vec![track.start, track.end];
     // Backward from the start, then forward from the end.
-    let (mut from, mut at) = (k, track.start);
-    while base.len() < MAX_CHAIN {
-        let Some((other, far)) = next(state, from, at) else {
-            break;
-        };
-        if base.contains(&other) {
-            break;
+    for (first, end) in [(true, TrackEnd::Start), (false, TrackEnd::End)] {
+        let (mut from, mut leave) = (k, end);
+        while base.len() < MAX_CHAIN {
+            let Some((other, far)) = next(state, from, leave) else {
+                break;
+            };
+            if base.contains(&other) {
+                break;
+            }
+            let at = end_point(ctx.base_track(other)?, far);
+            if first {
+                base.insert(0, other);
+                points.insert(0, at);
+            } else {
+                base.push(other);
+                points.push(at);
+            }
+            (from, leave) = (other, far);
         }
-        base.insert(0, other);
-        points.insert(0, far);
-        (from, at) = (other, far);
-    }
-    let (mut from, mut at) = (k, track.end);
-    while base.len() < MAX_CHAIN {
-        let Some((other, far)) = next(state, from, at) else {
-            break;
-        };
-        if base.contains(&other) {
-            break;
-        }
-        base.push(other);
-        points.push(far);
-        (from, at) = (other, far);
     }
     let ids = base
         .iter()
@@ -244,6 +273,16 @@ fn adopt_line(ctx: &Ctx<'_>, state: &mut State, k: usize) -> Option<usize> {
     if ids.len() != base.len() {
         return None;
     }
+    let pins = base
+        .iter()
+        .flat_map(|b| graph.joints_on(*b))
+        .filter(|j| {
+            j.end.is_none()
+                && j.meets != Meets::Fill
+                && !matches!(j.meets, Meets::Track { index, .. } if base.contains(&index))
+        })
+        .map(|j| j.at)
+        .collect();
     state.hidden.extend(base.iter().copied());
     state.lines.push(Line {
         net,
@@ -259,6 +298,7 @@ fn adopt_line(ctx: &Ctx<'_>, state: &mut State, k: usize) -> Option<usize> {
         },
         original: points.clone(),
         points,
+        pins,
     });
     Some(state.lines.len() - 1)
 }
@@ -339,7 +379,10 @@ fn push_line(ctx: &Ctx<'_>, state: &mut State, l: usize, pusher: &Piece) -> Opti
                     .find(|h| !ctx.movable(state, h.target) || touches(h, pusher, state))
             });
             match block {
-                None if !has_acute(&pts) && best.as_ref().is_none_or(|(b, _)| total < *b) => {
+                None if !has_acute(&pts)
+                    && line.keeps_pins(&pts)
+                    && best.as_ref().is_none_or(|(b, _)| total < *b) =>
+                {
                     best = Some((total, pts));
                 }
                 Some(hit) if blocking.as_ref().is_none_or(|(b, _)| total < *b) => {
@@ -410,9 +453,18 @@ fn tidy(
             let (Some(&a), Some(&b)) = (points.get(i), points.get(j)) else {
                 continue;
             };
+            // A shortcut keeps the chain's pins on the corners it skips.
+            let skipped = points.get(i..=j).unwrap_or(&[]);
+            let pinned: Vec<Point> = line
+                .pins
+                .iter()
+                .copied()
+                .filter(|p| keeps_joint(skipped, *p))
+                .collect();
             for f in [false, true] {
                 let legs = posture::path(a, b, posture, f);
-                if legs.len() >= 2 && clear(&legs) {
+                if legs.len() >= 2 && pinned.iter().all(|p| keeps_joint(&legs, *p)) && clear(&legs)
+                {
                     via = Some(legs);
                     next = j;
                     break 'search;
@@ -485,7 +537,10 @@ fn push_via(ctx: &Ctx<'_>, state: &mut State, m: usize, pusher: &Piece) -> Optio
 }
 
 /// The chains ending on `via` follow it to `to` with a 45° elbow from
-/// their last corner. Their indices; `None` when one cannot follow.
+/// their last corner, each end keeping its place on the via. Their
+/// indices; `None` when one cannot follow, or when copper joins the via
+/// other than at a track end (a pad, another via, a track in mid-span):
+/// moving the via would detach that copper.
 fn follow(
     ctx: &Ctx<'_>,
     state: &mut State,
@@ -493,50 +548,64 @@ fn follow(
     to: Point,
 ) -> Option<Vec<usize>> {
     let from = via.position;
-    // Adopt the board tracks ending on the via first.
-    for layer in ctx.stack.clone() {
-        if !via.on(layer, &ctx.stack) {
-            continue;
-        }
-        for k in ctx.track_ends_at(via.net, layer, from) {
-            if !state.hidden.contains(&k) {
-                adopt_line(ctx, state, k)?;
-            }
+    let index = ctx.project.vias.iter().position(|v| v.id == via.id)?;
+    let original = ctx.project.vias.get(index)?.position;
+    let mut ends = Vec::new();
+    for meets in ctx.graph().joints_of_via(index) {
+        match meets {
+            Meets::Track {
+                index: k,
+                end: Some(end),
+                ..
+            } => ends.push((k, end)),
+            Meets::Fill => {}
+            _ => return None,
         }
     }
+    // Adopt the board tracks ending on the via first; each end keeps its
+    // offset from the via's centre.
+    let mut offsets = Vec::with_capacity(ends.len());
+    for (k, end) in ends {
+        if !state.hidden.contains(&k) {
+            adopt_line(ctx, state, k)?;
+        }
+        let p = end_point(ctx.project.tracks.get(k)?, end);
+        offsets.push([p[0] - original[0], p[1] - original[1]]);
+    }
+    let on_via = |p: Point| {
+        offsets
+            .iter()
+            .copied()
+            .find(|o| distance([p[0] - o[0], p[1] - o[1]], from) < 1e-6)
+    };
     let mut followed = Vec::new();
     for (l, line) in state.lines.iter_mut().enumerate() {
         if line.net != via.net {
             continue;
         }
-        let at_end = line
-            .points
-            .last()
-            .is_some_and(|p| distance(*p, from) < 1e-6);
-        let at_start = line
-            .points
-            .first()
-            .is_some_and(|p| distance(*p, from) < 1e-6);
-        if !(at_end || at_start) {
-            continue;
-        }
-        if at_end && at_start {
-            return None;
-        }
-        if at_start {
+        let at_start = line.points.first().and_then(|p| on_via(*p));
+        let at_end = line.points.last().and_then(|p| on_via(*p));
+        let offset = match (at_start, at_end) {
+            (Some(_), Some(_)) => return None,
+            (Some(o), None) | (None, Some(o)) => o,
+            (None, None) => continue,
+        };
+        if at_start.is_some() {
             line.points.reverse();
         }
         let n = line.points.len();
         let anchor = *line.points.get(n.checked_sub(2)?)?;
-        let old = [from[0] - anchor[0], from[1] - anchor[1]];
+        let old_end = *line.points.get(n - 1)?;
+        let target = [to[0] + offset[0], to[1] + offset[1]];
+        let old = [old_end[0] - anchor[0], old_end[1] - anchor[1]];
         let elbow = [false, true]
             .into_iter()
-            .map(|f| posture::path(anchor, to, Posture::Diagonal, f))
+            .map(|f| posture::path(anchor, target, Posture::Diagonal, f))
             .max_by(|a, b| keeps(a, old).total_cmp(&keeps(b, old)))?;
         line.points.truncate(n - 1);
         line.points.extend(elbow.iter().skip(1));
         line.points = simplify(&line.points);
-        if at_start {
+        if at_start.is_some() {
             line.points.reverse();
         }
         followed.push(l);

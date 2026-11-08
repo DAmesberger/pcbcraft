@@ -130,6 +130,7 @@ fn real_skew_on_the_path_is_still_reported() -> Fallible {
     let plan = pcbcraft_core::layout::meander::plan(
         &p,
         &index,
+        &pcbcraft_core::layout::CopperGraph::of(&p),
         &pcbcraft_core::layout::meander::TuneRequest {
             track,
             amount: pcbcraft_core::layout::meander::TuneAmount::Add { mm: 1.0 },

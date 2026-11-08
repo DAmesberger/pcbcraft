@@ -1363,7 +1363,7 @@ impl Engine {
             Query::RoutePreview { request } => {
                 request.check()?;
                 let project = &self.document.project;
-                let index = layout::router::RouteIndex::of(project);
+                let index = layout::router::RouteIndex::with_graph(project, self.copper_graph());
                 Ok(QueryResult::RoutePreview(Box::new(layout::router::plan(
                     project, &index, &request,
                 ))))
@@ -1372,7 +1372,8 @@ impl Engine {
                 let project = &self.document.project;
                 let obstacles = layout::obstacles::Obstacles::of(project);
                 Ok(QueryResult::TunePreview(Box::new(
-                    layout::meander::plan(project, &obstacles, &request)?.preview(),
+                    layout::meander::plan(project, &obstacles, &self.copper_graph(), &request)?
+                        .preview(),
                 )))
             }
             Query::Issues { scope } => Ok(QueryResult::Issues(issues::report_on(

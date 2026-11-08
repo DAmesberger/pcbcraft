@@ -21,8 +21,16 @@
 //! Fill islands of fresh fills ([`super::fill::fresh`]) join by the same
 //! rule ([`islands_joined`]), which fill compute also calls to decide which
 //! islands to keep; stale copper joins nothing until it is refilled.
+//!
+//! The router's shove chains and via followers, the meander and the Route
+//! tool ask where copper meets a track or via and which islands lie under
+//! a point ([`CopperGraph::joints_on`], [`CopperGraph::joints_of_via`],
+//! [`CopperGraph::islands_at`]). This module is the only code that
+//! decides whether copper touches or joins; `cargo xtask connectivity`
+//! enforces that.
 mod build;
 mod islands;
+mod joints;
 mod lengths;
 mod queries;
 #[cfg(test)]
@@ -30,6 +38,7 @@ mod tests;
 
 pub(crate) use build::{islands_joined, track_copper, via_copper};
 pub use islands::Island;
+pub use joints::{Meets, TrackEnd, TrackJoint, keeps_joint};
 pub use lengths::{MAX_PATH_WORK, NetPaths, PadEnd, PathEdge, PathTree, Walk};
 pub use queries::Stub;
 

@@ -4,9 +4,11 @@
 //! and the same rules (`limits::BoardRules`) as `layout.route_apply`, so a
 //! proposal the router finds clear is one the engine accepts.
 use super::hull::{Facets, Hull};
-use crate::geometry::{Bounds, Point, distance};
+use crate::geometry::{Bounds, Point};
 use crate::ids::Id;
+use crate::layout::CopperGraph;
 use crate::layout::board_edge::{BoardEdges, EdgeLoopKind, EdgeVerdict};
+use crate::layout::connectivity::keeps_joint;
 use crate::layout::limits::BoardRules;
 use crate::layout::obstacles::{ObstacleKind, Obstacles};
 use crate::layout::posture::Posture;
@@ -15,6 +17,7 @@ use crate::model::{BoardShape, CopperLayer, Keepout, Project, Track, Via};
 use crate::rules::CopperObject;
 use crate::rules::signal::{DiffPair, DiffPairId};
 use std::collections::BTreeSet;
+use std::sync::{Arc, OnceLock};
 
 /// How far past the rule a hull is grown, mm: room for rounding and for
 /// the conservative judgement of flattened curves.
@@ -27,9 +30,20 @@ pub struct RouteIndex {
     keepouts: Vec<(Keepout, CopperRing)>,
     cutouts: Vec<CopperRing>,
     edges: BoardEdges,
+    /// The revision's copper graph: where shoved chains end and which
+    /// tracks follow a moved via. Built on first use unless given.
+    graph: OnceLock<Arc<CopperGraph>>,
 }
 
 impl RouteIndex {
+    /// The index of `project`, sharing `graph`, the copper graph of the
+    /// same revision (the engine's or the editor's).
+    pub fn with_graph(project: &Project, graph: Arc<CopperGraph>) -> Self {
+        let index = Self::of(project);
+        let _ = index.graph.set(graph);
+        index
+    }
+
     pub fn of(project: &Project) -> Self {
         let ring = |outline: &crate::library::Outline| {
             let ring = outline.flatten(CURVE_SLACK_MM);
@@ -67,6 +81,7 @@ impl RouteIndex {
             keepouts,
             cutouts,
             edges: BoardEdges::of(project),
+            graph: OnceLock::new(),
         }
     }
 }
@@ -137,7 +152,8 @@ impl Piece {
 }
 
 /// A chain of tracks a shove moves as one: same net, layer and width,
-/// joined end to end where nothing else meets. Its ends stay put.
+/// joined end to end where nothing else meets (on the copper graph). Its
+/// ends stay put, and so do its pins.
 #[derive(Clone, Debug)]
 pub(super) struct Line {
     pub net: Id,
@@ -149,6 +165,9 @@ pub(super) struct Line {
     pub original: Vec<Point>,
     pub points: Vec<Point>,
     pub posture: Posture,
+    /// Where other copper joins the chain's tracks in mid-span (a T, a via
+    /// on a track): a moved chain must still pass through each.
+    pub pins: Vec<Point>,
 }
 
 impl Line {
@@ -156,6 +175,12 @@ impl Line {
         let a = *self.points.get(segment)?;
         let b = *self.points.get(segment + 1)?;
         Some(Piece::track(self.net, self.layer, a, b, self.width))
+    }
+
+    /// Whether `points`, a new centre line for the chain, keeps every
+    /// mid-span joint ([`keeps_joint`]).
+    pub fn keeps_pins(&self, points: &[Point]) -> bool {
+        self.pins.iter().all(|p| keeps_joint(points, *p))
     }
 }
 
@@ -533,41 +558,12 @@ impl<'a> Ctx<'a> {
         ))
     }
 
-    /// Board tracks of `net` on `layer` with an end at `p` (within a
-    /// micrometre), by obstacle index, skipping `except`.
-    pub fn track_ends_at(&self, net: Id, layer: CopperLayer, p: Point) -> Vec<usize> {
-        let mut near = Vec::new();
-        self.index.obstacles.near(&Bounds::point(p), &mut near);
-        near.into_iter()
-            .filter(|k| {
-                self.base_track(*k).is_some_and(|t| {
-                    t.net == net
-                        && t.layer == layer
-                        && (distance(t.start, p) < 1e-6 || distance(t.end, p) < 1e-6)
-                })
-            })
-            .collect()
-    }
-
-    /// Whether a via or pad of `net` joins copper at `p` (an end of a
-    /// chain that must stay put).
-    pub fn joint_at(&self, net: Id, layer: CopperLayer, p: Point) -> bool {
-        let mut near = Vec::new();
-        self.index.obstacles.near(&Bounds::point(p), &mut near);
-        let items = self.index.obstacles.items();
-        near.into_iter().any(|k| {
-            items.get(k).is_some_and(|o| {
-                o.net == net
-                    && o.layers.contains(&layer)
-                    && match o.kind {
-                        ObstacleKind::Via(_) => self
-                            .base_via(k)
-                            .is_some_and(|v| distance(v.position, p) < 1e-6),
-                        ObstacleKind::Pad(..) => crate::geometry::polygon_contains(&o.ring.ring, p),
-                        ObstacleKind::Track(_) => false,
-                    }
-            })
-        })
+    /// The copper graph of the index's revision: which copper is joined
+    /// and where.
+    pub fn graph(&self) -> &'a CopperGraph {
+        self.index
+            .graph
+            .get_or_init(|| Arc::new(CopperGraph::of(self.project)))
     }
 
     /// A refusal naming what `hit` is ("Too close to a via on GND").

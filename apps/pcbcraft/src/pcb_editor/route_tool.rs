@@ -14,7 +14,7 @@
 //! `layout.route_apply` removing exactly the last step's tracks and via
 //! and putting back what it shoved, and moves the head back. Any other
 //! document change ends the route.
-use super::{BoardInk, BoardView, PcbEditor, Tool, capsule, pad_on};
+use super::{BoardInk, BoardView, PcbEditor, Tool, capsule};
 use crate::commands::KeyDecl;
 use crate::keys;
 use egui::{Shape, Stroke};
@@ -358,7 +358,7 @@ impl PcbEditor {
             return Some((t.net, on, t.layer));
         }
         let pad = self.pick_pad(at, |p| seen.pad(p))?;
-        let layer = self.stack.iter().copied().find(|l| pad_on(pad, *l))?;
+        let layer = self.stack.iter().copied().find(|l| pad.on_copper(*l))?;
         Some((pad.net?, pad.center(), layer))
     }
 
@@ -486,7 +486,8 @@ impl PcbEditor {
         match &self.route.index {
             Some((at, index)) if *at == revision => Rc::clone(index),
             _ => {
-                let index = Rc::new(RouteIndex::of(project));
+                let graph = self.revision_graph(project, revision);
+                let index = Rc::new(RouteIndex::with_graph(project, graph));
                 self.route.index = Some((revision, Rc::clone(&index)));
                 index
             }
@@ -725,7 +726,7 @@ impl PcbEditor {
         let net = self.net?;
         self.follow_class_width(project);
         let finish = snapped.is_some_and(|(_, n)| n == Some(net))
-            || self.joins_net_copper(project, net, destination);
+            || self.reaches_another_island(net, destination);
         let request = self.route_step(project, destination)?;
         let planned = self.route_plan(project, revision, destination)?;
         let Planned::Single(plan) = planned.as_ref() else {
@@ -754,25 +755,24 @@ impl PcbEditor {
         }))
     }
 
-    /// Whether `at` is on copper of `net` on the routing layer that this
-    /// route did not add: a track or a via.
-    fn joins_net_copper(&self, project: &Project, net: Id, at: Point) -> bool {
-        let own = |id: Id| {
-            self.route
-                .steps
-                .iter()
-                .any(|s| s.tracks.contains(&id) || s.vias.contains(&id))
-        };
-        project.tracks.iter().any(|t| {
-            t.net == net
-                && t.layer == self.layer
-                && !own(t.id)
-                && (t.start == at || t.end == at || layout::track_contains(t, at, 0.0))
-        }) || project.vias.iter().any(|v| {
-            v.net == net
-                && !own(v.id)
-                && pcbcraft_core::geometry::distance(v.position, at) <= v.diameter / 2.0
-        })
+    /// The islands of the route's copper at its head: its net's copper on
+    /// the layer the head is on (before a pending via), on the editor's
+    /// copper graph.
+    fn head_islands(&self, net: Id) -> Vec<usize> {
+        let layer = self.pending_via.map_or(self.layer, |(_, from)| from);
+        self.route_start
+            .map(|head| self.graph.islands_at(head, layer, net))
+            .unwrap_or_default()
+    }
+
+    /// Whether `at` is on copper of `net` on the routing layer in another
+    /// island than the route's head: a step there joins that copper.
+    fn reaches_another_island(&self, net: Id, at: Point) -> bool {
+        let head = self.head_islands(net);
+        self.graph
+            .islands_at(at, self.layer, net)
+            .iter()
+            .any(|i| !head.contains(i))
     }
 
     /// Backspace: drop a pending via, else unwind the last step (one
@@ -814,18 +814,13 @@ impl PcbEditor {
     /// `None`), unless one is already pending or the head already joins
     /// both layers (a via or through-hole pad of the net there); back on
     /// the layer the pending via was reached on, no via.
-    pub(super) fn change_layer_to(
-        &mut self,
-        project: &Project,
-        layer: CopperLayer,
-        at: Option<Point>,
-    ) {
+    pub(super) fn change_layer_to(&mut self, layer: CopperLayer, at: Option<Point>) {
         if layer == self.layer || !self.stack.contains(&layer) {
             return;
         }
         if let (Some(head), None) = (self.route_start, self.pending_via) {
             let at = at.unwrap_or(head);
-            let joined = at == head && self.head_joins_layers(project, head, layer);
+            let joined = at == head && self.head_spans_layers(head, layer);
             if !joined {
                 self.pending_via = Some((at, self.layer));
             }
@@ -837,23 +832,16 @@ impl PcbEditor {
     }
 
     /// Whether copper of the routed net at `head` already joins the
-    /// current layer and `layer`.
-    fn head_joins_layers(&self, project: &Project, head: Point, layer: CopperLayer) -> bool {
+    /// current layer and `layer`: one island has copper on both there.
+    fn head_spans_layers(&self, head: Point, layer: CopperLayer) -> bool {
         let Some(net) = self.net else {
             return false;
         };
-        let via = project.vias.iter().any(|v| {
-            v.net == net
-                && pcbcraft_core::geometry::distance(v.position, head) <= v.diameter / 2.0
-                && v.on(self.layer, &self.stack)
-                && v.on(layer, &self.stack)
-        });
-        via || self.board_pads.iter().any(|b| {
-            b.placed.net == Some(net)
-                && b.contains(head)
-                && pad_on(&b.placed, self.layer)
-                && pad_on(&b.placed, layer)
-        })
+        let here = self.graph.islands_at(head, self.layer, net);
+        self.graph
+            .islands_at(head, layer, net)
+            .iter()
+            .any(|i| here.contains(i))
     }
 
     /// The Route tool's keys while the canvas is hovered and no field has
@@ -902,7 +890,7 @@ impl PcbEditor {
         }
         for (id, reverse) in [("route.via-next", false), ("route.via-previous", true)] {
             if pressed(id) {
-                self.next_layer(project, pointer, reverse);
+                self.next_layer(pointer, reverse);
             }
         }
         if pressed("route.back") {
@@ -913,7 +901,7 @@ impl PcbEditor {
 
     /// V: the next copper layer of the stackup (Shift: the previous one),
     /// through a via at `at` during a route.
-    pub(super) fn next_layer(&mut self, project: &Project, at: Option<Point>, reverse: bool) {
+    pub(super) fn next_layer(&mut self, at: Option<Point>, reverse: bool) {
         let Some(index) = self.stack.iter().position(|l| *l == self.layer) else {
             self.layer = CopperLayer::Top;
             return;
@@ -925,7 +913,7 @@ impl PcbEditor {
             (index + 1) % count
         };
         if let Some(&layer) = self.stack.get(next) {
-            self.change_layer_to(project, layer, at);
+            self.change_layer_to(layer, at);
         }
     }
 

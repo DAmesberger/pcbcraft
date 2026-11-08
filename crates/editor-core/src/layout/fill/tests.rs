@@ -230,7 +230,7 @@ fn assert_clear(project: &Project, f: &Fill, rule: impl Fn(CopperObject) -> f64)
         }
     }
     for pad in placed_pads(project) {
-        if pad.net != f.net && super::compute::pad_on(&pad, f.layer) {
+        if pad.net != f.net && pad.on_copper(f.layer) {
             // The flattened outline is inscribed in the true one, so the
             // true gap is at least this less the chord tolerance.
             let ring = pad.outline().flatten(FILL_CHORD_MM / 10.0);

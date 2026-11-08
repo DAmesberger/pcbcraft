@@ -826,6 +826,15 @@ impl PcbEditor {
         self.sync_shape(engine);
     }
 
+    /// The copper graph of `project` at `revision`: the engine's, which the
+    /// editor holds for its cached revision, else built for it.
+    pub(super) fn revision_graph(&self, project: &Project, revision: u64) -> Arc<CopperGraph> {
+        match self.cached_revision {
+            Some(r) if r == revision => Arc::clone(&self.graph),
+            _ => Arc::new(CopperGraph::of(project)),
+        }
+    }
+
     /// Place pads and graphics once per revision.
     fn cache_board(&mut self, project: &Project) {
         self.board_pads = layout::placed_pads(project)
@@ -1781,7 +1790,7 @@ impl PcbEditor {
             .iter()
             .filter(|b| {
                 let p = &b.placed;
-                p.net.is_some() && pad_on(p, self.layer) && seen.pad(p)
+                p.net.is_some() && p.on_copper(self.layer) && seen.pad(p)
             })
             .map(|b| {
                 (
@@ -2604,11 +2613,6 @@ fn copper_color(layer: Layer, selected: bool) -> Color32 {
         colors.copper(layer)
     }
 }
-/// Whether a pad has copper on `layer`: a through-hole pad on every
-/// layer, a surface pad on its side's outer layer.
-fn pad_on(pad: &PlacedPad, layer: CopperLayer) -> bool {
-    pad.pad.kind.through_hole() || CopperLayer::from(pad.layer) == layer
-}
 fn opposite(layer: Layer) -> Layer {
     if layer == Layer::Top {
         Layer::Bottom
@@ -3286,16 +3290,16 @@ mod tests {
         fonts::setup_bundled_fonts(&ctx);
         let mut editor = PcbEditor::default();
         frame(&mut editor, &engine, &ctx, vec![]);
-        editor.select_layer(engine.project(), 9);
+        editor.select_layer(9);
         assert_eq!(editor.layer, CopperLayer::Inner(9));
         assert!(editor.pending_via.is_none(), "no route: no via");
         assert_eq!(editor.layer_key_id(), Some("pcb.layer-10"));
         assert_eq!(editor.layer_label(&ctx), "Inner 9 (0)");
-        editor.select_layer(engine.project(), 11);
+        editor.select_layer(11);
         assert_eq!(editor.layer, CopperLayer::Bottom);
         assert_eq!(editor.layer_key_id(), None);
         assert!(editor.layer_at(12).is_err());
-        editor.select_layer(engine.project(), 12);
+        editor.select_layer(12);
         assert_eq!(
             editor.layer,
             CopperLayer::Bottom,

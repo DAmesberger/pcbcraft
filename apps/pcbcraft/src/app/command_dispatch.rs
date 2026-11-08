@@ -269,7 +269,7 @@ impl App {
             }
             Action::PcbLayer(index) => {
                 self.enter(Workspace::Pcb);
-                self.pcb.select_layer(self.engine.project(), index);
+                self.pcb.select_layer(index);
             }
             Action::Key => {}
         }
