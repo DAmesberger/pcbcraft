@@ -10,7 +10,7 @@
 //!
 //! **Pair halves** are measured along their signal path instead, the copper
 //! between the pair's endpoints ([`path`]), and the branches off it are
-//! listed as stubs. Skew, uncoupled length, a half's tuning target and its
+//! listed with the pins they reach. Skew, uncoupled length, a half's tuning target and its
 //! length in a group all read that length ([`signal_length`]).
 //!
 //! **Coupling.** Two segments of a pair's halves on one layer run coupled
@@ -31,7 +31,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub mod path;
 
-pub use path::{PairMeasure, PairMeasured, PairStub};
+pub use path::{PairBranch, PairMeasure, PairMeasured};
 
 /// The most length one tuning adds, mm.
 pub const MAX_TUNE_MM: f64 = 1000.0;
@@ -330,7 +330,7 @@ pub struct NetRow {
     pub name: String,
     pub length: NetLength,
     /// A pair half's signal path, which its target and delta compare; the
-    /// rest of `length` is its stubs.
+    /// rest of `length` is its branches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<f64>,
     /// The length it must reach (its group's, or its pair partner's).
@@ -370,7 +370,7 @@ pub struct PairRow {
     pub max_uncoupled: Option<f64>,
     /// Copper off the signal paths, left out of skew and uncoupled length.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub stubs: Vec<PairStub>,
+    pub branches: Vec<PairBranch>,
 }
 
 /// The pads one half's signal path joins ("J1.B6" to "U1.43").
@@ -535,8 +535,8 @@ pub fn report(project: &Project) -> LengthReport {
                         to: h.to.clone(),
                     })
                 }),
-                stubs: halves.map_or_else(Vec::new, |hs| {
-                    hs.iter().flat_map(|h| h.stubs.iter().cloned()).collect()
+                branches: halves.map_or_else(Vec::new, |hs| {
+                    hs.iter().flat_map(|h| h.branches.iter().cloned()).collect()
                 }),
                 positive: a,
                 negative: b,
@@ -580,38 +580,6 @@ pub fn checks(project: &Project) -> Vec<Finding> {
         let max_skew = signal
             .pair_max_skew
             .unwrap_or(crate::rules::signal::DEFAULT_PAIR_MAX_SKEW_MM);
-        // A stub is copper off a half's signal path (a branch, or a jumper
-        // to a receptacle's second contact). It is warned past the default
-        // skew, never a class's skew limit: that one is about matching the
-        // halves, often a fraction of a millimetre, and no class sets a
-        // stub limit.
-        let max_stub = crate::rules::signal::DEFAULT_PAIR_MAX_SKEW_MM;
-        let halves = lengths.pairs.get(&pair.id).and_then(|m| m.halves.as_ref());
-        for stub in halves
-            .iter()
-            .flat_map(|hs| hs.iter().flat_map(|h| &h.stubs))
-        {
-            if stub.length <= max_stub + 1e-6 {
-                continue;
-            }
-            let to = stub
-                .reaches
-                .first()
-                .map_or_else(|| " to nothing".to_owned(), |pad| format!(" to {pad}"));
-            let mut objects = objects.clone();
-            objects.extend(stub.tracks.iter().map(|&id| ObjectRef::Track { id }));
-            findings.push(Finding::new(
-                "pair.stub",
-                format!(
-                    "{}: {} mm stub on {}{to}; needs at most {} mm (default limit)",
-                    pair.name,
-                    mm(stub.length),
-                    stub.name,
-                    mm(max_stub)
-                ),
-                objects,
-            ));
-        }
         if a > 0.0 && b > 0.0 && (a - b).abs() > max_skew + 1e-6 {
             let limit = if signal.pair_max_skew.is_some() {
                 format!("net class {class_name}: max skew")

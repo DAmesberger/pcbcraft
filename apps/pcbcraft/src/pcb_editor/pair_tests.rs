@@ -477,9 +477,10 @@ fn the_cards_show_derived_impedance_pairs_and_lengths() -> TestResult {
 }
 
 /// The High speed card shows what a selected pair's lengths measure: its
-/// path's pads and each stub on a line of its own.
+/// path's pads and each branch off it on a line of its own, labelled with
+/// its net, as information.
 #[test]
-fn the_high_speed_card_lists_the_path_and_the_stubs() -> TestResult {
+fn the_high_speed_card_lists_the_path_and_the_branches() -> TestResult {
     let Usb {
         mut engine,
         nets,
@@ -553,9 +554,9 @@ fn the_high_speed_card_lists_the_path_and_the_stubs() -> TestResult {
         texts.iter().any(|t| t.contains("R3.1 to R4.1")),
         "{texts:?}"
     );
-    assert!(
-        texts.iter().any(|t| t.contains("USB_D+ 3 mm to open")),
-        "{texts:?}"
-    );
+    for wanted in ["USB_D+", "Branch to no pin · 3 mm"] {
+        assert!(texts.iter().any(|t| t == wanted), "{wanted}: {texts:?}");
+    }
+    assert!(!texts.iter().any(|t| t.contains("Stub")), "{texts:?}");
     Ok(())
 }

@@ -322,7 +322,7 @@ fn body(
     (operation, lit)
 }
 
-/// The selected pair: what its lengths measure, its stubs and endpoints.
+/// The selected pair: what its lengths measure, its branches and endpoints.
 fn pair_section(
     ui: &mut Ui,
     project: &Project,
@@ -355,18 +355,16 @@ fn pair_section(
             kit::value_row(ui, name, &value);
         }
         kit::value_row(ui, "Uncoupled", &mm(row.uncoupled));
-        kit::list_frame(ui, row.stubs.len(), row.stubs.len(), |ui, i| {
-            if let Some(stub) = row.stubs.get(i) {
-                let to = if stub.reaches.is_empty() {
-                    "open".to_owned()
+        // Copper off the paths, for information: a link reaches pins, and an
+        // open end is the board check's `board.track_dangling`.
+        kit::list_frame(ui, row.branches.len(), row.branches.len(), |ui, i| {
+            if let Some(branch) = row.branches.get(i) {
+                let value = if branch.pins.is_empty() {
+                    format!("Branch to no pin · {}", mm(branch.length))
                 } else {
-                    stub.reaches.join(", ")
+                    format!("Link to {} · {}", branch.pins.join(", "), mm(branch.length))
                 };
-                kit::value_row(
-                    ui,
-                    "Stub",
-                    &format!("{} {} to {to}", stub.name, mm(stub.length)),
-                );
+                kit::value_row(ui, &branch.name, &value);
             }
         });
         let options = |net: Id| -> Vec<(pcbcraft_core::ids::Endpoint, String)> {

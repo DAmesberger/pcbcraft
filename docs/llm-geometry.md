@@ -126,7 +126,7 @@ The engine does the grading, with no LLM judge and no judgement calls in the num
   | Kind | Grade | Needs |
   |---|---|---|
   | Point to point | Detour and avoidable layer changes: a change needed because source and target are on different layers doesn't count | Nothing new |
-  | Bus or multi-drop (SPI) | For each source and sink: length, layer changes, stubs off the path, and skew across the bus | Source and sinks per net: from function directions where known, otherwise set by the user |
+  | Bus or multi-drop (SPI) | For each source and sink: length, layer changes, branches off the path, and skew across the bus | Source and sinks per net: from function directions where known, otherwise set by the user |
   | Power and ground | Resistance from the source to each load. Inductance comes later, because it needs the return path | Net marked as power; source and loads; a resistance solver for tracks, vias and pours |
   | Differential pair | Skew and coupling, already reported | Nothing new |
 

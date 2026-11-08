@@ -702,11 +702,13 @@ fn on_run(usb: &Usb, net: Id) -> Result<Point> {
         .ok_or_else(|| Error::NotFound("track".into()))
 }
 
-/// A two-pin half measures exactly its total copper; a branch off it is a
-/// stub of its own length, in neither skew nor uncoupled length, with no
-/// pad to reach. Hand-derived: the branch runs straight for 4 mm.
+/// A two-pin half measures exactly its total copper; a branch off it that
+/// ends at no pad is listed with its own length and no pin, in neither skew
+/// nor uncoupled length. Its open end is a stub: the board check reports it
+/// as dangling copper, and no pair finding names it. Hand-derived: the
+/// branch runs straight for 4 mm.
 #[test]
-fn a_branch_is_a_stub_and_not_skew() -> Result<()> {
+fn an_open_branch_is_not_skew_and_the_dangling_check_reports_it() -> Result<()> {
     let mut usb = usb(usb90())?;
     let legs = straight(&usb);
     routed(&mut usb, legs)?;
@@ -716,7 +718,7 @@ fn a_branch_is_a_stub_and_not_skew() -> Result<()> {
         .first()
         .ok_or_else(|| Error::NotFound("row".into()))?;
     assert_eq!(row.measured, layout::length::PairMeasured::Derived);
-    assert!(row.stubs.is_empty(), "{:?}", row.stubs);
+    assert!(row.branches.is_empty(), "{:?}", row.branches);
     assert!(row.skew < 1e-9, "{row:?}");
     let copper = layout::length::net_lengths(usb.engine.project());
     let total = copper.get(&usb.nets[0]).map_or(0.0, |l| l.total);
@@ -743,12 +745,12 @@ fn a_branch_is_a_stub_and_not_skew() -> Result<()> {
         .ok_or_else(|| Error::NotFound("row".into()))?;
     assert!(row.skew < 1e-9, "{row:?}");
     assert!((row.uncoupled - uncoupled).abs() < 1e-9, "{row:?}");
-    let [stub] = row.stubs.as_slice() else {
-        return Err(Error::Invalid(format!("{:?}", row.stubs)));
+    let [open] = row.branches.as_slice() else {
+        return Err(Error::Invalid(format!("{:?}", row.branches)));
     };
-    assert!((stub.length - 4.0).abs() < 1e-9, "{stub:?}");
-    assert_eq!(stub.net, usb.nets[0]);
-    assert!(stub.reaches.is_empty());
+    assert!((open.length - 4.0).abs() < 1e-9, "{open:?}");
+    assert_eq!(open.net, usb.nets[0]);
+    assert!(open.pins.is_empty());
     let net_row = r
         .nets
         .iter()
@@ -756,9 +758,135 @@ fn a_branch_is_a_stub_and_not_skew() -> Result<()> {
         .ok_or_else(|| Error::NotFound("net".into()))?;
     assert!((net_row.length.total - total - 4.0).abs() < 1e-9);
     assert_eq!(net_row.path, Some(row.positive));
-    assert!(!board_codes(&usb.engine).contains(&"pair.skew".to_owned()));
+    let findings = layout::checks(usb.engine.project());
+    assert!(
+        !findings.iter().any(|f| f.code.starts_with("pair.")),
+        "{findings:?}"
+    );
+    let dangling: Vec<_> = findings
+        .iter()
+        .filter(|f| f.code == "board.track_dangling")
+        .collect();
+    let [end] = dangling.as_slice() else {
+        return Err(Error::Invalid(format!("{findings:?}")));
+    };
+    assert!(
+        open.tracks
+            .iter()
+            .any(|&id| end.objects.contains(&crate::ObjectRef::Track { id })),
+        "{end:?}"
+    );
     // The tuning target compares paths, too.
     assert!(net_row.delta.is_none_or(|d| d.abs() < 1e-9), "{net_row:?}");
+    Ok(())
+}
+
+/// A branch from a pair half to a third pin of its net is a link: it is
+/// terminated, so it is listed with the pin it reaches and raises nothing,
+/// neither a pair finding nor dangling copper. Hand-derived: R5's pad 1 is
+/// placed 4 mm straight off the run, so the link is 4 mm.
+#[test]
+fn a_pin_to_pin_branch_is_a_link_and_raises_nothing() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let r3 = by_designator(&usb.engine, "R3")?;
+    let template = usb
+        .engine
+        .project()
+        .instance(r3)
+        .cloned()
+        .ok_or_else(|| Error::NotFound("R3".into()))?;
+    apply(
+        &mut usb.engine,
+        Operation::Instance(InstanceCommand::Place(crate::instances::NewInstance {
+            sheet: None,
+            component: template.component,
+            designator: Some("R5".into()),
+            properties: vec![],
+            representation: template.representation,
+            unit: UnitId(1),
+            position: [15.0, 80.0],
+            physical: template.physical,
+        })),
+    )?;
+    let r5 = by_designator(&usb.engine, "R5")?;
+    apply(
+        &mut usb.engine,
+        Operation::Schematic(SchematicCommand::Connect {
+            from: ep(r5, 1).into(),
+            to: ep(r3, 1).into(),
+        }),
+    )?;
+    apply(&mut usb.engine, Operation::Layout(LayoutCommand::Sync))?;
+    // Clear of the route until the pair is routed.
+    apply(
+        &mut usb.engine,
+        Operation::Layout(LayoutCommand::Move {
+            instance: r5,
+            position: [25.0, 5.0],
+            rotation_deg: 0.0,
+            layer: Layer::Top,
+        }),
+    )?;
+    let legs = straight(&usb);
+    routed(&mut usb, legs)?;
+    let net = usb.nets[0];
+    let at = on_run(&usb, net)?;
+    let away = if at[1] > mid(usb.start[0], usb.start[1])[1] {
+        4.0
+    } else {
+        -4.0
+    };
+    // Unrotated, R5's pads lie along x: pad 2 sits beside the link's end.
+    let pin = [at[0], at[1] + away];
+    let origin = usb
+        .engine
+        .project()
+        .placements
+        .iter()
+        .find(|p| p.instance == r5)
+        .map(|p| p.position)
+        .ok_or_else(|| Error::NotFound("R5 placement".into()))?;
+    let pad = pad_of(&usb.engine, r5, 1)?;
+    apply(
+        &mut usb.engine,
+        Operation::Layout(LayoutCommand::Move {
+            instance: r5,
+            position: [pin[0] - (pad[0] - origin[0]), pin[1] - (pad[1] - origin[1])],
+            rotation_deg: 0.0,
+            layer: Layer::Top,
+        }),
+    )?;
+    let pad = pad_of(&usb.engine, r5, 1)?;
+    assert!(
+        crate::geometry::distance(pad, pin) < 1e-9,
+        "{pad:?} {pin:?}"
+    );
+    branch(&mut usb, net, at, pin)?;
+    let r = report(&usb.engine)?;
+    let row = r
+        .pairs
+        .first()
+        .ok_or_else(|| Error::NotFound("row".into()))?;
+    assert_eq!(row.measured, layout::length::PairMeasured::Derived);
+    assert!(row.skew < 1e-9, "{row:?}");
+    let [link] = row.branches.as_slice() else {
+        return Err(Error::Invalid(format!("{:?}", row.branches)));
+    };
+    assert!((link.length - 4.0).abs() < 1e-9, "{link:?}");
+    assert_eq!(link.pins, vec!["R5.1".to_owned()]);
+    // The demo board's own nets stay unrouted; the pair's are complete.
+    let pair_net = |f: &crate::Finding| {
+        usb.nets
+            .iter()
+            .any(|&id| f.objects.contains(&crate::ObjectRef::Net { id }))
+    };
+    let findings = layout::checks(usb.engine.project());
+    assert!(
+        !findings.iter().any(|f| f.code.starts_with("pair.")
+            || f.code == "board.track_dangling"
+            || (f.code == "board.unrouted" && pair_net(f))),
+        "{findings:?}"
+    );
     Ok(())
 }
 
@@ -777,7 +905,7 @@ fn an_unfinished_half_is_measured_by_its_copper() -> Result<()> {
         .first()
         .ok_or_else(|| Error::NotFound("row".into()))?;
     assert_eq!(row.measured, layout::length::PairMeasured::Copper);
-    assert!(row.paths.is_none() && row.stubs.is_empty(), "{row:?}");
+    assert!(row.paths.is_none() && row.branches.is_empty(), "{row:?}");
     assert!((row.skew - 2.0).abs() < 1e-9, "{row:?}");
     Ok(())
 }
@@ -858,12 +986,12 @@ fn skew_past_the_default_limit_warns_when_no_limit_is_set() -> Result<()> {
     Ok(())
 }
 
-/// Run 3, finding 8: the production check warns on a pair's stub past the
-/// 2.5 mm default, whatever skew limit its class sets, and on skew past the
-/// default when its class sets none; a class's skew limit replaces that. The
-/// branch is a hand-derived 4 mm, past 2.5 mm; the skew 3.5 mm, inside 5 mm.
+/// Run 3, finding 8: the production check warns on a pair's open copper as
+/// dangling, whatever limits its class sets, and on skew past the default
+/// when its class sets none; a class's skew limit replaces that. The skew is
+/// 3.5 mm, inside 5 mm.
 #[test]
-fn the_production_check_warns_on_pair_stubs_and_skew() -> Result<()> {
+fn the_production_check_warns_on_open_pair_copper_and_skew() -> Result<()> {
     use crate::fabrication::preflight;
     use crate::issues::Severity;
     for (signal, warned) in [
@@ -896,17 +1024,11 @@ fn the_production_check_warns_on_pair_stubs_and_skew() -> Result<()> {
                 .map(|i| i.title)
                 .collect())
         };
-        let stubs = warnings(&usb.engine, "pair.stub")?;
-        let [stub] = stubs.as_slice() else {
-            return Err(Error::Invalid(format!("{stubs:?}")));
+        let open = warnings(&usb.engine, "board.track_dangling")?;
+        let [end] = open.as_slice() else {
+            return Err(Error::Invalid(format!("{open:?}")));
         };
-        assert!(stub.starts_with("USB_D: 4 mm stub on USB_D+"), "{stub}");
-        // The finding states the limit it was checked against.
-        let cited = layout::checks(usb.engine.project())
-            .into_iter()
-            .filter(|f| f.code == "pair.stub")
-            .all(|f| f.message.contains("needs at most 2.5 mm (default limit)"));
-        assert!(cited);
+        assert!(end.starts_with("Track on USB_D+"), "{end}");
         // Skew 1 mm past the default: warned only without a class limit.
         let track = longest(&usb.engine, usb.nets[1])?;
         apply(
