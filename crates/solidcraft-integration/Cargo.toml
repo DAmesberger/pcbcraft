@@ -8,6 +8,12 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Compile Solidcraft's span profiler in (`profile`, re-exported): off by
+# default; the build profile benchmark (automation's tests/build_profile.rs)
+# turns it on.
+profile = ["solidcraft-engine/profile"]
+
 [dependencies]
 pcbcraft-core.workspace = true
 solidcraft-engine.workspace = true

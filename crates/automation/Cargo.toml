@@ -20,3 +20,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+# Solidcraft's span profiler compiled in, for the build profile benchmark
+# (tests/build_profile.rs) only.
+pcbcraft-solidcraft = { workspace = true, features = ["profile"] }

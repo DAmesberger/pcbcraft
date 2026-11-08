@@ -18,6 +18,10 @@ pub mod scene;
 pub mod silkscreen;
 pub mod stackup_edge;
 pub mod svg;
+/// Solidcraft's span profiler: records only when this crate's `profile`
+/// feature compiles it in (the build profile benchmark turns it on) and
+/// it is switched on; otherwise every call is empty.
+pub use solidcraft_engine::profile;
 pub use solidcraft_engine::render;
 
 /// Solidcraft's geometry, with the plain vector and profile data its public
