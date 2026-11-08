@@ -25,8 +25,9 @@ mod geom;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use checks::{FillLink, links};
+pub(crate) use checks::{Fresh, fresh};
 pub use checks::{fill_label, findings};
+pub(crate) use geom::RegionIndex;
 
 /// The chord tolerance computed fill copper is flattened at, mm.
 pub const FILL_CHORD_MM: f64 = 0.005;
@@ -449,10 +450,6 @@ pub fn validate(project: &Project) -> Result<()> {
                             .iter()
                             .chain(r.holes.iter().flatten())
                             .all(|p| point_valid(*p))
-                })
-                && c.joins.iter().all(|j| {
-                    j.joined_region()
-                        .is_none_or(|r| (r as usize) < c.regions.len())
                 })
         });
         total = total.saturating_add(vertices);

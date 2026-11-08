@@ -8,8 +8,8 @@ use crate::ids::Id;
 use crate::layout::{self, placed_pads};
 use crate::library::{Outline, Segment};
 use crate::model::fill::{
-    FillJoin, FillSettings, FillSpec, Hatch, IslandRemoval, KeepoutLayers, KeepoutRules,
-    KeepoutSpec, PadConnections,
+    FillSettings, FillSpec, Hatch, IslandRemoval, KeepoutLayers, KeepoutRules, KeepoutSpec,
+    PadConnections,
 };
 use crate::model::{CopperLayer, Fill, Project};
 use crate::rules::{CopperObject, NetClassSpec, PadConnection, RuleKey, RuleValue, RulesCommand};
@@ -83,6 +83,75 @@ fn refill(engine: &mut Engine) -> Fallible<()> {
 
 fn fill(project: &Project, id: Id) -> Fallible<&Fill> {
     Ok(project.fill(id).ok_or("no fill")?)
+}
+
+/// The board copper the copper graph joins to an island of fill `id`.
+fn joined_to(project: &Project, id: Id) -> Vec<ObjectRef> {
+    use layout::connectivity::{CopperGraph, EdgeKind, ElementKind};
+    let graph = CopperGraph::of(project);
+    let kind = |v: usize| {
+        let e = graph.vertices().get(v)?.element;
+        Some(graph.elements().get(e)?.kind)
+    };
+    let mut out = Vec::new();
+    for e in graph.edges().iter().filter(|e| e.kind == EdgeKind::Joint) {
+        let (Some(a), Some(b)) = (kind(e.a), kind(e.b)) else {
+            continue;
+        };
+        let other = match (a, b) {
+            (ElementKind::Fill { fill, .. }, other) | (other, ElementKind::Fill { fill, .. })
+                if fill == id =>
+            {
+                other
+            }
+            _ => continue,
+        };
+        let object = match other {
+            ElementKind::Track { index } => project
+                .tracks
+                .get(index)
+                .map(|t| ObjectRef::Track { id: t.id }),
+            ElementKind::Via { index } => {
+                project.vias.get(index).map(|v| ObjectRef::Via { id: v.id })
+            }
+            ElementKind::Pad { index } => graph.pads().get(index).map(|p| ObjectRef::Pad {
+                instance: p.instance,
+                pad: p.pad,
+            }),
+            ElementKind::Fill { .. } => None,
+        };
+        if let Some(o) = object
+            && !out.contains(&o)
+        {
+            out.push(o);
+        }
+    }
+    out
+}
+
+/// Whether fill copper lies at `radius` from `center` in direction `deg`.
+fn copper_towards(f: &Fill, center: Point, radius: f64, deg: f64) -> bool {
+    let (s, c) = deg.to_radians().sin_cos();
+    inside(f, [center[0] + c * radius, center[1] + s * radius])
+}
+
+/// The relief spokes of `relief` around a via that carry fill copper,
+/// probed halfway across the relief gap, and whether the gap between
+/// every pair of neighbouring spokes is clear of copper.
+fn via_relief(
+    f: &Fill,
+    via: &crate::model::Via,
+    relief: crate::rules::ThermalRelief,
+) -> (usize, bool) {
+    let r = via.diameter / 2.0 + relief.gap / 2.0;
+    let n = relief.spoke_count.max(1);
+    let step = 360.0 / f64::from(n);
+    let angle = |k: u32| relief.angle_deg + step * f64::from(k);
+    let spokes = (0..n)
+        .filter(|k| copper_towards(f, via.position, r, angle(*k)))
+        .count();
+    let gaps = (0..n).all(|k| !copper_towards(f, via.position, r, angle(k) + step / 2.0));
+    (spokes, gaps)
 }
 
 /// A whole-board GND fill on `layer` of the showcase.
@@ -250,77 +319,72 @@ fn net_class_and_rule_clearances_widen_the_gap() -> Fallible<()> {
 fn pads_vias_and_tracks_of_the_net_join_the_fill_with_their_connection_style() -> Fallible<()> {
     let (mut engine, id, gnd) = showcase_with(CopperLayer::Bottom)?;
     let p = engine.project();
-    let copper = fill(p, id)?.computed.clone().ok_or("not filled")?;
+    fill(p, id)?.computed.as_ref().ok_or("not filled")?;
     // Default: thermal reliefs with four spokes; every GND via joins.
-    let gnd_vias = p.vias.iter().filter(|v| v.net == gnd).count();
-    let via_joins: Vec<_> = copper
-        .joins
-        .iter()
-        .filter_map(|j| match j {
-            FillJoin::Via {
-                connection, spokes, ..
-            } => Some((*connection, *spokes)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(via_joins.len(), gnd_vias);
-    assert!(via_joins.iter().all(|(c, _)| *c == PadConnection::Thermal));
-    assert!(via_joins.iter().any(|(_, s)| *s == 4), "{via_joins:?}");
+    let joined = joined_to(p, id);
+    let gnd_vias: Vec<_> = p.vias.iter().filter(|v| v.net == gnd).collect();
     assert!(
-        copper
-            .joins
+        gnd_vias
             .iter()
-            .any(|j| matches!(j, FillJoin::Track { .. }))
+            .all(|v| joined.contains(&ObjectRef::Via { id: v.id })),
+        "{joined:?}"
     );
-    // The header's ground pin (through-hole) joins with spokes.
     assert!(
-        copper.joins.iter().any(|j| matches!(
-            j,
-            FillJoin::Pad {
-                connection: PadConnection::Thermal,
-                spokes: 1..,
-                ..
-            }
-        )),
-        "{:?}",
-        copper.joins
-    );
-    // Every join names a kept island.
-    assert!(
-        copper
-            .joins
+        p.tracks
             .iter()
-            .filter_map(FillJoin::joined_region)
-            .all(|r| (r as usize) < copper.regions.len())
+            .any(|t| t.net == gnd && joined.contains(&ObjectRef::Track { id: t.id }))
     );
-    // A thermal relief leaves copper only in its spokes around the via.
-    let via = p
-        .vias
-        .iter()
-        .find(|v| v.net == gnd)
-        .cloned()
-        .ok_or("no via")?;
+    // A thermal relief leaves copper only in its spokes around a via: some
+    // via has all four spokes, and no via has copper between its spokes.
     let f = fill(p, id)?;
     let t = p.rules.effective().fill.thermal;
-    let r = via.diameter / 2.0 + t.gap / 2.0;
-    let on_spoke = |deg: f64| {
+    let reliefs: Vec<(usize, bool)> = gnd_vias.iter().map(|v| via_relief(f, v, t)).collect();
+    assert!(reliefs.iter().any(|(s, _)| *s == 4), "{reliefs:?}");
+    assert!(reliefs.iter().all(|(_, gaps)| *gaps), "{reliefs:?}");
+    // The header's ground pin (through-hole) joins with spokes: copper
+    // halfway across the relief gap along a spoke, none between spokes.
+    let header = placed_pads(p)
+        .into_iter()
+        .find(|pad| pad.net == Some(gnd) && pad.pad.kind == crate::library::PadKind::PlatedThrough)
+        .ok_or("no through-hole ground pin")?;
+    assert!(joined.contains(&ObjectRef::Pad {
+        instance: header.instance,
+        pad: header.pad.id,
+    }));
+    let frame = header.pad_transform();
+    let reach = header.pad.shape.extent();
+    let centre = frame.apply([0.0, 0.0]);
+    let outline = header.outline().flatten(0.001);
+    // The distance from the centre to the pad's edge in direction `deg`.
+    let edge = |deg: f64| {
         let (s, c) = deg.to_radians().sin_cos();
-        inside(f, [via.position[0] + c * r, via.position[1] + s * r])
-    };
-    let spokes = copper
-        .joins
-        .iter()
-        .find_map(|j| match j {
-            FillJoin::Via { via: v, spokes, .. } if *v == via.id => Some(*spokes),
-            _ => None,
-        })
-        .ok_or("via not joined")?;
-    if spokes == 4 {
-        for k in 0..4 {
-            assert!(on_spoke(t.angle_deg + 90.0 * f64::from(k)));
-            assert!(!on_spoke(f64::from(k) * 90.0), "gap between spokes");
+        let mut d = 0.0;
+        while d < reach[0].hypot(reach[1])
+            && crate::geometry::polygon_contains(&outline, [centre[0] + c * d, centre[1] + s * d])
+        {
+            d += 0.001;
         }
-    }
+        d
+    };
+    let spoke = frame.rotation_deg + t.angle_deg;
+    let at = |deg: f64| copper_towards(f, centre, edge(deg) + t.gap / 2.0, deg);
+    let spokes = (0..t.spoke_count)
+        .filter(|k| at(spoke + 360.0 * f64::from(*k) / f64::from(t.spoke_count)))
+        .count();
+    assert!(spokes >= 1, "the header pin has no spoke");
+    let between = 180.0 / f64::from(t.spoke_count);
+    assert!(
+        (0..t.spoke_count)
+            .all(|k| !at(spoke + between + 360.0 * f64::from(k) / f64::from(t.spoke_count))),
+        "copper between the header pin's spokes"
+    );
+    // Every island of the fill joins copper of its net.
+    assert!(
+        !layout::checks(p)
+            .iter()
+            .any(|f| f.code == "fill.island_unconnected")
+    );
+    let via = (*gnd_vias.first().ok_or("no via")?).clone();
 
     // Solid vias flood; "none" clears them like another net and joins nothing.
     let mut edited = fill(engine.project(), id)?.clone();
@@ -341,10 +405,9 @@ fn pads_vias_and_tracks_of_the_net_join_the_fill_with_their_connection_style() -
     let p = engine.project();
     let f = fill(p, id)?;
     assert!(
-        !f.computed
+        !joined_to(p, id)
             .iter()
-            .flat_map(|c| &c.joins)
-            .any(|j| matches!(j, FillJoin::Via { .. }))
+            .any(|o| matches!(o, ObjectRef::Via { .. }))
     );
     assert_clear(p, f, |_| 0.2);
     let gap = gap_to_segment(f, via.position, via.position) - via.diameter / 2.0;
@@ -433,8 +496,8 @@ fn a_plane_connects_what_its_track_used_to() -> Fallible<()> {
         .ok_or("strap via")?;
     via.position[0] += 0.02;
     assert!(super::is_stale(&moved, &moved.fills[moved.fills.len() - 1]));
-    assert!(super::links(&moved).is_empty(), "stale joins are dropped");
-    assert!(!super::links(&filled).is_empty());
+    assert!(joined_to(&moved, id).is_empty(), "stale joins are dropped");
+    assert!(!joined_to(&filled, id).is_empty());
     assert_eq!(layout::airwires(&moved).len(), split);
     Ok(())
 }
@@ -957,41 +1020,25 @@ fn strip_fill(
 ) -> Fallible<Id> {
     let mut s = spec(Some(fixture.gnd), layer, fixture.strip.clone());
     s.settings.connections = connections;
-    s.settings.thermal = Some(crate::rules::ThermalRelief {
-        spoke_width: 0.3,
-        spoke_count: 4,
-        gap: 0.25,
-        angle_deg: 0.0,
-    });
+    s.settings.thermal = Some(STRIP_RELIEF);
     s.settings.width_min = Some(0.1);
     let id = add(&mut fixture.engine, s)?;
     refill(&mut fixture.engine)?;
     Ok(id)
 }
 
-fn via_spokes(
-    project: &Project,
-    fill_id: Id,
-    via: Id,
-) -> Fallible<(PadConnection, u32, Option<u32>)> {
-    let joins = fill(project, fill_id)?
-        .computed
-        .clone()
-        .ok_or("not filled")?
-        .joins;
-    Ok(joins
-        .iter()
-        .find_map(|j| match j {
-            FillJoin::Via {
-                via: v,
-                connection,
-                spokes,
-                ..
-            } if *v == via => Some((*connection, *spokes, j.joined_region())),
-            _ => None,
-        })
-        .ok_or("via not joined")?)
+/// Whether the copper graph joins via `via` to fill `fill_id`.
+fn via_joined(project: &Project, fill_id: Id, via: Id) -> bool {
+    joined_to(project, fill_id).contains(&ObjectRef::Via { id: via })
 }
+
+/// The strip fills' relief: four 0.3 mm spokes across a 0.25 mm gap.
+const STRIP_RELIEF: crate::rules::ThermalRelief = crate::rules::ThermalRelief {
+    spoke_width: 0.3,
+    spoke_count: 4,
+    gap: 0.25,
+    angle_deg: 0.0,
+};
 
 /// The other half of gap 17: a fill can join vias solidly. It leaves no
 /// relief to starve, and the vias still join the fill's copper.
@@ -1009,9 +1056,7 @@ fn a_fill_can_join_its_vias_solidly() -> Fallible<()> {
     )?;
     let p = f.engine.project();
     for via in [f.in_pad, f.beside] {
-        let (connection, _, region) = via_spokes(p, id, via)?;
-        assert_eq!(connection, PadConnection::Solid);
-        assert!(region.is_some(), "via {via} joins the copper");
+        assert!(via_joined(p, id, via), "via {via} joins the copper");
     }
     // Solid copper runs up to the via's drill: 0.05 mm off its barrel is
     // copper on the 0.6 mm pad's ring, where a thermal would have a gap.
@@ -1032,8 +1077,16 @@ fn a_fill_can_join_its_vias_solidly() -> Fallible<()> {
     )?;
     let beside = other.beside;
     let other_id = other.engine.project().fills.last().ok_or("fill")?.id;
-    let (connection, _, _) = via_spokes(other.engine.project(), other_id, beside)?;
-    assert_eq!(connection, PadConnection::Thermal);
+    let p = other.engine.project();
+    let v = p.via(beside).ok_or("via")?;
+    assert!(via_joined(p, other_id, beside));
+    // A thermal relief: copper only along its spokes. The strip is 0.8 mm
+    // tall, so only the two spokes along it reach copper.
+    assert_eq!(
+        via_relief(fill(p, other_id)?, v, STRIP_RELIEF),
+        (2, true),
+        "a thermal relief with its spokes along the strip"
+    );
     Ok(())
 }
 
@@ -1143,10 +1196,12 @@ fn a_large_board_fills_in_seconds() -> Fallible<()> {
     let start = std::time::Instant::now();
     let copper = super::compute(&project, id)?;
     let full = start.elapsed();
-    let joined = copper
-        .joins
+    if let Some(f) = project.fills.iter_mut().find(|f| f.id == id) {
+        f.computed = Some(copper.clone());
+    }
+    let joined = joined_to(&project, id)
         .iter()
-        .filter(|j| j.joined_region().is_some())
+        .filter(|o| matches!(o, ObjectRef::Via { .. }))
         .count();
     assert_eq!(joined, 5000);
     // Inputs keys of every fill are cheap enough to compute per revision.

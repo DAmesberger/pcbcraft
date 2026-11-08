@@ -53,13 +53,13 @@ Four founder requests are built here: configurable manufacturing parameters with
   2. These are subtracted at the effective rule and net-class clearances: cutouts and slots, mounting holes, keepouts, other-net copper and higher-priority fills.
   3. Same-net pads and vias connect solid or through thermal reliefs (spoke count, width, gap and angle). The style is set per fill for surface pads, through-hole pads and vias (`settings.connections`), then by net class, then by rule.
   4. A minimum-width opening drops slivers.
-  5. Hatching and island removal are options.
-- **Results.** The copper (`FilledCopper`) is stored on the fill with the key of its inputs.
+  5. Hatching and island removal are options. An island is joined when copper of the fill's net on its layer touches it, by the copper graph's one joining rule ([copper graph](copper-graph.md)).
+- **Results.** The copper (`FilledCopper`: its islands and the count removed) is stored on the fill with the key of its inputs. What the islands join is not stored.
   - `inputs_key` covers only the objects within the fill's reach, so an edit elsewhere leaves the fill fresh.
   - `fill.store` refuses copper whose key is stale; `fill.store_all` stores several fills as one undo step and refuses the whole batch when any key is stale.
-  - The fill joins (the pads, vias and tracks of each island) count in board connectivity and airwires while the copper is fresh. Stale copper joins nothing, so an airwire shows as soon as a joined pad or via moves off the pour.
+  - The copper graph joins a fresh fill's islands to the pads, vias and tracks they touch, for board connectivity and airwires. Stale copper joins nothing, so an airwire shows as soon as a joined pad or via moves off the pour.
   - Fill copper is bounded per fill (2^20 vertices) and per project (2^23).
-- **Checks:** `fill.clearance` (other-net copper overlapping stale copper; a stale fill otherwise carries only its one `fill.stale`, so a profile switch does not list every gap the refill will fix), `fill.empty`, `fill.island_unconnected`, `fill.net_missing`, `fill.stale` and `keepout.track`/`via`/`pad`.
+- **Checks:** `fill.clearance` (other-net copper overlapping stale copper; a stale fill otherwise carries only its one `fill.stale`, so a profile switch does not list every gap the refill will fix), `fill.empty`, `fill.island_unconnected` (an island of fresh copper that the copper graph joins to nothing, kept because the fill keeps every island), `fill.net_missing`, `fill.stale` and `keepout.track`/`via`/`pad`.
 - **Background refill.** The desktop fill worker (`apps/pcbcraft/src/fill_worker.rs`) computes stale fills off the UI thread with `FillCache` and `compute_stale`. It stores them with `Engine::store_fills`, which adds no undo step and computes the keys of the stored fills only.
   - An explicit refill (the Fill card's and Layout's Refill) also runs on the worker. The app commits its copper as one undoable `fill.store_all` and says "Refilling in the background" meanwhile; a refill whose revision moved on is computed again. The CLI and MCP keep the synchronous `fill.refill`.
 - **Measured** (1 November 2026, macOS arm64, release build): one fill of a 200 × 200 mm plane over 10,000 through vias took 1.40 s, and its inputs key 2.1 ms (`a_large_board_fills_in_seconds`, which prints both).

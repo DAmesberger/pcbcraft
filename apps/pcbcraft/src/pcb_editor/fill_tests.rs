@@ -20,7 +20,6 @@ fn copper(regions: Vec<FilledRegion>) -> FilledCopper {
     FilledCopper {
         key: "test".into(),
         regions,
-        joins: vec![],
         removed_islands: 0,
     }
 }

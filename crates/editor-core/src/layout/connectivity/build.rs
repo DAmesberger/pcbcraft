@@ -1,13 +1,16 @@
 //! Building the graph: elements, the one joining rule, joints with
 //! stations, vertices, edges and islands.
 use super::{CopperGraph, Dsu, Edge, EdgeKind, Element, ElementKind, Group, JOIN_EPS, Vertex};
-use crate::diagnostics::ObjectRef;
-use crate::geometry::{Point, polygon_contains, segment_distance, segments_cross};
-use crate::ids::{Id, PadId};
+use crate::geometry::{
+    Bounds, Point, polygon_contains, segment_distance, segments_cross, segments_gap,
+};
+use crate::ids::Id;
+use crate::layout::MAX_CHECK_PAIRS;
+use crate::layout::WorldPad;
 use crate::layout::copper::{CURVE_SLACK_MM, CopperRing};
+use crate::layout::fill::{self, RegionIndex};
 use crate::layout::grid::BoundsGrid;
-use crate::layout::{MAX_CHECK_PAIRS, WorldPad, fill};
-use crate::model::{CopperLayer, Project};
+use crate::model::{Project, Track, Via};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// The farthest apart two outlines' bounds may be and still join.
@@ -200,54 +203,107 @@ fn track_land(track: Geo<'_>, land: Geo<'_>) -> Vec<(f64, f64)> {
     out
 }
 
-/// The distance from `p` to a fill island (0 inside its copper).
-fn region_distance(p: Point, outer: &[Point], holes: &[Vec<Point>]) -> f64 {
-    let inside = polygon_contains(outer, p) && !holes.iter().any(|h| polygon_contains(h, p));
-    if inside {
-        return 0.0;
-    }
-    std::iter::once(outer)
-        .chain(holes.iter().map(Vec::as_slice))
-        .flat_map(edges)
-        .map(|(a, b)| segment_distance(p, a, b))
-        .fold(f64::INFINITY, f64::min)
+/// The copper of a track: its centre line grown by its half-width.
+pub(crate) fn track_copper(track: &Track) -> CopperRing {
+    CopperRing::capsule(track.start, track.end, track.width / 2.0)
 }
 
-fn edges(ring: &[Point]) -> impl Iterator<Item = (Point, Point)> + '_ {
+/// The copper of one via land: a disc of the via's diameter.
+pub(crate) fn via_copper(via: &Via) -> CopperRing {
+    CopperRing::capsule(via.position, via.position, via.diameter / 2.0)
+}
+
+/// The islands of an indexed fill that `ring` joins: the one joining rule
+/// ([`joins`]) for fill copper, whose stored polygon is the fabricated
+/// copper (no slack). The caller has checked the layer and the net.
+pub(crate) fn islands_joined(index: &RegionIndex, ring: &CopperRing) -> Vec<u32> {
+    let Some(bounds) = ring.bounds else {
+        return Vec::new();
+    };
+    let reach = JOIN_EPS + ring.slack;
+    let lo = [bounds.min[0] - reach, bounds.min[1] - reach];
+    let hi = [bounds.max[0] + reach, bounds.max[1] + reach];
+    let mut out = Vec::new();
+    match ring.spine {
+        Some((a, b, radius)) => {
+            // Inside an island, or within reach of one of its edges.
+            out.extend(index.region_at(a));
+            out.extend(
+                index
+                    .edges_near(lo, hi)
+                    .filter(|(_, c, d)| segments_gap(a, b, *c, *d) <= radius + reach)
+                    .map(|(r, _, _)| r),
+            );
+        }
+        None => {
+            // The outline inside an island, or an edge within reach of one.
+            out.extend(ring.ring.first().and_then(|p| index.region_at(*p)));
+            for (p, q) in ring_edges(&ring.ring) {
+                let lo = [p[0].min(q[0]) - reach, p[1].min(q[1]) - reach];
+                let hi = [p[0].max(q[0]) + reach, p[1].max(q[1]) + reach];
+                out.extend(
+                    index
+                        .edges_near(lo, hi)
+                        .filter(|(r, c, d)| !out.contains(r) && segments_gap(p, q, *c, *d) <= reach)
+                        .map(|(r, _, _)| r)
+                        .collect::<Vec<_>>(),
+                );
+            }
+            // An island inside the outline: its edges lie within its bounds.
+            let inside: Vec<u32> = index
+                .edges_near(lo, hi)
+                .filter(|(r, c, _)| !out.contains(r) && polygon_contains(&ring.ring, *c))
+                .map(|(r, _, _)| r)
+                .collect();
+            out.extend(inside);
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn ring_edges(ring: &[Point]) -> impl Iterator<Item = (Point, Point)> + '_ {
     ring.iter()
         .zip(ring.iter().cycle().skip(1))
         .map(|(a, b)| (*a, *b))
 }
 
-/// Where a track joined to a fill island meets it: each end whose copper
-/// reaches the island, else the station nearest the island's edge.
+/// Where a track (`start`–`end`, half-width `radius`) joined to fill
+/// island `island` meets it: each end whose copper reaches the island,
+/// else the station nearest the island's edges.
 fn fill_stations(
+    index: &RegionIndex,
+    island: u32,
     start: Point,
     end: Point,
     radius: f64,
     length: f64,
-    outer: &[Point],
-    holes: &[Vec<Point>],
 ) -> Vec<f64> {
     let reach = radius + JOIN_EPS;
+    let near = |a: Point, b: Point| {
+        let lo = [a[0].min(b[0]) - reach, a[1].min(b[1]) - reach];
+        let hi = [a[0].max(b[0]) + reach, a[1].max(b[1]) + reach];
+        index
+            .edges_near(lo, hi)
+            .filter(move |(r, _, _)| *r == island)
+    };
     let mut out: Vec<f64> = [(start, 0.0), (end, length)]
         .into_iter()
-        .filter(|(p, _)| region_distance(*p, outer, holes) <= reach)
+        .filter(|(p, _)| {
+            index.region_at(*p) == Some(island)
+                || near(*p, *p).any(|(_, c, d)| segment_distance(*p, c, d) <= reach)
+        })
         .map(|(_, s)| s)
         .collect();
     if out.is_empty() {
         let mut best = (f64::INFINITY, 0.0);
-        for (c, d) in std::iter::once(outer)
-            .chain(holes.iter().map(Vec::as_slice))
-            .flat_map(edges)
-        {
+        for (_, c, d) in near(start, end) {
             let cd = (d[0] - c[0]).hypot(d[1] - c[1]);
             let (s, t) = nearest(start, end, length, c, d, cd);
-            let gap = {
-                let p = at(start, end, length, s);
-                let q = at(c, d, cd, t);
-                (p[0] - q[0]).hypot(p[1] - q[1])
-            };
+            let p = at(start, end, length, s);
+            let q = at(c, d, cd, t);
+            let gap = (p[0] - q[0]).hypot(p[1] - q[1]);
             if gap < best.0 {
                 best = (gap, s);
             }
@@ -284,11 +340,7 @@ impl CopperGraph {
         let mut lands = Vec::with_capacity(tracks.len() + vias.len() + pads.len());
         for (index, track) in tracks.iter().enumerate() {
             lands.push(elements.len()..elements.len() + 1);
-            shapes.push(CopperRing::capsule(
-                track.start,
-                track.end,
-                track.width / 2.0,
-            ));
+            shapes.push(track_copper(track));
             elements.push(element(
                 ElementKind::Track { index },
                 track.net,
@@ -298,11 +350,7 @@ impl CopperGraph {
         let mut via_lands = Vec::with_capacity(vias.len());
         for (index, via) in vias.iter().enumerate() {
             let first = elements.len();
-            shapes.push(CopperRing::capsule(
-                via.position,
-                via.position,
-                via.diameter / 2.0,
-            ));
+            shapes.push(via_copper(via));
             for layer in layers.iter().filter(|l| via.on(**l, &layers)) {
                 elements.push(element(ElementKind::Via { index }, via.net, *layer));
             }
@@ -319,23 +367,21 @@ impl CopperGraph {
             }
             lands.push(first..elements.len());
         }
-        let links = fill::links(project);
+        // One element per island of each fresh fill; stale copper joins
+        // nothing until it is refilled.
+        let fills = fill::fresh(project);
         let first_fill = elements.len();
-        for link in &links {
-            let Some((net, layer)) = project
-                .fill(link.fill)
-                .and_then(|f| f.net.map(|n| (n, f.layer)))
-            else {
-                continue;
-            };
-            elements.push(element(
-                ElementKind::Fill {
-                    fill: link.fill,
-                    region: link.region,
-                },
-                net,
-                layer,
-            ));
+        for f in &fills {
+            for region in 0..f.copper.regions.len() {
+                elements.push(element(
+                    ElementKind::Fill {
+                        fill: f.id,
+                        region: u32::try_from(region).unwrap_or(u32::MAX),
+                    },
+                    f.net,
+                    f.layer,
+                ));
+            }
         }
         let mid_planes = layers
             .iter()
@@ -358,7 +404,7 @@ impl CopperGraph {
             ..Self::default()
         };
         let mut joints = graph.join();
-        joints.extend(graph.fill_joints(project, &links, first_fill));
+        joints.extend(graph.fill_joints(&fills, first_fill));
         graph.connect(joints);
         graph
     }
@@ -532,113 +578,63 @@ impl CopperGraph {
         (joints, true)
     }
 
-    /// The joints fill compute stored for each fresh fill island, with the
-    /// stations where tracks meet the island.
-    fn fill_joints(
-        &self,
-        project: &Project,
-        links: &[fill::FillLink],
-        first_fill: usize,
-    ) -> Vec<Joint> {
-        if links.is_empty() {
-            return Vec::new();
-        }
-        // Tracks are the first elements, one each, in document order.
-        let by_track: HashMap<Id, usize> = self
-            .tracks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| (t.id, i))
-            .collect();
-        let by_via: HashMap<Id, usize> = self
-            .vias
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (v.id, i))
-            .collect();
-        let by_pad: HashMap<(Id, PadId), usize> = self
-            .pads
-            .iter()
-            .enumerate()
-            .map(|(i, p)| ((p.instance, p.pad), i))
-            .collect();
-        let land = |lands: Option<std::ops::Range<usize>>, layer: CopperLayer| {
-            lands?.find(|e| self.elements.get(*e).is_some_and(|e| e.layer == layer))
-        };
+    /// The joints of each fresh fill's islands with the copper of its net
+    /// on its layer, by the one joining rule, with the stations where
+    /// tracks meet an island.
+    fn fill_joints(&self, fills: &[fill::Fresh<'_>], first_fill: usize) -> Vec<Joint> {
         let mut out = Vec::new();
-        for (f, e) in self.elements.iter().enumerate().skip(first_fill) {
-            let ElementKind::Fill { fill, region } = e.kind else {
+        let mut near = Vec::new();
+        let mut first = first_fill;
+        for f in fills {
+            let fill_at = first;
+            first += f.copper.regions.len();
+            let Some(group) = self.groups.get(&f.net) else {
                 continue;
             };
-            let Some(link) = links.iter().find(|l| l.fill == fill && l.region == region) else {
+            let Some(bounds) = Bounds::of(
+                f.copper
+                    .regions
+                    .iter()
+                    .flat_map(|r| r.outer.iter().copied()),
+            ) else {
                 continue;
             };
-            let island = project
-                .fill(fill)
-                .and_then(|f| f.computed.as_ref())
-                .and_then(|c| c.regions.get(usize::try_from(region).ok()?));
-            for member in &link.members {
-                match *member {
-                    ObjectRef::Pad { instance, pad } => {
-                        // Outlines run tracks, vias, then pads.
-                        let lands = by_pad.get(&(instance, pad)).and_then(|i| {
-                            self.lands
-                                .get(self.tracks.len() + self.vias.len() + i)
-                                .cloned()
-                        });
-                        if let Some(p) = land(lands, e.layer) {
-                            out.push(Joint {
-                                a: p,
-                                station_a: 0.0,
-                                b: f,
-                                station_b: 0.0,
-                            });
-                        }
-                    }
-                    ObjectRef::Via { id } => {
-                        let lands = by_via
-                            .get(&id)
-                            .and_then(|i| self.via_lands.get(*i).cloned());
-                        if let Some(v) = land(lands, e.layer) {
-                            out.push(Joint {
-                                a: v,
-                                station_a: 0.0,
-                                b: f,
-                                station_b: 0.0,
-                            });
-                        }
-                    }
-                    ObjectRef::Track { id } => {
-                        let Some(&t) = by_track.get(&id) else {
-                            continue;
-                        };
-                        let Some(track) = self.elements.get(t).and_then(|e| match e.kind {
-                            ElementKind::Track { index } => self.tracks.get(index),
-                            _ => None,
-                        }) else {
-                            continue;
-                        };
-                        let length =
-                            (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1]);
-                        let stations = match island {
-                            Some(r) => fill_stations(
-                                track.start,
-                                track.end,
-                                track.width / 2.0,
-                                length,
-                                &r.outer,
-                                &r.holes,
-                            ),
-                            None => vec![0.0],
-                        };
-                        out.extend(stations.into_iter().map(|s| Joint {
-                            a: t,
-                            station_a: s,
-                            b: f,
-                            station_b: 0.0,
-                        }));
-                    }
-                    _ => {}
+            let index = RegionIndex::filled(&f.copper.regions);
+            group.grid.near(&bounds, JOIN_REACH_MM, &mut near);
+            for &outline in near.iter().filter_map(|j| group.members.get(*j)) {
+                let (Some(lands), Some(ring)) = (self.lands.get(outline), self.shapes.get(outline))
+                else {
+                    continue;
+                };
+                let Some(land) = lands
+                    .clone()
+                    .find(|e| self.elements.get(*e).is_some_and(|e| e.layer == f.layer))
+                else {
+                    continue;
+                };
+                let track = match self.elements.get(land).map(|e| e.kind) {
+                    Some(ElementKind::Track { index }) => self.tracks.get(index),
+                    _ => None,
+                };
+                for island in islands_joined(&index, ring) {
+                    let stations = match track {
+                        Some(t) => fill_stations(
+                            &index,
+                            island,
+                            t.start,
+                            t.end,
+                            t.width / 2.0,
+                            (t.end[0] - t.start[0]).hypot(t.end[1] - t.start[1]),
+                        ),
+                        None => vec![0.0],
+                    };
+                    let b = fill_at + island as usize;
+                    out.extend(stations.into_iter().map(|s| Joint {
+                        a: land,
+                        station_a: s,
+                        b,
+                        station_b: 0.0,
+                    }));
                 }
             }
         }

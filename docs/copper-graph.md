@@ -1,6 +1,6 @@
 # One copper graph (design)
 
-Design for review, 8 November 2026. Base: `component-model` at 32116be. Approved by the founder with all its recommendations. Slices 1, 2 and 4 are built; see [Slice 1 as built](#slice-1-as-built), [Slice 2 as built](#slice-2-as-built) and [Slice 4 as built](#slice-4-as-built).
+Design for review, 8 November 2026. Base: `component-model` at 32116be. Approved by the founder with all its recommendations. Slices 1 to 4 are built; see [Slice 1 as built](#slice-1-as-built), [Slice 2 as built](#slice-2-as-built), [Slice 3 as built](#slice-3-as-built) and [Slice 4 as built](#slice-4-as-built).
 
 The founder's requirement: "single copper graph. there is no excuse for duplication. everything needs to be single source of truth." His ruling on pairs: "what is a pin-to-pin link other than a track between two pins". So this design keeps no separate link or branch concept. Copper off a pair's signal path is ordinary net copper. Where it ends at a pin, it is a track between pins. Where it ends at no pad, it is a stub.
 
@@ -303,7 +303,7 @@ From `layout/copper.rs`: the union-find (`find`, `union`), `join_fills`, `fill_k
 
 ### Temporary adapter
 
-- **`fill::links` → `FillLink { fill, region, members }`.** The graph reads fresh fill islands from the joins fill compute stored, and finds where a joined track meets the island from the stored island polygon (each end within reach, else the nearest station). Slice 3 removes it, when fill islands join by the one rule.
+- **`fill::links` → `FillLink { fill, region, members }`.** The graph reads fresh fill islands from the joins fill compute stored, and finds where a joined track meets the island from the stored island polygon (each end within reach, else the nearest station). Slice 3 removed it: fill islands now join by the one rule.
 
 No other adapter was needed: pair measurement (D3), net length (D4), Update PCB (D6), the router (D7), the route tool (D8) and the meander (D9) decide nothing that slice 1 changed, and stay as they are until slices 2, 4 and 5.
 
@@ -388,6 +388,79 @@ No other expectation changed. On the ESP32 reference board the whole length repo
 | A pair of that board's two via nets (20,000 via lands per half) | not measured | 4.3 ms on the graph |
 
 The graph's build on that board, soft joints included, measured 6.6 ms in the same run (slice 1: 5.5 ms; target ≤ 10 ms). Pair measurement is now linear in the half's copper (Dijkstra on its slice), and the engine shares the graph with the checks, so the length report and pair checks add no second connectivity build.
+
+## Slice 3 as built
+
+Built on `component-model` at a13196d, 8 November 2026.
+
+### What exists
+
+- **One rule for fill copper.** `connectivity::islands_joined(index, ring)` (in `connectivity/build.rs`) returns the islands of an indexed fill that a piece of copper joins: its copper lies inside an island, or within `JOIN_EPS` (plus its curve slack) of an island's edge, or the island lies inside it. The stored fill polygon is the fabricated copper, so it carries no slack. This is the graph's joining rule for a polygon with holes. The outlines it is given come from the same constructors the graph uses: `connectivity::track_copper`, `connectivity::via_copper` and `CopperRing::of_placed_pad` (the same outline as `CopperRing::of_pad`).
+- **Fill compute, step 5,** marks an island as joined when `islands_joined` finds same-net copper on the fill's layer touching it: pads on that layer, vias and tracks. Unjoined islands are removed by the island setting, as before. The probes are deleted. That covers centre-line sampling at 65 points or fewer, the solid probe at the centre and at the outline pulled 5 % inward, and the spoke probe at mid-gap and just past the gap. The thermal relief geometry itself (the obstacle and its spokes) is unchanged.
+- **The graph** makes one element per island of each fresh fill (`fill::fresh`: the fill has a net and its stored key is current). It joins each one, through the net's grid and `islands_joined`, to every outline of the net with a land on the fill's layer. A track's stations on an island are each end whose copper reaches the island, else the station nearest the island's edges, found through the fill's `RegionIndex`. **Stale fills join nothing until they are refilled** (Q3, approved).
+- **`fill.island_unconnected`** is a graph finding (`CopperGraph::findings`): per fresh fill, the islands with no joint. Only a fill that keeps every island can have them, because compute removes the rest by the same rule. A partial graph reports only `board.check_limit`.
+- **`RegionIndex`** (`fill/geom.rs`) gained `filled` (built from stored islands) and `edges_near` (the edges in the cells a box covers). `segment_distance` uses `edges_near`. The segment-to-segment distance is one function, `geometry::segments_gap`, used by `CopperRing::gap`, `RegionIndex` and the graph.
+
+### Deleted
+
+- `fill::links`, `FillLink` and the graph's `fill_joints` adapter that read them.
+- Fill compute's `probe_spokes`, `probe_solid`, `ray_exit`, the track centre-line sampling, the renumbering of joins after island removal, and the old `fill.island_unconnected` count from stored joins in `fill/checks.rs`.
+- **From the file format:** `FilledCopper::joins` and the `FillJoin` type (`Pad` and `Via` with `connection`, `spokes` and `region`, and `Track` with `region`). Each was a stored second answer to "what does this fill join", which the graph now derives. Before removing them I checked every reader. Gerber, the 3D scene and the fill rebuild read none of them. The spoke count lost its only reader when `fill.thermal_starved` was removed (gap 17 of the ESP32 log). `connection` is a function of the fill settings, the net class and the rules. The spoke geometry is in the copper polygons. `FilledCopper` keeps `key`, `regions` and `removed_islands` (the fill card shows the count). Pcbcraft is pre-release with one format version, so files written before this change and still carrying `joins` are refused by `deny_unknown_fields`; a refill writes the new form. The validation that a join named an existing island went with the field. The MCP and CLI schemas derive from the types, so they changed with them. No hand-written schema listed the fields.
+
+### Behaviour changes and test corrections
+
+The one rule disagrees with the old probes wherever copper overlaps an island without a probe point inside it. New tests in `connectivity/tests.rs`:
+
+- `a_track_overlapping_an_island_only_at_its_edge_joins_it`: an island starting 0.1 mm above a 0.3 mm track's centre line overlaps only the track's edge. Centre-line sampling removed it; it is now kept, joined and reported by nothing. At 0.16 mm it is clear of the copper and still removed.
+- `a_via_land_overlapping_an_island_joins_it`: a solidly joined via whose land overlaps an island by 0.01 mm, its centre outside. The solid probe (centre, then the outline pulled 0.015 mm inward) missed it and removed the island; it is now kept and joined. Without the via, the island is removed, or kept and reported as `fill.island_unconnected` when the fill keeps every island.
+
+These two are the fragments the ESP32 board now keeps (below): copper overlapping only a via land, or only a track's edge.
+
+Changed tests, each a correction, none weaker:
+
+- `fill/tests.rs::pads_vias_and_tracks_of_the_net_join_the_fill_with_their_connection_style` read the stored joins. It now asserts through the graph that every GND via and some GND track join the pour. It checks the reliefs in the copper: some via has all four spokes, no via has copper between its spokes, and the header's through-hole ground pin has copper along a spoke halfway across its relief gap and none between spokes. It also asserts that no island is unconnected. The old test only checked the first via's spokes when the stored count happened to be 4, so this is stronger.
+- `a_plane_connects_what_its_track_used_to`: "stale joins are dropped" now asserts that the graph joins nothing to the stale plane and something to the fresh one.
+- `a_fill_can_join_its_vias_solidly`: the stored `connection` and `region` gave way to the graph join and the copper. The solid vias join, as before. The other fill's thermal via shows exactly two spokes with clear gaps, because the 0.8 mm strip leaves no room for the two spokes across it.
+- `a_large_board_fills_in_seconds`: the 5,000 joined vias are counted on the graph after the fill is stored.
+- `solidcraft-integration` `board/tests.rs::the_shipped_showcase_has_its_shape_classes_and_edge_held_header` asserted a stored thermal `FillJoin::Pad`. It now finds a GND pad the pour meets through exactly the set number of spokes, each as wide as the set spoke width and no wider (probed ±0.02 mm inside and ±0.03 mm outside the spoke's edges, halfway across the gap), with no copper between spokes. It also asserts that the graph puts that pad and the pour in one island. `project/fill/tests.rs` and the desktop's `fill_tests.rs` only dropped `joins: vec![]` from their fixtures.
+
+### The ESP32 reference board
+
+It stays at 0 issues (`project.issues`). Its fills change by islands added, and nothing else:
+
+| Fill | Kept / removed islands before | After |
+| --- | --- | --- |
+| GND plane (In1) | 1 / 0 | 1 / 0 |
+| 3V3 plane (In2) | 1 / 0 | 1 / 0 |
+| GND bottom | 1 / 1 | 2 / 0 |
+| GND top | 9 / 25 | 29 / 5 |
+
+No existing island was lost or altered: every old region is in the new list, byte for byte. Each of the 21 new islands is a fragment of about 0.3 × 0.4 mm, joined by copper overlap:
+
+- 18 are thermal-relief spoke pieces at GND vias 424, 428, 436, 455, 480, 485, 487, 489 and 492, cut off from the pour by other-net clearance. Each overlaps its via's land, by up to 0.15 mm, and usually also the GND track ending at that via.
+- 2 on Top overlap only the edges of GND tracks 407 and 408.
+- 1 on Bottom touches a GND pad and no via or track.
+
+Under the old probes, a spoke piece joined only if copper lay both mid-gap and beyond the gap, and a track joined only along its centre line. Under the one rule they touch same-net copper, so they are joined and kept. This is the design's row "Fill islands touched by a track's edge only: removed → kept and joined". They are electrically harmless.
+
+In `fab/`, only the two outer copper Gerbers change: `copper-l1-top.gbr` gains 509 lines (20 regions) and `copper-l4-bottom.gbr` gains 22 (1 region). Every other fab file is byte-identical. In the `.pcbcraft`, the only changes are the removed `joins` lists (33, 5, 33 and 120 entries), the added regions and the two `removed_islands` counts; every key and every other entry is unchanged. The committed schematic PDF was left as it was.
+
+### Open fill-policy question (not built)
+
+- **Q9: Redundant fragments.** Should a fill drop islands that add no connection: copper joined only to things already connected without it, such as the ESP32's spoke pieces? A minimum island area would do much the same. Either belongs as a fill setting (like `IslandRemoval::BelowArea`), not as a connectivity rule. The graph keeps deciding what joins.
+
+### Measured
+
+Measured against a build of the base (a13196d), alternating base and new runs, on an Apple M5 Max shared with other agents' builds:
+
+| Work | Base | Slice 3 |
+| --- | --- | --- |
+| ESP32 board, `fill.refill` of all four fills through `pcbcraft-cli stdio` (`ci` profile; best / median of 8, three rounds) | 81–82 / 82–84 ms | 81–83 / 83–87 ms |
+| 10,000-via plane, `a_large_board_fills_in_seconds` (one fill, 5,000 joined vias; `test` profile; best / median of 6) | 1.75 / 2.0 s | 1.83 / 1.94 s |
+| `via_board(10_000, 2_000)`: `CopperGraph::of` (best / median of 6) | 5.9 / 6.3 ms | 7.8 / 8.3 ms |
+| The same board: board checks with the graph | 25.0 / 28.0 ms | 28.0 / 29.4 ms |
+
+Refill time is unchanged within the noise on both boards. The first version tested each pad outline edge against every fill edge in the pad's bounds and cost about 2 ms more per ESP32 refill. Querying the fill's index once per outline edge brought fill compute's island step back to the old probes' cost: about 1.4 ms against 1.2 ms, of which about 0.6 ms is building the region index in both. Graph build costs about 1.8 ms more on the 10,000-via board, because the graph now indexes each fresh fill and joins its islands itself instead of reading stored joins. It stays within the 10 ms target.
 
 ## Slice 4 as built
 

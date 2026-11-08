@@ -134,79 +134,16 @@ pub struct FilledRegion {
     pub holes: Vec<Vec<Point>>,
 }
 
-/// A pad, via or track the fill joined, and how. `region` indexes
-/// [`FilledCopper::regions`]: the island it connects to.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum FillJoin {
-    Pad {
-        instance: Id,
-        pad: crate::ids::PadId,
-        connection: PadConnection,
-        /// Spokes that reached fill copper (thermal only).
-        spokes: u32,
-        /// The island joined; `None` when no copper reached the pad.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        region: Option<u32>,
-    },
-    Via {
-        via: Id,
-        connection: PadConnection,
-        spokes: u32,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        region: Option<u32>,
-    },
-    /// A same-net track running through the island.
-    Track { track: Id, region: u32 },
-}
-
-impl FillJoin {
-    /// The island this join electrically connects, if any: a thermal
-    /// with no spoke reaching copper, or a pad no copper reached, joins
-    /// nothing.
-    pub fn joined_region(&self) -> Option<u32> {
-        match *self {
-            FillJoin::Pad {
-                connection,
-                spokes,
-                region,
-                ..
-            }
-            | FillJoin::Via {
-                connection,
-                spokes,
-                region,
-                ..
-            } => match connection {
-                PadConnection::Thermal if spokes == 0 => None,
-                PadConnection::None => None,
-                _ => region,
-            },
-            FillJoin::Track { region, .. } => Some(region),
-        }
-    }
-
-    /// Renumber the island after islands were removed; a track whose
-    /// island is gone is marked with `u32::MAX` for removal.
-    pub(crate) fn renumber(&mut self, map: impl Fn(u32) -> Option<u32>) {
-        match self {
-            FillJoin::Pad { region, .. } | FillJoin::Via { region, .. } => {
-                *region = region.and_then(&map);
-            }
-            FillJoin::Track { region, .. } => *region = map(*region).unwrap_or(u32::MAX),
-        }
-    }
-}
-
 /// A fill's computed copper and what it was computed from.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FilledCopper {
     /// Hex hash of every input (`layout::fill::inputs_key`).
     pub key: String,
+    /// The copper islands. Which copper they join is not stored: the
+    /// copper graph (`layout::connectivity`) joins fresh islands by its one
+    /// rule.
     pub regions: Vec<FilledRegion>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub joins: Vec<FillJoin>,
     /// Islands removed by the island rule.
     #[serde(default)]
     pub removed_islands: u32,

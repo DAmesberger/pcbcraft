@@ -203,8 +203,27 @@ pub(crate) struct RegionIndex {
 
 impl RegionIndex {
     pub(crate) fn new(regions: &[Region]) -> Self {
-        let edges: usize = regions.iter().flatten().map(Vec::len).sum();
-        let Some([min, max]) = bounds(regions.iter().flatten()) else {
+        Self::of_rings(regions.iter().map(|r| r.iter().map(Vec::as_slice)))
+    }
+
+    /// The index of stored fill islands (an outer ring and its holes each).
+    pub(crate) fn filled(regions: &[crate::model::fill::FilledRegion]) -> Self {
+        Self::of_rings(
+            regions.iter().map(|r| {
+                std::iter::once(r.outer.as_slice()).chain(r.holes.iter().map(Vec::as_slice))
+            }),
+        )
+    }
+
+    /// The index of regions given as their rings, numbered in order.
+    fn of_rings<'r, R>(regions: impl Iterator<Item = R> + Clone) -> Self
+    where
+        R: Iterator<Item = &'r [Point]>,
+    {
+        let edges: usize = regions.clone().flatten().map(<[Point]>::len).sum();
+        let Some(crate::geometry::Bounds { min, max }) =
+            crate::geometry::Bounds::of(regions.clone().flatten().flatten().copied())
+        else {
             return Self {
                 min: [0.0, 0.0],
                 cell: 1.0,
@@ -226,7 +245,7 @@ impl RegionIndex {
             rows,
             cells: vec![Vec::new(); cols * rows],
         };
-        for (r, region) in regions.iter().enumerate() {
+        for (r, region) in regions.enumerate() {
             let r = u32::try_from(r).unwrap_or(u32::MAX);
             for ring in region {
                 let n = ring.len();
@@ -295,32 +314,36 @@ impl RegionIndex {
         parity.into_iter().find(|(_, odd)| *odd).map(|(r, _)| r)
     }
 
+    /// The edges (region, a, b) stored in the cells that box `lo`–`hi`
+    /// covers; an edge spanning several cells is listed once per cell.
+    pub(crate) fn edges_near(
+        &self,
+        lo: Point,
+        hi: Point,
+    ) -> impl Iterator<Item = (u32, Point, Point)> + '_ {
+        let ((c0, r0), (c1, r1)) = if self.cells.is_empty() {
+            ((1, 1), (0, 0))
+        } else {
+            (self.at(lo), self.at(hi))
+        };
+        (r0..=r1).flat_map(move |row| {
+            (c0..=c1).flat_map(move |col| {
+                self.cells
+                    .get(row * self.cols + col)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+            })
+        })
+    }
+
     /// The least distance from segment `a`–`b` to an edge within `limit`
     /// (0 when they cross), or `limit`.
     pub(crate) fn segment_distance(&self, a: Point, b: Point, limit: f64) -> f64 {
-        if self.cells.is_empty() {
-            return limit;
-        }
         let lo = [a[0].min(b[0]) - limit, a[1].min(b[1]) - limit];
         let hi = [a[0].max(b[0]) + limit, a[1].max(b[1]) + limit];
-        let (c0, r0) = self.at(lo);
-        let (c1, r1) = self.at(hi);
-        let mut best = limit;
-        for row in r0..=r1 {
-            for col in c0..=c1 {
-                for &(_, c, d) in self.cells.get(row * self.cols + col).into_iter().flatten() {
-                    let gap = if crate::geometry::segments_cross(a, b, c, d) {
-                        0.0
-                    } else {
-                        crate::geometry::segment_distance(a, c, d)
-                            .min(crate::geometry::segment_distance(b, c, d))
-                            .min(crate::geometry::segment_distance(c, a, b))
-                            .min(crate::geometry::segment_distance(d, a, b))
-                    };
-                    best = best.min(gap);
-                }
-            }
-        }
-        best
+        self.edges_near(lo, hi)
+            .map(|(_, c, d)| crate::geometry::segments_gap(a, b, c, d))
+            .fold(limit, f64::min)
     }
 }

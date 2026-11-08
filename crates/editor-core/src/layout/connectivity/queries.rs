@@ -397,7 +397,37 @@ impl CopperGraph {
                 .collect();
             out.push(Finding::new("board.track_dangling", message, objects));
         }
+        out.extend(self.unjoined_islands(project));
         out
+    }
+
+    /// `fill.island_unconnected`: per fresh fill, the islands that join no
+    /// copper of its net. Fill compute removes these unless the fill keeps
+    /// every island; it decides by the same rule.
+    fn unjoined_islands(&self, project: &Project) -> Vec<Finding> {
+        let mut dead: Vec<(Id, usize)> = Vec::new();
+        for (i, e) in self.elements.iter().enumerate() {
+            let ElementKind::Fill { fill, .. } = e.kind else {
+                continue;
+            };
+            let joined = self.vertices_of(i).any(|v| !self.neighbours(v).is_empty());
+            match dead.last_mut() {
+                Some((id, count)) if *id == fill => *count += usize::from(!joined),
+                _ => dead.push((fill, usize::from(!joined))),
+            }
+        }
+        dead.into_iter()
+            .filter(|(_, count)| *count > 0)
+            .filter_map(|(id, count)| {
+                let fill = project.fill(id)?;
+                let label = crate::layout::fill::fill_label(project, fill);
+                Some(Finding::new(
+                    "fill.island_unconnected",
+                    format!("{label} has {count} unconnected copper islands"),
+                    vec![ObjectRef::Fill { id }],
+                ))
+            })
+            .collect()
     }
 
     /// Airwires: per net, a minimum spanning tree over the islands holding

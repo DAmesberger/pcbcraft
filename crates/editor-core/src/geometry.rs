@@ -987,6 +987,17 @@ pub fn segment_distance(p: Point, a: Point, b: Point) -> f64 {
     distance(p, [a[0] + ab[0] * t, a[1] + ab[1] * t])
 }
 
+/// The distance between segments `a`–`b` and `c`–`d` (0 when they cross).
+pub fn segments_gap(a: Point, b: Point, c: Point, d: Point) -> f64 {
+    if segments_cross(a, b, c, d) {
+        return 0.0;
+    }
+    segment_distance(a, c, d)
+        .min(segment_distance(b, c, d))
+        .min(segment_distance(c, a, b))
+        .min(segment_distance(d, a, b))
+}
+
 /// Even-odd containment of `p` in a closed outline. Points exactly on the
 /// boundary may report either way; callers needing a margin compare
 /// distances.

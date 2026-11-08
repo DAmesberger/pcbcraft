@@ -669,6 +669,51 @@ fn the_mask_and_edge_bands_follow_the_sketched_shape() -> Fallible<()> {
     Ok(())
 }
 
+/// Whether fill `copper` meets `pad` through a thermal relief: copper
+/// along each of `relief`'s spokes, as wide as the spoke and no wider,
+/// halfway across the relief gap, and none between the spokes.
+fn thermal_relief(
+    copper: &pcbcraft_core::model::fill::FilledCopper,
+    pad: &pcbcraft_core::layout::PlacedPad,
+    relief: &pcbcraft_core::rules::ThermalRelief,
+) -> bool {
+    use pcbcraft_core::geometry::polygon_contains;
+    let inside = |p: [f64; 2]| {
+        copper.regions.iter().any(|r| {
+            polygon_contains(&r.outer, p) && !r.holes.iter().any(|h| polygon_contains(h, p))
+        })
+    };
+    let frame = pad.pad_transform();
+    let centre = frame.apply([0.0, 0.0]);
+    let outline = pad.outline().flatten(0.001);
+    let extent = pad.pad.shape.extent();
+    let far = extent[0].hypot(extent[1]);
+    // The point halfway across the gap in direction `deg`, offset `side`
+    // across it.
+    let probe = |deg: f64, side: f64| {
+        let (s, c) = deg.to_radians().sin_cos();
+        let mut d = 0.0;
+        while d < far && polygon_contains(&outline, [centre[0] + c * d, centre[1] + s * d]) {
+            d += 0.001;
+        }
+        let d = d + relief.gap / 2.0;
+        inside([centre[0] + c * d - s * side, centre[1] + s * d + c * side])
+    };
+    let n = relief.spoke_count.max(1);
+    let step = 360.0 / f64::from(n);
+    let sign = if frame.mirror { -1.0 } else { 1.0 };
+    let angle = |k: u32| frame.rotation_deg + sign * (relief.angle_deg + step * f64::from(k));
+    let half = relief.spoke_width / 2.0;
+    (0..n).all(|k| {
+        probe(angle(k), 0.0)
+            && probe(angle(k), half - 0.02)
+            && probe(angle(k), -(half - 0.02))
+            && !probe(angle(k), half + 0.03)
+            && !probe(angle(k), -(half + 0.03))
+            && !probe(angle(k) + step / 2.0, 0.0)
+    })
+}
+
 /// The shipped showcase (`Engine::showcase_hosted`): a sketched board with
 /// rounded corners, a round cutout and a milled slot, a Power class over
 /// GND and VCC, a top GND pour, and J1 held to the left edge. Its board
@@ -722,16 +767,40 @@ fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible
         .ok_or("top pour")?;
     let copper = top.computed.as_ref().ok_or("top pour filled")?;
     assert!(!copper.regions.is_empty());
-    assert!(
-        copper.joins.iter().any(|j| matches!(
-            j,
-            pcbcraft_core::model::fill::FillJoin::Pad {
-                connection: pcbcraft_core::rules::PadConnection::Thermal,
-                ..
-            }
-        )),
-        "thermals"
-    );
+    // Thermals: some ground pad joins the pour through exactly the set
+    // number of spokes of the set width, with the relief gap clear of
+    // copper between them; the copper graph joins it to the pour.
+    let relief = top
+        .settings
+        .thermal
+        .unwrap_or(project.rules.effective().fill.thermal);
+    let gnd = project
+        .nets
+        .iter()
+        .find(|n| n.name == "GND")
+        .ok_or("GND")?
+        .id;
+    let relieved = pcbcraft_core::layout::placed_pads(project)
+        .into_iter()
+        .filter(|p| p.net == Some(gnd) && p.on_copper(Layer::Top))
+        .find(|p| thermal_relief(copper, p, &relief))
+        .ok_or("no ground pad with a thermal relief")?;
+    let graph = pcbcraft_core::layout::CopperGraph::of(project);
+    let pad = graph
+        .pads()
+        .iter()
+        .position(|w| w.instance == relieved.instance && w.pad == relieved.pad.id)
+        .ok_or("pad in the graph")?;
+    let pour = graph
+        .elements()
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| {
+            matches!(e.kind, pcbcraft_core::layout::connectivity::ElementKind::Fill { fill, .. } if fill == top.id)
+        })
+        .filter_map(|(i, _)| graph.island_of(graph.vertices_of(i).start))
+        .collect::<Vec<_>>();
+    assert!(pour.contains(&graph.pad_island(pad).ok_or("pad island")?));
     assert!(
         project
             .fills

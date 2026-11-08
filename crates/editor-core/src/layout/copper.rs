@@ -18,8 +18,7 @@ use super::limits::{BoardRules, mm};
 use super::{CLEARANCE_MM, EPS, MAX_CHECK_PAIRS, WorldPad, courtyard, pad_labels, sync_preview};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{
-    Bounds, Point, Shape, polygons_overlap, polyline_polygon_distance, segment_distance,
-    segments_cross,
+    Bounds, Point, Shape, polygons_overlap, polyline_polygon_distance, segments_gap,
 };
 use crate::ids::Id;
 use crate::library::{PAD_ARC_TOLERANCE_MM, PadShape, Segment};
@@ -62,17 +61,6 @@ pub struct CopperRing {
     pub spine: Option<(Point, Point, f64)>,
 }
 
-/// The distance between segments `a`–`b` and `c`–`d` (0 when they cross).
-fn segments_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
-    if segments_cross(a, b, c, d) {
-        return 0.0;
-    }
-    segment_distance(a, c, d)
-        .min(segment_distance(b, c, d))
-        .min(segment_distance(c, a, b))
-        .min(segment_distance(d, a, b))
-}
-
 impl CopperRing {
     /// A board outline, flattened within [`CURVE_SLACK_MM`]. `curved` says
     /// whether it (or the pad shape it came from) has curved edges.
@@ -90,6 +78,12 @@ impl CopperRing {
     /// A placed pad's copper outline.
     pub fn of_pad(pad: &WorldPad) -> Self {
         Self::of_shape(&pad.outline(), curved(&pad.shape))
+    }
+
+    /// A placed pad's copper outline, the same as [`Self::of_pad`] gives
+    /// for its connected pad.
+    pub fn of_placed_pad(pad: &super::PlacedPad) -> Self {
+        Self::of_shape(&pad.outline(), curved(&pad.pad.shape))
     }
 
     /// A via's annular pad, a circle of its diameter.
@@ -167,7 +161,7 @@ impl CopperRing {
         }
         match (self.spine, other.spine) {
             (Some((a, b, r)), Some((c, d, s))) => {
-                return (segments_distance(a, b, c, d) - r - s).max(0.0);
+                return (segments_gap(a, b, c, d) - r - s).max(0.0);
             }
             (Some((a, b, r)), None) => {
                 return (polyline_polygon_distance(&[a, b], &other.ring) - r).max(0.0);

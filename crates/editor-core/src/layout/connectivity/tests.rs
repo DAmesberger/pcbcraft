@@ -432,3 +432,139 @@ fn the_engine_caches_the_graph_per_revision() -> Result<()> {
     assert_eq!(engine.copper_graph().airwires().len(), 1);
     Ok(())
 }
+
+/// A fill of net 2 on Top over `outline`, refilled, with `settings`.
+fn filled(project: &mut Project, outline: Outline, settings: FillSettings) -> Result<Id> {
+    let id = project.allocate()?;
+    project.fills.push(Fill::from_spec(
+        id,
+        FillSpec {
+            name: String::new(),
+            net: Some(SHARED),
+            layer: top(),
+            outline,
+            priority: 0,
+            settings,
+        },
+    ));
+    let computed = layout::fill::compute(project, id)?;
+    if let Some(fill) = project.fills.iter_mut().find(|f| f.id == id) {
+        fill.computed = Some(computed);
+    }
+    Ok(id)
+}
+
+/// The fill's (kept islands, removed islands).
+fn islands(project: &Project, id: Id) -> Option<(usize, u32)> {
+    let c = project.fill(id)?.computed.as_ref()?;
+    Some((c.regions.len(), c.removed_islands))
+}
+
+/// Whether the graph puts `object`'s copper and every island of fill `id`
+/// in one island.
+fn joined_to_fill(project: &Project, object: ElementKind, id: Id) -> bool {
+    let graph = CopperGraph::of(project);
+    let island = |pick: &dyn Fn(ElementKind) -> bool| -> Vec<Option<usize>> {
+        graph
+            .elements()
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| pick(e.kind))
+            .map(|(i, _)| graph.island_of(graph.vertices_of(i).start))
+            .collect()
+    };
+    let theirs = island(&|k| k == object);
+    let fill = island(&|k| matches!(k, ElementKind::Fill { fill, .. } if fill == id));
+    !fill.is_empty()
+        && fill
+            .iter()
+            .all(|f| f.is_some() && theirs.iter().any(|t| t == f))
+}
+
+/// The one joining rule against the fill's old centre-line sampling: a
+/// track whose copper (not its centre line) overlaps an island joins it.
+/// The island starts 0.1 mm above the track's centre line, inside its
+/// 0.15 mm half-width. Sampling the centre line found no join and removed
+/// the island as unconnected; the copper overlaps, so it is kept, joined
+/// and not reported.
+#[test]
+fn a_track_overlapping_an_island_only_at_its_edge_joins_it() -> Result<()> {
+    let mut project = fixture()?;
+    track(&mut project, R1_2, R2_1, top())?;
+    let id = filled(
+        &mut project,
+        rect(14.0, 10.1, 20.0, 14.0),
+        FillSettings::default(),
+    )?;
+    assert_eq!(islands(&project, id), Some((1, 0)));
+    assert!(joined_to_fill(
+        &project,
+        ElementKind::Track { index: 0 },
+        id
+    ));
+    assert_eq!(layout::checks(&project), Vec::new());
+    // 0.06 mm further up, the island is clear of the copper: removed.
+    let mut apart = fixture()?;
+    track(&mut apart, R1_2, R2_1, top())?;
+    let id = filled(
+        &mut apart,
+        rect(14.0, 10.16, 20.0, 14.0),
+        FillSettings::default(),
+    )?;
+    assert_eq!(islands(&apart, id), Some((0, 1)));
+    Ok(())
+}
+
+/// The one joining rule against the fill's old pad and via probes: a
+/// solidly joined via whose land overlaps an island by 0.01 mm, its centre
+/// outside the island, joins it. The probe looked at the centre and at
+/// the land's outline pulled 5 % (0.015 mm) inward, missed the overlap and
+/// removed the island; the copper overlaps, so it is kept and joined. Kept
+/// on request, an island that nothing touches is reported by the graph.
+#[test]
+fn a_via_land_overlapping_an_island_joins_it() -> Result<()> {
+    use crate::model::fill::{IslandRemoval, PadConnections};
+    use crate::rules::PadConnection;
+    let mut project = fixture()?;
+    track(&mut project, R1_2, R2_1, top())?;
+    via(&mut project, [17.0, 16.29], ViaSpan::Through)?;
+    let solid = FillSettings {
+        connections: PadConnections {
+            via: Some(PadConnection::Solid),
+            ..Default::default()
+        },
+        ..FillSettings::default()
+    };
+    let outline = rect(14.0, 13.0, 20.0, 16.0);
+    let id = filled(&mut project, outline.clone(), solid)?;
+    assert_eq!(islands(&project, id), Some((1, 0)));
+    assert!(joined_to_fill(&project, ElementKind::Via { index: 0 }, id));
+    let found = layout::checks(&project);
+    assert_eq!(
+        codes(&found, "fill.island_unconnected"),
+        Vec::new(),
+        "{found:?}"
+    );
+    // Without the via the island joins nothing: removed, or kept and
+    // reported when the fill keeps every island.
+    project.vias.clear();
+    project.fills.clear();
+    let id = filled(&mut project, outline.clone(), solid)?;
+    assert_eq!(islands(&project, id), Some((0, 1)));
+    project.fills.clear();
+    let keep = FillSettings {
+        islands: IslandRemoval::Never,
+        ..solid
+    };
+    filled(&mut project, outline, keep)?;
+    let found = layout::checks(&project);
+    let [dead] = codes(&found, "fill.island_unconnected")
+        .try_into()
+        .map_err(|f: Vec<Finding>| Error::Invalid(format!("one finding: {f:?}")))?;
+    assert!(
+        dead.message.contains("has 1 unconnected copper islands"),
+        "{}",
+        dead.message
+    );
+    Ok(())
+}

@@ -17,8 +17,8 @@
 //! 3. Copper narrower than the minimum width is removed (an opening: erode
 //!    then grow by half the width).
 //! 4. Hatched fills keep a border and a grid of lines.
-//! 5. Islands are found and joined to the pads, vias and tracks they
-//!    touch; unconnected islands (and, by setting, small ones) are removed.
+//! 5. Islands that no copper of the fill's net touches (by the copper
+//!    graph's one joining rule) are removed, and by setting small ones.
 //!
 //! Every clearance adds [`FILL_CHORD_MM`]: obstacles are generated so they
 //! cover their true curves, and the fill boundary is never closer than the
@@ -32,8 +32,10 @@ use super::{FILL_CHORD_MM, MAX_FILL_VERTICES};
 use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::ids::Id;
+use crate::layout::connectivity::{islands_joined, track_copper, via_copper};
+use crate::layout::copper::CopperRing;
 use crate::library::{PadKind, Segment};
-use crate::model::fill::{FillJoin, FilledCopper, FilledRegion, Hatch, IslandRemoval};
+use crate::model::fill::{FilledCopper, FilledRegion, Hatch, IslandRemoval};
 use crate::model::{CopperLayer, Fill, Project};
 use crate::rules::{
     ClearanceSide, CopperObject, DesignRules, NetClassId, PadConnection, ThermalRelief,
@@ -423,7 +425,6 @@ impl<'a> Ctx<'a> {
             }
         }
         let thermal = self.thermal(fill);
-        let mut thermal_pads: Vec<(usize, PadConnection)> = Vec::new();
         for &i in &rel.pads {
             let Some(pad) = self.pads.get(i) else {
                 continue;
@@ -462,9 +463,6 @@ impl<'a> Ctx<'a> {
                         }
                     }
                 }
-                if connection != PadConnection::None {
-                    thermal_pads.push((i, connection));
-                }
             }
             for hole in pad.holes() {
                 // A joined plated hole is drilled out of the fill; any
@@ -474,7 +472,6 @@ impl<'a> Ctx<'a> {
                 rings.extend(grown_shape(&hole.shape, gap, tol));
             }
         }
-        let mut joined_vias: Vec<(usize, PadConnection)> = Vec::new();
         for &i in &rel.vias {
             let Some(v) = p.vias.get(i) else {
                 continue;
@@ -500,9 +497,6 @@ impl<'a> Ctx<'a> {
                     regions.extend(relief(Some(ring), &s));
                     rings.push(geom::circle(v.position, v.drill / 2.0, tol));
                 }
-            }
-            if connection != PadConnection::None {
-                joined_vias.push((i, connection));
             }
         }
         for t in rel.tracks.iter().filter_map(|i| p.tracks.get(*i)) {
@@ -546,91 +540,46 @@ impl<'a> Ctx<'a> {
             copper = hatch(&copper, &h, tol)?;
         }
 
-        // 5. Islands.
-        let index = RegionIndex::new(&copper);
-        let mut joins: Vec<FillJoin> = Vec::new();
-        for (i, connection) in thermal_pads {
-            let Some(pad) = self.pads.get(i) else {
-                continue;
-            };
-            let frame = pad.pad_transform();
-            let center = frame.apply([0.0, 0.0]);
-            let ring = pad.outline().flatten(tol);
-            let (spokes, region) = match connection {
-                PadConnection::Thermal => probe_spokes(
-                    &index,
-                    center,
-                    &ring,
-                    frame.rotation_deg,
-                    frame.mirror,
-                    &thermal,
-                ),
-                _ => (0, probe_solid(&index, center, &ring)),
-            };
-            joins.push(FillJoin::Pad {
-                instance: pad.instance,
-                pad: pad.pad.id,
-                connection,
-                spokes,
-                region,
-            });
-        }
-        for (i, connection) in joined_vias {
-            let Some(v) = p.vias.get(i) else {
-                continue;
-            };
-            let ring = geom::circle(v.position, v.diameter / 2.0, tol);
-            let (spokes, region) = match connection {
-                PadConnection::Thermal => {
-                    probe_spokes(&index, v.position, &ring, 0.0, false, &thermal)
-                }
-                _ => (0, probe_solid(&index, v.position, &ring)),
-            };
-            joins.push(FillJoin::Via {
-                via: v.id,
-                connection,
-                spokes,
-                region,
-            });
-        }
-        for t in rel.tracks.iter().filter_map(|i| p.tracks.get(*i)) {
-            if !same(Some(t.net)) {
-                continue;
-            }
-            let len = (t.end[0] - t.start[0]).hypot(t.end[1] - t.start[1]);
-            let n = ((len / t.width.max(0.25)).ceil() as usize).clamp(1, 64);
-            let mut hit: Vec<u32> = (0..=n)
-                .filter_map(|k| {
-                    let s = k as f64 / n as f64;
-                    index.region_at([
-                        t.start[0] + (t.end[0] - t.start[0]) * s,
-                        t.start[1] + (t.end[1] - t.start[1]) * s,
-                    ])
-                })
-                .collect();
-            hit.sort_unstable();
-            hit.dedup();
-            joins.extend(hit.into_iter().map(|region| FillJoin::Track {
-                track: t.id,
-                region,
-            }));
-        }
-        let mut connected = vec![false; copper.len()];
-        for j in &joins {
-            if let Some(r) = j.joined_region()
-                && let Some(flag) = connected.get_mut(r as usize)
-            {
-                *flag = true;
-            }
-        }
+        // 5. Islands. One is joined when copper of the fill's net on its
+        // layer touches it, by the copper graph's one joining rule
+        // (`connectivity::islands_joined`), which also joins the fresh
+        // fill's islands on the board.
         let (unconnected, area_min) = match fill.settings.islands {
             IslandRemoval::Never => (false, 0.0),
             IslandRemoval::Unconnected => (true, self.rules.fill.island_area_min),
             IslandRemoval::BelowArea(a) => (true, a.max(self.rules.fill.island_area_min)),
         };
+        let mut connected = vec![false; copper.len()];
         // A fill without a net has nothing to connect to.
-        let unconnected = unconnected && fill_net.is_some();
-        let mut renumber = vec![None; copper.len()];
+        let unconnected = match fill_net {
+            Some(net) if unconnected => {
+                let index = RegionIndex::new(&copper);
+                let mut mark = |ring: &CopperRing| {
+                    for r in islands_joined(&index, ring) {
+                        if let Some(flag) = connected.get_mut(r as usize) {
+                            *flag = true;
+                        }
+                    }
+                };
+                for pad in rel.pads.iter().filter_map(|i| self.pads.get(*i)) {
+                    if pad.net == Some(net) && pad_on(pad, fill.layer) {
+                        mark(&CopperRing::of_placed_pad(pad));
+                    }
+                }
+                for v in rel.vias.iter().filter_map(|i| p.vias.get(*i)) {
+                    if v.net == net {
+                        mark(&via_copper(v));
+                    }
+                }
+                for t in rel.tracks.iter().filter_map(|i| p.tracks.get(*i)) {
+                    if t.net == net {
+                        mark(&track_copper(t));
+                    }
+                }
+                true
+            }
+            _ => false,
+        };
         let mut kept = Vec::new();
         let mut removed = 0u32;
         for (i, region) in copper.into_iter().enumerate() {
@@ -640,13 +589,8 @@ impl<'a> Ctx<'a> {
                 removed = removed.saturating_add(1);
                 continue;
             }
-            renumber[i] = u32::try_from(kept.len()).ok();
             kept.push(region);
         }
-        for j in &mut joins {
-            j.renumber(|r| renumber.get(r as usize).copied().flatten());
-        }
-        joins.retain(|j| !matches!(j, FillJoin::Track { region, .. } if *region == u32::MAX));
         let mut vertices = 0usize;
         let regions = kept
             .into_iter()
@@ -670,7 +614,6 @@ impl<'a> Ctx<'a> {
         Ok(FilledCopper {
             key,
             regions,
-            joins,
             removed_islands: removed,
         })
     }
@@ -680,7 +623,6 @@ fn empty(key: String) -> FilledCopper {
     FilledCopper {
         key,
         regions: Vec::new(),
-        joins: Vec::new(),
         removed_islands: 0,
     }
 }
@@ -738,69 +680,6 @@ fn relief(ring: Option<Ring>, spokes: &[Ring]) -> Vec<Region> {
         return Vec::new();
     };
     geom::difference_rings(&[vec![ring]], spokes)
-}
-
-/// The distance from `c` along unit `u` to the ring's boundary.
-fn ray_exit(c: Point, u: Point, ring: &[Point]) -> f64 {
-    let n = ring.len();
-    let mut best = f64::INFINITY;
-    for i in 0..n {
-        let (a, b) = (ring[i], ring[(i + 1) % n]);
-        let e = [b[0] - a[0], b[1] - a[1]];
-        let den = u[0] * e[1] - u[1] * e[0];
-        if den.abs() < 1e-15 {
-            continue;
-        }
-        let w = [a[0] - c[0], a[1] - c[1]];
-        let t = (w[0] * e[1] - w[1] * e[0]) / den;
-        let s = (w[0] * u[1] - w[1] * u[0]) / den;
-        if t > 0.0 && (-1e-9..=1.0 + 1e-9).contains(&s) {
-            best = best.min(t);
-        }
-    }
-    if best.is_finite() { best } else { 0.0 }
-}
-
-/// How many spokes reach fill copper (probed halfway across the relief
-/// gap) and the region the first one joins.
-fn probe_spokes(
-    index: &RegionIndex,
-    center: Point,
-    ring: &[Point],
-    rotation_deg: f64,
-    mirror: bool,
-    t: &ThermalRelief,
-) -> (u32, Option<u32>) {
-    let mut count = 0;
-    let mut region = None;
-    for a in spoke_angles(rotation_deg, mirror, t) {
-        let (s, c) = a.to_radians().sin_cos();
-        let exit = ray_exit(center, [c, s], ring);
-        // Halfway across the gap, and just past it, must both be copper.
-        let at = |d: f64| [center[0] + c * d, center[1] + s * d];
-        let mid = index.region_at(at(exit + t.gap / 2.0));
-        let out = index.region_at(at(exit + t.gap + FILL_CHORD_MM * 4.0 + t.spoke_width / 4.0));
-        if let (Some(m), Some(o)) = (mid, out)
-            && m == o
-        {
-            count += 1;
-            region.get_or_insert(m);
-        }
-    }
-    (count, region)
-}
-
-/// The region a solidly joined pad lies in: its centre, else one of its
-/// vertices pulled slightly inward.
-fn probe_solid(index: &RegionIndex, center: Point, ring: &[Point]) -> Option<u32> {
-    index.region_at(center).or_else(|| {
-        ring.iter().find_map(|p| {
-            index.region_at([
-                p[0] + (center[0] - p[0]) * 0.05,
-                p[1] + (center[1] - p[1]) * 0.05,
-            ])
-        })
-    })
 }
 
 /// A hatched fill: a border of the hatch width and a grid of lines.

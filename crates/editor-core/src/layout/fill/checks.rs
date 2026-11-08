@@ -7,19 +7,20 @@
 //! merely miss a changed clearance (a profile switch, a class edit) are
 //! what the refill fixes, so they are not listed one by one.
 //!
-//! The joins of stale copper do not count in board connectivity
-//! ([`links`], read by the copper graph): an airwire shows as soon as a joined pad or via moves off
-//! the pour, not after the refill lands.
+//! Only fresh copper joins board copper ([`fresh`], read by the copper
+//! graph, which joins its islands by the one joining rule): an airwire
+//! shows as soon as a joined pad or via moves off the pour, not after the
+//! refill lands. The graph also reports islands that join nothing
+//! (`fill.island_unconnected`).
 use super::FILL_CHORD_MM;
 use super::compute::{Ctx, pad_on};
 use super::geom::{self, Region, RegionIndex};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Point, polygons_overlap};
 use crate::ids::Id;
-use crate::model::fill::{FillJoin, IslandRemoval};
-use crate::model::{Fill, Project};
+use crate::model::fill::FilledCopper;
+use crate::model::{CopperLayer, Fill, Project};
 use crate::rules::CopperObject;
-use std::collections::BTreeMap;
 
 /// How a fill is named in messages: its name, else its net and layer.
 pub fn fill_label(project: &Project, fill: &Fill) -> String {
@@ -42,53 +43,35 @@ fn regions_of(fill: &Fill) -> Vec<Region> {
         .collect()
 }
 
-/// One island of a fresh fill and the copper its stored joins name.
-///
-/// Temporary adapter for the copper graph (`docs/copper-graph.md`, slice
-/// 1): the graph reads fill islands from the joins fill compute stored.
-/// Slice 3 removes it, when the graph joins fresh fill islands by the one
-/// joining rule.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct FillLink {
-    pub fill: Id,
-    /// Index into the fill's computed regions.
-    pub region: u32,
-    pub members: Vec<ObjectRef>,
+/// A fill whose stored copper is current, with its net.
+pub(crate) struct Fresh<'a> {
+    pub id: Id,
+    pub net: Id,
+    pub layer: CopperLayer,
+    pub copper: &'a FilledCopper,
 }
 
-/// Every island of every fresh fill with the pads, vias and tracks it
-/// joins. Stale copper joins nothing until it is refilled.
-pub(crate) fn links(project: &Project) -> Vec<FillLink> {
+/// Every fill with a net whose stored copper is current. Only these join
+/// board copper (in the copper graph): stale copper joins nothing until it
+/// is refilled.
+pub(crate) fn fresh(project: &Project) -> Vec<Fresh<'_>> {
     let mut out = Vec::new();
     if project.fills.iter().all(|f| f.computed.is_none()) {
         return out;
     }
     let mut ctx = Ctx::new(project);
     for fill in &project.fills {
-        let Some(copper) = &fill.computed else {
+        let (Some(net), Some(copper)) = (fill.net, &fill.computed) else {
             continue;
         };
-        // Stale copper joins nothing until it is refilled.
-        if ctx.key(fill.id).ok().as_ref() != Some(&copper.key) {
-            continue;
+        if ctx.key(fill.id).ok().as_ref() == Some(&copper.key) {
+            out.push(Fresh {
+                id: fill.id,
+                net,
+                layer: fill.layer,
+                copper,
+            });
         }
-        let mut groups: BTreeMap<u32, Vec<ObjectRef>> = BTreeMap::new();
-        for join in &copper.joins {
-            let Some(region) = join.joined_region() else {
-                continue;
-            };
-            let object = match *join {
-                FillJoin::Pad { instance, pad, .. } => ObjectRef::Pad { instance, pad },
-                FillJoin::Via { via, .. } => ObjectRef::Via { id: via },
-                FillJoin::Track { track, .. } => ObjectRef::Track { id: track },
-            };
-            groups.entry(region).or_default().push(object);
-        }
-        out.extend(groups.into_iter().map(|(region, members)| FillLink {
-            fill: fill.id,
-            region,
-            members,
-        }));
     }
     out
 }
@@ -138,22 +121,6 @@ pub fn findings(project: &Project) -> Vec<Finding> {
                 format!("{label} has no copper"),
                 vec![me],
             ));
-        }
-        if fill.settings.islands == IslandRemoval::Never && fill.net.is_some() {
-            let mut joined = vec![false; copper.regions.len()];
-            for j in &copper.joins {
-                if let Some(flag) = j.joined_region().and_then(|r| joined.get_mut(r as usize)) {
-                    *flag = true;
-                }
-            }
-            let dead = joined.iter().filter(|j| !**j).count();
-            if dead > 0 {
-                out.push(Finding::new(
-                    "fill.island_unconnected",
-                    format!("{label} has {dead} unconnected copper islands"),
-                    vec![me],
-                ));
-            }
         }
         if stale {
             clearance(&mut ctx, fill, &label, &mut out);

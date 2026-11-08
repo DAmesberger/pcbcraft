@@ -18,9 +18,9 @@
 //! pair half's signal path ([`NetPaths`]), with each barrel edge carrying
 //! the distance between its lands' foil mid-planes.
 //!
-//! Fill islands come from the joins fill compute stored
-//! ([`super::fill::links`]); slice 3 of the design replaces that adapter
-//! with the joining rule.
+//! Fill islands of fresh fills ([`super::fill::fresh`]) join by the same
+//! rule ([`islands_joined`]), which fill compute also calls to decide which
+//! islands to keep; stale copper joins nothing until it is refilled.
 mod build;
 mod islands;
 mod lengths;
@@ -28,6 +28,7 @@ mod queries;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use build::{islands_joined, track_copper, via_copper};
 pub use islands::Island;
 pub use lengths::{MAX_PATH_WORK, NetPaths, PadEnd, PathEdge, PathTree, Walk};
 pub use queries::Stub;
