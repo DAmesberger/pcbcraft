@@ -937,21 +937,20 @@ fn pair_endpoints_round_trip_and_stay_out_of_unset_files() -> Result<()> {
     Ok(())
 }
 
-/// Run 3, finding 8: a pair with no limit set still warns past the named
-/// default, says the limit is the default, and leads with the pair; a limit
-/// the class sets replaces it. Lengths are the meander's added amount.
+/// Skew is checked only against a limit the pair's net class sets: with
+/// none, no `pair.skew` however large the skew; within a class limit, none;
+/// past it, one that leads with the pair and cites the class. Lengths are the
+/// meander's added amount.
 #[test]
-fn skew_past_the_default_limit_warns_when_no_limit_is_set() -> Result<()> {
-    for (signal, findings, cites) in [
-        (SignalRules::default(), 1, "default limit"),
-        (
-            SignalRules {
-                pair_max_skew: Some(5.0),
-                ..SignalRules::default()
-            },
-            0,
-            "",
-        ),
+fn skew_is_checked_only_against_a_class_limit() -> Result<()> {
+    let limit = |mm| SignalRules {
+        pair_max_skew: Some(mm),
+        ..SignalRules::default()
+    };
+    for (signal, added, findings, cites) in [
+        (SignalRules::default(), 20.0, 0, ""),
+        (limit(5.0), 3.0, 0, ""),
+        (limit(2.0), 3.0, 1, "net class USB: max skew"),
     ] {
         let mut usb = usb(signal)?;
         let legs = straight(&usb);
@@ -963,9 +962,7 @@ fn skew_past_the_default_limit_warns_when_no_limit_is_set() -> Result<()> {
             Operation::Layout(LayoutCommand::TuneLength {
                 request: TuneRequest {
                     track,
-                    amount: TuneAmount::Add {
-                        mm: crate::rules::signal::DEFAULT_PAIR_MAX_SKEW_MM + 0.5,
-                    },
+                    amount: TuneAmount::Add { mm: added },
                     style: MeanderStyle::Trombone,
                     amplitude: Some(1.0),
                     spacing: None,
@@ -973,6 +970,12 @@ fn skew_past_the_default_limit_warns_when_no_limit_is_set() -> Result<()> {
                 },
             }),
         )?;
+        let r = report(&usb.engine)?;
+        let pair = r
+            .pairs
+            .first()
+            .ok_or_else(|| Error::NotFound("pair".into()))?;
+        assert!((pair.skew - added).abs() < 0.05, "{pair:?}");
         let skews: Vec<_> = layout::checks(usb.engine.project())
             .into_iter()
             .filter(|f| f.code == "pair.skew")
@@ -987,21 +990,20 @@ fn skew_past_the_default_limit_warns_when_no_limit_is_set() -> Result<()> {
 }
 
 /// Run 3, finding 8: the production check warns on a pair's open copper as
-/// dangling, whatever limits its class sets, and on skew past the default
-/// when its class sets none; a class's skew limit replaces that. The skew is
-/// 3.5 mm, inside 5 mm.
+/// dangling, whatever limits its class sets, and on skew only past a limit
+/// its class sets. The skew is 3.5 mm, past 2 mm.
 #[test]
 fn the_production_check_warns_on_open_pair_copper_and_skew() -> Result<()> {
     use crate::fabrication::preflight;
     use crate::issues::Severity;
     for (signal, warned) in [
-        (SignalRules::default(), true),
+        (SignalRules::default(), false),
         (
             SignalRules {
-                pair_max_skew: Some(5.0),
+                pair_max_skew: Some(2.0),
                 ..SignalRules::default()
             },
-            false,
+            true,
         ),
     ] {
         let mut usb = usb(signal)?;
@@ -1029,16 +1031,14 @@ fn the_production_check_warns_on_open_pair_copper_and_skew() -> Result<()> {
             return Err(Error::Invalid(format!("{open:?}")));
         };
         assert!(end.starts_with("Track on USB_D+"), "{end}");
-        // Skew 1 mm past the default: warned only without a class limit.
+        // Skew 3.5 mm: warned only past the class's limit.
         let track = longest(&usb.engine, usb.nets[1])?;
         apply(
             &mut usb.engine,
             Operation::Layout(LayoutCommand::TuneLength {
                 request: TuneRequest {
                     track,
-                    amount: TuneAmount::Add {
-                        mm: crate::rules::signal::DEFAULT_PAIR_MAX_SKEW_MM + 1.0,
-                    },
+                    amount: TuneAmount::Add { mm: 3.5 },
                     style: MeanderStyle::Trombone,
                     amplitude: Some(1.0),
                     spacing: None,

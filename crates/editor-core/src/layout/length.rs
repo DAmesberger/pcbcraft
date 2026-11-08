@@ -577,19 +577,16 @@ pub fn checks(project: &Project) -> Vec<Finding> {
         let signal = rules.signal(class);
         let (a, b) = (len(pair.positive), len(pair.negative));
         let objects = vec![net(pair.positive), net(pair.negative)];
-        let max_skew = signal
-            .pair_max_skew
-            .unwrap_or(crate::rules::signal::DEFAULT_PAIR_MAX_SKEW_MM);
-        if a > 0.0 && b > 0.0 && (a - b).abs() > max_skew + 1e-6 {
-            let limit = if signal.pair_max_skew.is_some() {
-                format!("net class {class_name}: max skew")
-            } else {
-                "default limit; no max skew set on its net class".to_owned()
-            };
+        // Skew is checked only against a limit the net class sets.
+        if let Some(max_skew) = signal.pair_max_skew
+            && a > 0.0
+            && b > 0.0
+            && (a - b).abs() > max_skew + 1e-6
+        {
             findings.push(Finding::new(
                 "pair.skew",
                 format!(
-                    "{}: halves differ by {} mm; needs at most {} mm ({limit})",
+                    "{}: halves differ by {} mm; needs at most {} mm (net class {class_name}: max skew)",
                     pair.name,
                     mm((a - b).abs()),
                     mm(max_skew)

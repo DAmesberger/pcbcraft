@@ -53,7 +53,8 @@ pub struct SignalRules {
     /// coupled to the other at the pair gap (pad fan-out included).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pair_max_uncoupled: Option<f64>,
-    /// Largest length difference between a pair's two halves, mm.
+    /// Largest length difference between a pair's two halves, mm. Unset:
+    /// no limit, and skew is not checked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pair_max_skew: Option<f64>,
 }
@@ -98,11 +99,6 @@ impl SignalRules {
         None
     }
 }
-
-/// The skew a pair is warned past when its net class sets no limit, mm: a
-/// generous design-review threshold (about 15 ps on FR-4), not a limit from
-/// any interface's specification. Set `pair_max_skew` for the real one.
-pub const DEFAULT_PAIR_MAX_SKEW_MM: f64 = 2.5;
 
 /// Project-local identity of a differential pair; never reused.
 #[derive(
