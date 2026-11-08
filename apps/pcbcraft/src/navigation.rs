@@ -274,6 +274,14 @@ impl Trackpad {
     }
 }
 
+/// The band at a canvas's foot that the floating navigation bar (Fit
+/// view) covers: its height and its gap above the canvas bottom. Toasts
+/// sit above it, and a flat canvas's fit keeps the page out of it.
+pub fn bar_band() -> f32 {
+    let t = solidcraft_ui_egui::theme::Tokens::get();
+    t.space_16 + t.control_height + 2.0 * t.space_4
+}
+
 /// The platform's name for the Command key in help text.
 pub fn command_key() -> &'static str {
     if cfg!(target_os = "macos") {

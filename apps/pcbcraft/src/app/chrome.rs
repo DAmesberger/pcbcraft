@@ -715,8 +715,7 @@ fn tab(ui: &mut egui::Ui, label: &str, tip: &str) -> egui::Response {
 /// Where toasts may go in `canvas`: above the navigation bar (its height
 /// and gap, see `navigation_bar`).
 fn toast_area(canvas: Rect) -> Rect {
-    let t = Tokens::get();
-    let navigation = t.space_16 + t.control_height + 2.0 * t.space_4;
+    let navigation = crate::navigation::bar_band();
     Rect::from_min_max(
         canvas.min,
         pos2(

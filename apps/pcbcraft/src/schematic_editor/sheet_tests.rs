@@ -290,6 +290,27 @@ fn schematic_view(editor: &SchematicEditor) -> symbol_view::View {
     }
 }
 
+/// Run 3, finding 23: Fit view keeps the page, title block included,
+/// above the floating navigation bar, so the Fit button never covers it.
+#[test]
+fn fit_keeps_the_page_clear_of_the_navigation_bar() -> TestResult {
+    let engine = Engine::demo()?;
+    let ctx = ctx();
+    let mut editor = SchematicEditor::default();
+    editor.fit();
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    let page = editor
+        .sheet_extent(engine.project())
+        .ok_or("no sheet extent")?;
+    let view = schematic_view(&editor);
+    let foot = view.screen(page.min).y;
+    let head = view.screen(page.max).y;
+    let bar = CANVAS.bottom() - crate::navigation::bar_band();
+    assert!(foot <= bar + 0.5, "page foot {foot} under the bar at {bar}");
+    assert!(head >= CANVAS.top() - 0.5, "page head {head} cut");
+    Ok(())
+}
+
 #[test]
 fn a_shown_sheet_draws_only_its_own_symbols() -> TestResult {
     let mut engine = Engine::demo()?;

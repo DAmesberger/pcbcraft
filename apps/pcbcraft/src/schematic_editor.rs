@@ -1600,10 +1600,13 @@ impl SchematicEditor {
             }
             if bounds.is_finite() {
                 bounds = bounds.expand(5.0);
+                // Above the navigation bar's band, so the Fit button never
+                // sits on the title block at the page's foot.
+                let band = crate::navigation::bar_band().min(rect.height() / 2.0);
                 self.scale = (rect.width() / bounds.width())
-                    .min(rect.height() / bounds.height())
+                    .min((rect.height() - band) / bounds.height())
                     .clamp(SCALE_MIN, SCALE_MAX);
-                self.pan = -bounds.center().to_vec2() * self.scale;
+                self.pan = -bounds.center().to_vec2() * self.scale - Vec2::new(0.0, band / 2.0);
             } else {
                 self.pan = Vec2::ZERO;
                 self.scale = 12.0;
