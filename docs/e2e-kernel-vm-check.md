@@ -167,3 +167,12 @@ Esc with a selection does not clear it; it only closes menus. That may be intend
 - The 3D card for U1 has an empty Designator section.
 - In 3D, rotating SW1 raised one warning, which was not looked into. The overlay's warning chip covers the "Updating" chip at the top right (visible in the stand-in screenshot).
 - The 3D fit leaves the board low in the frame, with empty space above.
+
+## Fixed afterwards
+
+Checked by headless tests only; none of these was retried in the app.
+
+- **Top problem 4, USB-C pin numbers (run 3 #10). Fixed in symbol drawing, for every symbol.** A pin number now fits along its stub: as it is, else up to a quarter smaller, else stacked pads take a short form, the first pad and "…" ("A4B9…", "A1B12…"), smaller as needed. It never runs past the pin end. The full designations stay in the pin mapping. A value wider than the body (the receptacle's long name) wraps at spaces to the body's width (`usb_c_pin_numbers_sit_clear_and_the_value_wraps` checks that no number box touches the end ring, another number or a name, and that the value fits the body).
+- **Top problem 5, two undos for a generic part. Fixed.** The first placement of a part that search or a template has just created joins the create (`Engine::join_last_step`), so one undo takes back both. Later placements are steps of their own. Esc before placing still undoes the create (`creating_and_placing_a_generic_part_is_one_undo_step`, `a_joined_step_undoes_with_the_one_before`).
+- **Top problem 6, group rotate. Fixed.** A rubber-banded wire that a move would make double back (a U-turn, or a segment straight back over the one before) is drawn again as one step, keeping the direction it had at the end that stayed. A U-turn the wire already had is kept. ⌘R on a group turns it about its middle, moved by whole grid steps so a group inside the sheet's frame lands inside it again where it fits; a group already off the sheet is not pulled onto it (`arrange::turn_about`; `a_turned_group_leaves_no_u_turn`, `a_turned_group_stays_inside_the_sheet_frame`).
+- **Top problem 7, 3D picking. Fixed.** A selected object smaller than 24 points on screen, such as a via or a small pad, gets a ring in the selection colour around it, so it reads as selected at overview zoom and under the mask (`a_small_selected_via_gets_a_ring`). Pad-level selection is not intended: in Layout a pad click selects its part and lights the pad's net. 3D now goes through the same selection code (`PcbEditor::select_picked`), so a 3D pad pick does the same (`a_3d_pick_selects_as_a_layout_click`).

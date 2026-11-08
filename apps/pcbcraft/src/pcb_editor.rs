@@ -1931,6 +1931,24 @@ impl PcbEditor {
         }
     }
 
+    /// Select what a 3D pick names, as a Layout click on the same object
+    /// does ([`Self::select_hit`]): a pad selects its part and lights the
+    /// pad's net (pads are not selected on their own in either view).
+    pub fn select_picked(&mut self, source: Option<&pcbcraft_solidcraft::project::Source>) {
+        use menu::Hit;
+        let Some(s) = source else {
+            return self.select_hit(Hit::Nothing);
+        };
+        match (s.instance, s.via, s.fill, s.track) {
+            (Some(instance), ..) if s.pad.is_some() => self.select_hit(Hit::Pad(instance, s.net)),
+            (None, Some(via), ..) => self.select_via(via, s.net),
+            (_, _, Some(fill), _) => self.select_fill(fill, s.net),
+            (Some(instance), ..) => self.select_hit(Hit::Part(instance)),
+            (None, None, None, Some(track)) => self.set_selection(None, Some(track), s.net),
+            _ => self.select_hit(Hit::Nothing),
+        }
+    }
+
     /// Select what `hit` picked (nothing clears the selection).
     fn select_hit(&mut self, hit: menu::Hit) {
         use menu::Hit;
@@ -3725,6 +3743,71 @@ mod tests {
         assert_eq!(hidden.texts.iter().filter(|t| *t == "R1").count(), 0);
         // Layers and selection are display state: the board is not rebuilt.
         assert_eq!(editor.board_pads.as_ptr(), cached);
+        Ok(())
+    }
+
+    /// VM check #7: a 3D pick selects as a Layout click on the same object.
+    /// A pad picks its part and lights the pad's net in both views (pads
+    /// are not selected on their own); a part's body picks the part.
+    #[test]
+    fn a_3d_pick_selects_as_a_layout_click() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let model = pcbcraft_solidcraft::project::build(engine.project())?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut layout = PcbEditor::default();
+        canvas_frame(&mut layout, &engine, &ctx, vec![]);
+        let state = |e: &PcbEditor| {
+            (
+                e.selected_instance(),
+                e.selected_track(),
+                e.selected_via(),
+                e.net,
+                e.highlighted_net(),
+            )
+        };
+        let mut picked = PcbEditor::default();
+        let mut pads = 0;
+        for source in model.sources.iter().filter(|s| s.pad.is_some()) {
+            let pad = layout
+                .board_pads
+                .iter()
+                .map(|b| &b.placed)
+                .find(|p| Some(p.instance) == source.instance && Some(p.pad.id) == source.pad)
+                .ok_or("the pad in Layout")?;
+            layout.select_at(engine.project(), pad.center(), 0.0, TextMetric::default());
+            picked.select_picked(Some(source));
+            assert_eq!(state(&picked), state(&layout), "{}", source.label);
+            assert_eq!(
+                picked.selected_instance(),
+                source.instance,
+                "{}",
+                source.label
+            );
+            pads += 1;
+        }
+        assert!(pads > 0);
+        assert!(
+            model
+                .sources
+                .iter()
+                .any(|s| s.pad.is_some() && s.net.is_some()),
+            "a pad with a net was checked"
+        );
+        let body = model
+            .sources
+            .iter()
+            .find(|s| s.pad.is_none() && s.instance.is_some())
+            .ok_or("a part body")?;
+        picked.select_picked(Some(body));
+        assert_eq!(
+            state(&picked),
+            (body.instance, None, None, None, None),
+            "{}",
+            body.label
+        );
+        picked.select_picked(None);
+        assert_eq!(state(&picked), (None, None, None, None, None));
         Ok(())
     }
 

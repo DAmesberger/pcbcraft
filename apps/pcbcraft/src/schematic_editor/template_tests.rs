@@ -160,6 +160,95 @@ fn choosing_a_row_creates_the_component_and_arms_placement() -> TestResult {
     Ok(())
 }
 
+/// VM check #4 (run 3 #10): on the placed USB-C receptacle no pin number's
+/// box runs past its pin end, touches the end's mark, another number or a
+/// pin name; stacked pads read in a short form; the long value wraps
+/// within the body's width.
+#[test]
+fn usb_c_pin_numbers_sit_clear_and_the_value_wraps() -> TestResult {
+    use pcbcraft_core::geometry::Bounds;
+    use pcbcraft_core::schematic::{self, PIN_RING_MM};
+    let mut engine = empty_engine();
+    let ctx = context();
+    let mut editor = SchematicEditor::default();
+    typed(&mut editor, &engine, &ctx, "usb");
+    let (_, operations) = workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    apply_hosted(&mut engine, operations.into_iter().next().ok_or("one")?)?;
+    workspace_frame(&mut editor, &engine, &ctx, vec![]);
+    let component = editor.component.ok_or("armed")?;
+    let (request, _) = first_choices(engine.project(), component).ok_or("a symbol")?;
+    apply_hosted(
+        &mut engine,
+        Operation::Instance(InstanceCommand::Place(request)),
+    )?;
+    let project = engine.project();
+    let occurrence = project.occurrences.first().ok_or("placed")?.id;
+    let unit = schematic::placed_unit(project, occurrence)?;
+    let m = TextMetric::default();
+    let numbers: Vec<(&schematic::PlacedPin, Bounds)> = unit
+        .pins
+        .iter()
+        .filter_map(|p| Some((p, p.number.as_ref()?.bounds(m))))
+        .collect();
+    assert_eq!(numbers.len(), 9, "every pin numbered");
+    let names: Vec<Bounds> = unit
+        .pins
+        .iter()
+        .filter_map(|p| Some(p.name.as_ref()?.bounds(m)))
+        .collect();
+    for (i, (pin, b)) in numbers.iter().enumerate() {
+        let text = pin.number.as_ref().map_or("", |t| t.text.as_str());
+        let ring = Bounds::point(pin.ring_centre(PIN_RING_MM)).inflated(PIN_RING_MM);
+        assert!(!b.intersects(&ring), "{text}: on the pin end's mark");
+        // Along the pin, the box stays between its end and the body.
+        let o = pin.outward();
+        let along = |p: [f64; 2]| p[0] * o[0] + p[1] * o[1];
+        let (lo, hi) = (along(pin.body_end), along(pin.end));
+        for corner in [b.min, b.max, [b.min[0], b.max[1]], [b.max[0], b.min[1]]] {
+            let a = along(corner);
+            assert!(a >= lo - 1e-9 && a <= hi + 1e-9, "{text}: past the pin end");
+        }
+        for (other, c) in &numbers[i + 1..] {
+            let them = other.number.as_ref().map_or("", |t| t.text.as_str());
+            assert!(!b.intersects(c), "{text} runs into {them}");
+        }
+        assert!(
+            !names.iter().any(|n| b.intersects(n)),
+            "{text} runs into a name"
+        );
+    }
+    let shown: Vec<&str> = numbers
+        .iter()
+        .filter_map(|(p, _)| p.number.as_ref().map(|t| t.text.as_str()))
+        .collect();
+    for short in ["A4B9…", "A1B12…"] {
+        assert!(shown.contains(&short), "{short} in {shown:?}");
+    }
+    let body = unit
+        .shapes
+        .iter()
+        .map(|s| s.shape.bounds(s.width))
+        .reduce(Bounds::union)
+        .ok_or("a body")?;
+    let value = unit
+        .texts
+        .iter()
+        .find(|t| t.text.contains("USB4105"))
+        .ok_or("the value")?;
+    assert!(value.text.contains('\n'), "{:?}", value.text);
+    let v = value.bounds(m);
+    assert!(
+        v.max[0] - v.min[0] <= body.max[0] - body.min[0] + 1e-9,
+        "{v:?} within {body:?}"
+    );
+    Ok(())
+}
+
 /// Esc in the palette on a template row, and Esc once placement is armed,
 /// leave the project as it was; the app undoes the create in the second case
 /// (the revision it is valid at comes back).
@@ -573,6 +662,70 @@ fn the_named_colour_reaches_the_placed_instance() -> TestResult {
             .contains_key(&request.properties[0].field),
         "{instance:?}"
     );
+    Ok(())
+}
+
+/// VM check #5: a generic part from search, created and then placed, is one
+/// undo step. The first placement joins the create (as the app does with
+/// `take_template_join`); a second placement is a step of its own.
+#[test]
+fn creating_and_placing_a_generic_part_is_one_undo_step() -> TestResult {
+    let mut engine = empty_engine();
+    let ctx = context();
+    let mut editor = SchematicEditor::default();
+    let before = engine.project().clone();
+    typed(&mut editor, &engine, &ctx, "10k 0603");
+    let (_, operations) = workspace_frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    apply_hosted(&mut engine, operations.into_iter().next().ok_or("one")?)?;
+    workspace_frame(&mut editor, &engine, &ctx, vec![]);
+    workspace_frame(&mut editor, &engine, &ctx, vec![]);
+    let click = |editor: &mut SchematicEditor, engine: &Engine, at| {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut sent = Vec::new();
+        for events in [
+            vec![egui::Event::PointerMoved(at)],
+            vec![button(true)],
+            vec![button(false)],
+        ] {
+            sent.extend(workspace_frame(editor, engine, &ctx, events).1);
+        }
+        sent
+    };
+    let place = |editor: &mut SchematicEditor, engine: &mut Engine, at| -> TestResult {
+        let sent = click(editor, engine, at);
+        let [operation @ Operation::Instance(InstanceCommand::Place(_))] = &sent[..] else {
+            return Err(format!("one component.place, got {sent:?}").into());
+        };
+        apply_hosted(engine, operation.clone())?;
+        if let Some(revision) = editor.take_template_join() {
+            engine.join_last_step(revision)?;
+        }
+        Ok(())
+    };
+    place(&mut editor, &mut engine, pos2(120.0, 680.0))?;
+    place(&mut editor, &mut engine, pos2(320.0, 680.0))?;
+    assert_eq!(engine.project().instances.len(), 2);
+    engine.undo()?;
+    assert_eq!(engine.project().instances.len(), 1, "the second on its own");
+    assert_eq!(engine.project().library.latest_components().len(), 1);
+    engine.undo()?;
+    assert!(engine.project().instances.is_empty());
+    assert!(
+        engine.project().library.components.is_empty(),
+        "the create went with the first placement"
+    );
+    assert_eq!(*engine.project(), before);
+    assert!(!engine.can_undo());
     Ok(())
 }
 

@@ -182,6 +182,121 @@ fn a_turned_or_mirrored_group_keeps_its_shape_about_the_point() -> Result<()> {
     Ok(())
 }
 
+/// Whether `path` runs back on itself: a segment straight back along the
+/// one before, or opposite the one two before (a U-turn).
+fn doubles_back(path: &[Point]) -> bool {
+    let d: Vec<Point> = path
+        .windows(2)
+        .map(|s| [s[1][0] - s[0][0], s[1][1] - s[0][1]])
+        .collect();
+    let opposite = |a: Point, b: Point| {
+        (a[0] * b[1] - a[1] * b[0]).abs() < 1e-9 && a[0] * b[0] + a[1] * b[1] < 0.0
+    };
+    d.windows(2).any(|w| opposite(w[0], w[1])) || d.windows(3).any(|w| opposite(w[0], w[2]))
+}
+
+/// VM check #6: a group turned so a wire's moved end passes the corner it
+/// would slide leaves no U-turn: the wire leaving the group is drawn again
+/// as one clean step between the new pin and the end that stayed.
+#[test]
+fn a_turned_group_leaves_no_u_turn() -> Result<()> {
+    let Sheet {
+        mut engine,
+        u1,
+        u2,
+        u3,
+        outer,
+        ..
+    } = sheet()?;
+    // U2.B (35, 15) right to x = 45, down, right to U3.A (55, 0).
+    apply(
+        &mut engine,
+        Operation::Schematic(C::SetWirePath {
+            wire: outer,
+            corners: vec![Corner::sharp([45.0, 15.0]), Corner::sharp([45.0, 0.0])],
+            from: None,
+            to: None,
+        }),
+    )?;
+    let drawn = path(&engine, outer)?;
+    assert!(!doubles_back(&drawn), "{drawn:?}");
+    // About (40, 30) U2.B lands at (55, 25), past the corner's x = 45.
+    let how = Arrangement::Rotate {
+        about: [40.0, 30.0],
+    };
+    apply(&mut engine, arrange_op(instances(&[u1, u2]), how))?;
+    let band = path(&engine, outer)?;
+    assert!(orthogonal(&band), "{band:?}");
+    assert!(!doubles_back(&band), "{band:?}");
+    assert_eq!(band.first(), pins(&engine, u2).get(1), "on the turned pin");
+    assert_eq!(
+        band.last(),
+        pins(&engine, u3).first(),
+        "the end outside stays"
+    );
+    Ok(())
+}
+
+/// VM check #6: a wide group near the top of the sheet, turned, lands
+/// inside the frame: the turn point moves it down by whole grid steps. A
+/// group with room turns about its middle.
+#[test]
+fn a_turned_group_stays_inside_the_sheet_frame() -> Result<()> {
+    let mut engine = Engine::default();
+    let f = two_pin(&mut engine)?;
+    let (u1, _) = place(&mut engine, &f, "U1", 1, [50.0, -20.0])?;
+    let (u2, _) = place(&mut engine, &f, "U2", 1, [110.0, -20.0])?;
+    let sheet = crate::SheetId::FIRST;
+    let objects = instances(&[u1, u2]);
+    let grid = 2.5;
+    let middle = arrange::centre(engine.project(), sheet, &objects)
+        .ok_or_else(|| Error::Invalid("no centre".into()))?
+        .map(|v| (v / grid).round() * grid);
+    let about = arrange::turn_about(engine.project(), sheet, &objects, middle, grid);
+    assert_ne!(about, middle, "about its middle it would leave the frame");
+    for v in about {
+        assert!(
+            (v / grid - (v / grid).round()).abs() < 1e-9,
+            "on the grid: {about:?}"
+        );
+    }
+    apply(
+        &mut engine,
+        arrange_op(objects.clone(), Arrangement::Rotate { about }),
+    )?;
+    let project = engine.project();
+    let [w, h] = project
+        .sheet(sheet)
+        .ok_or_else(|| Error::Invalid("sheet".into()))?
+        .size_mm();
+    let inner = schematic::scene::FRAME_INNER_MM;
+    let m = crate::library::TextMetric::default();
+    for occurrence in project.occurrences.iter() {
+        let b = schematic::placed_unit(project, occurrence.id)?
+            .bounds(m)
+            .ok_or_else(|| Error::Invalid("drawn".into()))?;
+        assert!(
+            b.min[0] >= inner
+                && b.max[0] <= w - inner
+                && b.min[1] >= -(h - inner)
+                && b.max[1] <= -inner,
+            "{b:?} inside the frame"
+        );
+    }
+    // Moved down to the middle of the sheet, the group turns where it is.
+    let mut engine = Engine::default();
+    let f = two_pin(&mut engine)?;
+    let (u1, _) = place(&mut engine, &f, "U1", 1, [100.0, -100.0])?;
+    let (u2, _) = place(&mut engine, &f, "U2", 1, [160.0, -100.0])?;
+    let objects = instances(&[u1, u2]);
+    let middle = [130.0, -97.5];
+    assert_eq!(
+        arrange::turn_about(engine.project(), sheet, &objects, middle, grid),
+        middle
+    );
+    Ok(())
+}
+
 /// A named wire brings its free end: rigid with its symbol, and with the end
 /// on an unnamed symbol held, only the free end goes and the path follows.
 #[test]

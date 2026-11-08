@@ -340,6 +340,9 @@ pub struct SchematicEditor {
     /// Esc cancelled that placement: the app undoes the create at this
     /// revision.
     template_undo: Option<u64>,
+    /// The first placement of a just-created component was sent at this
+    /// revision: the app joins it to the create, one undo step.
+    template_join: Option<u64>,
     /// The Resolve parts card.
     resolve: ResolveParts,
     /// New Part… was chosen: the app opens the component's Parts editor.
@@ -433,6 +436,7 @@ impl Default for SchematicEditor {
             template_armed: None,
             place_values: Vec::new(),
             template_undo: None,
+            template_join: None,
             resolve: ResolveParts::default(),
             updates: Arc::default(),
             library_update: None,
@@ -605,6 +609,13 @@ impl SchematicEditor {
     /// the revision it is valid at.
     pub fn take_template_undo(&mut self) -> Option<u64> {
         self.template_undo.take()
+    }
+
+    /// The revision the first placement of a just-created component was
+    /// sent at, once: the app joins that placement to the create
+    /// ([`Engine::join_last_step`]), so one undo takes back both.
+    pub fn take_template_join(&mut self) -> Option<u64> {
+        self.template_join.take()
     }
 
     /// A component just created from a template: arm placement of it.
@@ -2249,6 +2260,11 @@ impl SchematicEditor {
                     if let Some((request, _)) =
                         self.component.and_then(|c| first_choices(project, c))
                     {
+                        // The first placement finishes the create.
+                        self.template_join = self
+                            .template_armed
+                            .take()
+                            .filter(|r| *r == engine.revision());
                         output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
                             sheet: Some(self.sheet),
                             position: world(pointer),

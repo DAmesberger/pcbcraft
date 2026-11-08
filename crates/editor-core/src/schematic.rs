@@ -1277,6 +1277,55 @@ fn pin_numbers(
     (!designations.is_empty()).then(|| designations.join(","))
 }
 
+/// The share of its stub a pin number may take, so it keeps clear of the
+/// pin end's mark and of the body.
+const NUMBER_ROOM: f64 = 0.9;
+/// The smallest share of the pin text height a number shrinks to before it
+/// takes its short form.
+const NUMBER_MIN_SCALE: f64 = 0.75;
+/// The fewest characters a wrapped value line holds, however narrow the
+/// body.
+const MIN_WRAP_COLUMNS: usize = 12;
+
+/// A pin number `text` that fits along a stub `length` long, with its
+/// height: as it is; else a little smaller; else, for stacked pads
+/// ("A4B9,B4A9"), the first pad and "…" ("A4B9…"), smaller as needed. The
+/// full designations stay in the pin mapping.
+fn fitted_number(text: String, length: f64, height: f64) -> (String, f64) {
+    let advance = TextMetric::default().advance;
+    let room = NUMBER_ROOM * length;
+    let width = |t: &str| t.chars().count() as f64 * advance;
+    if room <= 0.0 || room.is_nan() || width(&text) * height <= room {
+        return (text, height);
+    }
+    if width(&text) * height * NUMBER_MIN_SCALE <= room {
+        let h = room / width(&text);
+        return (text, h);
+    }
+    let short = match text.split_once(',') {
+        Some((first, _)) => format!("{first}…"),
+        None => text,
+    };
+    let h = (room / width(&short).max(f64::EPSILON)).min(height);
+    (short, h)
+}
+
+/// `text` broken at spaces into lines of at most `columns` characters (a
+/// longer word keeps a line of its own).
+fn wrapped(text: &str, columns: usize) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for word in text.split(' ') {
+        match lines.last_mut() {
+            Some(line) if line.chars().count() + 1 + word.chars().count() <= columns => {
+                line.push(' ');
+                line.push_str(word);
+            }
+            _ => lines.push(word.to_owned()),
+        }
+    }
+    lines.join("\n")
+}
+
 fn flip(v: VAlign) -> VAlign {
     match v {
         VAlign::Top => VAlign::Bottom,
@@ -1333,6 +1382,17 @@ fn draw(
     // and beside the body, reading outward from it, instead of along the
     // pins where they would run over neighbouring pins and labels.
     let sideways = (t.rotation_deg.rem_euclid(180.0) - 90.0).abs() < 1e-9;
+    // The width of the drawn body, along its text.
+    let body_width = unit
+        .graphics
+        .iter()
+        .filter_map(|g| match &g.item {
+            Item::Shape { shape, width, .. } => Some(shape.bounds(*width)),
+            Item::Text(_) => None,
+        })
+        .reduce(Bounds::union)
+        .map(|b| b.max[0] - b.min[0])
+        .filter(|w| *w > 0.0);
     let mut shapes = Vec::new();
     let mut texts = Vec::new();
     let mut drawn_fields = BTreeSet::new();
@@ -1369,7 +1429,15 @@ fn draw(
                             );
                         }
                         height = height.min(VALUE_TEXT_HEIGHT_MM);
-                        value.clone()
+                        // A long value (a connector's full name) wraps to
+                        // the body's width instead of running past it.
+                        let advance = TextMetric::default().advance * height;
+                        match body_width {
+                            Some(w) if value.chars().count() as f64 * advance > w => {
+                                wrapped(value, ((w / advance) as usize).max(MIN_WRAP_COLUMNS))
+                            }
+                            _ => value.clone(),
+                        }
                     }
                     TextContent::UnitLabel => unit.label.clone(),
                     TextContent::Field(lineage) => r
@@ -1433,6 +1501,7 @@ fn draw(
                 .and_then(|(binding, package)| pin_numbers(binding, package, pin.terminal))
                 .filter(|_| pin.number.visible)
                 .map(|text| {
+                    let (text, height) = fitted_number(text, pin.length, height);
                     let width =
                         text.chars().count() as f64 * TextMetric::default().advance * height;
                     let (at, rotation, justify) = pin.number_anchor(width);

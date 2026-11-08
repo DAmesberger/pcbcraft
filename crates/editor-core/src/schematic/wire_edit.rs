@@ -656,10 +656,56 @@ pub fn follow_end<V: Vertex>(path: &[V], to: Point) -> Vec<V> {
     out
 }
 
+/// How often `points` doubles back: a segment straight back along the one
+/// before it, or one that runs opposite the segment two before it across a
+/// single step (a U-turn).
+fn reversals(points: &[Point]) -> usize {
+    let d: Vec<Point> = points
+        .windows(2)
+        .map(|s| [s[1][0] - s[0][0], s[1][1] - s[0][1]])
+        .collect();
+    let opposite = |a: Point, b: Point| {
+        let cross = a[0] * b[1] - a[1] * b[0];
+        cross.abs() <= 1e-9 * (a[0].hypot(a[1]) * b[0].hypot(b[1])).max(1.0)
+            && a[0] * b[0] + a[1] * b[1] < 0.0
+    };
+    let back = d.windows(2).filter(|w| opposite(w[0], w[1])).count();
+    let u = d.windows(3).filter(|w| opposite(w[0], w[2])).count();
+    back + u
+}
+
 /// A wire's drawn path `path` after its ends move to `from` and `to`,
 /// without corners that add nothing. Both ends moved alike (a unit with a
-/// wire between two of its own pins) carries the whole path along.
+/// wire between two of its own pins) carries the whole path along. A path
+/// the move would make double back where it did not (a group turned past a
+/// corner) is drawn again as one step instead, keeping the direction it
+/// had at the end that stayed.
 pub fn follow<V: Vertex>(path: &[V], from: Point, to: Point) -> Vec<V> {
+    let out = followed_path(path, from, to);
+    let (old, new) = (points_of(path), points_of(&out));
+    if reversals(&new) <= reversals(&old) {
+        return out;
+    }
+    // Which way the path ran at the end that stayed; horizontal first
+    // when both moved.
+    let along_first = |a: Point, b: Point| axis(a, b) != Axis::Vertical;
+    let horizontal_first = match (old.first(), old.get(1), old.iter().rev().nth(1), old.last()) {
+        (Some(&a), Some(&b), _, _) if same(a, from) => along_first(a, b),
+        (_, _, Some(&a), Some(&b)) if same(b, to) => !along_first(a, b),
+        _ => true,
+    };
+    let corner = if horizontal_first {
+        [to[0], from[1]]
+    } else {
+        [from[0], to[1]]
+    };
+    let (Some(&first), Some(&last)) = (out.first(), out.last()) else {
+        return out;
+    };
+    cleaned(&[first, V::sharp(corner), last])
+}
+
+fn followed_path<V: Vertex>(path: &[V], from: Point, to: Point) -> Vec<V> {
     let (Some(a), Some(b)) = (path.first().map(Vertex::at), path.last().map(Vertex::at)) else {
         return path.to_vec();
     };
@@ -1182,6 +1228,21 @@ mod tests {
                 [0.0, 0.0],
                 [10.0, 10.0],
                 vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+            ),
+            (
+                "the end passes the corner it slides: one step, no U-turn, \
+                 horizontal into the end that stayed",
+                vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [20.0, 10.0]],
+                [15.0, 5.0],
+                [20.0, 10.0],
+                vec![[15.0, 5.0], [15.0, 10.0], [20.0, 10.0]],
+            ),
+            (
+                "a U-turn the wire already had is kept",
+                vec![[0.0, 0.0], [0.0, 5.0], [10.0, 5.0], [10.0, 0.0]],
+                [0.0, -2.5],
+                [10.0, 0.0],
+                vec![[0.0, -2.5], [0.0, 5.0], [10.0, 5.0], [10.0, 0.0]],
             ),
         ];
         for (case, path, from, to, expected) in cases {

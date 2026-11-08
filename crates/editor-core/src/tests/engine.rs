@@ -259,6 +259,37 @@ fn undo_history_is_bounded() -> Result<()> {
     Ok(())
 }
 
+/// A step that finishes the one before joins it: one undo takes back both.
+/// Joining is refused, with history unchanged, unless the latest step was
+/// applied at the given revision and nothing was undone or redone since.
+#[test]
+fn a_joined_step_undoes_with_the_one_before() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let occurrence = engine.project().occurrences[0].id;
+    let moved = |x: f64| {
+        Operation::Schematic(SchematicCommand::MoveUnit {
+            occurrence,
+            position: [x, 0.0],
+        })
+    };
+    apply(&mut engine, moved(1.0))?;
+    let before = engine.project().clone();
+    apply(&mut engine, moved(2.0))?;
+    let at = engine.revision();
+    apply(&mut engine, moved(3.0))?;
+    assert!(engine.join_last_step(at + 1).is_err(), "another revision");
+    engine.join_last_step(at)?;
+    assert!(engine.join_last_step(at).is_err(), "only once");
+    engine.undo()?;
+    assert_eq!(*engine.project(), before, "both steps went");
+    engine.redo()?;
+    let at = engine.revision();
+    assert!(engine.join_last_step(at).is_err(), "not after a redo");
+    engine.undo()?;
+    assert_eq!(*engine.project(), before, "the history is as it was");
+    Ok(())
+}
+
 #[test]
 fn topology_uses_ids_and_survives_moving_and_reannotation() -> Result<()> {
     let mut engine = Engine::default();

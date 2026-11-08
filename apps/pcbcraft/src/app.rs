@@ -1023,12 +1023,21 @@ impl App {
                         self.schematic.arm_created(&ctx, &self.engine, component);
                     }
                     let canvas = self.schematic.canvas(ui, &self.engine);
+                    if sheet.is_some() {
+                        // The sheet's operation goes instead of a placement.
+                        self.schematic.take_template_join();
+                    }
                     sheet.or(canvas)
                 }
                 Workspace::Pcb => self.pcb.canvas(ui, &self.engine),
             };
             let ctx = ui.ctx().clone();
             self.apply(&ctx, Origin::Canvas, operation);
+            // The first placement of a just-created part joins its create:
+            // one undo takes back both (refused, harmlessly, if it failed).
+            if let Some(revision) = self.schematic.take_template_join() {
+                let _ = self.engine.join_last_step(revision);
+            }
             if let Some(revision) = self.schematic.take_template_undo()
                 && revision == self.engine.revision()
                 && self.engine.undo().is_ok()
@@ -1102,26 +1111,10 @@ impl App {
             updating_chip(ui, area, failed.as_deref());
             return;
         }
+        // A pick selects as a Layout click on the same object does.
         if let Some(pick) = pick {
-            match pick.and_then(|id| self.scene.source(id)) {
-                // A via body selects the via (and lights its net).
-                Some(source) if source.via.is_some() && source.instance.is_none() => {
-                    if let Some(via) = source.via {
-                        self.pcb.select_via(via, source.net);
-                    }
-                }
-                // A fill body selects the fill (and lights its net).
-                Some(source) if source.fill.is_some() => {
-                    if let Some(fill) = source.fill {
-                        self.pcb.select_fill(fill, source.net);
-                    }
-                }
-                Some(source) => {
-                    let (instance, track, net) = (source.instance, source.track, source.net);
-                    self.pcb.set_selection(instance, track, net);
-                }
-                None => self.pcb.set_selection(None, None, None),
-            }
+            self.pcb
+                .select_picked(pick.and_then(|id| self.scene.source(id)));
         }
     }
 

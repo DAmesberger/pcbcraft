@@ -51,6 +51,13 @@ const HIGHLIGHT_ALPHA: u8 = 110;
 /// The selected object's tint over the model, stronger than its net's
 /// ([`HIGHLIGHT_ALPHA`]) as Solidcraft's selection is than its pre-highlight.
 const SELECTED_ALPHA: u8 = 215;
+/// A selected object smaller than this on screen (points) also gets a
+/// ring: a via or a small pad reads as selected at any zoom, also where
+/// the mask covers its tint.
+const SMALL_SELECTION_PT: f64 = 24.0;
+/// The ring's least radius and its stroke (points).
+const RING_RADIUS_PT: f64 = 9.0;
+const RING_STROKE_PT: f32 = 2.0;
 /// Peak shadow opacity on light and dark backgrounds (Solidcraft's values).
 const SHADOW_ALPHA: [f32; 2] = [80.0, 150.0];
 /// Ambient occlusion samples per pixel for a still and a moving view
@@ -604,6 +611,59 @@ impl Viewport {
             .min_by(|a, b| a.0.total_cmp(&b.0))
     }
 
+    /// The rings marking selected objects that are small on screen in a
+    /// `width` × `height` view: each one's centre and radius in view
+    /// points. Shown layers only; a net's other objects get none.
+    fn selection_rings(&self, width: f64, height: f64) -> Vec<([f64; 2], f64)> {
+        let Some(model) = self.model.as_ref().filter(|_| !self.selected.is_empty()) else {
+            return Vec::new();
+        };
+        let mut boxes: Vec<(u64, Aabb3)> = Vec::new();
+        for g in model.geometry.iter().filter(|g| self.layers.shows(g)) {
+            let Some(item) = g.item.filter(|i| self.selected.contains(i)) else {
+                continue;
+            };
+            let at = match boxes.iter().position(|(i, _)| *i == item) {
+                Some(at) => at,
+                None => {
+                    boxes.push((item, Aabb3::EMPTY));
+                    boxes.len() - 1
+                }
+            };
+            if let Some((_, b)) = boxes.get_mut(at) {
+                b.add(Vec3::new(g.min[0], g.min[1], g.min[2]));
+                b.add(Vec3::new(g.max[0], g.max[1], g.max[2]));
+            }
+        }
+        let radius = self.bounds.diagonal();
+        boxes
+            .into_iter()
+            .filter_map(|(_, b)| {
+                let (lo, hi) = ([b.min.x, b.min.y, b.min.z], [b.max.x, b.max.y, b.max.z]);
+                let mut screen: Option<[f64; 4]> = None;
+                for k in 0..8 {
+                    let corner =
+                        std::array::from_fn(|i| if (k >> i) & 1 == 0 { lo[i] } else { hi[i] });
+                    let [x, y, z] = self.display.apply(corner);
+                    let (sx, sy, _) =
+                        self.camera
+                            .to_screen(Vec3::new(x, y, z), width, height, radius)?;
+                    let s = screen.get_or_insert([sx, sy, sx, sy]);
+                    *s = [s[0].min(sx), s[1].min(sy), s[2].max(sx), s[3].max(sy)];
+                }
+                let [x0, y0, x1, y1] = screen?;
+                let size = (x1 - x0).max(y1 - y0);
+                (size < SMALL_SELECTION_PT).then(|| {
+                    let half = 0.5 * (x1 - x0).hypot(y1 - y0);
+                    (
+                        [(x0 + x1) / 2.0, (y0 + y1) / 2.0],
+                        (half + 3.0).max(RING_RADIUS_PT),
+                    )
+                })
+            })
+            .collect()
+    }
+
     /// The pick identity under a pixel of a `width` × `height` view.
     pub fn pick(&self, x: f64, y: f64, width: f64, height: f64) -> Option<u64> {
         self.hit(x, y, width, height).and_then(|(_, g)| g.item)
@@ -767,6 +827,11 @@ impl Viewport {
         let cb = ViewportCallback(self.frame(view_proj, size_px, ssaa));
         ui.painter()
             .add(egui_wgpu::Callback::new_paint_callback(rect, cb));
+        let ring = egui::Stroke::new(RING_STROKE_PT, crate::palette::board().selected);
+        for ([x, y], r) in self.selection_rings(w, h) {
+            let centre = rect.min + egui::vec2(x as f32, y as f32);
+            ui.painter_at(rect).circle_stroke(centre, r as f32, ring);
+        }
         if caps.cube {
             self.paint_cube(ui, rect);
         }
@@ -1379,6 +1444,44 @@ mod tests {
             })
             .unwrap_or_default();
         assert_eq!(after, meshes);
+        Ok(())
+    }
+
+    /// VM check #7: a selected via, a few points across in the fitted
+    /// board, gets a ring around it in the selection colour; zoomed in
+    /// until it is large, the tint alone shows it. Its net's other vias
+    /// (highlighted, not selected) get none.
+    #[test]
+    fn a_small_selected_via_gets_a_ring() -> Result<(), Box<dyn std::error::Error>> {
+        let mut viewport = vias(40)?;
+        let (w, h) = (800.0, 600.0);
+        let (item, _, _) = above_via(&mut viewport, 5)?;
+        let (other, _, _) = above_via(&mut viewport, 6)?;
+        viewport.fit();
+        viewport.highlight_selected(vec![item, other], vec![item]);
+        let rings = viewport.selection_rings(w, h);
+        let [([cx, cy], r)] = rings[..] else {
+            return Err(format!("one ring, got {rings:?}").into());
+        };
+        assert!(r >= RING_RADIUS_PT, "{r}");
+        let model = viewport.model.as_ref().ok_or("no model")?;
+        let mut b = Aabb3::EMPTY;
+        for g in model.geometry.iter().filter(|g| g.item == Some(item)) {
+            b.add(Vec3::new(g.min[0], g.min[1], g.min[2]));
+            b.add(Vec3::new(g.max[0], g.max[1], g.max[2]));
+        }
+        let (vx, vy, _) = viewport
+            .camera
+            .to_screen(b.center(), w, h, viewport.bounds.diagonal())
+            .ok_or("behind the eye")?;
+        assert!((cx - vx).hypot(cy - vy) < r, "round the via");
+        // Close up (as `above_via` frames it) the via is large: no ring.
+        above_via(&mut viewport, 5)?;
+        viewport.camera.distance = 1.0;
+        assert!(viewport.selection_rings(w, h).is_empty());
+        viewport.highlight_selected(vec![], vec![]);
+        viewport.fit();
+        assert!(viewport.selection_rings(w, h).is_empty());
         Ok(())
     }
 

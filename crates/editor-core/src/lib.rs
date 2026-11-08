@@ -477,6 +477,9 @@ pub struct Engine {
     revision: u64,
     undo: VecDeque<Document>,
     redo: Vec<Document>,
+    /// The revision the latest undo step was applied at, until an undo,
+    /// redo or new document ([`Engine::join_last_step`]).
+    last_step: Option<u64>,
     /// `fabrication.waive` refuses a waiver without a reason (a host
     /// setting; off by default).
     waiver_reason_required: bool,
@@ -913,6 +916,7 @@ impl Engine {
         self.revision = revision;
         self.undo.clear();
         self.redo.clear();
+        self.last_step = None;
         Ok(())
     }
 
@@ -1495,6 +1499,7 @@ impl Engine {
         self.redo
             .push(std::mem::replace(&mut self.document, previous));
         self.revision = revision;
+        self.last_step = None;
         Ok(())
     }
 
@@ -1507,6 +1512,26 @@ impl Engine {
         self.undo
             .push_back(std::mem::replace(&mut self.document, next));
         self.revision = revision;
+        self.last_step = None;
+        Ok(())
+    }
+
+    /// Fold the latest undo step into the one before it, so one undo takes
+    /// both back: a step that finishes the one before (placing the part a
+    /// search or template has just created). `at` is the revision the
+    /// latest step was applied at, which the earlier step made. Refused,
+    /// with nothing changed, after an undo or redo, when another step came
+    /// between, or with fewer than two steps.
+    pub fn join_last_step(&mut self, at: u64) -> Result<()> {
+        if self.last_step != Some(at) || self.undo.len() < 2 {
+            return Err(Error::History(
+                "the latest step does not follow the one before".into(),
+            ));
+        }
+        // The document between the two steps goes; the one before both
+        // stays the undo target.
+        self.undo.pop_back();
+        self.last_step = None;
         Ok(())
     }
 
@@ -1524,6 +1549,7 @@ impl Engine {
         self.undo
             .push_back(std::mem::replace(&mut self.document, candidate));
         self.redo.clear();
+        self.last_step = Some(self.revision);
         self.revision = revision;
         Ok(())
     }

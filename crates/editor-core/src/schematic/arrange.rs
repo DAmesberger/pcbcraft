@@ -287,6 +287,11 @@ pub fn arrange(
 /// and vertices: the point a group turns or mirrors about. Text does not
 /// count, so a turn leaves the middle where it is.
 pub fn centre(project: &Project, sheet: SheetId, objects: &[ClipObject]) -> Option<Point> {
+    Bounds::of(points(project, sheet, objects)).map(|b| b.center())
+}
+
+/// The pins, anchors and vertices of what `objects` of `sheet` draw.
+fn points(project: &Project, sheet: SheetId, objects: &[ClipObject]) -> Vec<Point> {
     let mut points: Vec<Point> = Vec::new();
     for object in objects {
         match *object {
@@ -317,7 +322,101 @@ pub fn centre(project: &Project, sheet: SheetId, objects: &[ClipObject]) -> Opti
             }
         }
     }
-    Bounds::of(points).map(|b| b.center())
+    points
+}
+
+/// The point to turn `objects` of `sheet` a quarter about: `about` (their
+/// middle, on the grid), moved so a group inside the sheet's frame lands
+/// inside it again where it fits there. The group moves by whole steps of twice
+/// `grid` (`about` by whole steps of `grid`), so what was on the grid stays
+/// on it.
+pub fn turn_about(
+    project: &Project,
+    sheet: SheetId,
+    objects: &[ClipObject],
+    about: Point,
+    grid: f64,
+) -> Point {
+    let (Some(page), Some(drawn)) = (project.sheet(sheet), extent(project, sheet, objects)) else {
+        return about;
+    };
+    let [w, h] = page.size_mm();
+    let inner = super::scene::FRAME_INNER_MM;
+    let frame = Bounds {
+        min: [inner, -(h - inner)],
+        max: [w - inner, -inner],
+    };
+    // A group already off the sheet is not pulled onto it.
+    let inside = |b: &Bounds| {
+        b.min[0] >= frame.min[0]
+            && b.min[1] >= frame.min[1]
+            && b.max[0] <= frame.max[0]
+            && b.max[1] <= frame.max[1]
+    };
+    if !inside(&drawn) {
+        return about;
+    }
+    let how = Arrangement::Rotate { about };
+    let Some(turned) = Bounds::of(
+        [
+            drawn.min,
+            drawn.max,
+            [drawn.min[0], drawn.max[1]],
+            [drawn.max[0], drawn.min[1]],
+        ]
+        .map(|p| how.point(p)),
+    ) else {
+        return about;
+    };
+    let step = if grid.is_finite() && grid > 0.0 {
+        2.0 * grid
+    } else {
+        1.0
+    };
+    // The shift that brings each side in, in whole steps; none on an axis
+    // the group is wider than the frame.
+    let shift = |k: usize| {
+        let (low, high) = (frame.min[k] - turned.min[k], frame.max[k] - turned.max[k]);
+        if low > high {
+            0.0
+        } else if low > 0.0 {
+            (low / step).ceil() * step
+        } else if high < 0.0 {
+            (high / step).floor() * step
+        } else {
+            0.0
+        }
+    };
+    let t = [shift(0), shift(1)];
+    // A turn about `about + c` lands the group `(c - turned c)` further:
+    // c = ((tx - ty) / 2, (tx + ty) / 2) moves it by t.
+    [
+        about[0] + (t[0] - t[1]) / 2.0,
+        about[1] + (t[0] + t[1]) / 2.0,
+    ]
+}
+
+/// The extent of what `objects` of `sheet` draw, text included.
+fn extent(project: &Project, sheet: SheetId, objects: &[ClipObject]) -> Option<Bounds> {
+    let m = crate::library::TextMetric::default();
+    let mut boxes: Vec<Bounds> = Vec::new();
+    for object in objects {
+        if let ClipObject::Instance { id } = *object {
+            boxes.extend(
+                project
+                    .occurrences_of(id)
+                    .filter(|o| o.sheet == sheet)
+                    .filter_map(|o| placed_unit(project, o.id).ok()?.bounds(m)),
+            );
+        }
+    }
+    let middle = objects
+        .iter()
+        .filter(|o| !matches!(o, ClipObject::Instance { .. }))
+        .copied()
+        .collect::<Vec<_>>();
+    boxes.extend(Bounds::of(points(project, sheet, &middle)));
+    boxes.into_iter().reduce(Bounds::union)
 }
 
 /// Remove the wires, labels and drawings of `objects`, in that order (the

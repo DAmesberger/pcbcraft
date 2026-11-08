@@ -15,7 +15,7 @@ use egui::{Rect, Shape, Stroke};
 use pcbcraft_core::geometry::Bounds;
 use pcbcraft_core::library::TextMetric;
 use pcbcraft_core::model::Corner;
-use pcbcraft_core::schematic::arrange::{Arrangement, centre};
+use pcbcraft_core::schematic::arrange::{Arrangement, centre, turn_about};
 use pcbcraft_core::schematic::{self, ClipObject, Pasted, SchematicCommand, labels};
 use pcbcraft_core::updates::Change;
 use pcbcraft_core::{EditPolicy, Engine, Id, LabelKind, Operation, Point, Project, SheetItem};
@@ -489,12 +489,13 @@ impl SchematicEditor {
             return None;
         }
         let objects = self.group.objects();
-        let about = snap(
-            centre(project, self.sheet, &objects)?,
-            engine.drafts().grid.symbol_mm,
-        );
+        let grid = engine.drafts().grid.symbol_mm;
+        let about = snap(centre(project, self.sheet, &objects)?, grid);
         let action = match action {
-            Arrange::Rotate => Arrangement::Rotate { about },
+            // Turned, the group stays inside the sheet's frame.
+            Arrange::Rotate => Arrangement::Rotate {
+                about: turn_about(project, self.sheet, &objects, about, grid),
+            },
             Arrange::Mirror => Arrangement::Mirror { about },
         };
         Some(Operation::Schematic(self.arrange(objects, action)))
