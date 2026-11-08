@@ -6,8 +6,8 @@
 //! B6/B7 to U3 is 4.645 + 1.563 mm; U3 to U1 is 23.657 mm on each half (the
 //! positive half's corners fall 0.174 mm apart from the negative's and
 //! cancel), so 29.865 mm each.
-//! - The positive stub, A6 to the T on B6's track, is 1.245 + 1.0 = 2.245 mm.
-//! - The negative stub, A7 through a via, the bottom jumper and a via to
+//! - The positive link, A6 to the T on B6's track, is 1.245 + 1.0 = 2.245 mm.
+//! - The negative link, A7 through a via, the bottom jumper and a via to
 //!   B7, is 1.355 + 1.0 + 1.355 = 3.71 mm of track and two 1.635 mm barrels
 //!   (when the stackup's mid-planes are as the file says), 6.98 mm.
 use pcbcraft_core::diagnostics::Finding;
@@ -56,21 +56,12 @@ fn pair_findings(findings: &[Finding]) -> Vec<&Finding> {
         .collect()
 }
 
-/// The pair findings are exactly the one known warning: the USB_DN
-/// receptacle jumper is a 6.98 mm stub, past the 2.5 mm default (run 3,
-/// finding 8). It cannot be made short: on this one-row footprint the A7 to
-/// B7 jumper crosses DP's A6 pad, so it needs two through-via barrels (about
-/// 1.6 mm each) or, on top, at least 2.85 mm at 0.3 mm width and 0.2 mm
-/// clearance. USB_DP's jumper (2.245 mm) passes.
-fn only_the_dn_jumper_stub(findings: &[Finding]) -> bool {
-    let pair = pair_findings(findings);
-    matches!(pair.as_slice(), [f] if f.code == "pair.stub"
-        && f.message.starts_with("USB: 6.98 mm stub on USB_DN to J1.A7"))
-}
-
-/// Gap 2: equal paths, no skew; the plug-orientation jumpers are stubs.
+/// Gap 2: equal paths, no skew. The plug-orientation jumpers are links:
+/// each joins the receptacle's second contact, a pin, so it is terminated
+/// copper, listed with the pin it reaches and never warned (run 3,
+/// finding 8, as the founder decided).
 #[test]
-fn the_receptacle_jumpers_are_stubs_and_not_skew() -> Fallible {
+fn the_receptacle_jumpers_are_links_and_not_skew() -> Fallible {
     let p = board()?;
     let report = length::report(&p);
     let usb = row(&report)?;
@@ -89,15 +80,16 @@ fn the_receptacle_jumpers_are_stubs_and_not_skew() -> Fallible {
         ("J1.B7", "U1.42"),
         "{paths:?}"
     );
-    assert_eq!(usb.stubs.len(), 2, "{:?}", usb.stubs);
-    let stub = |name: &str| usb.stubs.iter().find(|s| s.name == name);
-    let plus = stub("USB_DP").ok_or("no + stub")?;
+    assert_eq!(usb.branches.len(), 2, "{:?}", usb.branches);
+    let branch = |name: &str| usb.branches.iter().find(|s| s.name == name);
+    let plus = branch("USB_DP").ok_or("no + link")?;
     assert!(close(plus.length, 2.245, 0.002), "{plus:?}");
-    assert_eq!(plus.reaches, ["J1.A6"]);
-    let minus = stub("USB_DN").ok_or("no - stub")?;
-    assert_eq!(minus.reaches, ["J1.A7"]);
+    assert_eq!(plus.pins, ["J1.A6"]);
+    let minus = branch("USB_DN").ok_or("no - link")?;
+    assert!(close(minus.length, 6.98, 0.005), "{minus:?}");
+    assert_eq!(minus.pins, ["J1.A7"]);
     assert_eq!(minus.tracks.len(), 3, "{minus:?}");
-    // Total copper still holds the stubs: the old 4.735 mm difference.
+    // Total copper still holds the links: the old 4.735 mm difference.
     let total = |name: &str| -> Fallible<f64> {
         Ok(report
             .nets
@@ -114,11 +106,17 @@ fn the_receptacle_jumpers_are_stubs_and_not_skew() -> Fallible {
     assert!(close(total("USB_DP")?, usb.positive + plus.length, 1e-6));
     assert!(close(total("USB_DN")?, usb.negative + minus.length, 1e-6));
     let findings = layout::checks(&p);
-    assert!(only_the_dn_jumper_stub(&findings), "{findings:?}");
+    assert!(pair_findings(&findings).is_empty(), "{findings:?}");
+    // The report CLI and MCP callers read says so: a branch with its pin,
+    // and nothing called a stub.
+    let json = serde_json::to_value(usb)?;
+    let links = json.get("branches").ok_or("no branches")?;
+    assert!(links.to_string().contains(r#""pins":["J1.A7"]"#), "{links}");
+    assert!(!json.to_string().contains("stub"), "{json}");
     Ok(())
 }
 
-/// Real skew on the signal path is still found, with the stubs listed:
+/// Real skew on the signal path is still found, with the links listed:
 /// 1 mm of detour on one half's coupled run, keeping the jumpers.
 #[test]
 fn real_skew_on_the_path_is_still_reported() -> Fallible {
@@ -152,7 +150,7 @@ fn real_skew_on_the_path_is_still_reported() -> Fallible {
     let report = length::report(&p);
     let usb = row(&report)?;
     assert!(close(usb.skew, 1.0, 0.01), "{usb:?}");
-    assert_eq!(usb.stubs.len(), 2, "{:?}", usb.stubs);
+    assert_eq!(usb.branches.len(), 2, "{:?}", usb.branches);
     let findings = layout::checks(&p);
     assert!(
         findings.iter().any(|f| f.code == "pair.skew"),
@@ -215,7 +213,7 @@ fn set_endpoints_are_measured_and_validated() -> Fallible {
     assert_eq!(usb.measured, PairMeasured::Set);
     // A6 joins 1.245 mm up B6's track after 2.245 mm: 1 mm longer than B6.
     assert!(close(usb.positive, 30.865, 0.002), "{usb:?}");
-    // A7 through the jumper to B7: the whole 6.98 mm stub joins the path.
+    // A7 through the jumper to B7: the whole 6.98 mm link joins the path.
     assert!(close(usb.negative, 29.865 + 6.98, 0.01), "{usb:?}");
     assert!(close(usb.skew, 5.98, 0.01), "{usb:?}");
     assert!(
@@ -296,7 +294,7 @@ fn a_track_across_the_pair_never_tears_it() -> Fallible {
             assert!(usb.skew <= skew_before + 0.075, "{at}: {usb:?}");
             let findings = layout::checks(&after);
             assert!(
-                only_the_dn_jumper_stub(&findings),
+                pair_findings(&findings).is_empty(),
                 "{at}: {:?}",
                 pair_findings(&findings)
             );
@@ -355,11 +353,8 @@ fn issues_and_the_production_check_count_alike_but_for_production_findings() -> 
         issues.counts,
         preflight.items.len()
     );
-    // The one issue is the USB_DN jumper stub ([`only_the_dn_jumper_stub`]),
-    // in both counts.
-    assert_eq!(issues.rows.len(), 1, "{:?}", issues.counts);
-    assert_eq!(count("pair.stub"), 1);
-    assert_eq!(preflight.items.len(), 7);
+    assert_eq!(issues.rows.len(), 0, "{:?}", issues.counts);
+    assert_eq!(preflight.items.len(), 6);
     assert_eq!(only_production.len(), 6);
     Ok(())
 }

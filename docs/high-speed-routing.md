@@ -60,7 +60,7 @@ The formulas are our own implementation of published equations (`layout::impedan
 
 ## Length
 
-**Length model** (`layout/length.rs`). A net's routed length is the sum of its tracks' centre-line lengths plus, for each via, the barrel between the outermost copper layers on which the net's tracks reach the via: the distance between those foils' mid-planes in the stackup. On the 4-layer preset, a top-to-bottom via adds 1.635 mm (1.6 mm of dielectric plus half of each 35 µm foil). Not counted: a through via's stub beyond the layers it joins, paths inside pads, and via-in-pad joins. For a two-pin net this is the pad-to-pad length; for a branched net, the total copper length.
+**Length model** (`layout/length.rs`). A net's routed length is the sum of its tracks' centre-line lengths plus, for each via, the barrel between the outermost copper layers on which the net's tracks reach the via: the distance between those foils' mid-planes in the stackup. On the 4-layer preset, a top-to-bottom via adds 1.635 mm (1.6 mm of dielectric plus half of each 35 µm foil). Not counted: the rest of a through via's barrel, beyond the layers it joins, paths inside pads, and via-in-pad joins. For a two-pin net this is the pad-to-pad length; for a branched net, the total copper length.
 
 **Pair halves** (`layout/length/path.rs`) are measured along their signal path instead. Each half's copper is a graph: tracks split where a track, via or pad joins them, one vertex per layer a via is reached on with the barrels between them, and pads as zero-length joints. The path is the shortest one between the endpoints. Skew, uncoupled length, a half's tuning target and its length in a length group all read it. The endpoints are, in order:
 
@@ -69,6 +69,12 @@ The formulas are our own implementation of published equations (`layout::impedan
 3. otherwise, for a route still unfinished, each half's total copper as before (`copper`). A half past 2,048 tracks or 64 pads is also measured this way; both are target bounds.
 
 A two-pin half has no copper off its path, and its path equals its total copper. A stale set endpoint, whose pad left the net in a schematic edit, is ignored and the row reads `derived`.
+
+**Targets.** A net's target is the most demanding of its length groups' targets (explicit, or the longest member) and, when its pair has a skew limit, its partner's length.
+
+**Tuning** (`layout/meander.rs`). `plan` meanders one straight track segment to add an exact length: trombone (bumps to one side) or accordion (a serpentine to both sides), with 45° chamfered corners. The straight lead-in and lead-out keep the meander one leg spacing off the segment's joints. The fewest bumps whose height stays within the amplitude limit are found by bisection, then the height by bisection on the built polyline, so the added length is exact to under a micrometre (`the_meander_adds_exactly_the_solved_length`; through the engine within 10 µm, `a_meander_adds_the_exact_length_and_keeps_clearance`). The leg spacing is at least the track width plus the track clearance (default: the width plus the larger of the clearance and two widths). Every new segment is checked against other nets' copper at the rules' clearance through the obstacle index, and against the board; a trombone tries the left side, then the right, then lower amplitudes. The track keeps its identity as the first segment. `layout.tune_length` takes the amount to add or the net's target length; `layout.tune_preview` returns the plan without applying it.
+
+**Tune tool** (T). Hovering a segment previews the meander that brings its net to its target, with a live readout at the pointer ("USB_D+ 41.2 / 42 mm (−0.8)"); a click commits it. The Tune card shows the net's length and target, the meander (added length, bumps, height) or why none fits, and the settings: style, amplitude, side and an own target. / switches the style, A and Shift+A raise and lower the amplitude, S and Shift+S widen and narrow the spacing, F flips the side.
 
 ### Copper off the signal path
 
@@ -97,12 +103,6 @@ Branches count in neither skew nor uncoupled length. Their copper stays in the n
 - Connectivity is computed three times: the board check and airwires each run the same union-find scan over `BoardCopper`, and the pair graph joins copper by its own tests (exact centre-line joints, a track end on another track's copper, the nearest leg into a pad) and ignores fills. They agree on the tested boards. One copper graph per net in `layout`, built from `BoardCopper`'s indexed touches with the joint positions the pair needs, would let all three read one structure. It is deferred: it changes established check results at the edges (a cap overlapping another track's copper, fills) and must keep the 10,000-via target.
 - `board.track_dangling` tests track ends only. A track that ends at a via joining nothing else is not reported: the via counts as joined, and the track end touches it.
 
-**Targets.** A net's target is the most demanding of its length groups' targets (explicit, or the longest member) and, when its pair has a skew limit, its partner's length.
-
-**Tuning** (`layout/meander.rs`). `plan` meanders one straight track segment to add an exact length: trombone (bumps to one side) or accordion (a serpentine to both sides), with 45° chamfered corners. The straight lead-in and lead-out keep the meander one leg spacing off the segment's joints. The fewest bumps whose height stays within the amplitude limit are found by bisection, then the height by bisection on the built polyline, so the added length is exact to under a micrometre (`the_meander_adds_exactly_the_solved_length`; through the engine within 10 µm, `a_meander_adds_the_exact_length_and_keeps_clearance`). The leg spacing is at least the track width plus the track clearance (default: the width plus the larger of the clearance and two widths). Every new segment is checked against other nets' copper at the rules' clearance through the obstacle index, and against the board; a trombone tries the left side, then the right, then lower amplitudes. The track keeps its identity as the first segment. `layout.tune_length` takes the amount to add or the net's target length; `layout.tune_preview` returns the plan without applying it.
-
-**Tune tool** (T). Hovering a segment previews the meander that brings its net to its target, with a live readout at the pointer ("USB_D+ 41.2 / 42 mm (−0.8)"); a click commits it. The Tune card shows the net's length and target, the meander (added length, bumps, height) or why none fits, and the settings: style, amplitude, side and an own target. / switches the style, A and Shift+A raise and lower the amplitude, S and Shift+S widen and narrow the spacing, F flips the side.
-
 ## Checks
 
 `layout::length::checks` runs with the board checks (`layout::checks`), so Issues, the CLI and MCP list the findings, each classified in `issues/rules.rs` (warnings):
@@ -110,20 +110,19 @@ Branches count in neither skew nor uncoupled length. Their copper stays in the n
 | Code | Finding |
 | --- | --- |
 | `pair.skew` | The halves' measured lengths differ by more than the class's max skew, or by more than the default 2.5 mm (`DEFAULT_PAIR_MAX_SKEW_MM`) when the class sets none (both routed) |
-| `pair.stub` | A stub (copper off a half's signal path: a branch, or a jumper to a receptacle's second contact) longer than the default 2.5 mm, whatever the class's max skew; open stubs are also `board.track_dangling` |
 | `pair.uncoupled` | A half's signal path runs uncoupled longer than the class's max uncoupled length |
 | `pair.gap` | Parallel stretches of the halves closer than the pair gap (worst per layer) |
 | `length.mismatch` | A routed group member outside its window |
 | `impedance.mismatch` | A track (single-ended target) or coupled stretch (differential target) outside the tolerance, worst per net and layer; or a target on a layer without a reference plane |
 
-**Length report** (`layout.length_report`, the High speed card's Lengths section): every routed, paired or grouped net with its length (tracks, vias, total), a half's `path`, target, tolerance and deviation (a half's against its path); every pair's measured halves, how they were measured, their paths' pads, stubs, skew and uncoupled length; every group's target, window and worst deviation.
+**Length report** (`layout.length_report`, the High speed card's Lengths section): every routed, paired or grouped net with its length (tracks, vias, total), a half's `path`, target, tolerance and deviation (a half's against its path); every pair's measured halves, how they were measured, their paths' pads, branches, skew and uncoupled length; every group's target, window and worst deviation.
 
 ## Desktop
 
 - **Net classes card:** a High speed section per class with the impedance targets, tolerance, pair width, gap and limits, then each layer's derived width, gap and impedance with its problem lines.
 - **Design rules panel:** an Impedance section with every layer's structure (height, Dk, notes when references are assumed or Dk estimated) and every class with a target, layer by layer.
 - **Route card:** the pair, its width and gap, the layer's structure and computed impedance, the class target and any problem line. With a single-ended target, the route width follows the derived width of the current layer.
-- **High speed card** (Board card's High speed row): pairs with skew; for the selected pair, how it is measured, each half's length and pads, its uncoupled length, each stub on its own row, and *Set endpoints* with a pad choice per end; suggested pairs with Add, length groups (match longest or an explicit target, tolerance, members, add the highlighted net), and the length report. Rows highlight their net.
+- **High speed card** (Board card's High speed row): pairs with skew; for the selected pair, how it is measured, each half's length and pads, its uncoupled length, each branch on its own row ("Link to J1.A7 · 6.98 mm"), and *Set endpoints* with a pad choice per end; suggested pairs with Add, length groups (match longest or an explicit target, tolerance, members, add the highlighted net), and the length report. Rows highlight their net.
 - **Tune tool** and its card, above.
 
 The obstacle index for the Tune tool is built once per document revision, a meander is planned only when the hovered segment, the revision or a setting changes, and the length report is computed once per revision. Planning one segment takes a bounded handful of polyline evaluations and grid queries; it is not yet measured on a 10,000-via board (see Limits).
@@ -143,5 +142,5 @@ The modules are built so the push-and-shove router ([as built](push-and-shove.md
 - Dk and plane flags enter through `layout.set_stackup` or `layout.edit_stackup` (CLI and MCP) or the desktop's Stackup dialog (Board card › Copper › Stackup…).
 - Pair routing pushes other copper and walks round obstacles as one unit, and a pair pushed by other copper moves as one unit or stays ([push-and-shove](push-and-shove.md)); it does not keep the pair coupled through a bend tighter than its pitch. A pad-to-pad pair whose pads lie along the route direction fans out across the partner pad and is refused by the clearance check.
 - Tuning meanders one straight segment per click; it does not spread a meander over several segments or tune a whole pair at once, and the accordion needs room on both sides (it is refused next to the partner half).
-- Length counts via barrels between the layers used, not a via's own stub; pad-internal and package (die) lengths are not included. Copper of a half joined only through a fill has no path. A stretch of a path that runs beside the partner's stub counts as coupled. The Tune tool does not stop a meander on a stub, which adds no path length.
+- Length counts via barrels between the layers used, not the rest of a via's barrel; pad-internal and package (die) lengths are not included. Copper of a half joined only through a fill has no path. A stretch of a path that runs beside the partner's branch counts as coupled. The Tune tool does not stop a meander on a branch, which adds no path length.
 - Checks and the length report run on the UI thread with the other board checks; neither is measured at 10,000 vias yet.

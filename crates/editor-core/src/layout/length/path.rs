@@ -1,7 +1,9 @@
 //! A pair half measured along its signal path: the copper between the
-//! pair's two endpoints. Whatever else the net's copper reaches (the second
-//! plug orientation of a USB-C receptacle, a test point) is a stub, listed
-//! on its own and left out of skew and uncoupled length.
+//! pair's two endpoints. The rest of the net's copper is listed as
+//! branches with the pins they reach (a link to a USB-C receptacle's second
+//! contact, a test point), left out of skew and uncoupled length. A branch
+//! is never judged here: copper ending at no pad is a stub, which the board
+//! check reports on any net (`board.track_dangling`).
 //!
 //! **Graph.** Each half's copper is a graph: tracks split where another
 //! track, a via or a pad joins them, via barrels (one vertex per layer
@@ -50,18 +52,19 @@ pub enum PairMeasured {
     Copper,
 }
 
-/// Copper of a half off its signal path.
+/// A connected piece of a half's copper off its signal path. One that
+/// reaches a pin is a link to it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct PairStub {
+pub struct PairBranch {
     pub net: Id,
     /// The net's name.
     pub name: String,
     /// Tracks and via barrels of the branch, mm.
     pub length: f64,
     pub tracks: Vec<Id>,
-    /// The pads the branch reaches ("J1.A6"), when it reaches any.
+    /// The pins the branch reaches ("J1.A6"), when it reaches any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub reaches: Vec<String>,
+    pub pins: Vec<String>,
 }
 
 /// One half's signal path.
@@ -76,7 +79,7 @@ pub struct HalfPath {
     pub vias: f64,
     /// The stretches of each track on the path, as distances from its start.
     pub spans: BTreeMap<Id, Vec<(f64, f64)>>,
-    pub stubs: Vec<PairStub>,
+    pub branches: Vec<PairBranch>,
 }
 
 impl HalfPath {
@@ -156,7 +159,7 @@ enum Meets {
 /// Where tracks join `pad`: each touching track at its point nearest the
 /// pad's centre, unless another touching track carries on from there
 /// nearer to the centre. So a route's last leg, not the corner that first
-/// touches the pad, joins it, and that leg counts as path, not as a stub.
+/// touches the pad, joins it, and that leg counts as path, not as a branch.
 fn pad_joints(tracks: &[&Track], pad: &WorldPadRing<'_>) -> Vec<(usize, f64)> {
     let touching: Vec<(usize, f64, Point, f64)> = tracks
         .iter()
@@ -522,7 +525,7 @@ impl Graph {
     }
 
     /// Lay the path `edges` between pads `start` and `end` out as a
-    /// [`HalfPath`], everything else as its stubs.
+    /// [`HalfPath`], everything else as its branches.
     fn half(
         &self,
         project: &Project,
@@ -539,7 +542,7 @@ impl Graph {
             tracks: 0.0,
             vias: 0.0,
             spans: BTreeMap::new(),
-            stubs: Vec::new(),
+            branches: Vec::new(),
         };
         for e in edges {
             let Some(edge) = self.edges.get(*e) else {
@@ -555,19 +558,19 @@ impl Graph {
                 Kind::Joint => {}
             }
         }
-        out.stubs = self.stubs(project, net, &on_path, &path_vertices);
+        out.branches = self.branches(project, net, &on_path, &path_vertices);
         out
     }
 
-    /// The copper off the path, one stub per branch: branches meet only
+    /// The copper off the path, one entry per branch: branches meet only
     /// on the path, whose vertices therefore never join two of them.
-    fn stubs(
+    fn branches(
         &self,
         project: &Project,
         net: Id,
         on_path: &BTreeSet<usize>,
         path_vertices: &BTreeSet<usize>,
-    ) -> Vec<PairStub> {
+    ) -> Vec<PairBranch> {
         let mut parent: Vec<usize> = (0..self.vertices + self.edges.len()).collect();
         fn find(parent: &mut [usize], mut v: usize) -> usize {
             while let Some(&p) = parent.get(v) {
@@ -597,25 +600,25 @@ impl Graph {
                 }
             }
         }
-        let mut branches: BTreeMap<usize, PairStub> = BTreeMap::new();
+        let mut branches: BTreeMap<usize, PairBranch> = BTreeMap::new();
         let name = project.net_name(net).to_owned();
         for (e, edge) in self.edges.iter().enumerate() {
             if on_path.contains(&e) {
                 continue;
             }
             let root = find(&mut parent, self.vertices + e);
-            let stub = branches.entry(root).or_insert_with(|| PairStub {
+            let branch = branches.entry(root).or_insert_with(|| PairBranch {
                 net,
                 name: name.clone(),
                 length: 0.0,
                 tracks: Vec::new(),
-                reaches: Vec::new(),
+                pins: Vec::new(),
             });
-            stub.length += edge.length;
+            branch.length += edge.length;
             if let Kind::Track { id, .. } = edge.kind
-                && !stub.tracks.contains(&id)
+                && !branch.tracks.contains(&id)
             {
-                stub.tracks.push(id);
+                branch.tracks.push(id);
             }
         }
         for pad in &self.pads {
@@ -623,17 +626,17 @@ impl Graph {
                 continue;
             }
             let root = find(&mut parent, pad.vertex);
-            if let Some(stub) = branches.get_mut(&root) {
-                stub.reaches.push(pad.label.clone());
+            if let Some(branch) = branches.get_mut(&root) {
+                branch.pins.push(pad.label.clone());
             }
         }
-        let mut stubs: Vec<PairStub> = branches.into_values().filter(|s| s.length > 1e-9).collect();
-        for stub in &mut stubs {
-            stub.tracks.sort_unstable();
-            stub.reaches.sort();
+        let mut out: Vec<PairBranch> = branches.into_values().filter(|b| b.length > 1e-9).collect();
+        for branch in &mut out {
+            branch.tracks.sort_unstable();
+            branch.pins.sort();
         }
-        stubs.sort_by(|a, b| b.length.total_cmp(&a.length).then(a.tracks.cmp(&b.tracks)));
-        stubs
+        out.sort_by(|a, b| b.length.total_cmp(&a.length).then(a.tracks.cmp(&b.tracks)));
+        out
     }
 }
 
@@ -697,7 +700,7 @@ fn set_ends(g: &Graph, ends: [Endpoint; 2]) -> (Vec<usize>, Vec<usize>) {
     (g.terminals(ends[0]), g.terminals(ends[1]))
 }
 
-/// A pad's name in a path or stub ("J1.B6").
+/// A pad's name in a path or branch ("J1.B6").
 fn pad_name(project: &Project, labels: &BTreeMap<(Id, PadId), String>, pad: &WorldPad) -> String {
     format!(
         "{}.{}",
