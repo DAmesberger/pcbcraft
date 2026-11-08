@@ -145,7 +145,7 @@ fn a_t_on_the_vertical_leg_of_a_bent_wire_keeps_its_path() -> Result<()> {
     // One wire, its bend a corner.
     assert_eq!(
         engine.project().wire(bent).map(|w| w.corners.clone()),
-        Some(vec![crate::model::Corner { at: [25.0, 30.0] }])
+        Some(vec![crate::model::Corner::sharp([25.0, 30.0])])
     );
     connect_to(&mut engine, ep(u[2], 1).into(), on(bent, [25.0, 40.0]))?;
     let project = engine.project();
@@ -351,7 +351,7 @@ fn draw(engine: &mut Engine, from: WireTarget, corners: &[Point], to: WireTarget
             from,
             corners: corners
                 .iter()
-                .map(|at| crate::model::Corner { at: *at })
+                .map(|at| crate::model::Corner::sharp(*at))
                 .collect(),
             to,
         }),

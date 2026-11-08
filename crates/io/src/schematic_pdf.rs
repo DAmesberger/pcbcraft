@@ -135,8 +135,7 @@ fn draw(scene: &SheetScene) -> Page {
     let mut page = Page::new(scene.size);
     drawing(&mut page, &f, &scene.frame);
     for wire in &scene.wires {
-        let points: Vec<Point> = wire.iter().map(|p| f.map(*p)).collect();
-        page.polyline(&points, false, &ink(scene::WIRE_MM));
+        shape(&mut page, &f, wire, scene::WIRE_MM, None);
     }
     for unit in &scene.units {
         for s in &unit.shapes {

@@ -1,4 +1,5 @@
 //! Engine-level behaviour through public commands and queries.
+mod arc_corners;
 mod arrange;
 mod board_checks;
 mod board_contract;

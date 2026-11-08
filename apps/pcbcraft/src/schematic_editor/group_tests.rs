@@ -485,12 +485,13 @@ fn a_group_drag_is_one_undo_step_with_rigid_and_rubber_banded_wires() -> TestRes
             .all(|s| s[0][0] == s[1][0] || s[0][1] == s[1][1]),
         "{band:?}"
     );
-    assert_eq!(
-        dragged.wire(s.wire),
-        Some(&inner),
-        "the preview is what landed"
-    );
-    assert_eq!(dragged.wire(outer), Some(&band));
+    let at = |w: Id| {
+        dragged
+            .wire(w)
+            .map(|p| p.iter().map(|c| c.at).collect::<Vec<_>>())
+    };
+    assert_eq!(at(s.wire), Some(inner), "the preview is what landed");
+    assert_eq!(at(outer), Some(band));
     frame(&mut s.editor, &s.engine, &s.ctx, vec![], Modifiers::NONE);
     assert_eq!(s.editor.group.len(), 2, "still selected");
     s.engine.undo()?;

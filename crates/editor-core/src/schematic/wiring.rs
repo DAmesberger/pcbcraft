@@ -13,6 +13,7 @@
 //! derived, never stored: [`junction_dots`] lists every point where three or
 //! more conductors meet (a pin counts as one). [`tidy`] keeps the stored
 //! topology in its normal form after every edit.
+use super::wire_edit::Vertex;
 use super::{Error, MAX_CORNERS, Result, invalid, not_found, pin_position};
 use crate::geometry::{Point, point_valid};
 use crate::ids::{Endpoint, Id, SheetId};
@@ -128,6 +129,26 @@ pub fn wire_path(project: &Project, wire: &Wire) -> Option<Vec<Point>> {
     Some(path)
 }
 
+/// [`wire_path`] with each corner's radius: the ends are sharp vertices.
+pub fn wire_vertices(project: &Project, wire: &Wire) -> Option<Vec<Corner>> {
+    let (a, b) = wire_ends(project, wire)?;
+    let mut path = Vec::with_capacity(wire.corners.len() + 2);
+    path.push(Corner::sharp(a));
+    path.extend(wire.corners.iter().copied());
+    path.push(Corner::sharp(b));
+    Some(path)
+}
+
+/// The largest radius a wire's corner may store, mm.
+pub const MAX_CORNER_RADIUS_MM: f64 = 1000.0;
+
+/// Whether every corner's radius is a length a wire may store.
+pub(super) fn radii_valid(corners: &[Corner]) -> bool {
+    corners
+        .iter()
+        .all(|c| c.radius.is_finite() && (0.0..=MAX_CORNER_RADIUS_MM).contains(&c.radius))
+}
+
 fn nearest_on_segment(p: Point, a: Point, b: Point) -> Point {
     let ab = [b[0] - a[0], b[1] - a[1]];
     let len2 = ab[0] * ab[0] + ab[1] * ab[1];
@@ -161,21 +182,22 @@ pub fn nearest_on_wire(project: &Project, wire: Id, p: Point) -> Option<Point> {
 
 /// `corners` between `start` and `end` without corners that add nothing:
 /// one on the vertex before it, or one in line between its neighbours.
-pub(super) fn simplified(start: Point, corners: Vec<Corner>, end: Point) -> Vec<Corner> {
-    let mut kept: Vec<Point> = Vec::with_capacity(corners.len());
-    let previous = |kept: &Vec<Point>| kept.last().copied().unwrap_or(start);
-    for corner in corners.iter().map(|c| c.at).chain([end]) {
+/// A kept corner keeps its radius.
+pub(super) fn simplified<V: Vertex>(start: Point, corners: Vec<V>, end: Point) -> Vec<V> {
+    let mut kept: Vec<V> = Vec::with_capacity(corners.len());
+    let previous = |kept: &Vec<V>| kept.last().map_or(start, Vertex::at);
+    for vertex in corners.into_iter().chain([V::sharp(end)]) {
+        let corner = vertex.at();
         if distance(previous(&kept), corner) <= JUNCTION_TOLERANCE_MM {
             continue;
         }
         // The last kept corner lies in line between its neighbours.
-        while let Some(&middle) = kept.last() {
+        while let Some(middle) = kept.last().map(Vertex::at) {
             let before = kept
                 .len()
                 .checked_sub(2)
                 .and_then(|i| kept.get(i))
-                .copied()
-                .unwrap_or(start);
+                .map_or(start, Vertex::at);
             let u = [middle[0] - before[0], middle[1] - before[1]];
             let v = [corner[0] - middle[0], corner[1] - middle[1]];
             let onward = u[0] * v[0] + u[1] * v[1] > 0.0;
@@ -185,11 +207,11 @@ pub(super) fn simplified(start: Point, corners: Vec<Corner>, end: Point) -> Vec<
                 break;
             }
         }
-        kept.push(corner);
+        kept.push(vertex);
     }
     // The end was pushed last; it is not a corner.
     kept.pop();
-    kept.into_iter().map(|at| Corner { at }).collect()
+    kept
 }
 
 /// A wire's corners without those that add nothing, when its ends are
@@ -701,12 +723,11 @@ fn join_touching(project: &mut Project) -> Result<()> {
             }
             along.push(walked);
         }
-        let corners: Vec<(f64, Point)> = along
+        let corners: Vec<(f64, Corner)> = along
             .iter()
             .copied()
-            .zip(path.iter().copied())
             .skip(1)
-            .take(path.len().saturating_sub(2))
+            .zip(wire.corners.iter().copied())
             .collect();
         let mut stops = Vec::with_capacity(through.len() + 2);
         stops.push((0.0, wire.from));
@@ -718,7 +739,7 @@ fn join_touching(project: &mut Project) -> Result<()> {
             let between: Vec<Corner> = corners
                 .iter()
                 .filter(|(s, _)| *s > s0 && *s < s1)
-                .map(|(_, at)| Corner { at: *at })
+                .map(|(_, corner)| *corner)
                 .collect();
             let start = positions
                 .get(&from)
@@ -872,7 +893,7 @@ fn attach_free_ends(project: &mut Project) -> Result<()> {
                 w.to = to;
             }
             if reached.is_some() {
-                let corner = Corner { at: p };
+                let corner = Corner::sharp(p);
                 if side == 0 {
                     w.corners.insert(0, corner);
                 } else {
@@ -945,7 +966,7 @@ fn merge(project: &mut Project, a: Id, b: Id, at: WireEnd, point: Point) {
     } else {
         return;
     };
-    corners.push(Corner { at: point });
+    corners.push(Corner::sharp(point));
     corners.extend(rest);
     let mut merged = Wire {
         id: a,
@@ -1246,7 +1267,7 @@ pub(super) fn validate(project: &Project) -> Result<()> {
         if wire.corners.len() > MAX_CORNERS {
             return Err(invalid("A wire has more than 256 corners."));
         }
-        if !wire.corners.iter().all(|c| point_valid(c.at)) {
+        if !wire.corners.iter().all(|c| point_valid(c.at)) || !radii_valid(&wire.corners) {
             return Err(invalid("A wire corner is out of range."));
         }
         for end in [wire.from, wire.to] {

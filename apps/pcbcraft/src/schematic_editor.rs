@@ -262,6 +262,11 @@ pub struct SchematicEditor {
     wire: Option<WireDraft>,
     /// The Wire tool's elbow runs vertical first (F).
     wire_flipped: bool,
+    /// The Wire tool rounds new corners (A), by `wire_radius` mm.
+    wire_arc: bool,
+    wire_radius: f64,
+    /// The picked corner's Radius field while it is edited.
+    corner_radius: Option<((Id, usize), f64)>,
     draft_reference: String,
     draft_fields: Vec<FieldBuffer>,
     draft_position: Point,
@@ -388,6 +393,9 @@ impl Default for SchematicEditor {
             net_label: None,
             wire: None,
             wire_flipped: false,
+            wire_arc: false,
+            wire_radius: wire_tool::DEFAULT_RADIUS_MM,
+            corner_radius: None,
             draft_reference: String::new(),
             draft_fields: Vec::new(),
             draft_position: [0.0; 2],
@@ -1860,15 +1868,18 @@ impl SchematicEditor {
                 || selected_net.is_some_and(|n| self.wire_nets.get(&id) == Some(&n))
         };
         // Each drawn wire's screen path, for picking a wire or a point on it.
-        let mut wire_paths: Vec<(Id, Vec<Pos2>)> = Vec::with_capacity(project.wires.len());
+        let mut wire_paths: Vec<(Id, path_edit::ScreenPath)> =
+            Vec::with_capacity(project.wires.len());
         for wire in &project.wires {
             if wire.sheet != self.sheet {
                 continue;
             }
-            if let Some(mut path) = schematic::wire_path(project, wire) {
+            if let Some(mut path) = schematic::wire_vertices(project, wire) {
                 // A dragged unit, label or sheet symbol moves the ends, and
                 // the path follows as the move will store it.
-                if let (Some(&first), Some(&last)) = (path.first(), path.last()) {
+                if let (Some(first), Some(last)) =
+                    (path.first().map(|v| v.at), path.last().map(|v| v.at))
+                {
                     let ends = (
                         self.preview_end(project, wire.from, first),
                         self.preview_end(project, wire.to, last),
@@ -1885,13 +1896,13 @@ impl SchematicEditor {
                     path.clone_from(&drag.now);
                 }
                 // A label sitting on its pin's end leaves its wire no length.
-                if path.windows(2).all(|s| s[0] == s[1]) {
+                if path.windows(2).all(|s| s[0].at == s[1].at) {
                     continue;
                 }
-                let points: Vec<Pos2> = path.into_iter().map(screen).collect();
+                let points = path_edit::ScreenPath::new(&path, scale, &screen);
                 let active = wire_active(wire.id);
                 painter.add(egui::Shape::line(
-                    points.clone(),
+                    points.drawn.clone(),
                     Stroke::new(
                         if active { 2.5 } else { 1.5 },
                         if active { t.accent } else { t.form_success },
@@ -1900,9 +1911,7 @@ impl SchematicEditor {
                 if response.clicked()
                     && self.tool == Tool::Select
                     && let Some(p) = response.interact_pointer_pos()
-                    && points
-                        .windows(2)
-                        .any(|s| segment_distance(p, s[0], s[1]) < WIRE_HIT_PX)
+                    && points.distance(p) < WIRE_HIT_PX
                 {
                     hit_wire = Some(wire.id);
                 }
@@ -2043,13 +2052,7 @@ impl SchematicEditor {
         let wire_point_at = |pointer: Pos2| -> Option<(WireTarget, Pos2)> {
             let (wire, _) = wire_paths
                 .iter()
-                .map(|(id, path)| {
-                    let d = path
-                        .windows(2)
-                        .map(|s| segment_distance(pointer, s[0], s[1]))
-                        .fold(f32::INFINITY, f32::min);
-                    (*id, d)
-                })
+                .map(|(id, path)| (*id, path.distance(pointer)))
                 .filter(|(_, d)| *d < WIRE_HIT_PX)
                 .min_by(|a, b| a.1.total_cmp(&b.1))?;
             let at = path_edit::on_wire_snapped(project, wire, view.world(pointer), grid)?;
@@ -2169,22 +2172,22 @@ impl SchematicEditor {
                 let end = landing
                     .and_then(|(target, _)| target_position(project, target))
                     .unwrap_or_else(|| world(pointer));
-                let path: Vec<Pos2> = draft
-                    .path(end, self.wire_flipped)
-                    .into_iter()
-                    .map(screen)
-                    .collect();
+                let path = path_edit::ScreenPath::new(
+                    &wire_tool::rounded(&draft.path(end, self.wire_flipped), self.new_radius()),
+                    scale,
+                    &screen,
+                );
                 // Connection points it runs over join it: ringed now.
                 path_edit::ring_run_over(
                     &painter,
-                    &path,
+                    &path.vertices,
                     pin_hits
                         .iter()
                         .map(|(_, p)| *p)
                         .chain(junction_hits.iter().map(|(_, p)| *p))
                         .chain(point_hits.iter().map(|(_, p)| *p)),
                 );
-                painter.add(egui::Shape::line(path, Stroke::new(1.5, t.accent)));
+                painter.add(egui::Shape::line(path.drawn, Stroke::new(1.5, t.accent)));
             }
         }
         // Hovering a path highlights it, in the order a click picks: a pin
@@ -2210,7 +2213,7 @@ impl SchematicEditor {
         }
         // What the path being dragged would land on and run over.
         if let Some(drag) = &self.path_drag {
-            let path: Vec<Pos2> = drag.now.iter().copied().map(screen).collect();
+            let path: Vec<Pos2> = drag.now.iter().map(|v| screen(v.at)).collect();
             path_edit::ring_run_over(
                 &painter,
                 &path,
@@ -2464,7 +2467,7 @@ impl SchematicEditor {
             let landing = match drag.grab {
                 path_edit::Grab::Corner(_) => point_at(pointer),
                 path_edit::Grab::End(_) => target_at(pointer),
-                path_edit::Grab::Segment(_) => None,
+                path_edit::Grab::Segment(_) | path_edit::Grab::Radius(_) => None,
             }
             .filter(|(target, _)| match *target {
                 WireTarget::OnWire(on) => own.is_none_or(|o| o.0 != on.wire),
@@ -2986,6 +2989,15 @@ impl SchematicEditor {
                 "Horizontal first (F)"
             };
             kit::value_row(ui, "Elbow", elbow);
+            let arc = crate::keys::labelled(ui.ctx(), "Arc", "wire.arc");
+            kit::check_row(ui, &arc, &mut self.wire_arc);
+            kit::number_row(
+                ui,
+                "Radius",
+                &mut self.wire_radius,
+                "mm",
+                0.1..=schematic::MAX_CORNER_RADIUS_MM,
+            );
             kit::hint(
                 ui,
                 "Crossing wires are not joined",

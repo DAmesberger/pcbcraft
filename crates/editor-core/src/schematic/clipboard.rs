@@ -289,7 +289,10 @@ pub fn paste(
             end(wire.from)?.into(),
             wire.corners
                 .iter()
-                .map(|c| Corner { at: shift(c.at) })
+                .map(|c| Corner {
+                    at: shift(c.at),
+                    ..*c
+                })
                 .collect(),
             end(wire.to)?.into(),
         )?);

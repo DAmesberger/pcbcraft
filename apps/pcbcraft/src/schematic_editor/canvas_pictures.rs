@@ -611,7 +611,7 @@ fn write_path_handle_pictures() -> TestResult {
             from: from.into(),
             corners: corners
                 .iter()
-                .map(|&at| pcbcraft_core::model::Corner { at })
+                .map(|&at| pcbcraft_core::model::Corner::sharp(at))
                 .collect(),
             to: WireTarget::Free(end),
         }),

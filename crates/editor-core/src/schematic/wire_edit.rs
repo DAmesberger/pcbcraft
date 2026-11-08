@@ -12,16 +12,62 @@
 //! The path edits (docs/schematic-wires.md, "Editing a selected path") work
 //! the same way: [`move_corner`], [`move_segment`], [`insert_corner`],
 //! [`remove_corner`], [`move_end`] and [`split_at`] are pure functions of a
-//! path, which the canvas previews and the `wire.*` commands store.
+//! path, which the canvas previews and the `wire.*` commands store. They
+//! take bare points or [`Corner`]s ([`Vertex`]): a corner keeps its radius
+//! when an edit moves it, and a corner an edit adds is sharp.
 use super::wiring::{self, JUNCTION_TOLERANCE_MM, WireTarget, end_position, simplified};
 use super::{Error, MAX_CORNERS, MAX_WIRES, Project, Result, invalid, not_found};
-use crate::geometry::{Point, point_valid};
+use crate::geometry::{self, Point, point_valid};
 use crate::ids::Id;
 use crate::instances;
 use crate::model::{Corner, Wire, WireEnd};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+/// A path vertex: a bare point, or a [`Corner`] with its radius.
+pub trait Vertex: Copy {
+    fn at(&self) -> Point;
+    /// A new vertex at `at`: a sharp corner.
+    fn sharp(at: Point) -> Self;
+    /// This vertex moved to `at`, keeping its radius.
+    fn moved(self, at: Point) -> Self;
+    fn corner(&self) -> Corner;
+}
+
+impl Vertex for Point {
+    fn at(&self) -> Point {
+        *self
+    }
+    fn sharp(at: Point) -> Self {
+        at
+    }
+    fn moved(self, at: Point) -> Self {
+        at
+    }
+    fn corner(&self) -> Corner {
+        Corner::sharp(*self)
+    }
+}
+
+impl Vertex for Corner {
+    fn at(&self) -> Point {
+        self.at
+    }
+    fn sharp(at: Point) -> Self {
+        Corner::sharp(at)
+    }
+    fn moved(self, at: Point) -> Self {
+        Corner { at, ..self }
+    }
+    fn corner(&self) -> Corner {
+        *self
+    }
+}
+
+fn points_of<V: Vertex>(path: &[V]) -> Vec<Point> {
+    path.iter().map(Vertex::at).collect()
+}
 
 /// One end of a wire.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -40,25 +86,25 @@ pub fn movable(wire: &Wire) -> Movable {
     [wire.from, wire.to].map(|end| end.free_point().is_some())
 }
 
-fn corners_of(path: &[Point]) -> Vec<Corner> {
+fn corners_of<V: Vertex>(path: &[V]) -> Vec<Corner> {
     path.get(1..path.len().saturating_sub(1))
         .unwrap_or_default()
         .iter()
-        .map(|&at| Corner { at })
+        .map(Vertex::corner)
         .collect()
 }
 
 /// `path` without corners that add nothing; its ends stay.
-fn cleaned(path: &[Point]) -> Vec<Point> {
+fn cleaned<V: Vertex>(path: &[V]) -> Vec<V> {
     let (Some(&first), Some(&last)) = (path.first(), path.last()) else {
         return path.to_vec();
     };
+    let interior = path
+        .get(1..path.len().saturating_sub(1))
+        .unwrap_or_default()
+        .to_vec();
     let mut kept = vec![first];
-    kept.extend(
-        simplified(first, corners_of(path), last)
-            .into_iter()
-            .map(|c| c.at),
-    );
+    kept.extend(simplified(first.at(), interior, last.at()));
     kept.push(last);
     kept
 }
@@ -68,25 +114,26 @@ fn cleaned(path: &[Point]) -> Vec<Point> {
 /// direction, so the neighbour takes the offset across it, together with the
 /// run of vertices in line with it. An end that cannot move gets a new corner
 /// before it, so the segment steps instead of slanting.
-fn carried(c: Point, rest: &[Point], end_moves: bool, d: Point) -> Vec<Point> {
+fn carried<V: Vertex>(c: Point, rest: &[V], end_moves: bool, d: Point) -> Vec<V> {
     let mut out = rest.to_vec();
-    let Some(&first) = rest.first() else {
+    let Some(first) = rest.first() else {
         return out;
     };
-    let along = axis(c, first);
+    let along = axis(c, first.at());
     let shift = match along {
         Axis::Horizontal => [0.0, d[1]],
         Axis::Vertical => [d[0], 0.0],
         Axis::Other => return out,
     };
-    for (i, &here) in rest.iter().enumerate() {
-        let next = rest.get(i + 1).copied();
+    for (i, vertex) in rest.iter().enumerate() {
+        let here = vertex.at();
+        let next = rest.get(i + 1).map(Vertex::at);
         let moved = [here[0] + shift[0], here[1] + shift[1]];
         if next.is_none() && !end_moves {
-            out.insert(i, moved);
+            out.insert(i, V::sharp(moved));
             break;
         }
-        out[i] = moved;
+        out[i] = vertex.moved(moved);
         if next.is_none_or(|n| axis(here, n) != along) {
             break;
         }
@@ -99,24 +146,25 @@ fn carried(c: Point, rest: &[Point], end_moves: bool, d: Point) -> Vec<Point> {
 /// directions ([`carried`]). A corner in line between its neighbours, as a
 /// new one is, breaks the line into a step: the segment before it stops at
 /// the corner's new position and turns to reach it.
-pub fn move_corner(
-    path: &[Point],
+pub fn move_corner<V: Vertex>(
+    path: &[V],
     movable: Movable,
     index: usize,
     to: Point,
     free: bool,
-) -> Option<Vec<Point>> {
+) -> Option<Vec<V>> {
     let v = index.checked_add(1)?;
     let (before, after) = (path.get(..v)?, path.get(v + 1..)?);
-    let (c, next) = (*path.get(v)?, *after.first()?);
+    let (corner, next) = (*path.get(v)?, after.first()?.at());
+    let c = corner.at();
     if free {
         let mut out = path.to_vec();
-        *out.get_mut(v)? = to;
+        *out.get_mut(v)? = corner.moved(to);
         return Some(cleaned(&out));
     }
     let d = [to[0] - c[0], to[1] - c[1]];
-    let reversed: Vec<Point> = before.iter().rev().copied().collect();
-    let previous = *reversed.first()?;
+    let reversed: Vec<V> = before.iter().rev().copied().collect();
+    let previous = reversed.first()?.at();
     let mut out = if axis(previous, c) == axis(c, next) {
         let turn = match axis(previous, c) {
             Axis::Horizontal => [to[0], previous[1]],
@@ -124,14 +172,14 @@ pub fn move_corner(
             Axis::Other => previous,
         };
         let mut out = before.to_vec();
-        out.push(turn);
+        out.push(V::sharp(turn));
         out
     } else {
         let mut out = carried(c, &reversed, movable[0], d);
         out.reverse();
         out
     };
-    out.push(to);
+    out.push(corner.moved(to));
     out.extend(carried(c, after, movable[1], d));
     Some(cleaned(&out))
 }
@@ -158,51 +206,55 @@ pub fn segment_normal(a: Point, b: Point) -> Option<Point> {
 /// segment or it has no length. Its neighbours stretch. An end that cannot
 /// move, or a neighbour in line with it, stays and gets a short perpendicular
 /// segment instead.
-pub fn move_segment(
-    path: &[Point],
+pub fn move_segment<V: Vertex>(
+    path: &[V],
     movable: Movable,
     index: usize,
     offset: f64,
-) -> Option<Vec<Point>> {
+) -> Option<Vec<V>> {
     let far = index.checked_add(1)?;
     let (a, b) = (*path.get(index)?, *path.get(far)?);
-    let n = segment_normal(a, b)?;
-    let moved = |p: Point| [p[0] + n[0] * offset, p[1] + n[1] * offset];
-    let along = axis(a, b);
-    let in_line = |q: &Point, p: Point| along != Axis::Other && axis(*q, p) == along;
-    let keeps = |neighbour: Option<&Point>, end_moves: bool, p: Point| match neighbour {
+    let n = segment_normal(a.at(), b.at())?;
+    let moved = |v: V| {
+        let p = v.at();
+        v.moved([p[0] + n[0] * offset, p[1] + n[1] * offset])
+    };
+    let along = axis(a.at(), b.at());
+    let in_line = |q: &V, p: Point| along != Axis::Other && axis(q.at(), p) == along;
+    let keeps = |neighbour: Option<&V>, end_moves: bool, p: Point| match neighbour {
         None => !end_moves,
         Some(q) => in_line(q, p),
     };
     let previous = index.checked_sub(1).and_then(|i| path.get(i));
     let mut out = path.get(..index)?.to_vec();
-    if keeps(previous, movable[0], a) {
+    if keeps(previous, movable[0], a.at()) {
         out.push(a);
     }
     out.push(moved(a));
     out.push(moved(b));
-    if keeps(path.get(far + 1), movable[1], b) {
+    if keeps(path.get(far + 1), movable[1], b.at()) {
         out.push(b);
     }
     out.extend_from_slice(path.get(far + 1..)?);
     Some(cleaned(&out))
 }
 
-/// `path` with a corner at `at`, a point on it away from its vertices, and
-/// the new corner's index; the shape is unchanged. `None` off the path or on
-/// a vertex.
-pub fn insert_corner(path: &[Point], at: Point) -> Option<(Vec<Point>, usize)> {
-    let (on, segment) = wiring::nearest_on_path(path, at)?;
-    if !same(on, at) || path.iter().any(|v| same(*v, on)) {
+/// `path` with a sharp corner at `at`, a point on it away from its vertices,
+/// and the new corner's index; the shape is unchanged. `None` off the path or
+/// on a vertex.
+pub fn insert_corner<V: Vertex>(path: &[V], at: Point) -> Option<(Vec<V>, usize)> {
+    let points = points_of(path);
+    let (on, segment) = wiring::nearest_on_path(&points, at)?;
+    if !same(on, at) || points.iter().any(|v| same(*v, on)) {
         return None;
     }
     let mut out = path.to_vec();
-    out.insert(segment + 1, on);
+    out.insert(segment + 1, V::sharp(on));
     Some((out, segment))
 }
 
 /// `path` without corner `index`; `None` when there is no such corner.
-pub fn remove_corner(path: &[Point], index: usize) -> Option<Vec<Point>> {
+pub fn remove_corner<V: Vertex>(path: &[V], index: usize) -> Option<Vec<V>> {
     let v = index.checked_add(1)?;
     if v + 1 >= path.len() {
         return None;
@@ -212,36 +264,79 @@ pub fn remove_corner(path: &[Point], index: usize) -> Option<Vec<Point>> {
     Some(cleaned(&out))
 }
 
+/// `path` with corner `index` rounded by `radius` (0: sharp); `None` when
+/// there is no such corner or the radius does not fit ([`radius_limit`]).
+pub fn set_radius(path: &[Corner], index: usize, radius: f64) -> Option<Vec<Corner>> {
+    let v = index.checked_add(1).filter(|v| v + 1 < path.len())?;
+    if !(radius.is_finite() && radius >= 0.0)
+        || radius > radius_limit(path, index)? + JUNCTION_TOLERANCE_MM
+    {
+        return None;
+    }
+    let mut out = path.to_vec();
+    out.get_mut(v)?.radius = radius;
+    Some(out)
+}
+
+/// `path` with each radius reduced to what is drawn: where neighbouring arcs
+/// would overlap on a segment, both shrink in proportion. Rounded to the
+/// micrometre, so a radius halved on a grid segment reads as a round number.
+pub fn fitted(path: &[Corner]) -> Vec<Corner> {
+    let points = points_of(path);
+    let radii: Vec<f64> = path.iter().map(|c| c.radius).collect();
+    let fit = geometry::fit_corner_radii(&points, &radii, false);
+    path.iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let r = fit.get(i).copied().unwrap_or(0.0).min(c.radius);
+            Corner {
+                radius: ((r * 1000.0 + 1e-3).floor() / 1000.0).max(0.0),
+                ..*c
+            }
+        })
+        .collect()
+}
+
+/// The largest radius corner `index` of `path` takes: what fits its two
+/// segments beside the arcs of its neighbours as drawn. 0 where its segments
+/// run in line or fold back; `None` when there is no such corner.
+pub fn radius_limit(path: &[Corner], index: usize) -> Option<f64> {
+    let v = index.checked_add(1).filter(|v| v + 1 < path.len())?;
+    let points = points_of(path);
+    let radii: Vec<f64> = path.iter().map(|c| c.radius).collect();
+    Some(geometry::corner_radius_limit(&points, &radii, v).min(wiring::MAX_CORNER_RADIUS_MM))
+}
+
 /// `path` with the end `side` at `to`, rubber-banded as when the object an
 /// end is on moves ([`follow`]).
-pub fn move_end(path: &[Point], side: WireSide, to: Point) -> Vec<Point> {
-    let (Some(&first), Some(&last)) = (path.first(), path.last()) else {
+pub fn move_end<V: Vertex>(path: &[V], side: WireSide, to: Point) -> Vec<V> {
+    let (Some(first), Some(last)) = (path.first(), path.last()) else {
         return path.to_vec();
     };
     match side {
-        WireSide::From => follow(path, to, last),
-        WireSide::To => follow(path, first, to),
+        WireSide::From => follow(path, to, last.at()),
+        WireSide::To => follow(path, first.at(), to),
     }
 }
 
 /// What is left when a segment goes: the path up to its first vertex, and
 /// from its second, each `None` when it has no segment.
-pub type Split = (Option<Vec<Point>>, Option<Vec<Point>>);
+pub type Split<V> = (Option<Vec<V>>, Option<Vec<V>>);
 
 /// The two paths left without segment `index`; `None` when there is no such
 /// segment.
-pub fn split_at(path: &[Point], index: usize) -> Option<Split> {
+pub fn split_at<V: Vertex>(path: &[V], index: usize) -> Option<Split<V>> {
     let far = index.checked_add(1).filter(|i| *i < path.len())?;
-    let piece = |p: &[Point]| (p.len() >= 2).then(|| p.to_vec());
+    let piece = |p: &[V]| (p.len() >= 2).then(|| p.to_vec());
     Some((piece(path.get(..=index)?), piece(path.get(far..)?)))
 }
 
-/// A wire's drawn path and which ends may move.
-fn editable(project: &Project, id: Id) -> Result<(Vec<Point>, Movable)> {
+/// A wire's drawn path, with its corners' radii, and which ends may move.
+fn editable(project: &Project, id: Id) -> Result<(Vec<Corner>, Movable)> {
     let wire = project
         .wire(id)
         .ok_or_else(|| not_found("Unknown schematic wire."))?;
-    let path = wiring::wire_path(project, wire)
+    let path = wiring::wire_vertices(project, wire)
         .ok_or_else(|| invalid("This wire is not drawn on the sheet."))?;
     Ok((path, movable(wire)))
 }
@@ -256,15 +351,15 @@ fn wire_mut(project: &mut Project, id: Id) -> Result<&mut Wire> {
 
 /// Store `path` as wire `id`'s geometry: its corners, and where its free
 /// ends are. An attached end's position stays with its object.
-fn store(project: &mut Project, id: Id, path: &[Point]) -> Result<()> {
-    if !path.iter().all(|p| point_valid(*p)) {
+fn store(project: &mut Project, id: Id, path: &[Corner]) -> Result<()> {
+    if !path.iter().all(|p| point_valid(p.at)) {
         return Err(off_sheet());
     }
     let corners = corners_of(path);
     if corners.len() > MAX_CORNERS {
         return Err(Error::Limit("A wire has at most 256 corners.".into()));
     }
-    let (Some(&first), Some(&last)) = (path.first(), path.last()) else {
+    let (Some(first), Some(last)) = (path.first().map(|v| v.at), path.last().map(|v| v.at)) else {
         return Err(invalid("A wire must connect two different points."));
     };
     let wire = wire_mut(project, id)?;
@@ -322,6 +417,10 @@ fn no_segment() -> Error {
     invalid("This wire has no such segment.")
 }
 
+pub(super) fn bad_radius() -> Error {
+    invalid("A corner's radius must be from 0 to 1000 mm.")
+}
+
 pub(super) fn set_path(
     project: &mut Project,
     id: Id,
@@ -334,6 +433,9 @@ pub(super) fn set_path(
     }
     if !corners.iter().all(|c| point_valid(c.at)) {
         return Err(off_sheet());
+    }
+    if !wiring::radii_valid(&corners) {
+        return Err(bad_radius());
     }
     if let Some(target) = from {
         let end = new_end(project, id, target)?;
@@ -396,6 +498,42 @@ pub(super) fn apply_remove_corner(project: &mut Project, id: Id, index: usize) -
     store(project, id, &path)
 }
 
+/// Round corner `index` by `radius`, or make it sharp with 0. Refused, not
+/// reduced, when the radius does not fit its segments.
+pub(super) fn apply_set_radius(
+    project: &mut Project,
+    id: Id,
+    index: usize,
+    radius: f64,
+) -> Result<()> {
+    if !wiring::radii_valid(&[Corner {
+        at: [0.0, 0.0],
+        radius,
+    }]) {
+        return Err(bad_radius());
+    }
+    let (path, _) = editable(project, id)?;
+    let limit = radius_limit(&path, index).ok_or_else(no_corner)?;
+    let path = set_radius(&path, index, radius).ok_or_else(|| {
+        if limit <= JUNCTION_TOLERANCE_MM {
+            invalid("This corner cannot be rounded: its segments run in line or fold back.")
+        } else {
+            invalid(&format!(
+                "A {} mm radius does not fit this corner's segments; at most {} mm fits.",
+                mm(radius),
+                mm(limit)
+            ))
+        }
+    })?;
+    store(project, id, &path)
+}
+
+/// A length for a message: at most three decimals, without trailing zeros.
+fn mm(value: f64) -> String {
+    let text = format!("{value:.3}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
 /// Remove a segment: the part before it keeps the wire's ID, and the part
 /// after is a new wire, with free ends at the gap. Without a part before, the
 /// part after keeps the ID; with neither, the wire goes.
@@ -413,7 +551,7 @@ pub(super) fn remove_segment(project: &mut Project, id: Id, index: usize) -> Res
         .position(|w| w.id == id)
         .ok_or_else(|| not_found("Unknown schematic wire."))?;
     let wire = project.wires.remove(position);
-    let free = |p: Option<&Point>| p.and_then(|p| WireEnd::free(*p)).ok_or_else(off_sheet);
+    let free = |p: Option<&Corner>| p.and_then(|p| WireEnd::free(p.at)).ok_or_else(off_sheet);
     let mut at = position;
     if let Some(head) = &head {
         let piece = Wire {
@@ -482,22 +620,23 @@ fn same(a: Point, b: Point) -> bool {
 }
 
 /// `path` (from its first vertex) after that first vertex moves to `to`.
-pub fn follow_end(path: &[Point], to: Point) -> Vec<Point> {
+pub fn follow_end<V: Vertex>(path: &[V], to: Point) -> Vec<V> {
     let mut out = path.to_vec();
-    let (Some(&first), Some(&next)) = (path.first(), path.get(1)) else {
+    let (Some(&start), Some(&second)) = (path.first(), path.get(1)) else {
         return out;
     };
-    out[0] = to;
+    out[0] = start.moved(to);
+    let (first, next) = (start.at(), second.at());
     let first_axis = axis(first, next);
     // The next vertex is a corner: slide it along the second segment.
-    if let Some(&after) = path.get(2) {
+    if let Some(after) = path.get(2).map(Vertex::at) {
         match (first_axis, axis(next, after)) {
             (Axis::Horizontal, Axis::Vertical) => {
-                out[1] = [next[0], to[1]];
+                out[1] = second.moved([next[0], to[1]]);
                 return out;
             }
             (Axis::Vertical, Axis::Horizontal) => {
-                out[1] = [to[0], next[1]];
+                out[1] = second.moved([to[0], next[1]]);
                 return out;
             }
             _ => {}
@@ -513,15 +652,15 @@ pub fn follow_end(path: &[Point], to: Point) -> Vec<Point> {
         Axis::Vertical => [to[0], next[1]],
         Axis::Horizontal | Axis::Other => [next[0], to[1]],
     };
-    out.insert(1, corner);
+    out.insert(1, V::sharp(corner));
     out
 }
 
 /// A wire's drawn path `path` after its ends move to `from` and `to`,
 /// without corners that add nothing. Both ends moved alike (a unit with a
 /// wire between two of its own pins) carries the whole path along.
-pub fn follow(path: &[Point], from: Point, to: Point) -> Vec<Point> {
-    let (Some(&a), Some(&b)) = (path.first(), path.last()) else {
+pub fn follow<V: Vertex>(path: &[V], from: Point, to: Point) -> Vec<V> {
+    let (Some(a), Some(b)) = (path.first().map(Vertex::at), path.last().map(Vertex::at)) else {
         return path.to_vec();
     };
     let (da, db) = (
@@ -529,7 +668,12 @@ pub fn follow(path: &[Point], from: Point, to: Point) -> Vec<Point> {
         [to[0] - b[0], to[1] - b[1]],
     );
     let mut out = if same(da, db) {
-        path.iter().map(|p| [p[0] + da[0], p[1] + da[1]]).collect()
+        path.iter()
+            .map(|v| {
+                let p = v.at();
+                v.moved([p[0] + da[0], p[1] + da[1]])
+            })
+            .collect()
     } else {
         let mut out = if same(a, from) {
             path.to_vec()
@@ -545,21 +689,12 @@ pub fn follow(path: &[Point], from: Point, to: Point) -> Vec<Point> {
     };
     // The ends are where the objects are, exactly.
     if let Some(first) = out.first_mut() {
-        *first = from;
+        *first = first.moved(from);
     }
     if let Some(last) = out.last_mut() {
-        *last = to;
+        *last = last.moved(to);
     }
-    let corners = out
-        .get(1..out.len().saturating_sub(1))
-        .unwrap_or_default()
-        .iter()
-        .map(|&at| Corner { at })
-        .collect();
-    let mut kept = vec![from];
-    kept.extend(simplified(from, corners, to).into_iter().map(|c| c.at));
-    kept.push(to);
-    kept
+    cleaned(&out)
 }
 
 /// Each wire's ends and where they are drawn, taken before an edit that
@@ -592,16 +727,10 @@ pub(super) fn followed(
     nb: Point,
 ) -> Option<Vec<Corner>> {
     let mut path = Vec::with_capacity(wire.corners.len() + 2);
-    path.push(a);
-    path.extend(wire.corners.iter().map(|c| c.at));
-    path.push(b);
-    let path = follow(&path, na, nb);
-    let corners: Vec<Corner> = path
-        .get(1..path.len().saturating_sub(1))
-        .unwrap_or_default()
-        .iter()
-        .map(|&at| Corner { at })
-        .collect();
+    path.push(Corner::sharp(a));
+    path.extend(wire.corners.iter().copied());
+    path.push(Corner::sharp(b));
+    let corners = corners_of(&follow(&path, na, nb));
     (corners.len() <= MAX_CORNERS).then_some(corners)
 }
 

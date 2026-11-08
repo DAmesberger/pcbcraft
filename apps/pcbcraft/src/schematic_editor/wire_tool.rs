@@ -6,6 +6,7 @@
 use super::*;
 use crate::commands::KeyDecl;
 use pcbcraft_core::model::{Corner, FreeEnd};
+use pcbcraft_core::schematic::wire_edit;
 
 /// The Wire tool's keys while a wire is in progress, handled by the canvas
 /// (`crate::keys::pressed`).
@@ -27,7 +28,28 @@ pub const WIRE_KEYS: &[KeyDecl] = &[
     ),
     KeyDecl::new("wire.back", "Backspace", "Remove the last corner"),
     KeyDecl::new("wire.flip", "F", "Flip the elbow corner"),
+    KeyDecl::new("wire.arc", "A", "Round new corners, or not"),
 ];
+
+/// The radius the Wire tool rounds new corners by until the card changes it.
+pub(super) const DEFAULT_RADIUS_MM: f64 = 2.5;
+
+/// A drawn path's vertices with every corner rounded by `radius` (0: sharp),
+/// each as large as fits: what `wire.draw` stores and the preview draws.
+pub(super) fn rounded(vertices: &[Point], radius: f64) -> Vec<Corner> {
+    let mut points = vertices.to_vec();
+    points.dedup();
+    let last = points.len().saturating_sub(1);
+    let path: Vec<Corner> = points
+        .iter()
+        .enumerate()
+        .map(|(i, &at)| Corner {
+            at,
+            radius: if i == 0 || i == last { 0.0 } else { radius },
+        })
+        .collect();
+    wire_edit::fitted(&path)
+}
 
 /// A refused wire whose engine text cannot be shown.
 const WIRE_REFUSED: &str = "A wire cannot end there";
@@ -95,6 +117,9 @@ impl SchematicEditor {
         if crate::keys::pressed(ctx, "wire.flip") {
             self.wire_flipped = !self.wire_flipped;
         }
+        if crate::keys::pressed(ctx, "wire.arc") {
+            self.wire_arc = !self.wire_arc;
+        }
         self.wire.as_ref()?;
         if crate::keys::pressed(ctx, "wire.back") {
             if let Some(draft) = &mut self.wire
@@ -121,7 +146,7 @@ impl SchematicEditor {
         let mut corners: Vec<Point> = draft.legs.iter().flatten().copied().collect();
         let end = corners.pop()?;
         let to = WireTarget::Free(FreeEnd::new(end)?);
-        self.send_wire(ctx, engine, &draft, corners, to)
+        self.send_wire(ctx, engine, &draft, corners, (to, end))
     }
 
     /// A Wire tool click at the snapped sheet point `at`, landing on
@@ -162,7 +187,7 @@ impl SchematicEditor {
                 }
                 let mut corners: Vec<Point> = draft.legs.iter().flatten().copied().collect();
                 corners.push(elbow(draft.last(), end, self.wire_flipped));
-                self.send_wire(ctx, engine, &draft, corners, to)
+                self.send_wire(ctx, engine, &draft, corners, (to, end))
             }
             // Empty space fixes the elbow and continues from the click.
             None => {
@@ -187,12 +212,19 @@ impl SchematicEditor {
         engine: &Engine,
         draft: &WireDraft,
         corners: Vec<Point>,
-        to: WireTarget,
+        (to, end): (WireTarget, Point),
     ) -> Option<Operation> {
+        let mut vertices = vec![draft.start];
+        vertices.extend(corners);
+        vertices.push(end);
+        let path = rounded(&vertices, self.new_radius());
         let command = SchematicCommand::DrawWire {
             sheet: Some(self.sheet),
             from: draft.from,
-            corners: corners.into_iter().map(|at| Corner { at }).collect(),
+            corners: path
+                .get(1..path.len().saturating_sub(1))
+                .unwrap_or_default()
+                .to_vec(),
             to,
         };
         let plan = engine.preview_update(Change::Schematic { command });
@@ -211,6 +243,11 @@ impl SchematicEditor {
             self.wire_review = Some((draft.clone(), engine.revision()));
         }
         operation
+    }
+
+    /// The radius new corners get: the card's with arcs on (A), else 0.
+    pub(super) fn new_radius(&self) -> f64 {
+        if self.wire_arc { self.wire_radius } else { 0.0 }
     }
 
     /// Back to drawing the wire whose review was cancelled. A review that

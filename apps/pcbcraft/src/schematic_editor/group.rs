@@ -8,12 +8,13 @@
 //! `viewport::paint_box_selection`): left to right takes what is wholly
 //! inside and right to left what it touches, ⇧ adds, and a drag from an
 //! object with ⇧ held still draws a rectangle.
-use super::{Arrange, Item, SchematicEditor, Tool, snap};
+use super::{Arrange, Item, SchematicEditor, Tool, path_edit, snap};
 use crate::kit;
 use crate::symbol_view::View;
-use egui::{Pos2, Rect, Shape, Stroke};
+use egui::{Rect, Shape, Stroke};
 use pcbcraft_core::geometry::Bounds;
 use pcbcraft_core::library::TextMetric;
+use pcbcraft_core::model::Corner;
 use pcbcraft_core::schematic::arrange::{Arrangement, centre};
 use pcbcraft_core::schematic::{self, ClipObject, Pasted, SchematicCommand, labels};
 use pcbcraft_core::updates::Change;
@@ -125,7 +126,7 @@ impl Group {
 pub(super) struct GroupDrag {
     grab: Point,
     by: Point,
-    wires: BTreeMap<Id, Vec<Point>>,
+    wires: BTreeMap<Id, Vec<Corner>>,
     dots: BTreeMap<WireEnd, Point>,
     labels: BTreeMap<Id, Point>,
 }
@@ -135,7 +136,7 @@ impl GroupDrag {
         self.dots.get(&end).copied()
     }
 
-    pub fn wire(&self, wire: Id) -> Option<&Vec<Point>> {
+    pub fn wire(&self, wire: Id) -> Option<&Vec<Corner>> {
         self.wires.get(&wire)
     }
 
@@ -320,7 +321,7 @@ impl SchematicEditor {
         view: View,
         m: TextMetric,
         bx: BoxSel,
-        wires: &[(Id, Vec<Pos2>)],
+        wires: &[(Id, path_edit::ScreenPath)],
     ) -> Group {
         let on_screen = |b: Bounds| Rect::from_two_pos(view.screen(b.min), view.screen(b.max));
         let takes = |b: Bounds| {
@@ -369,7 +370,7 @@ impl SchematicEditor {
         }
         group.wires = wires
             .iter()
-            .filter(|(_, path)| bx.takes(path))
+            .filter(|(_, path)| bx.takes(&path.drawn))
             .map(|(id, _)| *id)
             .collect();
         group
@@ -421,7 +422,7 @@ impl SchematicEditor {
         if schematic::apply(&mut next, command, EditPolicy::Direct).is_err() {
             return;
         }
-        let path = |p: &Project, w: &Wire| schematic::wire_path(p, w);
+        let path = |p: &Project, w: &Wire| schematic::wire_vertices(p, w);
         let wires = next
             .wires
             .iter()

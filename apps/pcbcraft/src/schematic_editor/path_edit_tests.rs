@@ -130,7 +130,10 @@ fn drag(
     ] {
         frame(editor, engine, ctx, events);
     }
-    let preview = editor.path_drag.as_ref().map(|d| d.now.clone());
+    let preview = editor
+        .path_drag
+        .as_ref()
+        .map(|d| d.now.iter().map(|c| c.at).collect());
     let sent = frame(editor, engine, ctx, vec![button(b, false)]).1;
     (preview, sent)
 }
@@ -189,7 +192,7 @@ fn draw(
         Operation::Schematic(SchematicCommand::DrawWire {
             sheet: None,
             from,
-            corners: corners.iter().map(|&at| Corner { at }).collect(),
+            corners: corners.iter().map(|&at| Corner::sharp(at)).collect(),
             to,
         }),
     )?;
@@ -834,6 +837,7 @@ fn handles_are_not_crowded_on_short_segments() {
             .iter()
             .map(|p| pos2(p[0] as f32 * scale, p[1] as f32 * scale))
             .collect();
+        let points = path_edit::ScreenPath::sharp(points);
         let handles = path_edit::handles(&points, [true, true]);
         let reach = |grab: &Grab| match grab {
             Grab::Segment(_) => path_edit::MIDPOINT_RADIUS_PX,
@@ -864,7 +868,8 @@ fn handles_are_not_crowded_on_short_segments() {
 /// The end kinds show as squares only for free ends.
 #[test]
 fn handles_list_corners_free_ends_and_long_segments() {
-    let points = [pos2(0.0, 0.0), pos2(100.0, 0.0), pos2(100.0, 10.0)];
+    let points =
+        path_edit::ScreenPath::sharp(vec![pos2(0.0, 0.0), pos2(100.0, 0.0), pos2(100.0, 10.0)]);
     let list = path_edit::handles(&points, [false, true]);
     let grabs: Vec<Grab> = list.iter().map(|(g, _)| *g).collect();
     assert_eq!(
@@ -872,4 +877,135 @@ fn handles_list_corners_free_ends_and_long_segments() {
         vec![Grab::Corner(0), Grab::End(WireSide::To), Grab::Segment(0)],
         "no square on the attached end, no dot on the short segment"
     );
+}
+
+/// Round corner 0 of the fixture's dogleg by `radius` through the engine.
+fn round(f: &mut Fixture, radius: f64) -> TestResult {
+    let operation = Operation::Schematic(SchematicCommand::SetWireRadius {
+        wire: f.wire,
+        index: 0,
+        radius,
+    });
+    f.engine.apply(f.engine.revision(), operation)?;
+    Ok(())
+}
+
+/// Where the middle of a `radius` arc lies at the fixture's corner 0, which
+/// turns from +x (R90.2) to +y (towards R91): on the line halving it, inward.
+fn arc_middle(f: &Fixture, radius: f64) -> Point {
+    let reach = radius * (std::f64::consts::SQRT_2 - 1.0) / std::f64::consts::SQRT_2;
+    [f.v[1][0] - reach, f.v[1][1] + reach]
+}
+
+/// A rounded corner is drawn and picked on its arc, not at its cut-off
+/// vertex; its radius dot shows in the arc's middle, and dragging the dot
+/// sends one `wire.set_radius`, previewed as it lands.
+#[test]
+fn a_rounded_corner_is_picked_on_its_arc_and_its_dot_sets_the_radius() -> TestResult {
+    let mut f = fixture()?;
+    round(&mut f, 5.0)?;
+    f.editor.selected_wire = None;
+    click(&mut f.editor, &f.engine, &f.ctx, f.v[1]);
+    assert_eq!(
+        f.editor.selected_wire, None,
+        "the vertex is off the drawn wire"
+    );
+    let (big, small) = (arc_middle(&f, 5.0), arc_middle(&f, 2.5));
+    click(&mut f.editor, &f.engine, &f.ctx, big);
+    assert_eq!(f.editor.selected_wire, Some(f.wire), "the arc is the wire");
+    let (shapes, _) = frame(&mut f.editor, &f.engine, &f.ctx, vec![]);
+    let dot = screen(&f.editor, big);
+    assert!(
+        shapes.iter().any(|s| matches!(s, egui::Shape::Circle(c)
+            if (c.radius - path_edit::ARC_DOT_RADIUS_PX).abs() < 1e-3
+                && c.center.distance(dot) < 0.5)),
+        "the radius dot sits in the arc's middle"
+    );
+    let path = f.path()?;
+    let (preview, sent) = drag(&mut f.editor, &f.engine, &f.ctx, big, small);
+    assert_eq!(preview, Some(path.clone()), "the vertices stay");
+    match &sent {
+        Some(Operation::Schematic(SchematicCommand::SetWireRadius { radius, index, .. })) => {
+            assert_eq!((*index, *radius), (0, 2.5));
+        }
+        other => return Err(format!("{other:?}").into()),
+    }
+    f.accept(sent, "wire.set_radius")?;
+    let radius = |f: &Fixture| f.engine.project().wire(f.wire).map(|w| w.corners[0].radius);
+    assert_eq!(radius(&f), Some(2.5));
+    assert_eq!(f.path()?, path);
+    f.engine.undo()?;
+    assert_eq!(radius(&f), Some(5.0), "one undo step");
+    Ok(())
+}
+
+/// A on a picked corner rounds it by the Wire tool's radius, and again makes
+/// it sharp; each is one undo step.
+#[test]
+fn a_rounds_the_picked_corner_and_makes_it_sharp() -> TestResult {
+    let mut f = fixture()?;
+    frame(&mut f.editor, &f.engine, &f.ctx, vec![]);
+    let a = key(egui::Key::A, egui::Modifiers::NONE);
+    let (_, sent) = frame(&mut f.editor, &f.engine, &f.ctx, vec![a.clone()]);
+    assert!(sent.is_none(), "no corner picked");
+    click(&mut f.editor, &f.engine, &f.ctx, f.v[2]);
+    let (_, sent) = frame(&mut f.editor, &f.engine, &f.ctx, vec![a.clone()]);
+    f.accept(sent, "wire.set_radius")?;
+    let radii = |f: &Fixture| -> Vec<f64> {
+        f.engine
+            .project()
+            .wire(f.wire)
+            .map(|w| w.corners.iter().map(|c| c.radius).collect())
+            .unwrap_or_default()
+    };
+    assert_eq!(radii(&f), vec![0.0, 2.5]);
+    let (_, sent) = frame(&mut f.editor, &f.engine, &f.ctx, vec![a]);
+    f.accept(sent, "wire.set_radius")?;
+    assert_eq!(radii(&f), vec![0.0, 0.0]);
+    Ok(())
+}
+
+/// The Wire tool's A is sticky and rounds every new corner by the card's
+/// radius; the drawn wire is still one `wire.draw`.
+#[test]
+fn the_wire_tool_rounds_new_corners_with_a() -> TestResult {
+    let mut f = fixture()?;
+    f.editor.selected_wire = None;
+    f.editor.tool = Tool::Wire;
+    frame(&mut f.editor, &f.engine, &f.ctx, vec![]);
+    let a = key(egui::Key::A, egui::Modifiers::NONE);
+    frame(&mut f.editor, &f.engine, &f.ctx, vec![a]);
+    assert!(f.editor.wire_arc);
+    click(&mut f.editor, &f.engine, &f.ctx, [0.0, -415.0]);
+    click(&mut f.editor, &f.engine, &f.ctx, [15.0, -420.0]);
+    let (_, sent) = frame(
+        &mut f.editor,
+        &f.engine,
+        &f.ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    // The drawing applies as it is shown (an update without a review).
+    let command = match &sent {
+        Some(Operation::Update(update)) => match &update.change {
+            Change::Schematic { command } => Some(command),
+            _ => None,
+        },
+        _ => None,
+    };
+    match command {
+        Some(SchematicCommand::DrawWire { corners, .. }) => {
+            assert_eq!(
+                corners,
+                &vec![Corner {
+                    at: [15.0, -415.0],
+                    radius: 2.5
+                }]
+            );
+        }
+        other => return Err(format!("{other:?}").into()),
+    }
+    f.engine
+        .apply(f.engine.revision(), sent.ok_or("nothing sent")?)?;
+    assert!(f.editor.wire_arc, "A stays on for the next wire");
+    Ok(())
 }
