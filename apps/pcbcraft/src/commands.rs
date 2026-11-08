@@ -1180,7 +1180,7 @@ fn defaults() -> Vec<Command> {
             .keywords("log history notifications"),
         app("app.settings", "Settings…", A::Settings)
             .chord(Chord::cmd(K::Comma))
-            .icon("params")
+            .icon("settings")
             .keywords("preferences options keyboard keymap shortcuts rebind keys"),
         app("library.sources", "Library sources…", A::LibrarySources)
             .icon("component")

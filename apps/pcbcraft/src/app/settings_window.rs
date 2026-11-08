@@ -195,7 +195,7 @@ impl SettingsWindow {
         let mut action = None;
         let mut reveal_changed = false;
         let mut waiver_changed = false;
-        let closed = ui_kit::Window::new(egui::Id::unique("app-settings"), "params", "Settings")
+        let closed = ui_kit::Window::new(egui::Id::unique("app-settings"), "settings", "Settings")
             .show_body(ctx, |ui| {
                 kit::section(ui, "settings-production", "Production", true, None, |ui| {
                     waiver_changed = kit::check_row(
@@ -558,7 +558,7 @@ mod tests {
     /// scrolling brings its last row fully into view instead of leaving
     /// it cut at the window's bottom edge.
     #[test]
-    fn the_settings_body_scrolls_to_its_last_row() {
+    fn the_settings_body_scrolls_to_its_last_row() -> Result<(), String> {
         fn texts(shape: &egui::Shape, clip: egui::Rect, out: &mut Vec<(egui::Rect, egui::Rect)>) {
             match shape {
                 egui::Shape::Text(t) => out.push((t.galley.rect.translate(t.pos.to_vec2()), clip)),
@@ -603,6 +603,15 @@ mod tests {
             below(&frame(vec![])) > 0,
             "the body is taller than the window"
         );
+        // Run 3, finding 19: the card takes the room the screen leaves
+        // (it once kept its first frame's height and cut a row mid-screen).
+        let card = ctx
+            .memory(|m| m.area_rect(egui::Id::unique("app-settings")))
+            .ok_or("no Settings card")?;
+        assert!(
+            card.bottom() > screen.bottom() - 120.0,
+            "the card stops at {card:?}"
+        );
         let center = ctx
             .memory(|m| m.area_rect(egui::Id::unique("app-settings")))
             .map_or(screen.center(), |r| r.center());
@@ -618,6 +627,7 @@ mod tests {
         }
         let end = frame(vec![]);
         assert_eq!(below(&end), 0, "every row is reachable");
+        Ok(())
     }
 
     /// Clicking a key cap records the next chord, which no one else sees;
