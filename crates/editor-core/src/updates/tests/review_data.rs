@@ -153,7 +153,13 @@ fn a_removal_is_listed_by_area_kind_and_object_with_refs() -> Result<()> {
     );
     // The summary names the instance and what goes with it a user knows.
     assert_eq!(plan.summary, "Removes R1, 1 wire and its PCB placement");
-    // The conflicting track names its net, layer and length.
+    // The shared track then joins R2.1 alone, of its own net: it stays.
+    assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+    // Disconnecting the wire puts R1.2 and R2.1 on different nets: the
+    // track joining them conflicts, named by net, layer and length.
+    let plan = engine.preview_update(Change::Schematic {
+        command: SchematicCommand::Disconnect { wire: wire.id },
+    });
     let [conflict] = plan.conflicts.as_slice() else {
         return Err(invalid("one conflict expected"));
     };
@@ -173,14 +179,18 @@ fn a_removal_is_listed_by_area_kind_and_object_with_refs() -> Result<()> {
         conflict.length_mm
     );
     assert_eq!(conflict.reason, ConflictReason::NetChanged);
-    assert_eq!(conflict.pad, None);
-    assert_eq!(conflict.ack, "Remove that track (Top, 5.6 mm)");
     assert!(
-        conflict
-            .line
-            .starts_with(&format!("Track on {}", conflict.net_name)),
-        "{}",
-        conflict.line
+        matches!(conflict.pad, Some(ObjectRef::Pad { .. })),
+        "the pad on the other net is named: {:?}",
+        conflict.pad
+    );
+    assert_eq!(conflict.ack, "Remove that track (Top, 5.6 mm)");
+    assert_eq!(
+        conflict.line,
+        format!(
+            "Track on {} would join pads the net no longer joins",
+            conflict.net_name
+        )
     );
     Ok(())
 }
@@ -330,6 +340,7 @@ fn a_removal_diff_resolves_every_finding_it_no_longer_has() -> Result<()> {
     let before = findings(engine.project());
     let (plan, next) = preview(
         engine.project(),
+        &engine.copper_graph(),
         engine.revision(),
         Change::Instance {
             edit: InstanceChange::Remove { instance: r1 },

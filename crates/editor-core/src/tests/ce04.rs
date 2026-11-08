@@ -201,7 +201,10 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
         (1..=6).map(pad_of).collect::<Vec<_>>(),
         vec![vec![2], vec![1], vec![3], vec![5], vec![6], vec![4]]
     );
-    // Route a stub on Q1.1's net so unplacing A affects copper.
+    // Route a stub on Q1.1's net. It joins Q1.1's pad alone, so unplacing
+    // A or removing Q1 leaves it in place: only copper that would join pads
+    // of different nets is offered for removal (slice 4 of
+    // `docs/copper-graph.md`).
     let land = pads
         .iter()
         .find(|p| p.terminal == ep(q1, 1))
@@ -358,7 +361,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
     let mut expected = a_wires.clone();
     expected.sort_unstable();
     assert_eq!(removed, expected);
-    assert_eq!(plan.conflicting_tracks, vec![track]);
+    assert!(plan.conflicting_tracks.is_empty(), "{:?}", plan.conflicts);
     for terminal in [1, 2] {
         let name = engine
             .project()
@@ -376,7 +379,15 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
     engine.apply_update(plan.revision, plan.change, true)?;
     assert_eq!(engine.revision(), revision + 1);
     assert!(engine.project().occurrence(occ_a).is_none());
-    assert!(engine.project().tracks.is_empty());
+    assert_eq!(
+        engine
+            .project()
+            .tracks
+            .iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>(),
+        [track]
+    );
     let after = engine.document().clone();
     engine.undo()?;
     assert_eq!(engine.document(), &before);
@@ -405,7 +416,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
     removed.sort_unstable();
     assert_eq!(removed, expected);
     assert_eq!(plan.removed_placements, vec![q1]);
-    assert_eq!(plan.conflicting_tracks, vec![track]);
+    assert!(plan.conflicting_tracks.is_empty(), "{:?}", plan.conflicts);
     // Every net Q1 leaves is listed as an electrical change.
     let mut listed = 0;
     for terminal in 1..=6 {

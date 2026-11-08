@@ -1568,10 +1568,13 @@ mod tests {
             })
             .map(|n| n.id)
             .ok_or("the shared net")?;
+        // A via in R2.1's pad: disconnecting the wire puts R2.1 on another
+        // net, so the via would join a pad its net no longer joins. (A via
+        // joining no pad stays; slice 4 of `docs/copper-graph.md`.)
         engine.apply(
             engine.revision(),
             Operation::Layout(LayoutCommand::AddVia {
-                via: ViaRequest::through(net, [12.0, 20.0]),
+                via: ViaRequest::through(net, [15.2, 8.0]),
             }),
         )?;
         let change = Change::Schematic {

@@ -186,17 +186,35 @@ fn disconnect_and_remove_plan_wires_placements_and_conflicts_atomically() -> Res
     assert_eq!(engine.project().tracks[0].id, unaffected);
     engine.undo()?;
     assert_eq!(engine.project(), &before);
+    // Removing R1 leaves N2 with R2.1 alone: the shared track then joins
+    // one pad, of its own net, so it is not offered for removal (slice 4
+    // of `docs/copper-graph.md`). It stays for rerouting, with a warning.
     let plan = engine.preview_update(Change::Instance {
         edit: InstanceChange::Remove { instance: r1 },
     });
     assert_eq!(plan.removed_placements, vec![r1]);
     assert_eq!(plan.removed_wires, vec![wire]);
-    assert_eq!(plan.conflicting_tracks, vec![shared]);
-    engine.apply_update(plan.revision, plan.change, true)?;
+    assert!(plan.conflicting_tracks.is_empty());
+    assert!(
+        plan.warning_lines.iter().any(|w| w.line
+            == "A track on N2 loses R1 pad 2; it stays for rerouting"
+            && w.refs.contains(&ObjectRef::Track { id: shared })),
+        "{:#?}",
+        plan.warning_lines
+    );
+    engine.apply_update(plan.revision, plan.change, false)?;
     assert!(engine.project().instance(r1).is_none());
     assert!(engine.project().occurrences_of(r1).next().is_none());
     assert_eq!(engine.project().placements.len(), 1);
-    assert_eq!(engine.project().tracks[0].id, unaffected);
+    assert_eq!(
+        engine
+            .project()
+            .tracks
+            .iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>(),
+        [shared, unaffected]
+    );
     engine.undo()?;
     assert_eq!(engine.project(), &before);
     Ok(())
@@ -487,8 +505,13 @@ fn pcb_sync_preview_adds_only_missing_placement_and_preserves_copper() -> Result
     Ok(())
 }
 
+/// Declaring R1.1 no-connect leaves it on its own net, so the track on
+/// it joins one pad of its own net before and after: it is not offered for
+/// removal (slice 4 of `docs/copper-graph.md`; it was, as copper of a net
+/// whose terminal changed). Only copper that would join pads of different
+/// nets is.
 #[test]
-fn newly_device_declared_nc_removes_singleton_net_copper_only_explicitly() -> Result<()> {
+fn newly_device_declared_nc_keeps_copper_that_joins_no_other_net() -> Result<()> {
     let Routed {
         mut engine,
         fixture: f,
@@ -502,16 +525,10 @@ fn newly_device_declared_nc_removes_singleton_net_copper_only_explicitly() -> Re
         })
     })?;
     let plan = engine.preview_update(revision_change(r1, target));
-    assert_eq!(plan.conflicting_tracks, vec![nc_track]);
-    let before = engine.project().clone();
-    assert!(
-        engine
-            .apply_update(plan.revision, plan.change.clone(), false)
-            .is_err()
-    );
-    assert_eq!(engine.project(), &before);
-    engine.apply_update(plan.revision, plan.change, true)?;
-    assert_eq!(engine.project().tracks.len(), 2);
+    assert!(plan.conflicting_tracks.is_empty(), "{:?}", plan.conflicts);
+    engine.apply_update(plan.revision, plan.change, false)?;
+    assert_eq!(engine.project().tracks.len(), 3);
+    assert!(engine.project().tracks.iter().any(|t| t.id == nc_track));
     Ok(())
 }
 
@@ -1195,6 +1212,97 @@ fn a_package_change_is_listed_once_for_every_instance_it_reaches() -> Result<()>
         body[0].starts_with("R1, R2: body 2.0×1.2×0.6 → 1.6×0.8×0.45 mm"),
         "{body:?}"
     );
+    Ok(())
+}
+
+/// Splitting a net offers only the copper that would join pads now on
+/// different nets. Copper of the net elsewhere that joins no such pad (here
+/// a floating track) stays; the old rule offered every track of the net.
+#[test]
+fn a_split_offers_only_the_copper_joining_both_sides() -> Result<()> {
+    let Routed {
+        mut engine,
+        r1,
+        shared,
+        unaffected,
+        ..
+    } = routed()?;
+    let floating = route(&mut engine, ep(r1, 2), [20.0, 20.0], [24.0, 20.0])?;
+    let wire = engine.project().wires[0].id;
+    let plan = engine.preview_update(Change::Schematic {
+        command: SchematicCommand::Disconnect { wire },
+    });
+    assert_eq!(plan.conflicting_tracks, vec![shared]);
+    let [conflict] = plan.conflicts.as_slice() else {
+        return Err(invalid("one conflict expected"));
+    };
+    assert_eq!(conflict.reason, ConflictReason::NetChanged);
+    // The conflict names the pad its copper would join on the other net.
+    let Some(ObjectRef::Pad { instance, .. }) = conflict.pad else {
+        return Err(invalid("the pad of the other net is named"));
+    };
+    let net_after = |engine: &Engine, terminal| {
+        stage_change(engine.project(), &plan.change)
+            .ok()
+            .and_then(|next| next.net_of(terminal).map(|n| n.id))
+    };
+    let r2 = by_designator(&engine, "R2")?;
+    let pad_terminal = if instance == r1 { ep(r1, 2) } else { ep(r2, 1) };
+    assert_ne!(
+        net_after(&engine, pad_terminal),
+        Some(conflict.net),
+        "the named pad is on another net after the update"
+    );
+    engine.apply_update(plan.revision, plan.change, true)?;
+    assert_eq!(
+        engine
+            .project()
+            .tracks
+            .iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>(),
+        [unaffected, floating]
+    );
+    Ok(())
+}
+
+/// A net that only loses a terminal keeps all its copper: R3.1 joins N2
+/// and leaves it again, and the track between R1.2 and R2.1 still joins
+/// pads of N2 only. The old rule offered it for removal.
+#[test]
+fn a_net_losing_an_unrouted_terminal_keeps_its_copper() -> Result<()> {
+    let Routed {
+        mut engine,
+        fixture: f,
+        r1,
+        ..
+    } = routed()?;
+    let (r3, _) = place(&mut engine, &f, "R3", 1, [30.0, 0.0])?;
+    let wired = engine.preview_update(Change::Schematic {
+        command: SchematicCommand::Connect {
+            from: crate::schematic::WireTarget::Terminal(ep(r3, 1)),
+            to: crate::schematic::WireTarget::Terminal(ep(r1, 2)),
+        },
+    });
+    engine.apply_update(wired.revision, wired.change, false)?;
+    let synced = engine.preview_update(Change::SyncPcb {});
+    engine.apply_update(synced.revision, synced.change, false)?;
+    let wire = engine
+        .project()
+        .wires
+        .iter()
+        .find(|w| w.from.terminal() == Some(ep(r3, 1)) || w.to.terminal() == Some(ep(r3, 1)))
+        .map(|w| w.id)
+        .ok_or_else(|| invalid("R3 wire"))?;
+    let tracks = engine.project().tracks.clone();
+    let plan = engine.preview_update(Change::Schematic {
+        command: SchematicCommand::Disconnect { wire },
+    });
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(plan.conflicting_tracks.is_empty(), "{:?}", plan.conflicts);
+    assert!(plan.conflicting_vias.is_empty());
+    engine.apply_update(plan.revision, plan.change, false)?;
+    assert_eq!(engine.project().tracks, tracks);
     Ok(())
 }
 

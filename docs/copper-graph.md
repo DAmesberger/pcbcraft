@@ -1,6 +1,6 @@
 # One copper graph (design)
 
-Design for review, 8 November 2026. Base: `component-model` at 32116be. Approved by the founder with all its recommendations. Slice 1 is built; see [Slice 1 as built](#slice-1-as-built).
+Design for review, 8 November 2026. Base: `component-model` at 32116be. Approved by the founder with all its recommendations. Slices 1 and 4 are built; see [Slice 1 as built](#slice-1-as-built) and [Slice 4 as built](#slice-4-as-built).
 
 The founder's requirement: "single copper graph. there is no excuse for duplication. everything needs to be single source of truth." His ruling on pairs: "what is a pin-to-pin link other than a track between two pins". So this design keeps no separate link or branch concept. Copper off a pair's signal path is ordinary net copper. Where it ends at a pin, it is a track between pins. Where it ends at no pad, it is a stub.
 
@@ -339,3 +339,54 @@ On `via_board(10_000, 2_000)` (10,000 through vias on 4 layers, 2,000 tracks, th
 | `BoardCopper::checks` with a fresh graph (graph, clearance, edge, via and courtyard checks) | 23.5 ms | — |
 
 The first version filed every land separately and built in about 30 ms; testing each outline once and joining its lands on the common layers brought it under the target. Incremental update (Q6) is not needed and was not built. The board checks with the graph (23.5 ms) cost about what the old checks did (23.2 ms, plus 5.0 ms for the separate airwire scan), and the graph now also finds stations, stubs and per-layer lands. The engine shares one build between the Issues query and the desktop editor, where there were two scans per revision. Memory was not measured.
+
+## Slice 4 as built
+
+Built on `component-model` at 3ce267d, 8 November 2026.
+
+### What exists
+
+- **The updated board's graph.** `updates::preview` builds `CopperGraph::with_pads(&next, carried)`: the staged board's copper, with every pad on the net its copper had before the update (a pad new to the board keeps its new net). Each island is then one net's copper and the pads it would join after the update. `CopperGraph::of` is now `with_pads(project, layout::pads(project))`; nothing else in the builder changed.
+- **Two additive queries** in `connectivity/islands.rs`: `CopperGraph::islands()` (per island: its net, pads, tracks and vias) and `CopperGraph::copper_at_pad(index)` (the tracks and vias joined to a pad directly).
+- **Conflicts, by the approved rule (Q8).** A track or via is offered for removal when:
+  - its net no longer exists after the update ("Track on N would be left without its net", unchanged); or
+  - its island holds a pad whose net after the update is not the copper's net, on a net the update changes electrically. Every track and via of that island is offered ("Track on N would join pads the net no longer joins"), and the conflict now names that pad, so the review's per-net line locates it.
+
+  A net that only loses a terminal keeps its copper.
+- **Detached and retired warnings** come from the two graphs. The current revision's graph is the engine's cached one, passed into `preview` and `candidate`; the "before" findings reuse it too. A track or via that joined a changed pad directly before is "detached" only when it no longer shares the pad's island after the update. Copper still joined through other copper is not warned about. A pad that leaves the board warns "A track on N loses P; it stays for rerouting" for each track that touched it.
+- **Clearance** to moved pads stays a clearance test: `layout::pad_clearance_conflicts` compares each changed pad only with tracks and vias near it, through a `BoundsGrid` sized by the largest clearance.
+- **The removal review** (one acknowledged line per net in `update_preview.rs`) reads `plan.conflicts`, which this graph now decides; it needed no change.
+
+### Deleted
+
+From `updates.rs`: the pairwise loops over every changed pad × every track and via, their `track_touches_pad` and `via_touches_pad` tests, and the 100,000-pair budget with its blocker ("Too much copper to check"). The blanket `NetChanged` marking of every track and via of a changed net is also gone. `layout::track_touches_pad` and `layout::via_touches_pad` are deleted; nothing else used them.
+
+### Changed expectations, each a correction
+
+- `updates/tests.rs::disconnect_and_remove_plan_wires_placements_and_conflicts_atomically`, second half. Removing R1 used to offer the shared track for removal. Now it is kept, with the "loses R1 pad 2" warning. Apply works without the acknowledgement and keeps the track. After the update, N2 is R2.1 alone, so the track joins one pad of its own net. It only lost a terminal.
+- `updates/tests.rs::newly_device_declared_nc_removes_singleton_net_copper_only_explicitly` is renamed `newly_device_declared_nc_keeps_copper_that_joins_no_other_net`. Declaring R1.1 no-connect leaves it on its own net, so the track on it joins that one pad before and after. The old rule offered it only because the terminal's class changed.
+- `updates/tests/review_data.rs::a_removal_is_listed_by_area_kind_and_object_with_refs`. For the same reason as the first item, the removal has no conflict. The conflict-field assertions (net, layer, 5.6 mm, `NetChanged`, ack, line) now run on disconnecting the wire, a real conflict. There the conflict names the pad on the other net (it was `None`).
+- `layout/via/tests.rs::electrical_changes_to_a_net_with_vias_are_reviewed_updates`. The lone via joined no pad, so it no longer conflicts when the net splits. The test now routes R1.2 to R2.1 through two vias and keeps the lone via. The two route vias and four tracks are offered (a real conflict), and the lone via survives the apply.
+- `tests/ce04.rs::ce04_two_units_share_one_package_placement_and_identity`. The stub routed off Q1.1's pad joins that pad alone. Unplacing unit A, or removing Q1, used to offer it for removal; now the stub stays, and applying the unplace keeps it. It joins no pad of another net.
+- `apps/pcbcraft/src/update_preview.rs::an_update_with_only_via_conflicts_applies_once_acknowledged`. Its via moves from open board (12, 20), where it joined no pad and now stays, into R2.1's pad. R2.1 goes to another net when the wire is disconnected, so the via is a real conflict, and it is the only one.
+- `layout/tests.rs::round_pad_clearance_holds_either_side_of_the_rule` asserts that the track and pad share no island of the graph, in place of the deleted `track_touches_pad`.
+
+New tests:
+
+- `a_split_offers_only_the_copper_joining_both_sides`: disconnecting N2 offers only the track that joins R1.2 and R2.1, naming the pad on the other net. A floating N2 track elsewhere stays; the old rule offered it too.
+- `a_net_losing_an_unrouted_terminal_keeps_its_copper`: R3.1 joins N2 and then leaves it, and nothing is offered. The old rule offered the routed track.
+
+The real conflicts stay offered: a remapped pad, a moved foreign pad (clearance), a renumbered terminal, a disconnected wire, and the vias of a split route. The ESP32 reference board stays at 0 issues, and `regenerate.sh` reproduces its `.pcbcraft` and fab output byte for byte. The schematic PDF was left as committed.
+
+### Measured
+
+These timings are on `via_board(10_000, 2_000)`, test profile, Apple M5 Max shared with other builds, best of 5 (`an_update_preview_on_ten_thousand_vias_stays_quick`). The update disconnects a wire of the net that has 5,000 vias:
+
+| Work | Before slice 4 | After |
+| --- | --- | --- |
+| `CopperGraph::with_pads` of the updated board | — | 6.6–7.8 ms (the plain build is 7.6 ms in the same run) |
+| `Engine::preview_update`, both boards' checks included | 92.7 ms | 80.6 ms |
+| Offered for removal | 985 tracks, 5,003 vias (every one on the net) | 14 tracks, 3 vias (the copper joining the split pads) |
+
+The preview builds one extra graph; it reuses the engine's graph for the current board and its findings. Most of the preview is the two boards' full checks, as before.
+
