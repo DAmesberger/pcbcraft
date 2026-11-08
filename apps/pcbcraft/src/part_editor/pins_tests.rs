@@ -799,6 +799,57 @@ fn ldo_paste_imports_every_row() -> TestResult {
     Ok(())
 }
 
+/// Run 3, finding 13: I²C lines import open drain unless the type states a
+/// drive, so a correct bus raises no open-drain contention; other outputs
+/// stay push-pull, and SCLK (SPI) is not SCL.
+#[test]
+fn i2c_lines_default_to_open_drain() -> TestResult {
+    use pcbcraft_core::functions::Drive;
+    let rows = pins_table::split_table(
+        "Pin\tName\tType\tFunction\n\
+         1\tSDA\tio\t\n\
+         2\tPB6\tio\tI2C1_SCL/USART1_TX\n\
+         3\tPB5\tio\tSPI1_SCLK\n\
+         4\tSCL0\toutput\t\n\
+         5\tSDA1\tpush-pull\t\n\
+         6\tSCL\tinput\t\n",
+        Delimiter::Auto,
+    )?;
+    let mapping = Mapping {
+        list_separator: "/".into(),
+        ..mapping_of(vec![
+            ColumnMap::Number,
+            ColumnMap::Name,
+            ColumnMap::Type,
+            ColumnMap::Function,
+        ])
+    };
+    let (document, problems) = pins_table::document(&rows, &mapping, "MCU", "QFN");
+    let document = document.ok_or("no document")?;
+    assert!(problems.is_empty(), "{problems:?}");
+    let drives = |i: usize| -> Vec<(String, Drive)> {
+        document.pins[i]
+            .functions
+            .iter()
+            .map(|f| (f.label.clone(), f.drive))
+            .collect()
+    };
+    assert_eq!(drives(0), vec![("SDA".into(), Drive::OpenDrain)]);
+    assert_eq!(
+        drives(1),
+        vec![
+            ("I2C1_SCL".into(), Drive::OpenDrain),
+            ("USART1_TX".into(), Drive::PushPull)
+        ]
+    );
+    assert_eq!(drives(2), vec![("SPI1_SCLK".into(), Drive::PushPull)]);
+    assert_eq!(drives(3), vec![("SCL0".into(), Drive::OpenDrain)]);
+    // A stated drive wins, and an input drives nothing.
+    assert_eq!(drives(4), vec![("SDA1".into(), Drive::PushPull)]);
+    assert_eq!(drives(5), vec![("SCL".into(), Drive::None)]);
+    Ok(())
+}
+
 /// An unknown type never drops a row: it imports as passive, flagged
 /// uncertain, and the preview and toast name it by row.
 #[test]

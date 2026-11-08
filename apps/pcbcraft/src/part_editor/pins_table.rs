@@ -769,6 +769,45 @@ pub fn default_drive(direction: Direction) -> Drive {
     }
 }
 
+/// The drive of a function labelled `label` whose pin type states no
+/// drive, from its type's default `drive`: an I²C line (a label whose word
+/// is SDA or SCL, as in "I2C1_SDA" or "SCL0") is open drain, as the bus
+/// requires; every other function keeps `drive`.
+pub fn labelled_drive(drive: Drive, label: &str) -> Drive {
+    let i2c = label
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|word| {
+            let word = word.to_ascii_uppercase();
+            ["SDA", "SCL"].iter().any(|line| {
+                word.strip_prefix(line)
+                    .is_some_and(|rest| rest.chars().all(|c| c.is_ascii_digit()))
+            })
+        });
+    if drive == Drive::PushPull && i2c {
+        Drive::OpenDrain
+    } else {
+        drive
+    }
+}
+
+/// `text` lower-cased, with `-` and `_` as spaces and single spaces.
+fn normalized(text: &str) -> String {
+    text.to_ascii_lowercase()
+        .replace(['-', '_'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Whether a Pin type cell states a drive (push-pull or open drain), so
+/// [`labelled_drive`] leaves it alone.
+pub fn states_drive(text: &str) -> bool {
+    matches!(
+        normalized(text).as_str(),
+        "push pull" | "open drain" | "open collector" | "od" | "oc"
+    )
+}
+
 /// Read a Pin type cell, ignoring case, spacing, `-` and `_`: power
 /// (`power`, `power input`, `power in`, `supply`, `pwr`, `ground`,
 /// `gnd`, `vss`, `vdd`), `power output`/`power out`, `input`/`in`,
@@ -777,12 +816,7 @@ pub fn default_drive(direction: Direction) -> Drive {
 /// `no connect`, `reserved`/`rsv`, or empty. The person maps the column;
 /// the text is a stated pin type, not a name to guess from.
 pub fn pin_type(text: &str) -> Option<PinType> {
-    let text = text
-        .to_ascii_lowercase()
-        .replace(['-', '_'], " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let text = normalized(text);
     let electrical =
         |direction| PinType::Electrical(direction, SignalKind::Digital, default_drive(direction));
     Some(match text.as_str() {
@@ -1076,6 +1110,13 @@ pub fn document(
             ),
         };
         let kind = kind.unwrap_or(PinType::Unstated);
+        let drive_of = |label: &str| {
+            if states_drive(stated) {
+                drive
+            } else {
+                labelled_drive(drive, label)
+            }
+        };
         let mut functions = Vec::new();
         let mut row_ok = true;
         for text in function_columns.iter().map(|i| cell(*i)) {
@@ -1098,7 +1139,7 @@ pub fn document(
                     label: label.to_owned(),
                     direction,
                     signal,
-                    drive,
+                    drive: drive_of(label),
                     peripheral: peripheral.map(str::to_owned),
                     role: role.map(str::to_owned),
                     mux: mux.map(str::to_owned),
@@ -1161,7 +1202,7 @@ pub fn document(
                 label: name.to_owned(),
                 direction,
                 signal,
-                drive,
+                drive: drive_of(name),
                 peripheral: None,
                 role: None,
                 mux: None,
