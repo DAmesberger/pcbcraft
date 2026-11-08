@@ -173,7 +173,12 @@ fn disjoint(native: &mut Native, definition: &ModelDefinition) -> Result<()> {
 
 /// [`disjoint`] within a relative `tolerance`: curved faces are measured
 /// through their tessellation, so the volumes agree only to about 1e-5.
-fn disjoint_within(
+/// Bodies that touch only along a line or at a point (a stake under the
+/// shell's round underside) are disjoint too: the join keeps them in one
+/// body (`touching: one_body`), as Solidcraft would otherwise make each a
+/// body of its own and the union's volume would leave it out. A notice the
+/// join gives, or a body it splits off, fails the check.
+pub(super) fn disjoint_within(
     native: &mut Native,
     definition: &ModelDefinition,
     tolerance: f64,
@@ -187,16 +192,27 @@ fn disjoint_within(
     let Some((first, rest)) = names.split_first() else {
         return Err(Error::Verification("no bodies".into()));
     };
-    native.call(
+    let reply = native.call(
         "solid.combine",
         serde_json::json!({"target": first, "tools": rest, "operation": "join",
-            "keep_tools": true, "new_component": false}),
+            "touching": "one_body", "keep_tools": true, "new_component": false}),
     )?;
+    if let Some(notice) = reply.get("notice").filter(|n| !n.is_null()) {
+        return Err(Error::Verification(format!("join notice: {notice}")));
+    }
+    if let Some(created) = reply
+        .get("created_bodies")
+        .and_then(serde_json::Value::as_array)
+        .filter(|c| !c.is_empty())
+    {
+        return Err(Error::Verification(format!("join split off {created:?}")));
+    }
     let union = volume(native, first)?;
-    assert!(
-        (union - total).abs() < tolerance * total.max(1.0),
-        "bodies overlap: {total} mm³ apart, {union} mm³ joined"
-    );
+    if (union - total).abs() >= tolerance * total.max(1.0) {
+        return Err(Error::Verification(format!(
+            "bodies overlap: {total} mm³ apart, {union} mm³ joined"
+        )));
+    }
     Ok(())
 }
 
@@ -287,22 +303,7 @@ fn a_usb_c_receptacle_matches_the_drawing_outline() -> Result<()> {
     assert_eq!(material("pkgt tongue"), Some(MaterialId::Lcp));
     assert_eq!(material("pkgt tail 1"), Some(MaterialId::Gold));
     assert_eq!(native.evaluation_error(), None);
-    // The stakes touch the shell along a line, where the round underside
-    // reaches their inner face. SMLib's join of such a pair gives back the
-    // target alone, which would read as an overlap, so they are checked by
-    // hand: the shell's underside rises away from that line (x beyond the
-    // inner face), and each stake's top stops at it.
-    let form = pcbcraft_core::library::UsbCForm::typical();
-    let radius = form.opening[1] / 2.0 + form.shell_thickness;
-    let beyond = radius - form.shell_thickness;
-    let underside = form.opening_z - (radius * radius - beyond * beyond).sqrt();
-    for k in 1..=4 {
-        let (_, hi) = bounds(&native, &format!("pkgt stake {k}"))?;
-        near(hi[2], underside, "stake top at the shell's underside");
-    }
-    let mut joined = definition.clone();
-    joined.bodies.retain(|b| !b.name.starts_with("pkgt stake"));
-    disjoint_within(&mut native, &joined, 1e-4)
+    disjoint_within(&mut native, &definition, 1e-4)
 }
 
 #[test]
