@@ -184,6 +184,66 @@ Generated package models have rounded edges so they catch highlights instead of 
 
 Tin and tin-lead were lowered (from 0.70 and 0.68) and made smoother (HASL from 0.20, solder from 0.15, terminations from 0.35) after the visual check found HASL pads and fillets reading as flat white paper: at a high F0 and moderate roughness the studio's average saturated to a uniform white, with no reflection detail. Both changes are **est.**
 
+## Look diagnosis
+
+Measured headless on 8 November 2026 at fork `21ac01f4a` (studio `Contrast` turned 145°, exposure 1.1), before the studio and look retunes (Solidcraft track L, then Pcbcraft track PL). The tests and the harness are in `apps/pcbcraft/src/viewport/pictures/look.rs`.
+
+**How pixels are assigned.** The viewport draws a backdrop behind the model, so the clear colour does not mark empty pixels. A material's pixels are those that change when only its bodies are redrawn matte red and then matte blue. Both redraws have the same specular part, so only that material's diffuse light differs. Scene-referred values undo the PBR Neutral tone map (an exact inverse below the shoulder) and divide out the exposure. The earlier gold test kept every pixel that did not match the clear colour, so its numbers (0.17, 0.21 and 0.24 against the 0.30 bar) measured mostly the backdrop, not the pads.
+
+**ENIG tests.** The pads of the demo board are drawn alone from 8 sides at 40° and from above. They are drawn once as ENIG and once as a neutral reference metal (F0 0.95, the same roughness 0.28).
+- `exposed_gold_is_gold_against_a_reference_metal` (physics) passes. Gold reflects 0.795–0.799 of the reference in every view (target 0.80 ± 0.10; expected 0.756 / 0.95 = 0.796). With the reference's tint divided out, the chromaticity is G/R 0.730–0.733 and B/R 0.301–0.313 in all 9 views (target G/R 0.73 ± 0.08, B/R 0.30 ± 0.10, from gold's measured optical constants). The material and its shading are right.
+- `exposed_gold_reads_as_gold_in_the_studio` (art-direction target; ignored until tracks L and PL land). No view goes black: the lowest mean is 0.111. One view has a clear highlight: the best 95th percentile is 0.599. From above, the pads measure a mean of 0.114 against a 0.30 target, and their display B/R is 0.15, which reads as olive.
+- `the_finish_hides_the_pad_copper_under_it` (ignored, fails now). See the rose cast below.
+
+**The rose cast is bare copper, not gold.** In the showcase diagnosis, pad copper shows where the finish should be:
+
+| View | Finish pixels | Pad copper pixels | Pad copper colour (display G/R, B/R) |
+|---|---|---|---|
+| Top, 85° | 3091 | 0 | – |
+| Turned, 40° | 333 | 1651 | `#7B6259` (0.62, 0.51) |
+| Oblique, 25° | 231 | 1358 | `#977C72` (0.65, 0.55) |
+| Close-up, 30°, 12 mm | 970 | 1279 | `#D1AEA2` (0.66, 0.56) |
+| Close-up grazing, 12° | 1665 | 505 | `#BCA096` (0.70, 0.61) |
+
+- The VM's rose ENIG, `#BC9A8D` (G/R 0.64, B/R 0.54), is this copper. Copper's F0 is (0.955, 0.638, 0.538), so G/R 0.67 and B/R 0.56.
+- Gold mixed with any grey or white reflection would raise G/R above 0.73, never lower it. The finish's own pixels keep gold's hue in every view (scene G/R 0.74–0.76).
+- The finish covers the copper's top and sides 5 µm thick (`appearance.rs`), so from above the board no pad copper should show. From above, none does. From oblique views, the copper wins most of each pad.
+- This fits the material stream's depth bias of some pixels' depth slope. That bias spans about 20 µm at overview (commit `c49269b`), well over 5 µm. `model_scene::covered` keeps tracks, laminate and mask undersides out of the stream, but not pad copper under a finish.
+- Fixing this is a renderer change in Pcbcraft. It is not a material or studio change.
+
+**Olive from above** is the studio and the tone map, not the F0. From above, the scene-referred hue is gold (G/R 0.74, B/R 0.31). The radiance is low, though: the reference metal reads only 0.15 there. PBR Neutral's toe subtracts most of the darkest channel at low levels, so the display B/R falls to 0.15. The founder's decision is a soft top light in the studio, with no change to F0.
+
+**Showcase, per material** (display luminance and display-linear chromaticity; the full table, with percentiles and scene-referred values, comes from the harness):
+
+| View | Mask mean / p95 | Mask colour | Gold mean | Silk mean / colour | Laminate mean |
+|---|---|---|---|---|---|
+| Overview | 0.068 / 0.214 | `#305138` | 0.287 | 0.404, `#ABAAA8` | 0.142 |
+| Turned, 40° | 0.046 / 0.078 | `#134523` | 0.169 | 0.248, `#898886` | 0.106 |
+| Top, 85° | 0.043 / 0.073 | `#07441D` | 0.116 | 0.374, `#A5A5A2` | 0.101 |
+| Oblique, 25° | 0.085 / 0.221 | `#3D5844` | 0.203 | 0.296, `#949492` | 0.151 |
+| Grazing, 10° | 0.226 / 0.793 | `#7A867E` (G/R 1.23) | 0.252 | 0.312, `#989895` | 0.152 |
+| Grazing, 5° | 0.218 / 0.807 | `#79837C` (G/R 1.19) | 0.329 | 0.304, `#969694` | 0.144 |
+
+Reading the table:
+- **Mask at grazing angles** loses its green: G/R falls from 2–27 to about 1.2, and the mean triples. The coat's Fresnel reflects the bright cyclorama. That is the VM's cream-grey (owner: L for the cyclorama levels, then PL).
+- **Silkscreen** sits at a luminance of 0.25–0.40 (`#898886`–`#ABAAA8`) and is neutral (B/R 0.96). The art target is near-white (owner: L for the top light, PL for the grain).
+- **Gold** pixels are few at overview (28 at 640 × 480). The pad copper problem above is larger than the gold's own tone.
+
+**Mask materials (for track PL; not unified here).**
+- The board's mask is a diffuse pigmented body under a clear coat. The body is `mask_body(green, FR-4, 20 µm)` with roughness 1 and IOR 1. The coat has weight 1, roughness 0.06 and IOR 1.52. The mask carries the orange-peel detail.
+- The ESP32 module's board (`models/module.rs`) uses editor-core `MaterialId::SolderMaskGreen`: a dielectric (0.0118, 0.116, 0.032) with roughness 0.20, IOR 1.52, no coat and no peel. Its antenna uses `SolderMaskOverCopper`, (0.064, 0.237, 0.069), with the same 0.20 and no coat.
+- At grazing angles, the board's 0.06 coat mirrors the cyclorama, while the module's 0.20 uncoated surface stays green.
+- The module's pads use `MaterialId::Gold` (1.000, 0.782, 0.344; roughness 0.30). The board's ENIG is (1.0, 0.73, 0.30; 0.28).
+
+**Rerun and compare.**
+1. `PCBCRAFT_LOOK_OUT=before.tsv cargo test --profile ci -p pcbcraft look_diagnosis -- --ignored --nocapture` writes the table. It covers 9 views (overview, turned 40°, top 85°, two obliques at 25°, grazing 10° and 5°, and close-ups at 30° and 12°) and 6 materials (mask, gold, silk, laminate, pad copper and other copper).
+2. After a change, `PCBCRAFT_LOOK_BASELINE=before.tsv` prints each row's change in mean, p95 and scene G/R and B/R.
+3. Optional settings:
+   - `PCBCRAFT_LOOK_BOARD=file.pcbcraft` measures another design.
+   - `PCBCRAFT_LOOK_OFF=coat,detail` turns off the clear coats or the surface detail.
+   - `PCBCRAFT_TWEAK` (`lights=0`, `intensity=0`, `exposure=…`, `rotation=…`, `studio=…`) works as it does for the pictures.
+4. The ENIG tests run with `cargo test -p pcbcraft exposed_gold` (add `-- --include-ignored` for the art target).
+
 ## Sources
 
 The core table's source keys are `johnson-christy-1972`, `rakic-1998`, `hoffman` and `palik-crc` (Palik and the CRC Handbook), the first four entries below; `est` marks an estimate.

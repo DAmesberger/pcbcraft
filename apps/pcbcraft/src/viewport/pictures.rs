@@ -262,56 +262,8 @@ fn luminance(p: &[u8]) -> f64 {
     0.2126 * lin(p[0]) + 0.7152 * lin(p[1]) + 0.0722 * lin(p[2])
 }
 
-/// Only the pad finish, seen flat from eight sides against black: the
-/// studio's softboxes make exposed gold read as bright metal from some
-/// views, as metal from a typical view, and never black. Discrete lights
-/// alone could not (see `docs/editor-evidence.md`).
-#[test]
-#[ignore = "upstream renderer's studio: lowest 0.17, median 0.21, brightest 0.24 against the 0.30 bar (fork 21ac01f4a); the look awaits review"]
-fn exposed_gold_reflects_the_studio_from_every_side() -> Result<(), Box<dyn std::error::Error>> {
-    let Some(mut gpu) = Gpu::new() else {
-        // A machine that has a GPU sets PCBCRAFT_REQUIRE_GPU, so a missing
-        // adapter fails there instead of passing without measuring.
-        if std::env::var_os("PCBCRAFT_REQUIRE_GPU").is_some() {
-            return Err("PCBCRAFT_REQUIRE_GPU is set but no GPU adapter was found".into());
-        }
-        eprintln!("no GPU adapter: skipped");
-        return Ok(());
-    };
-    let model = pcbcraft_solidcraft::project::build(&project(Fabrication::default())?)?;
-    let pads: Vec<_> = model
-        .geometry
-        .into_iter()
-        .filter(|g| g.kind == BodyKind::PadFinish)
-        .collect();
-    assert!(!pads.is_empty());
-    let mut viewport = Viewport::detached();
-    viewport.set_model(crate::model_scene::build(pads)?);
-    let target = viewport.bounds.center();
-    let distance = 1.5 * viewport.bounds.diagonal();
-    let mut means = vec![];
-    for k in 0..8 {
-        aim(&mut viewport, target, distance, 45.0 * f64::from(k), 40.0);
-        let rgba = gpu.draw(&mut viewport, 256, 256, 1.0).ok_or("no picture")?;
-        let metal: Vec<f64> = rgba
-            .chunks_exact(4)
-            .filter(|p| {
-                let bg = |c: u8, b: f64| (f64::from(c) / 255.0 - b).abs() < 0.02;
-                !(bg(p[0], BACKGROUND.r) && bg(p[1], BACKGROUND.g) && bg(p[2], BACKGROUND.b))
-            })
-            .map(luminance)
-            .collect();
-        assert!(metal.len() > 50, "the pads cover pixels");
-        means.push(metal.iter().sum::<f64>() / metal.len() as f64);
-    }
-    means.sort_by(f64::total_cmp);
-    let (lowest, median, highest) = (means[0], means[4], means[7]);
-    eprintln!("gold luminance by view: {means:?}");
-    assert!(lowest >= 0.10, "darkest view {lowest}");
-    assert!(median >= 0.18, "median {median}");
-    assert!(highest >= 0.30, "no view catches a softbox: {highest}");
-    Ok(())
-}
+/// The ENIG material and look tests and the look diagnosis.
+mod look;
 
 /// The default overview of the showcase board is not flat: the studio's
 /// strip light lies on part of the gloss mask as a lacquer sheen, so the

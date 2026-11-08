@@ -16,6 +16,10 @@ Pcbcraft directly depends on `solidcraft-engine`, `solidcraft-ui-egui` and the g
 
 Original Pcbcraft code is licensed MIT OR Apache-2.0, like Solidcraft; see [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE) and [NOTICE](NOTICE). Every workspace crate declares this license, and `cargo xtask licences --check` enforces it together with the dependency license policy.
 
+## Tone map in the look tests
+
+The PCB 3D look tests (`apps/pcbcraft/src/viewport/pictures/look.rs`, test code only) follow the Khronos PBR Neutral tone mapping specification (Apache-2.0; Copyright The Khronos Group Inc.). They use it to check their own inverse of the tone map, which undoes the viewport's tone map before measuring radiance.
+
 ## SVG import
 
 SVG artwork import (`crates/solidcraft-integration/src/svg.rs`) calls Solidcraft's public SVG reader, `solidcraft_engine::io::read_svg` (`crates/io/src/svg.rs` of the pinned fork revision above, unchanged from upstream `4f3ac07`; MIT OR Apache-2.0), for all path, shape, transform and unit handling. The element walk uses [quick-xml](https://github.com/tafia/quick-xml) 0.41 (MIT), the version that reader already depends on. The conversion to Pcbcraft graphics and the test fixture `crates/solidcraft-integration/src/svg/mark.svg` are original.
