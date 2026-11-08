@@ -318,7 +318,6 @@ fn exposed_gold_reflects_the_studio_from_every_side() -> Result<(), Box<dyn std:
 /// brightest board pixels stand well above the typical ones, while almost
 /// nothing clips to white.
 #[test]
-#[ignore = "REGRESSION on the upstream renderer (fork 21ac01f4a): the top mask draws grey, not green, at overview pixel density (median 0.20, 95th 0.21); open, see the repin report"]
 fn the_overview_shows_a_sheen_on_the_mask_without_clipping()
 -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut gpu) = Gpu::new() else {

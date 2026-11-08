@@ -526,7 +526,10 @@ impl Looks {
 /// so the material stream leaves it out. The stream tests against the opaque
 /// faces' depth with a bias of some pixels' depth slope (Solidcraft's overlay
 /// depth), wider than a 20 µm mask when zoomed out: a covered face would shade
-/// over the layer above it. Its opaque copy stays, for depth.
+/// over the layer above it. Its opaque copy stays, for depth. A mask's own
+/// underside lies on the laminate (or on the track a cap covers): drawn, it
+/// shaded through the mask's top as a grazing coat, grey, wherever the bias
+/// spanned the 20 µm.
 fn covered(g: &Geometry, n: Vec3, view: &LayerView) -> bool {
     use pcbcraft_core::{CopperLayer, Layer};
     if n.z.abs() < 0.9 {
@@ -540,6 +543,13 @@ fn covered(g: &Geometry, n: Vec3, view: &LayerView) -> bool {
             Some(CopperLayer::Top) => side == Layer::Top && mask,
             Some(CopperLayer::Bottom) => side == Layer::Bottom && mask,
             _ => view.draws(ViewLayer::Substrate),
+        },
+        BodyKind::MaskTop => side == Layer::Bottom && view.draws(ViewLayer::Substrate),
+        BodyKind::MaskBottom => side == Layer::Top && view.draws(ViewLayer::Substrate),
+        BodyKind::MaskCap => match g.layer {
+            Some(CopperLayer::Top) => side == Layer::Bottom && view.draws(ViewLayer::Substrate),
+            Some(CopperLayer::Bottom) => side == Layer::Top && view.draws(ViewLayer::Substrate),
+            _ => false,
         },
         _ => false,
     }
@@ -1269,12 +1279,40 @@ pub(crate) mod tests {
                     kept.len() < scene.stream.tris.len(),
                     "{view:?} hides something"
                 );
-                assert!(
-                    stream_bytes(&packed) < stream_bytes(&scene.stream),
-                    "{view:?} hides its material stream too"
+                // Not always smaller: hiding a mask shows the laminate and
+                // the tracks it covered (and drops its own underside).
+                assert_ne!(
+                    stream_bytes(&packed),
+                    stream_bytes(&scene.stream),
+                    "{view:?} changes its material stream too"
                 );
             }
         }
+        Ok(())
+    }
+
+    /// A mask's underside lies on the laminate: the material stream leaves
+    /// it out while the laminate is shown (drawn, its grazing coat shaded
+    /// grey through the mask zoomed out), and keeps it in an x-ray view.
+    #[test]
+    fn a_mask_s_underside_stays_out_of_the_material_stream()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let scene = demo_scene()?;
+        let mut x_ray = LayerView::default();
+        x_ray.set(ViewLayer::Substrate, false);
+        let mut seen = 0;
+        for g in &scene.geometry {
+            let (under, over) = match g.kind {
+                BodyKind::MaskTop => (-Vec3::Z, Vec3::Z),
+                BodyKind::MaskBottom => (Vec3::Z, -Vec3::Z),
+                _ => continue,
+            };
+            seen += 1;
+            assert!(covered(g, under, &LayerView::default()), "{:?}", g.kind);
+            assert!(!covered(g, over, &LayerView::default()), "{:?}", g.kind);
+            assert!(!covered(g, under, &x_ray), "{:?}", g.kind);
+        }
+        assert!(seen > 0);
         Ok(())
     }
 
