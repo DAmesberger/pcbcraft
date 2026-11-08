@@ -384,6 +384,18 @@ impl SchematicEditor {
         }
     }
 
+    /// Open the review that removes `instance`, as its Delete… on the sheet
+    /// does (the Browser row's Delete…).
+    pub fn review_removal(&mut self, engine: &Engine, instance: Id) {
+        self.select_instance(Some(instance), engine.project());
+        let _ = self.stage_update(
+            engine,
+            Change::Instance {
+                edit: InstanceChange::Remove { instance },
+            },
+        );
+    }
+
     /// What the app runs for the menu's last row, once.
     pub fn take_menu_request(&mut self) -> Option<Request> {
         self.menu_request.take()

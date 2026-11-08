@@ -315,6 +315,9 @@ impl App {
                                 pin_mux: None,
                             }),
                         );
+                    } else if let Some(browser::Pick::Command(id)) = pick {
+                        // A folder's menu: as from the palette.
+                        self.run_command(&ctx, id);
                     } else if let Some(pick) = pick {
                         self.pick(pick);
                         // An overlay Browser gives the canvas back once used.
@@ -562,6 +565,12 @@ impl App {
                 self.workspace = Workspace::Schematic;
                 self.schematic.show_sheet(sheet, self.engine.project());
             }
+            Pick::Remove(id) => {
+                self.workspace = Workspace::Schematic;
+                self.schematic.review_removal(&self.engine, id);
+            }
+            // Run where the context is at hand (the Browser's call site).
+            Pick::Command(_) => {}
         }
     }
 

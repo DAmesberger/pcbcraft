@@ -40,19 +40,34 @@ pub enum Pick {
     Board,
     /// A schematic sheet: show it.
     Sheet(SheetId),
+    /// Run a registry command, as the palette would (a folder's menu).
+    Command(&'static str),
+    /// Open the review that removes an instance, as its Delete… on the
+    /// sheet does.
+    Remove(Id),
 }
 
 /// What a Browser row's right-click menu is about.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuTarget {
     Component(DefinitionId),
-    Instance(Id),
+    /// An instance row, with its component lineage.
+    Instance(Id, DefinitionId),
+    /// A folder row, by its key.
+    Folder(&'static str),
 }
 
 /// The rows of a Browser row's menu: each picks what the row's click or
-/// double-click picks, or locates as Issues does.
-pub fn menu_rows(target: MenuTarget) -> crate::context_menu::Rows<Pick> {
+/// double-click picks, locates as Issues does, or runs what the same
+/// object's menu on the sheet runs. A folder offers the commands that add
+/// to it; a folder with none has no menu.
+pub fn menu_rows(ctx: &egui::Context, target: MenuTarget) -> crate::context_menu::Rows<Pick> {
     use crate::context_menu::Entry;
+    let command = |id: &'static str, label: &str| {
+        let mut entry = Entry::command(ctx, id, label, true);
+        entry.run = crate::context_menu::Run::Act(Pick::Command(id));
+        Some(entry)
+    };
     match target {
         MenuTarget::Component(id) => vec![Some(Entry::act(
             "Edit component",
@@ -60,10 +75,45 @@ pub fn menu_rows(target: MenuTarget) -> crate::context_menu::Rows<Pick> {
             Pick::EditComponent(id),
             true,
         ))],
-        MenuTarget::Instance(id) => vec![
+        MenuTarget::Instance(id, component) => vec![
             Some(Entry::act("Select", "select", Pick::Instance(id), true)),
             Some(Entry::act("Locate", "zoom", Pick::Locate(id), true)),
+            None,
+            Some(Entry::act(
+                "Edit component",
+                "component",
+                Pick::EditComponent(component),
+                true,
+            )),
+            None,
+            Some(
+                Entry::act("Delete…", "delete", Pick::Remove(id), true)
+                    .key_of(ctx, "schematic.delete"),
+            ),
         ],
+        MenuTarget::Folder(key) => match key {
+            "components" => vec![command("component.new", "New component…")],
+            "schematic" => vec![
+                command("schematic.place", "Place part"),
+                command("schematic.add-sheet", "Add sheet"),
+            ],
+            "sheets" => vec![command("schematic.add-sheet", "Add sheet")],
+            "instances" => vec![
+                command("schematic.place", "Place part"),
+                command("schematic.annotate", "Annotate"),
+            ],
+            "nets" => vec![
+                command("schematic.wire", "Wire"),
+                command("schematic.label", "Label"),
+            ],
+            "pcb" => vec![
+                command("pcb.update", "Update PCB"),
+                command("pcb.production", "Production files…"),
+            ],
+            "placements" => vec![command("pcb.update", "Update PCB")],
+            "tracks" => vec![command("pcb.route", "Route")],
+            _ => Vec::new(),
+        },
     }
 }
 
@@ -190,10 +240,13 @@ fn set_open(ui: &egui::Ui, key: &str, open: bool) {
         .data_mut(|d| d.insert_persisted(egui::Id::unique(("browser-open", key)), open));
 }
 
-/// A folder row; returns whether it is open after this frame.
+/// A folder row of the project tree; returns whether it is open after
+/// this frame. A right-click opens its menu (when it has rows).
+#[allow(clippy::too_many_arguments)]
 fn folder(
     ui: &mut egui::Ui,
-    key: &str,
+    menu: &mut crate::context_menu::State<MenuTarget>,
+    key: &'static str,
     depth: usize,
     label: &str,
     count: Option<usize>,
@@ -201,7 +254,13 @@ fn folder(
     default_open: bool,
 ) -> bool {
     let count = count.map(|c| c.to_string()).unwrap_or_default();
-    folder_labelled(ui, key, depth, label, &count, branch, default_open)
+    let (open, at) = folder_row(ui, key, depth, label, &count, branch, default_open);
+    if let Some(at) = at
+        && !menu_rows(ui.ctx(), MenuTarget::Folder(key)).is_empty()
+    {
+        menu.open(at, MenuTarget::Folder(key));
+    }
+    open
 }
 
 /// A folder row with its secondary text; returns whether it is open after
@@ -215,6 +274,20 @@ pub(super) fn folder_labelled(
     branch: bool,
     default_open: bool,
 ) -> bool {
+    folder_row(ui, key, depth, label, count, branch, default_open).0
+}
+
+/// A folder row: whether it is open after this frame, and where a
+/// right-click asked for its menu.
+fn folder_row(
+    ui: &mut egui::Ui,
+    key: &str,
+    depth: usize,
+    label: &str,
+    count: &str,
+    branch: bool,
+    default_open: bool,
+) -> (bool, Option<egui::Pos2>) {
     let open = folded(ui, key, default_open);
     let response = kit::tree_row(
         ui,
@@ -232,7 +305,7 @@ pub(super) fn folder_labelled(
     if response.fold || response.clicked {
         set_open(ui, key, !open);
     }
-    folded(ui, key, default_open)
+    (folded(ui, key, default_open), response.menu)
 }
 
 /// The Browser's one-line summary for its title band.
@@ -297,8 +370,8 @@ pub fn show(
         Some(MenuTarget::Component(id)) if !components(engine).iter().any(|c| c.id == *id) => {
             Vec::new()
         }
-        Some(MenuTarget::Instance(id)) if engine.project().instance(*id).is_none() => Vec::new(),
-        Some(target) => menu_rows(*target),
+        Some(MenuTarget::Instance(id, _)) if engine.project().instance(*id).is_none() => Vec::new(),
+        Some(target) => menu_rows(ui.ctx(), *target),
         None => Vec::new(),
     };
     match menu.show(ui.ctx(), &rows) {
@@ -325,7 +398,7 @@ fn tree(
         return pick;
     }
     ui.spacing_mut().item_spacing.y = 0.0;
-    if !folder(ui, "project", 0, &project.name, None, false, true) {
+    if !folder(ui, menu, "project", 0, &project.name, None, false, true) {
         return pick;
     }
 
@@ -355,7 +428,7 @@ fn tree(
     } else {
         all.len().to_string()
     };
-    if folder_labelled(
+    let (open, at) = folder_row(
         ui,
         "components",
         1,
@@ -363,7 +436,11 @@ fn tree(
         &count,
         lit.component.is_some(),
         true,
-    ) {
+    );
+    if let Some(at) = at {
+        menu.open(at, MenuTarget::Folder("components"));
+    }
+    if open {
         ui.add_space(2.0);
         let field = kit::filter_field(
             ui,
@@ -473,12 +550,22 @@ fn tree(
     }
 
     let schematic_lit = lit.instance.is_some() || lit.net.is_some();
-    if folder(ui, "schematic", 1, "Schematic", None, schematic_lit, true) {
-        if let Some(sheet) = sheets(ui, engine, lit) {
+    if folder(
+        ui,
+        menu,
+        "schematic",
+        1,
+        "Schematic",
+        None,
+        schematic_lit,
+        true,
+    ) {
+        if let Some(sheet) = sheets(ui, engine, lit, menu) {
             pick = Some(Pick::Sheet(sheet));
         }
         if folder(
             ui,
+            menu,
             "instances",
             2,
             "Instances",
@@ -528,12 +615,13 @@ fn tree(
                     pick = Some(Pick::Instance(instance.id));
                 }
                 if let Some(at) = response.menu {
-                    menu.open(at, MenuTarget::Instance(instance.id));
+                    menu.open(at, MenuTarget::Instance(instance.id, instance.component.id));
                 }
             }
         }
         if folder(
             ui,
+            menu,
             "nets",
             2,
             "Nets",
@@ -569,7 +657,7 @@ fn tree(
     }
 
     let pcb_lit = lit.board || lit.track.is_some() || lit.placement.is_some();
-    if folder(ui, "pcb", 1, "PCB", None, pcb_lit, true) {
+    if folder(ui, menu, "pcb", 1, "PCB", None, pcb_lit, true) {
         let size = format!(
             "{} × {} mm",
             kit::number_text(project.board_size[0]),
@@ -596,6 +684,7 @@ fn tree(
         }
         if folder(
             ui,
+            menu,
             "placements",
             2,
             "Placements",
@@ -638,6 +727,7 @@ fn tree(
         }
         if folder(
             ui,
+            menu,
             "tracks",
             2,
             "Tracks",
@@ -759,11 +849,25 @@ pub fn show_sources(
 
 /// The Sheets folder: every sheet in page order, nested under the sheet
 /// whose sheet symbol uses it (`schematic.sheets`). Returns the picked one.
-fn sheets(ui: &mut egui::Ui, engine: &Engine, lit: Lit) -> Option<SheetId> {
+fn sheets(
+    ui: &mut egui::Ui,
+    engine: &Engine,
+    lit: Lit,
+    menu: &mut crate::context_menu::State<MenuTarget>,
+) -> Option<SheetId> {
     let Ok(QueryResult::Sheets(rows)) = engine.query(Query::Sheets {}) else {
         return None;
     };
-    if !folder(ui, "sheets", 2, "Sheets", Some(rows.len()), false, true) {
+    if !folder(
+        ui,
+        menu,
+        "sheets",
+        2,
+        "Sheets",
+        Some(rows.len()),
+        false,
+        true,
+    ) {
         return None;
     }
     let mut pick = None;
@@ -1026,7 +1130,10 @@ mod tests {
         run(vec![egui::Event::PointerMoved(row)], &mut menu);
         assert_eq!(run(vec![button(row, Secondary, true)], &mut menu).1, None);
         assert_eq!(run(vec![button(row, Secondary, false)], &mut menu).1, None);
-        assert_eq!(menu.target(), Some(&MenuTarget::Instance(r1.id)));
+        assert_eq!(
+            menu.target(),
+            Some(&MenuTarget::Instance(r1.id, r1.component.id))
+        );
         let (painted, _) = run(vec![], &mut menu);
         let locate = painted
             .iter()
@@ -1041,10 +1148,66 @@ mod tests {
         );
         assert!(!menu.is_open());
         // A component's row edits it.
-        let edit = menu_rows(MenuTarget::Component(r1.component.id));
+        let edit = menu_rows(&ctx, MenuTarget::Component(r1.component.id));
         let edit = edit.into_iter().flatten().next().ok_or("Edit component")?;
         assert_eq!(edit.label, "Edit component");
         assert_eq!(edit.run, Run::Act(Pick::EditComponent(r1.component.id)));
+        // Run 3, finding 21: an instance row offers what its part's menu on
+        // the sheet does: Edit component and Delete….
+        let rows: Vec<_> = menu_rows(&ctx, MenuTarget::Instance(r1.id, r1.component.id))
+            .into_iter()
+            .flatten()
+            .map(|e| (e.label, e.run))
+            .collect();
+        assert!(rows.contains(&(
+            "Edit component".into(),
+            Run::Act(Pick::EditComponent(r1.component.id))
+        )));
+        assert!(rows.contains(&("Delete…".into(), Run::Act(Pick::Remove(r1.id)))));
+        // A folder's right-click opens a menu of the commands that add to it.
+        let (painted, _) = run(vec![], &mut menu);
+        let instances = painted
+            .iter()
+            .find(|(t, ..)| t == "Instances")
+            .map(|(_, rect, ..)| rect.center())
+            .ok_or("the Instances folder")?;
+        run(vec![egui::Event::PointerMoved(instances)], &mut menu);
+        run(vec![button(instances, Secondary, true)], &mut menu);
+        run(vec![button(instances, Secondary, false)], &mut menu);
+        assert_eq!(menu.target(), Some(&MenuTarget::Folder("instances")));
+        let (painted, _) = run(vec![], &mut menu);
+        let place = painted
+            .iter()
+            .find(|(t, ..)| t == "Place part")
+            .map(|(_, rect, ..)| rect.center())
+            .ok_or("the Place part row")?;
+        run(vec![egui::Event::PointerMoved(place)], &mut menu);
+        run(vec![button(place, Primary, true)], &mut menu);
+        assert_eq!(
+            run(vec![button(place, Primary, false)], &mut menu).1,
+            Some(Pick::Command("schematic.place"))
+        );
+        // Every folder with a menu names registry commands that exist.
+        let registry = crate::commands::Registry::standard();
+        for key in [
+            "components",
+            "schematic",
+            "sheets",
+            "instances",
+            "nets",
+            "pcb",
+            "placements",
+            "tracks",
+        ] {
+            let rows = menu_rows(&ctx, MenuTarget::Folder(key));
+            assert!(!rows.is_empty(), "{key}");
+            for entry in rows.into_iter().flatten() {
+                let Run::Act(Pick::Command(id)) = entry.run else {
+                    return Err(format!("{key}: {entry:?}").into());
+                };
+                assert!(registry.get(id).is_some(), "{key}: {id}");
+            }
+        }
         Ok(())
     }
 
