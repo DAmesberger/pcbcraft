@@ -367,6 +367,38 @@ impl UpdatePreview {
     }
 }
 
+/// The one acknowledged line of one net's conflicting tracks. A single
+/// track keeps its own line and acknowledgement; several read "3 tracks on
+/// USB_DM would join pads the net no longer joins", acknowledged by
+/// "Remove these tracks (8.9 mm in all)".
+fn track_conflict_line(group: &[&pcbcraft_core::updates::TrackConflict]) -> ReviewLine {
+    let (title, ack) = match group {
+        [one] => (one.line.clone(), one.ack.clone()),
+        [first, ..] => {
+            let count = group.len();
+            let net = &first.net_name;
+            let title = match first.line.strip_prefix(&format!("Track on {net} ")) {
+                Some(rest) if group.iter().all(|c| c.line == first.line) => {
+                    format!("{count} tracks on {net} {rest}")
+                }
+                _ => format!("{count} tracks on {net} conflict with this update"),
+            };
+            let length: f64 = group.iter().map(|c| c.length_mm).sum();
+            (
+                title,
+                format!("Remove these tracks ({length:.1} mm in all)"),
+            )
+        }
+        [] => (String::new(), String::new()),
+    };
+    ReviewLine {
+        level: Level::Error,
+        title: refusal::clip(&title, MAX_LINE),
+        ack: Some(ack),
+        locate: true,
+    }
+}
+
 /// The one acknowledged line of a plan's conflicting vias: "2 vias on GND
 /// conflict with this update", acknowledged by "Remove those vias".
 fn via_conflict_line(plan: &UpdatePlan, project: &Project) -> ReviewLine {
@@ -572,20 +604,24 @@ pub fn content(
             objects,
         );
     }
+    // The conflicting tracks, one acknowledged line per net: a routed part
+    // has many short segments, and applying removes them all at once.
+    let mut by_net: Vec<(Id, Vec<&pcbcraft_core::updates::TrackConflict>)> = Vec::new();
     for conflict in &plan.conflicts {
-        let mut objects = vec![
-            ObjectRef::Track { id: conflict.track },
-            ObjectRef::Net { id: conflict.net },
-        ];
-        objects.extend(conflict.pad);
+        match by_net.iter_mut().find(|(net, _)| *net == conflict.net) {
+            Some((_, group)) => group.push(conflict),
+            None => by_net.push((conflict.net, vec![conflict])),
+        }
+    }
+    for (net, group) in by_net {
         let n = push(
-            ReviewLine {
-                level: Level::Error,
-                title: conflict.line.clone(),
-                ack: Some(conflict.ack.clone()),
-                locate: true,
-            },
-            objects,
+            track_conflict_line(&group),
+            group
+                .iter()
+                .map(|c| ObjectRef::Track { id: c.track })
+                .chain([ObjectRef::Net { id: net }])
+                .chain(group.iter().filter_map(|c| c.pad))
+                .collect(),
         );
         conflicts.push(n);
     }
@@ -1285,6 +1321,74 @@ mod tests {
         let none = content(&plan, engine.project(), None, &[(1, "R1".into(), false)]);
         assert_eq!(none.lines[0].title, "Check at least one instance to update");
         assert_eq!(none.lines[0].level, Level::Error);
+        Ok(())
+    }
+
+    /// Run 3, finding 12: a net's conflicting segments share one line and
+    /// one "Remove these tracks" tick, and that tick lets Apply remove them.
+    #[test]
+    fn conflicting_tracks_are_one_line_per_net() -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_core::Layer;
+        use pcbcraft_core::updates::{ConflictReason, TrackConflict};
+        let engine = Engine::demo()?;
+        let mut plan = engine.preview_update(Change::SyncPcb {});
+        plan.blockers.clear();
+        plan.blocker_lines.clear();
+        plan.warnings.clear();
+        plan.warning_lines.clear();
+        let conflict = |track: Id, net: Id, name: &str, length_mm: f64| TrackConflict {
+            track,
+            net,
+            net_name: name.into(),
+            layer: Layer::Top.into(),
+            length_mm,
+            reason: ConflictReason::NetChanged,
+            pad: None,
+            line: format!("Track on {name} would join pads the net no longer joins"),
+            ack: format!("Remove that track (Top, {length_mm:.1} mm)"),
+        };
+        plan.conflicts = vec![
+            conflict(40, 7, "USB_DM", 4.0),
+            conflict(41, 8, "GND", 1.5),
+            conflict(42, 7, "USB_DM", 0.1),
+            conflict(43, 7, "USB_DM", 4.8),
+        ];
+        plan.conflicting_tracks = vec![40, 41, 42, 43];
+        let c = content(&plan, engine.project(), None, &[]);
+        let rows: Vec<_> = c
+            .conflicts
+            .iter()
+            .map(|n| (c.lines[*n].title.as_str(), c.lines[*n].ack.as_deref()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "3 tracks on USB_DM would join pads the net no longer joins",
+                    Some("Remove these tracks (8.9 mm in all)")
+                ),
+                (
+                    "Track on GND would join pads the net no longer joins",
+                    Some("Remove that track (Top, 1.5 mm)")
+                ),
+            ]
+        );
+        let usb = &c.refs[c.conflicts[0]];
+        for id in [40, 42, 43] {
+            assert!(usb.contains(&ObjectRef::Track { id }), "{usb:?}");
+        }
+        assert!(!usb.contains(&ObjectRef::Track { id: 41 }));
+        // Two ticks clear the gate.
+        let mut acked = vec![false; c.lines.len()];
+        assert!(crate::kit::review::apply_gate(false, &c.lines, &acked).is_some());
+        for n in &c.conflicts {
+            acked[*n] = true;
+        }
+        assert_eq!(
+            crate::kit::review::apply_gate(false, &c.lines, &acked),
+            None
+        );
+        check_style(&c);
         Ok(())
     }
 
