@@ -64,7 +64,10 @@ impl PcbEditor {
         };
         let project = engine.project();
         if card.report.as_ref().map(|(r, _)| *r) != Some(engine.revision()) {
-            card.report = Some((engine.revision(), length::report(project)));
+            card.report = Some((
+                engine.revision(),
+                length::report_with(project, &engine.copper_graph()),
+            ));
         }
         let inspector = kit::card::Inspector {
             header: crate::shell::Header::new("trace", "High speed", "Rules"),
@@ -322,7 +325,8 @@ fn body(
     (operation, lit)
 }
 
-/// The selected pair: what its lengths measure, its branches and endpoints.
+/// The selected pair: what its lengths measure, each half's path (from-pin,
+/// to-pin, length), the skew, the uncoupled length and its endpoints.
 fn pair_section(
     ui: &mut Ui,
     project: &Project,
@@ -350,23 +354,15 @@ fn pair_section(
             let path = row.paths.as_ref().and_then(|p| p.get(side));
             let value = path.map_or_else(
                 || mm(length),
-                |p| format!("{} · {} to {}", mm(length), p.from, p.to),
+                |p| {
+                    let fill = if p.via_fill { " via fill" } else { "" };
+                    format!("{} · {} to {}{fill}", mm(length), p.from, p.to)
+                },
             );
             kit::value_row(ui, name, &value);
         }
+        kit::value_row(ui, "Skew", &mm(row.skew));
         kit::value_row(ui, "Uncoupled", &mm(row.uncoupled));
-        // Copper off the paths, for information: a link reaches pins, and an
-        // open end is the board check's `board.track_dangling`.
-        kit::list_frame(ui, row.branches.len(), row.branches.len(), |ui, i| {
-            if let Some(branch) = row.branches.get(i) {
-                let value = if branch.pins.is_empty() {
-                    format!("Branch to no pin · {}", mm(branch.length))
-                } else {
-                    format!("Link to {} · {}", branch.pins.join(", "), mm(branch.length))
-                };
-                kit::value_row(ui, &branch.name, &value);
-            }
-        });
         let options = |net: Id| -> Vec<(pcbcraft_core::ids::Endpoint, String)> {
             path::net_pads(project, net)
         };

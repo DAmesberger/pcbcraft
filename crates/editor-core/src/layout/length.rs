@@ -1,24 +1,29 @@
 //! Routed length, pair coupling and the high-speed checks.
 //!
+//! Every length is read off the copper graph ([`CopperGraph`]), which
+//! decides which copper is joined and carries each via barrel's length.
+//!
 //! **Length model.** A net's routed length is the sum of its track
 //! segments' centre-line lengths plus, for each via, the barrel between
-//! the outermost copper layers on which the net's tracks reach that via:
-//! the distance between those layers' foil mid-planes in the stackup. A
-//! through via's stub beyond them, pad-internal paths and via-in-pad
-//! joins are not counted. For a two-pin net this is the pad-to-pad path
-//! length; for a branched net it is the total copper length.
+//! the outermost of its lands that the net's tracks join: the distance
+//! between those layers' foil mid-planes in the stackup
+//! ([`CopperGraph::net_lengths`]). A through via's stub beyond them,
+//! pad-internal paths and via-in-pad joins are not counted. For a two-pin
+//! net this is the pad-to-pad path length; for a branched net it is the
+//! total copper length.
 //!
 //! **Pair halves** are measured along their signal path instead, the copper
-//! between the pair's endpoints ([`path`]), and the branches off it are
-//! listed with the pins they reach. Skew, uncoupled length, a half's tuning target and its
-//! length in a group all read that length ([`signal_length`]).
+//! between the pair's endpoints ([`path`]). Copper off the path is the
+//! net's like any other: in its total length, and a stub if it reaches no
+//! pad. Skew, uncoupled length, a half's tuning target and its length in a
+//! group all read the path ([`signal_length`]).
 //!
 //! **Coupling.** Two segments of a pair's halves on one layer run coupled
 //! where they are parallel and their edge gap is the pair gap within
 //! [`gap_tolerance`]; the rest of each half (pad fan-out included) is
 //! uncoupled. Parallel stretches closer than the gap are `pair.gap`
 //! findings.
-use super::impedance;
+use super::{CopperGraph, impedance};
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::geometry::Point;
 use crate::ids::Id;
@@ -31,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub mod path;
 
-pub use path::{PairBranch, PairMeasure, PairMeasured};
+pub use path::{PairMeasure, PairMeasured};
 
 /// The most length one tuning adds, mm.
 pub const MAX_TUNE_MM: f64 = 1000.0;
@@ -50,51 +55,10 @@ pub struct NetLength {
     pub via_count: usize,
 }
 
-/// The z of a copper layer's mid-plane, mm.
-fn mid_z(project: &Project, layer: CopperLayer) -> Option<f64> {
-    project
-        .stackup
-        .copper_span(layer)
-        .map(|(lo, hi)| 0.5 * (lo + hi))
-}
-
-/// Every net's routed length (nets without copper are absent).
+/// Every net's routed length (nets without copper are absent); see
+/// [`CopperGraph::net_lengths`].
 pub fn net_lengths(project: &Project) -> BTreeMap<Id, NetLength> {
-    let mut by_net: BTreeMap<Id, Vec<&Track>> = BTreeMap::new();
-    for track in &project.tracks {
-        by_net.entry(track.net).or_default().push(track);
-    }
-    let mut out: BTreeMap<Id, NetLength> = BTreeMap::new();
-    for (net, tracks) in &by_net {
-        let entry = out.entry(*net).or_default();
-        for t in tracks {
-            entry.tracks += crate::geometry::distance(t.start, t.end);
-            entry.segments += 1;
-        }
-    }
-    for via in &project.vias {
-        let tracks = by_net.get(&via.net).map(Vec::as_slice).unwrap_or_default();
-        let reach = via.diameter / 2.0 + 1e-6;
-        let zs: Vec<f64> = tracks
-            .iter()
-            .filter(|t| crate::geometry::segment_distance(via.position, t.start, t.end) <= reach)
-            .filter_map(|t| mid_z(project, t.layer))
-            .collect();
-        let barrel = match (
-            zs.iter().copied().reduce(f64::min),
-            zs.iter().copied().reduce(f64::max),
-        ) {
-            (Some(lo), Some(hi)) => hi - lo,
-            _ => 0.0,
-        };
-        let entry = out.entry(via.net).or_default();
-        entry.vias += barrel;
-        entry.via_count += 1;
-    }
-    for value in out.values_mut() {
-        value.total = value.tracks + value.vias;
-    }
-    out
+    CopperGraph::of(project).net_lengths()
 }
 
 /// One net's routed length.
@@ -111,14 +75,14 @@ struct Measured {
 }
 
 impl Measured {
-    fn of(project: &Project) -> Self {
+    fn of(project: &Project, graph: &CopperGraph) -> Self {
         let mut out = Self {
-            copper: net_lengths(project),
+            copper: graph.net_lengths(),
             pairs: BTreeMap::new(),
             paths: BTreeMap::new(),
         };
         for pair in &project.rules.diff_pairs {
-            let measure = path::measure(project, pair);
+            let measure = path::measure(project, graph, pair);
             if let Some([p, n]) = &measure.halves {
                 out.paths.insert(pair.positive, p.total());
                 out.paths.insert(pair.negative, n.total());
@@ -149,9 +113,17 @@ impl Measured {
 /// The length of `net` its pair, group and tuning targets compare: a pair
 /// half's signal path, otherwise its total copper.
 pub fn signal_length(project: &Project, net: Id) -> f64 {
+    signal_length_with(project, &CopperGraph::of(project), net)
+}
+
+/// [`signal_length`] on `graph`, the copper graph of `project`.
+pub fn signal_length_with(project: &Project, graph: &CopperGraph, net: Id) -> f64 {
     match project.rules.pair_of(net) {
-        Some(_) => Measured::of(project).length(net),
-        None => net_length(project, net).total,
+        Some(_) => Measured::of(project, graph).length(net),
+        None => graph
+            .net_lengths()
+            .get(&net)
+            .map_or(0.0, |length| length.total),
     }
 }
 
@@ -330,7 +302,7 @@ pub struct NetRow {
     pub name: String,
     pub length: NetLength,
     /// A pair half's signal path, which its target and delta compare; the
-    /// rest of `length` is its branches.
+    /// rest of `length` is copper off the path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<f64>,
     /// The length it must reach (its group's, or its pair partner's).
@@ -368,9 +340,6 @@ pub struct PairRow {
     pub uncoupled: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_uncoupled: Option<f64>,
-    /// Copper off the signal paths, left out of skew and uncoupled length.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub branches: Vec<PairBranch>,
 }
 
 /// The pads one half's signal path joins ("J1.B6" to "U1.43").
@@ -378,6 +347,9 @@ pub struct PairRow {
 pub struct PairPath {
     pub from: String,
     pub to: String,
+    /// The path runs through a fill island of its net.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub via_fill: bool,
 }
 
 /// One length group in the report.
@@ -451,10 +423,15 @@ fn group_rows(project: &Project, lengths: &Measured) -> Vec<GroupRow> {
 /// its groups' targets and, when its pair has a skew limit, its longer
 /// partner's length. `None` when nothing sets one.
 pub fn tune_target(project: &Project, net: Id) -> Option<(f64, f64)> {
-    tune_target_with(project, &Measured::of(project), net)
+    tune_target_with(project, &CopperGraph::of(project), net)
 }
 
-fn tune_target_with(project: &Project, lengths: &Measured, net: Id) -> Option<(f64, f64)> {
+/// [`tune_target`] on `graph`, the copper graph of `project`.
+pub fn tune_target_with(project: &Project, graph: &CopperGraph, net: Id) -> Option<(f64, f64)> {
+    tune_target_of(project, &Measured::of(project, graph), net)
+}
+
+fn tune_target_of(project: &Project, lengths: &Measured, net: Id) -> Option<(f64, f64)> {
     let rules = &project.rules;
     let mut best: Option<(f64, f64)> = None;
     let mut consider = |target: f64, tolerance: f64| {
@@ -483,7 +460,12 @@ fn tune_target_with(project: &Project, lengths: &Measured, net: Id) -> Option<(f
 
 /// `layout.length_report`.
 pub fn report(project: &Project) -> LengthReport {
-    let lengths = Measured::of(project);
+    report_with(project, &CopperGraph::of(project))
+}
+
+/// [`report`] on `graph`, the copper graph of `project`.
+pub fn report_with(project: &Project, graph: &CopperGraph) -> LengthReport {
+    let lengths = Measured::of(project, graph);
     let rules = &project.rules;
     let mut wanted: BTreeSet<Id> = lengths.copper.keys().copied().collect();
     wanted.extend(
@@ -500,7 +482,7 @@ pub fn report(project: &Project) -> LengthReport {
         .filter(|n| project.net(*n).is_some())
         .map(|net| {
             let length = lengths.copper.get(&net).copied().unwrap_or_default();
-            let target = tune_target_with(project, &lengths, net);
+            let target = tune_target_of(project, &lengths, net);
             let measured = lengths.length(net);
             let delta = target.map(|(t, _)| measured - t);
             NetRow {
@@ -533,10 +515,8 @@ pub fn report(project: &Project) -> LengthReport {
                     hs.each_ref().map(|h| PairPath {
                         from: h.from.clone(),
                         to: h.to.clone(),
+                        via_fill: h.via_fill,
                     })
-                }),
-                branches: halves.map_or_else(Vec::new, |hs| {
-                    hs.iter().flat_map(|h| h.branches.iter().cloned()).collect()
                 }),
                 positive: a,
                 negative: b,
@@ -558,15 +538,16 @@ fn mm(v: f64) -> String {
     super::limits::mm(v)
 }
 
-/// The pair, group and impedance findings of `project`.
-pub fn checks(project: &Project) -> Vec<Finding> {
+/// The pair, group and impedance findings of `project`, whose copper
+/// graph is `graph`.
+pub fn checks(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
     let rules = &project.rules;
     let mut findings = Vec::new();
     let has_targets = rules.net_classes.iter().any(|c| !c.signal.is_empty());
     if rules.diff_pairs.is_empty() && rules.length_groups.is_empty() && !has_targets {
         return findings;
     }
-    let lengths = Measured::of(project);
+    let lengths = Measured::of(project, graph);
     let len = |n: Id| lengths.length(n);
     let net = |id: Id| ObjectRef::Net { id };
     for pair in &rules.diff_pairs {

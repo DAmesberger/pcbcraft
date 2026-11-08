@@ -1357,7 +1357,7 @@ impl Engine {
                 )))
             }
             Query::LengthReport {} => Ok(QueryResult::LengthReport(Box::new(
-                layout::length::report(&self.document.project),
+                layout::length::report_with(&self.document.project, &self.copper_graph()),
             ))),
             Query::RoutePreview { request } => {
                 request.check()?;

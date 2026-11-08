@@ -8,7 +8,7 @@ use crate::layout::copper::{CURVE_SLACK_MM, CopperRing};
 use crate::layout::grid::BoundsGrid;
 use crate::layout::{MAX_CHECK_PAIRS, fill};
 use crate::model::{CopperLayer, Project};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// The farthest apart two outlines' bounds may be and still join.
 pub(super) const JOIN_REACH_MM: f64 = 2.0 * CURVE_SLACK_MM + 2.0 * JOIN_EPS;
@@ -99,15 +99,43 @@ fn nearest(a: Point, b: Point, ab: f64, c: Point, d: Point, cd: f64) -> (f64, f6
     (best.1, best.2)
 }
 
+/// How a track end meets another track.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum End {
+    /// Not a track end on a track's copper only: a land, a crossing, or an
+    /// end on the other track's centre line.
+    Exact,
+    /// The first (`A`) or second (`B`) element's end lies on the other
+    /// track's copper but off its centre line.
+    SoftA,
+    SoftB,
+}
+
+/// Where two joined elements meet: their stations, and for tracks meeting
+/// only by soft ends, the nearest stations to fall back on.
+struct Meet {
+    at: Vec<(f64, f64, End)>,
+    fallback: Option<(f64, f64)>,
+}
+
 /// The stations where two joined elements meet. A track end whose copper
 /// meets the other element joins there; otherwise the track joins at its
 /// station nearest the other copper (a crossing, or a land's centre).
-fn stations(x: Geo<'_>, y: Geo<'_>) -> Vec<(f64, f64)> {
+///
+/// A track end that lies on another track's copper, but not on its centre
+/// line, is a soft joint: it is dropped when that end is joined exactly
+/// elsewhere ([`CopperGraph::scan`]), so that a short leg's far end does not
+/// cut the leg short through the copper of the track before it.
+fn stations(x: Geo<'_>, y: Geo<'_>) -> Meet {
+    let exact = |at: Vec<(f64, f64)>| Meet {
+        at: at.into_iter().map(|(s, t)| (s, t, End::Exact)).collect(),
+        fallback: None,
+    };
     match (x, y) {
-        (Geo::Land { .. }, Geo::Land { .. }) => vec![(0.0, 0.0)],
-        (Geo::Track { .. }, Geo::Land { .. }) => track_land(x, y),
+        (Geo::Land { .. }, Geo::Land { .. }) => exact(vec![(0.0, 0.0)]),
+        (Geo::Track { .. }, Geo::Land { .. }) => exact(track_land(x, y)),
         (Geo::Land { .. }, Geo::Track { .. }) => {
-            track_land(y, x).into_iter().map(|(s, t)| (t, s)).collect()
+            exact(track_land(y, x).into_iter().map(|(s, t)| (t, s)).collect())
         }
         (
             Geo::Track {
@@ -124,21 +152,26 @@ fn stations(x: Geo<'_>, y: Geo<'_>) -> Vec<(f64, f64)> {
             },
         ) => {
             let reach = r + q + JOIN_EPS;
-            let mut out = Vec::new();
+            let kind = |gap: f64, soft: End| if gap <= JOIN_EPS { End::Exact } else { soft };
+            let mut at = Vec::new();
             for (end, s) in [(a, 0.0), (b, ab)] {
-                if segment_distance(end, c, d) <= reach {
-                    out.push((s, station(end, c, d, cd)));
+                let gap = segment_distance(end, c, d);
+                if gap <= reach {
+                    at.push((s, station(end, c, d, cd), kind(gap, End::SoftA)));
                 }
             }
             for (end, s) in [(c, 0.0), (d, cd)] {
-                if segment_distance(end, a, b) <= reach {
-                    out.push((station(end, a, b, ab), s));
+                let gap = segment_distance(end, a, b);
+                if gap <= reach {
+                    at.push((station(end, a, b, ab), s, kind(gap, End::SoftB)));
                 }
             }
-            if out.is_empty() {
-                out.push(nearest(a, b, ab, c, d, cd));
+            let nearest = nearest(a, b, ab, c, d, cd);
+            if at.is_empty() {
+                return exact(vec![nearest]);
             }
-            out
+            let fallback = at.iter().all(|j| j.2 != End::Exact).then_some(nearest);
+            Meet { at, fallback }
         }
     }
 }
@@ -297,8 +330,16 @@ impl CopperGraph {
                 layer,
             ));
         }
+        let mid_planes = layers
+            .iter()
+            .filter_map(|l| {
+                let (lo, hi) = project.stackup.copper_span(*l)?;
+                Some((*l, 0.5 * (lo + hi)))
+            })
+            .collect();
         let mut graph = Self {
             layers,
+            mid_planes,
             pads,
             tracks,
             vias,
@@ -379,10 +420,16 @@ impl CopperGraph {
     }
 
     /// Every joint between filed outlines, and whether the scan finished
-    /// within its limits.
+    /// within its limits. A soft joint (see [`stations`]) is kept only when
+    /// its track end is joined exactly to nothing. Two tracks left with no
+    /// joint, and not joined through other copper, meet at their nearest
+    /// stations instead, so dropping a soft joint never splits an island.
     fn scan(&self) -> (Vec<Joint>, bool) {
         let limit = self.elements.len().saturating_mul(MAX_JOINTS_PER_ELEMENT);
         let mut joints = Vec::new();
+        // (pair, joint, the soft end's element and station)
+        let mut soft: Vec<(usize, Joint, usize, f64)> = Vec::new();
+        let mut fallbacks: Vec<(usize, Joint)> = Vec::new();
         let mut near = Vec::new();
         let mut pairs = 0usize;
         for group in self.groups.values() {
@@ -419,15 +466,59 @@ impl CopperGraph {
                     ) else {
                         continue;
                     };
-                    let stations = stations(x, y);
+                    let meet = stations(x, y);
                     for (ea, eb) in common {
-                        joints.extend(stations.iter().map(|&(sa, sb)| Joint {
+                        let joint = |sa: f64, sb: f64| Joint {
                             a: ea,
                             station_a: sa,
                             b: eb,
                             station_b: sb,
-                        }));
+                        };
+                        for &(sa, sb, end) in &meet.at {
+                            match end {
+                                End::Exact => joints.push(joint(sa, sb)),
+                                End::SoftA => soft.push((pairs, joint(sa, sb), ea, sa)),
+                                End::SoftB => soft.push((pairs, joint(sa, sb), eb, sb)),
+                            }
+                        }
+                        if let Some((sa, sb)) = meet.fallback {
+                            fallbacks.push((pairs, joint(sa, sb)));
+                        }
                     }
+                }
+            }
+        }
+        if !soft.is_empty() {
+            let mut exact: HashMap<usize, Vec<f64>> = HashMap::new();
+            for j in &joints {
+                exact.entry(j.a).or_default().push(j.station_a);
+                exact.entry(j.b).or_default().push(j.station_b);
+            }
+            let anchored = |element: usize, s: f64| {
+                exact
+                    .get(&element)
+                    .is_some_and(|list| list.iter().any(|x| (x - s).abs() <= JOIN_EPS))
+            };
+            let mut kept: HashSet<usize> = HashSet::new();
+            for (pair, joint, element, s) in soft {
+                if !anchored(element, s) {
+                    joints.push(joint);
+                    kept.insert(pair);
+                }
+            }
+            let mut dsu = Dsu::new(self.elements.len());
+            for lands in &self.lands {
+                for e in lands.clone().skip(1) {
+                    dsu.union(lands.start, e);
+                }
+            }
+            for j in &joints {
+                dsu.union(j.a, j.b);
+            }
+            for (pair, joint) in fallbacks {
+                if !kept.contains(&pair) && dsu.find(joint.a) != dsu.find(joint.b) {
+                    dsu.union(joint.a, joint.b);
+                    joints.push(joint);
                 }
             }
         }
@@ -567,8 +658,16 @@ impl CopperGraph {
             }
         }
         for list in stations.values_mut() {
+            // The track's end is its last station, exactly: a station merged
+            // into it must not shorten the track's stretches.
+            let length = list.get(1).copied().unwrap_or(0.0);
             list.sort_by(f64::total_cmp);
             list.dedup_by(|later, kept| (*later - *kept).abs() <= JOIN_EPS);
+            if list.len() > 1
+                && let Some(last) = list.last_mut()
+            {
+                *last = length;
+            }
         }
         let mut vertices = Vec::new();
         for (i, e) in self.elements.iter_mut().enumerate() {

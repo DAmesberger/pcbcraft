@@ -97,8 +97,13 @@ impl PcbEditor {
         match self.tune.net_target {
             Some((r, cached)) if r == revision && cached.0 == net => Some(cached),
             _ => {
-                let length = length::signal_length(project, net);
-                let target = length::tune_target(project, net);
+                // The revision's graph when the editor holds it.
+                let graph = match self.cached_revision {
+                    Some(r) if r == revision => self.graph.clone(),
+                    _ => std::sync::Arc::new(pcbcraft_core::layout::CopperGraph::of(project)),
+                };
+                let length = length::signal_length_with(project, &graph, net);
+                let target = length::tune_target_with(project, &graph, net);
                 let cached = (net, length, target);
                 self.tune.net_target = Some((revision, cached));
                 Some(cached)

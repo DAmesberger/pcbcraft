@@ -476,11 +476,12 @@ fn the_cards_show_derived_impedance_pairs_and_lengths() -> TestResult {
     Ok(())
 }
 
-/// The High speed card shows what a selected pair's lengths measure: its
-/// path's pads and each branch off it on a line of its own, labelled with
-/// its net, as information.
+/// The High speed card shows what a selected pair's lengths measure: each
+/// half's path (from-pin, to-pin, length), the skew and the uncoupled
+/// length. Copper off the path (here a 3 mm open spur) has no row: it is
+/// net copper, and its open end is in Issues as `board.track_dangling`.
 #[test]
-fn the_high_speed_card_lists_the_path_and_the_branches() -> TestResult {
+fn the_high_speed_card_lists_the_paths_and_not_the_copper_off_them() -> TestResult {
     let Usb {
         mut engine,
         nets,
@@ -554,9 +555,14 @@ fn the_high_speed_card_lists_the_path_and_the_branches() -> TestResult {
         texts.iter().any(|t| t.contains("R3.1 to R4.1")),
         "{texts:?}"
     );
-    for wanted in ["USB_D+", "Branch to no pin · 3 mm"] {
+    for wanted in ["USB_D+", "Skew", "Uncoupled"] {
         assert!(texts.iter().any(|t| t == wanted), "{wanted}: {texts:?}");
     }
-    assert!(!texts.iter().any(|t| t.contains("Stub")), "{texts:?}");
+    for unwanted in ["Stub", "Branch", "Link to", "via fill"] {
+        assert!(
+            !texts.iter().any(|t| t.contains(unwanted)),
+            "{unwanted}: {texts:?}"
+        );
+    }
     Ok(())
 }

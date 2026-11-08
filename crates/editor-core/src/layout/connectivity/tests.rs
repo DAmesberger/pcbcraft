@@ -15,10 +15,15 @@ use crate::library::{Outline, PadShape, Segment};
 use crate::model::fill::{FillSettings, FillSpec};
 use crate::model::{CopperLayer, Fill, Layer, Project, Stackup, Track, Via, ViaSpan};
 
-const R1_2: Point = [10.8, 10.0];
-const R2_1: Point = [24.2, 10.0];
+pub(super) const R1_2: Point = [10.8, 10.0];
+pub(super) const R2_1: Point = [24.2, 10.0];
 
-fn track(project: &mut Project, start: Point, end: Point, layer: CopperLayer) -> Result<Id> {
+pub(super) fn track(
+    project: &mut Project,
+    start: Point,
+    end: Point,
+    layer: CopperLayer,
+) -> Result<Id> {
     let id = project.allocate()?;
     project.tracks.push(Track {
         id,
@@ -32,7 +37,7 @@ fn track(project: &mut Project, start: Point, end: Point, layer: CopperLayer) ->
     Ok(id)
 }
 
-fn via(project: &mut Project, position: Point, span: ViaSpan) -> Result<Id> {
+pub(super) fn via(project: &mut Project, position: Point, span: ViaSpan) -> Result<Id> {
     let id = project.allocate()?;
     project.vias.push(Via {
         id,
@@ -60,7 +65,7 @@ fn connectivity(project: &Project) -> Vec<Finding> {
     CopperGraph::of(project).findings(project)
 }
 
-fn top() -> CopperLayer {
+pub(super) fn top() -> CopperLayer {
     Layer::Top.into()
 }
 
@@ -220,7 +225,7 @@ fn c4_a_blind_via_joins_only_the_layers_it_spans() -> Result<()> {
     Ok(())
 }
 
-fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Outline {
+pub(super) fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Outline {
     Outline {
         start: [x0, y0],
         segments: vec![

@@ -1,6 +1,6 @@
 # One copper graph (design)
 
-Design for review, 8 November 2026. Base: `component-model` at 32116be. Approved by the founder with all its recommendations. Slice 1 is built; see [Slice 1 as built](#slice-1-as-built).
+Design for review, 8 November 2026. Base: `component-model` at 32116be. Approved by the founder with all its recommendations. Slices 1 and 2 are built; see [Slice 1 as built](#slice-1-as-built) and [Slice 2 as built](#slice-2-as-built).
 
 The founder's requirement: "single copper graph. there is no excuse for duplication. everything needs to be single source of truth." His ruling on pairs: "what is a pin-to-pin link other than a track between two pins". So this design keeps no separate link or branch concept. Copper off a pair's signal path is ordinary net copper. Where it ends at a pin, it is a track between pins. Where it ends at no pad, it is a stub.
 
@@ -339,3 +339,52 @@ On `via_board(10_000, 2_000)` (10,000 through vias on 4 layers, 2,000 tracks, th
 | `BoardCopper::checks` with a fresh graph (graph, clearance, edge, via and courtyard checks) | 23.5 ms | — |
 
 The first version filed every land separately and built in about 30 ms; testing each outline once and joining its lands on the common layers brought it under the target. Incremental update (Q6) is not needed and was not built. The board checks with the graph (23.5 ms) cost about what the old checks did (23.2 ms, plus 5.0 ms for the separate airwire scan), and the graph now also finds stations, stubs and per-layer lands. The engine shares one build between the Issues query and the desktop editor, where there were two scans per revision. Memory was not measured.
+
+## Slice 2 as built
+
+Built on `component-model` at 3ce267d, 8 November 2026.
+
+### What exists
+
+- **Barrel lengths on the graph.** The graph holds each copper layer's foil mid-plane (`mid_planes`), and `CopperGraph::edge_length` gives every edge its length: a stretch's centre line, a barrel's mid-plane distance, 0 for joints and plated holes.
+- **Net length** (`CopperGraph::net_lengths`, in `connectivity/lengths.rs`): each net's track centre lines plus, at each via, the barrel between the outermost of its lands that a track of the net joins. The length model is unchanged; only "a track reaches the via" is now the graph's joint (copper overlap, within the via's span) instead of the centre-line test. `layout::length::net_lengths` builds the graph and calls it.
+- **Pair measurement** (`CopperGraph::net_paths`, `NetPaths`): one net's vertices, stretches, barrels and joints as a weighted graph, searched by Dijkstra. Where a track meets a via or pad land, the path enters the land at the track's station nearest the land's centre, unless another track meeting the land carries on from there nearer the centre (a virtual vertex splits the stretch when no station lies there). This is the old pair graph's "last leg into the pad" rule, now applied over the graph's joints and to vias too; it decides only where a joined track's length stops, never which copper is joined. Fill hops are zero-length edges, and a path using one is marked `via_fill` (`HalfPath::via_fill`, `PairPath::via_fill` in the length report, "via fill" on the High speed card's path row).
+- **Endpoint selection stays in `layout/length/path.rs`** (set, derived between the farthest shared parts, longest pad-to-pad), now over `NetPaths`. The derived choice runs one search per shared part instead of one per pair of parts.
+- **One graph per caller.** `layout::checks_with` passes its graph to `length::checks`; `Query::LengthReport` uses `Engine::copper_graph()` (`length::report_with`); the High speed card and the Tune tool read the engine's or the editor's graph (`signal_length_with`, `tune_target_with`). Pure callers (`report`, `signal_length`, `tune_target`, `net_lengths`) build it.
+- **Bounds.** A partial graph measures pairs by total copper. The path searches of one pair settle at most `MAX_PATH_WORK` = 4,000,000 vertices (a target bound, work rather than a count of tracks or pads); past it the pair is measured by total copper.
+- **The pair card** shows each half's path (length, from-pin, to-pin), the skew and the uncoupled length. Uncoupled length reads the path's own track stretches (`HalfPath::spans`), as before.
+
+### Deleted
+
+From `layout/length/path.rs`: the pair graph (`graph()`, `pad_joints`, `Stations`, `Meets`, `along_track`, its `Graph`, `Edge` and `Kind`, `Graph::branches`), its joining rules (centre-line joints at 1e-6 mm, the copper fallback for unjoined ends, the via and via-in-pad tests) and the `MAX_PATH_TRACKS` (2,048) and `MAX_PATH_PADS` (64) caps. From `layout/length.rs`: net length's own via-barrel scan and `mid_z`. `PairBranch`, `HalfPath::branches` and `PairRow::branches` (length report, CLI and MCP) are gone, and with them the High speed card's "Link to …" and "Branch to no pin · …" rows. No parallel joining rule remains in lengths or pairs.
+
+Two corrections in the graph build (`connectivity/build.rs`), both about where joints sit, neither about which copper is joined:
+
+- A track's last station is set back to its exact length after stations within 1 µm merge, so its stretches always sum to the track's length.
+- **Soft end joints.** A track end that lies on another track's copper but off its centre line is a soft joint, kept only when that end is joined exactly to nothing else (the old pair graph's rule). Slice 1 joined every such end, so a leg shorter than the track width joined the track before it at its far end as well, and a path cut the leg out: the Tune tool's trombone, whose chamfer legs are 0.114 mm at 0.3 mm width, measured 0.228 mm short (`pair_tests::the_tune_tool_meanders_to_the_partner_length` failed until this was fixed; its expectation is unchanged). When dropping soft joints would leave two overlapping tracks in different islands, they join at their nearest stations instead, so islands, stubs and the checks are unchanged. Test: `a_short_leg_is_not_cut_short_through_the_track_before_it`.
+
+### Behaviour changes and test corrections
+
+New tests in `connectivity/lengths/tests.rs`, each with a hand-derived answer: `c1_a_pair_path_runs_through_a_mid_span_crossing` (path 13.4/17.4 of both tracks; before: no path), `c2_off_centre_vias_carry_the_path_and_their_barrels` (12 mm of track and two 1.635 mm barrels; net length counts both barrels, which the centre-line rule missed; before: no path), `c6_a_pair_path_crosses_side_by_side_overlap` (13.4 mm; before: no path), `a_path_enters_a_pad_at_its_centre` (a last leg whose corner lies on the pad, and a track overshooting the centre, both 13.4 mm), `a_path_through_a_fill_is_measured_and_marked` (10.2 mm, `via_fill`; before: no path), and the two timings below.
+
+Changed expectations in existing tests, each a correction under the founder's ruling that a pin-to-pin link is a track between two pins:
+
+- `tests/high_speed.rs::an_open_branch_is_not_skew_and_the_dangling_check_reports_it`: the `branches` assertions (one branch, 4 mm, no pins) go with the field. The 4 mm is asserted as the net's total less its path, and the stub's track is found among the tracks the branch added. Skew, uncoupled and `board.track_dangling` assertions are unchanged.
+- `tests/high_speed.rs::a_pin_to_pin_branch_is_a_link_and_raises_nothing`, renamed `…_is_a_track_between_pins_and_raises_nothing`: the link's 4 mm and pin are asserted as the net's total less its path; "no finding" and "0 skew" are unchanged.
+- `tests/high_speed.rs::an_unfinished_half_is_measured_by_its_copper`: drops `branches.is_empty()`; the rest is unchanged.
+- `crates/io/tests/esp32_pair.rs`: `the_receptacle_jumpers_are_links_and_not_skew`, renamed `…_are_off_the_path_and_not_skew`, asserts the jumpers' 2.245 mm and 6.98 mm as each net's total less its path, that the report JSON has no `branches`, and that neither path runs via a fill. `real_skew_on_the_path_is_still_reported` drops `branches.len() == 2`. Paths, 0 mm skew and set endpoints are unchanged.
+- `apps/pcbcraft/src/pcb_editor/pair_tests.rs::the_high_speed_card_lists_the_path_and_the_branches`, renamed `…_lists_the_paths_and_not_the_copper_off_them`: asserts the path rows, Skew and Uncoupled, and that no Branch, Link or Stub row is shown.
+
+No other expectation changed. On the ESP32 reference board the whole length report (34 nets, the USB pair's 29.866 mm paths, 0 mm skew, 7.907 mm uncoupled, the groups) is bit-identical to slice 1's, and the board stays at 0 issues. Its fab output and `.pcbcraft` are byte-identical (`regenerate.sh`).
+
+### Measured
+
+`test` profile, Apple M5 Max shared with other builds, best of 5. The collinear halves are 1 mm tracks (0.49 mm at 2,048, so the chain stays within 1 m); the pair has both halves on that net, as the design's cases were run.
+
+| Work | Before (design §3) | Now |
+| --- | --- | --- |
+| Pair measurement, halves of 256, 1,024 and 2,048 collinear tracks | 2.0, 18.2 and 61.2 ms (quadratic; refused past 2,048) | 0.16, 0.60 and 1.30 ms on the graph; 0.33, 1.21 and 2.55 ms with the graph's build |
+| Net lengths on `via_board(10_000, 2_000)` | 26.7 ms (O(vias × the net's tracks)) | 0.28 ms on the graph; 7.1 ms with the graph's build |
+| A pair of that board's two via nets (20,000 via lands per half) | not measured | 4.3 ms on the graph |
+
+The graph's build on that board, soft joints included, measured 6.6 ms in the same run (slice 1: 5.5 ms; target ≤ 10 ms). Pair measurement is now linear in the half's copper (Dijkstra on its slice), and the engine shares the graph with the checks, so the length report and pair checks add no second connectivity build.
