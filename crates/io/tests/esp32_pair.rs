@@ -1,13 +1,15 @@
 //! The differential pair on the shipped ESP32-S31 dev board example: its
-//! USB-C receptacle joins both plug orientations, so each half branches.
+//! USB-C receptacle joins both plug orientations, so each half holds a
+//! track between pins off its signal path.
 //!
 //! Hand-derived from the board's tracks. Along x = 20.75 and x = 19.25 the
 //! halves reach the ESD pads, then run coupled to the module:
 //! B6/B7 to U3 is 4.645 + 1.563 mm; U3 to U1 is 23.657 mm on each half (the
 //! positive half's corners fall 0.174 mm apart from the negative's and
 //! cancel), so 29.865 mm each.
-//! - The positive link, A6 to the T on B6's track, is 1.245 + 1.0 = 2.245 mm.
-//! - The negative link, A7 through a via, the bottom jumper and a via to
+//! - The positive jumper, A6 to the T on B6's track, is 1.245 + 1.0 =
+//!   2.245 mm.
+//! - The negative jumper, A7 through a via, the bottom jumper and a via to
 //!   B7, is 1.355 + 1.0 + 1.355 = 3.71 mm of track and two 1.635 mm barrels
 //!   (when the stackup's mid-planes are as the file says), 6.98 mm.
 use pcbcraft_core::diagnostics::Finding;
@@ -56,12 +58,12 @@ fn pair_findings(findings: &[Finding]) -> Vec<&Finding> {
         .collect()
 }
 
-/// Gap 2: equal paths, no skew. The plug-orientation jumpers are links:
-/// each joins the receptacle's second contact, a pin, so it is terminated
-/// copper, listed with the pin it reaches and never warned (run 3,
-/// finding 8, as the founder decided).
+/// Gap 2: equal paths, no skew. The plug-orientation jumpers are tracks
+/// between pins: each joins the receptacle's second contact, a pin, so it
+/// is terminated copper off the path, never warned (run 3, finding 8, as
+/// the founder decided) and not listed apart from the net's copper.
 #[test]
-fn the_receptacle_jumpers_are_links_and_not_skew() -> Fallible {
+fn the_receptacle_jumpers_are_off_the_path_and_not_skew() -> Fallible {
     let p = board()?;
     let report = length::report(&p);
     let usb = row(&report)?;
@@ -80,16 +82,8 @@ fn the_receptacle_jumpers_are_links_and_not_skew() -> Fallible {
         ("J1.B7", "U1.42"),
         "{paths:?}"
     );
-    assert_eq!(usb.branches.len(), 2, "{:?}", usb.branches);
-    let branch = |name: &str| usb.branches.iter().find(|s| s.name == name);
-    let plus = branch("USB_DP").ok_or("no + link")?;
-    assert!(close(plus.length, 2.245, 0.002), "{plus:?}");
-    assert_eq!(plus.pins, ["J1.A6"]);
-    let minus = branch("USB_DN").ok_or("no - link")?;
-    assert!(close(minus.length, 6.98, 0.005), "{minus:?}");
-    assert_eq!(minus.pins, ["J1.A7"]);
-    assert_eq!(minus.tracks.len(), 3, "{minus:?}");
-    // Total copper still holds the links: the old 4.735 mm difference.
+    assert!(paths.iter().all(|p| !p.via_fill), "{paths:?}");
+    // Total copper still holds the jumpers: the old 4.735 mm difference.
     let total = |name: &str| -> Fallible<f64> {
         Ok(report
             .nets
@@ -103,21 +97,20 @@ fn the_receptacle_jumpers_are_links_and_not_skew() -> Fallible {
         close((total("USB_DN")? - total("USB_DP")?).abs(), 4.735, 0.002),
         "the copper difference is unchanged"
     );
-    assert!(close(total("USB_DP")?, usb.positive + plus.length, 1e-6));
-    assert!(close(total("USB_DN")?, usb.negative + minus.length, 1e-6));
+    assert!(close(total("USB_DP")? - usb.positive, 2.245, 0.002));
+    assert!(close(total("USB_DN")? - usb.negative, 6.98, 0.005));
     let findings = layout::checks(&p);
     assert!(pair_findings(&findings).is_empty(), "{findings:?}");
-    // The report CLI and MCP callers read says so: a branch with its pin,
-    // and nothing called a stub.
+    // The report CLI and MCP callers read lists the paths and nothing off
+    // them: no branches, and nothing called a stub.
     let json = serde_json::to_value(usb)?;
-    let links = json.get("branches").ok_or("no branches")?;
-    assert!(links.to_string().contains(r#""pins":["J1.A7"]"#), "{links}");
+    assert!(json.get("branches").is_none(), "{json}");
     assert!(!json.to_string().contains("stub"), "{json}");
     Ok(())
 }
 
-/// Real skew on the signal path is still found, with the links listed:
-/// 1 mm of detour on one half's coupled run, keeping the jumpers.
+/// Real skew on the signal path is still found: 1 mm of detour on one
+/// half's coupled run, keeping the jumpers.
 #[test]
 fn real_skew_on_the_path_is_still_reported() -> Fallible {
     let mut p = board()?;
@@ -150,7 +143,6 @@ fn real_skew_on_the_path_is_still_reported() -> Fallible {
     let report = length::report(&p);
     let usb = row(&report)?;
     assert!(close(usb.skew, 1.0, 0.01), "{usb:?}");
-    assert_eq!(usb.branches.len(), 2, "{:?}", usb.branches);
     let findings = layout::checks(&p);
     assert!(
         findings.iter().any(|f| f.code == "pair.skew"),
@@ -213,7 +205,7 @@ fn set_endpoints_are_measured_and_validated() -> Fallible {
     assert_eq!(usb.measured, PairMeasured::Set);
     // A6 joins 1.245 mm up B6's track after 2.245 mm: 1 mm longer than B6.
     assert!(close(usb.positive, 30.865, 0.002), "{usb:?}");
-    // A7 through the jumper to B7: the whole 6.98 mm link joins the path.
+    // A7 through the jumper to B7: the whole 6.98 mm jumper joins the path.
     assert!(close(usb.negative, 29.865 + 6.98, 0.01), "{usb:?}");
     assert!(close(usb.skew, 5.98, 0.01), "{usb:?}");
     assert!(

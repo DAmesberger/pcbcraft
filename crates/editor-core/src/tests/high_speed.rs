@@ -703,10 +703,10 @@ fn on_run(usb: &Usb, net: Id) -> Result<Point> {
 }
 
 /// A two-pin half measures exactly its total copper; a branch off it that
-/// ends at no pad is listed with its own length and no pin, in neither skew
-/// nor uncoupled length. Its open end is a stub: the board check reports it
-/// as dangling copper, and no pair finding names it. Hand-derived: the
-/// branch runs straight for 4 mm.
+/// ends at no pad is net copper off the path, in neither skew nor uncoupled
+/// length. Its open end is a stub: the board check reports it as dangling
+/// copper, and no pair finding names it. Hand-derived: the branch runs
+/// straight for 4 mm, the net's total less its path.
 #[test]
 fn an_open_branch_is_not_skew_and_the_dangling_check_reports_it() -> Result<()> {
     let mut usb = usb(usb90())?;
@@ -718,7 +718,6 @@ fn an_open_branch_is_not_skew_and_the_dangling_check_reports_it() -> Result<()> 
         .first()
         .ok_or_else(|| Error::NotFound("row".into()))?;
     assert_eq!(row.measured, layout::length::PairMeasured::Derived);
-    assert!(row.branches.is_empty(), "{:?}", row.branches);
     assert!(row.skew < 1e-9, "{row:?}");
     let copper = layout::length::net_lengths(usb.engine.project());
     let total = copper.get(&usb.nets[0]).map_or(0.0, |l| l.total);
@@ -737,7 +736,16 @@ fn an_open_branch_is_not_skew_and_the_dangling_check_reports_it() -> Result<()> 
     } else {
         -4.0
     };
+    let before: Vec<Id> = usb.engine.project().tracks.iter().map(|t| t.id).collect();
     branch(&mut usb, net, at, [at[0], at[1] + away])?;
+    let spur: Vec<Id> = usb
+        .engine
+        .project()
+        .tracks
+        .iter()
+        .map(|t| t.id)
+        .filter(|id| !before.contains(id))
+        .collect();
     let r = report(&usb.engine)?;
     let row = r
         .pairs
@@ -745,12 +753,6 @@ fn an_open_branch_is_not_skew_and_the_dangling_check_reports_it() -> Result<()> 
         .ok_or_else(|| Error::NotFound("row".into()))?;
     assert!(row.skew < 1e-9, "{row:?}");
     assert!((row.uncoupled - uncoupled).abs() < 1e-9, "{row:?}");
-    let [open] = row.branches.as_slice() else {
-        return Err(Error::Invalid(format!("{:?}", row.branches)));
-    };
-    assert!((open.length - 4.0).abs() < 1e-9, "{open:?}");
-    assert_eq!(open.net, usb.nets[0]);
-    assert!(open.pins.is_empty());
     let net_row = r
         .nets
         .iter()
@@ -758,6 +760,7 @@ fn an_open_branch_is_not_skew_and_the_dangling_check_reports_it() -> Result<()> 
         .ok_or_else(|| Error::NotFound("net".into()))?;
     assert!((net_row.length.total - total - 4.0).abs() < 1e-9);
     assert_eq!(net_row.path, Some(row.positive));
+    assert!((net_row.length.total - row.positive - 4.0).abs() < 1e-9);
     let findings = layout::checks(usb.engine.project());
     assert!(
         !findings.iter().any(|f| f.code.starts_with("pair.")),
@@ -771,8 +774,7 @@ fn an_open_branch_is_not_skew_and_the_dangling_check_reports_it() -> Result<()> 
         return Err(Error::Invalid(format!("{findings:?}")));
     };
     assert!(
-        open.tracks
-            .iter()
+        spur.iter()
             .any(|&id| end.objects.contains(&crate::ObjectRef::Track { id })),
         "{end:?}"
     );
@@ -781,12 +783,12 @@ fn an_open_branch_is_not_skew_and_the_dangling_check_reports_it() -> Result<()> 
     Ok(())
 }
 
-/// A branch from a pair half to a third pin of its net is a link: it is
-/// terminated, so it is listed with the pin it reaches and raises nothing,
-/// neither a pair finding nor dangling copper. Hand-derived: R5's pad 1 is
-/// placed 4 mm straight off the run, so the link is 4 mm.
+/// A branch from a pair half to a third pin of its net is a track between
+/// pins: it is terminated and raises nothing, neither a pair finding nor
+/// dangling copper, and it is off the path. Hand-derived: R5's pad 1 is
+/// placed 4 mm straight off the run, so the net holds 4 mm beyond its path.
 #[test]
-fn a_pin_to_pin_branch_is_a_link_and_raises_nothing() -> Result<()> {
+fn a_pin_to_pin_branch_is_a_track_between_pins_and_raises_nothing() -> Result<()> {
     let mut usb = usb(usb90())?;
     let r3 = by_designator(&usb.engine, "R3")?;
     let template = usb
@@ -869,11 +871,15 @@ fn a_pin_to_pin_branch_is_a_link_and_raises_nothing() -> Result<()> {
         .ok_or_else(|| Error::NotFound("row".into()))?;
     assert_eq!(row.measured, layout::length::PairMeasured::Derived);
     assert!(row.skew < 1e-9, "{row:?}");
-    let [link] = row.branches.as_slice() else {
-        return Err(Error::Invalid(format!("{:?}", row.branches)));
-    };
-    assert!((link.length - 4.0).abs() < 1e-9, "{link:?}");
-    assert_eq!(link.pins, vec!["R5.1".to_owned()]);
+    let net_row = r
+        .nets
+        .iter()
+        .find(|n| n.net == net)
+        .ok_or_else(|| Error::NotFound("net".into()))?;
+    assert!(
+        (net_row.length.total - row.positive - 4.0).abs() < 1e-9,
+        "{net_row:?} {row:?}"
+    );
     // The demo board's own nets stay unrouted; the pair's are complete.
     let pair_net = |f: &crate::Finding| {
         usb.nets
@@ -905,7 +911,7 @@ fn an_unfinished_half_is_measured_by_its_copper() -> Result<()> {
         .first()
         .ok_or_else(|| Error::NotFound("row".into()))?;
     assert_eq!(row.measured, layout::length::PairMeasured::Copper);
-    assert!(row.paths.is_none() && row.branches.is_empty(), "{row:?}");
+    assert!(row.paths.is_none(), "{row:?}");
     assert!((row.skew - 2.0).abs() < 1e-9, "{row:?}");
     Ok(())
 }

@@ -1452,7 +1452,7 @@ pub fn checks_with(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
     let mut findings = BoardCopper::of(project).checks(project, graph);
     findings.extend(fill::findings(project));
     findings.extend(outline::checks(project));
-    findings.extend(length::checks(project));
+    findings.extend(length::checks(project, graph));
     findings
 }
 

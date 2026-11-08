@@ -60,13 +60,13 @@ The formulas are our own implementation of published equations (`layout::impedan
 
 ## Length
 
-**Length model** (`layout/length.rs`). A net's routed length is the sum of its tracks' centre-line lengths plus, for each via, the barrel between the outermost copper layers on which the net's tracks reach the via: the distance between those foils' mid-planes in the stackup. On the 4-layer preset, a top-to-bottom via adds 1.635 mm (1.6 mm of dielectric plus half of each 35 µm foil). Not counted: the rest of a through via's barrel, beyond the layers it joins, paths inside pads, and via-in-pad joins. For a two-pin net this is the pad-to-pad length; for a branched net, the total copper length.
+**Length model** (`layout/length.rs`, read off the [copper graph](copper-graph.md)). A net's routed length is the sum of its tracks' centre-line lengths plus, for each via, the barrel between the outermost of its lands that the net's tracks join: the distance between those foils' mid-planes in the stackup. On the 4-layer preset, a top-to-bottom via adds 1.635 mm (1.6 mm of dielectric plus half of each 35 µm foil). Not counted: the rest of a through via's barrel, beyond the layers it joins, paths inside pads, and via-in-pad joins. For a two-pin net this is the pad-to-pad length; for a branched net, the total copper length.
 
-**Pair halves** (`layout/length/path.rs`) are measured along their signal path instead. Each half's copper is a graph: tracks split where a track, via or pad joins them, one vertex per layer a via is reached on with the barrels between them, and pads as zero-length joints. The path is the shortest one between the endpoints. Skew, uncoupled length, a half's tuning target and its length in a length group all read it. The endpoints are, in order:
+**Pair halves** (`layout/length/path.rs`) are measured along their signal path instead: the shortest path between the endpoints on the copper graph, which decides every joint (crossings and side-by-side overlaps included), splits tracks at their stations and gives each via barrel its mid-plane length. A track enters a via or pad land at its station nearest the land's centre, unless another track meeting the land carries on from there nearer the centre, so a route's last leg into a pad is path. A path may run through a fill island of its net: the hop adds no length, and the path row says "via fill". Skew, uncoupled length, a half's tuning target and its length in a length group all read it. The endpoints are, in order:
 
 1. the ones the pair sets, when both halves connect them (`measured: set`);
 2. otherwise derived (`derived`): of the parts both halves reach, the two farthest apart along the copper, each half taking the shortest path between them, so a part in line, such as ESD diodes, is passed through. When the halves share fewer than two parts, each takes its longest pad-to-pad path;
-3. otherwise, for a route still unfinished, each half's total copper as before (`copper`). A half past 2,048 tracks or 64 pads is also measured this way; both are target bounds.
+3. otherwise, for a route still unfinished, each half's total copper as before (`copper`). A pair is also measured this way when the copper graph is incomplete (it reports `board.check_limit`) or its path searches settle more than 4,000,000 vertices (`MAX_PATH_WORK`, a target bound).
 
 A two-pin half has no copper off its path, and its path equals its total copper. A stale set endpoint, whose pad left the net in a schematic edit, is ignored and the row reads `derived`.
 
@@ -83,25 +83,13 @@ These terms mean the same on every net, paired or not:
 - A **stub** is copper that ends at no pad. It is a fault on any net, and the board check reports it as the warning `board.track_dangling`. Nothing else calls copper a stub.
 - Copper whose ends reach pins is **terminated**. A pin is a termination. Whether a contact is open in operation, such as a USB-C receptacle's unused plug orientation or an unpopulated part, is a property of the connector or part, which routing does not know. Terminated copper is not a stub and raises nothing.
 
-**Which code decides.** The board's copper connectivity is `BoardCopper` (`layout/copper.rs`): the exact copper outlines, fills included, in a grid index sized for the 10,000-via target. The board check reads it for `board.unrouted`, `board.via_dangling` and `board.track_dangling`; airwires read it for the islands they join. Only `board.track_dangling` decides that copper is a stub: a track end whose round cap meets no other copper of its net, unless a fill joins the track.
+**Which code decides.** The [copper graph](copper-graph.md) (`layout/connectivity`), built once per document revision: the board check reads it for `board.unrouted`, `board.via_dangling` and `board.track_dangling` (a stub: copper that leads to no pad, on any net), airwires read its islands, and lengths and pair paths are queries on it. Nothing else decides which copper is joined.
 
-The pair measurement builds a graph per half (`layout/length/path.rs`), above, because it needs what connectivity does not: where along a track each joint lies, a via's barrel per layer, and shortest paths. It reports no finding and decides no fault.
+**Copper off the path.** A pin-to-pin link is a track between two pins, so a pair has no separate branch concept. Copper off a half's signal path is net copper like any other: in the net's total length (`NetRow.length`, next to the half's `path`), in neither skew nor uncoupled length, and a stub if it reaches no pad. On the ESP32 board the USB-C receptacle J1 has two contacts per signal, and each half joins them: USB_DP by 2.245 mm to J1.A6, and USB_DN by 6.98 mm to J1.A7, through two vias and the bottom layer. Both are terminated and raise nothing.
 
-**Branches.** A half's copper off its signal path is split into **branches** (`PairBranch`), one per connected piece. Each has its net, its length (via barrels included), its tracks and the `pins` it reaches. A branch's ends are classified by pins only:
+**What is shown.** For each half, the length report lists the path's pads (`from`, `to`, and `via_fill` when the path runs through a fill) with its length; the High speed card shows the same per half ("29.866 mm · J1.B6 to U1.43"), then the skew and the uncoupled length. An open end is in Issues as `board.track_dangling`.
 
-- A branch that reaches a pin is a **link** to it. On the ESP32 board the USB-C receptacle J1 has two contacts per signal, and each half links them: USB_DP by 2.245 mm to J1.A6, and USB_DN by 6.98 mm to J1.A7, through two vias and the bottom layer.
-- A branch that reaches no pin ends at no pad, unless it only rejoins the path; the board check reports that end as a stub. A link with an open spur is still a link; its spur's end is reported the same way.
-
-Branches count in neither skew nor uncoupled length. Their copper stays in the net's total length.
-
-**What is shown.** The length report lists each pair's `branches` with their net, length, tracks and pins. The High speed card shows one plain row per branch below the halves, labelled with its net: "Link to J1.A7 · 6.98 mm", or "Branch to no pin · 0.5 mm". Neither raises a warning; an open end is in Issues as `board.track_dangling`.
-
-**Not built.** No rule limits a branch's length, and parts do not yet say which contacts are open in some state. A future branch-length rule would be a net-class setting sourced from an interface's specification, unchecked by default. It would need those connector and part properties, since only a link to a contact that is open in operation acts as a stub electrically.
-
-**Known gaps.**
-
-- Connectivity is computed three times: the board check and airwires each run the same union-find scan over `BoardCopper`, and the pair graph joins copper by its own tests (exact centre-line joints, a track end on another track's copper, the nearest leg into a pad) and ignores fills. They agree on the tested boards. One copper graph per net in `layout`, built from `BoardCopper`'s indexed touches with the joint positions the pair needs, would let all three read one structure. It is deferred: it changes established check results at the edges (a cap overlapping another track's copper, fills) and must keep the 10,000-via target.
-- `board.track_dangling` tests track ends only. A track that ends at a via joining nothing else is not reported: the via counts as joined, and the track end touches it.
+**Not built.** No rule limits the length of copper off the path, and parts do not yet say which contacts are open in some state. A future rule would be a net-class setting sourced from an interface's specification, unchecked by default. It would need those connector and part properties, since only a link to a contact that is open in operation acts as a stub electrically.
 
 ## Checks
 
@@ -115,14 +103,14 @@ Branches count in neither skew nor uncoupled length. Their copper stays in the n
 | `length.mismatch` | A routed group member outside its window |
 | `impedance.mismatch` | A track (single-ended target) or coupled stretch (differential target) outside the tolerance, worst per net and layer; or a target on a layer without a reference plane |
 
-**Length report** (`layout.length_report`, the High speed card's Lengths section): every routed, paired or grouped net with its length (tracks, vias, total), a half's `path`, target, tolerance and deviation (a half's against its path); every pair's measured halves, how they were measured, their paths' pads, branches, skew and uncoupled length; every group's target, window and worst deviation.
+**Length report** (`layout.length_report`, the High speed card's Lengths section): every routed, paired or grouped net with its length (tracks, vias, total), a half's `path`, target, tolerance and deviation (a half's against its path); every pair's measured halves, how they were measured, their paths' pads, skew and uncoupled length; every group's target, window and worst deviation.
 
 ## Desktop
 
 - **Net classes card:** a High speed section per class with the impedance targets, tolerance, pair width, gap and limits, then each layer's derived width, gap and impedance with its problem lines.
 - **Design rules panel:** an Impedance section with every layer's structure (height, Dk, notes when references are assumed or Dk estimated) and every class with a target, layer by layer.
 - **Route card:** the pair, its width and gap, the layer's structure and computed impedance, the class target and any problem line. With a single-ended target, the route width follows the derived width of the current layer.
-- **High speed card** (Board card's High speed row): pairs with skew; for the selected pair, how it is measured, each half's length and pads, its uncoupled length, each branch on its own row ("Link to J1.A7 · 6.98 mm"), and *Set endpoints* with a pad choice per end; suggested pairs with Add, length groups (match longest or an explicit target, tolerance, members, add the highlighted net), and the length report. Rows highlight their net.
+- **High speed card** (Board card's High speed row): pairs with skew; for the selected pair, how it is measured, each half's length and pads, its skew and uncoupled length, and *Set endpoints* with a pad choice per end; suggested pairs with Add, length groups (match longest or an explicit target, tolerance, members, add the highlighted net), and the length report. Rows highlight their net.
 - **Tune tool** and its card, above.
 
 The obstacle index for the Tune tool is built once per document revision, a meander is planned only when the hovered segment, the revision or a setting changes, and the length report is computed once per revision. Planning one segment takes a bounded handful of polyline evaluations and grid queries; it is not yet measured on a 10,000-via board (see Limits).
@@ -142,5 +130,5 @@ The modules are built so the push-and-shove router ([as built](push-and-shove.md
 - Dk and plane flags enter through `layout.set_stackup` or `layout.edit_stackup` (CLI and MCP) or the desktop's Stackup dialog (Board card › Copper › Stackup…).
 - Pair routing pushes other copper and walks round obstacles as one unit, and a pair pushed by other copper moves as one unit or stays ([push-and-shove](push-and-shove.md)); it does not keep the pair coupled through a bend tighter than its pitch. A pad-to-pad pair whose pads lie along the route direction fans out across the partner pad and is refused by the clearance check.
 - Tuning meanders one straight segment per click; it does not spread a meander over several segments or tune a whole pair at once, and the accordion needs room on both sides (it is refused next to the partner half).
-- Length counts via barrels between the layers used, not the rest of a via's barrel; pad-internal and package (die) lengths are not included. Copper of a half joined only through a fill has no path. A stretch of a path that runs beside the partner's branch counts as coupled. The Tune tool does not stop a meander on a branch, which adds no path length.
-- Checks and the length report run on the UI thread with the other board checks; neither is measured at 10,000 vias yet.
+- Length counts via barrels between the layers used, not the rest of a via's barrel; pad-internal and package (die) lengths are not included. A stretch of a path that runs beside the partner's copper off its path counts as coupled. The Tune tool does not stop a meander on copper off the path, which adds no path length.
+- Checks and the length report run on the UI thread with the other board checks. On the 10,000-via benchmark board, net lengths take 0.3 ms and a pair's measurement 4.3 ms on the revision's copper graph ([measured](copper-graph.md#slice-2-as-built)); the whole length report is not timed there.

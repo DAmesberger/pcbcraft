@@ -14,18 +14,22 @@
 //! copper, so a track is a chain of vertices at its stations. Islands,
 //! stubs (copper leading to no pad, found by peeling dead ends that are not
 //! pins), `board.unrouted`, `board.via_dangling` and the airwires are all
-//! read off this graph.
+//! read off this graph, and so are lengths: a net's routed length and a
+//! pair half's signal path ([`NetPaths`]), with each barrel edge carrying
+//! the distance between its lands' foil mid-planes.
 //!
 //! Fill islands come from the joins fill compute stored
 //! ([`super::fill::links`]); slice 3 of the design replaces that adapter
 //! with the joining rule.
 mod build;
 mod islands;
+mod lengths;
 mod queries;
 #[cfg(test)]
 mod tests;
 
 pub use islands::Island;
+pub use lengths::{MAX_PATH_WORK, NetPaths, PadEnd, PathEdge, PathTree, Walk};
 pub use queries::Stub;
 
 use super::WorldPad;
@@ -77,7 +81,8 @@ pub struct Vertex {
 pub enum EdgeKind {
     /// A track's copper between two of its stations.
     Stretch,
-    /// A via's barrel between two of its lands.
+    /// A via's barrel between two of its lands; its length is the distance
+    /// between their layers' foil mid-planes ([`CopperGraph::edge_length`]).
     Barrel,
     /// A plated pad's hole between two of its lands.
     Plated,
@@ -105,6 +110,8 @@ struct Group {
 #[derive(Debug, Default)]
 pub struct CopperGraph {
     layers: Vec<CopperLayer>,
+    /// The z of each copper layer's foil mid-plane in the stackup, mm.
+    mid_planes: BTreeMap<CopperLayer, f64>,
     pads: Vec<WorldPad>,
     tracks: Vec<Track>,
     vias: Vec<Via>,

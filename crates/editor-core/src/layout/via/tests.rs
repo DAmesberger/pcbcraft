@@ -479,7 +479,7 @@ fn stackup_heights_stack_from_the_bottom_dielectric_face() -> Result<()> {
 /// The showcase on four layers with `count` through vias on a 1.27 mm grid
 /// below its parts, on two nets in pairs, and inner tracks joining pairs
 /// until the board holds `tracks` tracks.
-fn via_board(count: usize, tracks: usize) -> Result<Project> {
+pub(crate) fn via_board(count: usize, tracks: usize) -> Result<Project> {
     let mut project = Engine::showcase()?.project().clone();
     project.stackup = Stackup::preset(4)?;
     let nets = [project.nets[0].id, project.nets[1].id];

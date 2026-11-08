@@ -604,4 +604,4 @@ pub(super) fn validate(project: &Project, nets: &BTreeSet<Id>) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
