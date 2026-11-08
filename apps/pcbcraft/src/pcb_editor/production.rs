@@ -97,7 +97,9 @@ pub(super) struct ProductionDialog {
 }
 
 impl ProductionDialog {
-    pub(super) fn new(library: Option<ProfileLibrary>) -> Self {
+    /// A new dialog writing into `folder` (the project's kept production
+    /// folder) when that folder still exists.
+    pub(super) fn new(library: Option<ProfileLibrary>, folder: Option<PathBuf>) -> Self {
         let user_profiles = library
             .as_ref()
             .and_then(|l| l.list().ok())
@@ -107,7 +109,7 @@ impl ProductionDialog {
             user_profiles,
             pick: Pick::Board,
             format: Format::Folder,
-            location: None,
+            location: folder.filter(|f| f.is_dir()),
             options: FabricationOptions::default(),
             report: None,
             checking: None,
@@ -213,21 +215,25 @@ impl ProductionDialog {
     }
 
     /// Take a picked location.
-    fn poll_picker(&mut self) {
-        let Some(receiver) = &self.picking else {
-            return;
-        };
+    /// Take the picked location; returns a picked folder (not a ZIP file),
+    /// for the app to keep as the project's production folder.
+    fn poll_picker(&mut self) -> Option<PathBuf> {
+        let receiver = self.picking.as_ref()?;
         match receiver.try_recv() {
             Ok(path) => {
                 self.picking = None;
                 if path.is_some() {
                     self.location = path;
                     self.refusal = None;
+                    if self.format == Format::Folder {
+                        return self.location.clone();
+                    }
                 }
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => self.picking = None,
         }
+        None
     }
 
     /// Take export progress and the result.
@@ -495,8 +501,17 @@ impl PcbEditor {
         self.net_classes = None;
         self.rules = None;
         if self.production.is_none() {
-            self.production = Some(ProductionDialog::new(library));
+            self.production = Some(ProductionDialog::new(
+                library,
+                self.production_folder.clone(),
+            ));
         }
+    }
+
+    /// A production folder just chosen in the dialog, once, for the app
+    /// to keep for this project.
+    pub fn take_chosen_production_folder(&mut self) -> Option<PathBuf> {
+        self.chosen_production_folder.take()
     }
 
     pub(super) fn production_subject(&self) -> Option<Subject> {
@@ -517,7 +532,9 @@ impl PcbEditor {
             dialog.refusal = Some(text);
         }
         dialog.check(&ctx, engine);
-        dialog.poll_picker();
+        if let Some(folder) = dialog.poll_picker() {
+            self.chosen_production_folder = Some(folder);
+        }
         dialog.poll_export(&ctx);
         let stem = fabrication::base_name(engine.project(), &dialog.options)
             .unwrap_or_else(|_| "board".into());
@@ -623,6 +640,14 @@ fn body(
         kit::row(ui, "Save to", |ui| {
             choose = kit::summary_row(ui, &shown, Some("Choose…"));
         });
+        if output.is_none() {
+            // Why Export is grey, without hovering it.
+            let what = match dialog.format {
+                Format::Folder => "a folder",
+                Format::Zip => "a ZIP file",
+            };
+            kit::hint(ui, &format!("Choose {what} to save to, then Export"), "");
+        }
         if choose {
             dialog.start_pick(ui.ctx(), stem);
         }

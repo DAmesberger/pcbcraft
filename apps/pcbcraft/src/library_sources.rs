@@ -772,6 +772,22 @@ impl LibrarySources {
         Ok(())
     }
 
+    /// The production folder last chosen for the project file `project`.
+    pub fn production_folder(&self, project: &std::path::Path) -> Option<&std::path::Path> {
+        self.settings.production_folder(project)
+    }
+
+    /// Keep `folder` as the production folder of the project file
+    /// `project`, per user (bounded and checked by
+    /// [`UserSettings::remember_production_folder`]).
+    pub fn set_production_folder(&mut self, project: &std::path::Path, folder: std::path::PathBuf) {
+        if self.settings.production_folder(project) != Some(folder.as_path()) {
+            self.settings
+                .remember_production_folder(project.to_path_buf(), folder);
+            self.persist();
+        }
+    }
+
     /// Whether the app's waivers need a reason (Settings).
     pub fn require_waiver_reason(&self) -> bool {
         self.settings.require_waiver_reason

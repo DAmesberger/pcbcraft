@@ -425,6 +425,11 @@ pub struct PcbEditor {
     rules: Option<rules_panel::RulesPanel>,
     /// The Production files dialog while it is open.
     production: Option<production::ProductionDialog>,
+    /// The production folder kept for this project (the app's per-user
+    /// settings); a new Production files dialog starts there.
+    pub production_folder: Option<std::path::PathBuf>,
+    /// A folder the dialog was just pointed at, for the app to keep.
+    chosen_production_folder: Option<std::path::PathBuf>,
     /// Board bounds a Locate asked the next Layout frame to frame.
     frame_request: Option<[Point; 2]>,
     /// Bounds the next Layout frame shows whole, zooming out past the
@@ -531,6 +536,8 @@ impl Default for PcbEditor {
             stackup: None,
             rules: None,
             production: None,
+            production_folder: None,
+            chosen_production_folder: None,
             frame_request: None,
             overview_request: None,
             show_in_schematic: None,
@@ -2144,15 +2151,22 @@ impl PcbEditor {
                 if pad.placed.pad.number.is_empty() || !seen.pad(&pad.placed) {
                     continue;
                 }
+                // A number shows only inside its pad: fine-pitch pads (a
+                // USB-C receptacle at fit zoom) would stack their numbers
+                // over each other and the designator.
+                let font = FontId::proportional(t.font_small);
+                let galley =
+                    painter.layout_no_wrap(pad.placed.pad.number.clone(), font, t.on_accent);
+                let bounds = pad.outline.bounds(0.0);
+                let width = (bounds.max[0] - bounds.min[0]) as f32 * scale;
+                let height = (bounds.max[1] - bounds.min[1]) as f32 * scale;
+                if galley.size().x > width || t.font_small * PAD_NUMBER_CAP > height {
+                    continue;
+                }
                 let delta = self.drag_delta(pad.placed.instance);
                 let c = pad.placed.center();
-                painter.text(
-                    screen([c[0] + delta[0], c[1] + delta[1]]),
-                    Align2::CENTER_CENTER,
-                    &pad.placed.pad.number,
-                    FontId::proportional(t.font_small),
-                    t.on_accent,
-                );
+                let at = screen([c[0] + delta[0], c[1] + delta[1]]);
+                painter.galley(at - galley.size() / 2.0, galley, t.on_accent);
             }
         }
     }
@@ -2464,6 +2478,10 @@ struct BoardInk {
 
 /// A tented via's ring under its mask.
 const TENTED_SHADE: f32 = 0.55;
+
+/// A pad number's digit height as a share of its font size: the number
+/// shows when the pad is at least this tall on screen.
+const PAD_NUMBER_CAP: f32 = 0.7;
 
 /// `top` (premultiplied, maybe translucent) composited over opaque `under`.
 fn over(under: Color32, top: Color32) -> Color32 {
@@ -3806,6 +3824,35 @@ mod tests {
         // R1's pads are drawn (and so numbered) first.
         assert_eq!(editor.selected_instance(), Some(r1));
         assert!((editor.board_pads[0].placed.center()[0] - pth[0]).abs() < 1e-9);
+        Ok(())
+    }
+
+    /// Run 3, finding 11: a pad number shows only where it fits inside its
+    /// pad, so fine-pitch numbers ("A1B12" on a USB-C receptacle) don't
+    /// stack over each other and the designator at fit zoom.
+    #[test]
+    fn a_pad_number_shows_only_inside_its_pad() -> Result<(), Box<dyn std::error::Error>> {
+        let mut file = shaped_board()?.to_file();
+        for footprint in &mut file.project.library.footprints {
+            if let Some(pad) = footprint
+                .definition
+                .pads
+                .iter_mut()
+                .find(|p| p.kind == PadKind::PlatedThrough)
+            {
+                pad.number = "A1B12".into();
+            }
+        }
+        let engine = Engine::from_file(file)?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+        let texts = painted(&output).texts;
+        // The 1.6 mm pad is too narrow for five characters at fit zoom;
+        // the custom pad's "2" fits.
+        assert!(!texts.iter().any(|t| t == "A1B12"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "2"), "{texts:?}");
         Ok(())
     }
 

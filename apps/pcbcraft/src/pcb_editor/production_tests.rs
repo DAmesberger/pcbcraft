@@ -218,6 +218,50 @@ fn the_ribbon_command_opens_the_dialog_in_the_subject_slot() -> TestResult {
     Ok(())
 }
 
+/// Run 3, finding 16: without a folder the card says why Export waits; a
+/// picked folder goes to the app once to keep for the project, and the
+/// kept folder starts the next dialog, unless it has gone.
+#[test]
+fn the_card_says_export_needs_a_folder_and_the_folder_is_kept() -> TestResult {
+    let engine = Engine::showcase()?;
+    let ctx = context();
+    let says = |output: &egui::FullOutput| {
+        texts(output)
+            .iter()
+            .any(|t| t.starts_with("Choose a folder to save to"))
+    };
+    let mut editor = open(&engine)?;
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(says(&output), "{:?}", texts(&output));
+
+    let tmp = tempfile::tempdir()?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    sender.send(Some(tmp.path().to_path_buf()))?;
+    dialog(&mut editor)?.picking = Some(receiver);
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(!says(&output), "a folder is chosen");
+    assert_eq!(
+        editor.take_chosen_production_folder().as_deref(),
+        Some(tmp.path())
+    );
+    assert_eq!(editor.take_chosen_production_folder(), None, "once");
+
+    // What the app hands back for this project starts the next dialog.
+    let mut editor = PcbEditor {
+        production_folder: Some(tmp.path().to_path_buf()),
+        ..PcbEditor::default()
+    };
+    editor.open_production_in(None);
+    assert_eq!(dialog(&mut editor)?.location.as_deref(), Some(tmp.path()));
+    let mut editor = PcbEditor {
+        production_folder: Some(tmp.path().join("gone")),
+        ..PcbEditor::default()
+    };
+    editor.open_production_in(None);
+    assert_eq!(dialog(&mut editor)?.location, None, "a missing folder asks");
+    Ok(())
+}
+
 #[test]
 fn an_unwaived_error_blocks_export_and_a_waiver_unblocks_it() -> TestResult {
     let mut engine = Engine::showcase()?;

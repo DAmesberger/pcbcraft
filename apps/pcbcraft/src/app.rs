@@ -1215,6 +1215,23 @@ impl App {
             available: &available,
         })
     }
+
+    /// Keep the production folder chosen for this project file per user,
+    /// and hand the kept one to the next Production files dialog. A
+    /// project never saved has no file to keep it by.
+    fn production_folder(&mut self) {
+        let Some(project) = self.files.path() else {
+            self.pcb.production_folder = None;
+            return;
+        };
+        if let Some(folder) = self.pcb.take_chosen_production_folder() {
+            self.sources.set_production_folder(project, folder);
+        }
+        let kept = self.sources.production_folder(project);
+        if self.pcb.production_folder.as_deref() != kept {
+            self.pcb.production_folder = kept.map(std::path::Path::to_path_buf);
+        }
+    }
 }
 
 /// ⌘Q (Ctrl+Q) is the registry's `app.quit`, rebindable and asking about
@@ -1265,6 +1282,7 @@ impl eframe::App for App {
         self.app_bar(ui);
         self.ribbon(ui);
         self.workspace_area(ui);
+        self.production_folder();
         // Draft edits commit once their gesture ends, as one undo step.
         self.part_requests();
         self.library_requests(&ctx);

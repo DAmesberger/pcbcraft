@@ -25,6 +25,8 @@ pub const MAX_FAVOURITES: usize = 256;
 pub const MAX_RECENT: usize = 32;
 /// Recent part files kept (the part-file chooser), most recent first.
 pub const MAX_RECENT_PART_FILES: usize = 8;
+/// Projects whose production folder is kept, most recent first.
+pub const MAX_PRODUCTION_FOLDERS: usize = 32;
 /// Bytes of the settings file.
 pub const MAX_SETTINGS_BYTES: usize = 1024 * 1024;
 /// The widest panel width kept, in points.
@@ -75,6 +77,21 @@ pub struct UserSettings {
     /// default: a reason is optional).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub require_waiver_reason: bool,
+    /// The folder each project's production files were last written to,
+    /// by project file, most recent first: a machine's own paths, so kept
+    /// per user and never in the (portable) project.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub production_folders: Vec<ProductionFolder>,
+}
+
+/// Where one project's production files go.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProductionFolder {
+    /// The project file, absolute.
+    pub project: PathBuf,
+    /// The folder that holds its output folder, absolute.
+    pub folder: PathBuf,
 }
 
 impl Default for UserSettings {
@@ -88,6 +105,7 @@ impl Default for UserSettings {
             keyboard: KeyboardSettings::default(),
             part_files: Vec::new(),
             require_waiver_reason: false,
+            production_folders: Vec::new(),
         }
     }
 }
@@ -332,6 +350,29 @@ impl UserSettings {
         self.part_files.truncate(MAX_RECENT_PART_FILES);
     }
 
+    /// The production folder last chosen for the project file `project`.
+    pub fn production_folder(&self, project: &Path) -> Option<&Path> {
+        self.production_folders
+            .iter()
+            .find(|p| p.project == project)
+            .map(|p| p.folder.as_path())
+    }
+
+    /// Keep `folder` as the production folder of the project file
+    /// `project`, first, dropping the oldest beyond
+    /// [`MAX_PRODUCTION_FOLDERS`]. Paths the settings would refuse
+    /// (relative or overlong) are not kept.
+    pub fn remember_production_folder(&mut self, project: PathBuf, folder: PathBuf) {
+        let kept = |p: &Path| p.is_absolute() && p.as_os_str().len() <= MAX_PATH;
+        if !kept(&project) || !kept(&folder) {
+            return;
+        }
+        self.production_folders.retain(|p| p.project != project);
+        self.production_folders
+            .insert(0, ProductionFolder { project, folder });
+        self.production_folders.truncate(MAX_PRODUCTION_FOLDERS);
+    }
+
     /// Add or remove a favourite; returns whether it is now a favourite.
     /// Adding beyond [`MAX_FAVOURITES`] is refused.
     pub fn toggle_favourite(&mut self, key: EntryKey) -> Result<bool> {
@@ -388,6 +429,27 @@ impl UserSettings {
         }
         if self.part_files.iter().collect::<BTreeSet<_>>().len() != self.part_files.len() {
             return Err(Error::Invalid("a recent part file is listed twice".into()));
+        }
+        if self.production_folders.len() > MAX_PRODUCTION_FOLDERS {
+            return Err(Error::TooLarge(format!(
+                "at most {MAX_PRODUCTION_FOLDERS} production folders"
+            )));
+        }
+        for p in &self.production_folders {
+            for path in [&p.project, &p.folder] {
+                if !path.is_absolute() || path.as_os_str().len() > MAX_PATH {
+                    return Err(Error::Invalid(format!(
+                        "production folder path {} must be absolute and at most {MAX_PATH} bytes",
+                        path.display()
+                    )));
+                }
+            }
+        }
+        let projects: BTreeSet<_> = self.production_folders.iter().map(|p| &p.project).collect();
+        if projects.len() != self.production_folders.len() {
+            return Err(Error::Invalid(
+                "a project's production folder is listed twice".into(),
+            ));
         }
         let mut paths = BTreeSet::new();
         for source in &self.sources {
@@ -664,6 +726,41 @@ mod tests {
         }
         assert!(settings.toggle_favourite(key(9999)).is_err());
         settings.check()
+    }
+
+    /// Run 3, finding 16: a project's production folder is kept per user
+    /// by project file, survives a write and read, and stays bounded.
+    #[test]
+    fn production_folders_are_kept_per_project_file() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(SETTINGS_FILE);
+        let board = PathBuf::from("/work/board.pcbcraft");
+        let mut settings = UserSettings::default();
+        settings.remember_production_folder(board.clone(), "/work/out".into());
+        settings.remember_production_folder(board.clone(), "/work/fab".into());
+        settings.remember_production_folder("relative.pcbcraft".into(), "/x".into());
+        settings.remember_production_folder("/work/other.pcbcraft".into(), "x".into());
+        assert_eq!(settings.production_folders.len(), 1, "one per project");
+        write_settings(&path, &settings)?;
+        let read = read_settings(&path)?;
+        assert_eq!(read.production_folder(&board), Some(Path::new("/work/fab")));
+        assert_eq!(read.production_folder(Path::new("/work/x.pcbcraft")), None);
+        for n in 0..40 {
+            settings.remember_production_folder(
+                PathBuf::from(format!("/p/{n}.pcbcraft")),
+                PathBuf::from("/out"),
+            );
+        }
+        assert_eq!(settings.production_folders.len(), MAX_PRODUCTION_FOLDERS);
+        assert_eq!(settings.production_folder(&board), None, "oldest dropped");
+        settings.check()?;
+        settings.production_folders.pop();
+        settings.production_folders.push(ProductionFolder {
+            project: "relative".into(),
+            folder: "/out".into(),
+        });
+        assert!(settings.check().is_err());
+        Ok(())
     }
 
     #[test]
