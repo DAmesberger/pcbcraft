@@ -201,10 +201,11 @@ fn defs(params: &[FootprintParam], package: &[PackageValue]) -> Outcome<Vec<Para
                 ),
             ));
         }
-        // `{:?}` keeps every bit of the f64 (shortest round-trip form).
+        // `{:?}` keeps every bit of the f64 (shortest round-trip form);
+        // `+ 0.0` writes a negative zero as `0.0`, as `native::mm` does.
         let (text, unit) = match v.value {
-            ParamValue::Length(mm) if mm.is_finite() => (format!("{mm:?} mm"), "mm"),
-            ParamValue::Angle(deg) if deg.is_finite() => (format!("{deg:?} deg"), "deg"),
+            ParamValue::Length(mm) if mm.is_finite() => (format!("{:?} mm", mm + 0.0), "mm"),
+            ParamValue::Angle(deg) if deg.is_finite() => (format!("{:?} deg", deg + 0.0), "deg"),
             ParamValue::Count(n) => (n.to_string(), ""),
             _ => {
                 return Err(problem(EXPR, format!("`{}` is not finite", v.name.0)));

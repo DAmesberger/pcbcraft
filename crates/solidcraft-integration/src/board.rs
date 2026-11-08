@@ -63,7 +63,7 @@ fn sketch_error(e: impl std::fmt::Display) -> Problem {
 }
 
 fn mm(v: f64) -> Expr {
-    Expr(format!("{v} mm"))
+    Expr(crate::native::mm(v))
 }
 
 impl BoardShapeEvaluator for SketchBoardEvaluator {

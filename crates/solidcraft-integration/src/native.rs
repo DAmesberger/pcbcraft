@@ -45,8 +45,13 @@ impl From<String> for Expr {
     }
 }
 
+/// `value` millimetres as a Solidcraft expression, such as `3.1 mm`: the one
+/// formatter for lengths written into expressions. A negative zero, which
+/// rounding a tiny negative offset gives, is written as `0 mm`. Otherwise an
+/// expression that means the same would read as changed, and an edit that
+/// could update the model in place would rebuild it.
 pub fn mm(value: f64) -> String {
-    format!("{value} mm")
+    format!("{} mm", value + 0.0)
 }
 
 /// Identity of a created component and its occurrence in the root assembly.
@@ -953,7 +958,7 @@ fn joint_params(joint: &BoardJoint, frame: &JointFrame, lift: Option<&str>) -> V
         (Mount::Height(z), Some(lift)) => {
             let z = match &z.0 {
                 Value::String(e) => e.clone(),
-                other => format!("{other} mm"),
+                other => other.as_f64().map_or_else(|| format!("{other} mm"), mm),
             };
             (true, json!(format!("({z}) + ({lift})")))
         }

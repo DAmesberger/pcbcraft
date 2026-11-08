@@ -244,6 +244,28 @@ fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
     Ok(())
 }
 
+/// Every part turned by 90° and back (an edit and its undo) updates the
+/// model in place, as a fresh build would: a pad offset that rounds to a
+/// negative zero after the turn writes the same joint expression as before
+/// (`0 mm`, not `-0 mm`), so the board is not built anew.
+#[test]
+fn a_part_turn_and_its_undo_update_in_place() -> Result<()> {
+    let mut project = board()?;
+    let mut model = build(&project)?;
+    for (what, turn) in [("turned", 90.0), ("turned back", -90.0)] {
+        for placement in &mut project.placements {
+            placement.rotation_deg = (placement.rotation_deg + turn).rem_euclid(360.0);
+        }
+        let (next, how) = updated(model, &project)?;
+        assert!(
+            matches!(how, Rebuilt::InPlace(n) if n > 0),
+            "{what}: {how:?}"
+        );
+        model = next;
+    }
+    Ok(())
+}
+
 /// A model whose build a newer request cancelled after it finished still
 /// updates: the flag stopped that build, not the model it made.
 #[test]

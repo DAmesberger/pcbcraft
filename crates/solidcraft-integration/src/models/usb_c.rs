@@ -12,7 +12,7 @@
 //! (docs/materials.md).
 use super::{Build, check_positive, require};
 use crate::Result;
-use crate::native::{Plane, ProfileBody};
+use crate::native::{Plane, ProfileBody, mm};
 use crate::pad_outline::Contour;
 use pcbcraft_core::library::package_form::usb_c::UsbCForm;
 use pcbcraft_core::library::{BodyRole, Outline, Segment};
@@ -121,9 +121,9 @@ pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
         Plane::Xz,
         ProfileBody {
             name: &insulator,
-            offset: format!("{depth} / 2 - ({insulator_depth} mm)").into(),
+            offset: format!("{depth} / 2 - ({})", mm(insulator_depth)).into(),
             contours: &[obround(0.0, centre_v, half_inner)],
-            height: format!("{insulator_depth} mm").into(),
+            height: mm(insulator_depth).into(),
         },
     )?;
     b.push(insulator, BodyRole::Body, plastic);
@@ -138,15 +138,11 @@ pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
         BodyRole::Body,
         plastic,
         [
-            format!("{} mm", -tongue_width / 2.0),
-            format!("{tip} mm"),
-            format!("{} mm", f.opening_z - tongue_thickness / 2.0),
+            mm(-tongue_width / 2.0),
+            mm(tip),
+            mm(f.opening_z - tongue_thickness / 2.0),
         ],
-        [
-            format!("{tongue_width} mm"),
-            format!("{} mm", tongue_end - tip),
-            format!("{tongue_thickness} mm"),
-        ],
+        [mm(tongue_width), mm(tongue_end - tip), mm(tongue_thickness)],
     )?;
 
     // The solder tails, in lead order, each from under the shell's rear to
@@ -167,16 +163,8 @@ pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
             &tail,
             BodyRole::Lead,
             tail_material,
-            [
-                format!("{} mm", x - width / 2.0),
-                format!("{tail_start} mm"),
-                "0 mm".into(),
-            ],
-            [
-                format!("{width} mm"),
-                format!("{} mm", tail_end - tail_start),
-                format!("{TAIL_THICKNESS_MM} mm"),
-            ],
+            [mm(x - width / 2.0), mm(tail_start), "0 mm".into()],
+            [mm(width), mm(tail_end - tail_start), mm(TAIL_THICKNESS_MM)],
         )?;
         tails.push(tail);
     }
@@ -203,14 +191,14 @@ pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
             BodyRole::Lead,
             shell_material,
             [
-                format!("{x} mm"),
-                format!("{} mm", centre[1] - along / 2.0),
+                mm(x),
+                mm(centre[1] - along / 2.0),
                 format!("- {stake_length}"),
             ],
             [
-                format!("{t} mm"),
-                format!("{along} mm"),
-                format!("{stake_length} + {stake_top} mm"),
+                mm(t),
+                mm(along),
+                format!("{stake_length} + {}", mm(stake_top)),
             ],
         )?;
         if let Some(body) = b.bodies.iter_mut().find(|body| body.name == stake) {
@@ -224,12 +212,12 @@ pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
         let peg = b.name(&format!("peg {}", k + 1));
         b.native.profile_body(ProfileBody {
             name: &peg,
-            offset: format!("{} mm", -PEG_BELOW_MM).into(),
+            offset: mm(-PEG_BELOW_MM).into(),
             contours: &[Contour::Circle {
                 center: [x, f.peg_y],
                 radius: f.peg_diameter / 2.0,
             }],
-            height: format!("{} mm", PEG_BELOW_MM + shell_bottom).into(),
+            height: mm(PEG_BELOW_MM + shell_bottom).into(),
         })?;
         b.push(peg, BodyRole::Body, plastic);
     }

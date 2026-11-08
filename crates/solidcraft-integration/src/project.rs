@@ -13,7 +13,9 @@ use crate::geom::prelude::*;
 use crate::material::{self, BodyKind, Detail};
 use crate::models::imported::{LibraryDefinition, SourceCache};
 use crate::models::{self, ModelDefinition, look};
-use crate::native::{BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody};
+use crate::native::{
+    self, BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody,
+};
 use crate::pad_outline::{self, Contour, Copper, FLATTEN_TOLERANCE_MM, PLATING_MM};
 use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
@@ -1690,11 +1692,9 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         }
         // Rounded to a nanometre, so moving a part (whose offsets carry
         // rounding of its position) leaves the joint as it was.
-        let [dx, dy] = pad.offset().map(|v| (v * 1e9).round() / 1e9);
-        let x =
-            format!("{prefix}_x + cos({prefix}_angle) * {dx} mm - sin({prefix}_angle) * {dy} mm");
-        let y =
-            format!("{prefix}_y + sin({prefix}_angle) * {dx} mm + cos({prefix}_angle) * {dy} mm");
+        let [dx, dy] = pad.offset().map(|v| native::mm((v * 1e9).round() / 1e9));
+        let x = format!("{prefix}_x + cos({prefix}_angle) * {dx} - sin({prefix}_angle) * {dy}");
+        let y = format!("{prefix}_y + sin({prefix}_angle) * {dx} + cos({prefix}_angle) * {dy}");
         joints.push((
             BoardJoint {
                 board,
