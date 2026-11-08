@@ -5,7 +5,7 @@
 //! the screen and the print agree. Original geometry; the power port
 //! shapes repeat the ground and supply drawings of
 //! `library::symbol_style`.
-use super::{PlacedUnit, junction_dots, labels, placed_unit, wire_path, wiring};
+use super::{PlacedUnit, junction_dots, labels, placed_unit, wiring};
 use crate::geometry::{Bounds, Point, Shape, Transform2};
 use crate::ids::Id;
 use crate::ids::SheetId;
@@ -858,14 +858,30 @@ pub struct SheetScene {
     pub frame: Drawing,
     /// Labels, power ports, sheet symbols and furniture.
     pub items: Drawing,
-    /// Each wire's drawn path: its ends and corners in order. A free end is
-    /// a plain line end.
-    pub wires: Vec<Vec<Point>>,
+    /// Each wire's drawn path: a polyline through its ends and corners in
+    /// order, with each rounded corner's radius (`radii`, empty when every
+    /// corner is sharp). A free end is a plain line end.
+    pub wires: Vec<Shape>,
     /// Junction dots.
     pub dots: Vec<Point>,
     /// No-connect crosses on decided pins.
     pub no_connects: Vec<Point>,
     pub units: Vec<PlacedUnit>,
+}
+
+/// A wire's path, its vertices with their corner radii, as the polyline
+/// that draws it: rounded corners as arcs tangent to both segments, each as
+/// large as fits.
+pub fn wire_shape(path: &[crate::model::Corner]) -> Shape {
+    let radii = if path.iter().any(|c| c.radius > 0.0) {
+        path.iter().map(|c| c.radius).collect()
+    } else {
+        Vec::new()
+    };
+    Shape::Polyline {
+        points: path.iter().map(|c| c.at).collect(),
+        radii,
+    }
 }
 
 /// Resolve one sheet's drawing.
@@ -891,8 +907,9 @@ pub fn sheet_scene(project: &Project, sheet: SheetId) -> SheetScene {
         .wires
         .iter()
         .filter(|w| w.sheet == sheet)
-        .filter_map(|w| wire_path(project, w))
-        .filter(|path| path.windows(2).any(|s| s[0] != s[1]))
+        .filter_map(|w| wiring::wire_vertices(project, w))
+        .filter(|path| path.windows(2).any(|s| s[0].at != s[1].at))
+        .map(|path| wire_shape(&path))
         .collect();
     let dots = junction_dots(project)
         .into_iter()

@@ -194,9 +194,7 @@ fn a_named_wire_brings_its_free_end() -> Result<()> {
         Operation::Schematic(C::DrawWire {
             sheet: None,
             from: WireTarget::Terminal(pin(u1, 1)),
-            corners: vec![Corner {
-                at: [start[0], -20.0],
-            }],
+            corners: vec![Corner::sharp([start[0], -20.0])],
             to: WireEnd::free([-40.0, -20.0])
                 .ok_or_else(|| Error::Invalid("free".into()))?
                 .into(),

@@ -369,7 +369,7 @@ fn a_free_end_does_not_move() -> Result<()> {
         C::DrawWire {
             sheet: None,
             from: ep(u1, 2).into(),
-            corners: vec![crate::model::Corner { at: [20.0, 0.0] }],
+            corners: vec![crate::model::Corner::sharp([20.0, 0.0])],
             to: WireTarget::Free(
                 crate::model::FreeEnd::new([20.0, 10.0]).ok_or(Error::Invalid("free".into()))?,
             ),

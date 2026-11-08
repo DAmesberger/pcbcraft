@@ -78,10 +78,58 @@ impl SchematicEditor {
             kit::value_row(ui, "From", &end_label(project, wire.from));
             kit::value_row(ui, "To", &end_label(project, wire.to));
             kit::value_row(ui, "Corners", &wire.corners.len().to_string());
+            if let Some(op) = self.corner_radius_row(ui, wire) {
+                output = Some(op);
+            }
         });
         if let Some(instance) = select {
             self.select_instance(Some(instance), project);
         }
         output
+    }
+
+    /// The picked corner's radius (0: sharp), committed live as one
+    /// `wire.set_radius`; a radius that does not fit is refused on the field.
+    fn corner_radius_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        wire: &pcbcraft_core::Wire,
+    ) -> Option<Operation> {
+        let index = self.picked_corner(wire)?;
+        let current = wire.corners.get(index)?.radius;
+        let key = (wire.id, index);
+        let mut value = self
+            .corner_radius
+            .filter(|(k, _)| *k == key)
+            .map_or(current, |(_, v)| v);
+        let input = kit::row(ui, "Radius", |ui| {
+            kit::number_input(
+                ui,
+                "corner-radius",
+                &mut value,
+                "mm",
+                0.0..=schematic::MAX_CORNER_RADIUS_MM,
+            )
+        });
+        let changed = (value - current).abs() > 1e-9;
+        let state = live(
+            ui,
+            &input.response,
+            &mut self.refused,
+            changed,
+            input.invalid.as_deref(),
+        );
+        self.corner_radius = input.response.has_focus().then_some((key, value));
+        match state {
+            super::Live::Commit => {
+                refusal::mark(ui.ctx(), Origin::Field(input.response.id));
+                Some(Operation::Schematic(SchematicCommand::SetWireRadius {
+                    wire: wire.id,
+                    index,
+                    radius: value,
+                }))
+            }
+            super::Live::Revert | super::Live::Idle => None,
+        }
     }
 }

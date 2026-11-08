@@ -33,7 +33,7 @@ fn free(p: Point) -> Result<WireTarget> {
 }
 
 fn corners(points: &[Point]) -> Vec<Corner> {
-    points.iter().map(|&at| Corner { at }).collect()
+    points.iter().map(|&at| Corner::sharp(at)).collect()
 }
 
 /// U1 and U2 side by side and a wire from U1.2 at (5, 0) through `through`

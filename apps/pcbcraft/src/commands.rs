@@ -342,6 +342,13 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
         Chord::key(egui::Key::Backspace),
         "schematic.delete",
     ),
+    // A switches arc corners for new corners instead of rounding the picked
+    // corner of the selected wire.
+    (
+        Context::SchematicWire,
+        Chord::key(egui::Key::A),
+        "schematic.arc-corner",
+    ),
     // Tuning: F flips the meander's side instead of fitting the view.
     (Context::PcbTune, Chord::key(egui::Key::F), "view.fit"),
     (
@@ -1492,6 +1499,12 @@ fn defaults() -> Vec<Command> {
             Chord::key(K::Delete).with_shift(),
         )
         .also(&[Chord::key(K::Backspace).with_shift()]),
+        key(
+            "schematic.arc-corner",
+            "Round the picked wire corner, or make it sharp",
+            C::Schematic,
+            Chord::key(K::A),
+        ),
         key(
             "schematic.cancel",
             "Cancel the tool",

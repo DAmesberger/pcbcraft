@@ -298,3 +298,43 @@ fn the_esp32_board_labels_clear_bodies_and_each_other() -> TestResult {
     assert!(found.is_empty(), "{} overlaps: {found:#?}", found.len());
     Ok(())
 }
+
+/// A rounded wire corner prints as its arc, flattened to the curve
+/// tolerance (the PDF writer has no arcs): many more line segments than the
+/// sharp corner. Where the arc runs is checked on the scene in core.
+#[test]
+fn a_rounded_wire_corner_prints_as_its_arc() -> TestResult {
+    use pcbcraft_core::model::{Corner, FreeEnd};
+    use pcbcraft_core::schematic::WireTarget;
+    let mut engine = Engine::default();
+    let free = |p: Point| FreeEnd::new(p).map(WireTarget::Free).ok_or("free");
+    apply(
+        &mut engine,
+        C::DrawWire {
+            sheet: None,
+            from: free([20.0, -20.0])?,
+            corners: vec![Corner::sharp([60.0, -20.0])],
+            to: free([60.0, -60.0])?,
+        },
+    )?;
+    let wire = engine.project().wires.first().map(|w| w.id).ok_or("wire")?;
+    let segments = |pdf: &[u8]| find(pdf, b" l\n");
+    let sharp = schematic_pdf(engine.project(), &[])?;
+    apply(
+        &mut engine,
+        C::SetWireRadius {
+            wire,
+            index: 0,
+            radius: 10.0,
+        },
+    )?;
+    let rounded = schematic_pdf(engine.project(), &[])?;
+    // A 10 mm quarter arc within 0.02 mm of its chords takes about 13.
+    assert!(
+        segments(&rounded) >= segments(&sharp) + 10,
+        "{} then {}",
+        segments(&sharp),
+        segments(&rounded)
+    );
+    Ok(())
+}

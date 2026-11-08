@@ -138,11 +138,29 @@ pub struct Wire {
     pub corners: Vec<Corner>,
 }
 
-/// An interior vertex of a wire's path: a sharp corner.
+/// An interior vertex of a wire's path. With a `radius`, the corner is
+/// rounded by the arc of that radius tangent to both of its segments; the
+/// vertex stays where it is stored, so connectivity and edits work on it.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Corner {
     pub at: Point,
+    /// Fillet radius in mm; 0 is a sharp corner. A radius larger than its
+    /// segments allow is drawn as large as fits; `wire.set_radius` refuses
+    /// one.
+    #[serde(default, skip_serializing_if = "is_zero_radius")]
+    pub radius: f64,
+}
+
+fn is_zero_radius(radius: &f64) -> bool {
+    *radius == 0.0
+}
+
+impl Corner {
+    /// A sharp corner at `at`.
+    pub const fn sharp(at: Point) -> Self {
+        Self { at, radius: 0.0 }
+    }
 }
 
 /// One end of a wire: an instance terminal, a junction, a label (or power

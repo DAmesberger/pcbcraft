@@ -46,8 +46,9 @@ pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
 pub use arrange::Arrangement;
 pub use clipboard::{ClipObject, ClipSymbol, Pasted, PastedSymbol, SheetClip};
 pub use wiring::{
-    JUNCTION_TOLERANCE_MM, MAX_JUNCTIONS, WirePoint, WireTarget, end_position, end_sheet,
-    junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_path,
+    JUNCTION_TOLERANCE_MM, MAX_CORNER_RADIUS_MM, MAX_JUNCTIONS, WirePoint, WireTarget,
+    end_position, end_sheet, junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_path,
+    wire_vertices,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -153,6 +154,11 @@ pub enum SchematicCommand {
     /// Remove corner `index`, merging its two segments; the result may slant.
     #[serde(rename = "wire.remove_corner")]
     RemoveWireCorner { wire: Id, index: usize },
+    /// Round corner `index` by an arc of `radius` mm tangent to both of its
+    /// segments; 0 makes it sharp. Refused when the radius does not fit the
+    /// segments beside the arcs of the neighbouring corners.
+    #[serde(rename = "wire.set_radius")]
+    SetWireRadius { wire: Id, index: usize, radius: f64 },
     /// Remove segment `index`: the wire splits in two, with free ends at the
     /// gap. A segment at the end of the wire shortens it instead.
     #[serde(rename = "wire.remove_segment")]
@@ -373,6 +379,7 @@ declare_classes!(SchematicCommand {
     MoveWireSegment "wire.move_segment" Edit,
     InsertWireCorner "wire.insert_corner" Edit,
     RemoveWireCorner "wire.remove_corner" Edit,
+    SetWireRadius "wire.set_radius" Edit,
     RemoveWireSegment "wire.remove_segment" Edit,
     MoveWireEnd "wire.move_end" Edit,
     Disconnect "schematic.disconnect" Edit,
@@ -527,6 +534,11 @@ fn apply_command(
         C::RemoveWireCorner { wire, index } => {
             none(wire_edit::apply_remove_corner(project, wire, index))
         }
+        C::SetWireRadius {
+            wire,
+            index,
+            radius,
+        } => none(wire_edit::apply_set_radius(project, wire, index, radius)),
         C::RemoveWireSegment { wire, index } => {
             none(wire_edit::remove_segment(project, wire, index))
         }
@@ -887,7 +899,7 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
         .get(1..path.len().saturating_sub(1))
         .unwrap_or_default()
         .iter()
-        .map(|at| Corner { at: *at })
+        .map(|at| Corner::sharp(*at))
         .collect();
     add_wire(project, sheet, from, corners, to).map(|_| ())
 }
@@ -947,6 +959,9 @@ pub fn draw_wire(
         return Err(invalid(
             "Schematic position must be finite and within ±10000 mm.",
         ));
+    }
+    if !wiring::radii_valid(&corners) {
+        return Err(wire_edit::bad_radius());
     }
     if let (WireTarget::OnWire(a), WireTarget::OnWire(b)) = (&from, &to)
         && a.wire == b.wire

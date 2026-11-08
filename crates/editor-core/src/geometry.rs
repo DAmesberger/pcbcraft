@@ -477,13 +477,80 @@ pub fn fit_corner_radii(points: &[Point], radii: &[f64], closed: bool) -> Vec<f6
         .collect()
 }
 
+/// The largest radius vertex `i` of an open path can take while its
+/// neighbours' fillets stay as drawn: each of its two edges, less what the
+/// fillet at the edge's other end takes of it. 0 at an end, and where the
+/// edges run in line or fold back.
+pub fn corner_radius_limit(points: &[Point], radii: &[f64], i: usize) -> f64 {
+    let Some((prev, next)) = neighbours(points, i, false) else {
+        return 0.0;
+    };
+    let v = points[i];
+    let turn = match turn_deg(prev, v, next) {
+        Some(t) if t.abs() > 1e-9 && t.abs() <= MAX_FILLET_TURN_DEG => t,
+        _ => return 0.0,
+    };
+    let mut others = radii.to_vec();
+    others.resize(points.len(), 0.0);
+    others[i] = 0.0;
+    let trims = fitted_trims(points, &others, false);
+    let trim = |j: usize| trims.get(j).copied().unwrap_or(0.0);
+    let room = (distance(prev, v) - trim(i - 1)).min(distance(v, next) - trim(i + 1));
+    room.max(0.0) / half_turn_tan(turn)
+}
+
+/// Each rounded corner's arc as drawn on an open path, by vertex index:
+/// where it starts, its middle, and where it ends.
+pub fn fillet_arcs(points: &[Point], radii: &[f64]) -> Vec<(usize, [Point; 3])> {
+    fillets(points, radii, false)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, fillet)| {
+            let (start, end, arc) = fillet?;
+            match arc {
+                Shape::Arc {
+                    center,
+                    radius,
+                    start_deg,
+                    sweep_deg,
+                } => Some((
+                    i,
+                    [
+                        start,
+                        polar(center, radius, start_deg + sweep_deg / 2.0),
+                        end,
+                    ],
+                )),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 /// The straight edges and fillet arcs of a path whose corners are rounded
 /// by `radii`, in path order.
 pub fn rounded_path(points: &[Point], radii: &[f64], closed: bool) -> Vec<Shape> {
     let n = points.len();
+    let corners = fillets(points, radii, closed);
+    let mut out = Vec::new();
+    for (i, j) in edge_indices(n, closed) {
+        let a = corners[i].as_ref().map_or(points[i], |c| c.1);
+        let b = corners[j].as_ref().map_or(points[j], |c| c.0);
+        if distance(a, b) > 1e-12 {
+            out.push(Shape::Line { a, b });
+        }
+        if let Some((_, _, arc)) = &corners[j] {
+            out.push(arc.clone());
+        }
+    }
+    out
+}
+
+/// For each vertex rounded as drawn: where its fillet starts, where it
+/// ends, and its arc.
+fn fillets(points: &[Point], radii: &[f64], closed: bool) -> Vec<Option<(Point, Point, Shape)>> {
     let trims = fitted_trims(points, radii, closed);
-    // For each rounded corner: where it starts, where it ends, its arc.
-    let corners: Vec<Option<(Point, Point, Shape)>> = (0..n)
+    (0..points.len())
         .map(|i| {
             let trim = trims[i];
             if trim <= 0.0 {
@@ -515,19 +582,7 @@ pub fn rounded_path(points: &[Point], radii: &[f64], closed: bool) -> Vec<Shape>
                 },
             ))
         })
-        .collect();
-    let mut out = Vec::new();
-    for (i, j) in edge_indices(n, closed) {
-        let a = corners[i].as_ref().map_or(points[i], |c| c.1);
-        let b = corners[j].as_ref().map_or(points[j], |c| c.0);
-        if distance(a, b) > 1e-12 {
-            out.push(Shape::Line { a, b });
-        }
-        if let Some((_, _, arc)) = &corners[j] {
-            out.push(arc.clone());
-        }
-    }
-    out
+        .collect()
 }
 
 impl Shape {

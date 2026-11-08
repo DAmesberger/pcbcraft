@@ -237,7 +237,7 @@ fn a_new_wire_takes_the_other_l_or_a_dogleg_around_pins_it_does_not_end_on() -> 
     assert_eq!(project.wires.len(), 1);
     assert_eq!(
         project.wires[0].corners,
-        vec![crate::model::Corner { at: [5.0, 20.0] }]
+        vec![crate::model::Corner::sharp([5.0, 20.0])]
     );
     assert!(dots(&engine).is_empty(), "a bend has no dot");
     // With both L corners taken, a three-legged dogleg goes around.
@@ -432,7 +432,7 @@ fn a_junction_point_shows_on_a_lone_wire_and_is_refused_off_wires() -> Result<()
     assert_eq!(project.wires.len(), 1);
     assert_eq!(
         project.wires[0].corners,
-        vec![crate::model::Corner { at: [35.0, 0.0] }]
+        vec![crate::model::Corner::sharp([35.0, 0.0])]
     );
     Ok(())
 }
