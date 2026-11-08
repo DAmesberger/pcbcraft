@@ -249,18 +249,29 @@ fn folder(
     key: &'static str,
     depth: usize,
     label: &str,
-    count: Option<usize>,
+    count: &str,
     branch: bool,
     default_open: bool,
 ) -> bool {
-    let count = count.map(|c| c.to_string()).unwrap_or_default();
-    let (open, at) = folder_row(ui, key, depth, label, &count, branch, default_open);
+    let (open, at) = folder_row(ui, key, depth, label, count, branch, default_open);
     if let Some(at) = at
         && !menu_rows(ui.ctx(), MenuTarget::Folder(key)).is_empty()
     {
         menu.open(at, MenuTarget::Folder(key));
     }
     open
+}
+
+/// The Nets folder's count: every net, and how many of them reach one pin
+/// or none ("22 · 8 single-pin"), so it agrees with the sheet card's
+/// "Connected nets" (the rest).
+fn nets_count(nets: &[pcbcraft_core::Net]) -> String {
+    let single = nets.iter().filter(|n| n.terminals.len() < 2).count();
+    if single == 0 {
+        nets.len().to_string()
+    } else {
+        format!("{} · {single} single-pin", nets.len())
+    }
 }
 
 /// A folder row with its secondary text; returns whether it is open after
@@ -398,7 +409,7 @@ fn tree(
         return pick;
     }
     ui.spacing_mut().item_spacing.y = 0.0;
-    if !folder(ui, menu, "project", 0, &project.name, None, false, true) {
+    if !folder(ui, menu, "project", 0, &project.name, "", false, true) {
         return pick;
     }
 
@@ -556,7 +567,7 @@ fn tree(
         "schematic",
         1,
         "Schematic",
-        None,
+        "",
         schematic_lit,
         true,
     ) {
@@ -569,7 +580,7 @@ fn tree(
             "instances",
             2,
             "Instances",
-            Some(project.instances.len()),
+            &project.instances.len().to_string(),
             lit.instance.is_some(),
             true,
         ) {
@@ -625,11 +636,14 @@ fn tree(
             "nets",
             2,
             "Nets",
-            Some(project.nets.len()),
+            &nets_count(&project.nets),
             lit.net.is_some(),
             false,
         ) {
-            for net in &project.nets {
+            // Connected nets first, single-pin nets last, each in file order.
+            let mut nets: Vec<_> = project.nets.iter().collect();
+            nets.sort_by_key(|n| n.terminals.len() < 2);
+            for net in nets {
                 let members = match net.terminals.len() {
                     1 => "1 pin".to_owned(),
                     n => format!("{n} pins"),
@@ -657,7 +671,7 @@ fn tree(
     }
 
     let pcb_lit = lit.board || lit.track.is_some() || lit.placement.is_some();
-    if folder(ui, menu, "pcb", 1, "PCB", None, pcb_lit, true) {
+    if folder(ui, menu, "pcb", 1, "PCB", "", pcb_lit, true) {
         let size = format!(
             "{} × {} mm",
             kit::number_text(project.board_size[0]),
@@ -688,7 +702,7 @@ fn tree(
             "placements",
             2,
             "Placements",
-            Some(project.placements.len()),
+            &project.placements.len().to_string(),
             lit.placement.is_some(),
             lit.placement.is_some(),
         ) {
@@ -731,7 +745,7 @@ fn tree(
             "tracks",
             2,
             "Tracks",
-            Some(project.tracks.len()),
+            &project.tracks.len().to_string(),
             lit.track.is_some(),
             lit.track.is_some(),
         ) {
@@ -864,7 +878,7 @@ fn sheets(
         "sheets",
         2,
         "Sheets",
-        Some(rows.len()),
+        &rows.len().to_string(),
         false,
         true,
     ) {
@@ -1213,6 +1227,61 @@ mod tests {
 
     /// Precision run finding 3, as in Solidcraft's Browser: a click on a
     /// component row selects it; only a double-click opens it for editing.
+    /// The Nets folder counts every net and says how many reach one pin,
+    /// and lists those last, so its count agrees with the sheet card's
+    /// "Connected nets" (run 3, finding 20).
+    #[test]
+    fn the_nets_folder_counts_single_pin_nets_and_lists_them_last()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut engine = Engine::demo()?;
+        let first = engine.project().instances[0].clone();
+        // An unwired resistor: each of its pins is a net of its own.
+        engine.apply(
+            engine.revision(),
+            pcbcraft_core::Operation::Instance(pcbcraft_core::InstanceCommand::Place(
+                pcbcraft_core::instances::NewInstance {
+                    sheet: None,
+                    component: first.component,
+                    designator: Some("R3".into()),
+                    properties: vec![],
+                    representation: first.representation,
+                    unit: pcbcraft_core::UnitId(1),
+                    position: [30.0, 0.0],
+                    physical: first.physical,
+                },
+            )),
+        )?;
+        let nets = &engine.project().nets;
+        let single: Vec<&str> = nets
+            .iter()
+            .filter(|n| n.terminals.len() < 2)
+            .map(|n| n.name.as_str())
+            .collect();
+        let connected: Vec<&str> = nets
+            .iter()
+            .filter(|n| n.terminals.len() >= 2)
+            .map(|n| n.name.as_str())
+            .collect();
+        assert!(!single.is_empty() && !connected.is_empty(), "{nets:?}");
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        ctx.data_mut(|d| d.insert_persisted(egui::Id::unique(("browser-open", "nets")), true));
+        let shown = frame(&ctx, &engine, vec![]);
+        let count = format!("{} · {} single-pin", nets.len(), single.len());
+        assert!(shown.contains(&count), "{count}: {shown:?}");
+        let at = shown.iter().position(|t| t == "Nets").ok_or("no Nets")?;
+        let listed: Vec<&str> = shown
+            .iter()
+            .skip(at)
+            .map(String::as_str)
+            .filter(|t| single.contains(t) || connected.contains(t))
+            .take(nets.len())
+            .collect();
+        let expected: Vec<&str> = connected.iter().chain(&single).copied().collect();
+        assert_eq!(listed, expected);
+        Ok(())
+    }
+
     #[test]
     fn a_click_selects_a_component_and_a_double_click_edits_it() {
         let ctx = egui::Context::default();

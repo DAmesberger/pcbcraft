@@ -100,7 +100,7 @@ const STANDARD: [Standard; 7] = [
         kind_name: "Frequency",
         kind_lineage: "2e98c4b7013d4fa6b7d05a96e1c38f42",
         field_name: "Frequency",
-        field_lineage: "ad406f7b39e1425c91f7c2d85e06b3a9",
+        field_lineage: FREQUENCY_LINEAGE,
         dimension: [0, 0, -1, 0, 0, 0, 0],
         symbol: "Hz",
         aliases: &[],
@@ -116,6 +116,34 @@ const CAPACITANCE_LINEAGE: &str = "17ac95e3f06b4d28b3e4d172a9c05f86";
 const INDUCTANCE_LINEAGE: &str = "c02e7a941db8436fa86f15d3b07e92c4";
 const RATED_VOLTAGE_LINEAGE: &str = "e7304bc6185f4a9dbc72f09ad1e563b8";
 const RATED_CURRENT_LINEAGE: &str = "0fb86d21e5c74a3899d4c7e06a13f25d";
+const FREQUENCY_LINEAGE: &str = "ad406f7b39e1425c91f7c2d85e06b3a9";
+
+/// The fields that are a part's value, as a BOM's Value column states it:
+/// a passive's resistance, capacitance or inductance, a crystal's
+/// frequency and an LED's colour. Ratings and tolerances qualify a value.
+const VALUE_LINEAGES: [&str; 5] = [
+    RESISTANCE_LINEAGE,
+    CAPACITANCE_LINEAGE,
+    INDUCTANCE_LINEAGE,
+    FREQUENCY_LINEAGE,
+    COLOUR_LINEAGE,
+];
+
+/// Whether `field` is the project's copy of a standard value field
+/// ([`VALUE_LINEAGES`]), by its recorded origin, never by its name.
+pub fn is_value_field(library: &Library, field: FieldRef) -> bool {
+    let Some(source) = library_id() else {
+        return false;
+    };
+    library.origins.iter().any(|o| {
+        o.local.kind == DefinitionKind::Field
+            && o.local.id == field.id
+            && o.origin.library == source
+            && VALUE_LINEAGES
+                .iter()
+                .any(|l| SourceLineageId::parse(l) == Some(o.origin.lineage))
+    })
+}
 
 /// The colours the `Colour` field offers: the emitted colours of indicator
 /// LEDs. Choice IDs count from 1 and are never reused.

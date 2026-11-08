@@ -313,7 +313,8 @@ fn item(
     }
 }
 
-/// Findings only production needs: parts without a footprint, fills never
+/// Findings only production needs: parts without a footprint or with an
+/// empty value field (the BOM's Value would be blank), fills never
 /// computed, parts with only an envelope 3D model, unpublished draft
 /// changes of definitions in use, plated slots the drill file cannot route,
 /// legend ink over pad openings and legend ink off the board.
@@ -337,6 +338,25 @@ fn production_findings(project: &Project, drafts: &Drafts, items: &mut Vec<Prefl
         .collect();
     for instance in &project.instances {
         let objects = vec![ObjectRef::Instance { id: instance.id }];
+        let unvalued =
+            crate::instances::effective_fields(&project.library, instance).is_ok_and(|fields| {
+                fields.iter().any(|f| {
+                    f.value.is_none()
+                        && crate::library::standard_fields::is_value_field(
+                            &project.library,
+                            f.field,
+                        )
+                })
+            });
+        if unvalued {
+            items.push(item(
+                "fabrication.no_value",
+                Severity::Warning,
+                format!("{} has no Value", instance.designator),
+                Some("Fill in the part's value field".into()),
+                objects.clone(),
+            ));
+        }
         let resolved = crate::instances::resolve(&project.library, instance).ok();
         match resolved.as_ref().and_then(|r| r.physical) {
             None => items.push(item(

@@ -3373,7 +3373,9 @@ mod tests {
         Ok((engine, r3))
     }
 
-    /// B-e: the Sheet's Nets count leaves out single-terminal nets.
+    /// B-e: the Sheet card's "Connected nets" leaves out single-terminal
+    /// nets, and sits in the Design section, not under "On this sheet",
+    /// because it counts the whole design (run 3, finding 20).
     #[test]
     fn the_sheet_counts_only_nets_joining_two_or_more_terminals()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -3386,17 +3388,26 @@ mod tests {
         let mut editor = SchematicEditor::default();
         let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
         let shown = shown(&output);
-        let label = shown
-            .iter()
-            .find(|(t, _)| t == "Nets")
-            .ok_or("no Nets row")?
-            .1;
-        // The value is the text on the Nets row's line.
+        let at = |text: &str| {
+            shown
+                .iter()
+                .find(|(t, _)| t == text)
+                .map(|(_, p)| *p)
+                .ok_or(format!("no {text}"))
+        };
+        let label = at("Connected nets")?;
+        assert!(!shown.iter().any(|(t, _)| t == "Nets"), "one name only");
+        // The value is the text on the row's line.
         let value = shown
             .iter()
-            .find(|(t, p)| t != "Nets" && (p.y - label.y).abs() < 2.0 && p.x > label.x)
-            .ok_or("no Nets value")?;
+            .find(|(t, p)| t != "Connected nets" && (p.y - label.y).abs() < 2.0 && p.x > label.x)
+            .ok_or("no Connected nets value")?;
         assert_eq!(value.0, connected.to_string());
+        let (sheet, design, pages) = (at("ON THIS SHEET")?, at("DESIGN")?, at("PAGES")?);
+        assert!(
+            sheet.y < pages.y && pages.y < design.y && design.y < label.y,
+            "the row is in the Design section, after the sheet's own"
+        );
         Ok(())
     }
 

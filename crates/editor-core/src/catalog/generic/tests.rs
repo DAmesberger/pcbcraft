@@ -441,3 +441,95 @@ fn colour_reaches_the_placed_instance_through_the_outcome() -> Result<()> {
     }));
     Ok(())
 }
+
+/// Run 3, finding 25: an LED whose colour is empty warns "D1 has no Value"
+/// and has an empty BOM Value; its colour fills Value once set, and the
+/// warning goes. A header has no value field: no warning, and with no Part
+/// chosen its Value is empty, never its description.
+#[test]
+fn an_empty_value_field_warns_and_an_leds_value_is_its_colour() -> Result<()> {
+    use crate::fields::{PropertyEdit, PropertyInput};
+    use crate::instances::NewInstance;
+    use crate::{InstanceCommand, UnitId};
+    let mut engine = Engine::default();
+    let place = |engine: &mut Engine, query: &str, designator: &str| -> Result<crate::Id> {
+        let Outcome::GenericPart { component, .. } = find_or_create(engine, query, None)? else {
+            return fail("built");
+        };
+        let representation = engine
+            .project()
+            .library
+            .component(component)
+            .and_then(|c| c.definition.representations.first())
+            .map(|s| s.id)
+            .ok_or_else(|| crate::Error::NotFound("a symbol".into()))?;
+        engine.apply_hosted(
+            engine.revision(),
+            Operation::Instance(InstanceCommand::Place(NewInstance {
+                sheet: None,
+                component,
+                designator: Some(designator.into()),
+                properties: vec![],
+                representation,
+                unit: UnitId(1),
+                position: [0.0, 0.0],
+                physical: None,
+            })),
+            Evaluators::default(),
+        )?;
+        engine
+            .project()
+            .instance_by_designator(designator)
+            .map(|i| i.id)
+            .ok_or_else(|| crate::Error::NotFound(designator.into()))
+    };
+    let d1 = place(&mut engine, "led 0603", "D1")?;
+    place(&mut engine, "header 1x4", "J1")?;
+    let no_value = |engine: &Engine| -> Result<Vec<String>> {
+        let report =
+            crate::fabrication::preflight::report(engine.project(), &Default::default(), None)?;
+        Ok(report
+            .items
+            .into_iter()
+            .filter(|i| i.code == "fabrication.no_value")
+            .inspect(|i| assert_eq!(i.severity, crate::issues::Severity::Warning))
+            .map(|i| i.title)
+            .collect())
+    };
+    let values = |engine: &Engine| -> Result<Vec<(String, String)>> {
+        let csv = crate::fabrication::assembly::bom_parts_csv(engine.project())?;
+        Ok(csv
+            .lines()
+            .skip(1)
+            .filter_map(|l| {
+                let mut f = l.split(',');
+                Some((f.next()?.to_owned(), f.next()?.to_owned()))
+            })
+            .collect())
+    };
+    assert_eq!(no_value(&engine)?, ["D1 has no Value"]);
+    let pair = |d: &str, v: &str| (d.to_owned(), v.to_owned());
+    assert_eq!(values(&engine)?, [pair("D1", ""), pair("J1", "")]);
+
+    let colour = engine
+        .project()
+        .instance(d1)
+        .and_then(|i| engine.project().library.component(i.component))
+        .and_then(|c| c.definition.fields.first())
+        .map(|s| s.field.id)
+        .ok_or_else(|| crate::Error::NotFound("the colour field".into()))?;
+    engine.apply_hosted(
+        engine.revision(),
+        Operation::Instance(InstanceCommand::SetProperties {
+            instance: d1,
+            edits: vec![PropertyEdit {
+                field: colour,
+                input: PropertyInput::Text("Red".into()),
+            }],
+        }),
+        Evaluators::default(),
+    )?;
+    assert!(no_value(&engine)?.is_empty());
+    assert_eq!(values(&engine)?, [pair("D1", "Red"), pair("J1", "")]);
+    Ok(())
+}

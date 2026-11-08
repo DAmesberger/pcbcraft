@@ -580,6 +580,38 @@ pub fn checks(project: &Project) -> Vec<Finding> {
         let max_skew = signal
             .pair_max_skew
             .unwrap_or(crate::rules::signal::DEFAULT_PAIR_MAX_SKEW_MM);
+        // A stub is copper off a half's signal path (a branch, or a jumper
+        // to a receptacle's second contact). It is warned past the default
+        // skew, never a class's skew limit: that one is about matching the
+        // halves, often a fraction of a millimetre, and no class sets a
+        // stub limit.
+        let max_stub = crate::rules::signal::DEFAULT_PAIR_MAX_SKEW_MM;
+        let halves = lengths.pairs.get(&pair.id).and_then(|m| m.halves.as_ref());
+        for stub in halves
+            .iter()
+            .flat_map(|hs| hs.iter().flat_map(|h| &h.stubs))
+        {
+            if stub.length <= max_stub + 1e-6 {
+                continue;
+            }
+            let to = stub
+                .reaches
+                .first()
+                .map_or_else(|| " to nothing".to_owned(), |pad| format!(" to {pad}"));
+            let mut objects = objects.clone();
+            objects.extend(stub.tracks.iter().map(|&id| ObjectRef::Track { id }));
+            findings.push(Finding::new(
+                "pair.stub",
+                format!(
+                    "{}: {} mm stub on {}{to}; needs at most {} mm (default limit)",
+                    pair.name,
+                    mm(stub.length),
+                    stub.name,
+                    mm(max_stub)
+                ),
+                objects,
+            ));
+        }
         if a > 0.0 && b > 0.0 && (a - b).abs() > max_skew + 1e-6 {
             let limit = if signal.pair_max_skew.is_some() {
                 format!("net class {class_name}: max skew")

@@ -167,27 +167,18 @@ fn line_index(report: &completeness::BomReport) -> BTreeMap<Id, &BomLine> {
 
 /// The Value of an instance in the BOM and pick-and-place files: its value
 /// text ([`instances::value_text`], every typed value field as the
-/// instance shows it, "10 µF 16 V"), else the chosen Part's MPN, else the component name for a component of
-/// more than two terminals (an IC, whose name is its identity), else empty.
-/// A two-terminal part's name is a package description ("Chip capacitor
-/// 0603 (1608 metric)") the Package column already carries, so a passive
-/// with no value set and no Part leaves Value empty; its Status reads
-/// "no part". The schematic falls back the same way.
+/// instance shows it, "10 µF 16 V", or an LED's colour), else the chosen
+/// Part's MPN (a connector or an IC), else empty. Never the component name:
+/// it is a description ("USB-C receptacle 16-pin", "Chip capacitor 0603")
+/// the Package column and the part's Status already cover. The production
+/// check warns on an empty value field (`fabrication.no_value`).
 fn instance_value(
     project: &Project,
     instance: &crate::model::ComponentInstance,
     line: Option<&BomLine>,
 ) -> Result<String> {
-    if let Some(value) = instances::value_text(&project.library, instance)?
+    Ok(instances::value_text(&project.library, instance)?
         .or_else(|| line.and_then(|l| l.mpn.clone()))
-    {
-        return Ok(value);
-    }
-    Ok(project
-        .library
-        .component(instance.component)
-        .filter(|c| c.definition.terminals.len() > 2)
-        .map(|c| c.meta.name.clone())
         .unwrap_or_default())
 }
 

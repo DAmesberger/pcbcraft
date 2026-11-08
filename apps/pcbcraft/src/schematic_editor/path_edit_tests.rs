@@ -1009,3 +1009,103 @@ fn the_wire_tool_rounds_new_corners_with_a() -> TestResult {
     assert!(f.editor.wire_arc, "A stays on for the next wire");
     Ok(())
 }
+
+/// The toasts posted since the last call, as text.
+fn toasts(ctx: &egui::Context) -> Vec<String> {
+    crate::kit::toast::take_posted(ctx)
+        .into_iter()
+        .map(|p| p.text)
+        .collect()
+}
+
+/// A on a corner too tight for the tool's radius rounds it by the most that
+/// fits, and says so; the command itself is still exact. A corner in line
+/// stays refused.
+#[test]
+fn a_rounds_a_tight_corner_by_the_most_that_fits() -> TestResult {
+    let mut f = fixture()?;
+    // Corner 1 turns 90° between the dogleg's vertical segment and the
+    // horizontal one into R91; its neighbour is sharp, so the shorter of the
+    // two segments is the largest radius that fits.
+    let vertical = (f.v[2][1] - f.v[1][1]).abs();
+    let horizontal = (f.v[3][0] - f.v[2][0]).abs();
+    let most = vertical.min(horizontal);
+    f.editor.wire_radius = most + 10.0;
+    frame(&mut f.editor, &f.engine, &f.ctx, vec![]);
+    click(&mut f.editor, &f.engine, &f.ctx, f.v[2]);
+    toasts(&f.ctx);
+    let a = key(egui::Key::A, egui::Modifiers::NONE);
+    let (_, sent) = frame(&mut f.editor, &f.engine, &f.ctx, vec![a]);
+    f.accept(sent, "wire.set_radius")?;
+    let radius = f
+        .engine
+        .project()
+        .wire(f.wire)
+        .map(|w| w.corners[1].radius)
+        .ok_or("wire")?;
+    assert!((radius - most).abs() < 1e-3, "{radius} vs {most}");
+    let text = format!("{radius:.3}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    assert_eq!(
+        toasts(&f.ctx),
+        vec![format!("Rounded with {text} mm, the most that fits")]
+    );
+    // Programmatic calls stay exact: the command refuses the tool's radius.
+    f.engine.undo()?;
+    let refused = f.engine.apply(
+        f.engine.revision(),
+        Operation::Schematic(SchematicCommand::SetWireRadius {
+            wire: f.wire,
+            index: 1,
+            radius: most + 10.0,
+        }),
+    );
+    assert!(refused.is_err(), "wire.set_radius refuses, not clamps");
+    Ok(())
+}
+
+/// A new corner too tight for the card's radius is rounded by the most that
+/// fits, and the toast says so.
+#[test]
+fn the_wire_tool_rounds_a_tight_corner_by_the_most_that_fits() -> TestResult {
+    let mut f = fixture()?;
+    f.editor.selected_wire = None;
+    f.editor.tool = Tool::Wire;
+    f.editor.wire_arc = true;
+    f.editor.wire_radius = 10.0;
+    frame(&mut f.editor, &f.engine, &f.ctx, vec![]);
+    click(&mut f.editor, &f.engine, &f.ctx, [0.0, -415.0]);
+    click(&mut f.editor, &f.engine, &f.ctx, [15.0, -420.0]);
+    toasts(&f.ctx);
+    let (_, sent) = frame(
+        &mut f.editor,
+        &f.engine,
+        &f.ctx,
+        vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+    );
+    // The elbow at (15, −415) has a 15 mm and a 5 mm segment: 5 mm fits.
+    let command = match &sent {
+        Some(Operation::Update(update)) => match &update.change {
+            Change::Schematic { command } => Some(command),
+            _ => None,
+        },
+        _ => None,
+    };
+    match command {
+        Some(SchematicCommand::DrawWire { corners, .. }) => {
+            assert_eq!(
+                corners,
+                &vec![Corner {
+                    at: [15.0, -415.0],
+                    radius: 5.0
+                }]
+            );
+        }
+        other => return Err(format!("{other:?}").into()),
+    }
+    assert_eq!(
+        toasts(&f.ctx),
+        vec!["Rounded with 5 mm, the most that fits".to_owned()]
+    );
+    Ok(())
+}
