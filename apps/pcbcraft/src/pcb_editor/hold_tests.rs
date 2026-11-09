@@ -839,6 +839,89 @@ fn a_valid_value_clears_a_board_parameter_error() -> Fallible {
     Ok(())
 }
 
+/// Demo run item 8: on a plain rectangle board a part dimension's value
+/// reads `height / 2` (the board's own parameters, as the dimension solve
+/// reads them); an invalid value after a committed one is marked, and an
+/// undo, which puts the document's values back in the fields, clears it.
+#[test]
+fn a_rectangle_boards_parameters_read_and_undo_clears_a_dimension_error() -> Fallible {
+    let (mut engine, r1, _) = held_board()?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    editor.set_selection(Some(r1), None, None);
+    let frame = |editor: &mut PcbEditor, engine: &Engine, events| {
+        let mut command = None;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(320.0, 1200.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                command = editor.subject_slot(ui, engine).output;
+                let _ = refusal::take_mark(ui.ctx());
+            },
+        );
+        output.textures_delta.clear();
+        (output, command)
+    };
+    let key = |key, modifiers| egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    };
+    let enter = |editor: &mut PcbEditor, engine: &Engine, field: Pos2, text: &str| {
+        let click = |pressed| egui::Event::PointerButton {
+            pos: field,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(
+            editor,
+            engine,
+            vec![egui::Event::PointerMoved(field), click(true), click(false)],
+        );
+        frame(
+            editor,
+            engine,
+            vec![
+                key(egui::Key::A, egui::Modifiers::COMMAND),
+                egui::Event::Text(text.into()),
+            ],
+        );
+        frame(
+            editor,
+            engine,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        )
+        .1
+    };
+    frame(&mut editor, &engine, vec![]);
+    let (output, _) = frame(&mut editor, &engine, vec![]);
+    let field = visible_texts(&output)
+        .into_iter()
+        .find(|(t, _)| t == "5 mm")
+        .map(|(_, p)| p)
+        .ok_or("no dimension field showing 5 mm")?;
+    let op = enter(&mut editor, &engine, field, "height / 2").ok_or("height / 2 was refused")?;
+    hosted(&mut engine, op)?;
+    let (output, _) = frame(&mut editor, &engine, vec![]);
+    assert!(!red_rings(&output), "a valid expression is marked");
+    assert!(enter(&mut editor, &engine, field, "abc").is_none());
+    let (output, _) = frame(&mut editor, &engine, vec![]);
+    assert!(red_rings(&output), "the invalid value is marked");
+    engine.undo()?;
+    let (output, _) = frame(&mut editor, &engine, vec![]);
+    let shown: Vec<String> = visible_texts(&output).into_iter().map(|(t, _)| t).collect();
+    assert!(shown.iter().any(|t| t == "5 mm"), "{shown:?}");
+    assert!(!red_rings(&output), "the undone field stays marked");
+    Ok(())
+}
+
 /// Whether a red ring (a `kit::field_error` mark) is painted.
 fn red_rings(output: &egui::FullOutput) -> bool {
     fn walk(shape: &Shape, red: Color32) -> bool {

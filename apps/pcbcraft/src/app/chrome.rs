@@ -241,6 +241,10 @@ impl App {
         self.refresh_tips(&ribbon);
         let issues = self.issues.ribbon_toggle(&self.engine, self.workspace);
         if let Some(event) = shell::ribbon(ui, self.workspace, &ribbon, &issues) {
+            // The ribbon was drawn before its event: draw it again in its
+            // new state (the 3D tab chosen) rather than when input next
+            // arrives.
+            ui.ctx().request_repaint();
             self.ribbon_event(&ui.ctx().clone(), event);
         }
     }

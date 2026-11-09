@@ -459,7 +459,7 @@ fn open_ends(sk: &Sketch) -> Option<ShapeFault> {
     Some(fault(
         ShapeFaultKind::Open,
         format!(
-            "The board outline is open: curve ends at {} touch nothing. Join them to close it",
+            "The board outline is open: curve ends at {} touch nothing. Join them to close it.",
             named.join(", ")
         ),
         &ends,
@@ -500,7 +500,7 @@ fn region(sk: &Sketch) -> std::result::Result<Region, ShapeFault> {
     if profiles.is_empty() {
         return Err(fault(
             ShapeFaultKind::Invalid,
-            "The board's curves make no closed region; draw a closed outline".into(),
+            "The board's curves make no closed region; draw a closed outline.".into(),
             &[],
         ));
     }
@@ -518,7 +518,7 @@ fn region(sk: &Sketch) -> std::result::Result<Region, ShapeFault> {
                 ShapeFaultKind::Invalid,
                 format!(
                     "The board's curves cross or touch{place}: the outline may not cross \
-                     itself, and a cutout lies inside it apart from the others"
+                     itself, and a cutout lies inside it apart from the others."
                 ),
                 &at,
             ));
@@ -537,7 +537,7 @@ fn region(sk: &Sketch) -> std::result::Result<Region, ShapeFault> {
         return Err(fault(
             ShapeFaultKind::Invalid,
             format!(
-                "The board's curves make {} separate regions; a board is one",
+                "The board's curves make {} separate regions; a board is one.",
                 main.len()
             ),
             &[],
@@ -546,13 +546,13 @@ fn region(sk: &Sketch) -> std::result::Result<Region, ShapeFault> {
     let (outer, outer_holes) = whole
         .get(*m)
         .cloned()
-        .ok_or_else(|| fault(ShapeFaultKind::Invalid, "no board region".into(), &[]))?;
+        .ok_or_else(|| fault(ShapeFaultKind::Invalid, "No board region.".into(), &[]))?;
     let mine: Vec<BTreeSet<String>> = outer_holes.iter().map(|h| set(h)).collect();
     for (i, (o, h)) in whole.iter().enumerate() {
         if i != *m && (!h.is_empty() || !mine.contains(&set(o))) {
             return Err(fault(
                 ShapeFaultKind::Invalid,
-                "A region lies inside a cutout; a board is one piece".into(),
+                "A region lies inside a cutout; a board is one piece.".into(),
                 &[],
             ));
         }
@@ -778,7 +778,7 @@ fn shape(
             ShapeFaultKind::Invalid,
             format!(
                 "Slot {}'s curves no longer bound one hole of the board; redraw it or make it a \
-                 cutout",
+                 cutout.",
                 lost.id.0
             ),
             &[],

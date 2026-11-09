@@ -1292,6 +1292,11 @@ impl PcbEditor {
     /// stages beside it, so the preview shows where they go.
     pub(super) fn begin_update_pcb(&mut self, engine: &Engine) {
         self.update.begin(engine, Change::SyncPcb {});
+        // The review stages parts beside the board on the Layout canvas;
+        // the 3D view (and its camera) stays as it was for later.
+        if self.update.is_open() && self.view_3d {
+            self.set_3d(false);
+        }
         let board = engine.project().board_size;
         let ghosts = self.update.marks().map(|m| m.ghosts).unwrap_or_default();
         if !ghosts.is_empty() {
@@ -3016,6 +3021,35 @@ mod tests {
             Some(7),
             "the user's highlight stays"
         );
+        Ok(())
+    }
+
+    /// Demo run item 7: Update PCB's review shows in Layout, where the
+    /// staged parts are drawn beside the board, even when asked from 3D.
+    #[test]
+    fn update_pcb_reviews_in_layout() -> pcbcraft_core::Result<()> {
+        let mut engine = Engine::demo()?;
+        let first = engine.project().instances[0].clone();
+        engine.apply(
+            engine.revision(),
+            Operation::Instance(pcbcraft_core::InstanceCommand::Place(
+                pcbcraft_core::instances::NewInstance {
+                    sheet: None,
+                    component: first.component,
+                    designator: Some("R9".into()),
+                    properties: vec![],
+                    representation: first.representation,
+                    unit: pcbcraft_core::UnitId(1),
+                    position: [30.0, 0.0],
+                    physical: first.physical,
+                },
+            )),
+        )?;
+        let mut editor = PcbEditor::default();
+        editor.set_3d(true);
+        editor.on_tool("update", &engine);
+        assert!(editor.reviewing());
+        assert!(!editor.is_3d(), "the review opened in 3D");
         Ok(())
     }
 

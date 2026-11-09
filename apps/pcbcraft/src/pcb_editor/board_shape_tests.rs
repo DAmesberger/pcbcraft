@@ -175,7 +175,7 @@ fn a_fillet_rounds_a_drawn_corner_and_refuses_a_shared_one() -> Fallible {
         .err()
         .ok_or("too large a fillet was accepted")?;
     assert!(error.to_string().contains("too large"), "{error}");
-    // A corner drawn as one shared point cannot be opened.
+    // A corner drawn as one shared point is the evaluator's fillet.
     let shared = SketchEvaluator
         .apply_sketch(
             &blank()?,
@@ -188,10 +188,52 @@ fn a_fillet_rounds_a_drawn_corner_and_refuses_a_shared_one() -> Fallible {
         .sketch;
     let view = view_of(&shared)?;
     let mut stage = Stage::new(&HOST, &shared);
-    let error = fillet(&mut stage, &view, [10.0, 10.0], 0.5, 1.0)
+    fillet(&mut stage, &view, [10.0, 10.0], 0.5, 1.0)?;
+    let [BoardEdit::Fillet { corners, radius }] = stage.edits.as_slice() else {
+        return Err(format!("not one fillet: {:?}", stage.edits).into());
+    };
+    let corner = view
+        .points
+        .iter()
+        .find(|p| dist(p.at, [10.0, 10.0]) < 1e-9)
+        .ok_or("no shared corner")?;
+    assert_eq!(corners, &vec![corner.id.clone()]);
+    assert_eq!(radius, &DimValue::Fixed(1.0));
+    // Away from any corner, the click is refused.
+    let mut stage = Stage::new(&HOST, &shared);
+    let error = fillet(&mut stage, &view, [5.0, 5.0], 0.5, 1.0)
         .err()
-        .ok_or("a shared corner was filleted")?;
-    assert!(error.to_string().contains("share"), "{error}");
+        .ok_or("a fillet away from a corner was accepted")?;
+    assert!(error.to_string().contains("corner"), "{error}");
+    Ok(())
+}
+
+/// The demo run's first gesture: Fillet on a corner of the sketch Shape
+/// mode generated for a plain rectangle board rounds it in one step.
+#[test]
+fn a_fillet_rounds_a_corner_of_the_generated_board_sketch() -> Fallible {
+    let mut d = Drawn::new()?;
+    d.editor.shape.tool = ShapeTool::Fillet;
+    let corner = d.at(1.0, 1.0);
+    let operation = d.click(corner);
+    let edits = d.apply(operation)?;
+    assert!(
+        matches!(edits.as_slice(), [BoardEdit::Fillet { corners, .. }] if corners.len() == 1),
+        "{edits:?}"
+    );
+    let board = d.board()?;
+    assert!(board.fault.is_none(), "{:?}", board.fault);
+    let arcs = |b: &BoardSketch| {
+        b.solved
+            .outer
+            .segments
+            .iter()
+            .filter(|s| matches!(s, pcbcraft_core::library::Segment::Arc { .. }))
+            .count()
+    };
+    assert_eq!(arcs(&board), 1, "{:?}", board.solved.outer);
+    d.engine.undo()?;
+    assert_eq!(arcs(&d.board()?), 0);
     Ok(())
 }
 
@@ -413,9 +455,16 @@ fn edge_values_evaluate_board_parameters() -> Fallible {
     );
     assert!(edge_card::expression_error(project, "width / 2").is_none());
     assert!(edge_card::expression_error(project, "depth").is_some());
-    // A rectangular board has no parameters.
+    // A plain rectangle board reads `width` and `height` as the dimension
+    // solve does, before Shape mode ever made it a sketch.
     let demo = Engine::demo()?;
-    assert!(edge_card::expression_error(demo.project(), "width").is_some());
+    assert!(matches!(demo.project().board_shape, BoardShape::Rectangle));
+    let [_, h] = demo.project().board_size;
+    assert!(edge_card::expression_error(demo.project(), "height / 2").is_none());
+    let v = edge_card::evaluate(demo.project(), &Expr("height / 2".into()))
+        .ok_or("height / 2 did not evaluate on a rectangle board")?;
+    assert!((v - h / 2.0).abs() < 1e-9, "{v} vs {h}");
+    assert!(edge_card::expression_error(demo.project(), "depth").is_some());
     assert!(edge_card::expression_error(demo.project(), "4 mm").is_none());
     Ok(())
 }
@@ -1347,5 +1396,120 @@ fn a_conic_tied_to_a_line_closes_a_cutout_in_one_step() -> Fallible {
     assert_eq!(distinct_curves(cutout), 2);
     d.engine.undo()?;
     assert!(d.board()?.solved.cutouts.is_empty());
+    Ok(())
+}
+
+/// Demo run item 8: the selected dimension's Value field marks an invalid
+/// value; an undo, which reloads the sketch and its values, clears the mark.
+#[test]
+fn an_undo_clears_a_sketch_dimension_value_error() -> Fallible {
+    let mut d = Drawn::new()?;
+    let spare = BoardEdit::SetParameter {
+        param: FootprintParam {
+            name: ParamName("spare".into()),
+            expr: Expr("1 mm".into()),
+            unit: ParamUnit::Mm,
+            comment: String::new(),
+        },
+    };
+    d.apply(Some(operation(vec![spare])))?;
+    let view = scene_view(&d.board()?)?;
+    let width = view
+        .constraints
+        .iter()
+        .find(|k| k.param.as_deref() == Some("width"))
+        .map(|k| k.id.clone())
+        .ok_or("no width dimension")?;
+    d.editor.shape.dimension = Some(width);
+    let red = |output: &egui::FullOutput| {
+        fn walk(shape: &Shape, red: egui::Color32) -> bool {
+            match shape {
+                Shape::Vec(shapes) => shapes.iter().any(|s| walk(s, red)),
+                Shape::Rect(r) => r.stroke.color == red && r.fill == egui::Color32::TRANSPARENT,
+                _ => false,
+            }
+        }
+        let red = solidcraft_theme::Tokens::get().error;
+        output.shapes.iter().any(|c| walk(&c.shape, red))
+    };
+    slot(&mut d.editor, &d.engine, &d.ctx, vec![]);
+    let (output, _) = slot(&mut d.editor, &d.engine, &d.ctx, vec![]);
+    // The Value row's field: the "width" text on the "Value" label's line.
+    let shown = painted(&output);
+    let row = shown
+        .iter()
+        .find(|(t, _)| t == "Value")
+        .map(|(_, p)| p.y)
+        .ok_or("no Value row")?;
+    let field = shown
+        .iter()
+        .find(|(t, p)| t == "width" && (p.y - row).abs() < 4.0)
+        .map(|(_, p)| *p)
+        .ok_or("no Value field showing width")?;
+    let mut events = press_at(field);
+    events.extend(release_at(field));
+    slot(&mut d.editor, &d.engine, &d.ctx, events);
+    slot(
+        &mut d.editor,
+        &d.engine,
+        &d.ctx,
+        vec![
+            egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            },
+            egui::Event::Text("1 x = 2".into()),
+        ],
+    );
+    let (_, sent) = slot(&mut d.editor, &d.engine, &d.ctx, key(egui::Key::Enter));
+    assert!(sent.is_none(), "an invalid value was sent: {sent:?}");
+    let (output, _) = slot(&mut d.editor, &d.engine, &d.ctx, vec![]);
+    assert!(red(&output), "the invalid value is not marked");
+    d.engine.undo()?;
+    let (output, _) = slot(&mut d.editor, &d.engine, &d.ctx, vec![]);
+    assert!(!red(&output), "the undone field stays marked");
+    assert!(painted(&output).iter().any(|(t, _)| t == "width"));
+    Ok(())
+}
+
+/// Demo run item 6: the shipped ESP32 example's board sketch is fully
+/// defined; its mounting holes sit `inset` from their nearest edges, so a
+/// width change carries the right-hand holes along.
+#[test]
+fn the_esp32_examples_holes_follow_the_board_width() -> Fallible {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
+    let mut engine = Engine::from_file(pcbcraft_io::read_project(&path)?)?;
+    let BoardShape::Sketch(board) = engine.project().board_shape.clone() else {
+        return Err("the example's board is not a sketch".into());
+    };
+    assert_eq!(board.solve.status, SolveStatus::Solved, "{:?}", board.solve);
+    assert_eq!(board.solve.dof, 0);
+    let width = FootprintParam {
+        name: ParamName("width".into()),
+        expr: Expr("50 mm".into()),
+        unit: ParamUnit::Mm,
+        comment: "Board width".into(),
+    };
+    engine.apply_hosted(
+        engine.revision(),
+        operation(vec![BoardEdit::SetParameter { param: width }]),
+        hosted()?,
+    )?;
+    let mut xs: Vec<f64> = engine
+        .project()
+        .board()
+        .holes
+        .iter()
+        .map(|h| h.at[0])
+        .collect();
+    xs.sort_by(f64::total_cmp);
+    assert_eq!(xs.len(), 4);
+    for (x, want) in xs.iter().zip([3.5, 3.5, 46.5, 46.5]) {
+        assert!((x - want).abs() < 1e-6, "{xs:?}");
+    }
     Ok(())
 }

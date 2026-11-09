@@ -258,3 +258,33 @@ fn canvases_and_card_fields_have_names() -> Fallible {
     ax.find(Role::TextInput, "Project")?;
     Ok(())
 }
+
+/// Demo run item 12: a ribbon tab is drawn before its click is handled, so
+/// the frame of the click still shows the old tab chosen; the click asks
+/// for the next frame, which shows the new one without waiting for input.
+#[test]
+fn a_ribbon_tab_click_redraws_the_ribbon_in_its_new_state() -> Fallible {
+    let mut ax = Ax::new(Workspace::Pcb)?;
+    ax.app.pcb.set_3d(true);
+    ax.settle();
+    let tab = ax.find(Role::Button, "Layout")?;
+    assert_eq!(tab.toggled, Some(false));
+    ax.hover(tab.center());
+    let event = |pressed| egui::Event::PointerButton {
+        pos: tab.center(),
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    ax.frame(vec![event(true)]);
+    ax.frame(vec![event(false)]);
+    assert!(!ax.app.pcb.is_3d(), "the click chose Layout");
+    assert_eq!(ax.find(Role::Button, "Layout")?.toggled, Some(false));
+    assert!(
+        ax.ctx.has_requested_repaint(),
+        "the ribbon waits for input to show Layout chosen"
+    );
+    ax.frame(vec![]);
+    assert_eq!(ax.find(Role::Button, "Layout")?.toggled, Some(true));
+    Ok(())
+}

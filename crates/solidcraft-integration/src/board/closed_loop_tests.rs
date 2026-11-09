@@ -106,6 +106,13 @@ fn deleting_an_outline_line_opens_the_loop_and_keeps_the_last_shape() -> Fallibl
     assert_eq!(open.len(), 1, "{open:#?}");
     assert!(open[0].message.contains("(0, 0)"), "{}", open[0].message);
     assert!(open[0].message.contains("(60, 0)"), "{}", open[0].message);
+    // A whole sentence, so the card's "The board keeps its last shape."
+    // reads after it.
+    assert!(
+        open[0].message.ends_with("close it."),
+        "{}",
+        open[0].message
+    );
     let report = preflight(&engine)?;
     assert!(
         report

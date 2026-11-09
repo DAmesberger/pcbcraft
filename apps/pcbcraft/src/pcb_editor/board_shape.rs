@@ -755,7 +755,8 @@ pub(crate) fn slot(
 
 /// A fillet of `radius` at the corner whose Coincident constraint joins
 /// the ends of two lines near `at`: the Coincident goes, both ends move to
-/// the tangent points and a tangent arc of that radius joins them.
+/// the tangent points and a tangent arc of that radius joins them. A
+/// corner the two lines share as one point is a [`BoardEdit::Fillet`].
 pub(crate) fn fillet(
     stage: &mut Stage<'_>,
     view: &SketchView,
@@ -788,22 +789,31 @@ pub(crate) fn fillet(
         })
         .min_by(|a, b| a.0.total_cmp(&b.0));
     let Some((_, k, p, q)) = corner else {
+        // A corner drawn as one point both lines end at (as the board's
+        // generated rectangle is): the evaluator's sketch fillet rounds it,
+        // keeping the corner as the lines' virtual intersection.
         let shared = view
             .points
             .iter()
             .filter(|pt| dist(pt.at, at) <= tolerance)
-            .any(|pt| {
+            .filter(|pt| {
                 view.curves
                     .iter()
                     .filter(|c| c.points.contains(&pt.id))
                     .count()
                     >= 2
-            });
-        return Err(invalid(if shared {
-            "board.fillet: these lines share one corner point; redraw them with Line or Rectangle"
-        } else {
-            "board.fillet: click the corner where two lines meet"
-        }));
+            })
+            .min_by(|a, b| dist(a.at, at).total_cmp(&dist(b.at, at)));
+        let Some(shared) = shared else {
+            return Err(invalid(
+                "board.fillet: click the corner where two lines meet",
+            ));
+        };
+        stage.push(BoardEdit::Fillet {
+            corners: vec![shared.id.clone()],
+            radius: DimValue::Fixed(radius),
+        });
+        return Ok(());
     };
     let (Some((l1, far1, c1)), Some((l2, far2, _))) = (line_of(p), line_of(q)) else {
         return Err(invalid("board.fillet: a fillet joins two lines"));

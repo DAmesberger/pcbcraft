@@ -133,9 +133,15 @@ fn round_um(v: f64) -> f64 {
     (v * 1000.0).round() / 1000.0
 }
 
-/// The board parameters expressions read (none on a rectangular board).
+/// The board parameters expressions read: the sketch's, or on a plain
+/// rectangle board the `width` and `height` of the sketch the dimension
+/// solve holds it as ([`dimensions::board_sketch`]).
 fn parameters(project: &Project) -> Vec<FootprintParam> {
-    sketch_of(project)
+    if let Some(board) = sketch_of(project) {
+        return board.parameters.clone();
+    }
+    super::board_shape::host_evaluator()
+        .and_then(|ev| dimensions::board_sketch(project, ev).ok())
         .map(|b| b.parameters.clone())
         .unwrap_or_default()
 }
@@ -333,10 +339,12 @@ impl PcbEditor {
                 self.edge.show_all = false;
             }
             self.edge.key = Some(key);
+            // The document changed (an edit applied, an undo): the fields
+            // show its values, so no earlier text's error stands. A refused
+            // edit leaves the revision as it was, so its error is kept.
             self.edge.values = dims.iter().map(|d| (d.id, value_text(d))).collect();
-            if self.edge.sent.is_none() {
-                self.edge.error = None;
-            }
+            self.edge.error = None;
+            self.edge.sent = None;
         }
         let board = self
             .shape
