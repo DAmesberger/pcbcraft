@@ -71,7 +71,7 @@ One loop for every task, generalised from `pcbcraft_assist::run`:
 
 - input: a goal, a tool set, a budget and a context;
 - output: events for the UI, and a recording that can be replayed offline;
-- **limits:** token, time and request caps, the same for every model, hosted or local. Pcbcraft keeps no prices; billing is the provider's (founder, 9 November 2026: "remove pricing");
+- **limits:** token, time and request caps, the same for every model, hosted or local;
 - **output limits come from the model, not a small fixed number,** near what it supports, because reasoning counts against them. A cut-off is reported clearly and never treated as an answer;
 - every task uses this, so recording, limits and approval work the same way everywhere.
 

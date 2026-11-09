@@ -6,9 +6,9 @@
 
 - **MCP is the only AI surface.** That means its typed commands, its permission gate, the reviewable turn and undo. The in-app panel is a client of that surface and has no path of its own.
 - **The panel has two kinds of connection:**
-  - An **installed agent over ACP** (Claude Code, Codex, Gemini CLI and others). The agent brings its own model, login and billing.
+  - An **installed agent over ACP** (Claude Code, Codex, Gemini CLI and others). The agent brings its own model and login.
   - A **model endpoint** through the provider abstraction in `crates/assist`. This includes local OpenAI-compatible servers such as Ollama, LM Studio, vLLM and `llama-server`.
-- **No pricing in the product.** Runs have only token, request and time limits.
+- **Run limits:** runs have token, request and time limits.
 - **Workflows are MCP prompts,** such as datasheet → component. They run the same way in the panel and in any other MCP client.
 - **LLM-first, small models included.** The panel works with small local models that have no vision.
 - **Earlier decisions still apply:**
@@ -111,7 +111,7 @@ Field names follow the [ACP specification](https://agentclientprotocol.com): pro
 | `agent_thought_chunk` | Dimmed and folded reasoning |
 | `tool_call`, `tool_call_update` | A tool row with `title`, `kind`, `status` (`pending`, `in_progress`, `completed`, `failed`) and `rawInput` |
 | `plan` | A checklist, replaced as a whole |
-| `usage_update` | A context meter from `used` and `size`. `cost` is ignored: the product shows no prices |
+| `usage_update` | A context meter from `used` and `size`; other fields are ignored |
 | `config_option_update` | Replaces the option snapshot |
 
 **Two views of one tool call.** For our own tools the panel channel is authoritative: it sees the exact command, its gate decision, its outcome and its changes. The agent's `tool_call` for the same call is folded into that row when the tool name and `rawInput` match. Agent tool calls that don't match get rows of their own.

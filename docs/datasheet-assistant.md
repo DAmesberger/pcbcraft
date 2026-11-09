@@ -4,7 +4,7 @@
 
 ## MCP workflow
 
-**Founder decision, 9 November 2026: "keep it as an MCP workflow, remove pricing".** Pcbcraft provides the commands, the workflow and the checks. The agent brings the model, the key and the billing: Claude Code, Codex, or a local model through any agent that speaks MCP.
+Pcbcraft provides the commands, the workflow and the checks. The agent brings the model and its key: Claude Code, Codex, or a local model through any agent that speaks MCP.
 
 ### Design
 
@@ -38,7 +38,7 @@ A test drives this end to end with no model (`crates/automation/src/mcp/workflow
 
 ## In-app runner
 
-`pcbcraft-cli design-part` and the desktop's Create from datasheet… run the same task with a configured model in Pcbcraft (`crates/assist`). They're kept while the in-product assistant panel is decided, because their model layer (Anthropic and OpenAI-compatible clients, model profiles, local models) may become its base. They keep no prices: a run is bounded by request, token and time limits, and billing is the provider's.
+`pcbcraft-cli design-part` and the desktop's Create from datasheet… run the same task with a configured model in Pcbcraft (`crates/assist`). They're kept while the in-product assistant panel is decided, because their model layer (Anthropic and OpenAI-compatible clients, model profiles, local models) may become its base. A run is bounded by request, token and time limits.
 
 ### Design
 
@@ -53,7 +53,7 @@ A test drives this end to end with no model (`crates/automation/src/mcp/workflow
 - **Working pinout document.** The runner keeps the pinout document across calls. `library_pinout_edit` sets the header and upserts peripherals, pin rows (at most 40 a call) and rules, and answers with counts and the pin numbers still missing; `library_pinout_preview` previews it (a `document` given replaces it); `library_pinout_apply` takes only the base and imports exactly the previewed document, refusing one changed since. No call has to carry the whole document, and it is never sent twice.
 - **Datasheets on a model without native PDF** (`documents.rs`). Degrading openly, with permissive dependencies:
   - text taken from each page on this computer with `pdf-extract` (MIT), marked `=== page N ===`, blanks shortened; pages with almost no text are listed to the model as probable drawings;
-  - for a model declared with vision, any page rendered as a PNG on request with `hayro` (MIT OR Apache-2.0, pure Rust) through `datasheet_view_page` (150 dpi, at most 1600 pixels on the long side, at most 24 views a run), so only the pages it asks for cost context;
+  - for a model declared with vision, any page rendered as a PNG on request with `hayro` (MIT OR Apache-2.0, pure Rust) through `datasheet_view_page` (150 dpi, at most 1600 pixels on the long side, at most 24 views a run), so only the pages it asks for take up context;
   - a model without vision is told it can't see drawings and must not guess a dimension that appears only in one;
   - the review's "How the model read the datasheets" section says, per document, which it got, its pages and characters, and the pages viewed;
   - a PDF with no usable text on a model without vision is refused with the reason, as is a datasheet given by URL (download it). Both readers run on their own threads with a time limit, so a malformed PDF can't panic or hang the run.
@@ -63,7 +63,7 @@ A test drives this end to end with no model (`crates/automation/src/mcp/workflow
 
 ### Run limits
 
-- **The same caps for every model,** hosted or local: requests (60), output tokens (400 000), prompt plus output tokens over the run (`--max-tokens`, 40 million), and run time (`--max-seconds`, 6 hours; each request waits no longer than the run has left). Each is checked before a request against its worst case. There is no money cap and no spend tracking: Pcbcraft keeps no prices.
+- **The same caps for every model,** hosted or local: requests (60), output tokens (400 000), prompt plus output tokens over the run (`--max-tokens`, 40 million), and run time (`--max-seconds`, 6 hours; each request waits no longer than the run has left). Each is checked before a request against its worst case.
 - **Output limits come from the model's configuration.** Anthropic: 32 000 a request and 64 000 for the request after a cut-off, for a 30-minute non-streaming wait. OpenAI-compatible: half the declared context up to 32 000, and three quarters up to 64 000 after a cut-off, or `--max-output-tokens`. Reasoning counts against them, so they are never a small fixed number. A request never asks for more than the context leaves beside the estimated prompt, and a request with less than 4 000 tokens of room isn't sent: the run stops and says the conversation filled the context. A prompt that can't fit before the first request is refused with the numbers.
 - **Cut-offs are never answers.** A cut-off reply's calls aren't run; the model is told to continue in smaller steps; after three cut-off replies in a row the run stops with `cut off` and says so.
 - **Truncation warning.** The history only grows, so a server that counts fewer prompt tokens than the last request (by more than a tenth), or a first request far below the datasheets' size, has probably dropped part of the conversation to fit its context. The review carries a warning saying so.
@@ -209,6 +209,6 @@ What went wrong, and what changed:
 - **One live run.** The HTTP transport has made one live run ([run 1](datasheet-assistant-run1.md)); its recording replays in the tests. The chunked pinout flow, the rule evaluation in the loop and the 64 000-token retry after a cut-off are tested only by replay so far.
 - **Live runs per backend.** Anthropic: one live run ([run 1](datasheet-assistant-run1.md)) before the model layer, now replayed through it; no paid call was made since, so the Anthropic HTTP path is verified by a byte-for-byte request test, recordings and a loopback HTTP test, not live. OpenAI-compatible: the two local runs above through Ollama, and the 16 tuning runs through vLLM; LM Studio, `llama-server`, OpenAI and OpenRouter are untested live.
 - **Keychain.** Storing and reading a key goes through `keyring`; the tests cover refusals and redaction but don't touch the real keychain, and the desktop key field needs a check in the app.
-- **Rendered pages** cost about 2 000 tokens each and stay in the conversation; a run may view at most 24. Text extraction loses table layout, and scanned PDFs need vision.
+- **Rendered pages** take about 2 000 tokens each and stay in the conversation; a run may view at most 24. Text extraction loses table layout, and scanned PDFs need vision.
 - **Repeated refusals** are caught only when the call is identical and nothing succeeds in between (a successful call may have changed what the refusal was about); a model that varies a hopeless call slightly is still bounded only by the request cap.
 - **Marking anchors.** A marking item sits at the centre, the pin-1 corner or an end; the WROOM-3 can's Ø0.5 mark at its −x/−y corner cannot be placed yet.
