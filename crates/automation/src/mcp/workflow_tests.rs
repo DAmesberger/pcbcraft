@@ -112,7 +112,7 @@ fn draft_of(server: &mut Server, id: u64) -> Fallible<Value> {
 
 #[test]
 fn the_prompt_is_listed_and_returns_the_workflow() -> Fallible<()> {
-    let mut server = Server::new(Session::default());
+    let mut server = Server::new(Session::default(), Policy::default());
     let init = rpc(&mut server, "initialize", json!({}));
     assert!(
         init["result"]["capabilities"]["prompts"].is_object(),
@@ -211,7 +211,12 @@ fn the_skill_file_and_the_prompt_are_one_source() -> Fallible<()> {
 /// the person has confirmed the rows.
 #[test]
 fn a_scripted_session_completes_the_workflow_through_the_review_gate() -> Fallible<()> {
-    let mut server = Server::new(Session::default());
+    // Publishing is Ask-class: allow-all stands in for the person's Allow,
+    // so the test reaches the review gate that must still refuse it.
+    let mut server = Server::new(
+        Session::default(),
+        Policy::new(Mode::AllowAll, Vec::<std::path::PathBuf>::new()),
+    );
     rpc(&mut server, "initialize", json!({}));
     let schema = ok(&mut server, "schema", "library_pinout_schema", json!({}))?;
     assert_eq!(schema["format"], 1);
@@ -375,7 +380,7 @@ fn a_scripted_session_completes_the_workflow_through_the_review_gate() -> Fallib
 #[test]
 fn the_review_check_passes_the_strictest_gate() {
     let policy = Policy::new(Mode::AskEveryTime, Vec::<std::path::PathBuf>::new());
-    let mut server = Server::gated(Session::default(), policy);
+    let mut server = Server::new(Session::default(), policy);
     let (failed, checked) = tool(&mut server, "library_review_check", report(json!([])));
     assert!(!failed, "{checked}");
     assert_eq!(checked["accepted"], false, "no drafts yet: {checked}");
