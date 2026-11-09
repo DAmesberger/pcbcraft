@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 mod checks;
 mod compute;
-mod geom;
+pub(crate) mod geom;
 #[cfg(test)]
 mod tests;
 
@@ -613,5 +613,19 @@ pub fn copper_union(
                 holes: region,
             })
         })
+        .collect()
+}
+
+/// The outlines (counter-clockwise, flattened within [`FILL_CHORD_MM`]) of
+/// the board and footprint keepouts that forbid fills on `layer`: where no
+/// fill flows, as fill compute subtracts them.
+pub(crate) fn fill_keepouts(
+    project: &Project,
+    layer: crate::model::CopperLayer,
+) -> Vec<Vec<crate::geometry::Point>> {
+    compute::effective_keepouts(project)
+        .into_iter()
+        .filter(|(k, _)| k.on(layer) && k.forbid.fills)
+        .filter_map(|(k, _)| geom::ccw(k.outline.flatten(FILL_CHORD_MM)))
         .collect()
 }

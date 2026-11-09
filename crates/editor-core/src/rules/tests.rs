@@ -24,9 +24,9 @@ fn every_key_round_trips_through_get_and_set() -> Result<()> {
         key.set(&mut rules, key.get(&base))?;
         assert_eq!(rules, base, "{key:?}");
     }
-    // 2 track widths, 21 clearance pairs, 25 contract scalars and the 5
-    // appended silkscreen-edge and land keys.
-    assert_eq!(RuleKey::all().len(), 2 + 21 + 25 + 5);
+    // 2 track widths, 21 clearance pairs, 25 contract scalars, the 5
+    // appended silkscreen-edge and land keys and the 2 etch-hazard keys.
+    assert_eq!(RuleKey::all().len(), 2 + 21 + 25 + 5 + 2);
     let unique: std::collections::BTreeSet<_> = RuleKey::all().into_iter().collect();
     assert_eq!(unique.len(), RuleKey::all().len());
     Ok(())

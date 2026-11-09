@@ -279,6 +279,8 @@ impl<'a> Ctx<'a> {
         }
         let p = self.project;
         let net_name = |n: Option<Id>| n.map(|n| p.net_name(n));
+        // Check-only rules (etch hazards) leave the copper and so the key.
+        let rules = p.rules.without_checks();
         #[derive(Serialize)]
         struct Inputs<'b> {
             fill: (
@@ -307,7 +309,7 @@ impl<'a> Ctx<'a> {
                 fill.priority,
                 &fill.settings,
             ),
-            rules: &p.rules,
+            rules: &rules,
             board: (&p.board_size, &p.board_shape),
             layers: &self.layers,
             pads: rel

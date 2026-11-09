@@ -250,6 +250,31 @@ pub struct FillRules {
     pub island_area_min: f64,
 }
 
+/// Etch-hazard checks (`board.acute_copper`, `board.copper_sliver`). No
+/// published standard or fabricator note gives a citable number for either,
+/// so both start unset: 0 means not checked. Enter the fabricator's value to
+/// check them.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EtchRules {
+    /// Least angle, degrees, of a wedge between joined copper edges on one
+    /// layer (track to track, track to pad, track to fill); 0: not checked.
+    #[serde(default)]
+    pub copper_angle_min: f64,
+    /// Least width, mm, of a bare gap between copper of other nets (or
+    /// copper and the board edge) inside a fill that did not flow into it;
+    /// 0: not checked.
+    #[serde(default)]
+    pub sliver_width_min: f64,
+}
+
+impl EtchRules {
+    /// Neither check is set (the default, left out of saved rules).
+    pub fn is_unset(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
 /// Land-pattern estimator margins (original rules of thumb, not a
 /// land-pattern standard), read by `library::samples` and the footprint
 /// templates.
@@ -285,6 +310,8 @@ pub struct DesignRules {
     pub courtyard: CourtyardRules,
     pub fill: FillRules,
     pub land: LandRules,
+    #[serde(default, skip_serializing_if = "EtchRules::is_unset")]
+    pub etch: EtchRules,
 }
 
 impl Default for DesignRules {
@@ -347,6 +374,7 @@ impl Default for DesignRules {
                 tht_land_extra: 0.6,
                 tht_land_gap: 0.25,
             },
+            etch: EtchRules::default(),
         }
     }
 }
@@ -411,6 +439,8 @@ pub enum RuleKey {
     ThtDrillClearance,
     ThtLandExtra,
     ThtLandGap,
+    CopperAngleMin,
+    SliverWidthMin,
 }
 
 /// A rule's value.
@@ -470,6 +500,8 @@ impl RuleKey {
             Self::ThtDrillClearance,
             Self::ThtLandExtra,
             Self::ThtLandGap,
+            Self::CopperAngleMin,
+            Self::SliverWidthMin,
         ]);
         keys
     }
@@ -492,9 +524,10 @@ impl RuleKey {
             Self::Clearance { a, b } if a == CopperObject::Hole || b == CopperObject::Hole => {
                 RuleGroup::HolesAndVias
             }
-            Self::TrackWidthMin | Self::TrackWidthDefault | Self::Clearance { .. } => {
-                RuleGroup::Copper
-            }
+            Self::TrackWidthMin
+            | Self::TrackWidthDefault
+            | Self::Clearance { .. }
+            | Self::CopperAngleMin => RuleGroup::Copper,
             Self::DrillMin
             | Self::ViaAnnularRingMin
             | Self::PthAnnularRingMin
@@ -515,7 +548,8 @@ impl RuleKey {
             | Self::ThermalGap
             | Self::ThermalAngle
             | Self::FillConnection
-            | Self::IslandAreaMin => RuleGroup::Fills,
+            | Self::IslandAreaMin
+            | Self::SliverWidthMin => RuleGroup::Fills,
             Self::GullWingWidthExtra
             | Self::ChipGapMin
             | Self::ExposedPadClearance
@@ -563,6 +597,8 @@ impl RuleKey {
                 Self::ThtDrillClearance => "THT drill over lead",
                 Self::ThtLandExtra => "THT land over drill",
                 Self::ThtLandGap => "min THT land gap",
+                Self::CopperAngleMin => "min copper angle",
+                Self::SliverWidthMin => "min sliver width",
                 Self::Clearance { .. } => "clearance",
             }
             .to_string(),
@@ -606,6 +642,8 @@ impl RuleKey {
             Self::ThtDrillClearance => Length(rules.land.tht_drill_clearance),
             Self::ThtLandExtra => Length(rules.land.tht_land_extra),
             Self::ThtLandGap => Length(rules.land.tht_land_gap),
+            Self::CopperAngleMin => Angle(rules.etch.copper_angle_min),
+            Self::SliverWidthMin => Length(rules.etch.sliver_width_min),
         }
     }
 
@@ -686,6 +724,12 @@ impl RuleKey {
             Self::ThtDrillClearance => &mut rules.land.tht_drill_clearance,
             Self::ThtLandExtra => &mut rules.land.tht_land_extra,
             Self::ThtLandGap => &mut rules.land.tht_land_gap,
+            Self::CopperAngleMin => {
+                let Angle(deg) = value else { return wrong() };
+                rules.etch.copper_angle_min = deg;
+                return Ok(());
+            }
+            Self::SliverWidthMin => &mut rules.etch.sliver_width_min,
         };
         let Some(mm) = length(value) else {
             return wrong();
@@ -702,7 +746,7 @@ fn length_ok(mm: f64) -> bool {
 impl DesignRules {
     /// Bounds of every value and the cross-field relations a fabricator
     /// could not build otherwise. Lengths 0–25 mm; areas 0–10⁶ mm²;
-    /// angles ±360°; track, fill, spoke and silkscreen widths, silkscreen
+    /// angles ±360° (the copper angle 0–180°); track, fill, spoke and silkscreen widths, silkscreen
     /// text height, drills and the default via positive; the default track
     /// width at least the minimum; the default via drill at least the
     /// minimum drill and its diameter covering the drill plus two minimum
@@ -718,6 +762,9 @@ impl DesignRules {
                 }
                 RuleValue::Length(mm) => length_ok(mm),
                 RuleValue::Area(a) => a.is_finite() && (0.0..=1.0e6).contains(&a),
+                RuleValue::Angle(d) if key == RuleKey::CopperAngleMin => {
+                    d.is_finite() && (0.0..=180.0).contains(&d)
+                }
                 RuleValue::Angle(d) => d.is_finite() && (-360.0..=360.0).contains(&d),
                 RuleValue::Ratio(r) => r.is_none_or(|r| r.is_finite() && (1.0..=50.0).contains(&r)),
                 RuleValue::Count(n) => key != RuleKey::ThermalSpokeCount || (1..=8).contains(&n),
@@ -970,6 +1017,20 @@ impl ProjectRules {
             let _ = o.key.set(&mut rules, o.value);
         }
         rules
+    }
+
+    /// These rules less the etch-hazard checks ([`EtchRules`]), which only
+    /// checks read: what fill copper depends on, so a check threshold
+    /// leaves fills fresh. Borrowed when no etch rule is set.
+    pub fn without_checks(&self) -> std::borrow::Cow<'_, ProjectRules> {
+        let etch = |k: RuleKey| matches!(k, RuleKey::CopperAngleMin | RuleKey::SliverWidthMin);
+        if self.profile.rules.etch.is_unset() && !self.overrides.iter().any(|o| etch(o.key)) {
+            return std::borrow::Cow::Borrowed(self);
+        }
+        let mut rules = self.clone();
+        rules.profile.rules.etch = EtchRules::default();
+        rules.overrides.retain(|o| !etch(o.key));
+        std::borrow::Cow::Owned(rules)
     }
 
     pub fn override_of(&self, key: RuleKey) -> Option<&RuleOverride> {

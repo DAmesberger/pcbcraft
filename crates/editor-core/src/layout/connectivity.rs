@@ -35,12 +35,14 @@ mod lengths;
 mod queries;
 #[cfg(test)]
 mod tests;
+mod wedges;
 
 pub(crate) use build::{islands_joined, track_copper, via_copper};
 pub use islands::Island;
 pub use joints::{Meets, TrackEnd, TrackJoint, keeps_joint};
 pub use lengths::{MAX_PATH_WORK, NetPaths, PadEnd, PathEdge, PathTree, Walk};
 pub use queries::Stub;
+pub use wedges::Wedge;
 
 use super::WorldPad;
 use super::copper::CopperRing;
