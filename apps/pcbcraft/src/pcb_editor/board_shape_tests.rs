@@ -10,7 +10,7 @@ use pcbcraft_core::layout::outline::{BoardCommand, BoardEvaluation, edge_pose};
 use pcbcraft_core::library::footprint_source::SolveStatus;
 use pcbcraft_core::library::footprint_source::{EvaluatorRef, FootprintEvaluator, SketchOutcome};
 use pcbcraft_core::model::board::{
-    ConstraintTarget, EdgeAnchor, NamedEdge, SolvedBoard, SolvedEdge,
+    ConstraintTarget, EdgeAnchor, NamedEdge, ShapeFaultKind, SolvedBoard, SolvedEdge,
 };
 use pcbcraft_core::{BoardShape, EdgeConstraint, Engine, Operation, Project};
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
@@ -1011,4 +1011,420 @@ fn edge_names_centre_outside_their_edges_and_keep_clear() {
     let label = Rect::from_center_size(Pos2::new(430.0, 200.0), egui::vec2(80.0, 16.0));
     let r = edge_name_rect(&[b, c], centre, size, 4.0, &[label]);
     assert!(r.is_some_and(|r| !r.intersects(label) && !board.shrink(0.5).intersects(r)));
+}
+
+// --- Free-form drawing tools on the engine ---------------------------------
+
+/// The showcase board turned into its sketch on SolidCraft's board engine,
+/// with the editor in the Board shape mode on it.
+struct Drawn {
+    engine: Engine,
+    ctx: egui::Context,
+    editor: PcbEditor,
+    view: crate::pcb_editor::BoardView,
+}
+
+fn hosted() -> Fallible<pcbcraft_core::Evaluators<'static>> {
+    Ok(pcbcraft_core::Evaluators {
+        footprint: None,
+        board: Some(host_evaluator().ok_or("no host board evaluator")?),
+    })
+}
+
+impl Drawn {
+    fn new() -> Fallible<Self> {
+        let mut engine = Engine::showcase()?;
+        engine.apply_hosted(
+            engine.revision(),
+            Operation::Board(BoardCommand::StartSketch),
+            hosted()?,
+        )?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = PcbEditor::default();
+        assert!(editor.on_tool("board-shape", &engine).is_none());
+        assert!(editor.shape.active);
+        let (_, _, rect) = canvas(&mut editor, &engine, &ctx, vec![]);
+        let view = board_view(
+            rect,
+            engine.project().board_size,
+            1.0,
+            egui::Vec2::ZERO,
+            false,
+        );
+        Ok(Self {
+            engine,
+            ctx,
+            editor,
+            view,
+        })
+    }
+
+    /// The point `fx`, `fy` of the way across the board, in mm.
+    fn at(&self, fx: f64, fy: f64) -> Point {
+        let [w, h] = self.engine.project().board_size;
+        [w * fx, h * fy]
+    }
+
+    fn frame(&mut self, events: Vec<egui::Event>) -> Option<Operation> {
+        canvas(&mut self.editor, &self.engine, &self.ctx, events).1
+    }
+
+    fn hover(&mut self, at: Point) -> Option<Operation> {
+        let pos = self.view.screen(at);
+        self.frame(vec![egui::Event::PointerMoved(pos)])
+    }
+
+    fn click(&mut self, at: Point) -> Option<Operation> {
+        let pos = self.view.screen(at);
+        let pressed = self.frame(press_at(pos));
+        self.frame(release_at(pos)).or(pressed)
+    }
+
+    fn key(&mut self, key: egui::Key, shift: bool) -> Option<Operation> {
+        let modifiers = if shift {
+            egui::Modifiers::SHIFT
+        } else {
+            egui::Modifiers::NONE
+        };
+        self.frame(vec![egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }])
+    }
+
+    /// Apply a gesture's operation: one step on the engine.
+    fn apply(&mut self, operation: Option<Operation>) -> Fallible<Vec<BoardEdit>> {
+        let Some(op) = operation else {
+            return Err("the gesture sent nothing".into());
+        };
+        let Operation::Board(BoardCommand::Edit { edits }) = op.clone() else {
+            return Err(format!("not a board.edit: {op:?}").into());
+        };
+        let before = self.engine.revision();
+        self.engine.apply_hosted(before, op, hosted()?)?;
+        assert_eq!(self.engine.revision(), before + 1, "one step");
+        Ok(edits)
+    }
+
+    fn board(&self) -> Fallible<BoardSketch> {
+        match &self.engine.project().board_shape {
+            BoardShape::Sketch(board) => Ok((**board).clone()),
+            BoardShape::Rectangle => Err("the board is not a sketch".into()),
+        }
+    }
+}
+
+/// The same point, clicked: within the f32 screen position a pointer
+/// carries (far under a pixel).
+fn near(a: Point, b: Point) -> bool {
+    (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-4
+}
+
+/// The area inside a solved loop, mm².
+fn ring_area(outline: &pcbcraft_core::library::Outline) -> f64 {
+    let ring = crate::pcb_editor::board_shape_ui::ring(outline);
+    pcbcraft_core::geometry::signed_area2(&ring).abs() / 2.0
+}
+
+fn distinct_curves(cutout: &pcbcraft_core::model::board::SolvedCutout) -> usize {
+    cutout
+        .curves
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+}
+
+/// The registry gives the free-form tools mnemonic keys of their own in
+/// the Board shape mode, and Enter finishes a spline.
+#[test]
+fn the_free_form_tools_have_their_own_keys() {
+    use crate::commands::{Chord, Context, Registry, active_contexts};
+    use egui::Key as K;
+    let registry = Registry::standard();
+    let active = active_contexts(Context::BoardShape);
+    let id = |chord| registry.resolve(chord, &active).map(|c| c.id.clone());
+    assert_eq!(id(Chord::key(K::S)), Some("shape.bs-spline".into()));
+    assert_eq!(
+        id(Chord::key(K::C).with_shift()),
+        Some("shape.bs-ellipse".into())
+    );
+    assert_eq!(
+        id(Chord::key(K::A).with_shift()),
+        Some("shape.bs-conic".into())
+    );
+    assert_eq!(id(Chord::key(K::Enter)), Some("shape.finish".into()));
+    // The tools they generalise keep their keys.
+    assert_eq!(id(Chord::key(K::C)), Some("shape.bs-circle".into()));
+    assert_eq!(id(Chord::key(K::A)), Some("shape.bs-arc".into()));
+}
+
+/// Spline (S): fit points, then a click on the first point closes it
+/// smoothly. The preview follows the pointer without a command; the
+/// closing click is one `board.edit` (one undo step), and the closed
+/// spline is a cutout of the solved board.
+#[test]
+fn a_spline_closed_on_its_first_point_is_one_step_and_a_cutout() -> Fallible {
+    let mut d = Drawn::new()?;
+    let start = d.at(0.3, 0.3);
+    d.hover(start);
+    assert!(d.key(egui::Key::S, false).is_none());
+    assert_eq!(d.editor.shape.tool, ShapeTool::Spline);
+    let points = [start, d.at(0.5, 0.25), d.at(0.6, 0.45), d.at(0.4, 0.55)];
+    let revision = d.engine.revision();
+    for p in points {
+        assert!(d.click(p).is_none(), "a point commits nothing");
+    }
+    // The live preview: the spline through the points and the pointer,
+    // from a scratch sketch; the document is untouched.
+    let pointer = d.at(0.35, 0.5);
+    assert!(d.hover(pointer).is_none());
+    let curve = preview_curve(
+        ShapeTool::Spline,
+        &d.editor.shape.options,
+        &d.editor.shape.gesture.pending,
+        pointer,
+        0.01,
+    )
+    .ok_or("no preview")?;
+    let line = pcbcraft_solidcraft::board::free_form_preview(&curve).ok_or("no line")?;
+    for p in points.iter().chain([&pointer]) {
+        let closest = line
+            .iter()
+            .map(|q| (q[0] - p[0]).hypot(q[1] - p[1]))
+            .fold(f64::INFINITY, f64::min);
+        assert!(closest < 0.05, "the preview passes {p:?}: {closest}");
+    }
+    assert_eq!(d.engine.revision(), revision);
+    // Clicking the first point closes it.
+    let operation = d.click(start);
+    let edits = d.apply(operation)?;
+    let (drawn, periodic, control) = edits
+        .iter()
+        .find_map(|e| match e {
+            BoardEdit::AddSpline {
+                points,
+                periodic,
+                control,
+                ..
+            } => Some((points.clone(), *periodic, *control)),
+            _ => None,
+        })
+        .ok_or("no AddSpline")?;
+    assert_eq!(drawn.len(), 4);
+    assert!(drawn.iter().zip(points).all(|(a, b)| near(*a, b)));
+    assert!(periodic && !control, "a closed fit-point spline");
+    assert!(d.editor.shape.gesture.pending.is_empty());
+    let board = d.board()?;
+    assert!(board.fault.is_none(), "{:?}", board.fault);
+    let [cutout] = board.solved.cutouts.as_slice() else {
+        return Err(format!("{} cutouts", board.solved.cutouts.len()).into());
+    };
+    assert_eq!(distinct_curves(cutout), 1);
+    assert!(ring_area(&cutout.outline) > 1.0);
+    d.engine.undo()?;
+    assert!(d.board()?.solved.cutouts.is_empty());
+    Ok(())
+}
+
+/// An open spline ends on Enter or on a double-click on its last point;
+/// its open ends are the board's fault, marked on the canvas, and the
+/// board keeps its last shape. Backspace takes back a point; Esc drops
+/// the spline.
+#[test]
+fn an_open_spline_ends_on_enter_or_a_double_click_and_shows_its_open_ends() -> Fallible {
+    let mut d = Drawn::new()?;
+    let (a, b, c) = (d.at(0.2, 0.3), d.at(0.4, 0.5), d.at(0.6, 0.35));
+    d.hover(a);
+    d.key(egui::Key::S, false);
+    // Backspace takes back the last point; Esc drops them all.
+    d.click(a);
+    d.click(b);
+    d.key(egui::Key::Backspace, false);
+    assert_eq!(d.editor.shape.gesture.pending.len(), 1);
+    d.key(egui::Key::Escape, false);
+    assert!(d.editor.shape.gesture.pending.is_empty());
+    assert_eq!(d.editor.shape.tool, ShapeTool::Spline);
+    // Enter finishes the spline.
+    for p in [a, b, c] {
+        assert!(d.click(p).is_none());
+    }
+    assert_eq!(d.editor.shape.gesture.pending.len(), 3);
+    let operation = d.key(egui::Key::Enter, false);
+    assert!(
+        d.editor.shape.gesture.pending.is_empty(),
+        "Enter did not finish: {:?}",
+        d.editor.shape.gesture.pending
+    );
+    let edits = d.apply(operation)?;
+    assert!(edits.iter().any(|e| matches!(
+        e,
+        BoardEdit::AddSpline { points, periodic: false, .. } if points.len() == 3
+    )));
+    let board = d.board()?;
+    let fault = board.fault.as_ref().ok_or("no fault for the open ends")?;
+    assert_eq!(fault.kind, ShapeFaultKind::Open);
+    for end in [a, c] {
+        assert!(
+            fault
+                .at
+                .iter()
+                .any(|p| (p[0] - end[0]).hypot(p[1] - end[1]) < 0.01),
+            "{end:?} in {:?}",
+            fault.at
+        );
+    }
+    assert!(board.solved.cutouts.is_empty(), "the last shape is kept");
+    // The canvas marks both open ends.
+    let (output, _, _) = canvas(&mut d.editor, &d.engine, &d.ctx, vec![]);
+    fn circles(shape: &Shape, out: &mut Vec<(Pos2, f32)>) {
+        match shape {
+            Shape::Circle(c) => out.push((c.center, c.radius)),
+            Shape::Vec(v) => v.iter().for_each(|s| circles(s, out)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    for s in &output.shapes {
+        circles(&s.shape, &mut found);
+    }
+    for end in [a, c] {
+        let at = d.view.screen(end);
+        assert!(
+            found
+                .iter()
+                .any(|(p, r)| p.distance(at) < 0.5 && (*r - 6.0).abs() < 1e-3),
+            "no open-end marker at {end:?}"
+        );
+    }
+    d.engine.undo()?;
+    // A double-click on the last point finishes it too.
+    for p in [a, b] {
+        assert!(d.click(p).is_none());
+    }
+    let operation = d.click(b);
+    let edits = d.apply(operation)?;
+    assert!(edits.iter().any(|e| matches!(
+        e,
+        BoardEdit::AddSpline { points, .. } if points.len() == 2
+    )));
+    Ok(())
+}
+
+/// Ellipse (Shift+C): the centre, the end of the major axis, then a point
+/// on it. One `board.edit` draws the ellipse through that point, and the
+/// closed ellipse is a cutout of its area.
+#[test]
+fn an_ellipse_gesture_is_one_step_and_a_cutout() -> Fallible {
+    let mut d = Drawn::new()?;
+    let [w, h] = d.engine.project().board_size;
+    let r = (w.min(h) * 0.1).max(1.0);
+    let centre = d.at(0.5, 0.5);
+    let major = [centre[0] + 2.0 * r, centre[1]];
+    let on = [centre[0], centre[1] + r];
+    d.hover(centre);
+    d.key(egui::Key::C, true);
+    assert_eq!(d.editor.shape.tool, ShapeTool::Ellipse);
+    assert!(d.click(centre).is_none());
+    assert!(d.click(major).is_none());
+    // The preview is the ellipse through the pointer.
+    d.hover(on);
+    let preview = preview_curve(
+        ShapeTool::Ellipse,
+        &d.editor.shape.options,
+        &d.editor.shape.gesture.pending,
+        on,
+        0.01,
+    );
+    assert!(
+        matches!(
+            preview,
+            Some(FreeFormCurve::Ellipse { minor_radius, .. }) if (minor_radius - r).abs() < 1e-4
+        ),
+        "{preview:?} for r = {r}, clicks {:?}",
+        d.editor.shape.gesture.pending
+    );
+    let operation = d.click(on);
+    let edits = d.apply(operation)?;
+    let [
+        BoardEdit::AddEllipse {
+            center,
+            major: end,
+            minor_radius,
+            construction: false,
+        },
+    ] = edits.as_slice()
+    else {
+        return Err(format!("not one ellipse: {edits:?}").into());
+    };
+    assert!(near(*center, centre) && near(*end, major));
+    assert!((minor_radius - r).abs() < 1e-4);
+    let board = d.board()?;
+    assert!(board.fault.is_none(), "{:?}", board.fault);
+    let [cutout] = board.solved.cutouts.as_slice() else {
+        return Err("no ellipse cutout".into());
+    };
+    let expected = std::f64::consts::PI * 2.0 * r * r;
+    let area = ring_area(&cutout.outline);
+    assert!(
+        (area - expected).abs() < expected * 0.01,
+        "{area} vs {expected}"
+    );
+    Ok(())
+}
+
+/// Conic (Shift+A): from the start to the end, shaped by the apex. Its
+/// ends snap to a line's ends and are tied to them in the same step, so
+/// the line and the conic close a D-shaped cutout.
+#[test]
+fn a_conic_tied_to_a_line_closes_a_cutout_in_one_step() -> Fallible {
+    let mut d = Drawn::new()?;
+    let (a, b) = (d.at(0.4, 0.3), d.at(0.4, 0.6));
+    let apex = d.at(0.6, 0.45);
+    d.hover(a);
+    d.key(egui::Key::L, false);
+    d.click(a);
+    let line = d.click(b);
+    d.apply(line)?;
+    d.key(egui::Key::Escape, false);
+    d.key(egui::Key::A, true);
+    assert_eq!(d.editor.shape.tool, ShapeTool::Conic);
+    let revision = d.engine.revision();
+    assert!(d.click(b).is_none());
+    assert!(d.click(a).is_none());
+    d.hover(apex);
+    assert_eq!(d.engine.revision(), revision, "the preview changes nothing");
+    let operation = d.click(apex);
+    let edits = d.apply(operation)?;
+    assert!(edits.iter().any(|e| matches!(
+        e,
+        BoardEdit::AddConic { rho, .. } if (*rho - 0.5).abs() < 1e-12
+    )));
+    let ties = edits
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                BoardEdit::Sketch {
+                    edit: SketchEdit::AddConstraint {
+                        kind: GeomConstraint::Coincident,
+                        ..
+                    }
+                }
+            )
+        })
+        .count();
+    assert_eq!(ties, 2, "both ends tied to the line");
+    let board = d.board()?;
+    assert!(board.fault.is_none(), "{:?}", board.fault);
+    let [cutout] = board.solved.cutouts.as_slice() else {
+        return Err("no D-shaped cutout".into());
+    };
+    assert_eq!(distinct_curves(cutout), 2);
+    d.engine.undo()?;
+    assert!(d.board()?.solved.cutouts.is_empty());
+    Ok(())
 }
