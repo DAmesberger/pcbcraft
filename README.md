@@ -1,120 +1,82 @@
 # Pcbcraft
 
-A Rust electronics editor using Solidcraft's egui/wgpu UI and native parametric engine. Component authoring, a basic single-sheet schematic and PCB layout now share one desktop shell. PCB 3D displays physical copper and package envelopes through Solidcraft, with shared selection and whole-net highlighting.
+**A parametric PCB editor with deep 3D, built for people and AI agents alike.**
+Parts, schematic, board layout and 3D in one Rust app, on [Solidcraft](https://github.com/tangency-labs/solidcraft)'s CAD engine.
 
-This is an early working editor foundation, not a manufacturing-ready release. See [current evidence and limits](docs/editor-evidence.md).
+<!-- VIDEO: replace every VIDEO_URL below with the https://github.com/user-attachments/assets/… link.
+     A bare user-attachments URL on its own line plays inline on GitHub. -->
+VIDEO_URL
 
-## Run
+<p align="center">
+  <a href="VIDEO_URL"><img src="docs/media/video-poster.jpg" width="720" alt="The ESP32-S31 dev board in the integrated 3D view, with its board parameters beside it"></a><br>
+  <a href="VIDEO_URL">Watch the video (90 s)</a>: schematic to routed board, a parametric edit, 3D and production files.
+</p>
 
-`rust-toolchain.toml` pins Rust 1.96.0, Clippy, rustfmt and the wasm target. Use rustup, or the Nix dev shell, which provides exactly that toolchain:
+## Why it's different
 
-```sh
-nix develop          # optional: pinned toolchain without rustup
-cargo run --locked --profile ci -p pcbcraft [FILE.pcbcraft]
-cargo xtask ci
-```
+**Parametric boards.** A board is a design with named parameters and expressions, not a fixed drawing. Width, height and corner radius drive the outline, and placements, fills and keepouts can be tied to its named edges. Footprints are constrained sketches. Part bodies can be parametric Solidcraft models, and common generic parts (chip R, C and L, LEDs, diodes, headers) are made on demand from what you type.
 
-The app starts with two connected resistor instances. Component authoring includes Symbol, Footprint, Mapping and 3D modes; each finished edit of the five component drafts (component, symbol, package, footprint, binding) is one undo step, and Publish creates immutable project revisions. In Schematic, Place (or P) opens the Place palette: type a query such as `10k 0603`, `res>=10k` or `tol<=1%`, move with ↑/↓, press Enter to place (Shift+Enter keeps the palette open) or click a row to place it with the mouse; the properties card previews the highlighted part. Connect terminals with Wire and rename a selected wire's net. The Browser's Components section has a filter field that uses the same search. In PCB, preview/apply Update PCB, move placements and route between pads. Switch between 2D and 3D within PCB; selection and whole-net highlighting are shared.
+**3D is the same design, not an export.** Copper, pads, plated holes, vias and fills are solids with real thickness, built by Solidcraft's engine. Layout and 3D are two views of one board, with one selection, one undo history and one set of properties. Pick a track in 3D and it is selected in the layout. The whole board saves as a native, parametric `.solidcraft` model.
 
-File offers New, Open, Save, Save as and Export to Solidcraft through native dialogs; reads, writes and exports run in the background. Unsaved work is snapshotted for crash recovery and offered at the next launch. Project files contain the revisioned library snapshot and the definition drafts, so they reopen offline. Native export writes a new parametric `.solidcraft` file; package models are clearly identified envelopes.
+**Built for AI from the start.** Every change, from a wire to a published part, is a typed command on one engine. The desktop app, the command line and the MCP server send the same commands, and a refused command leaves the design untouched. An assistant can work on a file in the background or, when you allow it, live in the open window, on your undo history. A datasheet assistant drafts parts from PDFs for you to review, on Claude or a local model.
 
-Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S saves, +Shift+S saves as, +O opens, +N starts a new project, +Z/+Shift+Z undo and redo.
+**Already end to end.** Multi-sheet schematics with ERC, push-and-shove routing, differential pairs, length tuning, copper fills, design rules, and production files behind a pre-flight check. Schematic to Gerbers in one app.
 
-## Architecture
+## What it does today
 
-| Crate | Responsibility |
-| --- | --- |
-| `pcbcraft-core` | Pure, wasm-compatible document: revisioned library definitions and drafts, component instances and symbol occurrences, schematic, persistent nets, layout, impact plans, completeness findings, typed `Operation`s and `Query`s, the one `Engine` (shared undo, engine-owned drafts), file format, typed errors and check findings. |
-| `pcbcraft-io` | Bounded reads, atomic writes, crash recovery. |
-| `pcbcraft-solidcraft` | Builds the native Solidcraft model through a typed facade over Solidcraft's command API. |
-| `pcbcraft-automation` | Headless `Session` (engine + open/save/export) shared by the JSON-lines transport and the MCP server, and the live channel into the open window ([live MCP](#live-mcp)). |
-| `pcbcraft-assist` | The datasheet assistant: a tool loop over the automation session that drafts a part from its datasheets, on a model you configure (Anthropic Messages or any OpenAI-compatible endpoint, hosted or local), with cost, token, time and request caps ([as built](docs/datasheet-assistant.md)). |
-| `pcbcraft`, `pcbcraft-cli` | Desktop editor and command line. |
+<table>
+  <tr>
+    <td><img src="examples/esp32-s31-devboard/images/app-pcb-3d.png" alt="The 4-layer ESP32-S31 dev board in the integrated 3D view, with the board parameters width, height and corner_r in the properties panel"></td>
+    <td><img src="examples/esp32-s31-devboard/images/app-pcb-2d.png" alt="The same board in the PCB layout view, routed, with its top copper fill"></td>
+  </tr>
+</table>
 
-`cargo xtask layers` enforces this direction; `cargo xtask ui-containers` rejects raw egui windows, areas and panels outside Solidcraft's `ui_kit::Container`. `cargo xtask core-modules` enforces the core module map in [component model](docs/component-model.md), and `cargo xtask connectivity` that only `layout/connectivity` decides whether copper joins ([copper graph](docs/copper-graph.md#where-connectivity-lives)). `cargo xtask licences --check` rejects dependencies that require GPL-family or unreviewed licenses, and `cargo xtask clean-room` rejects EDA library files and data in the repository. All of these run in `cargo xtask ci`.
+- **Components.** Symbol, footprint, pin functions, mapping and 3D in one workspace. Publishing creates immutable revisions. A project keeps an exact snapshot of its library, so it reopens offline, and a library change reaches a board only through a reviewed update.
+- **Schematic.** Several sheets with a hierarchy, net labels, power ports, title blocks, annotation, ERC and vector PDF output. The Place palette searches with units: `res>=10k 0603`.
+- **PCB.** 2 to 64 copper layers with a typed stackup. Interactive routing that shoves or walks round other nets. Differential pairs at a gap derived from the stackup's impedance, and length meanders. Design-rule profiles, net classes, copper fills with thermals, and parametric board outlines.
+- **3D.** One key from the layout. Peel the stackup layer by layer. Generated part models with markings, and imported STEP, GLB and `.solidcraft` models.
+- **Production.** Gerber X2, Excellon, a job file, pick-and-place, BOMs, and fabrication and assembly drawings. Tests read every Gerber layer back and compare it with the design.
+- **Automation.** MCP and JSON lines over the same commands as the UI, including live MCP into the open window.
 
-## CLI, JSON lines and MCP
+The reference design is a 4-layer [ESP32-S31-WROOM-3 dev board](examples/esp32-s31-devboard/README.md): USB-C, a 90 Ω USB pair, an LDO, 20 parts. An AI agent designed it from parts to Gerbers through the command engine. It passes ERC, DRC and the production check. It has not yet been reviewed or built.
 
-```sh
-cargo run --locked --profile ci -p pcbcraft-cli -- demo example.pcbcraft
-cargo run --locked --profile ci -p pcbcraft-cli -- showcase showcase.pcbcraft   # a routed 4-layer board with via examples; open it in the app
-cargo run --locked --profile ci -p pcbcraft-cli -- parts parts.pcbcraft   # 24 invented EX- parts for the Place palette
-cargo run --locked --profile ci -p pcbcraft-cli -- sample-library NEW_DIR [NAME]   # the same catalog as a library folder
-cargo run --locked --profile ci -p pcbcraft-cli -- export example.pcbcraft example.solidcraft
-cargo run --locked --profile ci -p pcbcraft-cli -- export-schematic-pdf example.pcbcraft example.pdf [--sheet ID]...   # vector PDF, one page per sheet
-cargo run --locked --profile ci -p pcbcraft-cli -- commands
-cargo run --locked --profile ci -p pcbcraft-cli -- stdio [FILE.pcbcraft]
-cargo run --locked --profile ci -p pcbcraft-cli -- mcp [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
-cargo run --locked --profile ci -p pcbcraft-cli -- mcp --live [--port PORT]   # the project open in the desktop window
-ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-part \
-  --datasheet PART.pdf --name PART --out part.pcbcraft --max-usd 15   # drafts + PART.review.md; publishes nothing
-cargo run --locked --profile ci -p pcbcraft-cli -- design-part --provider openai \
-  --base-url http://localhost:11434/v1 --model MODEL --context-tokens N --vision yes \
-  --datasheet PART.pdf --name PART --out part.pcbcraft   # the same on a local model
-```
+## Where it's going
 
-`stdio` reads one JSON request per line (4 MiB maximum) and answers `{"ok":true,"result":…}` or `{"ok":false,"error":{"code":…,"message":…}}`. `project.apply` takes the same typed operations as the UI with an expected revision; `project.inspect`, `.undo`, `.redo`, `.new`, `.open`, `.save`, `.preview_update`, `.apply_update` and `.export_native` share the session. `mcp` serves the same requests as MCP tools (`project_apply`, …) over stdio. `commands` prints schemas generated from the Rust types.
+The goal is one workflow from idea to product: design, simulate, test without hardware, then manufacture. AI drives it end to end, as hands-off as you choose, with every step open to your review. Everything in this section is **planned**, not built.
 
-Replies on both are compact: a mutation answers with `revision`, `outcome`, `changes` (added, changed and removed stable ids by collection, such as `{"added":{"vias":[644]}}`), `findings` (the new ones, resolved counts per code, the open total) and the changed `drafts`. `project.inspect` answers with counts, drafts and findings per code, and with `at` (a JSON pointer such as `/project/nets`) reads one piece of the document. `verbose: true`, beside `command` or inside `params`, returns the whole snapshot instead. In MCP, `tools/list` names every operation and query, and `project_schema {name}` (`project.schema`) returns one's exact schema and how to send it.
+- **Circuit simulation.** Analog simulation in the style of LTspice, run from the same schematic.
+- **The board as a digital twin.** Emulate the microcontroller running your real firmware: for example, an ESP32-S31 running compiled Rust. UART, GPIO, LEDs, displays and buttons work on the 3D board. Press a button in 3D and watch an LED blink. Write and test firmware before the board exists.
+- **Smart parts.** Parts that carry electrical and behavioural models next to their symbol, footprint and 3D body, mapped pin by pin, so they simulate both as circuits and in software.
+- **Idea to production, AI-driven.** An assistant takes a description to a board: parts from datasheets, schematic, layout, virtual testing and the production files.
 
-Every command has a permission class: read, edit, ask or never, shown in its tool description and in `project_schema`. An MCP server is ungated by default, because the user who starts it has chosen to trust its client. `--permission-mode` turns on the gate: `ask-every-time` runs only reads, `auto-allow-edits` also runs edits, and `allow-all` runs everything except the never class. MCP has no way to ask, so whatever would need asking is refused with a message saying so. Under any mode, a path must be absolute and inside an `--allow-folder` or the folder of the project named on the command line.
+Nearer steps, also planned: build and test the ESP32-S31 reference board; drag existing tracks with shove; a realistic render mode; buses and reusable schematic sheets. The [roadmap](ROADMAP.md) tracks the work, and the [product plan](docs/pcbcraft-plan.md) defines the first release.
 
-### Live MCP
+## Status
 
-An assistant can also edit the project open in the desktop window, so you watch each change and share one undo history. In Pcbcraft, choose **Help › Connect AI assistants…** (also in the in-window File menu and the command palette) and turn on **Let AI assistants edit this project**. It is off at every start. The window shows the configuration to copy:
+Early. It is a working editor, not yet a manufacturing-ready release: no board has been built from its output yet, and the built-in design-rule profiles are estimates. It is developed and tested on macOS (Apple silicon); Linux and Windows have not been checked yet. [Editor evidence](docs/editor-evidence.md) records what was verified and how.
 
-```json
-{"mcpServers": {"pcbcraft": {"command": "/path/to/pcbcraft-cli", "args": ["mcp", "--live"]}}}
-```
+Open source under MIT OR Apache-2.0. The 3D engine, renderer and UI kit come from [Solidcraft](https://github.com/tangency-labs/solidcraft), a parametric CAD application in Rust under the same licences. Its engine builds every solid you see, its native file format holds the 3D model, and its interface conventions shape this one. We are grateful to its authors.
 
-For Claude Code: `claude mcp add pcbcraft -- /path/to/pcbcraft-cli mcp --live`.
+## Quick start
 
-- **Connection.** The window listens on `127.0.0.1` only, from port 27979 (or the next free one), using Solidcraft's control channel. Each time you turn it on, it makes a new token and writes it to `control/PORT.token` in the Pcbcraft config folder, readable only by you; `control/current.port` names the port. `pcbcraft-cli mcp --live [--port PORT]` reads both, so the configuration holds no secret. `PCBCRAFT_CONTROL_TOKEN` gives a token explicitly. Turning access off, or closing the window, closes every connection and removes the files.
-- **Same engine.** Requests run on the UI thread, between frames, through the same `Session::respond` as the headless server, on the window's engine. The tools are the same, except that `project_new`, `project_open` and `project_save` are left to you in the window. Replies stay compact: a via placed on the demo answers in under 4 KB.
-- **Revisions.** Every tool that changes the project takes `expected_revision`, inside its parameters or, for tools such as `project_undo` that have none, beside them. A stale revision is refused with `stale_revision`, so the assistant inspects again.
-- **Refusals.** While you type in a field, drag, or have a menu, the command palette, a file question or an update review open, a change is refused with `live.busy` and the reason. Reads still answer.
-- **Permissions.** The window's choice (reading only; reading and edits, the default; or everything except settings) decides as `--permission-mode` does. An ask-class tool, such as an export, waits for **Allow** or **Deny** in the window; the never class is refused. Paths must lie in your home folder, the temporary folder or the project's folder.
-- **What you see.** The application bar shows *AI access on* or *AI assistant connected* while access is on; its × turns access off. Each assistant edit shows as a toast with Undo and a Messages line (*AI assistant edit: layout.add_via*), and undoing one says *Undid AI assistant edit*.
-
-`project.query` also answers the parts catalog ([design and query language](docs/parts-library.md)): `library.search` ranks the project's component lineages for a one-line query, `library.facets` lists the fields, packages and badges the matches carry, and `library.inspect` reports one revision. For example:
-
-```json
-{"command":"project.query","params":{"query":"library.search","params":{"query":"res>=10k pkg:0603","limit":10}}}
-```
-
-Field keys come from the project's field names and units, so a query reports `V>=10k: 10 k has no unit of voltage` rather than guessing.
-
-Library folders ([S3](docs/parts-library.md#s3-as-built)) are plain directories of immutable revision files, shareable through git. `library.source.add` lists one in the user's settings (`PCBCRAFT_CONFIG_DIR`, `PCBCRAFT_CACHE_DIR` override the platform directories); `library.search` then includes its entries, `library.place_from_folder` imports and places in one undo step and `library.publish_to_folder` promotes a project revision to a writable folder. Imported revisions keep their origin and attached copies, so projects reopen without the folder. `library.import_from_project` copies one published revision and its closure from another `.pcbcraft` file, as one undo step.
-
-## Scripting integration proof
-
-The core contains a bounded Rhai integration for unit-aware expressions and draft pad-array generation. Units are request data; the interpreter has no component-specific property schema. `library.generate_pads` (on a footprint draft) is available inside `project.apply` through CLI/MCP, with ordinary revision checks and undo. This is a headless feasibility slice, not a new component editor or a complete library scripting format. See the [contract and limits](docs/part-library-design.md#rhai-integration-proof).
-
-Native scripting tests run in `cargo xtask ci`. To also execute the seven scripting tests, and the footprint evaluator's golden-hash tests (native/wasm agreement), as WebAssembly under Node (rather than only compile wasm), install Node and the test runner matching the locked `wasm-bindgen` version:
+Needs Rust (the toolchain is pinned in `rust-toolchain.toml`) or Nix.
 
 ```sh
-cargo install wasm-bindgen-cli --version 0.2.129 --locked
-cargo xtask wasm-scripting
-cargo xtask wasm-footprint
+nix develop    # optional: the pinned toolchain without rustup
+cargo run --locked --profile ci -p pcbcraft -- examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft
 ```
 
-Run these inside `nix develop` when using the Nix toolchain. The runner must be on `PATH`, or set `CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER` to its executable path. This optional runtime check is separate from `cargo xtask ci`; it does not exercise browser UI.
+Open the PCB workspace, press **D** to switch between layout and 3D, and **⌘P** to find any command.
 
-Solidcraft and its required patches are pinned to `04d3c2ffcff699c7cf1a07957627eaf4924869a3` of the [DAmesberger/solidcraft](https://github.com/DAmesberger/solidcraft) fork (branch `pcbcraft-smlib`): upstream Solidcraft `dfd9512e2` with its SMLib kernel (`solidcore` c0d3cc0124, vendored in Solidcraft, plus a stitch whose record keeping costs what each edit changes, carried ahead of upstream), plus material graphs on upstream's renderer and path tracer with an instanced graph draw, which the PCB 3D view uses for the board's look, and via scaling (indexed profile nesting, batched copies and joints, instanced display, deferred evaluation); Solidcraft's own app is unchanged by default, except that bundled symbols now draw ahead of the system language fonts. Builds use git dependencies and the lockfile; a neighboring Solidcraft checkout is not required. The native probe and copper sample (vias, zone with hole, same-net island) are acceptance tests in `pcbcraft-solidcraft`, not product features. UI source references and font licenses are recorded in [attribution](ATTRIBUTION.md).
+## Documentation
 
-## Scope and design
+- [Development](docs/development.md): build, checks, crate layout, command line, JSON lines and MCP.
+- [Architecture and product plan](docs/pcbcraft-plan.md), and the [component model](docs/component-model.md).
+- [MCP and AI integration](docs/llm-integration.md), including [live MCP](docs/development.md#live-mcp) and the [datasheet assistant](docs/datasheet-assistant.md).
+- [Keyboard shortcuts](docs/keyboard-shortcuts.md), [push-and-shove routing](docs/push-and-shove.md), [high-speed routing](docs/high-speed-routing.md), [fabrication output](docs/fabrication-output.md).
 
-- [Product plan](docs/pcbcraft-plan.md)
-- [Part library design](docs/part-library-design.md)
-- [Parts library: catalog, search and slice plan](docs/parts-library.md)
-- [Right sidebar and feedback: information architecture](docs/sidebar-ia.md)
-- [Component-editor acceptance scenarios](docs/part-library-design.md#component-editor-acceptance-scenarios), including multi-unit symbols and structured multi-function IOs
-- [Native integration research](docs/solidcraft-interop-research.md)
-- [Copper performance research](docs/copper-performance-research.md)
-- [Roadmap](ROADMAP.md) and [agent instructions](AGENTS.md)
+## Licence and attribution
 
-The Route tool shoves other nets' tracks and vias aside, walks round obstacles or ignores them (M cycles the mode); each click is one atomic transaction and undo step, also as `layout.route_step` for the CLI and MCP ([push-and-shove](docs/push-and-shove.md)). Dragging existing tracks with shove is planned. Large-board performance, incremental native rebuilds, arbitrary Solidcraft model composition and manufacturing outputs remain future work.
+Licensed under the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option, like Solidcraft. Third-party notices are in [NOTICE](NOTICE) and [ATTRIBUTION.md](ATTRIBUTION.md).
 
-## License
-
-Pcbcraft is licensed under the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option, like Solidcraft. Third-party notices are in [NOTICE](NOTICE) and [ATTRIBUTION.md](ATTRIBUTION.md). Pcbcraft is an independent clean-room implementation; it does not use code or library data from GPL-family or commercial EDA tools.
+This is an independent clean-room implementation. It uses public specifications and permissively licensed dependencies, and contains no code or library data from GPL-family or commercial EDA tools. Manufacturer CAD data is used only like a datasheet, with its source and licence recorded.

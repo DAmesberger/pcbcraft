@@ -5,7 +5,7 @@ description: Add or run Pcbcraft tests, benchmarks and CI; verify crash fixes, g
 
 # Verification and evidence
 
-Run `cargo xtask ci` for the current aggregate gate; see [README.md](../../README.md) for prerequisites and narrower checks. The wasm gate checks compilation, not browser execution. [Milestone 0](../../docs/milestone-0.md) defines the remaining acceptance evidence; report unimplemented gates explicitly.
+Run `cargo xtask ci` for the current aggregate gate; see [development](../../docs/development.md) for prerequisites and narrower checks. The wasm gate checks compilation, not browser execution. [Milestone 0](../../docs/milestone-0.md) defines the remaining acceptance evidence; report unimplemented gates explicitly.
 
 Choose evidence by the changed behavior:
 
