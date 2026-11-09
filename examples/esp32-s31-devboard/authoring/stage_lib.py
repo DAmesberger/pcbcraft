@@ -75,10 +75,6 @@ def check(s, ids=None):
     return bad
 
 
-def text(at, content, height, layer="silkscreen"):
-    return {"item": {"text": {"at": at, "content": content, "height": height,
-                              "justify": {"h": "center", "v": "middle"}, "line_spacing": 1.6,
-                              "rotation": "r0", "visible": True}}, "layer": layer, "side": "component"}
 
 
 def rect(a, b, width, layer):
@@ -86,50 +82,15 @@ def rect(a, b, width, layer):
             "layer": layer, "side": "component"}
 
 
-def smd(num, at, size, terminal):
-    return {"kind": "smd", "number": num, "position": at, "rotation_deg": 0.0, "side": "top",
-            "shape": {"rect": {"size": size}}, "mask": "inherit", "paste": "inherit", "terminal": terminal,
-            "hole": None, "vias": []}
 
 
-def footprint_body(package_id, pads, graphics):
-    out_pads, out_gfx, n = [], [], 1
-    for p in pads:
-        out_pads.append(dict(p, id=n)); n += 1
-    for g in graphics:
-        out_gfx.append(dict(g, id=n)); n += 1
-    return {"datum": {"offset": [0.0, 0.0], "rotation_deg": 0.0},
-            "defaults": {"mask_expansion_mm": 0.05, "paste_reduction_mm": 0.0},
-            "graphics": out_gfx, "next_local": n, "package": {"id": package_id, "revision": 1},
-            "pads": out_pads, "polarity": None, "source": None}
 
 
-def generic_package(s, pkg_id, envelope, prov, material="epoxy_mould", offset=None):
+def generic_package(s, pkg_id, envelope, prov, material="epoxy_mould"):
     d = drafts(s)[pkg_id]
     body = d["definition"]["body"]
     body["envelope"] = envelope
     body["form"] = {"family": "generic"}
     body["model"] = {"source": "envelope", "material": material}
-    if offset:
-        body["placement"]["translation"] = offset
     edit(s, [{"id": pkg_id, "meta": d["meta"] | {"provenance": prov}, "definition": d["definition"]}], f"generic package {pkg_id}")
 
-
-def custom_footprint(s, name, pkg_id, binding_id, pads_by_terminal_number, graphics, prov):
-    """A new footprint draft whose pads land package terminals by number."""
-    d = drafts(s)
-    terms = {t["designation"]: t["id"] for t in d[pkg_id]["definition"]["body"]["terminals"]}
-    pads = []
-    for p in pads_by_terminal_number:
-        p = dict(p)
-        num = p.pop("term")
-        if num is not None:
-            p["terminal"] = terms[num]
-        pads.append(p)
-    body = footprint_body(pkg_id, pads, graphics)
-    r = s.op("library.new_draft", {"meta": meta(name, prov), "definition": {"kind": "footprint", "body": body}}, f"footprint {name}")
-    fid = r["result"]["outcome"].get("id") or r["result"]["outcome"].get("ids", [None])[0]
-    b = drafts(s)[binding_id]
-    b["definition"]["body"]["footprints"] = [{"id": fid, "revision": 1}]
-    edit(s, [{"id": binding_id, "meta": b["meta"], "definition": b["definition"]}], f"bind footprint {name}")
-    return fid

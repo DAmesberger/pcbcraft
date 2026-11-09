@@ -153,6 +153,7 @@ fn board_operations_are_atomic_undoable_and_persist() -> Fallible<()> {
         engine.revision(),
         Operation::Fill(FillCommand::Add {
             fill: Box::new(FillSpec {
+                region: crate::model::fill::FillRegion::Drawn,
                 name: "GND".into(),
                 net: Some(net),
                 layer: CopperLayer::Bottom,

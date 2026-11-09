@@ -50,6 +50,7 @@ fn net(engine: &Engine, name: &str) -> Fallible<Id> {
 
 fn spec(net: Option<Id>, layer: CopperLayer, outline: Outline) -> FillSpec {
     FillSpec {
+        region: crate::model::fill::FillRegion::Drawn,
         name: String::new(),
         net,
         layer,

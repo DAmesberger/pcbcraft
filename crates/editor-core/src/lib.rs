@@ -1158,6 +1158,8 @@ impl Engine {
             // Constrained parts, fills and keepouts follow their board
             // edges (and a move away from one is refused).
             layout::outline::follow(&self.document.project, project, evaluators.board)?;
+            // Board-following fills take the (possibly changed) outline.
+            layout::fill::follow_board(project)?;
             if !reviewed {
                 schematic::protect_routed_nets(&self.document.project, project)?;
             }

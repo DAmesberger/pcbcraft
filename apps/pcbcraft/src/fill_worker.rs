@@ -232,6 +232,7 @@ mod tests {
             engine.revision(),
             Operation::Fill(FillCommand::Add {
                 fill: Box::new(FillSpec {
+                    region: pcbcraft_core::model::fill::FillRegion::Drawn,
                     name: "GND".into(),
                     net: Some(gnd),
                     layer: CopperLayer::Bottom,

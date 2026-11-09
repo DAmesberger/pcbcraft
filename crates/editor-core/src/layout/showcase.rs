@@ -431,6 +431,7 @@ fn pours(project: &Project, pours: &[(&str, &str, CopperLayer, u32)]) -> Result<
                 .ok_or_else(|| Error::NotFound(format!("showcase net {net}")))?;
             Ok(FillCommand::Add {
                 fill: Box::new(FillSpec {
+                    region: crate::model::fill::FillRegion::Drawn,
                     name: (*name).into(),
                     net: Some(net),
                     layer: *layer,

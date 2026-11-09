@@ -733,6 +733,7 @@ fn a_route_continues_through_fill_copper_stored_after_a_step() -> TestResult {
         engine.revision(),
         Operation::Fill(FillCommand::Add {
             fill: Box::new(FillSpec {
+                region: pcbcraft_core::model::fill::FillRegion::Drawn,
                 name: "pour".into(),
                 net: Some(other),
                 layer: CopperLayer::Top,

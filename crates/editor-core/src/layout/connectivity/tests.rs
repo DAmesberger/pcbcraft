@@ -249,6 +249,7 @@ fn c5_a_track_leaving_a_fill_to_an_open_end_is_a_stub() -> Result<()> {
     project.fills.push(Fill::from_spec(
         id,
         FillSpec {
+            region: crate::model::fill::FillRegion::Drawn,
             name: String::new(),
             net: Some(SHARED),
             layer: top(),
@@ -465,6 +466,7 @@ fn filled(project: &mut Project, outline: Outline, settings: FillSettings) -> Re
     project.fills.push(Fill::from_spec(
         id,
         FillSpec {
+            region: crate::model::fill::FillRegion::Drawn,
             name: String::new(),
             net: Some(SHARED),
             layer: top(),

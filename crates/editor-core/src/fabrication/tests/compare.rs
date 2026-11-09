@@ -628,6 +628,7 @@ fn a_ten_thousand_via_board_is_written_in_seconds() -> Fallible<()> {
     project.fills.push(crate::model::Fill::from_spec(
         fill,
         crate::model::fill::FillSpec {
+            region: crate::model::fill::FillRegion::Drawn,
             name: "GND".into(),
             net: Some(gnd),
             layer: CopperLayer::Bottom,

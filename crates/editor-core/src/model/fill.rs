@@ -68,6 +68,38 @@ pub struct FillSettings {
     pub islands: IslandRemoval,
 }
 
+/// Where a fill's region comes from. Stored, so whether a fill follows
+/// the board is the designer's explicit choice, never inferred from its
+/// outline's coordinates.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FillRegion {
+    /// Its own drawn outline, at fixed board coordinates.
+    #[default]
+    Drawn,
+    /// The board outline: its `outline` is the solved board outline,
+    /// derived again after every operation (`layout::fill::follow_board`),
+    /// so the fill follows board parameter and shape edits. The fill
+    /// computation still keeps it the fill-to-edge clearance inside the
+    /// edge and clears cutouts, slots, holes and keepouts.
+    Board,
+}
+
+impl FillRegion {
+    pub fn is_drawn(&self) -> bool {
+        *self == Self::Drawn
+    }
+}
+
+/// The outline of a fill spec that gives none: empty, which only a
+/// board-following fill may have (its outline is derived).
+fn no_outline() -> Outline {
+    Outline {
+        start: [0.0, 0.0],
+        segments: Vec::new(),
+    }
+}
+
 /// A fill to add: everything but its identity and computed copper.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -77,7 +109,12 @@ pub struct FillSpec {
     /// `None`: unconnected copper (no net).
     pub net: Option<Id>,
     pub layer: CopperLayer,
-    /// The region the fill may occupy, with arcs.
+    /// Drawn (the default) or the board outline.
+    #[serde(default, skip_serializing_if = "FillRegion::is_drawn")]
+    pub region: FillRegion,
+    /// The region the fill may occupy, with arcs. A board-following fill
+    /// may omit it: the board outline replaces it.
+    #[serde(default = "no_outline")]
     pub outline: Outline,
     /// Higher fills claim overlapping area first.
     #[serde(default)]
@@ -94,6 +131,10 @@ pub struct Fill {
     pub name: String,
     pub net: Option<Id>,
     pub layer: CopperLayer,
+    #[serde(default, skip_serializing_if = "FillRegion::is_drawn")]
+    pub region: FillRegion,
+    /// The drawn outline, or for [`FillRegion::Board`] the board outline
+    /// it was last derived from.
     pub outline: Outline,
     #[serde(default)]
     pub priority: u32,
@@ -114,6 +155,7 @@ impl Fill {
             name: s.name,
             net: s.net,
             layer: s.layer,
+            region: s.region,
             outline: s.outline,
             priority: s.priority,
             settings: s.settings,
