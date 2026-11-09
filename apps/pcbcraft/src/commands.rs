@@ -449,6 +449,9 @@ pub enum AppCommand {
     TogglePcb3d,
     /// Turn the PCB 3D view to a standard view.
     View3d(View3d),
+    /// Switch the PCB 3D view between the Realistic look (the studio,
+    /// reflections and materials) and Solidcraft's Standard modelling look.
+    ToggleRealistic,
     /// Quit the app: unsaved work asks Save, Don't Save or Cancel first.
     Quit,
     /// Close the window: the app's one window, so the same request as Quit.
@@ -1562,6 +1565,19 @@ fn defaults() -> Vec<Command> {
                 .keywords("orbit rotate turn camera standard view cube 3d"),
         );
     }
+    // Solidcraft's `view.look` (its ⇧P, which here refills the fills):
+    // ⇧R for Realistic.
+    v.push(
+        Command::new(
+            "view.look",
+            "Realistic look",
+            C::Pcb3d,
+            Action::App(A::ToggleRealistic),
+        )
+        .chord(Chord::key(K::R).with_shift())
+        .icon("render_scene")
+        .keywords("standard photoreal materials studio lighting render shading"),
+    );
     v.push(
         Command::new(
             "view.selection",

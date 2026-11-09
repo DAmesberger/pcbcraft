@@ -330,11 +330,23 @@ impl App {
                 self.pcb.set_3d(!three_d);
             }
             AppCommand::View3d(view) => self.view_3d(view),
+            AppCommand::ToggleRealistic => self.toggle_realistic(),
             // The same request as the window's close button.
             AppCommand::Quit | AppCommand::CloseWindow => {
                 self.files.request(file_ui::Action::Close)
             }
         }
+    }
+
+    /// Switch the PCB 3D view's look, opening the 3D view if needed: a view
+    /// preference, never part of the document or its undo history.
+    pub(super) fn toggle_realistic(&mut self) {
+        self.enter(Workspace::Pcb);
+        if !self.pcb.is_3d() {
+            self.pcb.set_3d(true);
+        }
+        let on = !self.scene.viewport.realistic();
+        self.scene.viewport.set_realistic(on);
     }
 
     /// Turn the PCB 3D view to a standard view, opening it if needed.

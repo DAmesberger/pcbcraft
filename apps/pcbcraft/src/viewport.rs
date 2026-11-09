@@ -159,6 +159,10 @@ pub struct Viewport {
     cube_press: Option<(egui::Pos2, bool)>,
     /// Whether this view shows the navigation cube (PCB 3D).
     cube: bool,
+    /// The Realistic look (the product look: studio, reflections and the
+    /// materials' graphs), else Solidcraft's Standard modelling look. A view
+    /// preference, on by default.
+    realistic: bool,
 }
 
 impl Viewport {
@@ -199,6 +203,17 @@ impl Viewport {
         if let Err(error) = spawned {
             eprintln!("pcbcraft: the 3D studio was not baked: {error}");
         }
+    }
+
+    /// Whether the view draws the Realistic look.
+    pub fn realistic(&self) -> bool {
+        self.realistic
+    }
+
+    /// Draw the Realistic look or Solidcraft's Standard one. Only the frame's
+    /// look changes: no geometry is rebuilt.
+    pub fn set_realistic(&mut self, on: bool) {
+        self.realistic = on;
     }
 
     /// The viewport's state without a GPU (the renderer is installed by
@@ -243,6 +258,7 @@ impl Viewport {
             rect: None,
             cube_press: None,
             cube: false,
+            realistic: true,
         };
         result.fit();
         result
@@ -743,8 +759,10 @@ impl Viewport {
     pub(crate) fn frame(&self, view_proj: [[f32; 4]; 4], size_px: [f32; 2], ssaa: f32) -> Frame {
         let eye = self.camera.eye().to_f32();
         Frame {
-            product_lights: Some(lighting::studio(&self.camera, &self.bounds)),
-            product_look: Some(lighting::look()),
+            product_lights: self
+                .realistic
+                .then(|| lighting::studio(&self.camera, &self.bounds)),
+            product_look: self.realistic.then(lighting::look),
             units_per_mm: 1.0,
             moving: None,
             preview_bounds: None,

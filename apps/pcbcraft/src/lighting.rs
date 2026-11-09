@@ -30,17 +30,17 @@ pub const MAX_LIGHTS: usize = 21;
 pub const EXPOSURE: f32 = 1.1;
 /// The studio's share of the light against the rig below.
 pub const STUDIO_INTENSITY: f32 = 1.0;
-/// The studio the look reflects: the high-contrast strip-light studio, so
-/// metal shows dark faces with bright edge streaks and gloss mask a crisp
-/// streak instead of a smear (chosen in the founder's look review,
-/// 1 Nov 2026). Its turn about +Z puts one strip light's mirror image on
-/// the default overview's far end as a crisp-edged lacquer band: unturned,
-/// it washed a third of the board pale with a blurred edge; a quarter
-/// turn read flat; at 140° the band leaves the board (tuned on the
-/// showcase pictures, realism review v4; the overview test below measures
-/// it).
+/// The studio the look reflects: Solidcraft's moody strip-light studio
+/// (`STU-005`), so metal shows dark faces with bright edge streaks, gloss
+/// mask a crisp streak, and its soft overhead scrim makes flat gold read
+/// gold from above (chosen in the founder's look reviews, 1 and 9 Nov
+/// 2026). Its turn about +Z puts one strip light's mirror image on the
+/// default overview's near corner as a crisp-edged lacquer sheen: at 145°
+/// (tuned against the earlier `Contrast`) the band crossed the middle of a
+/// bare board as a pale haze; at 240° it softened across the far end; at
+/// 285° it is a crisp sheen off the board's middle (`write_look_pictures`).
 pub const STUDIO: StudioPreset = StudioPreset::Contrast;
-const STUDIO_TURN_DEG: f32 = 145.0;
+const STUDIO_TURN_DEG: f32 = 285.0;
 /// Scale of the direct lights' records.
 const DIRECT: f64 = 1.0;
 /// Seen from below, the board's underside faces the studio's dark floor:

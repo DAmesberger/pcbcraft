@@ -350,7 +350,7 @@ const ALUMINA_IOR: f64 = 1.77;
 const MLCC: [f64; 3] = [0.32, 0.25, 0.15];
 /// Matte epoxy legend ink, diffuse reflectance (est.; TiO2-filled white,
 /// carbon black, chrome-free yellow) and its matte roughness (est.).
-const INK_WHITE: [f64; 3] = [0.78, 0.78, 0.76];
+const INK_WHITE: [f64; 3] = [0.85, 0.85, 0.83];
 const INK_BLACK: [f64; 3] = [0.03, 0.03, 0.03];
 const INK_YELLOW: [f64; 3] = [0.70, 0.52, 0.04];
 const INK_ROUGHNESS: f64 = 0.75;
