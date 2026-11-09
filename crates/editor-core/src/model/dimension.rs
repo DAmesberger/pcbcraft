@@ -6,7 +6,8 @@
 //!
 //! Part dimensions replaced the edge constraints of the first board sketch
 //! (docs/board-sketch-references.md §5.6).
-use crate::ids::{Id, PadId};
+use crate::geometry::Point;
+use crate::ids::{Id, PackageRef, PadId};
 use crate::library::footprint_source::{DimKind, DimValue, GeomConstraint, SketchRef};
 use crate::model::board::ConstraintTarget;
 use schemars::JsonSchema;
@@ -111,11 +112,14 @@ pub enum FeatureRef {
     },
     /// An anchor authored by name in the part's model design.
     Anchor { placement: Id, name: AnchorName },
-    /// A face of the part's 3D model (slice S3).
+    /// A face of the part's part file, by body, persistent face name and a
+    /// pick point on it (model frame, mm), traced in the board plane by the
+    /// host ([`ModelTrace`]). A name the part does not have is refused with
+    /// its faces square to the board, each by name with a point on it.
     Face { placement: Id, face: ModelFaceRef },
-    /// An edge of the part's 3D model (slice S3).
+    /// An edge of the part's 3D model.
     Edge { placement: Id, edge: ModelEdgeRef },
-    /// An end of an edge of the part's 3D model (slice S3).
+    /// An end of an edge of the part's 3D model.
     Vertex {
         placement: Id,
         edge: ModelEdgeRef,
@@ -135,6 +139,15 @@ impl FeatureRef {
             | Self::Edge { placement, .. }
             | Self::Vertex { placement, .. } => ConstraintTarget::Placement(*placement),
         }
+    }
+
+    /// Whether the feature is a face, edge or vertex of the part's 3D
+    /// model: the host traces it ([`ModelTrace`]).
+    pub fn is_model(&self) -> bool {
+        matches!(
+            self,
+            Self::Face { .. } | Self::Edge { .. } | Self::Vertex { .. }
+        )
     }
 }
 
@@ -237,10 +250,11 @@ pub struct ModelEdgeRef {
     pub pick: [f64; 3],
 }
 
-/// How a reference resolves against its source (§5.5). Derived, never
-/// stored here: `Lost` and `Inexact` references are reported
-/// (`board.reference_lost`, `board.reference_inexact`) and keep their last
-/// geometry.
+/// How a reference resolves against its source (§5.5). Derived: a 3D
+/// model reference's status is the host's, kept in its [`ModelTrace`];
+/// every other one is read from the document. `Lost` and `Inexact`
+/// references are reported (`board.reference_lost`,
+/// `board.reference_inexact`), stop driving and keep their last geometry.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceStatus {
@@ -250,4 +264,73 @@ pub enum ReferenceStatus {
     Inexact,
     /// Its source is gone.
     Lost,
+}
+
+/// A feature's geometry in its target's frame (part frame, before the
+/// placement mirrors and turns it), mm.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case", tag = "shape", deny_unknown_fields)]
+pub enum FeatureGeometry {
+    Point {
+        at: Point,
+    },
+    Line {
+        a: Point,
+        b: Point,
+    },
+    /// A bulge arc from `a` to `b` (as `library::Segment::Arc`).
+    Arc {
+        a: Point,
+        b: Point,
+        bulge: f64,
+    },
+    Circle {
+        center: Point,
+        radius: f64,
+    },
+}
+
+impl FeatureGeometry {
+    /// Every coordinate finite and in range, a radius positive.
+    pub fn valid(&self) -> bool {
+        use crate::geometry::point_valid;
+        match *self {
+            Self::Point { at } => point_valid(at),
+            Self::Line { a, b } => point_valid(a) && point_valid(b),
+            Self::Arc { a, b, bulge } => point_valid(a) && point_valid(b) && bulge.is_finite(),
+            Self::Circle { center, radius } => {
+                point_valid(center) && radius.is_finite() && radius > 0.0
+            }
+        }
+    }
+}
+
+/// Model traces one project keeps: one per 3D model reference.
+pub const MAX_MODEL_TRACES: usize = MAX_PART_DIMENSIONS;
+/// Bytes of a trace's note.
+pub const MAX_TRACE_NOTE: usize = 512;
+
+/// What the host found for one face, edge or vertex of a part's 3D model
+/// (docs/board-sketch-references.md §5.4, §5.5): its trace in the board
+/// plane and how it resolves. Written by the host's trace
+/// (`layout::dimensions::model::refresh`) whenever a dimension or the
+/// package it was traced in changes, and kept with the document like the
+/// solved board, so checks, fabrication preflight and the canvas read it
+/// without Solidcraft. A lost or inexact reference keeps the geometry it
+/// had last.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelTrace {
+    /// The reference: a `face`, `edge` or `vertex` feature.
+    pub feature: FeatureRef,
+    /// The package revision it was traced in; `None` once the part is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<PackageRef>,
+    pub status: ReferenceStatus,
+    /// Its trace in the part frame; for a lost reference, the last one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<FeatureGeometry>,
+    /// Why it is inexact or lost.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
 }

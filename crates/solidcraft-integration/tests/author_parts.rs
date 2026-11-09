@@ -577,12 +577,79 @@ pub fn author_b3u_1000p() -> Vec<u8> {
     finish_part(s, "body_height")
 }
 
+/// The GCT USB4105-GF-A USB-C receptacle of the ESP32-S31 dev board
+/// example: a nickel shell over the outline, open at the mating face (−y),
+/// and the LCP tongue inside. Origin at the outline centre, as the
+/// footprint's; the shell's front face (`F1:-y` of the Shell body) is
+/// what the board holds flush to its edge. Outline 8.94 × 7.35 × 3.31 mm
+/// and the 8.34 × 2.56 mm opening centred 1.73 mm up, from GCT's public
+/// USB4105 drawing (rev B4, sheet 1), as the example's package form
+/// records them. The cavity depth and the tongue are illustrative, and the
+/// shell stakes and pegs below the seating plane are left out (the part
+/// file's lowest geometry is the seating plane). No CAD or EDA library
+/// data was copied.
+pub fn author_usb4105() -> Vec<u8> {
+    let mut s = new_part(
+        "GCT USB4105-GF-A USB-C receptacle",
+        &[
+            ("width", "8.94 mm", "mm", "outline across (x)"),
+            (
+                "depth",
+                "7.35 mm",
+                "mm",
+                "outline deep (y), mating face at -y",
+            ),
+            ("height", "3.31 mm", "mm", "seated height"),
+            ("opening_w", "8.34 mm", "mm", "mating opening across"),
+            ("opening_h", "2.56 mm", "mm", "mating opening high"),
+            ("opening_z", "1.73 mm", "mm", "mating opening centre height"),
+            (
+                "cavity_depth",
+                "6.2 mm",
+                "mm",
+                "how deep the opening reaches (illustrative)",
+            ),
+            ("tongue_w", "6.7 mm", "mm", "tongue across (illustrative)"),
+            (
+                "tongue_t",
+                "0.7 mm",
+                "mm",
+                "tongue thickness (illustrative)",
+            ),
+        ],
+        ["width * 0.6", "depth * 0.6"],
+    );
+    run(
+        &mut s,
+        "solid.box",
+        json!({"corner": ["-width / 2", "-depth / 2", "0 mm"], "length": "width",
+            "width": "depth", "height": "height", "name": "Shell", "body_name": "Shell"}),
+    );
+    run(
+        &mut s,
+        "solid.box",
+        json!({"corner": ["-opening_w / 2", "-depth / 2 - 1 mm", "opening_z - opening_h / 2"],
+            "length": "opening_w", "width": "cavity_depth + 1 mm", "height": "opening_h",
+            "operation": "cut", "targets": ["Shell"], "name": "Opening"}),
+    );
+    run(
+        &mut s,
+        "solid.box",
+        json!({"corner": ["-tongue_w / 2", "-depth / 2 + 0.6 mm", "opening_z - tongue_t / 2"],
+            "length": "tongue_w", "width": "cavity_depth - 0.6 mm", "height": "tongue_t",
+            "name": "Tongue", "body_name": "Tongue"}),
+    );
+    assign_look(&mut s, &["Shell"], MaterialId::Nickel);
+    assign_look(&mut s, &["Tongue"], MaterialId::Lcp);
+    finish_part(s, "height")
+}
+
 #[test]
 #[ignore = "writes library/parts/*.solidcraft and the examples' part files"]
 fn author_parts() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     type Author = fn() -> Vec<u8>;
-    let parts: [(&str, &str, Author); 5] = [
+    let parts: [(&str, &str, Author); 6] = [
         ("library/parts", "esp32-s31-wroom-3", author_wroom3),
         ("library/parts", "smd-nut", author_smd_nut),
         ("library/parts", "round-spacer", author_round_spacer),
@@ -593,6 +660,13 @@ fn author_parts() {
             "examples/esp32-s31-devboard/parts",
             "b3u-1000p",
             author_b3u_1000p,
+        ),
+        // Its USB-C receptacle J1, held flush to the board edge by the
+        // shell's front face.
+        (
+            "examples/esp32-s31-devboard/parts",
+            "usb4105",
+            author_usb4105,
         ),
     ];
     for (folder, name, author) in parts {

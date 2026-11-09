@@ -1202,6 +1202,7 @@ impl Engine {
                     &self.copper_graph(),
                     self.revision,
                     *update,
+                    evaluators.board,
                 )?);
                 Outcome::None
             }
@@ -1532,11 +1533,23 @@ impl Engine {
     }
 
     pub fn preview_update(&self, change: updates::Change) -> updates::UpdatePlan {
+        self.preview_update_hosted(change, Evaluators::default())
+    }
+
+    /// [`Self::preview_update`] with the host's evaluators, which trace the
+    /// 3D model faces part dimensions name in the new package revisions and
+    /// solve the dimensioned parts, as applying the update does.
+    pub fn preview_update_hosted(
+        &self,
+        change: updates::Change,
+        evaluators: Evaluators<'_>,
+    ) -> updates::UpdatePlan {
         updates::preview(
             &self.document.project,
             &self.copper_graph(),
             self.revision,
             change,
+            evaluators.board,
         )
         .0
     }

@@ -79,6 +79,8 @@ pub enum ChangeObject {
     Package,
     Footprint,
     Pad,
+    /// A reference of a part dimension (a face of a part's 3D model).
+    Dimension,
 }
 
 impl ChangeObject {
@@ -101,6 +103,7 @@ impl ChangeObject {
             Self::Drawing => ("drawing", "drawings"),
             Self::Net => ("net", "nets"),
             Self::Placement => ("placement", "placements"),
+            Self::Dimension => ("part dimension", "part dimensions"),
         };
         if count == 1 { one } else { many }
     }

@@ -1,0 +1,220 @@
+{
+  "format": "solidcraft/51",
+  "name": "GCT USB4105-GF-A USB-C receptacle",
+  "units": "mm",
+  "params": [
+    {
+      "name": "width",
+      "expr": "8.94 mm",
+      "unit": "mm",
+      "comment": "outline across (x)",
+      "model": false
+    },
+    {
+      "name": "depth",
+      "expr": "7.35 mm",
+      "unit": "mm",
+      "comment": "outline deep (y), mating face at -y",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "3.31 mm",
+      "unit": "mm",
+      "comment": "seated height",
+      "model": false
+    },
+    {
+      "name": "opening_w",
+      "expr": "8.34 mm",
+      "unit": "mm",
+      "comment": "mating opening across",
+      "model": false
+    },
+    {
+      "name": "opening_h",
+      "expr": "2.56 mm",
+      "unit": "mm",
+      "comment": "mating opening high",
+      "model": false
+    },
+    {
+      "name": "opening_z",
+      "expr": "1.73 mm",
+      "unit": "mm",
+      "comment": "mating opening centre height",
+      "model": false
+    },
+    {
+      "name": "cavity_depth",
+      "expr": "6.2 mm",
+      "unit": "mm",
+      "comment": "how deep the opening reaches (illustrative)",
+      "model": false
+    },
+    {
+      "name": "tongue_w",
+      "expr": "6.7 mm",
+      "unit": "mm",
+      "comment": "tongue across (illustrative)",
+      "model": false
+    },
+    {
+      "name": "tongue_t",
+      "expr": "0.7 mm",
+      "unit": "mm",
+      "comment": "tongue thickness (illustrative)",
+      "model": false
+    },
+    {
+      "name": "marking_top_u",
+      "expr": "width * 0.6",
+      "unit": "mm",
+      "comment": "marking-top size along its u axis",
+      "model": false
+    },
+    {
+      "name": "marking_top_v",
+      "expr": "depth * 0.6",
+      "unit": "mm",
+      "comment": "marking-top size across it",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Shell",
+      "suppressed": false,
+      "body_names": [
+        "Shell"
+      ],
+      "param_names": [
+        "d1",
+        "d2",
+        "d3"
+      ],
+      "type": "box",
+      "corner": [
+        "-width / 2",
+        "-depth / 2",
+        "0 mm"
+      ],
+      "length": "width",
+      "width": "depth",
+      "height": "height",
+      "operation": "new_body"
+    },
+    {
+      "id": 2,
+      "name": "Opening",
+      "suppressed": false,
+      "param_names": [
+        "d4",
+        "d5",
+        "d6"
+      ],
+      "participants": [
+        "Shell"
+      ],
+      "type": "box",
+      "corner": [
+        "-opening_w / 2",
+        "-depth / 2 - 1 mm",
+        "opening_z - opening_h / 2"
+      ],
+      "length": "opening_w",
+      "width": "cavity_depth + 1 mm",
+      "height": "opening_h",
+      "operation": "cut"
+    },
+    {
+      "id": 3,
+      "name": "Tongue",
+      "suppressed": false,
+      "body_names": [
+        "Tongue"
+      ],
+      "param_names": [
+        "d7",
+        "d8",
+        "d9"
+      ],
+      "type": "box",
+      "corner": [
+        "-tongue_w / 2",
+        "-depth / 2 + 0.6 mm",
+        "opening_z - tongue_t / 2"
+      ],
+      "length": "tongue_w",
+      "width": "cavity_depth - 0.6 mm",
+      "height": "tongue_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 4,
+      "name": "marking-top",
+      "suppressed": false,
+      "param_names": [
+        "d10"
+      ],
+      "type": "construction_plane",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "placed",
+          "origin": [
+            "0 mm",
+            "0 mm",
+            "height"
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "distance": "0 mm"
+      }
+    }
+  ],
+  "next_id": 5,
+  "next_component_color_index": 0,
+  "appearances": {
+    "bodies": {
+      "Shell": {
+        "name": "nickel",
+        "color": [
+          212,
+          205,
+          192
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tongue": {
+        "name": "lcp",
+        "color": [
+          44,
+          44,
+          47
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 0.0,
+          "roughness": 0.35,
+          "dielectric_ior": 1.6
+        }
+      }
+    }
+  }
+}

@@ -2467,9 +2467,17 @@ pub(crate) fn preview(
     graph: &layout::CopperGraph,
     revision: u64,
     change: Change,
+    evaluator: Option<&dyn layout::outline::BoardShapeEvaluator>,
 ) -> (UpdatePlan, Option<Project>) {
     let mut plan = UpdatePlan::new(revision, change.clone());
-    let mut next = match stage_change(project, &change) {
+    let staged = stage_change(project, &change).and_then(|mut next| {
+        // As the engine does after the update: the 3D model references
+        // are traced in the new package revisions and the dimensioned
+        // parts solved.
+        layout::dimensions::follow(project, &mut next, evaluator)?;
+        Ok(next)
+    });
+    let mut next = match staged {
         Ok(next) => next,
         Err(error) => {
             plan.block(
@@ -3129,6 +3137,7 @@ pub(crate) fn preview(
     plan.affected_wires.dedup();
     plan.affected_placements.sort_unstable();
     plan.affected_placements.dedup();
+    reference_rows(&mut plan, project, &next);
     if plan.changes.is_empty() {
         plan.warn(
             "This update changes nothing",
@@ -3240,11 +3249,34 @@ fn name_added_placements(plan: &mut UpdatePlan, project: &Project, next: &Projec
     }
 }
 
+/// The 3D model references the update re-finds differently, listed first
+/// and never dropped by the detail limit: a face gone from a new model
+/// revision (`Lost`), one found but not provably the same (`Inexact`), and
+/// one that moves its part (docs/board-sketch-references.md §5.5).
+fn reference_rows(plan: &mut UpdatePlan, project: &Project, next: &Project) {
+    let rows = layout::dimensions::model::impact(project, next);
+    for (at, row) in rows.into_iter().enumerate() {
+        plan.changes.insert(at, row.detail.clone());
+        plan.items.insert(
+            at,
+            PlanChange {
+                area: A::Board,
+                kind: K::Change,
+                object: O::Dimension,
+                refs: vec![ObjectRef::Instance { id: row.instance }],
+                line: clip(&row.line),
+                detail: row.detail,
+            },
+        );
+    }
+}
+
 pub(crate) fn candidate(
     project: &Project,
     graph: &layout::CopperGraph,
     revision: u64,
     update: ApplyUpdate,
+    evaluator: Option<&dyn layout::outline::BoardShapeEvaluator>,
 ) -> Result<Project> {
     if update.expected_revision != revision {
         return Err(Error::Stale {
@@ -3252,7 +3284,7 @@ pub(crate) fn candidate(
             actual: revision,
         });
     }
-    let (plan, candidate) = preview(project, graph, revision, update.change);
+    let (plan, candidate) = preview(project, graph, revision, update.change, evaluator);
     if !plan.blockers.is_empty() {
         return Err(Error::Conflict(plan.blockers.join("\n")));
     }
