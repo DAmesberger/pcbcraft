@@ -289,6 +289,32 @@ fn c6_tracks_overlapping_side_by_side_join() -> Result<()> {
     Ok(())
 }
 
+/// The joining tolerance is 1 µm: two tracks end to end whose copper is
+/// 0.5 µm apart join (routed, no stub), and 2 µm apart do not (unrouted,
+/// each facing end a stub).
+#[test]
+fn copper_joins_within_a_micrometre_and_not_beyond() -> Result<()> {
+    assert_eq!(super::JOIN_TOLERANCE_MM, 1e-3);
+    // The first track's copper ends at x = 17.15 mm (half-width 0.15).
+    for (gap, joins) in [(0.5e-3, true), (2e-3, false)] {
+        let mut project = fixture()?;
+        track(&mut project, R1_2, [17.0, 10.0], top())?;
+        track(&mut project, [17.3 + gap, 10.0], R2_1, top())?;
+        let found = connectivity(&project);
+        let unrouted = codes(&found, "board.unrouted");
+        let stubs = codes(&found, "board.track_dangling");
+        if joins {
+            assert_eq!(found, Vec::new(), "{gap}");
+            assert!(layout::airwires(&project).is_empty(), "{gap}");
+        } else {
+            assert_eq!(unrouted.len(), 2, "{gap}: one per pad: {found:?}");
+            assert_eq!(stubs.len(), 2, "{gap}: {stubs:?}");
+            assert_eq!(layout::airwires(&project).len(), 1, "{gap}");
+        }
+    }
+    Ok(())
+}
+
 /// A branch off a routed track to an open end is a stub; a branch on to a
 /// pin is not.
 #[test]

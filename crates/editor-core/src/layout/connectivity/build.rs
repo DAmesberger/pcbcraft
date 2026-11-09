@@ -1,6 +1,8 @@
 //! Building the graph: elements, the one joining rule, joints with
 //! stations, vertices, edges and islands.
-use super::{CopperGraph, Dsu, Edge, EdgeKind, Element, ElementKind, Group, JOIN_EPS, Vertex};
+use super::{
+    CopperGraph, Dsu, Edge, EdgeKind, Element, ElementKind, Group, JOIN_TOLERANCE_MM, Vertex,
+};
 use crate::geometry::{
     Bounds, Point, polygon_contains, segment_distance, segments_cross, segments_gap,
 };
@@ -14,15 +16,15 @@ use crate::model::{Project, Track, Via};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// The farthest apart two outlines' bounds may be and still join.
-pub(super) const JOIN_REACH_MM: f64 = 2.0 * CURVE_SLACK_MM + 2.0 * JOIN_EPS;
+pub(super) const JOIN_REACH_MM: f64 = 2.0 * CURVE_SLACK_MM + 2.0 * JOIN_TOLERANCE_MM;
 /// Most joints per element; past it the graph is partial.
 const MAX_JOINTS_PER_ELEMENT: usize = 4;
 
 /// Whether two outlines join: their copper overlaps or touches within
-/// [`JOIN_EPS`] plus the curve slack of either. The one joining rule.
+/// [`JOIN_TOLERANCE_MM`] plus the curve slack of either. The one joining rule.
 pub(super) fn joins(a: &CopperRing, b: &CopperRing) -> bool {
     let slack = a.slack + b.slack;
-    a.gap(b, JOIN_EPS + slack + JOIN_EPS) <= JOIN_EPS + slack
+    a.gap(b, JOIN_TOLERANCE_MM + slack + JOIN_TOLERANCE_MM) <= JOIN_TOLERANCE_MM + slack
 }
 
 /// One meeting of two elements, with the station on each (0 off tracks).
@@ -154,8 +156,14 @@ fn stations(x: Geo<'_>, y: Geo<'_>) -> Meet {
                 length: cd,
             },
         ) => {
-            let reach = r + q + JOIN_EPS;
-            let kind = |gap: f64, soft: End| if gap <= JOIN_EPS { End::Exact } else { soft };
+            let reach = r + q + JOIN_TOLERANCE_MM;
+            let kind = |gap: f64, soft: End| {
+                if gap <= JOIN_TOLERANCE_MM {
+                    End::Exact
+                } else {
+                    soft
+                }
+            };
             let mut at = Vec::new();
             for (end, s) in [(a, 0.0), (b, ab)] {
                 let gap = segment_distance(end, c, d);
@@ -220,7 +228,7 @@ pub(crate) fn islands_joined(index: &RegionIndex, ring: &CopperRing) -> Vec<u32>
     let Some(bounds) = ring.bounds else {
         return Vec::new();
     };
-    let reach = JOIN_EPS + ring.slack;
+    let reach = JOIN_TOLERANCE_MM + ring.slack;
     let lo = [bounds.min[0] - reach, bounds.min[1] - reach];
     let hi = [bounds.max[0] + reach, bounds.max[1] + reach];
     let mut out = Vec::new();
@@ -280,7 +288,7 @@ fn fill_stations(
     radius: f64,
     length: f64,
 ) -> Vec<f64> {
-    let reach = radius + JOIN_EPS;
+    let reach = radius + JOIN_TOLERANCE_MM;
     let near = |a: Point, b: Point| {
         let lo = [a[0].min(b[0]) - reach, a[1].min(b[1]) - reach];
         let hi = [a[0].max(b[0]) + reach, a[1].max(b[1]) + reach];
@@ -550,7 +558,7 @@ impl CopperGraph {
             let anchored = |element: usize, s: f64| {
                 exact
                     .get(&element)
-                    .is_some_and(|list| list.iter().any(|x| (x - s).abs() <= JOIN_EPS))
+                    .is_some_and(|list| list.iter().any(|x| (x - s).abs() <= JOIN_TOLERANCE_MM))
             };
             let mut kept: HashSet<usize> = HashSet::new();
             for (pair, joint, element, s) in soft {
@@ -665,7 +673,7 @@ impl CopperGraph {
             // into it must not shorten the track's stretches.
             let length = list.get(1).copied().unwrap_or(0.0);
             list.sort_by(f64::total_cmp);
-            list.dedup_by(|later, kept| (*later - *kept).abs() <= JOIN_EPS);
+            list.dedup_by(|later, kept| (*later - *kept).abs() <= JOIN_TOLERANCE_MM);
             if list.len() > 1
                 && let Some(last) = list.last_mut()
             {

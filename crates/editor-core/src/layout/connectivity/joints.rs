@@ -2,7 +2,7 @@
 //! point: the questions the router, the Tune tool and the Route tool ask
 //! before they move or finish copper.
 use super::build::joins;
-use super::{CopperGraph, ElementKind, JOIN_EPS};
+use super::{CopperGraph, ElementKind, JOIN_TOLERANCE_MM};
 use crate::geometry::{Point, distance, segment_distance};
 use crate::ids::Id;
 use crate::layout::copper::CopperRing;
@@ -55,10 +55,10 @@ pub struct TrackJoint {
 /// that point.
 pub fn keeps_joint(polyline: &[Point], at: Point) -> bool {
     match polyline {
-        [p] => distance(*p, at) <= JOIN_EPS,
+        [p] => distance(*p, at) <= JOIN_TOLERANCE_MM,
         _ => polyline
             .windows(2)
-            .any(|w| segment_distance(at, w[0], w[1]) <= JOIN_EPS),
+            .any(|w| segment_distance(at, w[0], w[1]) <= JOIN_TOLERANCE_MM),
     }
 }
 
@@ -146,7 +146,7 @@ impl CopperGraph {
                         },
                     ) => self
                         .track_point(o, station)
-                        .is_some_and(|p| distance(p, at) <= JOIN_EPS),
+                        .is_some_and(|p| distance(p, at) <= JOIN_TOLERANCE_MM),
                     _ => false,
                 };
                 out.push(TrackJoint {

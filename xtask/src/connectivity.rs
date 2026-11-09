@@ -8,10 +8,11 @@
 //! It parses the workspace's crates and apps and rejects, outside the
 //! module:
 //!
-//! - the module's joining tolerances by name (`JOIN_EPS`, `JOIN_REACH_MM`);
+//! - the module's joining tolerances by name (`JOIN_TOLERANCE_MM`, `JOIN_REACH_MM`);
 //! - a function that both compares a net for equality (`a.net == b`) and
 //!   tests copper for contact: a comparison with a contact tolerance (a
-//!   float literal from 1e-8 up to 0.001 mm, such as `1e-6`), or a
+//!   float literal from 1e-8 up to and including 0.001 mm, the joining
+//!   tolerance of 1 µm, such as `1e-3` or `1e-6`), or a
 //!   containment or touch predicate (`touches`, `track_contains`,
 //!   `polygon_contains`). Smaller literals (`1e-9`, `1e-12`) test float
 //!   identity, such as finding a track a step just wrote by its end point
@@ -32,14 +33,15 @@ const MODULE: &[&str] = &[
 ];
 
 /// Names only the module may use: its joining tolerances.
-const OWNED: &[&str] = &["JOIN_EPS", "JOIN_REACH_MM"];
+const OWNED: &[&str] = &["JOIN_TOLERANCE_MM", "JOIN_REACH_MM"];
 
 /// Calls that test whether a point or shape lies on copper.
 const CONTACT: &[&str] = &["touches", "track_contains", "polygon_contains"];
 
-/// The literals read as a contact tolerance, in mm: below them float
+/// The literals read as a contact tolerance, in mm, up to and including
+/// the joining tolerance (`JOIN_TOLERANCE_MM`, 1 µm): below them float
 /// identity, above them a design value.
-const TOLERANCE: std::ops::Range<f64> = 1e-8..1e-3;
+const TOLERANCE: std::ops::RangeInclusive<f64> = 1e-8..=1e-3;
 
 /// Functions that match the shape but decide no connectivity: (file,
 /// function, why). A stale entry fails the check.
@@ -320,14 +322,18 @@ mod tests {
 
     #[test]
     fn joining_code_is_found_and_clearance_is_not() {
-        // Track ends of one net meeting within a micrometre.
-        assert_eq!(
-            names(
-                "fn ends(t: &Track, u: &Track) -> bool { \
-                 t.net == u.net && distance(t.end, u.start) < 1e-6 }"
-            ),
-            ["ends"]
-        );
+        // Track ends of one net meeting within a micrometre, or a
+        // nanometre.
+        for tolerance in ["1e-3", "0.001", "1e-6"] {
+            assert_eq!(
+                names(&format!(
+                    "fn ends(t: &Track, u: &Track) -> bool {{ \
+                     t.net == u.net && distance(t.end, u.start) < {tolerance} }}"
+                )),
+                ["ends"],
+                "{tolerance}"
+            );
+        }
         // A point on a track of the net.
         assert_eq!(
             names(
@@ -363,7 +369,7 @@ mod tests {
 
     #[test]
     fn the_joining_tolerance_is_the_modules_alone() {
-        let owned = scan("fn f() -> f64 { connectivity::JOIN_EPS }")
+        let owned = scan("fn f() -> f64 { connectivity::JOIN_TOLERANCE_MM }")
             .map(|(_, o)| o.len())
             .unwrap_or_default();
         assert_eq!(owned, 1);
