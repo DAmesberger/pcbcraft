@@ -415,9 +415,6 @@ fn exposed_gold_is_gold_against_a_reference_metal() -> Result<(), Box<dyn std::e
 /// and from straight above the pads read as light gold (mean ≥ 0.30, in
 /// gold's hue band), by a soft top light rather than a brighter F0.
 #[test]
-#[ignore = "art target awaiting the studio retune (Solidcraft track L) and Pcbcraft's look retune \
-            (track PL): lowest 0.111 and best highlight p95 0.599 pass, but from above the pads \
-            measure 0.114 against 0.30, display B/R 0.15, olive (fork 21ac01f4a)"]
 fn exposed_gold_reads_as_gold_in_the_studio() -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut gpu) = gpu_or_skip()? else {
         return Ok(());

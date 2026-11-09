@@ -257,6 +257,19 @@ Reading the table:
 - The legend shows at oblique views (4× the pixels): before, the mask drawn after it covered most of it. At the overview, the 17 pixels that survived were its brightest; the 430 now include thin strokes that share their pixel with the mask, hence the lower mean.
 - Laminate inside mask openings is shaded (with its weave) instead of its flat plain colour: mean and p95 rise a little.
 
+**After the studio retune (Solidcraft track L, fork `c26590edb`).** Solidcraft's default studio is now `Contrast` with a soft overhead scrim (Pcbcraft still turns it 145° at exposure 1.1; the scrim is centred, so the turn does not move it). Same harness, before → after, mean display luminance (p95):
+
+| Board, view | Gold | Mask | Silk | Laminate |
+|---|---|---|---|---|
+| Showcase, top 85° | 0.117 (0.197) → 0.434 (0.534), `#C9AD6C` | 0.043 → 0.062 | 0.374 → 0.485 | 0.116 → 0.159 |
+| Showcase, turned 40° | 0.155 → 0.235 | 0.046 → 0.060 | 0.268 → 0.332 | 0.120 → 0.154 |
+| Showcase, grazing 10° | 0.240 → 0.235 | 0.226 → 0.246 | 0.294 → 0.331 | 0.152 → 0.159 |
+| ESP32 dev board, top 85° | 0.095 (0.100) → 0.421 (0.434), `#C7AB6A` | 0.074 → 0.111 | 0.342 → 0.446 | 0.104 → 0.145 |
+| ESP32 dev board, turned 40° | 0.107 → 0.166 | 0.063 → 0.088 | 0.108 → 0.135 | 0.134 → 0.150 |
+
+- `exposed_gold_reads_as_gold_in_the_studio` passes and is no longer ignored: from above the pads measure 0.446 (target ≥ 0.30) in gold's hue, the darkest of the 8 views is 0.272, and the best p95 is 0.599. The physics test is unchanged (ratio 0.796–0.797).
+- Silk is lighter but not near-white yet, and the mask still turns grey-green at grazing angles. Both are left to Pcbcraft's look retune (track PL).
+
 **Rerun and compare.**
 1. `PCBCRAFT_LOOK_OUT=before.tsv cargo test --profile ci -p pcbcraft look_diagnosis -- --ignored --nocapture` writes the table. It covers 9 views (overview, turned 40°, top 85°, two obliques at 25°, grazing 10° and 5°, and close-ups at 30° and 12°) and 6 materials (mask, gold, silk, laminate, pad copper and other copper).
 2. After a change, `PCBCRAFT_LOOK_BASELINE=before.tsv` prints each row's change in mean, p95 and scene G/R and B/R.
