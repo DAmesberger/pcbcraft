@@ -51,7 +51,7 @@ Total: 126 s.
 
 ### Notes
 
-- **A — the datasheet run on camera.** A live run takes minutes and costs about 5–7 USD. Record it
+- **A — the datasheet run on camera.** A live run takes minutes. Record it
   once and time-cut (shot 1 → 2). For repeatable takes the desktop dialog would need the CLI's
   `--replay` option (listed in the [polish list](polish-list.md)); until then shot 1 is a one-off
   live recording or the CLI with `--replay examples/esp32-s31-wroom-3/wroom3.replay.jsonl`.

@@ -26,7 +26,7 @@ The agent used the tools as a user would. It added no features and made no code 
   - The copper's X2 `.N` net attributes carry the net names.
   - The legend's bounding box extended beyond the board (gap 7, since moved); this parse predates the moves.
 - **Datasheet assistant:**
-  - One live run, on the TLV75733PDBVR: `claude-opus-5-5`, effort medium, 13 requests, **$1.06** of a $6 cap.
+  - One live run, on the TLV75733PDBVR: `claude-opus-5-5`, effort medium, 13 requests.
   - It produced the right pinout, read TI's DBV0005A land pattern (0.6 × 1.1 mm pads) and wrote an honest review with four open questions.
   - Three of its `library_package_plan` calls were refused before one succeeded.
   - Its footprint was better than the one the agent first made from the starter table, which the board then corrected to match.
@@ -105,7 +105,7 @@ On `examples/esp32-s31-devboard`, the `ci` profile, `pcbcraft-cli` at 70ee104 ag
 - **One engine end to end.** The 655 requests of the run covered parts, schematic, board, rules, routing, fills and fabrication, all through `project.apply`/`project.query`. Every refused request left the document unchanged, so the client could try again with other values; every refusal in the first passes was recoverable. The replay rebuilds the board byte-identically.
 - **Parts from datasheets.**
   - `library.pinout_preview`/`pinout_apply` followed by `package_from_template` made the LDO and ESD parts in a few calls, with their terminals kept by number.
-  - The datasheet assistant did the same for $1.06 and read the real land pattern.
+  - The datasheet assistant did the same in one 13-request run and read the real land pattern.
 - **Purchasing.** Typed fields, `instance.set_properties` text parsing (`5.1k`, `22u`, `10V`), `resolve_groups`, `library.search` and an atomic `assign_part` gave a fully resolved BOM with values and MPNs.
 - **Schematic.** Power ports, global labels across two sheets, the title block, no-connect marking and ERC behaved as documented. ERC was clean on the first pass.
 - **High speed.**

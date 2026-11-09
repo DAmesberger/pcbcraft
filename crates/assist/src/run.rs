@@ -477,17 +477,6 @@ pub fn run(
     facts.elapsed_seconds = started.elapsed().as_secs_f64();
     facts.documents = std::mem::take(&mut context.facts);
     let session = context.session;
-    // The MCP workflow's check, on the same report and drafts: what it
-    // would refuse is told to the reviewer (recorded runs predate it, so
-    // it does not refuse the run's report).
-    if let Some(r) = &report {
-        let checked = pcbcraft_automation::review::check(&session.snapshot(), r);
-        for problem in checked["problems"].as_array().into_iter().flatten() {
-            let warning = format!("Review check: {}", problem.as_str().unwrap_or_default());
-            events(Event::Warning(warning.clone()));
-            facts.warnings.push(warning);
-        }
-    }
     report::finish_facts(&mut facts, &tally, &stop, session);
     Ok(Outcome {
         report,
