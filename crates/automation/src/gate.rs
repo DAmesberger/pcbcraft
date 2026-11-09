@@ -79,8 +79,8 @@ impl Policy {
 /// Who sent a request to [`Session::respond`], which gates it accordingly.
 #[derive(Clone, Copy, Debug)]
 pub enum Caller<'a> {
-    /// The operator's own script (`pcbcraft-cli stdio` without a permission
-    /// mode): every class runs, as at the command line. Never a model's.
+    /// The operator's own script (`pcbcraft-cli stdio --operator`): every
+    /// class runs, as at the command line. Never a model's.
     Operator,
     /// A model, under `policy`, with no one asked: Never, a path outside the
     /// folders and whatever needs a person are refused.
