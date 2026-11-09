@@ -241,7 +241,12 @@ pub(crate) mod tests {
 
     #[test]
     fn soldermask_shading_varies_across_the_board() -> Result<(), Box<dyn std::error::Error>> {
-        let mask = material(BodyKind::MaskTop, &Fabrication::default()).surface()?;
+        let mask = material(
+            BodyKind::MaskTop,
+            &Fabrication::default(),
+            &pcbcraft_solidcraft::stack::Stack::default(),
+        )
+        .surface()?;
         let b = board();
         for camera in views() {
             let rig = studio(&camera, &b);

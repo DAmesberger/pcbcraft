@@ -130,10 +130,10 @@ fn legend_over_a_track_stands_on_its_mask_cap() -> Result<()> {
         .iter()
         .filter(|g| g.kind == BodyKind::Silkscreen)
         .collect();
-    let crown = 1.6 + 0.035 + MASK_CAP_MM;
+    let crown = 1.6 + 0.035 + project.stackup.mask_um / 1000.0;
     let raised: Vec<&&Geometry> = films
         .iter()
-        .filter(|g| (g.max[2] - (crown + INK_THICKNESS_MM)).abs() < 1e-9)
+        .filter(|g| (g.max[2] - (crown + INK_MM)).abs() < 1e-9)
         .collect();
     assert_eq!(raised.len(), 1, "one raised piece, over the track only");
     let piece = raised[0];

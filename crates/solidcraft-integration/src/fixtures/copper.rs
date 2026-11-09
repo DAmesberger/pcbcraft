@@ -336,8 +336,12 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
             item: source.map(|i| i.id),
             kind,
             layer: None,
-            surface: crate::material::material(kind, &pcbcraft_core::Fabrication::default())
-                .surface()?,
+            surface: crate::material::material(
+                kind,
+                &pcbcraft_core::Fabrication::default(),
+                &crate::stack::Stack::default(),
+            )
+            .surface()?,
             detail: crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
             mesh: body.mesh(),
             place: None,

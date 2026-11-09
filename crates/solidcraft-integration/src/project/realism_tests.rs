@@ -316,7 +316,7 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
         .into_iter()
         .find(|g| g.kind == BodyKind::MaskCap && g.layer == Some(CopperLayer::Top))
         .ok_or_else(|| invalid("no dome"))?;
-    near(dome.max[2], t + 0.035 + appearance::MASK_CAP_MM);
+    near(dome.max[2], t + 0.035 + pcbcraft_core::MASK_UM / 1000.0);
     Ok(())
 }
 
@@ -339,6 +339,7 @@ fn every_display_layer_names_its_copper_layer_or_side() -> Result<()> {
             | BodyKind::MaskBottom
             | BodyKind::MaskCap
             | BodyKind::Silkscreen
+            | BodyKind::OpenLaminate
             | BodyKind::EdgeCopper => true,
             // A via's finished ring is the via's, on no single layer.
             BodyKind::PadFinish => !of_via,
@@ -380,7 +381,7 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
         .filter(|g| g.kind == BodyKind::Silkscreen)
         .collect();
     assert!(!films.is_empty());
-    let mask_top = 1.6 + appearance::MASK_THICKNESS_MM;
+    let mask_top = 1.6 + crate::stack::MASK_OVER_LAMINATE_MM;
     for film in &films {
         // Each part's legend shares the part's pick identity.
         let source = model
@@ -399,7 +400,7 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
     let pads = layout::placed_pads(&project);
     for pad in &pads {
         let c = pad.center();
-        let z = 1.6 + appearance::MASK_THICKNESS_MM;
+        let z = 1.6 + crate::stack::MASK_OVER_LAMINATE_MM;
         for film in &films {
             assert!(
                 !film.world_mesh().contains(Vec3::new(c[0], c[1], z)),
@@ -497,5 +498,73 @@ fn a_twelve_layer_board_saves_deep_inner_copper_at_its_height() -> Result<()> {
         .filter(|g| g.kind == BodyKind::EdgeCopper)
         .count();
     assert_eq!(foils, 12, "every foil shows at the routed edge");
+    Ok(())
+}
+
+/// One z model: on a stackup whose foils and dielectrics all differ, every
+/// copper body the native model builds (its height parameters and the
+/// inner foils' `inner_base` expressions, evaluated by Solidcraft) lies
+/// where [`crate::stack::Stack`] and `Stackup::copper_span` put that layer,
+/// the laminate ends at the stack's laminate face, and each side's mask
+/// over copper stands the stackup's mask thickness over its foil.
+#[test]
+fn native_heights_agree_with_the_stack() -> Result<()> {
+    use crate::stack::{Slot, Stack};
+    let (mut project, _, _) = four_layer()?;
+    let mut stackup = Stackup::preset(4).map_err(invalid)?;
+    for (foil, um) in stackup.copper.iter_mut().zip([70.0, 18.0, 50.0, 105.0]) {
+        foil.thickness_um = um;
+    }
+    for (d, mm) in stackup.dielectrics.iter_mut().zip([0.18, 0.9, 0.25]) {
+        d.thickness_mm = mm;
+    }
+    stackup.mask_um = 22.0;
+    project.stackup = stackup.clone();
+    let model = build(&project)?;
+    let stack = Stack::of(&stackup);
+    assert_eq!(model.stack, stack);
+    let mut seen = std::collections::BTreeSet::new();
+    for g in model
+        .geometry
+        .iter()
+        .filter(|g| matches!(g.kind, BodyKind::CopperTrack | BodyKind::EdgeCopper))
+    {
+        let layer = g.layer.ok_or_else(|| invalid("copper without a layer"))?;
+        let (low, high) = stackup
+            .copper_span(layer)
+            .ok_or_else(|| invalid("no span"))?;
+        let span = stack
+            .span_of(Slot::Copper(layer))
+            .ok_or_else(|| invalid("no slot"))?;
+        near(span[0], low);
+        near(span[1], high);
+        if g.kind == BodyKind::CopperTrack {
+            near(g.min[2], low);
+            near(g.max[2], high);
+            seen.insert(layer);
+        }
+    }
+    assert!(seen.contains(&CopperLayer::Inner(1)) && seen.contains(&CopperLayer::Inner(2)));
+    // The laminate is stacked slabs, one per dielectric and inner foil.
+    let slabs = model
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::Substrate);
+    let low = slabs
+        .clone()
+        .map(|g| g.min[2])
+        .fold(f64::INFINITY, f64::min);
+    let high = slabs.map(|g| g.max[2]).fold(f64::NEG_INFINITY, f64::max);
+    near(low, 0.0);
+    near(high, stack.laminate());
+    for (side, z) in [
+        (Layer::Top, stack.laminate() + 0.070 + 0.022),
+        (Layer::Bottom, -(0.105 + 0.022)),
+    ] {
+        let span = stack
+            .span_of(Slot::Mask(side))
+            .ok_or_else(|| invalid("no mask"))?;
+        near(if side == Layer::Top { span[1] } else { span[0] }, z);
+    }
     Ok(())
 }

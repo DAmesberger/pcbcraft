@@ -176,7 +176,7 @@ impl Viewport {
         } else {
             transformed(&self.decals.geometry, &self.display)
         };
-        if let Ok((stream, _)) = model_scene::pack(geometry, &decals, &self.layers) {
+        if let Ok((stream, _)) = model_scene::pack(geometry, &decals, &self.layers, &model.stack) {
             self.repack = None;
             self.publish_stream(stream);
         }
@@ -267,7 +267,7 @@ mod tests {
         let project = crate::model_scene::tests::demo_project()?;
         let model = pcbcraft_solidcraft::project::build(&project)?;
         let mut viewport = Viewport::detached();
-        viewport.set_model(crate::model_scene::build(model.geometry)?);
+        viewport.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
         let generation = viewport.generation;
         let before = viewport.bounds;
         let key = viewport.key;
@@ -303,7 +303,7 @@ mod tests {
             "a large unplaced body is drawn instanced"
         );
         let mut viewport = Viewport::detached();
-        viewport.set_model(crate::model_scene::build(model.geometry)?);
+        viewport.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
         let published = |v: &Viewport| -> Vec<(usize, Vec<u8>)> {
             v.slot
                 .lock()

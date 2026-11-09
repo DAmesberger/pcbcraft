@@ -2,25 +2,24 @@
 //! bore an open side shows. An open side's finished ring and mask opening
 //! are an ordinary [`super::Land`] ([`super::ViaMark::lands`]).
 use super::{
-    BORE_GAP_MM, BORE_SHADOW_MM, Board, DOME_STEPS, FINISH_THICKNESS_MM, MASK_CAP_MM,
-    MASK_THICKNESS_MM, Region, TENT_SAG_MM, TENT_SKIRT_MM, VIA_SEGMENTS, ViaMark, circle, push,
-    slab,
+    BORE_GAP_MM, BORE_SHADOW_MM, Board, DOME_STEPS, Region, TENT_SAG_MM, TENT_SKIRT_MM,
+    VIA_SEGMENTS, ViaMark, circle, push, slab,
 };
 use crate::Result;
 use crate::geom::prelude::*;
 use crate::geom::{Mesh, Vec3};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
+use crate::stack::{FINISH_MM, MASK_OVER_LAMINATE_MM, PROUD_MM};
 use pcbcraft_core::{CopperLayer, Layer};
 
 /// The dome a tented side shows and the bore shadow of an open one.
 pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) -> Result<()> {
-    let looks = board.fabrication;
     for side in [Layer::Top, Layer::Bottom] {
         if via.covered(board, side) {
             push(
                 out,
-                &looks,
+                Some(board),
                 BodyKind::MaskCap,
                 Some(via.pick),
                 Some(CopperLayer::from(side)),
@@ -48,7 +47,7 @@ pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) 
     };
     push(
         out,
-        &looks,
+        Some(board),
         BodyKind::ViaBore,
         Some(via.pick),
         None,
@@ -63,14 +62,10 @@ pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) 
     // disc on it would share the part's underside seen up the drill.
     for side in [Layer::Top, Layer::Bottom].into_iter().filter(|s| open(*s)) {
         let copper = board.copper(side);
-        let (z0, z1) = board.span(
-            side,
-            copper + FINISH_THICKNESS_MM / 2.0,
-            copper + FINISH_THICKNESS_MM,
-        );
+        let (z0, z1) = board.span(side, copper + FINISH_MM / 2.0, copper + FINISH_MM);
         push(
             out,
-            &looks,
+            Some(board),
             BodyKind::ViaBore,
             Some(via.pick),
             None,
@@ -93,17 +88,18 @@ pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) 
 /// a mask cap over copper does, and sloping smoothly down into the flat
 /// mask beyond it.
 fn tent_height(board: &Board, via: &ViaMark, side: Layer, r: f64) -> f64 {
-    let crown = board.copper(side) + MASK_CAP_MM;
+    let crown = board.crown(side);
+    let sag = TENT_SAG_MM.min(board.stack.mask_mm() - PROUD_MM);
     let ring = via.diameter / 2.0;
     let bore = via.bore().max(0.0);
     if r < bore && bore > 0.0 {
         let t = r / bore;
-        crown - TENT_SAG_MM * (1.0 - t * t)
+        crown - sag * (1.0 - t * t)
     } else if r <= ring {
         crown
     } else {
         // Ends just under the mask's top, so the dome rises out of it.
-        let foot = MASK_THICKNESS_MM - 0.002;
+        let foot = MASK_OVER_LAMINATE_MM - PROUD_MM;
         let t = ((r - ring) / TENT_SKIRT_MM).clamp(0.0, 1.0);
         let ease = 0.5 + 0.5 * (std::f64::consts::PI * t).cos();
         foot + (crown - foot) * ease
@@ -252,11 +248,7 @@ mod tests {
             width: 10.0,
             depth: 10.0,
             shape: None,
-            thickness: 1.6,
-            copper_top: 0.035,
-            copper_bottom: 0.035,
-            mask_top: true,
-            mask_bottom: true,
+            stack: crate::stack::Stack::default(),
             fabrication: Fabrication::default(),
         }
     }
@@ -282,7 +274,7 @@ mod tests {
             assert_eq!(dome.layer, Some(CopperLayer::from(side)));
             assert_eq!(dome.item, Some(7));
             // It covers the ring and its skirt, above the copper's crown.
-            let crown = 0.035 + MASK_CAP_MM;
+            let crown = 0.035 + pcbcraft_core::MASK_UM / 1000.0;
             let r = 0.3 + TENT_SKIRT_MM;
             assert!((dome.max[0] - dome.min[0] - 2.0 * r).abs() < 1e-6);
             let (top, face) = match side {
@@ -299,7 +291,7 @@ mod tests {
             let h1 = tent_height(&board, &via(true), side, 0.25);
             assert!(h0 < h1 && (h1 - crown).abs() < 1e-12);
             // Its foot sinks into the flat mask.
-            assert!(tent_height(&board, &via(true), side, r) < MASK_THICKNESS_MM);
+            assert!(tent_height(&board, &via(true), side, r) < MASK_OVER_LAMINATE_MM);
         }
         Ok(())
     }
@@ -331,7 +323,10 @@ mod tests {
         }
         // Tented on top only when the bottom has no mask.
         let half = Board {
-            mask_bottom: false,
+            stack: crate::stack::Stack::of(&pcbcraft_core::Stackup {
+                mask_bottom: false,
+                ..pcbcraft_core::Stackup::default()
+            }),
             ..board.clone()
         };
         let mut out = Vec::new();

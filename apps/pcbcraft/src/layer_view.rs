@@ -14,6 +14,7 @@ use egui::{Align2, FontId, Sense, Ui, pos2, vec2};
 use pcbcraft_core::{CopperLayer, Layer};
 use pcbcraft_solidcraft::material::BodyKind;
 use pcbcraft_solidcraft::scene::Geometry;
+use pcbcraft_solidcraft::stack::{Slot, Stack};
 use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button, Container, Surface};
 use std::collections::BTreeSet;
@@ -57,68 +58,44 @@ impl ViewLayer {
         }
     }
 
-    /// The popover's toggles for a board with the `copper` layers (top to
-    /// bottom), in the order the layers lie: components, their markings and
-    /// the top films above the copper, the laminate between the copper, the bottom films
-    /// below it, then the vias that pass through it all.
-    pub fn stack(copper: &[CopperLayer]) -> Vec<ViewLayer> {
-        let mut out = vec![
-            Self::Bodies,
-            Self::Markings,
-            Self::Silkscreen(Layer::Top),
-            Self::Mask(Layer::Top),
-        ];
-        let mut layers: Vec<CopperLayer> = copper.to_vec();
-        for outer in [CopperLayer::Top, CopperLayer::Bottom] {
-            if !layers.contains(&outer) {
-                layers.push(outer);
+    /// The popover's toggles for a board of `stack`, in the order the
+    /// layers lie: components and their markings, the stack's films and
+    /// foils top to bottom (a finish shows with its copper), then the vias
+    /// that pass through it all.
+    pub fn stack(stack: &Stack) -> Vec<ViewLayer> {
+        let mut out = vec![Self::Bodies, Self::Markings];
+        for (slot, _) in stack.slots() {
+            let layer = Self::from(*slot);
+            if !out.contains(&layer) {
+                out.push(layer);
             }
         }
-        layers.sort();
-        let (bottom, above): (Vec<CopperLayer>, Vec<CopperLayer>) =
-            layers.into_iter().partition(|l| *l == CopperLayer::Bottom);
-        out.extend(above.into_iter().map(Self::Copper));
-        out.push(Self::Substrate);
-        out.extend(bottom.into_iter().map(Self::Copper));
-        out.extend([
-            Self::Mask(Layer::Bottom),
-            Self::Silkscreen(Layer::Bottom),
-            Self::Vias,
-        ]);
+        out.push(Self::Vias);
         out
     }
 
-    /// The toggle a body belongs to. Films and copper read their side or
-    /// layer from `layer`; a mask cap without one belongs to the top.
-    /// Copper on no single layer (a via's or a through-hole pad's plated
-    /// barrel, a via's finished ring) is the Vias toggle's: Vias shows
-    /// every plated hole. The foils' lines at the routed edge are part of
-    /// the edge's stackup bands, with the substrate.
+    /// The toggle a body belongs to: its stack slot's
+    /// ([`BodyKind::slot`]). Vias shows every plated hole; the foils'
+    /// lines at the routed edge are part of the edge's stackup bands, with
+    /// the substrate.
     pub fn of(kind: BodyKind, layer: Option<CopperLayer>) -> Self {
-        let side = layer.and_then(CopperLayer::side).unwrap_or(Layer::Top);
-        match kind {
-            BodyKind::Substrate | BodyKind::EdgeDielectric | BodyKind::EdgeCopper => {
-                Self::Substrate
-            }
-            BodyKind::MaskTop => Self::Mask(Layer::Top),
-            BodyKind::MaskBottom => Self::Mask(Layer::Bottom),
-            BodyKind::MaskCap => Self::Mask(side),
-            BodyKind::Silkscreen => Self::Silkscreen(side),
-            BodyKind::CopperTrack
-            | BodyKind::PadCopper
-            | BodyKind::PadFinish
-            | BodyKind::FillCopper => layer.map_or(Self::Vias, Self::Copper),
-            BodyKind::ViaCopper | BodyKind::ViaBore => Self::Vias,
-            BodyKind::PackageBody
-            | BodyKind::ChipResistor
-            | BodyKind::ChipCapacitor
-            | BodyKind::Termination
-            | BodyKind::Overcoat
-            | BodyKind::Solder
-            | BodyKind::PartBody
-            | BodyKind::ModelBody
-            | BodyKind::ModelLead => Self::Bodies,
-            BodyKind::Marking => Self::Markings,
+        Self::from(kind.slot(layer))
+    }
+}
+
+impl From<Slot> for ViewLayer {
+    /// The toggle of a slot: a body's films show with its bodies, a finish
+    /// with the copper it plates.
+    fn from(slot: Slot) -> Self {
+        match slot {
+            Slot::Bodies | Slot::BodyFilms => Self::Bodies,
+            Slot::Marking => Self::Markings,
+            Slot::Silk(side) => Self::Silkscreen(side),
+            Slot::Mask(side) => Self::Mask(side),
+            Slot::Finish(side) => Self::Copper(side.into()),
+            Slot::Copper(layer) => Self::Copper(layer),
+            Slot::Substrate => Self::Substrate,
+            Slot::Vias => Self::Vias,
         }
     }
 }
@@ -162,7 +139,7 @@ impl LayerView {
 
     /// Only one copper layer (and nothing else) shows.
     #[cfg(test)]
-    pub fn only(copper: CopperLayer, stack: &[CopperLayer]) -> Self {
+    pub fn only(copper: CopperLayer, stack: &Stack) -> Self {
         let mut view = Self::default();
         for layer in ViewLayer::stack(stack) {
             view.set(layer, layer == ViewLayer::Copper(copper));
@@ -211,9 +188,9 @@ impl LayerView {
 }
 
 /// The navigation bar's layer button and its popover of toggles for a
-/// board with the `copper` layers. Returns whether `view` changed. The
-/// button is outlined while a layer is hidden.
-pub fn button(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool {
+/// board of `stack`. Returns whether `view` changed. The button is
+/// outlined while a layer is hidden.
+pub fn button(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
     let t = Tokens::get();
     let response = shell::icon_button(ui, "eye", "Layers", true);
     if view.hides_any() {
@@ -232,7 +209,7 @@ pub fn button(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool
         .show(|ui| {
             crate::kit::form(ui, |ui| {
                 ui.set_width(POPOVER_WIDTH);
-                changed = popover(ui, view, copper);
+                changed = popover(ui, view, stack);
             });
         });
     changed
@@ -264,7 +241,7 @@ pub fn copper_rows(ui: &mut Ui, len: usize, mut row: impl FnMut(&mut Ui, usize))
 }
 
 /// The popover's content: a caption, one check per layer and Show all.
-fn popover(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool {
+fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(POPOVER_WIDTH, CAPTION_HEIGHT), Sense::hover());
     ui.painter().text(
@@ -284,7 +261,7 @@ fn popover(ui: &mut Ui, view: &mut LayerView, copper: &[CopperLayer]) -> bool {
     };
     // The films above, the copper and laminate (scrolled on a many-layer
     // board), the films below and the vias.
-    let stack = ViewLayer::stack(copper);
+    let stack = ViewLayer::stack(stack);
     let first = stack
         .iter()
         .position(|l| matches!(l, ViewLayer::Copper(_)))
@@ -345,9 +322,16 @@ mod tests {
         assert_eq!(LayerView::substrate_hidden(false), LayerView::default());
     }
 
+    fn four() -> Result<Stack, String> {
+        pcbcraft_core::Stackup::preset(4)
+            .map(|s| Stack::of(&s))
+            .map_err(|e| e.to_string())
+    }
+
     #[test]
-    fn the_popover_lists_every_layer_once_in_board_order() {
-        let four = [
+    fn the_popover_lists_every_layer_once_in_board_order() -> Result<(), String> {
+        let four = four()?;
+        let copper = [
             CopperLayer::Top,
             CopperLayer::Inner(1),
             CopperLayer::Inner(2),
@@ -374,15 +358,24 @@ mod tests {
         );
         // Every body kind on every layer of the board has its toggle.
         for kind in BodyKind::ALL {
-            for layer in four.iter().copied().map(Some).chain([None]) {
+            for layer in copper.iter().copied().map(Some).chain([None]) {
                 let toggle = ViewLayer::of(kind, layer);
                 assert!(stack.contains(&toggle), "{kind:?} on {layer:?}");
             }
         }
-        // The outer layers are always listed, however the list is given.
-        let two = ViewLayer::stack(&[CopperLayer::Top, CopperLayer::Bottom]);
-        assert_eq!(ViewLayer::stack(&[]), two);
+        let two = ViewLayer::stack(&Stack::default());
         assert_eq!(two.len(), stack.len() - 2);
+        // Only the films the stackup has: no bottom mask or top legend
+        // toggle on a board without them.
+        let bare = ViewLayer::stack(&Stack::of(&pcbcraft_core::Stackup {
+            mask_bottom: false,
+            silkscreen_top: false,
+            ..pcbcraft_core::Stackup::default()
+        }));
+        assert_eq!(bare.len(), two.len() - 2);
+        assert!(!bare.contains(&ViewLayer::Mask(Layer::Bottom)));
+        assert!(!bare.contains(&ViewLayer::Silkscreen(Layer::Top)));
+        Ok(())
     }
 
     /// Where the popover drew `label`, after one frame.
@@ -400,14 +393,14 @@ mod tests {
 
     /// Hover, press and release on `label`; whether the view changed.
     fn click(ctx: &egui::Context, view: &mut LayerView, label: &str) -> Result<bool, String> {
-        let copper = [CopperLayer::Top, CopperLayer::Bottom];
+        let stack = Stack::default();
         let frame = |view: &mut LayerView, events: Vec<egui::Event>| {
             let mut changed = false;
             let input = egui::RawInput {
                 events,
                 ..Default::default()
             };
-            let mut output = ctx.run_ui(input, |ui| changed = popover(ui, view, &copper));
+            let mut output = ctx.run_ui(input, |ui| changed = popover(ui, view, &stack));
             // Tests have no renderer to apply texture deltas.
             output.textures_delta.clear();
             (output, changed)
@@ -434,7 +427,7 @@ mod tests {
     /// Copper on no single layer is the Vias toggle's; X-ray shows only
     /// copper and vias; `only` one copper layer.
     #[test]
-    fn plated_barrels_follow_vias_and_x_ray_shows_only_copper() {
+    fn plated_barrels_follow_vias_and_x_ray_shows_only_copper() -> Result<(), String> {
         for kind in [
             BodyKind::PadCopper,
             BodyKind::PadFinish,
@@ -446,12 +439,7 @@ mod tests {
                 ViewLayer::Copper(CopperLayer::Bottom)
             );
         }
-        let four = [
-            CopperLayer::Top,
-            CopperLayer::Inner(1),
-            CopperLayer::Inner(2),
-            CopperLayer::Bottom,
-        ];
+        let four = four()?;
         let x_ray = LayerView::x_ray();
         for layer in ViewLayer::stack(&four) {
             let copper = matches!(layer, ViewLayer::Copper(_) | ViewLayer::Vias);
@@ -466,6 +454,7 @@ mod tests {
                 "{layer:?}"
             );
         }
+        Ok(())
     }
 
     #[test]

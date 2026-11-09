@@ -394,10 +394,12 @@ impl Viewport {
         };
         let (send, result) = mpsc::channel();
         let view = layers.clone();
+        let stack = model.stack.clone();
         let spawned = std::thread::Builder::new()
             .name("pcb-3d-repack".into())
             .spawn(move || {
-                let packed = model_scene::pack(&geometry, &decals, &view).map(|(scene, _)| scene);
+                let packed =
+                    model_scene::pack(&geometry, &decals, &view, &stack).map(|(scene, _)| scene);
                 let _ = send.send(packed);
             });
         self.repack = match spawned {
@@ -469,7 +471,7 @@ impl Viewport {
             return Vec::new();
         };
         let display = self.display_place();
-        let shown = |i: &&model_scene::Instanced| self.layers.visible(i.layer);
+        let shown = |i: &&model_scene::Instanced| self.layers.draws(i.layer);
         let mut out = Vec::new();
         for i in model.instanced.iter().filter(shown) {
             let mesh = match display {
@@ -586,7 +588,7 @@ impl Viewport {
                 scene.selected_instanced = model
                     .instanced
                     .iter()
-                    .filter(|i| self.layers.visible(i.layer))
+                    .filter(|i| self.layers.draws(i.layer))
                     .filter_map(|i| {
                         i.highlight(&model.geometry, display.as_ref(), &highlighted, &selected)
                     })
@@ -1309,7 +1311,7 @@ mod tests {
         let project = crate::model_scene::tests::demo_project()?;
         let model = pcbcraft_solidcraft::project::build(&project)?;
         let mut viewport = Viewport::detached();
-        viewport.set_model(crate::model_scene::build(model.geometry)?);
+        viewport.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
         viewport.fit();
         Ok(viewport)
     }
@@ -1318,7 +1320,7 @@ mod tests {
         let project = crate::model_scene::tests::via_project(count)?;
         let model = pcbcraft_solidcraft::project::build(&project)?;
         let mut viewport = Viewport::detached();
-        viewport.set_model(crate::model_scene::build(model.geometry)?);
+        viewport.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
         viewport.fit();
         Ok(viewport)
     }
@@ -1755,7 +1757,8 @@ mod tests {
         assert_eq!(kind(&viewport), Some(BodyKind::CopperTrack));
         settle(&mut viewport)?;
         let model = viewport.model.as_ref().ok_or("no model")?;
-        let (expected, _) = model_scene::pack(&model.geometry, &[], viewport.layers())?;
+        let (expected, _) =
+            model_scene::pack(&model.geometry, &[], viewport.layers(), &model.stack)?;
         assert_eq!(pbr_bytes(&viewport.slot), expected.tris);
         assert!(expected.tris.len() < full);
         let after: Vec<usize> = model
@@ -1815,11 +1818,11 @@ mod tests {
     fn a_new_model_keeps_the_hidden_layers() -> Result<(), Box<dyn std::error::Error>> {
         let project = crate::model_scene::tests::demo_project()?;
         let model = pcbcraft_solidcraft::project::build(&project)?;
-        let scene = crate::model_scene::build(model.geometry)?;
+        let scene = crate::model_scene::build(model.geometry, &model.stack)?;
         let mut view = LayerView::default();
         view.set(ViewLayer::Substrate, false);
         view.set(ViewLayer::Silkscreen(Layer::Top), false);
-        let (expected, _) = model_scene::pack(&scene.geometry, &[], &view)?;
+        let (expected, _) = model_scene::pack(&scene.geometry, &[], &view, &scene.stack)?;
         let mut viewport = Viewport::detached();
         viewport.set_layers(view);
         viewport.set_model(scene);

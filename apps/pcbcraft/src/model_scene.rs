@@ -23,6 +23,14 @@
 //! the stream ([`covered`]); [`MAX_GRAPH_BYTES`] bounds those, and past it they
 //! keep the plain colour of their instanced mesh.
 //!
+//! The material stream tests against the opaque depth without writing its
+//! own, so where two of its surfaces pass the test the one drawn later
+//! shows. The board's [`Stack`] decides both: a face that a body above it
+//! covers whole is left out of the stream ([`covered`]), and a body that
+//! lies on another without covering it (a legend on the mask, a marking on
+//! a moulding, a termination on a chip) is drawn instanced after it, in
+//! the stack's order ([`Slot::rank`]).
+//!
 //! The ground shadow follows Solidcraft's viewport `ground_shadow` (MIT,
 //! upstream revision 4f3ac07, unchanged in the pinned fork; see
 //! ATTRIBUTION.md), adapted to a Z-up board.
@@ -33,6 +41,7 @@ use pcbcraft_solidcraft::{
     material::BodyKind,
     render::surface::{OpaqueSurface, unit_direction},
     scene::{Geometry, Place},
+    stack::{Slot, Stack},
 };
 use solidcraft_ui_egui::gpu::{
     BlockBuilder, GpuScene, InstanceLook, InstancedMesh, LOD_PX, PaletteIndex, SceneBlock,
@@ -111,6 +120,8 @@ pub struct ModelScene {
     /// The placed bodies, one instanced mesh per definition mesh, look and view layer.
     pub instanced: Vec<Instanced>,
     pub bounds: Aabb3,
+    /// The board's layer stack ([`Stack::none`] for a package preview).
+    pub stack: Stack,
 }
 
 /// One definition mesh drawn at each of its placements: its shared
@@ -238,20 +249,20 @@ pub const LARGE_BODY: usize = 32_768;
 /// indices, levels and placements).
 pub const MAX_INSTANCED_BYTES: usize = 768 << 20;
 
-/// Whether a body goes into the vertex stream ([`pack`]): unplaced and not
-/// large. Everything else is drawn as an instanced mesh ([`Instanced`]).
+/// Whether a body goes into the vertex stream ([`pack`]): unplaced, not
+/// large, and not lying on another body it covers only in part
+/// ([`Slot::overlays`]), which is drawn instanced after it. Everything else
+/// is drawn as an instanced mesh ([`Instanced`]).
 pub fn streamed(g: &Geometry) -> bool {
-    g.place.is_none() && g.mesh.triangles.len() < LARGE_BODY
+    g.place.is_none() && g.mesh.triangles.len() < LARGE_BODY && !g.kind.slot(g.layer).overlays()
 }
 
-/// Whether the material stream shades a body drawn instanced: the kinds a
-/// layer above can cover ([`covered`]), whose covered faces the stream leaves
-/// out. Other instanced bodies are shaded from their shared triangles.
-fn stream_shaded(g: &Geometry) -> bool {
-    matches!(
-        g.kind,
-        BodyKind::Substrate | BodyKind::CopperTrack | BodyKind::FillCopper
-    )
+/// Whether the material stream shades a body drawn instanced: a body a film
+/// lies on ([`Stack::buried`]), whose covered faces the stream leaves out.
+/// Other instanced bodies are shaded from their shared triangles, after
+/// the stream.
+fn stream_shaded(g: &Geometry, stack: &Stack) -> bool {
+    stack.buried(g.kind, g.layer)
 }
 
 /// The placed and the large bodies of `geometry` grouped by definition
@@ -259,10 +270,12 @@ fn stream_shaded(g: &Geometry) -> bool {
 /// more than once.
 /// [`instance`] for bodies drawn beside a model (Component 3D decals).
 pub fn instance_bodies(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
-    instance(geometry)
+    instance(geometry, &Stack::none())
 }
 
-fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
+/// Grouped as [`instance_bodies`] says, in the stack's draw order
+/// ([`Slot::rank`]; model order within a rank).
+fn instance(geometry: &[Geometry], stack: &Stack) -> Result<Vec<Instanced>, String> {
     let mut out: Vec<Instanced> = Vec::new();
     let mut palette = palette_of(geometry);
     let mut by: HashMap<(usize, LookKey, ViewLayer), usize> = HashMap::new();
@@ -285,7 +298,7 @@ fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
         let address = Arc::as_ptr(&g.mesh) as usize;
         let colour = plain_colour(g.surface);
         let look_key = look_graph::look_key(g.surface, g.detail);
-        let look = if stream_shaded(g) {
+        let look = if stream_shaded(g, stack) {
             None
         } else {
             Some(looks.get(g)?)
@@ -295,7 +308,13 @@ fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
                 .entry(address)
                 .or_insert_with(|| {
                     let several = uses.get(&address).is_some_and(|n| *n > 1);
-                    let shared = Arc::new(indexed(&g.mesh));
+                    // A film drawn on another body, unplaced, leaves out its
+                    // faces that lie on that body (a legend's underside in the
+                    // mask): drawn, they shade over the film's own top.
+                    let film = g.place.is_none() && g.kind.slot(g.layer).overlays();
+                    let view = LayerView::default();
+                    let shared =
+                        Arc::new(indexed(&g.mesh, |n| !(film && covered(g, n, stack, &view))));
                     (shared, if several { levels(&g.mesh) } else { Vec::new() })
                 })
                 .clone();
@@ -331,6 +350,12 @@ fn instance(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
             return Err("model too large for the 3D view".into());
         }
     }
+    out.sort_by_key(|i| {
+        i.bodies
+            .first()
+            .and_then(|b| geometry.get(*b))
+            .map_or(0, |g| g.kind.slot(g.layer).rank())
+    });
     Ok(out)
 }
 
@@ -342,13 +367,19 @@ pub fn gpu_bytes(tris: &SharedTris) -> usize {
 /// `mesh`'s triangles with each vertex stored once per position and
 /// normal, lit by those normals (also where every triangle is flat, which
 /// Solidcraft's own sharing would light by its facets alone).
-fn indexed(mesh: &pcbcraft_solidcraft::geom::Mesh) -> SharedTris {
+fn indexed(mesh: &pcbcraft_solidcraft::geom::Mesh, keep: impl Fn(Vec3) -> bool) -> SharedTris {
     let mut out = SharedTris::default();
     out.indices.reserve_exact(mesh.triangles.len() * 3);
     let mut seen: HashMap<[u32; 6], u32> = HashMap::with_capacity(mesh.positions.len());
     let mut lo = [f32::INFINITY; 3];
     let mut hi = [f32::NEG_INFINITY; 3];
     for t in &mesh.triangles {
+        if let Some(p) = mesh.tri(t) {
+            let face = unit_direction((p[1] - p[0]).cross(p[2] - p[0])).unwrap_or(Vec3::Z);
+            if !keep(face) {
+                continue;
+            }
+        }
         let corners = t.map(|i| {
             let i = usize::try_from(i).ok()?;
             Some((
@@ -522,37 +553,31 @@ impl Looks {
     }
 }
 
-/// Whether a face of `g` with unit normal `n` lies under a layer `view` shows,
-/// so the material stream leaves it out. The stream tests against the opaque
-/// faces' depth with a bias of some pixels' depth slope (Solidcraft's overlay
-/// depth), wider than a 20 µm mask when zoomed out: a covered face would shade
-/// over the layer above it. Its opaque copy stays, for depth. A mask's own
-/// underside lies on the laminate (or on the track a cap covers): drawn, it
-/// shaded through the mask's top as a grazing coat, grey, wherever the bias
-/// spanned the 20 µm.
-fn covered(g: &Geometry, n: Vec3, view: &LayerView) -> bool {
-    use pcbcraft_core::{CopperLayer, Layer};
-    if n.z.abs() < 0.9 {
+/// Least |n.z| of a face that looks to a side, and most of an upright wall.
+const FLAT_NZ: f64 = 0.9;
+const WALL_NZ: f64 = 0.1;
+
+/// Whether a face of `g` with unit normal `n` lies under a film of the
+/// board's `stack` that `view` shows ([`Stack::cover`]), so the material
+/// stream leaves it out. The stream tests against the opaque faces' depth
+/// with a bias of some pixels' depth slope (Solidcraft's overlay depth),
+/// wider than a 20 µm mask when zoomed out: a covered face would shade over
+/// the film above it. Its opaque copy stays, for depth. A mask's own
+/// underside lies on the laminate: drawn, it shaded through the mask's top
+/// as a grazing coat, grey, wherever the bias spanned the 20 µm; pad copper
+/// under its 5 µm finish showed through it as a rose cast.
+fn covered(g: &Geometry, n: Vec3, stack: &Stack, view: &LayerView) -> bool {
+    use pcbcraft_core::Layer;
+    let toward = if n.z.abs() >= FLAT_NZ {
+        Some(if n.z > 0.0 { Layer::Top } else { Layer::Bottom })
+    } else if n.z.abs() <= WALL_NZ {
+        None
+    } else {
         return false;
-    }
-    let side = if n.z > 0.0 { Layer::Top } else { Layer::Bottom };
-    let mask = view.draws(ViewLayer::Mask(side));
-    match g.kind {
-        BodyKind::Substrate => mask,
-        BodyKind::CopperTrack | BodyKind::FillCopper => match g.layer {
-            Some(CopperLayer::Top) => side == Layer::Top && mask,
-            Some(CopperLayer::Bottom) => side == Layer::Bottom && mask,
-            _ => view.draws(ViewLayer::Substrate),
-        },
-        BodyKind::MaskTop => side == Layer::Bottom && view.draws(ViewLayer::Substrate),
-        BodyKind::MaskBottom => side == Layer::Top && view.draws(ViewLayer::Substrate),
-        BodyKind::MaskCap => match g.layer {
-            Some(CopperLayer::Top) => side == Layer::Bottom && view.draws(ViewLayer::Substrate),
-            Some(CopperLayer::Bottom) => side == Layer::Top && view.draws(ViewLayer::Substrate),
-            _ => false,
-        },
-        _ => false,
-    }
+    };
+    stack
+        .cover(g.kind, g.layer, toward)
+        .is_some_and(|film| view.draws(ViewLayer::from(film)))
 }
 
 /// The opaque vertices of the streamed bodies of `geometry` that `view` shows
@@ -563,6 +588,7 @@ pub fn pack(
     geometry: &[Geometry],
     decals: &[Geometry],
     view: &LayerView,
+    stack: &Stack,
 ) -> Result<(GpuScene, Runs), String> {
     let bodies: Vec<(ViewLayer, &Geometry)> = ordered(geometry)
         .into_iter()
@@ -603,7 +629,7 @@ pub fn pack(
             };
             let face = (p[1] - p[0]).cross(p[2] - p[0]);
             let face = unit_direction(face).unwrap_or(Vec3::Z);
-            let shaded = !covered(g, face, view);
+            let shaded = !covered(g, face, stack, view);
             for (corner, index) in p.iter().zip(indices) {
                 let normal = usize::try_from(*index)
                     .ok()
@@ -623,7 +649,7 @@ pub fn pack(
             _ => runs.push((layer, start..end)),
         }
     }
-    pack_placed(&mut scene, &mut looks, geometry, decals, view)?;
+    pack_placed(&mut scene, &mut looks, geometry, decals, view, stack)?;
     Ok((scene, runs))
 }
 
@@ -641,12 +667,15 @@ fn pack_placed(
     geometry: &[Geometry],
     decals: &[Geometry],
     view: &LayerView,
+    stack: &Stack,
 ) -> Result<(), String> {
     let mut uses: HashMap<usize, usize> = HashMap::new();
     let placed: Vec<&Geometry> = geometry
         .iter()
         .chain(decals)
-        .filter(|g| !streamed(g) && stream_shaded(g) && view.draws(ViewLayer::of(g.kind, g.layer)))
+        .filter(|g| {
+            !streamed(g) && stream_shaded(g, stack) && view.draws(ViewLayer::of(g.kind, g.layer))
+        })
         .inspect(|g| *uses.entry(Arc::as_ptr(&g.mesh) as usize).or_default() += 1)
         .collect();
     let mut order: Vec<&Geometry> = placed;
@@ -671,7 +700,12 @@ fn pack_placed(
             };
             let face = (p[1] - p[0]).cross(p[2] - p[0]);
             let face = unit_direction(face).unwrap_or(Vec3::Z);
-            if covered(g, unit_direction(place.vector(face)).unwrap_or(face), view) {
+            if covered(
+                g,
+                unit_direction(place.vector(face)).unwrap_or(face),
+                stack,
+                view,
+            ) {
                 continue;
             }
             for (corner, index) in p.iter().zip(indices) {
@@ -709,8 +743,10 @@ pub fn keep_visible(bytes: &mut Vec<u8>, runs: &[(ViewLayer, Range<usize>)], vie
     bytes.truncate(end);
 }
 
-pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
-    let (stream, runs) = pack(&geometry, &[], &LayerView::default())?;
+/// The scene of a model's `geometry` on a board of `stack`
+/// ([`Stack::none`] for a package preview).
+pub fn build(geometry: Vec<Geometry>, stack: &Stack) -> Result<ModelScene, String> {
+    let (stream, runs) = pack(&geometry, &[], &LayerView::default(), stack)?;
     let mut bounds = Aabb3::EMPTY;
     let mut flat: Vec<(u64, ViewLayer, BlockBuilder)> = Vec::new();
     let mut index: HashMap<(u64, ViewLayer), usize> = HashMap::new();
@@ -742,8 +778,8 @@ pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
         }
         builder.end_body();
     }
-    let shadows = shadows(&geometry, &bounds);
-    let instanced = instance(&geometry)?;
+    let shadows = shadows(&geometry, &bounds, stack);
+    let instanced = instance(&geometry, stack)?;
     Ok(ModelScene {
         instanced,
         geometry,
@@ -764,6 +800,7 @@ pub fn build(geometry: Vec<Geometry>) -> Result<ModelScene, String> {
             })
             .collect(),
         bounds,
+        stack: stack.clone(),
     })
 }
 
@@ -776,24 +813,20 @@ const GROUND_RINGS: [(f64, f32); 4] = [(0.0, 1.0), (0.55, 0.75), (0.85, 1.0 / 3.
 const CONTACT_RINGS: [(f64, f32); 3] = [(0.0, 1.0), (0.15, 0.5), (0.4, 0.0)];
 /// Arc steps per rounded corner of a contact ring.
 const CORNER_STEPS: usize = 4;
-/// Height of a contact shadow above the soldermask (mm).
-const CONTACT_LIFT: f64 = 0.002;
+/// Height of a contact shadow above the board's surface (mm).
+const CONTACT_LIFT: f64 = pcbcraft_solidcraft::stack::PROUD_MM;
 
-fn shadows(geometry: &[Geometry], bounds: &Aabb3) -> Shadows {
+/// The ground shadow, and contact shadows under the packages on the board's
+/// outer surface on each side ([`Stack::surface`]: the mask, or the
+/// laminate where a side has none). A package preview has no board.
+fn shadows(geometry: &[Geometry], bounds: &Aabb3, stack: &Stack) -> Shadows {
+    use pcbcraft_core::Layer;
     let mut out = Shadows::default();
     ground(&mut out.ground, bounds);
-    let surface = |kind, top: bool| {
-        geometry
-            .iter()
-            .find(|g| g.kind == kind)
-            .map(|g| if top { g.max[2] } else { g.min[2] })
-    };
-    let (Some(top), Some(bottom)) = (
-        surface(BodyKind::MaskTop, true),
-        surface(BodyKind::MaskBottom, false),
-    ) else {
+    if !stack.has(Slot::Substrate) {
         return out;
-    };
+    }
+    let (top, bottom) = (stack.surface(Layer::Top), stack.surface(Layer::Bottom));
     for body in package_bodies(geometry) {
         let corners = footprint(body);
         if body.min[2] >= top - 1e-6 {
@@ -1036,7 +1069,7 @@ pub(crate) mod tests {
         let count = 40;
         let project = via_project(count)?;
         let model = pcbcraft_solidcraft::project::build(&project)?;
-        let scene = build(model.geometry)?;
+        let scene = build(model.geometry, &model.stack)?;
         let vias: Vec<&Geometry> = scene.geometry.iter().filter(|g| is_via(g.kind)).collect();
         assert!(vias.len() >= count, "{} via bodies", vias.len());
         assert!(
@@ -1163,7 +1196,7 @@ pub(crate) mod tests {
             }
         }
         let started = std::time::Instant::now();
-        let scene = build(geometry)?;
+        let scene = build(geometry, &Stack::default())?;
         let built = started.elapsed();
         let placed = vias * bodies.len();
         assert_eq!(
@@ -1208,7 +1241,7 @@ pub(crate) mod tests {
 
     fn demo_scene() -> Result<ModelScene, Box<dyn std::error::Error>> {
         let model = pcbcraft_solidcraft::project::build(&demo_project()?)?;
-        Ok(build(model.geometry)?)
+        Ok(build(model.geometry, &model.stack)?)
     }
 
     #[test]
@@ -1235,8 +1268,9 @@ pub(crate) mod tests {
             at = run.end;
         }
         assert_eq!(at, scene.stream.tris.len());
+        // Component bodies and the films and markings on them are drawn
+        // instanced, after the stream ([`streamed`]).
         for layer in [
-            ViewLayer::Bodies,
             ViewLayer::Substrate,
             ViewLayer::Mask(pcbcraft_core::Layer::Top),
             ViewLayer::Copper(pcbcraft_core::CopperLayer::Top),
@@ -1271,7 +1305,7 @@ pub(crate) mod tests {
         for view in views {
             let mut kept = scene.stream.tris.clone();
             keep_visible(&mut kept, &scene.runs, &view);
-            let (packed, runs) = pack(&scene.geometry, &[], &view)?;
+            let (packed, runs) = pack(&scene.geometry, &[], &view, &scene.stack)?;
             assert_eq!(kept, packed.tris, "{view:?}");
             assert!(runs.iter().all(|(l, _)| view.draws(*l)));
             if view != LayerView::default() {
@@ -1288,6 +1322,98 @@ pub(crate) mod tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    /// A board without mask keeps its laminate's look and its copper's
+    /// finish: the stack, not the mask's view toggle (shown), says nothing
+    /// lies on the laminate; outer copper lies under the finish that plates
+    /// it all, and laminate in a mask opening under nothing. Its packages
+    /// still cast contact shadows, on the laminate.
+    #[test]
+    fn a_side_without_mask_keeps_its_laminate_and_copper() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use pcbcraft_core::Layer;
+        let mut project = demo_project()?;
+        project.stackup.mask_top = false;
+        project.stackup.mask_bottom = false;
+        let model = pcbcraft_solidcraft::project::build(&project)?;
+        let scene = build(model.geometry, &model.stack)?;
+        let view = LayerView::default();
+        assert!(view.draws(ViewLayer::Mask(Layer::Top)), "the toggle is on");
+        let mut tracks = 0;
+        for g in &scene.geometry {
+            match g.kind {
+                BodyKind::Substrate => {
+                    for n in [Vec3::Z, -Vec3::Z] {
+                        assert!(!covered(g, n, &scene.stack, &view), "laminate {n:?}");
+                    }
+                }
+                BodyKind::CopperTrack => {
+                    let Some(side) = g.layer.and_then(pcbcraft_core::CopperLayer::side) else {
+                        continue;
+                    };
+                    let out = if side == Layer::Top {
+                        Vec3::Z
+                    } else {
+                        -Vec3::Z
+                    };
+                    assert_eq!(
+                        scene.stack.cover(g.kind, g.layer, Some(side)),
+                        Some(Slot::Finish(side))
+                    );
+                    assert!(covered(g, out, &scene.stack, &view));
+                    tracks += 1;
+                }
+                BodyKind::MaskTop | BodyKind::MaskBottom | BodyKind::OpenLaminate => {
+                    return Err(format!("{:?} without mask", g.kind).into());
+                }
+                _ => {}
+            }
+        }
+        assert!(tracks > 0);
+        let top = scene.stack.laminate() + CONTACT_LIFT;
+        assert!(
+            !scene.shadows.top.is_empty(),
+            "contact shadows without mask"
+        );
+        assert!(
+            scene
+                .shadows
+                .top
+                .iter()
+                .all(|(p, _)| (f64::from(p[2]) - top).abs() < 1e-4)
+        );
+        Ok(())
+    }
+
+    /// Laminate a mask opening leaves bare is shaded: its film lies under
+    /// nothing, while the laminate's own face lies under the mask.
+    #[test]
+    fn laminate_in_a_mask_opening_is_shaded() -> Result<(), Box<dyn std::error::Error>> {
+        let scene = demo_scene()?;
+        let view = LayerView::default();
+        let open: Vec<&Geometry> = scene
+            .geometry
+            .iter()
+            .filter(|g| g.kind == BodyKind::OpenLaminate)
+            .collect();
+        assert!(!open.is_empty());
+        for g in open {
+            let out = if g.layer == Some(pcbcraft_core::CopperLayer::Top) {
+                Vec3::Z
+            } else {
+                -Vec3::Z
+            };
+            assert!(!covered(g, out, &scene.stack, &view));
+            assert!(covered(g, -out, &scene.stack, &view), "its underside");
+        }
+        let substrate = scene
+            .geometry
+            .iter()
+            .find(|g| g.kind == BodyKind::Substrate)
+            .ok_or("no laminate")?;
+        assert!(covered(substrate, Vec3::Z, &scene.stack, &view));
         Ok(())
     }
 
@@ -1308,9 +1434,17 @@ pub(crate) mod tests {
                 _ => continue,
             };
             seen += 1;
-            assert!(covered(g, under, &LayerView::default()), "{:?}", g.kind);
-            assert!(!covered(g, over, &LayerView::default()), "{:?}", g.kind);
-            assert!(!covered(g, under, &x_ray), "{:?}", g.kind);
+            assert!(
+                covered(g, under, &scene.stack, &LayerView::default()),
+                "{:?}",
+                g.kind
+            );
+            assert!(
+                !covered(g, over, &scene.stack, &LayerView::default()),
+                "{:?}",
+                g.kind
+            );
+            assert!(!covered(g, under, &scene.stack, &x_ray), "{:?}", g.kind);
         }
         assert!(seen > 0);
         Ok(())
@@ -1389,6 +1523,7 @@ pub(crate) mod tests {
                     !covered(
                         g,
                         unit_direction(face).unwrap_or(Vec3::Z),
+                        &scene.stack,
                         &LayerView::default(),
                     )
                 })
@@ -1454,7 +1589,7 @@ pub(crate) mod tests {
             .map(|d| d.vertices.len() / if d.object { 40 } else { 28 })
             .sum();
         let view = LayerView::default();
-        let in_stream = |g: &&Geometry| streamed(g) || stream_shaded(g);
+        let in_stream = |g: &&Geometry| streamed(g) || stream_shaded(g, &scene.stack);
         let triangles: usize = scene
             .geometry
             .iter()
@@ -1468,7 +1603,12 @@ pub(crate) mod tests {
                     .filter(|p| {
                         let face = (p[1] - p[0]).cross(p[2] - p[0]);
                         let face = unit_direction(face).unwrap_or(Vec3::Z);
-                        !covered(g, unit_direction(place.vector(face)).unwrap_or(face), &view)
+                        !covered(
+                            g,
+                            unit_direction(place.vector(face)).unwrap_or(face),
+                            &scene.stack,
+                            &view,
+                        )
                     })
                     .count()
             })
@@ -1481,7 +1621,12 @@ pub(crate) mod tests {
         assert!(placed > 0);
         for group in &scene.instanced {
             for g in group.bodies.iter().filter_map(|i| scene.geometry.get(*i)) {
-                assert_eq!(group.look.is_some(), !stream_shaded(g), "{:?}", g.kind);
+                assert_eq!(
+                    group.look.is_some(),
+                    !stream_shaded(g, &scene.stack),
+                    "{:?}",
+                    g.kind
+                );
             }
         }
         Ok(())
@@ -1499,7 +1644,7 @@ pub(crate) mod tests {
         let per_copy = one.mesh.triangles.len() * 3 * TRI_SIZE;
         let copies = MAX_PBR_BYTES / per_copy.max(1) + 1;
         geometry.extend(std::iter::repeat_n(one, copies));
-        assert!(build(geometry).is_err());
+        assert!(build(geometry, &model.stack).is_err());
         Ok(())
     }
 
@@ -1564,12 +1709,15 @@ pub(crate) mod tests {
         let count = decals.len();
         let mut geometry = model.geometry;
         geometry.extend(decals);
-        Ok((build(geometry)?, count))
+        Ok((build(geometry, &model.stack)?, count))
     }
 
-    /// PCB 3D: decals pack in their own Markings run (the Markings toggle or
-    /// hiding the bodies drops them, nothing rebuilt), take their finish's
-    /// look and highlight with their instance.
+    /// PCB 3D: decals are drawn as their own Markings meshes, after every
+    /// body they lie on (the material stream draws the later surface where
+    /// both pass its depth test, so a marking drawn first vanished at any
+    /// tilt); the Markings toggle or hiding the bodies drops them, nothing
+    /// rebuilt; they take their finish's look and highlight with their
+    /// instance.
     #[test]
     fn marking_decals_draw_and_hide_with_the_component_bodies()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -1580,24 +1728,28 @@ pub(crate) mod tests {
         let decals: Vec<&Geometry> = scene.geometry[plain.geometry.len()..].iter().collect();
         assert_eq!(decals.len(), count);
         let triangles: usize = decals.iter().map(|g| g.mesh.triangles.len()).sum();
-        // The decal vertices are exactly the Markings run; the bodies'
-        // run is unchanged.
-        let run = |s: &ModelScene, layer: ViewLayer| {
-            s.runs
-                .iter()
-                .find(|(l, _)| *l == layer)
-                .map(|(_, r)| r.len())
-                .unwrap_or(0)
-        };
-        assert_eq!(
-            run(&scene, ViewLayer::Bodies),
-            run(&plain, ViewLayer::Bodies)
-        );
-        assert_eq!(run(&scene, ViewLayer::Markings), 3 * TRI_SIZE * triangles);
-        assert_eq!(
-            scene.stream.tris.len(),
-            plain.stream.tris.len() + 3 * TRI_SIZE * triangles
-        );
+        // The decals are exactly the Markings meshes, each with its look;
+        // the stream is unchanged.
+        let markings: Vec<&Instanced> = scene
+            .instanced
+            .iter()
+            .filter(|i| i.layer == ViewLayer::Markings)
+            .collect();
+        let drawn: usize = markings.iter().map(|i| i.mesh.tris.indices.len() / 3).sum();
+        assert_eq!(drawn, triangles);
+        assert!(markings.iter().all(|i| i.look.is_some()));
+        assert_eq!(scene.stream.tris, plain.stream.tris);
+        let last_body = scene
+            .instanced
+            .iter()
+            .rposition(|i| i.layer == ViewLayer::Bodies)
+            .ok_or("no body meshes")?;
+        let first_marking = scene
+            .instanced
+            .iter()
+            .position(|i| i.layer == ViewLayer::Markings)
+            .ok_or("no marking meshes")?;
+        assert!(first_marking > last_body, "markings draw after the bodies");
         let laser = finish_surface(pcbcraft_core::library::marking::Finish::LaserEtch)?;
         for g in &decals {
             assert_eq!(g.kind, DECAL_KIND);
@@ -1611,8 +1763,8 @@ pub(crate) mod tests {
         for hidden in [ViewLayer::Bodies, ViewLayer::Markings] {
             let mut view = LayerView::default();
             view.set(hidden, false);
-            let (marked, _) = pack(&scene.geometry, &[], &view)?;
-            let (unmarked, _) = pack(&plain.geometry, &[], &view)?;
+            let (marked, _) = pack(&scene.geometry, &[], &view, &scene.stack)?;
+            let (unmarked, _) = pack(&plain.geometry, &[], &view, &plain.stack)?;
             assert_eq!(marked.tris, unmarked.tris, "{hidden:?}");
             let mut kept = scene.stream.tris.clone();
             keep_visible(&mut kept, &scene.runs, &view);

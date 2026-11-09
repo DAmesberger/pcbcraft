@@ -20,7 +20,7 @@ impl Nav {
         let project = crate::model_scene::tests::demo_project()?;
         let model = pcbcraft_solidcraft::project::build(&project)?;
         let mut viewport = Viewport::detached();
-        viewport.set_model(crate::model_scene::build(model.geometry)?);
+        viewport.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
         let mut nav = Self {
             ctx: egui::Context::default(),
             viewport,

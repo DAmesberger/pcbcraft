@@ -634,8 +634,8 @@ impl App {
         }
         if pcb_3d {
             let mut view = self.pcb.layer_view();
-            let copper = self.engine.project().stackup.layers();
-            if crate::layer_view::button(&mut child, &mut view, &copper) {
+            let stack = pcbcraft_solidcraft::stack::Stack::of(&self.engine.project().stackup);
+            if crate::layer_view::button(&mut child, &mut view, &stack) {
                 self.scene.viewport.set_layers(view.clone());
                 self.pcb.set_layer_view(view);
             }
