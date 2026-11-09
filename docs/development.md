@@ -2,7 +2,7 @@
 
 How Pcbcraft is built, checked and driven from the command line. The [README](../README.md) describes the product; this page is for contributors and for anyone scripting it.
 
-A Rust electronics editor using Solidcraft's egui/wgpu UI and native parametric engine. Component authoring, multi-sheet schematics, PCB layout and production output share one desktop shell. PCB 3D displays physical copper and package models through Solidcraft, with shared selection and whole-net highlighting.
+PCB design software in Rust, using Solidcraft's egui/wgpu UI and native parametric engine. Component authoring, multi-sheet schematics, PCB layout and production output share one desktop shell. PCB 3D displays physical copper and package models through Solidcraft, with shared selection and whole-net highlighting.
 
 This is an early working editor foundation, not a manufacturing-ready release. See [current evidence and limits](editor-evidence.md).
 

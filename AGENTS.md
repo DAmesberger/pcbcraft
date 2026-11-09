@@ -1,6 +1,6 @@
 # Pcbcraft agent instructions
 
-Pcbcraft is a Rust electronics editor with component authoring, schematics, PCB layout and integrated 3D, using Solidcraft's technology and UI conventions. These instructions are adapted from Solidcraft; see [attribution](ATTRIBUTION.md).
+Pcbcraft is PCB design software, written in Rust, with component authoring, schematics, PCB layout and integrated 3D, using Solidcraft's technology and UI conventions. These instructions are adapted from Solidcraft; see [attribution](ATTRIBUTION.md).
 
 ## Start here
 

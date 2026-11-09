@@ -8,7 +8,7 @@
 <h1 align="center">Pcbcraft</h1>
 
 <p align="center">
-  <b>An electronics editor where the board in 3D <i>is</i> the board.</b><br>
+  <b>PCB design where the board in 3D <i>is</i> the board.</b><br>
   Components, schematics, PCB layout and a photoreal, thickness-aware 3D view in one Rust app —<br>
   with one command engine that the UI, the CLI and your AI agent all drive.
 </p>
