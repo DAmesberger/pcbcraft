@@ -508,6 +508,19 @@ impl PcbEditor {
         }
     }
 
+    /// Another project was opened: the Production dialog's check, folder
+    /// and written files were the previous project's, so it closes.
+    pub fn document_opened(&mut self) {
+        self.production = None;
+        self.chosen_production_folder = None;
+    }
+
+    /// Whether the Production dialog is open.
+    #[cfg(test)]
+    pub(crate) fn production_open(&self) -> bool {
+        self.production.is_some()
+    }
+
     /// A production folder just chosen in the dialog, once, for the app
     /// to keep for this project.
     pub fn take_chosen_production_folder(&mut self) -> Option<PathBuf> {

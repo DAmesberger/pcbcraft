@@ -47,6 +47,16 @@ def build(s, L, S):
                                   {"op": "fillet", "corners": [], "radius": {"param": "corner_r"}}]
                         + [{"op": "add_mounting_hole", "center": pid, "drill": "2.7 mm", "plated": False} for pid in pts]},
          "rounded corners and M2.5 mounting holes")
+    # Each hole sits `inset` from its two nearest edges, so the sketch is
+    # fully defined and a width or height edit carries the holes along.
+    edges = {e["name"]: e["curve"] for e in p["board_shape"]["sketch"]["edges"]}
+    at = {pt["id"]: tuple(pt["pos"]) for pt in sk["points"]}
+    to_edge = lambda pid, edge: {"op": "sketch", "edit": {"add_dimension": {
+        "kind": "distance", "refs": [{"point": pid}, {"curve": edges[edge]}], "value": {"param": "inset"}}}}
+    s.op("board.edit", {"edits": [{"op": "set_parameter", "param": {"name": "inset", "expr": "3.5 mm", "unit": "mm", "comment": "Mounting hole inset from the edges"}}]
+                        + [to_edge(pid, "left" if at[pid][0] < W / 2 else "right") for pid in pts]
+                        + [to_edge(pid, "bottom" if at[pid][1] < H / 2 else "top") for pid in pts]},
+         "mounting holes inset from the edges")
     out["holes"] = pts
 
     # Fabrication profile: the built-in "Standard 6/6" (a generic estimate,

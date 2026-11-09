@@ -355,3 +355,21 @@ fn a_named_net_merge_refused_by_core_opens_the_review() -> Fallible {
     assert!(h.app.toasts.is_empty(), "a refusal toast");
     Ok(())
 }
+
+/// Demo run item 11: the Production dialog belongs to the project it
+/// checked; opening another project closes it, so the previous project's
+/// written files are never shown for the new one.
+#[test]
+fn opening_another_project_closes_the_production_dialog() -> Fallible {
+    let mut h = Harness::new()?;
+    h.app.workspace = Workspace::Pcb;
+    assert!(h.app.pcb.on_tool("production", &h.app.engine).is_none());
+    h.frame(vec![]);
+    assert!(h.app.pcb.production_open());
+    let other = Engine::showcase()?.to_file();
+    h.app
+        .replace(other, Some(h.dir.path().join("other.pcbcraft")), false);
+    h.frame(vec![]);
+    assert!(!h.app.pcb.production_open(), "{}", said(&h.app));
+    Ok(())
+}

@@ -309,6 +309,8 @@ pub struct SceneController {
     /// The camera each kind of model (board, package) was last seen with,
     /// so switching workspaces keeps each view's framing.
     cameras: [Option<pcbcraft_solidcraft::render::Camera>; 2],
+    /// Another document was opened: its first board model is framed.
+    fit_board: bool,
 }
 
 impl SceneController {
@@ -324,7 +326,16 @@ impl SceneController {
             sources: vec![],
             status: Status::Idle,
             cameras: [None; 2],
+            fit_board: false,
         }
+    }
+
+    /// Another project was opened (or a new one made): the board camera
+    /// kept was the previous project's, so the new board's first model is
+    /// framed instead. Later models of it keep the camera.
+    pub fn document_opened(&mut self) {
+        self.cameras[0] = None;
+        self.fit_board = true;
     }
 
     pub fn status(&self) -> &Status {
@@ -414,7 +425,13 @@ impl SceneController {
                     let was = self.shown.as_ref().map(ModelKey::is_package);
                     let now = self.key.as_ref().map(ModelKey::is_package);
                     self.viewport.set_model(scene);
-                    if was != now {
+                    if self.fit_board && now == Some(false) {
+                        if was == Some(true) {
+                            self.cameras[1] = Some(self.viewport.camera());
+                        }
+                        self.fit_board = false;
+                        self.viewport.fit();
+                    } else if was != now {
                         let slot = |package: bool| usize::from(package);
                         if let Some(was) = was {
                             self.cameras[slot(was)] = Some(self.viewport.camera());
@@ -701,6 +718,40 @@ mod open_tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         Err("the model was never shown".into())
+    }
+
+    /// Demo run item 7: the board camera kept belongs to the project it
+    /// framed. An opened project's first model is framed; its later models
+    /// (an edit) keep the camera the person left.
+    #[test]
+    fn an_opened_project_is_framed_and_its_edits_keep_the_camera() -> Fallible<()> {
+        let mut scene = SceneController::new(
+            egui::Context::default(),
+            crate::viewport::Viewport::detached(),
+        );
+        let demo = ModelKey::Project(Arc::new(Engine::demo()?.project().clone()));
+        show(&mut scene, &demo)?;
+        let framed = scene.viewport.camera();
+        // The person looks somewhere far off the demo board.
+        let mut away = framed;
+        away.target.x += 500.0;
+        away.distance *= 0.1;
+        scene.viewport.set_camera(away);
+        scene.document_opened();
+        let opened = Engine::showcase()?;
+        let opened_key = ModelKey::Project(Arc::clone(opened.project_arc()));
+        show(&mut scene, &opened_key)?;
+        let fitted = scene.viewport.camera();
+        assert_ne!(fitted, away, "the opened board was not framed");
+        // An edit of the opened board keeps the camera as it is.
+        let mut edited = opened.project().clone();
+        edited.placements[0].position[0] += 1.0;
+        let mut kept = fitted;
+        kept.yaw += 0.3;
+        scene.viewport.set_camera(kept);
+        show(&mut scene, &ModelKey::Project(Arc::new(edited)))?;
+        assert_eq!(scene.viewport.camera(), kept);
+        Ok(())
     }
 
     fn component_body(kind: BodyKind) -> bool {

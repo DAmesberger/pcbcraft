@@ -182,7 +182,11 @@ impl ShapeMode {
         {
             self.dimension = None;
         }
+        // The Value field shows the new revision's value (an edit applied,
+        // an undo), so no earlier text's error stands; a refused edit
+        // leaves the revision, and its error, as they were.
         self.dim_text = None;
+        self.errors.remove(DIM_FIELD);
         self.drag = None;
         self.loaded = Some(Loaded {
             key,

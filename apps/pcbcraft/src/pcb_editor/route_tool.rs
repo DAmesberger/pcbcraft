@@ -19,7 +19,7 @@ use crate::commands::KeyDecl;
 use crate::keys;
 use egui::{Shape, Stroke};
 use pcbcraft_core::{
-    CopperLayer, Id, Operation, Point, Project,
+    CopperLayer, Id, Layer, Operation, Point, Project,
     layout::{
         self, LayoutCommand, RouteEditSet, ViaRequest,
         pair::PairStepRequest,
@@ -264,7 +264,9 @@ fn by_value(a: &f64, b: &f64) -> Ordering {
 }
 
 /// What a click's plan owes the user: why nothing was added, or why the
-/// step stopped short. `None` when it reached the click.
+/// step stopped short. `None` when it reached the click. A step that stopped
+/// short commits the copper up to the obstacle (one undo step) and the
+/// route goes on from its end, so the message says so.
 pub(super) fn refusal(
     reached: bool,
     blocked: Option<&str>,
@@ -277,7 +279,10 @@ pub(super) fn refusal(
     Some(if edits.add.is_empty() && edits.vias.is_empty() {
         format!("Can't route there: {why}")
     } else {
-        format!("Route stopped short: {why}")
+        format!(
+            "Route stopped short: {why}. The track ends there and the route goes on from its \
+             end; Undo takes the step back."
+        )
     })
 }
 
@@ -573,9 +578,26 @@ impl PcbEditor {
                     .as_ref()
                     .is_some_and(|p| p.nets.contains(&n))
         };
+        // Shoved copper on another layer (a moved via's tracks) is drawn as
+        // its layer is: dimmed by the focus mode, or not at all.
+        let near = if self.from_bottom {
+            Layer::Bottom
+        } else {
+            Layer::Top
+        };
+        let share = |layer: CopperLayer| -> Option<f32> {
+            if layer == self.layer {
+                Some(1.0)
+            } else {
+                self.look(layer, near).map(|look| look.shade)
+            }
+        };
         let leg = |start: Point, end: Point, width: f64, layer: CopperLayer, net: Id| {
+            let Some(share) = share(layer) else {
+                return;
+            };
             let width = (width as f32 * scale).max(1.0);
-            let color = ink.on_board(colors.copper_layer(layer), 1.0);
+            let color = ink.on_board(colors.copper_layer(layer), share);
             let (a, b) = (screen(start), screen(end));
             painter.add(Shape::convex_polygon(
                 capsule(a, b, width / 2.0),
@@ -583,7 +605,7 @@ impl PcbEditor {
                 Stroke::NONE,
             ));
             let outline = if own(net) { t.body_selected } else { t.accent };
-            painter.line_segment([a, b], Stroke::new(1.0, outline));
+            painter.line_segment([a, b], Stroke::new(1.0, outline.gamma_multiply(share)));
         };
         for r in &edits.add {
             leg(r.start, r.end, r.width, r.layer, r.net);
@@ -960,5 +982,114 @@ mod tests {
         assert_eq!(cycle(&widths, 0.25, true, by_value), Some(0.2));
         assert_eq!(cycle::<f64>(&[], 0.25, true, by_value), None);
         assert_eq!(ROUTE_KEYS.len(), 15);
+    }
+
+    /// Demo run item 9: a step that stopped short says what it left: the
+    /// track up to the obstacle, the route going on from its end, and how
+    /// to take it back. A step that added nothing says it could not route.
+    #[test]
+    fn a_step_that_stopped_short_says_what_it_left() {
+        let blocked = Some("Blocked by a track on GND");
+        assert_eq!(refusal(true, blocked, &RouteEditSet::default()), None);
+        let nothing = refusal(false, blocked, &RouteEditSet::default());
+        assert_eq!(
+            nothing.as_deref(),
+            Some("Can't route there: Blocked by a track on GND")
+        );
+        let mut some = RouteEditSet::default();
+        some.add.push(layout::RouteRequest {
+            net: 1,
+            start: [0.0, 0.0],
+            end: [1.0, 0.0],
+            width: 0.3,
+            layer: CopperLayer::Top,
+        });
+        let said = refusal(false, blocked, &some).unwrap_or_default();
+        assert!(said.starts_with("Route stopped short: Blocked by a track on GND."));
+        assert!(said.contains("track ends there"), "{said}");
+        assert!(said.contains("goes on from its end"), "{said}");
+        assert!(said.contains("Undo takes the step back"), "{said}");
+    }
+
+    /// Demo run item 9: a shove that moves a via moves its tracks on the
+    /// other layer too; the preview draws those as their layer is drawn
+    /// (dimmed), not as full-strength copper over the routed layer.
+    #[test]
+    fn shoved_copper_on_another_layer_is_previewed_dimmed() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let engine = pcbcraft_core::Engine::demo()?;
+        let project = engine.project();
+        let mut editor = PcbEditor {
+            net: Some(1),
+            route_start: Some([5.0, 5.0]),
+            ..PcbEditor::default()
+        };
+        let step = editor.route_step(project, [10.0, 5.0]).ok_or("no step")?;
+        let shoved = |layer| pcbcraft_core::Track {
+            id: 900,
+            net: 2,
+            start: [8.0, 2.0],
+            end: [8.0, 20.0],
+            width: 1.0,
+            layer,
+            locked: false,
+        };
+        let plan = |layer| RoutePlan {
+            edits: RouteEditSet {
+                replace: vec![shoved(layer)],
+                ..RouteEditSet::default()
+            },
+            end: [10.0, 5.0],
+            end_layer: CopperLayer::Top,
+            reached: true,
+            via_placed: false,
+            used: RouteMode::Shove,
+            shoved: vec![900],
+            moved_vias: vec![],
+            undo: RouteEditSet::default(),
+            blocked: None,
+            detour_factor: 1.0,
+            note: None,
+        };
+        let colors = crate::palette::board();
+        let ink = BoardInk::get();
+        let fills = |editor: &mut PcbEditor, layer: CopperLayer| {
+            editor.route.planned = Some((
+                PlanKey::Single(0, RouteStepRequest::of(&step, RouteMode::Shove, true)),
+                Rc::new(Planned::Single(Box::new(plan(layer)))),
+            ));
+            let ctx = egui::Context::default();
+            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+                let view = super::super::board_view(
+                    rect,
+                    project.board_size,
+                    1.0,
+                    egui::Vec2::ZERO,
+                    false,
+                );
+                editor.paint_route_preview(ui.painter(), view, project, [10.0, 5.0]);
+            });
+            output
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    Shape::Path(p) => Some(p.fill),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        // On the routed layer: full strength.
+        let full = ink.on_board(colors.copper_layer(CopperLayer::Top), 1.0);
+        assert_eq!(fills(&mut editor, CopperLayer::Top), vec![full]);
+        // On the far layer: as the canvas draws that layer.
+        let shade = editor
+            .look(CopperLayer::Bottom, Layer::Top)
+            .map(|l| l.shade)
+            .ok_or("the bottom layer is drawn")?;
+        assert!(shade < 1.0);
+        let dimmed = ink.on_board(colors.copper_layer(CopperLayer::Bottom), shade);
+        assert_eq!(fills(&mut editor, CopperLayer::Bottom), vec![dimmed]);
+        Ok(())
     }
 }
