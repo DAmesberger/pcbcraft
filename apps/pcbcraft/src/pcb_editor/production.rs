@@ -38,7 +38,7 @@ use pcbcraft_core::rules::{RuleProfile, builtin};
 use pcbcraft_core::{Engine, Operation};
 use pcbcraft_io::fabrication::{ExportReport, ExportRequest, Progress};
 use pcbcraft_io::rule_profiles::ProfileLibrary;
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};

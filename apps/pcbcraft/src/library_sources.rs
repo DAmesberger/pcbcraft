@@ -1274,7 +1274,7 @@ pub(crate) fn reveal(path: &Path) {
 /// A dim layer under a card that blocks the canvas and cards beneath it;
 /// a click on it closes the card. The card is kept above it.
 fn scrim(ctx: &egui::Context, card: egui::Id) -> bool {
-    let t = solidcraft_ui_egui::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let id = card.with("scrim");
     let rect = ctx.content_rect();
     let clicked = ui_kit::Container::new(ctx, ui_kit::Surface::InputShield)
@@ -1666,7 +1666,7 @@ fn kind_label(kind: pcbcraft_core::DefinitionKind) -> &'static str {
 
 /// A dialog body inset like the file workflow's.
 fn body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    let t = solidcraft_ui_egui::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(t.space_12 as i8, t.space_8 as i8))
         .show(ui, |ui| {

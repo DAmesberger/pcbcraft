@@ -46,7 +46,7 @@ use pcbcraft_core::library::templates::generic::GenericState;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, DefinitionKind, Engine, Id, PartRef, Query, QueryResult, Revision,
 };
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::collections::BTreeMap;
 

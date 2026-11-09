@@ -18,7 +18,8 @@ use pcbcraft_core::library::{PadKind, PadSide};
 use pcbcraft_core::{Engine, Operation, Point};
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 use pcbcraft_solidcraft::footprint::view::{SketchView, ViewGeometry};
-use solidcraft_ui_egui::{fonts, theme::Tokens};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::fonts;
 
 /// Pick reach around sketch entities and lands, in pixels.
 const PICK_PX: f32 = 4.0;

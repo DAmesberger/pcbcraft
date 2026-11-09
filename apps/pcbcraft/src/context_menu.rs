@@ -17,8 +17,9 @@
 //! and would take Esc for itself, and ⌘Z would act underneath, so the app
 //! calls [`hold_keys`] before any of them.
 use egui::{Pos2, Vec2, vec2};
-use solidcraft_ui_egui::context_menu::{Item, LIST_W, list_row, menu_frame, place};
+use solidcraft_ui_egui::context_menu::{list_row, menu_frame, place};
 use solidcraft_ui_egui::ui_kit::{Container, Surface};
+use solidcraft_ui_egui::ui_kit::{Item, LIST_W};
 
 /// What a chosen row does.
 #[derive(Clone, Debug, PartialEq)]

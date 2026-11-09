@@ -17,7 +17,7 @@
 use super::card::FOOTER_HEIGHT;
 use super::severity::{Level, severity_glyph};
 use egui::{Align, FontId, Layout, Rect, Response, RichText, Sense, Ui, UiBuilder, pos2, vec2};
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::{fonts, ui_kit};
 
 /// A docked dialog's header height, in points.

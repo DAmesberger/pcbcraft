@@ -15,7 +15,7 @@
 use super::severity::{Level, severity_glyph};
 use super::text;
 use egui::{Align, Color32, FontId, Layout, Rect, Response, Sense, Ui, UiBuilder, pos2, vec2};
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::{fonts, ui_kit};
 
 /// Rows a list shows before it is bounded with "Show all".

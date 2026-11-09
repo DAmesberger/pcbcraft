@@ -9,7 +9,7 @@ use super::{BoardView, Layers, MAX_INNER, PcbEditor};
 use egui::{Align2, Color32, FontId, Pos2, Shape, Stroke};
 use pcbcraft_core::model::fill::KeepoutLayers;
 use pcbcraft_core::{CopperLayer, Id, Layer, Point, Project};
-use solidcraft_ui_egui::theme::{self, Tokens};
+use solidcraft_theme::{self as theme, Tokens};
 
 /// How Layout shows the copper layers besides the active one. Cycled by
 /// the registry command `pcb.layer-focus`.

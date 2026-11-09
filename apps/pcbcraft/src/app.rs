@@ -27,7 +27,8 @@ use crate::shell::Workspace;
 use crate::{part_editor, pcb_editor, schematic_editor, viewport};
 use pcbcraft_core::layout::fill::{FillCommand, RefillTarget, StoredFill};
 use pcbcraft_core::{Engine, Operation, format::EditorFile};
-use solidcraft_ui_egui::{fonts, theme};
+use solidcraft_theme::{self as theme};
+use solidcraft_ui_egui::fonts;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -1098,7 +1099,7 @@ impl App {
                 crate::kit::canvas_hint(
                     &ui.painter_at(rect),
                     rect,
-                    solidcraft_ui_egui::theme::Tokens::get().space_16,
+                    solidcraft_theme::Tokens::get().space_16,
                     crate::navigation::hint_3d(),
                 );
             }
@@ -1335,7 +1336,7 @@ impl eframe::App for App {
 /// The chip over a 3D view showing its last model while a newer one is
 /// prepared (or failed: the error, the last model still shown).
 fn updating_chip(ui: &mut egui::Ui, area: egui::Rect, failed: Option<&str>) {
-    let t = solidcraft_ui_egui::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let text = failed.unwrap_or("Updating");
     let width = if failed.is_some() {
         (area.width() - 2.0 * t.space_8).min(480.0)

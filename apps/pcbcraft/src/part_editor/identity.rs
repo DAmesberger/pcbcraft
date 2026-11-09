@@ -20,8 +20,9 @@ use pcbcraft_core::catalog::CatalogContext;
 use pcbcraft_core::ids::LibraryId;
 use pcbcraft_core::library::bundle::Direction;
 use pcbcraft_core::{DefinitionId, Engine, Operation};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::fonts;
 use solidcraft_ui_egui::ui_kit::{self, Button};
-use solidcraft_ui_egui::{fonts, theme::Tokens};
 use std::sync::mpsc::Receiver;
 
 /// The most subjects the open history keeps.

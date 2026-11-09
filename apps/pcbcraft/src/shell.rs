@@ -7,9 +7,9 @@
 //! ui_kit/panel.rs (card frames). MIT option; see ATTRIBUTION.md. The
 //! upstream fonts, icons, tokens and Container are used directly.
 use egui::{Align2, FontId, Rect, Response, Sense, Ui, pos2, vec2};
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::{
     fonts, icons,
-    theme::Tokens,
     toolbar::{RIBBON_HEIGHT, TAB_ROW_HEIGHT},
     ui_kit::{Container, Edge, Surface},
 };

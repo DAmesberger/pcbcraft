@@ -5,10 +5,8 @@
 use crate::kit::severity::Level;
 use pcbcraft_core::{Document, Engine, Project, format::EditorFile};
 use pcbcraft_io::recovery::{self, RecoveryEntry, RecoveryStore};
-use solidcraft_ui_egui::{
-    theme::Tokens,
-    ui_kit::{self, Button},
-};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::{
     path::{Path, PathBuf},
     sync::{

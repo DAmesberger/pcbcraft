@@ -25,7 +25,7 @@ use pcbcraft_core::library::model3d::ModelFormat;
 use pcbcraft_core::library::package_model::PartValue;
 use pcbcraft_core::{Engine, ModelRef};
 use pcbcraft_solidcraft::models::part_file::{self, PartParameter, PartReport, PartValues};
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::path::PathBuf;
 use std::sync::Arc;

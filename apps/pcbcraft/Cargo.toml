@@ -26,6 +26,7 @@ pcbcraft-solidcraft.workspace = true
 pcbcraft-automation.workspace = true
 pcbcraft-assist.workspace = true
 solidcraft-ui-egui.workspace = true
+solidcraft-theme.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
 eframe.workspace = true

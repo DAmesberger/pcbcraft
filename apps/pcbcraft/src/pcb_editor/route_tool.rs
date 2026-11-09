@@ -560,7 +560,7 @@ impl PcbEditor {
             return;
         };
         let edits = plan.edits();
-        let t = solidcraft_ui_egui::theme::Tokens::get();
+        let t = solidcraft_theme::Tokens::get();
         let scale = view.view.scale;
         let screen = |p: Point| view.screen(p);
         let ink = BoardInk::get();

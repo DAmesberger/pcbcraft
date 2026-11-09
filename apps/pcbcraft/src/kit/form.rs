@@ -1,6 +1,7 @@
 //! Form rows and controls (upstream `ui_kit/layout.rs` and `fields.rs`).
 use egui::{Align, Layout, Response, RichText, Ui, UiBuilder, vec2};
-use solidcraft_ui_egui::{fonts, theme::Tokens, ui_kit};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::{fonts, ui_kit};
 
 /// Form scope: tokenised spacing, type and control looks for every row
 /// inside `add` (upstream `layout::scope`).

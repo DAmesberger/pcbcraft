@@ -8,7 +8,7 @@
 
 use super::severity::{Level, severity_glyph};
 use egui::{RichText, vec2};
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit;
 use std::collections::VecDeque;
 

@@ -27,10 +27,8 @@ use pcbcraft_core::{
     library::{PadKind, PlacedText, TextMetric},
     updates::Change,
 };
-use solidcraft_ui_egui::{
-    fonts,
-    theme::{self, Tokens},
-};
+use solidcraft_theme::{self as theme, Tokens};
+use solidcraft_ui_egui::fonts;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 

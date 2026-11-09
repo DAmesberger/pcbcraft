@@ -21,7 +21,8 @@ use egui::{
     Stroke, Ui, UiBuilder, WidgetInfo, pos2, vec2,
 };
 use pcbcraft_core::issues::{IssueCounts, IssueDetail};
-use solidcraft_ui_egui::{fonts, theme::Tokens, ui_kit};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::{fonts, ui_kit};
 use std::sync::Arc;
 
 /// The Issues bar's height while collapsed, in points.

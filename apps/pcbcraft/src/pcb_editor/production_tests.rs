@@ -86,7 +86,7 @@ fn hint_shows_whole(
     ctx: &egui::Context,
     hint: &str,
 ) -> TestResult {
-    let width = solidcraft_ui_egui::theme::Tokens::get().form_card_width;
+    let width = solidcraft_theme::Tokens::get().form_card_width;
     frame_at(editor, engine, ctx, vec![], width);
     let (output, _) = frame_at(editor, engine, ctx, vec![], width);
     let output = &output;

@@ -19,7 +19,8 @@ use pcbcraft_core::library::pinout::{
 };
 use pcbcraft_core::library::{ComponentDefinition, Terminal, TerminalClass};
 use pcbcraft_core::{FunctionId, ResourceId, RoleId, TerminalId};
-use solidcraft_ui_egui::{fonts, theme::Tokens, ui_kit};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::{fonts, ui_kit};
 use std::collections::BTreeMap;
 
 /// Which rows the table shows.

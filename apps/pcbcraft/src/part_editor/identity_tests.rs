@@ -326,8 +326,8 @@ fn a_lent_preview_is_restored_only_under_its_own_subject() -> TestResult {
 #[test]
 fn state_chips_are_legible_and_do_not_look_selected() {
     for dark in [false, true] {
-        solidcraft_ui_egui::theme::set_dark(dark);
-        let t = solidcraft_ui_egui::theme::Tokens::get();
+        solidcraft_theme::set_dark(dark);
+        let t = solidcraft_theme::Tokens::get();
         for strong in [false, true] {
             let (fill, ink) = super::identity::chip_colours(&t, strong);
             assert_ne!(fill, t.chip, "the selection chip's fill");

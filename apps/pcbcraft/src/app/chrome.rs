@@ -9,12 +9,12 @@ use crate::kit;
 use crate::reveal::{self, Target};
 use crate::shell::{self, Workspace};
 use egui::{Rect, pos2, vec2};
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::{
     fonts,
-    theme::Tokens,
-    titlebar::TRAFFIC_LIGHTS,
     toolbar::APP_BAR_HEIGHT,
     ui_kit::{Container, Edge, Surface},
+    window_chrome::TRAFFIC_LIGHTS,
 };
 
 /// Gap between the viewport edge and floating cards (Solidcraft's
@@ -745,7 +745,7 @@ mod tests {
     fn the_application_bar_is_legible() -> Result<(), Box<dyn std::error::Error>> {
         use crate::kit::text::tests::Screen;
         for dark in [false, true] {
-            solidcraft_ui_egui::theme::set_dark(dark);
+            solidcraft_theme::set_dark(dark);
             let t = Tokens::get();
             assert!(kit::contrast(t.app_bar_text, t.app_bar) >= 4.5);
             let screen = Screen::new(vec2(200.0, 40.0));

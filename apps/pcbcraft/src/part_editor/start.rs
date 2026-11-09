@@ -20,8 +20,9 @@ use pcbcraft_core::catalog::templates::TemplateHit;
 use pcbcraft_core::catalog::{CatalogEntry, Source};
 use pcbcraft_core::library::templates::generic::GenericState;
 use pcbcraft_core::{DefinitionId, DefinitionKind, Engine, Operation, Query, QueryResult};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::fonts;
 use solidcraft_ui_egui::ui_kit::{self, Button};
-use solidcraft_ui_egui::{fonts, theme::Tokens};
 
 /// Results shown before "Show all".
 const SHOWN: usize = 8;

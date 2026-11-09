@@ -14,7 +14,8 @@ use crate::commands::{Chord, Command, Context, Registry};
 use crate::keymap::Unapplied;
 use crate::kit;
 use pcbcraft_io::settings::{HOLD_MS_RANGE, RevealSettings};
-use solidcraft_ui_egui::{theme::Tokens, ui_kit, ui_kit::Button};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::{ui_kit, ui_kit::Button};
 
 const MAX_FILTER: usize = 128;
 

@@ -91,7 +91,7 @@ impl PcbEditor {
                   is not added.",
             finish: None,
         };
-        let t = solidcraft_ui_egui::theme::Tokens::get();
+        let t = solidcraft_theme::Tokens::get();
         let margin = egui::Margin::symmetric(t.space_8 as i8, 0);
         let response = egui::Frame::NONE
             .inner_margin(margin)

@@ -17,6 +17,7 @@ profile = ["solidcraft-engine/profile"]
 [dependencies]
 pcbcraft-core.workspace = true
 solidcraft-engine.workspace = true
+solidcraft-color.workspace = true
 solidcore-record.workspace = true
 serde.workspace = true
 serde_json.workspace = true

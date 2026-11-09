@@ -440,7 +440,7 @@ impl Catalog {
         {
             action = Some(Action::ManageSources);
         }
-        ui.spacing_mut().item_spacing.y = solidcraft_ui_egui::theme::Tokens::get().space_4;
+        ui.spacing_mut().item_spacing.y = solidcraft_theme::Tokens::get().space_4;
         if let Some(chosen) = details(ui, engine, found, &feed) {
             action = Some(chosen);
         }

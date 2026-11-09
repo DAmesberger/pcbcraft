@@ -11,7 +11,7 @@ use crate::kit::severity::Level;
 use crate::kit::*;
 use egui::epaint::{ClippedPrimitive, Primitive};
 use egui::{Event, FullOutput, Pos2, Shape};
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use std::collections::HashMap;
 
 /// A text painted cut short: its full text and where it shows.
@@ -707,7 +707,7 @@ fn strongest_ink(rgba: &[u8], width: usize, rect: Rect, page: Color32) -> f32 {
 #[test]
 fn an_unavailable_command_row_is_dimmed_to_the_key() {
     for dark in [false, true] {
-        solidcraft_ui_egui::theme::set_dark(dark);
+        solidcraft_theme::set_dark(dark);
         let screen = Screen::new(egui::vec2(420.0, 90.0));
         let row = |ui: &mut Ui, name: &str, enabled: bool| {
             let row = CommandRow {
