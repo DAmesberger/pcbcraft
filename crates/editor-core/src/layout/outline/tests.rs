@@ -8,7 +8,7 @@ use crate::layout::LayoutCommand;
 use crate::layout::fill::FillCommand;
 use crate::library::{Outline, Segment};
 use crate::model::Layer;
-use crate::model::board::SolvedEdge;
+use crate::model::board::{ConstraintAlign, ConstraintTarget, EdgeAnchor, SolvedEdge};
 use crate::model::fill::FillSpec;
 use crate::{CopperLayer, Engine, Operation, Outcome};
 

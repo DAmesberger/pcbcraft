@@ -19,9 +19,9 @@ use std::f64::consts::TAU;
 use crate::geom::Vec2;
 use pcbcraft_core::diagnostics::{Error, Finding, ObjectRef, Result};
 use pcbcraft_core::geometry::{Point, polygon_contains};
+use pcbcraft_core::layout::dimensions::{PartsRequest, PartsSolution};
 use pcbcraft_core::layout::outline::{
-    BoardEvaluation, BoardShapeEvaluator, CONSTRAINT_UNRESOLVED, ConstraintValues, DrawnSlot,
-    FATAL_PREFIX, Fillets, SHAPE_UNSOLVED,
+    BoardEvaluation, BoardShapeEvaluator, DrawnSlot, FATAL_PREFIX, Fillets, SHAPE_UNSOLVED,
 };
 use pcbcraft_core::library::footprint_source::{
     DimValue, EvaluatorRef, Expr, FootprintParam, ParamName, ParamUnit, SketchBlob, SketchCurveId,
@@ -198,6 +198,10 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
 
     fn slot(&self, board: &BoardSketch, a: Point, b: Point, width: &DimValue) -> Result<DrawnSlot> {
         Ok(slot(board, a, b, width)?)
+    }
+
+    fn solve_parts(&self, request: &PartsRequest<'_>) -> Result<PartsSolution> {
+        parts::solve(request)
     }
 }
 
@@ -581,24 +585,7 @@ fn run(
     }
     let bytes =
         serde_json::to_vec(&solved).map_err(|e| problem("board.internal", e.to_string()))?;
-    let mut findings = Vec::new();
-    let mut solved_constraints = Vec::new();
-    for c in constraints {
-        let along = values.signed_length(&c.along.0);
-        let offset = values.signed_length(&c.offset.0);
-        match (along, offset) {
-            (Ok(along), Ok(offset)) => solved_constraints.push(ConstraintValues {
-                constraint: c.id,
-                along,
-                offset,
-            }),
-            (Err(p), _) | (_, Err(p)) => findings.push(Finding::new(
-                CONSTRAINT_UNRESOLVED,
-                format!("edge constraint {}: {}", c.id, p.message),
-                vec![ObjectRef::Board],
-            )),
-        }
-    }
+    let (solved_constraints, findings) = parts::edge_constraint_values(&values, constraints);
     let dof = u32::try_from(dof).unwrap_or(u32::MAX);
     Ok(BoardEvaluation {
         solved,
@@ -623,6 +610,12 @@ fn dim(values: &Values, value: &DimValue) -> Outcome<(f64, Option<String>)> {
     let (v, param) = match value {
         DimValue::Fixed(v) => (*v, None),
         DimValue::Param(name) => (values.positive(&name.0)?, Some(name.0.clone())),
+        DimValue::Expr(_) => {
+            return Err(problem(
+                EDIT,
+                "a board sketch dimension takes a number or a board parameter",
+            ));
+        }
     };
     if !(v.is_finite() && v > 0.0 && v <= MAX_COORD_MM) {
         return Err(problem(EDIT, format!("{v} mm is not a positive size")));
@@ -858,5 +851,8 @@ pub fn laminate(project: &pcbcraft_core::Project) -> Option<Laminate> {
     })
 }
 
+#[cfg(test)]
+mod closed_loop_tests;
+mod parts;
 #[cfg(test)]
 mod tests;

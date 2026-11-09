@@ -158,6 +158,10 @@ pub enum Outcome {
     EdgeConstraintAdded {
         constraint: Id,
     },
+    /// The part dimension `layout.dimension_add` created.
+    DimensionAdded {
+        dimension: Id,
+    },
     /// The sketch points, curves and constraints a `board.edit` created
     /// and kept, in the order its edits made them.
     BoardEdited {

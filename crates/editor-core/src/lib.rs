@@ -66,6 +66,8 @@ pub enum Operation {
     Fill(layout::fill::FillCommand),
     /// Board shape and edge constraints (`board.*`).
     Board(layout::outline::BoardCommand),
+    /// Part dimensions (`layout.dimension_*`).
+    Dimension(layout::dimensions::DimensionCommand),
     /// Pre-flight waivers for fabrication output (`fabrication.*`).
     Fabrication(fabrication::FabricationCommand),
     Update(Box<updates::ApplyUpdate>),
@@ -82,6 +84,7 @@ impl Operation {
             Self::Rules(command) => command.class(),
             Self::Fill(command) => command.class(),
             Self::Board(command) => command.class(),
+            Self::Dimension(command) => command.class(),
             Self::Fabrication(command) => command.class(),
             Self::Update(_) => Class::Edit,
         }
@@ -97,6 +100,7 @@ impl Operation {
             Self::Rules(command) => command.command(),
             Self::Fill(command) => command.command(),
             Self::Board(command) => command.command(),
+            Self::Dimension(command) => command.command(),
             Self::Fabrication(command) => command.command(),
             Self::Update(_) => "update",
         }
@@ -113,6 +117,7 @@ impl Operation {
             rules::RulesCommand::CLASSES,
             layout::fill::FillCommand::CLASSES,
             layout::outline::BoardCommand::CLASSES,
+            layout::dimensions::DimensionCommand::CLASSES,
             fabrication::FabricationCommand::CLASSES,
             UPDATE,
         ]
@@ -132,6 +137,7 @@ impl Operation {
             rules::RulesCommand::TITLES,
             layout::fill::FillCommand::TITLES,
             layout::outline::BoardCommand::TITLES,
+            layout::dimensions::DimensionCommand::TITLES,
             fabrication::FabricationCommand::TITLES,
             UPDATE,
         ]
@@ -1175,6 +1181,15 @@ impl Engine {
                     layout::outline::BoardApplied::Nothing => Outcome::None,
                 }
             }
+            Operation::Dimension(command) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                match layout::dimensions::apply(project, command, evaluators.board)? {
+                    layout::dimensions::DimensionApplied::Added(dimension) => {
+                        Outcome::DimensionAdded { dimension }
+                    }
+                    layout::dimensions::DimensionApplied::Nothing => Outcome::None,
+                }
+            }
             Operation::Fabrication(command) => {
                 let mut next = candidate.project.production.clone();
                 fabrication::preflight::apply(&mut next, command, self.waiver_reason_required)?;
@@ -1220,6 +1235,8 @@ impl Engine {
             // Constrained parts, fills and keepouts follow their board
             // edges (and a move away from one is refused).
             layout::outline::follow(&self.document.project, project, evaluators.board)?;
+            // Dimensioned parts are solved after the board.
+            layout::dimensions::follow(&self.document.project, project, evaluators.board)?;
             // Board-following fills take the (possibly changed) outline.
             layout::fill::follow_board(project)?;
             if !reviewed {

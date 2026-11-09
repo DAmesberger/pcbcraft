@@ -316,7 +316,9 @@ pub struct BoardSketch {
     /// Board parameters (`width`, `height`, `corner_r`); dimensions bind
     /// to them through SolidCraft's own `Constraint.param`.
     pub parameters: Vec<FootprintParam>,
-    /// The closed loop of the outer outline.
+    /// The closed loop of the outer outline. Slice S1 drops it: the outline
+    /// becomes the one closed region of the sketch
+    /// (docs/board-sketch-references.md §5.1).
     pub outline: Vec<SketchCurveId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cutouts: Vec<CutoutRole>,
@@ -405,6 +407,9 @@ pub struct EdgeConstraintSpec {
     pub rotation_deg: f64,
 }
 
+/// A placement held relative to a named board edge. Slice S2 replaces it
+/// with [`crate::model::dimension::PartDimension`]s (one per held quantity,
+/// docs/board-sketch-references.md §5.6) and deletes it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct EdgeConstraint {

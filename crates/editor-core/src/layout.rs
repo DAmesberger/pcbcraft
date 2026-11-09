@@ -30,6 +30,7 @@ pub mod board_edge;
 pub mod connectivity;
 mod copper;
 pub mod courtyard;
+pub mod dimensions;
 pub mod etch;
 pub mod fill;
 mod grid;
@@ -1240,6 +1241,7 @@ pub fn validate(project: &Project) -> Result<()> {
     project.stackup.check()?;
     fill::validate(project)?;
     outline::validate(project)?;
+    dimensions::validate(project)?;
     let ids = project.nets.iter().map(|n| n.id).collect::<BTreeSet<_>>();
     via::validate(project, &ids)?;
     length::validate(project)?;
@@ -1491,6 +1493,7 @@ pub fn checks_with(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
     let mut findings = BoardCopper::of(project).checks(project, graph);
     findings.extend(fill::findings(project));
     findings.extend(outline::checks(project));
+    findings.extend(dimensions::checks(project));
     findings.extend(length::checks(project, graph));
     findings.extend(etch::checks(project, graph));
     findings

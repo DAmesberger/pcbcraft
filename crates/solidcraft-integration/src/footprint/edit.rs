@@ -227,6 +227,10 @@ fn set_dimension(
             }
             Ok(Some(name.0.clone()))
         }
+        DimValue::Expr(_) => Err(problem(
+            EDIT,
+            "a footprint dimension takes a number or a parameter",
+        )),
     }
 }
 

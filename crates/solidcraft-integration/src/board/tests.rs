@@ -7,40 +7,40 @@
 
 use super::*;
 use pcbcraft_core::layout::LayoutCommand;
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit, edge_pose};
+use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit, CONSTRAINT_UNRESOLVED, edge_pose};
 use pcbcraft_core::library::footprint_source::{DimKind, SketchRef};
 use pcbcraft_core::model::board::{
     BoardShape, ConstraintAlign, ConstraintTarget, CutoutKind, EdgeAnchor, EdgeConstraintSpec,
 };
 use pcbcraft_core::{Engine, Evaluators, Layer, Operation, Outcome, Query, QueryResult, format};
 
-type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub(super) type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-const EV: SketchBoardEvaluator = SketchBoardEvaluator;
+pub(super) const EV: SketchBoardEvaluator = SketchBoardEvaluator;
 
-fn hosted() -> Evaluators<'static> {
+pub(super) fn hosted() -> Evaluators<'static> {
     Evaluators {
         footprint: Some(&crate::footprint::SketchEvaluator),
         board: Some(&SketchBoardEvaluator),
     }
 }
 
-fn apply(engine: &mut Engine, op: Operation) -> pcbcraft_core::Result<Outcome> {
+pub(super) fn apply(engine: &mut Engine, op: Operation) -> pcbcraft_core::Result<Outcome> {
     engine.apply_hosted(engine.revision(), op, hosted())
 }
 
-fn edit(engine: &mut Engine, edits: Vec<BoardEdit>) -> pcbcraft_core::Result<Outcome> {
+pub(super) fn edit(engine: &mut Engine, edits: Vec<BoardEdit>) -> pcbcraft_core::Result<Outcome> {
     apply(engine, Operation::Board(BoardCommand::Edit { edits }))
 }
 
-fn sketch(engine: &Engine) -> Fallible<BoardSketch> {
+pub(super) fn sketch(engine: &Engine) -> Fallible<BoardSketch> {
     match &engine.project().board_shape {
         BoardShape::Sketch(s) => Ok((**s).clone()),
         BoardShape::Rectangle => Err("not a sketch".into()),
     }
 }
 
-fn set(name: &str, expr: &str) -> BoardEdit {
+pub(super) fn set(name: &str, expr: &str) -> BoardEdit {
     BoardEdit::SetParameter {
         param: FootprintParam {
             name: ParamName(name.into()),
@@ -51,17 +51,17 @@ fn set(name: &str, expr: &str) -> BoardEdit {
     }
 }
 
-fn close(a: Point, b: Point) -> bool {
+pub(super) fn close(a: Point, b: Point) -> bool {
     (a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6
 }
 
-fn sketched() -> Fallible<Engine> {
+pub(super) fn sketched() -> Fallible<Engine> {
     let mut engine = Engine::demo()?;
     apply(&mut engine, Operation::Board(BoardCommand::StartSketch))?;
     Ok(engine)
 }
 
-fn created_curves(outcome: &SketchOutcome) -> Vec<SketchCurveId> {
+pub(super) fn created_curves(outcome: &SketchOutcome) -> Vec<SketchCurveId> {
     outcome
         .created
         .iter()

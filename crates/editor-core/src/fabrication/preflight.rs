@@ -67,6 +67,12 @@ pub fn apply(
                     "fabrication.waiver_key: a waiver needs a finding key".into(),
                 ));
             }
+            if let Some(k) = keys.iter().find(|k| unwaivable(k)) {
+                return Err(Error::Conflict(format!(
+                    "fabrication.not_waivable: `{k}` cannot be waived; re-pick or acknowledge the \
+                     reference"
+                )));
+            }
             if reason_required && reason.is_empty() {
                 return Err(Error::Invalid(
                     "fabrication.waiver_reason: a reason is required to waive findings (Settings)"
@@ -199,6 +205,19 @@ pub const MAX_SILK_PAIRS: usize = 4_000_000;
 /// Characters of a legend text a finding quotes, so its title stays one line.
 const MAX_LEGEND_NAME: usize = 16;
 
+/// Finding codes that block export and cannot be waived: a lost or
+/// inexact dimension reference (docs/board-sketch-references.md §5.5).
+pub const NO_WAIVER: &[&str] = &[
+    layout::dimensions::REFERENCE_LOST,
+    layout::dimensions::REFERENCE_INEXACT,
+];
+
+/// Whether the finding a waiver key names may not be waived.
+fn unwaivable(key: &str) -> bool {
+    let code = key.split_whitespace().next().unwrap_or_default();
+    NO_WAIVER.contains(&code)
+}
+
 /// The waiver key of a finding: its code and the objects it names.
 pub fn key(code: &str, objects: &[ObjectRef]) -> String {
     crate::model::production::waiver_key(code, objects)
@@ -213,7 +232,14 @@ fn severity(row: &IssueRow) -> Option<Severity> {
     let code = row.finding.code.as_str();
     if matches!(
         code,
-        "board.unrouted" | "board.unplaced" | "fill.stale" | "board.shape_unsolved"
+        "board.unrouted"
+            | "board.unplaced"
+            | "fill.stale"
+            | "board.shape_unsolved"
+            | layout::outline::SHAPE_OPEN
+            | layout::outline::SHAPE_INVALID
+            | layout::dimensions::REFERENCE_LOST
+            | layout::dimensions::REFERENCE_INEXACT
     ) {
         return Some(Severity::Error);
     }
@@ -275,7 +301,11 @@ pub fn report(
     }
     production_findings(p, drafts, &mut items);
     for i in &mut items {
-        i.waiver = project.production.waiver(&i.key).cloned();
+        i.waiver = if unwaivable(&i.key) {
+            None
+        } else {
+            project.production.waiver(&i.key).cloned()
+        };
     }
     items.sort_by(|a, b| {
         a.severity

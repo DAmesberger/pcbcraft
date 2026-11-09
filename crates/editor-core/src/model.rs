@@ -12,12 +12,14 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 pub mod board;
+pub mod dimension;
 pub mod fill;
 pub mod production;
 pub mod sheet;
 mod stackup;
 mod via;
 pub use board::{BoardShape, EdgeConstraint, SolvedBoard};
+pub use dimension::PartDimension;
 pub use fill::{Fill, Keepout};
 pub use sheet::{
     Label, LabelKind, Paper, PaperOrientation, PortShape, PowerStyle, ProjectProperties, Sheet,
@@ -493,9 +495,14 @@ pub struct Project {
     /// `board_size` at its solved bounding box.
     #[serde(default, skip_serializing_if = "BoardShape::is_rectangle")]
     pub board_shape: BoardShape,
-    /// Placement constraints relative to named board edges.
+    /// Placement constraints relative to named board edges. Replaced by
+    /// `part_dimensions` in slice S2 (docs/board-sketch-references.md §5.6).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edge_constraints: Shared<Vec<EdgeConstraint>>,
+    /// Dimensions and constraints that place parts relative to the board,
+    /// the housing and each other (`layout::dimensions`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub part_dimensions: Shared<Vec<PartDimension>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fills: Shared<Vec<Fill>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -542,6 +549,7 @@ impl Default for Project {
             rules: crate::rules::ProjectRules::default(),
             board_shape: BoardShape::Rectangle,
             edge_constraints: Shared::default(),
+            part_dimensions: Shared::default(),
             fills: Shared::default(),
             keepouts: Shared::default(),
             sheets: Sheets::default(),

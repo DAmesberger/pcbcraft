@@ -39,6 +39,10 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         // Geometry past the limit is unchecked, so errors may be uncounted.
         | "board.check_limit"
         | "board.shape_unsolved"
+        | "board.shape_open"
+        | "board.shape_invalid"
+        | "board.reference_lost"
+        | "board.reference_inexact"
         | CHECK_FAILED => Severity::Error,
         "board.unrouted" | "board.unplaced" | NO_PART => Severity::ToDo,
         "erc.unchecked_terminal"
@@ -86,6 +90,10 @@ pub fn group_title(code: &str) -> String {
         "impedance.mismatch" => "Impedance off target",
         "board.constraint_unresolved" => "Edge constraints unresolved",
         "board.shape_unsolved" => "Board shape does not solve",
+        "board.shape_open" => "Board outline not closed",
+        "board.shape_invalid" => "Board outline not one board",
+        "board.reference_lost" => "Dimension references lost",
+        "board.reference_inexact" => "Dimension references to check",
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
@@ -203,6 +211,10 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "impedance.mismatch" => "Route at the width the Route card shows for the layer",
         "board.constraint_unresolved" => "Edit or delete the edge constraint",
         "board.shape_unsolved" => "Fix the board sketch's dimensions",
+        "board.shape_open" => "Join the open ends in Board shape",
+        "board.shape_invalid" => "Fix the crossing or move the hole inside the board",
+        "board.reference_lost" => "Pick the reference again or delete the dimension",
+        "board.reference_inexact" => "Check the reference and acknowledge it, or pick it again",
         "instance.unit_unplaced" => "Place the unit or mark it unused",
         "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
         "instance.required_terminal_no_connect" => "Connect the power input",
@@ -446,6 +458,10 @@ pub const KNOWN_CODES: &[&str] = &[
     "board.edge_clearance",
     "board.hole_clearance",
     "board.outside_outline",
+    "board.reference_inexact",
+    "board.reference_lost",
+    "board.shape_invalid",
+    "board.shape_open",
     "board.shape_unsolved",
     "board.track_dangling",
     "board.unplaced",

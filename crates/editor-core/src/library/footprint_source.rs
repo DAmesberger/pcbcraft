@@ -709,6 +709,9 @@ pub enum DimKind {
 pub enum DimValue {
     Fixed(f64),
     Param(ParamName),
+    /// An expression over board parameters, for part dimensions only
+    /// (`layout::dimensions`); footprint and board sketches refuse it.
+    Expr(Expr),
 }
 
 /// What a sketch edit produced.

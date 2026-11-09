@@ -422,3 +422,50 @@ The founder accepted all three recommendations (2026-11-09):
 1. **The published board design is the full board.** Update Links on it is measured in S11; a mechanical subset is considered only if that is too slow.
 2. **Stable names stay on Pcbcraft's side** through the persistent board design (§6.1). Proposing generic assigned face names upstream may be considered later, separately.
 3. **glTF (mesh) models stay the one kind without face references,** with a clear finding that steers authors to STEP or part files.
+
+## 12. C0 handoff
+
+C0 is the contract for S1 and S2. Every path that needs either slice refuses with a typed `Error::Unsupported` ("… not yet supported"); nothing panics.
+
+### What C0 put in place
+
+- **Types.** `model::dimension` (new): `PartDimension`, `PartDimensionSpec`, `PartRelation`, `BoardRef`, `FeatureRef`, `PadPoint`, `BoxSide`, `PartAxis`, `End`, `ModelFaceRef`, `ModelEdgeRef`, the name newtypes, `HousingRefId` and `ReferenceStatus`. `Project::part_dimensions` sits beside `edge_constraints`. `DimValue::Expr(Expr)` is added; footprint and board-sketch dimensions refuse it.
+- **Commands.** `board.edit` has `SetCutoutKind`, `AddSpline`, `AddEllipse` and `AddConic`; the free-form ones reach `BoardShapeEvaluator::add_curve` with a `FreeFormCurve`. The new `Operation::Dimension` family has `layout.dimension_add`, `layout.dimension_edit` and `layout.dimension_delete`, with `Outcome::DimensionAdded`. There is no new query: `board.shape` and `project.issues` cover S1 and S2.
+- **Solve seam.** `BoardShapeEvaluator::solve_parts(&PartsRequest) -> PartsSolution` (`layout::dimensions`). The engine calls `layout::dimensions::follow` right after `layout::outline::follow`. `dimensions::validate` and `dimensions::checks` are wired into `layout::validate` and `layout::checks`.
+- **Findings.** `board.shape_open` and `board.shape_invalid` (`layout::outline`), and `board.reference_lost` and `board.reference_inexact` (`layout::dimensions`). All four are classified as errors with group titles and fixes, and pre-flight blocks on them. `fabrication::preflight::NO_WAIVER` already keeps the two reference codes from being waived; `fabrication.waive` refuses them.
+- **Edge constraints moved, unchanged.** All edge-constraint code is in `layout/outline/edge_constraints.rs`, re-exported from `layout::outline` under the same names. The integration crate's evaluation of edge-constraint expressions is in `board/parts.rs` (`edge_constraint_values`).
+- **Test skeletons.** `#[ignore = "slice S1"]` / `#[ignore = "slice S2"]` tests state the expected behaviour. Each slice removes its ignores and must not weaken the expected values.
+
+### Doc adjustments made in C0
+
+1. `PartRelation` also has `PointAlong { at }`, because Pcbcraft's `GeomConstraint` has no `PointAlong` and it carries a fraction. `FeatureRef` also has `Axis { target, axis }`, for "origin and axes" (§4) and `Angle(axis, edge)` (§5.6).
+2. Solidcraft at our pin has no arc-length constraint, so §5.6's "(or `ArcLength`)" is not available. S2 maps `along` on an arc edge to `PointAlong` or to an angle about the arc centre.
+3. The dimension commands are their own operation family, because the parts solve needs the board evaluator, and `LayoutCommand` is applied without it. The wire names keep the `layout.` prefix of §5.6.
+4. `board.shape_open` and `board.shape_invalid` start with `FATAL_PREFIX` (`board.shape_`), but per §5.1 they are reported, not refused. S1 exempts them from the refusal. The stored "why the curves are not a board" state (open ends, crossing) is S1's to add to `BoardSketch`.
+5. The rule's key on the wire is `{"rule":"board_outline_fit"}`, because `RuleKey` names are snake_case identifiers. `board.outline_fit` stays its name in prose.
+6. Existing tests that contradict the approved design are replaced, not weakened: S1 changes the open-outline cases of `bad_edits_are_refused_and_leave_the_board` (§5.1), and S2 replaces the edge-constraint tests (§5.6).
+
+### File ownership
+
+| Files | S1 | S2 |
+| --- | --- | --- |
+| `editor-core/src/layout/outline.rs` | Owns | May only delete the three constraint variants of `BoardCommand` with their `declare_classes!` rows and match arms, the `edge_constraints` module line, re-exports and calls, and `BoardEvaluation::constraints`; may change `evaluate`'s `constraints` parameter. |
+| `editor-core/src/layout/outline/shape_tests.rs` (new) | Owns | — |
+| `editor-core/src/layout/outline/edge_constraints.rs`, `outline/tests.rs` | — | Owns (deletes or ports) |
+| `editor-core/src/model/board.rs` | Owns | May only delete `EdgeConstraint`, `EdgeConstraintSpec`, `EdgeAnchor`, `ConstraintAlign` and `MAX_EDGE_CONSTRAINTS`. `ConstraintTarget` stays: `model::dimension` uses it. |
+| `editor-core/src/rules.rs`, `rules/tests.rs`, app `pcb_editor/rules_panel.rs` | Owns (the `board_outline_fit` rule) | — |
+| `editor-core/src/model/dimension.rs`, `layout/dimensions.rs`, `layout/dimensions/` | — | Owns |
+| `solidcraft-integration/src/board.rs` | Owns | May only change the `constraints` parameter of `evaluate` and `run` with their call sites, and the `parts::edge_constraint_values` line. |
+| `solidcraft-integration/src/board/closed_loop_tests.rs` | Owns | — |
+| `solidcraft-integration/src/board/parts.rs`, `board/parts/tests.rs` | — | Owns |
+| `solidcraft-integration/src/board/tests.rs` (shared helpers are `pub(super)`) | Owns the shape tests | Owns the edge-constraint tests and the showcase test's constraint lines |
+| `editor-core/src/layout/showcase.rs` | `board_edits` | `j1_constraint` |
+| `editor-core/src/model.rs`, `validate.rs`, `lib.rs`, `commands/mod.rs`, `layout/fill.rs`, `layout.rs` (`held`), `tests/board_contract.rs` | — | Only to remove `edge_constraints`, `EdgeConstraintAdded`, `board.constrain` and `held` |
+| App `pcb_editor/board_shape.rs`, `board_shape_ui.rs`, `board_shape_tests.rs` | Owns | May only change the lines that read `edge_constraints` |
+| App `pcb_editor/edge_card.rs`, `hold_mark.rs`, `hold_tests.rs`, `pcb_editor.rs` (constraint painting) | — | Owns |
+| `automation` label resolution (`J1.pad(A6)`, `edge(left)`; a new module) | — | Owns |
+| `issues/rules.rs`, `fabrication/preflight.rs` | Done in C0; touch only for a new code | Same |
+| `automation/src/mcp/surface/golden/core.json` | Regenerate with `PCBCRAFT_BLESS=1` after rebasing; never hand-merge | Same |
+| This document | Its own slice notes | Same |
+
+Whichever slice lands second rebases onto the first. The other slice's ignored tests stay ignored until that slice lands.
