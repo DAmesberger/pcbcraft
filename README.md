@@ -3,6 +3,8 @@
 **Parametric PCB design software with deep integrated 3D, built for designers and AI agents alike.**
 Parts, schematic, board layout and 3D in one app, on [Solidcraft](https://github.com/tangency-labs/solidcraft)'s CAD engine.
 
+https://github.com/user-attachments/assets/3da46faa-128f-4c90-a563-dd01e53b8c44
+
 ## Why it's different
 
 **Parametric boards.** A board is a design with named parameters and expressions, not a fixed drawing. Width, height and corner radius drive the outline, and placements, fills and keepouts can be tied to its named edges. Footprints are constrained sketches. Part bodies can be parametric Solidcraft models, and common generic parts (chip R, C and L, LEDs, diodes, headers) are made on demand from what you type.
