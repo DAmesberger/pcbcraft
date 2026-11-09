@@ -45,8 +45,8 @@ pub enum FabricationCommand {
 
 // A new command chooses its permission class here.
 declare_classes!(FabricationCommand {
-    Waive "fabrication.waive" Ask,
-    Unwaive "fabrication.unwaive" Edit,
+    Waive "fabrication.waive" Ask "Waive a production finding",
+    Unwaive "fabrication.unwaive" Edit "Withdraw a waiver",
 });
 
 /// Apply one waiver command; `reason_required` refuses a waiver without a

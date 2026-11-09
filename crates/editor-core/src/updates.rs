@@ -189,6 +189,8 @@ pub struct RegroupResolution {
     pub action: RegroupAction,
 }
 
+/// Apply a previewed update at its revision, optionally removing the
+/// conflicting tracks its preview listed.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApplyUpdate {

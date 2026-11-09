@@ -17,13 +17,18 @@ const WHOLE_PROPERTY: usize = 400;
 /// Definitions one `project.schema` entry carries; the rest are named in
 /// `more_defs` and read with `def`.
 const MAX_DEFS_BYTES: usize = 24 * 1024;
-const MAX_SUMMARY: usize = 140;
+/// Where an index row cuts a summary; the metadata tests keep every summary
+/// within it ([`super::metadata::MAX_SUMMARY`]).
+const MAX_SUMMARY: usize = super::metadata::MAX_SUMMARY;
 
 /// One addressable schema: a command of the request catalog, or a variant of
 /// `project.apply`'s operation or `project.query`'s query.
-struct Entry {
-    kind: &'static str,
-    name: String,
+pub(super) struct Entry {
+    /// `command`, `operation` or `query`: where in the catalog it is.
+    pub(super) kind: &'static str,
+    pub(super) name: String,
+    /// Its title from the class listing beside its enum.
+    pub(super) title: &'static str,
     /// The operation's editor group, for an operation.
     editor: Option<String>,
     /// The catalog schema whose `$defs` the variant refers to.
@@ -33,9 +38,9 @@ struct Entry {
     send: Option<Value>,
     /// Its permission class. A missing one reads as Never and fails the
     /// gate's tests.
-    class: Class,
+    pub(super) class: Class,
     /// A command that can name a path, which makes it at least Ask.
-    takes_path: bool,
+    pub(super) takes_path: bool,
 }
 
 fn listed_class(
@@ -48,7 +53,19 @@ fn listed_class(
         .map_or(Class::Never, |(_, class)| *class)
 }
 
-fn entries() -> &'static [Entry] {
+/// The title listed for `name`; empty where none is (the metadata tests
+/// refuse that).
+fn listed_title(
+    table: impl IntoIterator<Item = &'static (&'static str, &'static str)>,
+    name: &str,
+) -> &'static str {
+    table
+        .into_iter()
+        .find(|(listed, _)| *listed == name)
+        .map_or("", |(_, title)| *title)
+}
+
+pub(super) fn entries() -> &'static [Entry] {
     static ENTRIES: OnceLock<Vec<Entry>> = OnceLock::new();
     ENTRIES.get_or_init(build_entries)
 }
@@ -64,6 +81,7 @@ fn build_entries() -> Vec<Entry> {
         entries.push(Entry {
             kind: "command",
             name: info.id.to_owned(),
+            title: info.title,
             editor: None,
             root: &info.params,
             schema,
@@ -97,6 +115,7 @@ fn operation_entries(root: &'static Value, entries: &mut Vec<Entry>) {
                             "operation": {"editor": editor, "operation": {"command": command, "params": "<params>"}},
                         })),
                         name: command.to_owned(),
+                        title: listed_title(Operation::titles(), command),
                         editor: Some(editor.to_owned()),
                         root,
                         schema: schema.clone(),
@@ -114,6 +133,7 @@ fn operation_entries(root: &'static Value, entries: &mut Vec<Entry>) {
                     "operation": {"editor": editor, "operation": "<params>"},
                 })),
                 name: editor.to_lowercase(),
+                title: listed_title(Operation::titles(), &editor.to_lowercase()),
                 editor: Some(editor.to_owned()),
                 root,
                 schema: content.clone(),
@@ -132,6 +152,7 @@ fn query_entries(root: &'static Value, entries: &mut Vec<Entry>) {
         entries.push(Entry {
             kind: "query",
             name: query.to_owned(),
+            title: listed_title(Query::TITLES, query),
             editor: None,
             root,
             schema: schema.clone(),
@@ -295,12 +316,14 @@ fn index() -> Value {
     })
 }
 
-fn summary_of(entry: &Entry) -> String {
+/// A command's summary, or the first sentence of an operation's or query's
+/// doc comment.
+pub(super) fn summary_of(entry: &Entry) -> String {
     let text = if entry.kind == "command" {
         Request::catalog_shared()
             .iter()
             .find(|c| c.id == entry.name)
-            .map_or("", |c| c.description)
+            .map_or("", |c| c.summary)
     } else {
         entry.schema["description"].as_str().unwrap_or("")
     };

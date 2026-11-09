@@ -59,6 +59,7 @@ pub enum FillCommand {
     /// cleared). A locked fill is refused.
     #[serde(rename = "fill.edit")]
     Edit { fill: Box<Fill> },
+    /// Delete a copper fill.
     #[serde(rename = "fill.delete")]
     Delete { id: Id },
     /// Compute and store the copper of the target fills now.
@@ -68,31 +69,33 @@ pub enum FillCommand {
     /// `copper.key` equals the fill's current [`inputs_key`].
     #[serde(rename = "fill.store")]
     Store { fill: Id, copper: Box<FilledCopper> },
-    /// Store copper the host computed for several fills (an explicit
-    /// refill done off the UI thread) as one undo step; refused, storing
-    /// nothing, unless every fill exists and every key is current.
+    /// Store copper the host computed for several fills, as one undo step. An
+    /// explicit refill done off the UI thread; refused, storing nothing, unless
+    /// every fill exists and every key is current.
     #[serde(rename = "fill.store_all")]
     StoreAll { fills: Vec<StoredFill> },
     /// Add a keepout; the outcome names it (`Outcome::KeepoutAdded`).
     #[serde(rename = "keepout.add")]
     AddKeepout { keepout: Box<KeepoutSpec> },
+    /// Replace a keepout with an edited one of the same id.
     #[serde(rename = "keepout.edit")]
     EditKeepout { keepout: Box<Keepout> },
+    /// Delete a keepout.
     #[serde(rename = "keepout.delete")]
     DeleteKeepout { id: Id },
 }
 
 // A new command chooses its permission class here.
 declare_classes!(FillCommand {
-    Add "fill.add" Edit,
-    Edit "fill.edit" Edit,
-    Delete "fill.delete" Edit,
-    Refill "fill.refill" Edit,
-    Store "fill.store" Edit,
-    StoreAll "fill.store_all" Edit,
-    AddKeepout "keepout.add" Edit,
-    EditKeepout "keepout.edit" Edit,
-    DeleteKeepout "keepout.delete" Edit,
+    Add "fill.add" Edit "Add a copper fill",
+    Edit "fill.edit" Edit "Edit a copper fill",
+    Delete "fill.delete" Edit "Delete a copper fill",
+    Refill "fill.refill" Edit "Refill copper",
+    Store "fill.store" Edit "Store a fill",
+    StoreAll "fill.store_all" Edit "Store all fills",
+    AddKeepout "keepout.add" Edit "Add a keep-out",
+    EditKeepout "keepout.edit" Edit "Edit a keep-out",
+    DeleteKeepout "keepout.delete" Edit "Delete a keep-out",
 });
 
 /// One fill's computed copper for `fill.store_all`.

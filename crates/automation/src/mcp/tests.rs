@@ -705,3 +705,23 @@ fn a_gnd_port_on_a_vbus_wire_over_mcp_merges_only_when_asked() -> super::scenari
     );
     Ok(())
 }
+
+/// The instructions a client is sent, headless and live: within Claude
+/// Code's cut, and near the design's 238 tokens (bytes stand in for tokens;
+/// `docs/mcp-surface.md` §3.1 has the ratio).
+#[test]
+#[ignore = "fails until slice P4 (M3 in v1) moves the method text into skills: 14,843 characters today"]
+fn the_instructions_fit_their_budget() {
+    for (mode, text) in [
+        ("headless", INSTRUCTIONS.to_owned()),
+        ("live", format!("{LIVE_INSTRUCTIONS}{INSTRUCTIONS}")),
+    ] {
+        let chars = text.chars().count();
+        assert!(chars <= MAX_INSTRUCTIONS, "{mode}: {chars} characters");
+    }
+    assert!(
+        INSTRUCTIONS.len() <= INSTRUCTIONS_TARGET,
+        "{} bytes",
+        INSTRUCTIONS.len()
+    );
+}

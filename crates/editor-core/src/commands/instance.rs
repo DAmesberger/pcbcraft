@@ -19,10 +19,12 @@ pub enum InstanceCommand {
     /// designator the core numbers it under the component's prefix.
     #[serde(rename = "component.place")]
     Place(NewInstance),
-    /// Direct only without wires or a placement; otherwise preview
+    /// Remove a component instance with its units. Direct only without wires
+    /// or a placement; otherwise preview
     /// `Change::Instance { Remove }`.
     #[serde(rename = "component.remove")]
     Remove { instance: Id },
+    /// Set an instance's designator.
     #[serde(rename = "instance.set_designator")]
     SetDesignator { instance: Id, designator: String },
     /// Apply 1–64 typed field edits atomically. Text is parsed in core; any
@@ -39,19 +41,22 @@ pub enum InstanceCommand {
         instance: Id,
         edits: Vec<FunctionEdit>,
     },
+    /// Mark one unit of an instance unused, or used again.
     #[serde(rename = "instance.set_unit_unused")]
     SetUnitUnused {
         instance: Id,
         unit: UnitId,
         unused: bool,
     },
+    /// Mark terminals of an instance no-connect, or clear the mark.
     #[serde(rename = "instance.set_no_connect")]
     SetNoConnect {
         instance: Id,
         terminals: Vec<TerminalId>,
         no_connect: bool,
     },
-    /// Direct only without a board placement; otherwise preview
+    /// Choose an instance's physical implementation (its binding and
+    /// footprint). Direct only without a board placement; otherwise preview
     /// `Change::Instance { SetPhysical }`.
     #[serde(rename = "instance.set_physical")]
     SetPhysical {
@@ -104,19 +109,19 @@ pub enum InstanceCommand {
 
 // A new command chooses its permission class here.
 declare_classes!(InstanceCommand {
-    Place "component.place" Edit,
-    Remove "component.remove" Edit,
-    SetDesignator "instance.set_designator" Edit,
-    SetProperties "instance.set_properties" Edit,
-    SelectFunctions "instance.select_functions" Edit,
-    SetUnitUnused "instance.set_unit_unused" Edit,
-    SetNoConnect "instance.set_no_connect" Edit,
-    SetPhysical "instance.set_physical" Edit,
-    AssignPart "instance.assign_part" Edit,
-    AssignPeripheral "instance.assign_peripheral" Edit,
-    SetPinConfig "instance.set_pin_config" Edit,
-    SetMarking "instance.set_marking" Edit,
-    SetTextPlacement "instance.set_text_placement" Edit,
+    Place "component.place" Edit "Place a component",
+    Remove "component.remove" Edit "Remove a component",
+    SetDesignator "instance.set_designator" Edit "Set a designator",
+    SetProperties "instance.set_properties" Edit "Set instance properties",
+    SelectFunctions "instance.select_functions" Edit "Select pin functions",
+    SetUnitUnused "instance.set_unit_unused" Edit "Mark a unit unused",
+    SetNoConnect "instance.set_no_connect" Edit "Mark a pin no-connect",
+    SetPhysical "instance.set_physical" Edit "Choose the binding and footprint",
+    AssignPart "instance.assign_part" Edit "Assign a manufacturer part",
+    AssignPeripheral "instance.assign_peripheral" Edit "Assign a peripheral",
+    SetPinConfig "instance.set_pin_config" Edit "Set pin configuration",
+    SetMarking "instance.set_marking" Edit "Set an instance marking",
+    SetTextPlacement "instance.set_text_placement" Edit "Place designator text",
 });
 
 impl InstanceCommand {
