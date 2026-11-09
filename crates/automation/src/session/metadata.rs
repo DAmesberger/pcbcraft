@@ -1,4 +1,4 @@
-//! What each of the 227 catalog entries (the requests, `project.apply`'s
+//! What each of the 229 catalog entries (the requests, `project.apply`'s
 //! operations and `project.query`'s queries) is, for the MCP surface
 //! (`docs/mcp-surface.md` §3): a title, a one-line summary, its kind, whether
 //! the person owns a step of it, whether it can run long, whether its result
@@ -23,7 +23,9 @@ pub const INLINE_RESULT: usize = 2 * 1024;
 
 /// How an entry is reached: a read, an undoable document edit, or an action
 /// on files, folders or what undo cannot take back.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Query,

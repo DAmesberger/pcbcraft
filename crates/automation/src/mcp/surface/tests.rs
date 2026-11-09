@@ -341,11 +341,16 @@ fn the_desk_runs_every_request_through_the_gate() -> Fallible<()> {
     let server = server(dir.path())?;
     block_on(async move {
         let desk = server.desk().clone();
-        let mut revision = desk.revision();
-        let start = *revision.borrow_and_update();
+        let mut revisions = desk.revisions();
+        let (project, start) = revisions
+            .borrow_and_update()
+            .iter()
+            .next()
+            .map(|(handle, revision)| (handle.clone(), *revision))
+            .ok_or("the first project")?;
 
         let inspect = desk
-            .run(|d| d.respond(json!({"command": "project.inspect", "params": {}})))
+            .run(|d| d.respond(None, json!({"command": "project.inspect", "params": {}})))
             .await?;
         assert_eq!(inspect["ok"], true, "{inspect}");
         assert_eq!(inspect["result"]["revision"], start);
@@ -354,32 +359,35 @@ fn the_desk_runs_every_request_through_the_gate() -> Fallible<()> {
             "expected_revision": start,
             "operation": {"editor": "Layout", "operation": {
                 "command": "layout.set_board_size", "params": {"size": [40.0, 30.0]}}}}});
-        let applied = desk.run(move |d| d.respond(edit)).await?;
+        let applied = desk.run(move |d| d.respond(None, edit)).await?;
         assert_eq!(applied["ok"], true, "{applied}");
-        revision.changed().await?;
-        assert_eq!(*revision.borrow(), start + 1);
+        revisions.changed().await?;
+        assert_eq!(revisions.borrow().get(&project), Some(&(start + 1)));
 
         // The same edit again is stale: refused, nothing changes.
         let stale = json!({"command": "project.apply", "params": {
             "expected_revision": start,
             "operation": {"editor": "Layout", "operation": {
                 "command": "layout.set_board_size", "params": {"size": [50.0, 30.0]}}}}});
-        let refused = desk.run(move |d| (d.respond(stale), d.revision())).await?;
+        let shown = project.clone();
+        let refused = desk
+            .run(move |d| (d.respond(None, stale), d.revision(&shown)))
+            .await?;
         assert_eq!(refused.0["ok"], false, "{}", refused.0);
-        assert_eq!(refused.1, start + 1);
+        assert_eq!(refused.1, Some(start + 1));
 
         let save = json!({"command": "project.save", "params": {"path": saved}});
         let asked = save.clone();
-        let decided = desk.run(move |d| d.decide(&asked)).await?;
+        let decided = desk.run(move |d| d.decide(None, &asked)).await?;
         assert!(
-            matches!(decided, crate::gate::Decision::Ask(_)),
+            matches!(decided, Ok(crate::gate::Decision::Ask(_))),
             "{decided:?}"
         );
-        let refused = desk.run(move |d| d.respond(save)).await?;
+        let refused = desk.run(move |d| d.respond(None, save)).await?;
         assert_eq!(refused["error"]["code"], "gate.cannot_ask", "{refused}");
 
         let never = json!({"command": "library.source.remove", "params": {"path": "/x"}});
-        let refused = desk.run(move |d| d.respond(never)).await?;
+        let refused = desk.run(move |d| d.respond(None, never)).await?;
         assert_eq!(refused["error"]["code"], "gate.never", "{refused}");
         Fallible::Ok(())
     })??;
@@ -396,7 +404,7 @@ fn concurrent_jobs_run_one_at_a_time() -> Fallible<()> {
         let desk = server.desk().clone();
         let calls = (0..desk::QUEUE * 2).map(|i| {
             let desk = desk.clone();
-            async move { desk.run(move |d| (i, d.revision())).await }
+            async move { desk.run(move |d| (i, d.revisions().len())).await }
         });
         let mut ran = Vec::new();
         for call in calls.collect::<Vec<_>>() {

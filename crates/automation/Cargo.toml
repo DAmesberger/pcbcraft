@@ -17,6 +17,7 @@ solidcraft-control.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
+getrandom.workspace = true
 thiserror.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-io"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }

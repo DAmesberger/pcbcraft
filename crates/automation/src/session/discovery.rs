@@ -163,6 +163,43 @@ fn query_entries(root: &'static Value, entries: &mut Vec<Entry>) {
     }
 }
 
+/// How catalog entry `name` is sent, filled with `params`, from the same
+/// table `project.schema`'s `send` comes from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Call {
+    /// A request of its own: `{"command": name, "params": params}`.
+    Command,
+    /// One of `project.apply`'s operations, as the operation value.
+    Operation(Value),
+    /// One of `project.query`'s queries, as the query value.
+    Query(Value),
+}
+
+/// [`Call`] for the entry named `name`, or `None` when no entry is.
+pub fn call(name: &str, params: Value) -> Option<Call> {
+    let entry = entries().iter().find(|e| e.name == name)?;
+    let fill = |template: &Value| fill_params(template, &params);
+    Some(match (entry.kind, &entry.send) {
+        ("operation", Some(send)) => Call::Operation(fill(&send["operation"])),
+        ("query", Some(send)) => Call::Query(fill(send)),
+        _ => Call::Command,
+    })
+}
+
+/// `template` with its `"<params>"` placeholder replaced by `params`.
+fn fill_params(template: &Value, params: &Value) -> Value {
+    match template {
+        Value::String(text) if text == "<params>" => params.clone(),
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, inner)| (key.clone(), fill_params(inner, params)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 /// `project.schema`: the index without a name, the schema of `name`, or one
 /// definition of that schema with `def`.
 pub(super) fn schema_reply(params: SchemaParams) -> Result<Value> {

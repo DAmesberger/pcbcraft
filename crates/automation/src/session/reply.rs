@@ -5,9 +5,9 @@
 //! The ids are found by diffing the serialized document, so a collection the
 //! document gains later is reported without changing this module.
 use super::{InspectParams, Request, Session, envelope};
-use crate::gate::Caller;
+use crate::gate::{Caller, Decision};
 use crate::{Error, Result};
-use pcbcraft_core::{Document, Finding, Project, Query, QueryResult, erc, layout};
+use pcbcraft_core::{Class, Document, Finding, Project, Query, QueryResult, erc, layout};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -61,6 +61,62 @@ impl Session {
         let result = serde_json::from_value::<Request>(request)
             .map_err(Error::from)
             .and_then(|request| self.execute_compact(request));
+        envelope(result)
+    }
+
+    /// A dry run of one document edit for `caller`: what [`Session::respond`]
+    /// would answer (outcome, changes, findings, drafts), run on a fork of
+    /// the engine, so document, revision, history and path stay as they are.
+    /// The gate decides as for the edit itself, except that what would ask
+    /// a person runs, since nothing is kept. Only requests that change the
+    /// engine and nothing else can be tried.
+    pub fn rehearse(&mut self, caller: Caller<'_>, mut request: Value) -> Value {
+        let policy = match caller {
+            Caller::Operator => None,
+            Caller::Model(policy) | Caller::Allowed(policy) => Some(policy),
+        };
+        if let Some(policy) = policy
+            && let Decision::Refuse(refusal) = self.check_request(policy, &request)
+        {
+            return refusal.reply();
+        }
+        take_verbose(&mut request);
+        let result = serde_json::from_value::<Request>(request)
+            .map_err(Error::from)
+            .and_then(|request| {
+                // Only what changes the engine alone: a folder import, for
+                // one, also notes a recent in the person's settings.
+                let pure = matches!(
+                    request,
+                    Request::Apply(_)
+                        | Request::ApplyAll(_)
+                        | Request::Undo(_)
+                        | Request::Redo(_)
+                        | Request::ApplyUpdate(_)
+                );
+                if !pure || request.effective_class() != Class::Edit {
+                    return Err(pcbcraft_core::Error::Invalid(format!(
+                        "{} has no dry run: only document operations, undo, redo and updates do",
+                        request.subject()
+                    ))
+                    .into());
+                }
+                let mut fork = self.engine.fork();
+                std::mem::swap(&mut self.engine, &mut fork);
+                let path = self.path.clone();
+                let baseline = self.baseline.take();
+                let tried = self.execute_compact(request);
+                std::mem::swap(&mut self.engine, &mut fork);
+                self.path = path;
+                self.baseline = baseline;
+                let mut reply = tried?;
+                reply["dry_run"] = json!(true);
+                // The document is where it was: the next edit names this.
+                reply["revision"] = json!(self.engine.revision());
+                reply["can_undo"] = json!(self.engine.can_undo());
+                reply["can_redo"] = json!(self.engine.can_redo());
+                Ok(reply)
+            });
         envelope(result)
     }
 
