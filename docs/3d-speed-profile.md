@@ -226,3 +226,42 @@ Gains are measured where marked; the rest are bounded by this profile. Effort is
 - Scaling: `PCBCRAFT_PROFILE_VARIANT=parts=N` with `PCBCRAFT_PROFILE_NOFILLS=1`, or `PCBCRAFT_PROFILE_VARIANT=addvias=N`; and `extrusion_scaling` with `PCBCRAFT_SCALING_EDGES` and `PCBCRAFT_SCALING_SHAPE=outline|holes`.
 - Function profile: run the test binary directly and attach `/usr/bin/sample <pid> 1500 1 -mayDie -file out.txt`. The test binary's symbols are enough; neither samply nor `cargo flamegraph` is installed; `xctrace` is available but was not needed.
 - The `-0` and fills-first results are experiments: one-line changes, measured and reverted. Neither is in this commit. The only code in it is the benchmark and the off-by-default `profile` feature of `pcbcraft-solidcraft` (a re-export of Solidcraft's profiler), which the benchmark turns on as a dev-dependency feature.
+
+## Update, 9 November 2026: board width, undo
+
+Build bdc78b4 (`component-model`), Solidcraft fork 04d3c2ffc (solidcore c0d3cc0124 with the stitch fix, after the `-0` fix and fills-first), same host and `ci` profile, load average 7–30 from other agents' builds: single runs vary by up to ±20 %. Best of three, headless. `PCBCRAFT_PROFILE_EDIT=width` is the board's `width` parameter 1 mm more through the engine (`board.edit`) and its undo, each followed as the app follows it: the model updated with the fills' stored copper, the stale fills refilled, the model updated again.
+
+**Where the ESP32 build goes now (26.5–32 s).** Solidcraft spans: `solidcore smlib_extrude` 72 % (the four fill regions, 2,547–3,517 side faces each, are 17–21 s of it), `kernel mesh` 14 %, fillets 5 %, commands and evaluation bookkeeping 9 %. The build runs on one core; Solidcraft evaluates features one after another, and the 18 kernel worker threads idle. A `sample` of the build thread (25 s, 16,716 samples) inside the SMLib extrusions:
+
+| Share of the build | Where in solidcore |
+| --- | --- |
+| 76 % | `create_linear_sweep` (all extrusions) |
+| 46 % | `stitch_and_orient_with_identity` (sewing the side faces into a shell) |
+| · 32 % | `Stitch::edit_glue_vertices` → `glue_with_notification_identity` → `with_kernel_callbacks` (self time; per-glue bookkeeping over the whole B-rep) |
+| · 13 % | `Stitch::edit_glue_edges` → `test_closure_split_region_attempt` → `has_lamina_edge` → `face::edges` |
+| 26 % | `create_planar_faces_with_3d_curves` (the two caps of each extrusion, one loop per hole) |
+| · 22 % | `create_faces_with_curves`: each loop added (`make_vertex_loop`, `remove_loop`) calls `face_notify`, which walks every edge-use and vertex-use of the face: quadratic in a cap's loops |
+| · 1.6 % | `point_3d_classify` |
+
+**What an edit and its undo cost, and why.** The width edit moves every fill (they follow the board), so every fill is refilled and its sketch redrawn. A redrawn region's extrusion picked its profile by curves the redraw replaces, so the update redefines it (`timeline.redefine`). Two Pcbcraft-side costs were measured and are fixed:
+
+1. Each redefinition ran with the history rolled forward, so it evaluated every feature after it again: the refill update ran 2,878 SMLib extrusions where the build runs 1,028. The redefinitions now run while the history is still rolled back, and the update keeps every result it evaluates (`Model::keep`) until the history is rolled forward once: 948 extrusions, and 3 s of meshing instead of 8 s.
+2. An undo back to a board the app's model worker made updated the last model back to it, as long as the edit. The worker now keeps its last three earlier board models (copies sharing the evaluated design and meshes, `NativeModel::snapshot`), and an undo or redo back to one shows it again without building or updating.
+
+| ESP32 board | Before | After |
+| --- | --- | --- |
+| Open in 3D (build) | 26.6 s | 26.5 s (unchanged; nothing here touches the build) |
+| Width +1 mm: update with stale copper, then refilled | 3.6 + 47.6 = 51.3 s | 4.0 + 40.6 = 44.7 s |
+| Undo, through `project::update` | 46.4 s | 38.8 s |
+| Undo in the app (model worker) | the update above | the earlier model shown again; no build (keeping each copy costs 4 ms) |
+
+A redefinition still evaluates its extrusion twice: once as the trial constructor on a scratch copy, once as the redefined feature (another feature id, so another cache key). For the fills that is about 17 s of the 40 s refill update. The showcase (build 4.4 / 4.7 s; outer track 559 / 616 ms; part 24 / 26 ms; inner track 516 / 601 ms) and the 1,000-via board (build 28.9 / 32.2 s; outer track 27.0 / 29.5 s; part 422 / 451 ms) did not change beyond the load (7 before, 15 after).
+
+**What remains, by share, and the smallest generic fix:**
+
+- solidcore, 46 % of the build: stitching a swept shell does whole-B-rep bookkeeping per glue. Fix: sew a linear sweep's side faces by construction (each profile edge's side face shares its edges with its neighbours), or make the per-glue notification incremental.
+- solidcore, 22 %: adding a loop to a face notifies the whole face. Fix: notify only the entities the new loop adds. (The `large-face-loops` branch's `point_3d_classify` fix is 1.6 % on this board.)
+- Solidcraft, about 17 s of an edit that refills the fills: `timeline.redefine` evaluates the feature twice. Fix: keep the trial's evaluation for the redefined feature (the same definition and the same state before it), or a way to re-pick an extrusion's default profiles after its sketch is redrawn without a trial.
+- Solidcraft: evaluation is single-threaded; independent new-body extrusions (the four fills) could be evaluated in parallel.
+
+**Measured option, not applied:** the fills' model chord (`MODEL_CHORD_MM`) at 25 µm instead of 10 µm builds the ESP32 board in 16.0 s (fills 6.5 s instead of about 17 s; 1,505–2,300 faces each). It changes the saved and displayed copper outline by up to 25 µm, not the document's copper or fabrication output; it needs the founder's call.

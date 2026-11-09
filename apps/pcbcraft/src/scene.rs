@@ -6,7 +6,9 @@
 //! walks a mesh. It keeps the last board model it made, and a board edited
 //! only in values (a part, track or via moved, a size changed) updates it
 //! in place ([`pcbcraft_solidcraft::project::update`]) instead of building
-//! the board again. A board's instance marking decals are made there too
+//! the board again. It keeps a few earlier board models too, so an undo or
+//! redo back to a board it made shows that model again without building
+//! or updating anything. A board's instance marking decals are made there too
 //! and appended to the drawn geometry (display only, never the native
 //! model); the worker keeps their per-instance cache between builds, and
 //! the read and checked library model files ([`SourceCache`]), so a board
@@ -114,11 +116,22 @@ type BuiltGeometry = Result<
     String,
 >;
 
+/// Earlier board models the worker keeps for an undo or redo back to them.
+const EARLIER_BOARDS: usize = 3;
+
+type BoardModel = pcbcraft_solidcraft::project::NativeModel;
+
 /// What the worker keeps between builds.
 #[derive(Default)]
 struct Kept {
-    /// The last board model, for the next board to update in place.
-    board: Option<pcbcraft_solidcraft::project::NativeModel>,
+    /// The last board model and the board it was made from, for the next
+    /// board to update in place.
+    board: Option<(Arc<Project>, BoardModel)>,
+    /// Earlier board models, oldest first, each with the board it was made
+    /// from (copies sharing the evaluated design and meshes): a board that
+    /// comes back (an undo, a redo) is shown from its model again instead
+    /// of updating the last one to it.
+    earlier: Vec<(Arc<Project>, BoardModel)>,
     markings: BoardMarkings,
     sources: SourceCache,
 }
@@ -127,18 +140,32 @@ struct Kept {
 fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
     match job {
         Job::Project(ticket, project, cancel) => {
-            let made = match kept.board.take() {
-                Some(previous) => pcbcraft_solidcraft::project::update(
-                    previous,
-                    &project,
-                    &kept.sources,
-                    Some(cancel),
-                )
-                .map(|(model, _)| model),
-                None => {
-                    pcbcraft_solidcraft::project::build_with(&project, &kept.sources, Some(cancel))
+            let same = |board: &Arc<Project>| Arc::ptr_eq(board, &project) || **board == *project;
+            let made = if let Some(at) = kept.earlier.iter().position(|(board, _)| same(board)) {
+                let (_, model) = kept.earlier.remove(at);
+                kept.earlier.extend(kept.board.take());
+                Ok(model)
+            } else {
+                match kept.board.take() {
+                    Some((board, previous)) => {
+                        kept.earlier.push((board, previous.snapshot()));
+                        pcbcraft_solidcraft::project::update(
+                            previous,
+                            &project,
+                            &kept.sources,
+                            Some(cancel),
+                        )
+                        .map(|(model, _)| model)
+                    }
+                    None => pcbcraft_solidcraft::project::build_with(
+                        &project,
+                        &kept.sources,
+                        Some(cancel),
+                    ),
                 }
             };
+            let excess = kept.earlier.len().saturating_sub(EARLIER_BOARDS);
+            kept.earlier.drain(..excess);
             let built = made.map(|model| {
                 // The drawn geometry shares the meshes; the model stays
                 // for the next edit to update, without the decals.
@@ -151,7 +178,7 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                     eprintln!("pcbcraft: instance {instance} shows no marking: {why}");
                 }
                 let sources = model.sources.clone();
-                kept.board = Some(model);
+                kept.board = Some((Arc::clone(&project), model));
                 (geometry, sources, Stack::of(&project.stackup))
             });
             (ticket, built.map_err(|e| e.to_string()))
@@ -658,6 +685,39 @@ mod tests {
         };
         assert!((min_x(&scene.geometry) - min_x(&fresh.geometry)).abs() < 1e-6);
         assert!((min_x(&scene.geometry) - min_x(&first.0.geometry) - 2.0).abs() < 1e-6);
+        Ok(())
+    }
+
+    /// An undo back to a board the worker made shows that board's model
+    /// again (the very meshes, nothing rebuilt or updated), and a redo the
+    /// edited one.
+    #[test]
+    fn an_undone_edit_shows_the_earlier_model_again() -> Result<(), Box<dyn std::error::Error>> {
+        let project = Arc::new(Engine::showcase()?.project().clone());
+        let mut edited = (*project).clone();
+        let track = edited.tracks.first_mut().ok_or("a track")?;
+        track.width += 0.05;
+        let edited = Arc::new(edited);
+        let flag = || Arc::new(AtomicBool::new(false));
+        let mut kept = Kept::default();
+        let mut made = |board: &Arc<Project>| {
+            build(Job::Project(0, Arc::clone(board), flag()), &mut kept)
+                .1
+                .map(|(geometry, _, _)| geometry)
+        };
+        // The native bodies' meshes, by identity.
+        let meshes = |geometry: &[pcbcraft_solidcraft::scene::Geometry]| -> Vec<usize> {
+            geometry
+                .iter()
+                .filter(|g| !g.kind.is_appearance())
+                .map(|g| Arc::as_ptr(&g.mesh) as usize)
+                .collect()
+        };
+        let first = meshes(&made(&project)?);
+        let second = meshes(&made(&edited)?);
+        assert_ne!(first, second, "the wider track has a mesh of its own");
+        assert_eq!(meshes(&made(&project)?), first, "undone");
+        assert_eq!(meshes(&made(&edited)?), second, "redone");
         Ok(())
     }
 

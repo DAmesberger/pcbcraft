@@ -11,7 +11,9 @@
 //!   `addvias=N` (no fills, N more vias on a grid).
 //! - `PCBCRAFT_PROFILE_NOFILLS=1`: leave the fills out (after the variant).
 //! - `PCBCRAFT_PROFILE_EDIT=1`: also time the part turn and its undo (`track`: an
-//!   outer track 10 µm wider and back instead);
+//!   outer track 10 µm wider and back instead; `width`: the board 1 mm wider
+//!   through the engine and undone, each followed as the app follows it,
+//!   the stale fills refilled);
 //!   `PCBCRAFT_PROFILE_REFILL=1` then refills the stale fills and updates again.
 //! - `PCBCRAFT_PROFILE_PART`: the part turned (default SW1).
 //! - `PCBCRAFT_PROFILE_TRACE`: write Solidcraft's Chrome trace there.
@@ -23,15 +25,19 @@ use pcbcraft_solidcraft::project::{self, NativeModel};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-fn board() -> Project {
-    let path = std::env::var("PCBCRAFT_PROFILE_BOARD").map_or_else(
+/// The board file profiled.
+fn path() -> std::path::PathBuf {
+    std::env::var("PCBCRAFT_PROFILE_BOARD").map_or_else(
         |_| {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft")
         },
         std::path::PathBuf::from,
-    );
-    let mut project = pcbcraft_io::read_project(&path)
+    )
+}
+
+fn board() -> Project {
+    let mut project = pcbcraft_io::read_project(&path())
         .unwrap()
         .into_document()
         .project
@@ -191,6 +197,10 @@ fn board_build_profile() {
     let Ok(edit) = std::env::var("PCBCRAFT_PROFILE_EDIT") else {
         return;
     };
+    if edit == "width" {
+        board_width(model);
+        return;
+    }
     // An outer track 10 µm wider, then as it was (an edit that changes a
     // value only: no fill is stale, nothing is drawn anew).
     if edit == "track" {
@@ -258,6 +268,94 @@ fn board_build_profile() {
         let (next, how) = project::update(model, &project, &sources, None).unwrap();
         eprintln!(
             "{what} {part}, refilled: update {:.1} s ({how:?})",
+            start.elapsed().as_secs_f64()
+        );
+        features(&next);
+        spans(&format!("{what}, refilled"));
+        model = next;
+    }
+}
+
+/// The board 1 mm wider through the engine (`layout.set_board_size`), then
+/// undone, each as the app follows it: the model worker updates the board
+/// with the fills' stored copper, the fill worker refills the fills the
+/// edit made stale (undo finds them in its cache) and the model is updated
+/// again with their copper. Prints each update and the edit's total.
+fn board_width(model: NativeModel) {
+    use pcbcraft_core::layout::LayoutCommand;
+    use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
+    use pcbcraft_core::{Engine, Operation};
+    let mut engine = Engine::from_file(pcbcraft_io::read_project(&path()).unwrap()).unwrap();
+    let sources = SourceCache::default();
+    let mut cache = pcbcraft_core::layout::fill::FillCache::default();
+    // The fills as opened are current: the cache holds them for undo.
+    assert!(
+        pcbcraft_core::layout::fill::compute_stale(engine.project(), &mut cache)
+            .unwrap()
+            .is_empty()
+    );
+    for fill in &engine.project().fills {
+        if let Some(copper) = &fill.computed {
+            cache.insert(copper.clone());
+        }
+    }
+    let mut model = model;
+    let [w, h] = engine.project().board_size;
+    for what in ["width +1 mm", "undo"] {
+        let start = Instant::now();
+        if what == "undo" {
+            engine.undo().unwrap();
+        } else {
+            let revision = engine.revision();
+            // A sketched board: its `width` parameter 1 mm more, as the
+            // board card's width field sets it.
+            let operation = match &engine.project().board_shape {
+                pcbcraft_core::model::board::BoardShape::Sketch(sketch) => {
+                    let mut param = sketch
+                        .parameters
+                        .iter()
+                        .find(|p| p.name.0 == "width")
+                        .unwrap()
+                        .clone();
+                    param.expr =
+                        pcbcraft_core::library::footprint_source::Expr(format!("{} mm", w + 1.0));
+                    Operation::Board(BoardCommand::Edit {
+                        edits: vec![BoardEdit::SetParameter { param }],
+                    })
+                }
+                _ => Operation::Layout(LayoutCommand::SetBoardSize { size: [w + 1.0, h] }),
+            };
+            engine
+                .apply_hosted(revision, operation, pcbcraft_automation::session::hosted())
+                .unwrap();
+            eprintln!("board size now {:?}", engine.project().board_size);
+        }
+        // The app's model worker keeps a copy of the model it updates, for
+        // an undo back to it.
+        let copy = Instant::now();
+        let _earlier = model.snapshot();
+        eprintln!(
+            "{what}: model kept for undo in {:.1} ms",
+            copy.elapsed().as_secs_f64() * 1e3
+        );
+        let (next, how) = project::update(model, engine.project(), &sources, None).unwrap();
+        let first = start.elapsed();
+        eprintln!("{what}: update {:.1} s ({how:?})", first.as_secs_f64());
+        spans(&format!("{what}, update"));
+        model = next;
+        let refill = Instant::now();
+        let fresh =
+            pcbcraft_core::layout::fill::compute_stale(engine.project(), &mut cache).unwrap();
+        let filled = refill.elapsed();
+        let count = fresh.len();
+        let revision = engine.revision();
+        engine.store_fills(revision, fresh).unwrap();
+        let again = Instant::now();
+        let (next, how) = project::update(model, engine.project(), &sources, None).unwrap();
+        eprintln!(
+            "{what}: {count} fills refilled in {:.1} s, update {:.1} s ({how:?}); in all {:.1} s",
+            filled.as_secs_f64(),
+            again.elapsed().as_secs_f64(),
             start.elapsed().as_secs_f64()
         );
         features(&next);

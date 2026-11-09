@@ -257,6 +257,19 @@ impl Native {
         Some(self)
     }
 
+    /// A copy of this design sharing its document and evaluated model
+    /// (Solidcraft's `Session::scratch`), with the commands it was built
+    /// with, so a later build of an edited board can update the copy in
+    /// place as it could this design.
+    pub(crate) fn snapshot(&self) -> Self {
+        Self {
+            session: self.session.scratch(),
+            cancel: None,
+            log: self.log.clone(),
+            replay: None,
+        }
+    }
+
     /// Whether this design is being replayed ([`Self::replaying`]).
     pub(crate) fn is_replaying(&self) -> bool {
         self.replay.is_some()
@@ -300,7 +313,19 @@ impl Native {
         // An update is short and leaves the design consistent only once
         // done: a newer request does not stop it.
         self.cancel = None;
-        let (log, ran) = replay.apply(self)?;
+        // Every result the update's commands evaluate is kept until it is
+        // done (Solidcraft's `Model::keep`): a redefined extrusion is
+        // evaluated on a trial copy of the design, and the evaluation that
+        // rolls the history forward takes it from there. The evaluation
+        // cache alone holds only the last few states of a board this size,
+        // so each would be evaluated again.
+        let kept = self.session.model.kept();
+        self.session.model.keep(Some(std::sync::Arc::new(
+            solidcraft_engine::doc::KeptResults::default(),
+        )));
+        let applied = replay.apply(self);
+        self.session.model.keep(kept);
+        let (log, ran) = applied?;
         self.log = Some(log);
         Ok(ran)
     }

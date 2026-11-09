@@ -360,7 +360,7 @@ pub fn board(
 /// board and the land) and a via's dome and bore (the board and the via).
 /// [`board_with`] takes each unchanged one from the last call instead of
 /// making it again, so an edit remakes only what it changed.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Memo {
     made: std::collections::HashMap<u64, Vec<Geometry>>,
 }
