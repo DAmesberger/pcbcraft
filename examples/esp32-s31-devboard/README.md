@@ -9,7 +9,7 @@ Release plan step 5: a real ESP32-S31-WROOM-3 development board designed from co
 | File | What |
 |---|---|
 | `esp32-s31-devboard.pcbcraft` | The project. Open it in the desktop app. It holds the parts library, two schematic sheets, the 4-layer board, the fills and the waiver-free production state. |
-| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 581 JSON-lines requests through `pcbcraft-cli stdio --operator`. It replays to a byte-identical `project.json`. |
+| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 570 JSON-lines requests through `pcbcraft-cli stdio --operator`. It replays to a byte-identical `project.json`. |
 | `regenerate.sh` | Replays the board and writes `fab/` and the schematic PDF. With `NATIVE=1` it also writes the `.solidcraft` model (about 10 s of CPU). |
 | `fab/` | Gerber X2 for 4 copper layers, masks, top paste, top legend and profile; plated and non-plated Excellon; drill map and table; job file; top pick-and-place; both BOMs; fabrication and assembly PDFs. |
 | `esp32-s31-devboard-schematic.pdf` | The schematic, two sheets. |
@@ -29,7 +29,7 @@ sh examples/esp32-s31-devboard/regenerate.sh
 - **Net classes:**
   - Power (GND, +3V3, VBUS): 0.5 mm tracks, 0.3 mm minimum.
   - USB: 90 Ω differential. On top this derives a 0.266 mm width and a 0.152 mm gap, as microstrip over the GND plane.
-- **Fills:**
+- **Fills:** each follows the board outline (`region: board`), so changing `width`, `height` or `corner_r` on the Board card moves the pours with the board; a refill fills the new outline.
   - GND on Inner 1 and on Bottom.
   - +3V3 on Inner 2.
   - GND on Top, with a 0.4 mm fill clearance so the USB pair stays a microstrip.
@@ -101,6 +101,6 @@ The board in the desktop app: PCB 2D (top copper and the top pour; 0 airwires), 
   - The pair check measures each half along its signal path, J1.B6 to U1.43 and J1.B7 to U1.42: 29.865 mm each, so the skew is 0. The length report lists the plug-orientation joins as stubs: 2.245 mm to J1.A6 and 6.98 mm to J1.A7. See the log.
 - **GPIO buses.** They run on the bottom layer, so no part sits in their way. The header order follows the module's pin order (J2 pin 4 = IO12 … pin 12 = IO4), so the buses route without crossings.
 - **EPAD.** Each of its nine squares has a via to the GND plane. The datasheet makes soldering the EPAD optional and recommends a moderate amount of paste. The paste follows the footprint's default.
-- **3D models.** The LED, the switches and the USB-C receptacle use envelope boxes; the production check warns about this. The module uses its parametric part file. The passives, the SOT parts and the headers use generated models.
-- **Legend.** U1's footprint outline passes the top edge by 0.225 mm at the antenna end, and the production check warns about its three lines that reach it. The fabricator trims them. J2's and U1's designators are moved onto the board with `instance.set_text_placement`. The desktop screenshots in `images/` were taken before those moves.
+- **3D models.** The module uses its parametric part file. The passives, the LEDs (the chip-LED row, from the Kingbright drawing), the SOT parts, the USB-C receptacle (the GCT USB4105 row) and the headers use generated models. The two switches use envelope boxes, because Pcbcraft has no tactile-switch package family yet; these are the production check's only warnings (`fabrication.envelope_model` for SW1 and SW2).
+- **Legend.** U1's footprint outline passes the top edge by 0.225 mm at the antenna end; the fabricator trims those lines (the production check covers legend text, not lines). J2's and U1's designators are moved onto the board with `instance.set_text_placement`. The switch footprint prints its designator outside the body outline, on the side away from SW2's neighbour U1, whose pads its old spot touched. The desktop screenshots in `images/` were taken before those moves.
 - **Antenna.** The module's edge is at the board edge. Espressif's guidelines ask for about 15 mm of clearance around the antenna on the host side, beyond the keep-out. The board leaves the keep-out area empty on every layer, but it does not extend past the module.

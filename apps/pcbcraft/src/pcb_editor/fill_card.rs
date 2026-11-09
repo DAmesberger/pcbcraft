@@ -1,6 +1,6 @@
-//! The Fill card of the selected fill: name, net, layer, priority and
-//! lock; its copper's state; clearance and minimum width, pad and via
-//! connection styles, thermal reliefs, solid or hatched copper and island
+//! The Fill card of the selected fill: name, net, layer, region (the
+//! board outline or drawn), priority and lock; its copper's state;
+//! clearance and minimum width, pad and via connection styles, thermal reliefs, solid or hatched copper and island
 //! removal, each following the design rules unless set here. Refill and
 //! Delete fill are in the footer (docs/sidebar-ia.md, "Properties card by
 //! subject"). Edits commit live as one `fill.edit` each: a choice or check
@@ -10,7 +10,7 @@ use crate::kit;
 use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::layout::fill::{FillCommand, RefillTarget};
-use pcbcraft_core::model::fill::{Hatch, IslandRemoval};
+use pcbcraft_core::model::fill::{FillRegion, Hatch, IslandRemoval};
 use pcbcraft_core::rules::{PadConnection, ThermalRelief};
 use pcbcraft_core::{Fill, Id, Operation, Project, schematic};
 use solidcraft_ui_egui::ui_kit::{self, Button};
@@ -87,6 +87,11 @@ impl PcbEditor {
                 kit::choice_row(ui, "Net", &mut d.net, &nets);
                 let layers = copper_options(&project.stackup.layers());
                 kit::choice_row(ui, "Layer", &mut d.layer, &layers);
+                let regions = [
+                    (FillRegion::Board, "Board outline".to_owned()),
+                    (FillRegion::Drawn, "Drawn".to_owned()),
+                ];
+                kit::choice_row(ui, "Region", &mut d.region, &regions);
                 let mut priority = f64::from(d.priority);
                 kit::number_row(ui, "Priority", &mut priority, "", PRIORITY_RANGE);
                 d.priority = priority.round().clamp(0.0, 1000.0) as u32;

@@ -289,6 +289,7 @@ fn fills_translate_to_their_edge_and_report_when_gone() -> Fallible<()> {
         engine.revision(),
         Operation::Fill(FillCommand::Add {
             fill: Box::new(FillSpec {
+                region: crate::model::fill::FillRegion::Drawn,
                 name: "GND".into(),
                 net: None,
                 layer: CopperLayer::Bottom,

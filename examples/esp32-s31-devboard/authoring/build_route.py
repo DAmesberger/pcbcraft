@@ -63,8 +63,10 @@ def build(s, L, S, PCB):
     # GND and VBUS pads of the receptacle.
     # The receptacle's GND pads join the shell pads beside them (plated
     # through, so on every plane).
-    R.path("GND", [pad("J1", "A1B12"), pad("J1", "S", 0)], 0.4, note="A1B12 to shell")
-    R.path("GND", [pad("J1", "B1A12"), pad("J1", "S", 2)], 0.4, note="B1A12 to shell")
+    for land in ("A1B12", "B1A12"):
+        at = pad("J1", land)
+        stake = min(pp[("J1", "S")], key=lambda q: (q[0] - at[0]) ** 2 + (q[1] - at[1]) ** 2)
+        R.path("GND", [at, stake], 0.4, note=f"{land} to shell")
     R.drop("VBUS", pad("J1", "A4B9"), (17.6, 9.0), 0.4)
     R.drop("VBUS", pad("J1", "B4A9"), (22.4, 9.0), 0.4)
     R.path("VBUS", [(22.4, 9.0), (17.6, 9.0)], PWR, BOT, note="B4A9 to A4B9")
@@ -150,12 +152,11 @@ def build(s, L, S, PCB):
         R.short.append(("USB pair", "route_pair", None, None, r["error"]["message"][:500]))
 
     # --- fills ----------------------------------------------------------------
-    W, H = 40.0, 64.0
-    rect = {"start": [0.0, 0.0], "segments": [{"line": {"to": [W, 0.0]}}, {"line": {"to": [W, H]}},
-                                              {"line": {"to": [0.0, H]}}, {"line": {"to": [0.0, 0.0]}}]}
+    # Each pour follows the board outline (`region: board`), so a board
+    # parameter edit (width, height, corner_r) moves it with the board.
     for name, net, layer in (("GND plane", "GND", {"Inner": 1}), ("3V3 plane", "+3V3", {"Inner": 2}),
                              ("GND bottom", "GND", BOT), ("GND top", "GND", TOP)):
-        spec = {"name": name, "net": nets[net], "layer": layer, "outline": rect}
+        spec = {"name": name, "net": nets[net], "layer": layer, "region": "board"}
         if layer == TOP:
             # Keep the top pour well away from the USB pair (and everything
             # else on top) so the pair stays a microstrip, not a coplanar line.

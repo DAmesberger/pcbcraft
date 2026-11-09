@@ -43,12 +43,6 @@ def part(s, mpn, manufacturer, comp, binding, specs, ds_title, ds_url, ds_rev=No
     return r["result"]["outcome"]["id"]
 
 
-def rename_terminals(s, comp, names):
-    d = drafts(s)[comp]
-    for t in d["definition"]["body"]["terminals"]:
-        if t["name"] in names:
-            t["name"] = names[t["name"]]
-    edit(s, [{"id": comp, "meta": d["meta"], "definition": d["definition"]}], f"terminal names {comp}")
 
 
 def replace_pads(s, fp, pads, prov=None):
@@ -63,11 +57,15 @@ def replace_pads(s, fp, pads, prov=None):
     edit(s, [{"id": fp, "meta": d["meta"], "definition": d["definition"]}], f"pads of {fp}")
 
 
-def set_graphics(s, fp, keep_text=True, extra=()):
+def set_graphics(s, fp, keep_text=True, extra=(), silk_text_at=None):
     d = drafts(s)[fp]
     body = d["definition"]["body"]
     n = body["next_local"]
     gfx = [g for g in body["graphics"] if keep_text and "text" in g["item"]]
+    if silk_text_at is not None:
+        for g in gfx:
+            if g["layer"] == "silkscreen":
+                g["item"]["text"]["at"] = silk_text_at
     for g in extra:
         gfx.append(dict(g, id=n)); n += 1
     body["graphics"] = gfx
@@ -79,6 +77,9 @@ def publish_and_close(s, ids, note):
     """Publish; library.publish closes the drafts it published by default,
     so they do not count against the project's 64-draft limit."""
     s.op("library.publish", {"drafts": ids}, note)
+
+
+USB_C_ROW = "USB-C receptacle, USB 2.0, 16 contacts, top mount (GCT USB4105)"
 
 
 def drafts_name(s, i):
@@ -111,17 +112,11 @@ def build(s):
         L[key] = dict(zip(["component", "symbol", "package", "footprint", "binding"], ids))
         publish.append(ids)
 
-    # Green 0603 LED: Kingbright APT1608SGC. Pad 1 is the cathode.
-    ids = from_template(s, "Chip capacitor 0603 (1608 metric)", "APT1608SGC", {"skeleton": "two_terminal", "polarised": True},
+    # Green 0603 LED: Kingbright APT1608SGC. The chip LED row is this
+    # datasheet's: 1.6 x 0.8 x 0.75 body, 0.8 x 0.8 lands 0.85 apart, pad 1
+    # the cathode (K), with the generated chip-LED model.
+    ids = from_template(s, "Chip LED 0603 (1608 metric)", "APT1608SGC", {"skeleton": "two_terminal", "polarised": True},
                         symbol="led", prefix="D")
-    comp, sym, pkg, fp, bind = ids
-    rename_terminals(s, comp, {"1": "A", "2": "K"})
-    b = drafts(s)[bind]
-    b["definition"]["body"]["mappings"] = [{"package_terminal": 1, "terminal": 2}, {"package_terminal": 2, "terminal": 1}]
-    edit(s, [{"id": bind, "meta": b["meta"], "definition": b["definition"]}], "LED: pad 1 is the cathode")
-    replace_pads(s, fp, [([-0.825, 0.0], [0.8, 0.8]), ([0.825, 0.0], [0.8, 0.8])],
-                 "Kingbright APT1608SGC datasheet p.1, Recommended soldering pattern: 0.8 x 0.8 pads, 0.85 gap; pad 1 cathode (polarity mark)")
-    generic_package(s, pkg, [1.6, 0.8, 0.75], "Kingbright APT1608SGC datasheet p.1, Package dimensions: 1.6 x 0.8 x 0.75", "silicone_clear")
     L["led"] = dict(zip(["component", "symbol", "package", "footprint", "binding"], ids))
     publish.append(ids)
 
@@ -131,9 +126,13 @@ def build(s):
     comp, sym, pkg, fp, bind = ids
     replace_pads(s, fp, [([-1.7, 0.0], [0.8, 1.7]), ([1.7, 0.0], [0.8, 1.7])],
                  "Omron B3U datasheet p.2, PCB Pad (Top View), B3U-1000P: two 0.8 x 1.7 pads, 2.6 between, 4.2 overall")
+    # The designator sits outside the body outline, on the -y side: the
+    # resistor row's spot (+1.8) printed it across the outline's +y line.
+    silk_half, silk_w, text_h, text_gap = 1.4, 0.12, 1.0, 0.15
     set_graphics(s, fp, extra=[rect([-1.5, -1.25], [1.5, 1.25], 0.1, "assembly"),
                                rect([-2.35, -1.5], [2.35, 1.5], 0.05, "courtyard"),
-                               rect([-1.05, -1.4], [1.05, 1.4], 0.12, "silkscreen")])
+                               rect([-1.05, -silk_half], [1.05, silk_half], silk_w, "silkscreen")],
+                 silk_text_at=[0.0, -round(silk_half + silk_w / 2 + text_gap + text_h / 2, 3)])
     generic_package(s, pkg, [3.0, 2.5, 1.6], "Omron B3U datasheet p.2, Dimensions (B3U-1000P): 3 x 2.5 body (4 over terminals), 1.6 high", "pa9t")
     L["sw"] = dict(zip(["component", "symbol", "package", "footprint", "binding"], ids))
     publish.append(ids)
@@ -182,35 +181,12 @@ def build(s):
     ids = pinout(s, "USB4105-GF-A", "usb4105", V, 13,
                  [pin(r, n, name, "passive", V, "unspecified", page=1, table="Pin/Signal table") for r, n, name in rows])
     comp, sym, pkg, bind = ids
-    generic_package(s, pkg, [8.94, 7.35, 3.31],
-                    "GCT USB4105 drawing sheet 1: receptacle 8.94 wide, 7.35 deep, 3.31 high (top mount)", "nickel",
-                    offset=[0.0, 3.675, 0.0])  # the body runs from the PCB edge (the footprint origin) 7.35 mm in
-    # Footprint origin: the PCB edge line, centred; +y into the board.
-    pads = []
-    xs = {"A1B12": -3.20, "A4B9": -2.40, "B8": -1.75, "A5": -1.25, "B7": -0.75, "A6": -0.25, "A7": 0.25,
-          "B6": 0.75, "A8": 1.25, "B5": 1.75, "B4A9": 2.40, "B1A12": 3.20}
-    for num, x in xs.items():
-        w = 0.6 if len(num) > 2 else 0.3
-        pads.append(dict(smd(num, [x, 7.355], [w, 1.15], None), term=num))
-    for x in (-4.32, 4.32):
-        for y, pad_len, slot_len in ((6.78, 2.1, 1.7), (2.60, 1.8, 1.4)):
-            pads.append({"kind": "plated_through", "number": "S", "position": [x, y], "rotation_deg": 0.0, "side": "top",
-                         "shape": {"oblong": {"size": [1.0, pad_len]}}, "mask": "inherit", "paste": "inherit",
-                         "hole": {"shape": {"slot": {"width": 0.6, "length": slot_len, "angle_deg": 90.0}}, "plated": True, "offset": [0.0, 0.0]},
-                         "vias": [], "term": "S"})
-    for x in (-2.89, 2.89):
-        pads.append({"kind": "non_plated_hole", "number": "", "position": [x, 6.28], "rotation_deg": 0.0, "side": "top",
-                     "shape": {"circle": {"diameter": 0.65}}, "mask": "inherit", "paste": "inherit",
-                     "hole": {"shape": {"round": {"diameter": 0.65}}, "plated": False, "offset": [0.0, 0.0]},
-                     "vias": [], "term": None})
-    fid = custom_footprint(s, "USB4105-GF-A footprint", pkg, bind, pads,
-                           [rect([-4.47, 0.0], [4.47, 7.35], 0.1, "assembly"),
-                            rect([-5.1, -0.25], [5.1, 8.2], 0.05, "courtyard"),
-                            text([0.0, 9.0], "designator", 1.0)],
-                           "GCT USB4105 drawing sheet 1, Recommended PCB Layout (component side): 12 pads 1.15 long "
-                           "(0.6 / 0.3 wide) at 0.5 pitch with VBUS at +-2.4 and GND at +-3.2; shell slots 0.6 x 1.7 (pad 1.0 x 2.1) "
-                           "and 0.6 x 1.4 (pad 1.0 x 1.8) at x +-4.32, 2.60 and 6.78 from the PCB edge; Ø0.65 NPTH pegs at "
-                           "+-2.89, 6.28 from the edge. Origin on the PCB edge line.")
+    # The USB-C receptacle row is this drawing's (GCT USB4105 rev B4 sheet 1):
+    # its form gives the package the generated receptacle model, and its
+    # lands the footprint (12 SMD lands, four plated shell slots, two NPTH
+    # pegs), landing the pinout's terminals by number. Footprint origin: the
+    # outline centre, mating face toward -y.
+    fid = package_from(s, pkg, USB_C_ROW)
     L["usbc"] = {"component": comp, "symbol": sym, "package": pkg, "binding": bind, "footprint": fid}
     publish.append(ids + [fid])
 

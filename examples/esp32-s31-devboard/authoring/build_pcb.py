@@ -2,8 +2,8 @@
 import json
 
 W, H = 40.0, 64.0
-PLACE = {  # designator: (x, y, rotation)
-    "J1": (20.0, 0.0, 0), "U3": (20.0, 12.5, 180), "R4": (16.0, 11.5, 90), "R5": (24.0, 11.5, 90),
+PLACE = {  # designator: (x, y, rotation); J1's y puts its mating face on the bottom edge (see build)
+    "J1": (20.0, None, 0), "U3": (20.0, 12.5, 180), "R4": (16.0, 11.5, 90), "R5": (24.0, 11.5, 90),
     "U2": (10.0, 13.0, 0), "C1": (7.0, 11.5, 90), "C2": (7.0, 15.5, 90),
     "R2": (29.0, 10.0, 0), "D1": (29.0, 12.5, 0),
     "U1": (20.0, 49.0, 0), "J2": (2.54, 21.0, 90), "J3": (37.46, 21.0, 90), "J4": (37.5, 52.0, 90),
@@ -65,7 +65,12 @@ def build(s, L, S):
          "legend to edge 0.2 mm")
 
     s.op("layout.sync", None, "update PCB from schematic")
-    for des, (x, y, r) in PLACE.items():
+    # The USB-C footprint's origin is the receptacle's outline centre with
+    # the mating face toward -y, so half its depth puts the face on y = 0.
+    lib = s.raw("project.inspect")["result"]["project"]["library"]
+    usbc = next(k["definition"]["form"] for k in lib["packages"] if k["id"] == L["usbc"]["package"])
+    place = dict(PLACE, J1=(PLACE["J1"][0], usbc["depth"] / 2, PLACE["J1"][2]))
+    for des, (x, y, r) in place.items():
         inst = S["instances"][des]["id"]
         s.op("layout.move", {"instance": inst, "position": [x, y], "rotation_deg": float(r), "layer": "Top"}, f"place {des}")
 

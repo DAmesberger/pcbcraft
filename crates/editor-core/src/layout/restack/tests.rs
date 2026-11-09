@@ -54,6 +54,7 @@ fn eight_layers() -> Fallible<Engine> {
         &mut engine,
         Operation::Fill(FillCommand::Add {
             fill: Box::new(FillSpec {
+                region: crate::model::fill::FillRegion::Drawn,
                 name: String::new(),
                 net: Some(net),
                 layer: CopperLayer::Inner(6),

@@ -998,3 +998,126 @@ fn board_edit_reports_what_it_created() -> Fallible<()> {
     assert!(engine.revision() > before);
     Ok(())
 }
+
+/// The largest x of a fill's computed copper, if it has any.
+fn copper_right(engine: &Engine, fill: pcbcraft_core::Id) -> Option<f64> {
+    let copper = engine.project().fill(fill)?.computed.as_ref()?;
+    copper
+        .regions
+        .iter()
+        .flat_map(|r| &r.outer)
+        .map(|p| p[0])
+        .reduce(f64::max)
+}
+
+/// A fill that follows the board (`region: board`, no outline of its
+/// own) takes the solved outline after a board parameter edit; a refill
+/// grows its copper to the new edge less the edge clearance, a drawn fill
+/// stays where it was drawn, and undo restores both.
+#[test]
+fn a_board_following_fill_grows_with_the_board_width() -> Fallible<()> {
+    use pcbcraft_core::layout::fill::{FillCommand, RefillTarget};
+    use pcbcraft_core::model::fill::{FillRegion, FillSpec};
+    let mut engine = sketched()?;
+    let add = |engine: &mut Engine, spec: serde_json::Value| -> Fallible<pcbcraft_core::Id> {
+        let spec: FillSpec = serde_json::from_value(spec)?;
+        match apply(
+            engine,
+            Operation::Fill(FillCommand::Add {
+                fill: Box::new(spec),
+            }),
+        )? {
+            Outcome::FillAdded { fill } => Ok(fill),
+            other => Err(format!("{other:?}").into()),
+        }
+    };
+    let islands = serde_json::json!({"islands": {"remove": "never"}});
+    let follows = add(
+        &mut engine,
+        serde_json::json!({"name": "plane", "net": null, "layer": "Bottom",
+                           "region": "board", "settings": islands}),
+    )?;
+    let drawn_outline = serde_json::json!({"start": [0.0, 0.0], "segments": [
+        {"line": {"to": [60.0, 0.0]}}, {"line": {"to": [60.0, 40.0]}},
+        {"line": {"to": [0.0, 40.0]}}, {"line": {"to": [0.0, 0.0]}}]});
+    let drawn = add(
+        &mut engine,
+        serde_json::json!({"name": "drawn", "net": null, "layer": "Top",
+                           "outline": drawn_outline, "settings": islands}),
+    )?;
+    let outer = |engine: &Engine| engine.project().board().outer.clone();
+    let fill = |engine: &Engine, id| engine.project().fill(id).cloned().ok_or("fill");
+    assert_eq!(fill(&engine, follows)?.region, FillRegion::Board);
+    assert_eq!(fill(&engine, follows)?.outline, outer(&engine));
+    let refill = |engine: &mut Engine| {
+        apply(
+            engine,
+            Operation::Fill(FillCommand::Refill {
+                target: RefillTarget::All,
+            }),
+        )
+    };
+    refill(&mut engine)?;
+    let edge = engine.project().rules.effective().copper.clearance.get(
+        pcbcraft_core::rules::CopperObject::Fill,
+        pcbcraft_core::rules::CopperObject::BoardEdge,
+    );
+    assert!(edge > 0.0);
+    let near = |x: Option<f64>, want: f64| x.is_some_and(|x| x <= want + 1e-6 && x >= want - 0.02);
+    assert!(near(copper_right(&engine, follows), 60.0 - edge));
+    let before = engine.project().clone();
+
+    edit(&mut engine, vec![set("width", "80 mm")])?;
+    assert_eq!(engine.project().board_size, [80.0, 40.0]);
+    // The region follows at once; the stored copper is stale until a refill.
+    assert_eq!(fill(&engine, follows)?.outline, outer(&engine));
+    assert!(pcbcraft_core::layout::fill::is_stale(
+        engine.project(),
+        &fill(&engine, follows)?
+    ));
+    refill(&mut engine)?;
+    assert!(near(copper_right(&engine, follows), 80.0 - edge));
+    // The drawn fill keeps its own outline: its copper stops where it
+    // was drawn, now short of the moved edge.
+    assert_eq!(
+        fill(&engine, drawn)?.outline,
+        before.fill(drawn).ok_or("drawn")?.outline
+    );
+    assert!(copper_right(&engine, drawn).is_some_and(|x| x <= 60.0 + 1e-6));
+
+    engine.undo()?;
+    engine.undo()?;
+    assert_eq!(*engine.project(), before);
+    assert!(near(copper_right(&engine, follows), 60.0 - edge));
+
+    // Its outline is derived: editing it is refused, in the engine's
+    // words, until the fill is made a drawn one.
+    let mut moved = fill(&engine, follows)?;
+    moved.outline = serde_json::from_value(serde_json::json!({"start": [5.0, 5.0], "segments": [
+        {"line": {"to": [30.0, 5.0]}}, {"line": {"to": [30.0, 30.0]}},
+        {"line": {"to": [5.0, 30.0]}}, {"line": {"to": [5.0, 5.0]}}]}))?;
+    let rev = engine.revision();
+    let refused = apply(
+        &mut engine,
+        Operation::Fill(FillCommand::Edit {
+            fill: Box::new(moved.clone()),
+        }),
+    );
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|e| format!("{e:?}").contains("fill.follows_board")),
+        "{refused:?}"
+    );
+    assert_eq!(engine.revision(), rev);
+    moved.region = FillRegion::Drawn;
+    apply(
+        &mut engine,
+        Operation::Fill(FillCommand::Edit {
+            fill: Box::new(moved.clone()),
+        }),
+    )?;
+    edit(&mut engine, vec![set("width", "70 mm")])?;
+    assert_eq!(fill(&engine, follows)?.outline, moved.outline);
+    Ok(())
+}

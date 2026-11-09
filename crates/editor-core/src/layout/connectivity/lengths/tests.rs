@@ -167,6 +167,7 @@ fn a_path_through_a_fill_is_measured_and_marked() -> Result<()> {
     project.fills.push(Fill::from_spec(
         id,
         FillSpec {
+            region: crate::model::fill::FillRegion::Drawn,
             name: String::new(),
             net: Some(SHARED),
             layer: top(),
