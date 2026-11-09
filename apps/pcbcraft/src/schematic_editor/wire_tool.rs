@@ -275,7 +275,7 @@ impl SchematicEditor {
             .map(|c| c.radius)
             .filter(|&r| r > 0.0 && r < radius)
             .collect();
-        let operation = self.join(engine, plan, draft.from, to);
+        let operation = self.join(engine, plan);
         if self.update.is_open() {
             self.wire_review = Some((draft.clone(), engine.revision()));
         }

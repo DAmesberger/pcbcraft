@@ -7,9 +7,15 @@
 //! the routed (or else oldest) ID; split-off groups and new terminals receive new
 //! IDs. Tracks are never retagged here: callers decide whether a change to
 //! routed nets is acceptable.
-use crate::diagnostics::{Error, Result};
+//!
+//! A change that joins two nets that each carry a name of their own (VBUS
+//! and GND) merges them only when its caller asks for that merge after a
+//! review ([`named_merges`], [`refuse_named_merges`]).
+use crate::diagnostics::{Error, ObjectRef, Result};
 use crate::ids::{Endpoint, Id, SheetId};
 use crate::model::{Label, LabelKind, Net, Project, WireEnd};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_NETS: usize = 262_144;
@@ -534,6 +540,219 @@ pub fn reconcile(project: &mut Project) -> Result<NetChanges> {
         project.nets = old;
     }
     Ok(changes)
+}
+
+/// One net a [`NamedMerge`] joins, as it was before the change.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MergedNet {
+    pub net: Id,
+    pub name: String,
+}
+
+/// Nets that each carried a name of their own before a change (a label,
+/// power port or sheet pin, [`name_sources`]) and are one net after it,
+/// with no name in common: VBUS and GND. Such a merge applies only when the
+/// caller asks for it after a review (`ApplyUpdate::merge_named_nets`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct NamedMerge {
+    /// The nets that become one, oldest first.
+    pub nets: Vec<MergedNet>,
+    /// The net they become: the routed one survives, otherwise the oldest
+    /// ([`reconcile`]).
+    pub net: Id,
+    /// The name it carries after the change.
+    pub name: String,
+    /// What joins them: the labels, sheet pins and wires on that net the
+    /// change adds or alters, at most [`MAX_JOINED_BY`].
+    pub joined_by: Vec<ObjectRef>,
+}
+
+/// The most objects a [`NamedMerge`] lists as joining its nets.
+pub const MAX_JOINED_BY: usize = 32;
+
+impl NamedMerge {
+    /// "VBUS and GND", "VBUS, 3V3 and GND".
+    pub fn names(&self) -> String {
+        let names: Vec<&str> = self.nets.iter().map(|n| n.name.as_str()).collect();
+        match names.split_last() {
+            Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+            Some((last, _)) => (*last).to_owned(),
+            None => String::new(),
+        }
+    }
+
+    /// One line: "Joins VBUS and GND into one net, GND".
+    pub fn line(&self) -> String {
+        format!("Joins {} into one net, {}", self.names(), self.name)
+    }
+
+    /// The full wording, naming what joins the nets in `after`.
+    pub fn detail(&self, after: &Project) -> String {
+        let mut joiners: Vec<String> = Vec::new();
+        let mut wires = 0usize;
+        for object in &self.joined_by {
+            match object {
+                ObjectRef::Label { id } => {
+                    if let Some(label) = after.label(*id) {
+                        joiners.push(format!("the {} {}", label.kind.noun(), label.name));
+                    }
+                }
+                ObjectRef::SheetPin { id } => {
+                    if let Some(pin) = after
+                        .sheet_symbols
+                        .iter()
+                        .flat_map(|s| &s.pins)
+                        .find(|p| p.id == *id)
+                    {
+                        joiners.push(format!("the sheet pin {}", pin.name));
+                    }
+                }
+                ObjectRef::Wire { .. } => wires += 1,
+                _ => {}
+            }
+        }
+        match wires {
+            0 => {}
+            1 => joiners.push("a wire".into()),
+            n => joiners.push(format!("{n} wires")),
+        }
+        let by = match joiners.split_last() {
+            Some((last, rest)) if !rest.is_empty() => {
+                format!("{} and {last} join them", rest.join(", "))
+            }
+            Some((last, _)) => format!("{last} joins them"),
+            None => "this change joins them".into(),
+        };
+        format!(
+            "Nets {} become one net, {}: {by}. Apply only if they are meant to be one net.",
+            self.names(),
+            self.name
+        )
+    }
+}
+
+/// Every [`NamedMerge`] from `before` to `after`. Only nets that join
+/// terminals of two named nets are looked at, so a change that merges
+/// nothing costs one pass over the terminals.
+pub fn named_merges(before: &Project, after: &Project) -> Vec<NamedMerge> {
+    let before_net: BTreeMap<Endpoint, Id> = before
+        .nets
+        .iter()
+        .flat_map(|net| net.terminals.iter().map(move |t| (*t, net.id)))
+        .collect();
+    let joined: Vec<(&Net, BTreeSet<Id>)> = after
+        .nets
+        .iter()
+        .filter_map(|net| {
+            let ids: BTreeSet<Id> = net
+                .terminals
+                .iter()
+                .filter_map(|t| before_net.get(t).copied())
+                .collect();
+            (ids.len() >= 2).then_some((net, ids))
+        })
+        .collect();
+    if joined.is_empty() {
+        return Vec::new();
+    }
+    let names: BTreeMap<Id, BTreeSet<String>> = name_sources(before)
+        .into_iter()
+        .map(|(id, sources)| {
+            let names = sources
+                .iter()
+                .map(|s| s.name.to_ascii_lowercase())
+                .collect();
+            (id, names)
+        })
+        .collect();
+    let mut out = Vec::new();
+    for (net, ids) in joined {
+        let named: Vec<(Id, &BTreeSet<String>)> = ids
+            .iter()
+            .filter_map(|id| Some((*id, names.get(id)?)))
+            .collect();
+        let apart = named.iter().enumerate().any(|(i, (_, a))| {
+            named
+                .get(i + 1..)
+                .unwrap_or_default()
+                .iter()
+                .any(|(_, b)| a.is_disjoint(b))
+        });
+        if !apart {
+            continue;
+        }
+        out.push(NamedMerge {
+            nets: named
+                .iter()
+                .map(|(id, _)| MergedNet {
+                    net: *id,
+                    name: before.net_name(*id).to_owned(),
+                })
+                .collect(),
+            net: net.id,
+            name: net.name.clone(),
+            joined_by: joined_by(before, after, net.id),
+        });
+    }
+    out
+}
+
+/// The labels, sheet pins and wires on `net` in `after` that `before` does
+/// not have as they are.
+fn joined_by(before: &Project, after: &Project, net: Id) -> Vec<ObjectRef> {
+    let mut out = Vec::new();
+    let before_pin = |id: Id| {
+        before
+            .sheet_symbols
+            .iter()
+            .flat_map(|s| &s.pins)
+            .find(|p| p.id == id)
+    };
+    for (end, at) in point_nets(after) {
+        if at != net {
+            continue;
+        }
+        match end {
+            WireEnd::Label(l) if before.label(l.label) != after.label(l.label) => {
+                out.push(ObjectRef::Label { id: l.label });
+            }
+            WireEnd::SheetPin(p) => {
+                let now = after
+                    .sheet_symbols
+                    .iter()
+                    .flat_map(|s| &s.pins)
+                    .find(|x| x.id == p.sheet_pin);
+                if before_pin(p.sheet_pin) != now {
+                    out.push(ObjectRef::SheetPin { id: p.sheet_pin });
+                }
+            }
+            _ => {}
+        }
+    }
+    for (wire, at) in wire_nets(after) {
+        if at == net
+            && before.wires.iter().find(|w| w.id == wire)
+                != after.wires.iter().find(|w| w.id == wire)
+        {
+            out.push(ObjectRef::Wire { id: wire });
+        }
+    }
+    out.truncate(MAX_JOINED_BY);
+    out
+}
+
+/// Refuse a change from `before` to `after` that makes a [`NamedMerge`]:
+/// the caller previews it and applies it as a reviewed update that asks
+/// for the merge.
+pub fn refuse_named_merges(before: &Project, after: &Project) -> Result<()> {
+    let merges = named_merges(before, after);
+    let Some(first) = merges.first() else {
+        return Ok(());
+    };
+    Err(Error::Conflict(format!(
+        "net.named_merge: {} Review it first: named nets join only through a reviewed update that asks for the merge (merge_named_nets: true).",
+        first.detail(after)
+    )))
 }
 
 pub fn default_name(id: Id) -> String {

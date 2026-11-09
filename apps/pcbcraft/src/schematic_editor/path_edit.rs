@@ -551,7 +551,7 @@ impl SchematicEditor {
         let drag = self.path_drag.take()?;
         let command = drag.command?;
         self.selected_corner = None;
-        self.send_path_edit(ctx, engine, drag.wire, command, drag.landing.map(|l| l.0))
+        self.send_path_edit(ctx, engine, command)
     }
 
     /// A click on the selected path: a corner is picked for Delete; a
@@ -571,9 +571,7 @@ impl SchematicEditor {
             Grab::Corner(index) if double => self.send_path_edit(
                 ctx,
                 engine,
-                wire,
                 SchematicCommand::RemoveWireCorner { wire, index },
-                None,
             ),
             Grab::Corner(index) | Grab::Radius(index) => {
                 self.selected_corner = Some((wire, index));
@@ -587,13 +585,7 @@ impl SchematicEditor {
                     .map(|(_, new)| (on_grid, new))
                     .or_else(|| wire_edit::insert_corner(&path, on).map(|(_, new)| (on, new)))?;
                 self.selected_corner = Some((wire, new));
-                self.send_path_edit(
-                    ctx,
-                    engine,
-                    wire,
-                    SchematicCommand::InsertWireCorner { wire, at },
-                    None,
-                )
+                self.send_path_edit(ctx, engine, SchematicCommand::InsertWireCorner { wire, at })
             }
             Grab::Segment(_) | Grab::End(_) => None,
         }
@@ -627,13 +619,11 @@ impl SchematicEditor {
             let sent = self.send_path_edit(
                 ctx,
                 engine,
-                wire,
                 SchematicCommand::SetWireRadius {
                     wire,
                     index,
                     radius,
                 },
-                None,
             );
             if reduced && sent.is_some() {
                 wire_tool::post_reduced(ctx, &[radius]);
@@ -645,9 +635,7 @@ impl SchematicEditor {
             return self.send_path_edit(
                 ctx,
                 engine,
-                wire,
                 SchematicCommand::RemoveWireSegment { wire, index },
-                None,
             );
         }
         if !crate::keys::pressed(ctx, "schematic.delete") {
@@ -662,9 +650,7 @@ impl SchematicEditor {
             Some(index) => self.send_path_edit(
                 ctx,
                 engine,
-                wire,
                 SchematicCommand::RemoveWireCorner { wire, index },
-                None,
             ),
             None => self.stage_update(
                 engine,
@@ -676,15 +662,13 @@ impl SchematicEditor {
     }
 
     /// One gesture's command. A refusal is a toast and leaves the path; an
-    /// edit that touches routed copper, or lands on a point that merges two
-    /// named nets, opens the review; anything else applies at once.
+    /// edit core says needs a review (it touches routed copper or merges two
+    /// named nets) opens the review; anything else applies at once.
     fn send_path_edit(
         &mut self,
         ctx: &egui::Context,
         engine: &Engine,
-        wire: Id,
         command: SchematicCommand,
-        landing: Option<WireTarget>,
     ) -> Option<Operation> {
         let change = Change::Schematic {
             command: command.clone(),
@@ -700,14 +684,7 @@ impl SchematicEditor {
             );
             return None;
         }
-        let routed = !plan.conflicting_tracks.is_empty() || !plan.conflicting_vias.is_empty();
-        let this = WireTarget::OnWire(WirePoint {
-            wire,
-            at: [0.0, 0.0],
-        });
-        let names_merge =
-            landing.is_some_and(|to| self.joins_named_nets(engine.project(), this, to));
-        if routed || names_merge {
+        if plan.needs_review() {
             return self.stage_update(engine, change);
         }
         Some(Operation::Schematic(command))

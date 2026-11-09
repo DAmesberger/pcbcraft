@@ -361,6 +361,9 @@ impl UpdatePreview {
                     expected_revision: plan.revision,
                     change: plan.change.clone(),
                     remove_conflicting_tracks: remove,
+                    // The review names each merge; Apply is the person's
+                    // decision to join them.
+                    merge_named_nets: !plan.merges_named.is_empty(),
                 })))
             }
         }
@@ -1160,6 +1163,7 @@ mod tests {
                 expected_revision: applied.revision(),
                 change: plan.change.clone(),
                 remove_conflicting_tracks: false,
+                merge_named_nets: false,
             })),
         )?;
         assert!(
@@ -1671,6 +1675,78 @@ mod tests {
         assert!(
             review.marks().ok_or("marks")?.focus.is_empty(),
             "a new plan starts unlocated"
+        );
+        Ok(())
+    }
+
+    /// Z4: the review of a GND port dropped on the VBUS wire names both
+    /// nets and the net they become; its Apply is the decision to merge
+    /// them, so it asks for the merge and the engine takes it.
+    #[test]
+    fn a_named_merge_review_names_both_nets_and_apply_asks_for_the_merge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_core::schematic::{SchematicCommand, WirePoint, WireTarget};
+        use pcbcraft_core::{Endpoint, LabelKind, PowerStyle, TerminalId, WireEnd};
+        let mut engine = Engine::demo()?;
+        let project = engine.project();
+        let ep = |n: usize, terminal: u32| -> Result<Endpoint, String> {
+            Ok(Endpoint {
+                instance: project.instances.get(n).ok_or("part")?.id,
+                terminal: TerminalId(terminal),
+            })
+        };
+        let (vbus_pin, joined, gnd_pin) = (ep(0, 2)?, ep(1, 1)?, ep(1, 2)?);
+        let ends = [WireEnd::from(vbus_pin), WireEnd::from(joined)];
+        let wire = project
+            .wires
+            .iter()
+            .find(|w| ends.contains(&w.from) && ends.contains(&w.to))
+            .map(|w| w.id)
+            .ok_or("the demo's wire")?;
+        let a = pcbcraft_core::schematic::pin_position(project, vbus_pin).ok_or("pin")?;
+        let b = pcbcraft_core::schematic::pin_position(project, joined).ok_or("pin")?;
+        let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+        let port = |name: &str, style, attach| SchematicCommand::PlaceLabel {
+            sheet: None,
+            name: name.into(),
+            kind: LabelKind::Power { style },
+            position: middle,
+            rotation: Default::default(),
+            attach: Some(attach),
+        };
+        for (name, style, at) in [
+            ("VBUS", PowerStyle::Bar, vbus_pin),
+            ("GND", PowerStyle::Ground, gnd_pin),
+        ] {
+            engine.apply(
+                engine.revision(),
+                Operation::Schematic(port(name, style, WireTarget::Terminal(at))),
+            )?;
+        }
+        let drop = port(
+            "GND",
+            PowerStyle::Ground,
+            WireTarget::OnWire(WirePoint { wire, at: middle }),
+        );
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let mut review = UpdatePreview::default();
+        review.begin(&engine, Change::Schematic { command: drop });
+        let (output, _) = frame(&mut review, &engine, &ctx, vec![]);
+        assert!(
+            text_at(&output, "Joins VBUS and GND into one net, GND").is_some(),
+            "the review does not name the merge"
+        );
+        let op = click(&mut review, &engine, &ctx, "Apply update")?.ok_or("apply")?;
+        let Operation::Update(request) = &op else {
+            return Err("not an update".into());
+        };
+        assert!(request.merge_named_nets, "Apply asks for the merge");
+        engine.apply(engine.revision(), op)?;
+        let project = engine.project();
+        assert_eq!(
+            project.net_of(vbus_pin).map(|n| n.id),
+            project.net_of(gnd_pin).map(|n| n.id)
         );
         Ok(())
     }

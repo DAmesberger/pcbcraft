@@ -343,11 +343,26 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
         .next()
         .map(|o| o.id)
         .ok_or_else(|| Error::Invalid("occurrence".into()))?;
-    run(
+    // Moved right by 10 mm, pin 1 would land on the SDA label left where
+    // pin 4 was: GND and SDA would become one net, so that move is refused.
+    let kept = Snapshot::of(&engine);
+    let shorted = run(
         &mut engine,
         C::MoveUnit {
             occurrence,
             position: [10.0, 0.0],
+        },
+    );
+    assert!(
+        matches!(&shorted, Err(Error::Conflict(m)) if m.starts_with("net.named_merge:")),
+        "{shorted:?}"
+    );
+    kept.assert_kept(&engine, "a move that shorts GND to SDA");
+    run(
+        &mut engine,
+        C::MoveUnit {
+            occurrence,
+            position: [0.0, 10.0],
         },
     )?;
     let project = engine.project();

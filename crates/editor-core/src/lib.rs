@@ -972,6 +972,7 @@ impl Engine {
         self.check_revision(expected_revision)?;
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
+        let merge_named = matches!(&operation, Operation::Update(u) if u.merge_named_nets);
         let outcome = match operation {
             Operation::Library(command) => {
                 commands::apply_library(&mut candidate, command, evaluator)?
@@ -1139,6 +1140,11 @@ impl Engine {
             layout::outline::follow(&self.document.project, project, evaluators.board)?;
             if !reviewed {
                 schematic::protect_routed_nets(&self.document.project, project)?;
+            }
+            // Every operation, from any surface: two named nets become one
+            // only when a reviewed update asks for it.
+            if !merge_named {
+                nets::refuse_named_merges(&self.document.project, project)?;
             }
             validate::edited_document(
                 &self.document.project,
@@ -1450,6 +1456,7 @@ impl Engine {
                 expected_revision,
                 change,
                 remove_conflicting_tracks,
+                merge_named_nets: false,
             })),
         )
         .map(|_| ())

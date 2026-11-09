@@ -18,6 +18,7 @@ mod labels;
 mod library;
 mod library_folders;
 mod mechanical;
+mod named_merges;
 mod net_classes;
 mod orientation;
 mod part_authoring;

@@ -582,3 +582,122 @@ fn verbose_over_mcp_returns_the_snapshot_once() -> super::scenario::Fallible<()>
     assert_eq!(full["result"]["content"].as_array().map(Vec::len), Some(1));
     Ok(())
 }
+
+/// Z4: a GND port dropped on the VBUS wire over MCP is refused as a named
+/// merge and changes nothing; the preview lists the merge, an update that
+/// does not ask for it is refused too, and one that asks merges the nets.
+#[test]
+fn a_gnd_port_on_a_vbus_wire_over_mcp_merges_only_when_asked() -> super::scenario::Fallible<()> {
+    use pcbcraft_core::{Endpoint, TerminalId, schematic::pin_position};
+    let engine = Engine::demo()?;
+    let project = engine.project();
+    let [first, second] = [0, 1].map(|n| project.instances.get(n).map(|i| i.id));
+    let (Some(first), Some(second)) = (first, second) else {
+        return Err("the demo has two parts".into());
+    };
+    let pin = |instance, terminal| Endpoint {
+        instance,
+        terminal: TerminalId(terminal),
+    };
+    let (vbus_pin, gnd_pin) = (pin(first, 2), pin(second, 2));
+    let wire = project.wires.first().ok_or("the demo's wire")?.id;
+    let a = pin_position(project, vbus_pin).ok_or("pin")?;
+    let b = pin_position(project, pin(second, 1)).ok_or("pin")?;
+    let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+    let mut server = Server::new(Session::new(engine));
+    let port = |name: &str, style: &str, attach: Value| {
+        json!({"editor": "Schematic", "operation": {"command": "label.place", "params": {
+            "name": name, "kind": {"type": "power", "style": style},
+            "position": middle, "attach": attach}}})
+    };
+    let mut id = 0;
+    let mut tool = |server: &mut Server, name: &str, arguments: Value| {
+        id += 1;
+        call(
+            server,
+            id,
+            "tools/call",
+            json!({"name": name, "arguments": arguments}),
+        )
+    };
+    let revision = |server: &Server| server.session().engine().revision();
+    for (name, style, at) in [("VBUS", "bar", vbus_pin), ("GND", "ground", gnd_pin)] {
+        let r = revision(&server);
+        let placed = tool(
+            &mut server,
+            "project_apply",
+            json!({"expected_revision": r, "operation": port(name, style, json!(at))}),
+        );
+        assert_eq!(placed["result"]["isError"], false, "{placed}");
+    }
+    let net_name = |server: &Server, at: Endpoint| {
+        let project = server.session().engine().project();
+        project
+            .net_of(at)
+            .map(|n| project.net_name(n.id).to_owned())
+    };
+    assert_eq!(net_name(&server, vbus_pin).as_deref(), Some("VBUS"));
+    assert_eq!(net_name(&server, gnd_pin).as_deref(), Some("GND"));
+
+    let drop = port("GND", "ground", json!({"wire": wire, "at": middle}));
+    let before = server.session().engine().document().clone();
+    let r = revision(&server);
+    let refused = tool(
+        &mut server,
+        "project_apply",
+        json!({"expected_revision": r, "operation": drop.clone()}),
+    );
+    assert_eq!(refused["result"]["isError"], true, "{refused}");
+    let body = payload(&refused);
+    assert_eq!(body["code"], "conflict", "{body}");
+    // The rule ID travels apart from the text (in `rule` or `details`).
+    assert!(body.to_string().contains("net.named_merge"), "{body}");
+    let message = body["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("VBUS and GND") && message.contains("merge_named_nets: true"),
+        "{message}"
+    );
+    assert_eq!(server.session().engine().document(), &before);
+    assert_eq!(revision(&server), r);
+
+    let change = json!({"kind": "Schematic", "params": {"command": drop["operation"]}});
+    let preview = payload(&tool(
+        &mut server,
+        "project_preview_update",
+        json!({"change": change}),
+    ));
+    let merges = preview["merges_named"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(merges.len(), 1, "{preview}");
+    let names: Vec<&str> = merges[0]["nets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| n["name"].as_str())
+        .collect();
+    assert_eq!(names, ["VBUS", "GND"]);
+    assert_eq!(merges[0]["name"], "GND");
+
+    let unasked = tool(
+        &mut server,
+        "project_apply_update",
+        json!({"expected_revision": r, "change": change, "remove_conflicting_tracks": false}),
+    );
+    assert_eq!(unasked["result"]["isError"], true, "{unasked}");
+    assert_eq!(server.session().engine().document(), &before);
+    let joined = tool(
+        &mut server,
+        "project_apply_update",
+        json!({"expected_revision": r, "change": change,
+               "remove_conflicting_tracks": false, "merge_named_nets": true}),
+    );
+    assert_eq!(joined["result"]["isError"], false, "{joined}");
+    let project = server.session().engine().project();
+    assert_eq!(
+        project.net_of(vbus_pin).map(|n| n.id),
+        project.net_of(gnd_pin).map(|n| n.id)
+    );
+    Ok(())
+}
