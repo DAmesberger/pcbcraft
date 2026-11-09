@@ -27,7 +27,7 @@ use pcbcraft_core::library::{
 use pcbcraft_core::{
     DefinitionId, Engine, LibraryCommand, ModelRef, Operation, Query, QueryResult,
 };
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 /// The builder revision new generated models are authored against

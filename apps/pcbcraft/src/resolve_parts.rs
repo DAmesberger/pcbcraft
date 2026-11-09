@@ -22,7 +22,7 @@ use pcbcraft_core::{
     ComponentRef, Engine, FieldRef, Id, InstanceCommand, Operation, PartRef, Project, Query,
     QueryResult,
 };
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 /// Designators a group title lists before summarising the rest.

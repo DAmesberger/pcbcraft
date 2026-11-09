@@ -8,7 +8,7 @@
 //! option; see ATTRIBUTION.md.
 use egui::{Color32, Painter, Pos2, Stroke, vec2};
 use pcbcraft_core::issues::Severity;
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// What a glyph, toast or message means, most severe first. `Ok` is the
 /// passed state of a check ("No issues"); the rest follow core's

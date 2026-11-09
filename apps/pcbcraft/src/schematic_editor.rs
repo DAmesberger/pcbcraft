@@ -30,7 +30,7 @@ use pcbcraft_core::{
     schematic::{self, ClipObject, SchematicCommand, WirePoint, WireTarget},
     updates::{ApplyUpdate, Change, InstanceChange},
 };
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;

@@ -266,7 +266,7 @@ impl PartEditor {
         canvas: egui::Rect,
         engine: &Engine,
     ) -> Option<Operation> {
-        let t = solidcraft_ui_egui::theme::Tokens::get();
+        let t = solidcraft_theme::Tokens::get();
         // The navigation bar is one button wide, centred at the canvas
         // bottom (app/chrome.rs `navigation_bar`); this bar sits right of it.
         let size = egui::vec2(

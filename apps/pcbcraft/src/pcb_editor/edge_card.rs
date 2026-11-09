@@ -25,7 +25,8 @@ use pcbcraft_core::model::board::{
 };
 use pcbcraft_core::{Id, Operation, Placement, Point, Project};
 use pcbcraft_solidcraft::footprint::view as sketch_view;
-use solidcraft_ui_egui::{fonts, theme::Tokens};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::fonts;
 
 /// The Board edge section's text buffers for one constraint.
 #[derive(Clone, Debug, Default)]

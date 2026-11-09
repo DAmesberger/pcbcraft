@@ -32,6 +32,7 @@ const UI_CRATES: &[&str] = &[
     "rfd",
     "pollster",
     "solidcraft-ui-egui",
+    "solidcraft-theme",
 ];
 
 /// The core stays pure so it compiles and runs unchanged on wasm.
@@ -99,11 +100,14 @@ pub fn check() -> Result<()> {
             let solidcraft = dep.starts_with("solidcraft-") || dep.starts_with("truck-");
             let allowed = matches!(
                 (name, dep),
-                ("pcbcraft-solidcraft", "solidcraft-engine") | ("pcbcraft", "solidcraft-ui-egui")
+                (
+                    "pcbcraft-solidcraft",
+                    "solidcraft-engine" | "solidcraft-color"
+                ) | ("pcbcraft", "solidcraft-ui-egui" | "solidcraft-theme")
             );
             if solidcraft && !allowed {
                 violations.push(format!(
-                    "{name} depends on {dep}; Solidcraft is reached through pcbcraft-solidcraft (engine) or the app (UI kit) only"
+                    "{name} depends on {dep}; Solidcraft is reached through pcbcraft-solidcraft (engine, colour) or the app (UI kit, tokens) only"
                 ));
             }
         }

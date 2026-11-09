@@ -610,7 +610,7 @@ impl ModelCard {
 /// The model card: the outline thumbnail, then name, revision and the
 /// source line, licence and lead map.
 fn model_card_rows(ui: &mut Ui, card: &ModelCard) {
-    let t = solidcraft_ui_egui::theme::Tokens::get();
+    let t = solidcraft_theme::Tokens::get();
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), t.space_24 * 3.0),
         egui::Sense::hover(),

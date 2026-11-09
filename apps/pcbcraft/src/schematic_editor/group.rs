@@ -20,8 +20,8 @@ use pcbcraft_core::schematic::{self, ClipObject, Pasted, SchematicCommand, label
 use pcbcraft_core::updates::Change;
 use pcbcraft_core::{EditPolicy, Engine, Id, LabelKind, Operation, Point, Project, SheetItem};
 use pcbcraft_core::{Wire, WireEnd};
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::selection::BoxSel;
-use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::collections::{BTreeMap, BTreeSet};
 

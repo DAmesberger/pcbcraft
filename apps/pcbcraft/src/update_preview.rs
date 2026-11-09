@@ -25,7 +25,7 @@ use pcbcraft_core::{
         summarize,
     },
 };
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use std::collections::BTreeSet;
 
 /// One shown title, at most this many characters.

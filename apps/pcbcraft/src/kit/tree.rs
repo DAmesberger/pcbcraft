@@ -1,7 +1,8 @@
 //! Browser tree rows and card headers (upstream `ui_kit/tree.rs`,
 //! `browser.rs::browser_header` and `ui_kit/panel.rs::inspector_header`).
 use egui::{FontId, Rect, Sense, Ui, pos2, vec2};
-use solidcraft_ui_egui::{fonts, theme::Tokens};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::fonts;
 
 /// Upstream `TREE_ROW_HEIGHT` and Browser indent.
 pub const TREE_ROW_HEIGHT: f32 = 26.0;

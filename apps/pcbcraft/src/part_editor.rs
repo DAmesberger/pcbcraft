@@ -82,7 +82,8 @@ use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FunctionId, GraphicId, LibraryCommand, ObjectRef,
     Operation, PackageTerminalId, PadId, Point, Query, QueryResult, TerminalId, UnitId,
 };
-use solidcraft_ui_egui::{fonts, theme::Tokens};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::fonts;
 use std::sync::Arc;
 #[cfg(test)]
 pub use working_set::Template;

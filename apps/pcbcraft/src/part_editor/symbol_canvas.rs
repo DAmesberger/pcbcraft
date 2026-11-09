@@ -19,7 +19,8 @@ use pcbcraft_core::library::graphics::{
 use pcbcraft_core::library::{Graphic, Item, Pin, PinDirection, SymbolHit, TextMetric, Unit};
 use pcbcraft_core::schematic;
 use pcbcraft_core::{Engine, GraphicId, Point, TerminalId, UnitId};
-use solidcraft_ui_egui::{fonts, theme::Tokens};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::fonts;
 use std::sync::Arc;
 
 /// The unit being drawn as core resolves it, and its snap targets, for one

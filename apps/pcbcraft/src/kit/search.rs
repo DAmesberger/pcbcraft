@@ -6,9 +6,9 @@
 //! compact `filter_field` and `search_message` are local additions in the
 //! same look.
 use egui::{FontId, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::{
     fonts,
-    theme::Tokens,
     ui_kit::{Container, Surface},
 };
 

@@ -15,7 +15,8 @@ use pcbcraft_core::geometry::{Bounds, Shape};
 use pcbcraft_core::library::graphics::{DrawingLayer, Fill, Item, TextContent};
 use pcbcraft_core::library::{PadKind, PadSide, PlacedText};
 use pcbcraft_core::{PadId, Point};
-use solidcraft_ui_egui::{fonts, theme::Tokens};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::fonts;
 
 /// Pick distance around a land, in pixels.
 const PICK_PX: f32 = 3.0;

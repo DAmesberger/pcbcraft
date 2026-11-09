@@ -11,8 +11,8 @@ that cannot be used without a GPL, LGPL or AGPL license, and any unreviewed lice
 
 The 3D engine and desktop UI come from Solidcraft (https://github.com/tangency-labs/solidcraft),
 built from the fork https://github.com/DAmesberger/solidcraft at revision
-21ac01f4a43888476f13ca4e7d1f488eba4ffe63 (branch pcbcraft-smlib: upstream c18aaf7cc33bc7dccf2f0b1d2d31861b1c890228
-with its SMLib kernel, plus material-graph looks, via scaling and a font-order fix) and linked as the solidcraft-engine
+758c0ace13cad1359d00f2b36de5fb8dd2378e9d (branch pcbcraft-smlib: upstream ea4164dabbd5137c2f772b8e3bda172a4ed380c7
+with its vendored SMLib kernel (solidcore c0d3cc0124), plus material-graph looks, via scaling and a font-order fix) and linked as the solidcraft-engine
 and solidcraft-ui-egui crates together with Solidcraft's patched geometry and windowing crates.
 Copyright (c) 2026 SolidCraft contributors; MIT OR Apache-2.0. Agent instructions, build
 conventions and some UI and transport source are adapted from the same revision under its MIT

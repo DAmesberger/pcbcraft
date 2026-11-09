@@ -13,7 +13,7 @@ use pcbcraft_core::functions::rules::{
 use pcbcraft_core::functions::{self, FunctionSelections, PinConfigs, Resolution};
 use pcbcraft_core::library::ComponentDefinition;
 use pcbcraft_core::{FunctionId, RuleId, TerminalId};
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// What the syntax check says about one script.
 #[derive(Clone, Debug, PartialEq, Eq)]

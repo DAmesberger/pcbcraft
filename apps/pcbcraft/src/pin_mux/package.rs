@@ -5,7 +5,7 @@
 use super::model::{Model, PadView, Preview};
 use egui::{Color32, Rect, Sense, Stroke, Ui, pos2, vec2};
 use pcbcraft_core::ids::TerminalId;
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// The categorical tints, from the shared workspace accents, by
 /// peripheral declaration order.

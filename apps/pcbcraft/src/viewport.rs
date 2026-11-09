@@ -30,11 +30,11 @@ use pcbcraft_solidcraft::{
     render::Camera,
     scene::{Geometry, Place},
 };
+use solidcraft_theme as theme;
 use solidcraft_ui_egui::gpu::{
     self, Frame, GpuScene, GpuTarget, Palette, Renderer, SceneSlot, StudioEnvironment,
     ViewportCallback,
 };
-use solidcraft_ui_egui::theme;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};

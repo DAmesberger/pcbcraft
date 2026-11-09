@@ -75,7 +75,7 @@ use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, LibraryCommand, Operation, PackageTerminalId, Query,
     QueryResult,
 };
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::sync::Arc;
 

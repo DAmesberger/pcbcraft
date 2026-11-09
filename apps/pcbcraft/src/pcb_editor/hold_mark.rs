@@ -18,7 +18,8 @@ use super::edge_card::{constraint_of, evaluate};
 use super::{BoardView, body_polygon};
 use pcbcraft_core::layout::outline::held_at;
 use pcbcraft_core::{Placement, Project};
-use solidcraft_ui_egui::{icons, theme::Tokens};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::icons;
 
 /// The glyph's side, in points (Solidcraft's `GLYPH`).
 pub(super) const GLYPH: f32 = 15.0;

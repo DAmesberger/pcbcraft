@@ -14,10 +14,8 @@ use egui::{Align2, FontId, Sense, Ui, pos2, vec2};
 use pcbcraft_core::{CopperLayer, Layer};
 use pcbcraft_solidcraft::material::BodyKind;
 use pcbcraft_solidcraft::scene::Geometry;
-use solidcraft_ui_egui::{
-    theme::Tokens,
-    ui_kit::{self, Button, Container, Surface},
-};
+use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::ui_kit::{self, Button, Container, Surface};
 use std::collections::BTreeSet;
 
 /// Width of the layer popover's content.

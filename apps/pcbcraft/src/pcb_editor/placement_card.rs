@@ -14,7 +14,7 @@ use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::layout::{self, LayoutCommand, outline::BoardCommand};
 use pcbcraft_core::{Engine, Id, Operation, Placement, Point, Project};
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 /// Bound on typed placement coordinates (mm). The engine bounds a part's

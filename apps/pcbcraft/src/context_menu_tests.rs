@@ -84,7 +84,7 @@ fn contrast(rgba: &[u8], width: usize, rect: Rect, background: [u8; 3]) -> i32 {
 /// one, Delete is drawn in the error colour and a hovered row is lit.
 #[test]
 fn the_menus_look_measured_in_pixels() -> TestResult {
-    use solidcraft_ui_egui::theme::Tokens;
+    use solidcraft_theme::Tokens;
     let screen = Screen::new(egui::vec2(400.0, 320.0));
     let width = 400;
     let mut state = State::default();

@@ -12,7 +12,7 @@
 use super::issues::{ISSUES_BAR_HEIGHT, issue_line};
 use egui::{Rect, Ui, pos2, vec2};
 use pcbcraft_core::issues::IssueCounts;
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 
 /// The pinned footer's height, in points.
 pub const FOOTER_HEIGHT: f32 = 48.0;

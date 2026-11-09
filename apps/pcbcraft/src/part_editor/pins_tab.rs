@@ -32,7 +32,7 @@ use pcbcraft_core::{
     Engine, FunctionId, LibraryCommand, Operation, Query, QueryResult, ResourceId, RoleId, RuleId,
     TerminalId,
 };
-use solidcraft_ui_egui::theme::Tokens;
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 /// The tab's three sub-views.

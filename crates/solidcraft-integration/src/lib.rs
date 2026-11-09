@@ -25,9 +25,11 @@ pub use solidcraft_engine::profile;
 pub use solidcraft_engine::render;
 
 /// Solidcraft's geometry, with the plain vector and profile data its public
-/// API uses, which live in solidcore's record crate.
+/// API uses, which live in solidcore's record crate, and its sRGB transfer
+/// function, which lives in its colour crate.
 pub mod geom {
     pub use solidcore_record::{Loop2, Plane, Seg2, Vec2, Vec3};
+    pub use solidcraft_color::srgb;
     pub use solidcraft_engine::geom::*;
 }
 
@@ -39,7 +41,7 @@ mod fixtures;
 /// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-font-order`
 /// branch of the DAmesberger/solidcraft fork (upstream 4f3ac07 plus the
 /// opt-in product look, via scaling and a font-order fix).
-pub const SOLIDCRAFT_REVISION: &str = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63";
+pub const SOLIDCRAFT_REVISION: &str = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

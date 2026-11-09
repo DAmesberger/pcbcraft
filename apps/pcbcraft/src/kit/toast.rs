@@ -10,8 +10,8 @@
 
 use super::severity::{Level, severity_glyph};
 use egui::{Rect, RichText, Ui, vec2};
+use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::frame::Side;
-use solidcraft_ui_egui::theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button, Container, Surface};
 use std::collections::VecDeque;
 

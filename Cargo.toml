@@ -39,11 +39,15 @@ rhai = { version = "=1.27.0", default-features = false, features = ["std", "sync
 egui = "0.37"
 egui-wgpu = "0.37"
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland", "accesskit"] }
-solidcraft-ui-egui = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63" }
-solidcraft-engine = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63" }
-# The vector types of Solidcraft's public API live in solidcore's record crate. The same pin as
-# Solidcraft's workspace; a mismatch fails to compile.
-solidcore-record = { git = "https://github.com/tangency-labs/solidcore", rev = "a445bdaac60a980b0e9d1dba3ee28eb7ada44f50" }
+solidcraft-ui-egui = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d" }
+solidcraft-engine = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d" }
+# Solidcraft's colour rules (the sRGB transfer function), reached through pcbcraft-solidcraft, and
+# its UI token contract, which the UI kit uses; the same revision.
+solidcraft-color = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d" }
+solidcraft-theme = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d" }
+# The vector types of Solidcraft's public API live in solidcore's record crate, which Solidcraft
+# vendors at solidcore/: the same fork revision, so it is the copy Solidcraft builds with.
+solidcore-record = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -78,5 +82,5 @@ debug = false
 # Cargo does not inherit a dependency workspace's patches. Keep Solidcraft's
 # geometry fixes pinned to the exact same revision as its engine.
 [patch.crates-io]
-egui-wgpu = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63" }
-winit = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "21ac01f4a43888476f13ca4e7d1f488eba4ffe63" }
+egui-wgpu = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d" }
+winit = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d" }
