@@ -1,6 +1,6 @@
 # Board geometry for an LLM: design and benchmark plan
 
-**Status:** proposal, 5 November 2026. Nothing is built, and nothing here has been measured. The encodings below are candidates for the benchmark to decide between. Examples are illustrative. Estimates are rough agent hours. No API money is spent until the founder approves the numbers in [Cost](#cost).
+**Status:** proposal, 5 November 2026. Nothing is built, and nothing here has been measured. The encodings below are candidates for the benchmark to decide between. Examples are illustrative. Estimates are rough agent hours. No hosted model run starts until the founder approves the [limits](#limits).
 
 ## Goal
 
@@ -132,44 +132,42 @@ The engine does the grading, with no LLM judge and no judgement calls in the num
 
   These stay separate numbers per kind, not one score. **The power row's solver is a future idea (founder, 5 November 2026):** the end-to-end PCB design process comes first. Until then, power and ground are graded on connectivity and DRC. Likely approach when it comes: a conductance grid over the copper, solved with `faer` (MIT);
 - pair skew and coupled length on T3;
-- input, cached and output tokens, cost, tool calls and time.
+- input, cached and output tokens, tool calls and time.
 
-**Headline number:** cost per correctly completed net, because a cheap attempt that fails costs more in the end. The founder also gets pictures of each best and worst result, since a route can pass every check and still look wrong.
+**Headline number:** tokens per correctly completed net, because a short attempt that fails takes more tokens in the end. The founder also gets pictures of each best and worst result, since a route can pass every check and still look wrong.
 
 ### Method
 
-- **Models:** `claude-opus-5-5` at a fixed, explicit effort as the reference, because it's the hosted model we have measurements for, plus Qwen 3.8 Flash Next on the local Mac, through an OpenAI-compatible endpoint, and possibly smaller local models. A local model costs no API money but takes longer. An encoding that only works on the largest model doesn't win outright; the report gives results per model. Encoding C needs vision and is skipped on models without it.
+- **Models:** `claude-opus-5-5` at a fixed, explicit effort as the reference, because it's the hosted model we have measurements for, plus Qwen 3.8 Flash Next on the local Mac, through an OpenAI-compatible endpoint, and possibly smaller local models. A local model needs no hosted account but takes longer. An encoding that only works on the largest model doesn't win outright; the report gives results per model. Encoding C needs vision and is skipped on models without it.
 - **Runner:** talks to models through a provider interface, not the Messages API directly, and records in one neutral format, so each run can be replayed and audited offline. Results are appended only, because editing earlier tool results invalidates Opus 5.5's thinking blocks. Provider features such as prompt caching are optional extras, and no result may depend on them.
 - **Comparison:** each encoding gets the same tasks, repeats and prompt except for its description of the encoding. The prompt isn't tuned per encoding before the first results, since that would favour whichever gets the most attention.
 - **Key:** injected per command from the Keychain, as in `AGENTS.md`; recordings must not contain it.
 
 ### Stages
 
-| Stage | Work | API cost |
+| Stage | Work | Model use |
 |---|---|---|
 | 0. Tooling | Queries, renderers, route forms, task setup, grader, runner. Needs `gap-mcp` merged. About 8–12 h | None |
 | 1. Offline | Token counts of every encoding on the same windows. Round-trip tests: every symbol maps to the right object. Anything clearly too big is dropped | Token counting only |
-| 2. Pilot | T1 and T2, each encoding, 2 repeats | About $5–15 |
-| 3. Main | T1–T5, surviving encodings, 3 repeats. T5 is one run per encoding at first | About $30–90 |
-| 4. Held-out | Winner on the second board | About $5–15 |
+| 2. Pilot | T1 and T2, each encoding, 2 repeats | Live runs |
+| 3. Main | T1–T5, surviving encodings, 3 repeats. T5 is one run per encoding at first | Live runs |
+| 4. Held-out | Winner on the second board | Live runs |
 
 Stop and report after stage 2 if nothing completes T1 reliably, because then the problem is the route language or the tools, not the encoding.
 
-### Cost
+### Limits
 
-Opus 5.5 is $4 per million input tokens, $20 output, $5 cache write and $0.20 cache read. The two recorded assistant runs give the only real data: 13 requests cost $1.06 at medium effort and $7.23 at high effort, on a much larger task.
-
-**Cap: $120 in total (approved by the founder, 5 November 2026), $3 per run, enforced by the runner**, which stops a run at its cap and records it as failed. The stage figures above are estimates from those two runs, and the pilot replaces them with measurements. I'd bring those numbers before the main run.
+The runner caps every run by requests, tokens and time, stops a run at its cap and records it as failed. The pilot measures tokens per task; those numbers go to the founder before the main run.
 
 ### Deciding
 
-The encoding that wins is the one with the lowest cost per correctly completed net, as long as it introduces no DRC errors, on T1–T4. If two are within about 20%, the one simpler to maintain wins. If none completes T3 and T4 reliably, the honest outcome is that LLM routing stays at the goal level, with the router doing more, and the report says so.
+The encoding that wins is the one with the fewest tokens per correctly completed net, as long as it introduces no DRC errors, on T1–T4. If two are within about 20%, the one simpler to maintain wins. If none completes T3 and T4 reliably, the honest outcome is that LLM routing stays at the goal level, with the router doing more, and the report says so.
 
 ## After the benchmark
 
 - Ship the winning view and route commands as MCP tools.
 - Add a route-board skill or prompt with what the benchmark taught.
-- Keep the benchmark as a regression test, run on demand because it spends money, with the offline token counts in normal CI.
+- Keep the benchmark as a regression test, run on demand because it calls hosted models, with the offline token counts in normal CI.
 
 ## Risks
 

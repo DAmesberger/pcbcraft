@@ -183,7 +183,7 @@ A run profile (`profile.rs`, `<config>/assist-profiles/NAME.json`) says what a m
 
 ### Limits
 
-There is no USD cap anywhere: `max_usd` and the price table go, which another agent is doing now. The limits, for every model local or hosted, are set in Settings › AI with these defaults (Q10):
+The limits, for every model local or hosted, are set in Settings › AI with these defaults (Q10):
 
 | Limit | Per turn | Enforced |
 |---|---|---|
@@ -368,7 +368,7 @@ At most five agents at once. Each slice has its own tests and ships on its own.
 - **Small models and tool-list size.** If even compact tools don't fit 32 k, a model gets a profile-chosen subset (`omit_tools`). Measure before promising support for small contexts.
 - **UI-thread execution.** Tool requests run between frames, so a long command, such as a fill, stalls frames for an assistant just as it does for a person. This is existing behaviour, not new risk, but turns make it more frequent.
 - **Datasheet parity.** Moving the runner's conveniences into MCP must not lose the Flash Next gains. The replays grade it (S9).
-- **Parallel work.** The pricing removal and `assist-to-mcp` touch `crates/assist` now, so S3 and S4 start after they merge.
+- **Parallel work.** `assist-to-mcp` touches `crates/assist` now, so S3 and S4 start after they merge.
 
 ## 8. Open questions for the founder
 
