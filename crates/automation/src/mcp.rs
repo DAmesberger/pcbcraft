@@ -278,6 +278,7 @@ fn error(id: Value, code: i64, message: &str) -> Value {
 pub mod prompts;
 #[cfg(test)]
 pub(crate) mod scenario;
+pub mod surface;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

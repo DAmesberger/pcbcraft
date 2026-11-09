@@ -32,6 +32,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 schemars = "1.2"
 thiserror = "2"
+# The official MCP SDK (Apache-2.0), serving protocol 2026-07-28 only;
+# pinned exactly, since it ships breaking releases often (docs/mcp-surface.md).
+rmcp = { version = "=3.9.0", default-features = false }
+tokio = { version = "1", default-features = false }
 # Vector PDF output (schematic printing, fabrication drawings). MIT OR Apache-2.0.
 pdf-writer = "0.15"
 i_overlay = { version = "9.1", default-features = false }

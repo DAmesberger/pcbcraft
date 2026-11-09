@@ -18,9 +18,13 @@ serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
 thiserror.workspace = true
+rmcp = { workspace = true, features = ["server", "transport-io"] }
+tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+rmcp = { workspace = true, features = ["client"] }
+tokio = { workspace = true, features = ["time"] }
 # Solidcraft's span profiler compiled in, for the build profile benchmark
 # (tests/build_profile.rs) only.
 pcbcraft-solidcraft = { workspace = true, features = ["profile"] }
