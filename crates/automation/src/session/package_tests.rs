@@ -76,7 +76,7 @@ fn package_placement_commands_through_json_report_store_and_undo() -> TestResult
     assert_eq!(session.engine().revision(), revision);
     // Each stored change is one undo step.
     for expected in [turned, start] {
-        let undo = session.dispatch(json!({"command": "project.undo", "params": {}}));
+        let undo = session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
         assert_eq!(undo["ok"], true, "{undo}");
         assert_eq!(package(&session).ok_or("no package")?.1, expected);
     }

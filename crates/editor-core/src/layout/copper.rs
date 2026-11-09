@@ -246,7 +246,7 @@ impl BoardCopper {
     pub fn of(project: &Project) -> Self {
         let pads = super::pads(project);
         let rings = pads.iter().map(CopperRing::of_pad).collect();
-        let vias = project.vias.clone();
+        let vias = project.vias.to_vec();
         let via_rings = vias.iter().map(CopperRing::of_via).collect();
         Self {
             pads,

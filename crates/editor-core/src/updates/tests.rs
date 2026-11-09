@@ -499,7 +499,7 @@ fn pcb_sync_preview_adds_only_missing_placement_and_preserves_copper() -> Result
     assert!(plan.conflicting_tracks.is_empty());
     assert!(plan.removed_placements.is_empty());
     engine.apply_update(plan.revision, plan.change, false)?;
-    assert_eq!(&engine.project().placements[..2], &before.placements);
+    assert_eq!(&engine.project().placements[..2], &before.placements[..]);
     assert_eq!(engine.project().tracks, before.tracks);
     assert_eq!(engine.project().placements[2].instance, id);
     Ok(())

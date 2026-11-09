@@ -35,6 +35,26 @@ pub struct ApplyParams {
 #[serde(deny_unknown_fields)]
 pub struct NoParams {}
 
+/// A document change that names nothing but the revision it expects
+/// (`project.undo`, `project.redo`, `project.new`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RevisionParams {
+    /// The revision of the last reply; refused as stale when the document
+    /// has moved since.
+    pub expected_revision: u64,
+}
+
+/// Open a project file in place of the current document.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenParams {
+    /// The revision of the document being replaced; refused as stale when
+    /// it has moved since.
+    pub expected_revision: u64,
+    pub path: String,
+}
+
 /// What `project.inspect` returns.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -257,16 +277,18 @@ pub enum Request {
     /// `Engine::query`.
     #[serde(rename = "project.query")]
     Query(Query),
+    /// Undo the latest step at an expected revision.
     #[serde(rename = "project.undo")]
-    Undo(NoParams),
+    Undo(RevisionParams),
+    /// Redo the latest undone step at an expected revision.
     #[serde(rename = "project.redo")]
-    Redo(NoParams),
+    Redo(RevisionParams),
     /// Start a new, empty project. History is cleared.
     #[serde(rename = "project.new")]
-    New(NoParams),
+    New(RevisionParams),
     /// Open a `.pcbcraft` file; a failure leaves the session unchanged.
     #[serde(rename = "project.open")]
-    Open(PathParams),
+    Open(OpenParams),
     /// Atomically write the document to a `.pcbcraft` file.
     #[serde(rename = "project.save")]
     Save(SaveParams),
@@ -445,7 +467,8 @@ impl Request {
     /// Every file or folder path this request names.
     pub fn paths(&self) -> Vec<&str> {
         match self {
-            Self::Open(params) | Self::ExportNative(params) | Self::SourceRemove(params) => {
+            Self::Open(params) => vec![params.path.as_str()],
+            Self::ExportNative(params) | Self::SourceRemove(params) => {
                 vec![params.path.as_str()]
             }
             Self::Save(params) => params.path.iter().map(String::as_str).collect(),
@@ -492,6 +515,56 @@ impl Request {
         }
     }
 
+    /// The revision a request that changes the document expects, checked
+    /// once before it runs ([`Session::execute`]), so a stale one does
+    /// nothing at all: no file read or written, no step taken or undone.
+    /// `None` only for a request that changes no document (a query, a file
+    /// export, the user's library settings).
+    pub fn expected_revision(&self) -> Option<u64> {
+        match self {
+            Self::Apply(params) => Some(params.expected_revision),
+            Self::Undo(params) | Self::Redo(params) | Self::New(params) => {
+                Some(params.expected_revision)
+            }
+            Self::Open(params) => Some(params.expected_revision),
+            Self::ApplyUpdate(params) => Some(params.expected_revision),
+            Self::ImportFrom(params) => Some(params.expected_revision),
+            Self::PlaceFrom(params) => Some(params.expected_revision),
+            Self::Publish(params) => Some(params.expected_revision),
+            Self::ImportFromProject(params) => Some(params.expected_revision),
+            Self::ImportSvg(params) => Some(params.expected_revision),
+            Self::SetMarking(params) => Some(params.expected_revision),
+            Self::UsePartFile(params) => Some(params.expected_revision),
+            Self::SetPartValues(params) => Some(params.expected_revision),
+            Self::PlacePartFile(params) => Some(params.expected_revision),
+            Self::SetPartFileValues(params) => Some(params.expected_revision),
+            Self::Inspect(_)
+            | Self::Schema(_)
+            | Self::Query(_)
+            | Self::Save(_)
+            | Self::PreviewUpdate(_)
+            | Self::ExportNative(_)
+            | Self::ExportFabrication(_)
+            | Self::Sources(_)
+            | Self::SourceAdd(_)
+            | Self::SourceCreate(_)
+            | Self::SourceRemove(_)
+            | Self::SourceEnable(_)
+            | Self::Rescan(_)
+            | Self::Favourite(_)
+            | Self::Bundle(_)
+            | Self::OpenPreview(_)
+            | Self::PinoutSchema(_)
+            | Self::FirmwarePreview(_)
+            | Self::FirmwareExport(_)
+            | Self::InspectModelFile(_)
+            | Self::SchematicPdf(_)
+            | Self::MarkingSurfaces(_)
+            | Self::CheckPartFile(_)
+            | Self::PartFiles(_) => None,
+        }
+    }
+
     /// Every request ID with its description and parameter schema, generated
     /// from the Rust types the dispatcher deserializes.
     pub fn catalog() -> Vec<CommandInfo> {
@@ -528,12 +601,21 @@ impl Request {
                 "project.query",
                 "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, active and unresolved terminal functions, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once; library.search ranks component lineages at their latest published revision for a one-line query (free text, pkg:/has:/missing: filters and unit-aware field predicates such as res>=10k, tol<=1% or C:1n..100n, whose keys resolve against the project's field definitions; parse errors name the term, e.g. V>=10k: 10 k has no unit of voltage); library.facets lists the fields, package labels and completeness badges the matching entries carry; library.inspect reports one revision of a lineage with its revisions, symbols, implementations and badges; project.bom lists the bill of materials, resolved instances grouped by their manufacturer Part and unresolved ones marked; library.footprint_preview reports what library.edit_footprint would produce for a footprint draft (pads, graphics and findings, blocking ones included); library.resolve_groups lists instances without an agreeing Part that share component revision, footprint and requirements, each group with the library.search query that finds Parts for it; library.updates_available lists project lineages copied from a library source that holds a newer revision or records whose hash changed (modified lists those source revisions); library.promote_preview reports the bundle and origins library.promote would write and record (library.publish_to_folder runs it); project.issues lists every issue of the project (scope all, an area of component, schematic or board, or a selection of objects), uncapped and most severe first, each with core's severity (error for anything that blocks a stage or breaks a board or electrical rule, warning, to_do for unrouted, unplaced and unpurchased work, info), group, one-line title naming objects by their names, cause and fix, the finding it comes from and, under also, the same-cause findings merged into it; elsewhere counts the issues of areas outside the scope. library.search and library.facets include the entries of every ready library source. Nothing is stored.",
             ),
-            info::<NoParams>("project.undo", "Undo the last document change."),
-            info::<NoParams>("project.redo", "Redo the last undone document change."),
-            info::<NoParams>("project.new", "Start a new empty project; clears history."),
-            info::<PathParams>(
+            info::<RevisionParams>(
+                "project.undo",
+                "Undo the last document change at expected_revision. Refused without changes on a stale revision, so a newer change by someone else is never undone.",
+            ),
+            info::<RevisionParams>(
+                "project.redo",
+                "Redo the last undone document change at expected_revision. Refused without changes on a stale revision.",
+            ),
+            info::<RevisionParams>(
+                "project.new",
+                "Start a new empty project at expected_revision; clears history. Refused without changes on a stale revision.",
+            ),
+            info::<OpenParams>(
                 "project.open",
-                "Open a .pcbcraft project file of the current format version; other versions are refused. Failure leaves the session unchanged.",
+                "Open a .pcbcraft project file of the current format version in place of the document at expected_revision; other versions are refused. Failure, a stale revision included, leaves the session unchanged.",
             ),
             info::<SaveParams>(
                 "project.save",
@@ -759,6 +841,10 @@ impl Session {
 
     /// Execute one typed request.
     pub fn execute(&mut self, request: Request) -> Result<Value> {
+        // The one revision check of every document-changing request.
+        if let Some(expected) = request.expected_revision() {
+            self.engine.check_revision(expected)?;
+        }
         match request {
             Request::Apply(params) => {
                 let outcome = self.engine.apply_hosted(
@@ -791,8 +877,8 @@ impl Session {
                     Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
                 )?)?);
             }
-            Request::Undo(_) => self.engine.undo()?,
-            Request::Redo(_) => self.engine.redo()?,
+            Request::Undo(params) => self.engine.undo_at(params.expected_revision)?,
+            Request::Redo(params) => self.engine.redo_at(params.expected_revision)?,
             Request::New(_) => {
                 self.engine.replace_document(EditorFile {
                     version: pcbcraft_core::format::FILE_VERSION,
@@ -1015,14 +1101,6 @@ impl Session {
     /// `library.promote` with the same arguments, so the recorded origins
     /// equal the records written.
     fn publish(&mut self, params: PublishParams) -> Result<Value> {
-        let actual = self.engine.revision();
-        if params.expected_revision != actual {
-            return Err(pcbcraft_core::Error::Stale {
-                expected: params.expected_revision,
-                actual,
-            }
-            .into());
-        }
         let folder = self.sources.writable(params.library)?.clone();
         let members =
             pcbcraft_core::library::bundle::closure(&self.engine.project().library, params.root)?;

@@ -74,6 +74,7 @@ use crate::ids::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, FieldRef, FootprintRef,
     ModelRef, PackageRef, PackageRowRef, PartRef, QuantityKindRef, Revision, SymbolRef,
 };
+use crate::shared::Shared;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -171,30 +172,30 @@ pub struct Published<T> {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Library {
-    pub components: Vec<Published<ComponentDefinition>>,
-    pub symbols: Vec<Published<SymbolDefinition>>,
-    pub packages: Vec<Published<PackageDefinition>>,
-    pub footprints: Vec<Published<FootprintDefinition>>,
-    pub bindings: Vec<Published<BindingDefinition>>,
-    pub quantity_kinds: Vec<Published<QuantityKind>>,
-    pub fields: Vec<Published<FieldDefinition>>,
+    pub components: Shared<Vec<Published<ComponentDefinition>>>,
+    pub symbols: Shared<Vec<Published<SymbolDefinition>>>,
+    pub packages: Shared<Vec<Published<PackageDefinition>>>,
+    pub footprints: Shared<Vec<Published<FootprintDefinition>>>,
+    pub bindings: Shared<Vec<Published<BindingDefinition>>>,
+    pub quantity_kinds: Shared<Vec<Published<QuantityKind>>>,
+    pub fields: Shared<Vec<Published<FieldDefinition>>>,
     /// Manufacturer parts (S2), published after the components they pin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub parts: Vec<Published<PartDefinition>>,
+    pub parts: Shared<Vec<Published<PartDefinition>>>,
     /// D1: 3D library models, published before the packages that use them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub models: Vec<Published<ModelDefinition>>,
+    pub models: Shared<Vec<Published<ModelDefinition>>>,
     /// B1: package-family dimension-table rows.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub package_rows: Vec<Published<PackageRowDefinition>>,
+    pub package_rows: Shared<Vec<Published<PackageRowDefinition>>>,
     /// Where imported or promoted revisions came from or went to (S3, D1).
     /// Outside revision bodies: recording an origin is not a new revision.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub origins: Vec<OriginRecord>,
+    pub origins: Shared<Vec<OriginRecord>>,
     /// Asset bytes packed by content hash (S3, D7), so the project reopens
     /// offline with attached copies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub assets: Vec<PackedAsset>,
+    pub assets: Shared<Vec<PackedAsset>>,
 }
 
 /// A field revision with the quantity kind its value type names, if any.

@@ -24,7 +24,7 @@ fn wroom3_values() -> Value {
 
 fn open() -> TestResult<(Session, u64)> {
     let mut session = Session::new(Engine::default());
-    let opened = session.dispatch(json!({"command": "project.open", "params": {"path": EXAMPLE}}));
+    let opened = session.dispatch(json!({"command": "project.open", "params": {"expected_revision": session.engine().revision(), "path": EXAMPLE}}));
     assert_eq!(opened["ok"], true, "{opened}");
     let package = session
         .engine()
@@ -154,7 +154,12 @@ fn a_package_uses_the_part_file_in_one_step_and_refusals_change_nothing() -> Tes
         return Err("the package uses no part file".into());
     };
     assert!((part.derived.bounds_mm[1][2] - lower.derived.bounds_mm[1][2] - 0.465).abs() < 1e-6);
-    let undo = call(&mut session, "project.undo", json!({}));
+    let now = session.engine().revision();
+    let undo = call(
+        &mut session,
+        "project.undo",
+        json!({"expected_revision": now}),
+    );
     assert_eq!(undo["ok"], true, "{undo}");
     assert_eq!(model(&session, package), Some(PackageModel::PartFile(part)));
     Ok(())

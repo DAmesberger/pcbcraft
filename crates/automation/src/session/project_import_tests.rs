@@ -127,10 +127,25 @@ fn a_part_imports_with_its_closure_as_one_undo_step_and_reopens_offline() -> Tes
     )?;
 
     // One undo step takes all of it away; the redo brings all of it back.
-    ok(&mut session, "project.undo", json!({}))?;
-    ok(&mut session, "project.undo", json!({}))?;
+    let now = session.engine().revision();
+    ok(
+        &mut session,
+        "project.undo",
+        json!({"expected_revision": now}),
+    )?;
+    let now = session.engine().revision();
+    ok(
+        &mut session,
+        "project.undo",
+        json!({"expected_revision": now}),
+    )?;
     assert_eq!(session.engine().document(), &before, "nothing left");
-    ok(&mut session, "project.redo", json!({}))?;
+    let now = session.engine().revision();
+    ok(
+        &mut session,
+        "project.redo",
+        json!({"expected_revision": now}),
+    )?;
     assert_eq!(session.engine().project().library, library);
 
     // Importing again reuses every copy: no revision, no undo step.
@@ -150,7 +165,12 @@ fn a_part_imports_with_its_closure_as_one_undo_step_and_reopens_offline() -> Tes
     let saved = save(&mut session, &temp.path().join("target.pcbcraft"))?;
     std::fs::remove_file(&path)?;
     let mut reopened = Session::new(Engine::default());
-    ok(&mut reopened, "project.open", json!({"path": saved}))?;
+    let now = reopened.engine().revision();
+    ok(
+        &mut reopened,
+        "project.open",
+        json!({"expected_revision": now, "path": saved}),
+    )?;
     assert_eq!(reopened.engine().project().library, library);
     Ok(())
 }
@@ -301,7 +321,12 @@ fn importing_from_a_project_replays_to_an_equal_document() -> TestResult {
 fn the_example_module_imports_once_published_in_its_project() -> TestResult {
     let temp = tempfile::tempdir()?;
     let mut module = Session::new(Engine::default());
-    ok(&mut module, "project.open", json!({"path": MODULE}))?;
+    let now = module.engine().revision();
+    ok(
+        &mut module,
+        "project.open",
+        json!({"expected_revision": now, "path": MODULE}),
+    )?;
     let drafts = module.engine().drafts().clone();
     let component = drafts
         .items
@@ -366,7 +391,12 @@ fn the_example_module_imports_once_published_in_its_project() -> TestResult {
     let saved = save(&mut board, &temp.path().join("board.pcbcraft"))?;
     std::fs::remove_file(&path)?;
     let mut reopened = Session::new(Engine::default());
-    ok(&mut reopened, "project.open", json!({"path": saved}))?;
+    let now = reopened.engine().revision();
+    ok(
+        &mut reopened,
+        "project.open",
+        json!({"expected_revision": now, "path": saved}),
+    )?;
     assert_eq!(reopened.engine().project().instances.len(), 1);
     Ok(())
 }
@@ -652,7 +682,12 @@ fn implements_never_matches_a_folder_entry() -> TestResult {
 #[test]
 fn publish_closes_over_json_and_check_drafts_reports_the_closure() -> TestResult {
     let mut module = Session::new(Engine::default());
-    ok(&mut module, "project.open", json!({"path": MODULE}))?;
+    let now = module.engine().revision();
+    ok(
+        &mut module,
+        "project.open",
+        json!({"expected_revision": now, "path": MODULE}),
+    )?;
     let ids: Vec<_> = module
         .engine()
         .drafts()
@@ -700,7 +735,12 @@ fn publish_closes_over_json_and_check_drafts_reports_the_closure() -> TestResult
         Some(ids.len() - set.len()),
         "the published drafts closed"
     );
-    ok(&mut module, "project.undo", json!({}))?;
+    let now = module.engine().revision();
+    ok(
+        &mut module,
+        "project.undo",
+        json!({"expected_revision": now}),
+    )?;
     assert_eq!(module.engine().drafts().items.len(), ids.len());
     Ok(())
 }

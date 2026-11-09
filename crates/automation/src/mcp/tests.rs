@@ -71,7 +71,7 @@ fn tool_calls_share_the_session_and_report_failures_as_tool_errors() {
         &mut server,
         2,
         "tools/call",
-        json!({"name": "project_undo", "arguments": {}}),
+        json!({"name": "project_undo", "arguments": {"expected_revision": revision}}),
     );
     assert_eq!(stale["result"]["isError"], true);
     assert_eq!(payload(&stale)["code"], "history_empty");

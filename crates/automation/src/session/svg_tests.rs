@@ -114,7 +114,7 @@ fn an_svg_imports_atomically_as_one_undo_step() -> TestResult {
         assert_eq!(symbol_graphics(&session, symbol), 7);
     }
 
-    session.dispatch(json!({"command": "project.undo", "params": {}}));
+    session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
     assert_eq!(symbol_graphics(&session, symbol), 0, "undo removes it all");
     Ok(())
 }

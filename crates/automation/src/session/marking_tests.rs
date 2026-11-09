@@ -16,7 +16,7 @@ const EXAMPLE: &str = concat!(
 /// The example's session and its component and package draft ids.
 fn example() -> std::result::Result<(Session, u64, u64), Box<dyn std::error::Error>> {
     let mut session = Session::new(Engine::default());
-    let opened = session.dispatch(json!({"command": "project.open", "params": {"path": EXAMPLE}}));
+    let opened = session.dispatch(json!({"command": "project.open", "params": {"expected_revision": session.engine().revision(), "path": EXAMPLE}}));
     assert_eq!(opened["ok"], true, "{opened}");
     let id = |kind: fn(&Definition) -> bool| {
         session
@@ -139,7 +139,7 @@ fn a_module_marking_goes_on_its_can_and_board_in_one_step() -> TestResult {
     );
     // The artwork is packed with the edit: one undo step takes both.
     assert_eq!(spec.artwork().count(), 2);
-    let undone = session.dispatch(json!({"command": "project.undo", "params": {}}));
+    let undone = session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
     assert_eq!(undone["ok"], true, "{undone}");
     let marked = session.engine().drafts().items.iter().any(|d| {
         d.id.0 == component

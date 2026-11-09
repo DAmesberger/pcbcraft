@@ -899,8 +899,9 @@ fn shrinking_the_board_names_the_copper_left_outside() -> Result<()> {
         track(1, net, [10.0, 10.0], [30.0, 10.0], 0.2),
         track(2, net, [30.0, 10.0], [30.0, 20.0], 0.2),
         track(3, net, [2.0, 2.0], [4.0, 2.0], 0.2),
-    ];
-    project.vias = vec![via(4, net, [30.0, 20.0], 0.3, 0.6)];
+    ]
+    .into();
+    project.vias = vec![via(4, net, [30.0, 20.0], 0.3, 0.6)].into();
     let name = project.net_name(net).to_owned();
     let error = crate::layout::copper_fits(&project, [25.0, 64.0])
         .err()

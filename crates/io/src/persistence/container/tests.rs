@@ -30,7 +30,7 @@ pub(crate) fn packed(bytes: Vec<u8>, media_type: &str) -> PackedAsset {
 /// The demo project with `assets` packed, sorted by hash.
 pub(crate) fn with_assets(assets: Vec<PackedAsset>) -> Result<EditorFile> {
     let mut file = Engine::demo()?.to_file();
-    file.project.library.assets = assets;
+    file.project.library.assets = assets.into();
     file.project.library.assets.sort_by_key(|a| a.hash);
     file.validate()?;
     Ok(file)
@@ -331,7 +331,7 @@ fn one_asset_at_the_raised_limit_round_trips_and_one_byte_more_is_refused() -> R
     let over = packed(noise(limit + 1, 9), "model/step");
     assert!(with_assets(vec![over.clone()]).is_err());
     let mut forced = Engine::demo()?.to_file();
-    forced.project.library.assets = vec![over];
+    forced.project.library.assets = vec![over].into();
     assert!(write_container(&dir.path().join("over.pcbcraft"), &forced).is_err());
     assert!(!dir.path().join("over.pcbcraft").exists());
     Ok(())

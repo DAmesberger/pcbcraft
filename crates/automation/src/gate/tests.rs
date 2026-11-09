@@ -34,8 +34,8 @@ const MODES: [Mode; 3] = [Mode::AskEveryTime, Mode::AutoAllowEdits, Mode::AllowA
 #[test]
 fn each_mode_treats_each_class_as_decided() -> Fallible {
     let read = request("project.inspect", json!({}))?;
-    let edit = request("project.undo", json!({}))?;
-    let ask = request("project.new", json!({}))?;
+    let edit = request("project.undo", json!({"expected_revision": 0}))?;
+    let ask = request("project.new", json!({"expected_revision": 0}))?;
     let never = request(
         "library.favourite",
         json!({"key": {"source": "project", "lineage": 1}, "favourite": true}),
@@ -84,8 +84,8 @@ fn project_apply_is_classed_by_its_operation() -> Fallible {
 fn a_batch_takes_its_strictest_member() -> Fallible {
     let policy = Policy::default();
     let read = request("project.inspect", json!({}))?;
-    let edit = request("project.undo", json!({}))?;
-    let ask = request("project.new", json!({}))?;
+    let edit = request("project.undo", json!({"expected_revision": 0}))?;
+    let ask = request("project.new", json!({"expected_revision": 0}))?;
     let never = request(
         "library.source.remove",
         json!({"path": "/somewhere/library"}),
@@ -108,7 +108,12 @@ fn a_batch_takes_its_strictest_member() -> Fallible {
 
 #[test]
 fn a_path_outside_the_folders_is_refused_in_every_mode() -> Fallible {
-    let open = |path: &str| request("project.open", json!({"path": path}));
+    let open = |path: &str| {
+        request(
+            "project.open",
+            json!({"expected_revision": 0, "path": path}),
+        )
+    };
     for mode in MODES {
         let policy = Policy::new(mode, [PathBuf::from("/work/board")]);
         for outside in [
@@ -180,7 +185,7 @@ fn path_samples() -> Fallible<Vec<Request>> {
     let at = "/samples/f";
     let mut samples = Vec::new();
     for (command, params) in [
-        ("project.open", json!({"path": at})),
+        ("project.open", json!({"expected_revision": 0, "path": at})),
         ("project.save", json!({"path": at})),
         ("project.export_native", json!({"path": at})),
         ("project.export_fabrication", json!({"output": at})),
@@ -632,8 +637,10 @@ fn a_malformed_request_is_refused_with_its_parse_error() -> Fallible {
 
 #[test]
 fn a_denied_question_answers_the_model() -> Fallible {
-    let Decision::Ask(question) = decide(&Policy::default(), &request("project.new", json!({}))?)
-    else {
+    let Decision::Ask(question) = decide(
+        &Policy::default(),
+        &request("project.new", json!({"expected_revision": 0}))?,
+    ) else {
         return Err("project.new asks".into());
     };
     assert_eq!(question.denied().code, "gate.denied");
@@ -676,7 +683,12 @@ fn mcp_runs_under_each_mode_and_ungated_by_default() -> Fallible {
         let (failed, _) = tool_call(&mut server, 1, "project.inspect", json!({}));
         assert!(!failed, "{mode:?}: reads always run");
 
-        let (failed, reply) = tool_call(&mut server, 2, "project.undo", json!({}));
+        let (failed, reply) = tool_call(
+            &mut server,
+            2,
+            "project.undo",
+            json!({"expected_revision": 0}),
+        );
         if undo_runs {
             // It reaches the engine: the demo has history or says it has none.
             assert_ne!(reply["code"], "gate.cannot_ask", "{mode:?}: {reply}");

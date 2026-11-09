@@ -229,6 +229,23 @@ Not done: refusal toasts still offer Details, not a Show that locates the blocke
 - **Measured correctness.** The impedance formulas match Pozar's microstrip and stripline examples and Cohn's exact stripline within their stated tolerances, and the IPC-2141 coupling equations match hand evaluation; the 90 Ω USB pair of the acceptance case derives its width and gap on the 4-layer preset. Pair routing (engine and Route tool) produces coupled tracks at the derived gap with a via pair on layer changes; meanders add the requested length to within 10 µm and keep the rules' clearance; skew, gap, length-group and impedance findings are raised on deliberate violations and cleared by tuning.
 - **Not yet.** No field solver: the models are quasi-static closed forms without solder mask, etch or roughness. No stackup editor in the desktop. Pair routing and tuning do not push other copper. The checks are not measured on a 10,000-via board.
 
+## Undo sharing and revision checks
+
+9 November 2026, macOS arm64, release build. Undo steps share every project section an edit did not write: the project's collections and each library-snapshot collection are copy-on-write sections (`pcbcraft_core::Shared`), and `nets::reconcile` keeps the nets section when they come out unchanged. History entries are still whole documents, with no diff log. Memory retained per undo step was measured with a counting allocator over 50 steps. Edit latency is the median of those steps.
+
+| Board and edit | Memory per step, before | After | Latency, before | After |
+| --- | --- | --- | --- | --- |
+| ESP32 dev board, rename project | 767 KiB | 7.7 KiB | 0.50 ms | 0.37 ms |
+| ESP32 dev board, via tent | 767 KiB | 10.8 KiB | 0.53 ms | 0.39 ms |
+| ESP32 dev board, via move | 767 KiB | 10.8 KiB | 0.79 ms | 0.66 ms |
+| 10,000 vias and 2,000 tracks, rename project | 827 KiB | 1.8 KiB | 1.17 ms | 1.07 ms |
+| 10,000 vias and 2,000 tracks, via tent | 827 KiB | 550 KiB | 1.57 ms | 1.64 ms |
+| 10,000 vias and 2,000 tracks, via move | 827 KiB | 550 KiB | 3.18 ms | 3.22 ms |
+
+A via edit on the large board still copies the whole via collection, about 55 bytes for each of the 10,021 vias, because sharing is per collection, not per object. Latency is dominated by validation and checks, not by the copy, so it barely changes. The machine was shared and under load, so latency differences under about 10% are noise.
+
+`project.undo`, `project.redo`, `project.new` and `project.open` now require `expected_revision`, as every other document-changing request does. `Session::execute` checks it once, from `Request::expected_revision`, before any file is read or written. The engine's `undo_at`/`redo_at` check it again through `Engine::check_revision`. The desktop's own undo and redo use the current revision. A catalog test requires the parameter on every non-read request except the named file and settings effects.
+
 ## Remaining release work
 
 The initial editors are intentionally narrow: traces and through vias only (board checks and copper connectivity use each pad's exact outline, with curved edges flattened within 2 µm); PCB 2D draws every copper layer and the board vias, routes through a via with V and places vias with the Via tool, but has no stackup editor (stackups are set through commands, the CLI or MCP); board builds grow about linearly with vias (measured in [PCB realism](pcb-realism.md#build-cost-measured): 10,000 vias build in about 3 s, and the 3D view shows them instanced in about 0.1 s); the 3D model is prepared in the background while the board is edited in 2D; manual routes; electrical and clearance checks against the project's design rules, whose built-in profiles are estimates. One fill of a 200 × 200 mm plane over 10,000 through vias took 1.40 s in a release build (macOS arm64). Copper fills are authored with the Fill tool (outline with arcs), edited through the Fill card and outline handles, drawn in PCB 2D (solid, hatched or outlines only) and built in PCB 3D as saved copper under the display-only mask (an inner fill in its own foil level of the laminate); their copper is computed by the fill core (`fill.refill`), and the showcase carries a bottom ground pour and an inner ground plane with stitching vias. No manufacturing-ready DRC claim follows from zero basic-check messages.

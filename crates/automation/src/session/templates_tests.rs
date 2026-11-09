@@ -213,13 +213,21 @@ pub(super) fn build_footprint(s: &mut Scenario, imported: &Imported) -> Fallible
         .as_u64()
         .ok_or_else(|| format!("the created footprint: {applied}"))?;
     // One undo step takes back the footprint draft and its listing too.
-    s.send("undo", json!({"command": "project.undo", "params": {}}))?;
+    let now = s.session.engine().revision();
+    s.send(
+        "undo",
+        json!({"command": "project.undo", "params": {"expected_revision": now}}),
+    )?;
     assert!(s.draft(footprint).is_err(), "undo removes the footprint");
     assert_eq!(
         s.draft(binding)?["draft"]["definition"]["body"]["footprints"],
         json!([])
     );
-    s.send("redo", json!({"command": "project.redo", "params": {}}))?;
+    let now = s.session.engine().revision();
+    s.send(
+        "redo",
+        json!({"command": "project.redo", "params": {"expected_revision": now}}),
+    )?;
     // Terminal identities are kept, so the import's mappings still hold;
     // leads keep their numbers and the 49th is designated EP.
     let built = s.draft(package)?;

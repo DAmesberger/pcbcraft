@@ -636,7 +636,7 @@ fn install_place_publish_update_delete_and_reopen_offline() -> TestResult {
     let reopened = ok(
         &mut offline,
         "project.open",
-        json!({"path": project_path.display().to_string()}),
+        json!({"expected_revision": 0, "path": project_path.display().to_string()}),
     )?;
     assert_eq!(offline.engine().document(), &saved);
     assert_eq!(instance(&reopened, "R1")?["component"]["revision"], 2);

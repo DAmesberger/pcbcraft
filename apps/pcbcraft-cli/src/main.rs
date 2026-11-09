@@ -104,9 +104,10 @@ fn user_session(engine: Engine) -> Session {
 fn open(path: Option<&String>) -> Result<Session> {
     let mut session = user_session(Engine::default());
     if let Some(path) = path {
+        let revision = session.engine().revision();
         execute(
             &mut session,
-            json!({"command": "project.open", "params": {"path": path}}),
+            json!({"command": "project.open", "params": {"expected_revision": revision, "path": path}}),
         )?;
     }
     Ok(session)

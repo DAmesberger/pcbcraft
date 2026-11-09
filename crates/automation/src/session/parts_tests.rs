@@ -230,7 +230,7 @@ fn publish_part(pair: &mut Pair) -> Fallible<PartRef> {
         .dispatch(json!({"command": "project.save", "params": {"path": path}}));
     assert_eq!(saved["ok"], true, "{saved}");
     let mut reopened = Session::default();
-    let opened = reopened.dispatch(json!({"command": "project.open", "params": {"path": path}}));
+    let opened = reopened.dispatch(json!({"command": "project.open", "params": {"expected_revision": reopened.engine().revision(), "path": path}}));
     assert_eq!(opened["ok"], true, "{opened}");
     assert_eq!(
         opened["result"]["project"]["library"]["parts"][0]["definition"],
@@ -272,9 +272,10 @@ fn assign_part_clears_and_refuses_bad_input_through_json() -> TestResult {
         }}));
     assert_eq!(refused["ok"], false, "{refused}");
     assert_eq!(pair.session.engine().document(), &before);
+    let now = pair.session.engine().revision();
     let undo = pair
         .session
-        .dispatch(json!({"command": "project.undo", "params": {}}));
+        .dispatch(json!({"command": "project.undo", "params": {"expected_revision": now}}));
     assert_eq!(undo["ok"], true, "{undo}");
     assert_eq!(undo["result"]["can_redo"], true);
     Ok(())
@@ -333,9 +334,10 @@ fn parts_resolve_assign_and_bom_through_json_match_the_engine() -> TestResult {
     {
         assert_eq!(instance["part"], serde_json::to_value(part)?);
     }
+    let now = pair.session.engine().revision();
     let undo = pair
         .session
-        .dispatch(json!({"command": "project.undo", "params": {}}));
+        .dispatch(json!({"command": "project.undo", "params": {"expected_revision": now}}));
     assert_eq!(undo["ok"], true, "{undo}");
     assert!(
         undo["result"]["project"]["instances"]
@@ -344,9 +346,10 @@ fn parts_resolve_assign_and_bom_through_json_match_the_engine() -> TestResult {
             .iter()
             .all(|i| i.get("part").is_none())
     );
+    let now = pair.session.engine().revision();
     let redo = pair
         .session
-        .dispatch(json!({"command": "project.redo", "params": {}}));
+        .dispatch(json!({"command": "project.redo", "params": {"expected_revision": now}}));
     assert_eq!(redo["ok"], true, "{redo}");
     assert_eq!(pair.session.engine().document(), pair.engine.document());
 

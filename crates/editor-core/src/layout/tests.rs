@@ -100,7 +100,7 @@ fn sync_adds_missing_instances_without_moving_or_ripping_up() -> Result<()> {
     nets::reconcile(&mut project)?;
     assert_eq!(sync_preview(&project), vec![expected]);
     apply(&mut project, LayoutCommand::Sync)?;
-    assert_eq!(&project.placements[..2], old_placements);
+    assert_eq!(&project.placements[..2], &old_placements[..]);
     assert_eq!(project.tracks, old_tracks);
     assert!(sync_preview(&project).is_empty());
     Ok(())
@@ -936,7 +936,7 @@ fn track_set_changes_width_and_layer_in_place() -> Result<()> {
     let original = project.tracks[0].clone();
     apply(&mut project, track_set(original.id, Some(0.5), None))?;
     assert_eq!(
-        project.tracks,
+        *project.tracks,
         vec![Track {
             width: 0.5,
             ..original.clone()
@@ -947,7 +947,7 @@ fn track_set_changes_width_and_layer_in_place() -> Result<()> {
         track_set(original.id, None, Some(Layer::Bottom)),
     )?;
     assert_eq!(
-        project.tracks,
+        *project.tracks,
         vec![Track {
             width: 0.5,
             layer: Layer::Bottom.into(),
@@ -959,7 +959,7 @@ fn track_set_changes_width_and_layer_in_place() -> Result<()> {
         track_set(original.id, Some(0.25), Some(Layer::Top)),
     )?;
     assert_eq!(
-        project.tracks,
+        *project.tracks,
         vec![Track {
             width: 0.25,
             ..original
