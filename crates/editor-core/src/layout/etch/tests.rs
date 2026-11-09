@@ -93,7 +93,6 @@ fn pour_with(
             outline,
             priority: 0,
             settings,
-            region: crate::model::fill::FillRegion::Drawn,
         },
     ));
     refill(project)?;
