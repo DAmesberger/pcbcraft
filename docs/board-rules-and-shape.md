@@ -48,6 +48,7 @@ Four founder requests are built here: configurable manufacturing parameters with
 
 ## Copper fills and keepouts
 
+- **Region.** A fill's `region` is stored, never inferred from its coordinates. `drawn` (the default) keeps its own outline at fixed board coordinates. `board` follows the board: after every operation `layout::fill::follow_board` gives it the solved board outline, so a board parameter or shape edit (`width`, `height`, `corner_r`, a sketch edit) moves its region at once, and its copper is stale until the next refill (the desktop's background refill, or `fill.refill`). A `fill.add` with `region: board` needs no outline. Editing a board-following fill's outline is refused (`fill.follows_board`) until it is made a drawn fill, which keeps the outline it has; an edge constraint on one is refused too. The Fill card's Region row switches between Board outline and Drawn, and a board-following fill has no outline handles (`a_board_following_fill_grows_with_the_board_width`).
 - **Computation** (`layout/fill.rs`, `layout/fill/compute.rs`) is a pure, deterministic function of the project. It uses `i_overlay` (MIT OR Apache-2.0; see [attribution](../ATTRIBUTION.md)). For one fill:
   1. The fill's outline is clipped to the board outline, shrunk by the fill-to-board-edge clearance.
   2. These are subtracted at the effective rule and net-class clearances: cutouts and slots, mounting holes, keepouts, other-net copper and higher-priority fills.

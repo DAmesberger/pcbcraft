@@ -232,7 +232,8 @@ impl PcbEditor {
     }
 
     /// The selected fill's handle within reach of the screen point `at`:
-    /// vertices before midpoints. A locked or hidden fill has none.
+    /// vertices before midpoints. A locked, hidden or board-following fill
+    /// has none.
     pub(super) fn fill_handle_at(
         &self,
         project: &Project,
@@ -242,7 +243,7 @@ impl PcbEditor {
         let fill = self
             .fill
             .and_then(|id| project.fill(id))
-            .filter(|f| !f.locked && self.fill_shown(f))?;
+            .filter(|f| !f.locked && f.region.is_drawn() && self.fill_shown(f))?;
         let near = |p: &Point| view.screen(*p).distance(at) <= REACH_PX;
         let vertices = fill_paint::vertices(&fill.outline);
         if let Some(i) = vertices.iter().position(near) {
@@ -288,6 +289,7 @@ impl PcbEditor {
     pub(super) fn add_fill(&mut self, outline: Outline) -> Operation {
         Operation::Fill(FillCommand::Add {
             fill: Box::new(FillSpec {
+                region: pcbcraft_core::model::fill::FillRegion::Drawn,
                 name: String::new(),
                 net: self.fill_draw.net,
                 layer: self.layer,

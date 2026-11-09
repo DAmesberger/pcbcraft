@@ -1,6 +1,6 @@
 # Qwen3.8 Flash Next with its tuned run profile (draft parts)
 
-5 November 2026: `RadixArk/Qwen3.8-Flash-Next-NVFP4` through vLLM's OpenAI-compatible endpoint on a private network, 262 144 tokens of context, vision declared, no native PDF, no cost, with the built-in `qwen3.8-flash-next` [run profile](../../docs/datasheet-assistant.md#run-profiles). Two parts, two Texas Instruments datasheets (not included here), read as text with pages viewed as images:
+5 November 2026: `RadixArk/Qwen3.8-Flash-Next-NVFP4` through vLLM's OpenAI-compatible endpoint on a private network, 262 144 tokens of context, vision declared, no native PDF, with the built-in `qwen3.8-flash-next` [run profile](../../docs/datasheet-assistant.md#run-profiles). Two parts, two Texas Instruments datasheets (not included here), read as text with pages viewed as images:
 
 - TLV75733PDBVR, a 3.3 V LDO in SOT-23-5 (DBV), from the TLV757P datasheet (SBVS322C): `tlv757.recording.jsonl` (16 replies) and `tlv75733.review.md`.
 - TPD2E009DBZR, a two-channel ESD diode in SOT-23-3 (DBZ), from the TPD2E009 datasheet (SLVS953B): `tpd2e009.recording.jsonl` (11 replies) and `tpd2e009.review.md`.

@@ -11,7 +11,7 @@ use crate::geometry::point_valid;
 use crate::ids::Id;
 use crate::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
 use crate::model::fill::{
-    FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec, MAX_FILLS, MAX_KEEPOUTS,
+    FillRegion, FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec, MAX_FILLS, MAX_KEEPOUTS,
 };
 use crate::model::{Fill, Keepout, Project};
 use crate::rules::MAX_RULE_MM;
@@ -118,19 +118,30 @@ pub fn apply(project: &mut Project, command: FillCommand) -> Result<Option<Id>> 
         }
         FillCommand::Edit { fill } => {
             let slot = project
-                .fills
-                .iter_mut()
-                .find(|f| f.id == fill.id)
+                .fill(fill.id)
                 .ok_or_else(|| missing("fill", fill.id))?;
             if slot.locked && fill.locked {
                 return Err(Error::Conflict(
                     "fill.locked: unlock the fill to edit it".into(),
                 ));
             }
-            *slot = Fill {
-                computed: None,
-                ..*fill
-            };
+            // A board-following fill's outline is derived: editing it
+            // means making the fill a drawn one.
+            if slot.region == FillRegion::Board
+                && fill.region == FillRegion::Board
+                && fill.outline != slot.outline
+            {
+                return Err(Error::Conflict(format!(
+                    "fill.follows_board: the {} follows the board outline; make it a drawn fill to edit its outline",
+                    fill_label(project, slot)
+                )));
+            }
+            if let Some(slot) = project.fills.iter_mut().find(|f| f.id == fill.id) {
+                *slot = Fill {
+                    computed: None,
+                    ..*fill
+                };
+            }
             Ok(None)
         }
         FillCommand::Delete { id } => {
@@ -214,6 +225,39 @@ pub fn apply(project: &mut Project, command: FillCommand) -> Result<Option<Id>> 
             Ok(None)
         }
     }
+}
+
+/// Give every board-following fill ([`FillRegion::Board`]) the solved
+/// board outline, after any operation: a board parameter or shape edit
+/// moves its region, and the next refill (the desktop's background
+/// refill, or `fill.refill`) fills it. An edge constraint on such a fill
+/// is refused: the board, not an edge, places it.
+pub fn follow_board(project: &mut Project) -> Result<()> {
+    if project.fills.iter().all(|f| f.region.is_drawn()) {
+        return Ok(());
+    }
+    let constrained = project
+        .edge_constraints
+        .iter()
+        .find_map(|c| match c.target {
+            crate::model::board::ConstraintTarget::Fill(id) => {
+                project.fill(id).filter(|f| f.region == FillRegion::Board)
+            }
+            _ => None,
+        });
+    if let Some(f) = constrained {
+        return Err(Error::Conflict(format!(
+            "fill.follows_board: the {} follows the board outline; an edge constraint cannot place it",
+            fill_label(project, f)
+        )));
+    }
+    let outer = project.board().outer.clone();
+    for f in &mut project.fills {
+        if f.region == FillRegion::Board && f.outline != outer {
+            f.outline = outer.clone();
+        }
+    }
+    Ok(())
 }
 
 /// The copper of fill `id`: its outline less board edge and cutout

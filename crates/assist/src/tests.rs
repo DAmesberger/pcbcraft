@@ -509,11 +509,18 @@ fn a_gated_tool_call_comes_back_as_a_tool_result_and_the_run_goes_on() -> Fallib
     };
     let mut session = Session::default();
     let (outcome, log) = run_with(&config, &mut backend, datasheet(&dir)?, &mut session)?;
-    assert_eq!(outcome.stop, Stop::Submitted, "{log:?}");
+    // The run went on to its report, which the review check refuses: with
+    // nothing applied there is no component draft. The script ends there.
+    assert_eq!(
+        outcome.stop,
+        Stop::Failed("HTTP: the recording has no more responses".into()),
+        "{log:?}"
+    );
     assert_eq!(
         outcome.facts.request_log[2].tools,
         vec!["library_pinout_apply!"]
     );
+    assert_eq!(outcome.facts.request_log[3].tools, vec!["submit_review!"]);
     assert!(
         session.engine().drafts().items.is_empty(),
         "nothing applied"
@@ -527,6 +534,10 @@ fn a_gated_tool_call_comes_back_as_a_tool_result_and_the_run_goes_on() -> Fallib
         text.contains("gate.cannot_ask") && text.contains("no way to ask"),
         "{text}"
     );
+    let report = &bodies[4]["messages"][8]["content"][0];
+    assert_eq!(report["is_error"], true);
+    let text = report["content"].as_str().unwrap_or_default();
+    assert!(text.contains("no component draft"), "{text}");
     Ok(())
 }
 

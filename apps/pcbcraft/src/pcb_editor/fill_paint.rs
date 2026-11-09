@@ -540,7 +540,8 @@ impl PcbEditor {
             ring.push(first);
         }
         painter.add(Shape::line(ring, Stroke::new(1.5, t.body_selected)));
-        if fill.locked {
+        // A board-following fill's outline is the board's: no handles.
+        if fill.locked || !fill.region.is_drawn() {
             return;
         }
         for p in vertices(&outline) {

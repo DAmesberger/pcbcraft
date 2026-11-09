@@ -2,7 +2,7 @@
 # Rebuild the ESP32-S31 dev board from its replay and write every output.
 # Run from the repository root:  sh examples/esp32-s31-devboard/regenerate.sh
 #
-# 1. The replay (581 JSON-lines requests through `pcbcraft-cli stdio
+# 1. The replay (570 JSON-lines requests through `pcbcraft-cli stdio
 #    --operator`, the same command engine the desktop and MCP use) opens the
 #    module example, authors the other parts, draws the schematic, lays out
 #    and routes the board and saves esp32-s31-devboard.pcbcraft. Any refused

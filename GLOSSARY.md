@@ -372,7 +372,7 @@ Bumps added to one track segment to lengthen it by an exact amount: a trombone b
 _Avoid_: Serpentine (as a term), squiggle
 
 **Copper fill**:
-A copper region of one net on one copper layer, drawn as an outline and computed by the core from the board around it: it keeps its clearances, joins its net's pads with solid or thermal connections and yields to higher-priority fills. Its computed copper is stored with the key of its inputs, and it is stale when they change.
+A copper region of one net on one copper layer, drawn as an outline or following the board outline (its stored region), and computed by the core from the board around it: it keeps its clearances, joins its net's pads with solid or thermal connections and yields to higher-priority fills. Its computed copper is stored with the key of its inputs, and it is stale when they change.
 _Avoid_: Zone
 
 **Keepout**:

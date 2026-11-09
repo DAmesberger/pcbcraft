@@ -16,7 +16,7 @@ pcbcraft-cli design-part --replay examples/esp32-s31-wroom-3/wroom3.replay.jsonl
   --name ESP32-S31-WROOM-3 --out new.pcbcraft
 ```
 
-- `run1/`: the first live Claude API run (`claude-opus-5-5`, $7.23): its recorded responses (`run1.recording.jsonl`, in the neutral recording format since 5 November 2026, replayed by the `pcbcraft-assist` tests) and the project it produced. [docs/datasheet-assistant-run1.md](../../docs/datasheet-assistant-run1.md) compares it with the reference above; `pcbcraft-cli review-diff run1/esp32-s31-wroom-3.pcbcraft esp32-s31-wroom-3.pcbcraft run1 reference` lists the differences.
+- `run1/`: the first live Claude API run (`claude-opus-5-5`): its recorded responses (`run1.recording.jsonl`, in the neutral recording format since 5 November 2026, replayed by the `pcbcraft-assist` tests) and the project it produced. Its pinout rows carry no source pages, so the review check (`library.review_check`, which the in-app runner's `submit_review` now runs) refuses its report and the replay ends refused. [docs/datasheet-assistant-run1.md](../../docs/datasheet-assistant-run1.md) compares it with the reference above; `pcbcraft-cli review-diff run1/esp32-s31-wroom-3.pcbcraft esp32-s31-wroom-3.pcbcraft run1 reference` lists the differences.
 
 ## CAD cross-check
 
