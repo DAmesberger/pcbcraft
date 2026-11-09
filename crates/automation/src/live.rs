@@ -9,16 +9,17 @@
 //! with [`admit`] and [`run`]: the same [`Session::respond`] the headless
 //! transports use, over the window's engine ([`Session::lend`]).
 //!
-//! Two methods are served: [`EXECUTE`] (`{command, params,
-//! expected_revision?}`, one automation request) and [`REVISION`]. Every
-//! request that may change the project names the revision it was prepared
-//! against, in its own parameters or beside them, and is refused while the
-//! person is typing, dragging or has a menu, dialog or review open. The
+//! Two methods are served: [`EXECUTE`] (`{command, params}`, one
+//! automation request) and [`REVISION`]. A request that changes the project
+//! names the revision it was prepared against in its own parameters, which
+//! [`Session::execute`] checks as for every transport. Any request but a
+//! read is refused while the person is typing, dragging or has a menu,
+//! dialog or review open. The
 //! permission gate decides as for any LLM request; Ask waits for the
 //! person's Allow in the window. The CLI's `mcp --live` bridges an MCP
 //! client to this channel ([`Client`]).
 use crate::gate::{Decision, Policy, Question, Refusal};
-use crate::session::{CommandInfo, Request, Session, envelope, take_verbose};
+use crate::session::{Request, Session, envelope, take_verbose};
 use pcbcraft_core::Class;
 use serde_json::{Value, json};
 use solidcraft_control::Effect;
@@ -36,7 +37,7 @@ use std::time::Duration;
 
 pub use solidcraft_control::ControlRequest;
 
-/// Run one automation request: `{command, params, expected_revision?}`.
+/// Run one automation request: `{command, params}`.
 pub const EXECUTE: &str = "engine.execute";
 /// The project's revision now, and whether it can undo and redo.
 pub const REVISION: &str = "project.revision";
@@ -327,7 +328,6 @@ pub struct Admitted {
     request: Value,
     subject: &'static str,
     class: Class,
-    expected: Option<u64>,
 }
 
 impl Admitted {
@@ -416,40 +416,38 @@ pub fn admit(
     take_verbose(&mut typed);
     let typed = match serde_json::from_value::<Request>(typed) {
         Ok(typed) => typed,
+        Err(_) if lacks_revision(command, &request["params"]) => {
+            return Verdict::Reply(refusal(
+                "live.revision_required",
+                command,
+                "a change to the open window's project names the revision it was prepared against. Nothing was changed.".into(),
+                "Send expected_revision in its parameters: the revision of the last reply, or project_inspect's.",
+            ));
+        }
         Err(error) => return Verdict::Reply(envelope(Err(error.into()))),
     };
     let class = typed.effective_class();
-    let mut admitted = Admitted {
+    let admitted = Admitted {
         request,
         subject: typed.subject(),
         class,
-        expected: None,
     };
-    if class != Class::Read {
-        if let Some(reason) = busy {
-            return Verdict::Reply(refusal(
-                "live.busy",
-                admitted.subject,
-                format!("{reason}. Nothing was changed."),
-                "Wait a moment and send it again; check the revision first, as the person may have changed the project.",
-            ));
-        }
-        let expected = admitted.request["params"]
-            .get("expected_revision")
-            .or_else(|| params.get("expected_revision"))
-            .and_then(Value::as_u64);
-        let Some(expected) = expected else {
-            return Verdict::Reply(refusal(
-                "live.revision_required",
-                admitted.subject,
-                "a change to the open window's project names the revision it was prepared against. Nothing was changed.".into(),
-                "Send expected_revision: the revision of the last reply, or project_inspect's.",
-            ));
-        };
-        if let Err(stale) = current(session, expected) {
-            return Verdict::Reply(stale);
-        }
-        admitted.expected = Some(expected);
+    if class != Class::Read
+        && let Some(reason) = busy
+    {
+        return Verdict::Reply(refusal(
+            "live.busy",
+            admitted.subject,
+            format!("{reason}. Nothing was changed."),
+            "Wait a moment and send it again; check the revision first, as the person may have changed the project.",
+        ));
+    }
+    // A stale change is refused now rather than after the person's Allow;
+    // Session::execute checks it again when it runs.
+    if let Some(expected) = typed.expected_revision()
+        && let Err(stale) = engine.check_revision(expected)
+    {
+        return Verdict::Reply(envelope(Err(stale.into())));
     }
     match session.check_request(policy, &admitted.request) {
         Decision::Run => Verdict::Run(admitted),
@@ -458,41 +456,24 @@ pub fn admit(
     }
 }
 
-/// Refused unless `expected` is the project's revision now.
-fn current(session: &Session, expected: u64) -> Result<(), Value> {
-    let actual = session.engine().revision();
-    if expected == actual {
-        Ok(())
-    } else {
-        Err(envelope(Err(pcbcraft_core::Error::Stale {
-            expected,
-            actual,
-        }
-        .into())))
-    }
+/// Whether `command` takes `expected_revision` in its parameters, which
+/// `params` lacks: the central revision rule's requirement, named clearly
+/// instead of as a parse error.
+fn lacks_revision(command: &str, params: &Value) -> bool {
+    let requires = Request::catalog_shared()
+        .iter()
+        .find(|info| info.id == command)
+        .and_then(|info| info.params.get("required"))
+        .and_then(Value::as_array)
+        .is_some_and(|required| required.iter().any(|name| name == "expected_revision"));
+    requires && params.get("expected_revision").is_none()
 }
 
 /// Run an admitted request on the window's session and answer with the
-/// compact reply. The revision is checked again: the person may have
-/// edited while it waited for their Allow.
+/// compact reply. [`Session::execute`] checks the revision again: the
+/// person may have edited while it waited for their Allow.
 pub fn run(session: &mut Session, admitted: &Admitted) -> Value {
-    if let Some(expected) = admitted.expected
-        && let Err(stale) = current(session, expected)
-    {
-        return stale;
-    }
     session.respond(admitted.request.clone())
-}
-
-/// Whether `command`'s tool takes `expected_revision` beside its own
-/// parameters on the live channel: a change whose parameters carry none.
-pub fn needs_revision(command: &CommandInfo) -> bool {
-    command.class != Class::Read
-        && command
-            .params
-            .get("properties")
-            .and_then(|properties| properties.get("expected_revision"))
-            .is_none()
 }
 
 /// A bridge's connection to the window: one authenticated connection, kept

@@ -164,7 +164,7 @@ fn an_assistant_edits_the_open_project_with_shared_undo() -> Fallible {
     // The assistant redoes at the revision it last saw: refused, stale.
     let stale = h.call(
         live::EXECUTE,
-        json!({"command": "project.redo", "expected_revision": revision + 1}),
+        json!({"command": "project.redo", "params": {"expected_revision": revision + 1}}),
     )?;
     assert_eq!(code(&stale), "stale_revision", "{stale}");
     let now = h.call(live::REVISION, json!({}))?;
@@ -172,7 +172,7 @@ fn an_assistant_edits_the_open_project_with_shared_undo() -> Fallible {
     assert_eq!(current, h.app.engine.revision());
     let redone = h.call(
         live::EXECUTE,
-        json!({"command": "project.redo", "expected_revision": current}),
+        json!({"command": "project.redo", "params": {"expected_revision": current}}),
     )?;
     assert_eq!(redone["ok"], true, "{redone}");
     assert_eq!(
@@ -235,7 +235,7 @@ fn changes_wait_while_the_person_holds_the_window() -> Fallible {
 
     let open = h.call(
         live::EXECUTE,
-        json!({"command": "project.open", "expected_revision": revision, "params": {"path": "/tmp/x.pcbcraft"}}),
+        json!({"command": "project.open", "params": {"expected_revision": revision, "path": "/tmp/x.pcbcraft"}}),
     )?;
     assert_eq!(code(&open), "live.window_only", "{open}");
     let missing = h.call(live::EXECUTE, json!({"command": "project.undo"}))?;
@@ -252,7 +252,7 @@ fn an_ask_request_waits_for_the_person() -> Fallible {
     let revision = h.app.engine.revision();
     let dir = tempfile::tempdir_in(std::env::temp_dir())?;
     let path = dir.path().join("board.solidcraft");
-    let export = json!({"command": "project.export_native", "expected_revision": revision,
+    let export = json!({"command": "project.export_native",
         "params": {"path": path.display().to_string()}});
 
     let mut client = h.client()?;

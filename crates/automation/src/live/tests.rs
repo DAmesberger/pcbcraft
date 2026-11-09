@@ -103,8 +103,8 @@ fn changes_need_the_current_revision_and_a_free_window() -> Fallible {
     );
     assert_eq!(session.engine().revision(), revision + 1);
 
-    // Undo takes its revision beside the parameters.
-    let undo = json!({"command": "project.undo", "expected_revision": revision + 1});
+    // Undo takes its revision in its own parameters.
+    let undo = json!({"command": "project.undo", "params": {"expected_revision": revision + 1}});
     let Verdict::Run(admitted) = decide(&session, None, &undo) else {
         return Err("a current undo was not admitted".into());
     };
@@ -120,14 +120,14 @@ fn the_window_decides_files_and_asks() -> Fallible {
     let session = Session::new(Engine::demo()?);
     let revision = session.engine().revision();
     for command in WINDOW_ONLY {
-        let request = json!({"command": command, "expected_revision": revision, "params": {}});
+        let request = json!({"command": command, "params": {"expected_revision": revision}});
         let Verdict::Reply(reply) = decide(&session, None, &request) else {
             return Err(format!("{command} was admitted").into());
         };
         assert_eq!(code(&reply), "live.window_only", "{reply}");
     }
     let path = std::env::temp_dir().join("live-export.solidcraft");
-    let export = json!({"command": "project.export_native", "expected_revision": revision,
+    let export = json!({"command": "project.export_native",
         "params": {"path": path.display().to_string()}});
     let Verdict::Ask(admitted, question) = decide(&session, None, &export) else {
         return Err("an export was not held for the person".into());
@@ -135,7 +135,7 @@ fn the_window_decides_files_and_asks() -> Fallible {
     assert_eq!(admitted.class(), Class::Ask);
     assert_eq!(question.command, "project.export_native");
 
-    let never = json!({"command": "library.favourite", "expected_revision": revision,
+    let never = json!({"command": "library.favourite",
         "params": {"key": {"source": "project", "lineage": 1}, "favourite": true}});
     let Verdict::Reply(never) = decide(&session, None, &never) else {
         return Err("a never-class request was admitted".into());
@@ -215,10 +215,10 @@ fn the_socket_needs_the_token_and_waits_for_the_window() -> Fallible {
     Ok(())
 }
 
-/// The bridge's tools: no window-only file requests, and every change
-/// without its own revision takes `expected_revision`.
+/// The bridge's tools: no window-only file requests, and each change takes
+/// `expected_revision` once, from its own parameters.
 #[test]
-fn live_tools_take_a_revision_for_every_change() {
+fn live_tools_take_their_own_revision() {
     let tools = crate::mcp::live_tools();
     let tool = |name: &str| tools.iter().find(|t| t["name"] == name).cloned();
     assert!(tool("project_open").is_none() && tool("project_save").is_none());

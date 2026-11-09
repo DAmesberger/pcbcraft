@@ -239,44 +239,19 @@ fn tool(command: &CommandInfo) -> Value {
     })
 }
 
-/// A live server's tools: the same, less the window's own file requests,
-/// and every change takes `expected_revision` ([`live::needs_revision`]).
+/// A live server's tools: the same, less the window's own file requests.
 pub fn live_tools() -> Vec<Value> {
     Request::catalog_shared()
         .iter()
         .filter(|command| !live::WINDOW_ONLY.contains(&command.id))
-        .map(|command| {
-            let mut tool = tool(command);
-            if live::needs_revision(command) {
-                let schema = &mut tool["inputSchema"];
-                schema["properties"]["expected_revision"] = json!({
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "The project revision this change was prepared against.",
-                });
-                match schema["required"].as_array_mut() {
-                    Some(required) => required.push(json!("expected_revision")),
-                    None => schema["required"] = json!(["expected_revision"]),
-                }
-            }
-            tool
-        })
+        .map(tool)
         .collect()
 }
 
-/// One tool call sent to the window: `expected_revision` goes beside the
-/// parameters when the request's own carry none. A lost connection is a
-/// failure with the reason, never retried.
-fn call_live(client: &mut live::Client, command: &CommandInfo, mut arguments: Value) -> Value {
-    let mut params = json!({"command": command.id});
-    if live::needs_revision(command)
-        && let Some(revision) = arguments
-            .as_object_mut()
-            .and_then(|arguments| arguments.remove("expected_revision"))
-    {
-        params["expected_revision"] = revision;
-    }
-    params["params"] = arguments;
+/// One tool call sent to the window. A lost connection is a failure with
+/// the reason, never retried.
+fn call_live(client: &mut live::Client, command: &CommandInfo, arguments: Value) -> Value {
+    let params = json!({"command": command.id, "params": arguments});
     match client.call(live::EXECUTE, params) {
         Ok(reply) => reply,
         Err(message) => {
