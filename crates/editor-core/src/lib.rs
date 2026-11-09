@@ -488,6 +488,8 @@ pub struct Evaluators<'a> {
 /// ([`Shared`]), so a step costs the sections it changed, not a copy of the
 /// whole project.
 pub const MAX_UNDO: usize = 100;
+/// Operations [`Engine::apply_all_hosted`] takes in one step.
+pub const MAX_BATCH: usize = 256;
 
 /// The document, its revision and one shared undo history.
 ///
@@ -980,6 +982,66 @@ impl Engine {
         evaluators: Evaluators<'_>,
     ) -> Result<Outcome> {
         self.apply_inner(expected_revision, operation, evaluators)
+    }
+
+    /// Apply `operations` in order at an expected revision as one undo step
+    /// and one revision, each checked as [`apply`](Self::apply) checks it
+    /// against the document the ones before it made. Any failure leaves
+    /// document, revision and history unchanged, and names the operation
+    /// that failed. At most [`MAX_BATCH`] operations, and at least one.
+    pub fn apply_all_hosted(
+        &mut self,
+        expected_revision: u64,
+        operations: Vec<Operation>,
+        evaluators: Evaluators<'_>,
+    ) -> Result<Vec<Outcome>> {
+        self.check_revision(expected_revision)?;
+        let count = operations.len();
+        if count == 0 {
+            return Err(Error::Invalid(
+                "a batch needs at least one operation".into(),
+            ));
+        }
+        if count > MAX_BATCH {
+            return Err(Error::Limit(format!(
+                "a batch takes at most {MAX_BATCH} operations, not {count}"
+            )));
+        }
+        // The steps run on a copy without history; only the end commits.
+        let mut scratch = Engine {
+            document: self.document.clone(),
+            revision: self.revision,
+            waiver_reason_required: self.waiver_reason_required,
+            copper: self.copper.clone(),
+            ..Engine::default()
+        };
+        let mut outcomes = Vec::with_capacity(count);
+        for (index, operation) in operations.into_iter().enumerate() {
+            let at = scratch.revision;
+            let outcome = scratch
+                .apply_inner(at, operation, evaluators)
+                .map_err(|error| error.in_batch(index, count))?;
+            outcomes.push(outcome);
+        }
+        if scratch.revision != self.revision {
+            self.commit(scratch.document)?;
+        }
+        Ok(outcomes)
+    }
+
+    /// A copy of this engine, history included, to try requests on without
+    /// touching this one (an MCP `dry_run`). Documents share their sections,
+    /// so the copy costs little.
+    pub fn fork(&self) -> Engine {
+        Engine {
+            document: self.document.clone(),
+            revision: self.revision,
+            undo: self.undo.clone(),
+            redo: self.redo.clone(),
+            last_step: self.last_step,
+            waiver_reason_required: self.waiver_reason_required,
+            copper: self.copper.clone(),
+        }
     }
 
     fn apply_inner(

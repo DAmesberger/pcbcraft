@@ -71,6 +71,23 @@ fn shown(text: &str) -> String {
 }
 
 impl Error {
+    /// This failure of operation `index` (from 0) of a batch of `count`,
+    /// which the message names after its own text, so a rule code it leads
+    /// with stays where [`split_rule`] reads it.
+    pub fn in_batch(self, index: usize, count: usize) -> Self {
+        let place =
+            |text: String| format!("{text} (operation {} of {count})", index.saturating_add(1));
+        match self {
+            Self::Invalid(text) => Self::Invalid(place(text)),
+            Self::NotFound(text) => Self::NotFound(place(text)),
+            Self::Conflict(text) => Self::Conflict(place(text)),
+            Self::Limit(text) => Self::Limit(place(text)),
+            Self::Unsupported(text) => Self::Unsupported(place(text)),
+            Self::History(text) => Self::History(place(text)),
+            other @ (Self::Stale { .. } | Self::Json(_)) => other,
+        }
+    }
+
     pub fn code(&self) -> &'static str {
         match self {
             Self::Invalid(_) => "invalid_input",

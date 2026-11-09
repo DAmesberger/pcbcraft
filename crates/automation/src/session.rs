@@ -31,6 +31,17 @@ pub struct ApplyParams {
     pub operation: Operation,
 }
 
+/// Document operations applied in order as one undo step.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApplyAllParams {
+    /// The revision the operations were prepared against.
+    pub expected_revision: u64,
+    /// One to [`pcbcraft_core::MAX_BATCH`] operations; each sees the
+    /// document the ones before it made.
+    pub operations: Vec<Operation>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoParams {}
@@ -264,6 +275,10 @@ pub enum Request {
     /// Apply one document operation at an expected revision.
     #[serde(rename = "project.apply")]
     Apply(ApplyParams),
+    /// Apply document operations in order at an expected revision as one
+    /// undo step; any failure changes nothing.
+    #[serde(rename = "project.apply_all")]
+    ApplyAll(ApplyAllParams),
     /// Return the document, drafts with their findings and design checks.
     #[serde(rename = "project.inspect")]
     Inspect(InspectParams),
@@ -400,6 +415,7 @@ pub enum Request {
 // path needs at least Ask ([`Request::effective_class`]).
 pcbcraft_core::declare_classes!(Request {
     Apply "project.apply" Edit "Apply an operation",
+    ApplyAll "project.apply_all" Edit "Apply operations as one step",
     Inspect "project.inspect" Read "Inspect the project",
     Schema "project.schema" Read "Look up a schema",
     Query "project.query" Read "Run a query",
@@ -448,6 +464,10 @@ impl Request {
     pub fn effective_class(&self) -> Class {
         let own = match self {
             Self::Apply(params) => params.operation.class(),
+            // At least an edit, so an empty batch is no read.
+            Self::ApplyAll(params) => {
+                Class::strictest(params.operations.iter().map(Operation::class)).max(Class::Edit)
+            }
             Self::Query(query) => query.class(),
             other => other.class(),
         };
@@ -463,6 +483,15 @@ impl Request {
     pub fn subject(&self) -> &'static str {
         match self {
             Self::Apply(params) => params.operation.command(),
+            // The strictest member speaks for the batch.
+            Self::ApplyAll(params) => {
+                let class = Class::strictest(params.operations.iter().map(Operation::class));
+                params
+                    .operations
+                    .iter()
+                    .find(|operation| operation.class() == class)
+                    .map_or("project.apply_all", Operation::command)
+            }
             Self::Query(query) => query.command(),
             other => other.command(),
         }
@@ -517,6 +546,7 @@ impl Request {
             Self::UsePartFile(params) => params.path.iter().map(String::as_str).collect(),
             Self::PlacePartFile(params) => params.path.iter().map(String::as_str).collect(),
             Self::Apply(_)
+            | Self::ApplyAll(_)
             | Self::Inspect(_)
             | Self::Schema(_)
             | Self::Query(_)
@@ -551,6 +581,7 @@ impl Request {
     pub fn expected_revision(&self) -> Option<u64> {
         match self {
             Self::Apply(params) => Some(params.expected_revision),
+            Self::ApplyAll(params) => Some(params.expected_revision),
             Self::Undo(params) | Self::Redo(params) | Self::New(params) => {
                 Some(params.expected_revision)
             }
@@ -628,6 +659,11 @@ impl Request {
                 "project.apply",
                 "Apply one typed document operation at expected_revision; a stale revision or invalid input changes nothing.",
                 "Apply one typed document operation (library, instance including instance.assign_part, schematic, layout including layout.set_fabrication, layout.set_stackup, layout.edit_stackup and layout.add_via, or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
+            ),
+            info::<ApplyAllParams>(
+                "project.apply_all",
+                "Apply typed document operations in order at expected_revision as one undo step; any failure changes nothing.",
+                "Apply one to 256 typed document operations, in order, at an expected revision as one undo step and one revision, and return their outcomes in order. Each is checked against the document the ones before it made; a stale revision or any failing operation (named by its place) changes nothing.",
             ),
             info::<InspectParams>(
                 "project.inspect",
@@ -943,6 +979,16 @@ impl Session {
                 )?;
                 let mut reply = self.document_reply();
                 reply["outcome"] = serde_json::to_value(outcome)?;
+                return Ok(reply);
+            }
+            Request::ApplyAll(params) => {
+                let outcomes = self.engine.apply_all_hosted(
+                    params.expected_revision,
+                    params.operations,
+                    hosted(),
+                )?;
+                let mut reply = self.document_reply();
+                reply["outcomes"] = serde_json::to_value(outcomes)?;
                 return Ok(reply);
             }
             Request::Inspect(params) => return self.inspect(params),

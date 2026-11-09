@@ -431,6 +431,64 @@ The new server is `crates/automation/src/mcp/surface.rs` (`mcp::surface::Server`
   - rmcp maps resource-not-found (`-32002`) to `-32602` at `2026-07-28`.
   - A cancelled request drops its handler, but a job already on the desk runs to completion. P7 adds cooperative cancellation.
 
+## As built: P2, five tools and project handles (9 November 2026)
+
+`surface::tools()` lists `find`, `describe`, `query`, `apply` and `act` (`crates/automation/src/mcp/surface/tools.rs`). Every call except `find` becomes one request of the JSON contract that runs on the desk through `Session::respond` as `Caller::Model`, so the gate is unchanged. Still served by no binary until P9.
+
+- **Annotations** come from `metadata::annotations` for Read, Edit and Ask (with open world), so they match the catalog's. `idempotentHint: false` is left out, since it is the protocol's default.
+- **Input schemas** are generated from the argument types with schemars, then compacted: no `default`, `format`, nullable types or `$defs`.
+  - `apply`'s `op` is an `enum` of every operation-kind name, generated from the catalog. This is the union outline Q3 recommends, pending the founder's answer.
+  - **Budget test:** the five tools measure 6,026 bytes, against 6,037 bytes (1,404 tokens at the instructions' 4.3 bytes per token). The `enum` is about 3.7 KB of that.
+- **`find {text, kind?, limit?}`** scores catalog name, title and summary words (3, 2 and 1 per word, with endings ignored) and returns hits best first, then in catalog order. An exact name ranks first.
+  - Each hit carries `name`, `kind`, `class`, `title` and `summary`. When hits are cut, `more` counts the rest.
+  - Limits: text up to 200 characters; `limit` 1–50 (default 10). Never-class entries are not found.
+  - `find` reads the static M2 metadata, not a project, so it does not go through the desk.
+- **`describe {name, def?}`** runs `project.schema` through the gate.
+  - It answers one reachable entry with `kind`, `title`, `summary`, `person` where set, and `call`, the call on this surface. Today's `send` shape and `asks_with_path` are removed.
+  - `def` reads one definition.
+- **`query {project?, name, params}`**: a query becomes `project.query`, and a read command runs as itself.
+- **`apply {project?, expected_revision, operations, dry_run?}`**: 1–256 steps.
+  - Document operations run as one new request, `project.apply_all`: one revision and one undo step, all or nothing.
+  - A failing step is named in the message as `(operation 2 of 3)`.
+  - Command-level edits go alone: `project.undo`, `project.redo`, `project.apply_update` and the folder imports. Mixing one into a batch is refused with `apply.alone`.
+  - `expected_revision` is filled into a command whose schema takes it.
+- **`dry_run`** is `Session::rehearse`, which runs the request on `Engine::fork()`.
+  - The answer is the compact reply the edit would give (outcomes, changes, findings, drafts), with `dry_run: true` and the revision unchanged.
+  - Only requests that touch nothing but the engine can be tried: operations, undo, redo and updates. A folder import also writes the person's recents, so it is excluded.
+  - The gate's refusals hold. What would only ask a person runs, since nothing is kept.
+- **`act {project?, name, params, expected_revision?}`** runs actions, including the Ask-class operations (`library.publish`, `library.promote`, `fabrication.waive`, …), which go through `project.apply_all`.
+  - Until P5, what needs a person is refused with `gate.cannot_ask`, as in P1.
+- **Name errors.** A name reached through another verb is refused with `catalog.other_kind`, and an unknown or Never name with `catalog.unknown`. Bad arguments give `arguments.invalid`. All three are tool results with `isError`; only an unknown tool is `-32602`.
+- **Project handles** (`surface/desk.rs`):
+  - A handle is `prj_` plus a UUID v4 from `getrandom`.
+  - The server's starting session gets one. `act project.new` and `act project.open {path}` run on a new session through the gate, and on success add it as another project with its own handle. Nothing is replaced, and with a `project` argument they are refused (`project.opens_new`).
+  - At most 16 projects (`project.limit`), held until the process exits.
+  - Every successful result carries `project`.
+  - A call may leave `project` out only while one project is open. Otherwise the call is refused with `project.ambiguous`, and a handle no project has gives `project.unknown`.
+  - New projects start from `Session::default()`, or from the host's factory (`Server::with_new_projects`, for P9's library sources).
+  - The desk publishes every project's revision (`watch` of handle → revision) for P6.
+- **Core** (`pcbcraft-core`):
+  - `Engine::apply_all_hosted` applies the steps on a history-free copy and commits once (`MAX_BATCH` 256).
+  - `Engine::fork` copies the engine with its history.
+  - `Error::in_batch` names the failing step after the message, so a leading rule code stays readable.
+- **Catalog.** `project.apply_all` ("Apply operations as one step", Edit) is the 42nd request, so the catalog now has 229 entries. Its class is the strictest of its operations, and at least Edit. Today's server lists it as a tool too, from the same catalog.
+- **Deviations from §3:**
+  - `find` hits carry no `pcbcraft://catalog/{name}` link, and `describe` gives no related skills and no `guide:` text. Those resources and skills arrive with P4, and `guide:` answers `guide.unknown` until then.
+  - Headless calls may leave `project` out while only one project is open. §3.2 asks for it on every call. This keeps the starting project usable before P5 can approve `project.new` (Ask class), and it never mixes projects: with two open, the call is refused.
+  - Undo and redo run alone, not inside a batch.
+  - Impact review (§3.5) is P5. Until then, `update`, `project.apply_update` and `library.pinout_apply` run as the Edit class allows.
+  - Live mode (§3.2) and recovered copies on `project.open` come with the cut-over (P9).
+- **Tests** (`surface/tool_tests.rs`, 4, with rmcp's client against the server), plus one core test (`a_batch_applies_as_one_step_or_not_at_all`). The P1 tests were adapted to the multi-project desk with the same assertions, and the golden transcript re-blessed: its `tools/list` now holds the five tools.
+  - The list: order, exact annotations, `apply`'s enum equal to the catalog's operations, and the byte budget.
+  - `find` and `describe`: ranking, kind filters, bounds, Never hidden, `call`, `person`, `def`, and the refusals.
+  - `query`, `apply` and `act` through the gate:
+    - a single step and a batch, each one revision;
+    - one undo for the whole batch;
+    - a stale or failing batch changes nothing;
+    - `dry_run` keeps nothing;
+    - `apply.alone`, `catalog.other_kind`, and `gate.cannot_ask` with no file written.
+  - Handles: `project.new` and `project.open`, separation, ambiguous, unknown and `opens_new`, save and reopen, `gate.path_outside` on open, and the 16-project limit.
+
 ## 9. Sources
 
 **Spec:**

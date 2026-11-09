@@ -352,6 +352,57 @@ fn a_joined_step_undoes_with_the_one_before() -> Result<()> {
     Ok(())
 }
 
+/// A batch is one revision and one undo step; a failing member, wherever
+/// it is, leaves document, revision and history as they were, and names
+/// itself.
+#[test]
+fn a_batch_applies_as_one_step_or_not_at_all() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let occurrence = engine.project().occurrences[0].id;
+    let moved = |x: f64| {
+        Operation::Schematic(SchematicCommand::MoveUnit {
+            occurrence,
+            position: [x, 0.0],
+        })
+    };
+    let before = engine.project().clone();
+    let start = engine.revision();
+    let can_undo = engine.can_undo();
+    let failing = vec![moved(1.0), designator_edit(u64::MAX, "X1"), moved(2.0)];
+    let Err(error) = engine.apply_all_hosted(start, failing, Default::default()) else {
+        return Err(Error::Invalid(
+            "a batch with a missing instance applied".into(),
+        ));
+    };
+    assert!(error.to_string().ends_with("(operation 2 of 3)"), "{error}");
+    assert_eq!(*engine.project(), before);
+    assert_eq!(engine.revision(), start);
+    assert_eq!(engine.can_undo(), can_undo);
+
+    let outcomes =
+        engine.apply_all_hosted(start, vec![moved(1.0), moved(2.0)], Default::default())?;
+    assert_eq!(outcomes.len(), 2);
+    assert_eq!(engine.revision(), start + 1, "one revision");
+    assert_ne!(*engine.project(), before);
+    engine.undo()?;
+    assert_eq!(*engine.project(), before, "one undo takes the whole batch");
+
+    let stale = engine.apply_all_hosted(start, vec![moved(3.0)], Default::default());
+    assert!(matches!(stale, Err(Error::Stale { .. })));
+    let empty = engine.apply_all_hosted(engine.revision(), Vec::new(), Default::default());
+    assert!(matches!(empty, Err(Error::Invalid(_))));
+    let many = vec![moved(1.0); crate::MAX_BATCH + 1];
+    let limit = engine.apply_all_hosted(engine.revision(), many, Default::default());
+    assert!(matches!(limit, Err(Error::Limit(_))));
+
+    // A fork tries steps without touching the engine it came from.
+    let mut fork = engine.fork();
+    fork.apply(fork.revision(), moved(9.0))?;
+    assert_eq!(*engine.project(), before);
+    assert_ne!(fork.project(), engine.project());
+    Ok(())
+}
+
 #[test]
 fn topology_uses_ids_and_survives_moving_and_reannotation() -> Result<()> {
     let mut engine = Engine::default();
