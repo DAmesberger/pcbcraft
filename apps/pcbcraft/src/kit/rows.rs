@@ -16,7 +16,10 @@ use super::severity::{Level, severity_glyph};
 use super::text;
 use egui::{Align, Color32, FontId, Layout, Rect, Response, Sense, Ui, UiBuilder, pos2, vec2};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{fonts, ui_kit};
+#[cfg(test)]
+use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// Rows a list shows before it is bounded with "Show all".
 pub const LIST_MAX_ROWS: usize = 8;
@@ -81,7 +84,7 @@ pub fn tool_card(ui: &mut Ui, card: &ToolCard<'_>, rows: impl FnOnce(&mut Ui)) -
     let key = (!card.key.is_empty()).then(|| {
         ui.painter().layout_no_wrap(
             card.key.to_owned(),
-            fonts::semibold(t.font_small),
+            type_face::semibold(t.font_small),
             t.form_dim,
         )
     });
@@ -91,7 +94,7 @@ pub fn tool_card(ui: &mut Ui, card: &ToolCard<'_>, rows: impl FnOnce(&mut Ui)) -
     let name = text::one_line(
         ui,
         card.name,
-        fonts::semibold(t.font_heading),
+        type_face::semibold(t.font_heading),
         t.form_ink,
         (right - left - key_width).max(0.0),
     );
@@ -194,7 +197,7 @@ pub fn hint(ui: &mut Ui, text: &str, tip: &str) -> Response {
         glyph,
         egui::Align2::CENTER_CENTER,
         "i",
-        fonts::semibold(t.font_badge),
+        type_face::semibold(t.font_badge),
         t.form_dim,
     );
     ui.painter().galley(
@@ -343,7 +346,7 @@ pub fn table(
                 caption,
                 &column.title.to_uppercase(),
                 "",
-                fonts::semibold(t.font_caption),
+                type_face::semibold(t.font_caption),
                 t.form_dim,
             );
             x += w + t.space_4;

@@ -28,7 +28,8 @@ use pcbcraft_solidcraft::footprint::view::{
     self as sketch_view, LiveSketch, ParamEvaluation, SketchView, SolveReport, ViewGeometry,
 };
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{fonts, ui_kit};
+use solidcraft_ui_egui::ui_kit;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// Pick and snap distance, in pixels.
 const PICK_PX: f32 = 7.0;
@@ -629,7 +630,7 @@ impl PcbEditor {
         }
         // Dimensions.
         let px = f64::from(1.0 / view.view.scale);
-        let font = fonts::medium(t.font_small);
+        let font = type_face::medium(t.font_small);
         let labels: Vec<(SketchConstraintId, String)> = drawn
             .constraints
             .iter()

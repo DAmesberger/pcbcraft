@@ -2,7 +2,7 @@
 //! `browser.rs::browser_header` and `ui_kit/panel.rs::inspector_header`).
 use egui::{FontId, Rect, Sense, Ui, pos2, vec2};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// Upstream `TREE_ROW_HEIGHT` and Browser indent.
 pub const TREE_ROW_HEIGHT: f32 = 26.0;
@@ -130,7 +130,7 @@ pub fn tree_row(ui: &mut Ui, id: egui::Id, row: &Row<'_>) -> RowResponse {
         t.text
     };
     let font = if row.selected {
-        fonts::semibold(t.font_label)
+        type_face::semibold(t.font_label)
     } else {
         FontId::proportional(t.font_label)
     };
@@ -243,7 +243,7 @@ pub fn card_title(ui: &mut Ui, title: &str, summary: &str) {
     let galley = super::text::one_line(
         ui,
         title,
-        fonts::semibold(t.font_heading),
+        type_face::semibold(t.font_heading),
         t.text,
         (rect.width() - t.space_6 * 2.0).max(0.0),
     );
@@ -298,7 +298,7 @@ pub fn inspector_header(ui: &mut Ui, icon: &str, title: &str, kind: &str) {
     if !kind.is_empty() {
         let galley = ui.painter().layout_no_wrap(
             kind.to_owned(),
-            fonts::semibold(t.font_small),
+            type_face::semibold(t.font_small),
             t.selected_ink,
         );
         let chip = Rect::from_center_size(
@@ -317,7 +317,7 @@ pub fn inspector_header(ui: &mut Ui, icon: &str, title: &str, kind: &str) {
     let galley = super::text::one_line(
         ui,
         title,
-        fonts::semibold(t.font_heading),
+        type_face::semibold(t.font_heading),
         t.form_ink,
         (name_right - left).max(0.0),
     );

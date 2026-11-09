@@ -15,7 +15,8 @@ use egui::{
     vec2,
 };
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{fonts, ui_kit};
+use solidcraft_ui_egui::ui_kit;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// How far a group's rows sit right of its header.
 pub const PICK_INDENT: f32 = 14.0;
@@ -71,7 +72,7 @@ pub fn pick_row(ui: &mut Ui, id: egui::Id, row: &PickRow<'_>) -> PickResponse {
     });
     let count_width = count.as_ref().map_or(0.0, |c| c.size().x + t.space_6);
     let font = if row.fold.is_some() {
-        fonts::semibold(t.font_label)
+        type_face::semibold(t.font_label)
     } else {
         FontId::proportional(t.font_label)
     };

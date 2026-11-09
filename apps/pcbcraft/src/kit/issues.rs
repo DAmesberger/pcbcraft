@@ -22,7 +22,10 @@ use egui::{
 };
 use pcbcraft_core::issues::{IssueCounts, IssueDetail};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{fonts, ui_kit};
+#[cfg(test)]
+use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit;
+use solidcraft_ui_egui::ui_kit::type_face;
 use std::sync::Arc;
 
 /// The Issues bar's height while collapsed, in points.
@@ -456,7 +459,7 @@ fn group_header(ui: &mut Ui, id: egui::Id, group: &IssueGroupView) -> (bool, boo
     let title = clipped(
         ui,
         &group.title,
-        fonts::semibold(t.font_label),
+        type_face::semibold(t.font_label),
         t.text,
         right - x - count.size().x - t.space_6,
     );
@@ -625,7 +628,7 @@ pub fn issues_bar(
         vec2(t.form_section_icon_size, t.form_section_icon_size),
     );
     super::chevron(ui.painter(), disclosure, expanded, t.text_dim);
-    let title = galley(ui, "Issues", fonts::semibold(t.font_label), t.text);
+    let title = galley(ui, "Issues", type_face::semibold(t.font_label), t.text);
     let mut x = disclosure.right() + t.space_6;
     let title_width = title.size().x;
     let segs = segments(counts, true, true);

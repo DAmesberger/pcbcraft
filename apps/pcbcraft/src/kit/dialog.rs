@@ -18,7 +18,8 @@ use super::card::FOOTER_HEIGHT;
 use super::severity::{Level, severity_glyph};
 use egui::{Align, FontId, Layout, Rect, Response, RichText, Sense, Ui, UiBuilder, pos2, vec2};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{fonts, ui_kit};
+use solidcraft_ui_egui::ui_kit;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// A docked dialog's header height, in points.
 pub const DIALOG_HEADER_HEIGHT: f32 = 40.0;
@@ -229,7 +230,7 @@ fn header(ui: &mut Ui, icon: &str, title: &str, kind: &str) -> bool {
     if !kind.is_empty() {
         let galley = ui.painter().layout_no_wrap(
             kind.to_owned(),
-            fonts::semibold(t.font_small),
+            type_face::semibold(t.font_small),
             t.selected_ink,
         );
         let chip = Rect::from_center_size(
@@ -255,7 +256,7 @@ fn header(ui: &mut Ui, icon: &str, title: &str, kind: &str) -> bool {
         title_rect,
         title,
         "",
-        fonts::semibold(t.font_heading),
+        type_face::semibold(t.font_heading),
         t.form_ink,
     );
     t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);

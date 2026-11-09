@@ -28,7 +28,6 @@ use pcbcraft_core::{
     updates::Change,
 };
 use solidcraft_theme::{self as theme, Tokens};
-use solidcraft_ui_egui::fonts;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -55,6 +54,9 @@ mod menu;
 #[cfg(test)]
 use layer_focus::OTHER_SHADE;
 use layer_focus::{FAR_SHADE, LayerFocus, Look};
+#[cfg(test)]
+use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 #[cfg(test)]
 mod layer_focus_tests;
 pub(crate) mod net_classes;
@@ -2171,7 +2173,7 @@ impl PcbEditor {
                     egui::pos2(screen(shown.position).x, top - 2.0),
                     Align2::CENTER_BOTTOM,
                     reference,
-                    fonts::semibold(t.font_label),
+                    type_face::semibold(t.font_label),
                     color,
                 );
             }

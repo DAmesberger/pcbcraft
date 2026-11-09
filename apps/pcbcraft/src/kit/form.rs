@@ -1,7 +1,10 @@
 //! Form rows and controls (upstream `ui_kit/layout.rs` and `fields.rs`).
 use egui::{Align, Layout, Response, RichText, Ui, UiBuilder, vec2};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{fonts, ui_kit};
+#[cfg(test)]
+use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// Form scope: tokenised spacing, type and control looks for every row
 /// inside `add` (upstream `layout::scope`).
@@ -590,7 +593,7 @@ fn section_with<R>(
     );
     super::disclosure(ui.painter(), icon_center, open, t.form_dim);
     let caption = title.to_uppercase();
-    let mut format = egui::TextFormat::simple(fonts::semibold(t.font_caption), t.form_dim);
+    let mut format = egui::TextFormat::simple(type_face::semibold(t.font_caption), t.form_dim);
     format.extra_letter_spacing = t.font_caption * t.font_section_tracking;
     let galley = ui
         .painter()

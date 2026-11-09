@@ -21,7 +21,7 @@ use pcbcraft_core::ids::LibraryId;
 use pcbcraft_core::library::bundle::Direction;
 use pcbcraft_core::{DefinitionId, Engine, Operation};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::sync::mpsc::Receiver;
 
@@ -458,7 +458,7 @@ impl PartEditor {
                     (Some((title, state)), None) => {
                         ui.label(
                             RichText::new(title)
-                                .font(fonts::semibold(t.font_panel))
+                                .font(type_face::semibold(t.font_panel))
                                 .color(t.text),
                         );
                         details |= chip(ui, state, read_only).clicked();

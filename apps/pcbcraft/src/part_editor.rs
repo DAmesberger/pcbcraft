@@ -83,7 +83,9 @@ use pcbcraft_core::{
     Operation, PackageTerminalId, PadId, Point, Query, QueryResult, TerminalId, UnitId,
 };
 use solidcraft_theme::Tokens;
+#[cfg(test)]
 use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 use std::sync::Arc;
 #[cfg(test)]
 pub use working_set::Template;
@@ -1888,14 +1890,14 @@ impl PartEditor {
             Pos2::new(left, rect.top() + t.space_16),
             Align2::LEFT_TOP,
             "Electrical terminal",
-            fonts::semibold(t.font_panel),
+            type_face::semibold(t.font_panel),
             t.text,
         );
         painter.text(
             Pos2::new(right, rect.top() + t.space_16),
             Align2::RIGHT_TOP,
             "Package terminal / copper pads",
-            fonts::semibold(t.font_panel),
+            type_face::semibold(t.font_panel),
             t.text,
         );
         let top = rect.top() + t.form_header_height + t.space_16;

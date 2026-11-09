@@ -10,7 +10,7 @@ use pcbcraft_core::geometry::{Shape, signed_area2};
 use pcbcraft_core::library::graphics::SYMBOL_STROKE_MM;
 use pcbcraft_core::library::{Fill, HAlign, TextMetric, VAlign};
 use pcbcraft_core::schematic::{PlacedText, PlacedUnit};
-use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, OnceLock};
@@ -33,7 +33,7 @@ pub fn metric(painter: &Painter) -> TextMetric {
     const SAMPLE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     let size = 100.0;
     let width = painter
-        .layout_no_wrap(SAMPLE.to_owned(), fonts::medium(size), Color32::WHITE)
+        .layout_no_wrap(SAMPLE.to_owned(), type_face::medium(size), Color32::WHITE)
         .size()
         .x;
     let advance = f64::from(width / SAMPLE.len() as f32 / (size * CAP_HEIGHT));
@@ -371,7 +371,7 @@ pub fn paint_text(painter: &Painter, view: View, text: &PlacedText, color: Color
         if line.text.is_empty() {
             continue;
         }
-        let galley = painter.layout_no_wrap(line.text.to_owned(), fonts::medium(size), color);
+        let galley = painter.layout_no_wrap(line.text.to_owned(), type_face::medium(size), color);
         let box_size = galley.size();
         // Offset from the line's anchor to the galley's top-left corner,
         // unrotated, screen axes (y down); every line centres vertically.
@@ -456,7 +456,7 @@ mod tests {
             for (text, size) in [("基板テスト", 40.0), ("Resistor", 40.0)] {
                 let galley = ui.painter().layout_no_wrap(
                     text.to_owned(),
-                    fonts::medium(size),
+                    type_face::medium(size),
                     egui::Color32::BLACK,
                 );
                 let lowered = above_line_box(&galley);
