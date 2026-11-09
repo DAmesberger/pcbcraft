@@ -9,9 +9,9 @@
 use egui::{Align2, FontId, Rect, Response, Sense, Ui, pos2, vec2};
 use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::{
-    fonts, icons,
+    icons,
     toolbar::{RIBBON_HEIGHT, TAB_ROW_HEIGHT},
-    ui_kit::{Container, Edge, Surface},
+    ui_kit::{Container, Edge, Surface, type_face},
 };
 
 /// Upstream `toolbar::WORKSPACE_WIDTH` (crate-private there).
@@ -295,7 +295,7 @@ fn tool_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Response {
         t.text_dim
     };
     let font = if tool.selected {
-        fonts::semibold(t.font_body)
+        type_face::semibold(t.font_body)
     } else {
         FontId::proportional(t.font_body)
     };
@@ -352,7 +352,7 @@ pub fn shortcut_tooltip(ui: &mut Ui, name: &str, key: Option<&str>, body: &str) 
     let t = Tokens::get();
     let name_width = ui
         .painter()
-        .layout_no_wrap(name.to_owned(), fonts::semibold(t.font_heading), t.text)
+        .layout_no_wrap(name.to_owned(), type_face::semibold(t.font_heading), t.text)
         .size()
         .x;
     let key_width = key.map_or(0.0, |key| {
@@ -366,7 +366,7 @@ pub fn shortcut_tooltip(ui: &mut Ui, name: &str, key: Option<&str>, body: &str) 
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(name)
-                .font(fonts::semibold(t.font_heading))
+                .font(type_face::semibold(t.font_heading))
                 .color(t.text),
         );
         if let Some(key) = key {
@@ -441,7 +441,7 @@ fn split_button(ui: &mut Ui, rect: Rect, tool: &Tool) -> Option<&'static str> {
         t.text_dim
     };
     let font = if tool.selected {
-        fonts::semibold(t.font_body)
+        type_face::semibold(t.font_body)
     } else {
         FontId::proportional(t.font_body)
     };
@@ -600,7 +600,7 @@ fn issues_toggle(ui: &mut Ui, slot: Rect, toggle: &IssuesToggle) -> bool {
         t.text
     };
     let font = if toggle.expanded {
-        fonts::semibold(t.font_body)
+        type_face::semibold(t.font_body)
     } else {
         FontId::proportional(t.font_body)
     };
@@ -655,7 +655,7 @@ fn workspace_switcher(ui: &mut Ui, tile: Rect, workspace: Workspace) -> Option<W
         pos2(tile.center().x, tile.top() + 69.0),
         Align2::CENTER_CENTER,
         workspace.label(),
-        fonts::semibold(t.font_button),
+        type_face::semibold(t.font_button),
         t.text,
     );
     let caption = ui.painter().layout_no_wrap(
@@ -720,7 +720,7 @@ fn workspace_item(ui: &mut Ui, workspace: Workspace, current: bool) -> Response 
         pos2(rect.left() + 44.0, rect.center().y - 8.0),
         Align2::LEFT_CENTER,
         workspace.label(),
-        fonts::semibold(t.font_label),
+        type_face::semibold(t.font_label),
         ink,
     );
     ui.painter().text(
@@ -745,7 +745,7 @@ fn tab_row(ui: &mut Ui, row: Rect, ribbon: &Ribbon) -> Option<&'static str> {
     let mut x = row.left() + TAB_INSET;
     let mut clicked = None;
     for tab in &ribbon.tabs {
-        let font = fonts::semibold(t.font_button);
+        let font = type_face::semibold(t.font_button);
         let width = ui
             .painter()
             .layout_no_wrap(tab.label.to_owned(), font.clone(), t.text)
@@ -961,7 +961,7 @@ fn overflow_item(ui: &mut Ui, tool: &Tool) -> Response {
         t.text_dim
     };
     let font = if tool.selected {
-        fonts::semibold(t.font_body)
+        type_face::semibold(t.font_body)
     } else {
         FontId::proportional(t.font_body)
     };

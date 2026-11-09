@@ -21,7 +21,7 @@ use pcbcraft_core::catalog::{CatalogEntry, Source};
 use pcbcraft_core::library::templates::generic::GenericState;
 use pcbcraft_core::{DefinitionId, DefinitionKind, Engine, Operation, Query, QueryResult};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 /// Results shown before "Show all".
@@ -96,7 +96,7 @@ impl PartEditor {
                         ui.add_space(t.space_24);
                         ui.label(
                             RichText::new("Open a component")
-                                .font(fonts::semibold(t.font_heading))
+                                .font(type_face::semibold(t.font_heading))
                                 .color(t.text),
                         );
                         kit::note(

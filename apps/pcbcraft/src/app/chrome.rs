@@ -10,8 +10,10 @@ use crate::reveal::{self, Target};
 use crate::shell::{self, Workspace};
 use egui::{Rect, pos2, vec2};
 use solidcraft_theme::Tokens;
+#[cfg(test)]
+use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 use solidcraft_ui_egui::{
-    fonts,
     toolbar::APP_BAR_HEIGHT,
     ui_kit::{Container, Edge, Surface},
     window_chrome::TRAFFIC_LIGHTS,
@@ -133,7 +135,7 @@ impl App {
                     }
                     ui.label(
                         egui::RichText::new("Pcbcraft")
-                            .font(fonts::bold(t.font_heading))
+                            .font(type_face::bold(t.font_heading))
                             .color(t.app_bar_text),
                     );
                     ui.add_space(t.space_8);
@@ -704,7 +706,7 @@ fn tab(ui: &mut egui::Ui, label: &str, tip: &str) -> egui::Response {
     let galley = kit::text::one_line(
         ui,
         label,
-        fonts::semibold(t.font_label),
+        type_face::semibold(t.font_label),
         t.app_bar_text,
         room - 2.0 * t.space_12,
     );

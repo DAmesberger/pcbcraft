@@ -7,10 +7,8 @@
 //! same look.
 use egui::{FontId, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{
-    fonts,
-    ui_kit::{Container, Surface},
-};
+use solidcraft_ui_egui::ui_kit::type_face;
+use solidcraft_ui_egui::ui_kit::{Container, Surface};
 
 /// Upstream search row: one control height plus 10 pt.
 pub fn search_row_height() -> f32 {
@@ -382,7 +380,7 @@ pub fn search_heading(ui: &mut Ui, label: &str, count: usize) {
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), t.space_24), Sense::hover());
     let mut job = egui::text::LayoutJob::simple_singleline(
         format!("{}  {count}", label.to_uppercase()),
-        fonts::semibold(t.font_small),
+        type_face::semibold(t.font_small),
         t.form_dim,
     );
     for section in &mut job.sections {
@@ -571,7 +569,7 @@ pub fn search_row_marked(
                 egui::Color32::TRANSPARENT,
             )
         };
-        let galley = painter.layout_no_wrap(text, fonts::semibold(t.font_small), ink);
+        let galley = painter.layout_no_wrap(text, type_face::semibold(t.font_small), ink);
         let size = galley.size() + vec2(t.space_10, t.space_4);
         let rect = Rect::from_min_size(pos2(right - size.x, r.center().y - size.y / 2.0), size);
         if badge.present {
@@ -589,8 +587,11 @@ pub fn search_row_marked(
     }
     if let Some(chip) = marks.chip {
         let colour = if chip.warning { t.warning } else { t.accent };
-        let galley =
-            painter.layout_no_wrap(chip.label.to_owned(), fonts::semibold(t.font_small), colour);
+        let galley = painter.layout_no_wrap(
+            chip.label.to_owned(),
+            type_face::semibold(t.font_small),
+            colour,
+        );
         let size = galley.size() + vec2(t.space_10, t.space_4);
         let rect = Rect::from_min_size(pos2(right - size.x, r.center().y - size.y / 2.0), size);
         painter.rect_filled(rect, inner_radius(), colour.gamma_multiply(0.16));
@@ -631,7 +632,7 @@ pub fn search_row_marked(
             job.append(
                 row.label.get(start..end).unwrap_or_default(),
                 0.0,
-                egui::TextFormat::simple(fonts::bold(t.font_label), t.selected_ink),
+                egui::TextFormat::simple(type_face::bold(t.font_label), t.selected_ink),
             );
             job.append(row.label.get(end..).unwrap_or_default(), 0.0, normal);
         }
@@ -764,7 +765,7 @@ pub fn command_row(ui: &mut Ui, id: egui::Id, row: &CommandRow<'_>) -> Response 
             job.append(
                 row.label.get(start..end).unwrap_or_default(),
                 0.0,
-                egui::TextFormat::simple(fonts::bold(t.font_label), t.selected_ink),
+                egui::TextFormat::simple(type_face::bold(t.font_label), t.selected_ink),
             );
             job.append(row.label.get(end..).unwrap_or_default(), 0.0, normal);
         }

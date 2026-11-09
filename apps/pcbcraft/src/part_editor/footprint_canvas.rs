@@ -16,7 +16,7 @@ use pcbcraft_core::library::graphics::{DrawingLayer, Fill, Item, TextContent};
 use pcbcraft_core::library::{PadKind, PadSide, PlacedText};
 use pcbcraft_core::{PadId, Point};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// Pick distance around a land, in pixels.
 const PICK_PX: f32 = 3.0;
@@ -397,7 +397,7 @@ impl PartEditor {
                     at,
                     Align2::CENTER_CENTER,
                     &pad.number,
-                    fonts::semibold(room),
+                    type_face::semibold(room),
                     t.on_accent,
                 );
             }
@@ -407,7 +407,7 @@ impl PartEditor {
             rect.left_top() + vec2(t.space_16, t.space_16),
             Align2::LEFT_TOP,
             "Footprint · copper lands",
-            fonts::semibold(t.font_panel),
+            type_face::semibold(t.font_panel),
             t.text,
         );
         self.footprint_value_field(ui, view);
@@ -422,7 +422,7 @@ impl PartEditor {
                     crate::kit::number_text(at[1]),
                     crate::kit::number_text(grid)
                 ),
-                fonts::medium(t.font_small),
+                type_face::medium(t.font_small),
                 t.text_dim,
             );
         }

@@ -19,7 +19,7 @@ use pcbcraft_core::{Engine, Operation, Point};
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 use pcbcraft_solidcraft::footprint::view::{SketchView, ViewGeometry};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// Pick reach around sketch entities and lands, in pixels.
 const PICK_PX: f32 = 4.0;
@@ -807,7 +807,7 @@ fn paint(
             rect.left_top() + vec2(t.space_16, t.space_16 + t.font_panel * 1.6),
             Align2::LEFT_TOP,
             hint,
-            fonts::medium(t.font_small),
+            type_face::medium(t.font_small),
             t.text_dim,
         );
     }

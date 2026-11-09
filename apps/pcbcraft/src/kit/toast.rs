@@ -12,6 +12,7 @@ use super::severity::{Level, severity_glyph};
 use egui::{Rect, RichText, Ui, vec2};
 use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::frame::Side;
+use solidcraft_ui_egui::ui_kit::type_face;
 use solidcraft_ui_egui::ui_kit::{self, Button, Container, Surface};
 use std::collections::VecDeque;
 
@@ -213,7 +214,7 @@ fn toast_row(ui: &mut Ui, index: usize, toast: &Toast) -> Option<ToastEvent> {
         let text = toast_text(toast);
         let mut job = egui::text::LayoutJob::simple(
             text.clone(),
-            solidcraft_ui_egui::fonts::medium(t.font_label),
+            type_face::medium(t.font_label),
             t.text,
             ui.available_width().max(0.0),
         );

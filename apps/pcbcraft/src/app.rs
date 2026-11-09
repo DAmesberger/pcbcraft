@@ -1392,6 +1392,7 @@ mod flow_tests;
 #[cfg(test)]
 mod font_tests {
     use solidcraft_ui_egui::fonts;
+    use solidcraft_ui_egui::ui_kit::type_face;
 
     /// The bundled faces have no CJK glyphs; the system fallbacks the app
     /// installs once found do (macOS ships Hiragino), in every family a
@@ -1433,7 +1434,7 @@ mod font_tests {
         for font in [
             egui::FontId::proportional(13.0),
             egui::FontId::proportional(11.0),
-            fonts::semibold(13.0),
+            type_face::semibold(13.0),
             egui::FontId::monospace(13.0),
         ] {
             let galley = ctx.fonts_mut(|f| {

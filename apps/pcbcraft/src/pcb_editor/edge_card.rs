@@ -26,7 +26,7 @@ use pcbcraft_core::model::board::{
 use pcbcraft_core::{Id, Operation, Placement, Point, Project};
 use pcbcraft_solidcraft::footprint::view as sketch_view;
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::fonts;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// The Board edge section's text buffers for one constraint.
 #[derive(Clone, Debug, Default)]
@@ -345,7 +345,7 @@ impl PcbEditor {
     ) {
         let t = Tokens::get();
         let board = project.board();
-        let font = fonts::medium(t.font_small);
+        let font = type_face::medium(t.font_small);
         for c in &project.edge_constraints {
             let ConstraintTarget::Placement(instance) = c.target else {
                 continue;

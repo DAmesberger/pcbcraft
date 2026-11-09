@@ -28,6 +28,7 @@ use pcbcraft_core::{
     DefinitionId, Engine, LibraryCommand, ModelRef, Operation, Query, QueryResult,
 };
 use solidcraft_theme::Tokens;
+use solidcraft_ui_egui::ui_kit::type_face;
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 /// The builder revision new generated models are authored against
@@ -620,11 +621,7 @@ fn card(ui: &mut Ui, id: egui::Id, hit: &ModelHit, highlighted: bool) -> egui::R
     thumbnail(&painter, thumb.shrink(t.space_8), body, hit.hints.pins);
     if let Some(fit) = &hit.fit {
         let ink = if fit_good(fit) { t.accent } else { t.warning };
-        let galley = painter.layout_no_wrap(
-            fit_label(fit),
-            solidcraft_ui_egui::fonts::semibold(t.font_small),
-            ink,
-        );
+        let galley = painter.layout_no_wrap(fit_label(fit), type_face::semibold(t.font_small), ink);
         let size = galley.size() + vec2(t.space_8, t.space_2);
         let chip = Rect::from_min_size(
             pos2(thumb.right() - size.x - t.space_4, thumb.top() + t.space_4),

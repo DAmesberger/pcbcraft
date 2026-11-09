@@ -27,7 +27,8 @@ use pcbcraft_core::library::footprint_source::{
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 use pcbcraft_solidcraft::footprint::view::ViewGeometry;
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{fonts, icons};
+use solidcraft_ui_egui::icons;
+use solidcraft_ui_egui::ui_kit::type_face;
 
 /// Pick distance around sketch points and curves, in pixels.
 const PICK_PX: f32 = 6.0;
@@ -635,7 +636,7 @@ impl PartEditor {
         }
         // Dimensions.
         let px = f64::from(1.0 / view.scale);
-        let font = fonts::medium(t.font_small);
+        let font = type_face::medium(t.font_small);
         let labels: Vec<(SketchConstraintId, String)> = drawn
             .constraints
             .iter()
@@ -815,7 +816,7 @@ impl PartEditor {
                         at,
                         Align2::CENTER_CENTER,
                         glyph_letter(constraint.kind),
-                        fonts::semibold(t.font_small),
+                        type_face::semibold(t.font_small),
                         ink,
                     );
                 }
@@ -873,7 +874,7 @@ impl PartEditor {
             rect.right_bottom() + vec2(-t.space_16, -t.space_16),
             Align2::RIGHT_BOTTOM,
             text,
-            fonts::medium(t.font_small),
+            type_face::medium(t.font_small),
             ink,
         );
         let hint = match self.footprint_tool.tool {
@@ -888,7 +889,7 @@ impl PartEditor {
                 rect.center_bottom() + vec2(0.0, -t.space_16 * 2.5),
                 Align2::CENTER_BOTTOM,
                 hint,
-                fonts::medium(t.font_small),
+                type_face::medium(t.font_small),
                 t.text_dim,
             );
         }
@@ -943,7 +944,12 @@ impl PartEditor {
         }
         if let Some(error) = error {
             let painter = ui.painter();
-            let galley = painter.layout(error, fonts::medium(t.font_small), t.error, FIELD_W * 2.0);
+            let galley = painter.layout(
+                error,
+                type_face::medium(t.font_small),
+                t.error,
+                FIELD_W * 2.0,
+            );
             let at = Pos2::new(r.left(), r.bottom() + 2.0);
             painter.rect_filled(
                 Rect::from_min_size(at, galley.size() + vec2(6.0, 2.0)),

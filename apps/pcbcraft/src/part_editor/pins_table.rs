@@ -20,7 +20,8 @@ use pcbcraft_core::library::pinout::{
 use pcbcraft_core::library::{ComponentDefinition, Terminal, TerminalClass};
 use pcbcraft_core::{FunctionId, ResourceId, RoleId, TerminalId};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{fonts, ui_kit};
+use solidcraft_ui_egui::ui_kit;
+use solidcraft_ui_egui::ui_kit::type_face;
 use std::collections::BTreeMap;
 
 /// Which rows the table shows.
@@ -315,7 +316,7 @@ pub fn table(
             ui,
             caption,
             &title.to_uppercase(),
-            fonts::semibold(t.font_caption),
+            type_face::semibold(t.font_caption),
             t.form_dim,
         );
         x += w + gap;
@@ -439,7 +440,7 @@ fn chips(
     for (index, function) in functions.functions.iter().enumerate() {
         let bold = functions.design_default == Some(function.id);
         let font = if bold {
-            fonts::semibold(t.font_small)
+            type_face::semibold(t.font_small)
         } else {
             FontId::proportional(t.font_small)
         };
