@@ -19,7 +19,7 @@
 //! creates drafts; publishing stays with a person (the import review gate).
 use crate::model::ToolSpec;
 use crate::report::ReviewReport;
-use pcbcraft_automation::{Decision, Policy, Session};
+use pcbcraft_automation::{Caller, Policy, Session};
 use pcbcraft_core::library::pinout::{
     MAX_PINOUT_PERIPHERALS, MAX_PINOUT_PINS, MAX_PINOUT_RULES, MAX_PINOUT_VARIANTS,
 };
@@ -336,17 +336,13 @@ pub fn execute(
     }
 }
 
-/// Every request a tool sends to the session goes through the gate. The
-/// runner reads full results (each draft's findings), so it asks for them.
+/// Every request a tool sends to the session goes through the gate, as a
+/// model's: there is no one to ask in a run yet, so Ask is refused with a
+/// reason the model can read, and Never always is. The runner reads full
+/// results (each draft's findings), so it asks for them.
 pub fn send(session: &mut Session, policy: &Policy, mut request: Value) -> Value {
     request["verbose"] = json!(true);
-    match session.check_request(policy, &request) {
-        Decision::Run => session.respond(request),
-        // There is no one to ask in a run yet: Ask is refused, with a reason
-        // the model can read.
-        Decision::Ask(_) => session.respond_gated(policy, request),
-        Decision::Refuse(refusal) => refusal.reply(),
-    }
+    session.respond(Caller::Model(policy), request)
 }
 
 /// `input` with each argument the tool declares as an array or object, but

@@ -18,7 +18,7 @@
 //! permission gate decides as for any LLM request; Ask waits for the
 //! person's Allow in the window. The CLI's `mcp --live` bridges an MCP
 //! client to this channel ([`Client`]).
-use crate::gate::{Decision, Policy, Question, Refusal};
+use crate::gate::{Caller, Decision, Policy, Question, Refusal};
 use crate::session::{Request, Session, envelope, take_verbose};
 use pcbcraft_core::Class;
 use serde_json::{Value, json};
@@ -94,10 +94,24 @@ impl Protocol for LiveProtocol {
     fn summary(&self, method: &str, params: &Value) -> Summary {
         let command = params.get("command").and_then(Value::as_str);
         let info = command.and_then(|id| Request::catalog_shared().iter().find(|c| c.id == id));
-        let effect = match (method, info) {
-            (REVISION, _) => Effect::ReadsOnly,
-            (_, Some(info)) if info.class == Class::Read && !info.takes_path => Effect::ReadsOnly,
-            (_, Some(info)) if info.class == Class::Ask && info.takes_path => Effect::WritesFile,
+        // What the request does is its effective class, as the gate decides
+        // it: `project.apply` of `library.publish` is Ask, a read naming a
+        // path is too. An unreadable one is refused at once.
+        let typed = info.and_then(|_| {
+            let mut request = json!({
+                "command": command,
+                "params": params.get("params").cloned().unwrap_or_else(|| json!({})),
+            });
+            take_verbose(&mut request);
+            serde_json::from_value::<Request>(request).ok()
+        });
+        let class = typed.as_ref().map(Request::effective_class);
+        let names_path = typed
+            .as_ref()
+            .is_some_and(|typed| !typed.paths().is_empty());
+        let effect = match (method, class) {
+            (REVISION, _) | (_, Some(Class::Read)) => Effect::ReadsOnly,
+            (_, Some(Class::Ask)) if names_path => Effect::WritesFile,
             _ => Effect::Changes,
         };
         Summary {
@@ -108,8 +122,10 @@ impl Protocol for LiveProtocol {
             effect,
             command: info.map(|info| info.id),
             steps: None,
-            // Ask waits for a person.
-            long: info.is_some_and(|info| info.class == Class::Ask || info.takes_path),
+            // Anything but a read may wait for a person: Ask always, an edit
+            // under ask-every-time. Timing it out first would leave it held,
+            // still to run on Allow, after the agent was told it failed.
+            long: method != REVISION && class.is_some_and(|class| class != Class::Read),
         }
     }
     fn document(&self) -> &'static str {
@@ -322,12 +338,17 @@ pub fn client_config(cli: &str) -> String {
     serde_json::to_string_pretty(&config).unwrap_or_default()
 }
 
-/// A request the window may run, as [`Session::respond`] takes it.
+/// A request the window may run, as [`Session::respond`] takes it, with
+/// the policy it was admitted under.
 #[derive(Clone, Debug)]
 pub struct Admitted {
     request: Value,
     subject: &'static str,
     class: Class,
+    policy: Policy,
+    /// Held for the person ([`Verdict::Ask`]): the host runs it only after
+    /// their Allow.
+    asked: bool,
 }
 
 impl Admitted {
@@ -427,10 +448,12 @@ pub fn admit(
         Err(error) => return Verdict::Reply(envelope(Err(error.into()))),
     };
     let class = typed.effective_class();
-    let admitted = Admitted {
+    let mut admitted = Admitted {
         request,
         subject: typed.subject(),
         class,
+        policy: policy.clone(),
+        asked: false,
     };
     if class != Class::Read
         && let Some(reason) = busy
@@ -451,7 +474,10 @@ pub fn admit(
     }
     match session.check_request(policy, &admitted.request) {
         Decision::Run => Verdict::Run(admitted),
-        Decision::Ask(question) => Verdict::Ask(admitted, question),
+        Decision::Ask(question) => {
+            admitted.asked = true;
+            Verdict::Ask(admitted, question)
+        }
         Decision::Refuse(refused) => Verdict::Reply(refused.reply()),
     }
 }
@@ -470,10 +496,17 @@ fn lacks_revision(command: &str, params: &Value) -> bool {
 }
 
 /// Run an admitted request on the window's session and answer with the
-/// compact reply. [`Session::execute`] checks the revision again: the
-/// person may have edited while it waited for their Allow.
+/// compact reply. [`Session::respond`] gates it again under the policy it
+/// was admitted with (a held one as allowed: the host runs it only on the
+/// person's Allow), and [`Session::execute`] checks the revision again: the
+/// person may have edited while it waited.
 pub fn run(session: &mut Session, admitted: &Admitted) -> Value {
-    session.respond(admitted.request.clone())
+    let caller = if admitted.asked {
+        Caller::Allowed(&admitted.policy)
+    } else {
+        Caller::Model(&admitted.policy)
+    };
+    session.respond(caller, admitted.request.clone())
 }
 
 /// A bridge's connection to the window: one authenticated connection, kept

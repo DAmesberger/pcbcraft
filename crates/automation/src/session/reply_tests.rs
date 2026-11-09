@@ -1,6 +1,7 @@
 //! Compact replies through the public JSON contract: what a mutation reports,
 //! what `verbose` returns, and that the document ends up the same either way.
 use super::*;
+use crate::gate::Caller;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -38,7 +39,7 @@ fn a_mutation_reports_its_ids_and_undo_reports_them_back() -> TestResult {
     let mut session = demo()?;
     let revision = session.engine().revision();
     let request = add_via(&session, [1.0, 1.0]);
-    let reply = ok(session.respond(request))?;
+    let reply = ok(session.respond(Caller::Operator, request))?;
     assert_eq!(reply["revision"], revision + 1);
     assert_eq!(reply["outcome"]["outcome"], "via_added", "{reply}");
     let via = reply["outcome"]["via"].clone();
@@ -48,14 +49,14 @@ fn a_mutation_reports_its_ids_and_undo_reports_them_back() -> TestResult {
     }
     assert_eq!(reply["can_undo"], true);
 
-    let undone = ok(session.respond(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}})))?;
+    let undone = ok(session.respond(Caller::Operator, json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}})))?;
     assert_eq!(
         undone["changes"]["removed"]["vias"],
         json!([via]),
         "{undone}"
     );
     assert_eq!(undone["can_redo"], true);
-    let redone = ok(session.respond(json!({"command": "project.redo", "params": {"expected_revision": session.engine().revision()}})))?;
+    let redone = ok(session.respond(Caller::Operator, json!({"command": "project.redo", "params": {"expected_revision": session.engine().revision()}})))?;
     assert_eq!(redone["changes"]["added"]["vias"], json!([via]), "{redone}");
     Ok(())
 }
@@ -67,7 +68,7 @@ fn verbose_returns_the_snapshot_in_either_place() -> TestResult {
     let mut session = demo()?;
     let mut request = add_via(&session, [1.0, 1.0]);
     request["verbose"] = json!(true);
-    let beside = ok(session.respond(request))?;
+    let beside = ok(session.respond(Caller::Operator, request))?;
     assert_eq!(beside["outcome"]["outcome"], "via_added");
     assert_eq!(
         beside["project"],
@@ -77,16 +78,18 @@ fn verbose_returns_the_snapshot_in_either_place() -> TestResult {
 
     let mut request = add_via(&session, [2.0, 1.0]);
     request["params"]["verbose"] = json!(true);
-    let inside = ok(session.respond(request))?;
+    let inside = ok(session.respond(Caller::Operator, request))?;
     assert!(inside["project"].is_object());
 
     let mut request = add_via(&session, [3.0, 1.0]);
     request["verbose"] = json!(false);
-    let compact = ok(session.respond(request))?;
+    let compact = ok(session.respond(Caller::Operator, request))?;
     assert!(compact.get("project").is_none());
 
-    let plain =
-        ok(session.respond(json!({"command": "project.inspect", "params": {"verbose": true}})))?;
+    let plain = ok(session.respond(
+        Caller::Operator,
+        json!({"command": "project.inspect", "params": {"verbose": true}}),
+    ))?;
     assert_eq!(plain, session.snapshot());
     Ok(())
 }
@@ -100,15 +103,20 @@ fn a_refused_request_answers_with_its_diagnostic_and_changes_nothing() -> TestRe
     let revision = session.engine().revision();
     let mut stale = add_via(&session, [1.0, 1.0]);
     stale["params"]["expected_revision"] = json!(revision + 5);
-    let reply = session.respond(stale);
+    let reply = session.respond(Caller::Operator, stale);
     assert_eq!(reply["ok"], false);
     assert_eq!(reply["error"]["code"], "stale_revision");
     assert_eq!(session.engine().document(), &before);
 
-    let reply = session.respond(json!({"command": "project.apply", "params": {"nonsense": 1}}));
+    let reply = session.respond(
+        Caller::Operator,
+        json!({"command": "project.apply", "params": {"nonsense": 1}}),
+    );
     assert_eq!(reply["error"]["code"], "malformed_request");
-    let reply = session
-        .respond(json!({"command": "project.apply", "params": {"verbose": true, "nonsense": 1}}));
+    let reply = session.respond(
+        Caller::Operator,
+        json!({"command": "project.apply", "params": {"verbose": true, "nonsense": 1}}),
+    );
     assert_eq!(reply["error"]["code"], "malformed_request");
     assert_eq!(session.engine().document(), &before);
     assert_eq!(session.engine().revision(), revision);
@@ -136,7 +144,7 @@ fn findings_report_what_appeared_and_what_went() -> TestResult {
     };
     let open_before = open(&session);
     let request = add_via(&session, [1.0, 1.0]);
-    let reply = ok(session.respond(request))?;
+    let reply = ok(session.respond(Caller::Operator, request))?;
     let findings = &reply["findings"];
     let new = findings["new"].as_array().ok_or("new findings")?;
     let about_via = json!({"kind": "via", "id": reply["outcome"]["via"]});
@@ -155,7 +163,7 @@ fn findings_report_what_appeared_and_what_went() -> TestResult {
     );
     assert_eq!(findings["open"], open(&session));
 
-    let undone = ok(session.respond(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}})))?;
+    let undone = ok(session.respond(Caller::Operator, json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}})))?;
     assert_eq!(
         undone["findings"]["resolved"]["board.via_dangling"], 1,
         "{undone}"
@@ -179,7 +187,7 @@ fn only_the_changed_draft_is_reported() -> TestResult {
         .ok_or("the demo has a symbol draft")?;
     let mut meta = symbol["meta"].clone();
     meta["name"] = json!("Only this");
-    let reply = ok(session.respond(json!({"command": "project.apply", "params": {
+    let reply = ok(session.respond(Caller::Operator, json!({"command": "project.apply", "params": {
         "expected_revision": revision,
         "operation": {"editor": "Library", "operation": {"command": "library.new_draft", "params": {
             "meta": meta,
@@ -207,7 +215,10 @@ fn only_the_changed_draft_is_reported() -> TestResult {
 #[test]
 fn inspect_summarizes_and_reads_one_part() -> TestResult {
     let mut session = demo()?;
-    let reply = ok(session.respond(json!({"command": "project.inspect", "params": {}})))?;
+    let reply = ok(session.respond(
+        Caller::Operator,
+        json!({"command": "project.inspect", "params": {}}),
+    ))?;
     let project = session.engine().project();
     let counts = &reply["summary"]["counts"];
     assert_eq!(counts["tracks"], project.tracks.len());
@@ -226,9 +237,10 @@ fn inspect_summarizes_and_reads_one_part() -> TestResult {
     );
     assert!(reply.get("project").is_none());
 
-    let nets =
-        ok(session
-            .respond(json!({"command": "project.inspect", "params": {"at": "/project/nets"}})))?;
+    let nets = ok(session.respond(
+        Caller::Operator,
+        json!({"command": "project.inspect", "params": {"at": "/project/nets"}}),
+    ))?;
     assert_eq!(
         nets["value"],
         serde_json::to_value(&session.engine().project().nets)?
@@ -240,8 +252,10 @@ fn inspect_summarizes_and_reads_one_part() -> TestResult {
             .dispatch(json!({"command": "project.inspect", "params": {"at": "/project/nets"}})))?;
     assert_eq!(direct, nets);
 
-    let missing = session
-        .respond(json!({"command": "project.inspect", "params": {"at": "/project/nothing"}}));
+    let missing = session.respond(
+        Caller::Operator,
+        json!({"command": "project.inspect", "params": {"at": "/project/nothing"}}),
+    );
     assert_eq!(missing["error"]["code"], "not_found");
     Ok(())
 }
@@ -251,7 +265,7 @@ fn inspect_summarizes_and_reads_one_part() -> TestResult {
 #[test]
 fn replacing_the_document_answers_with_a_summary() -> TestResult {
     let mut session = demo()?;
-    let reply = ok(session.respond(json!({"command": "project.new", "params": {"expected_revision": session.engine().revision()}})))?;
+    let reply = ok(session.respond(Caller::Operator, json!({"command": "project.new", "params": {"expected_revision": session.engine().revision()}})))?;
     assert_eq!(reply["summary"]["counts"]["tracks"], 0);
     assert!(reply.get("changes").is_none(), "{reply}");
     Ok(())
@@ -261,7 +275,10 @@ fn replacing_the_document_answers_with_a_summary() -> TestResult {
 #[test]
 fn a_request_that_changes_nothing_reports_no_changes() -> TestResult {
     let mut session = demo()?;
-    let reply = ok(session.respond(json!({"command": "library.sources", "params": {}})))?;
+    let reply = ok(session.respond(
+        Caller::Operator,
+        json!({"command": "library.sources", "params": {}}),
+    ))?;
     assert_eq!(reply, json!({"sources": []}));
     Ok(())
 }
@@ -288,7 +305,7 @@ fn the_board_replay_builds_the_same_document_with_compact_replies() -> TestResul
             let path = request["params"]["path"].as_str().ok_or("path")?;
             request["params"]["path"] = json!(root.join(path).display().to_string());
         }
-        let reply = compact.respond(request.clone());
+        let reply = compact.respond(Caller::Operator, request.clone());
         assert_eq!(reply["ok"], true, "{line}: {reply}");
         assert!(reply["result"].get("project").is_none(), "{line}");
         largest = largest.max(reply.to_string().len());

@@ -47,7 +47,7 @@ cargo run --locked --profile ci -p pcbcraft-cli -- export example.pcbcraft examp
 cargo run --locked --profile ci -p pcbcraft-cli -- fab example.pcbcraft out/   # production check, then Gerber X2, Excellon, job, pick-and-place, BOM and PDF drawings
 cargo run --locked --profile ci -p pcbcraft-cli -- export-schematic-pdf example.pcbcraft example.pdf [--sheet ID]...   # vector PDF, one page per sheet
 cargo run --locked --profile ci -p pcbcraft-cli -- commands
-cargo run --locked --profile ci -p pcbcraft-cli -- stdio [FILE.pcbcraft]
+cargo run --locked --profile ci -p pcbcraft-cli -- stdio [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
 cargo run --locked --profile ci -p pcbcraft-cli -- mcp [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
 cargo run --locked --profile ci -p pcbcraft-cli -- mcp --live [--port PORT]   # the project open in the desktop window
 ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-part \
@@ -61,7 +61,7 @@ cargo run --locked --profile ci -p pcbcraft-cli -- design-part --provider openai
 
 Replies on both are compact: a mutation answers with `revision`, `outcome`, `changes` (added, changed and removed stable ids by collection, such as `{"added":{"vias":[644]}}`), `findings` (the new ones, resolved counts per code, the open total) and the changed `drafts`. `project.inspect` answers with counts, drafts and findings per code, and with `at` (a JSON pointer such as `/project/nets`) reads one piece of the document. `verbose: true`, beside `command` or inside `params`, returns the whole snapshot instead. In MCP, `tools/list` names every operation and query, and `project_schema {name}` (`project.schema`) returns one's exact schema and how to send it.
 
-Every command has a permission class: read, edit, ask or never, shown in its tool description and in `project_schema`. An MCP server is ungated by default, because the user who starts it has chosen to trust its client. `--permission-mode` turns on the gate: `ask-every-time` runs only reads, `auto-allow-edits` also runs edits, and `allow-all` runs everything except the never class. MCP has no way to ask, so whatever would need asking is refused with a message saying so. Under any mode, a path must be absolute and inside an `--allow-folder` or the folder of the project named on the command line.
+Every command has a permission class: read, edit, ask or never, shown in its tool description and in `project_schema`. `Session::respond` enforces the class for every model-facing transport (headless MCP, live MCP and gated `stdio`): the never class is always refused, and so is a path outside the run's folders. An MCP server is always gated; `--permission-mode` chooses how: `ask-every-time` runs only reads, `auto-allow-edits` (the default) also runs edits, and `allow-all` runs everything except the never class. MCP has no way to ask, so whatever would need asking is refused with a message saying so; `--permission-mode allow-all` is the operator's explicit choice to let ask-class requests run. Under any mode, a path must be absolute and inside an `--allow-folder` or the folder of the project named on the command line. `stdio` is your own scripts' transport and runs every class; give it the same flags when a model drives it, and it is gated as `mcp` is.
 
 ### Live MCP
 

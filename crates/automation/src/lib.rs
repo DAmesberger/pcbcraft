@@ -10,7 +10,7 @@ pub mod live;
 pub mod mcp;
 pub mod session;
 
-pub use gate::{Decision, Mode, Policy, Question, Refusal};
+pub use gate::{Caller, Decision, Mode, Policy, Question, Refusal};
 pub use session::{Request, Session, part_files};
 
 #[derive(Debug, thiserror::Error)]
