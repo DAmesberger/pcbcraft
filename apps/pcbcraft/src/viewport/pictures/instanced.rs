@@ -71,7 +71,7 @@ fn instanced_vias_draw_as_their_copied_meshes() -> Result<(), Box<dyn std::error
             ..g.clone()
         })
         .collect();
-    let copied = crate::model_scene::build(copied)?;
+    let copied = crate::model_scene::build(copied, &model.stack)?;
     assert!(
         copied
             .instanced
@@ -79,7 +79,7 @@ fn instanced_vias_draw_as_their_copied_meshes() -> Result<(), Box<dyn std::error
             .all(|i| i.bodies.iter().all(|b| copied.geometry[*b].place.is_none())),
         "only large bodies are instanced"
     );
-    let instanced = crate::model_scene::build(model.geometry)?;
+    let instanced = crate::model_scene::build(model.geometry, &model.stack)?;
     assert!(!instanced.instanced.is_empty());
     let (w, h) = (400, 300);
     let mut pictures = vec![];
@@ -95,6 +95,7 @@ fn instanced_vias_draw_as_their_copied_meshes() -> Result<(), Box<dyn std::error
             .into_iter()
             .filter(|g| g.place.is_none())
             .collect(),
+        &pcbcraft_solidcraft::stack::Stack::default(),
     )?);
     aim(&mut bare, target, 4.0, 30.0, 50.0);
     let without = gpu.draw(&mut bare, w, h, 1.0).ok_or("no picture")?;
@@ -151,7 +152,7 @@ fn a_picked_via_keeps_its_drill_open_and_stands_out() -> Result<(), Box<dyn std:
         return Ok(());
     };
     let model = pcbcraft_solidcraft::project::build(&crate::model_scene::tests::via_project(64)?)?;
-    let scene = crate::model_scene::build(model.geometry)?;
+    let scene = crate::model_scene::build(model.geometry, &model.stack)?;
     // An open (untented) via: it has a bore shadow and no dome.
     let picked = scene
         .geometry
@@ -232,7 +233,7 @@ fn a_layer_toggle_uploads_no_instanced_via_mesh() -> Result<(), Box<dyn std::err
         return Ok(());
     };
     let model = pcbcraft_solidcraft::project::build(&crate::model_scene::tests::via_project(64)?)?;
-    let mut v = shown(crate::model_scene::build(model.geometry)?);
+    let mut v = shown(crate::model_scene::build(model.geometry, &model.stack)?);
     gpu.draw(&mut v, 200, 150, 1.0).ok_or("no picture")?;
     let uploads = |gpu: &Gpu| gpu.resources.get::<Renderer>().map(|r| r.uploads());
     let first = uploads(&gpu).ok_or("no renderer")?;
@@ -335,7 +336,7 @@ fn via_display_timings() -> Result<(), Box<dyn std::error::Error>> {
         let model = pcbcraft_solidcraft::project::build(&project)?;
         let native = started.elapsed();
         let started = std::time::Instant::now();
-        let scene = crate::model_scene::build(model.geometry.clone())?;
+        let scene = crate::model_scene::build(model.geometry.clone(), &model.stack)?;
         let built = started.elapsed();
         let stream = scene.stream.tris.len()
             + scene
@@ -361,7 +362,7 @@ fn via_display_timings() -> Result<(), Box<dyn std::error::Error>> {
         // and the first frame drawn.
         let mut first = std::time::Duration::MAX;
         for _ in 0..3 {
-            let scene = crate::model_scene::build(model.geometry.clone())?;
+            let scene = crate::model_scene::build(model.geometry.clone(), &model.stack)?;
             let started = std::time::Instant::now();
             let mut v = Viewport::detached();
             v.set_model(scene);
@@ -370,7 +371,10 @@ fn via_display_timings() -> Result<(), Box<dyn std::error::Error>> {
             first = first.min(started.elapsed());
         }
         let mut v = Viewport::detached();
-        v.set_model(crate::model_scene::build(model.geometry.clone())?);
+        v.set_model(crate::model_scene::build(
+            model.geometry.clone(),
+            &model.stack,
+        )?);
         v.fit_to(f64::from(w) / f64::from(h));
         let overview = gpu.draw(&mut v, w, h, 1.0).ok_or("no picture")?;
         if let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") {
@@ -418,7 +422,7 @@ fn esp32_display_timings() -> Result<(), Box<dyn std::error::Error>> {
     let model = pcbcraft_solidcraft::project::build(&document.project)?;
     let native = started.elapsed();
     let started = std::time::Instant::now();
-    let scene = crate::model_scene::build(model.geometry.clone())?;
+    let scene = crate::model_scene::build(model.geometry.clone(), &model.stack)?;
     let built = started.elapsed();
     let triangles: usize = model.geometry.iter().map(|g| g.mesh.triangles.len()).sum();
     let started = std::time::Instant::now();

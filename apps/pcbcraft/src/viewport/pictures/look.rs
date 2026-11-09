@@ -18,6 +18,7 @@ use super::*;
 use crate::lighting;
 use pcbcraft_solidcraft::material::Detail;
 use pcbcraft_solidcraft::render::surface::OpaqueSurface;
+use pcbcraft_solidcraft::stack::Stack;
 
 /// Gold's normal-incidence reflectance, chromaticity and luminance band.
 ///
@@ -208,7 +209,8 @@ fn surface(
     )?)
 }
 
-/// Pictures of `geometry` from each of `cameras`.
+/// Pictures of `geometry` from each of `cameras`, on the board of the model
+/// `v` shows (the same board, restyled).
 fn shoot(
     gpu: &mut Gpu,
     v: &mut Viewport,
@@ -216,7 +218,11 @@ fn shoot(
     cameras: &[Camera],
     (w, h): (u32, u32),
 ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
-    v.set_model(crate::model_scene::build(geometry)?);
+    let stack = v
+        .model
+        .as_ref()
+        .map_or_else(Stack::none, |m| m.stack.clone());
+    v.set_model(crate::model_scene::build(geometry, &stack)?);
     let mut out = vec![];
     for camera in cameras {
         v.camera = *camera;
@@ -305,7 +311,7 @@ fn pad_views(gpu: &mut Gpu) -> Result<Vec<PadView>, Box<dyn std::error::Error>> 
     let gold = pads.first().ok_or("no pads")?.surface;
     let reference = surface([REFERENCE_F0; 3], 1.0, gold.roughness())?;
     let mut viewport = Viewport::detached();
-    viewport.set_model(crate::model_scene::build(pads.clone())?);
+    viewport.set_model(crate::model_scene::build(pads.clone(), &Stack::none())?);
     let target = viewport.bounds.center();
     let distance = 1.5 * viewport.bounds.diagonal();
     let angles: Vec<(f64, f64)> = (0..8)
@@ -446,17 +452,14 @@ fn exposed_gold_reads_as_gold_in_the_studio() -> Result<(), Box<dyn std::error::
 /// from above the board, at any angle, the finish hides the copper: on the
 /// showcase, pad copper covers at most 5 % as many pixels as the finish.
 #[test]
-#[ignore = "pad copper shows through its 5 µm finish from oblique views (the rose cast): 1651 \
-            against 333 finish pixels at 40°, 1358 against 231 at 25°, 0 against 3091 from above; \
-            most likely the material stream's depth bias, which model_scene::covered does not \
-            keep pad copper out of"]
 fn the_finish_hides_the_pad_copper_under_it() -> Result<(), Box<dyn std::error::Error>> {
     let Some(mut gpu) = gpu_or_skip()? else {
         return Ok(());
     };
-    let geometry = pcbcraft_solidcraft::project::build(&showcase_project()?)?.geometry;
+    let model = pcbcraft_solidcraft::project::build(&showcase_project()?)?;
+    let geometry = model.geometry.clone();
     let mut v = Viewport::detached();
-    v.set_model(crate::model_scene::build(geometry.clone())?);
+    v.set_model(crate::model_scene::build(geometry.clone(), &model.stack)?);
     let b = v.bounds;
     let cameras: Vec<Camera> = [(25.0, 40.0), (25.0, 25.0), (0.0, 85.0)]
         .iter()
@@ -500,6 +503,71 @@ fn the_finish_hides_the_pad_copper_under_it() -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+/// The laser-etched marking on the WROOM-3 module's can shows at every
+/// tilt, not only from straight down: seen from above and at 40°, 25° and
+/// 10°, the marking's own pixels (those that change when only the decals
+/// are redrawn red and then blue) number at least half as many as from
+/// above, foreshortening aside (each count is divided by the sine of its
+/// pitch, the share of the can's top the view sees).
+#[test]
+fn the_module_marking_shows_at_every_tilt() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut gpu) = gpu_or_skip()? else {
+        return Ok(());
+    };
+    let engine = crate::scene::fixtures::wroom_board()?;
+    let project = engine.project().clone();
+    let model = pcbcraft_solidcraft::project::build(&project)?;
+    let mut geometry = model.geometry.clone();
+    let decals = pcbcraft_solidcraft::marking::board::BoardMarkings::default().decals(
+        &project,
+        &model.geometry,
+        &model.sources,
+    );
+    assert!(!decals.is_empty(), "the module is marked");
+    geometry.extend(decals);
+    let mut v = Viewport::detached();
+    v.set_model(crate::model_scene::build(geometry.clone(), &model.stack)?);
+    let can = geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::Marking)
+        .fold(pcbcraft_solidcraft::geom::Aabb3::EMPTY, |mut b, g| {
+            b.add(Vec3::new(g.min[0], g.min[1], g.min[2]));
+            b.add(Vec3::new(g.max[0], g.max[1], g.max[2]));
+            b
+        });
+    let pitches = [90.0, 40.0, 25.0, 10.0];
+    let cameras: Vec<Camera> = pitches
+        .iter()
+        .map(|&pitch| {
+            aim(&mut v, can.center(), 2.0 * can.diagonal(), 30.0, pitch);
+            v.camera
+        })
+        .collect();
+    let owned = owned(
+        &mut gpu,
+        &mut v,
+        &geometry,
+        &[BodyKind::Marking],
+        &cameras,
+        (640, 480),
+    )?;
+    let seen: Vec<f64> = pitches
+        .iter()
+        .zip(&owned)
+        .map(|(pitch, pixels)| pixels.len() as f64 / f64::to_radians(*pitch).sin())
+        .collect();
+    eprintln!("marking pixels per unit of seen top: {seen:?}");
+    let above = seen.first().copied().unwrap_or(0.0);
+    assert!(above > 200.0, "the marking shows from above: {above}");
+    for (pitch, n) in pitches.iter().zip(&seen) {
+        assert!(
+            *n >= 0.5 * above,
+            "pitch {pitch}: {n} against {above} from above"
+        );
+    }
+    Ok(())
+}
+
 /// A diagnosis view's camera: target, distance, yaw and pitch; `None`:
 /// the default overview.
 type Aim = Option<(Vec3, f64, f64, f64)>;
@@ -512,7 +580,15 @@ const MATERIALS: [(&str, &[BodyKind]); 6] = [
     ),
     ("gold", &[BodyKind::PadFinish]),
     ("silk", &[BodyKind::Silkscreen]),
-    ("laminate", &[BodyKind::Substrate, BodyKind::EdgeDielectric]),
+    // The laminate a mask opening leaves bare is drawn by its own film.
+    (
+        "laminate",
+        &[
+            BodyKind::Substrate,
+            BodyKind::OpenLaminate,
+            BodyKind::EdgeDielectric,
+        ],
+    ),
     // Pad copper lies under its finish (5 µm), so it should not show.
     ("pad-copper", &[BodyKind::PadCopper]),
     // The other copper: edge stackup lines, tracks and fills under the mask.
@@ -561,7 +637,8 @@ fn look_diagnosis() -> Result<(), Box<dyn std::error::Error>> {
         }
         None => showcase_project()?,
     };
-    let mut geometry = pcbcraft_solidcraft::project::build(&project)?.geometry;
+    let model = pcbcraft_solidcraft::project::build(&project)?;
+    let mut geometry = model.geometry.clone();
     for g in &mut geometry {
         if off.contains("detail") {
             g.detail = Detail::NONE;
@@ -573,7 +650,7 @@ fn look_diagnosis() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let mut v = Viewport::detached();
-    v.set_model(crate::model_scene::build(geometry.clone())?);
+    v.set_model(crate::model_scene::build(geometry.clone(), &model.stack)?);
     v.fit_to(4.0 / 3.0);
     let overview = v.camera;
     let b = v.bounds;
@@ -671,6 +748,38 @@ fn look_diagnosis() -> Result<(), Box<dyn std::error::Error>> {
                 delta(12)
             );
         }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "temp"]
+fn temp_finish_top() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no gpu".into());
+    };
+    let model = pcbcraft_solidcraft::project::build(&showcase_project()?)?;
+    for drop in [false, true] {
+        let geometry: Vec<Geometry> = model
+            .geometry
+            .iter()
+            .filter(|g| !drop || !matches!(g.kind, BodyKind::Solder | BodyKind::Termination))
+            .cloned()
+            .collect();
+        let mut v = Viewport::detached();
+        v.set_model(crate::model_scene::build(geometry.clone(), &model.stack)?);
+        let b = v.bounds;
+        aim(&mut v, b.center(), 0.75 * b.diagonal(), 0.0, 85.0);
+        let cam = v.camera;
+        let px = owned(
+            &mut gpu,
+            &mut v,
+            &geometry,
+            &[BodyKind::PadFinish],
+            &[cam],
+            (640, 480),
+        )?;
+        eprintln!("drop films {drop}: finish {}", px[0].len());
     }
     Ok(())
 }

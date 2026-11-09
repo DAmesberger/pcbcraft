@@ -10,6 +10,7 @@ use crate::geom::prelude::*;
 use crate::geom::{Mesh, Vec3};
 use crate::material::{self, BodyKind};
 use crate::scene::{Geometry, Place};
+use crate::stack::{FINISH_MM, MASK_OVER_LAMINATE_MM, PROUD_MM, Stack};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{cos_sin, is_quarter_turn};
 use pcbcraft_core::library::offset_polygon;
@@ -24,15 +25,9 @@ pub use outline::union;
 pub use region::{Region, slab};
 use via::via_layers;
 
-/// Soldermask over bare laminate (display thickness; see `docs/materials.md`).
-pub const MASK_THICKNESS_MM: f64 = 0.020;
 /// Soldermask pull-back from the board outline (est.; fabricators pull mask
 /// and copper back from a routed edge).
 pub const MASK_EDGE_INSET_MM: f64 = 0.03;
-/// Soldermask above a track's copper.
-pub const MASK_CAP_MM: f64 = 0.015;
-/// ENIG nickel (3–6 µm, IPC-4552); the immersion gold is negligible.
-pub const FINISH_THICKNESS_MM: f64 = 0.005;
 /// Soldermask tiles: the slab's faces are triangulated per square of this
 /// size, so a dense board stays local.
 const MASK_TILE_MM: f64 = 4.0;
@@ -58,10 +53,6 @@ const OVERCOAT_MM: f64 = 0.005;
 /// Solder fillet height as a share of the body height, at most 0.4 mm
 /// (J-STD-001 asks for at least a quarter of the termination height).
 const FILLET_HEIGHT_SHARE: f64 = 0.4;
-/// How far a fillet's foot stands off the land's finish (display only):
-/// its meniscus thins to nothing at the toe, and lying on the finish there
-/// it flickered against it (z-fighting).
-const FILLET_LIFT_MM: f64 = 0.002;
 const FILLET_MAX_MM: f64 = 0.4;
 /// The fillet is narrower than the termination it wets.
 const FILLET_WIDTH_SHARE: f64 = 0.92;
@@ -79,9 +70,9 @@ const SMOOTH_TURN: f64 = 0.55;
 pub const VIA_MASK_EXPANSION_MM: f64 = 0.05;
 /// A tented via's mask sags this far into the drill it bridges (est.; LPI
 /// tents over a 0.3 mm hole dip into it as a visible dimple). 8 µm read as
-/// no dimple in the look review; the dimple stays within the cap's 15 µm
-/// over the copper (`MASK_CAP_MM`), so a track ending at the via never
-/// shows through it.
+/// no dimple in the look review. The dimple stays [`PROUD_MM`] above the
+/// copper under the mask, so a track ending at the via never shows through
+/// it.
 const TENT_SAG_MM: f64 = 0.012;
 /// How far past the ring the tent's dome slopes down into the mask.
 const TENT_SKIRT_MM: f64 = 0.08;
@@ -154,67 +145,47 @@ pub struct Board {
     /// A sketched board's solved shape; `None` for the `width` × `depth`
     /// rectangle.
     pub shape: Option<std::sync::Arc<Outline>>,
-    /// The laminate (every dielectric) between the outer copper faces.
-    pub thickness: f64,
-    /// Outer copper foil thickness, top and bottom.
-    pub copper_top: f64,
-    pub copper_bottom: f64,
-    /// Which sides carry soldermask.
-    pub mask_top: bool,
-    pub mask_bottom: bool,
+    /// The films and foils, with their heights.
+    pub stack: Stack,
     pub fabrication: Fabrication,
 }
 
 impl Board {
     /// The board of `project`, from its outline, stackup and fabrication.
     pub fn of(project: &Project) -> Self {
-        let stackup = &project.stackup;
-        let foil = |layer: CopperLayer| {
-            stackup
-                .copper_span(layer)
-                .map_or(0.0, |(low, high)| high - low)
-        };
         Self {
             width: project.board_size[0],
             depth: project.board_size[1],
             shape: Outline::of(project).map(std::sync::Arc::new),
-            thickness: stackup.dielectric_mm(),
-            copper_top: foil(CopperLayer::Top),
-            copper_bottom: foil(CopperLayer::Bottom),
-            mask_top: stackup.mask_top,
-            mask_bottom: stackup.mask_bottom,
+            stack: Stack::of(&project.stackup),
             fabrication: project.fabrication,
         }
     }
 
     /// The outer copper foil thickness on a side.
     pub fn copper(&self, layer: Layer) -> f64 {
-        match layer {
-            Layer::Top => self.copper_top,
-            Layer::Bottom => self.copper_bottom,
-        }
+        self.stack.copper(layer)
     }
 
     /// Whether a side carries soldermask.
     pub fn mask(&self, layer: Layer) -> bool {
-        match layer {
-            Layer::Top => self.mask_top,
-            Layer::Bottom => self.mask_bottom,
-        }
+        self.stack.mask(layer)
     }
 
-    /// World z of a height above a copper layer's board face (below it for
-    /// the bottom layer).
+    /// The mask over a side's copper reaches this far above the laminate.
+    pub fn crown(&self, layer: Layer) -> f64 {
+        self.copper(layer) + self.stack.mask_mm()
+    }
+
+    /// World z of a height above a side's laminate face (below it for the
+    /// bottom) ([`Stack::z`]).
     pub fn z(&self, layer: Layer, height: f64) -> f64 {
-        match layer {
-            Layer::Top => self.thickness + height,
-            Layer::Bottom => -height,
-        }
+        self.stack.z(layer, height)
     }
 
     pub fn span(&self, layer: Layer, low: f64, high: f64) -> (f64, f64) {
-        let (a, b) = (self.z(layer, low), self.z(layer, high));
-        (a.min(b), a.max(b))
+        let [a, b] = self.stack.span(layer, low, high);
+        (a, b)
     }
 }
 
@@ -443,7 +414,7 @@ pub fn board_with(
         if !board.mask(layer) {
             continue;
         }
-        let (z0, z1) = board.span(layer, 0.0, MASK_THICKNESS_MM);
+        let (z0, z1) = board.span(layer, 0.0, MASK_OVER_LAMINATE_MM);
         let region = Region {
             fills: fills.clone(),
             cuts: lands
@@ -456,7 +427,7 @@ pub fn board_with(
         memo.unit(&mut next, &mut out, &(kind, board, &region), |out| {
             push(
                 out,
-                &board.fabrication,
+                Some(board),
                 kind,
                 None,
                 Some(layer.into()),
@@ -475,19 +446,13 @@ pub fn board_with(
         // not its underside: it starts a finish thickness off the laminate,
         // so its bottom never shares the copper's bottom face (the two
         // flickered in streaks seen from below with the laminate hidden).
-        let (z0, z1) = board.span(
-            land.layer,
-            FINISH_THICKNESS_MM,
-            board.copper(land.layer) + FINISH_THICKNESS_MM,
-        );
+        let (z0, z1) = board.span(land.layer, FINISH_MM, board.copper(land.layer) + FINISH_MM);
         let region = Region {
-            fills: offset_polygon(copper, FINISH_THICKNESS_MM)
-                .into_iter()
-                .collect(),
+            fills: offset_polygon(copper, FINISH_MM).into_iter().collect(),
             cuts: land
                 .bore
                 .iter()
-                .filter_map(|bore| offset_polygon(bore, -FINISH_THICKNESS_MM))
+                .filter_map(|bore| offset_polygon(bore, -FINISH_MM))
                 .collect(),
         };
         // A via's finished ring belongs to the via, not to its side's
@@ -502,7 +467,7 @@ pub fn board_with(
                 shared.place(&mut out, key, Some(via.pick), via.at, |made| {
                     push(
                         made,
-                        &board.fabrication,
+                        Some(board),
                         BodyKind::PadFinish,
                         Some(via.pick),
                         None,
@@ -513,7 +478,7 @@ pub fn board_with(
             None => memo.unit(&mut next, &mut out, &(board, land), |out| {
                 push(
                     out,
-                    &board.fabrication,
+                    Some(board),
                     BodyKind::PadFinish,
                     land.pick,
                     Some(land.layer.into()),
@@ -546,6 +511,94 @@ pub fn board_with(
         package(&mut out, Some(board), part)?;
     }
     *memo = next;
+    Ok(out)
+}
+
+/// The laminate the mask leaves bare on each side with mask: inside the
+/// lands' and open vias' mask openings (a fiducial's clearance, a land's
+/// expansion) and the pull-back from every routed edge, less the outer
+/// copper there (lands, tracks and the outlines of the `fills` on that
+/// side, all plated) and the drills. The laminate's own face lies under the mask, so
+/// the 3D view shades it only where this film lies; the film stands
+/// [`PROUD_MM`] off it.
+pub fn open_laminate(
+    board: &Board,
+    lands: &[Land],
+    paths: &[Path],
+    fills: &[(Layer, Vec<Point>)],
+) -> Result<Vec<Geometry>> {
+    let mut out = Vec::new();
+    let (inset, edge_cuts) = mask_outline(board);
+    let outer = match &board.shape {
+        Some(shape) => vec![shape.outer.clone()],
+        None => vec![vec![
+            [0.0, 0.0],
+            [board.width, 0.0],
+            [board.width, board.depth],
+            [0.0, board.depth],
+        ]],
+    };
+    let drills: Vec<Vec<Point>> = board.shape.as_ref().map_or_else(Vec::new, |shape| {
+        shape.cutouts.iter().chain(&shape.holes).cloned().collect()
+    });
+    for side in [Layer::Top, Layer::Bottom] {
+        if !board.mask(side) {
+            continue;
+        }
+        let on = lands.iter().filter(|land| land.layer == side);
+        let copper: Vec<Vec<Point>> = on
+            .clone()
+            .flat_map(|land| land.copper.iter().chain(&land.bore).cloned())
+            .chain(paths.iter().filter(|p| p.layer == side).filter_map(|p| {
+                let delta = [p.end[0] - p.start[0], p.end[1] - p.start[1]];
+                let length = delta[0].hypot(delta[1]);
+                let u = if positive(length) {
+                    [delta[0] / length, delta[1] / length]
+                } else {
+                    [1.0, 0.0]
+                };
+                let mut outline = Vec::with_capacity(2 * ARC_STEPS + 2);
+                end(&mut outline, p.end, u, p.width / 2.0, true);
+                end(&mut outline, p.start, [-u[0], -u[1]], p.width / 2.0, true);
+                positive(p.width).then_some(outline)
+            }))
+            .chain(
+                fills
+                    .iter()
+                    .filter(|(layer, _)| *layer == side)
+                    .map(|(_, l)| l.clone()),
+            )
+            .chain(edge_cuts.iter().cloned())
+            .collect();
+        let (z0, z1) = board.span(side, 0.0, PROUD_MM);
+        let layer = Some(CopperLayer::from(side));
+        for region in [
+            Region {
+                fills: on.flat_map(|land| land.openings.iter().cloned()).collect(),
+                cuts: copper,
+            },
+            Region {
+                fills: outer.clone(),
+                cuts: inset.clone(),
+            },
+            Region {
+                fills: edge_cuts.clone(),
+                cuts: drills.clone(),
+            },
+        ] {
+            if region.fills.is_empty() {
+                continue;
+            }
+            push(
+                &mut out,
+                Some(board),
+                BodyKind::OpenLaminate,
+                None,
+                layer,
+                slab(&region, z0, z1, MASK_TILE_MM),
+            )?;
+        }
+    }
     Ok(out)
 }
 
@@ -656,7 +709,7 @@ fn track(
     let capped = merged(openings.iter().copied().chain(domes).collect());
     let layer = Some(CopperLayer::from(path.layer));
     let copper = board.copper(path.layer);
-    let (c0, c1) = board.span(path.layer, 0.0, copper + MASK_CAP_MM);
+    let (c0, c1) = board.span(path.layer, 0.0, board.crown(path.layer));
     let mut from = (0.0, true);
     let mut pieces = Vec::new();
     for &(a, b) in &capped {
@@ -675,7 +728,7 @@ fn track(
         end(&mut outline, at(a, 0.0), [-u[0], -u[1]], band, free_a);
         push(
             out,
-            &board.fabrication,
+            Some(board),
             BodyKind::MaskCap,
             Some(path.pick),
             layer,
@@ -686,10 +739,10 @@ fn track(
     // strip's underside meets neither copper's nor the land finish's.
     let (f0, f1) = board.span(
         path.layer,
-        (1.0 - STRIP_SHARE) * FINISH_THICKNESS_MM,
-        copper + STRIP_SHARE * FINISH_THICKNESS_MM,
+        (1.0 - STRIP_SHARE) * FINISH_MM,
+        copper + STRIP_SHARE * FINISH_MM,
     );
-    let half = path.width / 2.0 + STRIP_SHARE * FINISH_THICKNESS_MM;
+    let half = path.width / 2.0 + STRIP_SHARE * FINISH_MM;
     for &(a, b) in &openings {
         let (a, b) = (a.max(0.0), b.min(length));
         if b - a < CAP_MIN_MM {
@@ -700,7 +753,7 @@ fn track(
         end(&mut outline, at(a, 0.0), [-u[0], -u[1]], half, false);
         push(
             out,
-            &board.fabrication,
+            Some(board),
             BodyKind::PadFinish,
             Some(path.pick),
             layer,
@@ -792,7 +845,6 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         board,
         placement: part.placement,
     };
-    let looks = board.map_or_else(Fabrication::default, |b| b.fabrication);
     let package = part.package;
     let [length, width, height] = package.envelope;
     let offset = package.placement.translation;
@@ -816,7 +868,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             let top = offset[2] + LEAD_HEIGHT_SHARE * height;
             if top > 0.001 {
                 let mesh = frame.cuboid([min[0], min[1], 0.0], [max[0], max[1], top]);
-                push(out, &looks, BodyKind::Termination, part.pick, None, mesh)?;
+                push(out, board, BodyKind::Termination, part.pick, None, mesh)?;
             }
         }
         return Ok(());
@@ -846,7 +898,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         max[2] = hi[2] + g;
         push(
             out,
-            &looks,
+            board,
             BodyKind::Termination,
             part.pick,
             None,
@@ -864,7 +916,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         if min[axis] < max[axis] && min[across] < max[across] {
             push(
                 out,
-                &looks,
+                board,
                 BodyKind::Overcoat,
                 part.pick,
                 None,
@@ -906,7 +958,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             rise,
             [mid - half, mid + half],
         );
-        push(out, &looks, BodyKind::Solder, part.pick, None, mesh)?;
+        push(out, board, BodyKind::Solder, part.pick, None, mesh)?;
     }
     Ok(())
 }
@@ -993,7 +1045,9 @@ fn fillet(
     rise: f64,
     span: [f64; 2],
 ) -> Mesh {
-    let base = FINISH_THICKNESS_MM + FILLET_LIFT_MM;
+    // The foot stands off the land's finish: the meniscus thins to nothing
+    // at the toe, and lying on the finish there it flickered against it.
+    let base = FINISH_MM + PROUD_MM;
     let mid = (span[0] + span[1]) / 2.0;
     let half = (span[1] - span[0]) / 2.0;
     let local = |s: f64, c: f64, z: f64| {
@@ -1209,7 +1263,7 @@ fn positive(value: f64) -> bool {
 /// layers), unless its mesh is empty.
 pub(crate) fn push(
     out: &mut Vec<Geometry>,
-    looks: &Fabrication,
+    board: Option<&Board>,
     kind: BodyKind,
     item: Option<u64>,
     layer: Option<CopperLayer>,
@@ -1218,6 +1272,14 @@ pub(crate) fn push(
     if mesh.triangles.is_empty() {
         return Ok(());
     }
+    // A package preview has no board: the default looks.
+    let (looks, stack) = match board {
+        Some(board) => (board.fabrication, std::borrow::Cow::Borrowed(&board.stack)),
+        None => (
+            Fabrication::default(),
+            std::borrow::Cow::Owned(Stack::default()),
+        ),
+    };
     let bounds = mesh.bounds();
     let volume = mesh.measure().volume;
     if !positive(volume) {
@@ -1229,8 +1291,8 @@ pub(crate) fn push(
         item,
         kind,
         layer,
-        surface: material::material(kind, looks).surface()?,
-        detail: material::detail(kind, looks),
+        surface: material::material(kind, &looks, &stack).surface()?,
+        detail: material::detail(kind, &looks),
         mesh: Arc::new(mesh),
         place: None,
         volume: crate::scene::Volume::known(volume),
@@ -1279,5 +1341,52 @@ mod tests {
         let volume = mesh.measure().volume;
         let ideal = 4.0 + std::f64::consts::PI * 0.25 / 2.0;
         assert!(volume < ideal && volume > ideal - 0.02, "{volume}");
+    }
+
+    /// Laminate a mask opening leaves bare (a fiducial's clearance) is its
+    /// own film on the laminate: the opening less the copper, and the
+    /// pull-back from the routed edge, on each side with mask only.
+    #[test]
+    fn a_mask_opening_shows_the_laminate_around_its_copper() -> Result<()> {
+        let stackup = pcbcraft_core::Stackup {
+            mask_bottom: false,
+            ..pcbcraft_core::Stackup::default()
+        };
+        let board = Board {
+            width: 10.0,
+            depth: 10.0,
+            shape: None,
+            stack: Stack::of(&stackup),
+            fabrication: Fabrication::default(),
+        };
+        let land = Land {
+            pick: Some(1),
+            layer: Layer::Top,
+            copper: Some(circle([5.0, 5.0], 0.5)),
+            bore: None,
+            openings: vec![circle([5.0, 5.0], 1.0)],
+        };
+        let films = open_laminate(&board, &[land], &[], &[])?;
+        assert_eq!(
+            films.len(),
+            2,
+            "the opening and the edge pull-back, top only"
+        );
+        let disc = |r: f64| {
+            let n = VIA_SEGMENTS as f64;
+            0.5 * n * r * r * (std::f64::consts::TAU / n).sin()
+        };
+        let inset = 10.0 - 2.0 * MASK_EDGE_INSET_MM;
+        for (film, area) in films
+            .iter()
+            .zip([disc(1.0) - disc(0.5), 100.0 - inset * inset])
+        {
+            assert_eq!(film.kind, BodyKind::OpenLaminate);
+            assert_eq!(film.layer, Some(CopperLayer::Top));
+            near(film.min[2], 1.6);
+            near(film.max[2], 1.6 + PROUD_MM);
+            assert!((film.volume() - area * PROUD_MM).abs() < 1e-9, "{area}");
+        }
+        Ok(())
     }
 }

@@ -7,6 +7,7 @@
 //! soldermask layer model are in `docs/materials.md`. No EDA tool, library or
 //! material file was consulted.
 use crate::geom::Vec3;
+use crate::stack::Stack;
 use crate::{Error, Result};
 use pcbcraft_core::{Fabrication, MaskColour, MaskFinish, PadFinish, SilkscreenColour};
 use serde::{Deserialize, Serialize};
@@ -20,6 +21,10 @@ use solidcraft_engine::render::surface::OpaqueSurface;
 pub enum BodyKind {
     /// FR-4 laminate core (its routed edge is what shows).
     Substrate,
+    /// The laminate a soldermask opening leaves bare (display-only): the
+    /// laminate's own face lies under the mask, so where the mask is open
+    /// this film draws it.
+    OpenLaminate,
     /// Soldermask over bare laminate, top side.
     MaskTop,
     /// Soldermask over bare laminate, bottom side.
@@ -75,8 +80,9 @@ pub enum BodyKind {
 }
 
 impl BodyKind {
-    pub const ALL: [BodyKind; 23] = [
+    pub const ALL: [BodyKind; 24] = [
         BodyKind::Substrate,
+        BodyKind::OpenLaminate,
         BodyKind::MaskTop,
         BodyKind::MaskBottom,
         BodyKind::MaskCap,
@@ -101,12 +107,11 @@ impl BodyKind {
         BodyKind::FillCopper,
     ];
 
-    /// Board-level layers: hidden with the substrate.
+    /// Board-level layers: the laminate and the mask over it
+    /// ([`crate::stack::Slot`]).
     pub fn is_board(self) -> bool {
-        matches!(
-            self,
-            BodyKind::Substrate | BodyKind::MaskTop | BodyKind::MaskBottom | BodyKind::MaskCap
-        )
+        use crate::stack::Slot;
+        matches!(self.slot(None), Slot::Substrate | Slot::Mask(_))
     }
 
     /// A package's envelope body (placed or previewed).
@@ -133,7 +138,8 @@ impl BodyKind {
     pub fn is_appearance(self) -> bool {
         matches!(
             self,
-            BodyKind::MaskTop
+            BodyKind::OpenLaminate
+                | BodyKind::MaskTop
                 | BodyKind::MaskBottom
                 | BodyKind::MaskCap
                 | BodyKind::PadFinish
@@ -272,7 +278,7 @@ pub fn weave_show_through(colour: MaskColour) -> f64 {
 /// The procedural detail of `kind` on a board built to `fabrication`.
 pub fn detail(kind: BodyKind, fabrication: &Fabrication) -> Detail {
     match kind {
-        BodyKind::Substrate | BodyKind::EdgeDielectric => Detail {
+        BodyKind::Substrate | BodyKind::OpenLaminate | BodyKind::EdgeDielectric => Detail {
             pattern: Pattern::Weave,
             strength: 1.0,
         },
@@ -316,10 +322,6 @@ const MASK_IOR: f64 = 1.52;
 /// fully rough, diffuse surface.
 const MASK_BODY_IOR: f64 = 1.0;
 const MASK_BODY_ROUGHNESS: f64 = 1.0;
-/// Soldermask over bare laminate (20 µm) and over a track's crown (12 µm;
-/// LPI thins over copper edges and crowns to 10–15 µm), in µm.
-pub const MASK_OVER_LAMINATE_UM: f64 = 20.0;
-pub const MASK_OVER_COPPER_UM: f64 = 12.0;
 /// Silica-filled epoxy and glass-epoxy laminate index (handbook values).
 const EPOXY_IOR: f64 = 1.55;
 /// Metals ignore the dielectric IOR; Solidcraft still requires one in [1, 3].
@@ -380,16 +382,27 @@ pub fn mask_body(pigment: Pigment, under: [f64; 3], thickness_um: f64) -> [f64; 
     mask_over(pigment, under, thickness_um).map(|c| (c / (1.0 - MASK_F0)).clamp(0.0, 1.0))
 }
 
-/// The physical look of `kind` on a board built to `fabrication`. Only the
-/// display-only layers (mask and plated finish) depend on it; the bodies the
-/// native model saves look the same for every fabrication.
-pub fn material(kind: BodyKind, fabrication: &Fabrication) -> Material {
-    let mut look = base_material(kind, fabrication);
+/// The physical look of `kind` on a board built to `fabrication` with
+/// `stack`'s films. Only the display-only layers (mask and plated finish)
+/// depend on them; the bodies the native model saves look the same for
+/// every fabrication. A mask's colour depends on its thickness: the
+/// stack's mask over laminate, and the stackup's mask over copper.
+pub fn material(kind: BodyKind, fabrication: &Fabrication, stack: &Stack) -> Material {
+    let mut look = base_material(kind, fabrication, stack);
     look.detail = detail(kind, fabrication);
     look
 }
 
-fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
+/// Soldermask over bare laminate and over copper, in µm.
+pub fn mask_um(stack: &Stack) -> [f64; 2] {
+    [
+        crate::stack::MASK_OVER_LAMINATE_MM * 1000.0,
+        stack.mask_mm() * 1000.0,
+    ]
+}
+
+fn base_material(kind: BodyKind, fabrication: &Fabrication, stack: &Stack) -> Material {
+    let [over_laminate, over_copper] = mask_um(stack);
     let pigment = pigment(fabrication.mask_colour);
     let lacquer = Coat {
         weight: 1.0,
@@ -419,14 +432,16 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication) -> Material {
         ..dielectric(name, base_linear, MASK_BODY_ROUGHNESS, MASK_BODY_IOR)
     };
     match kind {
-        BodyKind::Substrate => dielectric("FR-4 laminate", FR4, 0.60, EPOXY_IOR),
+        BodyKind::Substrate | BodyKind::OpenLaminate => {
+            dielectric("FR-4 laminate", FR4, 0.60, EPOXY_IOR)
+        }
         BodyKind::MaskTop | BodyKind::MaskBottom => mask(
             "Soldermask over laminate",
-            mask_body(pigment, FR4, MASK_OVER_LAMINATE_UM),
+            mask_body(pigment, FR4, over_laminate),
         ),
         BodyKind::MaskCap => mask(
             "Soldermask over copper",
-            mask_body(pigment, COPPER, MASK_OVER_COPPER_UM),
+            mask_body(pigment, COPPER, over_copper),
         ),
         BodyKind::CopperTrack
         | BodyKind::PadCopper
@@ -580,8 +595,17 @@ mod tests {
         out
     }
 
+    /// The default stack's mask over laminate and over copper, µm.
+    fn over_laminate() -> f64 {
+        mask_um(&Stack::default())[0]
+    }
+
+    fn over_copper() -> f64 {
+        mask_um(&Stack::default())[1]
+    }
+
     fn default_look(kind: BodyKind) -> Material {
-        material(kind, &Fabrication::default())
+        material(kind, &Fabrication::default(), &Stack::default())
     }
 
     fn luminance(c: [f64; 3]) -> f64 {
@@ -590,8 +614,8 @@ mod tests {
 
     /// Copper show-through: mask over copper against mask over laminate.
     fn show_through(colour: MaskColour) -> f64 {
-        luminance(mask_over(pigment(colour), COPPER, MASK_OVER_COPPER_UM))
-            / luminance(mask_over(pigment(colour), FR4, MASK_OVER_LAMINATE_UM))
+        luminance(mask_over(pigment(colour), COPPER, over_copper()))
+            / luminance(mask_over(pigment(colour), FR4, over_laminate()))
     }
 
     #[test]
@@ -600,7 +624,7 @@ mod tests {
         assert_eq!(all.len(), 8 * 3 * 5 * 3);
         for fabrication in &all {
             for kind in BodyKind::ALL {
-                let m = material(kind, fabrication);
+                let m = material(kind, fabrication, &Stack::default());
                 let surface = m.surface()?;
                 assert!(surface.roughness() >= 0.045, "{kind:?} {fabrication:?}");
                 assert!(
@@ -619,7 +643,11 @@ mod tests {
         for fabrication in fabrications() {
             for kind in BodyKind::ALL {
                 if !kind.is_appearance() {
-                    assert_eq!(material(kind, &fabrication), default_look(kind), "{kind:?}");
+                    assert_eq!(
+                        material(kind, &fabrication, &Stack::default()),
+                        default_look(kind),
+                        "{kind:?}"
+                    );
                 }
             }
         }
@@ -638,6 +666,7 @@ mod tests {
                     pad_finish,
                     ..Fabrication::default()
                 },
+                &Stack::default(),
             );
             (m.metallic, m.base_linear, m.roughness)
         };
@@ -679,7 +708,7 @@ mod tests {
     fn srgb8_round_trips_within_one_step() {
         for fabrication in fabrications() {
             for kind in BodyKind::ALL {
-                let m = material(kind, &fabrication);
+                let m = material(kind, &fabrication, &Stack::default());
                 for (c, linear) in m.srgb8().into_iter().zip(m.base_linear) {
                     let back = srgb8_to_linear(c);
                     let step =
@@ -699,8 +728,8 @@ mod tests {
     #[test]
     fn soldermask_is_green_and_lighter_over_copper() {
         let green = pigment(MaskColour::Green);
-        let laminate = mask_over(green, FR4, MASK_OVER_LAMINATE_UM);
-        let copper = mask_over(green, COPPER, MASK_OVER_COPPER_UM);
+        let laminate = mask_over(green, FR4, over_laminate());
+        let copper = mask_over(green, COPPER, over_copper());
         for albedo in [laminate, copper] {
             assert!(albedo.iter().all(|c| (0.0..=1.0).contains(c)), "{albedo:?}");
             assert!(
@@ -779,15 +808,15 @@ mod tests {
                 (
                     BodyKind::MaskTop,
                     laminate,
-                    mask_over(p, FR4, MASK_OVER_LAMINATE_UM),
+                    mask_over(p, FR4, over_laminate()),
                 ),
                 (
                     BodyKind::MaskCap,
                     copper,
-                    mask_over(p, COPPER, MASK_OVER_COPPER_UM),
+                    mask_over(p, COPPER, over_copper()),
                 ),
             ] {
-                let body = material(kind, &fabrication).base_linear;
+                let body = material(kind, &fabrication, &Stack::default()).base_linear;
                 for c in 0..3 {
                     assert!(
                         (got[c] - expected[c]).abs() <= 0.0006,
@@ -800,8 +829,8 @@ mod tests {
                 }
             }
             assert_eq!(
-                material(BodyKind::MaskBottom, &fabrication),
-                material(BodyKind::MaskTop, &fabrication)
+                material(BodyKind::MaskBottom, &fabrication, &Stack::default()),
+                material(BodyKind::MaskTop, &fabrication, &Stack::default())
             );
         }
     }
@@ -814,8 +843,8 @@ mod tests {
     fn mask_colours_keep_their_hue_and_show_through_order() {
         for colour in COLOURS {
             let p = pigment(colour);
-            let laminate = mask_over(p, FR4, MASK_OVER_LAMINATE_UM);
-            let copper = mask_over(p, COPPER, MASK_OVER_COPPER_UM);
+            let laminate = mask_over(p, FR4, over_laminate());
+            let copper = mask_over(p, COPPER, over_copper());
             for c in 0..3 {
                 assert!(copper[c] > laminate[c], "{colour:?}");
             }
@@ -860,6 +889,7 @@ mod tests {
                         mask_finish,
                         ..Fabrication::default()
                     },
+                    &Stack::default(),
                 )
             };
             let rough = |finish| look(finish).coat.map_or(f64::NAN, |c| c.roughness);
@@ -888,7 +918,7 @@ mod tests {
     fn mask_layers_are_coated_and_nothing_else_is() -> Result<()> {
         for fabrication in fabrications() {
             for kind in BodyKind::ALL {
-                let m = material(kind, &fabrication);
+                let m = material(kind, &fabrication, &Stack::default());
                 let coat = m.surface()?.clear_coat();
                 let is_mask = matches!(
                     kind,
@@ -917,6 +947,7 @@ mod tests {
                     mask_colour: colour,
                     ..Fabrication::default()
                 },
+                &Stack::default(),
             )
             .detail
         };
@@ -975,6 +1006,7 @@ mod tests {
                 if !matches!(
                     kind,
                     BodyKind::Substrate
+                        | BodyKind::OpenLaminate
                         | BodyKind::EdgeDielectric
                         | BodyKind::Silkscreen
                         | BodyKind::MaskTop

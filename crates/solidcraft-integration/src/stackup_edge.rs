@@ -3,7 +3,7 @@
 //! glass weave, per `Project::stackup`, so the board reads as a sectioned
 //! real board. Never saved; the native substrate stays one physical body.
 //!
-//! Each band is a thin frame standing [`EDGE_PROUD_MM`] proud of the
+//! Each band is a thin frame standing [`PROUD_MM`] proud of the
 //! routed faces (foils and mask lips also as far inside them, where the
 //! laminate hides it; dielectric bands start at the face, so none lies on
 //! the laminate's top or bottom):
@@ -13,16 +13,14 @@
 //! a face. An outer foil's line sits on the laminate face with its mask
 //! lip over it, as a section through a plane under the mask shows them.
 use crate::Result;
-use crate::appearance::{self, Board, MASK_CAP_MM, Region, slab};
+use crate::appearance::{self, Board, Region, slab};
 use crate::geom::Mesh;
 use crate::material::{BodyKind, Detail, Pattern};
 use crate::scene::Geometry;
+use crate::stack::PROUD_MM;
 use pcbcraft_core::library::offset_polygon;
 use pcbcraft_core::{CopperLayer, DielectricKind, GlassStyle, Layer, Point, Stackup};
 
-/// How far the bands stand proud of the routed edge, so they win the depth
-/// test without z-fighting the substrate's walls (display only).
-pub const EDGE_PROUD_MM: f64 = 0.002;
 /// Copper lines stand a little prouder than the dielectric beside them.
 const COPPER_PROUD_SHARE: f64 = 1.5;
 /// Thinner band pieces than this are left out.
@@ -63,17 +61,13 @@ pub fn bands(stackup: &Stackup, board: &Board) -> Result<Vec<Geometry>> {
             continue;
         }
         let (kind, layer, proud) = match band {
-            Band::Dielectric(_) => (BodyKind::EdgeDielectric, None, EDGE_PROUD_MM),
+            Band::Dielectric(_) => (BodyKind::EdgeDielectric, None, PROUD_MM),
             Band::Copper(layer) => (
                 BodyKind::EdgeCopper,
                 Some(layer),
-                COPPER_PROUD_SHARE * EDGE_PROUD_MM,
+                COPPER_PROUD_SHARE * PROUD_MM,
             ),
-            Band::Mask(side) => (
-                BodyKind::MaskCap,
-                Some(CopperLayer::from(side)),
-                EDGE_PROUD_MM,
-            ),
+            Band::Mask(side) => (BodyKind::MaskCap, Some(CopperLayer::from(side)), PROUD_MM),
         };
         // A dielectric band starts at the routed face rather than inside
         // it: a strip inside would lie on the laminate's top or bottom
@@ -89,7 +83,7 @@ pub fn bands(stackup: &Stackup, board: &Board) -> Result<Vec<Geometry>> {
             append(&mut mesh, slab(&region, z0, z1, f64::MAX));
         }
         let before = out.len();
-        appearance::push(&mut out, &board.fabrication, kind, None, layer, mesh)?;
+        appearance::push(&mut out, Some(board), kind, None, layer, mesh)?;
         if let (Band::Dielectric(index), Some(geometry)) = (band, out.get_mut(before))
             && let Some(d) = stackup.dielectrics.get(index)
         {
@@ -159,15 +153,11 @@ fn layout(stackup: &Stackup, board: &Board) -> Vec<(Band, f64, f64)> {
         .into_iter()
         .filter_map(|l| stackup.copper_span(l).map(|(a, b)| (l, a, b)))
         .collect();
-    for (side, mask) in [
-        (Layer::Bottom, board.mask_bottom),
-        (Layer::Top, board.mask_top),
-    ] {
-        if !mask {
+    for side in [Layer::Bottom, Layer::Top] {
+        if !board.mask(side) {
             continue;
         }
-        let foil = board.copper(side);
-        let (z0, z1) = board.span(side, foil, foil + MASK_CAP_MM);
+        let (z0, z1) = board.span(side, board.copper(side), board.crown(side));
         out.push((Band::Mask(side), z0, z1));
     }
     for (layer, z0, z1) in &foils {
@@ -206,11 +196,7 @@ mod tests {
             width: 20.0,
             depth: 10.0,
             shape: None,
-            thickness: stackup.dielectric_mm(),
-            copper_top: 0.035,
-            copper_bottom: 0.035,
-            mask_top: stackup.mask_top,
-            mask_bottom: stackup.mask_bottom,
+            stack: crate::stack::Stack::of(stackup),
             fabrication: Fabrication::default(),
         }
     }
@@ -253,8 +239,9 @@ mod tests {
         }
         let low = spans.first().map_or(0.0, |s| s.0);
         let high = spans.last().map_or(0.0, |s| s.1);
-        assert!((low + 0.035 + MASK_CAP_MM).abs() < 1e-9);
-        assert!((high - (stackup.dielectric_mm() + 0.035 + MASK_CAP_MM)).abs() < 1e-9);
+        let cap = 0.035 + stackup.mask_um / 1000.0;
+        assert!((low + cap).abs() < 1e-9);
+        assert!((high - (stackup.dielectric_mm() + cap)).abs() < 1e-9);
         // Each band hugs the routed edge, just proud of it.
         for g in &bands {
             assert!(g.min[0] < 0.0 && g.min[0] > -0.01);

@@ -19,8 +19,8 @@ fn write_layer_pictures() -> Result<(), Box<dyn std::error::Error>> {
         return Err("no GPU adapter".into());
     };
     let project = showcase_project()?;
-    let stack = project.stackup.layers();
-    if stack.len() < 4 {
+    let stack = pcbcraft_solidcraft::stack::Stack::of(&project.stackup);
+    if project.stackup.layers().len() < 4 {
         return Err("the showcase is a 4-layer board".into());
     }
     let mut v = viewport(&project)?;

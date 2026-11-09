@@ -25,7 +25,7 @@
 //! document revision) rebuilds them.
 use super::{Builder, Source, copper_param, inner_base, next_pick, polygon, track_outline};
 use crate::Result;
-use crate::appearance::{self, Board, Land, MASK_CAP_MM, Region, ViaMark};
+use crate::appearance::{self, Board, Land, Region, ViaMark};
 use crate::material::BodyKind;
 use crate::native::{BoardJoint, Expr, JointFrame, Mount, ProfileBody};
 use crate::pad_outline::{Contour, FLATTEN_TOLERANCE_MM};
@@ -33,7 +33,7 @@ use crate::scene::Geometry;
 use pcbcraft_core::layout::fill::{FillContact, copper_union};
 use pcbcraft_core::model::Fill;
 use pcbcraft_core::model::fill::FilledRegion;
-use pcbcraft_core::{CopperLayer, Point, Project};
+use pcbcraft_core::{CopperLayer, Layer, Point, Project};
 
 /// Mask cap tiles over a fill, as the board mask's.
 const CAP_TILE_MM: f64 = 4.0;
@@ -496,7 +496,7 @@ fn spine_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
 }
 
 /// The display-only mask cap over each outer-layer fill region: from the
-/// laminate to [`MASK_CAP_MM`] over the copper, opened where the pads' and
+/// laminate to the stackup's mask over the copper, opened where the pads' and
 /// open vias' mask openings are and where a tented via's dome is the mask.
 pub(super) fn films(
     board: &Board,
@@ -522,7 +522,7 @@ pub(super) fn films(
                     .map(|v| appearance::circle(v.at, v.diameter / 2.0)),
             )
             .collect();
-        let (z0, z1) = board.span(side, 0.0, board.copper(side) + MASK_CAP_MM);
+        let (z0, z1) = board.span(side, 0.0, board.crown(side));
         for region in mark.regions.iter().filter(|r| r.outer.len() >= 3) {
             let bounds = bounds(&region.outer);
             let region = Region {
@@ -541,7 +541,7 @@ pub(super) fn films(
             };
             appearance::push(
                 &mut out,
-                &board.fabrication,
+                Some(board),
                 BodyKind::MaskCap,
                 Some(mark.pick),
                 Some(side.into()),
@@ -550,6 +550,15 @@ pub(super) fn films(
         }
     }
     Ok(out)
+}
+
+/// Each outer-layer fill region's outline, with its side.
+pub(super) fn outlines(fills: &[FillMark]) -> Vec<(Layer, Vec<Point>)> {
+    fills
+        .iter()
+        .filter_map(|mark| mark.layer.side().map(|side| (side, mark)))
+        .flat_map(|(side, mark)| mark.regions.iter().map(move |r| (side, r.outer.clone())))
+        .collect()
 }
 
 /// The box of a loop.

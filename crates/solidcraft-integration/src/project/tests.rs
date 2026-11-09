@@ -650,7 +650,11 @@ fn looks_match_the_native_file(model: &NativeModel) -> Result<()> {
     assert_eq!(scene.meshes.len(), native(model).count());
     for (mesh, geometry) in scene.meshes.iter().zip(native(model)) {
         assert_eq!(mesh.surface, Some(geometry.surface), "{}", mesh.name);
-        let expected = material::material(geometry.kind, &Fabrication::default());
+        let expected = material::material(
+            geometry.kind,
+            &Fabrication::default(),
+            &crate::stack::Stack::default(),
+        );
         assert_eq!(mesh.color, expected.srgb8(), "{}", mesh.name);
     }
     Ok(())
@@ -704,7 +708,12 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
             || lip;
         assert_eq!(geometry.item.is_none(), board, "{:?}", geometry.kind);
     }
-    let copper = material::material(BodyKind::PadCopper, &Fabrication::default()).surface()?;
+    let copper = material::material(
+        BodyKind::PadCopper,
+        &Fabrication::default(),
+        &crate::stack::Stack::default(),
+    )
+    .surface()?;
     for source in model.sources.iter().filter(|s| s.pad.is_some()) {
         let pad = source_geometry(&model, BodyKind::PadCopper, |s| s.pick_id == source.pick_id)?;
         let finish = source_geometry(&model, BodyKind::PadFinish, |s| s.pick_id == source.pick_id)?;
@@ -1149,7 +1158,12 @@ fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Re
         if b.kind.is_appearance() {
             // Drawn directly from the table; native bodies go through the
             // file's 8-bit colour, which looks_match_the_native_file checks.
-            let expected = material::material(b.kind, &project.fabrication).surface()?;
+            let expected = material::material(
+                b.kind,
+                &project.fabrication,
+                &crate::stack::Stack::of(&project.stackup),
+            )
+            .surface()?;
             assert_eq!(b.surface, expected, "{:?}", b.kind);
         }
         if matches!(

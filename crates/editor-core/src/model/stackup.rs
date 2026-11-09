@@ -21,6 +21,17 @@ pub const MAX_COPPER_LAYERS: usize = 64;
 pub const COPPER_UM_RANGE: std::ops::RangeInclusive<f64> = 5.0..=210.0;
 /// Dielectric thicknesses a stackup accepts, in mm.
 pub const DIELECTRIC_MM_RANGE: std::ops::RangeInclusive<f64> = 0.025..=3.2;
+/// Soldermask over copper of a new stackup, in µm: within the 10–20 µm
+/// over copper that the LPI soldermask datasheets quote (Florida CirTech
+/// LPI-950 LC-1, C-8GD and S-22; listed in `docs/materials.md`,
+/// "Sources"), toward their thin end because LPI thins over a track's
+/// crown and edges. The 3D view's mask over copper, its geometry and its
+/// colour, is this thickness.
+pub const MASK_UM: f64 = 12.0;
+/// Soldermask thicknesses over copper a stackup accepts, in µm. An input
+/// bound, not a fabrication limit: from below the thinnest LPI coat to
+/// above dry-film masks.
+pub const MASK_UM_RANGE: std::ops::RangeInclusive<f64> = 5.0..=100.0;
 
 /// A named copper layer of the board, top to bottom. Its identity is its
 /// name: `Inner(1)` is the first inner layer below the top, whatever the
@@ -160,8 +171,16 @@ pub struct Stackup {
     pub dielectrics: Vec<Dielectric>,
     pub mask_top: bool,
     pub mask_bottom: bool,
+    /// Soldermask thickness over copper in µm, on every side with mask
+    /// ([`MASK_UM`] unless the fabricator quotes another).
+    #[serde(default = "default_mask_um")]
+    pub mask_um: f64,
     pub silkscreen_top: bool,
     pub silkscreen_bottom: bool,
+}
+
+fn default_mask_um() -> f64 {
+    MASK_UM
 }
 
 impl Default for Stackup {
@@ -178,6 +197,7 @@ impl Default for Stackup {
             }],
             mask_top: true,
             mask_bottom: true,
+            mask_um: MASK_UM,
             silkscreen_top: true,
             silkscreen_bottom: true,
         }
@@ -330,7 +350,8 @@ impl Stackup {
     /// The stackup rules: an even number of copper layers from
     /// [`MIN_COPPER_LAYERS`] to [`MAX_COPPER_LAYERS`], exactly one
     /// dielectric between neighbouring foils, finite thicknesses within
-    /// fabrication ranges and Dk within [`DK_RANGE`].
+    /// fabrication ranges, Dk within [`DK_RANGE`] and the mask thickness
+    /// within [`MASK_UM_RANGE`].
     pub fn check(&self) -> Result<()> {
         check_count(self.copper.len())?;
         if self.dielectrics.len() + 1 != self.copper.len() {
@@ -361,6 +382,11 @@ impl Stackup {
             .all(|dk| dk.is_finite() && DK_RANGE.contains(&dk))
         {
             return Err(Error::Invalid("dielectric Dk must be 1–20".into()));
+        }
+        if !(self.mask_um.is_finite() && MASK_UM_RANGE.contains(&self.mask_um)) {
+            return Err(Error::Invalid(
+                "soldermask thickness must be 5–100 µm".into(),
+            ));
         }
         Ok(())
     }

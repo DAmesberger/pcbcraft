@@ -71,6 +71,9 @@ pub struct NativeModel {
     native: Native,
     pub geometry: Vec<Geometry>,
     pub sources: Vec<Source>,
+    /// The board's layer stack ([`crate::stack::Stack::none`] for a
+    /// package preview).
+    pub stack: crate::stack::Stack,
     /// The generated package-model definitions, one per package revision
     /// (a library model's bodies with built-in materials among them).
     pub models: Vec<ModelDefinition>,
@@ -433,8 +436,14 @@ impl Builder {
             // Saved bodies look the same for every fabrication; only the
             // display-only layers take the project's mask and finish.
             if !names.is_empty() {
-                self.native
-                    .appearance(&names, &material::material(kind, &Fabrication::default()))?;
+                self.native.appearance(
+                    &names,
+                    &material::material(
+                        kind,
+                        &Fabrication::default(),
+                        &crate::stack::Stack::default(),
+                    ),
+                )?;
             }
         }
         identity::write(&mut self.native, &sources, &self.bodies)?;
@@ -781,6 +790,7 @@ fn finish_with(
         native,
         geometry,
         sources,
+        stack: crate::stack::Stack::none(),
         models,
         libraries: Vec::new(),
         reuse,
@@ -1801,6 +1811,12 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     let layers = |memo: &mut appearance::Memo| -> Result<Vec<Geometry>> {
         let mut layers = appearance::board_with(&display, &lands, &paths, &marks, &parts, memo)?;
         layers.extend(fill::films(&display, &lands, &marks, &fills)?);
+        layers.extend(appearance::open_laminate(
+            &display,
+            &lands,
+            &paths,
+            &fill::outlines(&fills),
+        )?);
         layers.extend(crate::silkscreen::films(
             project,
             &crate::silkscreen::Legend {
@@ -1841,6 +1857,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     let mut model = model?;
     model.geometry.extend(layers?);
     model.display = memo;
+    model.stack = crate::stack::Stack::of(stackup);
     Ok(model)
 }
 

@@ -233,7 +233,7 @@ fn project(fabrication: Fabrication) -> Result<Project, Box<dyn std::error::Erro
 fn viewport(project: &Project) -> Result<Viewport, Box<dyn std::error::Error>> {
     let model = pcbcraft_solidcraft::project::build(project)?;
     let mut viewport = Viewport::detached();
-    viewport.set_model(crate::model_scene::build(model.geometry)?);
+    viewport.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
     viewport.fit_to(4.0 / 3.0);
     Ok(viewport)
 }
@@ -362,7 +362,7 @@ fn write_pictures() -> Result<(), Box<dyn std::error::Error>> {
             package.envelope = package.form.envelope().unwrap_or([1.0; 3]);
             let model = pcbcraft_solidcraft::project::preview(&package)?;
             let mut v = Viewport::detached();
-            v.set_model(crate::model_scene::build(model.geometry)?);
+            v.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
             v.fit_to(4.0 / 3.0);
             let name = preset.label().to_lowercase().replace([' ', '×'], "-");
             save(&mut v, &format!("generated-{name}"))?;
@@ -404,7 +404,7 @@ fn write_pictures() -> Result<(), Box<dyn std::error::Error>> {
     {
         let model = pcbcraft_solidcraft::project::preview(&package.definition)?;
         let mut v = Viewport::detached();
-        v.set_model(crate::model_scene::build(model.geometry)?);
+        v.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
         v.fit_to(4.0 / 3.0);
         save(&mut v, &format!("component-preview-{k}"))?;
     }
@@ -603,7 +603,7 @@ fn write_model_pictures() -> Result<(), Box<dyn std::error::Error>> {
     for (name, package) in generated_packages() {
         let model = pcbcraft_solidcraft::project::preview(&package)?;
         let mut v = Viewport::detached();
-        v.set_model(crate::model_scene::build(model.geometry)?);
+        v.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
         v.fit_to(4.0 / 3.0);
         let b = v.bounds;
         aim(&mut v, b.center(), 1.7 * b.diagonal(), 35.0, 32.0);
@@ -883,7 +883,8 @@ fn show_layers(
     view: crate::layer_view::LayerView,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let model = v.model.as_ref().ok_or("no model")?;
-    let (stream, _) = crate::model_scene::pack(&model.geometry, &v.decals.geometry, &view)?;
+    let (stream, _) =
+        crate::model_scene::pack(&model.geometry, &v.decals.geometry, &view, &model.stack)?;
     v.set_layers(view);
     v.repack = None;
     v.publish_stream(stream);
@@ -950,7 +951,7 @@ fn opening_3d_timings() -> Result<(), Box<dyn std::error::Error>> {
         let mut best = f64::MAX;
         let mut prepared = None;
         for _ in 0..5 {
-            let scene = match crate::model_scene::build(model.geometry.clone()) {
+            let scene = match crate::model_scene::build(model.geometry.clone(), &model.stack) {
                 Ok(scene) => scene,
                 Err(error) => {
                     prepared = Some(error);
@@ -1038,7 +1039,7 @@ fn marked_preview(
     let mut geometry = model.geometry;
     geometry.extend(decals);
     let mut v = Viewport::detached();
-    v.set_model(crate::model_scene::build(geometry)?);
+    v.set_model(crate::model_scene::build(geometry, &model.stack)?);
     v.fit_to(4.0 / 3.0);
     Ok(v)
 }
@@ -1265,7 +1266,7 @@ fn write_wroom_board_pictures() -> Result<(), Box<dyn std::error::Error>> {
             &model.sources,
         ),
     );
-    v.set_model(crate::model_scene::build(geometry)?);
+    v.set_model(crate::model_scene::build(geometry, &model.stack)?);
     v.fit_to(4.0 / 3.0);
     let mut save =
         |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
@@ -1361,7 +1362,10 @@ fn write_mechanical_board_pictures() -> Result<(), Box<dyn std::error::Error>> {
     let project = engine.project().clone();
     let mut v = viewport(&project)?;
     let model = pcbcraft_solidcraft::project::build(&project)?;
-    v.set_model(crate::model_scene::build(model.geometry.clone())?);
+    v.set_model(crate::model_scene::build(
+        model.geometry.clone(),
+        &model.stack,
+    )?);
     v.fit_to(4.0 / 3.0);
     let mut save =
         |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {

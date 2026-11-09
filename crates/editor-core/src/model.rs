@@ -25,7 +25,8 @@ pub use sheet::{
 };
 pub use stackup::{
     COPPER_UM_RANGE, CopperFoil, CopperLayer, DIELECTRIC_MM_RANGE, DK_RANGE, Dielectric,
-    DielectricKind, GlassStyle, MAX_COPPER_LAYERS, MIN_COPPER_LAYERS, OUNCE_UM, Stackup,
+    DielectricKind, GlassStyle, MASK_UM, MASK_UM_RANGE, MAX_COPPER_LAYERS, MIN_COPPER_LAYERS,
+    OUNCE_UM, Stackup,
 };
 pub use via::{Via, ViaSpan};
 

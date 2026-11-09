@@ -16,6 +16,7 @@ pub mod pad_outline;
 pub mod project;
 pub mod scene;
 pub mod silkscreen;
+pub mod stack;
 pub mod stackup_edge;
 pub mod svg;
 /// Solidcraft's span profiler: records only when this crate's `profile`

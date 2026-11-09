@@ -8,12 +8,10 @@
 //! on the cap's crown instead, so copper under the mask never shows
 //! through the legend.
 use crate::Result;
-use crate::appearance::{
-    self, Board, CAP_MARGIN_MM, FINISH_THICKNESS_MM, Land, MASK_CAP_MM, MASK_THICKNESS_MM, Path,
-    Region, ViaMark, slab,
-};
+use crate::appearance::{self, Board, CAP_MARGIN_MM, Land, Path, Region, ViaMark, slab};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
+use crate::stack::{FINISH_MM, INK_MM, INK_SINK_SHARE, Slot};
 use pcbcraft_core::geometry::Shape;
 use pcbcraft_core::layout::{self, BoardDrawing, PlacedItem};
 use pcbcraft_core::library::graphics::PlacedText;
@@ -21,15 +19,9 @@ use pcbcraft_core::library::offset_polygon;
 use pcbcraft_core::{CopperLayer, Id, Layer, Point, Project};
 use std::collections::BTreeMap;
 
-/// Legend ink thickness over the mask (est.; screen-printed and inkjet
-/// legend is 10–25 µm).
-pub const INK_THICKNESS_MM: f64 = 0.015;
 /// Fabricators clip legend this far clear of mask openings (est.; quoted
 /// silkscreen-to-pad clearances are 0.05–0.15 mm).
 pub const OPENING_CLEARANCE_MM: f64 = 0.05;
-/// The film sinks this share of the ink into the surface it is printed on,
-/// so it never floats over it.
-const SINK_SHARE: f64 = 0.5;
 /// Chord tolerance of curves in the legend.
 const LEGEND_TOLERANCE_MM: f64 = 0.01;
 /// Segments of a stroke's round end.
@@ -92,25 +84,24 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
             .flat_map(|land| land.openings.iter())
             .map(|o| offset_polygon(o, OPENING_CLEARANCE_MM).unwrap_or_else(|| o.clone()))
             .collect();
-        let masked = board.mask(side);
-        // On the mask (or the bare laminate), and on the crown of the
-        // mask over copper.
-        let ground = if masked { MASK_THICKNESS_MM } else { 0.0 };
-        let crown = board.copper(side)
-            + if masked {
-                MASK_CAP_MM
-            } else {
-                FINISH_THICKNESS_MM
-            };
-        let sink = SINK_SHARE * INK_THICKNESS_MM;
-        let (z0, z1) = board.span(side, ground - sink, ground + INK_THICKNESS_MM);
+        // On the mask (or the bare laminate): the stack's legend slot; and
+        // on the crown of the mask (or the finish) over copper.
+        let Some([z0, z1]) = board.stack.span_of(Slot::Silk(side)) else {
+            continue;
+        };
+        let crown = if board.mask(side) {
+            board.crown(side)
+        } else {
+            board.copper(side) + FINISH_MM
+        };
+        let sink = INK_SINK_SHARE * INK_MM;
         let flat = Region {
             fills: loops.clone(),
             cuts: cuts.clone(),
         };
         display_only(appearance::push(
             &mut films,
-            &board.fabrication,
+            Some(board),
             BodyKind::Silkscreen,
             item,
             layer,
@@ -132,10 +123,10 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
         // via's dome) gives coincident pieces, whose shared edges the
         // slab cannot pair: merged first, they are one region.
         let raised = appearance::union(&raised).unwrap_or(raised);
-        let (c0, c1) = board.span(side, crown - sink, crown + INK_THICKNESS_MM);
+        let (c0, c1) = board.span(side, crown - sink, crown + INK_MM);
         display_only(appearance::push(
             &mut films,
-            &board.fabrication,
+            Some(board),
             BodyKind::Silkscreen,
             item,
             layer,

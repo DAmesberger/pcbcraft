@@ -58,7 +58,7 @@ impl Harness {
         let package = editor.preview_package().ok_or("package")?;
         let mut viewport = Viewport::detached();
         let built = pcbcraft_solidcraft::project::preview(&package)?;
-        viewport.set_model(crate::model_scene::build(built.geometry)?);
+        viewport.set_model(crate::model_scene::build(built.geometry, &built.stack)?);
         let mut h = Self {
             ctx,
             engine,

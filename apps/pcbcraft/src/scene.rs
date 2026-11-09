@@ -19,6 +19,7 @@ use pcbcraft_core::{Engine, Id, Project};
 use pcbcraft_solidcraft::marking::board::BoardMarkings;
 use pcbcraft_solidcraft::models::imported::SourceCache;
 use pcbcraft_solidcraft::project::Source;
+use pcbcraft_solidcraft::stack::Stack;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -103,8 +104,15 @@ enum Job {
     Package(u64, Box<PackageDefinition>, Option<Box<LibraryAsset>>),
 }
 
-/// A built job's display geometry and pick sources.
-type BuiltGeometry = Result<(Vec<pcbcraft_solidcraft::scene::Geometry>, Vec<Source>), String>;
+/// A built job's display geometry, pick sources and board stack.
+type BuiltGeometry = Result<
+    (
+        Vec<pcbcraft_solidcraft::scene::Geometry>,
+        Vec<Source>,
+        Stack,
+    ),
+    String,
+>;
 
 /// What the worker keeps between builds.
 #[derive(Default)]
@@ -144,7 +152,7 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                 }
                 let sources = model.sources.clone();
                 kept.board = Some(model);
-                (geometry, sources)
+                (geometry, sources, Stack::of(&project.stackup))
             });
             (ticket, built.map_err(|e| e.to_string()))
         }
@@ -157,14 +165,14 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                         &asset.bytes,
                         &ModelPlacement::default(),
                     )
-                    .map(|geometry| (geometry, Vec::new()))
+                    .map(|geometry| (geometry, Vec::new(), Stack::none()))
                 }
                 (PackageModel::PartFile(_), Some(asset)) => {
                     pcbcraft_solidcraft::project::preview_part(&package, &asset.bytes)
-                        .map(|model| (model.geometry, model.sources))
+                        .map(|model| (model.geometry, model.sources, Stack::none()))
                 }
                 _ => pcbcraft_solidcraft::project::preview(&package)
-                    .map(|model| (model.geometry, model.sources)),
+                    .map(|model| (model.geometry, model.sources, Stack::none())),
             };
             (ticket, built.map_err(|e| e.to_string()))
         }
@@ -196,8 +204,8 @@ impl Worker {
                     job = newer;
                 }
                 let (ticket, result) = build(job, &mut kept);
-                let result = result.and_then(|(geometry, sources)| {
-                    model_scene::build(geometry).map(|scene| (scene, sources))
+                let result = result.and_then(|(geometry, sources, stack)| {
+                    model_scene::build(geometry, &stack).map(|scene| (scene, sources))
                 });
                 if results.send(Built { ticket, result }).is_err() {
                     break;

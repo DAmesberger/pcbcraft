@@ -231,7 +231,7 @@ mod tests {
     fn every_body_kind_s_look_lowers_and_keeps_its_base_response() -> Result<()> {
         let fabrication = Fabrication::default();
         for kind in BodyKind::ALL {
-            let look = material(kind, &fabrication).surface()?;
+            let look = material(kind, &fabrication, &crate::stack::Stack::default()).surface()?;
             let d = detail(kind, &fabrication);
             let lowered = lower_look(look, d)?;
             let got = lowered.base.opaque;
@@ -261,9 +261,12 @@ mod tests {
             let d = detail(kind, &fabrication);
             patterns.insert(d.pattern);
             shapes.insert(
-                lower_look(material(kind, &fabrication).surface()?, d)?
-                    .ir
-                    .shape,
+                lower_look(
+                    material(kind, &fabrication, &crate::stack::Stack::default()).surface()?,
+                    d,
+                )?
+                .ir
+                .shape,
             );
         }
         assert!(patterns.contains(&Pattern::None));
