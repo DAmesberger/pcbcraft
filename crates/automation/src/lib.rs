@@ -8,6 +8,7 @@ pub mod gate;
 pub mod lines;
 pub mod live;
 pub mod mcp;
+pub mod review;
 pub mod session;
 
 pub use gate::{Decision, Mode, Policy, Question, Refusal};

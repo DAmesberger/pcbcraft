@@ -14,16 +14,15 @@
 //! backends; and one recording format. A model that can't read PDFs gets
 //! text and rendered pages ([`documents`]), and the review says which.
 //!
-//! Budgets are part of the loop ([`run()`]): a hard USD cap when a price is
-//! known, computed from each response's usage and checked before every
-//! request against the worst case of the next one; caps on tokens, requests
-//! and time for every model, local ones included. Keys come from the system
+//! Caps are part of the loop ([`run()`]): requests, output tokens, total
+//! tokens and time, the same for every model, hosted or local, each checked
+//! before a request against the worst case of the next one. Pcbcraft keeps
+//! no prices and no spend: billing is the provider's. Keys come from the system
 //! keychain per connection or a named environment variable, and are never
 //! written anywhere ([`model::keys`]).
 //!
 //! This crate sits above `pcbcraft-automation` and below the apps
 //! (`cargo xtask layers`); the HTTP client stays out of the core.
-pub mod cost;
 pub mod documents;
 pub mod model;
 pub mod pins;
@@ -32,6 +31,7 @@ mod prompt;
 pub mod report;
 mod run;
 pub mod tools;
+pub mod usage;
 
 use pcbcraft_automation::Session;
 use report::{ReviewReport, RunFacts};
@@ -66,8 +66,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// The default model.
 pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
-/// Default hard cap of one run, USD.
-pub const DEFAULT_MAX_USD: f64 = 15.0;
 
 /// A datasheet: a local PDF or an https URL the API fetches.
 #[derive(Clone, Debug, PartialEq)]
@@ -102,12 +100,11 @@ pub struct Goal {
 pub enum Event {
     /// Request `n` is about to go out with an estimated prompt size.
     Request { n: u32, prompt_tokens: u64 },
-    /// Its response: why it stopped, the spend so far, its output tokens
-    /// (reasoning included) and how long it took.
+    /// Its response: why it stopped, its output tokens (reasoning
+    /// included) and how long it took.
     Response {
         n: u32,
         stop_reason: String,
-        spent_usd: f64,
         output_tokens: u64,
         seconds: f64,
     },

@@ -32,5 +32,6 @@ The workspace layers are: `pcbcraft-core` (pure document, typed operations, the 
 | Solidcraft APIs, native models, copper geometry or performance | [pcbcraft-solidcraft](skills/pcbcraft-solidcraft/SKILL.md) |
 | Symbols, footprints, pin mapping, library revisions, design-file changes, source provenance or licensing | [pcbcraft-libraries](skills/pcbcraft-libraries/SKILL.md) |
 | Tests, benchmarks, CI, crash fixes or completion evidence | [pcbcraft-verification](skills/pcbcraft-verification/SKILL.md) |
+| Creating a component from datasheets through MCP (also served as the `datasheet_to_component` MCP prompt) | [pcbcraft-datasheet-part](skills/pcbcraft-datasheet-part/SKILL.md) |
 
 Read only the branches relevant to the work. Maintain instructions and their enforcement together; do not copy upstream paths or commands that Pcbcraft does not implement.

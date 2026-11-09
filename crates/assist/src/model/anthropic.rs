@@ -13,7 +13,7 @@ use super::{
     DocumentSource, Message, ModelBackend, ModelProfile, ModelReply, ModelRequest, Part, Role,
     StopReason,
 };
-use crate::cost::Usage;
+use crate::usage::Usage;
 use crate::{Error, Result};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -290,10 +290,9 @@ mod tests {
     use super::super::wire::ScriptedWire;
     use super::super::{Image, ToolSpec};
     use super::*;
-    use crate::cost::PriceTable;
 
     fn profile() -> ModelProfile {
-        ModelProfile::anthropic("claude-opus-5-5", &PriceTable::default())
+        ModelProfile::anthropic("claude-opus-5-5")
     }
 
     const THINKING: &str = r#"{"type": "thinking", "thinking": "", "signature": "CAQS6g=="}"#;

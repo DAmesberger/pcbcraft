@@ -220,6 +220,13 @@ fn library_folder_tools_are_listed_and_report_refusals() {
 /// them never meets an unknown tool.
 #[test]
 fn the_instructions_name_only_requests_and_tools_that_exist() {
+    let named = names_only_what_exists(INSTRUCTIONS);
+    assert!(named > 20, "the check found the IDs ({named})");
+}
+
+/// Checks every wire ID and tool name `text` names; returns how many wire
+/// IDs it found.
+pub(super) fn names_only_what_exists(text: &str) -> usize {
     let catalog = Request::catalog();
     let wire: String = catalog
         .iter()
@@ -230,7 +237,7 @@ fn the_instructions_name_only_requests_and_tools_that_exist() {
     // finding codes are checked against the registered codes.
     let prose = ["purchasing.state", "e.g", "library.other_revision"];
     let finding = |word: &str| pcbcraft_core::issues::KNOWN_CODES.contains(&word);
-    let words = INSTRUCTIONS.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'));
+    let words = text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'));
     let mut named = 0;
     for word in words.map(|w| w.trim_matches('.')) {
         let dotted = word.contains('.')
@@ -251,7 +258,7 @@ fn the_instructions_name_only_requests_and_tools_that_exist() {
             assert!(tool_names.iter().any(|t| t == word), "unknown tool {word}");
         }
     }
-    assert!(named > 20, "the check found the IDs ({named})");
+    named
 }
 
 /// The instructions walk an agent through the reviewed datasheet

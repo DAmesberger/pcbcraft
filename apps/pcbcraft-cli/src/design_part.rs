@@ -11,7 +11,6 @@
 //! never printed or written, and is refused over plain HTTP to another
 //! computer. `llm-key` stores one in the keychain for one endpoint.
 use super::Result;
-use pcbcraft_assist::cost::PriceTable;
 use pcbcraft_assist::model::profile::ANTHROPIC_BASE_URL;
 use pcbcraft_assist::model::record::{Recording, Replay};
 use pcbcraft_assist::model::{
@@ -29,8 +28,8 @@ use std::time::Duration;
 pub const USAGE: &str = "design-part --datasheet PDF|URL [--datasheet …] --name NAME --out NEW.pcbcraft
               [--provider anthropic|openai] [--base-url URL] [--model ID] [--key none|keychain|env:NAME]
               [--context-tokens N] [--max-output-tokens N] [--vision yes|no] [--native-pdf yes|no]
-              [--tools yes|no] [--effort LEVEL] [--prices FILE.json] [--request-timeout SECONDS]
-              [--max-usd N] [--max-requests N] [--max-tokens N] [--max-seconds N]
+              [--tools yes|no] [--effort LEVEL] [--request-timeout SECONDS]
+              [--max-requests N] [--max-tokens N] [--max-seconds N]
               [--profile NAME] [--notes TEXT] [--record FILE.jsonl | --replay FILE.jsonl]
                                    draft a part from datasheets with a configured model;
                                    writes the project and its .review.md/.review.json, publishes nothing
@@ -63,7 +62,6 @@ struct Flags {
     native_pdf: Option<bool>,
     tools: Option<bool>,
     effort: Option<String>,
-    prices: Option<PriceTable>,
     request_timeout: Option<u64>,
     profile: Option<String>,
 }
@@ -96,8 +94,6 @@ fn key_source(text: &str) -> Result<KeySource> {
 /// The profile and connection the flags declare.
 fn configure(flags: Flags, config: &mut RunConfig) -> Result<Connection> {
     let provider = Provider::parse(flags.provider.as_deref().unwrap_or("anthropic"))?;
-    let priced = flags.prices.is_some();
-    let prices = flags.prices.unwrap_or_default();
     let (mut profile, base, key) = match provider {
         Provider::Anthropic => {
             let model = flags
@@ -109,7 +105,7 @@ fn configure(flags: Flags, config: &mut RunConfig) -> Result<Connection> {
                     .filter(|b| b.starts_with("https://"))
                     .unwrap_or_else(|| ANTHROPIC_BASE_URL.into())
             });
-            let mut profile = ModelProfile::anthropic(&model, &prices);
+            let mut profile = ModelProfile::anthropic(&model);
             if let Some(context) = flags.context {
                 profile.capabilities.context_tokens = context;
             }
@@ -124,8 +120,7 @@ fn configure(flags: Flags, config: &mut RunConfig) -> Result<Connection> {
             let context = flags.context.ok_or(
                 "--provider openai needs --context-tokens: the context the server gives this model",
             )?;
-            let mut profile = ModelProfile::openai_compatible(&model, context);
-            profile.capabilities.price = priced.then(|| prices.of(&model)).transpose()?;
+            let profile = ModelProfile::openai_compatible(&model, context);
             (profile, base, KeySource::None)
         }
     };
@@ -164,7 +159,6 @@ fn configure(flags: Flags, config: &mut RunConfig) -> Result<Connection> {
         user_profiles().as_deref(),
     )?;
     config.profile = profile;
-    config.prices = prices;
     let key = match flags.key {
         Some(text) => key_source(&text)?,
         None => key,
@@ -203,19 +197,8 @@ fn parse(args: &[String]) -> Result<Args> {
             "--native-pdf" => flags.native_pdf = Some(yes_no(f, &value)?),
             "--tools" => flags.tools = Some(yes_no(f, &value)?),
             "--effort" => flags.effort = Some(value),
-            "--prices" => {
-                let text = std::fs::read_to_string(&value)?;
-                flags.prices = Some(PriceTable::parse(&text)?);
-            }
             "--request-timeout" => flags.request_timeout = Some(count(f, &value)?),
             "--profile" => flags.profile = Some(value),
-            "--max-usd" => {
-                config.budget.max_usd = value
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|v| v.is_finite() && *v > 0.0)
-                    .ok_or("--max-usd takes a positive number")?;
-            }
             "--max-requests" => config.budget.max_requests = count(f, &value)?,
             "--max-tokens" => config.budget.max_total_tokens = count(f, &value)?,
             "--max-seconds" => {
@@ -256,12 +239,11 @@ fn print_event(event: Event) {
         Event::Response {
             n,
             stop_reason,
-            spent_usd,
             output_tokens,
             seconds,
         } => {
             eprintln!(
-                "response {n}: {stop_reason}; {output_tokens} output tokens in {seconds:.0} s; spent ${spent_usd:.3}"
+                "response {n}: {stop_reason}; {output_tokens} output tokens in {seconds:.0} s"
             );
         }
         Event::Tool { name, error, step } => {
@@ -312,9 +294,8 @@ pub fn run(args: &[String]) -> Result<()> {
     let [_, review] = pcbcraft_assist::write_outputs(&mut session, &args.out, &outcome)?;
     let facts = &outcome.facts;
     eprintln!(
-        "{}: ${:.3} over {} requests, {} output tokens, {:.0} s; drafts saved to {} (review {})",
+        "{}: {} requests, {} output tokens, {:.0} s; drafts saved to {} (review {})",
         outcome.stop,
-        facts.spent_usd,
         facts.requests,
         facts.output_tokens,
         facts.elapsed_seconds,
@@ -435,7 +416,6 @@ mod tests {
         assert!(p.capabilities.vision && !p.capabilities.native_pdf);
         assert_eq!(p.capabilities.context_tokens, 65_536);
         assert_eq!(p.output.per_request, 32_000);
-        assert!(p.capabilities.price.is_none());
         assert_eq!(parsed.connection.key, KeySource::None);
         assert!(parsed.connection.endpoint.is_loopback());
         assert_eq!(parsed.config.budget.max_duration, Duration::from_secs(3600));

@@ -1,6 +1,6 @@
 //! "Create from datasheet…" on the Component workspace start page: the
 //! datasheet assistant (`pcbcraft-assist`) on a background thread, with
-//! progress, spend and Cancel. The run works in its own headless session
+//! progress, tokens and Cancel. The run works in its own headless session
 //! through the Pcbcraft tools and saves a new project of drafts with its
 //! review report beside it; nothing is published, and the open project is
 //! not touched.
@@ -14,7 +14,6 @@
 //! page comes with the assistant panel.
 use crate::kit;
 use egui::Ui;
-use pcbcraft_assist::cost::PriceTable;
 use pcbcraft_assist::model::profile::ANTHROPIC_BASE_URL;
 use pcbcraft_assist::model::{
     self, Budget, Connection, Endpoint, KeySource, ModelProfile, Provider, Secret, keys,
@@ -39,9 +38,6 @@ const DEFAULT_CONTEXT: f64 = 32_768.0;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Finished {
     pub stop: String,
-    pub spent_usd: f64,
-    /// Whether the model had a price (otherwise only tokens are shown).
-    pub priced: bool,
     pub output_tokens: u64,
     pub project: PathBuf,
     pub review: PathBuf,
@@ -49,7 +45,6 @@ pub struct Finished {
 
 enum Message {
     Line(String),
-    Spent(f64),
     Done(Result<Finished, String>),
 }
 
@@ -72,9 +67,7 @@ pub struct DatasheetAssist {
     context_tokens: f64,
     vision: bool,
     native_pdf: bool,
-    max_usd: f64,
     job: Option<Job>,
-    spent: f64,
     log: Vec<String>,
     result: Option<Result<Finished, String>>,
 }
@@ -93,9 +86,7 @@ impl Default for DatasheetAssist {
             context_tokens: DEFAULT_CONTEXT,
             vision: false,
             native_pdf: false,
-            max_usd: pcbcraft_assist::DEFAULT_MAX_USD,
             job: None,
-            spent: 0.0,
             log: Vec::new(),
             result: None,
         }
@@ -125,7 +116,6 @@ impl DatasheetAssist {
                         self.log.remove(0);
                     }
                 }
-                Message::Spent(usd) => self.spent = usd,
                 Message::Done(result) => done = Some(result),
             }
         }
@@ -133,10 +123,6 @@ impl DatasheetAssist {
             self.result = Some(result);
             self.job = None;
         }
-    }
-
-    fn priced(&self) -> bool {
-        self.provider == Provider::Anthropic
     }
 
     /// The form and progress; on the start page under New.
@@ -150,14 +136,11 @@ impl DatasheetAssist {
             ui,
             "A model reads the datasheets and drafts the component, symbol, package, footprint and 3D model through the Pcbcraft tools. The result is a new project of unreviewed drafts with a review report; nothing is published.",
         );
+        kit::note(
+            ui,
+            "Or use your own AI assistant: connect it with Help › Connect AI assistants… and ask it to run the datasheet_to_component prompt with these datasheets.",
+        );
         if let Some(job) = &self.job {
-            if self.priced() {
-                kit::value_row(
-                    ui,
-                    "Spent",
-                    &format!("${:.2} of ${:.2}", self.spent, self.max_usd),
-                );
-            }
             for line in self.log.iter().rev().take(8).rev() {
                 kit::note(ui, line);
             }
@@ -179,12 +162,11 @@ impl DatasheetAssist {
         self.model_rows(ui);
         match &self.result {
             Some(Ok(done)) => {
-                let spent = if done.priced {
-                    format!("${:.2}", done.spent_usd)
-                } else {
-                    format!("{} output tokens", done.output_tokens)
-                };
-                kit::value_row(ui, "Result", &format!("{} ({spent})", done.stop));
+                kit::value_row(
+                    ui,
+                    "Result",
+                    &format!("{} ({} output tokens)", done.stop, done.output_tokens),
+                );
                 kit::value_row(ui, "Project", &done.project.display().to_string());
                 kit::value_row(ui, "Review", &done.review.display().to_string());
             }
@@ -244,7 +226,7 @@ impl DatasheetAssist {
                     ("claude-opus-5-5".to_owned(), "Claude Opus 5.5".to_owned()),
                     (
                         "claude-sonnet-5-5".to_owned(),
-                        "Claude Sonnet 5.5 (cheaper)".to_owned(),
+                        "Claude Sonnet 5.5".to_owned(),
                     ),
                 ];
                 kit::choice_row(ui, "Model", &mut self.model, &models);
@@ -277,8 +259,6 @@ impl DatasheetAssist {
                 ui,
                 "Declare what this model can do; nothing is detected. Without PDF reading, the datasheets' text is sent, and pages are shown as images to a model that takes them.",
             );
-        } else {
-            kit::number_row(ui, "Cost cap", &mut self.max_usd, "USD", 0.5..=100.0);
         }
     }
 
@@ -291,9 +271,8 @@ impl DatasheetAssist {
         if key.is_some() {
             endpoint.check_key_allowed().map_err(|e| e.to_string())?;
         }
-        let prices = PriceTable::default();
         let profile = match self.provider {
-            Provider::Anthropic => ModelProfile::anthropic(self.model.trim(), &prices),
+            Provider::Anthropic => ModelProfile::anthropic(self.model.trim()),
             Provider::OpenAiCompatible => {
                 // The number row keeps the value within its range.
                 let context = self.context_tokens.round() as u64;
@@ -313,11 +292,7 @@ impl DatasheetAssist {
         let config = RunConfig {
             profile,
             run_profile,
-            budget: Budget {
-                max_usd: self.max_usd,
-                ..Budget::default()
-            },
-            prices,
+            budget: Budget::default(),
             policy,
         };
         let goal = Goal {
@@ -355,7 +330,6 @@ impl DatasheetAssist {
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&cancel);
         self.log.clear();
-        self.spent = 0.0;
         self.result = None;
         let spawned = std::thread::Builder::new()
             .name("datasheet-assist".into())
@@ -423,11 +397,9 @@ fn work(
                 Event::Response {
                     n,
                     stop_reason,
-                    spent_usd,
                     output_tokens,
                     seconds,
                 } => {
-                    let _ = tx.send(Message::Spent(spent_usd));
                     format!("Response {n}: {stop_reason}, {output_tokens} tokens in {seconds:.0} s")
                 }
                 Event::Tool { name, error, step } => {
@@ -449,8 +421,6 @@ fn work(
         pcbcraft_assist::write_outputs(&mut session, out, &outcome).map_err(|e| e.to_string())?;
     Ok(Finished {
         stop: outcome.stop.to_string(),
-        spent_usd: outcome.facts.spent_usd,
-        priced: outcome.facts.cap_usd.is_some(),
         output_tokens: outcome.facts.output_tokens,
         project: out.to_path_buf(),
         review,

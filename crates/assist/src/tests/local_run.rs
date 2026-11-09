@@ -21,7 +21,6 @@ fn the_local_run_replays_to_the_same_ldo() -> Fallible {
     let f = &outcome.facts;
     assert_eq!(f.requests, 29);
     assert_eq!(f.output_tokens, 38_861);
-    assert_eq!(f.cap_usd, None);
     // Pin 1 IN, 2 GND, 3 EN, 4 NC, 5 OUT (TLV757P datasheet Table 4-1).
     let pins: Vec<(String, String)> = f
         .pins

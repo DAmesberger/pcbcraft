@@ -1,4 +1,4 @@
-//! The start-page entry opens the form; progress, spend and the result
+//! The start-page entry opens the form; progress and the result
 //! arrive from the background thread.
 use super::*;
 
@@ -80,7 +80,6 @@ fn the_start_page_button_opens_the_form() -> Result<(), String> {
         "Endpoint",
         "Model",
         "API key",
-        "Cost cap",
         "Start",
     ] {
         assert!(
@@ -88,6 +87,21 @@ fn the_start_page_button_opens_the_form() -> Result<(), String> {
             "{label}: {painted:?}"
         );
     }
+    // No prices in the product: no cost cap, no spend.
+    assert!(
+        !painted
+            .iter()
+            .any(|(t, _)| t.contains("Cost") || t.contains('$') || t.contains("USD")),
+        "{painted:?}"
+    );
+    // The MCP workflow is offered beside the built-in run.
+    assert!(
+        painted
+            .iter()
+            .any(|(t, _)| t.contains("datasheet_to_component")
+                && t.contains("Connect AI assistants")),
+        "{painted:?}"
+    );
     Ok(())
 }
 
@@ -104,11 +118,8 @@ fn progress_and_the_result_arrive_from_the_thread() {
     };
     let sent = [
         Message::Line("Request 1".into()),
-        Message::Spent(0.42),
         Message::Done(Ok(Finished {
             stop: "review report submitted".into(),
-            spent_usd: 0.42,
-            priced: true,
             output_tokens: 1000,
             project: PathBuf::from("x.pcbcraft"),
             review: PathBuf::from("x.review.md"),
@@ -120,7 +131,6 @@ fn progress_and_the_result_arrive_from_the_thread() {
     assist.poll();
     assert!(assist.job.is_none(), "the run is over");
     assert_eq!(assist.log, ["Request 1"]);
-    assert!((assist.spent - 0.42).abs() < 1e-12);
     assert!(
         matches!(&assist.result, Some(Ok(f)) if f.review.as_path() == std::path::Path::new("x.review.md"))
     );
@@ -149,8 +159,6 @@ fn an_openai_compatible_model_is_declared_not_detected() -> Result<(), String> {
             "{label}: {painted:?}"
         );
     }
-    // No cost cap without a price.
-    assert!(!painted.iter().any(|(t, _)| t == "Cost cap"));
     assist.vision = true;
     assist.context_tokens = 65_536.0;
     assist.datasheets = "a.pdf".into();

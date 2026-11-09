@@ -354,6 +354,9 @@ pub enum Request {
     /// C3: the typed pinout document schema.
     #[serde(rename = "library.pinout_schema")]
     PinoutSchema(NoParams),
+    /// Check a datasheet review report against the drafts.
+    #[serde(rename = "library.review_check")]
+    ReviewCheck(crate::review::ReviewCheckParams),
     /// C4: the emitted firmware pin-configuration text.
     #[serde(rename = "firmware.export_preview")]
     FirmwarePreview(firmware::FirmwareParams),
@@ -424,6 +427,7 @@ pcbcraft_core::declare_classes!(Request {
     ImportSvg "library.import_svg" Ask,
     OpenPreview "library.open_preview" Read,
     PinoutSchema "library.pinout_schema" Read,
+    ReviewCheck "library.review_check" Read,
     FirmwarePreview "firmware.export_preview" Read,
     FirmwareExport "firmware.export" Ask,
     InspectModelFile "library.inspect_model_file" Ask,
@@ -507,6 +511,7 @@ impl Request {
             | Self::Publish(_)
             | Self::OpenPreview(_)
             | Self::PinoutSchema(_)
+            | Self::ReviewCheck(_)
             | Self::SetMarking(_)
             | Self::MarkingSurfaces(_)
             | Self::SetPartValues(_)
@@ -555,6 +560,7 @@ impl Request {
             | Self::Bundle(_)
             | Self::OpenPreview(_)
             | Self::PinoutSchema(_)
+            | Self::ReviewCheck(_)
             | Self::FirmwarePreview(_)
             | Self::FirmwareExport(_)
             | Self::InspectModelFile(_)
@@ -696,6 +702,10 @@ impl Request {
             info::<NoParams>(
                 "library.pinout_schema",
                 "The JSON schema of the typed pinout document (format 1) an agent fills from a datasheet: device, package variants, peripherals with roles, pins with explicit numbers per variant, GPIO, options, functions with explicit peripheral, role and mux code, source page, uncertain flags, and Rhai pin-rule scripts. Preview with project.query library.pinout_preview, show the review items to the user, then apply with project.apply library.pinout_apply; never publish without the user seeing the unreviewed count.",
+            ),
+            info::<crate::review::ReviewCheckParams>(
+                "library.review_check",
+                "Check the review report of a part made from datasheets (the datasheet_to_component prompt's last step) against the project's drafts: every value with a listed document, page, location (table, figure or section) and confidence (high: a table cell or dimensioned drawing; medium: derived or ambiguous; low: inferred, measured or not stated); distinct sources; open questions when any value is low confidence or any imported pin is uncertain; a component draft; and a source page on every imported function. Returns accepted, the problems to fix, each draft's blocking and warning finding codes, the unreviewed and uncertain pin counts and the report as Markdown for the person. Accepted means ready for a person's review, never verified or publishable. Not a document change.",
             ),
             info::<firmware::FirmwareParams>(
                 "firmware.export_preview",
@@ -1020,6 +1030,9 @@ impl Session {
             Request::ImportSvg(params) => return self.import_svg(params),
             Request::OpenPreview(params) => return self.open_preview(params),
             Request::PinoutSchema(_) => return self.pinout_schema(),
+            Request::ReviewCheck(params) => {
+                return Ok(crate::review::check(&self.snapshot(), &params.report));
+            }
             Request::FirmwarePreview(params) => return self.firmware(params, false),
             Request::FirmwareExport(params) => return self.firmware(params, true),
             Request::InspectModelFile(params) => return self.inspect_model_file(params),

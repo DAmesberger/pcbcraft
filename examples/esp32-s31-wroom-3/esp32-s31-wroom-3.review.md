@@ -2,7 +2,7 @@
 
 Status: **draft, not published**. Nothing enters a library until a person reviews the rows below and publishes.
 
-Run: model `claude-opus-5-5` via a replay of examples/esp32-s31-wroom-3/wroom3.replay.jsonl (no API calls; spend not real), 9 requests, spend $0.00 of the $15.00 cap; stopped: review report submitted.
+Run: model `claude-opus-5-5` via a replay of examples/esp32-s31-wroom-3/wroom3.replay.jsonl (no API calls; usage as recorded), 9 requests; stopped: review report submitted.
 
 Tokens: 0 input, 0 cache write, 0 cache read, 0 output.
 
@@ -203,14 +203,14 @@ One row per package pin as imported; check each against the datasheet in the Pin
 
 ## Requests
 
-| # | Stop | Cache write | Cache read | Input | Output | USD | Tools |
-|---|---|---|---|---|---|---|---|
-| 1 | tool_use | 0 | 0 | 0 | 0 | 0.000 | library_pinout_schema |
-| 2 | tool_use | 0 | 0 | 0 | 0 | 0.000 | library_pinout_preview |
-| 3 | tool_use | 0 | 0 | 0 | 0 | 0.000 | library_pinout_apply |
-| 4 | tool_use | 0 | 0 | 0 | 0 | 0.000 | library_package_schema |
-| 5 | tool_use | 0 | 0 | 0 | 0 | 0.000 | library_package_plan |
-| 6 | tool_use | 0 | 0 | 0 | 0 | 0.000 | library_package_from_template |
-| 7 | tool_use | 0 | 0 | 0 | 0 | 0.000 | library_set_marking |
-| 8 | tool_use | 0 | 0 | 0 | 0 | 0.000 | component_check_drafts |
-| 9 | tool_use | 0 | 0 | 0 | 0 | 0.000 | submit_review |
+| # | Stop | Cache write | Cache read | Input | Output | Tools |
+|---|---|---|---|---|---|---|
+| 1 | tool_use | 0 | 0 | 0 | 0 | library_pinout_schema |
+| 2 | tool_use | 0 | 0 | 0 | 0 | library_pinout_preview |
+| 3 | tool_use | 0 | 0 | 0 | 0 | library_pinout_apply |
+| 4 | tool_use | 0 | 0 | 0 | 0 | library_package_schema |
+| 5 | tool_use | 0 | 0 | 0 | 0 | library_package_plan |
+| 6 | tool_use | 0 | 0 | 0 | 0 | library_package_from_template |
+| 7 | tool_use | 0 | 0 | 0 | 0 | library_set_marking |
+| 8 | tool_use | 0 | 0 | 0 | 0 | component_check_drafts |
+| 9 | tool_use | 0 | 0 | 0 | 0 | submit_review |
