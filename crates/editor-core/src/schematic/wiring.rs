@@ -707,7 +707,7 @@ fn join_touching(project: &mut Project) -> Result<()> {
         return Ok(());
     }
     let positions: BTreeMap<WireEnd, Point> = points.iter().map(|(_, p, e)| (*e, *p)).collect();
-    let old = std::mem::take(&mut project.wires);
+    let old = std::mem::take(&mut *project.wires);
     let mut wires = Vec::with_capacity(old.len());
     for wire in old {
         let Some((path, through)) = splits.get(&wire.id) else {
@@ -790,7 +790,7 @@ fn join_touching(project: &mut Project) -> Result<()> {
             "This edition supports at most 16384 wires and 16384 junctions.".into(),
         ));
     }
-    project.wires = wires;
+    project.wires = wires.into();
     Ok(())
 }
 

@@ -54,10 +54,10 @@ fn json_requests_reach_the_engine_and_report_typed_errors() -> TestResult {
     assert_eq!(extra["error"]["code"], "malformed_request");
 
     assert_eq!(
-        session.dispatch(json!({"command": "project.undo", "params": {}}))["ok"],
+        session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}))["ok"],
         true
     );
-    let empty = session.dispatch(json!({"command": "project.undo", "params": {}}));
+    let empty = session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
     assert_eq!(empty["error"]["code"], "history_empty");
     Ok(())
 }
@@ -100,7 +100,7 @@ fn pad_generator_is_available_through_the_shared_transport_contract() -> TestRes
     assert_eq!(draft["check"]["result"]["publishable"], true, "{draft}");
     assert_eq!(session.engine().project(), original.project.as_ref());
     assert_eq!(
-        session.dispatch(json!({"command": "project.undo", "params": {}}))["ok"],
+        session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}))["ok"],
         true
     );
     assert_eq!(session.engine().document(), &original);
@@ -142,13 +142,13 @@ fn save_and_open_are_file_effects_outside_undo_history() -> TestResult {
     let mut other = Session::default();
     let refused = other.dispatch(json!({"command": "project.save", "params": {}}));
     assert_eq!(refused["error"]["code"], "invalid_input");
-    let opened = other.dispatch(json!({"command": "project.open", "params": {"path": path_text}}));
+    let opened = other.dispatch(json!({"command": "project.open", "params": {"expected_revision": other.engine().revision(), "path": path_text}}));
     assert_eq!(opened["ok"], true);
     assert_eq!(other.engine().to_file(), before);
     assert!(!other.engine().can_undo());
 
     std::fs::write(&path, b"broken")?;
-    let failed = other.dispatch(json!({"command": "project.open", "params": {"path": path_text}}));
+    let failed = other.dispatch(json!({"command": "project.open", "params": {"expected_revision": other.engine().revision(), "path": path_text}}));
     assert_eq!(failed["ok"], false);
     assert_eq!(
         other.engine().to_file(),
@@ -498,7 +498,7 @@ fn board_fabrication_through_json_is_undoable_and_discoverable() -> TestResult {
     let rejected = session.dispatch(request("orange", revision + 1));
     assert_eq!(rejected["error"]["code"], "malformed_request", "{rejected}");
     assert_eq!(session.engine().revision(), revision + 1);
-    let undo = session.dispatch(json!({"command": "project.undo", "params": {}}));
+    let undo = session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
     assert_eq!(undo["ok"], true);
     assert_eq!(
         session.engine().project().fabrication,
@@ -558,7 +558,7 @@ fn orienting_a_unit_through_json_is_one_undo_step() -> TestResult {
     }}));
     assert_eq!(bad["error"]["code"], "malformed_request", "{bad}");
     assert_eq!(
-        session.dispatch(json!({"command": "project.undo", "params": {}}))["ok"],
+        session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}))["ok"],
         true
     );
     assert_eq!(session.engine().project(), &before);
@@ -694,7 +694,7 @@ fn parametric_footprint_through_json_is_atomic_and_undoable() -> TestResult {
     );
 
     for _ in 0..2 {
-        session.dispatch(json!({"command": "project.undo", "params": {}}));
+        session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
     }
     let drafts = session.engine().drafts();
     let Some(Definition::Footprint(f)) = drafts.get(DefinitionId(draft)).map(|d| &d.definition)
@@ -775,7 +775,7 @@ fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult
     let replaced = session.dispatch(build(Some(true), revision));
     assert_eq!(replaced["ok"], true, "{replaced}");
     assert_eq!(session.engine().revision(), revision + 1);
-    session.dispatch(json!({"command": "project.undo", "params": {}}));
+    session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
     assert_eq!(
         session.engine().drafts(),
         &built,
@@ -826,7 +826,7 @@ fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult
     let reply = session.dispatch(set(0.5, revision));
     assert_eq!(reply["ok"], true, "{reply}");
     assert_eq!(reply["result"]["project"]["tracks"][0]["width"], 0.5);
-    session.dispatch(json!({"command": "project.undo", "params": {}}));
+    session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
     assert_eq!(session.engine().project(), &before);
     assert!(schemas().to_string().contains("layout.track_set"));
     Ok(())
@@ -862,4 +862,82 @@ fn schematic_export_pdf_writes_a_pdf_without_changing_the_document() -> TestResu
     assert_eq!(refused["ok"], false, "{refused}");
     assert!(!other.exists());
     Ok(())
+}
+
+/// Undo, redo, new and open prepared before someone else's newer edit are
+/// refused with nothing changed: an agent's undo never takes back the
+/// person's edit, and its open or new never discards it.
+#[test]
+fn history_and_replacing_requests_at_a_stale_revision_change_nothing() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("other.pcbcraft").display().to_string();
+    let mut session = Session::new(Engine::demo()?);
+    let saved = session.dispatch(json!({"command": "project.save", "params": {"path": path}}));
+    assert_eq!(saved["ok"], true, "{saved}");
+    let agent = session.engine().revision();
+    assert_eq!(session.dispatch(edit(&session, "R10", agent))["ok"], true);
+    let agent_saw = session.engine().revision();
+    assert_eq!(
+        session.dispatch(edit(&session, "R11", agent_saw))["ok"],
+        true
+    );
+    let before = session.engine().document().clone();
+    let revision = session.engine().revision();
+    for (command, params) in [
+        ("project.undo", json!({"expected_revision": agent_saw})),
+        ("project.redo", json!({"expected_revision": agent_saw})),
+        ("project.new", json!({"expected_revision": agent_saw})),
+        (
+            "project.open",
+            json!({"expected_revision": agent_saw, "path": path}),
+        ),
+    ] {
+        let reply = session.dispatch(json!({"command": command, "params": params}));
+        assert_eq!(
+            reply["error"]["code"], "stale_revision",
+            "{command}: {reply}"
+        );
+        assert_eq!(reply["error"]["actual_revision"], revision, "{command}");
+        assert_eq!(session.engine().document(), &before, "{command}");
+        assert_eq!(session.engine().revision(), revision, "{command}");
+        assert!(session.engine().can_undo() && !session.engine().can_redo());
+    }
+    let missing = session.dispatch(json!({"command": "project.undo", "params": {}}));
+    assert_eq!(missing["error"]["code"], "malformed_request");
+    let undone = session
+        .dispatch(json!({"command": "project.undo", "params": {"expected_revision": revision}}));
+    assert_eq!(undone["ok"], true, "{undone}");
+    assert_eq!(
+        session.engine().project().instances[0].designator,
+        "R10",
+        "only the latest edit is undone"
+    );
+    Ok(())
+}
+
+/// Every request that can change the document requires the revision it
+/// expects: all but reads and the requests that only write files or the
+/// user's library settings, named here.
+#[test]
+fn every_document_changing_request_requires_an_expected_revision() {
+    let no_document_change = [
+        "project.save",
+        "project.export_native",
+        "project.export_fabrication",
+        "library.source.add",
+        "library.source.create",
+        "library.source.remove",
+        "library.source.enable",
+        "library.favourite",
+        "firmware.export",
+        "library.inspect_model_file",
+        "schematic.export_pdf",
+    ];
+    for info in Request::catalog() {
+        let required = info.params["required"]
+            .as_array()
+            .is_some_and(|names| names.iter().any(|n| n == "expected_revision"));
+        let changes = info.class != Class::Read && !no_document_change.contains(&info.id);
+        assert_eq!(required, changes, "{}", info.id);
+    }
 }

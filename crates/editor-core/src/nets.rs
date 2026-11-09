@@ -522,12 +522,16 @@ pub fn reconcile(project: &mut Project) -> Result<NetChanges> {
         .filter(|id| !kept.contains(id) && !merged.contains(id))
         .collect();
     nets.sort_by_key(|n| n.id);
-    project.nets = nets;
+    let old = std::mem::replace(&mut project.nets, nets.into());
     let names = self::names(project);
     for net in &mut project.nets {
         if let Some(name) = names.get(&net.id) {
             net.name.clone_from(name);
         }
+    }
+    // Unchanged nets stay the section the undo history shares.
+    if *old == *project.nets {
+        project.nets = old;
     }
     Ok(changes)
 }

@@ -16,6 +16,7 @@ const MAP: &[(&str, &[&str])] = &[
     ("permission", &[]),
     ("geometry", &[]),
     ("ids", &[]),
+    ("shared", &[]),
     ("diagnostics", &["ids"]),
     ("quantity", &["diagnostics"]),
     ("fields", &["ids", "diagnostics", "quantity"]),
@@ -25,6 +26,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "library",
         &[
+            "shared",
             "rules",
             "materials",
             "geometry",
@@ -38,6 +40,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "model",
         &[
+            "shared",
             "rules",
             "materials",
             "geometry",

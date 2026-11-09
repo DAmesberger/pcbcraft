@@ -366,12 +366,20 @@ pub(super) fn import_reviewed(s: &mut Scenario) -> Fallible<Imported> {
     unreviewed.sort_by_key(|r| r[1..].parse::<u32>().unwrap_or(u32::MAX));
     assert_eq!(unreviewed, expected, "every imported row is unreviewed");
     let after_apply = s.session.engine().document().clone();
-    s.send("undo", json!({"command": "project.undo", "params": {}}))?;
+    let now = s.session.engine().revision();
+    s.send(
+        "undo",
+        json!({"command": "project.undo", "params": {"expected_revision": now}}),
+    )?;
     assert!(
         s.draft(component).is_err(),
         "undo removes the import in one step"
     );
-    s.send("redo", json!({"command": "project.redo", "params": {}}))?;
+    let now = s.session.engine().revision();
+    s.send(
+        "redo",
+        json!({"command": "project.redo", "params": {"expected_revision": now}}),
+    )?;
     assert_eq!(s.session.engine().document(), &after_apply);
 
     let draft = s.draft(component)?;

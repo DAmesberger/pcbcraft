@@ -278,7 +278,7 @@ fn source_models_are_listed_with_their_source() -> Fallible<()> {
         name: "Shared".into(),
         ..SourceCatalog::default()
     };
-    source.fields.models = engine.project().library.models[..1].to_vec();
+    source.fields.models = engine.project().library.models[..1].to_vec().into();
     let context = CatalogContext {
         sources: vec![std::sync::Arc::new(source)],
         ..CatalogContext::default()

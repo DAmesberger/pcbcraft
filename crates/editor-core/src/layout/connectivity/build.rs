@@ -326,8 +326,8 @@ impl CopperGraph {
     /// would join after the update.
     pub fn with_pads(project: &Project, pads: Vec<WorldPad>) -> Self {
         let layers = project.stackup.layers();
-        let tracks = project.tracks.clone();
-        let vias = project.vias.clone();
+        let tracks = project.tracks.to_vec();
+        let vias = project.vias.to_vec();
         let mut elements = Vec::new();
         let mut shapes = Vec::new();
         let element = |kind, net, layer| Element {

@@ -148,9 +148,10 @@ fn the_project_name_reaches_the_production_files() -> Fallible<()> {
         }
     }
     assert!(gerbers > 0);
+    let now = session.engine().revision();
     ok(
         &mut session,
-        json!({"command": "project.undo", "params": {}}),
+        json!({"command": "project.undo", "params": {"expected_revision": now}}),
     )?;
     assert_eq!(session.engine().project().name, was);
     Ok(())
@@ -240,9 +241,10 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
     let waivers = &session.engine().project().production.waivers;
     assert_eq!(waivers.len(), 1);
     assert_eq!(waivers[0].reason, "");
+    let now = session.engine().revision();
     ok(
         &mut session,
-        json!({"command": "project.undo", "params": {}}),
+        json!({"command": "project.undo", "params": {"expected_revision": now}}),
     )?;
     // One key that is not printable refuses the whole list.
     let revision = session.engine().revision();
@@ -279,16 +281,17 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
     let mut reopened = Session::new(Engine::default());
     ok(
         &mut reopened,
-        json!({"command": "project.open", "params": {"path": file.display().to_string()}}),
+        json!({"command": "project.open", "params": {"expected_revision": 0, "path": file.display().to_string()}}),
     )?;
     assert_eq!(
         reopened.engine().project().production.waivers.len(),
         blocking.len()
     );
     // The waivers were one undo step.
+    let now = session.engine().revision();
     ok(
         &mut session,
-        json!({"command": "project.undo", "params": {}}),
+        json!({"command": "project.undo", "params": {"expected_revision": now}}),
     )?;
     assert!(session.engine().project().production.waivers.is_empty());
     // An unknown profile is refused.

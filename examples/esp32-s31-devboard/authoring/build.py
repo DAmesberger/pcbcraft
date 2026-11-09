@@ -11,7 +11,7 @@ out = os.environ.get("E2E_OUT", "target/e2e-devboard")
 os.makedirs(out, exist_ok=True)
 
 s = Session(record=out + "/replay.jsonl")
-s.raw("project.open", {"path": MODULE})
+s.raw("project.open", {"expected_revision": 0, "path": MODULE})
 s.rev = None
 stages = ["lib", "sch", "pcb", "route", "fab"]
 state = {}

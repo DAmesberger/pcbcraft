@@ -5,6 +5,7 @@ use crate::functions::FunctionSelections;
 pub use crate::geometry::Point;
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, PartRef, SheetId, TerminalId, UnitId};
 use crate::library::{Drafts, Library, Rotation};
+use crate::shared::Shared;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -458,18 +459,18 @@ pub struct Project {
     pub next_id: Id,
     /// Every published revision this project can reference.
     pub library: Library,
-    pub instances: Vec<ComponentInstance>,
-    pub occurrences: Vec<SymbolOccurrence>,
-    pub wires: Vec<Wire>,
+    pub instances: Shared<Vec<ComponentInstance>>,
+    pub occurrences: Shared<Vec<SymbolOccurrence>>,
+    pub wires: Shared<Vec<Wire>>,
     /// Wire-to-wire connection points.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub junctions: Vec<Junction>,
+    pub junctions: Shared<Vec<Junction>>,
     /// Net IDs have their own allocation space, independent of object IDs.
     pub next_net: Id,
-    pub nets: Vec<Net>,
-    pub placements: Vec<Placement>,
-    pub tracks: Vec<Track>,
-    pub vias: Vec<Via>,
+    pub nets: Shared<Vec<Net>>,
+    pub placements: Shared<Vec<Placement>>,
+    pub tracks: Shared<Vec<Track>>,
+    pub vias: Shared<Vec<Via>>,
     pub board_size: Point,
     /// Copper and dielectric layers; sets the board's thickness.
     pub stackup: Stackup,
@@ -493,11 +494,11 @@ pub struct Project {
     pub board_shape: BoardShape,
     /// Placement constraints relative to named board edges.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub edge_constraints: Vec<EdgeConstraint>,
+    pub edge_constraints: Shared<Vec<EdgeConstraint>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub fills: Vec<Fill>,
+    pub fills: Shared<Vec<Fill>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub keepouts: Vec<Keepout>,
+    pub keepouts: Shared<Vec<Keepout>>,
     /// Schematic sheets in page order.
     #[serde(default, skip_serializing_if = "Sheets::is_default")]
     pub sheets: Sheets,
@@ -506,13 +507,13 @@ pub struct Project {
     pub properties: ProjectProperties,
     /// Net labels and power ports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub labels: Vec<Label>,
+    pub labels: Shared<Vec<Label>>,
     /// Hierarchical sheet symbols.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sheet_symbols: Vec<SheetSymbol>,
+    pub sheet_symbols: Shared<Vec<SheetSymbol>>,
     /// Sheet furniture: notes, lines and rectangles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub drawings: Vec<SheetDrawing>,
+    pub drawings: Shared<Vec<SheetDrawing>>,
     /// Waived pre-flight findings for fabrication output.
     #[serde(default, skip_serializing_if = "production::Production::is_default")]
     pub production: production::Production,
@@ -524,29 +525,29 @@ impl Default for Project {
             name: "Untitled".into(),
             next_id: 1,
             library: Library::default(),
-            instances: vec![],
-            occurrences: vec![],
-            wires: vec![],
-            junctions: vec![],
+            instances: Shared::default(),
+            occurrences: Shared::default(),
+            wires: Shared::default(),
+            junctions: Shared::default(),
             next_net: 1,
-            nets: vec![],
-            placements: vec![],
-            tracks: vec![],
-            vias: vec![],
+            nets: Shared::default(),
+            placements: Shared::default(),
+            tracks: Shared::default(),
+            vias: Shared::default(),
             board_size: [60.0, 40.0],
             stackup: Stackup::default(),
             fabrication: Fabrication::default(),
             material_table: crate::materials::BUILTIN_REVISION,
             rules: crate::rules::ProjectRules::default(),
             board_shape: BoardShape::Rectangle,
-            edge_constraints: vec![],
-            fills: vec![],
-            keepouts: vec![],
+            edge_constraints: Shared::default(),
+            fills: Shared::default(),
+            keepouts: Shared::default(),
             sheets: Sheets::default(),
             properties: ProjectProperties::default(),
-            labels: vec![],
-            sheet_symbols: vec![],
-            drawings: vec![],
+            labels: Shared::default(),
+            sheet_symbols: Shared::default(),
+            drawings: Shared::default(),
             production: production::Production::default(),
         }
     }

@@ -48,14 +48,14 @@ fn a_mutation_reports_its_ids_and_undo_reports_them_back() -> TestResult {
     }
     assert_eq!(reply["can_undo"], true);
 
-    let undone = ok(session.respond(json!({"command": "project.undo", "params": {}})))?;
+    let undone = ok(session.respond(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}})))?;
     assert_eq!(
         undone["changes"]["removed"]["vias"],
         json!([via]),
         "{undone}"
     );
     assert_eq!(undone["can_redo"], true);
-    let redone = ok(session.respond(json!({"command": "project.redo", "params": {}})))?;
+    let redone = ok(session.respond(json!({"command": "project.redo", "params": {"expected_revision": session.engine().revision()}})))?;
     assert_eq!(redone["changes"]["added"]["vias"], json!([via]), "{redone}");
     Ok(())
 }
@@ -155,7 +155,7 @@ fn findings_report_what_appeared_and_what_went() -> TestResult {
     );
     assert_eq!(findings["open"], open(&session));
 
-    let undone = ok(session.respond(json!({"command": "project.undo", "params": {}})))?;
+    let undone = ok(session.respond(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}})))?;
     assert_eq!(
         undone["findings"]["resolved"]["board.via_dangling"], 1,
         "{undone}"
@@ -251,7 +251,7 @@ fn inspect_summarizes_and_reads_one_part() -> TestResult {
 #[test]
 fn replacing_the_document_answers_with_a_summary() -> TestResult {
     let mut session = demo()?;
-    let reply = ok(session.respond(json!({"command": "project.new", "params": {}})))?;
+    let reply = ok(session.respond(json!({"command": "project.new", "params": {"expected_revision": session.engine().revision()}})))?;
     assert_eq!(reply["summary"]["counts"]["tracks"], 0);
     assert!(reply.get("changes").is_none(), "{reply}");
     Ok(())

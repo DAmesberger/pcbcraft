@@ -31,6 +31,7 @@ pub mod quantity;
 pub mod rules;
 pub mod schematic;
 pub mod scripting;
+pub mod shared;
 #[cfg(test)]
 mod tests;
 pub mod updates;
@@ -46,6 +47,7 @@ pub use model::*;
 pub use permission::Class;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+pub use shared::Shared;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -462,8 +464,9 @@ pub struct Evaluators<'a> {
     pub board: Option<&'a dyn layout::outline::BoardShapeEvaluator>,
 }
 
-/// Undo depth. Entries share unchanged data, so this bounds bookkeeping, not
-/// copies of the whole project.
+/// Undo depth. Entries share every section an edit did not write
+/// ([`Shared`]), so a step costs the sections it changed, not a copy of the
+/// whole project.
 pub const MAX_UNDO: usize = 100;
 
 /// The document, its revision and one shared undo history.
@@ -966,12 +969,7 @@ impl Engine {
         evaluators: Evaluators<'_>,
     ) -> Result<Outcome> {
         let evaluator = evaluators.footprint;
-        if expected_revision != self.revision {
-            return Err(Error::Stale {
-                expected: expected_revision,
-                actual: self.revision,
-            });
-        }
+        self.check_revision(expected_revision)?;
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
         let outcome = match operation {
@@ -1468,12 +1466,7 @@ impl Engine {
         expected_revision: u64,
         results: Vec<(Id, model::fill::FilledCopper)>,
     ) -> Result<usize> {
-        if expected_revision != self.revision {
-            return Err(Error::Stale {
-                expected: expected_revision,
-                actual: self.revision,
-            });
-        }
+        self.check_revision(expected_revision)?;
         // Only the stored fills' keys (and those they depend on).
         let project = &self.document.project;
         let ids: Vec<Id> = results
@@ -1502,7 +1495,36 @@ impl Engine {
         Ok(fresh.len())
     }
 
+    /// Refused as stale unless `expected_revision` is the current one.
+    /// Every document change, undo and redo included, is checked here, so a
+    /// caller never changes a document that moved since it last looked.
+    pub fn check_revision(&self, expected_revision: u64) -> Result<()> {
+        if expected_revision != self.revision {
+            return Err(Error::Stale {
+                expected: expected_revision,
+                actual: self.revision,
+            });
+        }
+        Ok(())
+    }
+
+    /// The person's own undo in the window that shows this document: at
+    /// the current revision, which is what they see. Transports and agents
+    /// use [`Engine::undo_at`].
     pub fn undo(&mut self) -> Result<()> {
+        self.undo_at(self.revision)
+    }
+
+    /// The person's own redo; see [`Engine::undo`].
+    pub fn redo(&mut self) -> Result<()> {
+        self.redo_at(self.revision)
+    }
+
+    /// Restore the document before the latest step, at an expected
+    /// revision: refused, with nothing changed, when the document moved
+    /// since, so someone else's newer step is never undone.
+    pub fn undo_at(&mut self, expected_revision: u64) -> Result<()> {
+        self.check_revision(expected_revision)?;
         let revision = self.next_revision()?;
         let previous = self
             .undo
@@ -1515,7 +1537,10 @@ impl Engine {
         Ok(())
     }
 
-    pub fn redo(&mut self) -> Result<()> {
+    /// Reapply the latest undone step at an expected revision, as for
+    /// [`Engine::undo_at`].
+    pub fn redo_at(&mut self, expected_revision: u64) -> Result<()> {
+        self.check_revision(expected_revision)?;
         let revision = self.next_revision()?;
         let next = self
             .redo

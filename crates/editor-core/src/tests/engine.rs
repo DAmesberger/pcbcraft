@@ -259,6 +259,68 @@ fn undo_history_is_bounded() -> Result<()> {
     Ok(())
 }
 
+/// An undo or redo prepared at an older revision is refused with nothing
+/// changed: an agent's undo never takes back the person's newer edit.
+#[test]
+fn undo_and_redo_at_a_stale_revision_change_nothing() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    let r1 = by_designator(&engine, "R1")?;
+    apply(&mut engine, designator_edit(r1, "R10"))?;
+    let agent_saw = engine.revision();
+    apply(&mut engine, designator_edit(r1, "R11"))?;
+    let before = engine.document().clone();
+    let revision = engine.revision();
+    assert!(matches!(
+        engine.undo_at(agent_saw),
+        Err(Error::Stale { expected, actual }) if expected == agent_saw && actual == revision
+    ));
+    assert_eq!(engine.document(), &before);
+    assert_eq!(engine.revision(), revision);
+    assert!(!engine.can_redo());
+    engine.undo_at(revision)?;
+    assert_eq!(engine.project().instances[0].designator, "R10");
+    let undone = engine.revision();
+    assert!(matches!(engine.redo_at(revision), Err(Error::Stale { .. })));
+    assert_eq!(engine.project().instances[0].designator, "R10");
+    assert_eq!(engine.revision(), undone);
+    engine.redo_at(undone)?;
+    assert_eq!(engine.project().instances[0].designator, "R11");
+    Ok(())
+}
+
+/// An undo step shares every project section the edit did not write: a
+/// track edit copies the tracks, not the library, nets, vias or wires, and
+/// undo restores the very sections it shared.
+#[test]
+fn an_edit_copies_only_the_sections_it_writes() -> Result<()> {
+    use crate::Shared;
+    let mut engine = Engine::showcase()?;
+    let before = Arc::clone(engine.project_arc());
+    let track = before.tracks[0].id;
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::SetTrack {
+            id: track,
+            width: Some(before.tracks[0].width + 0.05),
+            layer: None,
+        }),
+    )?;
+    let after = engine.project();
+    assert!(!Shared::ptr_eq(&before.tracks, &after.tracks));
+    let (library, now) = (&before.library, &after.library);
+    assert!(Shared::ptr_eq(&library.components, &now.components));
+    assert!(Shared::ptr_eq(&library.footprints, &now.footprints));
+    assert!(Shared::ptr_eq(&library.assets, &now.assets));
+    assert!(Shared::ptr_eq(&before.nets, &after.nets));
+    assert!(Shared::ptr_eq(&before.vias, &after.vias));
+    assert!(Shared::ptr_eq(&before.wires, &after.wires));
+    assert!(Shared::ptr_eq(&before.instances, &after.instances));
+    assert!(Shared::ptr_eq(&before.placements, &after.placements));
+    engine.undo()?;
+    assert!(Arc::ptr_eq(&before, engine.project_arc()));
+    Ok(())
+}
+
 /// A step that finishes the one before joins it: one undo takes back both.
 /// Joining is refused, with history unchanged, unless the latest step was
 /// applied at the given revision and nothing was undone or redone since.
