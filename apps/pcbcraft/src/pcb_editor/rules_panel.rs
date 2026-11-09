@@ -398,6 +398,16 @@ pub fn value_text(value: RuleValue) -> String {
     }
 }
 
+/// [`value_text`], and "Not checked" for a check rule at 0 (the etch
+/// hazards' minimum angle and sliver width: nothing is under 0).
+pub fn rule_text(key: RuleKey, value: RuleValue) -> String {
+    let check = matches!(key, RuleKey::CopperAngleMin | RuleKey::SliverWidthMin);
+    match value {
+        RuleValue::Angle(v) | RuleValue::Length(v) if check && v == 0.0 => "Not checked".into(),
+        _ => value_text(value),
+    }
+}
+
 fn connection_label(c: PadConnection) -> &'static str {
     match c {
         PadConnection::Solid => "Solid",
@@ -417,6 +427,7 @@ fn numeric(
         }
         RuleValue::Length(mm) => Some((mm, "mm", 0.0..=MAX_RULE_MM)),
         RuleValue::Area(a) => Some((a, "mm²", 0.0..=1.0e6)),
+        RuleValue::Angle(d) if key == RuleKey::CopperAngleMin => Some((d, "°", 0.0..=180.0)),
         RuleValue::Angle(d) => Some((d, "°", -360.0..=360.0)),
         RuleValue::Count(n) => Some((f64::from(n), "", 1.0..=8.0)),
         _ => None,
@@ -984,16 +995,23 @@ fn group_table(
                     let label = ui.add(
                         egui::Label::new(RichText::new(sentence(&row.label)).color(ink)).truncate(),
                     );
+                    let unset = if rule_text(key, row.value) == "Not checked" {
+                        " · 0: not checked"
+                    } else {
+                        ""
+                    };
                     label.on_hover_text(format!(
-                        "{} · from {}",
+                        "{} · from {}{unset}",
                         sentence(&row.label),
                         row.source.describe()
                     ));
                 }
                 1 => {
                     ui.add(
-                        egui::Label::new(RichText::new(value_text(row.profile)).color(t.form_dim))
-                            .truncate(),
+                        egui::Label::new(
+                            RichText::new(rule_text(key, row.profile)).color(t.form_dim),
+                        )
+                        .truncate(),
                     );
                 }
                 2 => {

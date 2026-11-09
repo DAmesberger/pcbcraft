@@ -155,6 +155,23 @@ fn values_and_provenance_read_as_text() {
     assert_eq!(value_text(RuleValue::Angle(45.0)), "45°");
     assert_eq!(value_text(RuleValue::Ratio(None)), "Not checked");
     assert_eq!(value_text(RuleValue::Ratio(Some(10.0))), "10:1");
+    // The etch checks are unset at 0, and say so.
+    assert_eq!(
+        rule_text(RuleKey::CopperAngleMin, RuleValue::Angle(0.0)),
+        "Not checked"
+    );
+    assert_eq!(
+        rule_text(RuleKey::SliverWidthMin, RuleValue::Length(0.0)),
+        "Not checked"
+    );
+    assert_eq!(
+        rule_text(RuleKey::CopperAngleMin, RuleValue::Angle(90.0)),
+        "90°"
+    );
+    assert_eq!(
+        rule_text(RuleKey::SilkEdgeClearance, RuleValue::Length(0.0)),
+        "0 mm"
+    );
     assert_eq!(
         value_text(RuleValue::Connection(PadConnection::Thermal)),
         "Thermal relief"

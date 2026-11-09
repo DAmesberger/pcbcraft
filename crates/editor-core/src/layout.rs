@@ -30,6 +30,7 @@ pub mod board_edge;
 pub mod connectivity;
 mod copper;
 pub mod courtyard;
+pub mod etch;
 pub mod fill;
 mod grid;
 pub mod impedance;
@@ -1478,7 +1479,7 @@ pub fn pad_clearance_conflicts(
 
 /// Every board check: clearance and edges over the exact outlines
 /// ([`BoardCopper::checks`]), connectivity from the copper graph, fills,
-/// outline and lengths. Builds the copper graph; callers holding the
+/// outline, lengths and etch hazards ([`etch`]). Builds the copper graph; callers holding the
 /// revision's graph ([`crate::Engine::copper_graph`]) call
 /// [`checks_with`].
 pub fn checks(project: &Project) -> Vec<Finding> {
@@ -1491,6 +1492,7 @@ pub fn checks_with(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
     findings.extend(fill::findings(project));
     findings.extend(outline::checks(project));
     findings.extend(length::checks(project, graph));
+    findings.extend(etch::checks(project, graph));
     findings
 }
 

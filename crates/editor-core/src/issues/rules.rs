@@ -54,6 +54,8 @@ pub(super) fn severity(finding: &Finding) -> Severity {
 pub fn group_title(code: &str) -> String {
     let known = match code {
         "board.clearance" => "Clearance",
+        "board.acute_copper" => "Acute copper angles",
+        "board.copper_sliver" => "Unfilled slivers",
         "board.courtyard_overlap" => "Courtyards overlap",
         "board.outside_outline" => "Outside the board outline",
         "board.unrouted" => "Unrouted connections",
@@ -176,6 +178,8 @@ fn humanised(code: &str) -> String {
 pub(super) fn fix(code: &str) -> Option<&'static str> {
     Some(match code {
         "board.clearance" => "Move the parts apart or reroute the copper",
+        "board.acute_copper" => "Reroute the copper to meet at a wider angle",
+        "board.copper_sliver" => "Move the copper apart or together, or widen the hatch",
         "board.courtyard_overlap" => "Move the parts apart",
         "board.outside_outline" => "Move it inside the board",
         "board.unrouted" => "Route the connection",
@@ -432,9 +436,11 @@ pub const KNOWN_CODES: &[&str] = &[
     "binding.unavailable_duplicate",
     "binding.unavailable_required",
     "binding.unavailable_unknown",
+    "board.acute_copper",
     "board.check_limit",
     "board.clearance",
     "board.constraint_unresolved",
+    "board.copper_sliver",
     "board.courtyard_clearance",
     "board.courtyard_overlap",
     "board.edge_clearance",
