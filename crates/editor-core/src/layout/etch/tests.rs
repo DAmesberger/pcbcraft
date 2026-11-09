@@ -89,6 +89,7 @@ fn pour_with(
             name: String::new(),
             net: Some(net),
             layer,
+            region: crate::model::fill::FillRegion::Drawn,
             outline,
             priority: 0,
             settings,
