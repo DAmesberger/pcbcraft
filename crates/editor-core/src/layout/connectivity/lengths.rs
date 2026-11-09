@@ -12,7 +12,7 @@
 //! track whose end overshoots the centre counts only up to it. The joints
 //! themselves (which copper is joined) are the graph's; this decides only
 //! where along a joined track the path's length stops.
-use super::{CopperGraph, Edge, EdgeKind, ElementKind, JOIN_EPS};
+use super::{CopperGraph, Edge, EdgeKind, ElementKind, JOIN_TOLERANCE_MM};
 use crate::geometry::{Point, distance};
 use crate::ids::{Endpoint, Id};
 use crate::layout::length::NetLength;
@@ -393,10 +393,10 @@ impl CopperGraph {
             let Some(t) = track(e) else {
                 continue;
             };
-            let reach = t.width / 2.0 + JOIN_EPS;
+            let reach = t.width / 2.0 + JOIN_TOLERANCE_MM;
             let carried_on = entries.iter().any(|&(o, _, _, other)| {
                 o != e
-                    && other < nearness - JOIN_EPS
+                    && other < nearness - JOIN_TOLERANCE_MM
                     && track(o).is_some_and(|o| {
                         distance(o.start, at) <= reach || distance(o.end, at) <= reach
                     })
@@ -408,7 +408,10 @@ impl CopperGraph {
                 .vertices_of(e)
                 .filter_map(|v| Some((self.vertices.get(v)?.station, *local.get(&v)?)))
                 .collect();
-            if let Some(&(_, v)) = stations.iter().find(|(x, _)| (x - s).abs() <= JOIN_EPS) {
+            if let Some(&(_, v)) = stations
+                .iter()
+                .find(|(x, _)| (x - s).abs() <= JOIN_TOLERANCE_MM)
+            {
                 view.edges.push(PathEdge {
                     a: v,
                     b: land,

@@ -29,8 +29,8 @@ use serde::{Deserialize, Serialize};
 
 /// The lowest bump the tuner builds, mm.
 pub const MIN_AMPLITUDE_MM: f64 = 0.05;
-/// The added length is solved to within this, mm.
-pub const LENGTH_TOLERANCE_MM: f64 = 1e-6;
+/// The added length is solved to within this, mm: 1 µm.
+pub const LENGTH_TOLERANCE_MM: f64 = 1e-3;
 /// Most bumps one meander has.
 const MAX_BUMPS: usize = 200;
 
@@ -661,7 +661,7 @@ mod tests {
         assert!(joined(&p));
         let planned = tune(&p, id)?;
         assert!(keeps_joint(&planned.points, at), "{:?}", planned.points);
-        assert!((planned.added - 1.0).abs() < LENGTH_TOLERANCE_MM);
+        assert!((planned.added - 1.0).abs() < 1e-6);
         assert!(
             planned.points.iter().all(|q| q[0] >= at[0] || q[1] == 20.0),
             "the bumps are past the via: {:?}",
@@ -714,7 +714,7 @@ mod tests {
                 assert!(bumps > 0, "{style:?} {want}");
                 let points = local(style, length, bumps, a, s, 1.0);
                 let added = polyline_length(&points) - length;
-                assert!((added - want).abs() < LENGTH_TOLERANCE_MM, "{added} {want}");
+                assert!((added - want).abs() < 1e-6, "{added} {want}");
                 assert!(a <= 1.8 + 1e-12);
                 // Every corner is 45° or 90° and every leg is long enough.
                 for w in points.windows(2) {

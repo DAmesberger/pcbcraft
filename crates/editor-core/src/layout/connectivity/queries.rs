@@ -1,6 +1,6 @@
 //! What the graph answers: stubs, the connectivity findings and airwires.
 use super::build::joins;
-use super::{CopperGraph, Dsu, EdgeKind, ElementKind, JOIN_EPS};
+use super::{CopperGraph, Dsu, EdgeKind, ElementKind, JOIN_TOLERANCE_MM};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::Point;
 use crate::ids::Id;
@@ -189,9 +189,9 @@ impl CopperGraph {
                             continue;
                         };
                         let length = (t.end[0] - t.start[0]).hypot(t.end[1] - t.start[1]);
-                        let end = if vertex.station <= JOIN_EPS {
+                        let end = if vertex.station <= JOIN_TOLERANCE_MM {
                             Some(t.start)
-                        } else if vertex.station >= length - JOIN_EPS {
+                        } else if vertex.station >= length - JOIN_TOLERANCE_MM {
                             Some(t.end)
                         } else {
                             None

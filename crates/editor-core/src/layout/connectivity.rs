@@ -6,7 +6,7 @@
 //! per layer, a plated pad's lands joined by plated edges) or an island of
 //! a fresh fill. Two elements **join** when they are on the same layer and
 //! the same net and their exact copper overlaps or touches within
-//! [`JOIN_EPS`] (plus the curve slack of flattened pad arcs). Different
+//! [`JOIN_TOLERANCE_MM`] (plus the curve slack of flattened pad arcs). Different
 //! nets never join: overlapping copper of two nets is a short, which the
 //! clearance check reports.
 //!
@@ -49,9 +49,12 @@ use crate::ids::Id;
 use crate::model::{CopperLayer, Track, Via};
 use std::collections::BTreeMap;
 
-/// How far apart two pieces of copper may be and still join, in mm: far
-/// below anything a fab resolves, above double rounding on mm coordinates.
-pub const JOIN_EPS: f64 = 1e-6;
+/// How far apart two pieces of copper may be and still join, in mm: 1 µm.
+/// Far below anything a fab resolves, and far above the rounding of
+/// coordinates (double rounding on mm, or whole nanometres). Also how far
+/// apart two stations on a track, or a point and a centre line, may be
+/// and still be one place.
+pub const JOIN_TOLERANCE_MM: f64 = 1e-3;
 
 /// What one element is.
 #[derive(Clone, Copy, Debug, PartialEq)]

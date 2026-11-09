@@ -90,7 +90,7 @@ Two elements **join** when all three hold:
 
 1. they are on the same copper layer (lands make layer spans explicit, so nothing is "through" any more);
 2. they are on the same net;
-3. their copper overlaps or touches: the exact distance between the cores, less both radii, is ≤ `JOIN_EPS` (1e-6 mm), plus the curve slack of any flattened custom arc.
+3. their copper overlaps or touches: the exact distance between the cores, less both radii, is ≤ `JOIN_TOLERANCE_MM` (1e-3 mm, 1 µm), plus the curve slack of any flattened custom arc.
 
 That one rule replaces all nine deciders. The tolerance is 1 µm: far below anything a fab resolves, and above double rounding on mm coordinates. Today's 1e-8 is tighter than the coordinates' own rounding after rotation, and three of the copies already use 1e-6.
 
@@ -271,7 +271,7 @@ After S5, the only joining rule is `connectivity::joins`. `cargo xtask` could en
 
 ## 7. Open questions for the founder
 
-1. **Q1: Join tolerance.** I propose exact geometry with a 1 µm tolerance (`JOIN_EPS` = 1e-6 mm), with curve slack only for custom arc pads. *Recommendation: yes.* It is far below fabrication resolution, and it replaces three different tolerances (1e-8, 1e-6, and centre-line rules).
+1. **Q1: Join tolerance.** I propose exact geometry with a 1 µm tolerance (`JOIN_TOLERANCE_MM` = 1e-3 mm), with curve slack only for custom arc pads. *Recommendation: yes.* It is far below fabrication resolution, and it replaces three different tolerances (1e-8, 1e-6, and centre-line rules).
 2. **Q2: One finding for a stub and its via?** When a stub ends at a via, report one `board.track_dangling` naming both, and keep `board.via_dangling` only for a via that joins nothing at all, or whose island holds no terminal. *Recommendation: yes.* One fault, one finding.
 3. **Q3: Stale fills.** Today a stale fill joins nothing, so airwires appear as soon as a pad leaves the pour. Should the graph keep that, or join through the stored (stale) copper? *Recommendation: keep it.* Stale copper is not the board that will be fabricated after the required refill, and `fill.stale` already blocks production.
 4. **Q4: Paths through a fill.** Should a pair path that hops through a fill be measured (with the fill hop flagged, length 0), or refused ("no path")? *Recommendation: measure it and show "via fill" on the path row.* Refusing hides a conducting route.
@@ -288,7 +288,7 @@ Built on `component-model` at ce259f8, 8 November 2026.
 
 - **`layout/connectivity.rs`** with `connectivity/build.rs` (elements, the joining rule, joints with stations, vertices, edges, islands), `connectivity/queries.rs` (stubs, findings, airwires, drag preview) and `connectivity/tests.rs`. `cargo xtask core-modules` needed no map change.
 - **Elements:** one per track; one land per layer a via reaches (`Via::on`, so a `ViaSpan::Between` via has lands only within its span), joined by barrel edges; one land per layer a pad reaches, a plated pad's lands joined by plated edges; one per island of a fresh fill.
-- **The one joining rule** is `connectivity::build::joins`: same layer, same net, exact copper within `JOIN_EPS` = 1e-6 mm plus curve slack. Tracks and via lands are exact capsules and discs (`CopperRing::capsule`). Each outline is tested once per same-net neighbour, and a joint is made on every layer both outlines have a land on.
+- **The one joining rule** is `connectivity::build::joins`: same layer, same net, exact copper within `JOIN_TOLERANCE_MM` = 1e-3 mm (1 µm) plus curve slack. Slice 1 built it as `JOIN_EPS` = 1e-6 mm, 1 nm, by mistake; see [the tolerance correction](#tolerance-correction). Tracks and via lands are exact capsules and discs (`CopperRing::capsule`). Each outline is tested once per same-net neighbour, and a joint is made on every layer both outlines have a land on.
 - **Stations:** a track end whose copper meets the other element joins at that end (0 or L); otherwise the track joins at its nearest station (a crossing, the nearest points of two segments, or the station nearest a land's centre). Stations within 1 µm merge. A track is a chain of vertices at its stations, joined by stretch edges.
 - **Stubs:** dead ends that are not pads are peeled until none is left; pads and fill islands are never peeled. An island with no pad is removed whole, so a floating loop is caught too. A via that keeps a land on copper leading to a pad is not part of a stub; what hangs off it is a separate stub.
 - **Findings** (`CopperGraph::findings`): `board.unrouted` per pad of a net whose pads lie in more than one island (message unchanged); one `board.track_dangling` per stub with tracks, naming its tracks, then its vias, then the net, with its open ends and the vias it ends at ("Track on N2 (Top) ends at (20, 20) mm and a via at (25, 25) mm joining nothing"); `board.via_dangling` for a via no stub names that joins nothing ("joins no copper of its net") or whose island holds no pad ("reaches no pad of its net"). A partial graph reports one `board.check_limit` and nothing else.
@@ -395,7 +395,7 @@ Built on `component-model` at a13196d, 8 November 2026.
 
 ### What exists
 
-- **One rule for fill copper.** `connectivity::islands_joined(index, ring)` (in `connectivity/build.rs`) returns the islands of an indexed fill that a piece of copper joins: its copper lies inside an island, or within `JOIN_EPS` (plus its curve slack) of an island's edge, or the island lies inside it. The stored fill polygon is the fabricated copper, so it carries no slack. This is the graph's joining rule for a polygon with holes. The outlines it is given come from the same constructors the graph uses: `connectivity::track_copper`, `connectivity::via_copper` and `CopperRing::of_placed_pad` (the same outline as `CopperRing::of_pad`).
+- **One rule for fill copper.** `connectivity::islands_joined(index, ring)` (in `connectivity/build.rs`) returns the islands of an indexed fill that a piece of copper joins: its copper lies inside an island, or within `JOIN_TOLERANCE_MM` (plus its curve slack) of an island's edge, or the island lies inside it. The stored fill polygon is the fabricated copper, so it carries no slack. This is the graph's joining rule for a polygon with holes. The outlines it is given come from the same constructors the graph uses: `connectivity::track_copper`, `connectivity::via_copper` and `CopperRing::of_placed_pad` (the same outline as `CopperRing::of_pad`).
 - **Fill compute, step 5,** marks an island as joined when `islands_joined` finds same-net copper on the fill's layer touching it: pads on that layer, vias and tracks. Unjoined islands are removed by the island setting, as before. The probes are deleted. That covers centre-line sampling at 65 points or fewer, the solid probe at the centre and at the outline pulled 5 % inward, and the spoke probe at mid-gap and just past the gap. The thermal relief geometry itself (the obstacle and its spokes) is unchanged.
 - **The graph** makes one element per island of each fresh fill (`fill::fresh`: the fill has a net and its stored key is current). It joins each one, through the net's grid and `islands_joined`, to every outline of the net with a land on the fill's layer. A track's stations on an island are each end whose copper reaches the island, else the station nearest the island's edges, found through the fill's `RegionIndex`. **Stale fills join nothing until they are refilled** (Q3, approved).
 - **`fill.island_unconnected`** is a graph finding (`CopperGraph::findings`): per fresh fill, the islands with no joint. Only a fill that keeps every island can have them, because compute removes the rest by the same rule. A partial graph reports only `board.check_limit`.
@@ -550,8 +550,8 @@ Built on `component-model` at 804cb20, 8 November 2026.
 
 Joining means "same net, and the copper meets". Clearance is the opposite question: "different nets, and the copper comes closer than a rule". The check (`xtask/src/connectivity.rs`) parses every crate's and app's sources outside `layout/connectivity` and skips test code. It rejects:
 
-- the joining tolerances by name (`JOIN_EPS`, `JOIN_REACH_MM`);
-- a function that both compares a net for equality (`a.net == b`, `net == Some(n)`) and tests copper for contact. A contact test is a comparison with a contact tolerance (a float literal from 1e-8 up to 0.001 mm) or a call to `touches`, `track_contains` or `polygon_contains`.
+- the joining tolerances by name (`JOIN_TOLERANCE_MM`, `JOIN_REACH_MM`);
+- a function that both compares a net for equality (`a.net == b`, `net == Some(n)`) and tests copper for contact. A contact test is a comparison with a contact tolerance (a float literal from 1e-8 up to and including 0.001 mm, the joining tolerance) or a call to `touches`, `track_contains` or `polygon_contains`.
 
 A clearance test compares nets for inequality and gaps against a rule, so it passes. Literals below 1e-8 test float identity, such as finding a track a step just wrote by its end point or skipping a degenerate segment, so they pass too. The first version flagged three functions of that kind (`pair_tool::settle_pair`, `pair::route`, `length::pair_coupling`), which is why the lower bound exists. Counted, reasoned exceptions name functions that match the shape but decide nothing. A stale exception fails the check. None is needed today.
 
@@ -594,9 +594,15 @@ The ESP32 reference board stays at 0 issues (`project.issues`: 0 errors, 0 warni
 
 Routing and shove speed are unchanged within the noise, and the sweep shoves and reaches exactly as before. The graph is built once per revision and shared with the checks, so the router adds no build where the engine or the editor already holds one. `layout.route_step` builds it on its first shove (3.6 ms on the dense board).
 
+## Tolerance correction
+
+Slices 1 to 5 built the joining tolerance as `JOIN_EPS` = 1e-6 mm, which is 1 nm, not the approved 1 µm, and the sections above that said "1 µm" were wrong about the code. The meander's `LENGTH_TOLERANCE_MM` was 1e-6 mm as well. At 1 nm, joins could break once coordinates are rounded to whole nanometres. Both are now 1e-3 mm (1 µm), and the joining tolerance is named `JOIN_TOLERANCE_MM`. Every use of it is a "same place" tolerance and now works at 1 µm: the joining rule (`build::joins`, `islands_joined`, fill stations), a track end on another track's centre line (an exact rather than a soft joint), a soft joint anchored by an exact one at the same station, stations merging along a track, a station at a track end, `keeps_joint`, end-to-end corners and the path tree's pad stations. Through `LENGTH_TOLERANCE_MM`, a tuning request for 1 µm or less is already at its target, and a pair push without a class skew limit may add up to 1 µm of skew. Float-identity epsilons (1e-9, 1e-12) are unchanged. `cargo xtask connectivity` now counts a literal of exactly 0.001 mm as a contact tolerance: before, its range stopped short of it.
+
+`copper_joins_within_a_micrometre_and_not_beyond` puts two tracks end to end with 0.5 µm of copper gap (joined: routed, no stub) and 2 µm (not joined: unrouted, two stubs). No other test changed its result. The meander tests keep asserting the solved length to within 1e-6 mm, the solver's precision, rather than the looser tolerance.
+
 ## Where connectivity lives
 
-Whether copper touches or joins is decided in one place: `crates/editor-core/src/layout/connectivity` (`connectivity.rs`, `build.rs`, `islands.rs`, `joints.rs`, `lengths.rs`, `queries.rs`). The rule is `build::joins`: same layer, same net, copper within `JOIN_EPS` (1 µm) plus curve slack. `islands_joined` applies the same rule to fill copper. The graph is built once per revision (`Engine::copper_graph`, or `CopperGraph::of` for pure callers). Every consumer asks it:
+Whether copper touches or joins is decided in one place: `crates/editor-core/src/layout/connectivity` (`connectivity.rs`, `build.rs`, `islands.rs`, `joints.rs`, `lengths.rs`, `queries.rs`). The rule is `build::joins`: same layer, same net, copper within `JOIN_TOLERANCE_MM` (1 µm) plus curve slack. `islands_joined` applies the same rule to fill copper. The graph is built once per revision (`Engine::copper_graph`, or `CopperGraph::of` for pure callers). Every consumer asks it:
 
 - the board checks and Issues (`findings`, `stubs`);
 - airwires and the drag preview;
