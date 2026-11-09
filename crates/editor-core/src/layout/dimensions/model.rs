@@ -28,7 +28,7 @@
 //! until the face is picked again.
 use super::FeatureGeometry;
 use crate::diagnostics::{Error, Result};
-use crate::geometry::Transform3;
+use crate::geometry::{Transform3, cos_sin};
 use crate::ids::{ContentHash, Id, ModelRef, PackageRef};
 use crate::instances;
 use crate::layout::outline::BoardShapeEvaluator;
@@ -36,11 +36,14 @@ use crate::library::bundle::asset_hash;
 use crate::library::model3d::{ModelDefinition, ModelFormat};
 use crate::library::package_model::PartFileModel;
 use crate::library::{PackageDefinition, PackageModel};
+use crate::model::Placement;
 use crate::model::Project;
 use crate::model::board::ConstraintTarget;
 use crate::model::dimension::{
-    BoardRef, FeatureRef, MAX_MODEL_TRACES, MAX_TRACE_NOTE, ModelTrace, ReferenceStatus,
+    BoardRef, FeatureRef, MAX_MODEL_TRACES, MAX_TRACE_NOTE, ModelEdgeRef, ModelFaceRef, ModelTrace,
+    ReferenceStatus,
 };
+use crate::{CopperLayer, Layer};
 use std::collections::BTreeSet;
 
 /// The design a reference is traced on.
@@ -87,6 +90,104 @@ pub struct Traced {
     pub geometry: FeatureGeometry,
     /// Why it is inexact.
     pub note: String,
+}
+
+/// A point picked on a placed part's 3D model, for the host to name
+/// ([`BoardShapeEvaluator::pick_model`]).
+#[derive(Clone, Copy, Debug)]
+pub struct PickRequest<'a> {
+    /// The design the point is named on.
+    pub model: TraceModel<'a>,
+    /// Model frame → part frame: the package's model placement.
+    pub frame: Transform3,
+    /// The picked point in the part frame (z = 0 the seating plane), mm.
+    pub at: [f64; 3],
+    /// An edge of the picked face within this distance (mm) is picked
+    /// instead of the face.
+    pub reach: f64,
+}
+
+/// What the host named at a picked point.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ModelPicked {
+    Face(ModelFaceRef),
+    Edge(ModelEdgeRef),
+}
+
+/// The part frame of a point on the board (board mm, z = 0 the bottom of
+/// the lowest dielectric): the inverse of the seating (§5.3) and of the
+/// placement's turn, mirror and position.
+pub fn part_point(project: &Project, placement: &Placement, at: [f64; 3]) -> [f64; 3] {
+    let top = placement.layer == Layer::Top;
+    let seat = if top {
+        project
+            .stackup
+            .copper_span(CopperLayer::Top)
+            .map_or(0.0, |s| s.1)
+    } else {
+        project
+            .stackup
+            .copper_span(CopperLayer::Bottom)
+            .map_or(0.0, |s| s.0)
+    };
+    let d = [at[0] - placement.position[0], at[1] - placement.position[1]];
+    let (c, s) = cos_sin(-placement.rotation_deg);
+    let mut p = [c * d[0] - s * d[1], s * d[0] + c * d[1]];
+    if !top {
+        p[1] = -p[1];
+    }
+    let z = if top { at[2] - seat } else { seat - at[2] };
+    [p[0], p[1], z]
+}
+
+/// Name the face or edge of `placement`'s 3D model at `at`, a point on
+/// its model in the board (board mm, as the 3D view has it), and trace
+/// it (§5.4): the reference a 3D pick gives, with its trace in the part
+/// frame. A face with no single trace in the board plane (sloped, or
+/// parallel to it) is refused in the trace's words ("pick an edge of
+/// it"); a model without faces (glTF) is refused as [`refresh`] would.
+pub fn pick(
+    project: &Project,
+    evaluator: &dyn BoardShapeEvaluator,
+    placement: Id,
+    at: [f64; 3],
+    reach: f64,
+) -> Result<(FeatureRef, FeatureGeometry)> {
+    let placed = project.placement_of(placement).ok_or_else(|| {
+        Error::NotFound("layout.dimension_reference: the part is not on the board".into())
+    })?;
+    let source = source(project, placement).ok_or_else(|| {
+        Error::NotFound("layout.dimension_reference: the part has no 3D model".into())
+    })?;
+    let (model, _, frame) = source.model?;
+    let local = part_point(project, placed, at);
+    if !local.iter().all(|v| v.is_finite()) || !reach.is_finite() {
+        return Err(Error::Invalid(
+            "layout.dimension_reference: the pick is out of range".into(),
+        ));
+    }
+    let picked = evaluator.pick_model(&PickRequest {
+        model,
+        frame,
+        at: local,
+        reach: reach.max(0.0),
+    })?;
+    let feature = match picked {
+        ModelPicked::Face(face) => FeatureRef::Face { placement, face },
+        ModelPicked::Edge(edge) => FeatureRef::Edge { placement, edge },
+    };
+    let traced = evaluator.trace_model(&TraceRequest {
+        model,
+        frame,
+        feature: &feature,
+        picked_here: true,
+    })?;
+    if !traced.geometry.valid() {
+        return Err(Error::Invalid(
+            "layout.dimension_reference: its trace is out of range".into(),
+        ));
+    }
+    Ok((feature, traced.geometry))
 }
 
 /// Where a placed part's model comes from: the package revision and, when

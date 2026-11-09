@@ -582,13 +582,14 @@ impl App {
     }
 
     /// Floating view controls at the bottom of the canvas (Solidcraft's
-    /// navigation bar): fit, and the layer popover in PCB 3D.
+    /// navigation bar): fit, and in PCB 3D the Realistic look toggle and
+    /// the layer popover.
     fn navigation_bar(&mut self, ui: &mut egui::Ui, canvas: Rect) {
         let t = Tokens::get();
         let three_d = self.model_key().is_some();
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
         let pcb_view = self.workspace == Workspace::Pcb && self.pcb.has_view_menu();
-        let buttons = if pcb_3d || pcb_view { 2.0 } else { 1.0 };
+        let buttons = 1.0 + f32::from(u8::from(pcb_view)) + 2.0 * f32::from(u8::from(pcb_3d));
         let size = vec2(
             buttons * t.control_height + (buttons + 1.0) * t.space_4,
             t.control_height + 2.0 * t.space_4,
@@ -639,6 +640,26 @@ impl App {
                 .show(|ui| self.pcb.view_menu(ui));
         }
         if pcb_3d {
+            // Solidcraft's Realistic look toggle (its navigation bar's
+            // `render_scene` row), outlined while on like a set layer filter.
+            let label = self.with_shortcut("Realistic look", AppCommand::ToggleRealistic);
+            let look = shell::icon_button(&mut child, "render_scene", &label, true);
+            if self.scene.viewport.realistic() {
+                ui.painter().rect_stroke(
+                    look.rect,
+                    t.radius_sm,
+                    egui::Stroke::new(1.0, t.accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            reveal::register(
+                ui.ctx(),
+                Target::App(AppCommand::ToggleRealistic),
+                look.rect,
+            );
+            if look.clicked() {
+                self.toggle_realistic();
+            }
             let mut view = self.pcb.layer_view();
             let stack = pcbcraft_solidcraft::stack::Stack::of(&self.engine.project().stackup);
             if crate::layer_view::button(&mut child, &mut view, &stack) {

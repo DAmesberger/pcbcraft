@@ -458,3 +458,101 @@ fn a_gltf_face_is_refused_with_the_mesh_finding() -> Fallible<()> {
     assert_eq!(engine.to_file(), before);
     Ok(())
 }
+
+/// A point on R1's model in the board (board mm, as the 3D view has it):
+/// `p` in the model frame through the model placement, the placement and
+/// the seating on the top copper.
+fn board_point(
+    engine: &Engine,
+    part: Id,
+    package: &PackageDefinition,
+    p: [f64; 3],
+) -> Fallible<[f64; 3]> {
+    let project = engine.project();
+    let placement = project.placement_of(part).ok_or("placement")?;
+    let local = package.placement.transform().apply(p);
+    let at = pcbcraft_core::layout::dimensions::view::part_transform(placement)
+        .apply([local[0], local[1]]);
+    let seat = project
+        .stackup
+        .copper_span(pcbcraft_core::CopperLayer::Top)
+        .map_or(0.0, |s| s.1);
+    Ok([at[0], at[1], seat + local[2]])
+}
+
+/// Slices S4 and S5: a 3D pick on R1's end face (a generated 0603's
+/// second termination) names the face in the generated model's own
+/// design; dimensioned flush to the right edge, R1 follows the board 10 mm
+/// wider.
+#[test]
+fn a_3d_pick_on_a_generated_end_face_holds_r1_to_the_edge() -> Fallible<()> {
+    let mut engine = sketched()?;
+    let part = r1(&engine)?;
+    let package = package_of(engine.project(), part)?;
+    let design = named::generated(&package)?;
+    let FeatureRef::Face { face, .. } = plus_x_face(design.state(), "termination 2", part)? else {
+        return Err("face".into());
+    };
+    let at = board_point(&engine, part, &package, face.pick)?;
+    let (picked, trace) = pcbcraft_core::layout::dimensions::model::pick(
+        engine.project(),
+        &crate::board::SketchBoardEvaluator,
+        part,
+        at,
+        0.0,
+    )?;
+    let FeatureRef::Face { face: named, .. } = &picked else {
+        return Err(format!("{picked:?}").into());
+    };
+    assert_eq!((&named.body, &named.face), (&face.body, &face.face));
+    let FeatureGeometry::Line { a, .. } = trace else {
+        return Err(format!("{trace:?}").into());
+    };
+    let width = engine.project().board_size[0];
+    let edge = right(&engine)?;
+    apply(
+        &mut engine,
+        Operation::Dimension(DimensionCommand::Add {
+            dimension: flush(BoardRef::Part(picked), edge),
+        }),
+    )?;
+    assert_eq!(
+        engine.project().model_traces[0].status,
+        ReferenceStatus::Resolved
+    );
+    assert!((x_of(&engine, part) + a[0] - width).abs() < 1e-6);
+    edit(
+        &mut engine,
+        vec![set("width", &format!("{} mm", width + 10.0))],
+    )?;
+    assert!((x_of(&engine, part) + a[0] - (width + 10.0)).abs() < 1e-6);
+    Ok(())
+}
+
+/// A 3D pick on a glTF model is refused with the mesh finding, the words
+/// the Dimension tool's card shows.
+#[test]
+fn a_3d_pick_on_a_gltf_model_is_refused_with_the_mesh_finding() -> Fallible<()> {
+    let (engine, _) = with_library_model(ModelFormat::Gltf, &fixture_glb())?;
+    let part = r1(&engine)?;
+    let position = engine
+        .project()
+        .placement_of(part)
+        .ok_or("placement")?
+        .position;
+    let refused = pcbcraft_core::layout::dimensions::model::pick(
+        engine.project(),
+        &crate::board::SketchBoardEvaluator,
+        part,
+        [position[0], position[1], 1.7],
+        0.0,
+    );
+    let Err(pcbcraft_core::Error::Unsupported(why)) = refused else {
+        panic!("{refused:?}")
+    };
+    assert!(
+        why.contains("glTF") && why.contains("STEP model or a part file"),
+        "{why}"
+    );
+    Ok(())
+}

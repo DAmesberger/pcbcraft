@@ -449,6 +449,9 @@ pub enum AppCommand {
     TogglePcb3d,
     /// Turn the PCB 3D view to a standard view.
     View3d(View3d),
+    /// Switch the PCB 3D view between the Realistic look (the studio,
+    /// reflections and materials) and Solidcraft's Standard modelling look.
+    ToggleRealistic,
     /// Quit the app: unsaved work asks Save, Don't Save or Cancel first.
     Quit,
     /// Close the window: the app's one window, so the same request as Quit.
@@ -1562,6 +1565,19 @@ fn defaults() -> Vec<Command> {
                 .keywords("orbit rotate turn camera standard view cube 3d"),
         );
     }
+    // Solidcraft's `view.look` (its ⇧P, which here refills the fills):
+    // ⇧R for Realistic.
+    v.push(
+        Command::new(
+            "view.look",
+            "Realistic look",
+            C::Pcb3d,
+            Action::App(A::ToggleRealistic),
+        )
+        .chord(Chord::key(K::R).with_shift())
+        .icon("render_scene")
+        .keywords("standard photoreal materials studio lighting render shading"),
+    );
     v.push(
         Command::new(
             "view.selection",
@@ -1616,6 +1632,22 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::key(K::P))
             .icon("polygon")
             .keywords("pour zone plane copper area"),
+        tool(
+            "pcb.dimension",
+            "Dimension",
+            C::Pcb3d,
+            Workspace::Pcb,
+            "dimension",
+        )
+        .chord(Chord::key(K::D).with_shift())
+        .icon("dimension")
+        .keywords("measure distance hold face edge hole board edge parametric"),
+        key(
+            "pcb.dimension-cancel",
+            "Drop the dimension's picks, then end the tool",
+            C::Pcb3d,
+            Chord::key(K::Escape),
+        ),
         tool(
             "pcb.place-part",
             "Place 3D part…",

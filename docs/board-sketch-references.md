@@ -569,7 +569,44 @@ The ESP32-S31 dev board's J1 uses an original USB4105 part file (`examples/esp32
 - **S4.** `layout::dimensions::model::source` refuses every model kind but `PartFile` with `layout.dimension_model`. S4 adds the named designs of generated, envelope and STEP models behind the same `trace_model`. STEP names are unverified, so their references come back `Inexact` until re-picked. If acknowledging without a new pick is wanted, it needs a stored flag on the trace or the dimension. glTF stays refused.
 - **S5.** The trace geometry for display and picking is `Project::model_traces[i].geometry`, in the part frame (transform it like any feature, `layout::placement_transform`). A pick in the 3D view must give the body, the persistent face name (`naming::face_name_at_body` on the part's evaluated state) and the pick point in the model frame, which is the board pick through the inverse of the placement, datum and model placement. Selection and camera must not call `trace_model`; only `refresh` does.
 
-## 15. S4 notes
+## 15. S5 notes
+
+S5 built picking in PCB 3D and the dimension display there.
+
+### The Dimension tool
+
+- **Arming.** 3D's ribbon has Dimension (`pcb.dimension`, Shift+D, PCB › 3D). It is a tool card in the subject slot. Esc (`pcb.dimension-cancel`) drops the picks, and a second Esc (or Done) ends the tool. Switching to Layout ends it.
+- **Hover.** The face under the pointer is highlighted the way Solidcraft pre-highlights: lifted, and outlined in `hover_edge`. When an edge of that face is within 6 points of the pointer, the edge is highlighted instead. The highlight is a block in the viewport's selection layer (`viewport/surface.rs`), built from the cached mesh only when what is hovered changes. Hover raycasts the shown meshes; it never calls the evaluator or requests a model.
+- **Picks.**
+  - A part body: the board point goes back into the part frame (`model::part_point`: the seat over the side's copper, then the placement's position, turn and mirror). The new evaluator seam `BoardShapeEvaluator::pick_model` (`model_refs::pick`) names the face with `naming::face_name_at_body`, or the face's edge within reach, picked at its nearest point. `model::pick` then traces the feature once. A sloped face, or one parallel to the board, is refused in the tool card in the trace's words, before anything is committed.
+  - A pad: `FeatureRef::Pad` at its centre.
+  - The laminate's side, or a mask or copper film at the edge: the board curve there (`dimensions::view::board_curve_at`). For a plain rectangle, the named edges are read through the evaluator's rectangle sketch.
+  - Two board edges are refused: a dimension holds a part.
+- **Value.** Two picks open a text field at the draft's label. It holds the distance measured now (`dimensions::view::shown`). It takes a number, a board parameter or an expression; the draft's label follows what is typed. Enter commits one `layout.dimension_add` (refs in pick order, `Distance`), which is one undo step. The new dimension is then selected. An engine refusal comes back to the card's refusal row.
+
+### Display and selection
+
+- The dimensions of the selected part, and the selected dimension, are drawn in the plane the part sits on. They use Solidcraft's `dim_layout_reaching`, `default_text` and `dim_view::label` ("fx:" for expressions), its `dimension`/`accent` colours and its text box. The arrowhead is reproduced, because upstream keeps it private.
+- Geometry comes from the document only (`dimensions::view::reference_geometry`): the stored model traces and the solved board. A lost reference is drawn dashed in the error colour and an inexact one in the warning colour, each labelled "· lost" or "· inexact". On hover, the label shows the reference findings of `dimensions::checks`.
+- **Shared selection.** `PcbEditor::dimension` is the one selection. A click on a label selects the dimension in 3D, and in Layout too, where the labels are now hit-tested. Focusing a value in the Placement card's Dimensions section also selects it. The part is selected with the dimension. Layout draws the selected dimension in the accent colour; the card puts its row on `selected_bg`.
+
+### Tests
+
+- `model_refs_tests::a_pick_names_the_face_or_the_edge_under_it` (host): face, edge within reach, a turned model placement, and off the model.
+- `app::dimension_3d_tests::a_3d_pick_dimensions_j1_to_the_bottom_edge_in_one_undo_step` runs the whole app frame on the ESP32 example:
+  - It removes J1's face dimension, frames J1 in 3D and arms the tool.
+  - It hovers the shell's front rim and the laminate side. No model is requested (`SceneController::requests`), and nothing is traced or picked (a counting evaluator).
+  - It clicks both, checks the value opens at `0 mm`, types `1 mm` and presses Enter.
+  - J1 moves 1 mm off the edge, and the dimension is added and selected. One undo restores J1.
+- `dimensions::view` unit tests cover the shown distance to a line and to an arc.
+
+### For later slices
+
+- Only `Distance` is made. Angles and the 3D display of non-distance relations are not drawn.
+- Picks reach every model kind but glTF since S4 (§16). Housing faces are S9.
+- A dimension's text cannot be dragged, and the 3D label cannot be edited in place. Values are edited in the Placement card.
+
+## 16. S4 notes
 
 S4 made faces, edges and vertices of every model kind but glTF dimension references: generated models, envelopes and STEP models, besides part files.
 
@@ -623,7 +660,7 @@ No stored acknowledgement flag was added. Picking the face again is a new refere
 
 The cold build pays once per process for each generated model's standalone design, evaluated once at the end of its commands (`defer_evaluation`); evaluated after every command, as at first, it cost +3.7 s and +1.1 s. The board then evaluates the inserted features again, as it evaluated the builder's commands before, so a warm build costs what it did. **The first 3D open in a session is therefore about 0.5–1.6 s slower in this profile; later opens and rebuilds are not.** Envelope and STEP designs are built only when a reference is traced, never by the 3D build.
 
-### For S5 and S6
+### Picking and S6
 
-- **S5.** The design a 3D pick is named on is `board::model_refs::ModelDesign::of(&TraceModel)` (`.state()`), for every kind, from the same caches. A board pick on a generated part's body maps to the design's body by dropping the definition's stem (`pkg3r1 body` → `body`); on an envelope it is the `envelope` body; on a STEP part the body key.
+- **Picking (S5, extended).** `PickRequest` carries the same `TraceModel` as a trace, and `model_refs::pick` names the point on `ModelDesign::of`, so the 3D Dimension tool picks generated, envelope and STEP faces as it picks part-file faces, from the same caches: the board point goes back into the model frame, never through the board's own body names. A glTF part is refused before the host is asked, with the mesh finding above, which the tool card shows. `model_refs_kinds_tests::a_3d_pick_on_a_generated_end_face_holds_r1_to_the_edge` picks R1's end face at its board position, adds the dimension and widens the board; `a_3d_pick_on_a_gltf_model_is_refused_with_the_mesh_finding` checks the refusal.
 - **S6.** The envelope is the one kind the board does not insert from its named design; when the board design becomes persistent, inserting the envelope design per package revision gives its faces board names too.

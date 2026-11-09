@@ -39,6 +39,7 @@ pub(crate) use commands::LAYER_KEYS;
 pub(crate) use commands::shape_tool_entries;
 pub(crate) use route_tool::ROUTE_KEYS;
 pub(crate) use tune_tool::TUNE_KEYS;
+mod dimension_3d;
 mod edge_card;
 mod fill_card;
 mod fill_paint;
@@ -101,6 +102,9 @@ enum Tool {
     Fill,
     /// Meander a track segment to its length target (`tune_tool`).
     Tune,
+    /// Dimension a part to a face, edge or board edge in 3D
+    /// (`dimension_3d`).
+    Dimension,
 }
 
 /// Most inner copper layers a stackup has: every layer but the two sides
@@ -479,6 +483,11 @@ pub struct PcbEditor {
     menu: crate::context_menu::State<menu::Target>,
     /// A registry command a menu row asked the app to run.
     menu_command: Option<&'static str>,
+    /// The selected part dimension, shared by Layout, 3D and the
+    /// Properties card (its part is selected with it).
+    dimension: Option<Id>,
+    /// PCB 3D's Dimension tool and drawn dimensions (`dimension_3d`).
+    dim3d: dimension_3d::Dimension3d,
 }
 
 impl Default for PcbEditor {
@@ -566,6 +575,8 @@ impl Default for PcbEditor {
             tune: Default::default(),
             menu: Default::default(),
             menu_command: None,
+            dimension: None,
+            dim3d: Default::default(),
         }
     }
 }
@@ -629,6 +640,9 @@ impl PcbEditor {
         self.reset_route();
         if enabled {
             self.end_route();
+        } else if self.tool == Tool::Dimension {
+            // The Dimension tool is 3D's.
+            self.arm_dimension(false);
         }
         self.cancel_drag();
     }
@@ -652,6 +666,8 @@ impl PcbEditor {
         }
         self.instance = instance;
         self.also.clear();
+        // A dimension is selected with its part (`select_dimension`).
+        self.dimension = None;
         self.track = track;
         self.via = None;
         self.fill = None;
@@ -825,6 +841,7 @@ impl PcbEditor {
             }
             self.property_key = Some(key);
         }
+        self.select_added_dimension(engine.project());
         self.sync_shape(engine);
     }
 
@@ -986,6 +1003,10 @@ impl PcbEditor {
                             .enabled(!self.view_3d && !engine.project().tracks.is_empty())
                             .selected(self.tool == Tool::Tune)
                             .tip("Meander a track to its length target; switch to Layout to tune"),
+                        Button::new("dimension", "dimension", "Dimension")
+                            .enabled(self.view_3d)
+                            .selected(self.tool == Tool::Dimension)
+                            .tip("Dimension a part to a face, edge, hole or board edge; switch to 3D to dimension"),
                         Button::new("board-shape", "sketch", "Shape")
                             .enabled(!self.view_3d)
                             .tip("Edit the board outline, cutouts and named edges as a sketch"),
@@ -1036,6 +1057,10 @@ impl PcbEditor {
                 self.cancel_drag();
             }
             "select" => self.end_route(),
+            "dimension" => {
+                self.end_route();
+                self.arm_dimension(true);
+            }
             "route" => {
                 if self.tool != Tool::Route {
                     self.reset_route();
@@ -1178,9 +1203,10 @@ impl PcbEditor {
             || self.signals.is_some()
         {
             Subject::Dialog
-        } else if (self.shape.active
+        } else if ((self.shape.active
             || matches!(self.tool, Tool::Route | Tool::Via | Tool::Fill | Tool::Tune))
-            && !self.view_3d
+            && !self.view_3d)
+            || (self.tool == Tool::Dimension && self.view_3d)
         {
             Subject::Tool
         } else {
@@ -1222,6 +1248,9 @@ impl PcbEditor {
             }
             Subject::Dialog | Subject::Review if self.rules.is_some() && !self.update.is_open() => {
                 self.rules_slot(ui, engine)
+            }
+            Subject::Tool if self.tool == Tool::Dimension => {
+                CardResponse::output(self.dimension_card(ui, engine.project()))
             }
             Subject::Tool if self.shape.active => CardResponse::output(self.shape_card(ui, engine)),
             Subject::Tool if self.tool == Tool::Via => {
@@ -1669,6 +1698,9 @@ impl PcbEditor {
                         kit::toast::post(ui.ctx(), kit::severity::Level::Warning, why, Vec::new());
                     }
                 }
+            } else if let Some(id) = self.dimension_label_at(screen(at)) {
+                // A dimension's label selects the dimension, as in 3D.
+                self.select_dimension(project, id);
             } else if self.fill_handle_at(project, view, screen(at)).is_none() {
                 // A click on a handle of the selected fill keeps it
                 // selected, so a double-click there can remove the vertex.
@@ -1738,7 +1770,7 @@ impl PcbEditor {
                     Tool::Via => "Via",
                     Tool::Fill => "Fill (A arcs, Enter closes)",
                     Tool::Tune => "Tune",
-                    Tool::Select => "Select / move",
+                    Tool::Select | Tool::Dimension => "Select / move",
                 },
                 self.layer.name(),
                 self.visible_airwires().len(),

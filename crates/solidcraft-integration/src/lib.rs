@@ -34,6 +34,15 @@ pub mod geom {
     pub use solidcraft_engine::geom::*;
 }
 
+/// Solidcraft's sketch dimension layout (extension and dimension lines,
+/// arrowheads, where the value sits), which the PCB 3D view draws part
+/// dimensions with, as Solidcraft draws sketch dimensions.
+pub mod dims {
+    pub use solidcraft_engine::sketch::{
+        ConstraintKind, DimFrame, DimLayout, default_text, dim_layout_reaching,
+    };
+}
+
 /// Native foundation fixtures (parametric probe and copper sample). They are
 /// acceptance tests for Solidcraft capabilities, not product features.
 #[cfg(test)]
@@ -42,7 +51,7 @@ mod fixtures;
 /// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-font-order`
 /// branch of the DAmesberger/solidcraft fork (upstream 4f3ac07 plus the
 /// opt-in product look, via scaling and a font-order fix).
-pub const SOLIDCRAFT_REVISION: &str = "04d3c2ffcff699c7cf1a07957627eaf4924869a3";
+pub const SOLIDCRAFT_REVISION: &str = "c26590edb55e5edfe962bc1004fc538efd58eed8";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

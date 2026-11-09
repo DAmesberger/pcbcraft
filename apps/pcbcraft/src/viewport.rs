@@ -159,6 +159,15 @@ pub struct Viewport {
     cube_press: Option<(egui::Pos2, bool)>,
     /// Whether this view shows the navigation cube (PCB 3D).
     cube: bool,
+    /// The Realistic look (the product look: studio, reflections and the
+    /// materials' graphs), else Solidcraft's Standard modelling look. A view
+    /// preference, on by default.
+    realistic: bool,
+    /// What a tool highlights under the pointer, with its block of the
+    /// selection layer ([`surface`]).
+    hovered: Option<(surface::Hovered, gpu::SceneBlock)>,
+    /// Where the last click that picked landed (screen points).
+    clicked_at: Option<egui::Pos2>,
 }
 
 impl Viewport {
@@ -199,6 +208,17 @@ impl Viewport {
         if let Err(error) = spawned {
             eprintln!("pcbcraft: the 3D studio was not baked: {error}");
         }
+    }
+
+    /// Whether the view draws the Realistic look.
+    pub fn realistic(&self) -> bool {
+        self.realistic
+    }
+
+    /// Draw the Realistic look or Solidcraft's Standard one. Only the frame's
+    /// look changes: no geometry is rebuilt.
+    pub fn set_realistic(&mut self, on: bool) {
+        self.realistic = on;
     }
 
     /// The viewport's state without a GPU (the renderer is installed by
@@ -243,6 +263,9 @@ impl Viewport {
             rect: None,
             cube_press: None,
             cube: false,
+            realistic: true,
+            hovered: None,
+            clicked_at: None,
         };
         result.fit();
         result
@@ -330,6 +353,8 @@ impl Viewport {
             stream.graphs = Default::default();
         }
         self.model = Some(model);
+        // Its bodies are new: a hover over the last model's is gone.
+        self.hovered = None;
         self.generation = self.generation.wrapping_add(1);
         self.repack = None;
         self.publish_stream(stream);
@@ -569,7 +594,16 @@ impl Viewport {
         let selected = crate::palette::board().selected;
         let rgba = [selected.r(), selected.g(), selected.b(), HIGHLIGHT_ALPHA];
         let strong = [selected.r(), selected.g(), selected.b(), SELECTED_ALPHA];
-        let mut scene = GpuScene::with_palette(Palette::with_stable(vec![rgba, strong]));
+        // Solidcraft's pre-highlight: the face lifted, its outline in the
+        // hover edge colour ([`surface`]).
+        let t = theme::Tokens::get();
+        // Over the lit model, the lift is white at about three times its
+        // share.
+        let face = [255, 255, 255, t.hover_face_lift.saturating_mul(3)];
+        let edge = t.hover_edge;
+        let edge = [edge.r(), edge.g(), edge.b(), 255];
+        let mut scene =
+            GpuScene::with_palette(Palette::with_stable(vec![rgba, strong, face, edge]));
         if let Some(model) = &self.model {
             scene.blocks = model
                 .highlight
@@ -594,6 +628,9 @@ impl Viewport {
                     })
                     .collect();
             }
+        }
+        if let Some((_, block)) = &self.hovered {
+            scene.blocks.push(block.clone());
         }
         Self::publish(&self.hl_slot, &mut self.hl_key, scene);
     }
@@ -743,8 +780,10 @@ impl Viewport {
     pub(crate) fn frame(&self, view_proj: [[f32; 4]; 4], size_px: [f32; 2], ssaa: f32) -> Frame {
         let eye = self.camera.eye().to_f32();
         Frame {
-            product_lights: Some(lighting::studio(&self.camera, &self.bounds)),
-            product_look: Some(lighting::look()),
+            product_lights: self
+                .realistic
+                .then(|| lighting::studio(&self.camera, &self.bounds)),
+            product_look: self.realistic.then(lighting::look),
             units_per_mm: 1.0,
             moving: None,
             preview_bounds: None,
@@ -843,9 +882,15 @@ impl Viewport {
             && let Some(p) = response.interact_pointer_pos()
         {
             let (x, y) = local(p);
+            self.clicked_at = Some(p);
             return Some(self.pick(x, y, w, h));
         }
         None
+    }
+
+    /// Where the click [`Self::show`] last reported landed.
+    pub fn clicked_at(&self) -> Option<egui::Pos2> {
+        self.clicked_at
     }
 }
 
@@ -1294,6 +1339,7 @@ fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
 mod decals;
 mod display;
 pub mod nav_cube;
+pub mod surface;
 pub use decals::DecalRequest;
 
 #[cfg(test)]
