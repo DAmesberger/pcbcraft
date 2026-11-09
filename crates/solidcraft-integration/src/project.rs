@@ -120,6 +120,23 @@ impl NativeModel {
     pub fn native(&self) -> &Native {
         &self.native
     }
+
+    /// A copy of this model that stays as it is while this one is updated
+    /// ([`update`] takes the model it updates), sharing its evaluated
+    /// design and meshes: an earlier board kept for an undo back to it.
+    pub fn snapshot(&self) -> Self {
+        Self {
+            native: self.native.snapshot(),
+            geometry: self.geometry.clone(),
+            sources: self.sources.clone(),
+            stack: self.stack.clone(),
+            models: self.models.clone(),
+            libraries: self.libraries.clone(),
+            reuse: self.reuse.clone(),
+            updated: self.updated,
+            display: self.display.clone(),
+        }
+    }
 }
 
 /// The previous model's geometry by identity, for [`finish_with`].

@@ -437,10 +437,6 @@ impl Replay {
             native.run("sketch.finish", &json!({}))?;
             ran += 1;
         }
-        if first.is_some() {
-            native.run("timeline.rollback", &json!({"position": "end"}))?;
-            ran += 1;
-        }
         // An extrusion that left its profiles to the default stored its pick
         // (a laminate slab in pieces, a fill region with holes) by index or
         // by curve, and a redrawn drawing numbers its profiles and curves
@@ -448,7 +444,14 @@ impl Replay {
         // name other profiles. Rebuilt from its command, the extrusion picks
         // the redrawn profiles as a fresh build does. A pick of one profile
         // by an outline drawn apart from the redrawn holes (a slab's) keeps
-        // its curves, and the extrusion as it is.
+        // its curves, and the extrusion as it is. Each is redefined while
+        // the history is still rolled back: a redefinition evaluates the
+        // design from its feature to the marker, so behind the marker it
+        // evaluates only its own extrusion (and what comes before it), and
+        // the features after it are evaluated once, rolled forward below.
+        // Rolled forward first, every redefinition would evaluate every
+        // feature after it again (the four fills and the laminate of the
+        // ESP32 example about three times over).
         for r in &now.ran {
             let sketch = r.params.get("sketch").and_then(Value::as_u64);
             if r.command != "solid.extrude"
@@ -467,6 +470,10 @@ impl Replay {
                 )?;
                 ran += 1;
             }
+        }
+        if first.is_some() {
+            native.run("timeline.rollback", &json!({"position": "end"}))?;
+            ran += 1;
         }
         for (occurrence, by) in moves {
             native.run(
