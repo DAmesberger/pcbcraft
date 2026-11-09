@@ -1,14 +1,7 @@
 # Pcbcraft
 
-**A parametric PCB editor with deep 3D, built for people and AI agents alike.**
-Parts, schematic, board layout and 3D in one Rust app, on [Solidcraft](https://github.com/tangency-labs/solidcraft)'s CAD engine.
-
-https://github.com/user-attachments/assets/3da46faa-128f-4c90-a563-dd01e53b8c44
-
-<p align="center">
-  <a href="https://github.com/user-attachments/assets/3da46faa-128f-4c90-a563-dd01e53b8c44"><img src="docs/media/video-poster.jpg" width="720" alt="The ESP32-S31 dev board in the integrated 3D view, with its board parameters beside it"></a><br>
-  <a href="https://github.com/user-attachments/assets/3da46faa-128f-4c90-a563-dd01e53b8c44">Watch the video (90 s)</a>: schematic to routed board, a parametric edit, 3D and production files.
-</p>
+**Parametric PCB design software with deep integrated 3D, built for designers and AI agents alike.**
+Parts, schematic, board layout and 3D in one app, on [Solidcraft](https://github.com/tangency-labs/solidcraft)'s CAD engine.
 
 ## Why it's different
 
