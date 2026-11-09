@@ -301,7 +301,8 @@ fn the_board_replay_builds_the_same_document_with_compact_replies() -> TestResul
         if request["command"] == "project.save" {
             continue;
         }
-        if request["command"] == "project.open" {
+        // Paths the replay reads are relative to the repository root.
+        if request["command"] == "project.open" || request["command"] == "library.use_part_file" {
             let path = request["params"]["path"].as_str().ok_or("path")?;
             request["params"]["path"] = json!(root.join(path).display().to_string());
         }

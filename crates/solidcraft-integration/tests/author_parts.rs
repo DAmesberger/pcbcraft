@@ -494,19 +494,110 @@ pub fn author_finned_heatsink() -> Vec<u8> {
     finish_part(s, "height")
 }
 
+/// The Omron B3U-1000P top-actuated tactile switch of the ESP32-S31 dev
+/// board example: a black housing, a metal cover, the round black plunger
+/// and two tin-plated terminals, one each side along x. Dimensions from
+/// Omron's public B3U catalog (en-b3u.pdf, p.2, Dimensions, B3U-1000P(M)):
+/// housing 3 x 2.5 mm, 1.2 mm to the cover, 1.6 mm over the 1.5 mm
+/// plunger, 4 mm over the terminals, terminals 1.4 mm wide. The drawing
+/// gives no cover or terminal thickness; those two are illustrative. No
+/// CAD or EDA library data was copied.
+pub fn author_b3u_1000p() -> Vec<u8> {
+    let mut s = new_part(
+        "Omron B3U-1000P tactile switch",
+        &[
+            ("length", "3 mm", "mm", "housing size along x"),
+            ("width", "2.5 mm", "mm", "housing size along y"),
+            (
+                "body_height",
+                "1.2 mm",
+                "mm",
+                "seating plane to the cover top",
+            ),
+            ("height", "1.6 mm", "mm", "seating plane to the plunger top"),
+            ("plunger_d", "1.5 mm", "mm", "plunger diameter"),
+            (
+                "terminal_span",
+                "4 mm",
+                "mm",
+                "size along x over the terminals",
+            ),
+            ("terminal_width", "1.4 mm", "mm", "terminal size along y"),
+            (
+                "cover_thickness",
+                "0.1 mm",
+                "mm",
+                "metal cover thickness (illustrative)",
+            ),
+            (
+                "terminal_thickness",
+                "0.15 mm",
+                "mm",
+                "terminal thickness (illustrative)",
+            ),
+        ],
+        ["length * 0.6", "width * 0.6"],
+    );
+    run(
+        &mut s,
+        "solid.box",
+        json!({"corner": ["-length / 2", "-width / 2", "0 mm"], "length": "length",
+            "width": "width", "height": "body_height - cover_thickness", "name": "Housing",
+            "body_name": "Housing"}),
+    );
+    run(
+        &mut s,
+        "solid.box",
+        json!({"corner": ["-length / 2", "-width / 2", "body_height - cover_thickness"],
+            "length": "length", "width": "width", "height": "cover_thickness", "name": "Cover",
+            "body_name": "Cover"}),
+    );
+    run(
+        &mut s,
+        "solid.cylinder",
+        json!({"diameter": "plunger_d", "height": "height - body_height",
+            "base": ["0 mm", "0 mm", "body_height"], "name": "Plunger", "body_name": "Plunger"}),
+    );
+    for (name, x) in [
+        ("Terminal 1", "length / 2"),
+        ("Terminal 2", "-terminal_span / 2"),
+    ] {
+        run(
+            &mut s,
+            "solid.box",
+            json!({"corner": [x, "-terminal_width / 2", "0 mm"],
+                "length": "(terminal_span - length) / 2", "width": "terminal_width",
+                "height": "terminal_thickness", "name": name, "body_name": name}),
+        );
+    }
+    assign_look(&mut s, &["Housing"], MaterialId::Lcp);
+    assign_look(&mut s, &["Cover"], MaterialId::NickelSilver);
+    assign_look(&mut s, &["Plunger"], MaterialId::Pa9t);
+    assign_look(&mut s, &["Terminal 1", "Terminal 2"], MaterialId::TinMatte);
+    finish_part(s, "body_height")
+}
+
 #[test]
-#[ignore = "writes library/parts/*.solidcraft"]
+#[ignore = "writes library/parts/*.solidcraft and the examples' part files"]
 fn author_parts() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../library/parts");
-    std::fs::create_dir_all(&dir).unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     type Author = fn() -> Vec<u8>;
-    let parts: [(&str, Author); 4] = [
-        ("esp32-s31-wroom-3", author_wroom3),
-        ("smd-nut", author_smd_nut),
-        ("round-spacer", author_round_spacer),
-        ("finned-heatsink", author_finned_heatsink),
+    let parts: [(&str, &str, Author); 5] = [
+        ("library/parts", "esp32-s31-wroom-3", author_wroom3),
+        ("library/parts", "smd-nut", author_smd_nut),
+        ("library/parts", "round-spacer", author_round_spacer),
+        ("library/parts", "finned-heatsink", author_finned_heatsink),
+        // The ESP32 dev board example's switches: the example's own part
+        // file, not a built-in.
+        (
+            "examples/esp32-s31-devboard/parts",
+            "b3u-1000p",
+            author_b3u_1000p,
+        ),
     ];
-    for (name, author) in parts {
+    for (folder, name, author) in parts {
+        let dir = root.join(folder);
+        std::fs::create_dir_all(&dir).unwrap();
         let bytes = author();
         let path = dir.join(format!("{name}.solidcraft"));
         std::fs::write(&path, &bytes).unwrap();

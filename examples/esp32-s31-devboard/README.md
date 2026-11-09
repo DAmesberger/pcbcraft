@@ -9,11 +9,12 @@ Release plan step 5: a real ESP32-S31-WROOM-3 development board designed from co
 | File | What |
 |---|---|
 | `esp32-s31-devboard.pcbcraft` | The project. Open it in the desktop app. It holds the parts library, two schematic sheets, the 4-layer board, the fills and the waiver-free production state. |
-| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 570 JSON-lines requests through `pcbcraft-cli stdio --operator`. It replays to a byte-identical `project.json`. |
+| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 571 JSON-lines requests through `pcbcraft-cli stdio --operator`. It replays to a byte-identical `project.json`. |
 | `regenerate.sh` | Replays the board and writes `fab/` and the schematic PDF. With `NATIVE=1` it also writes the `.solidcraft` model (about 10 s of CPU). |
 | `fab/` | Gerber X2 for 4 copper layers, masks, top paste, top legend and profile; plated and non-plated Excellon; drill map and table; job file; top pick-and-place; both BOMs; fabrication and assembly PDFs. |
 | `esp32-s31-devboard-schematic.pdf` | The schematic, two sheets. |
 | `authoring/` | The Python client that wrote the replay: placement coordinates, routes and part data with their datasheet sources. It is not application code. `python3 -B examples/esp32-s31-devboard/authoring/build.py route` from the repository root re-records the replay. |
+| `parts/b3u-1000p.solidcraft` | The switches' 3D model: original work (MIT OR Apache-2.0), authored through Solidcraft's commands by `cargo test -p pcbcraft-solidcraft --test author_parts -- --ignored`. `pcbcraft-cli part check` checks it. |
 | `images/` | Schematic pages; copper layers rendered by PyGerber (MIT) from the Gerber files; desktop screenshots of PCB 2D and 3D. |
 
 ```sh
@@ -68,7 +69,7 @@ The values come from manufacturers' public datasheets, used as datasheets. None 
   - TLV757P (SBVS320/322): pinout, DBV0005A land pattern 0.6 × 1.1 mm.
   - TPD2E009: pinout, DBZ0003A land pattern 0.6 × 1.3 mm.
 - GCT: USB4105 drawing, Recommended PCB Layout.
-- Omron: B3U catalog, PCB pad.
+- Omron: B3U catalog, PCB pad and the B3U-1000P(M) dimensions (p.2) for the switch's part file: housing 3 × 2.5 mm, 1.2 mm to the cover, 1.6 mm over the 1.5 mm plunger, 4 mm over the 1.4 mm wide terminals. The drawing gives no cover or terminal thickness; the part file's 0.1 and 0.15 mm are illustrative.
 - Kingbright: APT1608SGC, recommended soldering pattern; pad 1 is the cathode.
 - Murata and Yageo: MPNs and ratings from the product series pages. The capacitor and resistor lands are Pcbcraft's starter-table estimates.
 - Samtec: TSW. The header footprint is Pcbcraft's 2.54 mm header template.
@@ -101,6 +102,6 @@ The board in the desktop app: PCB 2D (top copper and the top pour; 0 airwires), 
   - The pair check measures each half along its signal path, J1.B6 to U1.43 and J1.B7 to U1.42: 29.865 mm each, so the skew is 0. The length report lists the plug-orientation joins as stubs: 2.245 mm to J1.A6 and 6.98 mm to J1.A7. See the log.
 - **GPIO buses.** They run on the bottom layer, so no part sits in their way. The header order follows the module's pin order (J2 pin 4 = IO12 … pin 12 = IO4), so the buses route without crossings.
 - **EPAD.** Each of its nine squares has a via to the GND plane. The datasheet makes soldering the EPAD optional and recommends a moderate amount of paste. The paste follows the footprint's default.
-- **3D models.** The module uses its parametric part file. The passives, the LEDs (the chip-LED row, from the Kingbright drawing), the SOT parts, the USB-C receptacle (the GCT USB4105 row) and the headers use generated models. The two switches use envelope boxes, because Pcbcraft has no tactile-switch package family yet; these are the production check's only warnings (`fabrication.envelope_model` for SW1 and SW2).
+- **3D models.** The module uses its parametric part file. The passives, the LEDs (the chip-LED row, from the Kingbright drawing), the SOT parts, the USB-C receptacle (the GCT USB4105 row) and the headers use generated models. The two switches use the example's own part file, `parts/b3u-1000p.solidcraft`: a parametric Solidcraft design (housing, metal cover, plunger and terminals) whose defaults are the B3U-1000P drawing's dimensions. The production check has no warnings.
 - **Legend.** U1's footprint outline passes the top edge by 0.225 mm at the antenna end; the fabricator trims those lines (the production check covers legend text, not lines). J2's and U1's designators are moved onto the board with `instance.set_text_placement`. The switch footprint prints its designator outside the body outline, on the side away from SW2's neighbour U1, whose pads its old spot touched. The desktop screenshots in `images/` were taken before those moves.
 - **Antenna.** The module's edge is at the board edge. Espressif's guidelines ask for about 15 mm of clearance around the antenna on the host side, beyond the keep-out. The board leaves the keep-out area empty on every layer, but it does not extend past the module.
