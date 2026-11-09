@@ -218,20 +218,22 @@ pub enum BoardCommand {
     /// (`Outcome::EdgeConstraintAdded`).
     #[serde(rename = "board.constrain")]
     Constrain { constraint: EdgeConstraintSpec },
+    /// Replace an edge constraint of the board outline, by id.
     #[serde(rename = "board.constraint_edit")]
     EditConstraint { constraint: EdgeConstraint },
+    /// Delete an edge constraint of the board outline.
     #[serde(rename = "board.constraint_delete")]
     DeleteConstraint { id: Id },
 }
 
 // A new command chooses its permission class here.
 declare_classes!(BoardCommand {
-    SetRectangle "board.set_rectangle" Edit,
-    StartSketch "board.start_sketch" Edit,
-    Edit "board.edit" Edit,
-    Constrain "board.constrain" Edit,
-    EditConstraint "board.constraint_edit" Edit,
-    DeleteConstraint "board.constraint_delete" Edit,
+    SetRectangle "board.set_rectangle" Edit "Set a rectangular outline",
+    StartSketch "board.start_sketch" Edit "Start an outline sketch",
+    Edit "board.edit" Edit "Edit the board outline",
+    Constrain "board.constrain" Edit "Constrain the outline",
+    EditConstraint "board.constraint_edit" Edit "Edit an outline constraint",
+    DeleteConstraint "board.constraint_delete" Edit "Delete an outline constraint",
 });
 
 /// What a board command produced for its caller.

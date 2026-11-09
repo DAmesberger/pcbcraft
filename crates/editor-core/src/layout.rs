@@ -73,8 +73,13 @@ const MAX_CHECK_PAIRS: usize = 1_000_000;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum LayoutCommand {
+    /// Stage every board-placeable instance without a placement on the top
+    /// side, as one undo step. Existing placements and routing are never
+    /// replaced; refused when they do not fit.
     #[serde(rename = "layout.sync")]
     Sync,
+    /// Place an instance's footprint on the board at `position`, `rotation_deg`
+    /// and `layer`.
     #[serde(rename = "layout.place")]
     Place {
         instance: Id,
@@ -82,6 +87,7 @@ pub enum LayoutCommand {
         rotation_deg: f64,
         layer: Layer,
     },
+    /// Move a placed instance to a new `position`, `rotation_deg` and `layer`.
     #[serde(rename = "layout.move")]
     Move {
         instance: Id,
@@ -89,14 +95,21 @@ pub enum LayoutCommand {
         rotation_deg: f64,
         layer: Layer,
     },
+    /// Lock or unlock an instance's placement.
     #[serde(rename = "layout.placement_lock")]
     SetPlacementLock { instance: Id, locked: bool },
+    /// Route one track of a net from `start` to `end` at `width` on one copper
+    /// layer, checked against other nets' copper.
     #[serde(rename = "layout.route")]
     Route { request: RouteRequest },
+    /// Apply a route edit set (tracks and vias to add, replace and remove) as
+    /// one transaction, checked as a whole.
     #[serde(rename = "layout.route_apply")]
     ApplyRoute { edits: RouteEditSet },
+    /// Delete a track.
     #[serde(rename = "layout.track_delete")]
     DeleteTrack { id: Id },
+    /// Lock or unlock a track.
     #[serde(rename = "layout.track_lock")]
     SetTrackLock { id: Id, locked: bool },
     /// Change one track's width, copper layer or both, as one undo step.
@@ -121,21 +134,25 @@ pub enum LayoutCommand {
     /// the new stackup lacks makes it fail (`layout.edit_stackup` moves it).
     #[serde(rename = "layout.set_stackup")]
     SetStackup(Stackup),
-    /// Replace the board's stackup and move copper between layers as one
-    /// undo step ([`restack::StackupEdit`]): every track, fill, keepout
-    /// and blind-via end on a moved layer moves with it, all at once.
-    /// Copper left on a layer the new stackup lacks refuses the edit.
+    /// Replace the board's stackup and move copper between layers, as one undo
+    /// step ([`restack::StackupEdit`]). Every track, fill, keepout and
+    /// blind-via end on a moved layer moves with it, all at once. Copper left
+    /// on a layer the new stackup lacks refuses the edit.
     #[serde(rename = "layout.edit_stackup")]
     EditStackup(restack::StackupEdit),
     /// Add a board via; the outcome names it (`Outcome::ViaAdded`).
     #[serde(rename = "layout.add_via")]
     AddVia { via: ViaRequest },
+    /// Move a via to `position`.
     #[serde(rename = "layout.via_move")]
     MoveVia { id: Id, position: Point },
+    /// Delete a via.
     #[serde(rename = "layout.via_delete")]
     DeleteVia { id: Id },
+    /// Cover a via with solder mask (`tented`) or leave it open.
     #[serde(rename = "layout.via_tent")]
     SetViaTented { id: Id, tented: bool },
+    /// Lock or unlock a via.
     #[serde(rename = "layout.via_lock")]
     SetViaLock { id: Id, locked: bool },
     /// Route to a via, change layer there and route on, as one undo step;
@@ -146,37 +163,36 @@ pub enum LayoutCommand {
     /// corner). Placements, tracks and vias must stay inside it.
     #[serde(rename = "layout.set_board_size")]
     SetBoardSize { size: Point },
-    /// Route both halves of a differential pair along a centre line, as
-    /// one undo step: 45° fan-out from the start pads, both halves
-    /// coupled at the pair gap with mitred corners, a via pair where
-    /// consecutive legs change layer, fan-in to the end pads. Width and
-    /// gap come from the pair's class (derived from its impedance target
-    /// per layer) unless given. Checked like `layout.route_apply`.
+    /// Route both halves of a differential pair along a centre line, as one
+    /// undo step. 45° fan-out from the start pads, both halves coupled at the
+    /// pair gap with mitred corners, a via pair where consecutive legs change
+    /// layer, fan-in to the end pads. Width and gap come from the pair's class
+    /// (derived from its impedance target per layer) unless given. Checked like
+    /// `layout.route_apply`.
     #[serde(rename = "layout.route_pair")]
     RoutePair { request: pair::PairRouteRequest },
-    /// Meander one straight track segment to add an exact length (or to
-    /// bring its net to a target length), as one undo step: the fewest
-    /// bumps within the amplitude, on the side with room, legs at least
-    /// the track clearance apart; refused when no meander fits.
+    /// Meander one straight track segment to add an exact length, or to bring
+    /// its net to a target length, as one undo step. The fewest bumps within
+    /// the amplitude, on the side with room, legs at least the track clearance
+    /// apart; refused when no meander fits.
     #[serde(rename = "layout.tune_length")]
     TuneLength { request: meander::TuneRequest },
-    /// One interactive route step in a routing mode (`layout::router`):
-    /// `ignore` routes straight (refused on a clearance violation), `walkaround`
-    /// goes round other nets' copper at the clearance, `shove` (the
-    /// default) pushes their tracks and vias aside. One undo step with
-    /// every shoved track and via; the head stops at the last legal point
-    /// when no way exists, and a step that cannot move it at all is
-    /// refused. `max_detour` bounds the path against the straight line;
+    /// One interactive route step in a routing mode: ignore, walkaround or
+    /// shove (the default). In `layout::router`, `ignore` routes straight
+    /// (refused on a clearance violation), `walkaround` goes round other nets'
+    /// copper at the clearance, and `shove` pushes their tracks and vias aside.
+    /// One undo step with every shoved track and via; the head stops at the
+    /// last legal point when no way exists, and a step that cannot move it at
+    /// all is refused. `max_detour` bounds the path against the straight line;
     /// the outcome reports where the head ended and its `detour_factor`
-    /// (`Outcome::RouteStepped`). `layout.route_preview` returns the same
-    /// plan unapplied.
+    /// (`Outcome::RouteStepped`). `layout.route_preview` returns the same plan
+    /// unapplied.
     #[serde(rename = "layout.route_step")]
     RouteStep { request: router::RouteStepRequest },
-    /// Find or make the variant of a mechanical part spec (its component,
-    /// mechanical symbol, package using the part file, footprint and
-    /// binding; docs/mechanical-parts.md) and place a new instance of it
-    /// with its unit off-sheet, as one undo step
-    /// (`Outcome::PartPlaced`).
+    /// Place a new instance of a mechanical part spec, finding or making its
+    /// variant, as one undo step (`Outcome::PartPlaced`). The variant is its
+    /// component, mechanical symbol, package using the part file, footprint and
+    /// binding (docs/mechanical-parts.md); its unit stays off-sheet.
     #[serde(rename = "layout.place_part")]
     PlacePart {
         part: Box<crate::library::mechanical::PartSpec>,
@@ -187,9 +203,9 @@ pub enum LayoutCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         designator: Option<String>,
     },
-    /// Move a placed mechanical part to the variant of another spec (found
-    /// or made), keeping its identity, designator, placement and marking,
-    /// as one undo step (`Outcome::PartPlaced`).
+    /// Move a placed mechanical part to the variant of another spec, found or
+    /// made, as one undo step. It keeps its identity, designator, placement and
+    /// marking (`Outcome::PartPlaced`).
     #[serde(rename = "layout.set_part")]
     SetPart {
         instance: Id,
@@ -203,31 +219,31 @@ pub enum LayoutCommand {
 
 // A new command chooses its permission class here.
 declare_classes!(LayoutCommand {
-    Sync "layout.sync" Edit,
-    Place "layout.place" Edit,
-    Move "layout.move" Edit,
-    SetPlacementLock "layout.placement_lock" Edit,
-    Route "layout.route" Edit,
-    ApplyRoute "layout.route_apply" Edit,
-    DeleteTrack "layout.track_delete" Edit,
-    SetTrackLock "layout.track_lock" Edit,
-    SetTrack "layout.track_set" Edit,
-    SetFabrication "layout.set_fabrication" Edit,
-    SetStackup "layout.set_stackup" Edit,
-    EditStackup "layout.edit_stackup" Edit,
-    AddVia "layout.add_via" Edit,
-    MoveVia "layout.via_move" Edit,
-    DeleteVia "layout.via_delete" Edit,
-    SetViaTented "layout.via_tent" Edit,
-    SetViaLock "layout.via_lock" Edit,
-    RouteLayerChange "layout.route_layer_change" Edit,
-    SetBoardSize "layout.set_board_size" Edit,
-    RoutePair "layout.route_pair" Edit,
-    TuneLength "layout.tune_length" Edit,
-    RouteStep "layout.route_step" Edit,
-    PlacePart "layout.place_part" Edit,
-    SetPart "layout.set_part" Edit,
-    RemovePart "layout.remove_part" Edit,
+    Sync "layout.sync" Edit "Sync the board with the schematic",
+    Place "layout.place" Edit "Place a part on the board",
+    Move "layout.move" Edit "Move a placed part",
+    SetPlacementLock "layout.placement_lock" Edit "Lock or unlock a placement",
+    Route "layout.route" Edit "Route a track",
+    ApplyRoute "layout.route_apply" Edit "Apply a routed path",
+    DeleteTrack "layout.track_delete" Edit "Delete a track",
+    SetTrackLock "layout.track_lock" Edit "Lock or unlock a track",
+    SetTrack "layout.track_set" Edit "Change a track",
+    SetFabrication "layout.set_fabrication" Edit "Set fabrication settings",
+    SetStackup "layout.set_stackup" Edit "Set the layer stackup",
+    EditStackup "layout.edit_stackup" Edit "Edit the layer stackup",
+    AddVia "layout.add_via" Edit "Add a via",
+    MoveVia "layout.via_move" Edit "Move a via",
+    DeleteVia "layout.via_delete" Edit "Delete a via",
+    SetViaTented "layout.via_tent" Edit "Tent or untent a via",
+    SetViaLock "layout.via_lock" Edit "Lock or unlock a via",
+    RouteLayerChange "layout.route_layer_change" Edit "Change layer while routing",
+    SetBoardSize "layout.set_board_size" Edit "Set the board size",
+    RoutePair "layout.route_pair" Edit "Route a differential pair",
+    TuneLength "layout.tune_length" Edit "Tune a track's length",
+    RouteStep "layout.route_step" Edit "Route one step",
+    PlacePart "layout.place_part" Edit "Place a mechanical part",
+    SetPart "layout.set_part" Edit "Change a mechanical part",
+    RemovePart "layout.remove_part" Edit "Remove a mechanical part",
 });
 
 impl LayoutCommand {

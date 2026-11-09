@@ -41,17 +41,17 @@ pub enum LibraryCommand {
     /// Draft an existing lineage starting from one of its revisions.
     #[serde(rename = "library.draft_from")]
     DraftFrom { revision: DefinitionRef },
-    /// Draft a published component revision's working set (the component,
-    /// its first symbol, its first binding with that binding's package and
-    /// first footprint) wherever a lineage has no draft yet, as one undo
-    /// step (`Outcome::DraftsCreated`, possibly empty: nothing changes).
+    /// Draft a published component revision's working set wherever a lineage
+    /// has no draft yet, as one undo step. The set is the component, its first
+    /// symbol, its first binding with that binding's package and first
+    /// footprint (`Outcome::DraftsCreated`, possibly empty: nothing changes).
     #[serde(rename = "library.draft_closure")]
     DraftClosure { component: ComponentRef },
-    /// "Edit a copy in this project": import a folder bundle whose root is
-    /// a component or a Part (revisions the project holds are reused, as
-    /// `library.import` does) and draft the component's working set as
-    /// `library.draft_closure` does, as one undo step. A refusal leaves the
-    /// document unchanged.
+    /// "Edit a copy in this project": import a folder bundle of a component or
+    /// Part and draft its working set, as one undo step. Revisions the project
+    /// holds are reused, as `library.import` does, and the working set is
+    /// drafted as `library.draft_closure` does. A refusal leaves the document
+    /// unchanged.
     #[serde(rename = "library.edit_copy")]
     EditCopy { bundle: Box<Bundle> },
     /// Replace 1–16 draft bodies atomically, as one undo step.
@@ -82,19 +82,19 @@ pub enum LibraryCommand {
     /// now off the symbol grid.
     #[serde(rename = "library.set_grid")]
     SetGrid { grid: Grid },
-    /// Replace the project's symbol drawing conventions (the resistor
-    /// style new generated symbols use; an undoable authoring setting
-    /// saved with the drafts). Existing symbols never change.
+    /// Replace the project's symbol drawing conventions, such as the resistor
+    /// style new generated symbols use. An undoable authoring setting saved
+    /// with the drafts. Existing symbols never change.
     #[serde(rename = "library.set_symbol_conventions")]
     SetSymbolConventions {
         conventions: library::symbol_style::SymbolConventions,
     },
-    /// Redraw one symbol draft as another kind (a pinout import's IC box as
-    /// an LED, say), as one undo step: its unit keeps its identity, and its
+    /// Redraw one symbol draft as another kind, such as a pinout import's IC
+    /// box as an LED, as one undo step. Its unit keeps its identity, and its
     /// other graphics and pins are replaced. Pins follow the component's
-    /// terminal order, or `terminals` when given (every terminal once, in
-    /// the kind's order: a diode's cathode first). The terminals never
-    /// change; a kind drawn for another terminal count is refused.
+    /// terminal order, or `terminals` when given (every terminal once, in the
+    /// kind's order: a diode's cathode first). The terminals never change; a
+    /// kind drawn for another terminal count is refused.
     #[serde(rename = "library.restyle_symbol")]
     RestyleSymbol {
         draft: DefinitionId,
@@ -110,28 +110,27 @@ pub enum LibraryCommand {
         draft: DefinitionId,
         edits: Vec<GraphicEdit>,
     },
-    /// Apply 1–256 parametric edits to one footprint draft, in order, then
-    /// evaluate once and store source and solved pads together, as one
-    /// undo step; any failure (including a blocking evaluation finding)
-    /// leaves the draft unchanged. A draft without pads gains a source on
-    /// its first edit. Needs the host's footprint evaluator.
+    /// Apply 1–256 parametric edits to one footprint draft in order, evaluated
+    /// once, as one undo step. Source and solved pads are stored together; any
+    /// failure (including a blocking evaluation finding) leaves the draft
+    /// unchanged. A draft without pads gains a source on its first edit. Needs
+    /// the host's footprint evaluator.
     #[serde(rename = "library.edit_footprint")]
     EditFootprint {
         draft: DefinitionId,
         edits: Vec<FootprintEdit>,
     },
-    /// Build a family template (chip, gull-wing, QFN/DFN, pin header) into
-    /// an empty footprint draft: the template's edits (named parameters,
-    /// template pads, arrays, the pin-1 polarity and explicit derived
-    /// courtyard and assembly roles) go through the same path as
-    /// `library.edit_footprint`, evaluated once, as one undo step; any
-    /// failure leaves the draft unchanged. Terminals stay unassigned.
-    /// A draft that already has pads or parametric content is refused
-    /// (`footprint.template_not_empty`) unless `replace` is true: then its
-    /// source, pads, polarity and role-solved graphics are dropped and the
-    /// template built in their place, still one atomic undo step (authored
-    /// graphics and mask/paste defaults stay). Needs the host's
-    /// footprint evaluator.
+    /// Build a family template (chip, gull-wing, QFN/DFN, pin header) into an
+    /// empty footprint draft, as one undo step. The template's edits (named
+    /// parameters, template pads, arrays, the pin-1 polarity and explicit
+    /// derived courtyard and assembly roles) go through the same path as
+    /// `library.edit_footprint`, evaluated once; any failure leaves the draft
+    /// unchanged. Terminals stay unassigned. A draft that already has pads or
+    /// parametric content is refused (`footprint.template_not_empty`) unless
+    /// `replace` is true: then its source, pads, polarity and role-solved
+    /// graphics are dropped and the template built in their place, still one
+    /// atomic undo step (authored graphics and mask/paste defaults stay). Needs
+    /// the host's footprint evaluator.
     #[serde(rename = "library.footprint_from_template")]
     FootprintFromTemplate {
         draft: DefinitionId,
@@ -140,10 +139,10 @@ pub enum LibraryCommand {
         #[serde(default)]
         replace: bool,
     },
-    /// Build a footprint draft from a datasheet's pad table: pad rows, plated
-    /// or unplated slots and holes become an explicit footprint, with the
-    /// assembly outline, silkscreen broken around the pads, courtyard and
-    /// designators added, as one undo step. Terminals come from each row's
+    /// Build a footprint draft from a datasheet's pad table, as one undo step.
+    /// Pad rows, plated or unplated slots and holes become an explicit
+    /// footprint, with the assembly outline, silkscreen broken around the pads,
+    /// courtyard and designators added. Terminals come from each row's
     /// `terminal`, or by number with `assign_by_number`; the rest stay
     /// unassigned and are listed. A draft with content is refused unless
     /// `replace`. No evaluator is needed.
@@ -159,15 +158,15 @@ pub enum LibraryCommand {
         confirm: bool,
     },
     /// Import a library bundle (a root revision and its closure) into the
-    /// project snapshot as one undo step: dedupe by origin, fresh project
-    /// lineages, every reference rewritten, origins recorded, assets
-    /// packed. Places nothing.
+    /// project as one undo step. It dedupes by origin, takes fresh project
+    /// lineages, rewrites every reference, records origins and packs assets.
+    /// Places nothing.
     #[serde(rename = "library.import")]
     Import { bundle: Box<Bundle> },
-    /// Import the built-in standard fields (`library.standard_fields`: SI
-    /// quantity kinds with resistance, capacitance, inductance, voltage,
-    /// current, power and frequency fields, and a relative tolerance), as
-    /// `library.import` does: one undo step, and importing them again
+    /// Import the built-in standard fields (SI quantity kinds and their fields)
+    /// as `library.import` does, as one undo step. `library.standard_fields`
+    /// lists them: resistance, capacitance, inductance, voltage, current, power
+    /// and frequency fields, and a relative tolerance. Importing them again
     /// reuses the copies and changes nothing.
     #[serde(rename = "library.import_standard_fields")]
     ImportStandardFields {},
@@ -205,9 +204,9 @@ pub enum LibraryCommand {
         component: ComponentRef,
         name: String,
     },
-    /// Apply 1–256 package edits (form, model, placement, quick action) to
-    /// one package draft, in order, as one undo step; any failure leaves the
-    /// draft unchanged.
+    /// Apply 1–256 package edits (form, model, placement, quick action) to one
+    /// package draft in order, as one undo step. Any failure leaves the draft
+    /// unchanged.
     #[serde(rename = "library.edit_package")]
     EditPackage {
         draft: DefinitionId,
@@ -225,9 +224,9 @@ pub enum LibraryCommand {
         rotation: FitRotation,
         confirm: bool,
     },
-    /// B1: create component, symbol, package, footprint and binding drafts
-    /// from a template row (or custom family values) and a skeleton, as
-    /// one undo step. Needs the host's footprint evaluator.
+    /// Create component, symbol, package, footprint and binding drafts from a
+    /// template row and a skeleton, as one undo step. A custom family's values
+    /// can stand in for the row (B1). Needs the host's footprint evaluator.
     #[serde(rename = "library.new_from_template")]
     NewFromTemplate(Box<NewFromTemplate>),
     /// `library.new_from_template`, then `library.publish` of its five
@@ -235,21 +234,22 @@ pub enum LibraryCommand {
     /// Any refusal changes nothing. Needs the host's footprint evaluator.
     #[serde(rename = "library.publish_from_template")]
     PublishFromTemplate(Box<NewFromTemplate>),
-    /// The part a text reads as (`library.generic_parts`): the identical
-    /// part if the project holds it (nothing changes), else built and
-    /// published as `library.publish_from_template`, one undo step. A text
-    /// that reads as several parts is refused until `candidate` picks one by
-    /// its index in that report. The outcome's `properties` are the text's
-    /// values for `component.place`. Needs the host's footprint evaluator.
+    /// Find the part a text reads as (`library.generic_parts`), or build and
+    /// publish it, as one undo step. The identical part the project holds is
+    /// returned and nothing changes; otherwise it is built and published as
+    /// `library.publish_from_template` does. A text that reads as several parts
+    /// is refused until `candidate` picks one by its index in that report. The
+    /// outcome's `properties` are the text's values for `component.place`.
+    /// Needs the host's footprint evaluator.
     #[serde(rename = "library.find_or_create")]
     FindOrCreate {
         query: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         candidate: Option<usize>,
     },
-    /// B1: replace the package, footprint and generated model of a working
-    /// set from a template row, as one undo step; a non-empty footprint is
-    /// refused unless `replace`. Terminal mappings change only through
+    /// Replace a working set's package, footprint and generated model from a
+    /// template row, as one undo step. A non-empty footprint is refused unless
+    /// `replace` (B1). Terminal mappings change only through
     /// `library.assign_terminals`. Needs the host's footprint evaluator.
     #[serde(rename = "library.package_from_template")]
     PackageFromTemplate(Box<PackageFromTemplate>),
@@ -257,20 +257,20 @@ pub enum LibraryCommand {
     /// draft.
     #[serde(rename = "library.save_package_row")]
     SavePackageRow(Box<SavePackageRow>),
-    /// C3: apply a pinout document as previewed by `library.pinout_preview`,
-    /// atomically, as one undo step; refused when the target changed since
-    /// `base`. Imported rows stay unreviewed.
+    /// Apply a pinout document as `library.pinout_preview` previewed it,
+    /// atomically, as one undo step. Refused when the target changed since
+    /// `base` (C3). Imported rows stay unreviewed.
     #[serde(rename = "library.pinout_apply")]
     PinoutApply(Box<PinoutApply>),
     /// D1: pack a model's asset bytes and create a Model draft; with
     /// `assign`, also use it in a package draft, one undo step.
     #[serde(rename = "library.import_model")]
     ImportModel(Box<ImportModel>),
-    /// D4: apply `library.edit`'s 1–16 draft edits and pack the 1–8 SVG
-    /// artwork files their markings name (`image/svg+xml` text of at most
-    /// 1 MiB, each named by an `Artwork` item of an edited component
-    /// marking or Part top mark), as one undo step; any refusal changes
-    /// nothing.
+    /// Apply `library.edit`'s draft edits and pack the SVG artwork their
+    /// markings name, as one undo step. It takes 1–16 edits and 1–8 artwork
+    /// files (`image/svg+xml` text of at most 1 MiB, each named by an `Artwork`
+    /// item of an edited component marking or Part top mark); any refusal
+    /// changes nothing (D4).
     #[serde(rename = "library.pack_artwork")]
     PackArtwork {
         edits: Vec<DraftEdit>,
@@ -280,37 +280,37 @@ pub enum LibraryCommand {
 
 // A new command chooses its permission class here.
 declare_classes!(LibraryCommand {
-    NewDraft "library.new_draft" Edit,
-    DraftFrom "library.draft_from" Edit,
-    DraftClosure "library.draft_closure" Edit,
-    EditCopy "library.edit_copy" Edit,
-    Edit "library.edit" Edit,
-    DiscardDraft "library.discard_draft" Edit,
-    Publish "library.publish" Ask,
-    GeneratePads "library.generate_pads" Edit,
-    SetGrid "library.set_grid" Edit,
-    SetSymbolConventions "library.set_symbol_conventions" Edit,
-    RestyleSymbol "library.restyle_symbol" Edit,
-    EditGraphics "library.edit_graphics" Edit,
-    EditFootprint "library.edit_footprint" Edit,
-    FootprintFromTemplate "library.footprint_from_template" Edit,
-    FootprintFromPads "library.footprint_from_pads" Edit,
-    AssignTerminals "library.assign_terminals" Edit,
-    Import "library.import" Edit,
-    ImportStandardFields "library.import_standard_fields" Edit,
-    PlaceFrom "library.place_from" Edit,
-    Promote "library.promote" Ask,
-    Duplicate "library.duplicate" Edit,
-    EditPackage "library.edit_package" Edit,
-    FitLeads "library.fit_leads" Edit,
-    NewFromTemplate "library.new_from_template" Edit,
-    PublishFromTemplate "library.publish_from_template" Ask,
-    FindOrCreate "library.find_or_create" Ask,
-    PackageFromTemplate "library.package_from_template" Edit,
-    SavePackageRow "library.save_package_row" Edit,
-    PinoutApply "library.pinout_apply" Edit,
-    ImportModel "library.import_model" Edit,
-    PackArtwork "library.pack_artwork" Edit,
+    NewDraft "library.new_draft" Edit "New draft",
+    DraftFrom "library.draft_from" Edit "Draft from a revision",
+    DraftClosure "library.draft_closure" Edit "Draft a definition and its parts",
+    EditCopy "library.edit_copy" Edit "Edit a copy",
+    Edit "library.edit" Edit "Edit drafts",
+    DiscardDraft "library.discard_draft" Edit "Discard a draft",
+    Publish "library.publish" Ask "Publish drafts",
+    GeneratePads "library.generate_pads" Edit "Generate pads",
+    SetGrid "library.set_grid" Edit "Set the symbol grid",
+    SetSymbolConventions "library.set_symbol_conventions" Edit "Set symbol conventions",
+    RestyleSymbol "library.restyle_symbol" Edit "Restyle a symbol",
+    EditGraphics "library.edit_graphics" Edit "Edit symbol graphics",
+    EditFootprint "library.edit_footprint" Edit "Edit a footprint",
+    FootprintFromTemplate "library.footprint_from_template" Edit "Footprint from a template",
+    FootprintFromPads "library.footprint_from_pads" Edit "Footprint from pads",
+    AssignTerminals "library.assign_terminals" Edit "Assign pads to terminals",
+    Import "library.import" Edit "Import a bundle",
+    ImportStandardFields "library.import_standard_fields" Edit "Import standard fields",
+    PlaceFrom "library.place_from" Edit "Import and place a bundle",
+    Promote "library.promote" Ask "Promote to a library",
+    Duplicate "library.duplicate" Edit "Duplicate a definition",
+    EditPackage "library.edit_package" Edit "Edit a package",
+    FitLeads "library.fit_leads" Edit "Fit leads to pads",
+    NewFromTemplate "library.new_from_template" Edit "New part from a template",
+    PublishFromTemplate "library.publish_from_template" Ask "Publish a part from a template",
+    FindOrCreate "library.find_or_create" Ask "Find or create a generic part",
+    PackageFromTemplate "library.package_from_template" Edit "Package from a row",
+    SavePackageRow "library.save_package_row" Edit "Save a package row",
+    PinoutApply "library.pinout_apply" Edit "Apply a pinout import",
+    ImportModel "library.import_model" Edit "Import a 3D model",
+    PackArtwork "library.pack_artwork" Edit "Pack marking artwork",
 });
 
 fn close_by_default() -> bool {

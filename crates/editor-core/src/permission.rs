@@ -40,16 +40,25 @@ impl Class {
     }
 }
 
+/// The longest title [`declare_classes!`] may give a command, in bytes.
+pub const MAX_TITLE: usize = 40;
+
 /// The classes of one command enum, one line per variant:
-/// `Variant "wire.name" Class`. Defines `class(&self)`, `command(&self)` and
-/// the table `CLASSES` that discovery reads by name.
+/// `Variant "wire.name" Class "Title"`. Defines `class(&self)`,
+/// `command(&self)` and the tables `CLASSES` and `TITLES` that discovery
+/// reads by name. The title is a short name for people (an MCP `title`), at
+/// most [`MAX_TITLE`] bytes; what the command does is its doc comment.
 #[macro_export]
 macro_rules! declare_classes {
-    ($family:ident { $($variant:ident $name:literal $class:ident,)+ }) => {
+    ($family:ident { $($variant:ident $name:literal $class:ident $title:literal,)+ }) => {
         impl $family {
             /// Every command of this enum with its permission class.
             pub const CLASSES: &'static [(&'static str, $crate::permission::Class)] =
                 &[$(($name, $crate::permission::Class::$class),)+];
+
+            /// Every command of this enum with its title.
+            pub const TITLES: &'static [(&'static str, &'static str)] =
+                &[$(($name, $title),)+];
 
             /// This command's permission class.
             pub const fn class(&self) -> $crate::permission::Class {

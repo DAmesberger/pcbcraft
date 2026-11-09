@@ -119,6 +119,25 @@ impl Operation {
         .into_iter()
         .flatten()
     }
+
+    /// Every operation by wire name with its title, in [`Self::classes`]'s
+    /// order.
+    pub fn titles() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
+        const UPDATE: &[(&str, &str)] = &[("update", "Apply an update")];
+        [
+            LibraryCommand::TITLES,
+            InstanceCommand::TITLES,
+            schematic::SchematicCommand::TITLES,
+            layout::LayoutCommand::TITLES,
+            rules::RulesCommand::TITLES,
+            layout::fill::FillCommand::TITLES,
+            layout::outline::BoardCommand::TITLES,
+            fabrication::FabricationCommand::TITLES,
+            UPDATE,
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 /// Every read-only report. Queries never change the document, its revision
@@ -136,8 +155,8 @@ pub enum Query {
     #[serde(rename = "component.check_drafts")]
     CheckDrafts {},
     /// Ranked component lineages at their latest published revision for a
-    /// one-line query: free text, `pkg:`/`has:`/`missing:` filters and
-    /// unit-aware field predicates such as `res>=10k`, `tol<=1%` or
+    /// one-line query. The query takes free text, `pkg:`/`has:`/`missing:`
+    /// filters and unit-aware field predicates such as `res>=10k`, `tol<=1%` or
     /// `C:1n..100n`. Field keys resolve against the project's field
     /// definitions.
     #[serde(rename = "library.search")]
@@ -167,19 +186,20 @@ pub enum Query {
         #[serde(default)]
         revision: Option<Revision>,
     },
-    /// The project BOM: resolved instances grouped by Part, unresolved ones
-    /// by component revision, footprint and identical requirements, each
-    /// line marked when it is unresolved.
+    /// The project BOM, with resolved instances grouped by Part and unresolved
+    /// lines marked. Unresolved instances group by component revision,
+    /// footprint and identical requirements.
     #[serde(rename = "project.bom")]
     Bom {},
-    /// Groups of instances without a Part (or with an unresolved one) that
-    /// share requirements and footprint, each with the `library.search`
-    /// query that finds Parts for it.
+    /// Groups of instances without a resolved Part, each with the
+    /// `library.search` query that finds Parts for it. A group shares
+    /// requirements and footprint; an instance with an unresolved Part is
+    /// included.
     #[serde(rename = "library.resolve_groups")]
     ResolveGroups {},
-    /// What `library.edit_footprint` would produce for these edits (pads,
-    /// graphics, findings, including blocking ones), without changing the
-    /// document. Needs the host's footprint evaluator.
+    /// What `library.edit_footprint` would produce for these edits, without
+    /// changing the document. Pads, graphics and findings, including blocking
+    /// ones. Needs the host's footprint evaluator.
     #[serde(rename = "library.footprint_preview")]
     FootprintPreview {
         draft: DefinitionId,
@@ -201,9 +221,9 @@ pub enum Query {
         name: String,
         fresh: Vec<SourceLineageId>,
     },
-    /// Every issue of the project and its drafts in `scope`, with the
-    /// severity, group and one-line title core gives each finding
-    /// (docs/sidebar-ia.md): uncapped, most severe first, with same-cause
+    /// Every issue of the project and its drafts in `scope`, most severe first,
+    /// with its severity, group and title. Each row has the one-line title core
+    /// gives the finding (docs/sidebar-ia.md); uncapped, with same-cause
     /// findings merged into one row and every finding kept.
     #[serde(rename = "project.issues")]
     Issues { scope: issues::IssueScope },
@@ -216,10 +236,10 @@ pub enum Query {
         #[serde(default)]
         limit: Option<usize>,
     },
-    /// On-demand generic parts a text reads as, under the families' declared
-    /// patterns ("header 1x4", "10k 0603"): how it was read, whether the part
-    /// already exists, and what `library.find_or_create` would make. Empty
-    /// when it reads as none.
+    /// On-demand generic parts a text such as "header 1x4" or "10k 0603" reads
+    /// as, under the families' patterns. Each says how the text was read,
+    /// whether the part already exists, and what `library.find_or_create` would
+    /// make. Empty when it reads as none.
     #[serde(rename = "library.generic_parts")]
     GenericParts { query: String },
     /// The built-in standard fields as a bundle `library.import` takes
@@ -255,9 +275,9 @@ pub enum Query {
         instance: Id,
         request: functions::suggest::SuggestRequest,
     },
-    /// C2: per terminal of one instance: pads, GPIO, active function,
-    /// peripheral and role, mux code, pin config, net and every other
-    /// endpoint on the net.
+    /// Per terminal of one instance: pads, GPIO, active function, peripheral,
+    /// role, mux code, pin config and net. Every other endpoint on the net is
+    /// listed too (C2).
     #[serde(rename = "project.pin_report")]
     PinReport { instance: Id },
     /// C4: the firmware pin-configuration IR of one instance.
@@ -302,15 +322,15 @@ pub enum Query {
     #[serde(rename = "schematic.sheets")]
     Sheets {},
     /// Where a net appears across sheets: its labels, sheet pins and placed
-    /// terminals with sheet and position, in page order (jump between a
-    /// label's other occurrences).
+    /// terminals, in page order. Each with sheet and position, for jumping
+    /// between a label's other occurrences.
     #[serde(rename = "schematic.net_places")]
     NetPlaces { net: Id },
-    /// What `schematic.paste` needs to recreate these sheet objects: the
-    /// symbols' instances, labels, drawings, the wires named and the wires
-    /// with both ends on named objects. A wire end on anything else reads
-    /// as a free end. Changes nothing, so a transport or the app can keep
-    /// the result as its copy buffer.
+    /// What `schematic.paste` needs to recreate these sheet objects. The
+    /// symbols' instances, labels, drawings, the wires named and the wires with
+    /// both ends on named objects. A wire end on anything else reads as a free
+    /// end. Changes nothing, so a transport or the app can keep the result as
+    /// its copy buffer.
     #[serde(rename = "schematic.copy")]
     SheetCopy {
         /// The sheet they are on; the first sheet when omitted.
@@ -319,7 +339,7 @@ pub enum Query {
         objects: Vec<schematic::ClipObject>,
     },
     /// Everything one sheet draws, resolved to shapes and text in sheet
-    /// millimetres: page frame and title block, labels, power ports, sheet
+    /// millimetres. Page frame and title block, labels, power ports, sheet
     /// symbols, furniture, wires, junction dots and units.
     #[serde(rename = "schematic.scene")]
     SheetScene { sheet: SheetId },
@@ -329,23 +349,23 @@ pub enum Query {
     ImpedanceCalculate {
         request: layout::impedance::ImpedanceRequest,
     },
-    /// Every layer's line structure and, for each net class with an
-    /// impedance target, the width and pair gap it needs on each layer
-    /// and why a target cannot be met there.
+    /// Every layer's line structure and the width and pair gap each impedance
+    /// target needs on each layer. Per net class with an impedance target, and
+    /// why a target cannot be met on a layer.
     #[serde(rename = "impedance.table")]
     ImpedanceTable {},
     /// Differential pairs proposed from net names (`USB_D+`/`USB_D-`,
     /// `_P`/`_N`, `DP`/`DM`); `diff_pair.add` makes one.
     #[serde(rename = "diff_pair.suggest")]
     SuggestPairs {},
-    /// Every routed, paired or grouped net's length (tracks plus via
-    /// barrels), its target and deviation; every pair's skew and
-    /// uncoupled length; every length group's window.
+    /// Every routed, paired or grouped net's length with its target and
+    /// deviation, and every pair's skew. Length counts tracks plus via barrels;
+    /// pairs also report uncoupled length, and every length group its window.
     #[serde(rename = "layout.length_report")]
     LengthReport {},
-    /// What `layout.route_step` would do, without applying it: the edit
-    /// set (the step's copper and every shoved track and via), where the
-    /// head ends and why it stopped short.
+    /// What `layout.route_step` would do, without applying it. The edit set
+    /// (the step's copper and every shoved track and via), where the head ends
+    /// and why it stopped short.
     #[serde(rename = "layout.route_preview")]
     RoutePreview {
         request: layout::router::RouteStepRequest,
@@ -355,10 +375,10 @@ pub enum Query {
     TunePreview {
         request: layout::meander::TuneRequest,
     },
-    /// The production check before fabrication export: the design checked
-    /// under `profile` (a profile id such as `std-6-6` or a whole profile;
-    /// the project's rules when omitted) plus production findings, each
-    /// with its waiver key and saved waiver.
+    /// The production check before fabrication export: the design and
+    /// production findings under a rule profile. `profile` is a profile id such
+    /// as `std-6-6` or a whole profile, and the project's rules when omitted;
+    /// each finding has its waiver key and saved waiver.
     #[serde(rename = "fabrication.preflight")]
     Preflight {
         #[serde(default)]
@@ -368,46 +388,46 @@ pub enum Query {
 
 // A new command chooses its permission class here.
 declare_classes!(Query {
-    InspectInstance "component.inspect" Read,
-    CheckDefinition "component.check" Read,
-    CheckDrafts "component.check_drafts" Read,
-    Search "library.search" Read,
-    GenericParts "library.generic_parts" Read,
-    Facets "library.facets" Read,
-    InspectLineage "library.inspect" Read,
-    Bom "project.bom" Read,
-    ResolveGroups "library.resolve_groups" Read,
-    FootprintPreview "library.footprint_preview" Read,
-    UpdatesAvailable "library.updates_available" Read,
-    PromotePreview "library.promote_preview" Read,
-    Issues "project.issues" Read,
-    Templates "library.templates" Read,
-    StandardFields "library.standard_fields" Read,
-    PackagePlan "library.package_plan" Read,
-    Models "library.models" Read,
-    PinoutPreview "library.pinout_preview" Read,
-    SuggestPins "functions.suggest" Read,
-    PinReport "project.pin_report" Read,
-    PinConfig "project.pin_config" Read,
-    Marking "instance.marking" Read,
-    RulesEffective "rules.effective" Read,
-    RuleProfiles "rules.profiles" Read,
-    PreviewProfile "rules.preview_profile" Read,
-    NetClasses "net_class.list" Read,
-    PreviewNetClassPatterns "net_class.preview_patterns" Read,
-    BoardShape "board.shape" Read,
-    FillStatus "fill.status" Read,
-    Sheets "schematic.sheets" Read,
-    NetPlaces "schematic.net_places" Read,
-    SheetCopy "schematic.copy" Read,
-    SheetScene "schematic.scene" Read,
-    ImpedanceCalculate "impedance.calculate" Read,
-    ImpedanceTable "impedance.table" Read,
-    SuggestPairs "diff_pair.suggest" Read,
-    LengthReport "layout.length_report" Read,
-    RoutePreview "layout.route_preview" Read,
-    TunePreview "layout.tune_preview" Read,
-    Preflight "fabrication.preflight" Read,
+    InspectInstance "component.inspect" Read "Inspect an instance",
+    CheckDefinition "component.check" Read "Check a definition",
+    CheckDrafts "component.check_drafts" Read "Check all drafts",
+    Search "library.search" Read "Search the library",
+    GenericParts "library.generic_parts" Read "Find generic parts",
+    Facets "library.facets" Read "List search filters",
+    InspectLineage "library.inspect" Read "Inspect a lineage",
+    Bom "project.bom" Read "Bill of materials",
+    ResolveGroups "library.resolve_groups" Read "Group instances for purchasing",
+    FootprintPreview "library.footprint_preview" Read "Preview a footprint",
+    UpdatesAvailable "library.updates_available" Read "List library updates",
+    PromotePreview "library.promote_preview" Read "Preview a promotion",
+    Issues "project.issues" Read "List issues",
+    Templates "library.templates" Read "List package rows",
+    StandardFields "library.standard_fields" Read "List standard fields",
+    PackagePlan "library.package_plan" Read "Plan a package from a row",
+    Models "library.models" Read "Find 3D models",
+    PinoutPreview "library.pinout_preview" Read "Preview a pinout import",
+    SuggestPins "functions.suggest" Read "Suggest pin assignments",
+    PinReport "project.pin_report" Read "Pin report",
+    PinConfig "project.pin_config" Read "Firmware pin configuration",
+    Marking "instance.marking" Read "Resolve an instance's marking",
+    RulesEffective "rules.effective" Read "Effective rules",
+    RuleProfiles "rules.profiles" Read "List rule profiles",
+    PreviewProfile "rules.preview_profile" Read "Preview a rule profile",
+    NetClasses "net_class.list" Read "List net classes",
+    PreviewNetClassPatterns "net_class.preview_patterns" Read "Preview net class patterns",
+    BoardShape "board.shape" Read "Board shape",
+    FillStatus "fill.status" Read "Fill status",
+    Sheets "schematic.sheets" Read "List sheets",
+    NetPlaces "schematic.net_places" Read "Find a net on the sheets",
+    SheetCopy "schematic.copy" Read "Copy schematic objects",
+    SheetScene "schematic.scene" Read "Sheet scene",
+    ImpedanceCalculate "impedance.calculate" Read "Calculate impedance",
+    ImpedanceTable "impedance.table" Read "Impedance table",
+    SuggestPairs "diff_pair.suggest" Read "Suggest differential pairs",
+    LengthReport "layout.length_report" Read "Length report",
+    RoutePreview "layout.route_preview" Read "Preview a route",
+    TunePreview "layout.tune_preview" Read "Preview length tuning",
+    Preflight "fabrication.preflight" Read "Production check",
 });
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]

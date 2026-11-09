@@ -1208,27 +1208,28 @@ pub enum RulesCommand {
     /// Replace one group's values (its id stays).
     #[serde(rename = "length_group.edit")]
     EditLengthGroup { group: signal::LengthGroup },
+    /// Delete a length group.
     #[serde(rename = "length_group.delete")]
     DeleteLengthGroup { group: signal::LengthGroupId },
 }
 
 // A new command chooses its permission class here.
 declare_classes!(RulesCommand {
-    SetProfile "rules.set_profile" Edit,
-    SetOverride "rules.set_override" Edit,
-    ClearOverride "rules.clear_override" Edit,
-    AddNetClass "net_class.add" Edit,
-    EditNetClass "net_class.edit" Edit,
-    DeleteNetClass "net_class.delete" Edit,
-    AssignNets "net_class.assign" Edit,
-    SetPatterns "net_class.set_patterns" Edit,
-    SetClassClearance "net_class.set_clearance" Edit,
-    AddDiffPair "diff_pair.add" Edit,
-    EditDiffPair "diff_pair.edit" Edit,
-    DeleteDiffPair "diff_pair.delete" Edit,
-    AddLengthGroup "length_group.add" Edit,
-    EditLengthGroup "length_group.edit" Edit,
-    DeleteLengthGroup "length_group.delete" Edit,
+    SetProfile "rules.set_profile" Edit "Set the rule profile",
+    SetOverride "rules.set_override" Edit "Override a rule",
+    ClearOverride "rules.clear_override" Edit "Clear a rule override",
+    AddNetClass "net_class.add" Edit "Add a net class",
+    EditNetClass "net_class.edit" Edit "Edit a net class",
+    DeleteNetClass "net_class.delete" Edit "Delete a net class",
+    AssignNets "net_class.assign" Edit "Assign nets to a class",
+    SetPatterns "net_class.set_patterns" Edit "Set net class patterns",
+    SetClassClearance "net_class.set_clearance" Edit "Set a class-to-class clearance",
+    AddDiffPair "diff_pair.add" Edit "Add a differential pair",
+    EditDiffPair "diff_pair.edit" Edit "Edit a differential pair",
+    DeleteDiffPair "diff_pair.delete" Edit "Delete a differential pair",
+    AddLengthGroup "length_group.add" Edit "Add a length group",
+    EditLengthGroup "length_group.edit" Edit "Edit a length group",
+    DeleteLengthGroup "length_group.delete" Edit "Delete a length group",
 });
 
 /// Apply one rules command. On failure `rules` is unchanged. Net

@@ -399,47 +399,47 @@ pub enum Request {
 // `project.query` take their operation's or query's; a request that names a
 // path needs at least Ask ([`Request::effective_class`]).
 pcbcraft_core::declare_classes!(Request {
-    Apply "project.apply" Edit,
-    Inspect "project.inspect" Read,
-    Schema "project.schema" Read,
-    Query "project.query" Read,
-    Undo "project.undo" Edit,
-    Redo "project.redo" Edit,
-    New "project.new" Ask,
-    Open "project.open" Ask,
-    Save "project.save" Ask,
-    PreviewUpdate "project.preview_update" Read,
-    ApplyUpdate "project.apply_update" Edit,
-    ExportNative "project.export_native" Ask,
-    ExportFabrication "project.export_fabrication" Ask,
-    Sources "library.sources" Read,
-    SourceAdd "library.source.add" Never,
-    SourceCreate "library.source.create" Never,
-    SourceRemove "library.source.remove" Never,
-    SourceEnable "library.source.enable" Never,
-    Rescan "library.rescan" Read,
-    Favourite "library.favourite" Never,
-    Bundle "library.bundle" Read,
-    ImportFrom "library.import_from_folder" Edit,
-    PlaceFrom "library.place_from_folder" Edit,
-    Publish "library.publish_to_folder" Ask,
-    ImportFromProject "library.import_from_project" Ask,
-    ImportSvg "library.import_svg" Ask,
-    OpenPreview "library.open_preview" Read,
-    PinoutSchema "library.pinout_schema" Read,
-    ReviewCheck "library.review_check" Read,
-    FirmwarePreview "firmware.export_preview" Read,
-    FirmwareExport "firmware.export" Ask,
-    InspectModelFile "library.inspect_model_file" Ask,
-    SetMarking "library.set_marking" Edit,
-    SchematicPdf "schematic.export_pdf" Ask,
-    MarkingSurfaces "library.marking_surfaces" Read,
-    CheckPartFile "library.check_part_file" Read,
-    UsePartFile "library.use_part_file" Edit,
-    SetPartValues "library.set_part_values" Edit,
-    PartFiles "library.part_files" Read,
-    PlacePartFile "layout.place_part_file" Edit,
-    SetPartFileValues "layout.set_part_file_values" Edit,
+    Apply "project.apply" Edit "Apply an operation",
+    Inspect "project.inspect" Read "Inspect the project",
+    Schema "project.schema" Read "Look up a schema",
+    Query "project.query" Read "Run a query",
+    Undo "project.undo" Edit "Undo",
+    Redo "project.redo" Edit "Redo",
+    New "project.new" Ask "New project",
+    Open "project.open" Ask "Open a project",
+    Save "project.save" Ask "Save the project",
+    PreviewUpdate "project.preview_update" Read "Preview an update",
+    ApplyUpdate "project.apply_update" Edit "Apply an update",
+    ExportNative "project.export_native" Ask "Export the 3D model",
+    ExportFabrication "project.export_fabrication" Ask "Export fabrication files",
+    Sources "library.sources" Read "List library folders",
+    SourceAdd "library.source.add" Never "Add a library folder",
+    SourceCreate "library.source.create" Never "Create a library folder",
+    SourceRemove "library.source.remove" Never "Remove a library folder",
+    SourceEnable "library.source.enable" Never "Turn a library folder on or off",
+    Rescan "library.rescan" Read "Rescan library folders",
+    Favourite "library.favourite" Never "Mark a favourite",
+    Bundle "library.bundle" Read "Read a folder bundle",
+    ImportFrom "library.import_from_folder" Edit "Import from a folder",
+    PlaceFrom "library.place_from_folder" Edit "Place from a folder",
+    Publish "library.publish_to_folder" Ask "Publish to a folder",
+    ImportFromProject "library.import_from_project" Ask "Import from another project",
+    ImportSvg "library.import_svg" Ask "Import SVG artwork",
+    OpenPreview "library.open_preview" Read "Preview a folder entry",
+    PinoutSchema "library.pinout_schema" Read "Pinout document schema",
+    ReviewCheck "library.review_check" Read "Check a datasheet review report",
+    FirmwarePreview "firmware.export_preview" Read "Preview a firmware export",
+    FirmwareExport "firmware.export" Ask "Export firmware pin configuration",
+    InspectModelFile "library.inspect_model_file" Ask "Inspect a model file",
+    SetMarking "library.set_marking" Edit "Set a component marking",
+    SchematicPdf "schematic.export_pdf" Ask "Export the schematic as PDF",
+    MarkingSurfaces "library.marking_surfaces" Read "List marking surfaces",
+    CheckPartFile "library.check_part_file" Read "Check a part file",
+    UsePartFile "library.use_part_file" Edit "Use a part file as the model",
+    SetPartValues "library.set_part_values" Edit "Set part file values",
+    PartFiles "library.part_files" Read "List part files",
+    PlacePartFile "layout.place_part_file" Edit "Place a part file on the board",
+    SetPartFileValues "layout.set_part_file_values" Edit "Change a placed part file",
 });
 
 impl Request {
@@ -594,13 +594,25 @@ impl Request {
         }
     }
 
-    /// Every request ID with its description and parameter schema, generated
-    /// from the Rust types the dispatcher deserializes.
+    /// Every request ID with its one-line summary, description and parameter
+    /// schema, generated from the Rust types the dispatcher deserializes.
+    /// The summary says what the command is for in its first words, within
+    /// [`metadata::MAX_SUMMARY`] bytes; the description adds the detail.
     pub fn catalog() -> Vec<CommandInfo> {
-        fn info<T: JsonSchema>(id: &'static str, description: &'static str) -> CommandInfo {
+        fn info<T: JsonSchema>(
+            id: &'static str,
+            summary: &'static str,
+            description: &'static str,
+        ) -> CommandInfo {
             let params = serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null);
             CommandInfo {
                 id,
+                // Every listed request has one; the metadata tests check.
+                title: Request::TITLES
+                    .iter()
+                    .find(|(name, _)| *name == id)
+                    .map_or(id, |(_, title)| *title),
+                summary,
                 description,
                 // Unlisted cannot pass the gate's tests; refused until then.
                 class: Request::CLASSES
@@ -614,166 +626,207 @@ impl Request {
         vec![
             info::<ApplyParams>(
                 "project.apply",
+                "Apply one typed document operation at expected_revision; a stale revision or invalid input changes nothing.",
                 "Apply one typed document operation (library, instance including instance.assign_part, schematic, layout including layout.set_fabrication, layout.set_stackup, layout.edit_stackup and layout.add_via, or update) at an expected revision and return its outcome. Fails without changes on stale revisions or invalid input.",
             ),
             info::<InspectParams>(
                 "project.inspect",
+                "Read the revision, object counts, drafts and open findings; at reads one part of the document.",
                 "Return the revision, object counts, each draft's state and open findings by code. verbose: true returns the whole snapshot (project, drafts with their publish findings, ERC and board-check findings; about 0.5 MB on a small board); at: a JSON pointer into it (/project/vias, /project/nets) returns just what it names.",
             ),
             info::<SchemaParams>(
                 "project.schema",
+                "Look up one operation, query or command's exact schema and how to send it; without a name, the index.",
                 "The exact JSON schema of one project.apply operation (layout.add_via), project.query query (library.search) or command, with how to send it; large definitions come separately through def. Without a name, the index of all of them with one line each. Not a document change.",
             ),
             info::<Query>(
                 "project.query",
+                "Answer one read-only query by name, such as project.issues, library.search or component.inspect.",
                 "Answer one read-only query: component.inspect reports an instance's exact component pin, resolved symbol and implementation, per-unit states, effective field values with their origin, active and unresolved terminal functions, occurrence and placement counts and completeness findings; component.check reports the publish findings, with the stage each blocks, of one draft or published revision; component.check_drafts reports every draft at once; library.search ranks component lineages at their latest published revision for a one-line query (free text, pkg:/has:/missing: filters and unit-aware field predicates such as res>=10k, tol<=1% or C:1n..100n, whose keys resolve against the project's field definitions; parse errors name the term, e.g. V>=10k: 10 k has no unit of voltage); library.facets lists the fields, package labels and completeness badges the matching entries carry; library.inspect reports one revision of a lineage with its revisions, symbols, implementations and badges; project.bom lists the bill of materials, resolved instances grouped by their manufacturer Part and unresolved ones marked; library.footprint_preview reports what library.edit_footprint would produce for a footprint draft (pads, graphics and findings, blocking ones included); library.resolve_groups lists instances without an agreeing Part that share component revision, footprint and requirements, each group with the library.search query that finds Parts for it; library.updates_available lists project lineages copied from a library source that holds a newer revision or records whose hash changed (modified lists those source revisions); library.promote_preview reports the bundle and origins library.promote would write and record (library.publish_to_folder runs it); project.issues lists every issue of the project (scope all, an area of component, schematic or board, or a selection of objects), uncapped and most severe first, each with core's severity (error for anything that blocks a stage or breaks a board or electrical rule, warning, to_do for unrouted, unplaced and unpurchased work, info), group, one-line title naming objects by their names, cause and fix, the finding it comes from and, under also, the same-cause findings merged into it; elsewhere counts the issues of areas outside the scope. library.search and library.facets include the entries of every ready library source. Nothing is stored.",
             ),
             info::<RevisionParams>(
                 "project.undo",
+                "Undo the last document change at expected_revision.",
                 "Undo the last document change at expected_revision. Refused without changes on a stale revision, so a newer change by someone else is never undone.",
             ),
             info::<RevisionParams>(
                 "project.redo",
+                "Redo the last undone document change at expected_revision.",
                 "Redo the last undone document change at expected_revision. Refused without changes on a stale revision.",
             ),
             info::<RevisionParams>(
                 "project.new",
+                "Start a new empty project at expected_revision, clearing history.",
                 "Start a new empty project at expected_revision; clears history. Refused without changes on a stale revision.",
             ),
             info::<OpenParams>(
                 "project.open",
+                "Open a .pcbcraft project file in place of the document at expected_revision.",
                 "Open a .pcbcraft project file of the current format version in place of the document at expected_revision; other versions are refused. Failure, a stale revision included, leaves the session unchanged.",
             ),
             info::<SaveParams>(
                 "project.save",
+                "Save the project atomically to a .pcbcraft file, by default its current path.",
                 "Atomically save to a .pcbcraft file (defaults to the current path). Not undoable.",
             ),
             info::<PreviewParams>(
                 "project.preview_update",
+                "Preview a component-revision, instance, schematic or board-sync change and its routed-copper impact.",
                 "Preview a revision-bound component-revision, instance, schematic or PCB-sync change and its routed-copper impact.",
             ),
             info::<updates::ApplyUpdate>(
                 "project.apply_update",
                 "Apply a previewed update at its revision, optionally removing the listed conflicting tracks.",
+                "Apply a previewed update at its revision, optionally removing the listed conflicting tracks.",
             ),
             info::<PathParams>(
                 "project.export_native",
+                "Export the board as a native parametric .solidcraft 3D model to a new file.",
                 "Export the board as a native parametric .solidcraft model to a new file.",
             ),
             info::<FabricationParams>(
                 "project.export_fabrication",
+                "Check the board for production, then write Gerber, drill, pick-and-place, BOM and drawing files.",
                 "Run the production check (fabrication.preflight) under the chosen rule profile, then write the production files to a new or empty folder, or one new .zip: Gerber X2 copper, solder mask, paste, legend and profile layers with file, aperture and object attributes; plated and non-plated Excellon drill files with routed slots, a drill map and table; a Gerber job file; pick-and-place and BOM CSVs; fabrication and assembly drawings (PDF). Refused, writing nothing, while unwaived errors remain (waive with project.apply fabrication.waive). Returns the preflight report, the files with sizes and step timings. Not a document change.",
             ),
             info::<NoParams>(
                 "library.sources",
+                "List the configured library folders with their state, or why one is disabled.",
                 "List the configured library folders in settings order: path, enabled, writable, state (ready with library id, name, entry and revision counts and how the index was obtained; disabled with the reason, e.g. path missing or unsupported format v2; failed with a diagnostic). Not a document change.",
             ),
             info::<SourceAddParams>(
                 "library.source.add",
+                "Add a library folder as a source in the person's settings.",
                 "Add a library folder (pcbcraft-library.json manifest) as a source in the per-user settings. A missing folder, a malformed manifest, another format version, an unknown required feature, a repeated path or a repeated library id is refused and nothing changes. library.search and library.facets then include its entries (source library, with source_lineage).",
             ),
             info::<SourceCreateParams>(
                 "library.source.create",
+                "Create an empty library folder and add it as a writable source.",
                 "Create an empty library folder and add it as a writable source. Its library id is random unless library supplies one (a recorded session passes the id it recorded, so a replay reproduces the folder).",
             ),
             info::<PathParams>(
                 "library.source.remove",
+                "Remove a library source from the settings; the folder stays untouched.",
                 "Remove a library source from the settings. The folder and every project copy are untouched.",
             ),
             info::<SourceEnableParams>(
                 "library.source.enable",
+                "Turn a library source on or off.",
                 "Turn a library source on or off; an off source stays listed as disabled (turned off).",
             ),
             info::<NoParams>(
                 "library.rescan",
+                "Re-read every library source's manifest and index, then list the sources.",
                 "Re-read every source's manifest and catalog index (after a git pull or another writer), then list the sources.",
             ),
             info::<FavouriteParams>(
                 "library.favourite",
+                "Mark or unmark a library lineage as a favourite, which ranks search results.",
                 "Mark or unmark a lineage, keyed by project lineage or by library id and source lineage, as a favourite. Favourites rank library.search results and persist per user, never in a project.",
             ),
             info::<BundleParams>(
                 "library.bundle",
+                "Read one revision of a folder lineage with its dependency closure and packed assets.",
                 "Read one revision of a folder lineage (default the newest) with its complete dependency closure and packed assets, as the bundle library.import and library.place_from carry.",
             ),
             info::<ImportFromParams>(
                 "library.import_from_folder",
+                "Import a folder lineage's revision and its closure into the project in one undo step.",
                 "Read a folder bundle and apply library.import with it at the expected revision: the closure is copied into the project under fresh project lineages, or appended as the next project revision of a lineage already imported from the same source; an equal origin is reused. One undo step; places nothing. Follow with project.preview_update to move instances to the new revision.",
             ),
             info::<ImportFromProjectParams>(
                 "library.import_from_project",
+                "Copy one published revision and its closure from another .pcbcraft file into this project.",
                 "Read another .pcbcraft file (never changed) and copy one published revision (root, with its kind, id and revision in that file) and its complete closure into this project, packed assets included, as one library.import at expected_revision: one undo step, nothing placed. Each copy records its origin with the exact source revision and content hash, and every pin keeps naming the exact revision it names there. The project numbers its copies in import order. Ids are derived from the file's content, so a replay is reproducible and importing again reuses the copies (no undo step); a newer revision of a copied lineage becomes its next project revision. A draft in that file cannot be imported: publish it there first. An unknown root lists what the file holds. Refused without changes on a stale revision, a dangling reference, a model that may not be redistributed, or a revision that differs from the copy already held (library.source_modified).",
             ),
             info::<PlaceFromParams>(
                 "library.place_from_folder",
+                "Import a folder component if needed and place it, in one undo step.",
                 "Read a folder bundle of a component lineage and apply library.place_from with it: import if needed, then place, as one transaction and one undo step. When the project holds another revision of that lineage, other_revision refuse (default) fails with code library.other_revision and keep_both imports the folder revision beside it.",
             ),
             info::<PublishParams>(
                 "library.publish_to_folder",
+                "Promote a published project revision and its closure to a writable library folder.",
                 "Promote a published project revision and its closure to a writable library source: compute library.promote_preview with fresh lineage ids (random unless fresh supplies them, as a recorded session does so that a replay reproduces the folder and origins; too few refuses before anything is written), write the records and assets to the folder (an existing rNNNN.json with other content refuses the write before anything is written), then apply library.promote, which records the origins as one undo step. Returns the written and unchanged record paths.",
             ),
             info::<ImportSvgParams>(
                 "library.import_svg",
+                "Add a .svg file's drawing to a symbol unit or footprint layer as editable graphics.",
                 "Read a .svg file (at most 1 MiB) and add its drawing to a symbol unit or a footprint's silkscreen or assembly layer as editable graphics, centred at `at` and scaled from the SVG's declared millimetre size: circles, circular arcs and axis-aligned rectangles stay exact, tangent arcs become corner radii, Béziers and ellipses flatten within tolerance_mm, filled closed shapes become solid fills and strokes keep their width. Filled regions with holes are imported as outlines; text, images and use references are skipped and listed in import.notes. Applied as one library.edit_graphics step at expected_revision: atomic and one undo step; the outcome lists the new graphic IDs.",
             ),
             info::<BundleParams>(
                 "library.open_preview",
+                "Inspect one revision of a folder lineage without importing it.",
                 "Inspect one revision of a folder lineage (default the newest) without importing it: the same report library.inspect gives a project item. Not a document change.",
             ),
             info::<NoParams>(
                 "library.pinout_schema",
+                "The schema of the pinout document an agent fills from a datasheet, with its pin-rule API.",
                 "The JSON schema of the typed pinout document (format 1) an agent fills from a datasheet: device, package variants, peripherals with roles, pins with explicit numbers per variant, GPIO, options, functions with explicit peripheral, role and mux code, source page, uncertain flags, and Rhai pin-rule scripts. Preview with project.query library.pinout_preview, show the review items to the user, then apply with project.apply library.pinout_apply; never publish without the user seeing the unreviewed count.",
             ),
             info::<crate::review::ReviewCheckParams>(
                 "library.review_check",
+                "Check a datasheet part's review report against the drafts: citations, confidence and open questions.",
                 "Check the review report of a part made from datasheets (the datasheet_to_component prompt's last step) against the project's drafts: every value with a listed document, page, location (table, figure or section) and confidence (high: a table cell or dimensioned drawing; medium: derived or ambiguous; low: inferred, measured or not stated); distinct sources; open questions when any value is low confidence or any imported pin is uncertain; a component draft; and a source page on every imported function. Returns accepted, the problems to fix, each draft's blocking and warning finding codes, the unreviewed and uncertain pin counts and the report as Markdown for the person. Accepted means ready for a person's review, never verified or publishable. Not a document change.",
             ),
             info::<firmware::FirmwareParams>(
                 "firmware.export_preview",
+                "Emit an instance's firmware pin configuration as JSON, C, a Zephyr overlay, Rust or a template.",
                 "Emit one instance's firmware pin configuration (project.pin_config) as JSON, a C header, a Zephyr overlay skeleton, Rust consts or a user template. Pin configuration only; a starting point, never a claim to configure clocks or registers.",
             ),
             info::<firmware::FirmwareParams>(
                 "firmware.export",
+                "Write a firmware pin-configuration export to a new file.",
                 "Write firmware.export_preview's text atomically to a new file at path. Not a document change.",
             ),
             info::<marking::SetMarkingParams>(
                 "library.set_marking",
+                "Set or clear a component draft's display-only 3D marking: text, artwork or polarity marks.",
                 "Set or clear a component draft's generic marking: display-only decals on the 3D model, never saved to .solidcraft or fabrication output. Items: text from templates ({mpn}, {designator}, {field:<id>}, {var:lot}), SVG artwork given as text with its licence (packed by SHA-256; never supply a logo you have no right to: a placeholder box marks where the user's own goes), polarity marks, a generated QR code (code2d: payload template, size_mm, anchor) and an electrolytic's µF/V text with its negative stripe. placement.on picks the surface: model (top marking area), a box face (top, bottom, pos_x, neg_x, pos_y, neg_y) or a named anchor from library.marking_surfaces (module: can_top, can_pos_x…, pcb_top, antenna_area; radial: top, sleeve; axial or MELF: body); then offset_mm, rotation_deg, scale, mirror, clip and, on a cylinder, wrap {seam_deg, wrap_deg, along_mm, repeat} with arc length kept. finish: laser_etch, laser_etch_metal (shield cans), ink_white (silkscreen), {ink: {colour}}, {pad_print: {colour}} or engraved. decals: up to four further decals, each with its own items, finish and placement. One library.pack_artwork (or library.edit) step at expected_revision; refused whole on any problem.",
             ),
             info::<marking::MarkingSurfacesParams>(
                 "library.marking_surfaces",
+                "List where a package can be marked: the model area, box faces and named anchors.",
                 "List where a package draft or published package can be marked, for library.set_marking's placement.on: the model area, the six box faces and its family's named anchors (each with a description, plane or cylinder, and size; a cylinder's circumference and whether its u runs along the axis). Not a document change.",
             ),
             info::<SchematicPdfParams>(
                 "schematic.export_pdf",
+                "Print the schematic as a vector PDF, one page per sheet.",
                 "Print the schematic as a vector PDF at path (written atomically, replacing a file there): one page per sheet in page order at its paper size, with the page frame and title block; sheets limits it to a selection (all when empty) and a sheet symbol links to its child sheet's page. Returns the page count. Not a document change.",
             ),
             info::<part_files::CheckPartFileParams>(
                 "library.check_part_file",
+                "Evaluate a SolidCraft part file at given parameter values and report its convention check.",
                 "Evaluate a SolidCraft part file (path to a .solidcraft design, or builtin: esp32-s31-wroom-3) at literal values for some of its user parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report the convention check (docs/part-templates.md §11): parameters with their values, bodies with the Pcbcraft material each appearance names, marking surfaces from marking-<name> construction planes sized by marking_<name>_u/_v, the pin1 point, bounds, timing and findings (part_file.read, part_file.structure, part_file.value, part_file.feature, part_file.seating, part_file.material, part_file.marking blocking; part_file.origin, part_file.no_marking, part_file.import, part_file.slow advisory). Lists the material appearance names. Not a document change.",
             ),
             info::<part_files::UsePartFileParams>(
                 "library.use_part_file",
+                "Make a SolidCraft part file a package draft's 3D model, at literal parameter values.",
                 "Make a package draft's 3D model a SolidCraft part file at literal parameter values: the file (path, with its licence, or a builtin) is checked, packed as a Model of format solidcraft (or the same file's existing model is reused) and the package's model set to it, with the evaluated bounds and marking surfaces stored, in one undo step at expected_revision. Refused whole on a blocking finding. The footprint, terminals and keep-outs stay the package's own. Returns the outcome and the check report.",
             ),
             info::<part_files::SetPartValuesParams>(
                 "library.set_part_values",
+                "Set new parameter values for the part file a package draft uses.",
                 "Set new literal values for the part file a package draft uses (they replace the previous values), re-evaluated and checked, in one undo step at expected_revision; refused whole on a blocking finding. Returns the outcome and the check report.",
             ),
             info::<NoParams>(
                 "library.part_files",
+                "List the SolidCraft part files this project can place or use.",
                 "List the SolidCraft part files this project can place or use (docs/mechanical-parts.md): the built-ins (name, title, designator prefix, kind pads, mechanical or package, parameters with units and defaults, licence) and the project's Models of format solidcraft (model, name, file, licence). Not a document change.",
             ),
             info::<mechanical_parts::PlacePartFileParams>(
                 "layout.place_part_file",
+                "Place a parametric 3D part such as a nut, standoff, spacer or heatsink on the board.",
                 "Place a parametric 3D part (an SMD nut or standoff, spacer, heatsink, bracket: path with its licence, builtin or model) directly on the board at position (mm, the part origin), rotation_deg and layer, at literal parameter values. The file is checked (blocking findings refuse) and evaluated; lands come from lands, lands_from (a footprint's pads) or a built-in's land rules, else none. pads: mechanical (default, no terminal) or terminals (each copper land a terminal that can join a net through the part's symbol on a sheet). bom (default true) and pick_and_place (default: has copper lands). The variant (file, values, lands, flags) is reused or made as an ordinary component set with a generated footprint and courtyard, and a new instance placed with its symbol unit off-sheet, in one undo step at expected_revision. Returns the outcome (PartPlaced: instance, designator, component, created) and the check report.",
             ),
             info::<mechanical_parts::SetPartFileValuesParams>(
                 "layout.set_part_file_values",
+                "Give a placed mechanical part new parameter values, pads or BOM flags.",
                 "Give a placed mechanical part new literal values (they replace the previous values) and optionally new pads, bom or pick_and_place: re-evaluated and checked, a built-in's lands re-derived (other lands kept), and the instance moved to the variant for them (reused or made), keeping its designator, placement and marking, in one undo step at expected_revision. Returns the snapshot, the outcome and the check report.",
             ),
             info::<models::ModelFileParams>(
                 "library.inspect_model_file",
+                "Read a STEP, GLB or .solidcraft model file and report its bodies, materials and bounds.",
                 "Read a STEP AP214/242, GLB or .solidcraft model file and report its bodies (keys, source colours, glTF materials), bounds and whether it has textures, for the import wizard's explicit mapping. Not a document change.",
             ),
         ]
@@ -791,6 +844,10 @@ impl Request {
 #[derive(Clone, Debug, Serialize)]
 pub struct CommandInfo {
     pub id: &'static str,
+    /// A short name for people (the MCP tool `title`).
+    pub title: &'static str,
+    /// One line: what the command is for, without the detail.
+    pub summary: &'static str,
     pub description: &'static str,
     pub class: Class,
     /// Whether it can name a path, which makes it at least Ask
@@ -1357,6 +1414,7 @@ pub mod discovery;
 mod firmware;
 mod marking;
 pub mod mechanical_parts;
+pub mod metadata;
 mod models;
 pub mod part_files;
 mod pinout;
@@ -1375,6 +1433,8 @@ mod folder_tests;
 mod high_speed_tests;
 #[cfg(test)]
 mod issues_tests;
+#[cfg(test)]
+mod metadata_tests;
 #[cfg(test)]
 mod models_tests;
 #[cfg(test)]

@@ -377,6 +377,22 @@ At most five agents at once. Each slice ships with its own tests, and nothing ru
 9. **How many revisions of linked results to keep.** **Recommendation:** the rendered views of the last 8 revisions per project, bounded to 32 MB. An evicted link says what the current revision is.
 10. **Project handles in live mode.** **Recommendation:** optional, defaulting to the window's project. When given, they must match, which guards against the person replacing the project mid-conversation.
 
+## As built: M2, catalog metadata (9 November 2026)
+
+Built to this design's field list: no `tier` and no `alwaysLoad`.
+
+- **Titles.** Every `declare_classes!` row now ends with a title (`Variant "wire.name" Class "Title"`, at most 40 bytes), so a new command does not compile without one. `Operation::titles()`, `Query::TITLES` and `Request::TITLES` hold them; `CommandInfo` carries `title`.
+- **Summaries.** A command has a hand-written `summary` beside its `description` in `Request::catalog`. An operation's or query's summary is the first sentence of its doc comment. 32 empty doc comments were written (`layout.sync`, `layout.place`, `update` and others) and 44 first sentences were cut to fit, with their detail kept after them.
+- **Derived fields** (`crates/automation/src/session/metadata.rs`, one `EntryMeta` per entry):
+  - `kind`: query (read without a path), operation (edit without a path) or action (Ask, or any path); none for Never;
+  - `person`: `approval` for every action, `review` for `project.apply_update`, `update` and `library.pinout_apply`;
+  - `long`: fabrication output and check, 3D export, issues, rescan, refills and large-part previews;
+  - `result`: `link` where the reply grows with the project, library or part, else `inline` (2 KB). A test checks both on the showcase: `project.inspect` is 3.5 KB there, so it is `link`;
+  - `annotations` from the class: read is `readOnlyHint` and `idempotentHint`; edit is `destructiveHint: false`; Ask is `destructiveHint: true`; `openWorldHint` only with a path, a library folder or the person's settings. Never has none.
+- **Today's `tools/list`** carries the catalog `title` and the annotations; descriptions and schemas are unchanged.
+- **Budgets as tests:** title and summary bytes for all 227 entries (they pass). The instructions test (at most 4,096 characters headless and live, and 1,100 bytes headless, about 255 Qwen tokens) is ignored until P4, at 14,843 characters today. The five-tool budget (751–1,404 tokens) gets its test with P2, which builds those tools.
+- **Measured** with `llama-tokenize` on the `qwen3.8:27b` vocabulary; CI uses bytes. Instructions: 15,178 bytes, 3,251 tokens. Today's `tools/list` with titles and annotations: 54.7 KB, 12,170 tokens. All 227 names and summaries: 21.7 KB, 5,026 tokens; the longest summary is 140 bytes, the mean 75.
+
 ## 9. Sources
 
 **Spec:**

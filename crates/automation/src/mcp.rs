@@ -28,6 +28,13 @@ pub const SUPPORTED_VERSIONS: &[&str] = &[PROTOCOL_VERSION, "2025-03-26", "2024-
 /// Large enough for a complete component draft, small enough to bound memory.
 pub const MAX_LINE: usize = 4 * 1024 * 1024;
 
+/// Claude Code cuts server instructions beyond this many characters.
+pub const MAX_INSTRUCTIONS: usize = 4096;
+/// The instructions' target in bytes (`docs/mcp-surface.md` §3.1): the
+/// draft there is 1,030 characters and 238 Qwen3.8 tokens (4.3 bytes per
+/// token), so this holds them near 255 tokens.
+pub const INSTRUCTIONS_TARGET: usize = 1100;
+
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
@@ -228,13 +235,19 @@ pub fn tools() -> Vec<Value> {
     Request::catalog_shared().iter().map(tool).collect()
 }
 
+/// One tool: its catalog title and, where its class gives them, the
+/// annotations ([`crate::session::metadata`]).
 fn tool(command: &CommandInfo) -> Value {
-    json!({
+    let mut tool = json!({
         "name": tool_name(command.id),
-        "title": command.id,
+        "title": command.title,
         "description": format!("{} {}", command.description, command.permission_note()),
         "inputSchema": discovery::tool_schema(command),
-    })
+    });
+    if let Some(annotations) = command.annotations() {
+        tool["annotations"] = json!(annotations);
+    }
+    tool
 }
 
 /// A live server's tools: the same, less the window's own file requests.

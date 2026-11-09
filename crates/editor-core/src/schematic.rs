@@ -82,8 +82,8 @@ pub enum SchematicCommand {
         objects: Vec<ClipObject>,
         action: Arrangement,
     },
-    /// Set an occurrence's orientation about its origin: `mirror` reflects
-    /// the unit across its local x-axis, then `rotation` turns it
+    /// Set an occurrence's orientation about its origin. `mirror` reflects the
+    /// unit across its local x-axis, then `rotation` turns it
     /// counter-clockwise. Presentation only; wires follow their pins.
     #[serde(rename = "symbol.orient_unit")]
     OrientUnit {
@@ -95,11 +95,11 @@ pub enum SchematicCommand {
     /// terminals; otherwise preview it as `Change::Schematic`.
     #[serde(rename = "symbol.unplace_unit")]
     UnplaceUnit { occurrence: Id },
-    /// Draw a wire between two targets: a terminal, a junction, a label, a
-    /// sheet pin, or a point on an existing wire, which splits that wire at
-    /// a new junction. The engine picks the path: the horizontal-first L,
-    /// or a detour around points in its way, with its bends as corners.
-    /// One undo step.
+    /// Draw a wire between two targets: terminals, junctions, labels, sheet
+    /// pins or points on wires. A point on an existing wire splits that wire at
+    /// a new junction. The engine picks the path: the horizontal-first L, or a
+    /// detour around points in its way, with its bends as corners. One undo
+    /// step.
     #[serde(rename = "schematic.connect")]
     Connect { from: WireTarget, to: WireTarget },
     /// Draw a wire along a given path: from `from` through `corners` to
@@ -141,11 +141,11 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         free: bool,
     },
-    /// Move segment `index` (from vertex `index` to `index + 1`; 0 starts at
-    /// the `from` end) along its normal by `offset` mm: +y for a horizontal
-    /// segment, +x for a vertical one, and the side of +x for a slanted one.
-    /// Its neighbours stretch; on an attached end a short perpendicular
-    /// segment is added.
+    /// Move one wire segment along its normal by `offset` mm. Segment `index`
+    /// runs from vertex `index` to `index + 1` (0 starts at the `from` end); +y
+    /// moves a horizontal segment, +x a vertical one, and a slanted one moves
+    /// to the side of +x. Its neighbours stretch; on an attached end a short
+    /// perpendicular segment is added.
     #[serde(rename = "wire.move_segment")]
     MoveWireSegment { wire: Id, index: usize, offset: f64 },
     /// Add a corner at `at`, a point on the wire, without changing its shape.
@@ -172,11 +172,12 @@ pub enum SchematicCommand {
         end: wire_edit::WireSide,
         to: WireTarget,
     },
+    /// Remove a wire, disconnecting what it joined.
     #[serde(rename = "schematic.disconnect")]
     Disconnect { wire: Id },
-    /// Put a junction point on the wires at `position`: on a wire's path it
-    /// joins everything meeting there, and where two wires cross it joins
-    /// them. Refused off every wire and on an existing connection point.
+    /// Put a junction point on the wires at `position`. On a wire's path it
+    /// joins everything meeting there, and where two wires cross it joins them.
+    /// Refused off every wire and on an existing connection point.
     #[serde(rename = "junction.place")]
     PlaceJunction {
         /// The first sheet when omitted.
@@ -184,9 +185,9 @@ pub enum SchematicCommand {
         sheet: Option<SheetId>,
         position: Point,
     },
-    /// Remove a junction point where straight wires pass through it: each
-    /// pair of wires leaving it in opposite directions becomes one wire
-    /// again, so a crossing stops joining. Refused at a bend or a T, where
+    /// Remove a junction point where straight wires pass through it, so a
+    /// crossing stops joining. Each pair of wires leaving it in opposite
+    /// directions becomes one wire again. Refused at a bend or a T, where
     /// removing a wire is the way to change the drawing.
     #[serde(rename = "junction.remove")]
     RemoveJunction { junction: Id },
@@ -218,7 +219,7 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         attach: Option<WireTarget>,
     },
-    /// Presentation only; wires follow.
+    /// Move a label to `position`: presentation only; wires follow.
     #[serde(rename = "label.move")]
     MoveLabel { label: Id, position: Point },
     /// Rename, change the kind of, or turn a label. A name or kind change
@@ -246,8 +247,10 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         orientation: Option<PaperOrientation>,
     },
+    /// Rename a sheet.
     #[serde(rename = "sheet.rename")]
     RenameSheet { sheet: SheetId, name: String },
+    /// Set a sheet's paper size and orientation.
     #[serde(rename = "sheet.set_page")]
     SetPage {
         sheet: SheetId,
@@ -277,10 +280,13 @@ pub enum SchematicCommand {
         position: Point,
         size: Point,
     },
+    /// Move a sheet symbol to `position`.
     #[serde(rename = "sheet_symbol.move")]
     MoveSheetSymbol { symbol: Id, position: Point },
+    /// Resize a sheet symbol; `size` is its width and height in mm.
     #[serde(rename = "sheet_symbol.resize")]
     ResizeSheetSymbol { symbol: Id, size: Point },
+    /// Point a sheet symbol at another child sheet.
     #[serde(rename = "sheet_symbol.set_child")]
     SetSheetChild { symbol: Id, child: SheetId },
     /// Remove a sheet symbol; its sheet stays as a top-level sheet.
@@ -290,6 +296,7 @@ pub enum SchematicCommand {
     /// symbol lacks.
     #[serde(rename = "sheet_symbol.sync_pins")]
     SyncSheetPins { symbol: Id },
+    /// Add a pin to a sheet symbol, on one `side` at `offset` along it.
     #[serde(rename = "sheet_pin.add")]
     AddSheetPin {
         symbol: Id,
@@ -299,6 +306,7 @@ pub enum SchematicCommand {
         side: SheetSide,
         offset: f64,
     },
+    /// Change a sheet pin's name, shape, side or offset; omitted fields stay.
     #[serde(rename = "sheet_pin.edit")]
     EditSheetPin {
         pin: Id,
@@ -311,6 +319,7 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         offset: Option<f64>,
     },
+    /// Remove a sheet pin.
     #[serde(rename = "sheet_pin.remove")]
     RemoveSheetPin { pin: Id },
     /// Add a note, line or rectangle.
@@ -323,6 +332,7 @@ pub enum SchematicCommand {
     /// Replace a drawing's item.
     #[serde(rename = "drawing.edit")]
     EditDrawing { drawing: Id, item: SheetItem },
+    /// Remove a drawing.
     #[serde(rename = "drawing.remove")]
     RemoveDrawing { drawing: Id },
     /// Set the title-block properties.
@@ -367,51 +377,51 @@ pub enum SchematicCommand {
 
 // A new command chooses its permission class here.
 declare_classes!(SchematicCommand {
-    PlaceUnit "symbol.place_unit" Edit,
-    MoveUnit "symbol.move_unit" Edit,
-    Arrange "schematic.arrange" Edit,
-    OrientUnit "symbol.orient_unit" Edit,
-    UnplaceUnit "symbol.unplace_unit" Edit,
-    Connect "schematic.connect" Edit,
-    DrawWire "wire.draw" Edit,
-    SetWirePath "wire.set_path" Edit,
-    MoveWireCorner "wire.move_corner" Edit,
-    MoveWireSegment "wire.move_segment" Edit,
-    InsertWireCorner "wire.insert_corner" Edit,
-    RemoveWireCorner "wire.remove_corner" Edit,
-    SetWireRadius "wire.set_radius" Edit,
-    RemoveWireSegment "wire.remove_segment" Edit,
-    MoveWireEnd "wire.move_end" Edit,
-    Disconnect "schematic.disconnect" Edit,
-    PlaceJunction "junction.place" Edit,
-    RemoveJunction "junction.remove" Edit,
-    RenameNet "schematic.net_rename" Edit,
-    MoveUnitToSheet "symbol.move_to_sheet" Edit,
-    PlaceLabel "label.place" Edit,
-    MoveLabel "label.move" Edit,
-    EditLabel "label.edit" Edit,
-    RemoveLabel "label.remove" Edit,
-    AddSheet "sheet.add" Edit,
-    RenameSheet "sheet.rename" Edit,
-    SetPage "sheet.set_page" Edit,
-    ReorderSheet "sheet.reorder" Edit,
-    DeleteSheet "sheet.delete" Edit,
-    PlaceSheetSymbol "sheet_symbol.place" Edit,
-    MoveSheetSymbol "sheet_symbol.move" Edit,
-    ResizeSheetSymbol "sheet_symbol.resize" Edit,
-    SetSheetChild "sheet_symbol.set_child" Edit,
-    RemoveSheetSymbol "sheet_symbol.remove" Edit,
-    SyncSheetPins "sheet_symbol.sync_pins" Edit,
-    AddSheetPin "sheet_pin.add" Edit,
-    EditSheetPin "sheet_pin.edit" Edit,
-    RemoveSheetPin "sheet_pin.remove" Edit,
-    AddDrawing "drawing.add" Edit,
-    EditDrawing "drawing.edit" Edit,
-    RemoveDrawing "drawing.remove" Edit,
-    SetProperties "project.set_properties" Edit,
-    RenameProject "project.rename" Edit,
-    Annotate "schematic.annotate" Edit,
-    Paste "schematic.paste" Edit,
+    PlaceUnit "symbol.place_unit" Edit "Place a symbol unit",
+    MoveUnit "symbol.move_unit" Edit "Move a symbol unit",
+    Arrange "schematic.arrange" Edit "Arrange symbols",
+    OrientUnit "symbol.orient_unit" Edit "Rotate or mirror a unit",
+    UnplaceUnit "symbol.unplace_unit" Edit "Take a unit off the sheet",
+    Connect "schematic.connect" Edit "Connect pins",
+    DrawWire "wire.draw" Edit "Draw a wire",
+    SetWirePath "wire.set_path" Edit "Set a wire's path",
+    MoveWireCorner "wire.move_corner" Edit "Move a wire corner",
+    MoveWireSegment "wire.move_segment" Edit "Move a wire segment",
+    InsertWireCorner "wire.insert_corner" Edit "Insert a wire corner",
+    RemoveWireCorner "wire.remove_corner" Edit "Remove a wire corner",
+    SetWireRadius "wire.set_radius" Edit "Round a wire corner",
+    RemoveWireSegment "wire.remove_segment" Edit "Remove a wire segment",
+    MoveWireEnd "wire.move_end" Edit "Move a wire end",
+    Disconnect "schematic.disconnect" Edit "Remove a wire",
+    PlaceJunction "junction.place" Edit "Place a junction",
+    RemoveJunction "junction.remove" Edit "Remove a junction",
+    RenameNet "schematic.net_rename" Edit "Rename a net",
+    MoveUnitToSheet "symbol.move_to_sheet" Edit "Move a unit to another sheet",
+    PlaceLabel "label.place" Edit "Place a label",
+    MoveLabel "label.move" Edit "Move a label",
+    EditLabel "label.edit" Edit "Edit a label",
+    RemoveLabel "label.remove" Edit "Remove a label",
+    AddSheet "sheet.add" Edit "Add a sheet",
+    RenameSheet "sheet.rename" Edit "Rename a sheet",
+    SetPage "sheet.set_page" Edit "Set a sheet's page",
+    ReorderSheet "sheet.reorder" Edit "Reorder sheets",
+    DeleteSheet "sheet.delete" Edit "Delete a sheet",
+    PlaceSheetSymbol "sheet_symbol.place" Edit "Place a sheet symbol",
+    MoveSheetSymbol "sheet_symbol.move" Edit "Move a sheet symbol",
+    ResizeSheetSymbol "sheet_symbol.resize" Edit "Resize a sheet symbol",
+    SetSheetChild "sheet_symbol.set_child" Edit "Set a sheet symbol's sheet",
+    RemoveSheetSymbol "sheet_symbol.remove" Edit "Remove a sheet symbol",
+    SyncSheetPins "sheet_symbol.sync_pins" Edit "Sync sheet symbol pins",
+    AddSheetPin "sheet_pin.add" Edit "Add a sheet pin",
+    EditSheetPin "sheet_pin.edit" Edit "Edit a sheet pin",
+    RemoveSheetPin "sheet_pin.remove" Edit "Remove a sheet pin",
+    AddDrawing "drawing.add" Edit "Add a drawing",
+    EditDrawing "drawing.edit" Edit "Edit a drawing",
+    RemoveDrawing "drawing.remove" Edit "Remove a drawing",
+    SetProperties "project.set_properties" Edit "Set project properties",
+    RenameProject "project.rename" Edit "Rename the project",
+    Annotate "schematic.annotate" Edit "Annotate designators",
+    Paste "schematic.paste" Edit "Paste schematic objects",
 });
 
 /// What a schematic command created or changed, for the engine's outcome.
