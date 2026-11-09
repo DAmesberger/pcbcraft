@@ -56,21 +56,24 @@ pub fn row<R>(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R
     let (rect, _) = ui.allocate_exact_size(vec2(width, t.control_height), egui::Sense::hover());
     let label_width = t.form_label_width.min(width * 0.45);
     let label_rect = egui::Rect::from_min_size(rect.min, vec2(label_width, rect.height()));
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(label_rect)
-            .layout(Layout::left_to_right(Align::Center)),
-        |ui| {
-            ui.add(
-                egui::Label::new(
-                    RichText::new(label)
-                        .size(t.font_label)
-                        .color(t.dialog_label),
+    let label_id = ui
+        .scope_builder(
+            UiBuilder::new()
+                .max_rect(label_rect)
+                .layout(Layout::left_to_right(Align::Center)),
+            |ui| {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(label)
+                            .size(t.font_label)
+                            .color(t.dialog_label),
+                    )
+                    .truncate(),
                 )
-                .truncate(),
-            );
-        },
-    );
+                .id
+            },
+        )
+        .inner;
     let control_rect = egui::Rect::from_min_max(
         egui::pos2(
             (label_rect.right() + t.space_8).min(rect.right()),
@@ -86,10 +89,33 @@ pub fn row<R>(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R
         |ui| {
             ui.set_clip_rect(ui.clip_rect().intersect(control_rect));
             ui.spacing_mut().text_edit_width = control_rect.width();
-            control(ui)
+            // The row's label names its field ([`named_by_row`]).
+            let named = !label.is_empty();
+            if named {
+                ui.data_mut(|d| d.insert_temp(row_label_key(), label_id));
+            }
+            let inner = control(ui);
+            if named {
+                ui.data_mut(|d| d.remove::<egui::Id>(row_label_key()));
+            }
+            inner
         },
     )
     .inner
+}
+
+/// Temp memory: the label of the form row whose control is being drawn.
+fn row_label_key() -> egui::Id {
+    egui::Id::unique("pcbcraft-form-row-label")
+}
+
+/// A field drawn in a [`row`] is named by the row's label in the
+/// accessibility tree, as screen readers and UI automation read it.
+fn named_by_row(ui: &Ui, response: Response) -> Response {
+    match ui.data(|d| d.get_temp::<egui::Id>(row_label_key())) {
+        Some(label) => response.labelled_by(label),
+        None => response,
+    }
 }
 
 /// Plain text row with the upstream cell editor. Returns the field's response.
@@ -109,6 +135,7 @@ pub fn multiline_row(ui: &mut Ui, label: &str, value: &mut String, invalid: bool
             .desired_width(ui.available_width())
             .text_color(if invalid { t.error } else { t.text });
         let response = ui.add(edit);
+        let response = named_by_row(ui, response);
         if invalid {
             not_stored(response)
         } else {
@@ -138,6 +165,7 @@ pub fn text_field(
 ) -> Response {
     let id = ui.scope_id().with(("text", id));
     let response = ui_kit::cell_editor(ui, id, value, hint, invalid);
+    let response = named_by_row(ui, response);
     if invalid {
         not_stored(response)
     } else {
@@ -255,7 +283,8 @@ pub fn number_input(
     };
     let mut text = ui.data(|d| d.get_temp::<String>(key)).unwrap_or_else(shown);
     let parsed = parse_number(&text, unit).filter(|v| range.contains(v));
-    let mut response = ui_kit::cell_editor(ui, key.with("edit"), &mut text, "", parsed.is_none());
+    let response = ui_kit::cell_editor(ui, key.with("edit"), &mut text, "", parsed.is_none());
+    let mut response = named_by_row(ui, response);
     let parsed = parse_number(&text, unit).filter(|v| range.contains(v));
     let escaped = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape));
     let mut changed = false;

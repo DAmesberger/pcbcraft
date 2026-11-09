@@ -1437,6 +1437,9 @@ impl PcbEditor {
         let project = engine.project();
         let t = Tokens::get();
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        // Named for screen readers and UI automation, which find the board
+        // by this name and its bounds.
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Board"));
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
             return None;
         }

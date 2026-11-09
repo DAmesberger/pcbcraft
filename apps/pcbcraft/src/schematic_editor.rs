@@ -858,6 +858,23 @@ impl SchematicEditor {
         self.focus_field = Some(format!("label/{label}/name"));
     }
 
+    /// Where sheet millimetres land in a canvas drawn in `canvas`, as the
+    /// canvas maps them (UI tests click sheet points through it).
+    #[cfg(test)]
+    pub(crate) fn screen_point(&self, canvas: Rect, p: Point) -> Pos2 {
+        symbol_view::View {
+            origin: canvas.center() + self.pan,
+            scale: self.scale,
+        }
+        .screen(p)
+    }
+
+    /// Whether an impact review (removal, disconnect) is open.
+    #[cfg(test)]
+    pub(crate) fn reviewing(&self) -> bool {
+        self.update.is_open()
+    }
+
     /// Delete a label, sheet symbol, sheet pin or drawing. It applies at
     /// once, unless it would take terminals off a routed net: that opens the
     /// review, as removing a part or a wire does, and keeps the selection.
@@ -1602,6 +1619,9 @@ impl SchematicEditor {
         let project = engine.project();
         let t = Tokens::get();
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        // Named for screen readers and UI automation, which find the sheet
+        // by this name and its bounds.
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, "Schematic"));
         if rect.width() < 1.0 || rect.height() < 1.0 {
             return None;
         }
