@@ -608,7 +608,7 @@ fn a_gnd_port_on_a_vbus_wire_over_mcp_merges_only_when_asked() -> super::scenari
     let a = pin_position(project, vbus_pin).ok_or("pin")?;
     let b = pin_position(project, pin(second, 1)).ok_or("pin")?;
     let middle = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
-    let mut server = Server::new(Session::new(engine));
+    let mut server = Server::new(Session::new(engine), Policy::default());
     let port = |name: &str, style: &str, attach: Value| {
         json!({"editor": "Schematic", "operation": {"command": "label.place", "params": {
             "name": name, "kind": {"type": "power", "style": style},
