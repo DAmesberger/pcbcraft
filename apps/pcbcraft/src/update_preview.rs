@@ -103,6 +103,19 @@ pub struct Marks {
     pub ghosts: Vec<pcbcraft_core::Placement>,
 }
 
+/// The plan of `change` with the host's evaluators, as the apply path uses
+/// them: 3D model faces that part dimensions name are re-found in the new
+/// revisions.
+fn hosted_plan(engine: &Engine, change: Change) -> pcbcraft_core::updates::UpdatePlan {
+    engine.preview_update_hosted(
+        change,
+        pcbcraft_core::Evaluators {
+            footprint: Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
+            board: crate::pcb_editor::board_shape::host_evaluator(),
+        },
+    )
+}
+
 impl UpdatePreview {
     /// The panel's identity: its refusal origin and widget state.
     fn id() -> egui::Id {
@@ -110,7 +123,7 @@ impl UpdatePreview {
     }
 
     pub fn begin(&mut self, engine: &Engine, change: Change) {
-        self.set_plan(engine.preview_update(change));
+        self.set_plan(hosted_plan(engine, change));
         self.choices.clear();
         self.note = None;
         self.applying = None;
@@ -190,7 +203,7 @@ impl UpdatePreview {
             target: *target,
             resolutions: resolutions.clone(),
         };
-        self.set_plan(engine.preview_update(change));
+        self.set_plan(hosted_plan(engine, change));
     }
 
     /// The plan again at the current revision, keeping the instance choice
@@ -200,7 +213,7 @@ impl UpdatePreview {
             self.rechoose(engine);
         } else if let Some(plan) = &self.plan {
             let change = plan.change.clone();
-            self.set_plan(engine.preview_update(change));
+            self.set_plan(hosted_plan(engine, change));
         }
     }
 

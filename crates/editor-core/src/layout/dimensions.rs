@@ -28,6 +28,7 @@ use crate::library::footprint_source::{
 use crate::library::{Outline, Segment};
 use crate::model::Project;
 use crate::model::board::{BoardShape, BoardSketch, ConstraintTarget};
+pub use crate::model::dimension::FeatureGeometry;
 use crate::model::dimension::{
     BoardRef, FeatureRef, MAX_DIMENSION_REFS, MAX_PART_DIMENSIONS, PartAxis, PartDimension,
     PartDimensionSpec, PartRelation, ReferenceStatus,
@@ -39,6 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod carry;
 pub mod features;
+pub mod model;
 
 pub use carry::carry;
 
@@ -108,7 +110,7 @@ fn missing(id: Id) -> Error {
 pub fn apply(
     project: &mut Project,
     command: DimensionCommand,
-    _evaluator: Option<&dyn super::outline::BoardShapeEvaluator>,
+    evaluator: Option<&dyn super::outline::BoardShapeEvaluator>,
 ) -> Result<DimensionApplied> {
     match command {
         DimensionCommand::Add { dimension } => {
@@ -119,18 +121,20 @@ pub fn apply(
             }
             let id = project.allocate()?;
             let dimension = PartDimension::from_spec(id, dimension);
+            project.part_dimensions.push(dimension.clone());
+            model::refresh(project, evaluator, &dimension.refs)?;
             check_new(project, &dimension)?;
-            project.part_dimensions.push(dimension);
             Ok(DimensionApplied::Added(id))
         }
         DimensionCommand::Edit { dimension } => {
-            check_new(project, &dimension)?;
             let slot = project
                 .part_dimensions
                 .iter_mut()
                 .find(|d| d.id == dimension.id)
                 .ok_or_else(|| missing(dimension.id))?;
-            *slot = dimension;
+            *slot = dimension.clone();
+            model::refresh(project, evaluator, &dimension.refs)?;
+            check_new(project, &dimension)?;
             Ok(DimensionApplied::Nothing)
         }
         DimensionCommand::Delete { id } => {
@@ -139,6 +143,7 @@ pub fn apply(
             if project.part_dimensions.len() == before {
                 return Err(missing(id));
             }
+            model::refresh(project, evaluator, &[])?;
             Ok(DimensionApplied::Nothing)
         }
     }
@@ -243,8 +248,8 @@ pub fn board_ids(project: &Project) -> Option<BTreeSet<SketchRef>> {
     )
 }
 
-/// How one reference resolves now (§5.5). Slice S2 has no source of
-/// `Inexact` references (model faces and housings come later).
+/// How one reference resolves now (§5.5): a 3D model reference as its
+/// host trace says ([`model::status`]); any other one is found or lost.
 pub fn reference_status(
     project: &Project,
     ids: Option<&BTreeSet<SketchRef>>,
@@ -253,6 +258,12 @@ pub fn reference_status(
     let found = match r {
         BoardRef::Board(b) => ids.is_none_or(|ids| ids.contains(b)),
         BoardRef::Housing(_) => false,
+        BoardRef::Part(f) if f.is_model() => {
+            if !features::target_exists(project, f.target()) {
+                return ReferenceStatus::Lost;
+            }
+            return model::status(project, f);
+        }
         BoardRef::Part(f) => features::geometry(project, f).is_ok(),
     };
     if found {
@@ -304,7 +315,17 @@ pub fn checks(project: &Project) -> Vec<Finding> {
         let target = targets_of(d).find(|t| features::target_exists(project, *t));
         let who = target.map_or_else(|| "A part".into(), |t| target_words(project, t));
         for r in &d.refs {
-            if reference_status(project, ids.as_ref(), r) != ReferenceStatus::Lost {
+            let status = reference_status(project, ids.as_ref(), r);
+            if status == ReferenceStatus::Resolved {
+                continue;
+            }
+            let objects = target.map_or_else(|| vec![ObjectRef::Board], objects_of);
+            if let BoardRef::Part(f) = r
+                && f.is_model()
+                && features::target_exists(project, f.target())
+            {
+                let (code, message) = model_words(project, f, status);
+                out.push(Finding::new(code, message, objects));
                 continue;
             }
             let message = match r {
@@ -329,11 +350,52 @@ pub fn checks(project: &Project) -> Vec<Finding> {
                     target_words(project, f.target())
                 ),
             };
-            let objects = target.map_or_else(|| vec![ObjectRef::Board], objects_of);
             out.push(Finding::new(REFERENCE_LOST, message, objects));
         }
     }
     out
+}
+
+/// "J1's face ‘F3:side:l2’" for a 3D model reference.
+pub fn model_feature_words(project: &Project, f: &FeatureRef) -> String {
+    let name = target_words(project, f.target());
+    match f {
+        FeatureRef::Face { face, .. } => format!("{name}'s face ‘{}’", face.face.0),
+        FeatureRef::Edge { edge, .. } => format!("{name}'s edge ‘{}’", edge.edge.0),
+        FeatureRef::Vertex { edge, end, .. } => format!(
+            "the {} of {name}'s edge ‘{}’",
+            match end {
+                crate::model::dimension::End::Start => "start",
+                crate::model::dimension::End::End => "end",
+            },
+            edge.edge.0
+        ),
+        _ => name,
+    }
+}
+
+/// The finding code and words of an unresolved 3D model reference.
+fn model_words(
+    project: &Project,
+    f: &FeatureRef,
+    status: ReferenceStatus,
+) -> (&'static str, String) {
+    let what = model_feature_words(project, f);
+    let why = model::find(project, f)
+        .map(|t| t.note.trim_end_matches('.').to_owned())
+        .filter(|n| !n.is_empty());
+    match (status, why) {
+        (ReferenceStatus::Inexact, Some(why)) => (
+            REFERENCE_INEXACT,
+            format!("{what} may not be the face it was: {why}; pick it again"),
+        ),
+        (ReferenceStatus::Inexact, None) => (
+            REFERENCE_INEXACT,
+            format!("{what} may not be the face it was; pick it again"),
+        ),
+        (_, Some(why)) => (REFERENCE_LOST, format!("{what} is lost: {why}")),
+        (_, None) => (REFERENCE_LOST, format!("{what} is lost")),
+    }
 }
 
 /// A stable key for a target, for ordered maps.
@@ -603,7 +665,13 @@ pub fn follow(
     project: &mut Project,
     evaluator: Option<&dyn super::outline::BoardShapeEvaluator>,
 ) -> Result<Vec<Id>> {
-    if project.part_dimensions.is_empty() || untouched(before, project) {
+    if untouched(before, project) {
+        return Ok(Vec::new());
+    }
+    // The 3D model references first: a new package revision re-traces
+    // them, and one that no longer resolves stops driving.
+    model::refresh(project, evaluator, &[])?;
+    if project.part_dimensions.is_empty() {
         return Ok(Vec::new());
     }
     let board_changed =
@@ -966,7 +1034,7 @@ fn reference_words(project: &Project, board: &BoardSketch, r: &BoardRef) -> Stri
                 FeatureRef::Courtyard { .. } => format!("{name}'s courtyard"),
                 FeatureRef::Anchor { name: anchor, .. } => format!("{name}'s ‘{}’", anchor.0),
                 FeatureRef::Face { .. } | FeatureRef::Edge { .. } | FeatureRef::Vertex { .. } => {
-                    format!("{name}'s 3D model")
+                    model_feature_words(project, f)
                 }
             }
         }
@@ -1041,7 +1109,7 @@ pub fn validate(project: &Project) -> Result<()> {
             )));
         }
     }
-    Ok(())
+    model::validate(project)
 }
 
 fn well_formed(d: &PartDimension) -> bool {
@@ -1096,30 +1164,6 @@ impl PartPose {
     pub fn valid(&self) -> bool {
         point_valid(self.position) && self.rotation_deg.is_finite()
     }
-}
-
-/// A feature's geometry in its target's frame (part frame, before the
-/// placement mirrors and turns it), mm.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "snake_case", tag = "shape", deny_unknown_fields)]
-pub enum FeatureGeometry {
-    Point {
-        at: Point,
-    },
-    Line {
-        a: Point,
-        b: Point,
-    },
-    /// A bulge arc from `a` to `b` (as `library::Segment::Arc`).
-    Arc {
-        a: Point,
-        b: Point,
-        bulge: f64,
-    },
-    Circle {
-        center: Point,
-        radius: f64,
-    },
 }
 
 /// One target of a parts solve, with every feature its dimensions name.

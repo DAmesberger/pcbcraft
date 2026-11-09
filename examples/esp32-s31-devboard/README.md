@@ -9,12 +9,13 @@ Release plan step 5: a real ESP32-S31-WROOM-3 development board designed from co
 | File | What |
 |---|---|
 | `esp32-s31-devboard.pcbcraft` | The project. Open it in the desktop app. It holds the parts library, two schematic sheets, the 4-layer board, the fills and the waiver-free production state. |
-| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 572 JSON-lines requests through `pcbcraft-cli stdio --operator`. It replays to a byte-identical `project.json`. |
+| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 576 JSON-lines requests through `pcbcraft-cli stdio --operator`. It replays to a byte-identical `project.json`. |
 | `regenerate.sh` | Replays the board and writes `fab/` and the schematic PDF. With `NATIVE=1` it also writes the `.solidcraft` model (about 10 s of CPU). |
 | `fab/` | Gerber X2 for 4 copper layers, masks, top paste, top legend and profile; plated and non-plated Excellon; drill map and table; job file; top pick-and-place; both BOMs; fabrication and assembly PDFs. |
 | `esp32-s31-devboard-schematic.pdf` | The schematic, two sheets. |
 | `authoring/` | The Python client that wrote the replay: placement coordinates, routes and part data with their datasheet sources. It is not application code. `python3 -B examples/esp32-s31-devboard/authoring/build.py route` from the repository root re-records the replay. |
 | `parts/b3u-1000p.solidcraft` | The switches' 3D model: original work (MIT OR Apache-2.0), authored through Solidcraft's commands by `cargo test -p pcbcraft-solidcraft --test author_parts -- --ignored`. `pcbcraft-cli part check` checks it. |
+| `parts/usb4105.solidcraft` | J1's 3D model, authored the same way: a nickel shell open at the mating face and the LCP tongue. The board holds J1 by its shell's front face (`F1:-y`): two part dimensions keep that face on the bottom edge and J1's origin at `width / 2` from the left edge, so J1 follows a change of the board's width. |
 | `images/` | Schematic pages; copper layers rendered by PyGerber (MIT) from the Gerber files; desktop screenshots of PCB 2D and 3D. |
 
 ```sh
@@ -68,7 +69,7 @@ The values come from manufacturers' public datasheets, used as datasheets. None 
 - TI:
   - TLV757P (SBVS320/322): pinout, DBV0005A land pattern 0.6 × 1.1 mm.
   - TPD2E009: pinout, DBZ0003A land pattern 0.6 × 1.3 mm.
-- GCT: USB4105 drawing, Recommended PCB Layout.
+- GCT: USB4105 drawing, Recommended PCB Layout, and the outline (8.94 × 7.35 × 3.31 mm, 8.34 × 2.56 mm opening 1.73 mm up) for the receptacle's part file. Its cavity depth and tongue are illustrative.
 - Omron: B3U catalog, PCB pad and the B3U-1000P(M) dimensions (p.2) for the switch's part file: housing 3 × 2.5 mm, 1.2 mm to the cover, 1.6 mm over the 1.5 mm plunger, 4 mm over the 1.4 mm wide terminals. The drawing gives no cover or terminal thickness; the part file's 0.1 and 0.15 mm are illustrative.
 - Kingbright: APT1608SGC, recommended soldering pattern; pad 1 is the cathode.
 - Murata and Yageo: MPNs and ratings from the product series pages. The capacitor and resistor lands are Pcbcraft's starter-table estimates.

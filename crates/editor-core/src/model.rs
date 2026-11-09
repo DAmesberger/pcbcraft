@@ -499,6 +499,10 @@ pub struct Project {
     /// the housing and each other (`layout::dimensions`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub part_dimensions: Shared<Vec<PartDimension>>,
+    /// The host's traces of the 3D model faces, edges and vertices the
+    /// part dimensions name (`layout::dimensions::model`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_traces: Shared<Vec<crate::model::dimension::ModelTrace>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fills: Shared<Vec<Fill>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -545,6 +549,7 @@ impl Default for Project {
             rules: crate::rules::ProjectRules::default(),
             board_shape: BoardShape::Rectangle,
             part_dimensions: Shared::default(),
+            model_traces: Shared::default(),
             fills: Shared::default(),
             keepouts: Shared::default(),
             sheets: Sheets::default(),

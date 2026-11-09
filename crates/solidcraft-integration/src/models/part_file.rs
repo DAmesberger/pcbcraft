@@ -30,7 +30,7 @@ use pcbcraft_core::materials::MaterialId;
 use serde::{Deserialize, Serialize};
 use solidcraft_engine::Session;
 use solidcraft_engine::doc::construct::ConstructGeom;
-use solidcraft_engine::doc::{Document, FeatureKind, clone_expression};
+use solidcraft_engine::doc::{Document, FeatureKind, ModelState, clone_expression};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -106,6 +106,10 @@ pub struct EvaluatedPart {
     pub evaluate_ms: f64,
     /// The source design with the values applied.
     source: Arc<Document>,
+    /// Its evaluated bodies, with their persistent face names: what
+    /// dimension references to the part's faces are traced on
+    /// (`crate::board::model_refs`).
+    state: Arc<ModelState>,
 }
 
 impl std::fmt::Debug for EvaluatedPart {
@@ -161,6 +165,11 @@ impl EvaluatedPart {
     /// `pkgp<first 12 hex of the key>`.
     pub fn stem(&self) -> String {
         format!("{PARAMETER_PREFIX}p{}", &hex(&self.key)[..12])
+    }
+
+    /// The evaluated bodies of the part, in the model frame.
+    pub fn state(&self) -> &ModelState {
+        &self.state
     }
 
     /// The first blocking finding as a refusal.
@@ -638,6 +647,7 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
         findings,
         evaluate_ms,
         source: doc,
+        state,
     })
 }
 

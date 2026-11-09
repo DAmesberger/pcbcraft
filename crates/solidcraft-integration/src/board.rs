@@ -216,6 +216,13 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
     fn solve_parts(&self, request: &PartsRequest<'_>) -> Result<PartsSolution> {
         parts::solve(request)
     }
+
+    fn trace_model(
+        &self,
+        request: &pcbcraft_core::layout::dimensions::model::TraceRequest<'_>,
+    ) -> Result<pcbcraft_core::layout::dimensions::model::Traced> {
+        model_refs::trace(request)
+    }
 }
 
 /// A failed solve: the last solved shape kept, a fatal finding.
@@ -1216,6 +1223,7 @@ pub fn laminate(project: &pcbcraft_core::Project) -> Option<Laminate> {
 
 #[cfg(test)]
 mod closed_loop_tests;
+pub mod model_refs;
 mod parts;
 #[cfg(test)]
 mod tests;

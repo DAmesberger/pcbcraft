@@ -1044,13 +1044,14 @@ impl Session {
             }
             Request::PreviewUpdate(params) => {
                 return Ok(serde_json::to_value(
-                    self.engine.preview_update(params.change),
+                    self.engine.preview_update_hosted(params.change, hosted()),
                 )?);
             }
             Request::ApplyUpdate(update) => {
-                self.engine.apply(
+                self.engine.apply_hosted(
                     update.expected_revision,
                     Operation::Update(Box::new(update)),
+                    hosted(),
                 )?;
             }
             Request::ExportNative(params) => {
@@ -1469,6 +1470,8 @@ mod reply;
 pub(crate) use reply::take_verbose;
 pub mod sources;
 
+#[cfg(test)]
+mod dimension_tests;
 #[cfg(test)]
 mod fabrication_tests;
 #[cfg(test)]

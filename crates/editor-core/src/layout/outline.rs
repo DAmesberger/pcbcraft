@@ -152,6 +152,18 @@ pub trait BoardShapeEvaluator {
     ) -> Result<super::dimensions::PartsSolution> {
         Err(super::dimensions::not_yet())
     }
+    /// Trace a face, edge or vertex of a part file in the board plane
+    /// (`layout::dimensions::model`, slice S3). `Err(NotFound)`: the model
+    /// has no such face; `Err(Unsupported)`: it has no single trace in the
+    /// board plane (a sloped face).
+    fn trace_model(
+        &self,
+        _request: &super::dimensions::model::TraceRequest<'_>,
+    ) -> Result<super::dimensions::model::Traced> {
+        Err(Error::Unsupported(
+            "layout.dimension: this board evaluator cannot read 3D models".into(),
+        ))
+    }
 }
 
 /// A free-form board curve to draw, in board millimetres (Solidcraft's

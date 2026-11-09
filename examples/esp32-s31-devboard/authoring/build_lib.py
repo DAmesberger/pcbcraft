@@ -4,6 +4,7 @@ from decimal import Decimal
 from stage_lib import *
 
 B3U_PART = "examples/esp32-s31-devboard/parts/b3u-1000p.solidcraft"  # from the repository root
+USB4105_PART = "examples/esp32-s31-devboard/parts/usb4105.solidcraft"
 PROV_NOTE ="Authored for the ESP32-S31 dev board e2e run from the manufacturer's public datasheet; checked by the author, not by a second reviewer."
 
 
@@ -196,8 +197,18 @@ def build(s):
     # pegs), landing the pinout's terminals by number. Footprint origin: the
     # outline centre, mating face toward -y.
     fid = package_from(s, pkg, USB_C_ROW)
-    L["usbc"] = {"component": comp, "symbol": sym, "package": pkg, "binding": bind, "footprint": fid}
-    publish.append(ids + [fid])
+    # The 3D model: the example's USB4105 part file (original work from the
+    # same drawing; see README, Sources), whose shell front face the board
+    # holds flush to its edge.
+    if s.rev is None:
+        s.rev = s.revision()
+    r = s.raw("library.use_part_file", {"expected_revision": s.rev, "package": pkg, "path": USB4105_PART,
+                                        "name": "USB4105-GF-A", "licence": "MIT OR Apache-2.0",
+                                        "redistribution": "permitted"}, "USB4105 part file")
+    s.rev = r["result"].get("revision", s.rev)
+    L["usbc"] = {"component": comp, "symbol": sym, "package": pkg, "binding": bind, "footprint": fid,
+                 "model": r["result"]["outcome"]["id"]}
+    publish.append(ids + [fid, L["usbc"]["model"]])
 
     bad = check(s)
     if bad:

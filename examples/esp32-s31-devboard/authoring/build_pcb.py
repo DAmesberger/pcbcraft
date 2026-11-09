@@ -12,6 +12,9 @@ PLACE = {  # designator: (x, y, rotation); J1's y puts its mating face on the bo
     "R3": (4.0, 50.0, 270), "D2": (4.0, 47.0, 90),
 }
 HOLES = [(3.5, 3.5), (36.5, 3.5), (3.5, 60.5), (36.5, 60.5)]
+# The front face of the USB4105 part file's Shell body (parts/usb4105.solidcraft):
+# its persistent Solidcraft name, and a point on it below the opening.
+USB_FRONT = ("Shell", "F1:-y", [0.0, -3.675, 0.2])
 
 
 def oid(r):
@@ -83,6 +86,19 @@ def build(s, L, S):
     for des, (x, y, r) in place.items():
         inst = S["instances"][des]["id"]
         s.op("layout.move", {"instance": inst, "position": [x, y], "rotation_deg": float(r), "layer": "Top"}, f"place {des}")
+    # J1 is held by its 3D model: the shell's front face flush with the
+    # bottom edge, and its origin on the board's centre line, so it follows
+    # a change of the board's width.
+    p = s.raw("project.inspect")["result"]["project"]
+    edges = {e["name"]: e["curve"] for e in p["board_shape"]["sketch"]["edges"]}
+    j1 = S["instances"]["J1"]["id"]
+    body, face, pick = USB_FRONT
+    front = {"part": {"feature": "face", "placement": j1, "face": {"body": body, "face": face, "pick": pick}}}
+    origin = {"part": {"feature": "origin", "target": {"kind": "placement", "id": j1}}}
+    for refs, value, note in (([front, {"board": {"curve": edges["bottom"]}}], {"fixed": 0.0}, "J1 flush with the bottom edge"),
+                              ([origin, {"board": {"curve": edges["left"]}}], {"expr": "width / 2"}, "J1 on the centre line")):
+        s.apply({"editor": "Dimension", "operation": {"command": "layout.dimension_add", "params": {
+            "dimension": {"kind": {"dim": "distance"}, "refs": refs, "value": value}}}}, note)
 
     nets, p = nets_by_name(s)
     out["nets"] = nets

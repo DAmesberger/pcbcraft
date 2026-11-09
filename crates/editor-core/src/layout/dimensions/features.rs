@@ -6,8 +6,9 @@
 //! turns it), or a fill's or keepout's outline start.
 //!
 //! A feature whose source is gone (a deleted part, pad or anchor) is
-//! `Error::NotFound`, which the caller reports as a lost reference; 3D
-//! model faces, edges and vertices (slice S3) are `Error::Unsupported`.
+//! `Error::NotFound`, which the caller reports as a lost reference. 3D
+//! model faces, edges and vertices are the host's traces, kept in the
+//! document (`super::model`); one that does not resolve is `NotFound` too.
 use super::FeatureGeometry;
 use crate::diagnostics::{Error, Result};
 use crate::geometry::{Bounds, Point, Transform2};
@@ -103,10 +104,7 @@ pub fn geometry(project: &Project, feature: &FeatureRef) -> Result<FeatureGeomet
             anchor_geometry(&anchor.geometry)
         }
         FeatureRef::Face { .. } | FeatureRef::Edge { .. } | FeatureRef::Vertex { .. } => {
-            Err(Error::Unsupported(
-                "layout.dimension: 3D model face, edge and vertex references are not yet supported"
-                    .into(),
-            ))
+            super::model::geometry(project, feature)
         }
     }
 }

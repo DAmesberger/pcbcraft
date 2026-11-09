@@ -517,3 +517,54 @@ This measures the solve alone, as one request. `follow` splits the parts into co
 
 - **S1 (landed first).** S2 dropped the `constraints` parameter of `BoardShapeEvaluator::evaluate` and `BoardEvaluation::constraints`. The parts solve reads the board through `check_board_sketch`, so free-form board curves can be dimensioned to. The app's `board_shape_tests.rs` lost its two edge-constraint tests.
 - **S3.** `features::geometry` refuses `Face`, `Edge` and `Vertex` with `Error::Unsupported`, and `reference_status` reports them as `Lost` until S3 resolves them. Anchors already come from `surface::package_anchors`. `reference_status` is the place to add `Inexact`.
+
+## 14. S3 notes
+
+S3 built dimensions to the faces, edges and vertices of a part's part file (`PackageModel::PartFile`), reference status, and the library impact rows.
+
+### How a model reference resolves
+
+- **Behind the evaluator seam.** The core never reads a model. `BoardShapeEvaluator::trace_model` (`layout::dimensions::model::TraceRequest` → `Traced`) is implemented in `pcbcraft-solidcraft` `board/model_refs.rs`. It evaluates the part through the one part-file cache the 3D build uses (`part_file::evaluate`, which now also keeps the evaluated `ModelState`), so there is no second model load or cache.
+- **Lookup.** The face is re-found by body and persistent name with `naming::locate_face_on_body`, an edge with `naming::locate_edge`, both on the part file's own design, then put in the part frame by the package's model placement (`ModelPlacement::transform`).
+- **Trace** (§5.4, all in the part frame):
+
+  | Model feature | Trace |
+  | --- | --- |
+  | Planar face square to the board | Its line, counter-clockwise round the part (outward normal on the right), over the face's extent |
+  | Cylinder or cone with a vertical axis | Its axis point (the task asked for points; §5.4's "and radius" is not kept) |
+  | Edge parallel to the board | Its line, arc or circle (`kernel::edge_circle`) |
+  | Vertex (`End` of an edge) | Its point |
+  | Face parallel to the board, sloped or free-form face, edge not parallel | Refused: `layout.dimension_sloped`, "pick an edge (or vertex) of it" |
+
+- **Status.** At our pin the lookup's `FaceHit`/`EdgeHit` carry `verified` (the name follows exact history) and `on_point` (the stored pick still lies on it). `Resolved` needs both; anything less is `Inexact`, with a note that gives a point on the face to pick again. Upstream's `face_on_body` `inexact` flag is not at our pin. Not found, or no longer square, is `Lost`.
+- **Discovery.** A face name the part does not have is refused with up to 12 faces square to the board, each by name with a point on it in the model frame, so an agent can pick from the refusal.
+
+### Traces are kept in the document
+
+`Project::model_traces` holds one `ModelTrace` per model reference: the feature, the package revision it was traced in, status, geometry and note. This is a deviation from "derived, never stored". Checks, preflight, `project.issues` and the update preview run without an evaluator, so they must read the status from the document, like the solved board. A trace is host output, never user input:
+
+- **When it is written.** `model::refresh` runs in `dimensions::apply` and at the start of `dimensions::follow`. It keeps a trace while its package revision is unchanged, re-traces it otherwise, and drops traces no dimension names.
+- **Refusals.** A new reference (in an add or edit) that does not resolve exactly is refused with the host's reason. An existing one that stops resolving becomes `Lost` or `Inexact`, keeps its last geometry, stops driving, and is reported (`board.reference_lost` / `board.reference_inexact`, no waiver).
+- **Re-picking.** A new pick is a new reference, so `layout.dimension_edit` with the point the note gives makes an inexact reference `Resolved`. There is no separate acknowledge command.
+
+### Library updates
+
+`updates::preview` and `updates::candidate` take the board evaluator. They run `dimensions::follow` on the staged project as the engine does after the update, so the dimensioned parts move in the preview too. `model::impact` rows (`ChangeObject::Dimension`) for references that become lost or inexact, or that move, are inserted first in `items` and `changes`, past the detail limit. `Engine::preview_update_hosted` passes the evaluators; the session and the desktop's update review use it. `Engine::preview_update` passes none, and a preview that needs a solve is then blocked, as the apply would be.
+
+### CLI and MCP
+
+References use typed ids (`{"part": {"feature": "face", "placement": <id>, "face": {"body", "face", "pick"}}}`). The readable labels (`J1.face(…)`, `edge(left)`) are still not built.
+
+### Example
+
+The ESP32-S31 dev board's J1 uses an original USB4105 part file (`examples/esp32-s31-devboard/parts/usb4105.solidcraft`, authored by `author_parts`). It is held by two part dimensions:
+
+- its shell's front face at distance 0 from the bottom edge;
+- its origin at `width / 2` from the left edge.
+
+`the_usb_c_receptacle_follows_the_board_width` widens the board from 40 mm to 50 mm and J1 moves from x = 20 to x = 25 with its face still on the edge.
+
+### For S4 and S5
+
+- **S4.** `layout::dimensions::model::source` refuses every model kind but `PartFile` with `layout.dimension_model`. S4 adds the named designs of generated, envelope and STEP models behind the same `trace_model`. STEP names are unverified, so their references come back `Inexact` until re-picked. If acknowledging without a new pick is wanted, it needs a stored flag on the trace or the dimension. glTF stays refused.
+- **S5.** The trace geometry for display and picking is `Project::model_traces[i].geometry`, in the part frame (transform it like any feature, `layout::placement_transform`). A pick in the 3D view must give the body, the persistent face name (`naming::face_name_at_body` on the part's evaluated state) and the pick point in the model frame, which is the board pick through the inverse of the placement, datum and model placement. Selection and camera must not call `trace_model`; only `refresh` does.

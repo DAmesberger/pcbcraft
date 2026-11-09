@@ -345,6 +345,7 @@ fn a_removal_diff_resolves_every_finding_it_no_longer_has() -> Result<()> {
         Change::Instance {
             edit: InstanceChange::Remove { instance: r1 },
         },
+        None,
     );
     let mut next = next.ok_or_else(|| invalid("staged"))?;
     next.tracks
