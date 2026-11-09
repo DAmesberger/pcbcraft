@@ -1414,7 +1414,8 @@ pub(crate) mod ax_harness;
 #[path = "app/ax_tests.rs"]
 mod ax_tests;
 
-#[cfg(test)]
+// The font tests rely on macOS system fonts, so the module only exists there.
+#[cfg(all(test, target_os = "macos"))]
 mod font_tests {
     use solidcraft_ui_egui::fonts;
     use solidcraft_ui_egui::ui_kit::type_face;
