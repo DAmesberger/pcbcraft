@@ -34,6 +34,15 @@ pub mod geom {
     pub use solidcraft_engine::geom::*;
 }
 
+/// Solidcraft's sketch dimension layout (extension and dimension lines,
+/// arrowheads, where the value sits), which the PCB 3D view draws part
+/// dimensions with, as Solidcraft draws sketch dimensions.
+pub mod dims {
+    pub use solidcraft_engine::sketch::{
+        ConstraintKind, DimFrame, DimLayout, default_text, dim_layout_reaching,
+    };
+}
+
 /// Native foundation fixtures (parametric probe and copper sample). They are
 /// acceptance tests for Solidcraft capabilities, not product features.
 #[cfg(test)]

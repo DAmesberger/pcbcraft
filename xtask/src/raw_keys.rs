@@ -52,6 +52,11 @@ const EXCEPTIONS: &[(&str, usize, &str)] = &[
         "text field: Enter commits and Esc reverts the dimension being typed",
     ),
     (
+        "pcb_editor/dimension_3d.rs",
+        2,
+        "text field: Enter commits and Esc drops the 3D dimension being typed",
+    ),
+    (
         "part_editor/model_view.rs",
         1,
         "gesture: Esc ends the triad drag in progress",

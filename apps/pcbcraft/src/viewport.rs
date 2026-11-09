@@ -163,6 +163,11 @@ pub struct Viewport {
     /// materials' graphs), else Solidcraft's Standard modelling look. A view
     /// preference, on by default.
     realistic: bool,
+    /// What a tool highlights under the pointer, with its block of the
+    /// selection layer ([`surface`]).
+    hovered: Option<(surface::Hovered, gpu::SceneBlock)>,
+    /// Where the last click that picked landed (screen points).
+    clicked_at: Option<egui::Pos2>,
 }
 
 impl Viewport {
@@ -259,6 +264,8 @@ impl Viewport {
             cube_press: None,
             cube: false,
             realistic: true,
+            hovered: None,
+            clicked_at: None,
         };
         result.fit();
         result
@@ -346,6 +353,8 @@ impl Viewport {
             stream.graphs = Default::default();
         }
         self.model = Some(model);
+        // Its bodies are new: a hover over the last model's is gone.
+        self.hovered = None;
         self.generation = self.generation.wrapping_add(1);
         self.repack = None;
         self.publish_stream(stream);
@@ -585,7 +594,16 @@ impl Viewport {
         let selected = crate::palette::board().selected;
         let rgba = [selected.r(), selected.g(), selected.b(), HIGHLIGHT_ALPHA];
         let strong = [selected.r(), selected.g(), selected.b(), SELECTED_ALPHA];
-        let mut scene = GpuScene::with_palette(Palette::with_stable(vec![rgba, strong]));
+        // Solidcraft's pre-highlight: the face lifted, its outline in the
+        // hover edge colour ([`surface`]).
+        let t = theme::Tokens::get();
+        // Over the lit model, the lift is white at about three times its
+        // share.
+        let face = [255, 255, 255, t.hover_face_lift.saturating_mul(3)];
+        let edge = t.hover_edge;
+        let edge = [edge.r(), edge.g(), edge.b(), 255];
+        let mut scene =
+            GpuScene::with_palette(Palette::with_stable(vec![rgba, strong, face, edge]));
         if let Some(model) = &self.model {
             scene.blocks = model
                 .highlight
@@ -610,6 +628,9 @@ impl Viewport {
                     })
                     .collect();
             }
+        }
+        if let Some((_, block)) = &self.hovered {
+            scene.blocks.push(block.clone());
         }
         Self::publish(&self.hl_slot, &mut self.hl_key, scene);
     }
@@ -861,9 +882,15 @@ impl Viewport {
             && let Some(p) = response.interact_pointer_pos()
         {
             let (x, y) = local(p);
+            self.clicked_at = Some(p);
             return Some(self.pick(x, y, w, h));
         }
         None
+    }
+
+    /// Where the click [`Self::show`] last reported landed.
+    pub fn clicked_at(&self) -> Option<egui::Pos2> {
+        self.clicked_at
     }
 }
 
@@ -1312,6 +1339,7 @@ fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
 mod decals;
 mod display;
 pub mod nav_cube;
+pub mod surface;
 pub use decals::DecalRequest;
 
 #[cfg(test)]

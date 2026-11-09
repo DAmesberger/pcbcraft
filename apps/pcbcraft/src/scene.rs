@@ -521,6 +521,12 @@ impl SceneController {
             .collect()
     }
 
+    /// How many models were asked for: each one a build or an update.
+    #[cfg(test)]
+    pub fn requests(&self) -> u64 {
+        self.ticket
+    }
+
     /// The electronics object a pick identifies.
     pub fn source(&self, pick: u64) -> Option<&Source> {
         self.sources.iter().find(|s| s.pick_id == pick)

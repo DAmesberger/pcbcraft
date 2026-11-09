@@ -48,6 +48,8 @@ pub(super) struct EdgeEdit {
     /// The selected part's hold: (revision, instance) → why a move is
     /// refused, and what its dimensions leave free.
     hold: Option<((u64, Id), Hold)>,
+    /// The dimension labels drawn on the canvas last frame, for clicks.
+    labels: Vec<(Id, egui::Rect)>,
 }
 
 /// Why a hand move is refused, and what the dimensions leave free.
@@ -190,7 +192,7 @@ pub(super) fn evaluate(project: &Project, expr: &Expr) -> Option<f64> {
 }
 
 /// A dimension value's length in mm, where it reads as one.
-fn length(project: &Project, value: &DimValue) -> Option<f64> {
+pub(super) fn length(project: &Project, value: &DimValue) -> Option<f64> {
     match value {
         DimValue::Fixed(v) => Some(*v),
         DimValue::Param(p) => evaluate(project, &Expr(p.0.clone())),
@@ -226,6 +228,13 @@ fn typed_value(
             .map(DimValue::Fixed)
             .ok_or_else(|| "Type an angle, like 90°".to_owned());
     }
+    length_value(project, text)
+}
+
+/// A distance typed as a value: a length (at least 0 mm) or an expression
+/// over the board parameters, or why it is neither.
+pub(super) fn length_value(project: &Project, text: &str) -> std::result::Result<DimValue, String> {
+    let text = text.trim();
     if let Some(v) = kit::parse_number(text, "mm") {
         return if v >= 0.0 {
             Ok(DimValue::Fixed(v))
@@ -352,6 +361,8 @@ impl PcbEditor {
             .and_then(|ev: &dyn BoardShapeEvaluator| dimensions::board_sketch(project, ev).ok());
         let mut operation = None;
         let mut sent = None;
+        let mut select = None;
+        let selected = self.dimension;
         let max = if self.edge.show_all {
             dims.len()
         } else {
@@ -365,6 +376,10 @@ impl PcbEditor {
             Some(dims.len()),
             |ui| {
                 for d in dims.iter().take(max) {
+                    // The selected dimension's row (2D and 3D share it) on
+                    // the selection's background, laid behind the row.
+                    let behind = ui.painter().add(egui::Shape::Noop);
+                    let top = ui.cursor().top();
                     ui.push_id(d.id, |ui| {
                         let title = label(project, board.as_deref(), placement.instance, d);
                         if d.reference || d.value.is_none() {
@@ -380,6 +395,9 @@ impl PcbEditor {
                                 self.edge.error.as_ref().is_some_and(|(id, _)| *id == d.id);
                             let response =
                                 kit::checked_text_row(ui, &title, text, "value", invalid);
+                            if response.gained_focus() {
+                                select = Some(d.id);
+                            }
                             if response.lost_focus() && text.trim() != value_text(d) {
                                 match typed_value(project, d, text) {
                                     Ok(value) => {
@@ -410,6 +428,17 @@ impl PcbEditor {
                                 Some(Operation::Dimension(DimensionCommand::Delete { id: d.id }));
                         }
                     });
+                    if selected == Some(d.id) {
+                        let t = Tokens::get();
+                        let row = egui::Rect::from_x_y_ranges(
+                            ui.max_rect().x_range(),
+                            top..=ui.cursor().top(),
+                        );
+                        ui.painter().set(
+                            behind,
+                            egui::Shape::rect_filled(row, t.radius_sm, t.selected_bg),
+                        );
+                    }
                 }
                 if dims.len() > max
                     && kit::summary_row(
@@ -427,6 +456,9 @@ impl PcbEditor {
             refusal::mark(ui.ctx(), Origin::Field(field_id(id)));
             self.edge.sent = Some(id);
         }
+        if select.is_some() {
+            self.dimension = select;
+        }
         operation
     }
 
@@ -434,11 +466,12 @@ impl PcbEditor {
     /// the Board shape mode), as dimension lines from the edge to the
     /// feature, labelled with their values.
     pub(super) fn paint_part_dimensions(
-        &self,
+        &mut self,
         painter: &egui::Painter,
         view: &BoardView,
         project: &Project,
     ) {
+        self.edge.labels.clear();
         if project.part_dimensions.is_empty() {
             return;
         }
@@ -469,9 +502,18 @@ impl PcbEditor {
             let ConstraintTarget::Placement(instance) = f.target() else {
                 continue;
             };
-            if !(self.shape.active || self.instance == Some(instance)) {
+            if !(self.shape.active
+                || self.instance == Some(instance)
+                || self.dimension == Some(d.id))
+            {
                 continue;
             }
+            // The selected dimension in the selection's accent, as in 3D.
+            let (color, stroke) = if self.dimension == Some(d.id) {
+                (t.accent, Stroke::new(1.5, t.accent))
+            } else {
+                (color, stroke)
+            };
             let (Some(placement), Some(edge)) = (
                 project.placement_of(instance),
                 solved
@@ -499,8 +541,20 @@ impl PcbEditor {
                 let r = egui::Rect::from_center_size(mid, galley.size() + vec2(6.0, 2.0));
                 painter.rect_filled(r, 2.0, t.panel);
                 painter.text(mid, Align2::CENTER_CENTER, text, font.clone(), color);
+                self.edge.labels.push((d.id, r));
             }
         }
+    }
+}
+
+impl PcbEditor {
+    /// The dimension whose label was drawn at `p` last frame.
+    pub(super) fn dimension_label_at(&self, p: Pos2) -> Option<Id> {
+        self.edge
+            .labels
+            .iter()
+            .find(|(_, r)| r.contains(p))
+            .map(|(id, _)| *id)
     }
 }
 
