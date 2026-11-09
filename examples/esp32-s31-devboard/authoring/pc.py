@@ -12,7 +12,7 @@ class Refused(Exception):
 
 class Session:
     def __init__(self, record=None, start=None):
-        args = [CLI, "stdio"] + ([start] if start else [])
+        args = [CLI, "stdio", "--operator"] + ([start] if start else [])
         import os
         env = dict(os.environ)
         import tempfile

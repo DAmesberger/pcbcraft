@@ -21,9 +21,12 @@ const MAX_REQUEST: usize = 4 * 1024 * 1024;
 const USAGE: &str = "usage: pcbcraft-cli <command>
   commands                         print request, document and diagnostic schemas
   stdio [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
-                                   JSON-lines requests on stdin, replies on stdout;
-                                   ungated for your own scripts, gated as for mcp
-                                   when a mode is given (give one when a model drives it)
+                                   JSON-lines requests on stdin, replies on stdout,
+                                   gated exactly as mcp is, because Pcbcraft cannot
+                                   tell a script from a model
+  stdio --operator [FILE.pcbcraft] the same, ungated: you are running this yourself,
+                                   not a model; every class runs (settings, library
+                                   sources, any path), as at the command line
   mcp [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
                                    Model Context Protocol server on stdio, always
                                    gated: the mode (ask-every-time, auto-allow-edits
@@ -116,12 +119,14 @@ fn open(path: Option<&String>) -> Result<Session> {
     Ok(session)
 }
 
-/// The `mcp` and `stdio` commands' arguments. An MCP server is always
-/// gated, in auto-allow-edits without a mode; `stdio` is gated only when
-/// given a mode, for a model that drives it.
+/// The `mcp` and `stdio` commands' arguments. Both are gated by
+/// [`McpOptions::policy`], in auto-allow-edits without a mode; only
+/// `stdio --operator` is not, for a person running their own script.
 #[derive(Debug, Default, PartialEq)]
 struct McpOptions {
     mode: Option<Mode>,
+    /// `--operator`: the person's own script, ungated (`stdio` only).
+    operator: bool,
     folders: Vec<String>,
     project: Option<String>,
 }
@@ -140,14 +145,18 @@ impl McpOptions {
                     options.mode = Some(value("--permission-mode")?.parse::<Mode>()?);
                 }
                 "--allow-folder" => options.folders.push(value("--allow-folder")?.clone()),
+                "--operator" => options.operator = true,
                 other if other.starts_with("--") || options.project.is_some() => {
                     return Err(format!("unexpected argument {other}\n{USAGE}").into());
                 }
                 _ => options.project = Some(arg.clone()),
             }
         }
-        if options.mode.is_none() && !options.folders.is_empty() {
-            return Err(format!("--allow-folder needs --permission-mode\n{USAGE}").into());
+        if options.operator && (options.mode.is_some() || !options.folders.is_empty()) {
+            return Err(format!(
+                "--operator is ungated; it takes no --permission-mode or --allow-folder\n{USAGE}"
+            )
+            .into());
         }
         Ok(options)
     }
@@ -168,12 +177,13 @@ impl McpOptions {
         Ok(Policy::new(mode, folders))
     }
 
-    /// The gate for `stdio`: a model's under the policy once a mode is
-    /// given, else the operator's own script.
+    /// The gate for `stdio`: [`McpOptions::policy`], as for `mcp`, unless
+    /// `--operator` names the person's own script.
     fn stdio_policy(&self) -> Result<Option<Policy>> {
-        match self.mode {
-            Some(_) => Ok(Some(self.policy()?)),
-            None => Ok(None),
+        if self.operator {
+            Ok(None)
+        } else {
+            Ok(Some(self.policy()?))
         }
     }
 }
@@ -187,6 +197,8 @@ fn run() -> Result<()> {
             stdio(
                 open(options.project.as_ref())?,
                 options.stdio_policy()?.as_ref(),
+                io::stdin().lock(),
+                io::stdout().lock(),
             )
         }
         [command, live, rest @ ..] if command == "mcp" && live == "--live" => {
@@ -203,6 +215,9 @@ fn run() -> Result<()> {
         }
         [command, rest @ ..] if command == "mcp" => {
             let options = McpOptions::parse(rest)?;
+            if options.operator {
+                return Err(format!("--operator is for stdio only\n{USAGE}").into());
+            }
             let session = open(options.project.as_ref())?;
             let mut server = mcp::Server::new(session, options.policy()?);
             Ok(server.serve(io::stdin().lock(), io::stdout().lock())?)
@@ -294,10 +309,15 @@ fn sample_library(path: &str, name: &str) -> Result<()> {
     print(&session::publish_library(&mut session, path, name)?)
 }
 
-/// JSON lines on stdin, gated as a model's when `policy` is given.
-fn stdio(mut session: Session, policy: Option<&Policy>) -> Result<()> {
+/// JSON lines from `input`, replies to `output`, gated as a model's under
+/// `policy`; `None` only for `--operator`.
+fn stdio(
+    mut session: Session,
+    policy: Option<&Policy>,
+    mut input: impl io::BufRead,
+    mut output: impl Write,
+) -> Result<()> {
     let caller = policy.map_or(Caller::Operator, Caller::Model);
-    let mut input = io::stdin().lock();
     while let Some(line) = lines::next(&mut input, MAX_REQUEST)? {
         let reply = match line {
             lines::Line::Text(text) if text.trim().is_empty() => continue,
@@ -308,10 +328,9 @@ fn stdio(mut session: Session, policy: Option<&Policy>) -> Result<()> {
             lines::Line::TooLarge => failure("limit_exceeded", "request exceeds 4 MiB"),
             lines::Line::NotUtf8 => failure("malformed_request", "request is not UTF-8"),
         };
-        let mut stdout = io::stdout().lock();
-        serde_json::to_writer(&mut stdout, &reply)?;
-        writeln!(stdout)?;
-        stdout.flush()?;
+        serde_json::to_writer(&mut output, &reply)?;
+        writeln!(output)?;
+        output.flush()?;
     }
     Ok(())
 }
@@ -329,10 +348,9 @@ mod mcp_option_tests {
         McpOptions::parse(&args)
     }
 
-    /// I-A1: without a mode an MCP server is still gated, in
+    /// I-A1: without a mode an MCP server and `stdio` are both gated, in
     /// auto-allow-edits within the project's folder, so what needs asking
-    /// and the never class are refused; `stdio` stays the operator's own
-    /// script until a mode is given.
+    /// and the never class are refused; only `stdio --operator` is not.
     #[test]
     fn without_a_mode_the_server_allows_edits_only() -> Result<()> {
         let policy = parse(&[])?.policy()?;
@@ -341,7 +359,17 @@ mod mcp_option_tests {
         let policy = parse(&["/work/board/x.pcbcraft"])?.policy()?;
         assert_eq!(policy.mode, Mode::AutoAllowEdits);
         assert_eq!(policy.folders, [std::path::PathBuf::from("/work/board")]);
-        assert!(parse(&["board.pcbcraft"])?.stdio_policy()?.is_none());
+        let gated = parse(&["/work/board/x.pcbcraft"])?.stdio_policy()?;
+        assert_eq!(gated.as_ref().map(|p| p.mode), Some(Mode::AutoAllowEdits));
+        assert_eq!(
+            gated.map(|p| p.folders),
+            Some(vec![std::path::PathBuf::from("/work/board")])
+        );
+        assert!(
+            parse(&["--operator", "board.pcbcraft"])?
+                .stdio_policy()?
+                .is_none()
+        );
         let gated = parse(&["--permission-mode", "ask-every-time"])?.stdio_policy()?;
         assert_eq!(gated.map(|p| p.mode), Some(Mode::AskEveryTime));
         Ok(())
@@ -372,8 +400,79 @@ mod mcp_option_tests {
     fn bad_arguments_are_refused() {
         assert!(parse(&["--permission-mode", "yolo"]).is_err());
         assert!(parse(&["--permission-mode"]).is_err());
-        assert!(parse(&["--allow-folder", "/x"]).is_err());
+        assert!(parse(&["--operator", "--permission-mode", "allow-all"]).is_err());
+        assert!(parse(&["--operator", "--allow-folder", "/x"]).is_err());
         assert!(parse(&["a.pcbcraft", "b.pcbcraft"]).is_err());
         assert!(parse(&["--gate"]).is_err());
+    }
+
+    /// The replies `stdio` gives to `requests` under the options `args`.
+    fn replies(args: &[&str], requests: &[Value]) -> Result<Vec<Value>> {
+        let options = parse(args)?;
+        let input: String = requests.iter().map(|r| format!("{r}\n")).collect();
+        let mut output = Vec::new();
+        stdio(
+            Session::new(Engine::default()),
+            options.stdio_policy()?.as_ref(),
+            input.as_bytes(),
+            &mut output,
+        )?;
+        let text = String::from_utf8(output)?;
+        Ok(text
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Without flags `stdio` is a model's: the never class and a relative
+    /// path are refused, as on `mcp`, and an edit still runs.
+    #[test]
+    fn stdio_without_flags_refuses_the_never_class() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let folder = dir.path().display().to_string();
+        let replies = replies(
+            &[],
+            &[
+                json!({"command": "library.source.add", "params": {"path": folder}}),
+                json!({"command": "project.save", "params": {"path": "board.pcbcraft"}}),
+                json!({"command": "project.apply", "params": {"expected_revision": 0, "operation": {
+                    "editor": "Schematic",
+                    "operation": {"command": "project.rename", "params": {"name": "Board"}}}}}),
+            ],
+        )?;
+        assert_eq!(replies[0]["error"]["code"], "gate.never");
+        assert_eq!(replies[1]["error"]["code"], "gate.path_outside");
+        assert_eq!(replies[2]["ok"], true, "{}", replies[2]);
+        let allow_all = replies_of_allow_all(&folder)?;
+        assert_eq!(allow_all["error"]["code"], "gate.never");
+        Ok(())
+    }
+
+    fn replies_of_allow_all(folder: &str) -> Result<Value> {
+        let request = json!({"command": "library.source.add", "params": {"path": folder}});
+        let mut replies = replies(
+            &["--permission-mode", "allow-all", "--allow-folder", folder],
+            &[request],
+        )?;
+        Ok(replies.remove(0))
+    }
+
+    /// `--operator` is the person's own script: the never class runs.
+    #[test]
+    fn stdio_operator_runs_every_class() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let folder = dir.path().join("library").display().to_string();
+        let engine = Engine::from_file(pcbcraft_core::format::EditorFile {
+            version: pcbcraft_core::format::FILE_VERSION,
+            project: pcbcraft_core::catalog::synthetic::project_with_parts(2)?,
+            drafts: Default::default(),
+        })?;
+        session::publish_library(&mut Session::new(engine), &folder, "Mine")?;
+        let replies = replies(
+            &["--operator"],
+            &[json!({"command": "library.source.add", "params": {"path": folder}})],
+        )?;
+        assert_eq!(replies[0]["ok"], true, "{}", replies[0]);
+        Ok(())
     }
 }

@@ -2,10 +2,11 @@
 # Rebuild the ESP32-S31 dev board from its replay and write every output.
 # Run from the repository root:  sh examples/esp32-s31-devboard/regenerate.sh
 #
-# 1. The replay (581 JSON-lines requests through `pcbcraft-cli stdio`, the
-#    same command engine the desktop and MCP use) opens the module example,
-#    authors the other parts, draws the schematic, lays out and routes the
-#    board and saves esp32-s31-devboard.pcbcraft. Any refused request fails.
+# 1. The replay (581 JSON-lines requests through `pcbcraft-cli stdio
+#    --operator`, the same command engine the desktop and MCP use) opens the
+#    module example, authors the other parts, draws the schematic, lays out
+#    and routes the board and saves esp32-s31-devboard.pcbcraft. Any refused
+#    request fails.
 # 2. `fab` writes the production files (byte-identical: --date none).
 # 3. The schematic PDF and the native Solidcraft model are written beside it.
 set -eu
@@ -15,7 +16,8 @@ cli=${PCBCRAFT_CLI:-target/nix/ci/pcbcraft-cli}
 [ -x "$cli" ] || { echo "build first: cargo build --locked --profile ci -p pcbcraft-cli" >&2; exit 1; }
 
 replies=$(mktemp)
-"$cli" stdio < "$dir/esp32-s31-devboard.replay.jsonl" > "$replies"
+# --operator: your own replay, not a model's (relative paths, ungated).
+"$cli" stdio --operator < "$dir/esp32-s31-devboard.replay.jsonl" > "$replies"
 if grep -q '"ok":false' "$replies"; then
     grep -n '"ok":false' "$replies" | head -5 >&2
     echo "the replay was refused; nothing else written" >&2
