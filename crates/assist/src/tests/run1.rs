@@ -69,8 +69,24 @@ fn results_of(backend: &Replay, n: usize) -> Fallible<Vec<String>> {
 #[test]
 fn the_first_live_run_replays_with_its_recorded_usage() -> Fallible {
     let (outcome, transport, _) = replay("run1/run1.recording.jsonl")?;
-    assert_eq!(outcome.stop, Stop::Submitted);
+    // Its report is refused by the review check: the run gave its pinout
+    // rows no source pages (cited only in the report), so 91 imported pins
+    // have a function without one. The recording ends there.
+    assert_eq!(
+        outcome.stop,
+        Stop::Failed("HTTP: the recording has no more responses".into())
+    );
+    assert!(outcome.report.is_none());
+    let refusal = results_of(&transport, 14)?.join("");
+    assert!(
+        refusal.contains("refused")
+            && refusal.contains(
+                "91 imported pins have a function without a source page (GND, GND, 3V3, 3V3, EN, IO2, IO3, IO0, …)"
+            ),
+        "{refusal}"
+    );
     let f = &outcome.facts;
+    assert_eq!(f.request_log[12].tools, vec!["submit_review!"]);
     assert_eq!(f.requests, 13);
     assert_eq!(
         (
@@ -88,7 +104,8 @@ fn the_first_live_run_replays_with_its_recorded_usage() -> Fallible {
         .iter()
         .map(|r| u64::from(r.max_output_tokens))
         .collect();
-    let mut expected = vec![32_000; 13];
+    // The fourteenth request carries the refusal; there is no reply to it.
+    let mut expected = vec![32_000; 14];
     expected[5] = 64_000;
     expected[8] = 64_000;
     assert_eq!(limits, expected);

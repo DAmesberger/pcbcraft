@@ -282,11 +282,13 @@ pub fn execute(
         "submit_review" => {
             return match serde_json::from_value::<ReviewReport>(report_input(input)) {
                 Ok(report) => {
-                    let problems = report.problems();
-                    if problems.is_empty() {
+                    // The MCP workflow's `library.review_check`, on the same
+                    // report and drafts: one set of rules for both paths.
+                    let checked = pcbcraft_automation::review::check(&session.snapshot(), &report);
+                    if checked["accepted"] == true {
                         ToolOutcome::Report(Box::new(report))
                     } else {
-                        reply(json!({"refused": problems}), true, None)
+                        reply(json!({"refused": checked["problems"]}), true, None)
                     }
                 }
                 Err(e) => reply(
@@ -915,9 +917,71 @@ mod tests {
         ));
     }
 
+    /// A session with one empty component draft, so a cited report passes
+    /// the review check.
+    fn with_a_component_draft() -> Session {
+        let mut session = Session::default();
+        let body = serde_json::to_value(pcbcraft_core::library::ComponentDefinition::default())
+            .unwrap_or_default();
+        let revision = session.engine().revision();
+        let reply = session.respond(
+            Caller::Operator,
+            json!({"command": "project.apply", "params": {"expected_revision": revision,
+                "operation": {"editor": "Library", "operation": {"command": "library.new_draft",
+                    "params": {"meta": {"name": "PART-NAME", "description": "", "provenance": ""},
+                        "definition": {"kind": "component", "body": body}}}}}}),
+        );
+        assert_eq!(reply["ok"], true, "{reply}");
+        session
+    }
+
+    #[test]
+    fn a_report_the_review_check_refuses_is_not_submitted() {
+        // The same check as MCP library.review_check: no component draft.
+        let mut session = Session::default();
+        let mut workspace = Workspace::default();
+        let outcome = execute(
+            &mut session,
+            &Policy::default(),
+            &mut workspace,
+            "submit_review",
+            &report_example(),
+        );
+        let ToolOutcome::Reply {
+            text, error: true, ..
+        } = outcome
+        else {
+            panic_free_fail();
+            return;
+        };
+        assert!(text.contains("no component draft"), "{text}");
+        // A value without its table, figure or section is refused too.
+        let mut session = with_a_component_draft();
+        let mut report = report_example();
+        report["report"]["values"][0]["source"]["location"] = json!("");
+        let outcome = execute(
+            &mut session,
+            &Policy::default(),
+            &mut workspace,
+            "submit_review",
+            &report,
+        );
+        let ToolOutcome::Reply {
+            text, error: true, ..
+        } = outcome
+        else {
+            panic_free_fail();
+            return;
+        };
+        assert!(
+            text.contains("needs its table, figure or section"),
+            "{text}"
+        );
+    }
+
     #[test]
     fn a_report_without_its_wrapper_or_with_lists_as_text_is_read() {
-        let mut session = Session::default();
+        let mut session = with_a_component_draft();
         let mut workspace = Workspace::default();
         let report = report_example()["report"].clone();
         let flat_and_stringified = json!({
