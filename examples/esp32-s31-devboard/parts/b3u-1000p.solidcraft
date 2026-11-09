@@ -1,0 +1,311 @@
+{
+  "format": "solidcraft/51",
+  "name": "Omron B3U-1000P tactile switch",
+  "units": "mm",
+  "params": [
+    {
+      "name": "length",
+      "expr": "3 mm",
+      "unit": "mm",
+      "comment": "housing size along x",
+      "model": false
+    },
+    {
+      "name": "width",
+      "expr": "2.5 mm",
+      "unit": "mm",
+      "comment": "housing size along y",
+      "model": false
+    },
+    {
+      "name": "body_height",
+      "expr": "1.2 mm",
+      "unit": "mm",
+      "comment": "seating plane to the cover top",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "1.6 mm",
+      "unit": "mm",
+      "comment": "seating plane to the plunger top",
+      "model": false
+    },
+    {
+      "name": "plunger_d",
+      "expr": "1.5 mm",
+      "unit": "mm",
+      "comment": "plunger diameter",
+      "model": false
+    },
+    {
+      "name": "terminal_span",
+      "expr": "4 mm",
+      "unit": "mm",
+      "comment": "size along x over the terminals",
+      "model": false
+    },
+    {
+      "name": "terminal_width",
+      "expr": "1.4 mm",
+      "unit": "mm",
+      "comment": "terminal size along y",
+      "model": false
+    },
+    {
+      "name": "cover_thickness",
+      "expr": "0.1 mm",
+      "unit": "mm",
+      "comment": "metal cover thickness (illustrative)",
+      "model": false
+    },
+    {
+      "name": "terminal_thickness",
+      "expr": "0.15 mm",
+      "unit": "mm",
+      "comment": "terminal thickness (illustrative)",
+      "model": false
+    },
+    {
+      "name": "marking_top_u",
+      "expr": "length * 0.6",
+      "unit": "mm",
+      "comment": "marking-top size along its u axis",
+      "model": false
+    },
+    {
+      "name": "marking_top_v",
+      "expr": "width * 0.6",
+      "unit": "mm",
+      "comment": "marking-top size across it",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "Housing",
+      "suppressed": false,
+      "body_names": [
+        "Housing"
+      ],
+      "param_names": [
+        "d1",
+        "d2",
+        "d3"
+      ],
+      "type": "box",
+      "corner": [
+        "-length / 2",
+        "-width / 2",
+        "0 mm"
+      ],
+      "length": "length",
+      "width": "width",
+      "height": "body_height - cover_thickness",
+      "operation": "new_body"
+    },
+    {
+      "id": 2,
+      "name": "Cover",
+      "suppressed": false,
+      "body_names": [
+        "Cover"
+      ],
+      "param_names": [
+        "d4",
+        "d5",
+        "d6"
+      ],
+      "type": "box",
+      "corner": [
+        "-length / 2",
+        "-width / 2",
+        "body_height - cover_thickness"
+      ],
+      "length": "length",
+      "width": "width",
+      "height": "cover_thickness",
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "Plunger",
+      "suppressed": false,
+      "body_names": [
+        "Plunger"
+      ],
+      "param_names": [
+        "d7",
+        "d8"
+      ],
+      "type": "cylinder",
+      "base": [
+        "0 mm",
+        "0 mm",
+        "body_height"
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "radius": "(plunger_d) / 2",
+      "height": "height - body_height",
+      "operation": "new_body"
+    },
+    {
+      "id": 4,
+      "name": "Terminal 1",
+      "suppressed": false,
+      "body_names": [
+        "Terminal 1"
+      ],
+      "param_names": [
+        "d9",
+        "d10",
+        "d11"
+      ],
+      "type": "box",
+      "corner": [
+        "length / 2",
+        "-terminal_width / 2",
+        "0 mm"
+      ],
+      "length": "(terminal_span - length) / 2",
+      "width": "terminal_width",
+      "height": "terminal_thickness",
+      "operation": "new_body"
+    },
+    {
+      "id": 5,
+      "name": "Terminal 2",
+      "suppressed": false,
+      "body_names": [
+        "Terminal 2"
+      ],
+      "param_names": [
+        "d12",
+        "d13",
+        "d14"
+      ],
+      "type": "box",
+      "corner": [
+        "-terminal_span / 2",
+        "-terminal_width / 2",
+        "0 mm"
+      ],
+      "length": "(terminal_span - length) / 2",
+      "width": "terminal_width",
+      "height": "terminal_thickness",
+      "operation": "new_body"
+    },
+    {
+      "id": 6,
+      "name": "marking-top",
+      "suppressed": false,
+      "param_names": [
+        "d15"
+      ],
+      "type": "construction_plane",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "placed",
+          "origin": [
+            "0 mm",
+            "0 mm",
+            "body_height"
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            0.0,
+            1.0,
+            0.0
+          ]
+        },
+        "distance": "0 mm"
+      }
+    }
+  ],
+  "next_id": 7,
+  "next_component_color_index": 0,
+  "appearances": {
+    "bodies": {
+      "Cover": {
+        "name": "nickel-silver",
+        "color": [
+          231,
+          227,
+          218
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.45,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Housing": {
+        "name": "lcp",
+        "color": [
+          44,
+          44,
+          47
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 0.0,
+          "roughness": 0.35,
+          "dielectric_ior": 1.6
+        }
+      },
+      "Plunger": {
+        "name": "pa9t",
+        "color": [
+          48,
+          48,
+          48
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 0.0,
+          "roughness": 0.45,
+          "dielectric_ior": 1.53
+        }
+      },
+      "Terminal 1": {
+        "name": "tin-matte",
+        "color": [
+          229,
+          229,
+          231
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.32,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Terminal 2": {
+        "name": "tin-matte",
+        "color": [
+          229,
+          229,
+          231
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.32,
+          "dielectric_ior": 1.5
+        }
+      }
+    }
+  }
+}

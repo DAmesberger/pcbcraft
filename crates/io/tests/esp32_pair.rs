@@ -315,9 +315,10 @@ fn a_track_across_the_pair_never_tears_it() -> Fallible {
 }
 
 /// The founder's "Issues says 44, the production check says 50": the skew
-/// was in both counts, so gap 2 takes one from each. The difference is the
-/// findings only production makes: the two switches' envelope models (no
-/// tactile-switch family yet).
+/// was in both counts, so gap 2 takes one from each. The difference was
+/// the findings only production makes: the two switches' envelope models.
+/// The switches now use the example's B3U-1000P part file, so both counts
+/// are 0.
 #[test]
 fn issues_and_the_production_check_count_alike_but_for_production_findings() -> Fallible {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -335,7 +336,7 @@ fn issues_and_the_production_check_count_alike_but_for_production_findings() -> 
     };
     let count = |code: &str| preflight.items.iter().filter(|i| i.code == code).count();
     assert_eq!(count("pair.skew"), 0);
-    assert_eq!(count("fabrication.envelope_model"), 2);
+    assert_eq!(count("fabrication.envelope_model"), 0);
     let only_production: Vec<&str> = preflight
         .items
         .iter()
@@ -348,7 +349,7 @@ fn issues_and_the_production_check_count_alike_but_for_production_findings() -> 
         preflight.items.len()
     );
     assert_eq!(issues.rows.len(), 0, "{:?}", issues.counts);
-    assert_eq!(preflight.items.len(), 2);
-    assert_eq!(only_production.len(), 2);
+    assert_eq!(preflight.items.len(), 0);
+    assert_eq!(only_production.len(), 0);
     Ok(())
 }

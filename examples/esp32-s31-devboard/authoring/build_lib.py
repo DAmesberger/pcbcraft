@@ -3,7 +3,8 @@ from decimal import Decimal
 
 from stage_lib import *
 
-PROV_NOTE = "Authored for the ESP32-S31 dev board e2e run from the manufacturer's public datasheet; checked by the author, not by a second reviewer."
+B3U_PART = "examples/esp32-s31-devboard/parts/b3u-1000p.solidcraft"  # from the repository root
+PROV_NOTE ="Authored for the ESP32-S31 dev board e2e run from the manufacturer's public datasheet; checked by the author, not by a second reviewer."
 
 
 def quantity(s, name, dim, symbol, aliases):
@@ -134,8 +135,16 @@ def build(s):
                                rect([-1.05, -silk_half], [1.05, silk_half], silk_w, "silkscreen")],
                  silk_text_at=[0.0, -round(silk_half + silk_w / 2 + text_gap + text_h / 2, 3)])
     generic_package(s, pkg, [3.0, 2.5, 1.6], "Omron B3U datasheet p.2, Dimensions (B3U-1000P): 3 x 2.5 body (4 over terminals), 1.6 high", "pa9t")
-    L["sw"] = dict(zip(["component", "symbol", "package", "footprint", "binding"], ids))
-    publish.append(ids)
+    # The 3D model: the example's B3U-1000P part file (original work, its
+    # defaults are the datasheet's dimensions; see README, Sources).
+    if s.rev is None:
+        s.rev = s.revision()
+    r = s.raw("library.use_part_file", {"expected_revision": s.rev, "package": pkg, "path": B3U_PART,
+                                        "name": "B3U-1000P", "licence": "MIT OR Apache-2.0",
+                                        "redistribution": "permitted"}, "B3U-1000P part file")
+    s.rev = r["result"].get("revision", s.rev)
+    L["sw"] = dict(zip(["component", "symbol", "package", "footprint", "binding"], ids), model=r["result"]["outcome"]["id"])
+    publish.append(ids + [L["sw"]["model"]])
 
     # Pin headers.
     for key, row, name in (("h12", "Pin header 1×12 2.54 mm", "Pin header 1x12 2.54 mm"),
