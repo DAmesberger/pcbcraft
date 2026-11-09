@@ -814,12 +814,6 @@ impl SchematicEditor {
         })))
     }
 
-    /// Whether the update review is open.
-    #[cfg(test)]
-    pub(crate) fn reviewing(&self) -> bool {
-        self.update.is_open()
-    }
-
     /// Open the review for a schematic `command` core refused because it
     /// merges named nets (`UpdatePlan::merges_named`): a label or power
     /// port placed or renamed, a paste, a junction or a sheet pin. Whatever
