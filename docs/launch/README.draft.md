@@ -40,10 +40,9 @@ operation leaves the document untouched. An agent cannot do anything a person co
 **Components from datasheets, with a Claude agent.** *Create from datasheet…* hands the PDFs to a
 Claude tool-use loop that drafts the component through the engine: pins and their multiplexed
 functions, Rhai pin rules, the package from a cited template, footprint, binding and markings. It
-only ever creates drafts, never publishes, and stops at a hard spending cap. Every value comes
-back in a review report with its datasheet page and a confidence level. The first live run
-drafted the ESP32-S31-WROOM-3 module for **$7.23** over 13 requests
-([run 1](docs/datasheet-assistant-run1.md)).
+only ever creates drafts and never publishes. Every value comes back in a review report with its
+datasheet page and a confidence level. The first live run drafted the ESP32-S31-WROOM-3 module
+in 13 requests ([run 1](docs/datasheet-assistant-run1.md)).
 
 **Copper is real geometry.** Tracks, pads, plated barrels, vias and fills are thickness-aware
 solids built by [Solidcraft](https://github.com/tangency-labs/solidcraft)'s parametric engine,
@@ -160,7 +159,7 @@ To draft a component from datasheets (needs an Anthropic API key, held in memory
 
 ```sh
 ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-part \
-  --datasheet PART.pdf --name PART --out part.pcbcraft --max-usd 15   # drafts + PART.review.md; publishes nothing
+  --datasheet PART.pdf --name PART --out part.pcbcraft   # drafts + PART.review.md; publishes nothing
 ```
 
 The desktop has the same as **Create from datasheet…** on the Component start page.
@@ -174,7 +173,7 @@ The desktop has the same as **Create from datasheet…** on the Component start 
 | `pcbcraft-solidcraft` | Builds the native Solidcraft model through a typed facade over Solidcraft's command API. |
 | `pcbcraft-firmware` | Pin-configuration exports: JSON IR, C header, Zephyr overlay skeleton, Rust constants. |
 | `pcbcraft-automation` | Headless `Session` shared by the JSON-lines transport and the MCP server. |
-| `pcbcraft-assist` | The datasheet assistant: a Claude tool-use loop over the automation session, with a hard cost cap. |
+| `pcbcraft-assist` | The in-app datasheet runner: a model tool-use loop over the automation session, with request, token and time limits. |
 | `pcbcraft`, `pcbcraft-cli` | The egui/wgpu desktop editor and the command line. |
 
 `cargo xtask ci` enforces the layer direction, the core module map, Solidcraft's UI containers,

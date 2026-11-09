@@ -411,7 +411,6 @@
   "run": {
     "cache_read_tokens": 0,
     "cache_write_tokens": 0,
-    "cap_usd": 15.0,
     "drafts": [
       [
         1,
@@ -1858,7 +1857,6 @@
       {
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
-        "cost_usd": 0.0,
         "input_tokens": 0,
         "n": 1,
         "output_tokens": 0,
@@ -1870,7 +1868,6 @@
       {
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
-        "cost_usd": 0.0,
         "input_tokens": 0,
         "n": 2,
         "output_tokens": 0,
@@ -1882,7 +1879,6 @@
       {
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
-        "cost_usd": 0.0,
         "input_tokens": 0,
         "n": 3,
         "output_tokens": 0,
@@ -1894,7 +1890,6 @@
       {
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
-        "cost_usd": 0.0,
         "input_tokens": 0,
         "n": 4,
         "output_tokens": 0,
@@ -1906,7 +1901,6 @@
       {
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
-        "cost_usd": 0.0,
         "input_tokens": 0,
         "n": 5,
         "output_tokens": 0,
@@ -1918,7 +1912,6 @@
       {
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
-        "cost_usd": 0.0,
         "input_tokens": 0,
         "n": 6,
         "output_tokens": 0,
@@ -1930,7 +1923,6 @@
       {
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
-        "cost_usd": 0.0,
         "input_tokens": 0,
         "n": 7,
         "output_tokens": 0,
@@ -1942,7 +1934,6 @@
       {
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
-        "cost_usd": 0.0,
         "input_tokens": 0,
         "n": 8,
         "output_tokens": 0,
@@ -1954,7 +1945,6 @@
       {
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
-        "cost_usd": 0.0,
         "input_tokens": 0,
         "n": 9,
         "output_tokens": 0,
@@ -2044,13 +2034,12 @@
         ]
       }
     ],
-    "spent_usd": 0.0,
     "steps": [
       "library_pinout_apply: revision 1 (outcome, report)",
       "library_package_from_template: revision 2 (outcome, plan; Terminals matched by number: 99 kept, 0 added, 0 removed.)",
       "library_set_marking: revision 3 (outcome)"
     ],
     "stop": "review report submitted",
-    "transport": "a replay of examples/esp32-s31-wroom-3/wroom3.replay.jsonl (no API calls; spend not real)"
+    "transport": "a replay of examples/esp32-s31-wroom-3/wroom3.replay.jsonl (no API calls; usage as recorded)"
   }
 }

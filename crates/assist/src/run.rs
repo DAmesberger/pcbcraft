@@ -1,7 +1,6 @@
 //! The tool loop of a run, on any backend: a goal, a tool set, a budget,
 //! events and a recording. Every tool call goes through [`dispatch_tool_call`],
 //! the one place a permission gate belongs.
-use crate::cost::{Ledger, Price, PriceTable};
 use crate::documents::{self, PageStore, Prepared, VIEW_PAGE_TOOL};
 use crate::model::{
     Budget, Image, Message, ModelBackend, ModelProfile, ModelRequest, Part, Role, StopReason,
@@ -10,6 +9,7 @@ use crate::model::{
 use crate::profile::RunProfile;
 use crate::report::{self, RequestFacts, ReviewReport, RunFacts};
 use crate::tools::{self, ToolOutcome};
+use crate::usage::Tally;
 use crate::{Error, Event, Goal, Outcome, Result, Stop};
 use pcbcraft_automation::{Mode, Policy, Session};
 use serde_json::Value;
@@ -37,8 +37,6 @@ pub struct RunConfig {
     /// What the model is told and how the loop reacts ([`crate::profile`]).
     pub run_profile: RunProfile,
     pub budget: Budget,
-    /// Prices of models that may serve instead of the configured one.
-    pub prices: PriceTable,
     /// What the run's tool calls may do: every call goes through the gate
     /// with it. The hosts give it the output folder as its only folder.
     pub policy: Policy,
@@ -46,14 +44,12 @@ pub struct RunConfig {
 
 impl Default for RunConfig {
     fn default() -> Self {
-        let prices = PriceTable::default();
         Self {
-            profile: ModelProfile::anthropic(crate::DEFAULT_MODEL, &prices),
+            profile: ModelProfile::anthropic(crate::DEFAULT_MODEL),
             // Claude's built-in profile: the base prompt and tools as they are.
             run_profile: crate::profile::select(None, crate::DEFAULT_MODEL, None)
                 .unwrap_or_default(),
             budget: Budget::default(),
-            prices,
             policy: Policy::default(),
         }
     }
@@ -150,11 +146,6 @@ fn first_message(goal: &Goal, prepared: &Prepared) -> Message {
 fn preflight(config: &RunConfig, prepared: &Prepared, prompt: u64) -> Result<()> {
     let profile = &config.profile;
     let caps = &profile.capabilities;
-    if !(config.budget.max_usd.is_finite() && config.budget.max_usd > 0.0) {
-        return Err(Error::Config(
-            "the cost cap must be a positive amount".into(),
-        ));
-    }
     if !caps.tool_calling {
         return Err(Error::Unsupported(format!(
             "Create from datasheet works through tools, and {} is declared without tool calling",
@@ -184,7 +175,6 @@ pub fn run(
     let profile = &config.profile;
     profile.check()?;
     let budget = &config.budget;
-    let price = profile.capabilities.price;
     let mut prepared = documents::prepare(&goal.datasheets, &profile.capabilities)?;
     let run_profile = &config.run_profile;
     let system = run_profile.system_prompt();
@@ -208,14 +198,13 @@ pub fn run(
         pages: std::mem::take(&mut prepared.pages),
         facts: std::mem::take(&mut prepared.facts),
     };
-    let mut ledger = Ledger::default();
+    let mut tally = Tally::default();
     let mut facts = RunFacts {
         model: profile.model.clone(),
         provider: profile.provider.label().to_owned(),
         capabilities: profile.declared(),
         transport: backend.label(),
         run_profile: run_profile.name.clone(),
-        cap_usd: price.map(|_| budget.max_usd),
         ..RunFacts::default()
     };
     let started = Instant::now();
@@ -233,7 +222,7 @@ pub fn run(
         if cancel.load(Ordering::Relaxed) {
             break Stop::Cancelled;
         }
-        if ledger.requests >= budget.max_requests {
+        if tally.requests >= budget.max_requests {
             break Stop::Budget(format!("{} requests", budget.max_requests));
         }
         let left = budget.max_duration.saturating_sub(started.elapsed());
@@ -245,7 +234,7 @@ pub fn run(
         }
         let output_left = budget
             .max_output_tokens
-            .saturating_sub(ledger.usage.output_tokens);
+            .saturating_sub(tally.usage.output_tokens);
         if output_left < u64::from(limit) {
             break Stop::Budget(format!("{} output tokens", budget.max_output_tokens));
         }
@@ -256,7 +245,7 @@ pub fn run(
             max_output_tokens: limit,
             timeout: profile.request_timeout.min(left),
         };
-        let prompt_tokens = if ledger.requests == 0 {
+        let prompt_tokens = if tally.requests == 0 {
             // Count exactly when the backend can; otherwise the estimate.
             match backend.count_prompt_tokens(&request) {
                 Ok(Some(n)) => n,
@@ -278,10 +267,10 @@ pub fn run(
         }
         request.max_output_tokens = u32::try_from(room.min(u64::from(limit))).unwrap_or(limit);
         let requested = u64::from(request.max_output_tokens);
-        let used = ledger
+        let used = tally
             .usage
             .prompt()
-            .saturating_add(ledger.usage.output_tokens);
+            .saturating_add(tally.usage.output_tokens);
         if used.saturating_add(prompt_tokens).saturating_add(requested) > budget.max_total_tokens {
             break Stop::Budget(format!(
                 "{} tokens: {used} used, and the next request could take {}",
@@ -289,16 +278,7 @@ pub fn run(
                 prompt_tokens + requested
             ));
         }
-        if let Some(price) = &price
-            && !ledger.affords(price, prompt_tokens, requested, budget.max_usd)
-        {
-            break Stop::Budget(format!(
-                "${:.2} spent; the next request could cost more than the ${:.2} left",
-                ledger.spent_usd,
-                budget.max_usd - ledger.spent_usd
-            ));
-        }
-        let n = ledger.requests + 1;
+        let n = tally.requests + 1;
         events(Event::Request { n, prompt_tokens });
         let sent = Instant::now();
         let reply = match backend.send(&request) {
@@ -319,8 +299,7 @@ pub fn run(
             }
         };
         let seconds = sent.elapsed().as_secs_f64();
-        let rate = served_rate(price, &reply.model, profile, &config.prices);
-        let cost = ledger.book(&reply.usage, &rate);
+        tally.book(&reply.usage);
         facts.usage_estimated |= reply.usage_estimated;
         if let Some(warning) = check_prompt(&reply, n, last_prompt, prepared.tokens) {
             events(Event::Warning(warning.clone()));
@@ -343,14 +322,12 @@ pub fn run(
             cache_write_tokens: reply.usage.cache_write_tokens,
             cache_read_tokens: reply.usage.cache_read_tokens,
             output_tokens: reply.usage.output_tokens,
-            cost_usd: cost,
             seconds,
             tools: Vec::new(),
         });
         events(Event::Response {
             n,
             stop_reason: stop_label,
-            spent_usd: ledger.spent_usd,
             output_tokens: reply.usage.output_tokens,
             seconds,
         });
@@ -500,7 +477,18 @@ pub fn run(
     facts.elapsed_seconds = started.elapsed().as_secs_f64();
     facts.documents = std::mem::take(&mut context.facts);
     let session = context.session;
-    report::finish_facts(&mut facts, &ledger, &stop, session);
+    // The MCP workflow's check, on the same report and drafts: what it
+    // would refuse is told to the reviewer (recorded runs predate it, so
+    // it does not refuse the run's report).
+    if let Some(r) = &report {
+        let checked = pcbcraft_automation::review::check(&session.snapshot(), r);
+        for problem in checked["problems"].as_array().into_iter().flatten() {
+            let warning = format!("Review check: {}", problem.as_str().unwrap_or_default());
+            events(Event::Warning(warning.clone()));
+            facts.warnings.push(warning);
+        }
+    }
+    report::finish_facts(&mut facts, &tally, &stop, session);
     Ok(Outcome {
         report,
         stop,
@@ -514,26 +502,6 @@ fn result(id: String, text: &str, error: bool, images: Vec<Image>) -> Part {
         text: text.to_owned(),
         error,
         images,
-    }
-}
-
-/// The rate to book a reply at. A fallback model may have served it: book the
-/// dearer rate. A model with no price books nothing, and the review says so.
-fn served_rate(
-    price: Option<Price>,
-    served: &str,
-    profile: &ModelProfile,
-    prices: &PriceTable,
-) -> Price {
-    let Some(price) = price else {
-        return Price::FREE;
-    };
-    if served == profile.model {
-        return price;
-    }
-    match prices.of(served) {
-        Ok(p) if p.output > price.output => p,
-        _ => price,
     }
 }
 

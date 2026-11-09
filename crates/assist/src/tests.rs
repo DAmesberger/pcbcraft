@@ -2,7 +2,6 @@
 //! synthetic radio module, EXR-22, authored end to end through the tools,
 //! and the caps, cancellation and refusal paths.
 use super::*;
-use crate::cost::PriceTable;
 use crate::documents::Delivery;
 use crate::model::anthropic::AnthropicBackend;
 use crate::model::openai::OpenAiBackend;
@@ -256,13 +255,9 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     );
     let report = outcome.report.ok_or("a report")?;
     assert_eq!(report.part, "EXR-22");
-    // Ten responses at 500 in, 1000 out and 50 000 cache reads each:
-    // 10 × (0.002 + 0.02 + 0.01) = 0.32 USD.
-    assert!(
-        (outcome.facts.spent_usd - 0.32).abs() < 1e-9,
-        "{}",
-        outcome.facts.spent_usd
-    );
+    // Ten responses at 500 in, 1000 out and 50 000 cache reads each.
+    assert_eq!(outcome.facts.output_tokens, 10 * 1000);
+    assert_eq!(outcome.facts.cache_read_tokens, 10 * 50_000);
     assert_eq!(outcome.facts.requests, 10);
     assert_eq!(outcome.facts.request_log.len(), 10);
     assert_eq!(
@@ -270,7 +265,6 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
         vec!["library_pinout_edit".to_owned()]
     );
     assert_eq!(outcome.facts.request_log[1].stop_reason, "tool_calls");
-    assert_eq!(outcome.facts.cap_usd, Some(DEFAULT_MAX_USD));
     assert_eq!(outcome.facts.documents[0].delivery, Delivery::NativePdf);
     // The review lists every pin by package number and the rule's checks.
     assert_eq!(outcome.facts.pins.len(), 23);
@@ -368,39 +362,6 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
         .find(|b| b["name"] == "library_pinout_apply")
         .ok_or("the apply call")?;
     assert!(apply["input"].get("document").is_none());
-    Ok(())
-}
-
-#[test]
-fn the_cost_cap_stops_before_a_request_it_could_not_pay() -> Fallible {
-    let dir = tempfile::tempdir()?;
-    let mut expensive = tool_turn("t1", "library_pinout_schema", json!({}));
-    // One million cache-write tokens: 5 USD at the default rates.
-    expensive["usage"]["cache_creation_input_tokens"] = json!(1_000_000);
-    let mut backend = anthropic(vec![
-        expensive,
-        tool_turn("t2", "component_check_drafts", json!({})),
-    ]);
-    backend.wire.count = Some(10_000);
-    let mut config = RunConfig::default();
-    config.budget.max_usd = 5.5;
-    let (outcome, _) = run_with(
-        &config,
-        &mut backend,
-        datasheet(&dir)?,
-        &mut Session::default(),
-    )?;
-    assert!(
-        matches!(outcome.stop, Stop::Budget(_)),
-        "{:?}",
-        outcome.stop
-    );
-    assert_eq!(
-        backend.wire.posts.len(),
-        1,
-        "the second request was never sent"
-    );
-    assert!(outcome.facts.spent_usd <= 5.5);
     Ok(())
 }
 
@@ -614,7 +575,7 @@ fn the_pinout_applies_without_a_base_or_with_it_as_text() -> Fallible {
 }
 
 #[test]
-fn non_pdf_files_and_models_without_prices_are_refused() -> Fallible {
+fn non_pdf_files_and_unnamed_models_are_refused() -> Fallible {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("x.pdf");
     std::fs::write(&path, b"not a pdf")?;
@@ -622,7 +583,7 @@ fn non_pdf_files_and_models_without_prices_are_refused() -> Fallible {
     assert!(documents::prepare(&[Datasheet::File(path)], &caps).is_err());
     assert!(documents::prepare(&[Datasheet::Url("http://x/y.pdf".into())], &caps).is_err());
     let config = RunConfig {
-        profile: ModelProfile::anthropic("unpriced", &PriceTable::default()),
+        profile: ModelProfile::anthropic(" "),
         ..RunConfig::default()
     };
     let result = run(
@@ -713,8 +674,6 @@ fn a_local_model_authors_the_module_from_text_and_a_page_view() -> Fallible {
     let f = &outcome.facts;
     assert_eq!(f.requests, 12);
     assert_eq!(f.request_log[1].tools, vec!["library_pinout_schema!"]);
-    assert_eq!(f.cap_usd, None, "no price: spend not tracked");
-    assert!(f.spent_usd.abs() < 1e-12);
     assert_eq!(f.output_tokens, 12 * 800);
     assert_eq!(f.documents[0].delivery, Delivery::TextAndPageViews);
     assert_eq!(f.documents[0].pages_viewed, vec![2]);
@@ -726,7 +685,7 @@ fn a_local_model_authors_the_module_from_text_and_a_page_view() -> Fallible {
         "{md}"
     );
     assert!(md.contains("it viewed pages [2]"), "{md}");
-    assert!(md.contains("spend is not tracked"), "{md}");
+    assert!(!md.contains("spend") && !md.contains('$'), "{md}");
 
     let posts = &backend.wire.posts;
     let first = &posts[0].2;
@@ -857,7 +816,7 @@ fn a_prompt_too_large_for_the_context_says_why_before_sending() -> Fallible {
 }
 
 #[test]
-fn token_and_time_caps_bind_a_model_without_a_price() -> Fallible {
+fn token_and_time_caps_bind_a_local_model() -> Fallible {
     let dir = tempfile::tempdir()?;
     let mut config = local_config(131_072);
     // The first request alone could take 32 000 output tokens.

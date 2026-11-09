@@ -67,7 +67,10 @@ impl Replay {
 
 impl ModelBackend for Replay {
     fn label(&self) -> String {
-        format!("a replay of {} (no API calls; spend not real)", self.source)
+        format!(
+            "a replay of {} (no API calls; usage as recorded)",
+            self.source
+        )
     }
 
     fn send(&mut self, request: &ModelRequest<'_>) -> Result<ModelReply> {
@@ -146,7 +149,7 @@ mod tests {
     use super::super::wire::{AuthStyle, HttpWire};
     use super::super::{Endpoint, ModelProfile, Part, Secret, StopReason, openai};
     use super::*;
-    use crate::cost::Usage;
+    use crate::usage::Usage;
     use std::io::Read;
 
     fn reply(id: &str) -> ModelReply {

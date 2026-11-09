@@ -1,117 +1,14 @@
-//! The review report an assisted run ends with: every value taken from a
-//! datasheet with its page and table or figure, a confidence, and the open
-//! questions a person must settle before publishing. The model submits it
-//! through the `submit_review` tool; the runner adds what it measured
-//! (spend, drafts, findings) and writes JSON and Markdown beside the
+//! The review report of an assisted run: the report itself (its types and
+//! checks are `pcbcraft_automation::review`, shared with the MCP workflow's
+//! `library.review_check`) and what the runner adds to it (requests,
+//! tokens, drafts, findings), written as JSON and Markdown beside the
 //! project.
-use schemars::JsonSchema;
+pub use pcbcraft_automation::review::{
+    Citation, Confidence, ExtractedValue, MAX_TEXT, MAX_VALUES, ReviewReport, SourceDocument,
+};
+use pcbcraft_automation::review::{cell, report_markdown};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
-
-/// Bytes of one free-text field.
-pub const MAX_TEXT: usize = 4096;
-/// Values one report lists.
-pub const MAX_VALUES: usize = 1024;
-
-#[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum Confidence {
-    /// Read directly from a dimensioned drawing or a table cell.
-    High,
-    /// Derived arithmetically from stated values, or read from a drawing
-    /// whose dimension line is ambiguous.
-    Medium,
-    /// Inferred, measured from a drawing's scale, or not stated.
-    Low,
-}
-
-/// Where in which document a value comes from.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Citation {
-    /// The document's short name, as listed in `sources`.
-    pub document: String,
-    /// 1-based page number of the PDF.
-    pub page: u32,
-    /// Table, figure or section, e.g. "Table 3-1" or "Figure 10-1".
-    #[serde(default)]
-    pub location: String,
-}
-
-/// One source document.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct SourceDocument {
-    /// Short name used by citations.
-    pub name: String,
-    pub title: String,
-    /// The document's own revision and date.
-    #[serde(default)]
-    pub revision: String,
-}
-
-/// One value taken from the datasheets.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ExtractedValue {
-    /// What it is, e.g. "pad pitch", "pin 45 strapping default".
-    pub item: String,
-    /// The value with its unit as used, e.g. "0.85 mm".
-    pub value: String,
-    pub source: Citation,
-    pub confidence: Confidence,
-    #[serde(default)]
-    pub note: String,
-}
-
-/// The model's report (`submit_review`).
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewReport {
-    /// The part, e.g. its manufacturer part name.
-    pub part: String,
-    /// What was built and what a reviewer should check first.
-    pub summary: String,
-    pub sources: Vec<SourceDocument>,
-    pub values: Vec<ExtractedValue>,
-    /// Questions the datasheets leave open, each to settle before publish.
-    #[serde(default)]
-    pub open_questions: Vec<String>,
-}
-
-impl ReviewReport {
-    /// Bounds a submitted report must meet.
-    pub fn problems(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        let long = |s: &str| s.len() > MAX_TEXT;
-        if self.part.trim().is_empty() || long(&self.part) || long(&self.summary) {
-            out.push("part and summary must be non-empty text of at most 4 KiB".into());
-        }
-        if self.values.len() > MAX_VALUES {
-            out.push(format!("at most {MAX_VALUES} values"));
-        }
-        if self.sources.is_empty() {
-            out.push("list the source documents".into());
-        }
-        for (k, v) in self.values.iter().enumerate() {
-            if !self.sources.iter().any(|s| s.name == v.source.document) {
-                out.push(format!(
-                    "value {} ({}) cites document {:?}, which sources does not list",
-                    k + 1,
-                    v.item,
-                    v.source.document
-                ));
-            }
-            if v.source.page == 0 {
-                out.push(format!("value {} ({}) needs a page", k + 1, v.item));
-            }
-        }
-        out.truncate(20);
-        out
-    }
-}
 
 /// What the runner adds to the model's report.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -123,18 +20,12 @@ pub struct RunFacts {
     /// What was declared for it.
     #[serde(default)]
     pub capabilities: String,
-    /// Where the responses came from: an endpoint, or a replay file (whose
-    /// spend is not real).
+    /// Where the responses came from: an endpoint, or a replay file.
     #[serde(default)]
     pub transport: String,
     /// The run profile the model ran with ([`crate::profile`]).
     #[serde(default)]
     pub run_profile: String,
-    pub spent_usd: f64,
-    /// `None` when the model has no price: spend is unknown, and the token,
-    /// time and request caps are what bound the run.
-    #[serde(default)]
-    pub cap_usd: Option<f64>,
     /// Wall-clock time of the run.
     #[serde(default)]
     pub elapsed_seconds: f64,
@@ -160,7 +51,7 @@ pub struct RunFacts {
     pub findings: Vec<(u64, Vec<String>)>,
     /// Operations applied, in order (tool and outcome).
     pub steps: Vec<String>,
-    /// Each request: why it stopped, its tokens, cost and tool calls.
+    /// Each request: why it stopped, its tokens and tool calls.
     #[serde(default)]
     pub request_log: Vec<RequestFacts>,
     /// The component draft's pins, one row per package pin.
@@ -180,7 +71,6 @@ pub struct RequestFacts {
     pub cache_write_tokens: u64,
     pub cache_read_tokens: u64,
     pub output_tokens: u64,
-    pub cost_usd: f64,
     /// How long the response took.
     #[serde(default)]
     pub seconds: f64,
@@ -192,16 +82,15 @@ pub struct RequestFacts {
 /// Fill in what the runner measured once a run has stopped.
 pub(crate) fn finish_facts(
     facts: &mut RunFacts,
-    ledger: &crate::cost::Ledger,
+    tally: &crate::usage::Tally,
     stop: &crate::Stop,
     session: &pcbcraft_automation::Session,
 ) {
-    facts.spent_usd = ledger.spent_usd;
-    facts.requests = ledger.requests;
-    facts.input_tokens = ledger.usage.input_tokens;
-    facts.output_tokens = ledger.usage.output_tokens;
-    facts.cache_write_tokens = ledger.usage.cache_write_tokens;
-    facts.cache_read_tokens = ledger.usage.cache_read_tokens;
+    facts.requests = tally.requests;
+    facts.input_tokens = tally.usage.input_tokens;
+    facts.output_tokens = tally.usage.output_tokens;
+    facts.cache_write_tokens = tally.usage.cache_write_tokens;
+    facts.cache_read_tokens = tally.usage.cache_read_tokens;
     facts.stop = stop.to_string();
     let snapshot = session.snapshot();
     facts.pins = crate::pins::rows(&snapshot);
@@ -245,10 +134,6 @@ pub(crate) fn finish_facts(
     }
 }
 
-fn cell(t: &str) -> String {
-    t.replace('|', "\\|").replace('\n', " ")
-}
-
 /// The report as Markdown for people.
 pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
     let mut s = String::new();
@@ -263,13 +148,9 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
     } else {
         format!(" via {}", facts.transport)
     };
-    let spend = match facts.cap_usd {
-        Some(cap) => format!("spend ${:.2} of the ${cap:.2} cap", facts.spent_usd),
-        None => "no price declared, so spend is not tracked".to_owned(),
-    };
     let _ = writeln!(
         s,
-        "Run: model `{}`{via}, {} requests in {:.0} s, {spend}; stopped: {}.\n",
+        "Run: model `{}`{via}, {} requests in {:.0} s; stopped: {}.\n",
         facts.model, facts.requests, facts.elapsed_seconds, facts.stop
     );
     let estimated = if facts.usage_estimated {
@@ -309,37 +190,7 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
         let _ = writeln!(s);
     }
     if let Some(r) = report {
-        let _ = writeln!(s, "## Summary\n\n{}\n", r.summary);
-        let _ = writeln!(s, "## Sources\n");
-        for d in &r.sources {
-            let _ = writeln!(s, "- **{}**: {} {}", d.name, d.title, d.revision);
-        }
-        let _ = writeln!(s, "\n## Open questions\n");
-        if r.open_questions.is_empty() {
-            let _ = writeln!(s, "None listed.");
-        }
-        for q in &r.open_questions {
-            let _ = writeln!(s, "- [ ] {q}");
-        }
-        let _ = writeln!(s, "\n## Extracted values\n");
-        let _ = writeln!(s, "| Item | Value | Source | Confidence | Note |");
-        let _ = writeln!(s, "|---|---|---|---|---|");
-        let mut values: Vec<&ExtractedValue> = r.values.iter().collect();
-        // Least confident first: they need the reviewer most.
-        values.sort_by_key(|v| std::cmp::Reverse(v.confidence));
-        for v in values {
-            let _ = writeln!(
-                s,
-                "| {} | {} | {} p.{} {} | {:?} | {} |",
-                cell(&v.item),
-                cell(&v.value),
-                cell(&v.source.document),
-                v.source.page,
-                cell(&v.source.location),
-                v.confidence,
-                cell(&v.note)
-            );
-        }
+        s.push_str(&report_markdown(r));
     }
     if !facts.rules.is_empty() {
         let _ = writeln!(
@@ -388,19 +239,18 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
         let _ = writeln!(s, "\n## Requests\n");
         let _ = writeln!(
             s,
-            "| # | Stop | Cache write | Cache read | Input | Output | USD | Seconds | Tools |\n|---|---|---|---|---|---|---|---|---|"
+            "| # | Stop | Cache write | Cache read | Input | Output | Seconds | Tools |\n|---|---|---|---|---|---|---|---|"
         );
         for r in &facts.request_log {
             let _ = writeln!(
                 s,
-                "| {} | {} | {} | {} | {} | {} | {:.3} | {:.0} | {} |",
+                "| {} | {} | {} | {} | {} | {} | {:.0} | {} |",
                 r.n,
                 r.stop_reason,
                 r.cache_write_tokens,
                 r.cache_read_tokens,
                 r.input_tokens,
                 r.output_tokens,
-                r.cost_usd,
                 r.seconds,
                 r.tools.join(", ")
             );
@@ -438,26 +288,17 @@ mod tests {
     }
 
     #[test]
-    fn a_report_cites_listed_documents_with_pages() {
-        let mut r = report();
-        assert!(r.problems().is_empty());
-        r.values[0].source.document = "Other".into();
-        r.values[0].source.page = 0;
-        assert_eq!(r.problems().len(), 2);
-    }
-
-    #[test]
-    fn markdown_lists_values_questions_and_spend() {
+    fn markdown_lists_values_and_questions_and_no_prices() {
         let facts = RunFacts {
             model: "claude-opus-5-5".into(),
-            spent_usd: 1.234,
-            cap_usd: Some(15.0),
+            requests: 3,
             ..RunFacts::default()
         };
         let md = markdown(Some(&report()), &facts);
         assert!(md.contains("| pitch | 1.27 mm | DS p.12 Figure 3 | High |"));
         assert!(md.contains("- [ ] Is the land pattern the pad?"));
-        assert!(md.contains("$1.23 of the $15.00 cap"));
+        assert!(md.contains("3 requests"));
+        assert!(!md.contains('$') && !md.contains("USD"), "{md}");
         assert!(md.contains("not published"));
     }
 }

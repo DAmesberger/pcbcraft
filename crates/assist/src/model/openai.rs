@@ -13,7 +13,7 @@ use super::{
     DocumentSource, Message, ModelBackend, ModelProfile, ModelReply, ModelRequest, Part, Role,
     StopReason,
 };
-use crate::cost::Usage;
+use crate::usage::Usage;
 use crate::{Error, Result};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;

@@ -33,7 +33,7 @@ from the same script. No voice-over is needed; captions carry the story.
 | # | Scene | What happens on screen | Duration | Caption | Feature it proves | Ready? |
 |---|---|---|---|---|---|---|
 | 0 | Cold open | Black, then the finished dev board in 3D, slowly orbiting under the studio light; the title fades in. | 4 s | **Pcbcraft** · *one design, components to Gerbers* | Integrated photoreal 3D | Waits: dev board; better with Realistic mode |
-| 1 | Datasheet in | Component workspace start page → **Create from datasheet…**; drop the two WROOM-3 PDFs (file names only), part name, model, cost cap 15 USD; Start. Progress and spend tick up. | 8 s | *Give it the datasheets.* | AI-assisted component creation (`pcbcraft-assist`) | Works today; see note A |
+| 1 | Datasheet in | Component workspace start page → **Create from datasheet…**; drop the two WROOM-3 PDFs (file names only), part name, model; Start. Progress ticks up. | 8 s | *Give it the datasheets.* | AI-assisted component creation (`pcbcraft-assist`) | Works today; see note A |
 | 2 | Review | Time-cut to the finished run: the review report lists values with page, table and confidence; the Pins tab shows 99 pins with their IO MUX functions. | 6 s | *Every value cited to its page.* | Review flow; pin functions | Works today |
 | 3 | The part in 3D | Component 3D tab: the WROOM-3 part file with the laser-etched name on the can, the QR code and pin-1 mark; a slow orbit and a push-in onto the etching. | 10 s | *A parametric Solidcraft part, with real markings.* | Lean parts; markings D7 | Works today; Realistic mode and material graphs will lift it |
 | 4 | Publish | Publish → the identity bar turns to *r1 · published*. | 3 s | *Published as an exact revision.* | Revisioned library | Works today |
@@ -61,7 +61,7 @@ Total: 126 s.
   current feature, and the caption must not imply it. The terminal is recorded as its own window
   (`launchkit record` on the terminal's pid), never the whole screen.
 - **Numbers on screen.** Only measured ones: 11.6 ms worst shove move on the 10,000-via board,
-  0 mm² Gerber read-back difference, 0.13 s showcase export, 7.23 USD first datasheet run.
+  0 mm² Gerber read-back difference, 0.13 s showcase export.
 
 ## Dependencies: record the final take after these land
 

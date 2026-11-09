@@ -9,7 +9,7 @@ Parts, schematic, board layout and 3D in one app, on [Solidcraft](https://github
 
 **3D is the same design, not an export.** Copper, pads, plated holes, vias and fills are solids with real thickness, built by Solidcraft's engine. Layout and 3D are two views of one board, with one selection, one undo history and one set of properties. Pick a track in 3D and it is selected in the layout. The whole board saves as a native, parametric `.solidcraft` model.
 
-**Built for AI from the start.** Every change, from a wire to a published part, is a typed command on one engine. The desktop app, the command line and the MCP server send the same commands, and a refused command leaves the design untouched. An assistant can work on a file in the background or, when you allow it, live in the open window, on your undo history. A datasheet assistant drafts parts from PDFs for you to review, on Claude or a local model.
+**Built for AI from the start.** Every change, from a wire to a published part, is a typed command on one engine. The desktop app, the command line and the MCP server send the same commands, and a refused command leaves the design untouched. An assistant can work on a file in the background or, when you allow it, live in the open window, on your undo history. Creating a part from datasheets is an MCP workflow any agent can run, such as Claude Code, Codex or a local model: it drafts the part with every value cited, Pcbcraft checks the citations, and you review and publish.
 
 **Already end to end.** Multi-sheet schematics with ERC, push-and-shove routing, differential pairs, length tuning, copper fills, design rules, and production files behind a pre-flight check. Schematic to Gerbers in one app.
 

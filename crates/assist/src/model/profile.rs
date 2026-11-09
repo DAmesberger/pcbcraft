@@ -3,7 +3,6 @@
 //! no behaviour above the backends depends on a vendor's name.
 use super::wire::AuthStyle;
 use super::{Endpoint, KeySource};
-use crate::cost::{Price, PriceTable};
 use crate::{Error, Result};
 use std::time::Duration;
 
@@ -63,8 +62,6 @@ pub struct Capabilities {
     pub server_fallback: bool,
     /// Prompt plus output tokens one request may hold.
     pub context_tokens: u64,
-    /// USD per million tokens; `None` when unknown or free.
-    pub price: Option<Price>,
 }
 
 /// Output tokens per request. These come from the model's configuration and
@@ -103,9 +100,6 @@ pub struct ModelProfile {
     pub effort: Option<String>,
     /// Longest wait for one response. Requests are not streamed.
     pub request_timeout: Duration,
-    /// Refuse to run without a price, because this endpoint bills and the
-    /// cost cap could not be enforced.
-    pub price_required: bool,
 }
 
 /// Model ids with a declared profile on the Messages API.
@@ -119,10 +113,9 @@ const FALLBACK_MODELS: &[&str] = &[
 
 impl ModelProfile {
     /// A model on the Messages API. Its capabilities are the ones that API
-    /// declares for its current models; `price` comes from `prices` by
-    /// exact id. The limits are today's: 32 000 output tokens a request and
+    /// declares for its current models. The limits are today's: 32 000 output tokens a request and
     /// 64 000 after a cut-off, for a 30-minute non-streaming wait.
-    pub fn anthropic(model: &str, prices: &PriceTable) -> Self {
+    pub fn anthropic(model: &str) -> Self {
         Self {
             provider: Provider::Anthropic,
             model: model.to_owned(),
@@ -134,7 +127,6 @@ impl ModelProfile {
                 adaptive_thinking: true,
                 server_fallback: FALLBACK_MODELS.contains(&model),
                 context_tokens: ANTHROPIC_CONTEXT,
-                price: prices.of(model).ok(),
             },
             output: OutputLimits {
                 per_request: 32_000,
@@ -142,7 +134,6 @@ impl ModelProfile {
             },
             effort: Some("high".into()),
             request_timeout: Duration::from_secs(30 * 60),
-            price_required: true,
         }
     }
 
@@ -162,13 +153,11 @@ impl ModelProfile {
                 adaptive_thinking: false,
                 server_fallback: false,
                 context_tokens,
-                price: None,
             },
             output: OutputLimits::for_context(context_tokens),
             effort: None,
             // A local model at 17 tokens a second takes 31 minutes for 32 000.
             request_timeout: Duration::from_secs(90 * 60),
-            price_required: false,
         }
     }
 
@@ -185,12 +174,6 @@ impl ModelProfile {
         }
         if self.output.per_request == 0 {
             return Err(Error::Config("the output limit must be above 0".into()));
-        }
-        if self.price_required && self.capabilities.price.is_none() {
-            return Err(Error::Config(format!(
-                "no price for model {}; add it to the price table (--prices)",
-                self.model
-            )));
         }
         Ok(())
     }
@@ -218,11 +201,11 @@ pub struct Connection {
     pub key: KeySource,
 }
 
-/// What one run may use. The USD cap applies when a price is known; the
-/// token, time and request caps apply to every model, local ones included.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// What one run may use: request, token and time caps, the same for every
+/// model, hosted or local. Pcbcraft keeps no prices; billing is the
+/// provider's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Budget {
-    pub max_usd: f64,
     pub max_requests: u32,
     /// Output tokens of the whole run.
     pub max_output_tokens: u64,
@@ -234,7 +217,6 @@ pub struct Budget {
 impl Default for Budget {
     fn default() -> Self {
         Self {
-            max_usd: crate::DEFAULT_MAX_USD,
             max_requests: 60,
             max_output_tokens: 400_000,
             max_total_tokens: 40_000_000,
@@ -264,22 +246,13 @@ mod tests {
         // A Claude id on an OpenAI-compatible proxy gets what was declared.
         let p = ModelProfile::openai_compatible("claude-opus-5-5", 100_000);
         assert!(!p.capabilities.native_pdf && !p.capabilities.caching);
-        assert!(p.capabilities.price.is_none());
     }
 
     #[test]
-    fn an_unpriced_billed_model_and_an_undeclared_context_are_refused() {
-        let prices = PriceTable::default();
-        assert!(
-            ModelProfile::anthropic("claude-opus-5-5", &prices)
-                .check()
-                .is_ok()
-        );
-        assert!(
-            ModelProfile::anthropic("unpriced", &prices)
-                .check()
-                .is_err()
-        );
+    fn an_undeclared_context_or_model_is_refused() {
+        assert!(ModelProfile::anthropic("claude-opus-5-5").check().is_ok());
+        assert!(ModelProfile::anthropic("any-model-id").check().is_ok());
+        assert!(ModelProfile::anthropic(" ").check().is_err());
         assert!(ModelProfile::openai_compatible("local", 0).check().is_err());
         assert!(ModelProfile::openai_compatible(" ", 1000).check().is_err());
         assert!(

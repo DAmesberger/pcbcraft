@@ -1,8 +1,8 @@
 //! The first live Claude API run (`examples/esp32-s31-wroom-3/run1`: 13
-//! recorded responses of `claude-opus-5-5`, $7.23, converted to the neutral
+//! recorded responses of `claude-opus-5-5`, converted to the neutral
 //! recording format) and the hand-made
 //! reference replay, both replayed through the current tools: what the
-//! model would now have been told, and that the recorded spend is booked
+//! model would now have been told, and that the recorded usage is counted
 //! exactly. No network: the datasheet is a stand-in, since a replay never
 //! sends it.
 use super::*;
@@ -67,7 +67,7 @@ fn results_of(backend: &Replay, n: usize) -> Fallible<Vec<String>> {
 }
 
 #[test]
-fn the_first_live_run_replays_with_its_recorded_spend() -> Fallible {
+fn the_first_live_run_replays_with_its_recorded_usage() -> Fallible {
     let (outcome, transport, _) = replay("run1/run1.recording.jsonl")?;
     assert_eq!(outcome.stop, Stop::Submitted);
     let f = &outcome.facts;
@@ -81,7 +81,6 @@ fn the_first_live_run_replays_with_its_recorded_spend() -> Fallible {
         ),
         (28, 595_003, 6_211_969, 150_455)
     );
-    assert!((f.spent_usd - 7.227).abs() < 0.001, "{}", f.spent_usd);
     // Two replies were cut off at 32 000 output tokens (5 and 8); the
     // request after each gets room to finish, then the limit returns.
     let limits: Vec<u64> = transport

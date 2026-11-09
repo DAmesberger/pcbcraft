@@ -21,7 +21,7 @@ What that means in practice:
 | One typed engine for UI, CLI and MCP | Built | `crates/automation` |
 | MCP server | Built; compact replies | `crates/automation/src/mcp.rs` |
 | Live MCP into the open window | Built: Help › Connect AI assistants…, off at start; requests run on the UI thread on the window's engine and undo history, with the gate and an in-app Allow for Ask ([development notes](development.md#live-mcp)) | `crates/automation/src/live.rs`, `apps/pcbcraft/src/app/live_mcp.rs` |
-| Datasheet assistant | Built: a tool loop, a USD cap, recording, review report. **Anthropic only:** `api.rs` hard-codes the endpoint and headers, and `request_body` and the PDF blocks are Messages-shaped. Its `Transport` trait is a useful seam but sends that shape | `crates/assist` |
+| Datasheet assistant | Built as an MCP workflow (9 November 2026): the `datasheet_to_component` prompt, served from the skill file `skills/pcbcraft-datasheet-part/SKILL.md`, and `library.review_check` on the agent's cited report. The in-app runner (Anthropic and OpenAI-compatible model layer, request, token and time limits, recording, review report) stays while the in-app assistant is decided ([datasheet assistant](datasheet-assistant.md#mcp-workflow)) | `crates/automation/src/mcp/prompts.rs`, `crates/automation/src/review.rs`, `crates/assist` |
 | Review of a proposed change | `pcbcraft-cli review-diff` compares two projects | CLI |
 | In-app chat | **None** | |
 
@@ -55,7 +55,7 @@ Panel  Datasheet flow  Issue fixes  Routing  ...   (tasks)
 One neutral interface in `crates/assist`, with no vendor shapes above it:
 
 - **Neutral conversation:** messages, tool calls, tool results, images and documents. Each backend converts them to its wire format.
-- **Capabilities, declared per model and never assumed:** tool calling, vision, native PDF, thinking, caching, context size, and price if any. Features ask for capabilities instead of checking a vendor's name.
+- **Capabilities, declared per model and never assumed:** tool calling, vision, native PDF, thinking, caching and context size. Features ask for capabilities instead of checking a vendor's name.
 - **Backends:**
   - Anthropic Messages.
   - OpenAI-compatible: Ollama, LM Studio, `llama-server`, OpenAI, OpenRouter, any URL.
@@ -71,9 +71,9 @@ One loop for every task, generalised from `pcbcraft_assist::run`:
 
 - input: a goal, a tool set, a budget and a context;
 - output: events for the UI, and a recording that can be replayed offline;
-- **budgets:** a USD cap for paid models, and token, time and request caps for all, including local;
+- **limits:** token, time and request caps, the same for every model, hosted or local. Pcbcraft keeps no prices; billing is the provider's (founder, 9 November 2026: "remove pricing");
 - **output limits come from the model, not a small fixed number,** near what it supports, because reasoning counts against them. A cut-off is reported clearly and never treated as an answer;
-- every task uses this, so recording, cost and approval work the same way everywhere.
+- every task uses this, so recording, limits and approval work the same way everywhere.
 
 ### 3. Tools and gate
 
@@ -103,7 +103,7 @@ Part of this is budgeting: replies and views shrink to fit a small model's conte
 ### 5. Proposals, not surprises
 
 - Every message's changes merge into **one undo step,** labelled with the message.
-- **Changes show on the canvas as they arrive,** with a summary card in the conversation: what changed, new and resolved issues, and cost.
+- **Changes show on the canvas as they arrive,** with a summary card in the conversation: what changed, and new and resolved issues.
 - **Review:** a run on a large task, such as routing a board, can work on a copy and offer the result as a diff to accept or reject, using `review-diff`. Small edits apply directly, because stopping for every track would be tedious.
 - **Reasons stay attached:** a routed net or chosen part can show why it was done that way.
 
@@ -115,7 +115,7 @@ Library publishing stays a person's decision, as the datasheet assistant does to
 - **Right-click or Issues:** "Ask about this", "Fix this", with the object already attached.
 - **Task entry points:** Create from datasheet, Review this schematic, Route these nets, Explain this rule. They're the same run with a preset goal and tool set, not separate features.
 - **Command palette:** the same request, one keystroke away, through the shortcut registry.
-- **A status line while running,** with Stop, spend and the current step.
+- **A status line while running,** with Stop and the current step.
 
 ### 7. Safety
 
@@ -129,7 +129,7 @@ Library publishing stays a person's decision, as the datasheet assistant does to
 A feature isn't "LLM-first" if it only works on the top model:
 
 - **An eval per task** on recorded fixtures, graded by the engine: datasheet to part, ERC fix, net routing.
-- **A measured model table:** each task on each model, with success, cost and time. It decides what the app recommends and what it warns about.
+- **A measured model table:** each task on each model, with success, tokens and time. It decides what the app recommends and what it warns about.
 - Fixtures run offline in CI through replay. Live runs are on demand.
 
 ## Local models: first measurements

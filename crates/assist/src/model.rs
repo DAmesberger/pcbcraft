@@ -19,7 +19,7 @@ pub mod record;
 pub mod wire;
 
 use crate::Result;
-use crate::cost::Usage;
+use crate::usage::Usage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
