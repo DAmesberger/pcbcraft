@@ -81,6 +81,14 @@ pub(super) fn has_acute(points: &[Point]) -> bool {
     )
 }
 
+/// Whether any leg runs back against the unit direction `along`: a hook,
+/// a reversal, or a knee that passes the target and comes back.
+pub(super) fn turns_back(points: &[Point], along: Point) -> bool {
+    points
+        .windows(2)
+        .any(|w| unit(w[0], w[1]).is_some_and(|d| dot(d, along) < -1e-6))
+}
+
 /// Drop legs shorter than [`MIN_SEGMENT_MM`], merge collinear legs and
 /// cut loops; the ends stay.
 pub(super) fn simplify(points: &[Point]) -> Vec<Point> {

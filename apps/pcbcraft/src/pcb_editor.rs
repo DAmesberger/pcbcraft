@@ -70,6 +70,8 @@ mod production;
 pub(crate) mod raster_tests;
 mod route_card;
 #[cfg(test)]
+mod route_entry_tests;
+#[cfg(test)]
 mod route_tests;
 pub(crate) mod route_tool;
 mod rules_panel;
