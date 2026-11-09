@@ -257,7 +257,7 @@ Pcbcraft keeps the map from its own objects (instance ids, board sketch curve id
 - names that a user or program assigns to a face, independent of the history position;
 - named faces on mesh bodies.
 
-Pcbcraft handles the first with the persistent design (§6.1) and has no workaround for the second (open question 3).
+Pcbcraft handles the first with the persistent design (§6.1) and has no workaround for the second (decision 3).
 
 ## 7. The housing round trip
 
@@ -360,7 +360,7 @@ Everything Pcbcraft does here uses public upstream APIs: `io::read_design`, `Ses
 | `update_links` is manual and has no dry run | The Solidcraft side cannot be previewed in Solidcraft | Pcbcraft's publish preview; Solidcraft's undo |
 | `DesignLink` stores no source digest or revision | Pcbcraft cannot read which board the housing holds | Comparing the consumed faces (§7.4) |
 | Face names follow history position; no assigned names | Rebuilds rename faces | Persistent board design (§6.1) |
-| No faces on mesh bodies; meshes are not linked | glTF parts cannot be referenced or seen by the housing | Reported; open question 3 |
+| No faces on mesh bodies; meshes are not linked | glTF parts cannot be referenced or seen by the housing | Reported; decision 3 |
 | A linked design is flattened into one component | The housing sees the board as one rigid body, not a sub-assembly of parts | Enough for mates and projections, because part poses are Pcbcraft's |
 | `face_on_body`'s `inexact` only upstream | — | Adopted when Pcbcraft next repins |
 
@@ -415,8 +415,10 @@ C0 comes first; dependencies are listed per slice.
 
 S1 and S2 can run in parallel after C0, then S3, S6 and S7.
 
-## 11. Open questions for the founder
+## 11. Decisions
 
-1. **What the published board design contains.** The full board (every pad, track and via as a solid body), or a mechanical subset (laminate, holes, parts) written as Pcbcraft's own second design? *Recommendation: the full board first, and measure Update Links on it (S11). Offer the subset only if that is too slow.* Today's file is the full board, and a subset is a second file to keep in step.
-2. **Stable names: Pcbcraft side only, or also upstream later?** The persistent board design (§6.1) works with upstream as it is, but costs 14 hours and renames everything after a forced rebuild. *Recommendation: build the persistent design now. Later, separately from the declined live links, consider proposing generic assigned face names upstream.*
-3. **glTF (mesh) models.** Solidcraft gives meshes no faces and does not link them. *Recommendation: accept the exception with a clear finding, and steer authors to STEP or part files for any part that a dimension or the housing needs.*
+The founder accepted all three recommendations (2026-11-09):
+
+1. **The published board design is the full board.** Update Links on it is measured in S11; a mechanical subset is considered only if that is too slow.
+2. **Stable names stay on Pcbcraft's side** through the persistent board design (§6.1). Proposing generic assigned face names upstream may be considered later, separately.
+3. **glTF (mesh) models stay the one kind without face references,** with a clear finding that steers authors to STEP or part files.
