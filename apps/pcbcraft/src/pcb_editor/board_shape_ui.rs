@@ -313,6 +313,9 @@ impl PcbEditor {
                     ShapeTool::Arc,
                     ShapeTool::Circle,
                     ShapeTool::Rect,
+                    ShapeTool::Spline,
+                    ShapeTool::Ellipse,
+                    ShapeTool::Conic,
                     ShapeTool::Fillet,
                 ],
             ),
@@ -396,12 +399,20 @@ impl PcbEditor {
         let typing = ui.ctx().egui_wants_keyboard_input();
         let mut operation = None;
         let mut refused = None;
+        // Enter, a double-click on the last point or a right-click ends a
+        // spline (Solidcraft's spline tools).
+        let mut finish = false;
         if response.hovered() && !typing {
             let ctx = ui.ctx().clone();
             if crate::keys::pressed(&ctx, "shape.cancel") {
                 self.shape.escape();
             }
+            finish = crate::keys::pressed(&ctx, "shape.finish");
             let delete = crate::keys::pressed(&ctx, "shape.delete");
+            // Backspace (or Delete) takes back the spline's last point.
+            if delete && self.shape.tool == ShapeTool::Spline {
+                self.shape.gesture.pending.pop();
+            }
             for tool in ShapeTool::ALL {
                 if crate::keys::pressed_tool(&ctx, "shape", tool.id()) {
                     let _ = self.shape_tool(tool.id(), engine);
@@ -457,7 +468,11 @@ impl PcbEditor {
             }]));
         }
         if response.clicked_by(PointerButton::Secondary) {
-            self.shape.reset_gesture();
+            if self.shape.tool == ShapeTool::Spline && self.shape.gesture.pending.len() >= 2 {
+                finish = true;
+            } else {
+                self.shape.reset_gesture();
+            }
         }
         if response.clicked_by(PointerButton::Primary)
             && let Some(at) = cursor
@@ -496,13 +511,22 @@ impl PcbEditor {
                     evaluator,
                     tolerance,
                 };
-                match shape::press(
+                let before = self.shape.gesture.pending.len();
+                let step = shape::press(
                     self.shape.tool,
                     &self.shape.options,
                     &mut self.shape.gesture,
                     at,
                     &scene,
-                ) {
+                );
+                // A double-click finishes a spline only on its last point:
+                // egui counts quick clicks anywhere as double (and a third
+                // quick one, after the point before, as triple).
+                finish |= self.shape.tool == ShapeTool::Spline
+                    && (response.double_clicked() || response.triple_clicked())
+                    && matches!(step, Ok(Step::More))
+                    && self.shape.gesture.pending.len() == before;
+                match step {
                     Ok(Step::Commit(commit)) => {
                         if self.shape.tool == ShapeTool::NameEdge {
                             self.shape.options.edge_name = bump_name(&self.shape.options.edge_name);
@@ -517,6 +541,24 @@ impl PcbEditor {
                 refused = Some(pcbcraft_core::Error::Unsupported(
                     "board.evaluator: board sketches need the host's sketch engine".into(),
                 ));
+            }
+        }
+        if finish && let Some(evaluator) = self.shape.evaluator {
+            let scene = Scene {
+                board,
+                view: &loaded.view,
+                evaluator,
+                tolerance,
+            };
+            match shape::finish(
+                self.shape.tool,
+                &self.shape.options,
+                &mut self.shape.gesture,
+                &scene,
+            ) {
+                Ok(Step::Commit(commit)) => operation = Some(shape::operation(commit.edits)),
+                Ok(Step::More) => {}
+                Err(error) => refused = Some(error),
             }
         }
         self.shape.loaded = Some(loaded);
@@ -758,7 +800,45 @@ impl PcbEditor {
         if let Some(at) = cursor {
             let pending: Vec<Point> = self.shape.gesture.pending.iter().map(|c| c.at).collect();
             let stroke = Stroke::new(1.0, t.preview_sketch);
-            match (self.shape.tool, pending.as_slice()) {
+            // A free-form tool's curve as it would be drawn now, from a
+            // scratch sketch (the document is untouched), over the faint
+            // guides it is built from.
+            let tolerance = f64::from(PICK_PX / view.view.scale);
+            let faint = Stroke::new(1.0, t.preview_sketch.gamma_multiply(0.6));
+            let tool = self.shape.tool;
+            let clicks = &self.shape.gesture.pending;
+            let options = &self.shape.options;
+            if let Some(line) = shape::preview_curve(tool, options, clicks, at, tolerance)
+                .and_then(|c| pcbcraft_solidcraft::board::free_form_preview(&c))
+            {
+                painter.add(Shape::line(
+                    line.iter().map(|p| view.screen(*p)).collect(),
+                    stroke,
+                ));
+            }
+            if tool == ShapeTool::Spline
+                && shape::closes(options, clicks, at, tolerance)
+                && let Some(first) = pending.first()
+            {
+                painter.circle_stroke(view.screen(*first), 6.0, Stroke::new(1.5, t.accent));
+            }
+            match (tool, pending.as_slice()) {
+                (ShapeTool::Spline, [.., last]) => {
+                    for w in pending.windows(2) {
+                        painter.line_segment([view.screen(w[0]), view.screen(w[1])], faint);
+                    }
+                    painter.line_segment([view.screen(*last), view.screen(at)], faint);
+                }
+                (ShapeTool::Ellipse, [c]) | (ShapeTool::Conic, [c]) => {
+                    painter.line_segment([view.screen(*c), view.screen(at)], stroke);
+                }
+                (ShapeTool::Ellipse, [c, m]) => {
+                    painter.line_segment([view.screen(*c), view.screen(*m)], faint);
+                }
+                (ShapeTool::Conic, [a, b]) => {
+                    painter.line_segment([view.screen(*a), view.screen(at)], faint);
+                    painter.line_segment([view.screen(*b), view.screen(at)], faint);
+                }
                 (ShapeTool::Line | ShapeTool::Slot, [a]) => {
                     painter.line_segment([view.screen(*a), view.screen(at)], stroke);
                 }
@@ -820,7 +900,8 @@ impl PcbEditor {
             tip: "The board outline is a parametric sketch: dimensions bind to the board \
                   parameters, and parts constrained to a named edge follow it when the \
                   board re-solves. Each change is one undo step.",
-            finish: None,
+            // A spline takes clicks until it is finished.
+            finish: (tool == ShapeTool::Spline).then_some("Finish"),
         };
         let t = Tokens::get();
         let margin = egui::Margin::symmetric(t.space_8 as i8, 0);
@@ -837,6 +918,29 @@ impl PcbEditor {
             self.shape.active = false;
             self.shape.reset_gesture();
         }
+        if response.cancel {
+            self.shape.reset_gesture();
+        }
+        if response.finish
+            && let (Some(evaluator), Some(loaded)) = (self.shape.evaluator, &self.shape.loaded)
+        {
+            let scene = Scene {
+                board,
+                view: &loaded.view,
+                evaluator,
+                tolerance: 0.0,
+            };
+            match shape::finish(tool, &self.shape.options, &mut self.shape.gesture, &scene) {
+                Ok(Step::Commit(commit)) => operation = Some(shape::operation(commit.edits)),
+                Ok(Step::More) => {}
+                Err(error) => kit::toast::post(
+                    ui.ctx(),
+                    refusal::level(&error),
+                    refusal::shown_error(&error),
+                    vec![],
+                ),
+            }
+        }
         operation
     }
 
@@ -849,7 +953,23 @@ impl PcbEditor {
         let mut operation = None;
         let o = &mut self.shape.options;
         match self.shape.tool {
-            ShapeTool::Line | ShapeTool::Arc | ShapeTool::Circle => {
+            ShapeTool::Line | ShapeTool::Arc | ShapeTool::Circle | ShapeTool::Ellipse => {
+                kit::check_row(ui, "Construction", &mut o.construction);
+            }
+            ShapeTool::Spline => {
+                kit::choice_row(
+                    ui,
+                    "Points",
+                    &mut o.spline_control,
+                    &[
+                        (false, "Fit points".to_owned()),
+                        (true, "Control points".to_owned()),
+                    ],
+                );
+                kit::check_row(ui, "Construction", &mut o.construction);
+            }
+            ShapeTool::Conic => {
+                kit::number_row(ui, "Rho", &mut o.conic_rho, "", shape::RHO_RANGE);
                 kit::check_row(ui, "Construction", &mut o.construction);
             }
             ShapeTool::Rect => {

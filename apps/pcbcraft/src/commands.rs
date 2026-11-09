@@ -1721,6 +1721,12 @@ fn defaults() -> Vec<Command> {
             C::BoardShape,
             Chord::key(K::Escape),
         ),
+        key(
+            "shape.finish",
+            "Finish the spline",
+            C::BoardShape,
+            Chord::key(K::Enter),
+        ),
     ]);
     // The active copper layer by its place in the stackup: 1 to 9, then 0
     // for the tenth (`crate::pcb_editor::LAYER_KEYS`).

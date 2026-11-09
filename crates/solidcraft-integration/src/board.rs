@@ -1089,6 +1089,23 @@ fn slot(board: &BoardSketch, a: Point, b: Point, width: &DimValue) -> Outcome<Dr
 fn free_form(board: &BoardSketch, curve: &FreeFormCurve) -> Outcome<SketchOutcome> {
     let stored = check::check_board_sketch(&board.sketch.0)?;
     let mut sk = stored.clone();
+    add_free_form(&mut sk, curve)?;
+    finish(&stored, &sk)
+}
+
+/// The polyline a free-form curve would draw, for a drawing tool's live
+/// preview: the curve alone in a scratch sketch, built as `board.edit`
+/// builds it ([`add_free_form`]), so the preview is the curve the gesture
+/// commits. Touches no board; `None` while the input is not a curve yet.
+pub fn free_form_preview(curve: &FreeFormCurve) -> Option<Vec<Point>> {
+    let mut sk = Sketch::new();
+    let index = add_free_form(&mut sk, curve).ok()?;
+    let line: Vec<Point> = sk.polyline(index).iter().map(|p| [p.x, p.y]).collect();
+    (line.len() >= 2 && line.iter().all(|p| p[0].is_finite() && p[1].is_finite())).then_some(line)
+}
+
+/// Add a free-form curve over new points to `sk`; returns its index.
+fn add_free_form(sk: &mut Sketch, curve: &FreeFormCurve) -> Outcome<usize> {
     let add = |sk: &mut Sketch, p: Point| -> Outcome<usize> {
         let v = crate::footprint::edit::vec2(p)?;
         sk.add_point(v, None).map_err(sketch_error)
@@ -1108,7 +1125,7 @@ fn free_form(board: &BoardSketch, curve: &FreeFormCurve) -> Outcome<SketchOutcom
             }
             let mut pts = Vec::with_capacity(points.len() + 1);
             for p in points {
-                pts.push(add(&mut sk, *p)?);
+                pts.push(add(sk, *p)?);
             }
             // A periodic spline closes on its first point.
             if *periodic && let Some(first) = pts.first().copied() {
@@ -1138,8 +1155,8 @@ fn free_form(board: &BoardSketch, curve: &FreeFormCurve) -> Outcome<SketchOutcom
                     format!("{r} mm is not an ellipse's minor radius"),
                 ));
             }
-            let c = add(&mut sk, *center)?;
-            let m = add(&mut sk, *major)?;
+            let c = add(sk, *center)?;
+            let m = add(sk, *major)?;
             (CurveKind::Ellipse { c, m, r }, *construction)
         }
         FreeFormCurve::Conic {
@@ -1149,7 +1166,7 @@ fn free_form(board: &BoardSketch, curve: &FreeFormCurve) -> Outcome<SketchOutcom
             rho,
             construction,
         } => {
-            let (a, b, apex) = (add(&mut sk, *a)?, add(&mut sk, *b)?, add(&mut sk, *apex)?);
+            let (a, b, apex) = (add(sk, *a)?, add(sk, *b)?, add(sk, *apex)?);
             (
                 CurveKind::Conic {
                     a,
@@ -1165,7 +1182,7 @@ fn free_form(board: &BoardSketch, curve: &FreeFormCurve) -> Outcome<SketchOutcom
     if let Some(c) = sk.curves.get_mut(index) {
         c.construction = construction;
     }
-    finish(&stored, &sk)
+    Ok(index)
 }
 
 /// A sketched board's laminate for the native model: the outer outline

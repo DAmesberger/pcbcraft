@@ -20,7 +20,7 @@
 use crate::part_editor::footprint_dims::{self as dims, DimInput, DimPicks};
 use pcbcraft_core::Point;
 use pcbcraft_core::diagnostics::{Error, Result};
-use pcbcraft_core::layout::outline::{BoardEdit, BoardShapeEvaluator};
+use pcbcraft_core::layout::outline::{BoardEdit, BoardShapeEvaluator, FreeFormCurve};
 use pcbcraft_core::library::footprint_source::{
     DimKind, DimValue, Expr, FootprintEdit, FootprintParam, FootprintSource, GeomConstraint,
     ParamName, ParamUnit, SketchBlob, SketchConstraintId, SketchCurveId, SketchEdit, SketchPointId,
@@ -36,6 +36,13 @@ use pcbcraft_solidcraft::footprint::view::{self, SketchView, ViewGeometry};
 pub(crate) fn host_evaluator() -> Option<&'static dyn BoardShapeEvaluator> {
     Some(&pcbcraft_solidcraft::board::SketchBoardEvaluator)
 }
+
+/// The most points a spline takes: the board sketch's limit
+/// (`check_board_sketch`, Solidcraft's `MAX_SPLINE_POINTS`).
+pub(crate) const MAX_SPLINE_POINTS: usize = 500;
+
+/// The range of a conic's rho the Conic tool offers (open at 0 and 1).
+pub(crate) const RHO_RANGE: std::ops::RangeInclusive<f64> = 0.01..=0.99;
 
 /// One ribbon tool of the Board shape mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -58,6 +65,12 @@ pub(crate) enum ShapeTool {
     Hole,
     /// Name the clicked edge, so placements can refer to it.
     NameEdge,
+    /// A cubic spline through (or controlled by) clicked points.
+    Spline,
+    /// Centre, end of the major axis, then a point on the ellipse.
+    Ellipse,
+    /// Start, end, then the apex; its rho shapes it.
+    Conic,
 }
 
 /// The shape a Cutout click draws.
@@ -70,12 +83,15 @@ pub(crate) enum CutoutShape {
 
 impl ShapeTool {
     /// Every tool, in ribbon order.
-    pub(crate) const ALL: [Self; 11] = [
+    pub(crate) const ALL: [Self; 14] = [
         Self::Select,
         Self::Line,
         Self::Arc,
         Self::Circle,
         Self::Rect,
+        Self::Spline,
+        Self::Ellipse,
+        Self::Conic,
         Self::Fillet,
         Self::Dimension,
         Self::Cutout,
@@ -98,6 +114,9 @@ impl ShapeTool {
             Self::Slot => "bs-slot",
             Self::Hole => "bs-hole",
             Self::NameEdge => "bs-name-edge",
+            Self::Spline => "bs-spline",
+            Self::Ellipse => "bs-ellipse",
+            Self::Conic => "bs-conic",
         }
     }
 
@@ -118,6 +137,9 @@ impl ShapeTool {
             Self::Slot => "Slot",
             Self::Hole => "Mounting hole",
             Self::NameEdge => "Name edge",
+            Self::Spline => "Spline",
+            Self::Ellipse => "Ellipse",
+            Self::Conic => "Conic",
         }
     }
 
@@ -135,12 +157,17 @@ impl ShapeTool {
             Self::Slot => "slot",
             Self::Hole => "hole",
             Self::NameEdge => "text",
+            Self::Spline => "spline",
+            Self::Ellipse => "ellipse",
+            Self::Conic => "conic",
         }
     }
 
     /// The tool's key: Solidcraft's sketch keys (L, R, C, D) and the
     /// Footprint tab's (A arc, H hole, Shift+H slot), plus F fillet,
-    /// U cutout and E name edge.
+    /// U cutout, E name edge, S spline, and Shift on the curve each
+    /// generalises: Shift+C ellipse (a stretched circle) and Shift+A conic
+    /// (a shaped arc).
     pub(crate) fn key(self) -> Option<(egui::Key, bool)> {
         use egui::Key as K;
         match self {
@@ -154,6 +181,9 @@ impl ShapeTool {
             Self::Slot => Some((K::H, true)),
             Self::Hole => Some((K::H, false)),
             Self::NameEdge => Some((K::E, false)),
+            Self::Spline => Some((K::S, false)),
+            Self::Ellipse => Some((K::C, true)),
+            Self::Conic => Some((K::A, true)),
             Self::Select => None,
         }
     }
@@ -171,6 +201,9 @@ impl ShapeTool {
             Self::Slot => "⇧H",
             Self::Hole => "H",
             Self::NameEdge => "E",
+            Self::Spline => "S",
+            Self::Ellipse => "⇧C",
+            Self::Conic => "⇧A",
             Self::Select => "",
         }
     }
@@ -189,6 +222,11 @@ impl ShapeTool {
             Self::Slot => "Click both ends of the slot",
             Self::Hole => "Click where the mounting hole goes",
             Self::NameEdge => "Click an edge to give it the name below",
+            Self::Spline => {
+                "Click points; click the first point to close; Enter or double-click ends"
+            }
+            Self::Ellipse => "Click the centre, the end of the major axis, then a point on it",
+            Self::Conic => "Click the start, the end, then the apex; Rho shapes it (0.5 parabola)",
         }
     }
 
@@ -196,7 +234,9 @@ impl ShapeTool {
     pub(crate) fn clicks(self) -> usize {
         match self {
             Self::Line | Self::Circle | Self::Rect | Self::Slot | Self::Cutout => 2,
-            Self::Arc => 3,
+            Self::Arc | Self::Ellipse | Self::Conic => 3,
+            // As many as the spline takes, until it is finished.
+            Self::Spline => MAX_SPLINE_POINTS,
             _ => 1,
         }
     }
@@ -219,6 +259,11 @@ pub(crate) struct ShapeOptions {
     pub edge_name: String,
     /// Draw construction geometry (reference only, never board edge).
     pub construction: bool,
+    /// Spline clicks are control points (a B-spline over them) instead of
+    /// points it passes through.
+    pub spline_control: bool,
+    /// A conic's shape: 0.5 a parabola, less elliptical, more hyperbolic.
+    pub conic_rho: f64,
 }
 
 impl Default for ShapeOptions {
@@ -234,6 +279,8 @@ impl Default for ShapeOptions {
             hole_pad: 6.0,
             edge_name: String::new(),
             construction: false,
+            spline_control: false,
+            conic_rho: 0.5,
         }
     }
 }
@@ -412,6 +459,25 @@ impl<'a> Stage<'a> {
         }
     }
 
+    /// Stage a free-form curve (`AddSpline`, `AddEllipse` or `AddConic`)
+    /// as the engine applies it to `board` with the staged sketch; returns
+    /// the curve and its defining points (a spline's in order, an
+    /// ellipse's centre and major end, a conic's start, end and apex).
+    fn free_form(
+        &mut self,
+        board: &BoardSketch,
+        curve: FreeFormCurve,
+    ) -> Result<(SketchCurveId, Vec<SketchPointId>)> {
+        let staged = BoardSketch {
+            sketch: self.sketch.clone(),
+            ..board.clone()
+        };
+        let out = self.evaluator.add_curve(&staged, &curve)?;
+        self.sketch = out.sketch;
+        self.edits.push(free_form_edit(curve));
+        self.created_curve(&out.created)
+    }
+
     fn constrain(&mut self, kind: GeomConstraint, refs: Vec<SketchRef>) -> Result<()> {
         self.sketch(SketchEdit::AddConstraint { kind, refs })
             .map(|_| ())
@@ -437,6 +503,47 @@ impl<'a> Stage<'a> {
             Some(existing) => self.coincident(end, existing),
             None => Ok(()),
         }
+    }
+}
+
+/// The `board.edit` that draws `curve`.
+fn free_form_edit(curve: FreeFormCurve) -> BoardEdit {
+    match curve {
+        FreeFormCurve::Spline {
+            points,
+            control,
+            periodic,
+            construction,
+        } => BoardEdit::AddSpline {
+            points,
+            control,
+            periodic,
+            construction,
+        },
+        FreeFormCurve::Ellipse {
+            center,
+            major,
+            minor_radius,
+            construction,
+        } => BoardEdit::AddEllipse {
+            center,
+            major,
+            minor_radius,
+            construction,
+        },
+        FreeFormCurve::Conic {
+            a,
+            b,
+            apex,
+            rho,
+            construction,
+        } => BoardEdit::AddConic {
+            a,
+            b,
+            apex,
+            rho,
+            construction,
+        },
     }
 }
 
@@ -842,6 +949,7 @@ pub(crate) fn press(
             });
             Ok(commit(stage))
         }
+        ShapeTool::Spline => spline_press(options, gesture, at, scene),
         ShapeTool::NameEdge => {
             let name = EdgeName(options.edge_name.trim().to_owned());
             if !edge_name_valid(&name) {
@@ -986,6 +1094,37 @@ fn draw(
                 })?;
             }
         },
+        (ShapeTool::Ellipse, [c, m, q]) => {
+            let minor_radius = ellipse_minor(c.at, m.at, q.at).ok_or_else(|| {
+                invalid("board.edit: the ellipse has no width; click beside its major axis")
+            })?;
+            let (_, points) = stage.free_form(
+                scene.board,
+                FreeFormCurve::Ellipse {
+                    center: c.at,
+                    major: m.at,
+                    minor_radius,
+                    construction,
+                },
+            )?;
+            tie_all(&mut stage, &points, &[c, m])?;
+        }
+        (ShapeTool::Conic, [a, b, apex]) => {
+            if !RHO_RANGE.contains(&options.conic_rho) {
+                return Err(invalid("board.edit: a conic's rho is between 0 and 1"));
+            }
+            let (_, points) = stage.free_form(
+                scene.board,
+                FreeFormCurve::Conic {
+                    a: a.at,
+                    b: b.at,
+                    apex: apex.at,
+                    rho: options.conic_rho,
+                    construction,
+                },
+            )?;
+            tie_all(&mut stage, &points, &[a, b, apex])?;
+        }
         (ShapeTool::Slot, [a, b]) => {
             let curves = slot(&mut stage, a.at, b.at, options.slot_width)?;
             stage.push(BoardEdit::SetCutoutKind {
@@ -998,6 +1137,160 @@ fn draw(
         _ => return Ok(Step::More),
     }
     Ok(commit(stage))
+}
+
+/// Tie each new point to the existing point its click snapped to.
+fn tie_all(stage: &mut Stage<'_>, points: &[SketchPointId], clicks: &[&Click]) -> Result<()> {
+    for (point, click) in points.iter().zip(clicks) {
+        stage.tie(point, click.snapped.as_ref())?;
+    }
+    Ok(())
+}
+
+/// The minor radius of the ellipse centred at `c` with its major axis
+/// ending at `m` that passes through `q` (Solidcraft's Ellipse tool);
+/// `None` when `q` is on the axis line or past its end.
+pub(crate) fn ellipse_minor(c: Point, m: Point, q: Point) -> Option<f64> {
+    let u = unit(sub(m, c))?;
+    let d = sub(q, c);
+    let along = (d[0] * u[0] + d[1] * u[1]) / dist(c, m);
+    let k = 1.0 - along * along;
+    if !(k.is_finite() && k > 1e-12) {
+        return None;
+    }
+    let r = cross(d, u).abs() / k.sqrt();
+    (r.is_finite() && r > 1e-9).then_some(r)
+}
+
+/// A Spline click: the next point, or the first point again (with three
+/// distinct points down) to close a fit-point spline smoothly. A click on
+/// the last point, a double-click's second, adds nothing.
+fn spline_press(
+    options: &ShapeOptions,
+    gesture: &mut Gesture,
+    at: Point,
+    scene: &Scene<'_>,
+) -> Result<Step> {
+    if closes(options, &gesture.pending, at, scene.tolerance) {
+        let step = spline_commit(options, &gesture.pending, true, scene)?;
+        gesture.pending.clear();
+        return Ok(step);
+    }
+    if gesture
+        .pending
+        .last()
+        .is_some_and(|c| dist(c.at, at) <= scene.tolerance)
+    {
+        return Ok(Step::More);
+    }
+    if gesture.pending.len() >= MAX_SPLINE_POINTS {
+        return Err(invalid(format!(
+            "board.edit: a spline has at most {MAX_SPLINE_POINTS} points; Enter finishes it"
+        )));
+    }
+    gesture.pending.push(snap(scene.view, at, scene.tolerance));
+    Ok(Step::More)
+}
+
+/// Whether a click at `at` closes the fit-point spline `pending` draws:
+/// it is on its first point and three distinct points are down.
+pub(crate) fn closes(options: &ShapeOptions, pending: &[Click], at: Point, tolerance: f64) -> bool {
+    let mut distinct: Vec<Point> = Vec::with_capacity(3);
+    for c in pending {
+        if distinct.len() == 3 {
+            break;
+        }
+        if !distinct.iter().any(|p| dist(*p, c.at) <= 1e-9) {
+            distinct.push(c.at);
+        }
+    }
+    !options.spline_control
+        && distinct.len() == 3
+        && pending.first().is_some_and(|c| dist(c.at, at) <= tolerance)
+}
+
+/// The spline over `clicks`, its points tied to those they snapped to.
+fn spline_commit(
+    options: &ShapeOptions,
+    clicks: &[Click],
+    periodic: bool,
+    scene: &Scene<'_>,
+) -> Result<Step> {
+    let mut stage = Stage::new(scene.evaluator, &scene.board.sketch);
+    let (_, points) = stage.free_form(
+        scene.board,
+        FreeFormCurve::Spline {
+            points: clicks.iter().map(|c| c.at).collect(),
+            control: options.spline_control,
+            periodic,
+            construction: options.construction,
+        },
+    )?;
+    let clicks: Vec<&Click> = clicks.iter().collect();
+    tie_all(&mut stage, &points, &clicks)?;
+    Ok(commit(stage))
+}
+
+/// End the armed tool's open gesture (Enter, a double-click, a right-click
+/// or the card's Finish): a spline of two or more points commits; with
+/// fewer, or for another tool, nothing happens. The points stay when the
+/// commit is refused.
+pub(crate) fn finish(
+    tool: ShapeTool,
+    options: &ShapeOptions,
+    gesture: &mut Gesture,
+    scene: &Scene<'_>,
+) -> Result<Step> {
+    if tool != ShapeTool::Spline || gesture.pending.len() < 2 {
+        return Ok(Step::More);
+    }
+    let step = spline_commit(options, &gesture.pending, false, scene)?;
+    gesture.pending.clear();
+    Ok(step)
+}
+
+/// The free-form curve the armed tool would draw with the pointer at
+/// `hover`, which its live preview shows: the spline through the points
+/// so far and the pointer (closed when the pointer is on its first point),
+/// the ellipse through the pointer, or the conic with its apex there.
+/// `None` for the other tools and before the curve exists.
+pub(crate) fn preview_curve(
+    tool: ShapeTool,
+    options: &ShapeOptions,
+    pending: &[Click],
+    hover: Point,
+    tolerance: f64,
+) -> Option<FreeFormCurve> {
+    let construction = options.construction;
+    match (tool, pending) {
+        (ShapeTool::Spline, [.., last]) => {
+            let periodic = closes(options, pending, hover, tolerance);
+            let mut points: Vec<Point> = pending.iter().map(|c| c.at).collect();
+            if !periodic && dist(last.at, hover) > tolerance {
+                points.push(hover);
+            }
+            (points.len() >= 2).then_some(FreeFormCurve::Spline {
+                points,
+                control: options.spline_control,
+                periodic,
+                construction,
+            })
+        }
+        (ShapeTool::Ellipse, [c, m]) => Some(FreeFormCurve::Ellipse {
+            center: c.at,
+            major: m.at,
+            minor_radius: ellipse_minor(c.at, m.at, hover)?,
+            construction,
+        }),
+        (ShapeTool::Conic, [a, b]) => Some(FreeFormCurve::Conic {
+            a: a.at,
+            b: b.at,
+            apex: hover,
+            rho: options.conic_rho,
+            construction,
+        }),
+        _ => None,
+    }
 }
 
 fn dimension_press(gesture: &mut Gesture, at: Point, scene: &Scene<'_>) -> Result<Step> {
