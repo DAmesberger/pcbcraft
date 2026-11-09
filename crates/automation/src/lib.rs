@@ -6,6 +6,7 @@
 //! so every transport reaches the same typed operations and error codes.
 pub mod gate;
 pub mod lines;
+pub mod live;
 pub mod mcp;
 pub mod session;
 

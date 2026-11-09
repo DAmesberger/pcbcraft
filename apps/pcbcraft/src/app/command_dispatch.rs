@@ -320,6 +320,7 @@ impl App {
             AppCommand::ToggleIssues => self.issues.toggle(),
             AppCommand::Messages => self.messages_open = true,
             AppCommand::Settings => self.settings_window.toggle(),
+            AppCommand::ConnectAssistants => self.live.toggle_window(),
             AppCommand::LibrarySources => self.sources.open_card(),
             AppCommand::Workspace(workspace) => self.enter(workspace),
             AppCommand::FitView => self.fit_view(),

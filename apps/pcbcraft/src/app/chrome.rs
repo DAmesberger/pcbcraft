@@ -177,6 +177,7 @@ impl App {
                     }
                     ui.add_space(t.space_8);
                     self.document_tab(ui);
+                    self.live_indicator(ui);
                     let (_, drag) = ui.allocate_exact_size(
                         vec2(ui.available_width().max(0.0), APP_BAR_HEIGHT - t.space_8),
                         egui::Sense::drag(),

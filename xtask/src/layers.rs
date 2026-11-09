@@ -4,7 +4,8 @@
 //! - 0 `pcbcraft-core`: document, commands, engine. Pure: no files, UI or Solidcraft.
 //! - 1 `pcbcraft-io`: file effects. `pcbcraft-solidcraft`: native 3D via `solidcraft-engine` only.
 //!   `pcbcraft-firmware`: firmware pin-configuration emitters over the core IR (slice C4).
-//! - 2 `pcbcraft-automation`: headless session, JSON-lines and MCP transports.
+//! - 2 `pcbcraft-automation`: headless session, JSON-lines and MCP transports, and
+//!   the live channel into the open window over `solidcraft-control`.
 //! - 3 `pcbcraft-assist`: AI-assisted part design over the automation session
 //!   (the only crate with an HTTP client).
 //! - 4 apps: `pcbcraft` (desktop UI) and `pcbcraft-cli`.
@@ -104,10 +105,11 @@ pub fn check() -> Result<()> {
                     "pcbcraft-solidcraft",
                     "solidcraft-engine" | "solidcraft-color"
                 ) | ("pcbcraft", "solidcraft-ui-egui" | "solidcraft-theme")
+                    | ("pcbcraft-automation", "solidcraft-control")
             );
             if solidcraft && !allowed {
                 violations.push(format!(
-                    "{name} depends on {dep}; Solidcraft is reached through pcbcraft-solidcraft (engine, colour) or the app (UI kit, tokens) only"
+                    "{name} depends on {dep}; Solidcraft is reached through pcbcraft-solidcraft (engine, colour), pcbcraft-automation (control channel) or the app (UI kit, tokens) only"
                 ));
             }
         }

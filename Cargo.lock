@@ -3460,6 +3460,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "solidcraft-control",
  "tempfile",
  "thiserror 2.0.21",
 ]

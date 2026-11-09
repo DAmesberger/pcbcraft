@@ -740,6 +740,23 @@ impl Session {
         self.path.as_deref()
     }
 
+    /// Run `f` on this session over a host's own engine (the desktop
+    /// window's, for live MCP), then hand the engine back, its revision and
+    /// undo history moved on by whatever `f` did. `path` is the host's file,
+    /// which requests that name none (`project.save`) would use.
+    pub fn lend<R>(
+        &mut self,
+        engine: &mut Engine,
+        path: Option<&Path>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        std::mem::swap(&mut self.engine, engine);
+        self.path = path.map(Path::to_path_buf);
+        let result = f(self);
+        std::mem::swap(&mut self.engine, engine);
+        result
+    }
+
     /// Execute one typed request.
     pub fn execute(&mut self, request: Request) -> Result<Value> {
         match request {

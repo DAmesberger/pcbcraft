@@ -8,9 +8,13 @@
 //! ([`Session::respond`]) and are sent once, as text. Conventions (bounded
 //! lines, version negotiation, notifications without replies) follow
 //! Solidcraft's MCP server.
+//!
+//! A live server ([`Server::live`]) answers the same tools from the open
+//! desktop window instead of a session of its own ([`crate::live`]).
 use crate::gate::Policy;
 use crate::lines::{self, Line};
-use crate::session::{Request, Session, discovery};
+use crate::live;
+use crate::session::{CommandInfo, Request, Session, discovery};
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 
@@ -38,7 +42,12 @@ pub struct Server {
     /// this transport has no way to ask. Off by default, because the user who
     /// starts a server has already chosen to trust its client.
     gate: Option<Policy>,
+    /// When set, tool calls go to the open window, whose gate decides.
+    live: Option<live::Client>,
 }
+
+/// What a live server's agent is told before the rest.
+const LIVE_INSTRUCTIONS: &str = "This server edits the project open in the person's Pcbcraft window: they see each change, and it joins their undo history. Every tool that changes the project takes expected_revision (from the last reply's revision, or project_inspect's); a stale one is refused, so inspect again, since the person may have edited meanwhile. Changes are refused while the person is typing, dragging or has a menu, dialog or review open: wait and retry. A tool whose class is ask waits for the person's Allow in the window. Opening, saving and starting projects is the person's, in the window. ";
 
 impl Server {
     pub fn new(session: Session) -> Self {
@@ -46,6 +55,14 @@ impl Server {
             session,
             initialized: false,
             gate: None,
+            live: None,
+        }
+    }
+    /// A server whose tool calls run in the open window `client` reaches.
+    pub fn live(client: live::Client) -> Self {
+        Self {
+            live: Some(client),
+            ..Self::new(Session::default())
         }
     }
     /// A server whose tool calls all pass the gate under `policy`.
@@ -143,15 +160,22 @@ impl Server {
                 } else {
                     PROTOCOL_VERSION
                 };
+                let instructions = if self.live.is_some() {
+                    format!("{LIVE_INSTRUCTIONS}{INSTRUCTIONS}")
+                } else {
+                    INSTRUCTIONS.to_owned()
+                };
                 Ok(json!({
                     "protocolVersion": version,
                     "capabilities": {"tools": {"listChanged": false}},
                     "serverInfo": {"name": "pcbcraft", "title": "Pcbcraft", "version": env!("CARGO_PKG_VERSION")},
-                    "instructions": INSTRUCTIONS,
+                    "instructions": instructions,
                 }))
             }
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({"tools": tools()})),
+            "tools/list" => {
+                Ok(json!({"tools": if self.live.is_some() { live_tools() } else { tools() }}))
+            }
             "tools/call" => {
                 let name = params
                     .get("name")
@@ -165,7 +189,7 @@ impl Server {
                     None | Some(Value::Null) => json!({}),
                     Some(arguments) => arguments.clone(),
                 };
-                Ok(self.call(command.id, arguments))
+                Ok(self.call(command, arguments))
             }
             _ => Err((METHOD_NOT_FOUND, format!("method {method} not found"))),
         }
@@ -173,11 +197,16 @@ impl Server {
 
     /// Tool failures are results with `isError`, not protocol errors, so the
     /// agent sees the diagnostic code and message.
-    fn call(&mut self, command: &str, arguments: Value) -> Value {
-        let request = json!({"command": command, "params": arguments});
-        let reply = match &self.gate {
-            Some(policy) => self.session.respond_gated(policy, request),
-            None => self.session.respond(request),
+    fn call(&mut self, command: &CommandInfo, arguments: Value) -> Value {
+        let reply = match &mut self.live {
+            Some(client) => call_live(client, command, arguments),
+            None => {
+                let request = json!({"command": command.id, "params": arguments});
+                match &self.gate {
+                    Some(policy) => self.session.respond_gated(policy, request),
+                    None => self.session.respond(request),
+                }
+            }
         };
         let failed = reply["ok"] != true;
         let payload = if failed {
@@ -198,17 +227,62 @@ pub fn tool_name(command: &str) -> String {
 
 /// Tool definitions generated from the request catalog.
 pub fn tools() -> Vec<Value> {
+    Request::catalog_shared().iter().map(tool).collect()
+}
+
+fn tool(command: &CommandInfo) -> Value {
+    json!({
+        "name": tool_name(command.id),
+        "title": command.id,
+        "description": format!("{} {}", command.description, command.permission_note()),
+        "inputSchema": discovery::tool_schema(command),
+    })
+}
+
+/// A live server's tools: the same, less the window's own file requests,
+/// and every change takes `expected_revision` ([`live::needs_revision`]).
+pub fn live_tools() -> Vec<Value> {
     Request::catalog_shared()
         .iter()
+        .filter(|command| !live::WINDOW_ONLY.contains(&command.id))
         .map(|command| {
-            json!({
-                "name": tool_name(command.id),
-                "title": command.id,
-                "description": format!("{} {}", command.description, command.permission_note()),
-                "inputSchema": discovery::tool_schema(command),
-            })
+            let mut tool = tool(command);
+            if live::needs_revision(command) {
+                let schema = &mut tool["inputSchema"];
+                schema["properties"]["expected_revision"] = json!({
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "The project revision this change was prepared against.",
+                });
+                match schema["required"].as_array_mut() {
+                    Some(required) => required.push(json!("expected_revision")),
+                    None => schema["required"] = json!(["expected_revision"]),
+                }
+            }
+            tool
         })
         .collect()
+}
+
+/// One tool call sent to the window: `expected_revision` goes beside the
+/// parameters when the request's own carry none. A lost connection is a
+/// failure with the reason, never retried.
+fn call_live(client: &mut live::Client, command: &CommandInfo, mut arguments: Value) -> Value {
+    let mut params = json!({"command": command.id});
+    if live::needs_revision(command)
+        && let Some(revision) = arguments
+            .as_object_mut()
+            .and_then(|arguments| arguments.remove("expected_revision"))
+    {
+        params["expected_revision"] = revision;
+    }
+    params["params"] = arguments;
+    match client.call(live::EXECUTE, params) {
+        Ok(reply) => reply,
+        Err(message) => {
+            json!({"ok": false, "error": {"code": "live.unreachable", "message": message}})
+        }
+    }
 }
 
 fn error(id: Value, code: i64, message: &str) -> Value {

@@ -16,6 +16,12 @@ Pcbcraft directly depends on `solidcraft-engine`, `solidcraft-ui-egui` and the g
 
 Original Pcbcraft code is licensed MIT OR Apache-2.0, like Solidcraft; see [LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE) and [NOTICE](NOTICE). Every workspace crate declares this license, and `cargo xtask licences --check` enforces it together with the dependency license policy.
 
+## Live MCP
+
+Live MCP into the open window (`crates/automation/src/live.rs`, `apps/pcbcraft/src/app/live_mcp.rs`) uses Solidcraft's control channel, `solidcraft-control` from the pinned fork revision above (MIT OR Apache-2.0), through its public API: the per-session token and its files, the loopback bind and the JSON-lines connection server (`server::Hub`). Nothing was added to Solidcraft for it.
+
+The shape of the feature follows [tangency-labs/pcbcraft](https://github.com/tangency-labs/pcbcraft) (MIT OR Apache-2.0): a socket worker that hands each request to the UI thread, which refuses it while a dialog or a text edit holds the editor, and an opt-in with a configuration to copy, reached from the app. Only the idea was reused, not code or text; the gate, revision checks, refusals and panel here are original and run on Pcbcraft's own engine.
+
 ## Tone map in the look tests
 
 The PCB 3D look tests (`apps/pcbcraft/src/viewport/pictures/look.rs`, test code only) follow the Khronos PBR Neutral tone mapping specification (Apache-2.0; Copyright The Khronos Group Inc.). They use it to check their own inverse of the tone map, which undoes the viewport's tone map before measuring radiance.

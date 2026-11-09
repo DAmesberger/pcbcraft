@@ -117,7 +117,10 @@ pub const WINDOW: &[Entry] = &[
     Entry::System(System::BringAllToFront),
 ];
 
-pub const HELP: &[Entry] = &[C("app.shortcuts", "Keyboard Shortcuts")];
+pub const HELP: &[Entry] = &[
+    C("app.shortcuts", "Keyboard Shortcuts"),
+    C("app.connect-assistants", "Connect AI Assistants…"),
+];
 
 /// The macOS menu bar, left to right.
 pub const BAR: &[(&str, &[Entry])] = &[
@@ -145,6 +148,7 @@ pub const IN_WINDOW_FILE: &[Entry] = &[
     Sep,
     C("app.settings", "Settings…"),
     C("app.shortcuts", "Keyboard shortcuts…"),
+    C("app.connect-assistants", "Connect AI assistants…"),
     C("view.messages", "Messages…"),
     Sep,
     C("app.quit", "Quit"),

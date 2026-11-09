@@ -13,6 +13,7 @@ pcbcraft-core.workspace = true
 pcbcraft-io.workspace = true
 pcbcraft-solidcraft.workspace = true
 pcbcraft-firmware.workspace = true
+solidcraft-control.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

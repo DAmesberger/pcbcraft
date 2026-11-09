@@ -10,6 +10,7 @@ mod chrome;
 mod command_dispatch;
 mod command_palette;
 mod key_reveal;
+mod live_mcp;
 mod open_timing;
 mod settings_window;
 mod shortcut_sheet;
@@ -70,9 +71,11 @@ pub struct App {
     /// Every message of this run, with the full engine text.
     messages: Messages,
     messages_open: bool,
-    /// Messages, Keyboard shortcuts and Settings open last frame, in that
-    /// order (`system_windows`).
-    system_windows: [bool; 3],
+    /// Messages, Keyboard shortcuts, Settings and Connect AI assistants
+    /// open last frame, in that order (`system_windows`).
+    system_windows: [bool; 4],
+    /// Live MCP: assistants editing this window's project (off at start).
+    live: live_mcp::LiveMcp,
     /// The system's fallback fonts (CJK and others) are installed.
     system_fonts: bool,
     /// The Issues card, canvas badge and pill, and their cached answers.
@@ -247,7 +250,8 @@ impl App {
             toasts: Toasts::default(),
             messages,
             messages_open: false,
-            system_windows: [false; 3],
+            system_windows: [false; 4],
+            live: Default::default(),
             system_fonts: false,
             issues: Default::default(),
             undo_revision: None,
@@ -771,15 +775,24 @@ impl App {
         self.browser = self.browser.toggled(self.browser_visible);
     }
 
-    /// Undo or redo one engine step.
+    /// Undo or redo one engine step. Undoing an AI assistant's edit says
+    /// so.
     fn history(&mut self, redo: bool) {
+        let assistant = (!redo)
+            .then(|| self.live_edit_at(self.engine.revision()))
+            .flatten();
         let result = if redo {
             self.engine.redo()
         } else {
             self.engine.undo()
         };
         match result {
-            Ok(()) => self.clear_error(),
+            Ok(()) => {
+                self.clear_error();
+                if let Some(subject) = assistant {
+                    self.say(Level::Info, format!("Undid AI assistant edit: {subject}"));
+                }
+            }
             Err(error) => self.command_refused(error, true),
         }
     }
@@ -1259,6 +1272,9 @@ impl eframe::App for App {
         self.scene.receive();
         self.refill_fills(&ctx);
         self.file_effects(&ctx);
+        // Assistants' requests, between the last frame and this one's
+        // editors.
+        self.serve_live(&ctx);
         self.library_sources(&ctx);
         self.component_subject(&ctx);
         // A2: the Component workspace catalog's action and feed.
@@ -1295,6 +1311,7 @@ impl eframe::App for App {
         let active = self.active_contexts();
         self.shortcut_sheet.show(&ctx, &self.registry, &active);
         self.settings(&ctx);
+        self.live_windows(&ctx);
         self.reveal_overlay(&ctx);
         self.feedback(&ctx);
         self.unclaimed_refusals(&ctx);

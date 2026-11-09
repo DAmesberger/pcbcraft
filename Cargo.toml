@@ -48,6 +48,10 @@ solidcraft-theme = { git = "https://github.com/DAmesberger/solidcraft.git", rev 
 # The vector types of Solidcraft's public API live in solidcore's record crate, which Solidcraft
 # vendors at solidcore/: the same fork revision, so it is the copy Solidcraft builds with.
 solidcore-record = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d" }
+# Solidcraft's control channel (per-session token files, the loopback JSON-lines
+# server) for live MCP into the open window; the same revision, reached through
+# pcbcraft-automation only.
+solidcraft-control = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "758c0ace13cad1359d00f2b36de5fb8dd2378e9d" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

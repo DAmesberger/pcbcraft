@@ -441,6 +441,8 @@ pub enum AppCommand {
     LibrarySources,
     /// The Settings window (its Keyboard section).
     Settings,
+    /// The Connect AI assistants window (live MCP).
+    ConnectAssistants,
     Workspace(Workspace),
     FitView,
     /// Switch the PCB between its Layout and 3D views.
@@ -1189,6 +1191,13 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::cmd(K::Comma))
             .icon("settings")
             .keywords("preferences options keyboard keymap shortcuts rebind keys"),
+        app(
+            "app.connect-assistants",
+            "Connect AI assistants…",
+            A::ConnectAssistants,
+        )
+        .icon("assistant")
+        .keywords("mcp agent llm claude assistant ai live remote control"),
         app("library.sources", "Library sources…", A::LibrarySources)
             .icon("component")
             .keywords("folders libraries rescan"),

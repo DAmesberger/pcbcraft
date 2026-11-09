@@ -27,7 +27,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 | `pcbcraft-core` | Pure, wasm-compatible document: revisioned library definitions and drafts, component instances and symbol occurrences, schematic, persistent nets, layout, impact plans, completeness findings, typed `Operation`s and `Query`s, the one `Engine` (shared undo, engine-owned drafts), file format, typed errors and check findings. |
 | `pcbcraft-io` | Bounded reads, atomic writes, crash recovery. |
 | `pcbcraft-solidcraft` | Builds the native Solidcraft model through a typed facade over Solidcraft's command API. |
-| `pcbcraft-automation` | Headless `Session` (engine + open/save/export) shared by the JSON-lines transport and the MCP server. |
+| `pcbcraft-automation` | Headless `Session` (engine + open/save/export) shared by the JSON-lines transport and the MCP server, and the live channel into the open window ([live MCP](#live-mcp)). |
 | `pcbcraft-assist` | The datasheet assistant: a tool loop over the automation session that drafts a part from its datasheets, on a model you configure (Anthropic Messages or any OpenAI-compatible endpoint, hosted or local), with cost, token, time and request caps ([as built](docs/datasheet-assistant.md)). |
 | `pcbcraft`, `pcbcraft-cli` | Desktop editor and command line. |
 
@@ -45,6 +45,7 @@ cargo run --locked --profile ci -p pcbcraft-cli -- export-schematic-pdf example.
 cargo run --locked --profile ci -p pcbcraft-cli -- commands
 cargo run --locked --profile ci -p pcbcraft-cli -- stdio [FILE.pcbcraft]
 cargo run --locked --profile ci -p pcbcraft-cli -- mcp [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
+cargo run --locked --profile ci -p pcbcraft-cli -- mcp --live [--port PORT]   # the project open in the desktop window
 ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-part \
   --datasheet PART.pdf --name PART --out part.pcbcraft --max-usd 15   # drafts + PART.review.md; publishes nothing
 cargo run --locked --profile ci -p pcbcraft-cli -- design-part --provider openai \
@@ -57,6 +58,23 @@ cargo run --locked --profile ci -p pcbcraft-cli -- design-part --provider openai
 Replies on both are compact: a mutation answers with `revision`, `outcome`, `changes` (added, changed and removed stable ids by collection, such as `{"added":{"vias":[644]}}`), `findings` (the new ones, resolved counts per code, the open total) and the changed `drafts`. `project.inspect` answers with counts, drafts and findings per code, and with `at` (a JSON pointer such as `/project/nets`) reads one piece of the document. `verbose: true`, beside `command` or inside `params`, returns the whole snapshot instead. In MCP, `tools/list` names every operation and query, and `project_schema {name}` (`project.schema`) returns one's exact schema and how to send it.
 
 Every command has a permission class: read, edit, ask or never, shown in its tool description and in `project_schema`. An MCP server is ungated by default, because the user who starts it has chosen to trust its client. `--permission-mode` turns on the gate: `ask-every-time` runs only reads, `auto-allow-edits` also runs edits, and `allow-all` runs everything except the never class. MCP has no way to ask, so whatever would need asking is refused with a message saying so. Under any mode, a path must be absolute and inside an `--allow-folder` or the folder of the project named on the command line.
+
+### Live MCP
+
+An assistant can also edit the project open in the desktop window, so you watch each change and share one undo history. In Pcbcraft, choose **Help › Connect AI assistants…** (also in the in-window File menu and the command palette) and turn on **Let AI assistants edit this project**. It is off at every start. The window shows the configuration to copy:
+
+```json
+{"mcpServers": {"pcbcraft": {"command": "/path/to/pcbcraft-cli", "args": ["mcp", "--live"]}}}
+```
+
+For Claude Code: `claude mcp add pcbcraft -- /path/to/pcbcraft-cli mcp --live`.
+
+- **Connection.** The window listens on `127.0.0.1` only, from port 27979 (or the next free one), using Solidcraft's control channel. Each time you turn it on, it makes a new token and writes it to `control/PORT.token` in the Pcbcraft config folder, readable only by you; `control/current.port` names the port. `pcbcraft-cli mcp --live [--port PORT]` reads both, so the configuration holds no secret. `PCBCRAFT_CONTROL_TOKEN` gives a token explicitly. Turning access off, or closing the window, closes every connection and removes the files.
+- **Same engine.** Requests run on the UI thread, between frames, through the same `Session::respond` as the headless server, on the window's engine. The tools are the same, except that `project_new`, `project_open` and `project_save` are left to you in the window. Replies stay compact: a via placed on the demo answers in under 4 KB.
+- **Revisions.** Every tool that changes the project takes `expected_revision`, inside its parameters or, for tools such as `project_undo` that have none, beside them. A stale revision is refused with `stale_revision`, so the assistant inspects again.
+- **Refusals.** While you type in a field, drag, or have a menu, the command palette, a file question or an update review open, a change is refused with `live.busy` and the reason. Reads still answer.
+- **Permissions.** The window's choice (reading only; reading and edits, the default; or everything except settings) decides as `--permission-mode` does. An ask-class tool, such as an export, waits for **Allow** or **Deny** in the window; the never class is refused. Paths must lie in your home folder, the temporary folder or the project's folder.
+- **What you see.** The application bar shows *AI access on* or *AI assistant connected* while access is on; its × turns access off. Each assistant edit shows as a toast with Undo and a Messages line (*AI assistant edit: layout.add_via*), and undoing one says *Undid AI assistant edit*.
 
 `project.query` also answers the parts catalog ([design and query language](docs/parts-library.md)): `library.search` ranks the project's component lineages for a one-line query, `library.facets` lists the fields, packages and badges the matches carry, and `library.inspect` reports one revision. For example:
 

@@ -9,7 +9,7 @@ mod review_diff;
 mod rules_profile;
 mod sample_packages;
 
-use pcbcraft_automation::{Mode, Policy, Session, lines, mcp, session};
+use pcbcraft_automation::{Mode, Policy, Session, lines, live, mcp, session};
 use pcbcraft_core::Engine;
 use serde_json::{Value, json};
 use std::io::{self, Write};
@@ -26,6 +26,11 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
                                    (ask-every-time, auto-allow-edits, allow-all) turns
                                    on the permission gate, limited to the given folders
                                    and FILE's, and refuses what would need asking
+  mcp --live [--port PORT]         MCP server for the project open in the Pcbcraft
+                                   window (Help › Connect AI assistants…): the
+                                   window's undo history, its permission choice
+                                   and its Allow/Deny; the token comes from the
+                                   window's token file or PCBCRAFT_CONTROL_TOKEN
   demo NEW_FILE.pcbcraft           write the two-component demo project
   showcase NEW_FILE.pcbcraft       write the 4-layer PCB showcase project
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
@@ -166,6 +171,18 @@ fn run() -> Result<()> {
     match args.as_slice() {
         [command] if command == "commands" => print(&session::schemas()),
         [command, rest @ ..] if command == "stdio" && rest.len() <= 1 => stdio(open(rest.first())?),
+        [command, live, rest @ ..] if command == "mcp" && live == "--live" => {
+            let port = match rest {
+                [] => None,
+                [flag, port] if flag == "--port" => Some(
+                    port.parse::<u16>()
+                        .map_err(|_| format!("--port takes a port number, not {port}"))?,
+                ),
+                _ => return Err(format!("unexpected arguments after --live\n{USAGE}").into()),
+            };
+            let client = live::Client::find(&live::APP, port, None)?;
+            Ok(mcp::Server::live(client).serve(io::stdin().lock(), io::stdout().lock())?)
+        }
         [command, rest @ ..] if command == "mcp" => {
             let options = McpOptions::parse(rest)?;
             let session = open(options.project.as_ref())?;
