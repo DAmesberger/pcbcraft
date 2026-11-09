@@ -223,6 +223,13 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
     ) -> Result<pcbcraft_core::layout::dimensions::model::Traced> {
         model_refs::trace(request)
     }
+
+    fn pick_model(
+        &self,
+        request: &pcbcraft_core::layout::dimensions::model::PickRequest<'_>,
+    ) -> Result<pcbcraft_core::layout::dimensions::model::ModelPicked> {
+        model_refs::pick(request)
+    }
 }
 
 /// A failed solve: the last solved shape kept, a fatal finding.

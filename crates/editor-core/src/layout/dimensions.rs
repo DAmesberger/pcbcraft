@@ -41,6 +41,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod carry;
 pub mod features;
 pub mod model;
+pub mod view;
 
 pub use carry::carry;
 

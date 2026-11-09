@@ -232,3 +232,79 @@ fn an_edge_parallel_to_the_board_traces_its_line_and_ends() -> Fallible {
     assert_eq!(start.geometry, FeatureGeometry::Point { at: a });
     Ok(())
 }
+
+fn picked(bytes: &[u8], at: [f64; 3], reach: f64, frame: Transform3) -> Result<ModelPicked> {
+    let part = PartFileModel::default();
+    pick(&PickRequest {
+        part: &part,
+        bytes,
+        frame,
+        at,
+        reach,
+    })
+}
+
+/// Slice S5: a point picked on the box names the face holding it, by the
+/// name the trace re-finds; within reach of one of that face's edges it
+/// names the edge, picked at its nearest point; off the model, nothing.
+/// The pick comes in the part frame and goes back through the model
+/// placement.
+#[test]
+fn a_pick_names_the_face_or_the_edge_under_it() -> Fallible {
+    let (bytes, body) = boxed();
+    let part = evaluated(&bytes);
+    let (name, _) = face_with(&part, &body, plane([1.0, 0.0, 0.0]));
+    // The +x face's middle, well away from its edges.
+    let face = picked(&bytes, [2.0, 0.0, 0.5], 0.1, Transform3::IDENTITY)?;
+    assert_eq!(
+        face,
+        ModelPicked::Face(ModelFaceRef {
+            body: BodyName(body.clone()),
+            face: FaceName(name.clone()),
+            pick: [2.0, 0.0, 0.5],
+        })
+    );
+    let ModelPicked::Face(f) = face else {
+        return Err("a face".into());
+    };
+    let traced = run(
+        &bytes,
+        &face_ref(&body, &f.face.0, f.pick),
+        Transform3::IDENTITY,
+    )?;
+    assert_eq!(traced.status, ReferenceStatus::Resolved);
+    // 0.05 mm below the top edge of that face: the edge, at z = 1.
+    let ModelPicked::Edge(edge) = picked(&bytes, [2.0, 0.2, 0.95], 0.1, Transform3::IDENTITY)?
+    else {
+        return Err("an edge".into());
+    };
+    assert!((edge.pick[2] - 1.0).abs() < 1e-9, "{edge:?}");
+    assert!((edge.pick[0] - 2.0).abs() < 1e-9 && (edge.pick[1] - 0.2).abs() < 1e-9);
+    let traced = run(
+        &bytes,
+        &FeatureRef::Edge {
+            placement: 1,
+            edge: edge.clone(),
+        },
+        Transform3::IDENTITY,
+    )?;
+    assert!(
+        matches!(traced.geometry, FeatureGeometry::Line { a, b }
+        if (a[0] - 2.0).abs() < 1e-9 && (b[0] - 2.0).abs() < 1e-9),
+        "{traced:?}"
+    );
+    // The model turned a quarter turn about z by its placement: the part
+    // frame's (0, 2, 0.5) is the model's +x face.
+    let turned = Transform3::rot_z(90.0);
+    let again = picked(&bytes, [0.0, 2.0, 0.5], 0.1, turned)?;
+    assert!(
+        matches!(&again, ModelPicked::Face(f) if f.face.0 == name
+        && (f.pick[0] - 2.0).abs() < 1e-9 && f.pick[1].abs() < 1e-9),
+        "{again:?}"
+    );
+    assert!(matches!(
+        picked(&bytes, [9.0, 9.0, 9.0], 0.1, Transform3::IDENTITY),
+        Err(Error::NotFound(_))
+    ));
+    Ok(())
+}

@@ -20,13 +20,14 @@
 //! face, a face parallel to the board and a free-form face have no single
 //! trace and are refused ("pick an edge of it").
 use crate::geom::Vec3;
+use crate::geom::prelude::*;
 use crate::models::part_file::{self, EvaluatedPart};
 use pcbcraft_core::diagnostics::{Error, Result};
 use pcbcraft_core::geometry::Transform3;
 use pcbcraft_core::layout::dimensions::FeatureGeometry;
-use pcbcraft_core::layout::dimensions::model::{TraceRequest, Traced};
+use pcbcraft_core::layout::dimensions::model::{ModelPicked, PickRequest, TraceRequest, Traced};
 use pcbcraft_core::model::dimension::{
-    End, FeatureRef, ModelEdgeRef, ModelFaceRef, ReferenceStatus,
+    BodyName, End, FaceName, FeatureRef, ModelEdgeName, ModelEdgeRef, ModelFaceRef, ReferenceStatus,
 };
 use solidcraft_engine::doc::naming;
 use solidcraft_engine::doc::{ModelBody, ModelState};
@@ -71,6 +72,95 @@ pub fn trace(request: &TraceRequest<'_>) -> Result<Traced> {
         _ => Err(Error::Invalid(
             "layout.dimension: only faces, edges and vertices are traced on a 3D model".into(),
         )),
+    }
+}
+
+/// Name the face or edge of a part file at a picked point (the
+/// evaluator's `pick_model`): the point goes back into the model frame,
+/// the face holding it is named with Solidcraft's own capture
+/// (`naming::face_name_at_body`), and an edge of that face within the
+/// request's reach is taken instead, picked at its nearest point.
+pub fn pick(request: &PickRequest<'_>) -> Result<ModelPicked> {
+    let part = part_file::evaluate(request.bytes, &request.part.values)
+        .map_err(|e| Error::Invalid(format!("part_file.read: {e}")))?;
+    let at = vec(inverse(&request.frame).apply(request.at));
+    let none = || {
+        Error::NotFound("layout.dimension_reference: no named face of the 3D model is there".into())
+    };
+    if !at.is_finite() {
+        return Err(none());
+    }
+    for b in part.state().bodies.iter().filter(|b| !b.body.is_mesh()) {
+        let Some(face) = naming::face_name_at_body(b, at) else {
+            continue;
+        };
+        if let Some(edge) = nearest_edge(b, &face, at, request.reach) {
+            return Ok(edge);
+        }
+        return Ok(ModelPicked::Face(ModelFaceRef {
+            body: BodyName(b.name.clone()),
+            face: FaceName(face),
+            pick: arr(at),
+        }));
+    }
+    Err(none())
+}
+
+/// The edge of face `face` on `b` nearest `at`, within `reach` mm, as a
+/// reference picked at its nearest point.
+fn nearest_edge(b: &ModelBody, face: &str, at: Vec3, reach: f64) -> Option<ModelPicked> {
+    if reach.is_nan() || reach <= 0.0 {
+        return None;
+    }
+    let mesh = b.mesh();
+    let faces = naming::face_names(b);
+    let names = naming::edge_names(b);
+    let index = faces.iter().position(|f| f == face)?;
+    let mut best: Option<(f64, usize, Vec3)> = None;
+    for (i, polyline) in mesh.edges.iter().enumerate() {
+        let bounds = mesh
+            .edge_faces
+            .get(i)
+            .is_some_and(|fs| fs.iter().any(|f| *f as usize == index));
+        if !bounds {
+            continue;
+        }
+        for w in polyline.windows(2) {
+            let (p, q) = (w[0], w[1]);
+            let d = q - p;
+            let t = if d.len2() > 0.0 {
+                ((at - p).dot(d) / d.len2()).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let on = p + d * t;
+            let dist = on.dist(at);
+            if dist <= reach && best.is_none_or(|(b, _, _)| dist < b) {
+                best = Some((dist, i, on));
+            }
+        }
+    }
+    let (_, i, on) = best?;
+    let name = names.get(i).filter(|n| !n.is_empty())?;
+    Some(ModelPicked::Edge(ModelEdgeRef {
+        body: BodyName(b.name.clone()),
+        edge: ModelEdgeName(name.clone()),
+        pick: arr(on),
+    }))
+}
+
+/// The inverse of a rigid transform (rotation transposed).
+fn inverse(t: &Transform3) -> Transform3 {
+    let r = t.rotation;
+    let rotation: [[f64; 3]; 3] = std::array::from_fn(|i| std::array::from_fn(|j| r[j][i]));
+    let back = Transform3 {
+        rotation,
+        translation: [0.0; 3],
+    };
+    let o = back.apply(t.translation);
+    Transform3 {
+        rotation,
+        translation: [-o[0], -o[1], -o[2]],
     }
 }
 

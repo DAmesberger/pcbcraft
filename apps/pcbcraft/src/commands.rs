@@ -1617,6 +1617,22 @@ fn defaults() -> Vec<Command> {
             .icon("polygon")
             .keywords("pour zone plane copper area"),
         tool(
+            "pcb.dimension",
+            "Dimension",
+            C::Pcb3d,
+            Workspace::Pcb,
+            "dimension",
+        )
+        .chord(Chord::key(K::D).with_shift())
+        .icon("dimension")
+        .keywords("measure distance hold face edge hole board edge parametric"),
+        key(
+            "pcb.dimension-cancel",
+            "Drop the dimension's picks, then end the tool",
+            C::Pcb3d,
+            Chord::key(K::Escape),
+        ),
+        tool(
             "pcb.place-part",
             "Place 3D part…",
             C::PcbLayout,

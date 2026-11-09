@@ -164,6 +164,17 @@ pub trait BoardShapeEvaluator {
             "layout.dimension: this board evaluator cannot read 3D models".into(),
         ))
     }
+    /// Name the face or edge of a part file at a point picked in the 3D
+    /// view (`layout::dimensions::model::pick`, slice S5): its body, its
+    /// persistent name and the point in the model frame.
+    fn pick_model(
+        &self,
+        _request: &super::dimensions::model::PickRequest<'_>,
+    ) -> Result<super::dimensions::model::ModelPicked> {
+        Err(Error::Unsupported(
+            "layout.dimension: this board evaluator cannot read 3D models".into(),
+        ))
+    }
 }
 
 /// A free-form board curve to draw, in board millimetres (Solidcraft's

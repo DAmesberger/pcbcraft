@@ -1134,13 +1134,17 @@ impl App {
             // The last model stays up while a newer one builds, under a
             // small chip at the top right; picks on it could name objects
             // that no longer exist, so they are ignored.
+            self.scene.viewport.set_hover(None);
             updating_chip(ui, area, failed.as_deref());
             return;
         }
-        // A pick selects as a Layout click on the same object does.
-        if let Some(pick) = pick {
-            self.pcb
-                .select_picked(pick.and_then(|id| self.scene.source(id)));
+        if self.workspace == Workspace::Pcb {
+            // A pick selects as a Layout click on the same object does, or
+            // picks for the Dimension tool; the selection's dimensions
+            // are drawn over the model.
+            let ctx = ui.ctx().clone();
+            let operation = self.pcb.board_3d(ui, &mut self.scene, &self.engine, pick);
+            self.apply(&ctx, Origin::Canvas, operation);
         }
     }
 
@@ -1414,6 +1418,9 @@ pub(crate) fn sheet_rows(
         .collect()
 }
 
+#[cfg(test)]
+#[path = "app/dimension_3d_tests.rs"]
+mod dimension_3d_tests;
 #[cfg(test)]
 #[path = "app/flow_tests.rs"]
 mod flow_tests;
