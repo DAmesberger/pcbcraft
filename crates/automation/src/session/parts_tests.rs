@@ -424,7 +424,7 @@ fn schemas_and_mcp_list_the_part_command_and_queries() -> TestResult {
     assert!(describes("project.query", "project.bom"));
     assert!(describes("project.query", "library.resolve_groups"));
 
-    let mut server = crate::mcp::Server::new(Session::default());
+    let mut server = crate::mcp::Server::new(Session::default(), crate::gate::Policy::default());
     let reply = server
         .handle(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}))
         .ok_or("initialize reply")?;

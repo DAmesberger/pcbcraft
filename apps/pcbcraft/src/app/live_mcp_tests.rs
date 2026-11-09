@@ -5,6 +5,7 @@
 use super::super::*;
 use super::Place;
 use crate::commands::Registry;
+use pcbcraft_automation::Mode;
 use pcbcraft_automation::live::{self, Client, ClientToken};
 use serde_json::{Value, json};
 use solidcraft_ui_egui::fonts;
@@ -300,5 +301,57 @@ fn turning_access_off_closes_the_channel() -> Fallible {
     assert!(!h.app.live.is_on());
     h.frame(Vec::new());
     assert!(client.call(live::REVISION, json!({})).is_err());
+    Ok(())
+}
+
+/// I-A1: over live MCP, `library.source.add` is refused in every mode the
+/// window offers, with nothing held for the person and the sources as they
+/// were.
+#[test]
+fn live_mcp_never_adds_a_library_source() -> Fallible {
+    let mut h = Harness::new()?;
+    let dir = tempfile::tempdir_in(std::env::temp_dir())?;
+    let add = json!({"command": "library.source.add",
+        "params": {"path": dir.path().display().to_string()}});
+    for mode in [Mode::AskEveryTime, Mode::AutoAllowEdits, Mode::AllowAll] {
+        h.app.live.mode = mode;
+        let reply = h.call(live::EXECUTE, add.clone())?;
+        assert_eq!(code(&reply), "gate.never", "{mode:?}: {reply}");
+        assert!(h.app.live_held().is_none(), "{mode:?}");
+        assert!(h.app.live.session.sources().list().is_empty(), "{mode:?}");
+    }
+    Ok(())
+}
+
+/// I-A2: a read that names a path asks the person and, on Allow, runs: it
+/// is not refused for a revision it has no field for.
+#[test]
+fn live_mcp_runs_a_path_read_on_allow() -> Fallible {
+    let mut h = Harness::new()?;
+    let dir = tempfile::tempdir_in(std::env::temp_dir())?;
+    let part = dir.path().join("smd-nut.solidcraft");
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../library/parts/smd-nut.solidcraft"
+        ),
+        &part,
+    )?;
+    let check = json!({"command": "library.check_part_file",
+        "params": {"path": part.display().to_string()}});
+    let mut client = h.client()?;
+    let asked = std::thread::spawn(move || client.call(live::EXECUTE, check));
+    for _ in 0..5000 {
+        if h.app.live_held().is_some() {
+            break;
+        }
+        h.frame(Vec::new());
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(h.app.live_held(), Some("library.check_part_file"));
+    h.app.live_answer(true);
+    let reply = asked.join().map_err(|_| "client thread")??;
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["result"]["report"]["ok"], true, "{reply}");
     Ok(())
 }

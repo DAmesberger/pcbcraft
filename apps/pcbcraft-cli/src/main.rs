@@ -9,7 +9,7 @@ mod review_diff;
 mod rules_profile;
 mod sample_packages;
 
-use pcbcraft_automation::{Mode, Policy, Session, lines, live, mcp, session};
+use pcbcraft_automation::{Caller, Mode, Policy, Session, lines, live, mcp, session};
 use pcbcraft_core::Engine;
 use serde_json::{Value, json};
 use std::io::{self, Write};
@@ -20,12 +20,16 @@ const MAX_REQUEST: usize = 4 * 1024 * 1024;
 
 const USAGE: &str = "usage: pcbcraft-cli <command>
   commands                         print request, document and diagnostic schemas
-  stdio [FILE.pcbcraft]            JSON-lines requests on stdin, replies on stdout
+  stdio [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
+                                   JSON-lines requests on stdin, replies on stdout;
+                                   ungated for your own scripts, gated as for mcp
+                                   when a mode is given (give one when a model drives it)
   mcp [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
-                                   Model Context Protocol server on stdio; a mode
-                                   (ask-every-time, auto-allow-edits, allow-all) turns
-                                   on the permission gate, limited to the given folders
-                                   and FILE's, and refuses what would need asking
+                                   Model Context Protocol server on stdio, always
+                                   gated: the mode (ask-every-time, auto-allow-edits
+                                   by default, allow-all) decides what runs, paths are
+                                   limited to the given folders and FILE's, what would
+                                   need asking is refused, and settings never change
   mcp --live [--port PORT]         MCP server for the project open in the Pcbcraft
                                    window (Help › Connect AI assistants…): the
                                    window's undo history, its permission choice
@@ -112,8 +116,9 @@ fn open(path: Option<&String>) -> Result<Session> {
     Ok(session)
 }
 
-/// The `mcp` command's arguments. Without a mode the server is ungated, as
-/// the user who starts it has already chosen to trust its client.
+/// The `mcp` and `stdio` commands' arguments. An MCP server is always
+/// gated, in auto-allow-edits without a mode; `stdio` is gated only when
+/// given a mode, for a model that drives it.
 #[derive(Debug, Default, PartialEq)]
 struct McpOptions {
     mode: Option<Mode>,
@@ -147,12 +152,10 @@ impl McpOptions {
         Ok(options)
     }
 
-    /// The gate's policy; the folder of a project named here is allowed, as
-    /// the user just chose that file.
-    fn policy(&self) -> Result<Option<Policy>> {
-        let Some(mode) = self.mode else {
-            return Ok(None);
-        };
+    /// The gate's policy, in the given mode or [`Mode::default`]; the folder
+    /// of a project named here is allowed, as the user just chose that file.
+    fn policy(&self) -> Result<Policy> {
+        let mode = self.mode.unwrap_or_default();
         let mut folders = Vec::new();
         for folder in &self.folders {
             folders.push(std::path::absolute(folder)?);
@@ -162,7 +165,16 @@ impl McpOptions {
         {
             folders.push(folder.to_path_buf());
         }
-        Ok(Some(Policy::new(mode, folders)))
+        Ok(Policy::new(mode, folders))
+    }
+
+    /// The gate for `stdio`: a model's under the policy once a mode is
+    /// given, else the operator's own script.
+    fn stdio_policy(&self) -> Result<Option<Policy>> {
+        match self.mode {
+            Some(_) => Ok(Some(self.policy()?)),
+            None => Ok(None),
+        }
     }
 }
 
@@ -170,7 +182,13 @@ fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command] if command == "commands" => print(&session::schemas()),
-        [command, rest @ ..] if command == "stdio" && rest.len() <= 1 => stdio(open(rest.first())?),
+        [command, rest @ ..] if command == "stdio" => {
+            let options = McpOptions::parse(rest)?;
+            stdio(
+                open(options.project.as_ref())?,
+                options.stdio_policy()?.as_ref(),
+            )
+        }
         [command, live, rest @ ..] if command == "mcp" && live == "--live" => {
             let port = match rest {
                 [] => None,
@@ -186,10 +204,7 @@ fn run() -> Result<()> {
         [command, rest @ ..] if command == "mcp" => {
             let options = McpOptions::parse(rest)?;
             let session = open(options.project.as_ref())?;
-            let mut server = match options.policy()? {
-                Some(policy) => mcp::Server::gated(session, policy),
-                None => mcp::Server::new(session),
-            };
+            let mut server = mcp::Server::new(session, options.policy()?);
             Ok(server.serve(io::stdin().lock(), io::stdout().lock())?)
         }
         [command, path] if ["demo", "showcase", "parts"].contains(&command.as_str()) => {
@@ -279,13 +294,15 @@ fn sample_library(path: &str, name: &str) -> Result<()> {
     print(&session::publish_library(&mut session, path, name)?)
 }
 
-fn stdio(mut session: Session) -> Result<()> {
+/// JSON lines on stdin, gated as a model's when `policy` is given.
+fn stdio(mut session: Session, policy: Option<&Policy>) -> Result<()> {
+    let caller = policy.map_or(Caller::Operator, Caller::Model);
     let mut input = io::stdin().lock();
     while let Some(line) = lines::next(&mut input, MAX_REQUEST)? {
         let reply = match line {
             lines::Line::Text(text) if text.trim().is_empty() => continue,
             lines::Line::Text(text) => match serde_json::from_str::<Value>(&text) {
-                Ok(request) => session.respond(request),
+                Ok(request) => session.respond(caller, request),
                 Err(error) => failure("malformed_request", &error.to_string()),
             },
             lines::Line::TooLarge => failure("limit_exceeded", "request exceeds 4 MiB"),
@@ -312,10 +329,21 @@ mod mcp_option_tests {
         McpOptions::parse(&args)
     }
 
+    /// I-A1: without a mode an MCP server is still gated, in
+    /// auto-allow-edits within the project's folder, so what needs asking
+    /// and the never class are refused; `stdio` stays the operator's own
+    /// script until a mode is given.
     #[test]
-    fn without_a_mode_the_server_is_ungated() -> Result<()> {
-        assert!(parse(&[])?.policy()?.is_none());
-        assert!(parse(&["board.pcbcraft"])?.policy()?.is_none());
+    fn without_a_mode_the_server_allows_edits_only() -> Result<()> {
+        let policy = parse(&[])?.policy()?;
+        assert_eq!(policy.mode, Mode::AutoAllowEdits);
+        assert!(policy.folders.is_empty());
+        let policy = parse(&["/work/board/x.pcbcraft"])?.policy()?;
+        assert_eq!(policy.mode, Mode::AutoAllowEdits);
+        assert_eq!(policy.folders, [std::path::PathBuf::from("/work/board")]);
+        assert!(parse(&["board.pcbcraft"])?.stdio_policy()?.is_none());
+        let gated = parse(&["--permission-mode", "ask-every-time"])?.stdio_policy()?;
+        assert_eq!(gated.map(|p| p.mode), Some(Mode::AskEveryTime));
         Ok(())
     }
 
@@ -328,7 +356,7 @@ mod mcp_option_tests {
             "/work/out",
             "/work/board/x.pcbcraft",
         ])?;
-        let policy = options.policy()?.ok_or("gated")?;
+        let policy = options.policy()?;
         assert_eq!(policy.mode, Mode::AllowAll);
         assert_eq!(
             policy.folders,

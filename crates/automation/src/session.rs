@@ -464,6 +464,29 @@ impl Request {
         }
     }
 
+    /// The requests whose [`Request::paths`] can be non-empty: what the
+    /// catalog, tool descriptions and schema rows say about asking with a
+    /// path. `gate/tests.rs` checks the two against each other.
+    pub const NAMING_PATHS: &'static [&'static str] = &[
+        "project.open",
+        "project.save",
+        "project.export_native",
+        "project.export_fabrication",
+        "library.source.add",
+        "library.source.create",
+        "library.source.remove",
+        "library.source.enable",
+        "library.import_from_project",
+        "library.import_svg",
+        "firmware.export_preview",
+        "firmware.export",
+        "library.inspect_model_file",
+        "schematic.export_pdf",
+        "library.check_part_file",
+        "library.use_part_file",
+        "layout.place_part_file",
+    ];
+
     /// Every file or folder path this request names.
     pub fn paths(&self) -> Vec<&str> {
         match self {
@@ -578,9 +601,7 @@ impl Request {
                     .iter()
                     .find(|(name, _)| *name == id)
                     .map_or(Class::Never, |(_, class)| *class),
-                takes_path: ["path", "output", "template_file"]
-                    .iter()
-                    .any(|name| params["properties"].get(name).is_some()),
+                takes_path: Request::NAMING_PATHS.contains(&id),
                 params,
             }
         }
@@ -762,7 +783,8 @@ pub struct CommandInfo {
     pub id: &'static str,
     pub description: &'static str,
     pub class: Class,
-    /// Whether it can name a path, which makes it at least Ask.
+    /// Whether it can name a path, which makes it at least Ask
+    /// ([`Request::NAMING_PATHS`]).
     pub takes_path: bool,
     pub params: Value,
 }

@@ -162,7 +162,7 @@ fn an_allowed_change_is_checked_again() -> Fallible {
     };
     // The person edits meanwhile.
     let mine = add_via(&session, revision);
-    assert_eq!(session.respond(mine)["ok"], true);
+    assert_eq!(session.respond(Caller::Operator, mine)["ok"], true);
     let reply = run(&mut session, &admitted);
     assert_eq!(code(&reply), "stale_revision", "{reply}");
     assert_eq!(session.engine().revision(), revision + 1);
@@ -244,4 +244,95 @@ fn live_tools_take_their_own_revision() {
     );
     let inspect = tool("project_inspect").unwrap_or_default();
     assert!(inspect["inputSchema"]["properties"]["expected_revision"].is_null());
+}
+
+/// I-A1: live, `library.source.add` is refused in every mode the window
+/// offers, before it is held for the person, and leaves the sources as they
+/// were.
+#[test]
+fn the_window_never_adds_a_library_source() -> Fallible {
+    let session = Session::new(Engine::demo()?);
+    let request = json!({"command": "library.source.add",
+        "params": {"path": std::env::temp_dir().join("lib").display().to_string()}});
+    for mode in [Mode::AskEveryTime, Mode::AutoAllowEdits, Mode::AllowAll] {
+        let policy = Policy::new(mode, [std::env::temp_dir()]);
+        let Verdict::Reply(reply) = admit(&session, &policy, None, EXECUTE, &request) else {
+            return Err(format!("{mode:?}: library.source.add was admitted").into());
+        };
+        assert_eq!(code(&reply), "gate.never", "{mode:?}: {reply}");
+    }
+    assert!(session.sources().list().is_empty());
+    Ok(())
+}
+
+/// I-A2: a read that names a path takes no revision. It asks, and on the
+/// person's Allow it runs: it is never refused for a revision it cannot
+/// send.
+#[test]
+fn a_read_naming_a_path_runs_on_allow() -> Fallible {
+    let mut session = Session::new(Engine::demo()?);
+    let dir = tempfile::tempdir_in(std::env::temp_dir())?;
+    let part = dir.path().join("smd-nut.solidcraft");
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../library/parts/smd-nut.solidcraft"
+        ),
+        &part,
+    )?;
+    let check = json!({"command": "library.check_part_file",
+        "params": {"path": part.display().to_string()}});
+    let Verdict::Ask(admitted, question) = decide(&session, None, &check) else {
+        return Err("a path-named read was not held for the person".into());
+    };
+    assert_eq!(question.command, "library.check_part_file");
+    let reply = run(&mut session, &admitted);
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(reply["result"]["report"]["ok"], true, "{reply}");
+
+    let preview = json!({"command": "firmware.export_preview", "params": {
+        "instance": 1, "emitter": {"emitter": "json"},
+        "template_file": dir.path().join("t.rhai").display().to_string()}});
+    let Verdict::Ask(admitted, _) = decide(&session, None, &preview) else {
+        return Err("a preview naming a template was not held".into());
+    };
+    let reply = run(&mut session, &admitted);
+    assert!(
+        !code(&reply).starts_with("live.") && !code(&reply).starts_with("gate."),
+        "{reply}"
+    );
+    Ok(())
+}
+
+/// I-A3: the wait comes from the effective class: a request inside
+/// `project.apply` that asks, a read that names a path and, under
+/// ask-every-time, an edit may all wait for the person, so none times out
+/// while it is held; a plain read keeps the short wait.
+#[test]
+fn a_request_that_may_wait_for_the_person_gets_the_long_wait() -> Fallible {
+    let session = Session::new(Engine::demo()?);
+    let apply = |command: &str, params: Value| {
+        json!({"command": "project.apply", "params": {
+            "expected_revision": 0,
+            "operation": {"editor": "Library", "operation": {"command": command, "params": params}},
+        }})
+    };
+    let publish = apply("library.publish", json!({"drafts": [1]}));
+    let path_read = json!({"command": "library.check_part_file",
+        "params": {"path": "/tmp/x.solidcraft"}});
+    let edit = add_via(&session, 0);
+    let read = json!({"command": "project.inspect"});
+    let summary = |params: &Value| LiveProtocol.summary(EXECUTE, params);
+    for (name, params) in [
+        ("publish", &publish),
+        ("path read", &path_read),
+        ("edit", &edit),
+    ] {
+        assert!(summary(params).long, "{name}: {params}");
+    }
+    assert!(matches!(summary(&publish).effect, Effect::Changes));
+    assert!(!summary(&read).long);
+    assert!(matches!(summary(&read).effect, Effect::ReadsOnly));
+    assert!(!LiveProtocol.summary(REVISION, &json!({})).long);
+    Ok(())
 }

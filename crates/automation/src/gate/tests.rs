@@ -492,7 +492,7 @@ fn a_request_from_a_run_cannot_publish_or_write_without_allow() -> Fallible {
             matches!(session.check_request(&policy, attempt), Decision::Ask(_)),
             "{attempt}"
         );
-        let reply = session.respond_gated(&policy, attempt.clone());
+        let reply = session.respond(Caller::Model(&policy), attempt.clone());
         assert_eq!(reply["ok"], false, "{reply}");
         assert_eq!(reply["error"]["code"], "gate.cannot_ask", "{reply}");
         let message = reply["error"]["message"].as_str().unwrap_or_default();
@@ -508,17 +508,20 @@ fn a_request_from_a_run_cannot_publish_or_write_without_allow() -> Fallible {
 
     // The same requests run when the host has a person's Allow: the gate was
     // what stopped them, not a failure of their own.
-    let saved = session.respond(attempts[2].clone());
+    let saved = session.respond(Caller::Allowed(&policy), attempts[2].clone());
     assert_eq!(saved["ok"], true, "{saved}");
     assert!(root.path().join("stolen.pcbcraft").exists());
-    let promoted = session.respond(promote);
+    let promoted = session.respond(Caller::Allowed(&policy), promote);
     assert_eq!(promoted["ok"], true, "{promoted}");
     assert!(file_count(&folder)? > records_before);
-    let published = session.respond(json!({"command": "project.apply", "params": {
-        "expected_revision": session.engine().revision(),
-        "operation": {"editor": "Library", "operation": {
-            "command": "library.publish", "params": {"drafts": [draft]}}},
-    }}));
+    let published = session.respond(
+        Caller::Allowed(&policy),
+        json!({"command": "project.apply", "params": {
+            "expected_revision": session.engine().revision(),
+            "operation": {"editor": "Library", "operation": {
+                "command": "library.publish", "params": {"drafts": [draft]}}},
+        }}),
+    );
     assert_eq!(published["ok"], true, "{published}");
     assert_eq!(session.engine().drafts().items.len(), drafts_before - 1);
     Ok(())
@@ -531,16 +534,16 @@ fn edits_run_inside_the_turn_and_settings_are_refused_with_no_way_around() -> Fa
     let policy = Policy::new(Mode::AllowAll, [root.path().to_path_buf()]);
     let revision = session.engine().revision();
     let sources = session.sources().list().len();
-    let reply = session.respond_gated(
-        &policy,
+    let reply = session.respond(
+        Caller::Model(&policy),
         json!({"command": "library.source.remove",
             "params": {"path": folder.display().to_string()}}),
     );
     assert_eq!(reply["error"]["code"], "gate.never", "{reply}");
     assert_eq!(session.sources().list().len(), sources);
 
-    let reply = session.respond_gated(
-        &Policy::default(),
+    let reply = session.respond(
+        Caller::Model(&Policy::default()),
         json!({"command": "project.apply", "params": {
             "expected_revision": revision,
             "operation": {"editor": "Library", "operation": {
@@ -565,11 +568,11 @@ fn saving_without_a_path_counts_as_naming_the_current_file() -> Fallible {
     let before = std::fs::read(&file)?;
     let policy = Policy::new(Mode::AllowAll, [root.path().to_path_buf()]);
     let request = json!({"command": "project.save", "params": {}});
-    let reply = session.respond_gated(&policy, request.clone());
+    let reply = session.respond(Caller::Model(&policy), request.clone());
     assert_eq!(reply["error"]["code"], "gate.path_outside", "{reply}");
     assert_eq!(std::fs::read(&file)?, before);
     let policy = Policy::new(Mode::AllowAll, [elsewhere.path().to_path_buf()]);
-    let reply = session.respond_gated(&policy, request);
+    let reply = session.respond(Caller::Model(&policy), request);
     assert_eq!(reply["ok"], true, "{reply}");
     Ok(())
 }
@@ -666,9 +669,9 @@ fn tool_call(server: &mut Server, id: u64, command: &str, arguments: Value) -> (
 }
 
 /// MCP has no way to ask, so its gate refuses what would need asking; each
-/// mode moves that line, and the default server stays ungated.
+/// mode moves that line, and a server without one allows edits only.
 #[test]
-fn mcp_runs_under_each_mode_and_ungated_by_default() -> Fallible {
+fn mcp_runs_under_each_mode_and_allows_edits_by_default() -> Fallible {
     let root = tempfile::tempdir()?;
     let file = |name: &str| root.path().join(name).display().to_string();
     for (mode, undo_runs, save_runs) in [
@@ -678,7 +681,7 @@ fn mcp_runs_under_each_mode_and_ungated_by_default() -> Fallible {
     ] {
         let name = format!("{}.pcbcraft", mode.name());
         let policy = Policy::new(mode, [root.path().to_path_buf()]);
-        let mut server = Server::gated(Session::new(Engine::demo()?), policy);
+        let mut server = Server::new(Session::new(Engine::demo()?), policy);
 
         let (failed, _) = tool_call(&mut server, 1, "project.inspect", json!({}));
         assert!(!failed, "{mode:?}: reads always run");
@@ -724,14 +727,115 @@ fn mcp_runs_under_each_mode_and_ungated_by_default() -> Fallible {
         assert_eq!(reply["code"], "gate.never", "{mode:?}: {reply}");
     }
 
-    let mut server = Server::new(Session::new(Engine::demo()?));
+    // I-A1: the CLI's server without a mode, its project's folder allowed:
+    // edits run, a save asks and so is refused.
+    let policy = Policy::new(Mode::default(), [root.path().to_path_buf()]);
+    let mut server = Server::new(Session::new(Engine::demo()?), policy);
     let (failed, reply) = tool_call(
         &mut server,
         1,
         "project.save",
-        json!({"path": file("ungated.pcbcraft")}),
+        json!({"path": file("default.pcbcraft")}),
     );
-    assert!(!failed, "{reply}");
-    assert!(root.path().join("ungated.pcbcraft").exists());
+    assert!(failed, "{reply}");
+    assert_eq!(reply["code"], "gate.cannot_ask", "{reply}");
+    assert!(!root.path().join("default.pcbcraft").exists());
+    Ok(())
+}
+
+/// I-A1: `library.source.add` writes the person's own settings, so a model
+/// never runs it: not over a headless MCP server in its default mode or in
+/// allow-all, not over gated JSON lines, not even after a person's Allow.
+/// The settings stay unwritten and the source list empty. The request
+/// itself is valid: the operator's own script runs it.
+#[test]
+fn a_model_never_adds_a_library_source() -> Fallible {
+    use crate::session::sources::Sources;
+    let root = tempfile::tempdir()?;
+    let folder = root.path().join("library");
+    let created = Session::default().dispatch(json!({"command": "library.source.create",
+        "params": {"path": folder.display().to_string(), "name": "Shared"}}));
+    assert_eq!(created["ok"], true, "{created}");
+    let dirs = pcbcraft_io::settings::UserDirs {
+        config: root.path().join("config"),
+        cache: root.path().join("cache"),
+    };
+    let user_session = || -> Fallible<Session> {
+        Ok(Session::with_sources(
+            Engine::default(),
+            Sources::with_dirs(dirs.clone())?,
+        ))
+    };
+    let settings_written = || dirs.config.exists();
+    let add = json!({"path": folder.display().to_string()});
+    let allow_all = Policy::new(Mode::AllowAll, [root.path().to_path_buf()]);
+
+    for policy in [Policy::default(), allow_all.clone()] {
+        let mut server = Server::new(user_session()?, policy.clone());
+        let (failed, reply) = tool_call(&mut server, 1, "library.source.add", add.clone());
+        assert!(failed, "{:?}: {reply}", policy.mode);
+        assert_eq!(reply["code"], "gate.never", "{:?}: {reply}", policy.mode);
+        assert!(server.session().sources().list().is_empty());
+        assert!(!settings_written(), "{:?}", policy.mode);
+    }
+
+    let request = json!({"command": "library.source.add", "params": add});
+    let mut session = user_session()?;
+    for caller in [Caller::Model(&allow_all), Caller::Allowed(&allow_all)] {
+        let reply = session.respond(caller, request.clone());
+        assert_eq!(reply["error"]["code"], "gate.never", "{caller:?}: {reply}");
+        assert!(session.sources().list().is_empty());
+        assert!(!settings_written(), "{caller:?}");
+    }
+    let reply = session.respond(Caller::Operator, request);
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!(session.sources().list().len(), 1);
+    assert!(settings_written());
+    Ok(())
+}
+
+/// I-A1: the server instructions never tell a model to call a request,
+/// operation or query of the Never class, which every model is refused.
+#[test]
+fn the_instructions_name_no_never_class_command() {
+    let instructions = format!(
+        "{}{}",
+        crate::mcp::LIVE_INSTRUCTIONS,
+        crate::mcp::INSTRUCTIONS
+    );
+    let never = Request::CLASSES
+        .iter()
+        .chain(Operation::classes())
+        .chain(Query::CLASSES)
+        .filter(|(_, class)| *class == Class::Never)
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>();
+    assert!(never.contains(&"library.source.add"), "{never:?}");
+    for name in never {
+        for spelling in [name.to_owned(), tool_name(name)] {
+            assert!(
+                !instructions.contains(&spelling),
+                "the instructions name {spelling}, which is never run for a model"
+            );
+        }
+    }
+}
+
+/// I-A22: what the catalog says about asking with a path (tool
+/// descriptions, schema rows) is exactly the requests whose
+/// [`Request::paths`] reach the gate.
+#[test]
+fn the_catalog_asks_with_a_path_where_the_gate_sees_one() -> Fallible {
+    let sampled: BTreeSet<&str> = path_samples()?.iter().map(Request::command).collect();
+    let declared: BTreeSet<&str> = Request::NAMING_PATHS.iter().copied().collect();
+    assert_eq!(declared, sampled);
+    for info in Request::catalog_shared() {
+        assert_eq!(
+            info.takes_path,
+            sampled.contains(info.id),
+            "{}: takes_path disagrees with Request::paths",
+            info.id
+        );
+    }
     Ok(())
 }

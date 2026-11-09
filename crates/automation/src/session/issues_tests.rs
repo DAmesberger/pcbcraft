@@ -48,7 +48,10 @@ fn json_lines_issues_of_the_demo_match_the_golden_file() -> Fallible<()> {
 
 #[test]
 fn mcp_issues_of_the_demo_match_the_golden_file() -> Fallible<()> {
-    let mut server = Server::new(Session::new(Engine::demo()?));
+    let mut server = Server::new(
+        Session::new(Engine::demo()?),
+        crate::gate::Policy::default(),
+    );
     let reply = server
         .handle(json!({
             "jsonrpc": "2.0",

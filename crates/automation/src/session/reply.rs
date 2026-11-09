@@ -5,6 +5,7 @@
 //! The ids are found by diffing the serialized document, so a collection the
 //! document gains later is reported without changing this module.
 use super::{InspectParams, Request, Session, envelope};
+use crate::gate::Caller;
 use crate::{Error, Result};
 use pcbcraft_core::{Document, Finding, Project, Query, QueryResult, erc, layout};
 use serde_json::{Map, Value, json};
@@ -45,10 +46,15 @@ fn design_findings(project: &Project) -> Vec<Finding> {
 }
 
 impl Session {
-    /// The transports' entry point: run one JSON request and answer in the
-    /// shared envelope with a compact result. `verbose: true`, beside
-    /// `command` or inside `params`, answers as [`Session::dispatch`] does.
-    pub fn respond(&mut self, mut request: Value) -> Value {
+    /// The transports' entry point: gate one JSON request for `caller`
+    /// ([`crate::gate`]), run it and answer in the shared envelope with a
+    /// compact result. A refused request changes nothing and answers with
+    /// the refusal. `verbose: true`, beside `command` or inside `params`,
+    /// answers as [`Session::dispatch`] does.
+    pub fn respond(&mut self, caller: Caller<'_>, mut request: Value) -> Value {
+        if let Err(refusal) = self.admit(caller, &request) {
+            return refusal.reply();
+        }
         if take_verbose(&mut request) {
             return self.dispatch(request);
         }

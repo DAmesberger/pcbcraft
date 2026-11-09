@@ -3,10 +3,12 @@
 //! on. It holds whatever a model was told, because datasheets and other
 //! documents are data: nothing in a request can widen the policy.
 //!
-//! [`decide`] is plain rules over plain data. Asking is a value returned to
-//! the host, which shows it to a person and, on Allow, runs the request with
-//! [`Session::respond`]. A host with no way to ask uses
-//! [`Session::respond_gated`], where Ask is refused and the message says so.
+//! [`decide`] is plain rules over plain data. [`Session::respond`] enforces
+//! it, for every transport, from the [`Caller`] the transport names: a model
+//! never runs a Never-class request, nor a path outside its folders, and Ask
+//! runs only as [`Caller::Allowed`], after a person's Allow in the host. A
+//! host with no way to ask names [`Caller::Model`], where Ask is refused and
+//! the message says so.
 //!
 //! The classes themselves are chosen beside each command enum
 //! ([`pcbcraft_core::declare_classes!`], [`Request`]'s listing in `session`).
@@ -72,6 +74,20 @@ impl Policy {
             folders: folders.into_iter().collect(),
         }
     }
+}
+
+/// Who sent a request to [`Session::respond`], which gates it accordingly.
+#[derive(Clone, Copy, Debug)]
+pub enum Caller<'a> {
+    /// The operator's own script (`pcbcraft-cli stdio` without a permission
+    /// mode): every class runs, as at the command line. Never a model's.
+    Operator,
+    /// A model, under `policy`, with no one asked: Never, a path outside the
+    /// folders and whatever needs a person are refused.
+    Model(&'a Policy),
+    /// A model's request that a person allowed in the host: what needs a
+    /// person runs; Never and a path outside the folders are still refused.
+    Allowed(&'a Policy),
 }
 
 /// The gate's answer.
@@ -326,12 +342,16 @@ impl Session {
         })
     }
 
-    /// [`Session::respond`] for a host with no way to ask: runs what the gate
-    /// lets run and answers anything else with the refusal, changing nothing.
-    pub fn respond_gated(&mut self, policy: &Policy, request: Value) -> Value {
-        match self.check_request(policy, &request).without_asking() {
-            Ok(()) => self.respond(request),
-            Err(refusal) => refusal.reply(),
+    /// Whether `caller` may run `request`: the gate [`Session::respond`]
+    /// applies before anything runs.
+    pub(crate) fn admit(&self, caller: Caller<'_>, request: &Value) -> Result<(), Refusal> {
+        match caller {
+            Caller::Operator => Ok(()),
+            Caller::Model(policy) => self.check_request(policy, request).without_asking(),
+            Caller::Allowed(policy) => match self.check_request(policy, request) {
+                Decision::Refuse(refusal) => Err(refusal),
+                Decision::Run | Decision::Ask(_) => Ok(()),
+            },
         }
     }
 }
