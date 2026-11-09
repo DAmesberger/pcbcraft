@@ -106,6 +106,18 @@ fn weave_nodes(surface: OpaqueSurface, swing: f64, strength: f64) -> Vec<Value> 
     ]
 }
 
+/// The orange peel's relief (mm): a gloss mask's lacquer waves a few
+/// tenths of a micrometre over millimetres, so the studio's lights mirror in
+/// it with crisp, gently rippled edges. More relief tore a strip light's
+/// mirror image into a ragged smear across the board.
+const PEEL_RELIEF_MM: f64 = 0.0015;
+
+/// Silkscreen ink's grain: its albedo swing at full strength and its relief
+/// (mm). Printed epoxy ink is a flat, even film at board scale; more swing
+/// and relief mottled white legend grey under the studio's low lights.
+const SILK_SWING: f64 = 0.12;
+const SILK_RELIEF_MM: f64 = 0.0005;
+
 /// Orange peel on a 2D projection `uv`, ending at normal node `coat_n`.
 fn peel_nodes(strength: f64) -> Vec<Value> {
     vec![
@@ -119,7 +131,7 @@ fn peel_nodes(strength: f64) -> Vec<Value> {
         json!({"id": "peel_ab", "kind": "add", "inputs": {"a": {"from": "peel_a"}, "b": {"from": "peel_b6"}}}),
         json!({"id": "peel", "kind": "multiply", "inputs": {"a": {"from": "peel_ab"}, "b": strength}}),
         json!({"id": "coat_n", "kind": "normal.from_height",
-               "inputs": {"height": {"from": "peel"}, "relief_mm": 0.006}}),
+               "inputs": {"height": {"from": "peel"}, "relief_mm": PEEL_RELIEF_MM}}),
     ]
 }
 
@@ -180,7 +192,7 @@ pub fn look_graph_json(surface: OpaqueSurface, detail: Detail) -> Value {
                        "params": {"kind": "value", "dimensions": 2, "octaves": 1},
                        "inputs": {"texcoord": {"from": "uv"}, "scale_mm": 0.16, "seed": 4}}),
                 json!({"id": "grain", "kind": "add", "inputs": {"a": {"from": "fine"}, "b": {"from": "coarse"}}}),
-                json!({"id": "swing", "kind": "multiply", "inputs": {"a": strength, "b": 0.36}}),
+                json!({"id": "swing", "kind": "multiply", "inputs": {"a": strength, "b": SILK_SWING}}),
                 json!({"id": "tint_lo", "kind": "subtract", "inputs": {"a": 1, "b": {"from": "swing"}}}),
                 json!({"id": "tint_hi", "kind": "add", "inputs": {"a": 1, "b": {"from": "swing"}}}),
                 json!({"id": "tint", "kind": "remap", "inputs": {"in": {"from": "grain"},
@@ -191,7 +203,7 @@ pub fn look_graph_json(surface: OpaqueSurface, detail: Detail) -> Value {
                        "inputs": {"a": b, "b": {"from": "tint", "fallback": 1}}}),
                 json!({"id": "relief_h", "kind": "multiply", "inputs": {"a": {"from": "grain"}, "b": strength}}),
                 json!({"id": "relief", "kind": "normal.from_height",
-                       "inputs": {"height": {"from": "relief_h"}, "relief_mm": 0.002}}),
+                       "inputs": {"height": {"from": "relief_h"}, "relief_mm": SILK_RELIEF_MM}}),
             ]);
             surface_node(
                 surface,

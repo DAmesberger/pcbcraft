@@ -780,3 +780,55 @@ fn temp_finish_top() -> Result<(), Box<dyn std::error::Error>> {
     }
     Ok(())
 }
+
+/// The PCB 3D view's overview, drawn as the window opens it, in the
+/// Realistic and the Standard look, written to `PCBCRAFT_PICTURES`: the
+/// showcase, a new project's bare board and each design named in
+/// `PCBCRAFT_LOOK_BOARDS` (`:`-separated paths). Evidence for look tuning.
+#[test]
+#[ignore = "writes look pictures"]
+fn write_look_pictures() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") else {
+        return Err("set PCBCRAFT_PICTURES".into());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let mut boards = vec![
+        ("showcase".to_owned(), showcase_project()?),
+        (
+            "bare".to_owned(),
+            pcbcraft_core::Engine::default().project().clone(),
+        ),
+    ];
+    for path in std::env::var("PCBCRAFT_LOOK_BOARDS")
+        .unwrap_or_default()
+        .split(':')
+        .filter(|p| !p.is_empty())
+    {
+        let file = pcbcraft_io::read_project(std::path::Path::new(path))?;
+        let mut engine = pcbcraft_core::Engine::default();
+        engine.replace_document(file)?;
+        let name = std::path::Path::new(path)
+            .file_stem()
+            .map_or("board".into(), |s| s.to_string_lossy().into_owned());
+        boards.push((name, engine.project().clone()));
+    }
+    for (name, project) in boards {
+        let model = pcbcraft_solidcraft::project::build(&project)?;
+        let mut v = Viewport::detached();
+        v.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
+        v.fit_to(4.0 / 3.0);
+        for (look, realistic) in [("realistic", true), ("standard", false)] {
+            v.set_realistic(realistic);
+            let (w, h) = (1280, 960);
+            let rgba = gpu.draw(&mut v, w, h, 2.0).ok_or("no picture")?;
+            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+                .ok_or("png encoding failed")?;
+            std::fs::write(dir.join(format!("{name}-{look}.png")), png)?;
+        }
+    }
+    Ok(())
+}

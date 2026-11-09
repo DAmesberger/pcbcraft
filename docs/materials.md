@@ -257,18 +257,22 @@ Reading the table:
 - The legend shows at oblique views (4× the pixels): before, the mask drawn after it covered most of it. At the overview, the 17 pixels that survived were its brightest; the 430 now include thin strokes that share their pixel with the mask, hence the lower mean.
 - Laminate inside mask openings is shaded (with its weave) instead of its flat plain colour: mean and p95 rise a little.
 
-**After the studio retune (Solidcraft track L, fork `c26590edb`).** Solidcraft's default studio is now `Contrast` with a soft overhead scrim (Pcbcraft still turns it 145° at exposure 1.1; the scrim is centred, so the turn does not move it). Same harness, before → after, mean display luminance (p95):
+**After the studio and look retune (9 November 2026).** Pcbcraft selects Solidcraft's `Contrast` studio, which now carries a soft overhead scrim (`lighting.rs`), turned 285° at exposure 1.1. The look graphs lower the mask's orange-peel relief from 6 to 1.5 µm and the legend ink's grain (swing 0.36 → 0.12, relief 2 → 0.5 µm). White legend ink is 0.85 diffuse reflectance (was 0.78; TiO2 inks reach 0.85–0.90). Same harness, before (fork `04d3c2ffc`, turn 145°) → after, mean display luminance (p95):
 
 | Board, view | Gold | Mask | Silk | Laminate |
 |---|---|---|---|---|
-| Showcase, top 85° | 0.117 (0.197) → 0.434 (0.534), `#C9AD6C` | 0.043 → 0.062 | 0.374 → 0.485 | 0.116 → 0.159 |
-| Showcase, turned 40° | 0.155 → 0.235 | 0.046 → 0.060 | 0.268 → 0.332 | 0.120 → 0.154 |
-| Showcase, grazing 10° | 0.240 → 0.235 | 0.226 → 0.246 | 0.294 → 0.331 | 0.152 → 0.159 |
-| ESP32 dev board, top 85° | 0.095 (0.100) → 0.421 (0.434), `#C7AB6A` | 0.074 → 0.111 | 0.342 → 0.446 | 0.104 → 0.145 |
-| ESP32 dev board, turned 40° | 0.107 → 0.166 | 0.063 → 0.088 | 0.108 → 0.135 | 0.134 → 0.150 |
+| Showcase, overview | 0.236 → 0.258 | 0.068 (0.214) → 0.087 (0.342) | 0.214 → 0.288 | 0.144 → 0.209 |
+| Showcase, top 85° | 0.117 (0.197) → 0.439 (0.542), `#CAAE6D` | 0.043 → 0.062 | 0.374 → 0.531, `#C1C1BE` | 0.116 → 0.160 |
+| Showcase, turned 40° | 0.155 → 0.251 | 0.046 → 0.059 | 0.268 → 0.370 | 0.120 → 0.157 |
+| Showcase, grazing 10° | 0.240 → 0.253 | 0.226 (0.793) → 0.196 (0.714) | 0.294 → 0.386 | 0.152 → 0.201 |
+| ESP32 dev board, overview | 0.211 → 0.264 | 0.166 → 0.182 | 0.155 → 0.235 | 0.119 → 0.171 |
+| ESP32 dev board, top 85° | 0.095 (0.100) → 0.431 (0.457), `#C8AD6C` | 0.074 → 0.111 | 0.342 → 0.495 | 0.104 → 0.151 |
+| ESP32 dev board, turned 40° | 0.107 → 0.175 | 0.063 → 0.089 | 0.108 → 0.157 | 0.134 → 0.172 |
 
-- `exposed_gold_reads_as_gold_in_the_studio` passes and is no longer ignored: from above the pads measure 0.446 (target ≥ 0.30) in gold's hue, the darkest of the 8 views is 0.272, and the best p95 is 0.599. The physics test is unchanged (ratio 0.796–0.797).
-- Silk is lighter but not near-white yet, and the mask still turns grey-green at grazing angles. Both are left to Pcbcraft's look retune (track PL).
+- `exposed_gold_reads_as_gold_in_the_studio` passes and is no longer ignored. From above, the pads measure 0.447 (target ≥ 0.30) in gold's hue. The darkest of the 8 views is 0.281, and the best p95 is 0.681. The physics test is unchanged (ratio 0.796–0.797).
+- The mask's sheen is a crisp-edged band at the overview's near corner. At 145°, the strip light's mirror image crossed a bare board's middle as a ragged, pale haze. `write_look_pictures` draws the overview of the showcase, a bare board and any design in `PCBCRAFT_LOOK_BOARDS`, in both looks.
+- Silk from above reads light grey (0.53, `#C1C1BE`). The art target is near-white, so it is not met yet.
+- The module's board (editor-core `SolderMaskGreen`, uncoated) is not yet the board mask's coated look.
 
 **Rerun and compare.**
 1. `PCBCRAFT_LOOK_OUT=before.tsv cargo test --profile ci -p pcbcraft look_diagnosis -- --ignored --nocapture` writes the table. It covers 9 views (overview, turned 40°, top 85°, two obliques at 25°, grazing 10° and 5°, and close-ups at 30° and 12°) and 6 materials (mask, gold, silk, laminate, pad copper and other copper).
