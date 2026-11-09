@@ -87,9 +87,21 @@ pub struct Sources {
     dirs: Option<UserDirs>,
     settings: UserSettings,
     loaded: Vec<Loaded>,
+    /// Why the user's settings could not be read. While set, every change
+    /// is refused rather than kept in memory and reported as saved.
+    unavailable: Option<String>,
 }
 
 impl Sources {
+    /// No user settings, because they could not be read (`reason`): the
+    /// session runs without sources, and changes to them are refused.
+    pub fn unavailable(reason: String) -> Self {
+        Self {
+            unavailable: Some(reason),
+            ..Self::default()
+        }
+    }
+
     /// Read the user's settings and load every configured source.
     pub fn with_dirs(dirs: UserDirs) -> Result<Self> {
         let settings = settings::read_settings(&dirs.settings_path())?;
@@ -97,6 +109,7 @@ impl Sources {
             dirs: Some(dirs),
             settings,
             loaded: Vec::new(),
+            unavailable: None,
         };
         sources.rescan();
         Ok(sources)
@@ -183,6 +196,11 @@ impl Sources {
     }
 
     fn persist(&self) -> Result<()> {
+        if let Some(reason) = &self.unavailable {
+            return Err(Error::File(pcbcraft_io::Error::Io(std::io::Error::other(
+                format!("library settings unavailable, so nothing was saved: {reason}"),
+            ))));
+        }
         if let Some(dirs) = &self.dirs {
             settings::write_settings(&dirs.settings_path(), &self.settings)?;
         }

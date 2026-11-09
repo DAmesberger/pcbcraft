@@ -129,3 +129,31 @@ fn atomic_create_never_replaces_an_existing_file() -> Result<()> {
     assert_eq!(std::fs::read_dir(dir.path())?.count(), 1);
     Ok(())
 }
+
+/// When the file is already in place but its folder cannot be synchronized
+/// (here: a folder that may be written but not opened), the error says so
+/// with its own code; it is not a refusal of the input.
+#[cfg(unix)]
+#[test]
+fn an_unsynchronized_folder_is_reported_as_written_not_refused() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir()?;
+    let folder = dir.path().join("out");
+    std::fs::create_dir(&folder)?;
+    let path = folder.join("board.txt");
+    atomic_write(&path, b"old")?;
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o300))?;
+    // A privileged user opens it anyway; there is nothing to test then.
+    let opened = std::fs::File::open(&folder).is_ok();
+    let result = atomic_write(&path, b"new");
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700))?;
+    if !opened {
+        let error = result
+            .err()
+            .ok_or_else(|| Error::Invalid("not reported".into()))?;
+        assert_eq!(error.code(), "written_unsynced", "{error}");
+        assert!(error.to_string().contains("was written"), "{error}");
+    }
+    assert_eq!(std::fs::read(&path)?, b"new", "the file was replaced");
+    Ok(())
+}

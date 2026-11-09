@@ -209,16 +209,31 @@ fn write_folder(output: &Path, files: &[FabFile]) -> Result<()> {
         f.write_all(&file.bytes)?;
         f.sync_all()?;
     }
-    // An empty folder the user chose is replaced by the finished one.
-    if output.is_dir() {
-        std::fs::remove_dir(output)?;
-    }
     let staged = staging.keep();
-    if let Err(error) = std::fs::rename(&staged, output) {
+    if let Err(error) = move_into_place(&staged, output) {
         let _ = std::fs::remove_dir_all(&staged);
         return Err(error.into());
     }
     Ok(())
+}
+
+/// Rename `staged` to `output`. On Unix the rename itself replaces an
+/// empty folder the user chose, so a failed rename leaves that folder as
+/// it was. Windows refuses to rename over a folder: there the empty folder
+/// is removed only after that refusal, and made again if the second rename
+/// fails too.
+fn move_into_place(staged: &Path, output: &Path) -> std::io::Result<()> {
+    match std::fs::rename(staged, output) {
+        Err(_)
+            if cfg!(windows) && output.is_dir() && std::fs::read_dir(output)?.next().is_none() =>
+        {
+            std::fs::remove_dir(output)?;
+            std::fs::rename(staged, output).inspect_err(|_| {
+                let _ = std::fs::create_dir(output);
+            })
+        }
+        other => other,
+    }
 }
 
 /// Write one ZIP atomically, entries in set order with a fixed timestamp,
@@ -250,4 +265,29 @@ pub fn resolve_profile(id: &str) -> Result<RuleProfile> {
     }
     let dirs = crate::settings::UserDirs::from_env()?;
     crate::rule_profiles::ProfileLibrary::from_dirs(&dirs).get(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The finished folder replaces the user's empty one; a move that
+    /// fails leaves the user's folder where it was, never deleted.
+    #[test]
+    fn a_failed_move_keeps_the_users_empty_folder() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let output = dir.path().join("fab");
+        std::fs::create_dir(&output)?;
+        let missing = dir.path().join(".pcbcraft-fab-gone");
+        assert!(move_into_place(&missing, &output).is_err());
+        assert!(output.is_dir(), "the user's folder is kept");
+
+        let staged = dir.path().join(".pcbcraft-fab-done");
+        std::fs::create_dir(&staged)?;
+        std::fs::write(staged.join("board.gbr"), "G04*")?;
+        move_into_place(&staged, &output)?;
+        assert_eq!(std::fs::read_to_string(output.join("board.gbr"))?, "G04*");
+        assert!(!staged.exists());
+        Ok(())
+    }
 }

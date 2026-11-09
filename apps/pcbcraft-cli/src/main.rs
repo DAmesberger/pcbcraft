@@ -83,16 +83,15 @@ fn execute(session: &mut Session, request: Value) -> Result<Value> {
 }
 
 /// A session over the user's library sources (`PCBCRAFT_CONFIG_DIR` and
-/// `PCBCRAFT_CACHE_DIR` when set). Without user directories the session
-/// still runs, with sources kept in memory only.
+/// `PCBCRAFT_CACHE_DIR` when set). When they cannot be read the session
+/// still runs without sources, says so, and refuses source changes instead
+/// of reporting them saved.
 fn user_session(engine: Engine) -> Session {
-    match session::sources::Sources::from_env() {
-        Ok(sources) => Session::with_sources(engine, sources),
-        Err(error) => {
-            eprintln!("library sources unavailable: {error}");
-            Session::new(engine)
-        }
-    }
+    let sources = session::sources::Sources::from_env().unwrap_or_else(|error| {
+        eprintln!("library sources unavailable: {error}");
+        session::sources::Sources::unavailable(error.to_string())
+    });
+    Session::with_sources(engine, sources)
 }
 
 /// A session, optionally starting from a project file.

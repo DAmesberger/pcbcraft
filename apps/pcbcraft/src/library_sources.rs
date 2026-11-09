@@ -565,6 +565,9 @@ pub struct LibrarySources {
     settings: UserSettings,
     /// Why settings or user directories are unavailable.
     problem: Option<String>,
+    /// The settings file exists but could not be read: this session runs
+    /// on defaults and never saves over that file.
+    unreadable: bool,
     sources: Vec<SourceView>,
     /// Bumped whenever `context()` would return something else.
     generation: u64,
@@ -604,7 +607,12 @@ impl LibrarySources {
             Ok(dirs) => Self::new(Some(dirs)),
             Err(error) => {
                 let mut sources = Self::new(None);
-                sources.problem = Some(format!("Library settings unavailable: {error}"));
+                let problem = format!(
+                    "Settings unavailable: {error}. Pcbcraft runs on default settings; \
+                     changes made now are lost when it quits."
+                );
+                sources.say(problem.clone(), true);
+                sources.problem = Some(problem);
                 sources
             }
         };
@@ -619,11 +627,24 @@ impl LibrarySources {
         let mut problem = None;
         let settings = match &dirs {
             Some(dirs) => settings::read_settings(&dirs.settings_path()).unwrap_or_else(|error| {
-                problem = Some(format!("Library settings unreadable: {error}"));
+                problem = Some(format!(
+                    "Settings in {} could not be read: {error}. Pcbcraft runs on default \
+                     settings and does not save over that file; changes made now are lost \
+                     when it quits.",
+                    dirs.settings_path().display()
+                ));
                 UserSettings::default()
             }),
             None => UserSettings::default(),
         };
+        let unreadable = problem.is_some();
+        let notices = problem
+            .iter()
+            .map(|text| Notice {
+                text: text.clone(),
+                error: true,
+            })
+            .collect();
         Self {
             sources: settings
                 .sources
@@ -634,6 +655,7 @@ impl LibrarySources {
             dirs,
             settings,
             problem,
+            unreadable,
             generation: 0,
             scan: 0,
             writes: 0,
@@ -646,7 +668,7 @@ impl LibrarySources {
             picking: false,
             promote: None,
             finished: None,
-            notices: Vec::new(),
+            notices,
             session_favourites: Vec::new(),
             session_recent: Vec::new(),
             bundles: Vec::new(),
@@ -880,11 +902,16 @@ impl LibrarySources {
     }
 
     /// Save the settings on the writer thread: one thread, so saves land in
-    /// order, and a burst of changes writes only the newest.
+    /// order, and a burst of changes writes only the newest. Settings read
+    /// from an unreadable file are defaults, so they are never written over
+    /// it; the problem shown at startup stays.
     fn persist(&mut self) {
         let Some(dirs) = &self.dirs else {
             return;
         };
+        if self.unreadable {
+            return;
+        }
         let saver = self.saver.get_or_insert_with(|| {
             let (saver, saves) = mpsc::channel::<(u64, UserSettings)>();
             let path = dirs.settings_path();
@@ -1813,6 +1840,52 @@ mod tests {
             settings::read_settings(&dirs.settings_path())?.browser_width,
             Some(333.0)
         );
+        Ok(())
+    }
+
+    /// A settings file that cannot be read (a newer format, a bad byte) is
+    /// reported at startup and never saved over: changes to the keymap,
+    /// sources, favourites or width keep working in memory only.
+    #[test]
+    fn unreadable_settings_are_reported_and_never_overwritten()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for text in [
+            "{\"format\":2,\"sources\":[],\"favourites\":[],\"recent\":[]}",
+            "{\"format\":1,\"sources\":[",
+        ] {
+            let dir = tempfile::tempdir()?;
+            let dirs = UserDirs {
+                config: dir.path().join("config"),
+                cache: dir.path().join("cache"),
+            };
+            std::fs::create_dir_all(&dirs.config)?;
+            std::fs::write(dirs.settings_path(), text)?;
+            let mut sources = LibrarySources::new(Some(dirs.clone()));
+            let notices = sources.take_notices();
+            assert!(
+                notices
+                    .iter()
+                    .any(|n| n.error && n.text.contains("does not save over that file")),
+                "{notices:?}"
+            );
+            sources.set_browser_width(333.0);
+            sources.toggle_favourite(EntryKey::Library {
+                library: LibraryId(1),
+                lineage: SourceLineageId(2),
+            });
+            let library = dir.path().join("team");
+            write(&library, &manifest(0x42, "Team parts"))?;
+            sources.add(library)?;
+            sources.wait()?;
+            assert_eq!(sources.browser_width(), Some(333.0), "kept in memory");
+            assert!(
+                sources
+                    .problem()
+                    .is_some_and(|p| p.contains("could not be read"))
+            );
+            assert_eq!(std::fs::read_to_string(dirs.settings_path())?, text);
+            assert_eq!(std::fs::read_dir(&dirs.config)?.count(), 1, "no stray file");
+        }
         Ok(())
     }
 

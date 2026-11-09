@@ -11,7 +11,7 @@
 //! newline, one file per revision. An existing `rNNNN.json` is never
 //! overwritten. Meaning (records, hashes, bundles) stays in
 //! `pcbcraft_core::library::bundle`; this module only moves bytes.
-use crate::persistence::atomic_write;
+use crate::persistence::{atomic_create, atomic_write};
 use crate::{Error, Result};
 use pcbcraft_core::ids::{
     ContentHash, DefinitionId, LibraryId, Revision, SourceLineageId, printable,
@@ -22,7 +22,7 @@ use pcbcraft_core::library::bundle::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// The manifest's file name.
@@ -245,39 +245,18 @@ fn conflict(message: String) -> Error {
     Error::Document(pcbcraft_core::Error::Conflict(message))
 }
 
-fn sync_directory(directory: &Path) -> Result<()> {
-    #[cfg(unix)]
-    std::fs::File::open(directory)
-        .and_then(|d| d.sync_all())
-        .map_err(|error| {
-            Error::Invalid(format!(
-                "a file was written, but synchronizing {} failed; power-loss durability is unconfirmed: {error}",
-                directory.display()
-            ))
-        })?;
-    #[cfg(not(unix))]
-    let _ = directory;
-    Ok(())
-}
-
-/// Atomically create `path` with `bytes`, never replacing an existing
-/// file. `Ok(false)` when the file already exists (nothing is written).
+/// Atomically create `path` with `bytes` (creating its directory), never
+/// replacing an existing file. `Ok(false)` when the file already exists
+/// (nothing is written).
 fn create_new_atomic(path: &Path, bytes: &[u8]) -> Result<bool> {
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(bytes)?;
-    temporary.as_file().sync_all()?;
-    match temporary.persist_noclobber(path) {
-        Ok(_) => {}
-        Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
-        Err(e) => return Err(Error::Io(e.error)),
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)?;
     }
-    sync_directory(parent)?;
-    Ok(true)
+    match atomic_create(path, bytes) {
+        Ok(()) => Ok(true),
+        Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 /// Atomically replace `path` (creating its directory).

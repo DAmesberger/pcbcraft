@@ -96,14 +96,23 @@ fn write_with(
             .persist_noclobber(path)
             .map_err(|e| Error::Io(e.error))?;
     }
+    sync_directory(parent)
+}
+
+/// Make a rename in `directory` durable. A failure is [`Error::Unsynced`]:
+/// the file is already in place, so it is not reported as refused input.
+pub(crate) fn sync_directory(directory: &Path) -> Result<()> {
     #[cfg(unix)]
-    std::fs::File::open(parent)
+    std::fs::File::open(directory)
         .and_then(|directory| directory.sync_all())
         .map_err(|error| {
-            Error::Invalid(format!(
-                "The file was written, but synchronizing its directory failed; power-loss durability is unconfirmed: {error}"
+            Error::Unsynced(format!(
+                "The file was written, but synchronizing {} failed; power-loss durability is unconfirmed: {error}",
+                directory.display()
             ))
         })?;
+    #[cfg(not(unix))]
+    let _ = directory;
     Ok(())
 }
 

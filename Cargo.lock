@@ -3440,6 +3440,7 @@ dependencies = [
  "keyring",
  "pcbcraft-automation",
  "pcbcraft-core",
+ "pcbcraft-io",
  "pdf-extract",
  "schemars",
  "serde",
