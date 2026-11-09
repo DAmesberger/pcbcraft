@@ -37,7 +37,10 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod carry;
 pub mod features;
+
+pub use carry::carry;
 
 /// Finding code: a reference whose source is gone (a deleted part, pad,
 /// anchor, board curve or model face). It keeps its last geometry and
@@ -593,14 +596,15 @@ fn solve_component(
 /// solver: it slides as far as its free degrees of freedom let it. A move
 /// that cannot land (the part cannot move that way at all) is refused in
 /// [`held_message`]'s words, and dimensions that do not solve together
-/// refuse the operation.
+/// refuse the operation. Returns the parts the solve placed, for [`carry`]
+/// to bring their copper along.
 pub fn follow(
     before: &Project,
     project: &mut Project,
     evaluator: Option<&dyn super::outline::BoardShapeEvaluator>,
-) -> Result<()> {
+) -> Result<Vec<Id>> {
     if project.part_dimensions.is_empty() || untouched(before, project) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let board_changed =
         before.board_size != project.board_size || before.board_shape != project.board_shape;
@@ -621,9 +625,10 @@ pub fn follow(
         touched.push(c);
     }
     if touched.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let evaluator = evaluator.ok_or_else(needs_evaluator)?;
+    let mut placed = Vec::new();
     let board = board_sketch(project, evaluator)?.into_owned();
     for c in touched {
         let Solved {
@@ -664,9 +669,12 @@ pub fn follow(
         }
         for (target, pose) in &solution.poses {
             place(project, *target, pose)?;
+            if let ConstraintTarget::Placement(id) = target {
+                placed.push(*id);
+            }
         }
     }
-    Ok(())
+    Ok(placed)
 }
 
 /// Put a target at a solved pose (a fill or keepout only translates).

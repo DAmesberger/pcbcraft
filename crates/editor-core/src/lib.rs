@@ -1231,8 +1231,18 @@ impl Engine {
                 rules::signal::follow_nets(&mut project.rules, &changes.merged, &live);
             }
             // Dimensioned parts, fills and keepouts are solved after the
-            // board (and a move that cannot land is refused).
-            layout::dimensions::follow(&self.document.project, project, evaluators.board)?;
+            // board (and a move that cannot land is refused); a solved
+            // part carries the copper attached to its pads.
+            let placed =
+                layout::dimensions::follow(&self.document.project, project, evaluators.board)?;
+            if !placed.is_empty() {
+                layout::dimensions::carry(
+                    &self.document.project,
+                    project,
+                    &self.copper_graph(),
+                    &placed,
+                )?;
+            }
             // Board-following fills take the (possibly changed) outline.
             layout::fill::follow_board(project)?;
             if !reviewed {

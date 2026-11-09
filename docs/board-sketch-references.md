@@ -168,6 +168,8 @@ pub struct ModelFaceRef { pub body: BodyName, pub face: FaceName, pub pick: [f64
 
 Feature geometry is rebuilt from the library snapshot for each solve and never stored. A move or rotate of a dimensioned part is a solver drag, so a part with one dimension to an edge slides along it. A move that cannot land is refused in `outline::held_message`'s words.
 
+A part the solve moves or turns carries the copper on its pads in the same operation and undo step (`dimensions::carry`): what is attached is read off the copper graph of the document before the operation. A via joined only to that part's pads moves rigidly with it. A track end on a carried pad or via moves rigidly too, so its segment stretches and the corners beyond it stay; when stretching would take the segment off copper that meets it in mid-span, the segment stays and a new segment like it joins its old end to the carried one. Locked copper stays. Nothing is deleted and no edit is refused for it: copper that lands too close to another net is a normal clearance finding, and fills refill as before. A plain `layout.move` of a part no dimension holds still leaves its tracks where they were.
+
 ### 5.3 Seating
 
 The board sketch and the parts solve are 2D, so z does not exist in them. Side and stackup set the seating. It reaches the native design as the joint's offset expression (`board_thickness` / `0 mm`), and the pose as parameter expressions (§1). The design keeps it that way:
