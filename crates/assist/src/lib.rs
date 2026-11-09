@@ -219,16 +219,13 @@ pub fn write_outputs(
     Ok(reviews)
 }
 
-/// Create `path` with `bytes`, refusing an existing file.
+/// Create `path` with `bytes` atomically, refusing an existing file: a
+/// failed or interrupted write leaves no partial file behind.
 pub(crate) fn write_new(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    use std::io::Write as _;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    Ok(())
+    pcbcraft_io::persistence::atomic_create(path, bytes).map_err(|error| match error {
+        pcbcraft_io::Error::Io(error) => Error::Io(error),
+        other => Error::Config(format!("{}: {other}", path.display())),
+    })
 }
 
 #[cfg(test)]

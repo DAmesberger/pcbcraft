@@ -37,7 +37,7 @@ fn independent_sessions_survive_drop_and_restore_project_plus_unfinished_draft()
     assert_ne!(first.path(), second.path());
     let path = own(&first)?.to_path_buf();
     drop(first);
-    let entries = list(directory.path())?;
+    let entries = list(directory.path())?.entries;
     assert_eq!(entries.len(), 2);
     let record = read(&path)?;
     assert_eq!(record.document, document);
@@ -50,9 +50,9 @@ fn independent_sessions_survive_drop_and_restore_project_plus_unfinished_draft()
         b"original is never overwritten by recovery"
     );
     second.remove_own()?;
-    assert_eq!(list(directory.path())?.len(), 1);
+    assert_eq!(list(directory.path())?.entries.len(), 1);
     remove_entry(directory.path(), &path)?;
-    assert!(list(directory.path())?.is_empty());
+    assert!(list(directory.path())?.entries.is_empty());
     Ok(())
 }
 
@@ -70,7 +70,7 @@ fn invalid_recovery_write_preserves_previous_valid_snapshot() -> Result<()> {
     store.remove_own()?;
     store.remove_own()?;
     store.write(&Engine::demo()?.to_file(), None)?;
-    assert_eq!(list(directory.path())?.len(), 1);
+    assert_eq!(list(directory.path())?.entries.len(), 1);
     Ok(())
 }
 
@@ -93,12 +93,12 @@ fn corrupted_or_newer_records_do_not_hide_other_recoveries() -> Result<()> {
         Some(&serde_json::to_vec(&meta)?),
         Method::Stored,
     )?;
-    let entries = list(directory.path())?;
+    let entries = list(directory.path())?.entries;
     assert_eq!(entries.len(), 3);
     assert_eq!(entries.iter().filter(|e| e.error.is_some()).count(), 2);
     assert!(read(&newer).is_err());
     remove_entry(directory.path(), &broken)?;
-    assert_eq!(list(directory.path())?.len(), 2);
+    assert_eq!(list(directory.path())?.entries.len(), 2);
     Ok(())
 }
 
@@ -120,7 +120,7 @@ fn discard_is_limited_to_direct_regular_session_files() -> Result<()> {
         std::os::unix::fs::symlink(&other, &link)?;
         assert!(remove_entry(directory.path(), &link).is_err());
         assert!(read(&link).is_err());
-        assert!(list(directory.path())?.is_empty());
+        assert!(list(directory.path())?.entries.is_empty());
         assert!(other.exists());
     }
     Ok(())
@@ -139,7 +139,7 @@ fn snapshots_carry_assets_in_the_container_and_listing_skips_them() -> Result<()
     store.write(&document, None)?;
     let path = own(&store)?;
     assert_eq!(read(path)?.document, document);
-    let entries = list(directory.path())?;
+    let entries = list(directory.path())?.entries;
     assert_eq!(entries.len(), 1);
     assert!(entries[0].error.is_none());
 
@@ -152,7 +152,7 @@ fn snapshots_carry_assets_in_the_container_and_listing_skips_them() -> Result<()
     bytes[at + 1000] ^= 0x5A;
     std::fs::write(path, &bytes)?;
     assert!(read(path).is_err());
-    let entries = list(directory.path())?;
+    let entries = list(directory.path())?.entries;
     assert_eq!(entries.len(), 1);
     assert!(entries[0].error.is_none());
 
@@ -164,5 +164,45 @@ fn snapshots_carry_assets_in_the_container_and_listing_skips_them() -> Result<()
         .map(|e| e.to_string())
         .unwrap_or_default();
     assert!(refused.contains("has no recovery.json"), "{refused}");
+    Ok(())
+}
+
+/// Past the read limit the newest sessions are still listed and the
+/// older ones are named, so they can be discarded; the listing never fails
+/// as a whole because one session too many is left over.
+#[test]
+fn sessions_past_the_limit_are_named_for_discard_not_fatal() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let store = RecoveryStore::new(directory.path())?;
+    store.write(&Engine::demo()?.to_file(), None)?;
+    let first = own(&store)?.to_path_buf();
+    let base = std::time::SystemTime::now() - std::time::Duration::from_secs(100_000);
+    let mut paths = Vec::new();
+    for n in 0..MAX_ENTRIES + 2 {
+        let path = directory.path().join(format!("session-n{n:04}{SUFFIX}"));
+        std::fs::copy(&first, &path)?;
+        let time = base + std::time::Duration::from_secs(n as u64 * 10);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)?
+            .set_modified(time)?;
+        paths.push(path);
+    }
+    remove_entry(directory.path(), &first)?;
+    let listing = list(directory.path())?;
+    assert_eq!(listing.entries.len(), MAX_ENTRIES);
+    assert_eq!(listing.older, vec![paths[1].clone(), paths[0].clone()]);
+    assert!(
+        listing
+            .entries
+            .iter()
+            .all(|e| !listing.older.contains(&e.path))
+    );
+    for path in &listing.older {
+        remove_entry(directory.path(), path)?;
+    }
+    let again = list(directory.path())?;
+    assert_eq!(again.entries.len(), MAX_ENTRIES);
+    assert!(again.older.is_empty());
     Ok(())
 }

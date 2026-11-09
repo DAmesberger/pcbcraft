@@ -23,6 +23,10 @@ pub enum Error {
     Invalid(String),
     #[error("{0}")]
     TooLarge(String),
+    /// The file was written and is in place, but synchronizing its folder
+    /// failed, so it may not survive a power loss.
+    #[error("{0}")]
+    Unsynced(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -35,6 +39,7 @@ impl Error {
             Self::Document(error) => error.code(),
             Self::Invalid(_) => "invalid_input",
             Self::TooLarge(_) => "limit_exceeded",
+            Self::Unsynced(_) => "written_unsynced",
             Self::Io(_) => "io_error",
             Self::Json(_) => "malformed_file",
         }

@@ -17,10 +17,14 @@ use std::{
 
 const PREFIX: &str = "session-";
 const SUFFIX: &str = ".pcbcraft-recovery";
-const MAX_ENTRIES: usize = 128;
+/// Sessions a listing reads, newest first by file time. Older ones are
+/// listed in [`Listing::older`] by path only, so they can be discarded.
+pub const MAX_ENTRIES: usize = 128;
 /// Bytes a listing decompresses in total: documents and metadata, never
-/// asset entries.
-const MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
+/// asset entries. Sessions past it go to [`Listing::older`] too.
+pub const MAX_SCAN_BYTES: u64 = 256 * 1024 * 1024;
+/// Session files a recovery folder may hold; beyond it listing is refused.
+pub const MAX_SESSION_FILES: usize = 65_536;
 const RECORD_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -188,29 +192,34 @@ fn session_name(path: &Path) -> bool {
         })
 }
 
+/// What a recovery folder holds.
+#[derive(Clone, Debug, Default)]
+pub struct Listing {
+    /// The newest sessions (at most [`MAX_ENTRIES`], within
+    /// [`MAX_SCAN_BYTES`]), most recently saved first.
+    pub entries: Vec<RecoveryEntry>,
+    /// Older session files that were not read, newest first: listed so the
+    /// user is told about them and can discard them, never dropped unseen.
+    pub older: Vec<PathBuf>,
+}
+
 /// Corrupt records remain visible with an error so the user can discard one
 /// explicitly without losing access to valid recovery candidates. A listing
 /// reads each snapshot's document and metadata only; [`read`] checks its
 /// assets and validates it before anything is restored.
-pub fn list(directory: &Path) -> Result<Vec<RecoveryEntry>> {
+pub fn list(directory: &Path) -> Result<Listing> {
     let entries = match std::fs::read_dir(directory) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Listing::default());
+        }
         Err(error) => return Err(error.into()),
     };
-    let mut result = Vec::new();
-    let mut scanned = 0usize;
-    let mut bytes = 0u64;
+    let mut candidates = Vec::new();
     for entry in entries {
         let path = entry?.path();
         if !session_name(&path) {
             continue;
-        }
-        scanned += 1;
-        if scanned > MAX_ENTRIES {
-            return Err(Error::Invalid(
-                "recovery directory exceeds the 128-entry scan limit".into(),
-            ));
         }
         let meta = std::fs::symlink_metadata(&path)?;
         if !meta.is_file() || meta.file_type().is_symlink() {
@@ -219,13 +228,30 @@ pub fn list(directory: &Path) -> Result<Vec<RecoveryEntry>> {
         if meta.len() == 0 {
             continue;
         } // reserved by a session writing its first snapshot
+        if candidates.len() == MAX_SESSION_FILES {
+            return Err(Error::TooLarge(format!(
+                "the recovery folder {} holds more than {MAX_SESSION_FILES} session files",
+                directory.display()
+            )));
+        }
+        candidates.push((meta.modified().ok(), path));
+    }
+    // Newest first; a file without a time sorts last.
+    candidates.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    let mut listing = Listing::default();
+    let mut result = Vec::new();
+    let mut bytes = 0u64;
+    for (_, path) in candidates {
+        if result.len() == MAX_ENTRIES || bytes > MAX_SCAN_BYTES {
+            listing.older.push(path);
+            continue;
+        }
         match summary(&path) {
             Ok((record, document, read)) => {
                 bytes = bytes.saturating_add(read);
                 if bytes > MAX_SCAN_BYTES {
-                    return Err(Error::Invalid(
-                        "recovery directory exceeds the 256 MiB scan limit".into(),
-                    ));
+                    listing.older.push(path);
+                    continue;
                 }
                 result.push(RecoveryEntry {
                     path,
@@ -251,7 +277,8 @@ pub fn list(directory: &Path) -> Result<Vec<RecoveryEntry>> {
             .cmp(&a.saved_unix_ms)
             .then_with(|| a.path.cmp(&b.path))
     });
-    Ok(result)
+    listing.entries = result;
+    Ok(listing)
 }
 
 /// Only an explicitly selected, direct-child session file can be discarded.

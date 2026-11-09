@@ -37,6 +37,8 @@ pub const MAX_PATH: usize = 4096;
 pub const CONFIG_VAR: &str = "PCBCRAFT_CONFIG_DIR";
 /// Overrides the cache directory (tests, sandboxes).
 pub const CACHE_VAR: &str = "PCBCRAFT_CACHE_DIR";
+/// Overrides the recovery directory (tests, sandboxes).
+pub const RECOVERY_VAR: &str = "PCBCRAFT_RECOVERY_DIR";
 const APP_DIR: &str = "pcbcraft";
 
 /// One configured library folder.
@@ -327,6 +329,51 @@ impl UserDirs {
     pub fn settings_path(&self) -> PathBuf {
         self.config.join(SETTINGS_FILE)
     }
+
+    /// Where crash-recovery snapshots live: `PCBCRAFT_RECOVERY_DIR` when
+    /// set, else the platform's state directory (`~/Library/Application
+    /// Support/Pcbcraft/Recovery`, `%LOCALAPPDATA%\Pcbcraft\Recovery`,
+    /// `$XDG_STATE_HOME/pcbcraft/recovery` or `~/.local/state/pcbcraft/recovery`).
+    /// Never a temporary or the current directory: without an absolute home
+    /// this is an error, and the caller says recovery is unavailable.
+    pub fn recovery_from_env() -> Result<PathBuf> {
+        Self::recovery_from_vars(|name| std::env::var_os(name))
+    }
+
+    /// [`UserDirs::recovery_from_env`] over any variable lookup (tests).
+    pub fn recovery_from_vars(var: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
+        let set = |name: &str| var(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+        let absolute = |p: PathBuf| Some(p).filter(|p| p.is_absolute());
+        let home = || absolute(set("HOME")?);
+        let path = set(RECOVERY_VAR).or_else(|| {
+            if cfg!(target_os = "macos") {
+                Some(home()?.join("Library/Application Support/Pcbcraft/Recovery"))
+            } else if cfg!(windows) {
+                Some(
+                    absolute(set("LOCALAPPDATA")?)?
+                        .join("Pcbcraft")
+                        .join("Recovery"),
+                )
+            } else {
+                let state = set("XDG_STATE_HOME")
+                    .and_then(absolute)
+                    .or_else(|| Some(home()?.join(".local/state")))?;
+                Some(state.join("pcbcraft/recovery"))
+            }
+        });
+        let path = path.ok_or_else(|| {
+            Error::Invalid(format!(
+                "no recovery directory: set {RECOVERY_VAR} or the platform's home directory"
+            ))
+        })?;
+        if !path.is_absolute() || path.as_os_str().len() > MAX_PATH {
+            return Err(Error::Invalid(format!(
+                "the recovery directory {} must be an absolute path of at most {MAX_PATH} bytes",
+                path.display()
+            )));
+        }
+        Ok(path)
+    }
 }
 
 impl UserSettings {
@@ -496,10 +543,12 @@ impl UserSettings {
     }
 }
 
-/// Read settings; a missing file is the defaults. An unsupported format is
-/// refused, never rewritten; out-of-bounds content is refused.
+/// Read settings; only a file that is not there is the defaults. A file
+/// that cannot be checked or read (a permission error, a bad byte, an
+/// unsupported format, out-of-bounds content) is refused, so no caller
+/// mistakes it for "no settings" and saves defaults over it.
 pub fn read_settings(path: &Path) -> Result<UserSettings> {
-    if !path.exists() {
+    if !path.try_exists()? {
         return Ok(UserSettings::default());
     }
     let settings: UserSettings = serde_json::from_slice(&read_bounded(path, MAX_SETTINGS_BYTES)?)?;
@@ -812,6 +861,73 @@ mod tests {
         let text = std::fs::read_to_string(&path)?;
         assert!(text.ends_with('\n'));
         assert_eq!(read_settings(&path)?, settings);
+        Ok(())
+    }
+
+    /// A settings file that exists but cannot be checked (its folder
+    /// refuses access) is an error, never "no settings": defaults read
+    /// from it would be saved over the user's keymap and sources.
+    #[cfg(unix)]
+    #[test]
+    fn an_inaccessible_settings_file_is_not_read_as_defaults() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir()?;
+        let config = dir.path().join("config");
+        std::fs::create_dir(&config)?;
+        let path = config.join(SETTINGS_FILE);
+        let settings = UserSettings {
+            browser_width: Some(300.0),
+            ..UserSettings::default()
+        };
+        write_settings(&path, &settings)?;
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o000))?;
+        // A privileged user is not refused; there is nothing to test then.
+        let refused = std::fs::metadata(&path).is_err();
+        let read = read_settings(&path);
+        std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o700))?;
+        if refused {
+            assert!(read.is_err(), "read as {read:?}");
+        }
+        assert_eq!(read_settings(&path)?, settings);
+        Ok(())
+    }
+
+    /// The recovery folder is explicit: the override or the platform's
+    /// state folder under an absolute home, never a temporary or relative
+    /// folder; without one it is an error the app reports.
+    #[test]
+    fn the_recovery_directory_is_explicit_or_an_error() -> Result<()> {
+        let vars = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map(|(_, v)| OsString::from(v))
+            }
+        };
+        assert_eq!(
+            UserDirs::recovery_from_vars(vars(&[(RECOVERY_VAR, "/r"), ("HOME", "/h")]))?,
+            PathBuf::from("/r")
+        );
+        assert!(UserDirs::recovery_from_vars(vars(&[(RECOVERY_VAR, "rel")])).is_err());
+        assert!(UserDirs::recovery_from_vars(vars(&[])).is_err());
+        assert!(UserDirs::recovery_from_vars(vars(&[("HOME", "relative")])).is_err());
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                UserDirs::recovery_from_vars(vars(&[("HOME", "/h")]))?,
+                PathBuf::from("/h/Library/Application Support/Pcbcraft/Recovery")
+            );
+        } else if !cfg!(windows) {
+            assert_eq!(
+                UserDirs::recovery_from_vars(vars(&[("HOME", "/h")]))?,
+                PathBuf::from("/h/.local/state/pcbcraft/recovery")
+            );
+            assert_eq!(
+                UserDirs::recovery_from_vars(vars(&[("HOME", "/h"), ("XDG_STATE_HOME", "s")]))?,
+                PathBuf::from("/h/.local/state/pcbcraft/recovery"),
+                "a relative XDG_STATE_HOME is ignored"
+            );
+        }
         Ok(())
     }
 }

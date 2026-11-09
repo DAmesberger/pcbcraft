@@ -143,6 +143,7 @@ impl Harness {
     /// The project names this session's recovery folder holds.
     fn recoverable(&self) -> Fallible<Vec<String>> {
         Ok(recovery::list(&self.dir.path().join("recovery"))?
+            .entries
             .into_iter()
             .map(|e| e.project_name)
             .collect())
@@ -436,5 +437,80 @@ fn a_clean_quit_leaves_no_recovery_file() -> Fallible {
         assert!(!h.files.keep_for_recovery(Duration::from_secs(1)));
         assert_eq!(h.recovery_files()?, Vec::<PathBuf>::new(), "edit: {edit}");
     }
+    Ok(())
+}
+
+/// Without a recovery folder (no home, a relative override) the app says
+/// at startup that recovery is off, rather than keeping snapshots in a
+/// temporary folder the system may empty.
+#[test]
+fn a_missing_recovery_folder_is_reported_at_startup() -> Fallible {
+    let ctx = egui::Context::default();
+    let engine = Engine::demo()?;
+    let reason = pcbcraft_io::settings::UserDirs::recovery_from_vars(|_| None)
+        .err()
+        .map(|e| e.to_string())
+        .ok_or("no variables still found a recovery folder")?;
+    let files = FileUi::with_recovery(&ctx, rfd::AsyncFileDialog::new(), &engine, Err(reason));
+    let mut h = Harness {
+        ctx,
+        files,
+        engine,
+        dir: tempfile::tempdir()?,
+        now: 0.0,
+        effects: Vec::new(),
+    };
+    h.until("the startup report", |h| h.files.status.is_some())?;
+    let (level, text) = h.files.take_status().ok_or("no status")?;
+    assert_eq!(level, Level::Error);
+    assert!(
+        text.starts_with("Recovery unavailable: no recovery directory")
+            && text.contains("not kept"),
+        "{text}"
+    );
+    assert!(h.files.recoveries.is_empty());
+    Ok(())
+}
+
+/// More sessions than a listing reads: the newest are offered, the
+/// question says how many older ones it left out, and one button discards
+/// exactly those.
+#[test]
+fn older_sessions_past_the_limit_are_named_and_discardable() -> Fallible {
+    let dir = tempfile::tempdir()?;
+    let folder = dir.path().join("recovery");
+    let store = RecoveryStore::new(&folder)?;
+    store.write(&EditorFile::from_document(Engine::demo()?.document()), None)?;
+    let first = store.path().ok_or("no snapshot")?.to_path_buf();
+    let base = std::time::SystemTime::now() - Duration::from_secs(100_000);
+    let mut paths = Vec::new();
+    for n in 0..recovery::MAX_ENTRIES + 3 {
+        let path = folder.join(format!("session-n{n:04}.pcbcraft-recovery"));
+        std::fs::copy(&first, &path)?;
+        std::fs::File::options()
+            .write(true)
+            .open(&path)?
+            .set_modified(base + Duration::from_secs(n as u64 * 10))?;
+        paths.push(path);
+    }
+    recovery::remove_entry(&folder, &first)?;
+    let mut h = Harness::in_dir(dir)?;
+    h.until("the recovery question", |h| !h.files.recoveries.is_empty())?;
+    assert_eq!(h.files.recoveries.len(), recovery::MAX_ENTRIES);
+    assert_eq!(h.files.older_recoveries.len(), 3);
+    assert!(shows(&h.shown(), &older_sessions_note(3)));
+    h.click(DISCARD_OLDER)?;
+    h.until("the older sessions discarded", |h| {
+        h.files.older_recoveries.is_empty() && !h.files.recovery_choice_pending
+    })?;
+    for path in &paths[..3] {
+        assert!(!path.exists(), "{}", path.display());
+    }
+    assert!(paths[3..].iter().all(|p| p.exists()));
+    assert_eq!(
+        h.files.recoveries.len(),
+        recovery::MAX_ENTRIES,
+        "still offered"
+    );
     Ok(())
 }

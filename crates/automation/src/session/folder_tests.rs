@@ -111,6 +111,45 @@ fn catalog_lists_the_folder_requests_with_generated_schemas() -> TestResult {
     Ok(())
 }
 
+/// Settings that cannot be read are refused, and a session started without
+/// them (as the CLI does) refuses source changes instead of keeping them in
+/// memory and reporting them saved. The file is never written.
+#[test]
+fn unreadable_settings_refuse_source_changes() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let dirs = dirs(temp.path());
+    std::fs::create_dir_all(&dirs.config)?;
+    let text = "{\"format\":1,\"sources\":[";
+    std::fs::write(dirs.settings_path(), text)?;
+    let error = Sources::with_dirs(dirs.clone())
+        .err()
+        .ok_or("unreadable settings were read")?;
+    let mut session = Session::with_sources(
+        Engine::default(),
+        Sources::unavailable(error.diagnostic().message),
+    );
+    let folder = temp.path().join("team");
+    manifest(&folder, &manifest_json(FOLDER_FORMAT, &[]))?;
+    let error = refused(
+        &mut session,
+        "library.source.add",
+        json!({"path": folder}),
+        "io_error",
+    );
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("nothing was saved")),
+        "{error}"
+    );
+    assert_eq!(
+        ok(&mut session, "library.sources", json!({}))?["sources"],
+        json!([])
+    );
+    assert_eq!(std::fs::read_to_string(dirs.settings_path())?, text);
+    Ok(())
+}
+
 /// A missing folder and manifests of another format, with an unknown
 /// required feature or malformed are refused by `library.source.add` and
 /// change nothing; configured in settings they stay listed with the reason.

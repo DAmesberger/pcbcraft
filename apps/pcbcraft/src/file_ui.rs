@@ -221,9 +221,11 @@ enum Job {
     ClearRecovery(Ticket, bool),
     Restore(Ticket, PathBuf),
     DiscardRecovery(PathBuf),
+    /// Discard the older sessions the listing named but did not read.
+    DiscardOlder(Vec<PathBuf>),
 }
 enum Event {
-    Startup(Outcome<Vec<RecoveryEntry>>),
+    Startup(Outcome<recovery::Listing>),
     Picked(Ticket, Kind, Option<PathBuf>),
     Read(Ticket, PathBuf, Outcome<EditorFile>),
     Written(Ticket, PathBuf, Outcome<()>),
@@ -232,16 +234,27 @@ enum Event {
     Recovered(Ticket, bool, bool, Outcome<()>),
     Restored(Ticket, PathBuf, Outcome<EditorFile>),
     Discarded(PathBuf, Outcome<()>),
+    /// The older sessions that are gone, and why the rest are not.
+    DiscardedOlder(Vec<PathBuf>, Outcome<()>),
 }
 
-fn worker(ctx: egui::Context, directory: PathBuf, events: Sender<Event>) -> Sender<Job> {
+/// The file worker. Without a recovery folder (`directory` is the reason)
+/// files still open and save, and startup reports that recovery is off.
+fn worker(ctx: egui::Context, directory: Outcome<PathBuf>, events: Sender<Event>) -> Sender<Job> {
     let (sender, jobs) = mpsc::channel();
     std::thread::spawn(move || {
-        let entries = recovery::list(&directory).map_err(|e| e.to_string());
-        let store = RecoveryStore::new(&directory).map_err(|e| e.to_string());
-        let startup = match &store {
-            Ok(_) => entries,
-            Err(error) => Err(format!("Recovery unavailable: {error}")),
+        let store = directory.as_ref().map_err(Clone::clone).and_then(|d| {
+            RecoveryStore::new(d)
+                .map_err(|e| format!("Recovery unavailable: cannot use {}: {e}", d.display()))
+        });
+        let startup = match (&directory, &store) {
+            (Err(error), _) => Err(format!(
+                "Recovery unavailable: {error}. Unsaved work is not kept if Pcbcraft stops."
+            )),
+            (_, Err(error)) => Err(format!(
+                "{error}. Unsaved work is not kept if Pcbcraft stops."
+            )),
+            (Ok(directory), Ok(_)) => recovery::list(directory).map_err(|e| e.to_string()),
         };
         if events.send(Event::Startup(startup)).is_err() {
             return;
@@ -296,9 +309,27 @@ fn worker(ctx: egui::Context, directory: PathBuf, events: Sender<Event>) -> Send
                     Event::Restored(ticket, path, result)
                 }
                 Job::DiscardRecovery(path) => {
-                    let result =
-                        recovery::remove_entry(&directory, &path).map_err(|e| e.to_string());
+                    let result = directory
+                        .as_ref()
+                        .map_err(Clone::clone)
+                        .and_then(|d| recovery::remove_entry(d, &path).map_err(|e| e.to_string()));
                     Event::Discarded(path, result)
+                }
+                Job::DiscardOlder(paths) => {
+                    let mut removed = Vec::new();
+                    let mut result = Ok(());
+                    for path in paths {
+                        match directory.as_ref().map_err(Clone::clone).and_then(|d| {
+                            recovery::remove_entry(d, &path).map_err(|e| e.to_string())
+                        }) {
+                            Ok(()) => removed.push(path),
+                            Err(error) => {
+                                result = Err(error);
+                                break;
+                            }
+                        }
+                    }
+                    Event::DiscardedOlder(removed, result)
                 }
             };
             if events.send(result).is_err() {
@@ -333,6 +364,9 @@ pub struct FileUi {
     /// The latest file message and how it reads.
     status: Option<(Level, String)>,
     recoveries: Vec<RecoveryEntry>,
+    /// Older session files past the listing's read limit, named so the
+    /// recovery question can say so and offer to discard them.
+    older_recoveries: Vec<PathBuf>,
     /// The recovery the dialog would restore or discard.
     recovery_selected: usize,
     /// A restored session file, removed once this session has saved its
@@ -355,14 +389,27 @@ pub struct FileUi {
 impl FileUi {
     pub fn new(cc: &eframe::CreationContext<'_>, engine: &Engine) -> Self {
         let picker = rfd::AsyncFileDialog::new().set_parent(cc);
-        Self::with_directory(&cc.egui_ctx, picker, engine, recovery_directory())
+        let directory =
+            pcbcraft_io::settings::UserDirs::recovery_from_env().map_err(|e| e.to_string());
+        Self::with_recovery(&cc.egui_ctx, picker, engine, directory)
     }
-    /// The file workflow with recovery snapshots in `directory`.
+    /// The file workflow with recovery snapshots in `directory` (tests).
+    #[cfg(test)]
     pub(crate) fn with_directory(
         ctx: &egui::Context,
         picker: rfd::AsyncFileDialog,
         engine: &Engine,
         directory: PathBuf,
+    ) -> Self {
+        Self::with_recovery(ctx, picker, engine, Ok(directory))
+    }
+    /// The file workflow with recovery snapshots in `directory`, or none,
+    /// said at startup, when there is no recovery folder.
+    fn with_recovery(
+        ctx: &egui::Context,
+        picker: rfd::AsyncFileDialog,
+        engine: &Engine,
+        directory: Outcome<PathBuf>,
     ) -> Self {
         let (events, receiver) = mpsc::channel();
         let sender = worker(ctx.clone(), directory, events.clone());
@@ -379,6 +426,7 @@ impl FileUi {
             effects: vec![],
             status: None,
             recoveries: vec![],
+            older_recoveries: vec![],
             recovery_selected: 0,
             restored_source: None,
             restored_origin: None,
@@ -502,6 +550,7 @@ impl FileUi {
             // The startup recovery question is kept on disk for the next
             // launch, as "Keep for later" does.
             self.recoveries.clear();
+            self.older_recoveries.clear();
         }
         if self.busy() || self.controller.prompt.is_some() || !self.recoveries.is_empty() {
             return;
@@ -687,7 +736,10 @@ impl FileUi {
     fn receive(&mut self, event: Event) {
         match event {
             Event::Startup(result) => match result {
-                Ok(entries) => self.recoveries = entries,
+                Ok(listing) => {
+                    self.recoveries = listing.entries;
+                    self.older_recoveries = listing.older;
+                }
                 Err(error) => self.status = Some((Level::Error, error)),
             },
             Event::Picked(ticket, kind, path) => {
@@ -889,6 +941,14 @@ impl FileUi {
                     Err(error) => self.status = Some((Level::Error, error)),
                 }
             }
+            Event::DiscardedOlder(removed, result) => {
+                self.recovery_choice_pending = false;
+                let removed: std::collections::BTreeSet<_> = removed.into_iter().collect();
+                self.older_recoveries.retain(|p| !removed.contains(p));
+                if let Err(error) = result {
+                    self.status = Some((Level::Error, error));
+                }
+            }
         }
     }
     /// Unsaved-changes and startup-recovery prompts, in Solidcraft's system
@@ -952,6 +1012,7 @@ impl FileUi {
         };
         let busy = self.busy();
         let mut choice = None;
+        let mut discard_older = false;
         let mut selected = self.recovery_selected;
         let count = self.recoveries.len();
         let title = if count == 1 {
@@ -966,6 +1027,21 @@ impl FileUi {
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+                    // First, so a long list never pushes it out of reach.
+                    if !self.older_recoveries.is_empty() {
+                        crate::kit::status(
+                            ui,
+                            &older_sessions_note(self.older_recoveries.len()),
+                            crate::kit::Tone::Dim,
+                        );
+                        ui.add_enabled_ui(!busy, |ui| {
+                            crate::kit::actions(ui, |ui| {
+                                if ui_kit::button(ui, DISCARD_OLDER, Button::Normal).clicked() {
+                                    discard_older = true;
+                                }
+                            });
+                        });
+                    }
                     for (at, candidate) in self.recoveries.iter().enumerate() {
                         let mut on = at == selected;
                         let label = recovery_label(candidate, now);
@@ -999,6 +1075,10 @@ impl FileUi {
                 });
             });
         self.recovery_selected = selected;
+        if discard_older {
+            self.recovery_choice_pending = true;
+            self.send(Job::DiscardOlder(self.older_recoveries.clone()));
+        }
         match choice {
             Some(Choice::Save) => {
                 if let Some(ticket) = self.begin(Kind::Restore, None) {
@@ -1009,6 +1089,7 @@ impl FileUi {
             Some(Choice::Cancel) => {
                 // Kept on disk for the next launch; none is asked again now.
                 self.recoveries.clear();
+                self.older_recoveries.clear();
                 self.recovery_selected = 0;
             }
             Some(Choice::Discard) => {
@@ -1024,6 +1105,23 @@ impl FileUi {
 /// recovery copy either: the session's snapshot is removed before the
 /// window closes, as in Solidcraft.
 const DONT_SAVE: &str = "Don't Save";
+
+/// The recovery question's button that discards the sessions past the
+/// listing's read limit.
+const DISCARD_OLDER: &str = "Discard older sessions";
+
+/// What the recovery question says about the sessions it did not read.
+fn older_sessions_note(count: usize) -> String {
+    let sessions = if count == 1 {
+        "session is"
+    } else {
+        "sessions are"
+    };
+    format!(
+        "{count} older {sessions} not listed: only the newest {} are read.",
+        recovery::MAX_ENTRIES
+    )
+}
 
 /// One recovery as the dialog lists it: name, age and size.
 fn recovery_label(entry: &RecoveryEntry, now_ms: u64) -> String {
@@ -1124,24 +1222,6 @@ fn home_directory() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(std::env::temp_dir)
-}
-fn recovery_directory() -> PathBuf {
-    if let Some(path) = std::env::var_os("PCBCRAFT_RECOVERY_DIR") {
-        return PathBuf::from(path);
-    }
-    if cfg!(target_os = "macos") {
-        home_directory().join("Library/Application Support/Pcbcraft/Recovery")
-    } else if cfg!(target_os = "windows") {
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(home_directory)
-            .join("Pcbcraft/Recovery")
-    } else {
-        std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home_directory().join(".local/state"))
-            .join("pcbcraft/recovery")
-    }
 }
 
 /// Dialog content inset like the kit's cards, in the kit's form scope.

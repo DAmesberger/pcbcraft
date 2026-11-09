@@ -323,6 +323,32 @@ mod tests {
         Ok(())
     }
 
+    /// Reports and profile copies are created atomically: complete or not
+    /// at all, never over an existing file, with no temporary left behind,
+    /// so a failed write cannot leave a partial file that blocks a rerun.
+    #[test]
+    fn new_files_are_written_whole_or_not_at_all() -> Fallible {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("review.json");
+        crate::write_new(&path, b"{\"report\": 1}")?;
+        let again = crate::write_new(&path, b"other");
+        assert!(
+            matches!(&again, Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::AlreadyExists),
+            "{again:?}"
+        );
+        assert_eq!(std::fs::read(&path)?, b"{\"report\": 1}");
+        let big = dir.path().join("big.md");
+        let refused = crate::write_new(&big, &vec![b'x'; 16 * 1024 * 1024 + 1]);
+        assert!(refused.is_err());
+        assert!(!big.exists(), "a failed write leaves no partial file");
+        assert_eq!(
+            std::fs::read_dir(dir.path())?.count(),
+            1,
+            "no temporary left"
+        );
+        Ok(())
+    }
+
     #[test]
     fn a_user_copy_is_edited_loaded_and_a_broken_one_refused() -> Fallible {
         let dir = tempfile::tempdir()?;
