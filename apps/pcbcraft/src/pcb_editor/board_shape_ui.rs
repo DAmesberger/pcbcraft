@@ -269,7 +269,7 @@ impl PcbEditor {
             kit::row(ui, "Outline", |ui| {
                 edit = kit::summary_row(ui, &summary, Some("Edit shape…"));
             });
-            let constrained = project.edge_constraints.len();
+            let constrained = pcbcraft_core::layout::dimensions::dimensioned(project, None);
             if constrained > 0 {
                 kit::value_row(
                     ui,
@@ -1228,11 +1228,8 @@ impl PcbEditor {
             Some(board.edges.len()),
             |ui| {
                 for edge in board.edges.iter().take(kit::LIST_MAX_ROWS) {
-                    let used = project
-                        .edge_constraints
-                        .iter()
-                        .filter(|c| c.edge == edge.name)
-                        .count();
+                    let used =
+                        pcbcraft_core::layout::dimensions::dimensioned(project, Some(&edge.curve));
                     if kit::row(ui, &edge.name.0, |ui| {
                         kit::summary_row(
                             ui,

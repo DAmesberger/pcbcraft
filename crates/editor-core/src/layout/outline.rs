@@ -1,23 +1,12 @@
-//! Board shape: commands over the board sketch, the evaluator seam that
+//! Board shape: commands over the board sketch and the evaluator seam that
 //! solves it (the integration crate's SolidCraft sketch engine, as for
-//! footprints), and edge-relative placement constraints.
+//! footprints).
 //!
 //! The core never interprets the sketch. A [`BoardShapeEvaluator`] applies
 //! sketch edits and solves the sketch with its parameters into a
-//! [`SolvedBoard`], evaluating every constraint's expressions; the core
-//! then places constrained targets with [`edge_pose`]. An unsolved or
-//! over-constrained sketch is a finding, never a panic.
-//!
-//! Resolution runs after every engine operation ([`follow`]): when the
-//! board, the constraints or a constrained target changed, every target is
-//! placed where its constraint puts it, so parts move with the board's
-//! parameters. A command that moves a constrained part elsewhere is refused
-//! with [`held_message`] ("J1 is held 2 mm from the right edge; edit or
-//! remove its constraint to move it"), and [`held`] gives a client the same
-//! words before it tries; a constraint whose edge or target is gone stays
-//! stored and is reported by [`checks`] (`board.constraint_unresolved`).
-//! Edge constraints live in [`edge_constraints`]; slice S2 replaces them
-//! with part dimensions (`layout::dimensions`).
+//! [`SolvedBoard`]. An unsolved or over-constrained sketch is a finding,
+//! never a panic. Parts held to the board by dimensions are solved after
+//! the board (`layout::dimensions`).
 //!
 //! The outline is the sketch's one closed region, found by the evaluator
 //! from whatever curves close; free-form curves reach the solved outline as
@@ -33,11 +22,11 @@ use crate::library::footprint_source::{
     SketchOutcome, SketchPointId, SketchRef, SolveStatus, SolveSummary,
 };
 use crate::model::board::{
-    BoardFeatureId, BoardSketch, CutoutKind, CutoutRole, EdgeConstraintSpec, EdgeName, MAX_CUTOUTS,
-    MAX_FAULT_POINTS, MAX_FAULT_TEXT, MAX_MOUNTING_HOLES, MAX_NAMED_EDGES, MountingHoleRole,
-    NamedEdge, ShapeFault, ShapeFaultKind,
+    BoardFeatureId, BoardSketch, CutoutKind, CutoutRole, EdgeName, MAX_CUTOUTS, MAX_FAULT_POINTS,
+    MAX_FAULT_TEXT, MAX_MOUNTING_HOLES, MAX_NAMED_EDGES, MountingHoleRole, NamedEdge, ShapeFault,
+    ShapeFaultKind,
 };
-use crate::model::{BoardShape, EdgeConstraint, Project, SolvedBoard};
+use crate::model::{BoardShape, Project, SolvedBoard};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -74,23 +63,13 @@ pub fn refuses(code: &str) -> bool {
     code.starts_with(FATAL_PREFIX) && code != SHAPE_OPEN && code != SHAPE_INVALID
 }
 
-pub mod edge_constraints;
-pub use edge_constraints::{
-    CONSTRAINT_UNRESOLVED, ConstraintValues, EdgePose, edge_pose, follow, held, held_at,
-    held_message,
-};
-#[cfg(test)]
-use edge_constraints::{placement_extents, plain_mm};
-
 /// What a board evaluation produced.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct BoardEvaluation {
     pub solved: SolvedBoard,
     pub solve: SolveSummary,
-    /// One per constraint the request listed whose expressions evaluated.
-    pub constraints: Vec<ConstraintValues>,
-    /// Design problems (unsolved, over-constrained, unknown parameter in a
-    /// constraint). Codes that [`refuses`] names refuse the edit.
+    /// Design problems (unsolved, over-constrained). Codes that
+    /// [`refuses`] names refuse the edit.
     pub findings: Vec<Finding>,
     /// Why the curves are not a board; `solved` is then the board's last
     /// valid shape.
@@ -128,15 +107,10 @@ pub trait BoardShapeEvaluator {
     fn rectangle(&self, size: Point) -> Result<BoardSketch>;
     /// Apply one sketch edit to a canonical sketch.
     fn apply_sketch(&self, sketch: &SketchBlob, edit: &SketchEdit) -> Result<SketchOutcome>;
-    /// Solve the board and evaluate the constraints' expressions against
-    /// its parameters: the outline is the sketch's one closed region, its
-    /// free-form curves fitted with lines and arcs within
+    /// Solve the board with its parameters: the outline is the sketch's one
+    /// closed region, its free-form curves fitted with lines and arcs within
     /// `board.outline_fit`. `Err` only refuses the input outright.
-    fn evaluate(
-        &self,
-        board: &BoardSketch,
-        constraints: &[EdgeConstraint],
-    ) -> Result<BoardEvaluation>;
+    fn evaluate(&self, board: &BoardSketch) -> Result<BoardEvaluation>;
     /// Round each corner point (where two lines meet) with a tangent arc
     /// of `radius`; the corner stays as the lines' virtual intersection,
     /// so dimensions to it keep holding. Empty `corners`: every corner of
@@ -293,7 +267,7 @@ pub enum BoardEdit {
     },
 }
 
-/// Board shape and edge-constraint mutations; each is one undo step.
+/// Board shape mutations; each is one undo step.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum BoardCommand {
@@ -306,16 +280,6 @@ pub enum BoardCommand {
     /// Edit the board sketch and re-solve it; constrained targets follow.
     #[serde(rename = "board.edit")]
     Edit { edits: Vec<BoardEdit> },
-    /// Add a placement constraint; the outcome names it
-    /// (`Outcome::EdgeConstraintAdded`).
-    #[serde(rename = "board.constrain")]
-    Constrain { constraint: EdgeConstraintSpec },
-    /// Replace an edge constraint of the board outline, by id.
-    #[serde(rename = "board.constraint_edit")]
-    EditConstraint { constraint: EdgeConstraint },
-    /// Delete an edge constraint of the board outline.
-    #[serde(rename = "board.constraint_delete")]
-    DeleteConstraint { id: Id },
 }
 
 // A new command chooses its permission class here.
@@ -323,9 +287,6 @@ declare_classes!(BoardCommand {
     SetRectangle "board.set_rectangle" Edit "Set a rectangular outline",
     StartSketch "board.start_sketch" Edit "Start an outline sketch",
     Edit "board.edit" Edit "Edit the board outline",
-    Constrain "board.constrain" Edit "Constrain the outline",
-    EditConstraint "board.constraint_edit" Edit "Edit an outline constraint",
-    DeleteConstraint "board.constraint_delete" Edit "Delete an outline constraint",
 });
 
 /// What a board command produced for its caller.
@@ -333,8 +294,6 @@ declare_classes!(BoardCommand {
 pub enum BoardApplied {
     #[default]
     Nothing,
-    /// The constraint `board.constrain` allocated.
-    Constraint(Id),
     /// The sketch entities a `board.edit` created and kept.
     Edited { created: Vec<SketchRef> },
 }
@@ -387,17 +346,6 @@ pub fn apply(
             commit(project, sketch, evaluator)?;
             created.retain(|c| !deleted.contains(c));
             Ok(BoardApplied::Edited { created })
-        }
-        BoardCommand::Constrain { constraint } => {
-            edge_constraints::add(project, constraint).map(BoardApplied::Constraint)
-        }
-        BoardCommand::EditConstraint { constraint } => {
-            edge_constraints::edit(project, constraint)?;
-            Ok(BoardApplied::Nothing)
-        }
-        BoardCommand::DeleteConstraint { id } => {
-            edge_constraints::delete(project, id)?;
-            Ok(BoardApplied::Nothing)
         }
     }
 }
@@ -717,8 +665,7 @@ fn retire(sketch: &mut BoardSketch, deleted: &BTreeSet<SketchRef>) -> Result<()>
 
 /// Solve a candidate sketch (with its free-form curves fitted within the
 /// project's `board.outline_fit`) and store it with its solve; refuses a
-/// shape that does not solve, and constraint expressions that no longer
-/// evaluate. Curves that are not a board are stored with their
+/// shape that does not solve. Curves that are not a board are stored with their
 /// [`ShapeFault`] and the last valid shape.
 fn commit(
     project: &mut Project,
@@ -726,7 +673,7 @@ fn commit(
     evaluator: &dyn BoardShapeEvaluator,
 ) -> Result<()> {
     sketch.outline_fit = outline_fit(project);
-    let evaluation = evaluator.evaluate(&sketch, &project.edge_constraints)?;
+    let evaluation = evaluator.evaluate(&sketch)?;
     if let Some(f) = evaluation.findings.iter().find(|f| refuses(&f.code)) {
         return Err(Error::Invalid(format!("{}: {}", f.code, f.message)));
     }
@@ -738,7 +685,6 @@ fn commit(
             "{SHAPE_UNSOLVED}: the board sketch does not solve"
         )));
     }
-    edge_constraints::expressions_evaluated(project, &evaluation)?;
     let size = sketch_size(&evaluation.solved)?;
     super::copper_fits(project, size)?;
     sketch.solve = evaluation.solve;
@@ -821,8 +767,7 @@ pub(crate) fn part_name(project: &Project, instance: Id) -> String {
 
 /// Board-shape findings: a stored sketch that did not solve
 /// ([`SHAPE_UNSOLVED`]), curves that are not a board ([`SHAPE_OPEN`],
-/// [`SHAPE_INVALID`]) and constraints whose edge or target is gone
-/// ([`CONSTRAINT_UNRESOLVED`]).
+/// [`SHAPE_INVALID`]).
 pub fn checks(project: &Project) -> Vec<Finding> {
     let mut out = Vec::new();
     if let BoardShape::Sketch(sketch) = &project.board_shape {
@@ -848,18 +793,13 @@ pub fn checks(project: &Project) -> Vec<Finding> {
             ));
         }
     }
-    edge_constraints::checks(project, &mut out);
     out
 }
 
-/// Structural bounds: constraints within the limit, unique per target,
-/// expressions well formed; a sketch board's roles bounded and unique, its
+/// Structural bounds: a sketch board's roles bounded and unique, its
 /// solved shape finite, fitted at the effective `board.outline_fit` and
-/// `board_size` its box. Unknown edges or vanished
-/// targets are check findings (`board.constraint_unresolved`), not invalid
-/// documents.
+/// `board_size` its box.
 pub fn validate(project: &Project) -> Result<()> {
-    edge_constraints::validate(project)?;
     if let BoardShape::Sketch(sketch) = &project.board_shape {
         validate_sketch(sketch)?;
         if sketch.outline_fit != outline_fit(project) {
@@ -982,5 +922,3 @@ fn validate_sketch(sketch: &BoardSketch) -> Result<()> {
 
 #[cfg(test)]
 mod shape_tests;
-#[cfg(test)]
-mod tests;

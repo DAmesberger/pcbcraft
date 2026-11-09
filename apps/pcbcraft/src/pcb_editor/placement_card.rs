@@ -6,13 +6,14 @@
 //! or focus loss, Side and Locked on choice, each as one `layout.move` or
 //! `layout.placement_lock` step. Esc reverts the field being edited. A
 //! refused commit stays in the field, marked, with the refusal under it.
-use super::edge_card::{constraint_of, nearest_edge, spec_at};
+use super::edge_card::{dimensions_of, nearest_edge, spec_at};
 use super::hold_mark::{self, Hold};
 use super::{Field, PcbEditor, Tool, focus_within, layer_options, opposite};
 use crate::kit::{self, severity::Level};
 use crate::refusal::{self, Origin};
 use egui::Ui;
-use pcbcraft_core::layout::{self, LayoutCommand, outline::BoardCommand};
+use pcbcraft_core::layout::LayoutCommand;
+use pcbcraft_core::layout::dimensions::{self, DimensionCommand};
 use pcbcraft_core::{Engine, Id, Operation, Placement, Point, Project};
 use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::{self, Button};
@@ -71,14 +72,15 @@ impl PcbEditor {
         let mut action = None;
         let mut focused = None;
         let mut state = None;
-        // Why Position (and Rotation, for a part that turns with its
-        // edge) cannot be typed: the engine's words for the refused move.
-        let constraint = constraint_of(project, placement.instance);
-        let held = (!locked)
-            .then(|| layout::move_refusal(project, placement.instance, self.shape.evaluator))
-            .flatten()
-            .map(|e| refusal::shown_error(&e));
-        let turns = constraint.is_some_and(|c| c.follow_edge);
+        // Why Position (and Rotation, for a part whose dimensions fix its
+        // turn) cannot be typed: the engine's words for the refused move.
+        let revision = self.cached_revision.unwrap_or(0);
+        let (held, free) = if locked {
+            (None, None)
+        } else {
+            self.hold_of(revision, project, placement.instance)
+        };
+        let turns = free.is_some_and(|f| !f.rotation);
         let why = |fixed: bool| {
             if locked {
                 LOCKED.to_owned()
@@ -90,7 +92,7 @@ impl PcbEditor {
         };
         kit::section(ui, "pcb-placement", "Placement", true, None, |ui| {
             // The state first, so the card says at once whether the part
-            // is free, held to an edge or locked, and offers the way to
+            // is free, held by dimensions or locked, and offers the way to
             // change it (docs/e2e-ui-run.md findings 8 and 10).
             state = self.state_row(ui, project, placement);
             let fixed = held.is_some();
@@ -184,8 +186,9 @@ impl PcbEditor {
 
     /// The Placement section's first row: what holds the part, with its
     /// canvas mark, and the action that changes it. A free part offers
-    /// "Constrain to edge" (to the nearest named edge, in place); a part
-    /// held to an edge offers "Free part". Locking is the Locked row's.
+    /// "Dimension to edge" (its distance to the nearest named edge, in
+    /// place); a part held by one dimension offers "Free part" (the
+    /// Dimensions section deletes any one). Locking is the Locked row's.
     fn state_row(
         &mut self,
         ui: &mut Ui,
@@ -194,17 +197,21 @@ impl PcbEditor {
     ) -> Option<Operation> {
         let t = Tokens::get();
         let hold = Hold::of(project, placement);
-        let constraint = constraint_of(project, placement.instance);
+        let only = match dimensions_of(project, placement.instance).as_slice() {
+            [one] => Some(one.id),
+            _ => None,
+        };
         let board = project.board();
         let nearest = nearest_edge(&board, placement.position);
-        let (words, action) = match hold_mark::state_words(project, placement) {
-            Some(words) => (words, constraint.map(|_| "Free part")),
+        let (words, action) = match hold_mark::state_words(project, placement, self.shape.evaluator)
+        {
+            Some(words) => (words, only.map(|_| "Free part")),
             None => (
                 nearest.map_or_else(
                     || "Free · name a board edge to hold it".to_owned(),
                     |e| format!("Free · nearest: {}", e.name.0),
                 ),
-                nearest.map(|_| "Constrain to edge"),
+                nearest.map(|_| "Dimension to edge"),
             ),
         };
         // The words wrap rather than clip, so the state reads in full in
@@ -231,14 +238,13 @@ impl PcbEditor {
         if !clicked {
             return None;
         }
-        match constraint {
-            Some(c) => Some(Operation::Board(BoardCommand::DeleteConstraint {
-                id: c.id,
-            })),
-            None => nearest
-                .and_then(|e| spec_at(placement.instance, e, placement.position))
-                .map(|spec| Operation::Board(BoardCommand::Constrain { constraint: spec })),
+        if let Some(id) = only {
+            return Some(Operation::Dimension(DimensionCommand::Delete { id }));
         }
+        let sketch = dimensions::board_sketch(project, self.shape.evaluator?).ok()?;
+        nearest
+            .and_then(|e| spec_at(&sketch, placement.instance, e, placement.position))
+            .map(|dimension| Operation::Dimension(DimensionCommand::Add { dimension }))
     }
 
     /// The Move a left Position or Rotation field commits: Position sends

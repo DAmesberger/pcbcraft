@@ -148,8 +148,8 @@ fn routed() -> Result<(Engine, Id, Id, Id), Box<dyn std::error::Error>> {
     Ok((engine, net, track, via))
 }
 
-/// A part: Rotate, Flip side, Lock, Constrain to edge when a named edge
-/// holds it, Delete…; while locked the moves are dimmed and Lock says
+/// A part: Rotate, Flip side, Lock, Dimension to edge when a named edge
+/// can hold it, Delete…; while locked the moves are dimmed and Lock says
 /// Unlock.
 #[test]
 fn a_part_offers_its_placement_actions() -> TestResult {
@@ -167,7 +167,7 @@ fn a_part_offers_its_placement_actions() -> TestResult {
             "Flip side",
             "—",
             "Lock",
-            "Constrain to edge",
+            "Dimension to edge",
             "—",
             "Delete…"
         ]

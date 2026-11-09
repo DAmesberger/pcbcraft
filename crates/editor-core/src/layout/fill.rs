@@ -230,24 +230,26 @@ pub fn apply(project: &mut Project, command: FillCommand) -> Result<Option<Id>> 
 /// Give every board-following fill ([`FillRegion::Board`]) the solved
 /// board outline, after any operation: a board parameter or shape edit
 /// moves its region, and the next refill (the desktop's background
-/// refill, or `fill.refill`) fills it. An edge constraint on such a fill
-/// is refused: the board, not an edge, places it.
+/// refill, or `fill.refill`) fills it. A part dimension on such a fill is
+/// refused: the board, not a dimension, places it.
 pub fn follow_board(project: &mut Project) -> Result<()> {
     if project.fills.iter().all(|f| f.region.is_drawn()) {
         return Ok(());
     }
-    let constrained = project
-        .edge_constraints
-        .iter()
-        .find_map(|c| match c.target {
-            crate::model::board::ConstraintTarget::Fill(id) => {
-                project.fill(id).filter(|f| f.region == FillRegion::Board)
-            }
+    let dimensioned = project.part_dimensions.iter().find_map(|d| {
+        d.refs.iter().find_map(|r| match r {
+            crate::model::dimension::BoardRef::Part(f) => match f.target() {
+                crate::model::board::ConstraintTarget::Fill(id) => {
+                    project.fill(id).filter(|f| f.region == FillRegion::Board)
+                }
+                _ => None,
+            },
             _ => None,
-        });
-    if let Some(f) = constrained {
+        })
+    });
+    if let Some(f) = dimensioned {
         return Err(Error::Conflict(format!(
-            "fill.follows_board: the {} follows the board outline; an edge constraint cannot place it",
+            "fill.follows_board: the {} follows the board outline; a dimension cannot place it",
             fill_label(project, f)
         )));
     }

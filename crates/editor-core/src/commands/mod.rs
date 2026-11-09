@@ -154,10 +154,6 @@ pub enum Outcome {
     KeepoutAdded {
         keepout: Id,
     },
-    /// The constraint `board.constrain` created.
-    EdgeConstraintAdded {
-        constraint: Id,
-    },
     /// The part dimension `layout.dimension_add` created.
     DimensionAdded {
         dimension: Id,

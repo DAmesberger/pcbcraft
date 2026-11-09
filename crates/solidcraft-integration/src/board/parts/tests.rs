@@ -1,23 +1,28 @@
 //! Slice S2 (docs/board-sketch-references.md §5.2, §5.6): dimensioned
 //! parts solved after the board, drag-to-move, pad and courtyard features,
 //! expressions over board parameters, and `EdgeConstraint` replaced.
-//! Ignored until S2 implements them; S2 removes each `#[ignore]` without
-//! weakening the expected values.
 #![allow(clippy::unwrap_used)]
 
-use super::super::tests::{Fallible, apply, close, edit, hosted, set, sketch, sketched};
+use super::super::tests::{
+    EV, Fallible, apply, close, created_curves, edit, hosted, set, sketch, sketched,
+};
 use pcbcraft_core::geometry::Point;
 use pcbcraft_core::ids::Id;
 use pcbcraft_core::layout::LayoutCommand;
 use pcbcraft_core::layout::dimensions::DimensionCommand;
+use pcbcraft_core::layout::fill::FillCommand;
+use pcbcraft_core::layout::outline::{BoardEdit, BoardShapeEvaluator};
 use pcbcraft_core::library::footprint_source::{
-    DimKind, DimValue, Expr, GeomConstraint, SketchCurveId, SketchRef,
+    DimKind, DimValue, Expr, GeomConstraint, SketchCurveId, SketchEdit, SketchPointId, SketchRef,
 };
+use pcbcraft_core::library::{Outline, Segment};
 use pcbcraft_core::model::board::ConstraintTarget;
+use pcbcraft_core::model::board::outline_bounds;
 use pcbcraft_core::model::dimension::{
     BoardRef, BoxSide, FeatureRef, PadPoint, PartAxis, PartDimensionSpec, PartRelation,
 };
-use pcbcraft_core::{Engine, Layer, Operation, Outcome};
+use pcbcraft_core::model::fill::{FillRegion, FillSpec};
+use pcbcraft_core::{CopperLayer, Engine, Layer, Operation, Outcome};
 
 fn curve(engine: &Engine, name: &str) -> Fallible<SketchCurveId> {
     sketch(engine)?
@@ -92,7 +97,6 @@ fn move_to(engine: &mut Engine, part: Id, to: Point) -> Fallible<pcbcraft_core::
 /// board and follows the width to x = 76; its y and rotation, which no
 /// dimension fixes, keep their stored values.
 #[test]
-#[ignore = "slice S2"]
 fn a_part_dimensioned_to_an_edge_moves_with_the_board() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, _) = parts(&engine)?;
@@ -115,7 +119,6 @@ fn a_part_dimensioned_to_an_edge_moves_with_the_board() -> Fallible<()> {
 /// Only parts a dimension names are solved: another part keeps its exact
 /// stored pose through the add and a board edit.
 #[test]
-#[ignore = "slice S2"]
 fn only_dimensioned_parts_are_solved() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, other) = parts(&engine)?;
@@ -133,7 +136,6 @@ fn only_dimensioned_parts_are_solved() -> Fallible<()> {
 /// A move is a solver drag: a part with one dimension to the right edge
 /// slides along it, landing at the asked y with x still 4 mm in.
 #[test]
-#[ignore = "slice S2"]
 fn dragging_slides_a_part_along_its_one_edge_dimension() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, _) = parts(&engine)?;
@@ -151,7 +153,6 @@ fn dragging_slides_a_part_along_its_one_edge_dimension() -> Fallible<()> {
 /// A part fixed in x, y and rotation cannot be moved: the move is refused
 /// in the held words ("R1 is held …") and changes nothing.
 #[test]
-#[ignore = "slice S2"]
 fn a_move_that_cannot_land_is_refused_in_held_words() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, _) = parts(&engine)?;
@@ -192,7 +193,6 @@ fn a_move_that_cannot_land_is_refused_in_held_words() -> Fallible<()> {
 /// An expression value evaluates over the board parameters: a quarter of
 /// the width from the left edge is 15 mm, then 20 mm at 80 mm wide.
 #[test]
-#[ignore = "slice S2"]
 fn an_expression_value_evaluates_over_board_parameters() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, _) = parts(&engine)?;
@@ -212,7 +212,6 @@ fn an_expression_value_evaluates_over_board_parameters() -> Fallible<()> {
 
 /// A reference dimension measures and never drives.
 #[test]
-#[ignore = "slice S2"]
 fn a_reference_dimension_measures_but_never_drives() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, _) = parts(&engine)?;
@@ -228,7 +227,6 @@ fn a_reference_dimension_measures_but_never_drives() -> Fallible<()> {
 
 /// A dimension that over-constrains its part is refused atomically.
 #[test]
-#[ignore = "slice S2"]
 fn an_over_constraining_dimension_is_refused_and_changes_nothing() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, _) = parts(&engine)?;
@@ -254,7 +252,6 @@ fn an_over_constraining_dimension_is_refused_and_changes_nothing() -> Fallible<(
 /// Two parts a dimension joins solve as one component: B 10 mm left of A,
 /// A 4 mm from the right edge, both follow the width.
 #[test]
-#[ignore = "slice S2"]
 fn parts_dimensioned_to_each_other_solve_together() -> Fallible<()> {
     let mut engine = sketched()?;
     let (a, b) = parts(&engine)?;
@@ -282,7 +279,6 @@ fn parts_dimensioned_to_each_other_solve_together() -> Fallible<()> {
 /// A pad side is a feature in the part frame: with the pad's right side
 /// 1 mm from the right edge, the placed pad's copper ends at x = 59.
 #[test]
-#[ignore = "slice S2"]
 fn a_pad_side_is_dimensioned_in_the_part_frame() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, _) = parts(&engine)?;
@@ -323,7 +319,6 @@ fn a_pad_side_is_dimensioned_in_the_part_frame() -> Fallible<()> {
 /// Deleting a dimension keeps the pose it gave; the part then stays put
 /// when the board changes. Adding is one undo step.
 #[test]
-#[ignore = "slice S2"]
 fn dimension_commands_are_undo_steps_and_delete_keeps_the_pose() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, _) = parts(&engine)?;
@@ -355,11 +350,9 @@ fn dimension_commands_are_undo_steps_and_delete_keeps_the_pose() -> Fallible<()>
 /// constraint, in the same place: (6, 15), centred on the left edge as the
 /// height changes.
 #[test]
-#[ignore = "slice S2"]
 fn the_showcase_header_is_held_by_part_dimensions() -> Fallible<()> {
     let mut engine = Engine::showcase_hosted(hosted())?;
     let project = engine.project();
-    assert!(project.edge_constraints.is_empty());
     let j1 = project
         .instance_by_designator("J1")
         .map(|i| i.id)
@@ -374,5 +367,539 @@ fn the_showcase_header_is_held_by_part_dimensions() -> Fallible<()> {
     assert!(close(pose(&engine, j1)?.0, [6.0, 15.0]));
     edit(&mut engine, vec![set("height", "32 mm")])?;
     assert!(close(pose(&engine, j1)?.0, [6.0, 17.0]));
+    Ok(())
+}
+
+// Edge-constraint tests replaced by their dimension equivalents
+// (docs/board-sketch-references.md §5.6).
+
+/// The board point a named edge starts at, by its sketch id.
+fn edge_start(engine: &Engine, name: &str) -> Fallible<BoardRef> {
+    let s = sketch(engine)?;
+    let sk = crate::footprint::check::check_sketch(&s.sketch.0)
+        .map_err(|p| format!("{}: {}", p.code, p.message))?;
+    let c = curve(engine, name)?;
+    let index = sk.curve_index(&c.0).ok_or("no curve")?;
+    let Some(solidcraft_engine::sketch::CurveKind::Line { a, .. }) =
+        sk.curves.get(index).map(|c| &c.kind)
+    else {
+        return Err("not a line".into());
+    };
+    let id = sk.points.get(*a).ok_or("no point")?.id.clone();
+    Ok(BoardRef::Board(SketchRef::Point(SketchPointId(id))))
+}
+
+fn axis(part: Id, axis: PartAxis) -> BoardRef {
+    BoardRef::Part(FeatureRef::Axis {
+        target: ConstraintTarget::Placement(part),
+        axis,
+    })
+}
+
+fn relation(kind: PartRelation, refs: Vec<BoardRef>, value: Option<DimValue>) -> PartDimensionSpec {
+    PartDimensionSpec {
+        kind,
+        refs,
+        value,
+        reference: false,
+    }
+}
+
+/// `offset`, `along` and `follow_edge` of an edge constraint as
+/// dimensions: 4 mm off the right edge, half the height up from its start,
+/// the x axis along the edge. The part sits at (56, 20) turned 90°, follows
+/// the width and height, refuses a dimension that does not evaluate and a
+/// move (it is fully held), and a dimension to deleted board geometry is a
+/// lost reference that keeps the pose it gave.
+#[test]
+fn a_part_held_by_expressions_follows_the_board() -> Fallible<()> {
+    let mut engine = sketched()?;
+    let (part, other) = parts(&engine)?;
+    let right = edge(&engine, "right")?;
+    add(
+        &mut engine,
+        distance(
+            vec![origin(part), right.clone()],
+            DimValue::Expr(Expr("4 mm".into())),
+        ),
+    )?;
+    let start = edge_start(&engine, "right")?;
+    let along = add(
+        &mut engine,
+        relation(
+            PartRelation::Dim(DimKind::VerticalDistance),
+            vec![start, origin(part)],
+            Some(DimValue::Expr(Expr("height / 2".into()))),
+        ),
+    )?;
+    add(
+        &mut engine,
+        relation(
+            PartRelation::Dim(DimKind::Angle),
+            vec![axis(part, PartAxis::X), right],
+            Some(DimValue::Fixed(0.0)),
+        ),
+    )?;
+    let (p, r, _) = pose(&engine, part)?;
+    assert!(close(p, [56.0, 20.0]), "{p:?}");
+    assert!((r - 90.0).abs() < 1e-6, "{r}");
+    edit(
+        &mut engine,
+        vec![set("width", "80 mm"), set("height", "50 mm")],
+    )?;
+    let (p, r, _) = pose(&engine, part)?;
+    assert!(close(p, [76.0, 25.0]), "{p:?}");
+    assert!((r - 90.0).abs() < 1e-6, "{r}");
+    // A value that does not evaluate is refused.
+    let rev = engine.revision();
+    let mut broken = engine
+        .project()
+        .part_dimensions
+        .iter()
+        .find(|d| d.id == along)
+        .cloned()
+        .ok_or("dimension")?;
+    broken.value = Some(DimValue::Expr(Expr("no_such_parameter".into())));
+    assert!(
+        apply(
+            &mut engine,
+            Operation::Dimension(DimensionCommand::Edit { dimension: broken })
+        )
+        .is_err()
+    );
+    // Moving the fully held part is refused in the held words.
+    let refused = move_to(&mut engine, part, [10.0, 10.0])?
+        .err()
+        .ok_or("moved")?
+        .to_string();
+    assert!(
+        refused.contains("is held 4 mm from the right edge"),
+        "{refused}"
+    );
+    assert_eq!(engine.revision(), rev);
+    // A dimension to a construction line, then the line deleted: a lost
+    // reference, reported, and the part keeps its pose.
+    let Outcome::BoardEdited { created } = edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::AddLine {
+                a: [30.0, 0.0],
+                b: [30.0, 50.0],
+                construction: true,
+            },
+        }],
+    )?
+    else {
+        return Err("no edit".into());
+    };
+    let line = created
+        .iter()
+        .find(|r| matches!(r, SketchRef::Curve(_)))
+        .cloned()
+        .ok_or("no line")?;
+    add(
+        &mut engine,
+        distance(
+            vec![origin(other), BoardRef::Board(line.clone())],
+            DimValue::Fixed(5.0),
+        ),
+    )?;
+    let held = pose(&engine, other)?;
+    assert!((held.0[0] - 25.0).abs() < 1e-6, "{held:?}");
+    assert!(pcbcraft_core::layout::dimensions::checks(engine.project()).is_empty());
+    edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::Delete { ids: vec![line] },
+        }],
+    )?;
+    let findings = pcbcraft_core::layout::checks(engine.project());
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|f| f.code == pcbcraft_core::layout::dimensions::REFERENCE_LOST)
+            .count(),
+        1,
+        "{findings:#?}"
+    );
+    assert_eq!(pose(&engine, other)?, held);
+    edit(&mut engine, vec![set("width", "70 mm")])?;
+    assert_eq!(pose(&engine, other)?, held);
+    Ok(())
+}
+
+/// An arc edge (§12 note 2: no arc-length constraint at our pin): a part
+/// 3 mm in from a round board's rim, on the construction line from the
+/// centre to the rim's middle, its x axis square to that radius (the
+/// tangent there), sits at the top, (30, 37), turned 180°.
+#[test]
+fn a_part_is_held_to_an_arc_edge() -> Fallible<()> {
+    let mut engine = sketched()?;
+    let s = sketch(&engine)?;
+    let drawn = EV.apply_sketch(
+        &s.sketch,
+        &SketchEdit::AddArc {
+            center: [30.0, 20.0],
+            start: [50.0, 20.0],
+            end: [10.0, 20.0],
+            construction: false,
+        },
+    )?;
+    let upper = created_curves(&drawn);
+    let drawn2 = EV.apply_sketch(
+        &drawn.sketch,
+        &SketchEdit::AddArc {
+            center: [30.0, 20.0],
+            start: [10.0, 20.0],
+            end: [50.0, 20.0],
+            construction: false,
+        },
+    )?;
+    let drawn3 = EV.apply_sketch(
+        &drawn2.sketch,
+        &SketchEdit::AddLine {
+            a: [30.0, 20.0],
+            b: [30.0, 40.0],
+            construction: true,
+        },
+    )?;
+    let radial = created_curves(&drawn3);
+    let old: Vec<SketchRef> = s
+        .solved
+        .outer_curves
+        .iter()
+        .map(|c| SketchRef::Curve(c.clone()))
+        .collect();
+    let sketch_edit = |edit| BoardEdit::Sketch { edit };
+    edit(
+        &mut engine,
+        vec![
+            sketch_edit(SketchEdit::AddArc {
+                center: [30.0, 20.0],
+                start: [50.0, 20.0],
+                end: [10.0, 20.0],
+                construction: false,
+            }),
+            sketch_edit(SketchEdit::AddArc {
+                center: [30.0, 20.0],
+                start: [10.0, 20.0],
+                end: [50.0, 20.0],
+                construction: false,
+            }),
+            sketch_edit(SketchEdit::AddLine {
+                a: [30.0, 20.0],
+                b: [30.0, 40.0],
+                construction: true,
+            }),
+            BoardEdit::NameEdge {
+                name: pcbcraft_core::model::board::EdgeName("rim".into()),
+                curve: upper.first().cloned().ok_or("arc")?,
+            },
+            sketch_edit(SketchEdit::Delete { ids: old }),
+        ],
+    )?;
+    let (part, _) = parts(&engine)?;
+    // Inside the rim first, so the distance measures inward.
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::Move {
+            instance: part,
+            position: [30.0, 30.0],
+            rotation_deg: 150.0,
+            layer: Layer::Top,
+        }),
+    )?;
+    let rim = edge(&engine, "rim")?;
+    let radial = BoardRef::Board(SketchRef::Curve(radial.first().cloned().ok_or("line")?));
+    add(
+        &mut engine,
+        distance(vec![origin(part), rim], DimValue::Fixed(3.0)),
+    )?;
+    add(
+        &mut engine,
+        relation(
+            PartRelation::Geom(GeomConstraint::PointOnCurve),
+            vec![origin(part), radial.clone()],
+            None,
+        ),
+    )?;
+    add(
+        &mut engine,
+        relation(
+            PartRelation::Dim(DimKind::Angle),
+            vec![radial, axis(part, PartAxis::X)],
+            Some(DimValue::Fixed(90.0)),
+        ),
+    )?;
+    let (p, r, _) = pose(&engine, part)?;
+    assert!(close(p, [30.0, 37.0]), "{p:?}");
+    assert!((r - 180.0).abs() < 1e-6, "{r}");
+    Ok(())
+}
+
+fn square(at: Point, side: f64) -> Outline {
+    Outline {
+        start: at,
+        segments: vec![
+            Segment::Line {
+                to: [at[0] + side, at[1]],
+            },
+            Segment::Line {
+                to: [at[0] + side, at[1] + side],
+            },
+            Segment::Line {
+                to: [at[0], at[1] + side],
+            },
+            Segment::Line { to: at },
+        ],
+    }
+}
+
+/// A drawn fill is dimensioned by its outline start and only translates:
+/// its top side 1 mm under the top edge, centred on the board's width; it
+/// follows the width, and deleting it leaves its two dimensions' references
+/// lost.
+#[test]
+fn fills_translate_to_their_dimensions_and_report_when_gone() -> Fallible<()> {
+    let mut engine = sketched()?;
+    let Outcome::FillAdded { fill } = apply(
+        &mut engine,
+        Operation::Fill(FillCommand::Add {
+            fill: Box::new(FillSpec {
+                region: FillRegion::Drawn,
+                name: "GND".into(),
+                net: None,
+                layer: CopperLayer::Bottom,
+                outline: square([20.0, 20.0], 10.0),
+                priority: 0,
+                settings: Default::default(),
+            }),
+        }),
+    )?
+    else {
+        return Err("no fill".into());
+    };
+    let at = BoardRef::Part(FeatureRef::Origin {
+        target: ConstraintTarget::Fill(fill),
+    });
+    let (top, left) = (edge(&engine, "top")?, edge(&engine, "left")?);
+    add(
+        &mut engine,
+        distance(vec![at.clone(), top], DimValue::Fixed(11.0)),
+    )?;
+    add(
+        &mut engine,
+        distance(
+            vec![at, left],
+            DimValue::Expr(Expr("width / 2 - 5 mm".into())),
+        ),
+    )?;
+    let bounds = |engine: &Engine| {
+        engine
+            .project()
+            .fill(fill)
+            .map(|f| outline_bounds(&f.outline))
+    };
+    let b = bounds(&engine).ok_or("fill")?;
+    assert!(
+        close(b.min, [25.0, 29.0]) && close(b.max, [35.0, 39.0]),
+        "{b:?}"
+    );
+    edit(&mut engine, vec![set("width", "80 mm")])?;
+    let b = bounds(&engine).ok_or("fill")?;
+    assert!(
+        close(b.min, [35.0, 29.0]) && close(b.max, [45.0, 39.0]),
+        "{b:?}"
+    );
+    apply(
+        &mut engine,
+        Operation::Fill(FillCommand::Delete { id: fill }),
+    )?;
+    let lost = pcbcraft_core::layout::checks(engine.project())
+        .into_iter()
+        .filter(|f| f.code == pcbcraft_core::layout::dimensions::REFERENCE_LOST)
+        .count();
+    assert_eq!(lost, 2);
+    Ok(())
+}
+
+/// The courtyard as features: its bottom side on the bottom edge and its
+/// centre 20 mm from the left edge put the part's extent on the edge,
+/// centred at x = 20 (an edge constraint's near-side alignment).
+#[test]
+fn courtyard_features_put_the_part_extent_on_the_edge() -> Fallible<()> {
+    let mut engine = sketched()?;
+    let (part, _) = parts(&engine)?;
+    let courtyard = |side| {
+        BoardRef::Part(FeatureRef::Courtyard {
+            placement: part,
+            side,
+        })
+    };
+    let (bottom, left) = (edge(&engine, "bottom")?, edge(&engine, "left")?);
+    add(
+        &mut engine,
+        distance(
+            vec![courtyard(Some(BoxSide::Bottom)), bottom],
+            DimValue::Fixed(0.0),
+        ),
+    )?;
+    add(
+        &mut engine,
+        distance(vec![courtyard(None), left], DimValue::Fixed(20.0)),
+    )?;
+    let project = engine.project();
+    let mut pts: Vec<Point> = pcbcraft_core::layout::courtyard::placed_courtyards(project)
+        .into_iter()
+        .filter(|c| c.instance == part)
+        .flat_map(|c| c.shape.flatten(1e-4))
+        .collect();
+    if pts.is_empty() {
+        pts = pcbcraft_core::layout::pads(project)
+            .into_iter()
+            .filter(|p| p.instance == part)
+            .flat_map(|p| p.outline().flatten(1e-4))
+            .collect();
+    }
+    let min_y = pts.iter().map(|p| p[1]).fold(f64::MAX, f64::min);
+    let (min_x, max_x) = pts
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p[0]), b.max(p[0])));
+    assert!(min_y.abs() < 1e-3, "the extent touches the edge: {min_y}");
+    assert!(((min_x + max_x) / 2.0 - 20.0).abs() < 1e-3);
+    Ok(())
+}
+
+/// Timing of the parts solve against §9's target (any edit re-solves within
+/// 16 ms with 100 dimensioned parts). Run in release:
+/// `cargo test --release -p pcbcraft-solidcraft parts_solve_timing -- --ignored --nocapture`.
+/// 100 parts on a 200 mm board: 50 held to the right and bottom edges, 50
+/// held to one of those by a horizontal and a vertical distance (pairs), each
+/// with its origin and a pad-sized line feature; solved as one request (the
+/// worst case: `follow` splits it into the 50 components), once at the
+/// stored poses and once after the board grew 20 mm.
+#[test]
+#[ignore = "timing; run in release"]
+fn parts_solve_timing() -> Fallible<()> {
+    use pcbcraft_core::layout::dimensions::{FeatureGeometry, PartPose, PartsRequest, SolvePart};
+    use pcbcraft_core::model::dimension::PartDimension;
+    let mut times = Vec::new();
+    for width in [200.0, 220.0] {
+        let board = EV.rectangle([width, 200.0])?;
+        let right = BoardRef::Board(SketchRef::Curve(
+            board
+                .edges
+                .iter()
+                .find(|e| e.name.0 == "right")
+                .ok_or("right")?
+                .curve
+                .clone(),
+        ));
+        let bottom = BoardRef::Board(SketchRef::Curve(
+            board
+                .edges
+                .iter()
+                .find(|e| e.name.0 == "bottom")
+                .ok_or("bottom")?
+                .curve
+                .clone(),
+        ));
+        let mut parts = Vec::new();
+        let mut dims = Vec::new();
+        let side = BoardRef::Part(FeatureRef::Courtyard {
+            placement: 0,
+            side: Some(BoxSide::Right),
+        });
+        for i in 0..100u64 {
+            let (row, col) = (i % 10, i / 10);
+            let at = [10.0 + 18.0 * col as f64, 10.0 + 18.0 * row as f64];
+            let side = match &side {
+                BoardRef::Part(FeatureRef::Courtyard { side, .. }) => FeatureRef::Courtyard {
+                    placement: i,
+                    side: *side,
+                },
+                _ => return Err("feature".into()),
+            };
+            parts.push(SolvePart {
+                target: ConstraintTarget::Placement(i),
+                pose: PartPose {
+                    position: at,
+                    rotation_deg: 0.0,
+                },
+                mirrored: false,
+                features: vec![
+                    (
+                        FeatureRef::Origin {
+                            target: ConstraintTarget::Placement(i),
+                        },
+                        FeatureGeometry::Point { at: [0.0, 0.0] },
+                    ),
+                    (
+                        side,
+                        FeatureGeometry::Line {
+                            a: [1.0, -0.5],
+                            b: [1.0, 0.5],
+                        },
+                    ),
+                ],
+            });
+            let dim = |id: u64, kind, refs, v: f64| PartDimension {
+                id,
+                kind: PartRelation::Dim(kind),
+                refs,
+                value: Some(DimValue::Fixed(v)),
+                reference: false,
+            };
+            if i < 50 {
+                dims.push(dim(
+                    1000 + 2 * i,
+                    DimKind::Distance,
+                    vec![origin(i), right.clone()],
+                    200.0 - at[0],
+                ));
+                dims.push(dim(
+                    1001 + 2 * i,
+                    DimKind::Distance,
+                    vec![origin(i), bottom.clone()],
+                    at[1],
+                ));
+            } else {
+                let o = i - 50;
+                let other = [10.0 + 18.0 * (o / 10) as f64, 10.0 + 18.0 * (o % 10) as f64];
+                dims.push(dim(
+                    1000 + 2 * i,
+                    DimKind::HorizontalDistance,
+                    vec![origin(o), origin(i)],
+                    (at[0] - other[0]).abs(),
+                ));
+                dims.push(dim(
+                    1001 + 2 * i,
+                    DimKind::VerticalDistance,
+                    vec![origin(o), origin(i)],
+                    (at[1] - other[1]).abs(),
+                ));
+            }
+        }
+        let request = PartsRequest {
+            board: &board,
+            parts: &parts,
+            dimensions: &dims,
+            drags: &[],
+        };
+        let mut runs = Vec::new();
+        for _ in 0..15 {
+            let start = std::time::Instant::now();
+            let solution = super::solve(&request)?;
+            runs.push(start.elapsed().as_secs_f64() * 1e3);
+            assert_eq!(solution.poses.len(), 100);
+        }
+        runs.sort_by(f64::total_cmp);
+        times.push((width, runs[runs.len() / 2], runs[runs.len() - 1]));
+    }
+    for (width, median, max) in times {
+        println!(
+            "parts solve, 100 parts, board {width} mm: median {median:.2} ms, max {max:.2} ms"
+        );
+    }
     Ok(())
 }

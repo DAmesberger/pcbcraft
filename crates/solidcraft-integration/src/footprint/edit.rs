@@ -87,7 +87,8 @@ pub(crate) fn diff(before: &Sketch, after: &Sketch, sketch: String) -> SketchOut
     }
 }
 
-enum Ref {
+/// A resolved constraint reference: a point or a curve, by index.
+pub(crate) enum Ref {
     P(usize),
     C(usize),
 }
@@ -108,7 +109,11 @@ fn resolve(sk: &Sketch, refs: &[SketchRef]) -> Outcome<Vec<Ref>> {
         .collect()
 }
 
-fn geom_constraint(sk: &Sketch, kind: GeomConstraint, refs: &[Ref]) -> Outcome<ConstraintKind> {
+pub(crate) fn geom_constraint(
+    sk: &Sketch,
+    kind: GeomConstraint,
+    refs: &[Ref],
+) -> Outcome<ConstraintKind> {
     use ConstraintKind as K;
     use GeomConstraint as G;
     Ok(match (kind, refs) {
@@ -142,7 +147,7 @@ fn geom_constraint(sk: &Sketch, kind: GeomConstraint, refs: &[Ref]) -> Outcome<C
     .and_then(|k| sk.validate(&k).map(|()| k).map_err(sketch_error))
 }
 
-fn dimension(sk: &Sketch, kind: DimKind, refs: &[Ref]) -> Outcome<ConstraintKind> {
+pub(crate) fn dimension(sk: &Sketch, kind: DimKind, refs: &[Ref]) -> Outcome<ConstraintKind> {
     use ConstraintKind as K;
     let ends = |l: usize| match sk.curves.get(l).map(|c| &c.kind) {
         Some(CurveKind::Line { a, b }) => Ok((*a, *b)),

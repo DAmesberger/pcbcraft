@@ -18,7 +18,7 @@ pub mod production;
 pub mod sheet;
 mod stackup;
 mod via;
-pub use board::{BoardShape, EdgeConstraint, SolvedBoard};
+pub use board::{BoardShape, SolvedBoard};
 pub use dimension::PartDimension;
 pub use fill::{Fill, Keepout};
 pub use sheet::{
@@ -495,10 +495,6 @@ pub struct Project {
     /// `board_size` at its solved bounding box.
     #[serde(default, skip_serializing_if = "BoardShape::is_rectangle")]
     pub board_shape: BoardShape,
-    /// Placement constraints relative to named board edges. Replaced by
-    /// `part_dimensions` in slice S2 (docs/board-sketch-references.md §5.6).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub edge_constraints: Shared<Vec<EdgeConstraint>>,
     /// Dimensions and constraints that place parts relative to the board,
     /// the housing and each other (`layout::dimensions`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -548,7 +544,6 @@ impl Default for Project {
             material_table: crate::materials::BUILTIN_REVISION,
             rules: crate::rules::ProjectRules::default(),
             board_shape: BoardShape::Rectangle,
-            edge_constraints: Shared::default(),
             part_dimensions: Shared::default(),
             fills: Shared::default(),
             keepouts: Shared::default(),

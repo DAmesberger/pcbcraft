@@ -56,7 +56,6 @@ fn project_except_library(p: &Project) -> Result<()> {
         .chain(p.vias.iter().map(|v| v.id))
         .chain(p.fills.iter().map(|f| f.id))
         .chain(p.keepouts.iter().map(|k| k.id))
-        .chain(p.edge_constraints.iter().map(|c| c.id))
         .chain(p.part_dimensions.iter().map(|d| d.id))
     {
         if id == 0 || id >= p.next_id || !ids.insert(id) {

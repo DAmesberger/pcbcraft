@@ -478,3 +478,40 @@ Whichever slice lands second rebases onto the first. The other slice's ignored t
 - **Free-form curves.** The board sketch admits `Ellipse`, `Conic` and `Spline` without explicit knots (cubic, 2–500 points; `check_board_sketch`). Footprints still refuse them. Each `exact_pieces` span is fitted with `Seg2::fit_arcs`. A loop that would need more than `MAX_OUTLINE_SEGMENTS` (512) spans is refused and names the rule. The rule's range is 0.001–1 mm.
 - **Superseded tests.** In `board/tests.rs`, the circle outside the board in `cutouts_slots_and_mounting_holes_solve_and_build_in_3d` is now reported as a second region rather than refused (§5.1).
 - **UI.** The sketch view draws free-form curves (`ViewGeometry::FreeForm`). Board shape mode marks the open ends or crossings and shows the fault in the card as advisory. The selection offers Make slot / Make cutout for a hole. There are no spline, ellipse or conic drawing tools yet; the commands are reachable through CLI and MCP.
+
+## 13. S2 notes
+
+S2 built dimensioned parts and removed `EdgeConstraint`, its `follow` pass and `board.constrain`, `board.constraint_edit` and `board.constraint_delete`. The shipped showcase holds J1 with two part dimensions: 6 mm from the left edge, and `height / 2 + 1 mm` from the bottom edge.
+
+### How the solve keeps free values
+
+`board/parts.rs` copies the solved board sketch into a scratch sketch with every point fixed and its constraints dropped. Each target gets an origin, a 10 mm construction axis, and its features bound with `PatternPoint`. Solidcraft's solve moves every point as little as it can, but that alone does not keep a free rotation exact. So the solve runs in two passes:
+
+1. Solve the dimensions with a freedom analysis. Three helper points per target copy its x, its y and its axis direction, so `point_determined` tells which of x, y and rotation the dimensions fix.
+2. Pin each free one with `VerticalPoints`, `HorizontalPoints` or `LineAngle`, at its stored value or at the value a move gave a dragged target, and solve again. Pinned values are written back exactly.
+
+If coupled pins disagree (two parts held only to each other, one of them dragged), the pins are placed in halves, re-reading the freedom after each solve. A move "cannot land" when the dragged target's position (or rotation) does not change at all; it is refused in `dimensions::held_message`'s words.
+
+### Deviations from the contract
+
+1. `PartsRequest::drag: Option<PartDrag>` became `drags: &[PartDrag]`, because one operation can move several targets of one component. `PartsSolution` gained `freedom` (per target: x, y, rotation free) and `failing` (the dimensions a failed solve names).
+2. The core reads the entity ids, and nothing else, from the board sketch's canonical JSON (`dimensions::board_ids`). Without them `checks` could not report a deleted board point or curve as `board.reference_lost` without the evaluator. On a rectangle board, which holds no sketch, a dimension to an unknown id is refused when the parts are solved.
+3. `along` on an arc edge (§12 note 2) is a construction line in the board sketch from the arc's centre: `PointOnCurve` on that line plus a `Distance` to the arc (`PointCircleDistance`, inward when the part starts inside), with `Angle(line, axis)` for the turn (`a_part_is_held_to_an_arc_edge`). A distance between two lines (a pad side to an edge) measures from the first line's start.
+4. Fills and keepouts only translate. A dimension on a board-following fill is refused (`fill.follows_board`).
+5. Labels for agents (`J1.pad(A6)`, `edge(left)`) are not built. Agents name curve ids from `board.shape` and pad ids from the library.
+
+### Measured (S2), against the §9 target
+
+`parts_solve_timing` (ignored; run with `--release -- --ignored --nocapture`) solves 100 dimensioned parts in one request: 50 held to two edges, 50 held to one of those by two distances, each with an origin and a line feature. Measured on an Apple M5 Max, release build, with a load average of 8–14 from other agents, median of 15 runs:
+
+| Case | Median | Max | Target |
+| --- | --- | --- | --- |
+| Solve at the stored poses | 8.1 ms | 9.4 ms | 16 ms per edit |
+| After the board grew 20 mm | 9.0 ms | 10.3 ms | 16 ms per edit |
+
+This measures the solve alone, as one request. `follow` splits the parts into connected components and solves only the ones an edit touched, so a real edit solves less. The core's grouping and feature resolution are not timed; S11 measures the whole edit.
+
+### For S1, S3 and later slices
+
+- **S1 (landed first).** S2 dropped the `constraints` parameter of `BoardShapeEvaluator::evaluate` and `BoardEvaluation::constraints`. The parts solve reads the board through `check_board_sketch`, so free-form board curves can be dimensioned to. The app's `board_shape_tests.rs` lost its two edge-constraint tests.
+- **S3.** `features::geometry` refuses `Face`, `Edge` and `Vertex` with `Error::Unsupported`, and `reference_status` reports them as `Lost` until S3 resolves them. Anchors already come from `surface::package_anchors`. `reference_status` is the place to add `Inexact`.

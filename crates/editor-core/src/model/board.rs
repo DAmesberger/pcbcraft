@@ -17,8 +17,6 @@ use serde::{Deserialize, Serialize};
 pub const MAX_CUTOUTS: usize = 256;
 pub const MAX_MOUNTING_HOLES: usize = 256;
 pub const MAX_NAMED_EDGES: usize = 1024;
-/// Placement constraints on one board.
-pub const MAX_EDGE_CONSTRAINTS: usize = 4096;
 
 /// The names a rectangular board's edges carry, counter-clockwise from
 /// the lower edge (origin at the lower-left corner).
@@ -400,20 +398,7 @@ impl BoardShape {
     }
 }
 
-/// Where along a named edge a constraint measures from.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "snake_case", tag = "at", content = "fraction")]
-pub enum EdgeAnchor {
-    /// The edge's first point (`a`).
-    #[default]
-    Start,
-    Middle,
-    End,
-    /// A fraction 0–1 of the edge's length from `a`.
-    Fraction(f64),
-}
-
-/// What a placement constraint moves.
+/// What a part dimension moves (`model::dimension`).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "id")]
 pub enum ConstraintTarget {
@@ -421,77 +406,4 @@ pub enum ConstraintTarget {
     Placement(Id),
     Fill(Id),
     Keepout(Id),
-}
-
-/// Which point of the target lands on the constrained position.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ConstraintAlign {
-    /// The placement origin (footprint datum).
-    #[default]
-    Origin,
-    /// The courtyard's (or outline's) side nearest the edge.
-    NearSide,
-    /// The courtyard's (or outline's) centre.
-    Centre,
-}
-
-/// A constraint to add: everything but its identity.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct EdgeConstraintSpec {
-    pub target: ConstraintTarget,
-    pub edge: EdgeName,
-    #[serde(default)]
-    pub anchor: EdgeAnchor,
-    /// Distance from the anchor along the edge (`a` to `b`), an
-    /// expression over board parameters (`width / 2 - 3 mm`).
-    pub along: Expr,
-    /// Distance from the edge along its inward normal.
-    pub offset: Expr,
-    #[serde(default)]
-    pub align: ConstraintAlign,
-    /// The target turns with the edge's direction (plus `rotation_deg`);
-    /// otherwise its own rotation is kept.
-    #[serde(default)]
-    pub follow_edge: bool,
-    #[serde(default)]
-    pub rotation_deg: f64,
-}
-
-/// A placement held relative to a named board edge. Slice S2 replaces it
-/// with [`crate::model::dimension::PartDimension`]s (one per held quantity,
-/// docs/board-sketch-references.md §5.6) and deletes it.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct EdgeConstraint {
-    pub id: Id,
-    pub target: ConstraintTarget,
-    pub edge: EdgeName,
-    #[serde(default)]
-    pub anchor: EdgeAnchor,
-    pub along: Expr,
-    pub offset: Expr,
-    #[serde(default)]
-    pub align: ConstraintAlign,
-    #[serde(default)]
-    pub follow_edge: bool,
-    #[serde(default)]
-    pub rotation_deg: f64,
-}
-
-impl EdgeConstraint {
-    pub fn from_spec(id: Id, s: EdgeConstraintSpec) -> Self {
-        Self {
-            id,
-            target: s.target,
-            edge: s.edge,
-            anchor: s.anchor,
-            along: s.along,
-            offset: s.offset,
-            align: s.align,
-            follow_edge: s.follow_edge,
-            rotation_deg: s.rotation_deg,
-        }
-    }
 }

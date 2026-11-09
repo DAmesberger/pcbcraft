@@ -1583,9 +1583,10 @@ impl PcbEditor {
                 let at = world(start);
                 if let Some(id) = self.pick_instance(project, at, tolerance, metric) {
                     self.set_selection(Some(id), None, None);
-                    // A locked or edge-held part does not follow the
-                    // pointer: the engine says why, in the words it would
-                    // refuse the move with, before anything moves.
+                    // A locked part, or one its dimensions hold in place,
+                    // does not follow the pointer: the engine says why, in
+                    // the words it would refuse the move with, before
+                    // anything moves.
                     if let Some(error) = layout::move_refusal(project, id, self.shape.evaluator) {
                         crate::kit::toast::post(
                             ui.ctx(),
@@ -1602,10 +1603,27 @@ impl PcbEditor {
             }
         }
         if let (Some((placement, start)), Some(at)) = (&self.drag, cursor) {
-            self.drag_position = Some(snap([
+            let to = snap([
                 placement.position[0] + at[0] - start[0],
                 placement.position[1] + at[1] - start[1],
-            ]));
+            ]);
+            // A dimensioned part slides along what holds it: the preview is
+            // where the engine's move will land it.
+            let landed = self.shape.evaluator.and_then(|ev| {
+                layout::dimensions::landing(
+                    project,
+                    placement.instance,
+                    layout::dimensions::PartPose {
+                        position: to,
+                        rotation_deg: placement.rotation_deg,
+                    },
+                    ev,
+                )
+            });
+            self.drag_position = Some(match landed {
+                Some(Ok(pose)) => pose.position,
+                _ => to,
+            });
         }
         if response.drag_stopped_by(PointerButton::Primary)
             && let (Some((placement, _)), Some(position)) =
@@ -1671,7 +1689,7 @@ impl PcbEditor {
         self.paint_fill_handles(&painter, view, project);
         self.paint_fill_draw(&painter, view, cursor);
         hold_mark::paint_marks(&painter, &view, project);
-        self.paint_edge_constraints(&painter, &view, project);
+        self.paint_part_dimensions(&painter, &view, project);
         // Slice R1: the docked review's canvas preview.
         if let Some(marks) = self.update.marks() {
             crate::update_preview::paint_board(

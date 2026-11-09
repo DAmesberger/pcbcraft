@@ -4,7 +4,8 @@
 //! that turns them into placements lives in `layout::dimensions`, and the
 //! sketch solver behind it in the host's board evaluator.
 //!
-//! Part dimensions replace [`super::board::EdgeConstraint`] (slice S2).
+//! Part dimensions replaced the edge constraints of the first board sketch
+//! (docs/board-sketch-references.md §5.6).
 use crate::ids::{Id, PadId};
 use crate::library::footprint_source::{DimKind, DimValue, GeomConstraint, SketchRef};
 use crate::model::board::ConstraintTarget;

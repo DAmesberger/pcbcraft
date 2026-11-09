@@ -1,59 +1,65 @@
-//! Edge-relative placement: the Board edge section of the Placement card
-//! and the dimension annotations that show a constrained part's distance
-//! along and off its edge on the Layout canvas.
+//! Parts held to the board by dimensions (docs/board-sketch-references.md
+//! §5.2): the Dimensions section of the Placement card and the dimension
+//! annotations that show a dimensioned part's distances to board edges on
+//! the Layout canvas.
 //!
-//! "Constrain to edge" (the Placement section's state row) ties the
-//! selected part to the nearest named board edge at its current position
-//! (`board.constrain`, one undo step), so the part does not move. Edge,
-//! anchor, along, offset, alignment and turning
-//! with the edge then commit live, each as one `board.constraint_edit`;
-//! along and offset are expressions over the board parameters
-//! (`width / 2 - 3 mm`), so editing a parameter moves the part when the
-//! board re-solves (`layout::outline`).
+//! "Dimension to edge" (the Placement section's state row) adds one
+//! distance from the selected part's origin to the nearest named board edge
+//! at its current distance (`layout.dimension_add`, one undo step), so the
+//! part does not move; it then slides along that edge when dragged. Each
+//! dimension's value commits live as one `layout.dimension_edit`: a length
+//! (`5 mm`) or an expression over the board parameters (`width / 2 - 3
+//! mm`), so editing a parameter moves the part when the board re-solves.
+//! "Delete" removes one dimension (`layout.dimension_delete`) and leaves the
+//! part where it is.
 use super::board_shape_ui::sketch_of;
 use super::{BoardView, PcbEditor};
 use crate::kit;
 use crate::refusal::{self, Origin};
 use egui::{Align2, Pos2, Stroke, Ui, vec2};
-use pcbcraft_core::layout::outline::{BoardCommand, edge_pose};
+use pcbcraft_core::geometry::Transform2;
+use pcbcraft_core::layout::dimensions::{
+    self, DimensionCommand, FeatureGeometry, PartFreedom, features,
+};
+use pcbcraft_core::layout::outline::BoardShapeEvaluator;
 use pcbcraft_core::library::footprint_source::{
-    Expr, FootprintParam, FootprintSource, ParamName, ParamUnit, ParamValue,
+    DimKind, DimValue, Expr, FootprintParam, FootprintSource, ParamName, ParamUnit, ParamValue,
+    SketchRef,
 };
-use pcbcraft_core::model::board::{
-    ConstraintAlign, ConstraintTarget, EdgeAnchor, EdgeConstraint, EdgeConstraintSpec, EdgeName,
-    SolvedBoard, SolvedEdge,
+use pcbcraft_core::model::board::{BoardSketch, ConstraintTarget, SolvedBoard, SolvedEdge};
+use pcbcraft_core::model::dimension::{
+    BoardRef, FeatureRef, PartDimension, PartDimensionSpec, PartRelation,
 };
-use pcbcraft_core::{Id, Operation, Placement, Point, Project};
+use pcbcraft_core::{Id, Layer, Operation, Placement, Point, Project};
 use pcbcraft_solidcraft::footprint::view as sketch_view;
 use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::type_face;
 
-/// The Board edge section's text buffers for one constraint.
+/// The Dimensions section's text buffers, and what the part's dimensions
+/// leave free, for one document revision.
 #[derive(Clone, Debug, Default)]
 pub(super) struct EdgeEdit {
     key: Option<(u64, Id)>,
-    along: String,
-    offset: String,
-    /// The field (`"along"`/`"offset"`) a refusal or invalid text belongs
-    /// to, and why.
-    error: Option<(&'static str, String)>,
-    sent: Option<&'static str>,
+    values: Vec<(Id, String)>,
+    /// The dimension a refusal or invalid text belongs to, and why.
+    error: Option<(Id, String)>,
+    sent: Option<Id>,
+    show_all: bool,
+    /// The selected part's hold: (revision, instance) → why a move is
+    /// refused, and what its dimensions leave free.
+    hold: Option<((u64, Id), Hold)>,
 }
 
-fn field_id(field: &'static str) -> egui::Id {
-    egui::Id::unique(("pcb-edge", field))
+/// Why a hand move is refused, and what the dimensions leave free.
+type Hold = (Option<String>, Option<PartFreedom>);
+
+fn field_id(dimension: Id) -> egui::Id {
+    egui::Id::unique(("pcb-dimension", dimension))
 }
 
-/// The constraint on a placement, if any.
-pub(super) fn constraint_of(project: &Project, instance: Id) -> Option<&EdgeConstraint> {
-    project
-        .edge_constraints
-        .iter()
-        .find(|c| c.target == ConstraintTarget::Placement(instance))
-}
-
-fn mm(v: f64) -> Expr {
-    Expr(format!("{} mm", kit::number_text(v)))
+/// The dimensions naming a placement.
+pub(super) fn dimensions_of(project: &Project, instance: Id) -> Vec<&PartDimension> {
+    dimensions::dimensions_of(project, ConstraintTarget::Placement(instance))
 }
 
 /// Where `p` is relative to a straight `edge`: the distance from `a` along
@@ -71,16 +77,6 @@ pub(super) fn along_offset(edge: &SolvedEdge, p: Point) -> Option<(f64, f64)> {
 
 fn edge_length(edge: &SolvedEdge) -> f64 {
     (edge.b[0] - edge.a[0]).hypot(edge.b[1] - edge.a[1])
-}
-
-fn anchor_at(edge: &SolvedEdge, anchor: EdgeAnchor) -> f64 {
-    let len = edge_length(edge);
-    match anchor {
-        EdgeAnchor::Start => 0.0,
-        EdgeAnchor::Middle => len / 2.0,
-        EdgeAnchor::End => len,
-        EdgeAnchor::Fraction(f) => f * len,
-    }
 }
 
 /// The straight named edge nearest `p`.
@@ -104,23 +100,37 @@ pub(super) fn nearest_edge(board: &SolvedBoard, p: Point) -> Option<&SolvedEdge>
         .map(|(_, e)| e)
 }
 
-/// The constraint that keeps a part at `position` relative to `edge`.
+/// The dimension that keeps a part at `position` relative to `edge`: its
+/// origin's distance to the edge's curve, as it is now.
 pub(super) fn spec_at(
+    board: &BoardSketch,
     instance: Id,
     edge: &SolvedEdge,
     position: Point,
-) -> Option<EdgeConstraintSpec> {
-    let (along, offset) = along_offset(edge, position)?;
-    Some(EdgeConstraintSpec {
-        target: ConstraintTarget::Placement(instance),
-        edge: edge.name.clone(),
-        anchor: EdgeAnchor::Start,
-        along: mm(along),
-        offset: mm(offset),
-        align: ConstraintAlign::Origin,
-        follow_edge: false,
-        rotation_deg: 0.0,
+) -> Option<PartDimensionSpec> {
+    let (_, offset) = along_offset(edge, position)?;
+    let curve = board
+        .edges
+        .iter()
+        .find(|e| e.name == edge.name)?
+        .curve
+        .clone();
+    Some(PartDimensionSpec {
+        kind: PartRelation::Dim(DimKind::Distance),
+        refs: vec![
+            BoardRef::Part(FeatureRef::Origin {
+                target: ConstraintTarget::Placement(instance),
+            }),
+            BoardRef::Board(SketchRef::Curve(curve)),
+        ],
+        value: Some(DimValue::Fixed(round_um(offset.abs()))),
+        reference: false,
     })
+}
+
+/// A length to the micrometre, as the card shows it.
+fn round_um(v: f64) -> f64 {
+    (v * 1000.0).round() / 1000.0
 }
 
 /// The board parameters expressions read (none on a rectangular board).
@@ -173,29 +183,130 @@ pub(super) fn evaluate(project: &Project, expr: &Expr) -> Option<f64> {
         })
 }
 
-fn anchor_options() -> [(EdgeAnchor, String); 3] {
-    [
-        (EdgeAnchor::Start, "Edge start"),
-        (EdgeAnchor::Middle, "Edge middle"),
-        (EdgeAnchor::End, "Edge end"),
-    ]
-    .map(|(v, l)| (v, l.to_owned()))
+/// A dimension value's length in mm, where it reads as one.
+fn length(project: &Project, value: &DimValue) -> Option<f64> {
+    match value {
+        DimValue::Fixed(v) => Some(*v),
+        DimValue::Param(p) => evaluate(project, &Expr(p.0.clone())),
+        DimValue::Expr(e) => evaluate(project, e),
+    }
 }
 
-fn align_options() -> [(ConstraintAlign, String); 3] {
-    [
-        (ConstraintAlign::Origin, "Part origin"),
-        (ConstraintAlign::NearSide, "Courtyard near side"),
-        (ConstraintAlign::Centre, "Courtyard centre"),
-    ]
-    .map(|(v, l)| (v, l.to_owned()))
+fn is_angle(d: &PartDimension) -> bool {
+    matches!(d.kind, PartRelation::Dim(DimKind::Angle))
+}
+
+/// A dimension's value as the card shows it.
+fn value_text(d: &PartDimension) -> String {
+    let unit = if is_angle(d) { "°" } else { "mm" };
+    match &d.value {
+        Some(DimValue::Fixed(v)) if unit == "°" => format!("{}°", kit::number_text(*v)),
+        Some(DimValue::Fixed(v)) => format!("{} mm", kit::number_text(*v)),
+        Some(DimValue::Param(p)) => p.0.clone(),
+        Some(DimValue::Expr(e)) => e.0.clone(),
+        None => String::new(),
+    }
+}
+
+/// The value typed into a dimension's field, or why it is not one.
+fn typed_value(
+    project: &Project,
+    d: &PartDimension,
+    text: &str,
+) -> std::result::Result<DimValue, String> {
+    let text = text.trim();
+    if is_angle(d) {
+        return kit::parse_number(text, "°")
+            .map(DimValue::Fixed)
+            .ok_or_else(|| "Type an angle, like 90°".to_owned());
+    }
+    if let Some(v) = kit::parse_number(text, "mm") {
+        return if v >= 0.0 {
+            Ok(DimValue::Fixed(v))
+        } else {
+            Err("A distance is at least 0 mm".into())
+        };
+    }
+    match expression_error(project, text) {
+        None => Ok(DimValue::Expr(Expr(text.to_owned()))),
+        Some(why) => Err(why),
+    }
+}
+
+/// What a dimension of `instance` holds, from the part's side: "Origin to
+/// the right edge", "Pad 1 to the bottom edge", "X axis to the top edge".
+fn label(
+    project: &Project,
+    board: Option<&BoardSketch>,
+    instance: Id,
+    d: &PartDimension,
+) -> String {
+    let words = |r: &BoardRef| -> String {
+        match r {
+            BoardRef::Board(SketchRef::Curve(c)) => board
+                .and_then(|b| dimensions::edge_name(b, c))
+                .map_or_else(|| "a board curve".into(), dimensions::edge_words),
+            BoardRef::Board(_) => "a board point".into(),
+            BoardRef::Housing(_) => "the housing".into(),
+            BoardRef::Part(f) if f.target() != ConstraintTarget::Placement(instance) => {
+                match f.target() {
+                    ConstraintTarget::Placement(id) => project
+                        .instance(id)
+                        .map_or_else(|| "a part".into(), |i| i.designator.clone()),
+                    ConstraintTarget::Fill(_) => "a fill".into(),
+                    ConstraintTarget::Keepout(_) => "a keepout".into(),
+                }
+            }
+            BoardRef::Part(f) => match f {
+                FeatureRef::Origin { .. } => "origin".into(),
+                FeatureRef::Axis { axis, .. } => match axis {
+                    pcbcraft_core::model::dimension::PartAxis::X => "x axis".into(),
+                    pcbcraft_core::model::dimension::PartAxis::Y => "y axis".into(),
+                },
+                FeatureRef::Pad { pad, .. } => format!("pad {}", pad.0),
+                FeatureRef::Courtyard { .. } => "courtyard".into(),
+                FeatureRef::Anchor { name, .. } => format!("‘{}’", name.0),
+                _ => "3D model".into(),
+            },
+        }
+    };
+    let text = d.refs.iter().map(words).collect::<Vec<_>>().join(" to ");
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |c| {
+        c.to_uppercase().chain(chars).collect::<String>()
+    })
 }
 
 impl PcbEditor {
-    /// BOARD EDGE, for a constrained part only: the constraint's edge,
-    /// anchor, along, offset, alignment and turning, each committed live.
-    /// "Constrain to edge" and "Free part" are the Placement section's
-    /// state row.
+    /// Why a hand move of the selected part is refused (locked, or fully
+    /// held by its dimensions) and what its dimensions leave free, solved
+    /// once per document revision.
+    pub(super) fn hold_of(
+        &mut self,
+        revision: u64,
+        project: &Project,
+        instance: Id,
+    ) -> (Option<String>, Option<PartFreedom>) {
+        let key = (revision, instance);
+        if let Some((k, (why, free))) = &self.edge.hold
+            && *k == key
+        {
+            return (why.clone(), *free);
+        }
+        let why = pcbcraft_core::layout::move_refusal(project, instance, self.shape.evaluator)
+            .map(|e| refusal::shown_error(&e));
+        let free = self.shape.evaluator.and_then(|ev| {
+            dimensions::freedom(project, ConstraintTarget::Placement(instance), ev)
+                .and_then(|r| r.ok())
+                .map(|(f, _)| f)
+        });
+        self.edge.hold = Some((key, (why.clone(), free)));
+        (why, free)
+    }
+
+    /// DIMENSIONS, for a dimensioned part only: each dimension's value,
+    /// committed live, and its Delete. "Dimension to edge" and "Free part"
+    /// are the Placement section's state row.
     pub(super) fn edge_section(
         &mut self,
         ui: &mut Ui,
@@ -203,196 +314,204 @@ impl PcbEditor {
         project: &Project,
         placement: &Placement,
     ) -> Option<Operation> {
-        if let Some(field) = self.edge.sent
-            && let Some(text) = refusal::claim(ui.ctx(), Origin::Field(field_id(field)))
+        if let Some(id) = self.edge.sent
+            && let Some(text) = refusal::claim(ui.ctx(), Origin::Field(field_id(id)))
         {
-            self.edge.error = Some((field, text));
+            self.edge.error = Some((id, text));
             self.edge.sent = None;
         }
-        let board = project.board();
-        // A free part's "Constrain to edge" is the Placement section's
-        // state row; this section edits a constraint that exists.
-        let c = constraint_of(project, placement.instance).cloned()?;
+        let dims: Vec<PartDimension> = dimensions_of(project, placement.instance)
+            .into_iter()
+            .cloned()
+            .collect();
+        if dims.is_empty() {
+            return None;
+        }
+        let key = (revision, placement.instance);
+        if self.edge.key != Some(key) {
+            if self.edge.key.map(|k| k.1) != Some(placement.instance) {
+                self.edge.show_all = false;
+            }
+            self.edge.key = Some(key);
+            self.edge.values = dims.iter().map(|d| (d.id, value_text(d))).collect();
+            if self.edge.sent.is_none() {
+                self.edge.error = None;
+            }
+        }
+        let board = self
+            .shape
+            .evaluator
+            .and_then(|ev: &dyn BoardShapeEvaluator| dimensions::board_sketch(project, ev).ok());
         let mut operation = None;
         let mut sent = None;
-        kit::section(ui, "pcb-edge", "Board edge", true, None, |ui| {
-            let key = (revision, c.id);
-            if self.edge.key != Some(key) {
-                self.edge.key = Some(key);
-                self.edge.along = c.along.0.clone();
-                self.edge.offset = c.offset.0.clone();
-                if self.edge.sent.is_none() {
-                    self.edge.error = None;
-                }
-            }
-            let edit = |f: &dyn Fn(&mut EdgeConstraint)| {
-                let mut next = c.clone();
-                f(&mut next);
-                (next != c).then_some(Operation::Board(BoardCommand::EditConstraint {
-                    constraint: next,
-                }))
-            };
-            // The edge: switching keeps the part where it is.
-            let mut edge = c.edge.clone();
-            let options: Vec<(EdgeName, String)> = board
-                .edges
-                .iter()
-                .map(|e| (e.name.clone(), e.name.0.clone()))
-                .chain(
-                    (!board.edges.iter().any(|e| e.name == c.edge))
-                        .then(|| (c.edge.clone(), format!("{} (missing)", c.edge.0))),
-                )
-                .collect();
-            if kit::choice_row(ui, "Edge", &mut edge, &options)
-                && let Some(e) = board.edge(&edge)
-                && let Some(spec) = spec_at(placement.instance, e, placement.position)
-            {
-                operation = edit(&|n| {
-                    n.edge = spec.edge.clone();
-                    n.anchor = EdgeAnchor::Start;
-                    n.along = spec.along.clone();
-                    n.offset = spec.offset.clone();
-                });
-            }
-            let mut anchor = match c.anchor {
-                EdgeAnchor::Fraction(_) => EdgeAnchor::Start,
-                a => a,
-            };
-            if kit::choice_row(ui, "Measured from", &mut anchor, &anchor_options()) {
-                // A plain distance is kept in place; an expression is kept.
-                let moved = board.edge(&c.edge).and_then(|e| {
-                    kit::parse_number(&c.along.0, "mm")
-                        .map(|along| mm(along + anchor_at(e, c.anchor) - anchor_at(e, anchor)))
-                });
-                operation = edit(&|n| {
-                    n.anchor = anchor;
-                    if let Some(along) = &moved {
-                        n.along = along.clone();
-                    }
-                });
-            }
-            for (field, label) in [("along", "Along"), ("offset", "Offset")] {
-                let text = if field == "along" {
-                    &mut self.edge.along
-                } else {
-                    &mut self.edge.offset
-                };
-                let stored = if field == "along" {
-                    &c.along
-                } else {
-                    &c.offset
-                };
-                let invalid = self.edge.error.as_ref().is_some_and(|(f, _)| *f == field);
-                let response = kit::checked_text_row(ui, label, text, "distance", invalid);
-                if response.lost_focus() && text.trim() != stored.0 {
-                    match expression_error(project, text) {
-                        None => {
-                            let value = Expr(text.trim().to_owned());
-                            operation = edit(&|n| {
-                                if field == "along" {
-                                    n.along = value.clone();
-                                } else {
-                                    n.offset = value.clone();
+        let max = if self.edge.show_all {
+            dims.len()
+        } else {
+            kit::LIST_MAX_ROWS
+        };
+        kit::section(
+            ui,
+            "pcb-dimensions",
+            "Dimensions",
+            true,
+            Some(dims.len()),
+            |ui| {
+                for d in dims.iter().take(max) {
+                    ui.push_id(d.id, |ui| {
+                        let title = label(project, board.as_deref(), placement.instance, d);
+                        if d.reference || d.value.is_none() {
+                            kit::value_row(
+                                ui,
+                                &title,
+                                if d.reference { "Reference" } else { "Held" },
+                            );
+                        } else if let Some((_, text)) =
+                            self.edge.values.iter_mut().find(|(id, _)| *id == d.id)
+                        {
+                            let invalid =
+                                self.edge.error.as_ref().is_some_and(|(id, _)| *id == d.id);
+                            let response =
+                                kit::checked_text_row(ui, &title, text, "value", invalid);
+                            if response.lost_focus() && text.trim() != value_text(d) {
+                                match typed_value(project, d, text) {
+                                    Ok(value) => {
+                                        let mut next = d.clone();
+                                        next.value = Some(value);
+                                        operation =
+                                            Some(Operation::Dimension(DimensionCommand::Edit {
+                                                dimension: next,
+                                            }));
+                                        self.edge.error = None;
+                                        sent = Some(d.id);
+                                    }
+                                    Err(why) => self.edge.error = Some((d.id, why)),
                                 }
-                            });
-                            self.edge.error = None;
-                            sent = Some(field);
+                            }
+                            if let Some((id, why)) = &self.edge.error
+                                && *id == d.id
+                            {
+                                kit::field_error(ui, &response, why, true);
+                            } else if let Some(DimValue::Expr(_) | DimValue::Param(_)) = &d.value
+                                && let Some(v) = d.value.as_ref().and_then(|v| length(project, v))
+                            {
+                                kit::note(ui, &format!("= {} mm", kit::number_text(v)));
+                            }
                         }
-                        Some(why) => self.edge.error = Some((field, why)),
-                    }
+                        if kit::summary_row(ui, "", Some("Delete")) {
+                            operation =
+                                Some(Operation::Dimension(DimensionCommand::Delete { id: d.id }));
+                        }
+                    });
                 }
-                if let Some((f, why)) = &self.edge.error
-                    && *f == field
+                if dims.len() > max
+                    && kit::summary_row(
+                        ui,
+                        &format!("{max} of {}", dims.len()),
+                        Some("Show all \u{203a}"),
+                    )
                 {
-                    kit::field_error(ui, &response, why, true);
-                } else if let Some(v) = evaluate(project, stored)
-                    && kit::parse_number(&stored.0, "mm").is_none()
-                {
-                    kit::note(ui, &format!("= {} mm", kit::number_text(v)));
+                    self.edge.show_all = true;
                 }
-            }
-            let mut align = c.align;
-            if kit::choice_row(ui, "Aligns", &mut align, &align_options()) {
-                operation = edit(&|n| n.align = align);
-            }
-            let mut follow = c.follow_edge;
-            if kit::check_row(ui, "Turn with edge", &mut follow) {
-                operation = edit(&|n| n.follow_edge = follow);
-            }
-            if c.follow_edge {
-                let mut rotation = c.rotation_deg;
-                if kit::number_row(ui, "Extra turn", &mut rotation, "°", -360.0..=360.0) {
-                    operation = edit(&|n| n.rotation_deg = rotation);
-                }
-            }
-            kit::note(ui, "Follows the edge when the board changes");
-        });
-        if let Some(field) = sent {
-            refusal::mark(ui.ctx(), Origin::Field(field_id(field)));
-            self.edge.sent = Some(field);
+                kit::note(ui, "Follows the board when it changes");
+            },
+        );
+        if let Some(id) = sent {
+            refusal::mark(ui.ctx(), Origin::Field(field_id(id)));
+            self.edge.sent = Some(id);
         }
         operation
     }
 
-    /// The selected part's edge constraint (every part's in the Board
-    /// shape mode) as two dimensions: along the edge from its anchor, and
-    /// off the edge to the part.
-    pub(super) fn paint_edge_constraints(
+    /// The selected part's distances to named board edges (every part's in
+    /// the Board shape mode), as dimension lines from the edge to the
+    /// feature, labelled with their values.
+    pub(super) fn paint_part_dimensions(
         &self,
         painter: &egui::Painter,
         view: &BoardView,
         project: &Project,
     ) {
+        if project.part_dimensions.is_empty() {
+            return;
+        }
+        let Some(evaluator) = self.shape.evaluator else {
+            return;
+        };
+        let Ok(board) = dimensions::board_sketch(project, evaluator) else {
+            return;
+        };
+        let solved = project.board();
         let t = Tokens::get();
-        let board = project.board();
         let font = type_face::medium(t.font_small);
-        for c in &project.edge_constraints {
-            let ConstraintTarget::Placement(instance) = c.target else {
+        let color = t.sketch_accent;
+        let stroke = Stroke::new(1.0, color);
+        for d in project.part_dimensions.iter() {
+            if !matches!(d.kind, PartRelation::Dim(DimKind::Distance)) {
+                continue;
+            }
+            let (Some(BoardRef::Part(f)), Some(edge)) = (
+                d.refs.iter().find(|r| matches!(r, BoardRef::Part(_))),
+                d.refs.iter().find_map(|r| match r {
+                    BoardRef::Board(SketchRef::Curve(c)) => dimensions::edge_name(&board, c),
+                    _ => None,
+                }),
+            ) else {
+                continue;
+            };
+            let ConstraintTarget::Placement(instance) = f.target() else {
                 continue;
             };
             if !(self.shape.active || self.instance == Some(instance)) {
                 continue;
             }
-            let Some(edge) = board.edge(&c.edge) else {
+            let (Some(placement), Some(edge)) = (
+                project.placement_of(instance),
+                solved
+                    .edges
+                    .iter()
+                    .find(|e| e.name.0 == edge && e.bulge == 0.0),
+            ) else {
                 continue;
             };
-            let (Some(along), Some(offset)) =
-                (evaluate(project, &c.along), evaluate(project, &c.offset))
-            else {
+            let Some(at) = feature_point(project, placement, f) else {
                 continue;
             };
-            let Ok(pose) = edge_pose(edge, c.anchor, along, offset) else {
+            let Some((along, offset)) = along_offset(edge, at) else {
                 continue;
             };
-            let Ok(foot) = edge_pose(edge, c.anchor, along, 0.0) else {
-                continue;
-            };
-            let Ok(start) = edge_pose(edge, c.anchor, 0.0, 0.0) else {
-                continue;
-            };
-            let color = t.sketch_accent;
-            let stroke = Stroke::new(1.0, color);
-            let (s, f, p) = (
-                view.screen(start.position),
-                view.screen(foot.position),
-                view.screen(pose.position),
-            );
-            dimension(painter, s, f, stroke);
-            dimension(painter, f, p, stroke);
-            painter.circle_stroke(s, 3.0, stroke);
-            let label = |a: Pos2, b: Pos2, text: &str| {
-                if (b - a).length() > 12.0 {
-                    let mid = a + (b - a) * 0.5;
-                    let galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
-                    let r = egui::Rect::from_center_size(mid, galley.size() + vec2(6.0, 2.0));
-                    painter.rect_filled(r, 2.0, t.panel);
-                    painter.text(mid, Align2::CENTER_CENTER, text, font.clone(), color);
-                }
-            };
-            label(s, f, &c.along.0);
-            label(f, p, &c.offset.0);
+            let len = edge_length(edge).max(1e-9);
+            let u = [(edge.b[0] - edge.a[0]) / len, (edge.b[1] - edge.a[1]) / len];
+            let foot = [edge.a[0] + u[0] * along, edge.a[1] + u[1] * along];
+            let (f_screen, p_screen) = (view.screen(foot), view.screen(at));
+            dimension(painter, f_screen, p_screen, stroke);
+            if (p_screen - f_screen).length() > 12.0 {
+                let mid = f_screen + (p_screen - f_screen) * 0.5;
+                let text = format!("{} mm", kit::number_text(round_um(offset.abs())));
+                let galley = painter.layout_no_wrap(text.clone(), font.clone(), color);
+                let r = egui::Rect::from_center_size(mid, galley.size() + vec2(6.0, 2.0));
+                painter.rect_filled(r, 2.0, t.panel);
+                painter.text(mid, Align2::CENTER_CENTER, text, font.clone(), color);
+            }
         }
     }
+}
+
+/// A part feature's point on the board (a line or arc's start, a circle's
+/// centre), through the placement.
+fn feature_point(project: &Project, placement: &Placement, f: &FeatureRef) -> Option<Point> {
+    let at = match features::geometry(project, f).ok()? {
+        FeatureGeometry::Point { at } => at,
+        FeatureGeometry::Line { a, .. } | FeatureGeometry::Arc { a, .. } => a,
+        FeatureGeometry::Circle { center, .. } => center,
+    };
+    Some(
+        Transform2 {
+            translate: placement.position,
+            rotation_deg: placement.rotation_deg,
+            mirror: placement.layer == Layer::Bottom,
+        }
+        .apply(at),
+    )
 }
 
 /// A dimension line from `a` to `b` with arrowheads at both ends.

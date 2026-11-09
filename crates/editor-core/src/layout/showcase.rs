@@ -14,8 +14,8 @@
 //! shows of design rules and board shape on top: a Power net class over
 //! GND and VCC, a top GND pour, and, with a board sketch evaluator, a
 //! sketched outline with rounded corners (`corner_r`), a round cutout, a
-//! milled slot and the header J1 held to the left edge by board
-//! parameters ([`board_edits`], [`j1_constraint`]).
+//! milled slot and the header J1 held to the left and bottom edges by part
+//! dimensions over board parameters ([`board_edits`], [`j1_dimensions`]).
 use super::fill::FillCommand;
 use super::outline::BoardEdit;
 use super::{LayerChangeRequest, LayoutCommand, RouteRequest, ViaRequest};
@@ -23,12 +23,11 @@ use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::ids::{Endpoint, Id, TerminalId};
 use crate::library::footprint_source::{
-    DimValue, Expr, FootprintParam, ParamName, ParamUnit, SketchEdit,
+    DimKind, DimValue, Expr, FootprintParam, ParamName, ParamUnit, SketchEdit, SketchRef,
 };
 use crate::library::{Outline, Segment};
-use crate::model::board::{
-    ConstraintAlign, ConstraintTarget, EdgeAnchor, EdgeConstraintSpec, EdgeName,
-};
+use crate::model::board::{BoardShape, ConstraintTarget};
+use crate::model::dimension::{BoardRef, FeatureRef, PartDimensionSpec, PartRelation};
 use crate::model::fill::{FillSettings, FillSpec, PadConnections};
 use crate::model::{CopperLayer, Layer, Project, Stackup};
 use crate::rules::{NetClassSpec, PadConnection};
@@ -493,24 +492,41 @@ pub fn board_edits() -> Vec<Vec<BoardEdit>> {
     ]
 }
 
-/// The header J1 held to the board's left edge where the showcase places
-/// it: [`PLACEMENTS`]' (6, 15), as half the board height less 1 mm down
-/// the edge from its top end and 6 mm in, so it stays centred when the
-/// `height` parameter changes.
-pub fn j1_constraint(project: &Project) -> Result<EdgeConstraintSpec> {
+/// The header J1 held where the showcase places it, [`PLACEMENTS`]' (6, 15):
+/// 6 mm from the left edge and half the board height plus 1 mm above the
+/// bottom edge, so it stays centred on the left edge when the `height`
+/// parameter changes. Its rotation is not dimensioned, so it keeps 90°.
+pub fn j1_dimensions(project: &Project) -> Result<Vec<PartDimensionSpec>> {
     let j1 = project
         .instance_by_designator("J1")
         .ok_or_else(|| Error::NotFound("showcase instance J1".into()))?;
-    Ok(EdgeConstraintSpec {
+    let BoardShape::Sketch(sketch) = &project.board_shape else {
+        return Err(Error::Invalid("showcase board sketch".into()));
+    };
+    let edge = |name: &str| {
+        sketch
+            .edges
+            .iter()
+            .find(|e| e.name.0 == name)
+            .map(|e| BoardRef::Board(SketchRef::Curve(e.curve.clone())))
+            .ok_or_else(|| Error::NotFound(format!("showcase board edge {name}")))
+    };
+    let origin = BoardRef::Part(FeatureRef::Origin {
         target: ConstraintTarget::Placement(j1.id),
-        edge: EdgeName("left".into()),
-        anchor: EdgeAnchor::Start,
-        along: Expr("height / 2 - 1 mm".into()),
-        offset: Expr("6 mm".into()),
-        align: ConstraintAlign::Origin,
-        follow_edge: false,
-        rotation_deg: 0.0,
-    })
+    });
+    let distance = |to: BoardRef, value: DimValue| PartDimensionSpec {
+        kind: PartRelation::Dim(DimKind::Distance),
+        refs: vec![origin.clone(), to],
+        value: Some(value),
+        reference: false,
+    };
+    Ok(vec![
+        distance(edge("left")?, DimValue::Fixed(6.0)),
+        distance(
+            edge("bottom")?,
+            DimValue::Expr(Expr("height / 2 + 1 mm".into())),
+        ),
+    ])
 }
 
 /// A showcase terminal, `designator.terminal`, as an endpoint of `project`.

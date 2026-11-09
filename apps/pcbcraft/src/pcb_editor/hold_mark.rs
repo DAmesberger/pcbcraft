@@ -1,22 +1,24 @@
 //! What holds a placed part in place, and the small mark that says so on
 //! the Layout canvas without selecting it.
 //!
-//! A part is free, held by an edge constraint (its position follows the
-//! board's dimensions), or locked by hand. The two fixed states use
+//! A part is free, held by dimensions (its position follows the board's
+//! dimensions), or locked by hand. The two fixed states use
 //! Solidcraft's constraint-glyph convention (`sketch_tools.rs`: a
 //! `GLYPH`-sized box in `glyph_bg`, its icon, and a rim): a locked part
 //! shows the Fix glyph (`c_fix`, Solidcraft's mark of fixed geometry) with
-//! a `sketch_locked` rim; a constrained part shows the Dimension glyph with
-//! a `dimension` rim, the colour its edge dimensions are drawn in. A free
+//! a `sketch_locked` rim; a dimensioned part shows the Dimension glyph with
+//! a `dimension` rim, the colour its dimensions are drawn in. A free
 //! part shows nothing, so a dense board gains marks only on the few parts
 //! that are fixed. The mark keeps its screen size at every zoom, sits just
 //! outside the top-right corner of the part's envelope, clear of its pads,
 //! and shrinks to a dot of the same colour on the corner when the part is
 //! smaller on screen than the glyph.
 //! The Placement card's state row draws the same glyph beside its words.
-use super::edge_card::{constraint_of, evaluate};
+use super::edge_card::dimensions_of;
 use super::{BoardView, body_polygon};
-use pcbcraft_core::layout::outline::held_at;
+use pcbcraft_core::layout::dimensions::{board_sketch, held_at};
+use pcbcraft_core::layout::outline::BoardShapeEvaluator;
+use pcbcraft_core::model::board::ConstraintTarget;
 use pcbcraft_core::{Placement, Project};
 use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::icons;
@@ -34,11 +36,11 @@ pub(super) enum Hold {
 }
 
 impl Hold {
-    /// The part's hold: locked wins over a constraint (it refuses first).
+    /// The part's hold: locked wins over dimensions (it refuses first).
     pub(super) fn of(project: &Project, placement: &Placement) -> Option<Self> {
         if placement.locked {
             Some(Self::Locked)
-        } else if constraint_of(project, placement.instance).is_some() {
+        } else if !dimensions_of(project, placement.instance).is_empty() {
             Some(Self::Constrained)
         } else {
             None
@@ -122,14 +124,26 @@ pub(super) fn paint_marks(painter: &egui::Painter, view: &BoardView, project: &P
 /// The Placement card's plain statement of what holds the part, in the
 /// engine's words ("Held 2 mm from the right edge", "Locked in place").
 /// `None` for a free part.
-pub(super) fn state_words(project: &Project, placement: &Placement) -> Option<String> {
+pub(super) fn state_words(
+    project: &Project,
+    placement: &Placement,
+    evaluator: Option<&dyn BoardShapeEvaluator>,
+) -> Option<String> {
     let hold = Hold::of(project, placement)?;
-    let held = constraint_of(project, placement.instance)
-        .map(|c| held_at(&c.edge, evaluate(project, &c.offset)));
+    let held = evaluator
+        .and_then(|ev| board_sketch(project, ev).ok())
+        .and_then(|board| {
+            held_at(
+                project,
+                &board,
+                ConstraintTarget::Placement(placement.instance),
+                &[],
+            )
+        });
     Some(match (hold, held) {
         (Hold::Locked, Some(at)) => format!("Locked · held {at}"),
         (Hold::Locked, None) => "Locked in place".to_owned(),
         (Hold::Constrained, Some(at)) => format!("Held {at}"),
-        (Hold::Constrained, None) => "Held to a board edge".to_owned(),
+        (Hold::Constrained, None) => "Held by dimensions".to_owned(),
     })
 }

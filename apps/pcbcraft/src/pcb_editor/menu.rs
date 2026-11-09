@@ -3,11 +3,12 @@
 //! what a click there would select first, unless it is already selected.
 //! Every row sends the operation its card button or key sends, or runs a
 //! registry command.
-use super::edge_card::{constraint_of, nearest_edge, spec_at};
+use super::edge_card::{dimensions_of, nearest_edge, spec_at};
 use super::{PcbEditor, Tool, opposite};
 use crate::context_menu::{Entry, Rows};
+use pcbcraft_core::layout::LayoutCommand;
+use pcbcraft_core::layout::dimensions::{self, DimensionCommand};
 use pcbcraft_core::layout::fill::{FillCommand, RefillTarget};
-use pcbcraft_core::layout::{LayoutCommand, outline::BoardCommand};
 use pcbcraft_core::updates::{Change, InstanceChange};
 use pcbcraft_core::{Engine, Id, Operation};
 
@@ -39,9 +40,9 @@ pub(super) enum Act {
     Rotate(Id),
     Flip(Id),
     Lock(Id, bool),
-    /// Hold the part to its nearest named edge.
+    /// Dimension the part to its nearest named edge, in place.
     Constrain(Id),
-    /// Free a part held to an edge (the constraint).
+    /// Free a part one dimension holds (delete it).
     Free(Id),
     Remove(Id),
     DeleteTrack(Id),
@@ -125,13 +126,16 @@ impl PcbEditor {
                     return Vec::new();
                 };
                 let free = !placement.locked && !reviewing;
-                let edge = match constraint_of(project, instance) {
-                    Some(_) => Entry::act("Free part", "close", Act::Free(instance), !reviewing),
-                    None => Entry::act(
-                        "Constrain to edge",
+                let held = dimensions_of(project, instance).len();
+                let edge = match held {
+                    1 => Entry::act("Free part", "close", Act::Free(instance), !reviewing),
+                    _ => Entry::act(
+                        "Dimension to edge",
                         "line",
                         Act::Constrain(instance),
-                        free && nearest_edge(&project.board(), placement.position).is_some(),
+                        held == 0
+                            && free
+                            && nearest_edge(&project.board(), placement.position).is_some(),
                     ),
                 };
                 vec![
@@ -260,13 +264,16 @@ impl PcbEditor {
                 let p = placement(instance)?;
                 let board = project.board();
                 let edge = nearest_edge(&board, p.position)?;
-                let constraint = spec_at(instance, edge, p.position)?;
-                Some(Operation::Board(BoardCommand::Constrain { constraint }))
+                let sketch = dimensions::board_sketch(project, self.shape.evaluator?).ok()?;
+                let dimension = spec_at(&sketch, instance, edge, p.position)?;
+                Some(Operation::Dimension(DimensionCommand::Add { dimension }))
             }
-            Act::Free(instance) => {
-                let id = constraint_of(project, instance)?.id;
-                Some(Operation::Board(BoardCommand::DeleteConstraint { id }))
-            }
+            Act::Free(instance) => match dimensions_of(project, instance).as_slice() {
+                [one] => Some(Operation::Dimension(DimensionCommand::Delete {
+                    id: one.id,
+                })),
+                _ => None,
+            },
             Act::Remove(instance) => {
                 self.update.begin(
                     engine,

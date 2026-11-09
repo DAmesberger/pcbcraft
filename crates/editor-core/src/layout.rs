@@ -579,9 +579,10 @@ pub(crate) fn locked(project: &Project, instance: Id, verb: &str) -> Error {
 }
 
 /// Why a hand move of the placed part `instance` is refused, in the words
-/// the engine refuses `layout.move` with: it is locked, or an edge
-/// constraint holds it (see [`outline::held`]). `None` for a free part, so
-/// a canvas can refuse a drag before it starts and say why.
+/// the engine refuses `layout.move` with: it is locked, or its dimensions
+/// hold its position (see [`dimensions::held`]). `None` for a part that can
+/// move (a dimensioned part may only slide), so a canvas can refuse a drag
+/// before it starts and say why.
 pub fn move_refusal(
     project: &Project,
     instance: Id,
@@ -591,7 +592,7 @@ pub fn move_refusal(
     if placement.locked {
         return Some(locked(project, instance, "move"));
     }
-    outline::held(project, instance, evaluator)
+    dimensions::held(project, instance, evaluator)
 }
 
 /// Apply to a candidate the caller discards on failure. Returns the via a

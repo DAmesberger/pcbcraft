@@ -1,17 +1,14 @@
 //! The board shape on Solidcraft's sketch solver: a rectangle sketch driven
-//! by its parameters, fillets, cutouts, slots and mounting holes, parts
-//! placed relative to named edges that move with the parameters, refused
+//! by its parameters, fillets, cutouts, slots and mounting holes, refused
 //! (over-constrained, open, unevaluable) edits, persistence and the 3D
-//! laminate.
+//! laminate. Parts dimensioned to the board are tested in `parts`.
 #![allow(clippy::unwrap_used)]
 
 use super::*;
 use pcbcraft_core::layout::LayoutCommand;
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit, CONSTRAINT_UNRESOLVED, edge_pose};
+use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
 use pcbcraft_core::library::footprint_source::{DimKind, SketchRef};
-use pcbcraft_core::model::board::{
-    BoardShape, ConstraintAlign, ConstraintTarget, CutoutKind, EdgeAnchor, EdgeConstraintSpec,
-};
+use pcbcraft_core::model::board::{BoardShape, CutoutKind};
 use pcbcraft_core::{Engine, Evaluators, Layer, Operation, Outcome, Query, QueryResult, format};
 
 pub(super) type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -96,7 +93,7 @@ fn the_rectangle_sketch_solves_to_the_plain_rectangle() -> Fallible<()> {
     assert_eq!(board.solved.outer.segments.len(), 4);
     assert_eq!(board.solved.bounds(), plain.bounds());
     // Re-evaluating the stored result changes nothing.
-    let again = EV.evaluate(&board, &[])?;
+    let again = EV.evaluate(&board)?;
     assert_eq!(again.solved, board.solved);
     assert_eq!(again.solve, board.solve);
     Ok(())
@@ -407,181 +404,6 @@ fn an_unsolvable_size_names_its_dimension() -> Fallible<()> {
     Ok(())
 }
 
-#[test]
-fn parts_follow_named_edges_when_board_parameters_change() -> Fallible<()> {
-    let mut engine = sketched()?;
-    let part = engine
-        .project()
-        .placements
-        .first()
-        .ok_or("no part")?
-        .instance;
-    let Outcome::EdgeConstraintAdded { constraint } = apply(
-        &mut engine,
-        Operation::Board(BoardCommand::Constrain {
-            constraint: EdgeConstraintSpec {
-                target: ConstraintTarget::Placement(part),
-                edge: EdgeName("right".into()),
-                anchor: EdgeAnchor::Start,
-                along: Expr("height / 2".into()),
-                offset: Expr("4 mm".into()),
-                align: ConstraintAlign::Origin,
-                follow_edge: true,
-                rotation_deg: 0.0,
-            },
-        }),
-    )?
-    else {
-        return Err("no constraint".into());
-    };
-    let at = |engine: &Engine| {
-        engine
-            .project()
-            .placements
-            .iter()
-            .find(|p| p.instance == part)
-            .map(|p| (p.position, p.rotation_deg))
-    };
-    let (p, r) = at(&engine).ok_or("placement")?;
-    assert!(close(p, [56.0, 20.0]), "{p:?}");
-    assert!((r - 90.0).abs() < 1e-6);
-    edit(
-        &mut engine,
-        vec![set("width", "80 mm"), set("height", "50 mm")],
-    )?;
-    let (p, _) = at(&engine).ok_or("placement")?;
-    assert!(close(p, [76.0, 25.0]), "{p:?}");
-    // The resolved pose is the edge pose of the solved edge.
-    let board = engine.project().board().into_owned();
-    let right = board.edge(&EdgeName("right".into())).ok_or("right")?;
-    let pose = edge_pose(right, EdgeAnchor::Start, 25.0, 4.0)?;
-    assert!(close(pose.position, p));
-    // An unknown parameter in a constraint is refused.
-    let mut broken = engine
-        .project()
-        .edge_constraints
-        .iter()
-        .find(|c| c.id == constraint)
-        .cloned()
-        .ok_or("constraint")?;
-    broken.along = Expr("no_such_parameter".into());
-    let rev = engine.revision();
-    assert!(
-        apply(
-            &mut engine,
-            Operation::Board(BoardCommand::EditConstraint { constraint: broken })
-        )
-        .is_err()
-    );
-    // Moving the part by hand is refused; the move leaves it in place.
-    assert!(
-        apply(
-            &mut engine,
-            Operation::Layout(LayoutCommand::Move {
-                instance: part,
-                position: [10.0, 10.0],
-                rotation_deg: 90.0,
-                layer: Layer::Top,
-            })
-        )
-        .is_err()
-    );
-    assert_eq!(engine.revision(), rev);
-    // Renaming the edge away leaves an unresolved-constraint finding.
-    edit(
-        &mut engine,
-        vec![BoardEdit::UnnameEdge {
-            name: EdgeName("right".into()),
-        }],
-    )?;
-    let findings = pcbcraft_core::layout::outline::checks(engine.project());
-    assert!(findings.iter().any(|f| f.code == CONSTRAINT_UNRESOLVED));
-    Ok(())
-}
-
-#[test]
-fn arc_board_edges_place_parts_on_a_round_board() -> Fallible<()> {
-    // A round board: one circle as the outline, a named arc edge on a
-    // half-circle cutout-free shape drawn from two arcs.
-    let mut engine = sketched()?;
-    let s = sketch(&engine)?;
-    let drawn = EV.apply_sketch(
-        &s.sketch,
-        &SketchEdit::AddArc {
-            center: [30.0, 20.0],
-            start: [50.0, 20.0],
-            end: [10.0, 20.0],
-            construction: false,
-        },
-    )?;
-    let upper = created_curves(&drawn);
-    let old: Vec<SketchRef> = s
-        .solved
-        .outer_curves
-        .iter()
-        .map(|c| SketchRef::Curve(c.clone()))
-        .collect();
-    // Arcs drawn separately meet only by position; the loop joins them.
-    let sketch_edit = |edit| BoardEdit::Sketch { edit };
-    edit(
-        &mut engine,
-        vec![
-            sketch_edit(SketchEdit::AddArc {
-                center: [30.0, 20.0],
-                start: [50.0, 20.0],
-                end: [10.0, 20.0],
-                construction: false,
-            }),
-            sketch_edit(SketchEdit::AddArc {
-                center: [30.0, 20.0],
-                start: [10.0, 20.0],
-                end: [50.0, 20.0],
-                construction: false,
-            }),
-            BoardEdit::NameEdge {
-                name: EdgeName("rim".into()),
-                curve: upper.first().cloned().ok_or("arc")?,
-            },
-            sketch_edit(SketchEdit::Delete { ids: old }),
-        ],
-    )?;
-    assert_eq!(engine.project().board_size, [50.0, 40.0]);
-    let board = engine.project().board().into_owned();
-    let rim = board.edge(&EdgeName("rim".into())).ok_or("rim")?;
-    assert!(rim.bulge > 0.0);
-    let part = engine
-        .project()
-        .placements
-        .first()
-        .ok_or("no part")?
-        .instance;
-    apply(
-        &mut engine,
-        Operation::Board(BoardCommand::Constrain {
-            constraint: EdgeConstraintSpec {
-                target: ConstraintTarget::Placement(part),
-                edge: EdgeName("rim".into()),
-                anchor: EdgeAnchor::Middle,
-                along: Expr("0".into()),
-                offset: Expr("3 mm".into()),
-                align: ConstraintAlign::Origin,
-                follow_edge: true,
-                rotation_deg: 0.0,
-            },
-        }),
-    )?;
-    let p = engine
-        .project()
-        .placements
-        .iter()
-        .find(|p| p.instance == part)
-        .ok_or("placement")?;
-    // The top of the circle, 3 mm in, facing the tangent there (180°).
-    assert!(close(p.position, [30.0, 37.0]), "{:?}", p.position);
-    assert!((p.rotation_deg - 180.0).abs() < 1e-6);
-    Ok(())
-}
-
 /// The display-only layers follow a sketched board: on a board with
 /// rounded corners and a round cutout, the mask films lie inside the
 /// outline and leave the cutout open, and the edge bands also line the
@@ -803,7 +625,7 @@ fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible
         .instance_by_designator("J1")
         .map(|i| i.id)
         .ok_or("J1")?;
-    assert_eq!(project.edge_constraints.len(), 1);
+    assert_eq!(project.part_dimensions.len(), 2);
     let at = |engine: &Engine| {
         engine
             .project()

@@ -3,9 +3,7 @@
 //! operations are atomic and undoable, the new fields stay out of existing
 //! files, and their schemas are served. Each slice tests its behaviour.
 use crate::layout::fill::FillCommand;
-use crate::layout::outline::BoardCommand;
 use crate::library::{Outline, Segment};
-use crate::model::board::{EdgeConstraintSpec, EdgeName};
 use crate::model::fill::FillSpec;
 use crate::rules::{
     CopperObject, DesignRules, NetClassSpec, RuleKey, RuleValue, RulesCommand, builtin,
@@ -70,7 +68,7 @@ fn existing_documents_do_not_mention_the_board_fields() -> Fallible<()> {
     for key in [
         "\"rules\"",
         "\"board_shape\"",
-        "\"edge_constraints\"",
+        "\"part_dimensions\"",
         "\"keepouts\"",
     ] {
         assert!(!text.contains(key), "{key}");
@@ -166,24 +164,6 @@ fn board_operations_are_atomic_undoable_and_persist() -> Fallible<()> {
     else {
         return Err("no fill".into());
     };
-    let Outcome::EdgeConstraintAdded { .. } = engine.apply(
-        engine.revision(),
-        Operation::Board(BoardCommand::Constrain {
-            constraint: EdgeConstraintSpec {
-                target: crate::model::board::ConstraintTarget::Fill(fill),
-                edge: EdgeName("left".into()),
-                anchor: Default::default(),
-                along: crate::library::footprint_source::Expr("2 mm".into()),
-                offset: crate::library::footprint_source::Expr("1 mm".into()),
-                align: Default::default(),
-                follow_edge: false,
-                rotation_deg: 0.0,
-            },
-        }),
-    )?
-    else {
-        return Err("no constraint".into());
-    };
     // Refilling computes and stores the copper as one undo step (the
     // contract refused it before the fill computation existed).
     let rev = engine.revision();
@@ -230,8 +210,8 @@ fn board_operations_are_atomic_undoable_and_persist() -> Fallible<()> {
 
     let reopened = format::decode(&format::encode(&engine.to_file())?)?;
     assert_eq!(reopened, engine.to_file());
-    // Profile, class, assignment, fill, constraint and the refill.
-    for _ in 0..6 {
+    // Profile, class, assignment, fill and the refill.
+    for _ in 0..5 {
         engine.undo()?;
     }
     assert_eq!(engine.to_file(), before);
@@ -250,7 +230,7 @@ fn board_schemas_are_served() {
         "fill.store_all",
         "keepout.add",
         "board.edit",
-        "board.constrain",
+        "layout.dimension_add",
         "rules.preview_profile",
         "board.shape",
     ] {

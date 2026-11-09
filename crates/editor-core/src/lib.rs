@@ -761,12 +761,13 @@ impl Engine {
                 evaluators,
             )?;
         }
-        let constraint = layout::showcase::j1_constraint(self.project())?;
-        self.apply_hosted(
-            self.revision,
-            Operation::Board(layout::outline::BoardCommand::Constrain { constraint }),
-            evaluators,
-        )?;
+        for dimension in layout::showcase::j1_dimensions(self.project())? {
+            self.apply_hosted(
+                self.revision,
+                Operation::Dimension(layout::dimensions::DimensionCommand::Add { dimension }),
+                evaluators,
+            )?;
+        }
         Ok(())
     }
 
@@ -1172,9 +1173,6 @@ impl Engine {
             Operation::Board(command) => {
                 let project = Arc::make_mut(&mut candidate.project);
                 match layout::outline::apply(project, command, evaluators.board)? {
-                    layout::outline::BoardApplied::Constraint(constraint) => {
-                        Outcome::EdgeConstraintAdded { constraint }
-                    }
                     layout::outline::BoardApplied::Edited { created } => {
                         Outcome::BoardEdited { created }
                     }
@@ -1232,10 +1230,8 @@ impl Engine {
                 );
                 rules::signal::follow_nets(&mut project.rules, &changes.merged, &live);
             }
-            // Constrained parts, fills and keepouts follow their board
-            // edges (and a move away from one is refused).
-            layout::outline::follow(&self.document.project, project, evaluators.board)?;
-            // Dimensioned parts are solved after the board.
+            // Dimensioned parts, fills and keepouts are solved after the
+            // board (and a move that cannot land is refused).
             layout::dimensions::follow(&self.document.project, project, evaluators.board)?;
             // Board-following fills take the (possibly changed) outline.
             layout::fill::follow_board(project)?;

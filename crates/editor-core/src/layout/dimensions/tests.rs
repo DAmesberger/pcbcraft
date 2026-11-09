@@ -1,7 +1,7 @@
 //! Part dimensions without a sketch evaluator: the wire form and bounds of
-//! the contract (slice C0), and the reference findings and their
-//! no-waiver rule (slice S2, ignored until it lands). The parts solve's
-//! tests live in `pcbcraft_solidcraft::board::parts`.
+//! the contract, the reference findings and their no-waiver rule, the
+//! refusals that need no solve, and the held refusal's words. The parts
+//! solve's tests live in `pcbcraft_solidcraft::board::parts`.
 use super::*;
 use crate::fabrication::FabricationCommand;
 use crate::ids::PadId;
@@ -135,7 +135,6 @@ fn reference_findings_cannot_be_waived() -> Fallible<()> {
 /// `board.reference_lost` (the part keeps its pose) and blocks
 /// fabrication output.
 #[test]
-#[ignore = "slice S2"]
 fn a_lost_pad_reference_is_reported_and_blocks_preflight() -> Fallible<()> {
     let engine = Engine::demo()?;
     let mut project = engine.project().clone();
@@ -164,4 +163,142 @@ fn a_lost_pad_reference_is_reported_and_blocks_preflight() -> Fallible<()> {
             .any(|i| i.code == REFERENCE_LOST && i.blocks())
     );
     Ok(())
+}
+
+/// A dimension must name live objects and at least one part, a driving
+/// dimension needs a value and a constraint takes none; each refusal
+/// leaves the document unchanged. A valid dimension needs the host's
+/// sketch evaluator to solve its part, so without one it is refused too.
+#[test]
+fn bad_dimensions_and_a_missing_evaluator_are_refused() -> Fallible<()> {
+    let mut engine = Engine::demo()?;
+    let part = engine
+        .project()
+        .placements
+        .first()
+        .ok_or("no part")?
+        .instance;
+    let rev = engine.revision();
+    let before = engine.to_file();
+    let spec = |d: PartDimension| PartDimensionSpec {
+        kind: d.kind,
+        refs: d.refs,
+        value: d.value,
+        reference: d.reference,
+    };
+    let mut gone = to_right(Id::MAX);
+    gone.refs[0] = BoardRef::Part(FeatureRef::Origin {
+        target: ConstraintTarget::Placement(Id::MAX),
+    });
+    let mut fill = to_right(part);
+    fill.refs[0] = BoardRef::Part(FeatureRef::Origin {
+        target: ConstraintTarget::Fill(part),
+    });
+    let mut board_only = to_right(part);
+    board_only.refs.remove(0);
+    let mut no_value = to_right(part);
+    no_value.value = None;
+    let mut valued = to_right(part);
+    valued.kind = PartRelation::Geom(crate::library::footprint_source::GeomConstraint::Coincident);
+    let mut housing = to_right(part);
+    housing.refs[1] = BoardRef::Housing(crate::model::dimension::HousingRefId(1));
+    let mut pad = to_right(part);
+    pad.refs[0] = BoardRef::Part(FeatureRef::Pad {
+        placement: part,
+        pad: PadId(9999),
+        at: PadPoint::Centre,
+    });
+    for bad in [
+        gone,
+        fill,
+        board_only,
+        no_value,
+        valued,
+        housing,
+        pad,
+        to_right(part),
+    ] {
+        let refused = engine.apply(
+            rev,
+            Operation::Dimension(DimensionCommand::Add {
+                dimension: spec(bad.clone()),
+            }),
+        );
+        assert!(refused.is_err(), "{bad:?}");
+        assert_eq!(engine.revision(), rev);
+        assert_eq!(engine.to_file(), before);
+    }
+    // Editing or deleting a dimension that does not exist is refused.
+    for missing in [
+        DimensionCommand::Edit {
+            dimension: to_right(part),
+        },
+        DimensionCommand::Delete { id: 900 },
+    ] {
+        assert!(engine.apply(rev, Operation::Dimension(missing)).is_err());
+        assert_eq!(engine.to_file(), before);
+    }
+    Ok(())
+}
+
+/// Lost references stop driving: a part whose only dimension lost its
+/// pad is not in any solve, so unrelated edits need no evaluator and the
+/// part keeps its pose.
+#[test]
+fn a_lost_reference_stops_driving() -> Fallible<()> {
+    let engine = Engine::demo()?;
+    let mut project = engine.project().clone();
+    let part = project.placements.first().ok_or("no part")?.instance;
+    let mut lost = to_right(part);
+    lost.refs[0] = BoardRef::Part(FeatureRef::Pad {
+        placement: part,
+        pad: PadId(9999),
+        at: PadPoint::Centre,
+    });
+    *project.part_dimensions = vec![lost];
+    let before = project.clone();
+    project.board_size = [80.0, 40.0];
+    follow(&before, &mut project, None)?;
+    assert_eq!(project.placements, before.placements);
+    Ok(())
+}
+
+/// The held refusal reads as a sentence about the part and where its
+/// dimensions hold it, in one message line however long the names: where
+/// it is held goes first, never the way out.
+#[test]
+fn the_held_refusal_fits_one_line_and_keeps_the_way_out() {
+    let way_out = |verb: &str| format!("; edit or delete one to {verb} it");
+    assert_eq!(
+        held_message("J1", Some("2 mm from the right edge"), "move"),
+        "J1 is held 2 mm from the right edge; edit or delete its dimensions to move it"
+    );
+    assert_eq!(
+        held_message("J1", None, "turn"),
+        format!("J1 is held by its dimensions{}", way_out("turn"))
+    );
+    assert_eq!(edge_words("USB edge"), "the USB edge");
+    assert_eq!(edge_words("right"), "the right edge");
+    // Two distances to named edges do not fit with a long name: where it
+    // is held goes, the name and the way out stay.
+    let at = "12.25 mm from the bottom edge and 3.5 mm from the left edge";
+    let long = held_message("CONN12", Some(at), "move");
+    assert_eq!(
+        long,
+        format!("CONN12 is held by its dimensions{}", way_out("move"))
+    );
+    let longer = held_message(
+        "CONNECTOR_LONG_NAME_7_WITH_MORE_WORDS_IN_IT",
+        Some(at),
+        "move",
+    );
+    assert!(longer.ends_with(&way_out("move")), "{longer}");
+    for text in [
+        long,
+        longer,
+        held_message("J1", Some("on the left edge"), "turn"),
+    ] {
+        assert!(text.chars().count() <= crate::issues::MAX_TITLE, "{text}");
+        assert!(crate::issues::style::check(&text).is_empty(), "{text}");
+    }
 }

@@ -1,8 +1,10 @@
 //! A part's placement state in Layout (docs/e2e-ui-run.md findings 5, 8, 9
 //! and 10), in headless egui frames on the engine: the canvas marks of
-//! locked and edge-held parts, the refusal of a drag of either in the
-//! engine's words, the Placement card's state row in a short card, and a
-//! refused board parameter going back to its value with the whole reason.
+//! locked and dimension-held parts, the refusal of a drag of either in the
+//! engine's words, a drag that slides a part along the one edge it is
+//! dimensioned to, the Placement card's state row and Dimensions section in
+//! a short card, and a refused board parameter going back to its value with
+//! the whole reason.
 //!
 //! With `PCBCRAFT_PICTURES` set, `hold_pictures` writes the canvas and the
 //! cards as PNGs there.
@@ -10,16 +12,62 @@ use super::hold_mark::{GLYPH, Hold};
 use super::raster_tests::{picture, picture_of, view_of};
 use super::*;
 use crate::kit::toast;
+use pcbcraft_core::layout::dimensions::{self, DimensionCommand};
 use pcbcraft_core::layout::outline::BoardCommand;
-use pcbcraft_core::library::footprint_source::Expr;
-use pcbcraft_core::model::board::{
-    ConstraintAlign, ConstraintTarget, EdgeAnchor, EdgeConstraintSpec, EdgeName,
-};
+use pcbcraft_core::library::footprint_source::{DimKind, DimValue, SketchRef};
+use pcbcraft_core::model::board::ConstraintTarget;
+use pcbcraft_core::model::dimension::{BoardRef, FeatureRef, PartDimensionSpec, PartRelation};
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// The demo board with R1 held 5 mm from the right edge (10 mm along it)
-/// and R2 locked; any other part is free.
+/// Apply with the app's host board evaluator, as the desktop does.
+fn hosted(
+    engine: &mut Engine,
+    operation: Operation,
+) -> pcbcraft_core::Result<pcbcraft_core::Outcome> {
+    engine.apply_hosted(
+        engine.revision(),
+        operation,
+        pcbcraft_core::Evaluators {
+            footprint: None,
+            board: board_shape::host_evaluator(),
+        },
+    )
+}
+
+/// A distance from a part's origin to a named board edge.
+fn to_edge(engine: &Engine, part: Id, edge: &str, mm: f64) -> Fallible<PartDimensionSpec> {
+    let ev = board_shape::host_evaluator().ok_or("no evaluator")?;
+    let board = dimensions::board_sketch(engine.project(), ev)?;
+    let curve = board
+        .edges
+        .iter()
+        .find(|e| e.name.0 == edge)
+        .map(|e| e.curve.clone())
+        .ok_or("no edge")?;
+    Ok(PartDimensionSpec {
+        kind: PartRelation::Dim(DimKind::Distance),
+        refs: vec![
+            BoardRef::Part(FeatureRef::Origin {
+                target: ConstraintTarget::Placement(part),
+            }),
+            BoardRef::Board(SketchRef::Curve(curve)),
+        ],
+        value: Some(DimValue::Fixed(mm)),
+        reference: false,
+    })
+}
+
+fn dimension(engine: &mut Engine, spec: PartDimensionSpec) -> Fallible {
+    hosted(
+        engine,
+        Operation::Dimension(DimensionCommand::Add { dimension: spec }),
+    )?;
+    Ok(())
+}
+
+/// The demo board with R1 held 5 mm from the right edge and 10 mm from
+/// the bottom edge, and R2 locked; any other part is free.
 fn held_board() -> Fallible<(Engine, Id, Id)> {
     let mut engine = Engine::demo()?;
     let r1 = engine
@@ -32,23 +80,12 @@ fn held_board() -> Fallible<(Engine, Id, Id)> {
         .instance_by_designator("R2")
         .map(|i| i.id)
         .ok_or("no R2")?;
-    engine.apply(
-        engine.revision(),
-        Operation::Board(BoardCommand::Constrain {
-            constraint: EdgeConstraintSpec {
-                target: ConstraintTarget::Placement(r1),
-                edge: EdgeName("right".into()),
-                anchor: EdgeAnchor::Start,
-                along: Expr("10 mm".into()),
-                offset: Expr("5 mm".into()),
-                align: ConstraintAlign::Origin,
-                follow_edge: false,
-                rotation_deg: 0.0,
-            },
-        }),
-    )?;
-    engine.apply(
-        engine.revision(),
+    let right = to_edge(&engine, r1, "right", 5.0)?;
+    dimension(&mut engine, right)?;
+    let bottom = to_edge(&engine, r1, "bottom", 10.0)?;
+    dimension(&mut engine, bottom)?;
+    hosted(
+        &mut engine,
         Operation::Layout(LayoutCommand::SetPlacementLock {
             instance: r2,
             locked: true,
@@ -228,7 +265,7 @@ fn dragging_a_fixed_part_is_refused_with_the_engines_reason() -> Fallible {
     for (part, want) in [
         (
             r1,
-            "R1 is held 5 mm from the right edge; edit or remove its constraint to move it",
+            "R1 is held by its dimensions; edit or delete one to move it",
         ),
         (r2, "R2 is locked; unlock it to move it"),
     ] {
@@ -246,18 +283,17 @@ fn dragging_a_fixed_part_is_refused_with_the_engines_reason() -> Fallible {
             .placement_of(part)
             .cloned()
             .ok_or("placed")?;
-        let refused = engine
-            .apply(
-                engine.revision(),
-                Operation::Layout(LayoutCommand::Move {
-                    instance: part,
-                    position: [placement.position[0] + 2.0, placement.position[1]],
-                    rotation_deg: placement.rotation_deg,
-                    layer: placement.layer,
-                }),
-            )
-            .err()
-            .ok_or("the engine moved it")?;
+        let refused = hosted(
+            &mut engine,
+            Operation::Layout(LayoutCommand::Move {
+                instance: part,
+                position: [placement.position[0] + 2.0, placement.position[1]],
+                rotation_deg: placement.rotation_deg,
+                layer: placement.layer,
+            }),
+        )
+        .err()
+        .ok_or("the engine moved it")?;
         assert_eq!(refusal::shown_error(&refused), want);
     }
     // Unlocked, R2 drags again.
@@ -275,6 +311,45 @@ fn dragging_a_fixed_part_is_refused_with_the_engines_reason() -> Fallible {
         "{op:?}"
     );
     assert!(toast::take_posted(&ctx).is_empty());
+    Ok(())
+}
+
+/// A part dimensioned to one edge only slides along it: the drag previews
+/// and commits the move the engine lands, its distance to the right edge
+/// kept while it follows the pointer up and down.
+#[test]
+fn dragging_slides_a_part_along_its_one_edge_dimension() -> Fallible {
+    let mut engine = Engine::demo()?;
+    let r2 = engine
+        .project()
+        .instance_by_designator("R2")
+        .map(|i| i.id)
+        .ok_or("no R2")?;
+    let before = engine.project().placement_of(r2).cloned().ok_or("placed")?;
+    let held = to_edge(&engine, r2, "right", 60.0 - before.position[0])?;
+    dimension(&mut engine, held)?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    let at = screen_of(&editor, &engine, r2)?;
+    let op = drag(&mut editor, &engine, &ctx, at);
+    let Some(op @ Operation::Layout(LayoutCommand::Move { position, .. })) = op else {
+        return Err(format!("no layout.move: {op:?}").into());
+    };
+    assert!(
+        (position[0] - before.position[0]).abs() < 1e-6,
+        "x is held: {position:?}"
+    );
+    assert!(
+        (position[1] - before.position[1]).abs() > 1.0,
+        "y follows the pointer: {position:?}"
+    );
+    assert!(toast::take_posted(&ctx).is_empty());
+    hosted(&mut engine, op)?;
+    let placed = engine.project().placement_of(r2).ok_or("placed")?;
+    assert!((placed.position[0] - before.position[0]).abs() < 1e-6);
+    assert!((placed.position[1] - position[1]).abs() < 1e-6);
     Ok(())
 }
 
@@ -333,6 +408,15 @@ fn painted_whole(output: &egui::FullOutput, label: &str) -> bool {
         .shapes
         .iter()
         .any(|c| walk(&c.shape, c.clip_rect, label))
+}
+
+/// Every text painted.
+fn collect_texts(shape: &Shape, out: &mut Vec<String>) {
+    match shape {
+        Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_texts(s, out)),
+        Shape::Text(text) => out.push(text.galley.job.text.clone()),
+        _ => {}
+    }
 }
 
 /// Texts painted inside the card's visible height, by centre.
@@ -398,9 +482,9 @@ fn click(
 
 /// In a card as short as the founder's, the Placement section opens with
 /// the part's state, visible at once: a free part says so and offers
-/// "Constrain to edge", a held part says where it is held and offers
-/// "Free part", a locked part says it is locked; the canvas glyph sits
-/// beside the words.
+/// "Dimension to edge", a held part says where it is held (and offers
+/// "Free part" when one dimension holds it), a locked part says it is
+/// locked; the canvas glyph sits beside the words.
 #[test]
 fn the_placement_card_states_the_hold_at_once() -> Fallible {
     let (mut engine, r1, r2) = held_board()?;
@@ -408,7 +492,11 @@ fn the_placement_card_states_the_hold_at_once() -> Fallible {
     fonts::setup_bundled_fonts(&ctx);
     let mut editor = PcbEditor::default();
     for (part, words, action) in [
-        (r1, "Held 5 mm from the right edge", Some("Free part")),
+        (
+            r1,
+            "Held 5 mm from the right edge and 10 mm from the bottom edge",
+            None::<&str>,
+        ),
         (r2, "Locked in place", None),
     ] {
         editor.set_selection(Some(part), None, None);
@@ -424,10 +512,10 @@ fn the_placement_card_states_the_hold_at_once() -> Fallible {
             );
         }
     }
-    // Free part: unlock R2, and the card offers to hold it to its nearest
-    // edge, in place, as one board.constrain.
-    engine.apply(
-        engine.revision(),
+    // Free part: unlock R2, and the card offers to dimension it to its
+    // nearest edge, in place, as one layout.dimension_add.
+    hosted(
+        &mut engine,
         Operation::Layout(LayoutCommand::SetPlacementLock {
             instance: r2,
             locked: false,
@@ -446,12 +534,12 @@ fn the_placement_card_states_the_hold_at_once() -> Fallible {
         .find(|t| t.starts_with("Free · "))
         .ok_or("no free state")?;
     assert!(painted_whole(&output, free), "{free} is cut short");
-    let op = click(&mut editor, &engine, &ctx, "Constrain to edge")?;
-    let Some(op @ Operation::Board(BoardCommand::Constrain { .. })) = op else {
-        return Err(format!("no board.constrain: {op:?}").into());
+    let op = click(&mut editor, &engine, &ctx, "Dimension to edge")?;
+    let Some(op @ Operation::Dimension(DimensionCommand::Add { .. })) = op else {
+        return Err(format!("no layout.dimension_add: {op:?}").into());
     };
     let before = engine.project().placement_of(r2).cloned();
-    engine.apply(engine.revision(), op)?;
+    hosted(&mut engine, op)?;
     assert_eq!(
         engine.project().placement_of(r2).cloned(),
         before,
@@ -460,16 +548,55 @@ fn the_placement_card_states_the_hold_at_once() -> Fallible {
     let (output, _) = short_card(&mut editor, &engine, &ctx, vec![]);
     let shown = visible_texts(&output);
     assert!(
-        shown.iter().any(|(t, _)| t.starts_with("Held ")),
+        shown
+            .iter()
+            .any(|(t, _)| t == "Held 8 mm from the bottom edge"),
         "{shown:?}"
     );
-    // "Free part" removes the constraint as one step.
+    // The canvas draws the selected part's distance to its edge.
+    let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
+    let mut painted = Vec::new();
+    for clipped in &output.shapes {
+        collect_texts(&clipped.shape, &mut painted);
+    }
+    assert!(painted.iter().any(|t| t == "8 mm"), "{painted:?}");
+    // Its Dimensions section (in a taller card) lists the dimension with its
+    // value and its Delete.
+    let id = super::edge_card::dimensions_of(engine.project(), r2)
+        .first()
+        .map(|d| d.id)
+        .ok_or("no dimension")?;
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(
+                Pos2::ZERO,
+                egui::vec2(SHORT_CARD[0], 900.0),
+            )),
+            ..Default::default()
+        },
+        |ui| {
+            editor.subject_slot(ui, &engine);
+            let _ = refusal::take_mark(ui.ctx());
+        },
+    );
+    output.textures_delta.clear();
+    let mut painted = Vec::new();
+    for clipped in &output.shapes {
+        collect_texts(&clipped.shape, &mut painted);
+    }
+    for want in ["DIMENSIONS", "Origin to the bottom edge", "Delete"] {
+        assert!(painted.iter().any(|t| t == want), "{want}: {painted:?}");
+    }
+    // "Free part" removes the one dimension as one step, in place.
+    let held = engine.project().placement_of(r2).cloned();
     let op = click(&mut editor, &engine, &ctx, "Free part")?;
-    let Some(op @ Operation::Board(BoardCommand::DeleteConstraint { .. })) = op else {
-        return Err(format!("no board.constraint_delete: {op:?}").into());
+    let Some(op @ Operation::Dimension(DimensionCommand::Delete { id: deleted })) = op else {
+        return Err(format!("no layout.dimension_delete: {op:?}").into());
     };
-    engine.apply(engine.revision(), op)?;
-    assert!(super::edge_card::constraint_of(engine.project(), r2).is_none());
+    assert_eq!(deleted, id);
+    hosted(&mut engine, op)?;
+    assert!(super::edge_card::dimensions_of(engine.project(), r2).is_empty());
+    assert_eq!(engine.project().placement_of(r2).cloned(), held);
     Ok(())
 }
 
@@ -763,8 +890,8 @@ fn hold_pictures() -> Fallible {
     }
     // The demo has two parts: a copy with R2 unlocked shows a free one.
     let (mut freed, _, _) = held_board()?;
-    freed.apply(
-        freed.revision(),
+    hosted(
+        &mut freed,
         Operation::Layout(LayoutCommand::SetPlacementLock {
             instance: r2,
             locked: false,

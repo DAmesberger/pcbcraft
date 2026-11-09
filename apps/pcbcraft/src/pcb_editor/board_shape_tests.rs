@@ -1,18 +1,16 @@
-//! Board shape mode and edge-relative placement: the gesture builders on
-//! SolidCraft's real sketch engine, the canvas and card in headless egui
-//! frames, and the Placement card's Board edge section on the engine.
+//! Board shape mode: the gesture builders on SolidCraft's real sketch
+//! engine, the canvas and card in headless egui frames, and the expressions
+//! a part dimension's value reads.
 use super::*;
 use crate::pcb_editor::edge_card;
 use crate::pcb_editor::{PcbEditor, board_view};
 use crate::refusal;
 use egui::{Pos2, Shape};
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEvaluation, edge_pose};
+use pcbcraft_core::layout::outline::{BoardCommand, BoardEvaluation};
 use pcbcraft_core::library::footprint_source::SolveStatus;
 use pcbcraft_core::library::footprint_source::{EvaluatorRef, FootprintEvaluator, SketchOutcome};
-use pcbcraft_core::model::board::{
-    ConstraintTarget, EdgeAnchor, NamedEdge, SolvedBoard, SolvedEdge,
-};
-use pcbcraft_core::{BoardShape, EdgeConstraint, Engine, Operation, Project};
+use pcbcraft_core::model::board::{NamedEdge, SolvedBoard};
+use pcbcraft_core::{BoardShape, Engine, Operation};
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 use pcbcraft_solidcraft::footprint::view::LiveSketch;
 use solidcraft_ui_egui::fonts;
@@ -33,7 +31,7 @@ impl BoardShapeEvaluator for Host {
     fn apply_sketch(&self, sketch: &SketchBlob, edit: &SketchEdit) -> Result<SketchOutcome> {
         SketchEvaluator.apply_sketch(sketch, edit)
     }
-    fn evaluate(&self, _: &BoardSketch, _: &[EdgeConstraint]) -> Result<BoardEvaluation> {
+    fn evaluate(&self, _: &BoardSketch) -> Result<BoardEvaluation> {
         Err(Error::Unsupported("test host".into()))
     }
 }
@@ -423,31 +421,6 @@ fn edge_values_evaluate_board_parameters() -> Fallible {
 }
 
 #[test]
-fn a_constraint_from_the_current_position_keeps_the_part_in_place() -> Fallible {
-    let board = SolvedBoard::rectangle([50.0, 30.0]);
-    let at = [10.0, 4.0];
-    let nearest = edge_card::nearest_edge(&board, at).ok_or("no edge")?;
-    assert_eq!(nearest.name.0, "bottom");
-    for edge in &board.edges {
-        let spec = edge_card::spec_at(7, edge, at).ok_or("no spec")?;
-        let along = kit_number(&spec.along.0)?;
-        let offset = kit_number(&spec.offset.0)?;
-        let pose = edge_pose(edge, EdgeAnchor::Start, along, offset)?;
-        assert!(dist(pose.position, at) < 1e-9, "{} {:?}", edge.name.0, pose);
-        assert_eq!(spec.target, ConstraintTarget::Placement(7));
-    }
-    // Inside the board, the offset is positive (the inward normal).
-    let top: &SolvedEdge = board.edge(&EdgeName("top".into())).ok_or("top")?;
-    let (along, offset) = edge_card::along_offset(top, at).ok_or("along")?;
-    assert!((along - 40.0).abs() < 1e-9 && (offset - 26.0).abs() < 1e-9);
-    Ok(())
-}
-
-fn kit_number(text: &str) -> Fallible<f64> {
-    crate::kit::parse_number(text, "mm").ok_or_else(|| format!("{text} is not a number").into())
-}
-
-#[test]
 fn ear_clipping_fills_a_concave_board() {
     // An L: 6 corners, 4 triangles, area 3 (of unit squares).
     let ring = [
@@ -780,58 +753,6 @@ fn the_placement_card_moves_and_resets_the_designator_in_one_step_each() -> Fall
     engine.undo()?;
     slot(&mut editor, &engine, &ctx, vec![]);
     assert_eq!(editor.text_offset, [1.5, -0.5]);
-    Ok(())
-}
-
-#[test]
-fn the_placement_card_constrains_a_part_to_its_nearest_edge_in_place() -> Fallible {
-    let mut engine = Engine::demo()?;
-    let ctx = egui::Context::default();
-    fonts::setup_bundled_fonts(&ctx);
-    let mut editor = PcbEditor::default();
-    let placement = engine
-        .project()
-        .placements
-        .first()
-        .cloned()
-        .ok_or("the demo has no placement")?;
-    editor.set_selection(Some(placement.instance), None, None);
-    let operation = click_text(&mut editor, &engine, &ctx, "Constrain to edge")?;
-    let Some(operation @ Operation::Board(BoardCommand::Constrain { .. })) = operation else {
-        return Err(format!("no board.constrain: {operation:?}").into());
-    };
-    let revision = engine.revision();
-    engine.apply(revision, operation)?;
-    let project: &Project = engine.project();
-    let c = edge_card::constraint_of(project, placement.instance).ok_or("no constraint")?;
-    let board = project.board();
-    let edge = board.edge(&c.edge).ok_or("no such edge")?;
-    let nearest = edge_card::nearest_edge(&board, placement.position).ok_or("no edge")?;
-    assert_eq!(edge.name, nearest.name);
-    let pose = edge_pose(
-        edge,
-        c.anchor,
-        kit_number(&c.along.0)?,
-        kit_number(&c.offset.0)?,
-    )?;
-    assert!(dist(pose.position, placement.position) < 1e-6);
-    // The canvas shows the two dimensions of the selected part.
-    let (output, _, _) = canvas(&mut editor, &engine, &ctx, vec![]);
-    let shown = painted(&output);
-    assert!(shown.iter().any(|(t, _)| *t == c.along.0));
-    assert!(shown.iter().any(|(t, _)| *t == c.offset.0));
-    // "Free part" removes the constraint as one step; undo restores it.
-    let operation = click_text(&mut editor, &engine, &ctx, "Free part")?;
-    let Some(operation @ Operation::Board(BoardCommand::DeleteConstraint { .. })) = operation
-    else {
-        return Err(format!("no board.constraint_delete: {operation:?}").into());
-    };
-    engine.apply(engine.revision(), operation)?;
-    assert!(edge_card::constraint_of(engine.project(), placement.instance).is_none());
-    engine.undo()?;
-    assert!(edge_card::constraint_of(engine.project(), placement.instance).is_some());
-    engine.undo()?;
-    assert!(engine.project().edge_constraints.is_empty());
     Ok(())
 }
 

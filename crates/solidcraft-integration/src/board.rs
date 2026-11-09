@@ -4,8 +4,7 @@
 //! check, parameters in Solidcraft's expression language, bound
 //! dimensions and the solver. It turns the solved sketch into the board's
 //! outer outline, cutouts and slots, mounting holes and named edges, and
-//! evaluates the edge constraints' expressions against the board
-//! parameters.
+//! solves dimensioned parts against the solved board ([`parts`]).
 //!
 //! The outline is whatever closed region the drawn curves make
 //! (Solidcraft's `find_drawn_profiles`): its outer loop is the outline and
@@ -38,7 +37,6 @@ use pcbcraft_core::library::footprint_source::{
     SketchEdit, SketchOutcome, SketchPointId, SolveStatus, SolveSummary,
 };
 use pcbcraft_core::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
-use pcbcraft_core::model::EdgeConstraint;
 use pcbcraft_core::model::board::{
     BoardSketch, CutoutKind, EdgeName, NamedEdge, RECT_EDGES, ShapeFault, ShapeFaultKind,
     SolvedBoard, SolvedCutout, SolvedEdge, SolvedMountingHole,
@@ -166,7 +164,7 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
             outline_fit: DEFAULT_OUTLINE_FIT_MM,
             fault: None,
         };
-        let evaluation = self.evaluate(&board, &[])?;
+        let evaluation = self.evaluate(&board)?;
         if let Some(f) = evaluation.findings.iter().find(|f| refuses(&f.code)) {
             return Err(Error::Invalid(format!("{}: {}", f.code, f.message)));
         }
@@ -184,11 +182,7 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
         Ok(finish(&stored, &edited)?)
     }
 
-    fn evaluate(
-        &self,
-        board: &BoardSketch,
-        constraints: &[EdgeConstraint],
-    ) -> Result<BoardEvaluation> {
+    fn evaluate(&self, board: &BoardSketch) -> Result<BoardEvaluation> {
         if board.evaluator.engine != ENGINE {
             return Err(Error::Unsupported(format!(
                 "board.evaluator: the board sketch was made with {}, this build has {ENGINE}",
@@ -196,7 +190,7 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
             )));
         }
         let stored = check::check_board_sketch(&board.sketch.0)?;
-        Ok(match run(board, &stored, constraints) {
+        Ok(match run(board, &stored) {
             Ok(evaluation) => evaluation,
             Err(p) => unsolved(board, p),
         })
@@ -243,7 +237,6 @@ fn unsolved(board: &BoardSketch, p: Problem) -> BoardEvaluation {
             status,
             ..SolveSummary::default()
         },
-        constraints: Vec::new(),
         findings: vec![Finding::new(code, p.message, vec![ObjectRef::Board])],
         fault: None,
         sketch_out: None,
@@ -683,11 +676,7 @@ fn extended(
     (a + u * lo, a + u * hi)
 }
 
-fn run(
-    board: &BoardSketch,
-    stored: &Sketch,
-    constraints: &[EdgeConstraint],
-) -> Outcome<BoardEvaluation> {
+fn run(board: &BoardSketch, stored: &Sketch) -> Outcome<BoardEvaluation> {
     let values = params::evaluate(&board.parameters, &[])
         .map_err(|p| problem(SHAPE_UNSOLVED, format!("board parameters: {}", p.message)))?;
     if !OUTLINE_FIT_RANGE_MM.contains(&board.outline_fit) {
@@ -719,7 +708,6 @@ fn run(
     };
     let bytes =
         serde_json::to_vec(&solved).map_err(|e| problem("board.internal", e.to_string()))?;
-    let (solved_constraints, findings) = parts::edge_constraint_values(&values, constraints);
     let dof = u32::try_from(dof).unwrap_or(u32::MAX);
     Ok(BoardEvaluation {
         solved,
@@ -733,8 +721,7 @@ fn run(
             dof,
             result_hash: format!("{:016x}", fnv(&bytes)),
         },
-        constraints: solved_constraints,
-        findings,
+        findings: Vec::new(),
         fault,
         sketch_out: Some(SketchBlob(check::canonical(&sk)?)),
     })
