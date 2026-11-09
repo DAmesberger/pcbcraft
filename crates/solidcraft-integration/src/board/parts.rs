@@ -765,4 +765,6 @@ fn solve_outcome(request: &PartsRequest<'_>) -> Outcome<PartsSolution> {
 }
 
 #[cfg(test)]
+mod carry_tests;
+#[cfg(test)]
 mod tests;
