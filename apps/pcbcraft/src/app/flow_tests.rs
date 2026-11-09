@@ -278,3 +278,80 @@ fn no_internal_command_names_reach_a_person() -> Fallible {
     assert_eq!(found, Vec::<String>::new());
     Ok(())
 }
+
+/// The demo with a VBUS port on R1's pin 2, whose wire runs to R2's pin 1,
+/// and a GND port on R2's pin 2: the VBUS wire and its middle.
+fn vbus_and_gnd(
+    engine: &mut Engine,
+) -> Result<(pcbcraft_core::Id, pcbcraft_core::geometry::Point), Box<dyn std::error::Error>> {
+    let project = engine.project();
+    let (r1, r2) = (project.instances[0].id, project.instances[1].id);
+    let (from, to) = (
+        pcbcraft_core::WireEnd::from(flow_ep(r1, 2)),
+        pcbcraft_core::WireEnd::from(flow_ep(r2, 1)),
+    );
+    let wire = project
+        .wires
+        .iter()
+        .find(|w| (w.from, w.to) == (from, to) || (w.from, w.to) == (to, from))
+        .map(|w| w.id)
+        .ok_or("the demo's wire")?;
+    let a = pcbcraft_core::schematic::pin_position(project, flow_ep(r1, 2)).ok_or("pin")?;
+    let b = pcbcraft_core::schematic::pin_position(project, flow_ep(r2, 1)).ok_or("pin")?;
+    for (name, style, at) in [
+        ("VBUS", pcbcraft_core::PowerStyle::Bar, flow_ep(r1, 2)),
+        ("GND", pcbcraft_core::PowerStyle::Ground, flow_ep(r2, 2)),
+    ] {
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::PlaceLabel {
+                sheet: None,
+                name: name.into(),
+                kind: LabelKind::Power { style },
+                position: [0.0, 0.0],
+                rotation: Default::default(),
+                attach: Some(pcbcraft_core::schematic::WireTarget::Terminal(at)),
+            }),
+        )?;
+    }
+    Ok((wire, [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]))
+}
+
+fn flow_ep(instance: pcbcraft_core::Id, terminal: u32) -> pcbcraft_core::Endpoint {
+    pcbcraft_core::Endpoint {
+        instance,
+        terminal: pcbcraft_core::TerminalId(terminal),
+    }
+}
+
+/// Z4: whatever tool sends it, a schematic edit that core refuses as a
+/// named-net merge opens the review instead of a refusal toast, and the
+/// document is unchanged until the review applies.
+#[test]
+fn a_named_net_merge_refused_by_core_opens_the_review() -> Fallible {
+    let mut h = Harness::new()?;
+    let (wire, middle) = vbus_and_gnd(&mut h.app.engine)?;
+    let before = h.app.engine.document().clone();
+    let messages = h.app.messages.len();
+    h.app.apply(
+        &h.ctx,
+        Origin::Canvas,
+        Some(Operation::Schematic(SchematicCommand::PlaceLabel {
+            sheet: None,
+            name: "GND".into(),
+            kind: LabelKind::Power {
+                style: pcbcraft_core::PowerStyle::Ground,
+            },
+            position: middle,
+            rotation: Default::default(),
+            attach: Some(pcbcraft_core::schematic::WireTarget::OnWire(
+                pcbcraft_core::schematic::WirePoint { wire, at: middle },
+            )),
+        })),
+    );
+    assert!(h.app.schematic.reviewing(), "no review: {}", said(&h.app));
+    assert_eq!(h.app.engine.document(), &before);
+    assert_eq!(h.app.messages.len(), messages, "a refusal was logged");
+    assert!(h.app.toasts.is_empty(), "a refusal toast");
+    Ok(())
+}

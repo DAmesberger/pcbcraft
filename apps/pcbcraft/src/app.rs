@@ -302,6 +302,12 @@ impl App {
                 return;
             }
         }
+        // Core refuses a direct schematic edit that merges named nets; the
+        // review then opens for it, whatever tool sent it.
+        let schematic = match &operation {
+            Operation::Schematic(command) => Some(command.clone()),
+            _ => None,
+        };
         match self.engine.apply_hosted(
             self.engine.revision(),
             operation,
@@ -316,6 +322,10 @@ impl App {
                 }
                 self.clear_error();
             }
+            Err(_)
+                if schematic.as_ref().is_some_and(|command| {
+                    self.schematic.review_named_merge(&self.engine, command)
+                }) => {}
             Err(error) => self.refuse(ctx, origin, error),
         }
     }

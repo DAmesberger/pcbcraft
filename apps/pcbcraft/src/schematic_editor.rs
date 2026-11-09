@@ -786,22 +786,19 @@ impl SchematicEditor {
         }
     }
 
-    /// A wire `command` drawn from `from` to `to`, whose plan is not
+    /// A drawn wire's `plan`, which is not
     /// blocked. An ordinary join applies at once, one undo step, and says
-    /// what changed in a status toast. The review opens only when the join
-    /// is risky: it touches routed copper (the plan has conflicting tracks
-    /// or vias), or it merges two nets that both carry a name a person gave
-    /// (a label or power port, or a rename), such as VBUS and GND.
+    /// what changed in a status toast. The review opens only when core says
+    /// the join needs one (`UpdatePlan::needs_review`): it touches routed
+    /// copper, or it merges two nets that each carry a name of their own,
+    /// such as VBUS and GND.
     fn join(
         &mut self,
         engine: &Engine,
         plan: pcbcraft_core::updates::UpdatePlan,
-        from: WireTarget,
-        to: WireTarget,
     ) -> Option<Operation> {
         let change = plan.change.clone();
-        let routed = !plan.conflicting_tracks.is_empty() || !plan.conflicting_vias.is_empty();
-        if routed || self.joins_named_nets(engine.project(), from, to) {
+        if plan.needs_review() {
             return self.stage_update(engine, change);
         }
         self.join_watch = Some((
@@ -813,41 +810,35 @@ impl SchematicEditor {
             expected_revision: plan.revision,
             change,
             remove_conflicting_tracks: false,
+            merge_named_nets: false,
         })))
     }
 
-    /// Whether a wire from `from` to `to` merges two differently named
-    /// nets. A net is named when its name is not the automatic `N<id>`; a
-    /// label not yet on a net is named by its own name, which it joins.
-    fn joins_named_nets(&self, project: &Project, from: WireTarget, to: WireTarget) -> bool {
-        let names = pcbcraft_core::nets::names(project);
-        let side = |target: WireTarget| {
-            let net = self.target_net(project, target);
-            let name = net
-                .and_then(|n| {
-                    names
-                        .get(&n)
-                        .filter(|name| **name != pcbcraft_core::nets::default_name(n))
-                        .cloned()
-                })
-                .or_else(|| match target {
-                    WireTarget::Label(l) => project
-                        .labels
-                        .iter()
-                        .find(|x| x.id == l.label)
-                        .map(|x| x.name.clone()),
-                    _ => None,
-                });
-            (net, name)
+    /// Whether the update review is open.
+    #[cfg(test)]
+    pub(crate) fn reviewing(&self) -> bool {
+        self.update.is_open()
+    }
+
+    /// Open the review for a schematic `command` core refused because it
+    /// merges named nets (`UpdatePlan::merges_named`): a label or power
+    /// port placed or renamed, a paste, a junction or a sheet pin. Whatever
+    /// tool sent it, the person sees both nets and what joins them, and
+    /// Apply merges them. False when the refusal had another cause.
+    pub(crate) fn review_named_merge(
+        &mut self,
+        engine: &Engine,
+        command: &SchematicCommand,
+    ) -> bool {
+        let change = Change::Schematic {
+            command: command.clone(),
         };
-        let ((a_net, a), (b_net, b)) = (side(from), side(to));
-        match (a, b) {
-            (Some(a), Some(b)) => {
-                let same_net = a_net.is_some() && a_net == b_net;
-                !(same_net || a.eq_ignore_ascii_case(&b))
-            }
-            _ => false,
+        let plan = engine.preview_update(change.clone());
+        if plan.merges_named.is_empty() || !plan.blockers.is_empty() {
+            return false;
         }
+        let _ = self.stage_update(engine, change);
+        true
     }
 
     /// Select `label` and give its name field the keyboard, as the menu's
@@ -868,7 +859,7 @@ impl SchematicEditor {
                 command: command.clone(),
             };
             let plan = engine.preview_update(change.clone());
-            if !plan.conflicting_tracks.is_empty() || !plan.conflicting_vias.is_empty() {
+            if plan.touches_routed() {
                 return self.stage_update(engine, change);
             }
         }

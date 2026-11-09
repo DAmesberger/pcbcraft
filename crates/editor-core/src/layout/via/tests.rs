@@ -440,6 +440,7 @@ fn electrical_changes_to_a_net_with_vias_are_reviewed_updates() -> Result<()> {
             expected_revision: engine.revision(),
             change: change.clone(),
             remove_conflicting_tracks: remove,
+            merge_named_nets: false,
         }))
     };
     let keep = update(false);

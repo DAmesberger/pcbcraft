@@ -809,11 +809,12 @@ impl Session {
                     self.engine.preview_update(params.change),
                 )?);
             }
-            Request::ApplyUpdate(update) => self.engine.apply_update(
-                update.expected_revision,
-                update.change,
-                update.remove_conflicting_tracks,
-            )?,
+            Request::ApplyUpdate(update) => {
+                self.engine.apply(
+                    update.expected_revision,
+                    Operation::Update(Box::new(update)),
+                )?;
+            }
             Request::ExportNative(params) => {
                 pcbcraft_solidcraft::project::build(self.engine.project())?.save(&params.path)?;
                 return Ok(json!({

@@ -195,6 +195,11 @@ pub struct ApplyUpdate {
     pub expected_revision: u64,
     pub change: Change,
     pub remove_conflicting_tracks: bool,
+    /// Merge the named nets the plan lists in `merges_named`, after a
+    /// review. Without it, a change that joins two named nets (VBUS and
+    /// GND) is refused.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub merge_named_nets: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -243,6 +248,11 @@ pub struct UpdatePlan {
     /// canvas preview of the result.
     #[serde(default)]
     pub planned_placements: Vec<crate::model::Placement>,
+    /// Nets with names of their own that the change joins into one
+    /// (`nets::named_merges`); each is also a warning line. Applying needs
+    /// `ApplyUpdate::merge_named_nets`.
+    #[serde(default)]
+    pub merges_named: Vec<nets::NamedMerge>,
 }
 
 /// Area, kind, objects and title of one change; see [`UpdatePlan::detail`].
@@ -293,7 +303,19 @@ impl UpdatePlan {
             conflicts: vec![],
             findings: FindingsDiff::default(),
             planned_placements: vec![],
+            merges_named: vec![],
         }
+    }
+
+    /// The change removes or retags routed copper: tracks or vias.
+    pub fn touches_routed(&self) -> bool {
+        !self.conflicting_tracks.is_empty() || !self.conflicting_vias.is_empty()
+    }
+
+    /// A person must see this plan before it applies: it touches routed
+    /// copper or merges named nets.
+    pub fn needs_review(&self) -> bool {
+        self.touches_routed() || !self.merges_named.is_empty()
     }
 
     /// Record one change: `head` structured, `detail` in full.
@@ -2458,6 +2480,17 @@ pub(crate) fn preview(
             return (plan, None);
         }
     };
+    let merges = nets::named_merges(project, &next);
+    for merge in &merges {
+        let refs = merge
+            .nets
+            .iter()
+            .map(|n| ObjectRef::Net { id: n.net })
+            .chain(merge.joined_by.iter().cloned())
+            .collect();
+        plan.warn(&merge.line(), merge.detail(&next), refs);
+    }
+    plan.merges_named = merges;
     let old_nets: BTreeMap<Id, &[Endpoint]> = project
         .nets
         .iter()

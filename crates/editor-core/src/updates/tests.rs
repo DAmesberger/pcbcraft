@@ -266,7 +266,8 @@ fn stale_preview_and_malformed_changes_do_not_touch_history() -> Result<()> {
             Operation::Update(Box::new(ApplyUpdate {
                 expected_revision: plan.revision,
                 change: plan.change,
-                remove_conflicting_tracks: true
+                remove_conflicting_tracks: true,
+                merge_named_nets: false,
             }))
         ),
         Err(Error::Stale { .. })
@@ -411,6 +412,7 @@ fn preview_and_apply_roundtrip_through_serialized_operations_and_schema() -> Res
             expected_revision: plan.revision,
             change: plan.change,
             remove_conflicting_tracks: false,
+            merge_named_nets: false,
         }),
     ))?)?;
     apply(&mut engine, operation)?;

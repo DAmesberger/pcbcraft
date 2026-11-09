@@ -701,3 +701,87 @@ fn write_label_pictures() -> TestResult {
     }
     Ok(())
 }
+
+/// The demo with a VBUS port on R1's pin 2, whose wire runs to R2's pin 1,
+/// and a GND port on R2's pin 2: the VBUS wire and its middle.
+fn vbus_and_gnd(
+    engine: &mut Engine,
+) -> Result<(Id, pcbcraft_core::geometry::Point), Box<dyn std::error::Error>> {
+    let project = engine.project();
+    let (r1, r2) = (project.instances[0].id, project.instances[1].id);
+    let (from, to) = (WireEnd::from(ep(r1, 2)), WireEnd::from(ep(r2, 1)));
+    let wire = project
+        .wires
+        .iter()
+        .find(|w| (w.from, w.to) == (from, to) || (w.from, w.to) == (to, from))
+        .map(|w| w.id)
+        .ok_or("the demo's wire")?;
+    let a = schematic::pin_position(project, ep(r1, 2)).ok_or("pin")?;
+    let b = schematic::pin_position(project, ep(r2, 1)).ok_or("pin")?;
+    for (name, style, at) in [
+        ("VBUS", PowerStyle::Bar, ep(r1, 2)),
+        ("GND", PowerStyle::Ground, ep(r2, 2)),
+    ] {
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::PlaceLabel {
+                sheet: None,
+                name: name.into(),
+                kind: LabelKind::Power { style },
+                position: [0.0, 0.0],
+                rotation: Default::default(),
+                attach: Some(WireTarget::Terminal(at)),
+            }),
+        )?;
+    }
+    Ok((wire, [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]))
+}
+
+/// Z4: the Power tool, still on its default GND, clicked onto the VBUS
+/// wire. Core refuses the port, so the board cannot be shorted silently;
+/// the refusal opens the review, which names both nets.
+#[test]
+fn a_gnd_port_clicked_onto_a_vbus_wire_opens_the_merge_review() -> TestResult {
+    let mut engine = Engine::demo()?;
+    let (wire, middle) = vbus_and_gnd(&mut engine)?;
+    let ctx = ctx();
+    let mut editor = centred(middle, 12.0);
+    editor.on_tool("power", &engine);
+    assert_eq!(editor.drafts.power, "GND", "the tool's default");
+    let op = click(&mut editor, &engine, &ctx, CANVAS.center()).ok_or("no port")?;
+    let Operation::Schematic(command @ SchematicCommand::PlaceLabel { name, attach, .. }) = &op
+    else {
+        return Err(format!("{op:?}").into());
+    };
+    assert_eq!(name, "GND");
+    assert!(
+        matches!(attach, Some(WireTarget::OnWire(p)) if p.wire == wire),
+        "{attach:?}"
+    );
+    let before = engine.document().clone();
+    let refused = engine.apply(engine.revision(), op.clone());
+    assert!(
+        matches!(&refused, Err(pcbcraft_core::Error::Conflict(m)) if m.contains("VBUS and GND")),
+        "{refused:?}"
+    );
+    assert_eq!(engine.document(), &before);
+    assert!(editor.review_named_merge(&engine, command));
+    assert!(editor.update.is_open(), "no review");
+    let Some(Change::Schematic { command: reviewed }) = editor.update.change() else {
+        return Err("the review is not of the port".into());
+    };
+    assert_eq!(format!("{reviewed:?}"), format!("{command:?}"));
+    let plan = engine.preview_update(Change::Schematic {
+        command: command.clone(),
+    });
+    let content = crate::update_preview::content(&plan, engine.project(), None, &[]);
+    assert!(
+        content
+            .lines
+            .iter()
+            .any(|l| l.title == "Joins VBUS and GND into one net, GND"),
+        "{:?}",
+        content.lines
+    );
+    Ok(())
+}

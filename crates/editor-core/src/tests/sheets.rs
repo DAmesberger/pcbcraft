@@ -398,7 +398,9 @@ fn renaming_a_labelled_net_renames_its_labels_and_keeps_its_id() -> Result<()> {
     );
     assert!(matches!(refused, Err(Error::Conflict(_))), "{refused:?}");
     kept.assert_kept(&engine, "rename onto another net");
-    // Renaming one label onto another net's name joins them deliberately.
+    // Renaming one label onto another net's name joins them, but only
+    // deliberately: directly it is refused, and a reviewed update that asks
+    // for the merge joins them.
     label(
         &mut engine,
         s1,
@@ -407,14 +409,28 @@ fn renaming_a_labelled_net_renames_its_labels_and_keeps_its_id() -> Result<()> {
         [10.0, -10.0],
         at(ep(u3, 1)),
     )?;
-    run(
+    let rename = C::EditLabel {
+        label: a,
+        name: Some("SCL".into()),
+        kind: None,
+        rotation: None,
+    };
+    let kept = Snapshot::of(&engine);
+    let refused = run(&mut engine, rename.clone());
+    assert!(
+        matches!(&refused, Err(Error::Conflict(m)) if m.starts_with("net.named_merge:")),
+        "{refused:?}"
+    );
+    kept.assert_kept(&engine, "a rename that merges named nets");
+    let revision = engine.revision();
+    apply(
         &mut engine,
-        C::EditLabel {
-            label: a,
-            name: Some("SCL".into()),
-            kind: None,
-            rotation: None,
-        },
+        Operation::Update(Box::new(crate::updates::ApplyUpdate {
+            expected_revision: revision,
+            change: Change::Schematic { command: rename },
+            remove_conflicting_tracks: false,
+            merge_named_nets: true,
+        })),
     )?;
     assert_eq!(net_of(&engine, ep(u1, 2))?, net_of(&engine, ep(u3, 1))?);
     engine.undo()?;
