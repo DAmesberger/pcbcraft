@@ -44,7 +44,7 @@ use solidcraft_engine::doc::FeatureKind;
 use solidcraft_engine::render::clear_coat::ClearCoat;
 use solidcraft_engine::render::surface::{MIN_ROUGHNESS, OpaqueSurface};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 /// Built bounds and lead contacts must match the recorded ones this
 /// closely, mm (the same reader and frame give the same numbers; the
@@ -282,11 +282,47 @@ pub(crate) fn add_source(
     frame: &SourceFrame,
     format: ModelFormat,
 ) -> Result<Vec<String>> {
-    let scale = frame_scale(frame, format)?;
     let created = native.component(component, false)?;
     let names: Vec<String> = (1..=source.keys.len())
         .map(|k| format!("{component} m{k}"))
         .collect();
+    add_import(
+        native,
+        Some(created.component),
+        component,
+        source,
+        (frame, format),
+        &names,
+    )?;
+    native.activate_root()?;
+    if let Some(error) = native.evaluation_error() {
+        return Err(Error::Verification(format!(
+            "model.build: {component} did not evaluate: {error}"
+        )));
+    }
+    Ok(names)
+}
+
+/// Add `source` to `native` as one import feature (in `component`, or the
+/// root) building the bodies `names`, then the features that put them in
+/// the model frame: the unit's scale, the turn to Z up and the origin
+/// offset, each only when needed. Feature names start with `label`.
+pub(crate) fn add_import(
+    native: &mut Native,
+    component: Option<u64>,
+    label: &str,
+    source: Source,
+    (frame, format): (&SourceFrame, ModelFormat),
+    names: &[String],
+) -> Result<()> {
+    let scale = frame_scale(frame, format)?;
+    if names.len() != source.keys.len() {
+        return Err(Error::Verification(format!(
+            "model.asset: {} body names for {} bodies",
+            names.len(),
+            source.keys.len()
+        )));
+    }
     let session = native.session_mut();
     let engine = |e: solidcraft_engine::doc::DocError| Error::Engine {
         command: "import".into(),
@@ -294,11 +330,13 @@ pub(crate) fn add_source(
     };
     let id = session
         .doc_mut()
-        .add_feature(source.kind, Some(&format!("{component} import")))
+        .add_feature(source.kind, Some(&format!("{label} import")))
         .map_err(engine)?;
     if let Some(f) = session.doc_mut().feature_mut(id) {
-        f.component = created.component;
-        f.body_names.clone_from(&names);
+        if let Some(component) = component {
+            f.component = component;
+        }
+        f.body_names = names.to_vec();
         f.inserted = true;
     }
     session.refresh();
@@ -328,31 +366,25 @@ pub(crate) fn add_source(
             native.call(
                 "solid.scale",
                 json!({"bodies": names, "factor": scale, "origin": [0, 0, 0],
-                    "name": format!("{component} unit")}),
+                    "name": format!("{label} unit")}),
             )?;
         }
         if frame.up == UpAxis::Y {
             native.call(
                 "solid.move",
                 json!({"bodies": names, "axis": [1, 0, 0], "angle": "90 deg",
-                    "name": format!("{component} up")}),
+                    "name": format!("{label} up")}),
             )?;
         }
         if frame.origin_offset.iter().any(|v| *v != 0.0) {
             native.call(
                 "solid.move",
                 json!({"bodies": names, "translate": frame.origin_offset,
-                    "name": format!("{component} origin")}),
+                    "name": format!("{label} origin")}),
             )?;
         }
     }
-    native.activate_root()?;
-    if let Some(error) = native.evaluation_error() {
-        return Err(Error::Verification(format!(
-            "model.build: {component} did not evaluate: {error}"
-        )));
-    }
-    Ok(names)
+    Ok(())
 }
 
 /// The union bounds of `names` in their definition's frame.
@@ -738,7 +770,7 @@ impl SourceCache {
             return Ok(source);
         }
         check_asset(model, bytes)?;
-        let source = Arc::new(read_source(bytes, model.format)?);
+        let source = shared_source(model, bytes)?;
         cache.reads += 1;
         cache.entries.insert(
             key,
@@ -780,6 +812,40 @@ impl SourceCache {
     pub fn counts(&self) -> (u64, u64) {
         self.0.lock().map_or((0, 0), |c| (c.hits, c.reads))
     }
+}
+
+/// Model files parsed and still held by a [`SourceCache`] or a named
+/// design (`super::named`), by asset hash and format: while anything holds
+/// a file's parse, nothing parses it again.
+type Parsed = BTreeMap<(ContentHash, u8), Weak<Source>>;
+
+fn parsed() -> &'static Mutex<Parsed> {
+    static PARSED: OnceLock<Mutex<Parsed>> = OnceLock::new();
+    PARSED.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// The parse of `bytes` (already checked against `model`): one another
+/// cache or named design holds, or read now.
+fn shared_source(model: &ModelDefinition, bytes: &[u8]) -> Result<Arc<Source>> {
+    let key = (model.asset.hash, format_key(model.format));
+    if let Ok(held) = parsed().lock()
+        && let Some(live) = held.get(&key).and_then(Weak::upgrade)
+    {
+        return Ok(live);
+    }
+    let source = Arc::new(read_source(bytes, model.format)?);
+    if let Ok(mut held) = parsed().lock() {
+        held.retain(|_, w| w.strong_count() > 0);
+        held.insert(key, Arc::downgrade(&source));
+    }
+    Ok(source)
+}
+
+/// The checked parse of a library model's `bytes`, shared with every
+/// [`SourceCache`] that holds it ([`shared_source`]).
+pub(crate) fn checked_source(model: &ModelDefinition, bytes: &[u8]) -> Result<Arc<Source>> {
+    check_asset(model, bytes)?;
+    shared_source(model, bytes)
 }
 
 /// [`build_library_model`] reading the file through `cache`.

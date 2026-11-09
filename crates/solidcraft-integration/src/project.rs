@@ -255,8 +255,17 @@ impl Builder {
                 }
             }
         } else {
+            // The model's own design, built once per process and inserted
+            // like a part file: its face names are the design's, and
+            // dimension references are traced on the same build.
+            let design = models::named::generated(package)?;
             let start = self.native.step();
-            let definition = models::build_definition(&mut self.native, stem, package)?;
+            let definition = models::part_file::insert_design(
+                &mut self.native,
+                stem,
+                design.source(),
+                &design.generated,
+            )?;
             self.native.mark(stem, start);
             definition
         };

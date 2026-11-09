@@ -31,6 +31,7 @@ pub mod inspect;
 pub mod look;
 mod module;
 mod molded;
+pub mod named;
 mod no_lead;
 pub mod part_file;
 mod profile;
@@ -129,14 +130,66 @@ pub struct ModelDefinition {
 /// parameters and body names. Refuses `PackageModel::Envelope` and
 /// `Imported`, a `Generic` form, and a model authored against another
 /// builder revision. Leaves the root component active.
+///
+/// The board inserts the standalone design of [`named::generated`]
+/// instead, so the model's face names are its own; this builds the same
+/// commands into a component of another design.
 pub fn build_definition(
     native: &mut Native,
     component: &str,
     package: &PackageDefinition,
 ) -> Result<ModelDefinition> {
+    check_generated(package)?;
+    if !valid_stem(component) {
+        return Err(Error::Invalid(format!(
+            "model.name: `{component}` must start with `{PARAMETER_PREFIX}` and use at most \
+             {MAX_STEM} ASCII letters, digits and underscores"
+        )));
+    }
+    if native.find_component(component).is_some() {
+        return Err(Error::Invalid(format!(
+            "model.name: the design already has a definition named {component}"
+        )));
+    }
+    native.component(component, false)?;
+    let bodies = build_bodies(native, component, package)?;
+    native.activate_root()?;
+    if let Some(error) = native.evaluation_error() {
+        return Err(Error::Verification(format!(
+            "model.build: {component} did not evaluate: {error}"
+        )));
+    }
+    Ok(ModelDefinition {
+        component: component.to_owned(),
+        bodies,
+    })
+}
+
+/// Build the generated model of `package` in the root of `native`, a new
+/// design: parameters and bodies by their own names (`length`, `body`), as
+/// a part file has them. The command sequence depends on the package's
+/// form, builder revision, materials and terminals only, so the feature
+/// ids, and with them the face names, are the same on every build.
+pub fn build_standalone(
+    native: &mut Native,
+    package: &PackageDefinition,
+) -> Result<Vec<GeneratedBody>> {
+    check_generated(package)?;
+    let bodies = build_bodies(native, "", package)?;
+    if let Some(error) = native.evaluation_error() {
+        return Err(Error::Verification(format!(
+            "model.build: the generated model did not evaluate: {error}"
+        )));
+    }
+    Ok(bodies)
+}
+
+/// The refusals of a generated build: another model source, a generic
+/// form, another builder revision, or form values out of range.
+fn check_generated(package: &PackageDefinition) -> Result<()> {
     let PackageModel::Generated {
         family_rev: authored,
-        materials,
+        ..
     } = &package.model
     else {
         return Err(Error::Invalid(
@@ -155,17 +208,6 @@ pub fn build_definition(
             package.form.label()
         )));
     }
-    if !valid_stem(component) {
-        return Err(Error::Invalid(format!(
-            "model.name: `{component}` must start with `{PARAMETER_PREFIX}` and use at most \
-             {MAX_STEM} ASCII letters, digits and underscores"
-        )));
-    }
-    if native.find_component(component).is_some() {
-        return Err(Error::Invalid(format!(
-            "model.name: the design already has a definition named {component}"
-        )));
-    }
     if package.form.lengths().iter().any(|v| !v.is_finite()) {
         return Err(Error::Invalid(
             "model.form: package form values must be finite".into(),
@@ -177,22 +219,35 @@ pub fn build_definition(
         return Err(Error::Invalid(format!("model.form: {problem}")));
     }
     match &package.form {
-        PackageForm::Chip(c) => chip::check(c)?,
-        PackageForm::GullWing(g) => gull_wing::check(g)?,
-        PackageForm::NoLead(n) => no_lead::check(n)?,
-        PackageForm::Header(h) => header::check(h)?,
-        PackageForm::Tabbed(f) => tabbed::check(f)?,
-        PackageForm::Molded(f) => molded::check(f)?,
-        PackageForm::Grid(f) => grid::check(f)?,
-        PackageForm::Tht(f) => tht::check(f)?,
-        PackageForm::Module(f) => module::check(f)?,
-        PackageForm::UsbC(f) => usb_c::check(f)?,
-        PackageForm::Generic => {}
+        PackageForm::Chip(c) => chip::check(c),
+        PackageForm::GullWing(g) => gull_wing::check(g),
+        PackageForm::NoLead(n) => no_lead::check(n),
+        PackageForm::Header(h) => header::check(h),
+        PackageForm::Tabbed(f) => tabbed::check(f),
+        PackageForm::Molded(f) => molded::check(f),
+        PackageForm::Grid(f) => grid::check(f),
+        PackageForm::Tht(f) => tht::check(f),
+        PackageForm::Module(f) => module::check(f),
+        PackageForm::UsbC(f) => usb_c::check(f),
+        PackageForm::Generic => Ok(()),
     }
-    native.component(component, false)?;
+}
+
+/// Run the family builder of `package` in the active component of
+/// `native`, names stemmed by `stem` (none when empty).
+fn build_bodies(
+    native: &mut Native,
+    stem: &str,
+    package: &PackageDefinition,
+) -> Result<Vec<GeneratedBody>> {
+    let PackageModel::Generated { materials, .. } = &package.model else {
+        return Err(Error::Invalid(
+            "model.unsupported: only generated package models are built here".into(),
+        ));
+    };
     let mut b = Build {
         native,
-        stem: component.to_owned(),
+        stem: stem.to_owned(),
         form: &package.form,
         materials,
         bodies: Vec::new(),
@@ -216,17 +271,7 @@ pub fn build_definition(
     }
     b.assign_terminals(package);
     b.assign_looks()?;
-    let bodies = b.bodies;
-    native.activate_root()?;
-    if let Some(error) = native.evaluation_error() {
-        return Err(Error::Verification(format!(
-            "model.build: {component} did not evaluate: {error}"
-        )));
-    }
-    Ok(ModelDefinition {
-        component: component.to_owned(),
-        bodies,
-    })
+    Ok(b.bodies)
 }
 
 fn valid_stem(stem: &str) -> bool {
@@ -252,8 +297,11 @@ fn mm(value: f64) -> String {
 }
 
 impl Build<'_> {
-    /// The named parameter `<stem>_<name>`.
+    /// The named parameter `<stem>_<name>` (`<name>` standalone).
     fn p(&self, name: &str) -> String {
+        if self.stem.is_empty() {
+            return name.to_owned();
+        }
         format!("{}_{name}", self.stem)
     }
 
@@ -271,8 +319,11 @@ impl Build<'_> {
         Ok(p)
     }
 
-    /// The body name `<stem> <part>`.
+    /// The body name `<stem> <part>` (`<part>` standalone).
     fn name(&self, part: &str) -> String {
+        if self.stem.is_empty() {
+            return part.to_owned();
+        }
         format!("{} {part}", self.stem)
     }
 

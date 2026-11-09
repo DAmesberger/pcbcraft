@@ -76,10 +76,10 @@ fn face_ref(body: &str, name: &str, pick: [f64; 3]) -> FeatureRef {
 fn run(bytes: &[u8], feature: &FeatureRef, frame: Transform3) -> Result<Traced> {
     let part = PartFileModel::default();
     trace(&TraceRequest {
-        part: &part,
-        bytes,
+        model: TraceModel::PartFile { part: &part, bytes },
         frame,
         feature,
+        picked_here: true,
     })
 }
 

@@ -101,7 +101,7 @@ pub(crate) fn fixture_glb() -> Vec<u8> {
 
 /// A STEP file of the same two boxes in millimetres, Z up, written by
 /// Solidcraft's exporter.
-fn fixture_step() -> Result<Vec<u8>> {
+pub(crate) fn fixture_step() -> Result<Vec<u8>> {
     let mut native = Native::new("fixture")?;
     for (name, corner, size) in [
         ("Body", [-2.0, -1.5, 0.2], [4.0, 3.0, 1.0]),

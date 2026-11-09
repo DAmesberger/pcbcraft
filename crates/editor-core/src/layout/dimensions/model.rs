@@ -1,9 +1,10 @@
 //! Faces, edges and vertices of a part's own 3D model as dimension
-//! references (docs/board-sketch-references.md §5.4, §5.5; slice S3).
+//! references (docs/board-sketch-references.md §5.4, §5.5, §6.2; slices S3
+//! and S4).
 //!
 //! The core never reads a model. The host's board evaluator traces each
 //! reference in the board plane ([`BoardShapeEvaluator::trace_model`]): it
-//! re-finds the face by its persistent name in the part file's own design,
+//! re-finds the face by its persistent name in the model's own design,
 //! checks the stored pick against it, and gives its trace in the part frame
 //! (a face square to the board is a line, a vertical hole or boss its
 //! centre). The seating leaves only x, y and the rotation to solve, so the
@@ -12,19 +13,29 @@
 //! traced in changes, so checks, preflight and the canvas read the status
 //! and the geometry without Solidcraft.
 //!
-//! Only part files (`PackageModel::PartFile`) are traced here; generated,
-//! envelope and library models are slice S4. A reference whose face is gone
-//! is `Lost`, one whose face was found but not provably the same (its name
-//! not exact history, or the stored pick no longer on it) `Inexact`; either
-//! stops driving, keeps its last geometry and blocks fabrication output.
+//! Every model kind but a glTF mesh has a design to name faces in
+//! ([`TraceModel`]): a part file its own; a generated model, or the
+//! package envelope, the standalone design the host builds from the
+//! package; a STEP model the design that imports it. A glTF mesh has no
+//! faces, and a reference to one is refused with a finding that steers the
+//! author to a STEP model or a part file (founder decision 3).
+//!
+//! A reference whose face is gone is `Lost`, one whose face was found but
+//! not provably the same `Inexact`: the stored pick no longer on it, or,
+//! once the model design changed since the pick ([`design_key`]), a name
+//! worked out from geometry rather than history (always so for STEP). Either
+//! stops driving, keeps its last geometry and blocks fabrication output
+//! until the face is picked again.
 use super::FeatureGeometry;
 use crate::diagnostics::{Error, Result};
 use crate::geometry::Transform3;
-use crate::ids::{Id, PackageRef};
+use crate::ids::{ContentHash, Id, ModelRef, PackageRef};
 use crate::instances;
 use crate::layout::outline::BoardShapeEvaluator;
-use crate::library::PackageModel;
+use crate::library::bundle::asset_hash;
+use crate::library::model3d::{ModelDefinition, ModelFormat};
 use crate::library::package_model::PartFileModel;
+use crate::library::{PackageDefinition, PackageModel};
 use crate::model::Project;
 use crate::model::board::ConstraintTarget;
 use crate::model::dimension::{
@@ -32,17 +43,38 @@ use crate::model::dimension::{
 };
 use std::collections::BTreeSet;
 
+/// The design a reference is traced on.
+#[derive(Clone, Copy, Debug)]
+pub enum TraceModel<'a> {
+    /// A part file: its model revision and values, and its packed bytes.
+    PartFile {
+        part: &'a PartFileModel,
+        bytes: &'a [u8],
+    },
+    /// The package's generated model, or its envelope when it has none:
+    /// the standalone design the host builds from the package.
+    Package { package: &'a PackageDefinition },
+    /// A STEP library model and its packed bytes, wrapped in a design that
+    /// imports them.
+    Step {
+        model: &'a ModelDefinition,
+        bytes: &'a [u8],
+    },
+}
+
 /// One reference for the host to trace.
 #[derive(Clone, Copy, Debug)]
 pub struct TraceRequest<'a> {
-    /// The package's part file: its model revision and values.
-    pub part: &'a PartFileModel,
-    /// The part file's packed bytes.
-    pub bytes: &'a [u8],
+    pub model: TraceModel<'a>,
     /// Model frame → part frame: the package's model placement.
     pub frame: Transform3,
     /// A `Face`, `Edge` or `Vertex` feature.
     pub feature: &'a FeatureRef,
+    /// The reference was picked on this very design (a new pick, or a new
+    /// package revision with the same [`design_key`]), so its names are
+    /// the ones picked. `false` once the design changed: a name worked out
+    /// from geometry is then only `Inexact`.
+    pub picked_here: bool,
 }
 
 /// What the host found for a reference it could trace.
@@ -58,10 +90,80 @@ pub struct Traced {
 }
 
 /// Where a placed part's model comes from: the package revision and, when
-/// it is a part file, the file and the frame.
+/// it has faces, the design, its key and the frame.
 struct Source<'a> {
     package: PackageRef,
-    file: Result<(&'a PartFileModel, &'a [u8], Transform3)>,
+    model: Result<(TraceModel<'a>, ContentHash, Transform3)>,
+}
+
+/// The refusal for a glTF model (founder decision 3).
+fn mesh_refusal() -> Error {
+    Error::Unsupported(
+        "layout.dimension_model: its 3D model is a glTF mesh, which has no faces to name; give \
+         the package a STEP model or a part file to dimension to its faces (its pads, courtyard \
+         and anchors can be dimensioned to as they are)"
+            .into(),
+    )
+}
+
+/// The design a package's model is traced on, with its [`design_key`].
+fn trace_model<'a>(
+    project: &'a Project,
+    package: &'a PackageDefinition,
+) -> Result<(TraceModel<'a>, ContentHash)> {
+    let model = match &package.model {
+        PackageModel::PartFile(part) => TraceModel::PartFile {
+            part,
+            bytes: bytes(project, part.model)?.1,
+        },
+        PackageModel::Library(use_) => {
+            let (definition, data) = bytes(project, use_.model)?;
+            match definition.format {
+                ModelFormat::Step => TraceModel::Step {
+                    model: definition,
+                    bytes: data,
+                },
+                ModelFormat::Gltf => return Err(mesh_refusal()),
+                ModelFormat::Solidcraft => {
+                    return Err(Error::Unsupported(
+                        "layout.dimension_model: its 3D model is a SolidCraft library model, \
+                         which is not built yet; use the design as the package's part file to \
+                         dimension to its faces"
+                            .into(),
+                    ));
+                }
+            }
+        }
+        PackageModel::Generated { .. } | PackageModel::Envelope { .. } => {
+            TraceModel::Package { package }
+        }
+    };
+    Ok((model, design_key(&model)?))
+}
+
+/// What a design's face names depend on, hashed: the part file's bytes and
+/// values; the generated model's form, builder revision and materials, or
+/// the envelope; the STEP file's bytes and frame. The model placement is
+/// not in it: it moves the trace, never a name.
+pub fn design_key(model: &TraceModel<'_>) -> Result<ContentHash> {
+    let described = match model {
+        TraceModel::PartFile { part, bytes } => serde_json::json!({
+            "part_file": asset_hash(bytes),
+            "values": part.values,
+        }),
+        TraceModel::Package { package } => serde_json::json!({
+            "form": package.form,
+            "model": package.model,
+            "envelope": package.envelope,
+        }),
+        TraceModel::Step { model, bytes } => serde_json::json!({
+            "step": asset_hash(bytes),
+            "frame": model.frame,
+        }),
+    };
+    let text = serde_json::to_vec(&described)
+        .map_err(|e| Error::Invalid(format!("layout.dimension_model: {e}")))?;
+    Ok(asset_hash(&text))
 }
 
 fn source(project: &Project, placement: Id) -> Option<Source<'_>> {
@@ -71,40 +173,31 @@ fn source(project: &Project, placement: Id) -> Option<Source<'_>> {
         .ok()?
         .physical?;
     let package = physical.package;
-    let file = match &package.definition.model {
-        PackageModel::PartFile(part) => {
-            bytes(project, part).map(|b| (&**part, b, package.definition.placement.transform()))
-        }
-        other => Err(Error::Unsupported(format!(
-            "layout.dimension_model: its 3D model is {}; faces can be named on part files only \
-             for now",
-            other.describe()
-        ))),
-    };
+    let model = trace_model(project, &package.definition)
+        .map(|(model, key)| (model, key, package.definition.placement.transform()));
     Some(Source {
         package: PackageRef::new(package.id, package.revision),
-        file,
+        model,
     })
 }
 
-/// The packed bytes of a part file.
-fn bytes<'a>(project: &'a Project, part: &PartFileModel) -> Result<&'a [u8]> {
-    let model = project.library.model(part.model).ok_or_else(|| {
+/// A library model and its packed bytes.
+fn bytes(project: &Project, model: ModelRef) -> Result<(&ModelDefinition, &[u8])> {
+    let found = project.library.model(model).ok_or_else(|| {
         Error::NotFound(format!(
-            "layout.dimension_model: the part file {} is not in the project",
-            part.model
+            "layout.dimension_model: the 3D model {model} is not in the project"
         ))
     })?;
+    let definition = &found.definition;
     project
         .library
         .assets
         .iter()
-        .find(|a| a.hash == model.definition.asset.hash)
-        .map(|a| a.data.as_slice())
+        .find(|a| a.hash == definition.asset.hash)
+        .map(|a| (definition, a.data.as_slice()))
         .ok_or_else(|| {
             Error::NotFound(format!(
-                "layout.dimension_model: the part file {} has no bytes in the project",
-                part.model
+                "layout.dimension_model: the 3D model {model} has no bytes in the project"
             ))
         })
 }
@@ -155,10 +248,13 @@ fn trace(
     previous: Option<&ModelTrace>,
 ) -> Result<(ModelTrace, Option<Error>)> {
     let last = previous.and_then(|t| t.geometry);
+    // The design the pick was made or last confirmed on.
+    let picked_on = previous.and_then(|t| t.design);
     let lost = |package: Option<PackageRef>, why: Error| {
         let trace = ModelTrace {
             feature: feature.clone(),
             package,
+            design: picked_on,
             status: ReferenceStatus::Lost,
             geometry: last,
             note: note(&why.to_string()),
@@ -188,24 +284,26 @@ fn trace(
         };
         return Ok((p.clone(), why));
     }
-    let (part, bytes, frame) = match source.file {
-        Ok(file) => file,
+    let (model, key, frame) = match source.model {
+        Ok(found) => found,
         Err(why) => return Ok(lost(Some(source.package), why)),
     };
     let evaluator = evaluator.ok_or_else(super::needs_evaluator)?;
     let found = evaluator.trace_model(&TraceRequest {
-        part,
-        bytes,
+        model,
         frame,
         feature,
+        picked_here: previous.is_none() || picked_on == Some(key),
     });
     Ok(match found {
         Ok(t) if t.geometry.valid() && t.status != ReferenceStatus::Lost => {
-            let why = (t.status != ReferenceStatus::Resolved)
+            let resolved = t.status == ReferenceStatus::Resolved;
+            let why = (!resolved)
                 .then(|| Error::Conflict(format!("layout.dimension_reference: {}", t.note)));
             let trace = ModelTrace {
                 feature: feature.clone(),
                 package: Some(source.package),
+                design: if resolved { Some(key) } else { picked_on },
                 status: t.status,
                 geometry: Some(t.geometry),
                 note: note(&t.note),

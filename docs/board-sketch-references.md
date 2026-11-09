@@ -568,3 +568,62 @@ The ESP32-S31 dev board's J1 uses an original USB4105 part file (`examples/esp32
 
 - **S4.** `layout::dimensions::model::source` refuses every model kind but `PartFile` with `layout.dimension_model`. S4 adds the named designs of generated, envelope and STEP models behind the same `trace_model`. STEP names are unverified, so their references come back `Inexact` until re-picked. If acknowledging without a new pick is wanted, it needs a stored flag on the trace or the dimension. glTF stays refused.
 - **S5.** The trace geometry for display and picking is `Project::model_traces[i].geometry`, in the part frame (transform it like any feature, `layout::placement_transform`). A pick in the 3D view must give the body, the persistent face name (`naming::face_name_at_body` on the part's evaluated state) and the pick point in the model frame, which is the board pick through the inverse of the placement, datum and model placement. Selection and camera must not call `trace_model`; only `refresh` does.
+
+## 15. S4 notes
+
+S4 made faces, edges and vertices of every model kind but glTF dimension references: generated models, envelopes and STEP models, besides part files.
+
+### One design per model
+
+`layout::dimensions::model::TraceRequest` now carries a `TraceModel`: `PartFile`, `Package` (the generated model, or the envelope when the package has none, decided by the host as the board build decides it) or `Step`. The host traces each on the design the 3D build uses (`board::model_refs::ModelDesign`), from `pcbcraft-solidcraft` `models::named`:
+
+| Model | Design | Shared with the 3D build |
+| --- | --- | --- |
+| Generated | The family builder's commands in the root of a new design (`models::build_standalone`): parameters and bodies by their own names (`length`, `body`, `termination 2`) | The board inserts this design (`part_file::insert_design`, the part-file insert generalized), so the board's bodies and parameters keep their names (`pkg3r1 body`, `pkg3r1_length`) and the model is built once per process |
+| Envelope | One box feature, body `envelope`, from the package envelope | Not inserted: the board keeps its per-placement box, whose size is a placement parameter a value edit replays in place. The box is the same |
+| STEP | One import feature with the file's bodies named by their keys in the file, then the frame's scale, turn and offset (`imported::add_import`, shared with the board build) | The file's parse: any `SourceCache` or named design holding it shares it (`imported::checked_source`); a file is parsed once while anything holds it |
+
+Designs are cached process-wide by what they are built from (form, builder revision, materials and terminals; envelope size; file hash and frame), 256 at most, least recently used last. The design keeps the evaluated `ModelState` a trace and a pick read.
+
+**Determinism.** `models::named` tests build the designs twice in one process and once in a fresh process (the test binary runs itself) and compare every body and face name; a golden list of the 0603 resistor's face names fails on any change in the builder or in Solidcraft's naming, which needs a new `family_rev`.
+
+### When a name is exact
+
+The rule of §5.5, made precise:
+
+- **The same design.** A name in the design the reference was picked on is the name picked, whether Solidcraft verified it or not. The core stores that design's key on the trace (`ModelTrace::design`, `model::design_key`: the part file's bytes and values; the generated form, model and envelope; the STEP file's bytes and frame; not the model placement, which moves a trace and never a name), and passes `picked_here` when the package's design still has that key. A new pick is always `picked_here`. So a library revision that keeps the model keeps its references `Resolved`, for STEP too.
+- **Another design.** A name that follows history (`verified`) is exact. A STEP import numbers the faces of each body in file order (`F1:face:4`), which Solidcraft reports as verified but which only holds for those bytes, so the host never trusts a STEP name in another file: it is `Inexact`, with a note giving a point to pick it again at. Generated faces Solidcraft names from geometry behave the same way.
+- **The pick.** In either case the stored pick must still lie on the face or edge, or the reference is `Inexact`.
+
+A trace that is not `Resolved` keeps the key of the design it was last picked on, so returning to that design makes it exact again and nothing else does.
+
+### Acknowledging: a new pick, no flag
+
+No stored acknowledgement flag was added. Picking the face again is a new reference (§14), and every note of an inexact reference offers a point on the face at least 1 µm from the stored pick (`REPICK_MM`), so `layout.dimension_edit` with that point always makes a new, `Resolved` reference. An edit that only changes the value keeps the reference and its status, so it never acknowledges silently.
+
+### glTF
+
+`model::source` refuses a glTF model with `layout.dimension_model`: "its 3D model is a glTF mesh, which has no faces to name; give the package a STEP model or a part file to dimension to its faces (its pads, courtyard and anchors can be dimensioned to as they are)". A reference whose package moves to a glTF model in an update becomes `Lost` with that note. A `.solidcraft` library model, which is not built, is refused the same way and pointed at part files.
+
+### Tests
+
+- `board/model_refs_kinds_tests.rs`: R1 of the demo, a generated 0603 resistor, held flush to the right edge by its second termination's +x face, follows the board 10 mm wider; a STEP model's face stays `Resolved` through a revision with the same file, becomes `Inexact` (stops driving, `board.reference_inexact`) with another file, and is `Resolved` again after a pick at the note's point; a glTF face is refused with the finding and nothing changes.
+- `models/named_tests.rs`: names on every build, in a fresh process, the resistor's golden names, the envelope box, STEP bodies by key.
+
+### Measured
+
+`crates/automation/tests/model_build_timing.rs` (ignored) builds a board four times in one process with one source cache, as the model worker does: the first build is cold (every model built), the rest warm. Each board ran in a fresh process, three times, interleaved with the same test on `component-model` cda6183 (built in a copy of that tree). `ci` profile, Apple M5 Max, load average 7–20 from other agents. Medians of the three processes, ms:
+
+| Board | Build | Before (cda6183) | S4 | Difference |
+| --- | --- | --- | --- | --- |
+| ESP32-S31 dev board (20 placements) | First, cold | 28,810 | 30,429 | +1,619 (+5.6 %) |
+| | Later, warm | 28,500–29,700 | 28,900–29,300 | within noise |
+| Showcase (9 placements) | First, cold | 5,973 | 6,478 | +505 (+8 %) |
+| | Later, warm | 5,400–5,800 | 4,800–5,900 | within noise |
+
+The cold build pays once per process for each generated model's standalone design, evaluated once at the end of its commands (`defer_evaluation`); evaluated after every command, as at first, it cost +3.7 s and +1.1 s. The board then evaluates the inserted features again, as it evaluated the builder's commands before, so a warm build costs what it did. **The first 3D open in a session is therefore about 0.5–1.6 s slower in this profile; later opens and rebuilds are not.** Envelope and STEP designs are built only when a reference is traced, never by the 3D build.
+
+### For S5 and S6
+
+- **S5.** The design a 3D pick is named on is `board::model_refs::ModelDesign::of(&TraceModel)` (`.state()`), for every kind, from the same caches. A board pick on a generated part's body maps to the design's body by dropping the definition's stem (`pkg3r1 body` → `body`); on an envelope it is the `envelope` body; on a STEP part the body key.
+- **S6.** The envelope is the one kind the board does not insert from its named design; when the board design becomes persistent, inserting the envelope design per package revision gives its faces board names too.

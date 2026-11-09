@@ -326,6 +326,11 @@ pub struct ModelTrace {
     /// The package revision it was traced in; `None` once the part is gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<PackageRef>,
+    /// The model design it was traced on (`layout::dimensions::model::
+    /// design_key`): a new package revision with the same design keeps
+    /// its names exact, so only another design can make a name inexact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design: Option<crate::ids::ContentHash>,
     pub status: ReferenceStatus,
     /// Its trace in the part frame; for a lost reference, the last one.
     #[serde(default, skip_serializing_if = "Option::is_none")]

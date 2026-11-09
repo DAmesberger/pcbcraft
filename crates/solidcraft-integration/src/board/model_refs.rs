@@ -1,17 +1,23 @@
-//! Faces, edges and vertices of a part file as dimension references
-//! (docs/board-sketch-references.md §5.4, §5.5; slice S3): the host side of
-//! `layout::dimensions::model`.
+//! Faces, edges and vertices of a part's 3D model as dimension references
+//! (docs/board-sketch-references.md §5.4, §5.5, §6.2; slices S3 and S4):
+//! the host side of `layout::dimensions::model`.
 //!
 //! A reference names a face or edge by its persistent Solidcraft name in
-//! the part file's own design, on a named body, with a pick point in the
-//! model frame. The part is evaluated through the one part-file cache the
-//! 3D build uses ([`part_file::evaluate`]), and the name is re-found with
-//! Solidcraft's own lookup (`naming::locate_face_on_body`,
-//! `naming::locate_edge`). At our pin the lookup reports whether the name
-//! follows exact history (`verified`) and whether the stored pick still
-//! lies on the face or edge (`on_point`); both must hold for `Resolved`,
-//! anything less is `Inexact` (upstream's `face_on_body` `inexact` flag is
-//! not at our pin).
+//! the model's own design, on a named body, with a pick point in the model
+//! frame. The design is the one the 3D build uses ([`ModelDesign`]): a
+//! part file evaluated through the part-file cache ([`part_file::
+//! evaluate`]); a generated model's standalone design, which the board
+//! inserts, or the envelope's one-box design ([`named::package`]); the
+//! design that imports a STEP model ([`named::step`]). The name is
+//! re-found with Solidcraft's own lookup (`naming::locate_face_on_body`,
+//! `naming::locate_edge`), which reports whether the name follows exact
+//! history (`verified`) and whether the stored pick still lies on the face
+//! or edge (`on_point`). The pick must lie on it for `Resolved`. In the
+//! design the reference was picked on (`TraceRequest::picked_here`) every
+//! name is the one picked; in another design a name worked out from
+//! geometry (every STEP face's, some generated faces') is only `Inexact`
+//! until the face is picked again (upstream's `face_on_body` `inexact`
+//! flag is not at our pin).
 //!
 //! The part sits on the board with only x, y and the rotation free, so a
 //! face square to the board traces an exact line in the board plane, a
@@ -20,11 +26,12 @@
 //! face, a face parallel to the board and a free-form face have no single
 //! trace and are refused ("pick an edge of it").
 use crate::geom::Vec3;
+use crate::models::named::{self, NamedDesign};
 use crate::models::part_file::{self, EvaluatedPart};
 use pcbcraft_core::diagnostics::{Error, Result};
 use pcbcraft_core::geometry::Transform3;
 use pcbcraft_core::layout::dimensions::FeatureGeometry;
-use pcbcraft_core::layout::dimensions::model::{TraceRequest, Traced};
+use pcbcraft_core::layout::dimensions::model::{TraceModel, TraceRequest, Traced};
 use pcbcraft_core::model::dimension::{
     End, FeatureRef, ModelEdgeRef, ModelFaceRef, ReferenceStatus,
 };
@@ -32,6 +39,7 @@ use solidcraft_engine::doc::naming;
 use solidcraft_engine::doc::{ModelBody, ModelState};
 use solidcraft_engine::kernel::{FaceSurface, edge_circle, face_surface};
 use std::f64::consts::TAU;
+use std::sync::Arc;
 
 /// How far from square to the board (the sine of the angle) a direction
 /// may be and still count as square.
@@ -43,6 +51,9 @@ const FLAT_MM: f64 = 1e-6;
 const LISTED: usize = 12;
 /// Triangles of one face read for its extent.
 const MAX_FACE_TRIANGLES: usize = 2_000_000;
+/// A point a note offers to pick again lies this far from the stored pick
+/// at least (mm), so picking it is a new reference.
+const REPICK_MM: f64 = 1e-3;
 
 fn arr(v: Vec3) -> [f64; 3] {
     [v.x, v.y, v.z]
@@ -60,18 +71,72 @@ fn point_words(p: [f64; 3]) -> String {
     format!("({}, {}, {})", mm(p[0]), mm(p[1]), mm(p[2]))
 }
 
-/// Trace one reference of a part file (the evaluator's `trace_model`).
+/// The evaluated design a model reference is traced on, and a pick in the
+/// 3D view is named on (`naming::face_name_at_body` on [`Self::state`],
+/// the pick in the model frame).
+#[derive(Clone, Debug)]
+pub enum ModelDesign {
+    Part(Arc<EvaluatedPart>),
+    Named(Arc<NamedDesign>),
+}
+
+impl ModelDesign {
+    /// The design of `model`, from the cache the 3D build fills.
+    pub fn of(model: &TraceModel<'_>) -> Result<Self> {
+        let read = |e: crate::Error| Error::Invalid(format!("model.read: {e}"));
+        match *model {
+            TraceModel::PartFile { part, bytes } => part_file::evaluate(bytes, &part.values)
+                .map(Self::Part)
+                .map_err(|e| Error::Invalid(format!("part_file.read: {e}"))),
+            TraceModel::Package { package } => {
+                named::package(package).map(Self::Named).map_err(read)
+            }
+            TraceModel::Step { model, bytes } => {
+                named::step(model, bytes).map(Self::Named).map_err(read)
+            }
+        }
+    }
+
+    /// Its evaluated bodies with their persistent face names, model frame.
+    pub fn state(&self) -> &ModelState {
+        match self {
+            Self::Part(part) => part.state(),
+            Self::Named(design) => design.state(),
+        }
+    }
+}
+
+/// Trace one reference of a part's 3D model (the evaluator's
+/// `trace_model`).
 pub fn trace(request: &TraceRequest<'_>) -> Result<Traced> {
-    let part = part_file::evaluate(request.bytes, &request.part.values)
-        .map_err(|e| Error::Invalid(format!("part_file.read: {e}")))?;
+    let design = ModelDesign::of(&request.model)?;
+    let state = design.state();
+    // An imported file has no history: its import numbers the faces of
+    // each body in file order, so a name is exact for those bytes only
+    // (§6.2). Another file is another design, and `picked_here` is false.
+    let here = Trust {
+        picked_here: request.picked_here,
+        history: !matches!(request.model, TraceModel::Step { .. }),
+    };
     match request.feature {
-        FeatureRef::Face { face, .. } => trace_face(&part, face, &request.frame),
-        FeatureRef::Edge { edge, .. } => trace_edge(&part, edge, None, &request.frame),
-        FeatureRef::Vertex { edge, end, .. } => trace_edge(&part, edge, Some(*end), &request.frame),
+        FeatureRef::Face { face, .. } => trace_face(state, face, &request.frame, here),
+        FeatureRef::Edge { edge, .. } => trace_edge(state, edge, None, &request.frame, here),
+        FeatureRef::Vertex { edge, end, .. } => {
+            trace_edge(state, edge, Some(*end), &request.frame, here)
+        }
         _ => Err(Error::Invalid(
             "layout.dimension: only faces, edges and vertices are traced on a 3D model".into(),
         )),
     }
+}
+
+/// How far a found name may be trusted.
+#[derive(Clone, Copy, Debug)]
+struct Trust {
+    /// The design is the one the reference was picked on.
+    picked_here: bool,
+    /// The design has history, so a verified name follows it.
+    history: bool,
 }
 
 /// The solid body of the part called `name`.
@@ -95,33 +160,72 @@ fn body<'a>(state: &'a ModelState, name: &str) -> Result<&'a ModelBody> {
         })
 }
 
-/// The status of a found face or edge, and why it is not resolved.
+/// The status of a found face or edge, and why it is not resolved. A name
+/// counts as exact when it follows the model's history or the design is
+/// the one it was picked on (`picked_here`). `repick` is a point on it,
+/// apart from the pick, to pick it again at.
 fn status(
-    verified: bool,
+    exact: (bool, bool),
     on_point: bool,
     pick: [f64; 3],
-    spot: Option<[f64; 3]>,
+    repick: Option<[f64; 3]>,
 ) -> (ReferenceStatus, String) {
-    match (verified, on_point) {
-        (true, true) => (ReferenceStatus::Resolved, String::new()),
-        (true, false) => (
+    let (verified, picked_here) = exact;
+    let again = match repick {
+        Some(p) => format!("; pick it again (a point on it is {})", point_words(p)),
+        None => "; pick it again".into(),
+    };
+    if !on_point {
+        return (
             ReferenceStatus::Inexact,
-            match spot {
-                Some(spot) => format!(
-                    "the pick {} is no longer on it; a point on it is {}",
-                    point_words(pick),
-                    point_words(spot)
-                ),
-                None => format!("the pick {} is no longer on it", point_words(pick)),
-            },
-        ),
-        (false, _) => (
-            ReferenceStatus::Inexact,
-            "its name was worked out from the geometry, not from the part's history".into(),
-        ),
+            format!("the pick {} is no longer on it{again}", point_words(pick)),
+        );
     }
+    if verified || picked_here {
+        return (ReferenceStatus::Resolved, String::new());
+    }
+    (
+        ReferenceStatus::Inexact,
+        format!(
+            "the 3D model changed since it was picked, and its name was worked out from the \
+             geometry, not from the model's history (a STEP model's always is){again}"
+        ),
+    )
 }
 
+/// A point on face `face` of `b` to pick it again at: its spot, or a
+/// triangle's centre, at least [`REPICK_MM`] from `pick`.
+fn face_repick(b: &ModelBody, face: usize, pick: [f64; 3]) -> Option<[f64; 3]> {
+    let far = |p: &[f64; 3]| {
+        let d = [p[0] - pick[0], p[1] - pick[1], p[2] - pick[2]];
+        (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() >= REPICK_MM
+    };
+    if let Some(spot) = naming::face_spot(b, face).map(|s| arr(s.point))
+        && far(&spot)
+    {
+        return Some(spot);
+    }
+    let mesh = b.mesh();
+    mesh.triangles
+        .iter()
+        .zip(&mesh.tri_face)
+        .filter(|(_, f)| **f as usize == face)
+        .filter_map(|(t, _)| mesh.tri(t))
+        .map(|[a, b, c]| arr((a + b + c) / 3.0))
+        .find(far)
+}
+
+/// A point on an edge (`points`, its polyline) to pick it again at: `at`,
+/// or a polyline point, at least [`REPICK_MM`] from `pick`.
+fn edge_repick(at: [f64; 3], points: &[Vec3], pick: [f64; 3]) -> Option<[f64; 3]> {
+    let far = |p: &[f64; 3]| {
+        let d = [p[0] - pick[0], p[1] - pick[1], p[2] - pick[2]];
+        (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() >= REPICK_MM
+    };
+    std::iter::once(at)
+        .chain(points.windows(2).map(|w| arr((w[0] + w[1]) / 2.0)))
+        .find(far)
+}
 /// Faces of `body` square to the board in the part frame, by name with a
 /// point on each: what a refusal offers an agent to pick from.
 fn square_faces(body: &ModelBody, frame: &Transform3) -> String {
@@ -151,8 +255,12 @@ fn square_faces(body: &ModelBody, frame: &Transform3) -> String {
     }
 }
 
-fn trace_face(part: &EvaluatedPart, face: &ModelFaceRef, frame: &Transform3) -> Result<Traced> {
-    let state = part.state();
+fn trace_face(
+    state: &ModelState,
+    face: &ModelFaceRef,
+    frame: &Transform3,
+    trust: Trust,
+) -> Result<Traced> {
     let named = body(state, &face.body.0)?;
     let pick = vec(face.pick);
     let hit = naming::locate_face_on_body(state, Some(&face.body.0), &face.face.0, pick)
@@ -197,8 +305,13 @@ fn trace_face(part: &EvaluatedPart, face: &ModelFaceRef, frame: &Transform3) -> 
         }
         _ => return Err(sloped()),
     };
-    let spot = naming::face_spot(b, hit.face).map(|s| arr(s.point));
-    let (status, note) = status(hit.verified, hit.on_point, face.pick, spot);
+    let repick = face_repick(b, hit.face, face.pick);
+    let (status, note) = status(
+        (hit.verified && trust.history, trust.picked_here),
+        hit.on_point,
+        face.pick,
+        repick,
+    );
     Ok(Traced {
         status,
         geometry,
@@ -255,12 +368,12 @@ fn plane_line(
 }
 
 fn trace_edge(
-    part: &EvaluatedPart,
+    state: &ModelState,
     edge: &ModelEdgeRef,
     end: Option<End>,
     frame: &Transform3,
+    trust: Trust,
 ) -> Result<Traced> {
-    let state = part.state();
     let b = body(state, &edge.body.0)?;
     let hit = naming::locate_edge(b, &edge.edge.0, vec(edge.pick)).map_err(|why| {
         Error::NotFound(format!(
@@ -304,7 +417,14 @@ fn trace_edge(
             ))
         })?,
     };
-    let (status, note) = status(hit.verified, hit.on_point, edge.pick, Some(arr(hit.point)));
+    let polyline = mesh.edges.get(hit.edge).map_or(&[][..], Vec::as_slice);
+    let repick = edge_repick(arr(hit.point), polyline, edge.pick);
+    let (status, note) = status(
+        (hit.verified && trust.history, trust.picked_here),
+        hit.on_point,
+        edge.pick,
+        repick,
+    );
     Ok(Traced {
         status,
         geometry,
@@ -357,6 +477,9 @@ fn edge_trace(
 #[cfg(test)]
 #[path = "model_refs_engine_tests.rs"]
 mod engine_tests;
+#[cfg(test)]
+#[path = "model_refs_kinds_tests.rs"]
+mod kinds_tests;
 #[cfg(test)]
 #[path = "model_refs_tests.rs"]
 mod tests;

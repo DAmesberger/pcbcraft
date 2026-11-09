@@ -152,8 +152,8 @@ pub trait BoardShapeEvaluator {
     ) -> Result<super::dimensions::PartsSolution> {
         Err(super::dimensions::not_yet())
     }
-    /// Trace a face, edge or vertex of a part file in the board plane
-    /// (`layout::dimensions::model`, slice S3). `Err(NotFound)`: the model
+    /// Trace a face, edge or vertex of a part's 3D model in the board plane
+    /// (`layout::dimensions::model`, slices S3, S4). `Err(NotFound)`: the model
     /// has no such face; `Err(Unsupported)`: it has no single trace in the
     /// board plane (a sloped face).
     fn trace_model(

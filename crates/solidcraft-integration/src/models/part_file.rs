@@ -658,18 +658,43 @@ fn valid_stem(stem: &str) -> bool {
         && stem.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
 }
 
-/// Add `part`'s history to `native` as the component definition `stem`:
-/// every root feature cloned with complete name maps (feature ids, feature
-/// names and body names `<stem> <name>`, every parameter, feature input and
-/// dimension `<stem>_<name>`), user parameters copied with their (literal
-/// or renamed) expressions, one evaluation, the bodies' looks assigned
-/// from their materials. Refuses a blocked part, a name the design already
-/// uses and any inserted feature failing; it runs inside a board build,
-/// which is discarded whole on a refusal. Leaves the root component active.
+/// Add `part`'s history to `native` as the component definition `stem`
+/// ([`insert_design`]), the bodies' roles and materials from their looks.
+/// Refuses a blocked part. Leaves the root component active.
 pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<ModelDefinition> {
     if let Some(refusal) = part.refusal() {
         return Err(refusal);
     }
+    let bodies: Vec<GeneratedBody> = part
+        .bodies
+        .iter()
+        .map(|b| GeneratedBody {
+            name: b.name.clone(),
+            role: role_of(b.material),
+            material: b.material.unwrap_or(MaterialId::EpoxyMould),
+            terminal: None,
+        })
+        .collect();
+    insert_design(native, stem, &part.source, &bodies)
+}
+
+/// Add a standalone design's history to `native` as the component
+/// definition `stem`: every root feature of `src` cloned with complete
+/// name maps (feature ids, feature names and body names `<stem> <name>`,
+/// every parameter, feature input and dimension `<stem>_<name>`), user
+/// parameters copied with their (literal or renamed) expressions, one
+/// evaluation, the looks of `bodies` (by their names in `src`) assigned
+/// from their materials. A part file and a generated model's standalone
+/// design (`super::named`) are inserted this way. Refuses a name the
+/// design already uses and any inserted feature failing; it runs inside a
+/// board build, which is discarded whole on a refusal. Leaves the root
+/// component active.
+pub fn insert_design(
+    native: &mut Native,
+    stem: &str,
+    src: &Document,
+    bodies: &[GeneratedBody],
+) -> Result<ModelDefinition> {
     if !valid_stem(stem) {
         return Err(Error::Invalid(format!(
             "model.name: `{stem}` must start with `{PARAMETER_PREFIX}` and use at most \
@@ -681,7 +706,6 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
             "model.name: the design already has a definition named {stem}"
         )));
     }
-    let src = &*part.source;
     let parameters: BTreeMap<String, String> = src
         .param_defs()
         .into_iter()
@@ -691,14 +715,13 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
         })
         .collect();
     let body_name = |n: &str| format!("{stem} {n}");
-    let mut bodies: BTreeMap<String, String> = part
-        .bodies
+    let mut renamed: BTreeMap<String, String> = bodies
         .iter()
         .map(|b| (b.name.clone(), body_name(&b.name)))
         .collect();
     for f in &src.features {
         for n in f.body_names.iter().chain(&f.participants) {
-            bodies.entry(n.clone()).or_insert_with(|| body_name(n));
+            renamed.entry(n.clone()).or_insert_with(|| body_name(n));
         }
     }
     let created = native.component(stem, false)?;
@@ -742,7 +765,7 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
         }
         for f in &src.features {
             let mut g = f.clone();
-            g.remap_clone(&ids, &names, &bodies, &parameters)
+            g.remap_clone(&ids, &names, &renamed, &parameters)
                 .map_err(|e| engine(format!("{}: {e}", f.name)))?;
             g.id = ids.get(&f.id).copied().unwrap_or_default();
             g.name = names.get(&f.name).cloned().unwrap_or_default();
@@ -751,7 +774,6 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
         }
     }
     session.refresh();
-    let inserted: BTreeSet<&str> = part.bodies.iter().map(|b| b.name.as_str()).collect();
     if let Some(error) = session
         .model
         .results
@@ -760,7 +782,7 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
         .find_map(|r| r.error.as_ref().map(|e| format!("{}: {e}", r.name)))
     {
         return Err(Error::Verification(format!(
-            "model.build: the part file did not build in the board: {error}"
+            "model.build: {stem} did not build in the board: {error}"
         )));
     }
     let state = session.model.state();
@@ -770,22 +792,19 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
         .filter(|b| b.name.starts_with(&format!("{stem} ")))
         .map(|b| b.name.clone())
         .collect();
-    let expected: BTreeSet<String> = inserted.iter().map(|n| body_name(n)).collect();
+    let expected: BTreeSet<String> = bodies.iter().map(|b| body_name(&b.name)).collect();
     if built != expected {
         return Err(Error::Verification(format!(
-            "model.build: the part file built {} bodies in the board, expected {}",
+            "model.build: {stem} built {} bodies in the board, expected {}",
             built.len(),
             expected.len()
         )));
     }
-    let generated: Vec<GeneratedBody> = part
-        .bodies
+    let generated: Vec<GeneratedBody> = bodies
         .iter()
         .map(|b| GeneratedBody {
             name: body_name(&b.name),
-            role: role_of(b.material),
-            material: b.material.unwrap_or(MaterialId::EpoxyMould),
-            terminal: None,
+            ..b.clone()
         })
         .collect();
     let mut by_material: BTreeMap<MaterialId, Vec<&str>> = BTreeMap::new();
