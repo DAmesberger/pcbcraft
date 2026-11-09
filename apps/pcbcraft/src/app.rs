@@ -1390,6 +1390,14 @@ pub(crate) fn sheet_rows(
 mod flow_tests;
 
 #[cfg(test)]
+#[path = "app/ax_harness.rs"]
+pub(crate) mod ax_harness;
+
+#[cfg(test)]
+#[path = "app/ax_tests.rs"]
+mod ax_tests;
+
+#[cfg(test)]
 mod font_tests {
     use solidcraft_ui_egui::fonts;
 

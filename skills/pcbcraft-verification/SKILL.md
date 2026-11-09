@@ -19,6 +19,8 @@ Choose evidence by the changed behavior:
 | Performance | Reproducible workload and machine/settings; latency distributions and invalidation/upload counters |
 | Crash/data-loss fix | Reproducer and regression; file/transaction state remains recoverable |
 
+For whole-app UI flows, drive the headless app through its accessibility tree with the `Ax` harness (`apps/pcbcraft/src/app/ax_harness.rs`, flows in `ax_tests.rs`): find widgets by role and name, click and type with real events. A widget a test cannot find by name needs an accessible label, not a pixel position.
+
 Run focused checks during development and the implemented aggregate gate before merging or handing off executable changes. Broaden testing when a shared boundary changes. Documentation-only work needs link/skill validation, not a full CAD build. Do not add superficial tests that only mirror implementation text.
 
 Expected values come from analytic reasoning, public specifications or independent permitted references. An implementation's own export/reimport agreement alone does not establish manufacturing correctness. Keep known limitations explicit; never adjust expected values just to match a wrong result.
