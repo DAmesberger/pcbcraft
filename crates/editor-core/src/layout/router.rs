@@ -13,6 +13,9 @@
 //!   everything, else shoves as far along the straight step as it can.
 //!   It never proposes a violation.
 //!
+//! In every mode, a step that would run back against the track ending at
+//! its head moves that corner back along the track instead (`corner`).
+//!
 //! [`plan`] is pure: the desktop's preview and the click that commits it
 //! (one `layout.route_apply`, one undo step, every shoved item included)
 //! call it on the same revision, and `layout.route_step` calls it inside
@@ -21,6 +24,7 @@
 //! back as soon as the head moves away. Differential pairs route through
 //! [`pair_plan`], which treats both halves as one unit.
 mod clean;
+mod corner;
 mod hull;
 mod shove;
 mod walk;
@@ -319,7 +323,7 @@ impl Head {
 /// `index`, built from the same revision).
 pub fn plan(project: &Project, index: &RouteIndex, request: &RouteStepRequest) -> RoutePlan {
     let ctx = Ctx::new(project, index);
-    let plan = proposal(&ctx, request);
+    let plan = corner::recompute(&ctx, request, proposal(&ctx, request));
     match request.max_detour {
         Some(max) if plan.detour_factor > max => too_long(request, plan.detour_factor, max),
         _ => plan,

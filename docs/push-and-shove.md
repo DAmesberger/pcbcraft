@@ -66,6 +66,14 @@ The engine's `layout.route_apply` checks remain the authority. The router's coll
 
 No branch returns copper that collides.
 
+**The head's corner** (`router/corner.rs`, every mode). The head is usually the end of the track the route came along, a corner placed by a click. Clicks snap to the 0.5 mm grid, and fine-pitch pins are often off it (USB-C pins sit at x.25 and x.75), so the corner lands past the pin's column. The step from there used to run back into the pin. Flipped, that was a 45° hook (an acute corner). Unflipped, it was a knee that passed the pin and came back. Now, when the step's path has a leg running back against the incoming track, the corner moves back along that track:
+
+1. The candidate corners are the target's foot on the track (a 90° turn), and in 45° and 90° routing each point from which an axis or diagonal of the posture, turning by at most 90°, runs straight to the target. The candidate nearest the head is tried first.
+2. The first candidate whose step reaches the target, with no leg turning back and no acute corner, wins. The track is shortened to it in the same edit set: one transaction, and one undo step that Backspace also takes back.
+3. The track must be a board track of the step's net on its layer, unlocked, with an end at the head. Every joint on it (a pad, a via, another track) stays on the shortened part, so a head at a pad, a via or a branch never moves.
+4. Steps with a layer change are left as they are.
+5. When no candidate works, the plain step stands. This happens when the target lies behind the track's start, or when the head is boxed in so that the only way out turns back.
+
 **Differential pairs** (`router::pair_plan`). In Shove, both halves' tracks and vias are the fixed copper of one shove, and both nets are frozen. The fallbacks are a pair walkaround, then the longest pushable prefix. Pair walkaround walks the centre line as one envelope of 2 × width + gap and lays both halves along it with `pair::step_along`. It tries both elbow senses, plus a lead straight out of the head for two pitches so halves leaving pads fan out before the first bend. The halves are checked as the engine checks them, the gap between them at the pair rule. A layer change keeps its straight legs and is cut back short of the vias when it collides.
 
 ### Differential pairs as the pushed copper
@@ -104,14 +112,17 @@ Core (`layout/router/tests.rs`, `hull.rs`, `clean.rs`). Every proposal goes thro
 - a pair pushed as one unit (`tests/pair_shove.rs`): a track ending between the halves, a sweep of 240 heads across the pair, a pushed track passing the push on, a pair that cannot bend held with a message, a pair via that stays where another net's would move, a half being routed that leaves its partner alone, and a pair off the 45° grid that a push moves only within half its class's max skew, and not at all without one (`a_push_adds_skew_only_within_the_class_limit`). On the real board, `crates/io/tests/esp32_pair.rs` sweeps 240 steps across the USB pair;
 - mid-span joints (`tests/joints.rs`): a T on a pushed track pins it, so the run bends round the head and comes back through the T, which a push without the T would have left in open board; a far pin leaves the rest free to bend; a via with a track running through it stays put, where without that track the push would have moved it clear of it;
 - `layout.route_step` as one transaction: one revision, undo and redo restore every shoved track and via exactly, the preview query agrees, the plan's undo edits restore the board, and a step that cannot move is refused without change;
-- Ignore proposes exactly `posture::step`.
+- Ignore proposes exactly `posture::step` (from a head with no incoming track to move);
+- entry into pads (`crates/io/tests/route_entry.rs`, on the ESP32 board's USB-C receptacle J1 at 0.5 mm pitch): steps from 216 heads round CC1's and CC2's pins, at every 5° and three distances, in both 45° and 90° elbows. Then two-step routes from R4 and R5 through every grid corner between the resistor and the pin. No step into a pin has a leg that runs back or a corner sharper than 90°. A corner past the pin's column moves back to it;
+- the corner moved back on the demo board: down from a track running right, past its end, moves the corner back. No turn is sharper than 90°, and the track shortens in the same edit set.
 
 Desktop (`pcb_editor/shove_tests.rs`), headless through the canvas:
 
 - M cycles the mode, which the card and the pill show;
 - a click in Shove sends the shoving `layout.route_apply` and the preview hides the shoved track's old place;
 - Backspace puts the shoved track back;
-- Walkaround goes round, and Ignore is refused by the engine.
+- Walkaround goes round, and Ignore is refused by the engine;
+- (`pcb_editor/route_entry_tests.rs`) the founder's hook: on the ESP32 board, R5 pad 1, a corner click that snaps past J1 B5's column, then B5, with the last elbow flipped or not. The route enters B5 straight up from the moved corner. Backspace after a moved corner restores the shortened track exactly.
 
 ## Performance
 
