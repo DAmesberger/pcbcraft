@@ -427,7 +427,7 @@ fn a_session_reply_becomes_a_tool_result() {
     assert_eq!(ok.is_error, Some(false));
     let text = ok.content[0].as_text().map(|t| t.text.clone());
     assert_eq!(text.as_deref(), Some(r#"{"revision":3}"#));
-    let failed = outcome(&Unreachable::Unknown("nothing".into()).reply());
+    let failed = outcome(&Unreachable::unknown("nothing", None).reply());
     assert_eq!(failed.is_error, Some(true));
     let text = failed.content[0]
         .as_text()
@@ -452,8 +452,10 @@ fn the_catalog_resolves_each_entry_by_its_kind() {
     for entry in all {
         match entry.kind {
             None => assert_eq!(
-                catalog::resolve(Kind::Action, &entry.name).map(|e| e.name.as_str()),
-                Err(Unreachable::Unknown(entry.name.clone()))
+                catalog::resolve(Kind::Action, &entry.name)
+                    .map(|e| e.name.as_str())
+                    .map_err(|e| e.code()),
+                Err("catalog.unknown")
             ),
             Some(kind) => {
                 let found = catalog::resolve(kind, &entry.name).map(|e| e.name.as_str());

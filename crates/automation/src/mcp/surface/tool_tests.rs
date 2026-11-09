@@ -3,7 +3,6 @@
 use super::tools::{ACT, APPLY, DESCRIBE, FIND, QUERY};
 use super::*;
 use crate::gate::Mode;
-use crate::session::metadata::{self, Kind};
 use rmcp::model::{ClientCapabilities, ClientConfig, ErrorCode};
 use rmcp::service::{RunningService, ServiceError};
 use rmcp::{ClientHandler, ClientLifecycleMode, ClientServiceExt, RoleClient};
@@ -110,8 +109,7 @@ fn board_size(size: [f64; 2]) -> Value {
 }
 
 /// The list is the five verbs in order, each with the annotations of its
-/// class, `apply` naming exactly the catalog's operations, within the
-/// design's token budget.
+/// class, `apply`'s `op` a plain string, within the design's token budget.
 #[test]
 fn the_tools_are_the_five_verbs() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
@@ -151,31 +149,95 @@ fn the_tools_are_the_five_verbs() -> Fallible<()> {
             assert!(tool.title.is_some(), "{} has a title", tool.name);
         }
 
+        // `op` is a plain string; the server resolves it (the founder's
+        // answer to Q3), so the list carries no operation names.
         let apply = listed.iter().find(|t| t.name == APPLY).ok_or("apply")?;
-        let ops: Vec<&str> = apply.input_schema["properties"]["operations"]["items"]["properties"]
-            ["op"]["enum"]
-            .as_array()
-            .ok_or("op names")?
-            .iter()
-            .filter_map(Value::as_str)
-            .collect();
-        let operations: Vec<&str> = metadata::entries()
-            .iter()
-            .filter(|e| e.kind == Some(Kind::Operation))
-            .map(|e| e.name.as_str())
-            .collect();
-        assert_eq!(ops, operations);
-        assert!(ops.contains(&"layout.add_via") && ops.contains(&"project.undo"));
+        assert_eq!(
+            apply.input_schema["properties"]["operations"]["items"]["properties"]["op"],
+            json!({"type": "string",
+                "description": "operation name; find it with `find`, get its schema with `describe`"})
+        );
+        let wire = serde_json::to_string(&listed)?;
         assert!(
-            !ops.contains(&"library.publish"),
-            "an Ask operation is an action"
+            !wire.contains("layout.add_via"),
+            "no operation names listed"
         );
 
         // §3.1: 1,404 Qwen tokens with the union outline, at the 4.3 bytes
         // per token the instructions target uses.
-        let bytes = serde_json::to_string(&listed)?.len();
+        let bytes = wire.len();
         assert!(bytes <= 1404 * 43 / 10, "the five tools are {bytes} bytes");
         connection.close().await
+    })?
+}
+
+/// A misspelt `op` is refused before anything runs, naming the nearest
+/// operations, and the document is unchanged; the right name still runs.
+#[test]
+fn a_misspelt_op_is_refused_with_the_nearest_names() -> Fallible<()> {
+    let dir = tempfile::tempdir()?;
+    block_on(async move {
+        let c = Connection::open(Mode::AutoAllowEdits, dir.path()).await?;
+        let at = json!({"name": "project.inspect", "params": {"at": "/project/board_size"}});
+        let before = c.ok(QUERY, at.clone()).await?;
+        let start = revision(&before)?;
+
+        let (refused, failed) = c
+            .call(
+                APPLY,
+                json!({"expected_revision": start, "operations": [
+                    board_size([40.0, 30.0]),
+                    {"op": "layout.set_bord_size", "params": {"size": [50.0, 30.0]}}]}),
+            )
+            .await?;
+        assert!(failed, "{refused}");
+        assert_eq!(refused["code"], "catalog.unknown", "{refused}");
+        assert_eq!(refused["closest"][0], "layout.set_board_size", "{refused}");
+        let closest = refused["closest"].as_array().ok_or("closest names")?;
+        assert!((1..=3).contains(&closest.len()), "{refused}");
+        assert!(
+            refused["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("did you mean layout.set_board_size")),
+            "{refused}"
+        );
+        let after = c.ok(QUERY, at.clone()).await?;
+        assert_eq!(
+            (revision(&after)?, after["value"].clone()),
+            (start, before["value"].clone()),
+            "nothing ran"
+        );
+
+        // Only the leaf of the name.
+        let (refused, _) = c
+            .call(
+                APPLY,
+                json!({"expected_revision": start,
+                "operations": [{"op": "set_board_size", "params": {"size": [50.0, 30.0]}}]}),
+            )
+            .await?;
+        assert_eq!(refused["closest"][0], "layout.set_board_size", "{refused}");
+
+        // Nothing near: no guesses.
+        let (refused, failed) = c
+            .call(
+                APPLY,
+                json!({"expected_revision": start, "operations": [{"op": "zzzzzzzzzzzzzzzz"}]}),
+            )
+            .await?;
+        assert!(failed && refused["code"] == "catalog.unknown", "{refused}");
+        assert!(refused.get("closest").is_none(), "{refused}");
+
+        let applied = c
+            .ok(
+                APPLY,
+                json!({"expected_revision": start, "operations": [board_size([50.0, 30.0])]}),
+            )
+            .await?;
+        assert_eq!(revision(&applied)?, start + 1);
+        let now = c.ok(QUERY, at).await?;
+        assert_eq!(now["value"], json!([50.0, 30.0]));
+        c.close().await
     })?
 }
 

@@ -116,7 +116,7 @@ A server whose state is "the one current project" would therefore mix up convers
 
 - **Never-class entries** are not reachable at all.
 - **What happens to the 40 commands.** Today's 40 per-command tools disappear. Each command becomes a catalog entry of kind query, operation or action, sorted by its class. A command that takes a path is an action, because it can reach outside the project.
-- **The `apply` schema.** Its input schema lists `op` names as a union outline, as `project_apply` does today. That costs 650 tokens more than a plain string, and it keeps the commonest names visible without a round trip. Q3 asks which to choose.
+- **The `apply` schema.** `op` is a plain string, described as "operation name; find it with `find`, get its schema with `describe`". The server resolves it against the catalog and refuses an unknown name with the nearest names. (Decided, Q3: a union outline of names costs about 3.7 KB and grows with every operation.)
 
 **Measured cost.** Today's figures come from building `pcbcraft-cli` (`nix develop -c cargo build --profile ci -p pcbcraft-cli`) and capturing `pcbcraft-cli mcp`'s `initialize` and `tools/list`. Tokens are counted with `llama-tokenize` on the Qwen3.8 27B vocabulary; no offline Claude tokenizer exists. The figures for the new surface are measured on mock definitions of the five tools:
 
@@ -368,7 +368,7 @@ At most five agents at once. Each slice ships with its own tests, and nothing ru
 
 1. **Reach.** As of today the decision means only Claude Code connects by default. Codex and OpenCode need opt-in settings, OpenCode cannot connect through ACP, and VS Code, Zed, Gemini CLI and (likely) Cursor cannot connect. **Recommendation:** proceed as decided. Ship per-client setup notes, and have the panel's OpenCode preset write OpenCode's own server configuration (`protocol: "2026-07-28"`) instead of relying on `session/new` (to verify in panel S6).
 2. **Five verbs instead of 40 tools.** **Recommendation:** yes. Exact annotations, a fixed cost of 1–1.6 k tokens and one validation path outweigh the specific tool names that tool search could match.
-3. **`apply`'s schema: a union outline of operation names (+650 tokens) or a plain `op` string?** **Recommendation:** the union outline. Names visible without a round trip help small models most, and 1.4 k tokens is still 4 % of 32 k. P10 measures both.
+3. **`apply`'s schema: a union outline of operation names (+650 tokens) or a plain `op` string?** **Recommendation:** the union outline. Names visible without a round trip help small models most, and 1.4 k tokens is still 4 % of 32 k. P10 measures both. **Decided (founder, 9 November 2026):** a plain string. The outline was about 3.7 KB of the 6,037-byte budget and grows with every operation.
 4. **Person-owned steps without elicitation** (Claude Code `-p`, the Agent SDK). **Recommendation:** refuse with `needs_person`. Only under `allow-all` may the model confirm a `dry_run` plan digest itself.
 5. **Does a client's elicitation count as the person's Allow on a headless server?** It is client-attested: hooks can auto-answer. **Recommendation:** yes under `auto-allow-edits` for reviews, and under `allow-all` for Ask. Under `ask-every-time` it counts only for reads, which never ask. Live mode always uses the window.
 6. **Tasks.** **Recommendation:** every action flagged `long` returns a task to clients that declare the extension, and P10's timings tune the flag. Edits stay synchronous, because they must land at the revision they were checked against.
@@ -437,8 +437,9 @@ The new server is `crates/automation/src/mcp/surface.rs` (`mcp::surface::Server`
 
 - **Annotations** come from `metadata::annotations` for Read, Edit and Ask (with open world), so they match the catalog's. `idempotentHint: false` is left out, since it is the protocol's default.
 - **Input schemas** are generated from the argument types with schemars, then compacted: no `default`, `format`, nullable types or `$defs`.
-  - `apply`'s `op` is an `enum` of every operation-kind name, generated from the catalog. This is the union outline Q3 recommends, pending the founder's answer.
-  - **Budget test:** the five tools measure 6,026 bytes, against 6,037 bytes (1,404 tokens at the instructions' 4.3 bytes per token). The `enum` is about 3.7 KB of that.
+  - `apply`'s `op` is a plain string ("operation name; find it with `find`, get its schema with `describe`"), by the founder's answer to Q3. The server still resolves it strictly through the catalog (`catalog::resolve`, then `discovery::call` into the core's operation type), so there is no second list of names.
+  - An unknown name is refused before anything runs with `catalog.unknown`, whose error carries `closest`: at most 3 names of the kind asked, by Levenshtein distance over the whole name or its part after the last dot, nearest first and then in catalog order, and within a third of the name's length (at least 2). The message names them too (`did you mean layout.set_board_size?`). `query`, `act` and `describe` give the same suggestions. No other tool embedded a name enum.
+  - **Budget test:** the five tools measure 2,986 bytes (6,026 with the enum), against 6,037 bytes (1,404 tokens at the instructions' 4.3 bytes per token).
 - **`find {text, kind?, limit?}`** scores catalog name, title and summary words (3, 2 and 1 per word, with endings ignored) and returns hits best first, then in catalog order. An exact name ranks first.
   - Each hit carries `name`, `kind`, `class`, `title` and `summary`. When hits are cut, `more` counts the rest.
   - Limits: text up to 200 characters; `limit` 1–50 (default 10). Never-class entries are not found.
@@ -478,8 +479,9 @@ The new server is `crates/automation/src/mcp/surface.rs` (`mcp::surface::Server`
   - Undo and redo run alone, not inside a batch.
   - Impact review (§3.5) is P5. Until then, `update`, `project.apply_update` and `library.pinout_apply` run as the Edit class allows.
   - Live mode (§3.2) and recovered copies on `project.open` come with the cut-over (P9).
-- **Tests** (`surface/tool_tests.rs`, 4, with rmcp's client against the server), plus one core test (`a_batch_applies_as_one_step_or_not_at_all`). The P1 tests were adapted to the multi-project desk with the same assertions, and the golden transcript re-blessed: its `tools/list` now holds the five tools.
-  - The list: order, exact annotations, `apply`'s enum equal to the catalog's operations, and the byte budget.
+- **Tests** (`surface/tool_tests.rs`, 5, with rmcp's client against the server), plus one core test (`a_batch_applies_as_one_step_or_not_at_all`). The P1 tests were adapted to the multi-project desk with the same assertions, and the golden transcript re-blessed: its `tools/list` now holds the five tools.
+  - The list: order, exact annotations, `apply`'s `op` a plain string with no operation names listed, and the byte budget.
+  - A misspelt `op` in a batch is refused with `closest` and leaves the revision and board unchanged; a leaf-only name finds its full name; a name near nothing suggests nothing; the right name still applies.
   - `find` and `describe`: ranking, kind filters, bounds, Never hidden, `call`, `person`, `def`, and the refusals.
   - `query`, `apply` and `act` through the gate:
     - a single step and a batch, each one revision;

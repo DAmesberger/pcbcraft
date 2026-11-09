@@ -5,8 +5,9 @@
 //! through its own kind, and every call becomes one request of the JSON
 //! contract that runs on the desk through the gate ([`super::desk`]).
 //!
-//! Input schemas are generated from the argument types here, and `apply`'s
-//! operation names from the catalog (the union outline of §3.1, Q3).
+//! Input schemas are generated from the argument types here. `apply`'s `op`
+//! is a plain string (the founder's answer to Q3): the catalog resolves it,
+//! and an unknown name is refused with the nearest names.
 //! Failures of the call itself (bad arguments, a name of another kind, a
 //! batch that cannot be one) are tool results with `isError`, like a
 //! refusal of the gate, so the model reads their code.
@@ -123,6 +124,7 @@ pub struct ApplyArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
+    /// operation name; find it with `find`, get its schema with `describe`
     pub op: String,
     #[serde(default)]
     pub params: Map<String, Value>,
@@ -280,13 +282,11 @@ fn compact(value: &mut Value, defs: &Value, depth: usize) {
     }
 }
 
-/// `apply`'s schema, with every operation name a step's `op` takes.
+/// `apply`'s schema. A step's `op` is a plain string, not an enum of the
+/// operation names, which would cost most of the tools' budget and grow with
+/// every operation; [`apply`] resolves it against the catalog instead.
 fn apply_schema() -> JsonObject {
     let mut schema = schema::<ApplyArgs>();
-    let names: Vec<&str> = catalog::reachable()
-        .filter(|e| e.kind == Some(Kind::Operation))
-        .map(|e| e.name.as_str())
-        .collect();
     let step = schema
         .get_mut("properties")
         .and_then(|p| p.get_mut("operations"))
@@ -294,9 +294,6 @@ fn apply_schema() -> JsonObject {
         .and_then(Value::as_object_mut);
     if let Some(step) = step {
         step.remove("description");
-        if let Some(op) = step.get_mut("properties").and_then(|p| p.get_mut("op")) {
-            *op = json!({"type": "string", "enum": names});
-        }
     }
     schema
 }
@@ -465,7 +462,7 @@ fn describe(desk: &mut Desk, args: DescribeArgs) -> Value {
         );
     }
     let Some(entry) = catalog::entry(&args.name) else {
-        return Unreachable::Unknown(args.name).reply();
+        return Unreachable::unknown(&args.name, None).reply();
     };
     let request =
         json!({"command": "project.schema", "params": {"name": args.name, "def": args.def}});
@@ -478,7 +475,7 @@ fn describe(desk: &mut Desk, args: DescribeArgs) -> Value {
         .and_then(|m| m.iter().find(|m| m["name"] == entry.name.as_str()))
         .cloned()
     else {
-        return Unreachable::Unknown(entry.name.clone()).reply();
+        return Unreachable::unknown(&entry.name, None).reply();
     };
     let mut described = found;
     if let Some(object) = described.as_object_mut() {
