@@ -17,18 +17,17 @@
 //! milled slot and the header J1 held to the left edge by board
 //! parameters ([`board_edits`], [`j1_constraint`]).
 use super::fill::FillCommand;
-use super::outline::{BoardEdit, BoardShapeEvaluator};
+use super::outline::BoardEdit;
 use super::{LayerChangeRequest, LayoutCommand, RouteRequest, ViaRequest};
 use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::ids::{Endpoint, Id, TerminalId};
 use crate::library::footprint_source::{
-    DimValue, Expr, FootprintParam, ParamName, ParamUnit, SketchEdit, SketchRef,
+    DimValue, Expr, FootprintParam, ParamName, ParamUnit, SketchEdit,
 };
 use crate::library::{Outline, Segment};
 use crate::model::board::{
-    BoardSketch, ConstraintAlign, ConstraintTarget, CutoutKind, EdgeAnchor, EdgeConstraintSpec,
-    EdgeName,
+    ConstraintAlign, ConstraintTarget, EdgeAnchor, EdgeConstraintSpec, EdgeName,
 };
 use crate::model::fill::{FillSettings, FillSpec, PadConnections};
 use crate::model::{CopperLayer, Layer, Project, Stackup};
@@ -456,36 +455,20 @@ fn pours(project: &Project, pours: &[(&str, &str, CopperLayer, u32)]) -> Result<
 
 /// The board edits that shape the hosted showcase's sketched board (a
 /// rectangle sketch of [`BOARD_MM`], see `board.start_sketch`): first the
-/// round [`CUTOUT`] (its curve ids come from `evaluator` on `sketch`) and
-/// the [`SLOT`], then [`CORNER_MM`] fillets on every corner through the
+/// round [`CUTOUT`] (a circle inside the outline is a cutout) and the
+/// [`SLOT`], then [`CORNER_MM`] fillets on every corner through the
 /// `corner_r` parameter. Each inner list is one `board.edit`.
-pub fn board_edits(
-    evaluator: &dyn BoardShapeEvaluator,
-    sketch: &BoardSketch,
-) -> Result<Vec<Vec<BoardEdit>>> {
+pub fn board_edits() -> Vec<Vec<BoardEdit>> {
     let (center, radius) = CUTOUT;
     let circle = SketchEdit::AddCircle {
         center,
         radius,
         construction: false,
     };
-    let curves = evaluator
-        .apply_sketch(&sketch.sketch, &circle)?
-        .created
-        .into_iter()
-        .filter_map(|r| match r {
-            SketchRef::Curve(c) => Some(c),
-            _ => None,
-        })
-        .collect();
     let (a, b, width) = SLOT;
-    Ok(vec![
+    vec![
         vec![
             BoardEdit::Sketch { edit: circle },
-            BoardEdit::AddCutout {
-                kind: CutoutKind::Cutout,
-                curves,
-            },
             BoardEdit::AddSlot {
                 a,
                 b,
@@ -507,7 +490,7 @@ pub fn board_edits(
                 radius: DimValue::Param(ParamName("corner_r".into())),
             },
         ],
-    ])
+    ]
 }
 
 /// The header J1 held to the board's left edge where the showcase places

@@ -969,34 +969,30 @@ fn draw(
                 construction,
             )?;
         }
-        (ShapeTool::Cutout, [a, b]) => {
-            let curves = match options.cutout {
-                CutoutShape::Rect => rectangle(&mut stage, a.at, b.at, 0.0, None, false)?,
-                CutoutShape::Circle => {
-                    let radius = dist(a.at, b.at);
-                    if radius <= 1e-9 {
-                        return Err(invalid("board.edit: the cutout has no radius"));
-                    }
-                    let created = stage.sketch(SketchEdit::AddCircle {
-                        center: a.at,
-                        radius,
-                        construction: false,
-                    })?;
-                    vec![stage.created_curve(&created)?.0]
+        // A closed loop inside the outline is a cutout by itself.
+        (ShapeTool::Cutout, [a, b]) => match options.cutout {
+            CutoutShape::Rect => {
+                rectangle(&mut stage, a.at, b.at, 0.0, None, false)?;
+            }
+            CutoutShape::Circle => {
+                let radius = dist(a.at, b.at);
+                if radius <= 1e-9 {
+                    return Err(invalid("board.edit: the cutout has no radius"));
                 }
-            };
-            stage.push(BoardEdit::AddCutout {
-                kind: CutoutKind::Cutout,
-                curves,
-            });
-        }
+                stage.sketch(SketchEdit::AddCircle {
+                    center: a.at,
+                    radius,
+                    construction: false,
+                })?;
+            }
+        },
         (ShapeTool::Slot, [a, b]) => {
             let curves = slot(&mut stage, a.at, b.at, options.slot_width)?;
-            stage.push(BoardEdit::AddCutout {
+            stage.push(BoardEdit::SetCutoutKind {
+                curves,
                 kind: CutoutKind::Slot {
                     plated: options.slot_plated,
                 },
-                curves,
             });
         }
         _ => return Ok(Step::More),
@@ -1125,7 +1121,7 @@ pub(crate) fn parameter_edit(
 }
 
 /// The edits Delete sends for the selection; a named edge's curve is
-/// unnamed and a cutout's curves leave the cutout first.
+/// unnamed first (a slot's role goes with its curves).
 pub(crate) fn delete_edits(board: &BoardSketch, selection: &[SketchRef]) -> Vec<BoardEdit> {
     if selection.is_empty() {
         return Vec::new();
@@ -1143,13 +1139,6 @@ pub(crate) fn delete_edits(board: &BoardSketch, selection: &[SketchRef]) -> Vec<
             name: edge.name.clone(),
         });
     }
-    for cutout in board
-        .cutouts
-        .iter()
-        .filter(|c| c.curves.iter().any(|id| curves.contains(&id)))
-    {
-        edits.push(BoardEdit::RemoveCutout { id: cutout.id });
-    }
     for hole in board.holes.iter().filter(|h| {
         selection
             .iter()
@@ -1165,29 +1154,23 @@ pub(crate) fn delete_edits(board: &BoardSketch, selection: &[SketchRef]) -> Vec<
     edits
 }
 
-/// The selection as an inner loop: the selected curves become a cutout or
-/// a slot.
-pub(crate) fn cutout_edit(selection: &[SketchRef], kind: CutoutKind) -> Option<BoardEdit> {
-    let curves: Vec<SketchCurveId> = selection
+/// The selection's curves, when they are exactly one hole of the solved
+/// board: that hole's curves and what it cuts now.
+pub(crate) fn selected_hole(
+    board: &BoardSketch,
+    selection: &[SketchRef],
+) -> Option<(Vec<SketchCurveId>, CutoutKind)> {
+    let picked: std::collections::BTreeSet<&SketchCurveId> = selection
         .iter()
         .filter_map(|r| match r {
-            SketchRef::Curve(c) => Some(c.clone()),
+            SketchRef::Curve(c) => Some(c),
             _ => None,
         })
         .collect();
-    (!curves.is_empty()).then_some(BoardEdit::AddCutout { kind, curves })
-}
-
-/// The selection as the outer outline.
-pub(crate) fn outline_edit(selection: &[SketchRef]) -> Option<BoardEdit> {
-    let curves: Vec<SketchCurveId> = selection
-        .iter()
-        .filter_map(|r| match r {
-            SketchRef::Curve(c) => Some(c.clone()),
-            _ => None,
-        })
-        .collect();
-    (!curves.is_empty()).then_some(BoardEdit::SetOutline { curves })
+    board.solved.cutouts.iter().find_map(|c| {
+        let curves: std::collections::BTreeSet<&SketchCurveId> = c.curves.iter().collect();
+        (!curves.is_empty() && curves == picked).then(|| (c.curves.clone(), c.kind))
+    })
 }
 
 /// The board command of a commit.

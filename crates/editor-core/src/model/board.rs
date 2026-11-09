@@ -61,7 +61,9 @@ pub enum CutoutKind {
     Slot { plated: bool },
 }
 
-/// An inner loop of sketch curves and what it cuts.
+/// The kind of an inner loop: every hole of the board sketch is a cutout
+/// unless a role keyed by its curves (the whole set, in any order) makes it
+/// a slot.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CutoutRole {
@@ -95,8 +97,13 @@ pub struct MountingHoleRole {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SolvedBoard {
-    /// The outer outline, counter-clockwise, with arcs.
+    /// The outer outline, counter-clockwise, with arcs. Free-form curves
+    /// arrive fitted with lines and arcs within the `board.outline_fit` rule.
     pub outer: Outline,
+    /// The sketch curve behind each segment of [`Self::outer`] (empty for a
+    /// plain rectangle).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outer_curves: Vec<SketchCurveId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cutouts: Vec<SolvedCutout>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -108,9 +115,15 @@ pub struct SolvedBoard {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SolvedCutout {
-    pub id: BoardFeatureId,
+    /// The [`CutoutRole`] that gave the hole its kind; `None` for a plain
+    /// cutout, which needs no role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<BoardFeatureId>,
     pub kind: CutoutKind,
     pub outline: Outline,
+    /// The sketch curve behind each segment of `outline`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub curves: Vec<SketchCurveId>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -167,6 +180,7 @@ impl SolvedBoard {
                     .map(|k| Segment::Line { to: corners[k % 4] })
                     .collect(),
             },
+            outer_curves: Vec::new(),
             cutouts: Vec::new(),
             holes: Vec::new(),
             edges,
@@ -316,10 +330,8 @@ pub struct BoardSketch {
     /// Board parameters (`width`, `height`, `corner_r`); dimensions bind
     /// to them through SolidCraft's own `Constraint.param`.
     pub parameters: Vec<FootprintParam>,
-    /// The closed loop of the outer outline. Slice S1 drops it: the outline
-    /// becomes the one closed region of the sketch
-    /// (docs/board-sketch-references.md §5.1).
-    pub outline: Vec<SketchCurveId>,
+    /// Slot roles of inner loops. The outline itself is no list: it is the
+    /// sketch's one closed region (docs/board-sketch-references.md §5.1).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cutouts: Vec<CutoutRole>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -328,9 +340,49 @@ pub struct BoardSketch {
     /// Next [`BoardFeatureId`].
     pub next_feature: u32,
     pub solve: SolveSummary,
-    /// The shape the last solve produced; `Project::board_size` holds its
-    /// bounding box.
+    /// The shape the last valid solve produced; `Project::board_size` holds
+    /// its bounding box.
     pub solved: SolvedBoard,
+    /// The arc-fit tolerance `solved` was made with, mm: the effective
+    /// `board.outline_fit` rule (`layout::outline::validate` keeps the two
+    /// equal; changing the rule re-solves the board).
+    #[serde(default = "default_outline_fit")]
+    pub outline_fit: f64,
+    /// Why the sketch's curves are not a board now (open ends, a crossing,
+    /// a touching hole); `solved` is then the last valid shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fault: Option<ShapeFault>,
+}
+
+fn default_outline_fit() -> f64 {
+    crate::rules::DEFAULT_OUTLINE_FIT_MM
+}
+
+/// Points one [`ShapeFault`] names at most.
+pub const MAX_FAULT_POINTS: usize = 64;
+/// Length of a [`ShapeFault`]'s message at most, bytes.
+pub const MAX_FAULT_TEXT: usize = 1024;
+
+/// What is wrong with the board sketch's curves.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeFaultKind {
+    /// Curve ends touch nothing (`board.shape_open`).
+    Open,
+    /// The curves close but are not one board (`board.shape_invalid`).
+    Invalid,
+}
+
+/// Why the board sketch's curves are not a board: reported as a finding,
+/// while the board keeps its last valid shape.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeFault {
+    pub kind: ShapeFaultKind,
+    pub message: String,
+    /// Where: the open ends, or the crossing or touching point.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub at: Vec<Point>,
 }
 
 /// The board outline. A rectangle is `Project::board_size`.

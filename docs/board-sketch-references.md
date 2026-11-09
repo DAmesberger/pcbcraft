@@ -469,3 +469,12 @@ C0 is the contract for S1 and S2. Every path that needs either slice refuses wit
 | This document | Its own slice notes | Same |
 
 Whichever slice lands second rebases onto the first. The other slice's ignored tests stay ignored until that slice lands.
+
+### S1 notes
+
+- **The outline.** `BoardSketch::outline` and `BoardEdit::{SetOutline, AddCutout, RemoveCutout}` are gone. The evaluator takes the outline and the holes from `find_drawn_profiles`; a profile must have whole curve boundaries (`Profile::whole_curve_boundaries`), so crossings and holes that touch the outline or each other are `board.shape_invalid` and are named by where the search cut the curves. Roles exist only for slots (`SetCutoutKind`, keyed by the whole curve set). A slot role that no longer matches a hole is `board.shape_invalid`.
+- **Stored state.** `BoardSketch` gains `fault: Option<ShapeFault>` (kind, message, points), which drives the findings and the canvas markers, and `outline_fit`: the tolerance the stored solve was fitted at. `layout::outline::validate` requires it to equal the effective rule. A rules change re-solves the board in the same operation (`layout::outline::refit`, called from the engine's rules arm). The trait's `evaluate` signature is unchanged, so S2's call sites are untouched.
+- **Solved board.** `SolvedBoard::outer_curves` and `SolvedCutout::curves` record the sketch curve behind each segment. `SolvedCutout::id` is the slot role's id, or `None` for a plain cutout.
+- **Free-form curves.** The board sketch admits `Ellipse`, `Conic` and `Spline` without explicit knots (cubic, 2–500 points; `check_board_sketch`). Footprints still refuse them. Each `exact_pieces` span is fitted with `Seg2::fit_arcs`. A loop that would need more than `MAX_OUTLINE_SEGMENTS` (512) spans is refused and names the rule. The rule's range is 0.001–1 mm.
+- **Superseded tests.** In `board/tests.rs`, the circle outside the board in `cutouts_slots_and_mounting_holes_solve_and_build_in_3d` is now reported as a second region rather than refused (§5.1).
+- **UI.** The sketch view draws free-form curves (`ViewGeometry::FreeForm`). Board shape mode marks the open ends or crossings and shows the fault in the card as advisory. The selection offers Make slot / Make cutout for a hole. There are no spline, ellipse or conic drawing tools yet; the commands are reachable through CLI and MCP.

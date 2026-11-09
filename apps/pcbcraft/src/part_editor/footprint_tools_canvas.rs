@@ -46,7 +46,7 @@ fn shape_of(g: &ViewGeometry) -> Option<Shape> {
                 sweep_deg: if sweep <= 1e-9 { 360.0 } else { sweep },
             })
         }
-        ViewGeometry::Other => None,
+        ViewGeometry::FreeForm { .. } => None,
     }
 }
 
@@ -107,7 +107,7 @@ fn targets(
             ViewGeometry::Circle { center, .. } | ViewGeometry::Arc { center, .. } => {
                 t.centers.push(*center);
             }
-            ViewGeometry::Other => {}
+            ViewGeometry::FreeForm { .. } => {}
         }
         if let Some(shape) = shape_of(&c.geometry) {
             t.curves.push((shape.coarse_bounds(0.0), shape));

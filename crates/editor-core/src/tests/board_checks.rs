@@ -565,14 +565,16 @@ fn sketched(project: &mut Project, slot: bool) {
     };
     let solved = SolvedBoard {
         outer,
+        outer_curves: Vec::new(),
         cutouts: vec![SolvedCutout {
-            id: BoardFeatureId(1),
+            id: Some(BoardFeatureId(1)),
             kind: if slot {
                 CutoutKind::Slot { plated: false }
             } else {
                 CutoutKind::Cutout
             },
             outline: square([20.0, 20.0], [24.0, 24.0]),
+            curves: Vec::new(),
         }],
         holes: Vec::new(),
         edges: Vec::new(),
@@ -581,13 +583,14 @@ fn sketched(project: &mut Project, slot: bool) {
         evaluator: Default::default(),
         sketch: Default::default(),
         parameters: Vec::new(),
-        outline: Vec::new(),
         cutouts: Vec::new(),
         holes: Vec::new(),
         edges: Vec::new(),
         next_feature: 2,
         solve: Default::default(),
         solved,
+        outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
+        fault: None,
     }));
 }
 
@@ -775,13 +778,14 @@ fn with_hole(project: &mut Project, at: Point) {
         evaluator: Default::default(),
         sketch: Default::default(),
         parameters: Vec::new(),
-        outline: Vec::new(),
         cutouts: Vec::new(),
         holes: Vec::new(),
         edges: Vec::new(),
         next_feature: 2,
         solve: Default::default(),
         solved,
+        outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
+        fault: None,
     }));
 }
 

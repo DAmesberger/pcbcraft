@@ -1602,7 +1602,7 @@ fn curve_distance(g: &ViewGeometry, p: Point) -> Option<f64> {
                 distance(p, *start).min(distance(p, *end))
             })
         }
-        ViewGeometry::Other => None,
+        ViewGeometry::FreeForm { .. } => None,
     }
 }
 

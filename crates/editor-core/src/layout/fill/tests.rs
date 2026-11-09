@@ -749,9 +749,10 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
     let mut p = engine.project().clone();
     let mut solved = SolvedBoard::rectangle(p.board_size);
     solved.cutouts.push(SolvedCutout {
-        id: BoardFeatureId(1),
+        id: Some(BoardFeatureId(1)),
         kind: CutoutKind::Cutout,
         outline: rect(39.0, 22.0, 42.0, 26.0),
+        curves: Vec::new(),
     });
     solved.holes.push(SolvedMountingHole {
         id: BoardFeatureId(2),
@@ -768,7 +769,6 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
         evaluator: evaluator.clone(),
         sketch: SketchBlob("{}".into()),
         parameters: Vec::new(),
-        outline: Vec::new(),
         cutouts: Vec::new(),
         holes: Vec::new(),
         edges: Vec::new(),
@@ -780,6 +780,8 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
             result_hash: String::new(),
         },
         solved,
+        outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
+        fault: None,
     }));
     p.rules.overrides.push(crate::rules::RuleOverride {
         key: RuleKey::Clearance {

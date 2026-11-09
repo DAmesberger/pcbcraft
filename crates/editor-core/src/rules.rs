@@ -32,6 +32,12 @@ pub use netclass::{
 
 /// Largest length rule, in mm.
 pub const MAX_RULE_MM: f64 = 25.0;
+/// `board.outline_fit`'s default, mm: the chord tolerance the board solve
+/// used before free-form curves.
+pub const DEFAULT_OUTLINE_FIT_MM: f64 = 0.01;
+/// The range `board.outline_fit` takes, mm: finer fits need more arcs than
+/// an outline holds, coarser ones would move the board edge visibly.
+pub const OUTLINE_FIT_RANGE_MM: std::ops::RangeInclusive<f64> = 0.001..=1.0;
 /// Most overrides one project holds (one per [`RuleKey`] at most).
 pub const MAX_OVERRIDES: usize = 256;
 /// Bytes of a profile's name, id or one provenance text.
@@ -312,6 +318,33 @@ pub struct DesignRules {
     pub land: LandRules,
     #[serde(default, skip_serializing_if = "EtchRules::is_unset")]
     pub etch: EtchRules,
+    #[serde(default, skip_serializing_if = "BoardRules::is_default")]
+    pub board: BoardRules,
+}
+
+/// The board shape's rules.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BoardRules {
+    /// How far, mm, the lines and arcs that stand for a free-form board
+    /// curve (spline, ellipse, conic) may stray from it: what fills,
+    /// checks, fabrication output and the 3D laminate read.
+    pub outline_fit: f64,
+}
+
+impl Default for BoardRules {
+    fn default() -> Self {
+        Self {
+            outline_fit: DEFAULT_OUTLINE_FIT_MM,
+        }
+    }
+}
+
+impl BoardRules {
+    /// The default (left out of saved rules).
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 impl Default for DesignRules {
@@ -375,6 +408,7 @@ impl Default for DesignRules {
                 tht_land_gap: 0.25,
             },
             etch: EtchRules::default(),
+            board: BoardRules::default(),
         }
     }
 }
@@ -441,6 +475,7 @@ pub enum RuleKey {
     ThtLandGap,
     CopperAngleMin,
     SliverWidthMin,
+    BoardOutlineFit,
 }
 
 /// A rule's value.
@@ -502,6 +537,7 @@ impl RuleKey {
             Self::ThtLandGap,
             Self::CopperAngleMin,
             Self::SliverWidthMin,
+            Self::BoardOutlineFit,
         ]);
         keys
     }
@@ -524,6 +560,7 @@ impl RuleKey {
             Self::Clearance { a, b } if a == CopperObject::Hole || b == CopperObject::Hole => {
                 RuleGroup::HolesAndVias
             }
+            Self::BoardOutlineFit => RuleGroup::BoardEdge,
             Self::TrackWidthMin
             | Self::TrackWidthDefault
             | Self::Clearance { .. }
@@ -599,6 +636,7 @@ impl RuleKey {
                 Self::ThtLandGap => "min THT land gap",
                 Self::CopperAngleMin => "min copper angle",
                 Self::SliverWidthMin => "min sliver width",
+                Self::BoardOutlineFit => "board outline fit",
                 Self::Clearance { .. } => "clearance",
             }
             .to_string(),
@@ -644,6 +682,7 @@ impl RuleKey {
             Self::ThtLandGap => Length(rules.land.tht_land_gap),
             Self::CopperAngleMin => Angle(rules.etch.copper_angle_min),
             Self::SliverWidthMin => Length(rules.etch.sliver_width_min),
+            Self::BoardOutlineFit => Length(rules.board.outline_fit),
         }
     }
 
@@ -730,6 +769,7 @@ impl RuleKey {
                 return Ok(());
             }
             Self::SliverWidthMin => &mut rules.etch.sliver_width_min,
+            Self::BoardOutlineFit => &mut rules.board.outline_fit,
         };
         let Some(mm) = length(value) else {
             return wrong();
@@ -751,7 +791,8 @@ impl DesignRules {
     /// width at least the minimum; the default via drill at least the
     /// minimum drill and its diameter covering the drill plus two minimum
     /// rings; spokes 1–8; aspect ratio 1–50 or unchecked; mask expansion
-    /// −1 mm to 25 mm (negative shrinks the opening). The error names the
+    /// −1 mm to 25 mm (negative shrinks the opening); the board outline fit
+    /// 0.001–1 mm ([`OUTLINE_FIT_RANGE_MM`]). The error names the
     /// rule (`rules.bounds: min drill is out of range`).
     pub fn validate(&self) -> Result<()> {
         let bad = |what: &str| Err(Error::Invalid(format!("rules.bounds: {what}")));
@@ -759,6 +800,9 @@ impl DesignRules {
             let ok = match key.get(self) {
                 RuleValue::Length(mm) if key == RuleKey::MaskExpansion => {
                     mm.is_finite() && (-1.0..=MAX_RULE_MM).contains(&mm)
+                }
+                RuleValue::Length(mm) if key == RuleKey::BoardOutlineFit => {
+                    OUTLINE_FIT_RANGE_MM.contains(&mm)
                 }
                 RuleValue::Length(mm) => length_ok(mm),
                 RuleValue::Area(a) => a.is_finite() && (0.0..=1.0e6).contains(&a),

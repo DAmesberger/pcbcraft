@@ -293,19 +293,22 @@ fn sketched() -> Fallible<Project> {
     solved.outer = rounded(w, h, 2.0);
     solved.cutouts = vec![
         SolvedCutout {
-            id: BoardFeatureId(1),
+            id: Some(BoardFeatureId(1)),
             kind: CutoutKind::Cutout,
             outline: circle([40.5, 24.5], 1.75),
+            curves: Vec::new(),
         },
         SolvedCutout {
-            id: BoardFeatureId(2),
+            id: Some(BoardFeatureId(2)),
             kind: CutoutKind::Slot { plated: false },
             outline: slot([28.0, 2.5], [33.0, 2.5], 1.0),
+            curves: Vec::new(),
         },
         SolvedCutout {
-            id: BoardFeatureId(3),
+            id: Some(BoardFeatureId(3)),
             kind: CutoutKind::Slot { plated: true },
             outline: slot([3.0, 25.0], [6.0, 25.0], 1.2),
+            curves: Vec::new(),
         },
     ];
     solved.holes = vec![
@@ -332,7 +335,6 @@ fn sketched() -> Fallible<Project> {
         evaluator: evaluator.clone(),
         sketch: SketchBlob("{}".into()),
         parameters: Vec::new(),
-        outline: Vec::new(),
         cutouts: Vec::new(),
         holes: Vec::new(),
         edges: Vec::new(),
@@ -344,6 +346,8 @@ fn sketched() -> Fallible<Project> {
             result_hash: String::new(),
         },
         solved,
+        outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
+        fault: None,
     }));
     refill(&mut p)?;
     Ok(p)

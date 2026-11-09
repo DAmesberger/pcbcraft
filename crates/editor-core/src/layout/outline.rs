@@ -19,8 +19,11 @@
 //! Edge constraints live in [`edge_constraints`]; slice S2 replaces them
 //! with part dimensions (`layout::dimensions`).
 //!
-//! Slice S1 makes the outline the sketch's one closed region and admits
-//! free-form curves (docs/board-sketch-references.md §5.1).
+//! The outline is the sketch's one closed region, found by the evaluator
+//! from whatever curves close; free-form curves reach the solved outline as
+//! lines and arcs within the `board.outline_fit` rule. Curves that do not
+//! make one board are reported ([`SHAPE_OPEN`], [`SHAPE_INVALID`]) and the
+//! board keeps its last valid shape (docs/board-sketch-references.md §5.1).
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::geometry::{Bounds, Point, point_valid};
 use crate::ids::Id;
@@ -31,7 +34,8 @@ use crate::library::footprint_source::{
 };
 use crate::model::board::{
     BoardFeatureId, BoardSketch, CutoutKind, CutoutRole, EdgeConstraintSpec, EdgeName, MAX_CUTOUTS,
-    MAX_MOUNTING_HOLES, MAX_NAMED_EDGES, MountingHoleRole, NamedEdge,
+    MAX_FAULT_POINTS, MAX_FAULT_TEXT, MAX_MOUNTING_HOLES, MAX_NAMED_EDGES, MountingHoleRole,
+    NamedEdge, ShapeFault, ShapeFaultKind,
 };
 use crate::model::{BoardShape, EdgeConstraint, Project, SolvedBoard};
 use schemars::JsonSchema;
@@ -60,7 +64,15 @@ pub const SHAPE_OPEN: &str = "board.shape_open";
 pub const SHAPE_INVALID: &str = "board.shape_invalid";
 /// Evaluator findings with this code prefix refuse the edit that caused
 /// them (the board would have no valid shape); others are advisory.
+/// [`SHAPE_OPEN`] and [`SHAPE_INVALID`] are exempt ([`refuses`]).
 pub const FATAL_PREFIX: &str = "board.shape_";
+
+/// Whether an evaluator finding refuses the edit: its code starts with
+/// [`FATAL_PREFIX`] and it is not one of the reported shape faults, which
+/// keep the last valid shape instead.
+pub fn refuses(code: &str) -> bool {
+    code.starts_with(FATAL_PREFIX) && code != SHAPE_OPEN && code != SHAPE_INVALID
+}
 
 pub mod edge_constraints;
 pub use edge_constraints::{
@@ -77,10 +89,13 @@ pub struct BoardEvaluation {
     pub solve: SolveSummary,
     /// One per constraint the request listed whose expressions evaluated.
     pub constraints: Vec<ConstraintValues>,
-    /// Design problems (unsolved, over-constrained, open outline,
-    /// unknown parameter in a constraint). Codes starting
-    /// [`FATAL_PREFIX`] refuse the edit.
+    /// Design problems (unsolved, over-constrained, unknown parameter in a
+    /// constraint). Codes that [`refuses`] names refuse the edit.
     pub findings: Vec<Finding>,
+    /// Why the curves are not a board; `solved` is then the board's last
+    /// valid shape.
+    #[serde(default)]
+    pub fault: Option<ShapeFault>,
     /// The sketch with its stored positions moved to the solve, so the
     /// next solve starts from it (`None`: keep the stored sketch).
     #[serde(default)]
@@ -114,7 +129,9 @@ pub trait BoardShapeEvaluator {
     /// Apply one sketch edit to a canonical sketch.
     fn apply_sketch(&self, sketch: &SketchBlob, edit: &SketchEdit) -> Result<SketchOutcome>;
     /// Solve the board and evaluate the constraints' expressions against
-    /// its parameters. `Err` only refuses the input outright.
+    /// its parameters: the outline is the sketch's one closed region, its
+    /// free-form curves fitted with lines and arcs within
+    /// `board.outline_fit`. `Err` only refuses the input outright.
     fn evaluate(
         &self,
         board: &BoardSketch,
@@ -147,7 +164,7 @@ pub trait BoardShapeEvaluator {
             "board.slot: this board evaluator cannot draw slots".into(),
         ))
     }
-    /// Draw a free-form curve (slice S1).
+    /// Draw a free-form curve.
     fn add_curve(&self, _board: &BoardSketch, _curve: &FreeFormCurve) -> Result<SketchOutcome> {
         Err(Error::Unsupported(
             "board.free_form: free-form board curves are not yet supported".into(),
@@ -208,17 +225,6 @@ pub enum BoardEdit {
     RemoveParameter {
         name: ParamName,
     },
-    /// The closed loop of curves that is the outer outline.
-    SetOutline {
-        curves: Vec<SketchCurveId>,
-    },
-    AddCutout {
-        kind: CutoutKind,
-        curves: Vec<SketchCurveId>,
-    },
-    RemoveCutout {
-        id: BoardFeatureId,
-    },
     AddMountingHole {
         center: SketchPointId,
         drill: Expr,
@@ -252,12 +258,13 @@ pub enum BoardEdit {
         plated: bool,
     },
     /// What the inner loop of these curves cuts: a slot role keyed by its
-    /// curve ids, or back to a plain cutout (slice S1).
+    /// curve ids, or back to a plain cutout (every hole is one without a
+    /// role).
     SetCutoutKind {
         curves: Vec<SketchCurveId>,
         kind: CutoutKind,
     },
-    /// A spline through (or controlled by) `points` (slice S1).
+    /// A spline through (or controlled by) `points`.
     AddSpline {
         points: Vec<Point>,
         #[serde(default)]
@@ -267,7 +274,7 @@ pub enum BoardEdit {
         #[serde(default)]
         construction: bool,
     },
-    /// An ellipse (slice S1).
+    /// An ellipse.
     AddEllipse {
         center: Point,
         major: Point,
@@ -275,7 +282,7 @@ pub enum BoardEdit {
         #[serde(default)]
         construction: bool,
     },
-    /// A conic from `a` to `b` shaped by `apex` and `rho` (slice S1).
+    /// A conic from `a` to `b` shaped by `apex` and `rho`.
     AddConic {
         a: Point,
         b: Point,
@@ -426,25 +433,43 @@ fn next_feature(sketch: &mut BoardSketch) -> Result<BoardFeatureId> {
     Ok(BoardFeatureId(id))
 }
 
-fn add_cutout(
+/// Give the inner loop of `curves` its kind: a slot keeps (or gets) a role
+/// keyed by the whole curve set; a plain cutout needs none.
+fn set_cutout_kind(
     sketch: &mut BoardSketch,
     kind: CutoutKind,
     curves: Vec<SketchCurveId>,
 ) -> Result<()> {
     curve_count(&curves)?;
+    let set: BTreeSet<&SketchCurveId> = curves.iter().collect();
+    let same = |role: &CutoutRole| role.curves.iter().collect::<BTreeSet<_>>() == set;
+    if let Some(at) = sketch.cutouts.iter().position(same) {
+        match kind {
+            CutoutKind::Cutout => {
+                sketch.cutouts.remove(at);
+            }
+            CutoutKind::Slot { .. } => {
+                if let Some(role) = sketch.cutouts.get_mut(at) {
+                    role.kind = kind;
+                }
+            }
+        }
+        return Ok(());
+    }
+    if kind == CutoutKind::Cutout {
+        return Ok(());
+    }
     if sketch.cutouts.len() >= MAX_CUTOUTS {
         return Err(Error::Limit(format!(
-            "board.cutout_limit: at most {MAX_CUTOUTS} cutouts and slots"
+            "board.cutout_limit: at most {MAX_CUTOUTS} slots"
         )));
     }
-    let used: BTreeSet<&SketchCurveId> = sketch
-        .outline
+    if let Some(c) = curves
         .iter()
-        .chain(sketch.cutouts.iter().flat_map(|c| &c.curves))
-        .collect();
-    if let Some(c) = curves.iter().find(|c| used.contains(c)) {
+        .find(|c| sketch.cutouts.iter().any(|k| k.curves.contains(c)))
+    {
         return Err(Error::Conflict(format!(
-            "board.loop: curve `{}` already bounds the outline or a cutout",
+            "board.loop: curve `{}` already bounds another slot",
             c.0
         )));
     }
@@ -514,27 +539,6 @@ fn edit_one(
                 )));
             }
         }
-        BoardEdit::SetOutline { curves } => {
-            curve_count(&curves)?;
-            if let Some(c) = curves
-                .iter()
-                .find(|c| sketch.cutouts.iter().any(|k| k.curves.contains(c)))
-            {
-                return Err(Error::Conflict(format!(
-                    "board.loop: curve `{}` bounds a cutout",
-                    c.0
-                )));
-            }
-            sketch.outline = curves;
-        }
-        BoardEdit::AddCutout { kind, curves } => add_cutout(sketch, kind, curves)?,
-        BoardEdit::RemoveCutout { id } => {
-            let before = sketch.cutouts.len();
-            sketch.cutouts.retain(|c| c.id != id);
-            if sketch.cutouts.len() == before {
-                return Err(Error::NotFound(format!("board.cutout: no cutout {}", id.0)));
-            }
-        }
         BoardEdit::AddMountingHole {
             center,
             drill,
@@ -599,10 +603,9 @@ fn edit_one(
             let drawn = evaluator.fillet(sketch, &corners, &radius)?;
             let (blob, changes) = SketchChanges::of(drawn.outcome);
             sketch.sketch = blob;
+            // A rounded corner of a slot stays in the slot's loop.
             for (arc, beside) in drawn.arcs {
-                if sketch.outline.contains(&beside) {
-                    sketch.outline.push(arc);
-                } else if let Some(c) = sketch
+                if let Some(c) = sketch
                     .cutouts
                     .iter_mut()
                     .find(|c| c.curves.contains(&beside))
@@ -624,14 +627,10 @@ fn edit_one(
             let drawn = evaluator.slot(sketch, a, b, &width)?;
             let (blob, changes) = SketchChanges::of(drawn.outcome);
             sketch.sketch = blob;
-            add_cutout(sketch, CutoutKind::Slot { plated }, drawn.curves)?;
+            set_cutout_kind(sketch, CutoutKind::Slot { plated }, drawn.curves)?;
             return Ok(changes);
         }
-        BoardEdit::SetCutoutKind { .. } => {
-            return Err(Error::Unsupported(
-                "board.cutout_kind: setting a loop's kind is not yet supported".into(),
-            ));
-        }
+        BoardEdit::SetCutoutKind { curves, kind } => set_cutout_kind(sketch, kind, curves)?,
         BoardEdit::AddSpline {
             points,
             control,
@@ -700,20 +699,14 @@ fn add_curve(
     Ok(changes)
 }
 
-/// Roles that name deleted sketch entities: a cutout, mounting hole or
-/// edge name goes with its curve or point; the outer outline cannot.
+/// Roles that name deleted sketch entities: a slot, mounting hole or edge
+/// name goes with its curve or point. Deleting an outline curve opens the
+/// outline, which the evaluation reports ([`SHAPE_OPEN`]).
 fn retire(sketch: &mut BoardSketch, deleted: &BTreeSet<SketchRef>) -> Result<()> {
     if deleted.is_empty() {
         return Ok(());
     }
     let gone = |c: &SketchCurveId| deleted.contains(&SketchRef::Curve(c.clone()));
-    if let Some(c) = sketch.outline.iter().find(|c| gone(c)) {
-        return Err(Error::Conflict(format!(
-            "board.outline_curve: curve `{}` bounds the board outline; set a new outline in the \
-             same edit",
-            c.0
-        )));
-    }
     sketch.cutouts.retain(|k| !k.curves.iter().any(gone));
     sketch.edges.retain(|e| !gone(&e.curve));
     sketch
@@ -722,20 +715,19 @@ fn retire(sketch: &mut BoardSketch, deleted: &BTreeSet<SketchRef>) -> Result<()>
     Ok(())
 }
 
-/// Solve a candidate sketch and store it with its solve; refuses a shape
-/// that does not solve, and constraint expressions that no longer
-/// evaluate.
+/// Solve a candidate sketch (with its free-form curves fitted within the
+/// project's `board.outline_fit`) and store it with its solve; refuses a
+/// shape that does not solve, and constraint expressions that no longer
+/// evaluate. Curves that are not a board are stored with their
+/// [`ShapeFault`] and the last valid shape.
 fn commit(
     project: &mut Project,
     mut sketch: BoardSketch,
     evaluator: &dyn BoardShapeEvaluator,
 ) -> Result<()> {
+    sketch.outline_fit = outline_fit(project);
     let evaluation = evaluator.evaluate(&sketch, &project.edge_constraints)?;
-    if let Some(f) = evaluation
-        .findings
-        .iter()
-        .find(|f| f.code.starts_with(FATAL_PREFIX))
-    {
+    if let Some(f) = evaluation.findings.iter().find(|f| refuses(&f.code)) {
         return Err(Error::Invalid(format!("{}: {}", f.code, f.message)));
     }
     if matches!(
@@ -751,12 +743,52 @@ fn commit(
     super::copper_fits(project, size)?;
     sketch.solve = evaluation.solve;
     sketch.solved = evaluation.solved;
+    sketch.fault = evaluation.fault.map(bounded);
     if let Some(blob) = evaluation.sketch_out {
         sketch.sketch = blob;
     }
     project.board_size = size;
     project.board_shape = BoardShape::Sketch(Box::new(sketch));
     Ok(())
+}
+
+/// The effective `board.outline_fit` rule, mm.
+fn outline_fit(project: &Project) -> f64 {
+    match project
+        .rules
+        .resolve(crate::rules::RuleKey::BoardOutlineFit)
+        .value
+    {
+        crate::rules::RuleValue::Length(mm) => mm,
+        _ => crate::rules::DEFAULT_OUTLINE_FIT_MM,
+    }
+}
+
+/// Re-solve a sketch board whose stored fit is not the effective
+/// `board.outline_fit` rule any more (the engine runs it after a rules
+/// change), so the solved outline always follows the rule.
+pub fn refit(project: &mut Project, evaluator: Option<&dyn BoardShapeEvaluator>) -> Result<()> {
+    let BoardShape::Sketch(sketch) = &project.board_shape else {
+        return Ok(());
+    };
+    if sketch.outline_fit == outline_fit(project) {
+        return Ok(());
+    }
+    let sketch = (**sketch).clone();
+    commit(project, sketch, needs(evaluator)?)
+}
+
+/// A fault cut to its stored bounds.
+fn bounded(mut fault: ShapeFault) -> ShapeFault {
+    fault.at.truncate(MAX_FAULT_POINTS);
+    if fault.message.len() > MAX_FAULT_TEXT {
+        let mut end = MAX_FAULT_TEXT;
+        while !fault.message.is_char_boundary(end) {
+            end -= 1;
+        }
+        fault.message.truncate(end);
+    }
+    fault
 }
 
 /// A sketch board's `board_size`: the box of its outline, which must lie
@@ -788,21 +820,33 @@ pub(crate) fn part_name(project: &Project, instance: Id) -> String {
 }
 
 /// Board-shape findings: a stored sketch that did not solve
-/// ([`SHAPE_UNSOLVED`]) and constraints whose edge or target is gone
+/// ([`SHAPE_UNSOLVED`]), curves that are not a board ([`SHAPE_OPEN`],
+/// [`SHAPE_INVALID`]) and constraints whose edge or target is gone
 /// ([`CONSTRAINT_UNRESOLVED`]).
 pub fn checks(project: &Project) -> Vec<Finding> {
     let mut out = Vec::new();
-    if let BoardShape::Sketch(sketch) = &project.board_shape
-        && matches!(
+    if let BoardShape::Sketch(sketch) = &project.board_shape {
+        if matches!(
             sketch.solve.status,
             SolveStatus::OverConstrained | SolveStatus::Failed
-        )
-    {
-        out.push(Finding::new(
-            SHAPE_UNSOLVED,
-            "The board sketch does not solve; the board keeps its last solved shape".into(),
-            vec![ObjectRef::Board],
-        ));
+        ) {
+            out.push(Finding::new(
+                SHAPE_UNSOLVED,
+                "The board sketch does not solve; the board keeps its last solved shape".into(),
+                vec![ObjectRef::Board],
+            ));
+        }
+        if let Some(fault) = &sketch.fault {
+            let code = match fault.kind {
+                ShapeFaultKind::Open => SHAPE_OPEN,
+                ShapeFaultKind::Invalid => SHAPE_INVALID,
+            };
+            out.push(Finding::new(
+                code,
+                fault.message.clone(),
+                vec![ObjectRef::Board],
+            ));
+        }
     }
     edge_constraints::checks(project, &mut out);
     out
@@ -810,13 +854,21 @@ pub fn checks(project: &Project) -> Vec<Finding> {
 
 /// Structural bounds: constraints within the limit, unique per target,
 /// expressions well formed; a sketch board's roles bounded and unique, its
-/// solved shape finite and `board_size` its box. Unknown edges or vanished
+/// solved shape finite, fitted at the effective `board.outline_fit` and
+/// `board_size` its box. Unknown edges or vanished
 /// targets are check findings (`board.constraint_unresolved`), not invalid
 /// documents.
 pub fn validate(project: &Project) -> Result<()> {
     edge_constraints::validate(project)?;
     if let BoardShape::Sketch(sketch) = &project.board_shape {
         validate_sketch(sketch)?;
+        if sketch.outline_fit != outline_fit(project) {
+            return Err(Error::Invalid(
+                "board.outline_fit: the board was fitted at another board.outline_fit than the \
+                 rules give"
+                    .into(),
+            ));
+        }
         let size = sketch_size(&sketch.solved)?;
         if !(near_mm(size[0], project.board_size[0]) && near_mm(size[1], project.board_size[1])) {
             return Err(Error::Invalid(
@@ -838,7 +890,6 @@ fn validate_sketch(sketch: &BoardSketch) -> Result<()> {
     if sketch.sketch.0.len() > crate::library::footprint_source::MAX_SKETCH_BYTES {
         return Err(Error::Limit("board.sketch: the sketch is too large".into()));
     }
-    curve_count(&sketch.outline)?;
     if sketch.cutouts.len() > MAX_CUTOUTS
         || sketch.holes.len() > MAX_MOUNTING_HOLES
         || sketch.edges.len() > MAX_NAMED_EDGES
@@ -857,7 +908,7 @@ fn validate_sketch(sketch: &BoardSketch) -> Result<()> {
             return bad("cutout and hole identities are unique and allocated");
         }
     }
-    let mut loops: BTreeSet<&SketchCurveId> = sketch.outline.iter().collect();
+    let mut loops: BTreeSet<&SketchCurveId> = BTreeSet::new();
     for c in &sketch.cutouts {
         curve_count(&c.curves)?;
         for curve in &c.curves {
@@ -883,9 +934,23 @@ fn validate_sketch(sketch: &BoardSketch) -> Result<()> {
             return bad("mounting holes need drill expressions");
         }
     }
+    if !crate::rules::OUTLINE_FIT_RANGE_MM.contains(&sketch.outline_fit) {
+        return bad("the outline fit is out of range");
+    }
+    if let Some(f) = &sketch.fault
+        && (f.message.len() > MAX_FAULT_TEXT
+            || f.at.len() > MAX_FAULT_POINTS
+            || !f.at.iter().all(|p| point_valid(*p)))
+    {
+        return bad("the shape fault is out of range");
+    }
     let solved = &sketch.solved;
-    let outlines = std::iter::once(&solved.outer).chain(solved.cutouts.iter().map(|c| &c.outline));
-    for o in outlines {
+    let outlines = std::iter::once((&solved.outer, &solved.outer_curves))
+        .chain(solved.cutouts.iter().map(|c| (&c.outline, &c.curves)));
+    for (o, curves) in outlines {
+        if !(curves.is_empty() || curves.len() == o.segments.len()) {
+            return bad("a solved loop names one curve per segment");
+        }
         let finite = point_valid(o.start)
             && o.segments.iter().all(|s| match s {
                 crate::library::Segment::Line { to } => point_valid(*to),

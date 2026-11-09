@@ -12,7 +12,7 @@ use pcbcraft_core::fabrication::PreflightReport;
 use pcbcraft_core::issues::Severity;
 use pcbcraft_core::layout::outline::{BoardEdit, SHAPE_INVALID, SHAPE_OPEN};
 use pcbcraft_core::library::footprint_source::SketchRef;
-use pcbcraft_core::model::board::CutoutKind;
+use pcbcraft_core::model::board::{CutoutKind, flatten};
 use pcbcraft_core::{Engine, Operation, Outcome, Query, QueryResult};
 
 /// The curve of the rectangle sketch's named edge.
@@ -88,7 +88,6 @@ fn distance_to(poly: &[Point], p: Point) -> f64 {
 /// closes the loop again (ends join within the loop join tolerance) and the
 /// finding goes.
 #[test]
-#[ignore = "slice S1"]
 fn deleting_an_outline_line_opens_the_loop_and_keeps_the_last_shape() -> Fallible<()> {
     let mut engine = sketched()?;
     let before = engine.project().board().into_owned();
@@ -136,7 +135,6 @@ fn deleting_an_outline_line_opens_the_loop_and_keeps_the_last_shape() -> Fallibl
 /// names it. Replacing the rectangle by a closed pentagon in one edit makes
 /// the pentagon the board.
 #[test]
-#[ignore = "slice S1"]
 fn the_outline_is_the_closed_region_not_a_curve_list() -> Fallible<()> {
     let mut engine = sketched()?;
     let delete = delete_rectangle(&engine)?;
@@ -170,7 +168,6 @@ fn the_outline_is_the_closed_region_not_a_curve_list() -> Fallible<()> {
 
 /// A self-crossing outer loop is not a board: reported, last shape kept.
 #[test]
-#[ignore = "slice S1"]
 fn a_self_crossing_outline_is_invalid_and_keeps_the_last_shape() -> Fallible<()> {
     let mut engine = sketched()?;
     let before = engine.project().board().into_owned();
@@ -197,7 +194,6 @@ fn a_self_crossing_outline_is_invalid_and_keeps_the_last_shape() -> Fallible<()>
 /// A hole must lie strictly inside the outer loop: one touching the left
 /// edge is reported, and the board keeps its last shape (no cutout).
 #[test]
-#[ignore = "slice S1"]
 fn a_hole_touching_the_outline_is_invalid() -> Fallible<()> {
     let mut engine = sketched()?;
     edit(
@@ -218,7 +214,6 @@ fn a_hole_touching_the_outline_is_invalid() -> Fallible<()> {
 /// Every hole is a cutout without being named one; `SetCutoutKind`, keyed
 /// by the hole's curves, makes it a slot and back.
 #[test]
-#[ignore = "slice S1"]
 fn inner_loops_are_cutouts_and_set_cutout_kind_makes_a_slot() -> Fallible<()> {
     let mut engine = sketched()?;
     let circle = created(edit(
@@ -262,15 +257,16 @@ fn inner_loops_are_cutouts_and_set_cutout_kind_makes_a_slot() -> Fallible<()> {
 /// passing through every fit point within the default `board.outline_fit`
 /// of 0.01 mm.
 #[test]
-#[ignore = "slice S1"]
 fn a_spline_outline_is_fitted_with_arcs_within_the_fit_tolerance() -> Fallible<()> {
     let mut engine = sketched()?;
+    // The periodic spline through these swings 7.8 mm below its lowest fit
+    // points (to y = 7.18), so the board stays above the origin.
     let points = vec![
-        [10.0, 5.0],
-        [50.0, 5.0],
-        [55.0, 25.0],
-        [30.0, 40.0],
-        [5.0, 25.0],
+        [10.0, 15.0],
+        [50.0, 15.0],
+        [55.0, 35.0],
+        [30.0, 50.0],
+        [5.0, 35.0],
     ];
     let delete = delete_rectangle(&engine)?;
     edit(
@@ -306,7 +302,6 @@ fn a_spline_outline_is_fitted_with_arcs_within_the_fit_tolerance() -> Fallible<(
 /// axes within the fit tolerance; overriding `board.outline_fit` to 1 µm
 /// fits it closer, with more segments.
 #[test]
-#[ignore = "slice S1"]
 fn an_ellipse_cutout_is_fitted_within_the_outline_fit_rule() -> Fallible<()> {
     let mut engine = sketched()?;
     edit(
@@ -352,7 +347,6 @@ fn an_ellipse_cutout_is_fitted_within_the_outline_fit_rule() -> Fallible<()> {
 /// A conic closed by a line is a cutout; with `rho` 0.5 (a parabola) its
 /// shoulder lies halfway from the chord's midpoint to the apex.
 #[test]
-#[ignore = "slice S1"]
 fn a_conic_closed_by_a_line_is_a_cutout() -> Fallible<()> {
     let mut engine = sketched()?;
     edit(
@@ -380,5 +374,94 @@ fn a_conic_closed_by_a_line_is_a_cutout() -> Fallible<()> {
     assert!((b.min[1] - 10.0).abs() <= 0.01);
     assert!((b.max[1] - 17.5).abs() <= 0.01, "{}", b.max[1]);
     assert!((b.min[0] - 20.0).abs() <= 0.01 && (b.max[0] - 40.0).abs() <= 0.01);
+    Ok(())
+}
+
+/// Distance from `p` to the ellipse centred at `c` with semi-axes `a`
+/// (along x) and `b` (along y): Newton on the foot point's parameter.
+fn ellipse_distance(c: Point, a: f64, b: f64, p: Point) -> f64 {
+    let (x, y) = (p[0] - c[0], p[1] - c[1]);
+    let mut t = (y / b).atan2(x / a);
+    for _ in 0..50 {
+        let (s, k) = t.sin_cos();
+        // f(t) = (E(t) - p) · E'(t) with E(t) = (a cos t, b sin t).
+        let f = (a * k - x) * (-a * s) + (b * s - y) * (b * k);
+        let df = (a * a - b * b) * (s * s - k * k) + x * a * k + y * b * s;
+        if df.abs() < 1e-300 {
+            break;
+        }
+        let step = f / df;
+        t -= step;
+        if step.abs() < 1e-15 {
+            break;
+        }
+    }
+    (a * t.cos() - x).hypot(b * t.sin() - y)
+}
+
+/// The fitted arcs stand for the analytic curve within `board.outline_fit`
+/// both ways: every point of the fitted cutout lies within the fit of the
+/// true ellipse, and every point of the ellipse within the fit of the
+/// fitted cutout, at the default 10 µm and at an overridden 1 µm.
+#[test]
+fn fitted_arcs_follow_the_analytic_ellipse_within_the_fit() -> Fallible<()> {
+    let (c, a, b) = ([30.0, 20.0], 10.0, 5.0);
+    let mut engine = sketched()?;
+    edit(
+        &mut engine,
+        vec![BoardEdit::AddEllipse {
+            center: c,
+            major: [c[0] + a, c[1]],
+            minor_radius: b,
+            construction: false,
+        }],
+    )?;
+    let worst = |engine: &Engine| -> Fallible<(f64, f64)> {
+        let board = engine.project().board().into_owned();
+        let cutout = board.cutouts.first().ok_or("ellipse cutout")?;
+        // Flattened a thousand times finer than the fit, so the chords add
+        // nothing measurable.
+        let fitted = flatten(&cutout.outline, 1e-6);
+        let off_curve = fitted
+            .iter()
+            .map(|p| ellipse_distance(c, a, b, *p))
+            .fold(0.0, f64::max);
+        let off_fit = (0..2000)
+            .map(|k| {
+                let t = std::f64::consts::TAU * f64::from(k) / 2000.0;
+                distance_to(&fitted, [c[0] + a * t.cos(), c[1] + b * t.sin()])
+            })
+            .fold(0.0, f64::max);
+        Ok((off_curve, off_fit))
+    };
+    let (curve, fit) = worst(&engine)?;
+    assert!(
+        curve <= 0.01 + 1e-6,
+        "fitted points {curve} mm off the ellipse"
+    );
+    assert!(
+        fit <= 0.01 + 1e-6,
+        "the ellipse {fit} mm off the fitted arcs"
+    );
+    let rule: Operation = serde_json::from_value(serde_json::json!({
+        "editor": "Rules",
+        "operation": {
+            "command": "rules.set_override",
+            "params": {
+                "key": {"rule": "board_outline_fit"},
+                "value": {"kind": "length", "value": 0.001}
+            }
+        }
+    }))?;
+    apply(&mut engine, rule)?;
+    let (curve, fit) = worst(&engine)?;
+    assert!(
+        curve <= 0.001 + 1e-6,
+        "fitted points {curve} mm off the ellipse"
+    );
+    assert!(
+        fit <= 0.001 + 1e-6,
+        "the ellipse {fit} mm off the fitted arcs"
+    );
     Ok(())
 }

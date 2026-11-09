@@ -9,7 +9,6 @@ type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 /// whose default is the 0.01 mm chord tolerance the board solve used
 /// before; a project override replaces it in the effective rules.
 #[test]
-#[ignore = "slice S1"]
 fn the_outline_fit_rule_defaults_to_ten_microns() -> Fallible<()> {
     let key: RuleKey = serde_json::from_value(serde_json::json!({"rule": "board_outline_fit"}))?;
     assert_eq!(key.group(), RuleGroup::BoardEdge);

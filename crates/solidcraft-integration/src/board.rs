@@ -3,9 +3,18 @@
 //! as the footprint evaluator ([`crate::footprint`]): the canonical sketch
 //! check, parameters in Solidcraft's expression language, bound
 //! dimensions and the solver. It turns the solved sketch into the board's
-//! outer outline, cutouts and slots (closed loops of lines and arcs, or one
-//! circle), mounting holes and named edges, and evaluates the edge
-//! constraints' expressions against the board parameters.
+//! outer outline, cutouts and slots, mounting holes and named edges, and
+//! evaluates the edge constraints' expressions against the board
+//! parameters.
+//!
+//! The outline is whatever closed region the drawn curves make
+//! (Solidcraft's `find_drawn_profiles`): its outer loop is the outline and
+//! each hole a cutout, unless a slot role names the hole's curves. Splines,
+//! ellipses and conics reach the solved board fitted with lines and arcs
+//! within `board.outline_fit` (Solidcraft's arc fitting), which is all that
+//! fills, checks, fabrication output and the laminate read. Curves that do
+//! not make one board (open ends from `loose_ends`, crossings, more than
+//! one region) leave the last valid shape in place with a [`ShapeFault`].
 //!
 //! Corners are rounded by real sketch fillets ([`fillet`](SketchBoardEvaluator)):
 //! the two lines are shortened to a tangent arc and the corner stays as
@@ -18,36 +27,43 @@ use std::f64::consts::TAU;
 
 use crate::geom::Vec2;
 use pcbcraft_core::diagnostics::{Error, Finding, ObjectRef, Result};
-use pcbcraft_core::geometry::{Point, polygon_contains};
+use pcbcraft_core::geometry::Point;
 use pcbcraft_core::layout::dimensions::{PartsRequest, PartsSolution};
 use pcbcraft_core::layout::outline::{
-    BoardEvaluation, BoardShapeEvaluator, DrawnSlot, FATAL_PREFIX, Fillets, SHAPE_UNSOLVED,
+    BoardEvaluation, BoardShapeEvaluator, DrawnSlot, FATAL_PREFIX, Fillets, FreeFormCurve,
+    SHAPE_UNSOLVED, refuses,
 };
 use pcbcraft_core::library::footprint_source::{
     DimValue, EvaluatorRef, Expr, FootprintParam, ParamName, ParamUnit, SketchBlob, SketchCurveId,
     SketchEdit, SketchOutcome, SketchPointId, SolveStatus, SolveSummary,
 };
-use pcbcraft_core::library::{Outline, Segment};
+use pcbcraft_core::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
 use pcbcraft_core::model::EdgeConstraint;
 use pcbcraft_core::model::board::{
-    BoardSketch, EdgeName, NamedEdge, RECT_EDGES, SolvedBoard, SolvedCutout, SolvedEdge,
-    SolvedMountingHole, flatten,
+    BoardSketch, CutoutKind, EdgeName, NamedEdge, RECT_EDGES, ShapeFault, ShapeFaultKind,
+    SolvedBoard, SolvedCutout, SolvedEdge, SolvedMountingHole,
 };
-use solidcraft_engine::sketch::{ConstraintKind, CurveKind, Sketch};
+use pcbcraft_core::rules::{DEFAULT_OUTLINE_FIT_MM, OUTLINE_FIT_RANGE_MM};
+use solidcraft_engine::sketch::{
+    ConstraintKind, CurveKind, ENDPOINT_JOIN_TOL, MAX_SPLINE_POINTS, Sketch, find_drawn_profiles,
+    loose_ends,
+};
+
+use crate::geom::Seg2;
 
 use crate::footprint::check::{self, MAX_COORD_MM};
 use crate::footprint::evaluate::{fnv, q, solve};
 use crate::footprint::params::{self, Values};
-use crate::footprint::{ENGINE, Outcome, Problem, SketchEvaluator, evaluator_ref, problem};
+use crate::footprint::{ENGINE, Outcome, Problem, evaluator_ref, problem};
 
-/// Two loop ends closer than this join, mm.
-const JOIN_MM: f64 = 1e-6;
-/// Chord tolerance for inside tests, mm.
-const CHORD_MM: f64 = 0.01;
+/// Two loop ends closer than this join, mm: where Solidcraft's profile
+/// search joins them.
+const JOIN_MM: f64 = ENDPOINT_JOIN_TOL;
+/// Crossings or open ends one fault names at most.
+const FAULT_POINTS: usize = 8;
 
 const OUTLINE: &str = "board.shape_outline";
 const CURVE: &str = "board.shape_curve";
-const CUTOUT: &str = "board.shape_cutout";
 const HOLE: &str = "board.shape_hole";
 const EDGE: &str = "board.shape_edge";
 const RANGE: &str = "board.shape_range";
@@ -134,7 +150,6 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
                 param("width", w, "Board width"),
                 param("height", h, "Board height"),
             ],
-            outline: ids.clone(),
             cutouts: Vec::new(),
             holes: Vec::new(),
             edges: RECT_EDGES
@@ -148,13 +163,11 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
             next_feature: 1,
             solve: SolveSummary::default(),
             solved: SolvedBoard::rectangle(size),
+            outline_fit: DEFAULT_OUTLINE_FIT_MM,
+            fault: None,
         };
         let evaluation = self.evaluate(&board, &[])?;
-        if let Some(f) = evaluation
-            .findings
-            .iter()
-            .find(|f| f.code.starts_with(FATAL_PREFIX))
-        {
+        if let Some(f) = evaluation.findings.iter().find(|f| refuses(&f.code)) {
             return Err(Error::Invalid(format!("{}: {}", f.code, f.message)));
         }
         board.solve = evaluation.solve;
@@ -166,7 +179,9 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
     }
 
     fn apply_sketch(&self, sketch: &SketchBlob, edit: &SketchEdit) -> Result<SketchOutcome> {
-        pcbcraft_core::library::FootprintEvaluator::apply_sketch(&SketchEvaluator, sketch, edit)
+        let stored = check::check_board_sketch(&sketch.0)?;
+        let edited = crate::footprint::edit::apply(&stored, edit)?;
+        Ok(finish(&stored, &edited)?)
     }
 
     fn evaluate(
@@ -180,7 +195,7 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
                 board.evaluator.engine
             )));
         }
-        let stored = check::check_sketch(&board.sketch.0)?;
+        let stored = check::check_board_sketch(&board.sketch.0)?;
         Ok(match run(board, &stored, constraints) {
             Ok(evaluation) => evaluation,
             Err(p) => unsolved(board, p),
@@ -198,6 +213,10 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
 
     fn slot(&self, board: &BoardSketch, a: Point, b: Point, width: &DimValue) -> Result<DrawnSlot> {
         Ok(slot(board, a, b, width)?)
+    }
+
+    fn add_curve(&self, board: &BoardSketch, curve: &FreeFormCurve) -> Result<SketchOutcome> {
+        Ok(free_form(board, curve)?)
     }
 
     fn solve_parts(&self, request: &PartsRequest<'_>) -> Result<PartsSolution> {
@@ -226,6 +245,7 @@ fn unsolved(board: &BoardSketch, p: Problem) -> BoardEvaluation {
         },
         constraints: Vec::new(),
         findings: vec![Finding::new(code, p.message, vec![ObjectRef::Board])],
+        fault: None,
         sketch_out: None,
     }
 }
@@ -256,11 +276,16 @@ fn pos(sk: &Sketch, i: usize) -> Outcome<Vec2> {
         .ok_or_else(|| problem(CURVE, "a curve names a missing point"))
 }
 
-/// A curve as loop pieces: a line, an arc, or a circle as two half arcs.
-fn pieces_of(sk: &Sketch, id: &str) -> Outcome<Vec<Piece>> {
-    let c = sk
+/// A curve as loop pieces in its direction of travel: a line, an arc, a
+/// circle as two half arcs, or a free-form curve fitted with lines and arcs
+/// within `fit` mm.
+fn pieces_of(sk: &Sketch, id: &str, fit: f64) -> Outcome<Vec<Piece>> {
+    let index = sk
         .curve_index(id)
-        .and_then(|c| sk.curves.get(c))
+        .ok_or_else(|| problem(CURVE, format!("no sketch curve `{id}`")))?;
+    let c = sk
+        .curves
+        .get(index)
         .ok_or_else(|| problem(CURVE, format!("no sketch curve `{id}`")))?;
     let piece = |a, b, bulge| Piece {
         curve: id.to_owned(),
@@ -284,46 +309,89 @@ fn pieces_of(sk: &Sketch, id: &str) -> Outcome<Vec<Piece>> {
             vec![piece(e, w, 1.0), piece(w, e, 1.0)]
         }
         _ => {
-            return Err(problem(
-                CURVE,
-                format!("`{id}` is not a line, arc or circle"),
-            ));
+            let mut out = Vec::new();
+            for seg in sk.exact_pieces(index) {
+                let fitted = seg.fit_arcs(fit).ok_or_else(|| {
+                    problem(
+                        OUTLINE,
+                        format!("curve `{id}` cannot be fitted with arcs within {fit} mm"),
+                    )
+                })?;
+                for s in fitted {
+                    out.push(fitted_piece(id, s)?);
+                }
+                if out.len() > MAX_OUTLINE_SEGMENTS {
+                    return Err(problem(
+                        OUTLINE,
+                        format!(
+                            "curve `{id}` needs more than {MAX_OUTLINE_SEGMENTS} arcs at a {fit} mm \
+                             outline fit; loosen the board.outline_fit rule"
+                        ),
+                    ));
+                }
+            }
+            if out.is_empty() {
+                return Err(problem(CURVE, format!("curve `{id}` has no length")));
+            }
+            out
         }
     })
 }
 
+/// A fitted span as a loop piece.
+fn fitted_piece(id: &str, s: Seg2) -> Outcome<Piece> {
+    let bulge = match s {
+        Seg2::Line { .. } => 0.0,
+        Seg2::Arc { sweep, .. } => (sweep / 4.0).tan(),
+        _ => return Err(problem(CURVE, format!("curve `{id}` was not fitted"))),
+    };
+    Ok(Piece {
+        curve: id.to_owned(),
+        a: s.start(),
+        b: s.end(),
+        bulge,
+    })
+}
+
 /// The closed loop the curves form, joined end to end in any order and
-/// direction. One circle is a loop by itself.
-fn loop_of(sk: &Sketch, ids: &[SketchCurveId], what: &str) -> Outcome<Vec<Piece>> {
-    let mut pieces = Vec::new();
+/// direction. A closed curve (circle, ellipse, periodic spline) is a loop
+/// by itself.
+fn loop_of(sk: &Sketch, ids: &[String], what: &str, fit: f64) -> Outcome<Vec<Piece>> {
+    let mut runs: Vec<Option<Vec<Piece>>> = Vec::new();
     for id in ids {
-        let p = pieces_of(sk, &id.0)?;
-        if p.len() == 2 && ids.len() > 1 {
-            return Err(problem(
-                OUTLINE,
-                format!("{what}: a circle is a loop by itself"),
-            ));
+        let closed = sk
+            .curve_index(id)
+            .and_then(|c| sk.curves.get(c))
+            .is_some_and(|c| c.kind.ends().is_none());
+        let pieces = pieces_of(sk, id, fit)?;
+        if closed {
+            if ids.len() > 1 {
+                return Err(problem(
+                    OUTLINE,
+                    format!("{what}: a closed curve is a loop by itself"),
+                ));
+            }
+            return Ok(pieces);
         }
-        pieces.extend(p);
+        runs.push(Some(pieces));
     }
-    if pieces.len() == 2 && ids.len() == 1 {
-        return Ok(pieces);
-    }
-    let mut rest = pieces.into_iter();
-    let first = rest
+    let mut rest = runs.into_iter();
+    let mut out = rest
         .next()
+        .flatten()
         .ok_or_else(|| problem(OUTLINE, format!("{what} has no curves")))?;
-    let mut rest: Vec<Option<Piece>> = rest.map(Some).collect();
-    let start = first.a;
-    let mut at = first.b;
-    let mut out = vec![first];
+    let mut rest: Vec<Option<Vec<Piece>>> = rest.collect();
+    let (Some(start), Some(mut at)) = (out.first().map(|p| p.a), out.last().map(|p| p.b)) else {
+        return Err(problem(OUTLINE, format!("{what} has no curves")));
+    };
     for _ in 0..rest.len() {
         let next = rest.iter_mut().find_map(|slot| {
-            let p = slot.as_ref()?;
-            let joined = if p.a.dist(at) <= JOIN_MM {
-                p.clone()
-            } else if p.b.dist(at) <= JOIN_MM {
-                p.reversed()
+            let run = slot.as_ref()?;
+            let (a, b) = (run.first()?.a, run.last()?.b);
+            let joined: Vec<Piece> = if a.dist(at) <= JOIN_MM {
+                run.clone()
+            } else if b.dist(at) <= JOIN_MM {
+                run.iter().rev().map(Piece::reversed).collect()
             } else {
                 return None;
             };
@@ -339,13 +407,167 @@ fn loop_of(sk: &Sketch, ids: &[SketchCurveId], what: &str) -> Outcome<Vec<Piece>
                 ),
             )
         })?;
-        at = next.b;
-        out.push(next);
+        if let Some(last) = next.last() {
+            at = last.b;
+        }
+        out.extend(next);
     }
     if at.dist(start) > JOIN_MM {
         return Err(problem(OUTLINE, format!("{what} does not close")));
     }
     Ok(out)
+}
+
+/// The curves of the one board region the drawn curves make: its outer
+/// loop's and each hole's (sorted ids).
+struct Region {
+    outer: Vec<String>,
+    holes: Vec<Vec<String>>,
+}
+
+/// A point as a message names it: `(12.5, 0)`, to the micrometre.
+fn at_text(p: Vec2) -> String {
+    let r = |v: f64| (v * 1000.0).round() / 1000.0 + 0.0;
+    format!("({}, {})", r(p.x), r(p.y))
+}
+
+fn fault(kind: ShapeFaultKind, message: String, at: &[Vec2]) -> ShapeFault {
+    ShapeFault {
+        kind,
+        message,
+        at: at
+            .iter()
+            .take(FAULT_POINTS)
+            .map(|p| [p.x + 0.0, p.y + 0.0])
+            .collect(),
+    }
+}
+
+/// The open ends of the drawn curves (Solidcraft's `loose_ends`): ends
+/// that touch no other curve, so no loop runs through them.
+fn open_ends(sk: &Sketch) -> Option<ShapeFault> {
+    let mut ends: Vec<Vec2> = Vec::new();
+    for p in loose_ends(sk).open {
+        if let Some(at) = sk.point(p)
+            && !ends.iter().any(|e| e.dist(at) <= JOIN_MM)
+        {
+            ends.push(at);
+        }
+    }
+    if ends.is_empty() {
+        return None;
+    }
+    ends.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    let named: Vec<String> = ends
+        .iter()
+        .take(FAULT_POINTS)
+        .map(|p| at_text(*p))
+        .collect();
+    Some(fault(
+        ShapeFaultKind::Open,
+        format!(
+            "The board outline is open: curve ends at {} touch nothing. Join them to close it",
+            named.join(", ")
+        ),
+        &ends,
+    ))
+}
+
+/// Where the profile search cut curves apart: the corners of `profile`'s
+/// loops that are no curve's end (a crossing, or a hole touching).
+fn cuts(sk: &Sketch, profile: &solidcraft_engine::sketch::Profile) -> Vec<Vec2> {
+    let ends: Vec<Vec2> = sk
+        .curves
+        .iter()
+        .filter(|c| !c.construction)
+        .filter_map(|c| c.kind.ends())
+        .flat_map(|(a, b)| [sk.point(a), sk.point(b)])
+        .flatten()
+        .collect();
+    let mut out: Vec<Vec2> = Vec::new();
+    let loops = std::iter::once(&profile.region.outer).chain(profile.region.holes.iter());
+    for corner in loops.flat_map(|l| l.segs.iter().map(|s| s.start())) {
+        if !ends.iter().any(|e| e.dist(corner) <= JOIN_MM)
+            && !out.iter().any(|o| o.dist(corner) <= JOIN_MM)
+        {
+            out.push(corner);
+        }
+        if out.len() >= FAULT_POINTS {
+            break;
+        }
+    }
+    out
+}
+
+/// The one region the drawn curves make: exactly one region (holes filled
+/// by plain discs aside), its curves whole (nothing crosses or touches),
+/// every hole inside it and apart from the others.
+fn region(sk: &Sketch) -> std::result::Result<Region, ShapeFault> {
+    let profiles = find_drawn_profiles(sk);
+    if profiles.is_empty() {
+        return Err(fault(
+            ShapeFaultKind::Invalid,
+            "The board's curves make no closed region; draw a closed outline".into(),
+            &[],
+        ));
+    }
+    let mut whole = Vec::with_capacity(profiles.len());
+    for p in &profiles {
+        let Some(boundaries) = p.whole_curve_boundaries() else {
+            let at = cuts(sk, p);
+            let named: Vec<String> = at.iter().map(|p| at_text(*p)).collect();
+            let place = if named.is_empty() {
+                String::new()
+            } else {
+                format!(" at {}", named.join(", "))
+            };
+            return Err(fault(
+                ShapeFaultKind::Invalid,
+                format!(
+                    "The board's curves cross or touch{place}: the outline may not cross \
+                     itself, and a cutout lies inside it apart from the others"
+                ),
+                &at,
+            ));
+        };
+        whole.push(boundaries);
+    }
+    let set = |ids: &[String]| ids.iter().cloned().collect::<BTreeSet<String>>();
+    let holes: Vec<BTreeSet<String>> = whole
+        .iter()
+        .flat_map(|(_, h)| h.iter().map(|h| set(h)))
+        .collect();
+    let main: Vec<usize> = (0..whole.len())
+        .filter(|i| whole.get(*i).is_some_and(|(o, _)| !holes.contains(&set(o))))
+        .collect();
+    let [m] = main.as_slice() else {
+        return Err(fault(
+            ShapeFaultKind::Invalid,
+            format!(
+                "The board's curves make {} separate regions; a board is one",
+                main.len()
+            ),
+            &[],
+        ));
+    };
+    let (outer, outer_holes) = whole
+        .get(*m)
+        .cloned()
+        .ok_or_else(|| fault(ShapeFaultKind::Invalid, "no board region".into(), &[]))?;
+    let mine: Vec<BTreeSet<String>> = outer_holes.iter().map(|h| set(h)).collect();
+    for (i, (o, h)) in whole.iter().enumerate() {
+        if i != *m && (!h.is_empty() || !mine.contains(&set(o))) {
+            return Err(fault(
+                ShapeFaultKind::Invalid,
+                "A region lies inside a cutout; a board is one piece".into(),
+                &[],
+            ));
+        }
+    }
+    Ok(Region {
+        outer,
+        holes: outer_holes,
+    })
 }
 
 /// Twice the signed area of a loop (positive counter-clockwise), arcs
@@ -468,10 +690,69 @@ fn run(
 ) -> Outcome<BoardEvaluation> {
     let values = params::evaluate(&board.parameters, &[])
         .map_err(|p| problem(SHAPE_UNSOLVED, format!("board parameters: {}", p.message)))?;
+    if !OUTLINE_FIT_RANGE_MM.contains(&board.outline_fit) {
+        return Err(problem(
+            RANGE,
+            format!("an outline fit of {} mm is out of range", board.outline_fit),
+        ));
+    }
     let (sk, dof) = solve(stored, &values)?;
-    let outer = oriented(loop_of(&sk, &board.outline, "the board outline")?, true);
+    if sk
+        .points
+        .iter()
+        .any(|p| p.pos.x.abs() > MAX_COORD_MM || p.pos.y.abs() > MAX_COORD_MM)
+    {
+        return Err(problem(
+            RANGE,
+            "the solved sketch leaves the coordinate range",
+        ));
+    }
+    // Curves that are not one board keep the last valid shape; open ends
+    // are named even when the closed curves make a board.
+    let shaped = match region(&sk) {
+        Ok(region) => shape(board, &sk, &values, &region)?,
+        Err(fault) => Err(fault),
+    };
+    let (solved, fault) = match shaped {
+        Ok(solved) => (solved, open_ends(&sk)),
+        Err(fault) => (board.solved.clone(), Some(open_ends(&sk).unwrap_or(fault))),
+    };
+    let bytes =
+        serde_json::to_vec(&solved).map_err(|e| problem("board.internal", e.to_string()))?;
+    let (solved_constraints, findings) = parts::edge_constraint_values(&values, constraints);
+    let dof = u32::try_from(dof).unwrap_or(u32::MAX);
+    Ok(BoardEvaluation {
+        solved,
+        solve: SolveSummary {
+            evaluator: evaluator_ref(),
+            status: if dof > 0 {
+                SolveStatus::UnderConstrained
+            } else {
+                SolveStatus::Solved
+            },
+            dof,
+            result_hash: format!("{:016x}", fnv(&bytes)),
+        },
+        constraints: solved_constraints,
+        findings,
+        fault,
+        sketch_out: Some(SketchBlob(check::canonical(&sk)?)),
+    })
+}
+
+/// The solved board of a valid region: the outline counter-clockwise, its
+/// holes as cutouts (or the slots their roles make them), the mounting
+/// holes and the named edges. A slot role whose curves no longer bound one
+/// hole is a fault.
+fn shape(
+    board: &BoardSketch,
+    sk: &Sketch,
+    values: &Values,
+    region: &Region,
+) -> Outcome<std::result::Result<SolvedBoard, ShapeFault>> {
+    let fit = board.outline_fit;
+    let outer = oriented(loop_of(sk, &region.outer, "the board outline", fit)?, true);
     let outer_outline = outline_of(&outer)?;
-    let outer_polygon = flatten(&outer_outline, CHORD_MM);
     // Edge orientation: material on the left. The outer loop runs
     // counter-clockwise, cutouts clockwise.
     let mut loops: BTreeMap<String, Piece> = BTreeMap::new();
@@ -479,27 +760,42 @@ fn run(
         loops.insert(p.curve.clone(), p.clone());
     }
     let mut cutouts = Vec::new();
-    for role in &board.cutouts {
-        let what = format!("cutout {}", role.id.0);
-        let pieces = oriented(loop_of(&sk, &role.curves, &what)?, true);
-        let outline = outline_of(&pieces)?;
-        if !flatten(&outline, CHORD_MM)
+    let mut matched = BTreeSet::new();
+    for (k, hole) in region.holes.iter().enumerate() {
+        let curves: BTreeSet<&String> = hole.iter().collect();
+        let role = board
+            .cutouts
             .iter()
-            .all(|p| polygon_contains(&outer_polygon, *p))
-        {
-            return Err(problem(
-                CUTOUT,
-                format!("{what} must lie inside the board outline"),
-            ));
+            .find(|r| r.curves.iter().map(|c| &c.0).collect::<BTreeSet<_>>() == curves);
+        if let Some(r) = role {
+            matched.insert(r.id);
         }
+        let what = format!("cutout {}", k + 1);
+        let pieces = oriented(loop_of(sk, hole, &what, fit)?, true);
+        let outline = outline_of(&pieces)?;
         for p in pieces.iter().rev() {
             loops.insert(p.curve.clone(), p.reversed());
         }
         cutouts.push(SolvedCutout {
-            id: role.id,
-            kind: role.kind,
+            id: role.map(|r| r.id),
+            kind: role.map_or(CutoutKind::Cutout, |r| r.kind),
             outline,
+            curves: pieces
+                .iter()
+                .map(|p| SketchCurveId(p.curve.clone()))
+                .collect(),
         });
+    }
+    if let Some(lost) = board.cutouts.iter().find(|r| !matched.contains(&r.id)) {
+        return Ok(Err(fault(
+            ShapeFaultKind::Invalid,
+            format!(
+                "Slot {}'s curves no longer bound one hole of the board; redraw it or make it a \
+                 cutout",
+                lost.id.0
+            ),
+            &[],
+        )));
     }
     let mut holes = Vec::new();
     for h in &board.holes {
@@ -537,18 +833,22 @@ fn run(
             pad_diameter: pad.map(q).transpose()?,
         });
     }
-    let held = held_on(&sk);
+    let held = held_on(sk);
     let mut edges = Vec::new();
     for e in &board.edges {
         let what = format!("edge `{}`", e.name.0);
         let index = sk
             .curve_index(&e.curve.0)
             .ok_or_else(|| problem(EDGE, format!("{what}: no sketch curve `{}`", e.curve.0)))?;
-        let mut drawn = pieces_of(&sk, &e.curve.0)?;
-        if drawn.len() != 1 {
+        let mut drawn = pieces_of(sk, &e.curve.0, fit)?;
+        let straight_or_arc = matches!(
+            sk.curves.get(index).map(|c| &c.kind),
+            Some(CurveKind::Line { .. } | CurveKind::Arc { .. })
+        );
+        if drawn.len() != 1 || !straight_or_arc {
             return Err(problem(
                 EDGE,
-                format!("{what}: a named edge is a line or an arc, not a circle"),
+                format!("{what}: a named edge is a line or an arc"),
             ));
         }
         let piece = match loops.get(&e.curve.0) {
@@ -556,7 +856,7 @@ fn run(
             None => drawn.remove(0),
         };
         let (a, b) = if piece.bulge == 0.0 {
-            extended(&sk, index, &piece, &held)
+            extended(sk, index, &piece, &held)
         } else {
             (piece.a, piece.b)
         };
@@ -567,42 +867,16 @@ fn run(
             bulge: qbulge(piece.bulge),
         });
     }
-    let solved = SolvedBoard {
+    Ok(Ok(SolvedBoard {
         outer: outer_outline,
+        outer_curves: outer
+            .iter()
+            .map(|p| SketchCurveId(p.curve.clone()))
+            .collect(),
         cutouts,
         holes,
         edges,
-    };
-    if sk
-        .points
-        .iter()
-        .any(|p| p.pos.x.abs() > MAX_COORD_MM || p.pos.y.abs() > MAX_COORD_MM)
-    {
-        return Err(problem(
-            RANGE,
-            "the solved sketch leaves the coordinate range",
-        ));
-    }
-    let bytes =
-        serde_json::to_vec(&solved).map_err(|e| problem("board.internal", e.to_string()))?;
-    let (solved_constraints, findings) = parts::edge_constraint_values(&values, constraints);
-    let dof = u32::try_from(dof).unwrap_or(u32::MAX);
-    Ok(BoardEvaluation {
-        solved,
-        solve: SolveSummary {
-            evaluator: evaluator_ref(),
-            status: if dof > 0 {
-                SolveStatus::UnderConstrained
-            } else {
-                SolveStatus::Solved
-            },
-            dof,
-            result_hash: format!("{:016x}", fnv(&bytes)),
-        },
-        constraints: solved_constraints,
-        findings,
-        sketch_out: Some(SketchBlob(check::canonical(&sk)?)),
-    })
+    }))
 }
 
 /// A dimension value: the number (mm) and the parameter it binds.
@@ -625,7 +899,7 @@ fn dim(values: &Values, value: &DimValue) -> Outcome<(f64, Option<String>)> {
 
 fn finish(stored: &Sketch, sk: &Sketch) -> Outcome<SketchOutcome> {
     let json = check::canonical(sk)?;
-    check::check_sketch(&json)?;
+    check::check_board_sketch(&json)?;
     Ok(crate::footprint::edit::diff(stored, sk, json))
 }
 
@@ -649,15 +923,16 @@ fn other_end(sk: &Sketch, line: usize, p: usize) -> Outcome<usize> {
 }
 
 fn fillet(board: &BoardSketch, corners: &[SketchPointId], radius: &DimValue) -> Outcome<Fillets> {
-    let stored = check::check_sketch(&board.sketch.0)?;
+    let stored = check::check_board_sketch(&board.sketch.0)?;
     let values = params::evaluate(&board.parameters, &[])?;
     let (r, param) = dim(&values, radius)?;
     let mut sk = stored.clone();
     let mut at: Vec<usize> = Vec::new();
     if corners.is_empty() {
-        // Every point where two outline lines meet.
+        // Every point where two lines of the outline meet.
         let outline: BTreeSet<usize> = board
-            .outline
+            .solved
+            .outer_curves
             .iter()
             .filter_map(|c| sk.curve_index(&c.0))
             .collect();
@@ -765,7 +1040,7 @@ fn fillet(board: &BoardSketch, corners: &[SketchPointId], radius: &DimValue) -> 
 }
 
 fn slot(board: &BoardSketch, a: Point, b: Point, width: &DimValue) -> Outcome<DrawnSlot> {
-    let stored = check::check_sketch(&board.sketch.0)?;
+    let stored = check::check_board_sketch(&board.sketch.0)?;
     let values = params::evaluate(&board.parameters, &[])?;
     let (w, param) = dim(&values, width)?;
     let (a, b) = (
@@ -820,6 +1095,90 @@ fn slot(board: &BoardSketch, a: Point, b: Point, width: &DimValue) -> Outcome<Dr
         outcome: finish(&stored, &sk)?,
         curves,
     })
+}
+
+/// Draw a free-form curve over new points: a cubic spline, an ellipse or a
+/// conic, as Solidcraft's own sketch does.
+fn free_form(board: &BoardSketch, curve: &FreeFormCurve) -> Outcome<SketchOutcome> {
+    let stored = check::check_board_sketch(&board.sketch.0)?;
+    let mut sk = stored.clone();
+    let add = |sk: &mut Sketch, p: Point| -> Outcome<usize> {
+        let v = crate::footprint::edit::vec2(p)?;
+        sk.add_point(v, None).map_err(sketch_error)
+    };
+    let (kind, construction) = match curve {
+        FreeFormCurve::Spline {
+            points,
+            control,
+            periodic,
+            construction,
+        } => {
+            if !(2..=MAX_SPLINE_POINTS).contains(&(points.len() + usize::from(*periodic))) {
+                return Err(problem(
+                    EDIT,
+                    format!("a spline has 2–{MAX_SPLINE_POINTS} points"),
+                ));
+            }
+            let mut pts = Vec::with_capacity(points.len() + 1);
+            for p in points {
+                pts.push(add(&mut sk, *p)?);
+            }
+            // A periodic spline closes on its first point.
+            if *periodic && let Some(first) = pts.first().copied() {
+                pts.push(first);
+            }
+            (
+                CurveKind::Spline {
+                    pts,
+                    control: *control,
+                    degree: 3,
+                    periodic: *periodic,
+                    nurbs: None,
+                },
+                *construction,
+            )
+        }
+        FreeFormCurve::Ellipse {
+            center,
+            major,
+            minor_radius,
+            construction,
+        } => {
+            let r = *minor_radius;
+            if !(r.is_finite() && r > 0.0 && r <= MAX_COORD_MM) {
+                return Err(problem(
+                    EDIT,
+                    format!("{r} mm is not an ellipse's minor radius"),
+                ));
+            }
+            let c = add(&mut sk, *center)?;
+            let m = add(&mut sk, *major)?;
+            (CurveKind::Ellipse { c, m, r }, *construction)
+        }
+        FreeFormCurve::Conic {
+            a,
+            b,
+            apex,
+            rho,
+            construction,
+        } => {
+            let (a, b, apex) = (add(&mut sk, *a)?, add(&mut sk, *b)?, add(&mut sk, *apex)?);
+            (
+                CurveKind::Conic {
+                    a,
+                    b,
+                    apex,
+                    rho: *rho,
+                },
+                *construction,
+            )
+        }
+    };
+    let index = sk.add_curve(kind, None).map_err(sketch_error)?;
+    if let Some(c) = sk.curves.get_mut(index) {
+        c.construction = construction;
+    }
+    finish(&stored, &sk)
 }
 
 /// A sketched board's laminate for the native model: the outer outline

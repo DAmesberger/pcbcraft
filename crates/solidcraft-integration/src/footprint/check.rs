@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use solidcraft_engine::sketch::{ConstraintKind, CurveKind, Sketch};
+use solidcraft_engine::sketch::{ConstraintKind, CurveKind, MAX_SPLINE_POINTS, Sketch};
 
 use super::{Outcome, problem};
 
@@ -30,6 +30,17 @@ pub(crate) fn canonical(sketch: &Sketch) -> Outcome<String> {
 
 /// Load a stored sketch: bounded, canonical and within the footprint subset.
 pub(crate) fn check_sketch(json: &str) -> Outcome<Sketch> {
+    load(json, false)
+}
+
+/// Load a stored board sketch: as [`check_sketch`], but the board also
+/// draws free-form curves (splines, ellipses, conics), which its evaluator
+/// fits with arcs. A read-only sketch view loads this way too.
+pub(crate) fn check_board_sketch(json: &str) -> Outcome<Sketch> {
+    load(json, true)
+}
+
+fn load(json: &str, free_form: bool) -> Outcome<Sketch> {
     if json.len() > MAX_SKETCH_BYTES {
         return Err(problem(
             TOO_LARGE,
@@ -65,14 +76,15 @@ pub(crate) fn check_sketch(json: &str) -> Outcome<Sketch> {
             ),
         ));
     }
-    subset(&sketch)?;
+    subset(&sketch, free_form)?;
     ids(&sketch)?;
     geometry(&sketch)?;
     Ok(sketch)
 }
 
-/// The footprint subset: no links, offsets, wires, patterns or 3D.
-fn subset(sketch: &Sketch) -> Outcome<()> {
+/// The footprint subset: no links, offsets, wires, patterns or 3D, and
+/// unless `free_form`, only lines, circles and arcs.
+fn subset(sketch: &Sketch, free_form: bool) -> Outcome<()> {
     let refuse = |what: &str| {
         Err(problem(
             UNSUPPORTED,
@@ -98,10 +110,19 @@ fn subset(sketch: &Sketch) -> Outcome<()> {
         return refuse("3D drawing");
     }
     for c in &sketch.curves {
-        if !matches!(
+        let analytic = matches!(
             c.kind,
             CurveKind::Line { .. } | CurveKind::Circle { .. } | CurveKind::Arc { .. }
-        ) {
+        );
+        // A free-form curve as Solidcraft's own sketch draws it: no
+        // explicit knots (no projected free-form edge).
+        let drawn = matches!(
+            c.kind,
+            CurveKind::Ellipse { .. }
+                | CurveKind::Conic { .. }
+                | CurveKind::Spline { nurbs: None, .. }
+        );
+        if !(analytic || free_form && drawn) {
             return refuse(&format!("free-form curves ({})", c.id));
         }
     }
@@ -163,19 +184,47 @@ fn geometry(sketch: &Sketch) -> Outcome<()> {
                 format!("curve {} names a missing point", c.id),
             ));
         }
+        // A periodic spline closes on its first point, listed again last.
+        let closing = matches!(c.kind, CurveKind::Spline { periodic: true, .. })
+            && pts.len() > 1
+            && pts.first() == pts.last();
         let distinct: BTreeSet<_> = pts.iter().collect();
-        if distinct.len() != pts.len() {
+        if distinct.len() != pts.len() - usize::from(closing) {
             return Err(problem(
                 UNSUPPORTED,
                 format!("curve {} repeats a point", c.id),
             ));
         }
-        if let CurveKind::Circle { r, .. } = c.kind
+        if let CurveKind::Circle { r, .. } | CurveKind::Ellipse { r, .. } = c.kind
             && !(r > 1e-9 && in_range(r))
         {
             return Err(problem(
                 UNSUPPORTED,
                 format!("curve {} has radius {r}", c.id),
+            ));
+        }
+        let shaped = match &c.kind {
+            CurveKind::Conic { rho, .. } => rho.is_finite() && *rho > 1e-6 && *rho < 1.0 - 1e-6,
+            CurveKind::Spline {
+                pts,
+                control,
+                degree,
+                periodic,
+                ..
+            } => {
+                (2..=MAX_SPLINE_POINTS).contains(&pts.len())
+                    && *degree == 3
+                    && !(*periodic && *control)
+            }
+            _ => true,
+        };
+        if !shaped {
+            return Err(problem(
+                UNSUPPORTED,
+                format!(
+                    "curve {}: a conic's rho lies in (0, 1); a spline is cubic with 2–{MAX_SPLINE_POINTS} points",
+                    c.id
+                ),
             ));
         }
     }

@@ -22,7 +22,7 @@ use pcbcraft_core::library::footprint_source::{
     ParamName, SketchConstraintId, SketchPointId, SketchRef,
 };
 use pcbcraft_core::library::{Outline, Segment, bulge_arc};
-use pcbcraft_core::model::board::{BoardSketch, CutoutKind, SolvedBoard};
+use pcbcraft_core::model::board::{BoardSketch, CutoutKind, ShapeFaultKind, SolvedBoard};
 use pcbcraft_core::{BoardShape, Engine, Operation, Point, Project};
 use pcbcraft_solidcraft::footprint::view::{
     self as sketch_view, LiveSketch, ParamEvaluation, SketchView, SolveReport, ViewGeometry,
@@ -254,8 +254,8 @@ impl PcbEditor {
             None => "Rectangle".to_owned(),
             Some(b) => {
                 let mut parts = vec!["Sketch".to_owned()];
-                if !b.cutouts.is_empty() {
-                    parts.push(format!("{} cutouts", b.cutouts.len()));
+                if !b.solved.cutouts.is_empty() {
+                    parts.push(format!("{} cutouts", b.solved.cutouts.len()));
                 }
                 if !b.holes.is_empty() {
                     parts.push(format!("{} holes", b.holes.len()));
@@ -585,7 +585,12 @@ impl PcbEditor {
             .collect();
         let selected = |r: &SketchRef| self.shape.selection.contains(r);
         let picks = &self.shape.gesture.picks;
-        let cut: Vec<_> = board.cutouts.iter().flat_map(|c| c.curves.iter()).collect();
+        let cut: Vec<_> = board
+            .solved
+            .cutouts
+            .iter()
+            .flat_map(|c| c.curves.iter())
+            .collect();
         for curve in &drawn.curves {
             let r = SketchRef::Curve(curve.id.clone());
             let line: Vec<Pos2> = polyline(&curve.geometry)
@@ -627,6 +632,11 @@ impl PcbEditor {
                 let radius = (hole_size(&hole.drill.0) as f32 * view.view.scale / 2.0).max(3.0);
                 painter.circle_stroke(view.screen(p.at), radius, Stroke::new(1.5, t.sketch_accent));
             }
+        }
+        // Where the curves fail to make a board: the open ends, or where
+        // they cross or touch.
+        for at in board.fault.iter().flat_map(|f| &f.at) {
+            painter.circle_stroke(view.screen(*at), 6.0, Stroke::new(2.0, t.sketch_conflict));
         }
         // Dimensions.
         let px = f64::from(1.0 / view.view.scale);
@@ -894,6 +904,18 @@ impl PcbEditor {
             .and_then(|l| l.report.as_ref())
             .map_or_else(|| "Not solved".to_owned(), dims::status_text);
         kit::value_row(ui, "Sketch", &status);
+        // Advisory while the shape is being drawn; an error elsewhere.
+        if let Some(fault) = &board.fault {
+            let state = match fault.kind {
+                ShapeFaultKind::Open => "Open",
+                ShapeFaultKind::Invalid => "Not one board",
+            };
+            kit::value_row(ui, "Outline", state);
+            kit::note(
+                ui,
+                &format!("{} The board keeps its last shape.", fault.message),
+            );
+        }
         if let Some(op) = self.parameters_section(ui, board, true) {
             operation = Some(op);
         }
@@ -967,13 +989,19 @@ impl PcbEditor {
                     if points == 1 { "point" } else { "points" }
                 ),
             );
-            if curves > 0 {
-                if kit::summary_row(ui, "Outer edge of the board", Some("Set as outline")) {
-                    edits = shape::outline_edit(&self.shape.selection).map(|e| vec![e]);
-                }
-                if kit::summary_row(ui, "Material removed inside", Some("Make cutout")) {
-                    edits = shape::cutout_edit(&self.shape.selection, CutoutKind::Cutout)
-                        .map(|e| vec![e]);
+            // A hole of the board is a cutout until it is made a slot.
+            if let Some((hole, kind)) = shape::selected_hole(board, &self.shape.selection) {
+                let (now, action, next) = match kind {
+                    CutoutKind::Cutout => {
+                        ("Cutout", "Make slot", CutoutKind::Slot { plated: false })
+                    }
+                    CutoutKind::Slot { .. } => ("Slot", "Make cutout", CutoutKind::Cutout),
+                };
+                if kit::summary_row(ui, now, Some(action)) {
+                    edits = Some(vec![BoardEdit::SetCutoutKind {
+                        curves: hole,
+                        kind: next,
+                    }]);
                 }
             }
             if kit::summary_row(ui, "", Some("Delete")) {
@@ -1233,7 +1261,7 @@ impl PcbEditor {
                 if board.edges.is_empty() {
                     kit::hint(ui, "Name an edge (E) to place parts relative to it", "");
                 }
-                let cutouts = board.cutouts.len();
+                let cutouts = board.solved.cutouts.len();
                 let holes = board.holes.len();
                 if cutouts + holes > 0 {
                     kit::value_row(
@@ -1379,7 +1407,7 @@ pub(super) fn polyline(geometry: &ViewGeometry) -> Vec<Point> {
                 })
                 .collect()
         }
-        ViewGeometry::Other => Vec::new(),
+        ViewGeometry::FreeForm { ref points } => points.clone(),
     }
 }
 

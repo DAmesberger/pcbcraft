@@ -446,7 +446,10 @@ fn production_findings(project: &Project, drafts: &Drafts, items: &mut Vec<Prefl
             && super::drill::stadium(&cutout.outline).is_none()
         {
             items.push(item(
-                &format!("fabrication.slot_unroutable.{}", cutout.id.0),
+                &format!(
+                    "fabrication.slot_unroutable.{}",
+                    cutout.id.map_or(0, |id| id.0)
+                ),
                 Severity::Error,
                 "A plated board slot is not a straight slot the drill file can route".into(),
                 Some("Draw the plated slot as a straight slot with round ends".into()),

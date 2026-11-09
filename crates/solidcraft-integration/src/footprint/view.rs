@@ -54,8 +54,11 @@ pub enum ViewGeometry {
         start: Point,
         end: Point,
     },
-    /// A curve kind the footprint subset does not draw (free-form curves).
-    Other,
+    /// A free-form curve (spline, ellipse, conic; only a board sketch has
+    /// them) as drawn: its polyline.
+    FreeForm {
+        points: Vec<Point>,
+    },
 }
 
 /// One sketch curve.
@@ -145,7 +148,8 @@ fn view_of(sk: &Sketch) -> SketchView {
     let curves = sk
         .curves
         .iter()
-        .map(|c| {
+        .enumerate()
+        .map(|(ci, c)| {
             let (geometry, defining) = match c.kind {
                 CurveKind::Line { a, b } => (
                     ViewGeometry::Line {
@@ -169,7 +173,12 @@ fn view_of(sk: &Sketch) -> SketchView {
                     },
                     vec![centre, a, b],
                 ),
-                _ => (ViewGeometry::Other, Vec::new()),
+                _ => (
+                    ViewGeometry::FreeForm {
+                        points: sk.polyline(ci).iter().map(|p| [p.x, p.y]).collect(),
+                    },
+                    c.kind.point_ids(),
+                ),
             };
             ViewCurve {
                 id: SketchCurveId(c.id.clone()),
@@ -208,9 +217,10 @@ fn view_of(sk: &Sketch) -> SketchView {
 }
 
 /// The source's sketch at its stored solved positions. Pure; refuses a
-/// sketch `check_sketch` refuses.
+/// sketch `check_board_sketch` refuses (the view is read-only, so it also
+/// shows a board sketch's free-form curves; footprints never store them).
 pub fn sketch_view(source: &FootprintSource) -> Result<SketchView> {
-    let sk = check::check_sketch(&source.sketch.0)?;
+    let sk = check::check_board_sketch(&source.sketch.0)?;
     Ok(view_of(&sk))
 }
 
@@ -242,7 +252,7 @@ pub fn dimensions_using(
     source: &FootprintSource,
     name: &ParamName,
 ) -> Result<Vec<SketchConstraintId>> {
-    let sketch = check::check_sketch(&source.sketch.0)?;
+    let sketch = check::check_board_sketch(&source.sketch.0)?;
     let readers = readers_of(source, name);
     Ok(sketch
         .constraints
@@ -354,7 +364,7 @@ pub fn readers(source: &FootprintSource, name: &ParamName) -> Result<ParamReader
             || o.value.paste.as_ref().is_some_and(paste)
     });
     let graphic = source.graphics.iter().any(|g| reads(&g.width));
-    let sketch = check::check_sketch(&source.sketch.0)?;
+    let sketch = check::check_board_sketch(&source.sketch.0)?;
     let placement = sketch
         .points
         .iter()
@@ -481,10 +491,10 @@ pub struct DragFrame {
 const DRAG_HELD: &str = "footprint.drag";
 
 impl LiveSketch {
-    /// Load the source's sketch (`check_sketch`) and apply its parameters
+    /// Load the source's sketch (`check_board_sketch`) and apply its parameters
     /// and the package values.
     pub fn load(source: &FootprintSource, package_values: &[PackageValue]) -> Result<Self> {
-        let stored = check::check_sketch(&source.sketch.0)?;
+        let stored = check::check_board_sketch(&source.sketch.0)?;
         let values = params::evaluate(&source.parameters, package_values)?;
         let mut sketch = stored.clone();
         evaluate::apply_values(&mut sketch, &values)?;

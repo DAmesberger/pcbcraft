@@ -122,7 +122,7 @@ fn polyline(geometry: &ViewGeometry) -> Vec<Point> {
             }
             arc(center, r, a0, sweep)
         }
-        ViewGeometry::Other => Vec::new(),
+        ViewGeometry::FreeForm { .. } => Vec::new(),
     }
 }
 

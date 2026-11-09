@@ -61,6 +61,20 @@ pub(super) fn sketched() -> Fallible<Engine> {
     Ok(engine)
 }
 
+/// The curves a `board.edit` reports it created.
+pub(super) fn created_curves_of(outcome: Outcome) -> Vec<SketchCurveId> {
+    match outcome {
+        Outcome::BoardEdited { created } => created
+            .into_iter()
+            .filter_map(|r| match r {
+                SketchRef::Curve(c) => Some(c),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 pub(super) fn created_curves(outcome: &SketchOutcome) -> Vec<SketchCurveId> {
     outcome
         .created
@@ -138,7 +152,7 @@ fn rounded_corners_follow_a_corner_radius_parameter() -> Fallible<()> {
     )?;
     let s = sketch(&engine)?;
     assert_eq!(s.solve.status, SolveStatus::Solved, "{:?}", s.solve);
-    assert_eq!(s.outline.len(), 8);
+    assert_eq!(s.solved.outer_curves.len(), 8);
     let arcs = s
         .solved
         .outer
@@ -193,29 +207,16 @@ fn rounded_corners_follow_a_corner_radius_parameter() -> Fallible<()> {
 #[test]
 fn cutouts_slots_and_mounting_holes_solve_and_build_in_3d() -> Fallible<()> {
     let mut engine = sketched()?;
-    let s = sketch(&engine)?;
-    let circle = EV.apply_sketch(
-        &s.sketch,
-        &SketchEdit::AddCircle {
-            center: [30.0, 20.0],
-            radius: 4.0,
-            construction: false,
-        },
-    )?;
-    let curves = created_curves(&circle);
     edit(
         &mut engine,
         vec![
+            // A circle inside the outline is a cutout by itself.
             BoardEdit::Sketch {
                 edit: SketchEdit::AddCircle {
                     center: [30.0, 20.0],
                     radius: 4.0,
                     construction: false,
                 },
-            },
-            BoardEdit::AddCutout {
-                kind: CutoutKind::Cutout,
-                curves,
             },
             BoardEdit::AddSlot {
                 a: [10.0, 30.0],
@@ -262,36 +263,38 @@ fn cutouts_slots_and_mounting_holes_solve_and_build_in_3d() -> Fallible<()> {
         "{b:?}"
     );
 
-    // A cutout outside the board is refused.
-    let rev = engine.revision();
-    let outside = EV.apply_sketch(
-        &sketch(&engine)?.sketch,
-        &SketchEdit::AddCircle {
-            center: [100.0, 20.0],
-            radius: 2.0,
-            construction: false,
-        },
+    // A circle outside the board is a second region, not a cutout: the
+    // board keeps its shape and reports it (§5.1); deleting it again
+    // clears the report.
+    let kept = engine.project().board().into_owned();
+    let outside = created_curves_of(edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::AddCircle {
+                center: [100.0, 20.0],
+                radius: 2.0,
+                construction: false,
+            },
+        }],
+    )?);
+    assert_eq!(engine.project().board().into_owned(), kept);
+    let invalid = |engine: &Engine| {
+        pcbcraft_core::layout::outline::checks(engine.project())
+            .iter()
+            .filter(|f| f.code == pcbcraft_core::layout::outline::SHAPE_INVALID)
+            .count()
+    };
+    assert_eq!(invalid(&engine), 1);
+    edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::Delete {
+                ids: outside.into_iter().map(SketchRef::Curve).collect(),
+            },
+        }],
     )?;
-    assert!(
-        edit(
-            &mut engine,
-            vec![
-                BoardEdit::Sketch {
-                    edit: SketchEdit::AddCircle {
-                        center: [100.0, 20.0],
-                        radius: 2.0,
-                        construction: false,
-                    },
-                },
-                BoardEdit::AddCutout {
-                    kind: CutoutKind::Cutout,
-                    curves: created_curves(&outside),
-                },
-            ],
-        )
-        .is_err()
-    );
-    assert_eq!(engine.revision(), rev);
+    assert_eq!(invalid(&engine), 0);
+    assert_eq!(engine.project().board().into_owned(), kept);
 
     // The laminate is the outline with its cutouts, slot and hole cut.
     let laminate = laminate(engine.project()).ok_or("laminate")?;
@@ -322,7 +325,7 @@ fn cutouts_slots_and_mounting_holes_solve_and_build_in_3d() -> Fallible<()> {
     // Saved and reopened unchanged; undo returns to the rectangle.
     let file = engine.to_file();
     assert_eq!(format::decode(&format::encode(&file)?)?, file);
-    for _ in 0..3 {
+    for _ in 0..5 {
         engine.undo()?;
     }
     assert!(engine.project().board_shape.is_rectangle());
@@ -354,16 +357,6 @@ fn bad_edits_are_refused_and_leave_the_board() -> Fallible<()> {
         vec![BoardEdit::RemoveParameter {
             name: ParamName("width".into()),
         }],
-        // Deleting an outline curve opens the outline.
-        vec![BoardEdit::Sketch {
-            edit: SketchEdit::Delete {
-                ids: vec![SketchRef::Curve(bottom.clone())],
-            },
-        }],
-        // An open outline.
-        vec![BoardEdit::SetOutline {
-            curves: vec![bottom],
-        }],
         // A negative size.
         vec![set("width", "-5 mm")],
     ];
@@ -373,6 +366,26 @@ fn bad_edits_are_refused_and_leave_the_board() -> Fallible<()> {
         assert_eq!(engine.revision(), rev, "{label}");
         assert_eq!(engine.to_file(), before, "{label}");
     }
+    // Opening the outline is no refusal (§5.1): the edit applies, the
+    // board keeps its last valid shape and size, and `board.shape_open`
+    // reports it (closed_loop_tests covers closing it again).
+    let board = engine.project().board().into_owned();
+    edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::Delete {
+                ids: vec![SketchRef::Curve(bottom)],
+            },
+        }],
+    )?;
+    assert!(engine.revision() > rev);
+    assert_eq!(engine.project().board().into_owned(), board);
+    assert_eq!(engine.project().board_size, [60.0, 40.0]);
+    assert!(
+        pcbcraft_core::layout::outline::checks(engine.project())
+            .iter()
+            .any(|f| f.code == pcbcraft_core::layout::outline::SHAPE_OPEN)
+    );
     Ok(())
 }
 
@@ -502,23 +515,12 @@ fn arc_board_edges_place_parts_on_a_round_board() -> Fallible<()> {
         },
     )?;
     let upper = created_curves(&drawn);
-    let drawn2 = EV.apply_sketch(
-        &drawn.sketch,
-        &SketchEdit::AddArc {
-            center: [30.0, 20.0],
-            start: [10.0, 20.0],
-            end: [50.0, 20.0],
-            construction: false,
-        },
-    )?;
-    let lower = created_curves(&drawn2);
     let old: Vec<SketchRef> = s
-        .outline
+        .solved
+        .outer_curves
         .iter()
         .map(|c| SketchRef::Curve(c.clone()))
         .collect();
-    let mut outline = upper.clone();
-    outline.extend(lower);
     // Arcs drawn separately meet only by position; the loop joins them.
     let sketch_edit = |edit| BoardEdit::Sketch { edit };
     edit(
@@ -536,7 +538,6 @@ fn arc_board_edges_place_parts_on_a_round_board() -> Fallible<()> {
                 end: [50.0, 20.0],
                 construction: false,
             }),
-            BoardEdit::SetOutline { curves: outline },
             BoardEdit::NameEdge {
                 name: EdgeName("rim".into()),
                 curve: upper.first().cloned().ok_or("arc")?,
@@ -589,23 +590,12 @@ fn arc_board_edges_place_parts_on_a_round_board() -> Fallible<()> {
 fn the_mask_and_edge_bands_follow_the_sketched_shape() -> Fallible<()> {
     use crate::material::BodyKind;
     let mut engine = sketched()?;
-    let s = sketch(&engine)?;
     let add = SketchEdit::AddCircle {
         center: [30.0, 20.0],
         radius: 4.0,
         construction: false,
     };
-    let curves = created_curves(&EV.apply_sketch(&s.sketch, &add)?);
-    edit(
-        &mut engine,
-        vec![
-            BoardEdit::Sketch { edit: add },
-            BoardEdit::AddCutout {
-                kind: CutoutKind::Cutout,
-                curves,
-            },
-        ],
-    )?;
+    edit(&mut engine, vec![BoardEdit::Sketch { edit: add }])?;
     edit(
         &mut engine,
         vec![

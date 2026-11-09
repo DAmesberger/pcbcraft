@@ -87,13 +87,14 @@ fn board_of(size: Point, parameters: Vec<FootprintParam>) -> Result<BoardSketch>
         evaluator: HOST.evaluator(),
         sketch: stage.staged().clone(),
         parameters,
-        outline: curves,
         cutouts: Vec::new(),
         holes: Vec::new(),
         edges,
         next_feature: 1,
         solve: Default::default(),
         solved: SolvedBoard::rectangle(size),
+        outline_fit: pcbcraft_core::rules::DEFAULT_OUTLINE_FIT_MM,
+        fault: None,
     })
 }
 
@@ -219,20 +220,28 @@ fn cutouts_slots_and_holes_name_the_curves_and_points_they_draw() -> Fallible {
         let Step::Commit(commit) = press(tool, &options, &mut gesture, clicks[1], &scene)? else {
             return Err(format!("{tool:?} did not commit").into());
         };
-        let Some(BoardEdit::AddCutout { kind, curves }) = commit.edits.last() else {
-            return Err(format!("{tool:?} added no cutout").into());
-        };
-        assert_eq!(
-            *kind,
-            if tool == ShapeTool::Slot {
-                CutoutKind::Slot { plated: false }
-            } else {
-                CutoutKind::Cutout
-            }
-        );
-        assert_eq!(curves.len(), 4);
         let drawn = view_of(&applied(&board.sketch, &commit.edits)?)?;
-        assert!(curves.iter().all(|c| drawn.curve(c).is_some()));
+        let roles: Vec<_> = commit
+            .edits
+            .iter()
+            .filter_map(|e| match e {
+                BoardEdit::SetCutoutKind { curves, kind } => Some((curves, kind)),
+                _ => None,
+            })
+            .collect();
+        if tool == ShapeTool::Slot {
+            // The slot's four curves get a slot role.
+            let [(curves, kind)] = roles.as_slice() else {
+                return Err("the slot named no slot role".into());
+            };
+            assert_eq!(**kind, CutoutKind::Slot { plated: false });
+            assert_eq!(curves.len(), 4);
+            assert!(curves.iter().all(|c| drawn.curve(c).is_some()));
+        } else {
+            // A closed loop inside the outline is a cutout without a role.
+            assert!(roles.is_empty());
+            assert_eq!(drawn.curves.len(), view.curves.len() + 4);
+        }
         assert!(matches!(
             status(&applied(&board.sketch, &commit.edits)?, Vec::new())?,
             SolveStatus::Solved | SolveStatus::UnderConstrained

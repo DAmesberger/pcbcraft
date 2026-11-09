@@ -746,18 +746,15 @@ impl Engine {
         for command in layout::showcase::top_fill_commands(self.project())? {
             self.apply(self.revision, Operation::Fill(command))?;
         }
-        let Some(board) = evaluators.board else {
+        if evaluators.board.is_none() {
             return Ok(());
-        };
+        }
         self.apply_hosted(
             self.revision,
             Operation::Board(layout::outline::BoardCommand::StartSketch),
             evaluators,
         )?;
-        let model::board::BoardShape::Sketch(sketch) = &self.project().board_shape else {
-            return Err(Error::Invalid("showcase board sketch".into()));
-        };
-        for edits in layout::showcase::board_edits(board, sketch)? {
+        for edits in layout::showcase::board_edits() {
             self.apply_hosted(
                 self.revision,
                 Operation::Board(layout::outline::BoardCommand::Edit { edits }),
@@ -1151,7 +1148,10 @@ impl Engine {
                 let mut next = candidate.project.rules.clone();
                 let added = rules::apply_added(&mut next, command)?;
                 if next != candidate.project.rules {
-                    Arc::make_mut(&mut candidate.project).rules = next;
+                    let project = Arc::make_mut(&mut candidate.project);
+                    project.rules = next;
+                    // A sketch board follows `board.outline_fit`.
+                    layout::outline::refit(project, evaluators.board)?;
                 }
                 match added {
                     Some(rules::signal::Added::Class(class)) => Outcome::NetClassAdded { class },
