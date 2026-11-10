@@ -119,7 +119,7 @@ fn junction_place(engine: &mut Engine, position: Point) -> Result<Id> {
         engine,
         Operation::Schematic(SchematicCommand::PlaceJunction {
             sheet: None,
-            position,
+            position: pt(position),
         }),
     )? {
         Outcome::JunctionPlaced { junction } => Ok(junction),
@@ -203,7 +203,7 @@ fn a_pin_moved_onto_a_wires_middle_joins_it_with_a_dot() -> Result<()> {
         &mut engine,
         Operation::Schematic(SchematicCommand::MoveUnit {
             occurrence,
-            position: [20.0, 0.0],
+            position: pt([20.0, 0.0]),
         }),
     )?;
     assert_eq!(net_of(&engine, ep(tp, 1))?, net_of(&engine, ep(u1, 2))?);
@@ -237,7 +237,7 @@ fn a_new_wire_takes_the_other_l_or_a_dogleg_around_pins_it_does_not_end_on() -> 
     assert_eq!(project.wires.len(), 1);
     assert_eq!(
         project.wires[0].corners,
-        vec![crate::model::Corner::sharp([5.0, 20.0])]
+        vec![crate::model::Corner::sharp(pt([5.0, 20.0]))]
     );
     assert!(dots(&engine).is_empty(), "a bend has no dot");
     // With both L corners taken, a three-legged dogleg goes around.
@@ -319,7 +319,7 @@ fn a_wire_ending_on_a_label_that_lies_on_another_wire_joins_with_a_junction_dot(
             sheet: None,
             name: "MID".into(),
             kind: LabelKind::Local,
-            position: [20.0, 0.0],
+            position: pt([20.0, 0.0]),
             rotation: Default::default(),
             attach: None,
         }),
@@ -432,7 +432,7 @@ fn a_junction_point_shows_on_a_lone_wire_and_is_refused_off_wires() -> Result<()
     assert_eq!(project.wires.len(), 1);
     assert_eq!(
         project.wires[0].corners,
-        vec![crate::model::Corner::sharp([35.0, 0.0])]
+        vec![crate::model::Corner::sharp(pt([35.0, 0.0]))]
     );
     Ok(())
 }
@@ -530,12 +530,12 @@ fn a_free_end_on_a_ports_drawing_attaches_to_it() -> Result<()> {
         &mut engine,
         port(
             "GND",
-            [0.0, 0.0],
+            pt([0.0, 0.0]),
             Some(schematic::WireTarget::Terminal(ep(r1, 2))),
         ),
     )?;
     let on_pin = engine.project().labels[0].id;
-    apply(&mut engine, port("AGND", [40.0, 0.0], None))?;
+    apply(&mut engine, port("AGND", pt([40.0, 0.0]), None))?;
     let alone = engine.project().labels[1].id;
     let draw = |engine: &mut Engine, end: Point| {
         let free = |p: Point| {
@@ -562,7 +562,7 @@ fn a_free_end_on_a_ports_drawing_attaches_to_it() -> Result<()> {
     let project = engine.project();
     let wire = project
         .wires_at(WireEnd::Terminal(ep(r1, 2)))
-        .find(|w| w.corners.iter().any(|c| near(c.at, on_ink)))
+        .find(|w| w.corners.iter().any(|c| near(c.at_mm(), on_ink)))
         .ok_or(Error::Invalid("the wire did not attach to the pin".into()))?;
     assert!(matches!(wire.from, WireEnd::Free(_)));
     let label = project

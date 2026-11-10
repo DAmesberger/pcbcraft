@@ -149,7 +149,7 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
             sheet: None,
             instance: u1,
             unit: P,
-            position: [0.0, 20.0],
+            position: pt([0.0, 20.0]),
         }),
     )?;
     let report = inspect(&engine, u1)?;
@@ -225,7 +225,7 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
             properties: vec![text(gain, "2")],
             representation: amp.symbol,
             unit: B,
-            position: [60.0, 0.0],
+            position: pt([60.0, 0.0]),
             physical: Some(amp.physical()),
         })),
     ) else {
@@ -446,7 +446,7 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
         // Not straight below U2's Aout: terminal 6's wire follows it from
         // (65, 10), and a wire running over the no-connect pin would join it.
         regroup(RegroupAction::PlaceUnit {
-            position: [40.0, -20.0],
+            position: pt([40.0, -20.0]),
         }),
     ));
     assert!(placed.blockers.is_empty(), "{:?}", placed.blockers);

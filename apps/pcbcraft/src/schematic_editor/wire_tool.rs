@@ -5,8 +5,8 @@
 //! the finished wire is one `wire.draw`, one undo step.
 use super::*;
 use crate::commands::KeyDecl;
-use pcbcraft_core::model::{Corner, FreeEnd};
-use pcbcraft_core::schematic::wire_edit;
+use pcbcraft_core::model::FreeEnd;
+use pcbcraft_core::schematic::wire_edit::{self, Bend};
 
 /// The Wire tool's keys while a wire is in progress, handled by the canvas
 /// (`crate::keys::pressed`).
@@ -36,14 +36,14 @@ pub(super) const DEFAULT_RADIUS_MM: f64 = 2.5;
 
 /// A drawn path's vertices with every corner rounded by `radius` (0: sharp),
 /// each as large as fits: what `wire.draw` stores and the preview draws.
-pub(super) fn rounded(vertices: &[Point], radius: f64) -> Vec<Corner> {
+pub(super) fn rounded(vertices: &[Point], radius: f64) -> Vec<Bend> {
     let mut points = vertices.to_vec();
     points.dedup();
     let last = points.len().saturating_sub(1);
-    let path: Vec<Corner> = points
+    let path: Vec<Bend> = points
         .iter()
         .enumerate()
-        .map(|(i, &at)| Corner {
+        .map(|(i, &at)| Bend {
             at,
             radius: if i == 0 || i == last { 0.0 } else { radius },
         })
@@ -252,10 +252,11 @@ impl SchematicEditor {
         let command = SchematicCommand::DrawWire {
             sheet: Some(self.sheet),
             from: draft.from,
-            corners: path
-                .get(1..path.len().saturating_sub(1))
-                .unwrap_or_default()
-                .to_vec(),
+            corners: wire_edit::stored(
+                path.get(1..path.len().saturating_sub(1))
+                    .unwrap_or_default(),
+            )
+            .ok()?,
             to,
         };
         let plan = engine.preview_update(Change::Schematic { command });

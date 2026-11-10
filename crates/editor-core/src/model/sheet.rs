@@ -4,13 +4,15 @@
 //! project properties a title block shows. Data only: connectivity rules
 //! live in `nets`, capture rules in `schematic`.
 //!
-//! Sheet coordinates are millimetres with y up, as for symbols and wires.
+//! Sheet coordinates are stored in whole nanometres with y up, as for
+//! symbols and wires; the page frame is computed in millimetres.
 //! A sheet's page has its top-left corner at [`PAGE_TOP_LEFT`], so content
 //! drawn near the origin (as single-sheet designs were) lies inside the
 //! frame: the page spans x ∈ [−30, width − 30], y ∈ [30 − height, 30].
 use crate::geometry::Point;
 use crate::ids::{Id, SheetId};
 use crate::library::Rotation;
+use crate::units::{Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -283,7 +285,7 @@ pub struct Label {
     pub name: String,
     pub kind: LabelKind,
     /// The connection point.
-    pub position: Point,
+    pub position: PointNm,
     /// Quarter turns counter-clockwise of the drawing about its point.
     #[serde(default)]
     pub rotation: Rotation,
@@ -318,8 +320,14 @@ pub struct SheetPin {
     pub shape: PortShape,
     pub side: SheetSide,
     /// Distance along the side from the symbol's top-left corner (left and
-    /// right sides: downward; top and bottom: rightward), in mm.
-    pub offset: f64,
+    /// right sides: downward; top and bottom: rightward).
+    pub offset_nm: Nm,
+}
+
+impl SheetPin {
+    pub fn offset_mm(&self) -> f64 {
+        self.offset_nm.to_mm_f64()
+    }
 }
 
 /// A box on a parent sheet that stands for a child sheet: the hierarchy.
@@ -334,9 +342,9 @@ pub struct SheetSymbol {
     pub sheet: SheetId,
     pub child: SheetId,
     /// The top-left corner.
-    pub position: Point,
-    /// Width and height, in mm.
-    pub size: Point,
+    pub position: PointNm,
+    /// Width (x) and height (y).
+    pub size: PointNm,
     pub pins: Vec<SheetPin>,
 }
 
@@ -344,16 +352,27 @@ impl SheetSymbol {
     pub fn pin(&self, id: Id) -> Option<&SheetPin> {
         self.pins.iter().find(|p| p.id == id)
     }
-    /// Where a pin's connection point sits on the sheet.
+    pub fn position_mm(&self) -> Point {
+        self.position.to_mm_f64()
+    }
+    pub fn size_mm(&self) -> Point {
+        self.size.to_mm_f64()
+    }
+    /// Where a pin's connection point sits on the sheet, mm.
     pub fn pin_position(&self, pin: &SheetPin) -> Point {
-        let [x, y] = self.position;
-        let [w, h] = self.size;
-        match pin.side {
-            SheetSide::Left => [x, y - pin.offset],
-            SheetSide::Right => [x + w, y - pin.offset],
-            SheetSide::Top => [x + pin.offset, y],
-            SheetSide::Bottom => [x + pin.offset, y - h],
-        }
+        // Each term is within ±2e9 nm: the i64 sums cannot overflow, and
+        // the conversion of the exact sum is exact to the nearest f64.
+        let mm = |nm: i64| nm as f64 / crate::units::NM_PER_MM as f64;
+        let (x, y) = (self.position.x_nm.get(), self.position.y_nm.get());
+        let (w, h) = (self.size.x_nm.get(), self.size.y_nm.get());
+        let offset = pin.offset_nm.get();
+        let [px, py] = match pin.side {
+            SheetSide::Left => [x, y - offset],
+            SheetSide::Right => [x + w, y - offset],
+            SheetSide::Top => [x + offset, y],
+            SheetSide::Bottom => [x + offset, y - h],
+        };
+        [mm(px), mm(py)]
     }
 }
 
@@ -363,20 +382,20 @@ impl SheetSymbol {
 pub enum SheetItem {
     /// A text note; lines split at `\n`.
     Text {
-        at: Point,
+        at: PointNm,
         text: String,
-        /// Cap height in mm.
-        height: f64,
+        /// Cap height.
+        height_nm: Nm,
         #[serde(default)]
         rotation: Rotation,
     },
     Line {
-        from: Point,
-        to: Point,
+        from: PointNm,
+        to: PointNm,
     },
     Rect {
-        min: Point,
-        max: Point,
+        min: PointNm,
+        max: PointNm,
     },
 }
 

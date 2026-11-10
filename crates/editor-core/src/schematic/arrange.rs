@@ -7,7 +7,7 @@
 //! on a junction a named wire ends on, or a free end of a named wire. So
 //! junctions only ever come along with wires.
 use super::clipboard::{ClipObject, MAX_CLIP_OBJECTS};
-use super::labels::{self, check_point};
+use super::labels;
 use super::wire_edit;
 use super::wiring::{end_position, wire_path};
 use super::{Result, invalid, mirrored_on_sheet, not_found, placed_unit, rotated_on_sheet, sheets};
@@ -15,7 +15,8 @@ use crate::diagnostics::Error;
 use crate::geometry::{Bounds, Point};
 use crate::ids::{Id, SheetId};
 use crate::library::Rotation;
-use crate::model::{LabelKind, Project, SheetItem, Wire, WireEnd};
+use crate::model::{FreeEnd, LabelKind, Project, SheetItem, Wire, WireEnd};
+use crate::units::{Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -24,22 +25,60 @@ use std::collections::BTreeSet;
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Arrangement {
-    /// Shift by `by`, in mm.
-    Move { by: Point },
+    /// Shift by `by`.
+    Move {
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        by: PointNm,
+    },
     /// A quarter turn counter-clockwise about the point `about`.
-    Rotate { about: Point },
+    Rotate {
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        about: PointNm,
+    },
     /// Left to right about the vertical line through `about`.
-    Mirror { about: Point },
+    Mirror {
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        about: PointNm,
+    },
 }
 
 impl Arrangement {
-    /// Where the arrangement takes a sheet point.
+    /// Where the arrangement takes a sheet point, mm.
     pub fn point(self, p: Point) -> Point {
         match self {
-            Self::Move { by } => [p[0] + by[0], p[1] + by[1]],
-            Self::Rotate { about } => [about[0] - (p[1] - about[1]), about[1] + (p[0] - about[0])],
-            Self::Mirror { about } => [2.0 * about[0] - p[0], p[1]],
+            Self::Move { by } => {
+                let by = by.to_mm_f64();
+                [p[0] + by[0], p[1] + by[1]]
+            }
+            Self::Rotate { about } => {
+                let about = about.to_mm_f64();
+                [about[0] - (p[1] - about[1]), about[1] + (p[0] - about[0])]
+            }
+            Self::Mirror { about } => [2.0 * about.to_mm_f64()[0] - p[0], p[1]],
         }
+    }
+
+    /// [`Arrangement::point`] for a stored point, exactly; refused off the
+    /// sheet's range.
+    pub fn point_nm(self, p: PointNm) -> Result<PointNm> {
+        // Every term is within ±2e9 nm: the i64 arithmetic cannot overflow.
+        let (x, y) = (p.x_nm.get(), p.y_nm.get());
+        let [x, y] = match self {
+            Self::Move { by } => [x + by.x_nm.get(), y + by.y_nm.get()],
+            Self::Rotate { about } => {
+                let (ax, ay) = (about.x_nm.get(), about.y_nm.get());
+                [ax - (y - ay), ay + (x - ax)]
+            }
+            Self::Mirror { about } => [2 * about.x_nm.get() - x, y],
+        };
+        let off = |_| invalid(super::POINT_RANGE);
+        Ok(PointNm::new(
+            Nm::new(x).map_err(off)?,
+            Nm::new(y).map_err(off)?,
+        ))
     }
 
     /// A label's rotation afterwards. A mirrored label keeps what it points
@@ -56,17 +95,17 @@ impl Arrangement {
         }
     }
 
-    fn item(self, item: &SheetItem) -> SheetItem {
-        match item.clone() {
+    fn item(self, item: &SheetItem) -> Result<SheetItem> {
+        Ok(match item.clone() {
             SheetItem::Text {
                 at,
                 text,
-                height,
+                height_nm,
                 rotation,
             } => SheetItem::Text {
-                at: self.point(at),
+                at: self.point_nm(at)?,
                 text,
-                height,
+                height_nm,
                 rotation: match self {
                     Self::Rotate { .. } => rotation.turned(1),
                     // Text stays readable.
@@ -74,17 +113,17 @@ impl Arrangement {
                 },
             },
             SheetItem::Line { from, to } => SheetItem::Line {
-                from: self.point(from),
-                to: self.point(to),
+                from: self.point_nm(from)?,
+                to: self.point_nm(to)?,
             },
             SheetItem::Rect { min, max } => {
-                let (a, b) = (self.point(min), self.point(max));
+                let (a, b) = (self.point_nm(min)?, self.point_nm(max)?);
                 SheetItem::Rect {
-                    min: [a[0].min(b[0]), a[1].min(b[1])],
-                    max: [a[0].max(b[0]), a[1].max(b[1])],
+                    min: PointNm::new(a.x_nm.min(b.x_nm), a.y_nm.min(b.y_nm)),
+                    max: PointNm::new(a.x_nm.max(b.x_nm), a.y_nm.max(b.y_nm)),
                 }
             }
-        }
+        })
     }
 }
 
@@ -151,11 +190,6 @@ pub fn arrange(
     how: Arrangement,
 ) -> Result<()> {
     let group = named(project, sheet, objects)?;
-    match how {
-        Arrangement::Move { by: p }
-        | Arrangement::Rotate { about: p }
-        | Arrangement::Mirror { about: p } => check_point(p)?,
-    }
     // All of this reads the sheet as it is before anything moves.
     let before = wire_edit::ends(project);
     let junctions: BTreeSet<Id> = project
@@ -205,8 +239,7 @@ pub fn arrange(
         .iter_mut()
         .filter(|o| o.sheet == sheet && group.instances.contains(&o.instance))
     {
-        occurrence.position = how.point(occurrence.position);
-        check_point(occurrence.position)?;
+        occurrence.position = how.point_nm(occurrence.position)?;
         (occurrence.rotation, occurrence.mirror) = match how {
             Arrangement::Move { .. } => (occurrence.rotation, occurrence.mirror),
             Arrangement::Rotate { .. } => rotated_on_sheet(occurrence.rotation, occurrence.mirror),
@@ -214,7 +247,7 @@ pub fn arrange(
         };
     }
     for (id, position, rotation) in moved_labels {
-        check_point(position)?;
+        let position = super::sheet_point(position)?;
         if let Some(label) = project.labels.iter_mut().find(|l| l.id == id) {
             label.position = position;
             label.rotation = rotation;
@@ -225,7 +258,7 @@ pub fn arrange(
         let item = project
             .drawing(*id)
             .map(|d| how.item(&d.item))
-            .ok_or_else(|| not_found("Unknown drawing."))?;
+            .ok_or_else(|| not_found("Unknown drawing."))??;
         sheets::edit_drawing(project, *id, item)?;
     }
     for junction in project
@@ -233,15 +266,15 @@ pub fn arrange(
         .iter_mut()
         .filter(|j| junctions.contains(&j.id))
     {
-        junction.position = how.point(junction.position);
-        check_point(junction.position)?;
+        junction.position = how.point_nm(junction.position)?;
     }
 
     // Named wires' free ends; rigid wires' corners with them.
-    let free_end = |end: WireEnd| match end.free_point() {
-        Some(p) => WireEnd::free(how.point(p))
-            .ok_or_else(|| invalid("Schematic position must be finite and within ±10000 mm.")),
-        None => Ok(end),
+    let free_end = |end: WireEnd| match end {
+        WireEnd::Free(f) => how
+            .point_nm(f.free)
+            .map(|free| WireEnd::Free(FreeEnd { free })),
+        _ => Ok(end),
     };
     for wire in &mut project.wires {
         if group.wires.contains(&wire.id) {
@@ -250,8 +283,7 @@ pub fn arrange(
         }
         if rigid.contains(&wire.id) {
             for corner in &mut wire.corners {
-                corner.at = how.point(corner.at);
-                check_point(corner.at)?;
+                corner.at = how.point_nm(corner.at)?;
             }
         }
     }
@@ -297,7 +329,7 @@ fn points(project: &Project, sheet: SheetId, objects: &[ClipObject]) -> Vec<Poin
         match *object {
             ClipObject::Instance { id } => {
                 for occurrence in project.occurrences_of(id).filter(|o| o.sheet == sheet) {
-                    points.push(occurrence.position);
+                    points.push(occurrence.position.to_mm_f64());
                     if let Ok(unit) = placed_unit(project, occurrence.id) {
                         points.extend(unit.pins.iter().map(|p| p.end));
                     }
@@ -307,9 +339,13 @@ fn points(project: &Project, sheet: SheetId, objects: &[ClipObject]) -> Vec<Poin
                 points.extend(project.label(id).map(|l| labels::anchor(project, l)));
             }
             ClipObject::Drawing { id } => match project.drawing(id).map(|d| &d.item) {
-                Some(SheetItem::Text { at, .. }) => points.push(*at),
-                Some(SheetItem::Line { from, to }) => points.extend([*from, *to]),
-                Some(SheetItem::Rect { min, max }) => points.extend([*min, *max]),
+                Some(SheetItem::Text { at, .. }) => points.push(at.to_mm_f64()),
+                Some(SheetItem::Line { from, to }) => {
+                    points.extend([from.to_mm_f64(), to.to_mm_f64()])
+                }
+                Some(SheetItem::Rect { min, max }) => {
+                    points.extend([min.to_mm_f64(), max.to_mm_f64()])
+                }
                 None => {}
             },
             ClipObject::Wire { id } => {
@@ -356,7 +392,10 @@ pub fn turn_about(
     if !inside(&drawn) {
         return about;
     }
-    let how = Arrangement::Rotate { about };
+    let Ok(centre) = PointNm::from_mm_f64_rounded(about) else {
+        return about;
+    };
+    let how = Arrangement::Rotate { about: centre };
     let Some(turned) = Bounds::of(
         [
             drawn.min,

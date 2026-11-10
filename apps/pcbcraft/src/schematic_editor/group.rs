@@ -14,8 +14,8 @@ use crate::symbol_view::View;
 use egui::{Rect, Shape, Stroke};
 use pcbcraft_core::geometry::Bounds;
 use pcbcraft_core::library::TextMetric;
-use pcbcraft_core::model::Corner;
 use pcbcraft_core::schematic::arrange::{Arrangement, centre, turn_about};
+use pcbcraft_core::schematic::wire_edit::Bend;
 use pcbcraft_core::schematic::{self, ClipObject, Pasted, SchematicCommand, labels};
 use pcbcraft_core::updates::Change;
 use pcbcraft_core::{EditPolicy, Engine, Id, LabelKind, Operation, Point, Project, SheetItem};
@@ -126,7 +126,7 @@ impl Group {
 pub(super) struct GroupDrag {
     grab: Point,
     by: Point,
-    wires: BTreeMap<Id, Vec<Corner>>,
+    wires: BTreeMap<Id, Vec<Bend>>,
     dots: BTreeMap<WireEnd, Point>,
     labels: BTreeMap<Id, Point>,
 }
@@ -136,7 +136,7 @@ impl GroupDrag {
         self.dots.get(&end).copied()
     }
 
-    pub fn wire(&self, wire: Id) -> Option<&Vec<Corner>> {
+    pub fn wire(&self, wire: Id) -> Option<&Vec<Bend>> {
         self.wires.get(&wire)
     }
 
@@ -354,7 +354,9 @@ impl SchematicEditor {
             for (item, drawing) in &scene.items {
                 let line = match item {
                     Item::Drawing(id) => match project.drawing(*id).map(|d| &d.item) {
-                        Some(SheetItem::Line { from, to }) => Some([*from, *to]),
+                        Some(SheetItem::Line { from, to }) => {
+                            Some([from.to_mm_f64(), to.to_mm_f64()])
+                        }
                         _ => None,
                     },
                     _ => None,
@@ -417,7 +419,10 @@ impl SchematicEditor {
         }
         let grab = drag.grab;
         let sheet = self.sheet;
-        let command = self.arrange(self.group.objects(), Arrangement::Move { by });
+        let Some(by_nm) = super::sheet_nm(by) else {
+            return;
+        };
+        let command = self.arrange(self.group.objects(), Arrangement::Move { by: by_nm });
         let mut next = project.clone();
         if schematic::apply(&mut next, command, EditPolicy::Direct).is_err() {
             return;
@@ -452,10 +457,9 @@ impl SchematicEditor {
     /// Let go: the one command that moves the group, if it moved.
     pub(super) fn finish_group_drag(&mut self) -> Option<Operation> {
         let drag = self.group_drag.take()?;
+        let by = super::sheet_nm(drag.by)?;
         (drag.by != [0.0, 0.0]).then(|| {
-            Operation::Schematic(
-                self.arrange(self.group.objects(), Arrangement::Move { by: drag.by }),
-            )
+            Operation::Schematic(self.arrange(self.group.objects(), Arrangement::Move { by }))
         })
     }
 
@@ -494,9 +498,11 @@ impl SchematicEditor {
         let action = match action {
             // Turned, the group stays inside the sheet's frame.
             Arrange::Rotate => Arrangement::Rotate {
-                about: turn_about(project, self.sheet, &objects, about, grid),
+                about: super::sheet_nm(turn_about(project, self.sheet, &objects, about, grid))?,
             },
-            Arrange::Mirror => Arrangement::Mirror { about },
+            Arrange::Mirror => Arrangement::Mirror {
+                about: super::sheet_nm(about)?,
+            },
         };
         Some(Operation::Schematic(self.arrange(objects, action)))
     }

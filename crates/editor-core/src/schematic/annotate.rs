@@ -79,9 +79,9 @@ fn key(project: &Project, instance: Id, order: AnnotateOrder) -> Key {
     let Some((page, o)) = first else {
         return (usize::MAX, 0, 0, instance);
     };
-    // Micrometres, so sorting is total and exact on the sheet grid.
-    let x = (o.position[0] * 1000.0).round() as i64;
-    let down = (-o.position[1] * 1000.0).round() as i64;
+    // Whole nanometres: sorting is total and exact.
+    let x = o.position.x_nm.get();
+    let down = -o.position.y_nm.get();
     match order {
         AnnotateOrder::Rows => (page, down, x, instance),
         AnnotateOrder::Columns => (page, x, down, instance),

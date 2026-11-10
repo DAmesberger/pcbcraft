@@ -3,6 +3,7 @@
 use super::*;
 use crate::diagnostics::Result;
 use crate::library::templates::generic::GenericPlan;
+use crate::tests::support::pt;
 use crate::{Engine, Evaluators, LibraryCommand, Operation, Outcome, Query, QueryResult};
 
 fn read(engine: &Engine, query: &str) -> Vec<GenericCandidate> {
@@ -472,7 +473,7 @@ fn an_empty_value_field_warns_and_an_leds_value_is_its_colour() -> Result<()> {
                 properties: vec![],
                 representation,
                 unit: UnitId(1),
-                position: [0.0, 0.0],
+                position: pt([0.0, 0.0]),
                 physical: None,
             })),
             Evaluators::default(),

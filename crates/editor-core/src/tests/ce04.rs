@@ -93,7 +93,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
             properties: vec![],
             representation: q.symbol,
             unit: A,
-            position: [10.0, 10.0],
+            position: pt([10.0, 10.0]),
             physical: None,
         })),
     )?;
@@ -134,7 +134,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
             sheet: None,
             instance: q1,
             unit: B,
-            position: [30.0, 10.0],
+            position: pt([30.0, 10.0]),
         }),
     )?
     else {
@@ -233,7 +233,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
             &mut engine,
             Operation::Schematic(SchematicCommand::MoveUnit {
                 occurrence,
-                position,
+                position: pt(position),
             }),
         )?;
     }
@@ -328,7 +328,7 @@ fn ce04_two_units_share_one_package_placement_and_identity() -> Result<()> {
             sheet: None,
             instance: q1,
             unit: B,
-            position: [10.0, 10.0],
+            position: pt([10.0, 10.0]),
         }),
     )?
     else {

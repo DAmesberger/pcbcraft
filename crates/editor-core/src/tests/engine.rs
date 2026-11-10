@@ -73,7 +73,7 @@ fn invalid_and_stale_commands_preserve_document_revision_and_redo() -> Result<()
     let revision = engine.revision();
     let operation = Operation::Schematic(SchematicCommand::MoveUnit {
         occurrence: 999,
-        position: [1.0, 2.0],
+        position: pt([1.0, 2.0]),
     });
     assert!(matches!(
         engine.apply(0, operation.clone()),
@@ -144,7 +144,7 @@ fn net_identity_survives_unrelated_edits_renames_and_history() -> Result<()> {
         &mut engine,
         Operation::Schematic(SchematicCommand::MoveUnit {
             occurrence,
-            position: [-40.0, 5.0],
+            position: pt([-40.0, 5.0]),
         }),
     )?;
     assert_eq!(net_of(&engine, ep(r1, 2))?, shared);
@@ -247,7 +247,7 @@ fn undo_history_is_bounded() -> Result<()> {
             &mut engine,
             Operation::Schematic(SchematicCommand::MoveUnit {
                 occurrence,
-                position: [i as f64, 0.0],
+                position: pt([i as f64, 0.0]),
             }),
         )?;
     }
@@ -331,7 +331,7 @@ fn a_joined_step_undoes_with_the_one_before() -> Result<()> {
     let moved = |x: f64| {
         Operation::Schematic(SchematicCommand::MoveUnit {
             occurrence,
-            position: [x, 0.0],
+            position: pt([x, 0.0]),
         })
     };
     apply(&mut engine, moved(1.0))?;
@@ -362,7 +362,7 @@ fn a_batch_applies_as_one_step_or_not_at_all() -> Result<()> {
     let moved = |x: f64| {
         Operation::Schematic(SchematicCommand::MoveUnit {
             occurrence,
-            position: [x, 0.0],
+            position: pt([x, 0.0]),
         })
     };
     let before = engine.project().clone();
@@ -420,7 +420,7 @@ fn topology_uses_ids_and_survives_moving_and_reannotation() -> Result<()> {
         &mut engine,
         Operation::Schematic(SchematicCommand::MoveUnit {
             occurrence,
-            position: [20.0, 10.0],
+            position: pt([20.0, 10.0]),
         }),
     )?;
     apply(&mut engine, designator_edit(a, "AMP7"))?;
@@ -447,10 +447,14 @@ fn malformed_references_and_routed_connectivity_changes_leave_state_unchanged() 
             to: ep(999, 1).into(),
         }),
         Operation::Schematic(SchematicCommand::MoveUnit {
-            occurrence,
-            position: [f64::NAN, 0.0],
+            occurrence: 999,
+            position: pt([0.0, 0.0]),
         }),
     ] {
+        // A position that is not finite is refused where the command is read.
+        let not_finite = serde_json::json!({"command": "symbol.move_unit",
+            "params": {"occurrence": occurrence, "position": ["NaN", 0.0]}});
+        assert!(serde_json::from_value::<SchematicCommand>(not_finite).is_err());
         assert!(engine.apply(revision, operation).is_err());
         assert_eq!(engine.document(), &before);
         assert_eq!(engine.revision(), revision);

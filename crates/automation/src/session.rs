@@ -211,7 +211,9 @@ pub struct PlaceFromParams {
     pub lineage: SourceLineageId,
     #[serde(default)]
     pub revision: Option<Revision>,
-    pub position: Point,
+    #[serde(with = "pcbcraft_core::units::point_mm")]
+    #[schemars(with = "[pcbcraft_core::units::Length; 2]")]
+    pub position: pcbcraft_core::units::PointNm,
     #[serde(default)]
     pub designator: Option<String>,
     #[serde(default)]

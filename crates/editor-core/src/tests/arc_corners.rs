@@ -5,8 +5,8 @@
 //! vertices, and so the nets, stay where they are.
 use super::support::*;
 use crate::geometry::{Shape, distance};
-use crate::model::{Corner, FreeEnd};
-use crate::schematic::{self, SchematicCommand as C, WireTarget, scene};
+use crate::model::Corner;
+use crate::schematic::{self, SchematicCommand as C, scene};
 use crate::{Engine, Error, Id, Operation, Outcome, Point, Result, format};
 
 fn two_pin(engine: &mut Engine) -> Result<Fixture> {
@@ -38,7 +38,10 @@ fn dogleg(engine: &mut Engine) -> Result<(Id, Id)> {
         C::DrawWire {
             sheet: None,
             from: ep(u1, 2).into(),
-            corners: vec![Corner::sharp([20.0, 0.0]), Corner::sharp([20.0, 20.0])],
+            corners: vec![
+                Corner::sharp(pt([20.0, 0.0])),
+                Corner::sharp(pt([20.0, 20.0])),
+            ],
             to: ep(u2, 1).into(),
         },
     )?;
@@ -50,18 +53,18 @@ fn radii(engine: &Engine, wire: Id) -> Result<Vec<f64>> {
         .project()
         .wire(wire)
         .ok_or(Error::Invalid("wire".into()))?;
-    Ok(wire.corners.iter().map(|c| c.radius).collect())
+    Ok(wire.corners.iter().map(Corner::radius_mm).collect())
 }
 
+/// Through the command's JSON form, as MCP and the CLI send it: a radius
+/// that is not finite is refused where the command is read.
 fn set(engine: &mut Engine, wire: Id, index: usize, radius: f64) -> Result<Outcome> {
-    run(
-        engine,
-        C::SetWireRadius {
-            wire,
-            index,
-            radius,
-        },
-    )
+    let command = serde_json::from_value::<C>(serde_json::json!({
+        "command": "wire.set_radius",
+        "params": {"wire": wire, "index": index, "radius": radius}
+    }))
+    .map_err(|e| Error::Invalid(e.to_string()))?;
+    run(engine, command)
 }
 
 /// A radius rounds the corner in one undo step, keeps the vertices and the
@@ -86,11 +89,14 @@ fn a_radius_rounds_a_corner_in_one_undo_step_and_survives_save() -> Result<()> {
         "the vertices stay"
     );
     assert_eq!(engine.project().nets, before.project.nets);
-    // Saved as `"radius"` beside the corner's point, and read back.
+    // Saved as `"radius_nm"` beside the corner's point, and read back.
     let saved = serde_json::to_value(engine.project())?;
     assert_eq!(
         saved["wires"][0]["corners"],
-        serde_json::json!([{ "at": [20.0, 0.0], "radius": 5.0 }, { "at": [20.0, 20.0] }])
+        serde_json::json!([
+            { "at": { "x_nm": 20_000_000, "y_nm": 0 }, "radius_nm": 5_000_000 },
+            { "at": { "x_nm": 20_000_000, "y_nm": 20_000_000 } }
+        ])
     );
     let bytes = format::encode(&engine.to_file())?;
     let opened = Engine::from_file(format::decode(&bytes)?)?;
@@ -142,7 +148,7 @@ fn a_radius_that_does_not_fit_is_refused_not_reduced() -> Result<()> {
         &mut engine,
         C::InsertWireCorner {
             wire,
-            at: [10.0, 0.0],
+            at: pt([10.0, 0.0]),
         },
     )?;
     let document = engine.document().clone();
@@ -165,7 +171,7 @@ fn edits_and_rubber_banding_keep_radii() -> Result<()> {
             C::MoveWireCorner {
                 wire,
                 index: 0,
-                to: [25.0, 5.0],
+                to: pt([25.0, 5.0]),
                 free: false,
             },
             // The segment on U1's pin steps through a new, sharp corner.
@@ -176,7 +182,7 @@ fn edits_and_rubber_banding_keep_radii() -> Result<()> {
             C::MoveWireSegment {
                 wire,
                 index: 1,
-                offset: -5.0,
+                offset: nm(-5.0),
             },
             vec![2.5, 5.0],
         ),
@@ -184,7 +190,7 @@ fn edits_and_rubber_banding_keep_radii() -> Result<()> {
             "a new corner",
             C::InsertWireCorner {
                 wire,
-                at: [20.0, 10.0],
+                at: pt([20.0, 10.0]),
             },
             vec![2.5, 0.0, 5.0],
         ),
@@ -192,7 +198,7 @@ fn edits_and_rubber_banding_keep_radii() -> Result<()> {
             "rubber-banding",
             C::MoveUnit {
                 occurrence: u2,
-                position: [40.0, 30.0],
+                position: pt([40.0, 30.0]),
             },
             vec![2.5, 5.0],
         ),
@@ -260,25 +266,23 @@ fn the_scene_draws_the_tangent_arc() -> Result<()> {
 fn wire_draw_takes_radii_and_refuses_a_malformed_one() -> Result<()> {
     let mut engine = Engine::default();
     two_pin(&mut engine)?;
-    let free = |p: Point| {
-        FreeEnd::new(p)
-            .map(WireTarget::Free)
-            .ok_or(Error::Invalid("free".into()))
-    };
     let draw = |radius: f64| -> Result<C> {
-        Ok(C::DrawWire {
-            sheet: None,
-            from: free([0.0, 0.0])?,
-            corners: vec![Corner {
-                at: [10.0, 0.0],
-                radius,
-            }],
-            to: free([10.0, 10.0])?,
-        })
+        serde_json::from_value::<C>(serde_json::json!({
+            "command": "wire.draw",
+            "params": {
+                "from": {"free": [0.0, 0.0]},
+                "corners": [{"at": [10.0, 0.0], "radius": radius}],
+                "to": {"free": [10.0, 10.0]}
+            }
+        }))
+        .map_err(|e| Error::Invalid(e.to_string()))
     };
     let document = engine.document().clone();
     for radius in [-1.0, f64::INFINITY, 1001.0] {
-        assert!(run(&mut engine, draw(radius)?).is_err(), "{radius}");
+        assert!(
+            draw(radius).and_then(|c| run(&mut engine, c)).is_err(),
+            "{radius}"
+        );
         assert_eq!(engine.document(), &document);
     }
     run(&mut engine, draw(2.5)?)?;
@@ -286,8 +290,8 @@ fn wire_draw_takes_radii_and_refuses_a_malformed_one() -> Result<()> {
     assert_eq!(
         corners,
         &vec![Corner {
-            at: [10.0, 0.0],
-            radius: 2.5
+            at: pt([10.0, 0.0]),
+            radius_nm: nm(2.5)
         }]
     );
     Ok(())

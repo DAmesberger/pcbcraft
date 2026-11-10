@@ -551,7 +551,7 @@ pub fn place_ref(
             properties: vec![],
             representation: fixture.symbol,
             unit: UnitId(unit),
-            position,
+            position: pt(position),
             physical,
         })),
     )? {
@@ -890,4 +890,15 @@ pub fn show_demo_pin_numbers(engine: &mut Engine) -> Result<()> {
 #[allow(clippy::expect_used)]
 pub fn dec(value: f64) -> crate::quantity::Decimal {
     crate::quantity::Decimal::from_f64(value).expect("a finite literal")
+}
+
+/// A sheet point a test writes in mm, as the document stores it. Test
+/// points lie within the sheet's range; one off it reads as the origin.
+pub fn pt(p: Point) -> crate::units::PointNm {
+    crate::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
+/// A length a test writes in mm, as the document stores it.
+pub fn nm(mm: f64) -> crate::units::Nm {
+    crate::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }

@@ -178,13 +178,15 @@ impl SchematicEditor {
             self.refused = Some((position_id, message));
         }
         match focus_left(ui, position_id.with("focus"), row.rect) {
-            Some(true) => self.draft_position = occurrence.position,
-            Some(false) if self.draft_position != occurrence.position => {
+            Some(true) => self.draft_position = occurrence.position.to_mm_f64(),
+            Some(false) if self.draft_position != occurrence.position.to_mm_f64() => {
                 refusal::mark(ui.ctx(), Origin::Field(position_id));
-                output = Some(Operation::Schematic(SchematicCommand::MoveUnit {
-                    occurrence: occurrence.id,
-                    position: self.draft_position,
-                }));
+                output = super::sheet_nm(self.draft_position).map(|position| {
+                    Operation::Schematic(SchematicCommand::MoveUnit {
+                        occurrence: occurrence.id,
+                        position,
+                    })
+                });
             }
             _ => {}
         }

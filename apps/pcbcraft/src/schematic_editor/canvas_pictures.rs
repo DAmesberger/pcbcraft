@@ -190,7 +190,7 @@ fn write_canvas_pictures() -> TestResult {
                 properties: vec![],
                 representation: first.representation,
                 unit: pcbcraft_core::UnitId(1),
-                position: at,
+                position: pt(at),
                 physical: None,
             })),
         )?;
@@ -241,7 +241,7 @@ fn write_canvas_pictures() -> TestResult {
         engine.revision(),
         Operation::Schematic(SchematicCommand::PlaceJunction {
             sheet: None,
-            position: [50.0, -440.0],
+            position: pt([50.0, -440.0]),
         }),
     )?;
     engine.apply(
@@ -258,7 +258,7 @@ fn write_canvas_pictures() -> TestResult {
         .junctions
         .iter()
         .filter(|j| project.wires_at(WireEnd::junction(j.id)).count() == 2 && !j.placed)
-        .map(|j| j.position)
+        .map(|j| j.position.to_mm_f64())
         .collect();
     let centre = [30.0, -424.0];
     let ctx = egui::Context::default();
@@ -442,7 +442,7 @@ fn write_readability_pictures() -> TestResult {
                 properties,
                 representation,
                 unit: pcbcraft_core::UnitId(1),
-                position: at,
+                position: pt(at),
                 physical: None,
             })),
         )?;
@@ -527,7 +527,7 @@ fn write_readability_pictures() -> TestResult {
                 sheet: None,
                 name: name.into(),
                 kind,
-                position: at,
+                position: pt(at),
                 rotation: Default::default(),
                 attach: Some(WireTarget::Terminal(Endpoint { instance, terminal })),
             }),
@@ -542,7 +542,7 @@ fn write_readability_pictures() -> TestResult {
         engine.revision(),
         Operation::Schematic(SchematicCommand::PlaceJunction {
             sheet: None,
-            position: mid,
+            position: pt(mid),
         }),
     )?;
     let ctx = egui::Context::default();
@@ -582,7 +582,7 @@ fn write_path_handle_pictures() -> TestResult {
             properties: vec![],
             representation: first.representation,
             unit: pcbcraft_core::UnitId(1),
-            position: [0.0, -400.0],
+            position: pt([0.0, -400.0]),
             physical: None,
         })),
     )?;
@@ -611,7 +611,7 @@ fn write_path_handle_pictures() -> TestResult {
             from: from.into(),
             corners: corners
                 .iter()
-                .map(|&at| pcbcraft_core::model::Corner::sharp(at))
+                .map(|&at| pcbcraft_core::model::Corner::sharp(pt(at)))
                 .collect(),
             to: WireTarget::Free(end),
         }),

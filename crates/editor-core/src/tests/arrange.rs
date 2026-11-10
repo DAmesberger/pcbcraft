@@ -121,7 +121,7 @@ fn a_moved_group_carries_inner_wires_and_rubber_bands_the_rest() -> Result<()> {
     let revision = engine.revision();
     apply(
         &mut engine,
-        arrange_op(instances(&[u1, u2]), Arrangement::Move { by }),
+        arrange_op(instances(&[u1, u2]), Arrangement::Move { by: pt(by) }),
     )?;
     assert_eq!(engine.revision(), revision + 1);
     let shifted: Vec<Point> = inner_path
@@ -145,8 +145,12 @@ fn a_moved_group_carries_inner_wires_and_rubber_bands_the_rest() -> Result<()> {
 #[test]
 fn a_turned_or_mirrored_group_keeps_its_shape_about_the_point() -> Result<()> {
     for how in [
-        Arrangement::Rotate { about: [15.0, 5.0] },
-        Arrangement::Mirror { about: [15.0, 5.0] },
+        Arrangement::Rotate {
+            about: pt([15.0, 5.0]),
+        },
+        Arrangement::Mirror {
+            about: pt([15.0, 5.0]),
+        },
     ] {
         let Sheet {
             mut engine,
@@ -213,7 +217,10 @@ fn a_turned_group_leaves_no_u_turn() -> Result<()> {
         &mut engine,
         Operation::Schematic(C::SetWirePath {
             wire: outer,
-            corners: vec![Corner::sharp([45.0, 15.0]), Corner::sharp([45.0, 0.0])],
+            corners: vec![
+                Corner::sharp(pt([45.0, 15.0])),
+                Corner::sharp(pt([45.0, 0.0])),
+            ],
             from: None,
             to: None,
         }),
@@ -222,7 +229,7 @@ fn a_turned_group_leaves_no_u_turn() -> Result<()> {
     assert!(!doubles_back(&drawn), "{drawn:?}");
     // About (40, 30) U2.B lands at (55, 25), past the corner's x = 45.
     let how = Arrangement::Rotate {
-        about: [40.0, 30.0],
+        about: pt([40.0, 30.0]),
     };
     apply(&mut engine, arrange_op(instances(&[u1, u2]), how))?;
     let band = path(&engine, outer)?;
@@ -262,7 +269,7 @@ fn a_turned_group_stays_inside_the_sheet_frame() -> Result<()> {
     }
     apply(
         &mut engine,
-        arrange_op(objects.clone(), Arrangement::Rotate { about }),
+        arrange_op(objects.clone(), Arrangement::Rotate { about: pt(about) }),
     )?;
     let project = engine.project();
     let [w, h] = project
@@ -309,7 +316,7 @@ fn a_named_wire_brings_its_free_end() -> Result<()> {
         Operation::Schematic(C::DrawWire {
             sheet: None,
             from: WireTarget::Terminal(pin(u1, 1)),
-            corners: vec![Corner::sharp([start[0], -20.0])],
+            corners: vec![Corner::sharp(pt([start[0], -20.0]))],
             to: WireEnd::free([-40.0, -20.0])
                 .ok_or_else(|| Error::Invalid("free".into()))?
                 .into(),
@@ -325,7 +332,7 @@ fn a_named_wire_brings_its_free_end() -> Result<()> {
                 ClipObject::Instance { id: u1 },
                 ClipObject::Wire { id: free },
             ],
-            Arrangement::Move { by },
+            Arrangement::Move { by: pt(by) },
         ),
     )?;
     let shifted: Vec<Point> = drawn.iter().map(|p| [p[0] + by[0], p[1] + by[1]]).collect();
@@ -338,7 +345,7 @@ fn a_named_wire_brings_its_free_end() -> Result<()> {
         &mut engine,
         arrange_op(
             vec![ClipObject::Wire { id: free }],
-            Arrangement::Move { by },
+            Arrangement::Move { by: pt(by) },
         ),
     )?;
     let held = path(&engine, free)?;
@@ -378,7 +385,7 @@ fn a_junction_comes_along_with_a_named_wire_only() -> Result<()> {
             from: WireTarget::Terminal(pin(u3, 2)),
             to: WireTarget::OnWire(schematic::WirePoint {
                 wire: inner,
-                at: [at[0], at[1]],
+                at: pt([at[0], at[1]]),
             }),
         }),
     )?;
@@ -399,7 +406,7 @@ fn a_junction_comes_along_with_a_named_wire_only() -> Result<()> {
     // The symbols alone leave it where it is.
     apply(
         &mut engine,
-        arrange_op(instances(&[u1, u2]), Arrangement::Move { by }),
+        arrange_op(instances(&[u1, u2]), Arrangement::Move { by: pt(by) }),
     )?;
     assert_eq!(spot(&engine)?, junction.1);
     engine.undo()?;
@@ -414,10 +421,11 @@ fn a_junction_comes_along_with_a_named_wire_only() -> Result<()> {
         &mut engine,
         arrange_op(
             vec![ClipObject::Wire { id: wire }],
-            Arrangement::Move { by },
+            Arrangement::Move { by: pt(by) },
         ),
     )?;
-    assert_eq!(spot(&engine)?, [junction.1[0], junction.1[1] + by[1]]);
+    let [x, y] = junction.1.to_mm_f64();
+    assert_eq!(spot(&engine)?, pt([x, y + by[1]]));
     Ok(())
 }
 
@@ -435,7 +443,7 @@ fn labels_and_drawings_go_with_the_group() -> Result<()> {
                 sheet: None,
                 name: name.into(),
                 kind,
-                position: [-20.0, 20.0],
+                position: pt([-20.0, 20.0]),
                 rotation: Rotation::R0,
                 attach,
             }),
@@ -471,16 +479,16 @@ fn labels_and_drawings_go_with_the_group() -> Result<()> {
     let rect = drawing(
         &mut engine,
         SheetItem::Rect {
-            min: [10.0, 10.0],
-            max: [20.0, 15.0],
+            min: pt([10.0, 10.0]),
+            max: pt([20.0, 15.0]),
         },
     )?;
     let note = drawing(
         &mut engine,
         SheetItem::Text {
-            at: [10.0, 20.0],
+            at: pt([10.0, 20.0]),
             text: "Note".into(),
-            height: 2.5,
+            height_nm: nm(2.5),
             rotation: Rotation::R0,
         },
     )?;
@@ -494,7 +502,12 @@ fn labels_and_drawings_go_with_the_group() -> Result<()> {
     ];
     apply(
         &mut engine,
-        arrange_op(objects.clone(), Arrangement::Mirror { about: [0.0, 0.0] }),
+        arrange_op(
+            objects.clone(),
+            Arrangement::Mirror {
+                about: pt([0.0, 0.0]),
+            },
+        ),
     )?;
     let project = engine.project();
     let label = |id| {
@@ -507,7 +520,7 @@ fn labels_and_drawings_go_with_the_group() -> Result<()> {
         schematic::pin_position(project, pin(u1, 1)),
         Some(labels::anchor(project, label(on_pin)?)),
     );
-    assert_eq!(label(flag)?.position, [20.0, 20.0]);
+    assert_eq!(label(flag)?.position, pt([20.0, 20.0]));
     assert_eq!(
         label(flag)?.rotation,
         Rotation::R180,
@@ -527,35 +540,40 @@ fn labels_and_drawings_go_with_the_group() -> Result<()> {
     assert_eq!(
         item(rect)?,
         SheetItem::Rect {
-            min: [-20.0, 10.0],
-            max: [-10.0, 15.0],
+            min: pt([-20.0, 10.0]),
+            max: pt([-10.0, 15.0]),
         }
     );
     assert!(matches!(
         item(note)?,
         SheetItem::Text {
-            at: [-10.0, 20.0],
+            at,
             rotation: Rotation::R0,
             ..
-        }
+        } if at == pt([-10.0, 20.0])
     ));
     apply(
         &mut engine,
-        arrange_op(objects, Arrangement::Rotate { about: [0.0, 0.0] }),
+        arrange_op(
+            objects,
+            Arrangement::Rotate {
+                about: pt([0.0, 0.0]),
+            },
+        ),
     )?;
     let project = engine.project();
     let note_rotation = project.drawing(note).map(|d| d.item.clone());
     assert!(matches!(
         note_rotation,
         Some(SheetItem::Text {
-            at: [-20.0, -10.0],
+            at,
             rotation: Rotation::R90,
             ..
-        })
+        }) if at == pt([-20.0, -10.0])
     ));
     assert_eq!(
         project.label(flag).map(|l| (l.position, l.rotation)),
-        Some(([-20.0, 20.0], Rotation::R270)),
+        Some((pt([-20.0, 20.0]), Rotation::R270)),
     );
     Ok(())
 }
@@ -574,15 +592,29 @@ fn a_refused_arrangement_leaves_the_document_unchanged() -> Result<()> {
     for (objects, by) in [
         (Vec::new(), [1.0, 0.0]),
         (instances(&[unknown]), [1.0, 0.0]),
-        (instances(&[u1, u2]), [20_000.0, 0.0]),
-        (instances(&[u1]), [f64::NAN, 0.0]),
+        (instances(&[u1, u2]), [1_999.0, 0.0]),
     ] {
         assert!(
             engine
-                .apply(revision, arrange_op(objects, Arrangement::Move { by }))
+                .apply(
+                    revision,
+                    arrange_op(objects, Arrangement::Move { by: pt(by) })
+                )
                 .is_err()
         );
         assert_eq!(engine.revision(), revision);
+    }
+    // A shift beyond the range, or not finite, is refused where the command
+    // is read.
+    for by in [
+        serde_json::json!([20_000.0, 0.0]),
+        serde_json::json!(["NaN", 0.0]),
+    ] {
+        let command = serde_json::json!({"command": "schematic.arrange", "params": {
+            "objects": [{"kind": "instance", "id": u1}],
+            "action": {"kind": "move", "by": by}
+        }});
+        assert!(serde_json::from_value::<C>(command).is_err(), "{by}");
     }
     assert_eq!(engine.project().occurrences, before.occurrences);
     Ok(())
@@ -619,9 +651,9 @@ fn the_arrange_command_round_trips() -> Result<()> {
         command,
         C::Arrange {
             sheet: None,
-            action: Arrangement::Rotate { about: [1.0, 2.0] },
+            action: Arrangement::Rotate { about },
             ..
-        }
+        } if about == pt([1.0, 2.0])
     ));
     assert_eq!(
         serde_json::to_value(&command).map_err(|e| Error::Invalid(e.to_string()))?,
@@ -651,7 +683,7 @@ fn removing_a_group_is_reviewed_with_everything_listed() -> Result<()> {
             kind: LabelKind::Power {
                 style: PowerStyle::Bar,
             },
-            position: [-20.0, 20.0],
+            position: pt([-20.0, 20.0]),
             rotation: Rotation::R0,
             attach: None,
         }),
@@ -664,8 +696,8 @@ fn removing_a_group_is_reviewed_with_everything_listed() -> Result<()> {
         Operation::Schematic(C::AddDrawing {
             sheet: None,
             item: SheetItem::Line {
-                from: [0.0, 30.0],
-                to: [10.0, 30.0],
+                from: pt([0.0, 30.0]),
+                to: pt([10.0, 30.0]),
             },
         }),
     )? {

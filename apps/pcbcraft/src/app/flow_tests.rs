@@ -31,7 +31,7 @@ impl Harness {
                 sheet: None,
                 name: "FIRST".into(),
                 kind: LabelKind::Local,
-                position: [100.0, -100.0],
+                position: crate::schematic_editor::pt([100.0, -100.0]),
                 rotation: Default::default(),
                 attach: None,
             }),
@@ -200,7 +200,7 @@ fn update_pcb_runs_on_the_first_press() -> Fallible {
                     properties: vec![],
                     representation: first.representation,
                     unit: pcbcraft_core::UnitId(1),
-                    position: [30.0, -150.0],
+                    position: crate::schematic_editor::pt([30.0, -150.0]),
                     physical: first.physical,
                 },
             )),
@@ -308,7 +308,7 @@ fn vbus_and_gnd(
                 sheet: None,
                 name: name.into(),
                 kind: LabelKind::Power { style },
-                position: [0.0, 0.0],
+                position: crate::schematic_editor::pt([0.0, 0.0]),
                 rotation: Default::default(),
                 attach: Some(pcbcraft_core::schematic::WireTarget::Terminal(at)),
             }),
@@ -342,10 +342,13 @@ fn a_named_net_merge_refused_by_core_opens_the_review() -> Fallible {
             kind: LabelKind::Power {
                 style: pcbcraft_core::PowerStyle::Ground,
             },
-            position: middle,
+            position: crate::schematic_editor::pt(middle),
             rotation: Default::default(),
             attach: Some(pcbcraft_core::schematic::WireTarget::OnWire(
-                pcbcraft_core::schematic::WirePoint { wire, at: middle },
+                pcbcraft_core::schematic::WirePoint {
+                    wire,
+                    at: crate::schematic_editor::pt(middle),
+                },
             )),
         })),
     );

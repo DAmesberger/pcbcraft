@@ -13,7 +13,7 @@
 //! derived, never stored: [`junction_dots`] lists every point where three or
 //! more conductors meet (a pin counts as one). [`tidy`] keeps the stored
 //! topology in its normal form after every edit.
-use super::wire_edit::Vertex;
+use super::wire_edit::Bend;
 use super::{Error, MAX_CORNERS, Result, invalid, not_found, pin_position};
 use crate::geometry::{Point, point_valid};
 use crate::ids::{Endpoint, Id, SheetId};
@@ -22,6 +22,7 @@ use crate::model::{
     Corner, FreeEnd, Junction, JunctionRef, LabelRef, Net, Project, SheetPinRef, Wire, WireEnd,
 };
 use crate::nets;
+use crate::units::PointNm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -37,7 +38,9 @@ pub const JUNCTION_TOLERANCE_MM: f64 = 1e-3;
 #[serde(deny_unknown_fields)]
 pub struct WirePoint {
     pub wire: Id,
-    pub at: Point,
+    #[serde(with = "crate::units::point_mm")]
+    #[schemars(with = "[crate::units::Length; 2]")]
+    pub at: PointNm,
 }
 
 /// Where a new wire end lands: a terminal (`{"instance", "terminal"}`), a
@@ -53,7 +56,11 @@ pub enum WireTarget {
     Label(LabelRef),
     SheetPin(SheetPinRef),
     OnWire(WirePoint),
-    Free(FreeEnd),
+    Free(
+        #[serde(with = "super::params::free_end")]
+        #[schemars(with = "super::params::FreeParams")]
+        FreeEnd,
+    ),
 }
 
 impl From<Endpoint> for WireTarget {
@@ -79,7 +86,7 @@ impl From<WireEnd> for WireTarget {
 pub fn end_position(project: &Project, end: WireEnd) -> Option<Point> {
     match end {
         WireEnd::Terminal(endpoint) => pin_position(project, endpoint),
-        WireEnd::Junction(j) => project.junction(j.junction).map(|j| j.position),
+        WireEnd::Junction(j) => project.junction(j.junction).map(|j| j.position.to_mm_f64()),
         WireEnd::Label(l) => project
             .label(l.label)
             .map(|l| super::labels::anchor(project, l)),
@@ -124,29 +131,30 @@ pub fn wire_path(project: &Project, wire: &Wire) -> Option<Vec<Point>> {
     let (a, b) = wire_ends(project, wire)?;
     let mut path = Vec::with_capacity(wire.corners.len() + 2);
     path.push(a);
-    path.extend(wire.corners.iter().map(|c| c.at));
+    path.extend(wire.corners.iter().map(Corner::at_mm));
     path.push(b);
     Some(path)
 }
 
 /// [`wire_path`] with each corner's radius: the ends are sharp vertices.
-pub fn wire_vertices(project: &Project, wire: &Wire) -> Option<Vec<Corner>> {
+pub fn wire_vertices(project: &Project, wire: &Wire) -> Option<Vec<Bend>> {
     let (a, b) = wire_ends(project, wire)?;
     let mut path = Vec::with_capacity(wire.corners.len() + 2);
-    path.push(Corner::sharp(a));
-    path.extend(wire.corners.iter().copied());
-    path.push(Corner::sharp(b));
+    path.push(Bend::sharp(a));
+    path.extend(wire.corners.iter().map(Bend::of));
+    path.push(Bend::sharp(b));
     Some(path)
 }
 
 /// The largest radius a wire's corner may store, mm.
 pub const MAX_CORNER_RADIUS_MM: f64 = 1000.0;
+const MAX_CORNER_RADIUS_NM: i64 = 1000 * crate::units::NM_PER_MM;
 
 /// Whether every corner's radius is a length a wire may store.
 pub(super) fn radii_valid(corners: &[Corner]) -> bool {
     corners
         .iter()
-        .all(|c| c.radius.is_finite() && (0.0..=MAX_CORNER_RADIUS_MM).contains(&c.radius))
+        .all(|c| (0..=MAX_CORNER_RADIUS_NM).contains(&c.radius_nm.get()))
 }
 
 fn nearest_on_segment(p: Point, a: Point, b: Point) -> Point {
@@ -182,22 +190,24 @@ pub fn nearest_on_wire(project: &Project, wire: Id, p: Point) -> Option<Point> {
 
 /// `corners` between `start` and `end` without corners that add nothing:
 /// one on the vertex before it, or one in line between its neighbours.
-/// A kept corner keeps its radius.
-pub(super) fn simplified<V: Vertex>(start: Point, corners: Vec<V>, end: Point) -> Vec<V> {
+/// A kept corner keeps its radius. `at` is where a corner is, mm.
+pub(super) fn simplified<V: Copy>(
+    start: Point,
+    corners: Vec<V>,
+    end: Point,
+    at: impl Fn(&V) -> Point,
+) -> Vec<V> {
     let mut kept: Vec<V> = Vec::with_capacity(corners.len());
-    let previous = |kept: &Vec<V>| kept.last().map_or(start, Vertex::at);
-    for vertex in corners.into_iter().chain([V::sharp(end)]) {
-        let corner = vertex.at();
-        if distance(previous(&kept), corner) <= JUNCTION_TOLERANCE_MM {
-            continue;
-        }
-        // The last kept corner lies in line between its neighbours.
-        while let Some(middle) = kept.last().map(Vertex::at) {
+    let previous = |kept: &Vec<V>| kept.last().map_or(start, &at);
+    // Drop the last kept corners that lie in line between their neighbours,
+    // the next vertex being at `corner`.
+    let straighten = |kept: &mut Vec<V>, corner: Point| {
+        while let Some(middle) = kept.last().map(&at) {
             let before = kept
                 .len()
                 .checked_sub(2)
                 .and_then(|i| kept.get(i))
-                .map_or(start, Vertex::at);
+                .map_or(start, &at);
             let u = [middle[0] - before[0], middle[1] - before[1]];
             let v = [corner[0] - middle[0], corner[1] - middle[1]];
             let onward = u[0] * v[0] + u[1] * v[1] > 0.0;
@@ -207,10 +217,21 @@ pub(super) fn simplified<V: Vertex>(start: Point, corners: Vec<V>, end: Point) -
                 break;
             }
         }
+    };
+    for vertex in corners {
+        let corner = at(&vertex);
+        if distance(previous(&kept), corner) <= JUNCTION_TOLERANCE_MM {
+            continue;
+        }
+        straighten(&mut kept, corner);
         kept.push(vertex);
     }
-    // The end was pushed last; it is not a corner.
-    kept.pop();
+    // A corner on the end adds nothing.
+    if distance(previous(&kept), end) <= JUNCTION_TOLERANCE_MM {
+        kept.pop();
+    } else {
+        straighten(&mut kept, end);
+    }
     kept
 }
 
@@ -218,7 +239,7 @@ pub(super) fn simplified<V: Vertex>(start: Point, corners: Vec<V>, end: Point) -
 /// drawn.
 pub(super) fn simplify(project: &Project, wire: &mut Wire) {
     if let Some((a, b)) = wire_ends(project, wire) {
-        wire.corners = simplified(a, std::mem::take(&mut wire.corners), b);
+        wire.corners = simplified(a, std::mem::take(&mut wire.corners), b, Corner::at_mm);
     }
 }
 
@@ -263,19 +284,15 @@ pub(super) fn on_path(
     project: &Project,
     point: WirePoint,
 ) -> Result<(Point, usize, Option<WireEnd>)> {
-    if !point_valid(point.at) {
-        return Err(invalid(
-            "Schematic position must be finite and within ±10000 mm.",
-        ));
-    }
     let wire = project
         .wire(point.wire)
         .ok_or_else(|| not_found("Unknown schematic wire."))?;
     let path =
         wire_path(project, wire).ok_or_else(|| invalid("This wire is not drawn on the sheet."))?;
+    let p = point.at.to_mm_f64();
     let (at, segment) =
-        nearest_on_path(&path, point.at).ok_or_else(|| invalid("The point is not on the wire."))?;
-    if distance(at, point.at) > JUNCTION_TOLERANCE_MM {
+        nearest_on_path(&path, p).ok_or_else(|| invalid("The point is not on the wire."))?;
+    if distance(at, p) > JUNCTION_TOLERANCE_MM {
         return Err(invalid("The point is not on the wire."));
     }
     let (Some(a), Some(b)) = (path.first(), path.last()) else {
@@ -292,6 +309,7 @@ pub(super) fn on_path(
 
 /// A new junction point (not placed) on `sheet` at `position`.
 fn new_junction(project: &mut Project, sheet: SheetId, position: Point) -> Result<Id> {
+    let position = super::sheet_point(position)?;
     if project.junctions.len() >= MAX_JUNCTIONS {
         return Err(Error::Limit(
             "This edition supports at most 16384 wires and 16384 junctions.".into(),
@@ -398,7 +416,7 @@ fn connection_points(project: &Project) -> Vec<(SheetId, Point, WireEnd)> {
         project
             .junctions
             .iter()
-            .map(|j| (j.sheet, j.position, WireEnd::junction(j.id))),
+            .map(|j| (j.sheet, j.position.to_mm_f64(), WireEnd::junction(j.id))),
     );
     points.extend(project.labels.iter().map(|l| {
         (
@@ -747,7 +765,7 @@ fn join_touching(project: &mut Project) -> Result<()> {
                 .or_else(|| path.first().copied());
             let end = positions.get(&to).copied().or_else(|| path.last().copied());
             let corners = match (start, end) {
-                (Some(p), Some(q)) => simplified(p, between, q),
+                (Some(p), Some(q)) => simplified(p, between, q, Corner::at_mm),
                 _ => between,
             };
             // A piece from a point back to itself with nothing between
@@ -893,7 +911,7 @@ fn attach_free_ends(project: &mut Project) -> Result<()> {
                 w.to = to;
             }
             if reached.is_some() {
-                let corner = Corner::sharp(p);
+                let corner = Corner::sharp_mm(p)?;
                 if side == 0 {
                     w.corners.insert(0, corner);
                 } else {
@@ -939,7 +957,7 @@ fn label_under(
 /// path from `a`'s other end through `point`, now a corner, to `b`'s other
 /// end, under `a`'s ID. Nothing for the same wire or a wire that does not
 /// end there.
-fn merge(project: &mut Project, a: Id, b: Id, at: WireEnd, point: Point) {
+fn merge(project: &mut Project, a: Id, b: Id, at: WireEnd, point: PointNm) {
     if a == b {
         return;
     }
@@ -1018,7 +1036,7 @@ fn join_free_ends(project: &mut Project) -> Result<()> {
             [a, b] => {
                 let (a, b) = (survivor(&alias, a), survivor(&alias, b));
                 if a != b {
-                    merge(project, a, b, end, free.point());
+                    merge(project, a, b, end, free.free);
                     alias.insert(b, a);
                 }
             }
@@ -1065,8 +1083,7 @@ fn settle_junctions(project: &mut Project) -> Result<()> {
             }
             // One end, or both ends of one wire: free there.
             [a] | [a, _] if !placed && ids.iter().all(|w| *w == a) => {
-                let free = WireEnd::free(position)
-                    .ok_or_else(|| invalid("A junction position is out of range."))?;
+                let free = WireEnd::Free(FreeEnd { free: position });
                 reattach(project, a, at, free);
                 gone.insert(id);
                 // A wire of no length (a label's on its pin) then draws
@@ -1166,11 +1183,7 @@ pub fn junction_dots(project: &Project) -> Vec<(WireEnd, Point)> {
 /// joining them. Refused off every wire and on an existing connection
 /// point.
 pub(super) fn place_junction(project: &mut Project, sheet: SheetId, position: Point) -> Result<Id> {
-    if !point_valid(position) {
-        return Err(invalid(
-            "Schematic position must be finite and within ±10000 mm.",
-        ));
-    }
+    super::sheet_point(position)?;
     if project.sheet(sheet).is_none() {
         return Err(not_found("Unknown sheet."));
     }
@@ -1251,11 +1264,6 @@ pub(super) fn validate(project: &Project) -> Result<()> {
     if project.junctions.len() > MAX_JUNCTIONS {
         return Err(invalid("Schematic exceeds supported item limits."));
     }
-    for junction in &project.junctions {
-        if !point_valid(junction.position) {
-            return Err(invalid("A junction position is out of range."));
-        }
-    }
     let mut ends: BTreeMap<Id, usize> = BTreeMap::new();
     for wire in &project.wires {
         if wire.from == wire.to && wire.corners.is_empty() {
@@ -1267,7 +1275,7 @@ pub(super) fn validate(project: &Project) -> Result<()> {
         if wire.corners.len() > MAX_CORNERS {
             return Err(invalid("A wire has more than 256 corners."));
         }
-        if !wire.corners.iter().all(|c| point_valid(c.at)) || !radii_valid(&wire.corners) {
+        if !radii_valid(&wire.corners) {
             return Err(invalid("A wire corner is out of range."));
         }
         for end in [wire.from, wire.to] {

@@ -50,6 +50,7 @@ const MAP: &[(&str, &[&str])] = &[
             "library",
             "fields",
             "functions",
+            "units",
         ],
     ),
     (
@@ -63,6 +64,7 @@ const MAP: &[(&str, &[&str])] = &[
             "model",
             "fields",
             "functions",
+            "units",
         ],
     ),
     (
@@ -79,6 +81,7 @@ const MAP: &[(&str, &[&str])] = &[
             "model",
             "instances",
             "nets",
+            "units",
         ],
     ),
     (

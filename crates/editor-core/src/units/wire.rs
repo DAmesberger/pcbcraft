@@ -74,3 +74,50 @@ impl JsonSchema for Length {
         })
     }
 }
+
+/// `#[serde(with = "units::length_mm")]` with `#[schemars(with = "Length")]`:
+/// a command's [`Nm`] field, carried on the wire as a [`Length`].
+pub mod length_mm {
+    use super::{Length, Nm};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(nm: &Nm, s: S) -> Result<S::Ok, S::Error> {
+        Length(*nm).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Nm, D::Error> {
+        Length::deserialize(d).map(|l| l.0)
+    }
+}
+
+/// `#[serde(with = "units::option_length_mm")]` with
+/// `#[schemars(with = "Option<Length>")]`: an optional [`Nm`] as a [`Length`].
+pub mod option_length_mm {
+    use super::{Length, Nm};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(nm: &Option<Nm>, s: S) -> Result<S::Ok, S::Error> {
+        nm.map(Length).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Nm>, D::Error> {
+        Ok(Option::<Length>::deserialize(d)?.map(|l| l.0))
+    }
+}
+
+/// `#[serde(with = "units::point_mm")]` with `#[schemars(with = "[Length; 2]")]`:
+/// a command's [`PointNm`] field, carried on the wire as `[x, y]` lengths.
+pub mod point_mm {
+    use super::Length;
+    use crate::units::PointNm;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(p: &PointNm, s: S) -> Result<S::Ok, S::Error> {
+        [Length(p.x_nm), Length(p.y_nm)].serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<PointNm, D::Error> {
+        let [x, y] = <[Length; 2]>::deserialize(d)?;
+        Ok(PointNm::new(x.0, y.0))
+    }
+}

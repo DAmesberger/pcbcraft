@@ -82,7 +82,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             properties: vec![],
             representation: f.symbol,
             unit: UnitId(1),
-            position: [0.0, 0.0],
+            position: pt([0.0, 0.0]),
             physical: None,
         })),
         Operation::Instance(InstanceCommand::Place(NewInstance {
@@ -92,7 +92,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             properties: vec![],
             representation: f.package,
             unit: UnitId(1),
-            position: [0.0, 0.0],
+            position: pt([0.0, 0.0]),
             physical: None,
         })),
         Operation::Instance(InstanceCommand::Place(NewInstance {
@@ -102,7 +102,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             properties: vec![],
             representation: f.symbol,
             unit: UnitId(9),
-            position: [0.0, 0.0],
+            position: pt([0.0, 0.0]),
             physical: None,
         })),
         Operation::Instance(InstanceCommand::Place(NewInstance {
@@ -112,7 +112,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             properties: vec![],
             representation: f.symbol,
             unit: UnitId(1),
-            position: [0.0, 0.0],
+            position: pt([0.0, 0.0]),
             physical: Some(PhysicalChoice {
                 binding: f.binding,
                 footprint: f.package,
@@ -160,7 +160,7 @@ fn new_instance_commands_fail_atomically_on_stale_malformed_and_unknown_input() 
             sheet: None,
             instance: r1,
             unit: UnitId(1),
-            position: [0.0, 0.0],
+            position: pt([0.0, 0.0]),
         }),
         Operation::Schematic(SchematicCommand::UnplaceUnit { occurrence }),
         Operation::Schematic(SchematicCommand::UnplaceUnit { occurrence: 999 }),

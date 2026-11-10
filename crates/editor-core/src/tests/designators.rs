@@ -65,7 +65,7 @@ fn request(
             .ok_or_else(|| Error::NotFound("symbol".into()))?
             .id,
         unit: UnitId(1),
-        position: [0.0, 0.0],
+        position: pt([0.0, 0.0]),
         physical: Some(PhysicalChoice {
             binding: binding.id,
             footprint: footprint.id,

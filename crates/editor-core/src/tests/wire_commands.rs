@@ -33,7 +33,7 @@ fn free(p: Point) -> Result<WireTarget> {
 }
 
 fn corners(points: &[Point]) -> Vec<Corner> {
-    points.iter().map(|&at| Corner::sharp(at)).collect()
+    points.iter().map(|&at| Corner::sharp(pt(at))).collect()
 }
 
 /// U1 and U2 side by side and a wire from U1.2 at (5, 0) through `through`
@@ -80,7 +80,7 @@ fn each_edit_stores_its_preview_in_one_undo_step_and_keeps_the_nets() -> Result<
             C::MoveWireCorner {
                 wire,
                 index: 0,
-                to: [25.0, 5.0],
+                to: pt([25.0, 5.0]),
                 free: false,
             },
             wire_edit::move_corner(&before, attached, 0, [25.0, 5.0], false)
@@ -91,7 +91,7 @@ fn each_edit_stores_its_preview_in_one_undo_step_and_keeps_the_nets() -> Result<
             C::MoveWireCorner {
                 wire,
                 index: 1,
-                to: [25.0, 15.0],
+                to: pt([25.0, 15.0]),
                 free: true,
             },
             wire_edit::move_corner(&before, attached, 1, [25.0, 15.0], true)
@@ -102,7 +102,7 @@ fn each_edit_stores_its_preview_in_one_undo_step_and_keeps_the_nets() -> Result<
             C::MoveWireSegment {
                 wire,
                 index: 1,
-                offset: -5.0,
+                offset: nm(-5.0),
             },
             wire_edit::move_segment(&before, attached, 1, -5.0)
                 .ok_or(Error::Invalid("segment".into()))?,
@@ -112,7 +112,7 @@ fn each_edit_stores_its_preview_in_one_undo_step_and_keeps_the_nets() -> Result<
             C::MoveWireSegment {
                 wire,
                 index: 0,
-                offset: 2.5,
+                offset: nm(2.5),
             },
             wire_edit::move_segment(&before, attached, 0, 2.5)
                 .ok_or(Error::Invalid("segment".into()))?,
@@ -121,7 +121,7 @@ fn each_edit_stores_its_preview_in_one_undo_step_and_keeps_the_nets() -> Result<
             "insert a corner: the shape does not change",
             C::InsertWireCorner {
                 wire,
-                at: [20.0, 10.0],
+                at: pt([20.0, 10.0]),
             },
             wire_edit::insert_corner(&before, [20.0, 10.0])
                 .ok_or(Error::Invalid("insert".into()))?
@@ -176,25 +176,7 @@ fn a_refused_edit_changes_nothing() -> Result<()> {
             C::MoveWireCorner {
                 wire,
                 index: 2,
-                to: [0.0, 0.0],
-                free: false,
-            },
-        ),
-        (
-            "off the sheet's range",
-            C::MoveWireCorner {
-                wire,
-                index: 0,
-                to: [20000.0, 0.0],
-                free: false,
-            },
-        ),
-        (
-            "not finite",
-            C::MoveWireCorner {
-                wire,
-                index: 0,
-                to: [f64::NAN, 0.0],
+                to: pt([0.0, 0.0]),
                 free: false,
             },
         ),
@@ -203,7 +185,7 @@ fn a_refused_edit_changes_nothing() -> Result<()> {
             C::MoveWireSegment {
                 wire,
                 index: 3,
-                offset: 1.0,
+                offset: nm(1.0),
             },
         ),
         (
@@ -211,29 +193,21 @@ fn a_refused_edit_changes_nothing() -> Result<()> {
             C::MoveWireSegment {
                 wire,
                 index: 1,
-                offset: 1e9,
-            },
-        ),
-        (
-            "an offset not finite",
-            C::MoveWireSegment {
-                wire,
-                index: 1,
-                offset: f64::INFINITY,
+                offset: nm(1999.0),
             },
         ),
         (
             "a new corner off the wire",
             C::InsertWireCorner {
                 wire,
-                at: [1.0, 1.0],
+                at: pt([1.0, 1.0]),
             },
         ),
         (
             "a new corner on a corner",
             C::InsertWireCorner {
                 wire,
-                at: [20.0, 0.0],
+                at: pt([20.0, 0.0]),
             },
         ),
         (
@@ -251,7 +225,7 @@ fn a_refused_edit_changes_nothing() -> Result<()> {
                 end: WireSide::To,
                 to: WireTarget::OnWire(WirePoint {
                     wire,
-                    at: [20.0, 10.0],
+                    at: pt([20.0, 10.0]),
                 }),
             },
         ),
@@ -272,6 +246,22 @@ fn a_refused_edit_changes_nothing() -> Result<()> {
         assert_eq!(engine.project().wires, wires, "{case}");
         assert_eq!(engine.revision(), revision, "{case}");
     }
+    // Lengths off the sheet's range or not finite are refused where the
+    // command is read, so they never reach the document.
+    let corner = |to: serde_json::Value| serde_json::json!({"command": "wire.move_corner", "params": {"wire": wire, "index": 0, "to": to}});
+    let segment = |offset: serde_json::Value| serde_json::json!({"command": "wire.move_segment", "params": {"wire": wire, "index": 1, "offset": offset}});
+    for (case, command) in [
+        (
+            "off the sheet's range",
+            corner(serde_json::json!([20000.0, 0.0])),
+        ),
+        ("not finite", corner(serde_json::json!(["NaN", 0.0]))),
+        ("an offset beyond 2 m", segment(serde_json::json!(1e9))),
+        ("an offset not finite", segment(serde_json::json!("inf"))),
+    ] {
+        assert!(serde_json::from_value::<C>(command).is_err(), "{case}");
+    }
+    assert!(serde_json::from_value::<C>(corner(serde_json::json!([20.0, "5mm"]))).is_ok());
     Ok(())
 }
 
@@ -343,7 +333,7 @@ fn a_corner_landing_on_a_connection_point_joins_it_and_on_a_wire_does_not() -> R
         C::MoveWireCorner {
             wire,
             index: 1,
-            to: at,
+            to: pt(at),
             free: true,
         },
     )?;
@@ -382,7 +372,7 @@ fn a_corner_landing_on_a_connection_point_joins_it_and_on_a_wire_does_not() -> R
         C::MoveWireCorner {
             wire,
             index: 0,
-            to: [30.0, -30.0],
+            to: pt([30.0, -30.0]),
             free: true,
         },
     )?;
@@ -463,7 +453,7 @@ fn moving_a_free_end_attaches_and_joins() -> Result<()> {
             end,
             to: WireTarget::OnWire(WirePoint {
                 wire: other,
-                at: [35.0, 5.0],
+                at: pt([35.0, 5.0]),
             }),
         },
     )?;
@@ -505,7 +495,7 @@ fn naming_a_port_on_a_pin_keeps_it_on_its_pin() -> Result<()> {
             kind: LabelKind::Power {
                 style: crate::model::PowerStyle::Ground,
             },
-            position: [5.0, 0.0],
+            position: pt([5.0, 0.0]),
             rotation: Default::default(),
             attach: Some(ep(u1, 2).into()),
         },

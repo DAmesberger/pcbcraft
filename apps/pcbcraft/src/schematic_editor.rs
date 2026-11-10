@@ -24,6 +24,7 @@ use pcbcraft_core::issues::{IssueArea, IssueCounts, IssueScope, Severity};
 use pcbcraft_core::library::graphics::SHEET_GRID_MM;
 use pcbcraft_core::library::{Rotation, TextMetric, Unit};
 use pcbcraft_core::schematic::PlacedUnit;
+use pcbcraft_core::units::PointNm;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Endpoint, Engine, Id, InstanceCommand, Net, ObjectRef, Operation,
     PhysicalChoice, Point, Project, Query, QueryResult, WireEnd,
@@ -511,7 +512,7 @@ fn first_choices(project: &Project, component: ComponentRef) -> Option<(NewInsta
             properties: Vec::new(),
             representation: symbol_ref.id,
             unit: unit.id,
-            position: [0.0, 0.0],
+            position: PointNm::ORIGIN,
             physical,
         },
         unit,
@@ -1403,7 +1404,7 @@ impl SchematicEditor {
             self.draft_id = id;
         }
         if let Some(o) = self.selected_occurrence.and_then(|o| project.occurrence(o)) {
-            self.draft_position = o.position;
+            self.draft_position = o.position.to_mm_f64();
             self.draft_rotation = o.rotation;
             self.draft_mirror = o.mirror;
         }
@@ -1748,15 +1749,17 @@ impl SchematicEditor {
                 component,
                 keep_open,
             }) => {
-                if let Some((request, unit)) = first_choices(project, component) {
+                if let Some((request, unit)) = first_choices(project, component)
+                    && let Some(position) = sheet_nm(self.drop_point(
+                        project,
+                        unit,
+                        rect,
+                        engine.drafts().grid.symbol_mm,
+                    ))
+                {
                     output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
                         sheet: Some(self.sheet),
-                        position: self.drop_point(
-                            project,
-                            unit,
-                            rect,
-                            engine.drafts().grid.symbol_mm,
-                        ),
+                        position,
                         ..request
                     })));
                 }
@@ -1946,7 +1949,10 @@ impl SchematicEditor {
             painter.circle_filled(p, radius, if active { t.accent } else { t.form_success });
         }
         for junction in project.junctions.iter().filter(|j| j.sheet == self.sheet) {
-            junction_hits.push((WireEnd::junction(junction.id), screen(junction.position)));
+            junction_hits.push((
+                WireEnd::junction(junction.id),
+                screen(junction.position.to_mm_f64()),
+            ));
         }
         let point_hits: Vec<(WireTarget, Pos2)> = self
             .point_targets(project)
@@ -1981,12 +1987,13 @@ impl SchematicEditor {
                 .as_ref()
                 .filter(|_| self.group.instances.contains(&occurrence.instance))
                 .map_or([0.0, 0.0], group::GroupDrag::by);
-            let delta = self
-                .preview
-                .filter(|(id, _)| *id == occurrence.id)
-                .map_or(dragged, |(_, p)| {
-                    [p[0] - occurrence.position[0], p[1] - occurrence.position[1]]
-                });
+            let delta =
+                self.preview
+                    .filter(|(id, _)| *id == occurrence.id)
+                    .map_or(dragged, |(_, p)| {
+                        let o = occurrence.position.to_mm_f64();
+                        [p[0] - o[0], p[1] - o[1]]
+                    });
             if let Some(b) = self.placed_bounds.get(&occurrence.id) {
                 let moved = Bounds {
                     min: [b.min[0] + delta[0], b.min[1] + delta[1]],
@@ -2072,7 +2079,13 @@ impl SchematicEditor {
                 .filter(|(_, d)| *d < WIRE_HIT_PX)
                 .min_by(|a, b| a.1.total_cmp(&b.1))?;
             let at = path_edit::on_wire_snapped(project, wire, view.world(pointer), grid)?;
-            Some((WireTarget::OnWire(WirePoint { wire, at }), screen(at)))
+            Some((
+                WireTarget::OnWire(WirePoint {
+                    wire,
+                    at: sheet_nm(at)?,
+                }),
+                screen(at),
+            ))
         };
         // The junction point under `pointer`, for the Junction tool.
         let junction_at = |pointer: Pos2| {
@@ -2264,6 +2277,7 @@ impl SchematicEditor {
                 Tool::Place => {
                     if let Some((request, _)) =
                         self.component.and_then(|c| first_choices(project, c))
+                        && let Some(position) = sheet_nm(world(pointer))
                     {
                         // The first placement finishes the create.
                         self.template_join = self
@@ -2272,7 +2286,7 @@ impl SchematicEditor {
                             .filter(|r| *r == engine.revision());
                         output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
                             sheet: Some(self.sheet),
-                            position: world(pointer),
+                            position,
                             properties: pcbcraft_core::library::templates::generic::properties(
                                 &project.library,
                                 request.component,
@@ -2397,7 +2411,7 @@ impl SchematicEditor {
             } else if let Some((WireTarget::OnWire(on), _)) = wire_point_at(pointer) {
                 menu::Target::Wire {
                     wire: on.wire,
-                    at: on.at,
+                    at: on.at.to_mm_f64(),
                 }
             } else if let Some(item) = self.item_at(project, view.world(pointer), tolerance) {
                 menu::Target::Item(item)
@@ -2451,10 +2465,8 @@ impl SchematicEditor {
             && let Some(occurrence) = project.occurrence(occurrence_id)
         {
             let p = view.world(pointer);
-            self.drag = Some((
-                occurrence_id,
-                [p[0] - occurrence.position[0], p[1] - occurrence.position[1]],
-            ));
+            let o = occurrence.position.to_mm_f64();
+            self.drag = Some((occurrence_id, [p[0] - o[0], p[1] - o[1]]));
             self.select(Some(id), Some(occurrence_id), project);
         }
         if self.tool == Tool::Select
@@ -2590,9 +2602,11 @@ impl SchematicEditor {
         {
             self.drag = None;
             self.draft_position = position;
-            output = operation(SchematicCommand::MoveUnit {
-                occurrence,
-                position,
+            output = sheet_nm(position).and_then(|position| {
+                operation(SchematicCommand::MoveUnit {
+                    occurrence,
+                    position,
+                })
             });
         }
         if let Some(hint) = canvas_hint(self, project) {
@@ -2698,10 +2712,8 @@ impl SchematicEditor {
                 .sheet_pin(p.sheet_pin)
                 .filter(|(symbol, _)| symbol.id == id)
                 .map_or(original, |(symbol, _)| {
-                    [
-                        original[0] + to[0] - symbol.position[0],
-                        original[1] + to[1] - symbol.position[1],
-                    ]
+                    let at = symbol.position_mm();
+                    [original[0] + to[0] - at[0], original[1] + to[1] - at[1]]
                 }),
             _ => original,
         }
@@ -2717,9 +2729,10 @@ impl SchematicEditor {
             && instances::owning_unit(&resolved.symbol.definition, endpoint.terminal)
                 == Some(occurrence.unit)
         {
+            let at = occurrence.position.to_mm_f64();
             return [
-                original[0] + position[0] - occurrence.position[0],
-                original[1] + position[1] - occurrence.position[1],
+                original[0] + position[0] - at[0],
+                original[1] + position[1] - at[1],
             ];
         }
         original
@@ -3153,14 +3166,32 @@ fn paint_pin_mark(
     }
 }
 
+/// A sheet point in mm as the document and its commands hold it, in whole
+/// nanometres; `None` off the sheet's ±2 m range, which no command takes.
+pub(crate) fn sheet_nm(p: Point) -> Option<PointNm> {
+    PointNm::from_mm_f64_rounded(p).ok()
+}
+
+/// A sheet point a test writes in mm; test points lie within the range.
+#[cfg(test)]
+pub(crate) fn pt(p: Point) -> PointNm {
+    PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
+/// A length a test writes in mm.
+#[cfg(test)]
+pub(crate) fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
 /// Where a Wire tool target sits on the sheet.
 fn target_position(project: &Project, target: WireTarget) -> Option<Point> {
     match target {
         WireTarget::Terminal(e) => schematic::pin_position(project, e),
-        WireTarget::Junction(j) => project.junction(j.junction).map(|j| j.position),
+        WireTarget::Junction(j) => project.junction(j.junction).map(|j| j.position.to_mm_f64()),
         WireTarget::Label(l) => schematic::end_position(project, WireEnd::Label(l)),
         WireTarget::SheetPin(p) => schematic::end_position(project, WireEnd::SheetPin(p)),
-        WireTarget::OnWire(p) => Some(p.at),
+        WireTarget::OnWire(p) => Some(p.at.to_mm_f64()),
         WireTarget::Free(f) => Some(f.point()),
     }
 }
@@ -3381,7 +3412,7 @@ mod tests {
                     properties: vec![],
                     representation: first.representation,
                     unit: pcbcraft_core::UnitId(1),
-                    position: [30.0, 0.0],
+                    position: pt([30.0, 0.0]),
                     physical: first.physical,
                 },
             )),
@@ -3693,7 +3724,7 @@ mod tests {
             return Err(format!("expected one move, got {sent:?}").into());
         };
         assert_eq!(*o, occurrence);
-        assert_eq!(*position, [-10.0, 5.0]);
+        assert_eq!(*position, pt([-10.0, 5.0]));
         Ok(())
     }
 
@@ -3710,7 +3741,7 @@ mod tests {
             engine.revision(),
             Operation::Instance(InstanceCommand::Place(NewInstance {
                 sheet: None,
-                position: [30.0, 0.0],
+                position: pt([30.0, 0.0]),
                 ..request
             })),
         )?;
@@ -3812,7 +3843,7 @@ mod tests {
             Operation::Instance(InstanceCommand::Place(NewInstance {
                 sheet: None,
                 designator: Some("U1".into()),
-                position: [0.0, 20.0],
+                position: pt([0.0, 20.0]),
                 ..request
             })),
         )? {
@@ -4395,10 +4426,11 @@ mod tests {
         else {
             return Err(format!("expected one move, got {operations:?}").into());
         };
-        assert_eq!(*position, [-10.0, 0.0]);
+        assert_eq!(*position, pt([-10.0, 0.0]));
         let grid = engine.drafts().grid.symbol_mm;
         assert!(
             position
+                .to_mm_f64()
                 .iter()
                 .all(|v| ((v / grid).round() * grid - v).abs() < 1e-9)
         );

@@ -26,7 +26,7 @@ fn occurrence(position: Point, rotation: Rotation, mirror: bool) -> SymbolOccurr
         id: 1,
         instance: 1,
         unit: crate::UnitId(1),
-        position,
+        position: pt(position),
         rotation,
         mirror,
     }
@@ -128,7 +128,7 @@ fn orienting_moves_pins_and_their_wires_in_one_undo_step() -> Result<()> {
     let before = engine.project().clone();
     let o = first_occurrence(&engine, r1)?;
     // R1 sits at (−12, 0) with pins at local (∓5, 0).
-    assert_eq!(o.position, [-12.0, 0.0]);
+    assert_eq!(o.position, pt([-12.0, 0.0]));
     let pin = |e: &Engine, t| schematic::pin_position(e.project(), ep(r1, t));
     assert_eq!(pin(&engine, 1), Some([-17.0, 0.0]));
 

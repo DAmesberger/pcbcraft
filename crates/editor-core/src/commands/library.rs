@@ -1,6 +1,5 @@
 use super::{OffGridPin, Outcome};
 use crate::diagnostics::{Error, Result};
-use crate::geometry::Point;
 use crate::ids::{
     ComponentRef, DefinitionId, DefinitionKind, DefinitionRef, LibraryId, PartRef, SourceLineageId,
     TerminalId,
@@ -22,6 +21,7 @@ use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts, 
 use crate::model::Document;
 use crate::model::PhysicalChoice;
 use crate::scripting;
+use crate::units::PointNm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -181,7 +181,9 @@ pub enum LibraryCommand {
     #[serde(rename = "library.place_from")]
     PlaceFrom {
         source: PlaceSource,
-        position: Point,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
         #[serde(default)]
         designator: Option<String>,
         #[serde(default)]
@@ -571,7 +573,7 @@ pub(crate) fn preview_footprint(
 fn place_request(
     library: &library::Library,
     root: DefinitionRef,
-    position: Point,
+    position: PointNm,
     designator: Option<String>,
 ) -> Result<(NewInstance, Option<PartRef>)> {
     let (component, binding, part) = match root.kind {

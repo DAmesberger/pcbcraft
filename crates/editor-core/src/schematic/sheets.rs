@@ -1,15 +1,15 @@
 //! Sheets, the hierarchy and sheet furniture: adding, renaming, ordering
 //! and deleting sheets; sheet symbols and their pins; notes, lines and
 //! rectangles; title-block properties; moving a unit to another sheet.
-use super::labels::{check_name, check_point, check_sheet, detach_point};
+use super::labels::{check_name, check_sheet, detach_point};
 use super::{Result, conflict, invalid, not_found};
 use crate::diagnostics::Error;
-use crate::geometry::{Point, point_valid};
 use crate::ids::{Id, SheetId, printable};
 use crate::model::{
     LabelKind, Paper, PaperOrientation, PortShape, Project, ProjectProperties, Sheet, SheetDrawing,
     SheetItem, SheetPin, SheetSide, SheetSymbol, WireEnd,
 };
+use crate::units::{NM_PER_MM, Nm, PointNm};
 use std::collections::BTreeSet;
 
 /// Sheets a project holds.
@@ -23,12 +23,12 @@ pub const MAX_DRAWINGS: usize = 16384;
 pub const MAX_SHEET_NAME: usize = 64;
 /// Longest note, in bytes.
 pub const MAX_NOTE: usize = 4096;
-/// Note cap heights, in mm.
-pub const NOTE_HEIGHT_MM: (f64, f64) = (0.5, 50.0);
-/// Sheet symbol sides, in mm.
-pub const SYMBOL_SIZE_MM: (f64, f64) = (5.0, 2000.0);
-/// Spacing of pins [`sync_pins`] adds, in mm.
-pub const PIN_PITCH_MM: f64 = 5.0;
+/// Note cap heights, in nm (0.5–50 mm).
+pub const NOTE_HEIGHT_NM: (i64, i64) = (NM_PER_MM / 2, 50 * NM_PER_MM);
+/// Sheet symbol sides, in nm (5–2000 mm).
+pub const SYMBOL_SIZE_NM: (i64, i64) = (5 * NM_PER_MM, 2000 * NM_PER_MM);
+/// Spacing of pins [`sync_pins`] adds, in nm (5 mm).
+pub const PIN_PITCH_NM: i64 = 5 * NM_PER_MM;
 
 fn check_sheet_name(project: &Project, name: &str, except: Option<SheetId>) -> Result<()> {
     if !printable(name) || name.len() > MAX_SHEET_NAME {
@@ -178,9 +178,9 @@ fn ancestors(project: &Project, sheet: SheetId) -> Vec<SheetId> {
     out
 }
 
-fn check_size(size: Point) -> Result<()> {
-    let ok = |v: f64| v.is_finite() && (SYMBOL_SIZE_MM.0..=SYMBOL_SIZE_MM.1).contains(&v);
-    if ok(size[0]) && ok(size[1]) {
+fn check_size(size: PointNm) -> Result<()> {
+    let ok = |v: Nm| (SYMBOL_SIZE_NM.0..=SYMBOL_SIZE_NM.1).contains(&v.get());
+    if ok(size.x_nm) && ok(size.y_nm) {
         Ok(())
     } else {
         Err(invalid("Sheet symbols are 5–2000 mm on each side."))
@@ -220,15 +220,14 @@ pub struct NewSheetSymbol {
     pub child: Option<SheetId>,
     /// The new child sheet's name.
     pub name: Option<String>,
-    pub position: Point,
-    pub size: Point,
+    pub position: PointNm,
+    pub size: PointNm,
 }
 
 /// Draw a sheet symbol for `child`, or for a new sheet appended to the
 /// page order. Returns the symbol and its child sheet.
 pub fn place_symbol(project: &mut Project, new: NewSheetSymbol) -> Result<(Id, SheetId)> {
     check_sheet(project, new.sheet)?;
-    check_point(new.position)?;
     check_size(new.size)?;
     if project.sheet_symbols.len() >= MAX_SHEET_SYMBOLS {
         return Err(Error::Limit(
@@ -267,19 +266,16 @@ fn symbol_mut(project: &mut Project, id: Id) -> Result<&mut SheetSymbol> {
         .ok_or_else(|| not_found("Unknown sheet symbol."))
 }
 
-fn side_length(size: Point, side: SheetSide) -> f64 {
+fn side_length(size: PointNm, side: SheetSide) -> Nm {
     match side {
-        SheetSide::Left | SheetSide::Right => size[1],
-        SheetSide::Top | SheetSide::Bottom => size[0],
+        SheetSide::Left | SheetSide::Right => size.y_nm,
+        SheetSide::Top | SheetSide::Bottom => size.x_nm,
     }
 }
 
 fn check_pins_fit(symbol: &SheetSymbol) -> Result<()> {
     for pin in &symbol.pins {
-        if !pin.offset.is_finite()
-            || pin.offset < 0.0
-            || pin.offset > side_length(symbol.size, pin.side)
-        {
+        if pin.offset_nm < Nm::ZERO || pin.offset_nm > side_length(symbol.size, pin.side) {
             return Err(invalid(
                 "A sheet pin must lie on its side of the sheet symbol.",
             ));
@@ -289,14 +285,13 @@ fn check_pins_fit(symbol: &SheetSymbol) -> Result<()> {
 }
 
 /// Move a sheet symbol; wires on its pins follow.
-pub fn move_symbol(project: &mut Project, id: Id, position: Point) -> Result<()> {
-    check_point(position)?;
+pub fn move_symbol(project: &mut Project, id: Id, position: PointNm) -> Result<()> {
     symbol_mut(project, id)?.position = position;
     Ok(())
 }
 
 /// Resize a sheet symbol; refused when a pin would leave its side.
-pub fn resize_symbol(project: &mut Project, id: Id, size: Point) -> Result<()> {
+pub fn resize_symbol(project: &mut Project, id: Id, size: PointNm) -> Result<()> {
     check_size(size)?;
     let symbol = symbol_mut(project, id)?;
     symbol.size = size;
@@ -353,7 +348,7 @@ pub struct NewSheetPin {
     pub name: String,
     pub shape: PortShape,
     pub side: SheetSide,
-    pub offset: f64,
+    pub offset: Nm,
 }
 
 pub fn add_pin(project: &mut Project, new: NewSheetPin) -> Result<Id> {
@@ -373,7 +368,7 @@ pub fn add_pin(project: &mut Project, new: NewSheetPin) -> Result<Id> {
         name: new.name,
         shape: new.shape,
         side: new.side,
-        offset: new.offset,
+        offset_nm: new.offset,
     });
     check_pins_fit(symbol)?;
     Ok(id)
@@ -395,7 +390,7 @@ pub fn edit_pin(
     name: Option<String>,
     shape: Option<PortShape>,
     side: Option<SheetSide>,
-    offset: Option<f64>,
+    offset: Option<Nm>,
 ) -> Result<()> {
     let symbol_id = pin_symbol(project, pin)?;
     if let Some(name) = &name
@@ -419,7 +414,7 @@ pub fn edit_pin(
         item.side = side;
     }
     if let Some(offset) = offset {
-        item.offset = offset;
+        item.offset_nm = offset;
     }
     check_pins_fit(symbol)
 }
@@ -469,21 +464,24 @@ pub fn sync_pins(project: &mut Project, symbol: Id) -> Result<Vec<Id>> {
         .pins
         .iter()
         .filter(|p| p.side == SheetSide::Left)
-        .map(|p| p.offset)
-        .fold(0.0, f64::max);
+        .map(|p| p.offset_nm.get())
+        .fold(0, i64::max);
     let mut added = Vec::with_capacity(wanted.len());
+    let too_many = || Error::Limit("The sheet symbol cannot grow to fit every pin.".into());
     for (name, shape) in wanted {
-        offset += PIN_PITCH_MM;
-        let needed = offset + PIN_PITCH_MM;
-        if needed > SYMBOL_SIZE_MM.1 {
-            return Err(Error::Limit(
-                "The sheet symbol cannot grow to fit every pin.".into(),
-            ));
+        // Offsets stay within the symbol's 2 m side: no overflow.
+        offset += PIN_PITCH_NM;
+        let needed = offset + PIN_PITCH_NM;
+        if needed > SYMBOL_SIZE_NM.1 {
+            return Err(too_many());
         }
-        let current = project.sheet_symbol(symbol).map_or(0.0, |s| s.size[1]);
+        let current = project
+            .sheet_symbol(symbol)
+            .map_or(0, |s| s.size.y_nm.get());
         if needed > current {
-            symbol_mut(project, symbol)?.size[1] = needed;
+            symbol_mut(project, symbol)?.size.y_nm = Nm::new(needed)?;
         }
+        let offset = Nm::new(offset)?;
         added.push(add_pin(
             project,
             NewSheetPin {
@@ -501,9 +499,8 @@ pub fn sync_pins(project: &mut Project, symbol: Id) -> Result<Vec<Id>> {
 fn check_item(item: &SheetItem) -> Result<()> {
     match item {
         SheetItem::Text {
-            at, text, height, ..
+            text, height_nm, ..
         } => {
-            check_point(*at)?;
             if text.trim().is_empty()
                 || text.len() > MAX_NOTE
                 || text.chars().any(|c| c.is_control() && c != '\n')
@@ -512,21 +509,17 @@ fn check_item(item: &SheetItem) -> Result<()> {
                     "Notes are 1–4096 bytes; only line breaks may be control characters.",
                 ));
             }
-            if !height.is_finite() || !(NOTE_HEIGHT_MM.0..=NOTE_HEIGHT_MM.1).contains(height) {
+            if !(NOTE_HEIGHT_NM.0..=NOTE_HEIGHT_NM.1).contains(&height_nm.get()) {
                 return Err(invalid("Note text is 0.5–50 mm high."));
             }
         }
         SheetItem::Line { from, to } => {
-            check_point(*from)?;
-            check_point(*to)?;
             if from == to {
                 return Err(invalid("A line needs two different points."));
             }
         }
         SheetItem::Rect { min, max } => {
-            check_point(*min)?;
-            check_point(*max)?;
-            if min[0] == max[0] || min[1] == max[1] {
+            if min.x_nm == max.x_nm || min.y_nm == max.y_nm {
                 return Err(invalid("A rectangle needs a width and a height."));
             }
         }
@@ -607,10 +600,9 @@ pub fn move_unit_to_sheet(
     project: &mut Project,
     occurrence: Id,
     sheet: SheetId,
-    position: Point,
+    position: PointNm,
 ) -> Result<()> {
     check_sheet(project, sheet)?;
-    check_point(position)?;
     let item = project
         .occurrence(occurrence)
         .cloned()
@@ -666,8 +658,8 @@ pub(super) fn validate(project: &Project) -> Result<()> {
         return Err(invalid("Schematic exceeds supported item limits."));
     }
     for label in &project.labels {
-        if !crate::nets::name_valid(&label.name) || !point_valid(label.position) {
-            return Err(invalid("A label has an invalid name or position."));
+        if !crate::nets::name_valid(&label.name) {
+            return Err(invalid("A label has an invalid name."));
         }
     }
     for drawing in &project.drawings {
@@ -681,7 +673,7 @@ pub(super) fn validate(project: &Project) -> Result<()> {
         if !children.insert(symbol.child) {
             return Err(invalid("A sheet is used by more than one sheet symbol."));
         }
-        if !point_valid(symbol.position) || symbol.pins.len() > MAX_SHEET_PINS {
+        if symbol.pins.len() > MAX_SHEET_PINS {
             return Err(invalid("A sheet symbol is out of range."));
         }
         check_size(symbol.size)?;

@@ -211,8 +211,8 @@ pub fn schematic_pdf(project: &Project, sheets: &[SheetId]) -> Result<Vec<u8>> {
         // A link over each sheet symbol whose child page is printed.
         for symbol in project.sheet_symbols.iter().filter(|s| s.sheet == *sheet) {
             if let Some(target) = pages.iter().position(|s| *s == symbol.child) {
-                let [x, y] = symbol.position;
-                let [w, h] = symbol.size;
+                let [x, y] = symbol.position_mm();
+                let [w, h] = symbol.size_mm();
                 page.link(f.map([x, y - h]), f.map([x + w, y]), target);
             }
         }

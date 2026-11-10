@@ -54,7 +54,7 @@ fn usb() -> Result<Usb, Box<dyn std::error::Error>> {
                     properties: vec![],
                     representation: r1.representation,
                     unit: UnitId(1),
-                    position: [x, 40.0],
+                    position: crate::schematic_editor::pt([x, 40.0]),
                     physical: r1.physical,
                 },
             )),

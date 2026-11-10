@@ -9,8 +9,10 @@ use crate::geometry::Point;
 use crate::ids::{Endpoint, Id, SheetId};
 use crate::instances::{self, NewInstance};
 use crate::model::{
-    ComponentInstance, Corner, Label, LabelRef, Project, SheetItem, SymbolOccurrence, Wire, WireEnd,
+    ComponentInstance, Corner, FreeEnd, Label, LabelRef, Project, SheetItem, SymbolOccurrence,
+    Wire, WireEnd,
 };
+use crate::units::PointNm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -68,21 +70,21 @@ impl SheetClip {
             self.symbols
                 .first()
                 .and_then(|s| s.occurrences.first())
-                .map(|o| o.position)
+                .map(|o| o.position.to_mm_f64())
         };
-        let label = || self.labels.first().map(|l| l.position);
+        let label = || self.labels.first().map(|l| l.position.to_mm_f64());
         let drawing = || {
             self.drawings.first().map(|d| match d {
-                SheetItem::Text { at, .. } => *at,
-                SheetItem::Line { from, .. } => *from,
-                SheetItem::Rect { min, .. } => *min,
+                SheetItem::Text { at, .. } => at.to_mm_f64(),
+                SheetItem::Line { from, .. } => from.to_mm_f64(),
+                SheetItem::Rect { min, .. } => min.to_mm_f64(),
             })
         };
         let wire = || {
             let wire = self.wires.first()?;
             wire.from
                 .free_point()
-                .or_else(|| wire.corners.first().map(|c| c.at))
+                .or_else(|| wire.corners.first().map(Corner::at_mm))
                 .or_else(|| wire.to.free_point())
         };
         symbol().or_else(label).or_else(drawing).or_else(wire)
@@ -157,7 +159,7 @@ pub fn copy(project: &Project, sheet: SheetId, objects: &[ClipObject]) -> Result
                     let mut copied = label.clone();
                     // Where it is drawn, which a label placed by its pin
                     // does not store.
-                    copied.position = labels::anchor(project, label);
+                    copied.position = super::sheet_point(labels::anchor(project, label))?;
                     copied.rotation = labels::current_rotation(project, id)?;
                     clip.labels.push(copied);
                 }
@@ -218,14 +220,13 @@ pub fn paste(
     project: &mut Project,
     sheet: SheetId,
     clip: SheetClip,
-    offset: Point,
+    offset: PointNm,
 ) -> Result<Pasted> {
     if clip == SheetClip::default() {
         return Err(invalid("There is nothing to paste."));
     }
     labels::check_sheet(project, sheet)?;
-    labels::check_point(offset)?;
-    let shift = |p: Point| [p[0] + offset[0], p[1] + offset[1]];
+    let shift = |p: PointNm| shifted_point(p, offset);
     let mut pasted = Pasted::default();
     let mut new_instances = BTreeMap::new();
     let mut new_labels = BTreeMap::new();
@@ -249,7 +250,7 @@ pub fn paste(
                 sheet,
                 name: label.name,
                 kind: label.kind,
-                position: shift(label.position),
+                position: shift(label.position)?,
                 rotation: label.rotation,
                 attach: None,
             },
@@ -265,7 +266,7 @@ pub fn paste(
     for item in clip.drawings {
         pasted
             .drawings
-            .push(sheets::add_drawing(project, sheet, shifted(item, offset))?);
+            .push(sheets::add_drawing(project, sheet, shifted(item, offset)?)?);
     }
     let end = |end: WireEnd| -> Result<WireEnd> {
         let unknown = || invalid("A pasted wire ends on an object the clip does not hold.");
@@ -277,8 +278,9 @@ pub fn paste(
             WireEnd::Label(LabelRef { label }) => {
                 Ok(WireEnd::label(*new_labels.get(&label).ok_or_else(unknown)?))
             }
-            WireEnd::Free(free) => WireEnd::free(shift(free.point()))
-                .ok_or_else(|| invalid("A pasted wire end is off the sheet's range.")),
+            WireEnd::Free(free) => shift(free.free)
+                .map(|free| WireEnd::Free(FreeEnd { free }))
+                .map_err(|_| invalid("A pasted wire end is off the sheet's range.")),
             WireEnd::Junction(_) | WireEnd::SheetPin(_) => Err(unknown()),
         }
     };
@@ -289,11 +291,13 @@ pub fn paste(
             end(wire.from)?.into(),
             wire.corners
                 .iter()
-                .map(|c| Corner {
-                    at: shift(c.at),
-                    ..*c
+                .map(|c| {
+                    Ok(Corner {
+                        at: shift(c.at)?,
+                        ..*c
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
             end(wire.to)?.into(),
         )?);
     }
@@ -306,15 +310,14 @@ fn paste_symbol(
     project: &mut Project,
     sheet: SheetId,
     symbol: ClipSymbol,
-    offset: Point,
+    offset: PointNm,
 ) -> Result<(Id, Id)> {
     let source = symbol.instance;
-    let shift = |p: Point| [p[0] + offset[0], p[1] + offset[1]];
+    let shift = |p: PointNm| shifted_point(p, offset);
     let mut units = symbol.occurrences.into_iter();
     let first = units
         .next()
         .ok_or_else(|| invalid("A pasted symbol needs a placed unit."))?;
-    labels::check_point(shift(first.position))?;
     let (id, occurrence) = instances::place(
         project,
         NewInstance {
@@ -323,15 +326,15 @@ fn paste_symbol(
             properties: Vec::new(),
             representation: source.representation,
             unit: first.unit,
-            position: shift(first.position),
+            position: shift(first.position)?,
             physical: source.physical,
             sheet: Some(sheet),
         },
     )?;
     orient(project, occurrence, &first);
     for unit in units {
-        labels::check_point(shift(unit.position))?;
-        let added = instances::add_occurrence(project, id, unit.unit, shift(unit.position), sheet)?;
+        let added =
+            instances::add_occurrence(project, id, unit.unit, shift(unit.position)?, sheet)?;
         orient(project, added, &unit);
     }
     let instance = instances::instance_mut(project, id)?;
@@ -354,27 +357,36 @@ fn orient(project: &mut Project, occurrence: Id, like: &SymbolOccurrence) {
     }
 }
 
-fn shifted(item: SheetItem, offset: Point) -> SheetItem {
-    let shift = |p: Point| [p[0] + offset[0], p[1] + offset[1]];
-    match item {
+/// `p` moved by `offset`; refused off the sheet's range.
+fn shifted_point(p: PointNm, offset: PointNm) -> Result<PointNm> {
+    let off = |_| invalid(super::POINT_RANGE);
+    Ok(PointNm::new(
+        p.x_nm.checked_add(offset.x_nm).map_err(off)?,
+        p.y_nm.checked_add(offset.y_nm).map_err(off)?,
+    ))
+}
+
+fn shifted(item: SheetItem, offset: PointNm) -> Result<SheetItem> {
+    let shift = |p: PointNm| shifted_point(p, offset);
+    Ok(match item {
         SheetItem::Text {
             at,
             text,
-            height,
+            height_nm,
             rotation,
         } => SheetItem::Text {
-            at: shift(at),
+            at: shift(at)?,
             text,
-            height,
+            height_nm,
             rotation,
         },
         SheetItem::Line { from, to } => SheetItem::Line {
-            from: shift(from),
-            to: shift(to),
+            from: shift(from)?,
+            to: shift(to)?,
         },
         SheetItem::Rect { min, max } => SheetItem::Rect {
-            min: shift(min),
-            max: shift(max),
+            min: shift(min)?,
+            max: shift(max)?,
         },
-    }
+    })
 }

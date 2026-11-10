@@ -119,7 +119,7 @@ fn place(
             properties: vec![],
             representation: first.representation,
             unit: pcbcraft_core::UnitId(1),
-            position: at,
+            position: pt(at),
             physical: None,
         })),
     )?;
@@ -261,7 +261,7 @@ fn the_sheet_symbol_tool_creates_a_child_sheet() -> TestResult {
     // Double-clicking the symbol opens its sheet (a fresh context, so the
     // placing click does not make it a triple click).
     let ctx = self::ctx();
-    let corner = project.sheet_symbol(symbol).ok_or("symbol")?.position;
+    let corner = project.sheet_symbol(symbol).ok_or("symbol")?.position_mm();
     editor.on_tool("select", &engine);
     let inside = schematic_view(&editor).screen([corner[0] + 10.0, corner[1] - 10.0]);
     let button = |pressed| egui::Event::PointerButton {
@@ -485,7 +485,7 @@ fn next_in_the_label_card_shows_the_other_sheet() -> TestResult {
                 kind: LabelKind::Global {
                     shape: pcbcraft_core::PortShape::Passive,
                 },
-                position: [0.0, 20.0],
+                position: pt([0.0, 20.0]),
                 rotation: Rotation::R0,
                 attach: Some(endpoint.into()),
             }),
@@ -529,7 +529,7 @@ fn delete_removes_the_selected_label_in_one_step() -> TestResult {
             kind: LabelKind::Power {
                 style: PowerStyle::Ground,
             },
-            position: [100.0, -100.0],
+            position: pt([100.0, -100.0]),
             rotation: Rotation::R0,
             attach: None,
         }),
@@ -728,7 +728,7 @@ fn vbus_and_gnd(
                 sheet: None,
                 name: name.into(),
                 kind: LabelKind::Power { style },
-                position: [0.0, 0.0],
+                position: pt([0.0, 0.0]),
                 rotation: Default::default(),
                 attach: Some(WireTarget::Terminal(at)),
             }),

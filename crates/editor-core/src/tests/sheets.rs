@@ -71,7 +71,7 @@ fn place_on(
                 properties: vec![],
                 representation: f.symbol,
                 unit: crate::UnitId(1),
-                position: at,
+                position: pt(at),
                 physical: Some(f.physical()),
             },
         )),
@@ -95,7 +95,7 @@ fn label(
             sheet: Some(sheet),
             name: name.into(),
             kind,
-            position: at,
+            position: pt(at),
             rotation: Default::default(),
             attach,
         },
@@ -330,11 +330,11 @@ fn a_label_on_a_wire_splits_it_and_removing_it_keeps_the_wires_joined() -> Resul
         [99.0, 99.0],
         Some(WireTarget::OnWire(WirePoint {
             wire,
-            at: [15.0, 0.0],
+            at: pt([15.0, 0.0]),
         })),
     )?;
     let project = engine.project();
-    assert_eq!(project.label(id).map(|l| l.position), Some([15.0, 0.0]));
+    assert_eq!(project.label(id).map(|l| l.position), Some(pt([15.0, 0.0])));
     assert_eq!(project.wires.len(), 2, "split at the label");
     assert_eq!(project.wires_at(WireEnd::label(id)).count(), 2);
     assert_eq!(net_name(&engine, ep(u1, 2))?, "MID");
@@ -461,8 +461,8 @@ fn hierarchy() -> Result<Hier> {
             sheet: None,
             child: None,
             name: Some("Sensor".into()),
-            position: [60.0, -30.0],
-            size: [30.0, 20.0],
+            position: pt([60.0, -30.0]),
+            size: pt([30.0, 20.0]),
         },
     )? {
         Outcome::SheetSymbolPlaced { symbol, child } => (symbol, child),
@@ -560,8 +560,8 @@ fn the_hierarchy_refuses_cycles_and_reuse() -> Result<()> {
             sheet: Some(child),
             child: Some(top),
             name: None,
-            position: [0.0, 0.0],
-            size: [20.0, 20.0],
+            position: pt([0.0, 0.0]),
+            size: pt([20.0, 20.0]),
         },
     );
     assert!(matches!(cycle, Err(Error::Conflict(_))), "{cycle:?}");
@@ -571,8 +571,8 @@ fn the_hierarchy_refuses_cycles_and_reuse() -> Result<()> {
             sheet: Some(top),
             child: Some(child),
             name: None,
-            position: [0.0, -100.0],
-            size: [20.0, 20.0],
+            position: pt([0.0, -100.0]),
+            size: pt([20.0, 20.0]),
         },
     );
     assert!(matches!(reuse, Err(Error::Conflict(_))), "{reuse:?}");
@@ -965,9 +965,9 @@ fn sheets_labels_symbols_and_furniture_survive_save_and_reopen() -> Result<()> {
         C::AddDrawing {
             sheet: Some(child),
             item: SheetItem::Text {
-                at: [20.0, -100.0],
+                at: pt([20.0, -100.0]),
                 text: "LDO: keep input cap close".into(),
-                height: 2.5,
+                height_nm: nm(2.5),
                 rotation: Default::default(),
             },
         },
@@ -977,8 +977,8 @@ fn sheets_labels_symbols_and_furniture_survive_save_and_reopen() -> Result<()> {
         C::AddDrawing {
             sheet: None,
             item: SheetItem::Rect {
-                min: [10.0, -150.0],
-                max: [80.0, -120.0],
+                min: pt([10.0, -150.0]),
+                max: pt([80.0, -120.0]),
             },
         },
     )?;
@@ -996,7 +996,7 @@ fn sheets_labels_symbols_and_furniture_survive_save_and_reopen() -> Result<()> {
             name: None,
             shape: Some(PortShape::Output),
             side: Some(SheetSide::Right),
-            offset: Some(10.0),
+            offset: Some(nm(10.0)),
         },
     )?;
     let bytes = format::encode(&engine.to_file())?;
@@ -1034,7 +1034,7 @@ fn malformed_commands_are_refused_without_changes() -> Result<()> {
                 sheet: None,
                 name: "A B".into(),
                 kind: LabelKind::Local,
-                position: [0.0, 0.0],
+                position: pt([0.0, 0.0]),
                 rotation: Default::default(),
                 attach: None,
             },
@@ -1045,16 +1045,16 @@ fn malformed_commands_are_refused_without_changes() -> Result<()> {
                 sheet: Some(SheetId(99)),
                 name: "X".into(),
                 kind: LabelKind::Local,
-                position: [0.0, 0.0],
+                position: pt([0.0, 0.0]),
                 rotation: Default::default(),
                 attach: None,
             },
         ),
         (
-            "non-finite",
+            "unknown label",
             C::MoveLabel {
                 label: 9999,
-                position: [f64::NAN, 0.0],
+                position: pt([0.0, 0.0]),
             },
         ),
         (
@@ -1063,8 +1063,8 @@ fn malformed_commands_are_refused_without_changes() -> Result<()> {
                 sheet: None,
                 child: None,
                 name: None,
-                position: [0.0, 0.0],
-                size: [1.0, 1.0],
+                position: pt([0.0, 0.0]),
+                size: pt([1.0, 1.0]),
             },
         ),
         (
@@ -1072,9 +1072,9 @@ fn malformed_commands_are_refused_without_changes() -> Result<()> {
             C::AddDrawing {
                 sheet: None,
                 item: SheetItem::Text {
-                    at: [0.0, 0.0],
+                    at: pt([0.0, 0.0]),
                     text: " ".into(),
-                    height: 2.0,
+                    height_nm: nm(2.0),
                     rotation: Default::default(),
                 },
             },
@@ -1100,6 +1100,14 @@ fn malformed_commands_are_refused_without_changes() -> Result<()> {
             "name": "X", "kind": {"type": "local"}, "position": [0, 0], "colour": "red"}}
     }));
     assert!(bad.is_err());
+    // A position not finite, or off the sheet's range, is refused there too.
+    for position in [serde_json::json!(["NaN", 0]), serde_json::json!([0, 2001])] {
+        let refused = serde_json::from_value::<Operation>(serde_json::json!({
+            "editor": "Schematic",
+            "operation": {"command": "label.move", "params": {"label": 9999, "position": position}}
+        }));
+        assert!(refused.is_err(), "{position}");
+    }
     let good = serde_json::from_value::<Operation>(serde_json::json!({
         "editor": "Schematic",
         "operation": {"command": "label.place", "params": {

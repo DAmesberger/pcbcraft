@@ -9,6 +9,7 @@ use crate::refusal::{self, Origin};
 use crate::shell::Header;
 use pcbcraft_core::library::Rotation;
 use pcbcraft_core::schematic::{AnnotateMode, AnnotateOrder, Numbering, SchematicCommand};
+use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{
     Engine, LabelKind, Operation, Paper, PaperOrientation, PortShape, PowerStyle, Project,
     ProjectProperties, SheetItem, SheetSide,
@@ -371,11 +372,12 @@ impl SchematicEditor {
                 ui,
                 &format!("symbol/{id}/size"),
                 "Size",
-                symbol.size,
+                symbol.size_mm(),
                 false,
                 5.0..=2000.0,
             ) {
-                output = op(SchematicCommand::ResizeSheetSymbol { symbol: id, size });
+                output = super::sheet_nm(size)
+                    .and_then(|size| op(SchematicCommand::ResizeSheetSymbol { symbol: id, size }));
             }
             open = kit::summary_row(ui, "", Some("Open sheet"));
         });
@@ -411,15 +413,17 @@ impl SchematicEditor {
                         .pins
                         .iter()
                         .filter(|p| p.side == SheetSide::Left)
-                        .map(|p| p.offset)
+                        .map(|p| p.offset_mm())
                         .fold(0.0, f64::max)
                         + 5.0;
-                    output = op(SchematicCommand::AddSheetPin {
-                        symbol: id,
-                        name,
-                        shape: PortShape::Bidirectional,
-                        side: SheetSide::Left,
-                        offset,
+                    output = Nm::from_mm_f64_rounded(offset).ok().and_then(|offset| {
+                        op(SchematicCommand::AddSheetPin {
+                            symbol: id,
+                            name,
+                            shape: PortShape::Bidirectional,
+                            side: SheetSide::Left,
+                            offset,
+                        })
                     });
                 }
                 if kit::summary_row(ui, "", Some("Sync pins")) {
@@ -445,7 +449,11 @@ impl SchematicEditor {
         let project = engine.project();
         let (symbol, pin) = project.sheet_pin(id)?;
         let (symbol, pin) = (symbol.clone(), pin.clone());
-        let edit = |name, shape, side, offset| {
+        let edit = |name, shape, side, offset: Option<f64>| {
+            let offset = match offset {
+                Some(mm) => Some(Nm::from_mm_f64_rounded(mm).ok()?),
+                None => None,
+            };
             op(SchematicCommand::EditSheetPin {
                 pin: id,
                 name,
@@ -477,14 +485,14 @@ impl SchematicEditor {
                     None,
                     None,
                     Some(side),
-                    Some(0.0_f64.max(pin.offset.min(5.0))),
+                    Some(0.0_f64.max(pin.offset_mm().min(5.0))),
                 );
             }
             if let Some([offset, _]) = self.live_pair(
                 ui,
                 &format!("pin/{id}/offset"),
                 "Offset",
-                [pin.offset, 0.0],
+                [pin.offset_mm(), 0.0],
                 true,
                 0.0..=2000.0,
             ) {
@@ -515,7 +523,7 @@ impl SchematicEditor {
             SheetItem::Text {
                 at,
                 text,
-                height,
+                height_nm,
                 rotation,
             } => {
                 if let Some(new) =
@@ -528,7 +536,7 @@ impl SchematicEditor {
                         item: SheetItem::Text {
                             at: *at,
                             text: new,
-                            height: *height,
+                            height_nm: *height_nm,
                             rotation: *rotation,
                         },
                     });
@@ -537,23 +545,25 @@ impl SchematicEditor {
                     ui,
                     &format!("drawing/{id}/height"),
                     "Height",
-                    [*height, 0.0],
+                    [height_nm.to_mm_f64(), 0.0],
                     true,
                     0.5..=50.0,
-                ) {
+                ) && let Ok(height_nm) = Nm::from_mm_f64_rounded(h)
+                {
                     output = op(SchematicCommand::EditDrawing {
                         drawing: id,
                         item: SheetItem::Text {
                             at: *at,
                             text: text.clone(),
-                            height: h,
+                            height_nm,
                             rotation: *rotation,
                         },
                     });
                 }
             }
             SheetItem::Line { from, to } => {
-                let point = |p: &[f64; 2]| {
+                let point = |p: &PointNm| {
+                    let p = p.to_mm_f64();
                     format!("{}, {} mm", kit::number_text(p[0]), kit::number_text(p[1]))
                 };
                 kit::value_row(ui, "From", &point(from));
@@ -562,8 +572,8 @@ impl SchematicEditor {
             SheetItem::Rect { min, max } => {
                 let size = format!(
                     "{} × {} mm",
-                    kit::number_text(max[0] - min[0]),
-                    kit::number_text(max[1] - min[1])
+                    kit::number_text(max.x_nm.to_mm_f64() - min.x_nm.to_mm_f64()),
+                    kit::number_text(max.y_nm.to_mm_f64() - min.y_nm.to_mm_f64())
                 );
                 kit::value_row(ui, "Size", &size);
             }

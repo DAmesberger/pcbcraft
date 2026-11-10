@@ -9,9 +9,10 @@
 //! arc, whose drag sets its radius, and a dot in the middle of each segment.
 use super::*;
 use pcbcraft_core::geometry;
-use pcbcraft_core::model::{Corner, FreeEnd, Wire};
+use pcbcraft_core::model::{FreeEnd, Wire};
 use pcbcraft_core::schematic::scene;
-use pcbcraft_core::schematic::wire_edit::{self, Movable, WireSide};
+use pcbcraft_core::schematic::wire_edit::{self, Bend, Movable, WireSide};
+use pcbcraft_core::units::Nm;
 
 /// How near a corner or free end handle reaches, in points (the Fill tool's).
 const HANDLE_REACH_PX: f32 = 8.0;
@@ -51,7 +52,7 @@ pub(super) struct ScreenPath {
 impl ScreenPath {
     /// `path` at `scale` px/mm, through `screen`; arcs flattened to a
     /// quarter of a point.
-    pub(super) fn new(path: &[Corner], scale: f32, screen: &impl Fn(Point) -> Pos2) -> Self {
+    pub(super) fn new(path: &[Bend], scale: f32, screen: &impl Fn(Point) -> Pos2) -> Self {
         let vertices: Vec<Pos2> = path.iter().map(|c| screen(c.at)).collect();
         let shape = scene::wire_shape(path);
         let geometry::Shape::Polyline { points, radii } = &shape else {
@@ -195,11 +196,11 @@ pub(super) struct PathDrag {
     pub grab: Grab,
     /// The path and its movable ends when the drag began; each frame's result
     /// is computed from these, so a drag never accumulates.
-    path: Vec<Corner>,
+    path: Vec<Bend>,
     movable: Movable,
     press: Point,
     /// The path as it would be stored now.
-    pub now: Vec<Corner>,
+    pub now: Vec<Bend>,
     /// The command that stores it; `None` while it has not moved.
     command: Option<SchematicCommand>,
     /// The connection point it would land on.
@@ -218,7 +219,8 @@ impl PathDrag {
                 let original = self.path.get(index + 1).map(|c| c.at);
                 wire_edit::move_corner(&self.path, self.movable, index, to, free)
                     .filter(|_| original != Some(to))
-                    .map(|now| {
+                    .zip(sheet_nm(to))
+                    .map(|(now, to)| {
                         (
                             now,
                             SchematicCommand::MoveWireCorner {
@@ -234,7 +236,8 @@ impl PathDrag {
                 let offset = self.offset(index, at, grid);
                 wire_edit::move_segment(&self.path, self.movable, index, offset)
                     .filter(|_| offset != 0.0)
-                    .map(|now| {
+                    .zip(Nm::from_mm_f64_rounded(offset).ok())
+                    .map(|(now, offset)| {
                         (
                             now,
                             SchematicCommand::MoveWireSegment {
@@ -250,7 +253,8 @@ impl PathDrag {
                 let original = self.path.get(index + 1).map(|c| c.radius);
                 wire_edit::set_radius(&self.path, index, radius)
                     .filter(|_| original != Some(radius))
-                    .map(|now| {
+                    .zip(Nm::from_mm_f64_rounded(radius).ok())
+                    .map(|(now, radius)| {
                         (
                             now,
                             SchematicCommand::SetWireRadius {
@@ -585,6 +589,7 @@ impl SchematicEditor {
                     .map(|(_, new)| (on_grid, new))
                     .or_else(|| wire_edit::insert_corner(&path, on).map(|(_, new)| (on, new)))?;
                 self.selected_corner = Some((wire, new));
+                let at = sheet_nm(at)?;
                 self.send_path_edit(ctx, engine, SchematicCommand::InsertWireCorner { wire, at })
             }
             Grab::Segment(_) | Grab::End(_) => None,
@@ -606,7 +611,7 @@ impl SchematicEditor {
             let found = project.wire(wire)?;
             let index = self.picked_corner(found)?;
             let mut reduced = false;
-            let radius = if found.corners.get(index)?.radius > 0.0 {
+            let radius = if found.corners.get(index)?.radius_nm > Nm::ZERO {
                 0.0
             } else {
                 // As large as fits, up to the tool's radius; nothing fits a
@@ -622,7 +627,7 @@ impl SchematicEditor {
                 SchematicCommand::SetWireRadius {
                     wire,
                     index,
-                    radius,
+                    radius: Nm::from_mm_f64_rounded(radius).ok()?,
                 },
             );
             if reduced && sent.is_some() {

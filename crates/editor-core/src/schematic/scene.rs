@@ -200,7 +200,13 @@ fn flag(shape: PortShape, length: f64, half: f64) -> Vec<Point> {
 /// position and rotation. A label that places itself is drawn by
 /// [`sheet_labels`].
 pub fn label(label: &Label) -> Drawing {
-    label_at(label, label.position, label.rotation, 0.0, false)
+    label_at(
+        label,
+        label.position.to_mm_f64(),
+        label.rotation,
+        0.0,
+        false,
+    )
 }
 
 /// What a label draws with its connection point at `at`, turned by
@@ -649,8 +655,8 @@ fn inward(side: SheetSide) -> f64 {
 /// page below it, and each pin's port shape and name inside the edge.
 pub fn sheet_symbol(project: &Project, symbol: &SheetSymbol) -> Drawing {
     let mut d = Drawing::default();
-    let [x, y] = symbol.position;
-    let [w, h] = symbol.size;
+    let [x, y] = symbol.position_mm();
+    let [w, h] = symbol.size_mm();
     d.rect([x, y], [x + w, y - h], FRAME_MM);
     let child = project.sheet(symbol.child);
     d.text(
@@ -698,20 +704,20 @@ pub fn item(item: &SheetItem) -> Drawing {
         SheetItem::Text {
             at,
             text,
-            height,
+            height_nm,
             rotation,
         } => d.texts.push(PlacedText {
             graphic: None,
             text: text.clone(),
-            at: *at,
-            height: *height,
+            at: at.to_mm_f64(),
+            height: height_nm.to_mm_f64(),
             rotation_deg: rotation.degrees(),
             justify: justify(HAlign::Left, VAlign::Bottom),
             mirrored: false,
             line_spacing: TEXT_LINE_SPACING,
         }),
-        SheetItem::Line { from, to } => d.line(*from, *to, LINE_MM),
-        SheetItem::Rect { min, max } => d.rect(*min, *max, LINE_MM),
+        SheetItem::Line { from, to } => d.line(from.to_mm_f64(), to.to_mm_f64(), LINE_MM),
+        SheetItem::Rect { min, max } => d.rect(min.to_mm_f64(), max.to_mm_f64(), LINE_MM),
     }
     d
 }
@@ -872,7 +878,7 @@ pub struct SheetScene {
 /// A wire's path, its vertices with their corner radii, as the polyline
 /// that draws it: rounded corners as arcs tangent to both segments, each as
 /// large as fits.
-pub fn wire_shape(path: &[crate::model::Corner]) -> Shape {
+pub fn wire_shape(path: &[super::wire_edit::Bend]) -> Shape {
     let radii = if path.iter().any(|c| c.radius > 0.0) {
         path.iter().map(|c| c.radius).collect()
     } else {

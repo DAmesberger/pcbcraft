@@ -96,7 +96,7 @@ impl SchematicEditor {
         wire: &pcbcraft_core::Wire,
     ) -> Option<Operation> {
         let index = self.picked_corner(wire)?;
-        let current = wire.corners.get(index)?.radius;
+        let current = wire.corners.get(index)?.radius_mm();
         let key = (wire.id, index);
         let mut value = self
             .corner_radius
@@ -126,7 +126,7 @@ impl SchematicEditor {
                 Some(Operation::Schematic(SchematicCommand::SetWireRadius {
                     wire: wire.id,
                     index,
-                    radius: value,
+                    radius: pcbcraft_core::units::Nm::from_mm_f64_rounded(value).ok()?,
                 }))
             }
             super::Live::Revert | super::Live::Idle => None,

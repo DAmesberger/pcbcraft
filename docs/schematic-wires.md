@@ -38,7 +38,7 @@ pub struct Corner {
 
 ### Ends
 
-`WireEnd` gains one variant: `Free(FreeEnd { free: Point })`, written as `{"free": [x, y]}`. `WireEnd` is a map key throughout core, so it must stay `Eq`/`Ord`/`Hash`. `FreeEnd` therefore holds the point as integer nanometres and serialises it in millimetres. A free end connects to nothing, and connectivity code skips it.
+`WireEnd` gains one variant: `Free(FreeEnd { free: PointNm })`, stored as `{"free": {"x_nm", "y_nm"}}` and given to commands as `{"free": [x, y]}` (lengths in mm or with a unit). `WireEnd` is a map key throughout core, so it must stay `Eq`/`Ord`/`Hash`, which the integer point is. A free end connects to nothing, and connectivity code skips it.
 
 ### Connectivity
 

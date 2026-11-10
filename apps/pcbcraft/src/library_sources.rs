@@ -261,7 +261,8 @@ fn place_source(
 ) -> Result<Placed, String> {
     let operation = Operation::Library(LibraryCommand::PlaceFrom {
         source,
-        position,
+        position: pcbcraft_core::units::PointNm::from_mm_f64_rounded(position)
+            .map_err(|e| e.to_string())?,
         designator: None,
         other_revision,
     });
