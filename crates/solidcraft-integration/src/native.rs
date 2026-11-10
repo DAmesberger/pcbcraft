@@ -1001,12 +1001,16 @@ impl Native {
             if let Some(instead) = instead {
                 let reply = self.run(command, &instead)?;
                 return match &mut self.replay {
-                    Some(replay) => replay.complete(reply),
+                    Some(replay) => {
+                        replay.count(1);
+                        replay.complete(reply)
+                    }
                     None => Ok(reply),
                 };
             }
             let reply = self.run(command, &params)?;
             if let Some(replay) = &mut self.replay {
+                replay.count(1);
                 replay.ran(command, params, reply.clone());
             }
             return Ok(reply);
@@ -1050,10 +1054,45 @@ impl Native {
                 }
                 params = json!({ "features": features });
             }
+            self.delete_rolled_back(&command, &params)?;
             self.run(&command, &params)?;
+            if let Some(replay) = &mut self.replay {
+                replay.count(1);
+            }
         }
         if changed_active && let Some(replay) = &mut self.replay {
             replay.unsynced();
+        }
+        Ok(())
+    }
+
+    /// Before a command that deletes features (`timeline.delete`, or
+    /// `component.delete` with the component's features), roll the history
+    /// back to the first of them unless it is: a deletion evaluates the
+    /// design again from where it deleted, and every feature after a
+    /// deleted one evaluates anew (its input state changed). Rolled back,
+    /// the deletions, and features added at the marker, are evaluated once,
+    /// when the history is rolled forward ([`replay::Replay::apply`]).
+    fn delete_rolled_back(&mut self, command: &str, params: &Value) -> Result<()> {
+        let features = &self.session.doc.features;
+        let from = match command {
+            "timeline.delete" => {
+                let ids: std::collections::BTreeSet<u64> = params
+                    .get("features")
+                    .and_then(Value::as_array)
+                    .map(|f| f.iter().filter_map(Value::as_u64).collect())
+                    .unwrap_or_default();
+                features.iter().position(|f| ids.contains(&f.id))
+            }
+            "component.delete" => {
+                let component = params.get("component").and_then(Value::as_u64);
+                features.iter().position(|f| Some(f.component) == component)
+            }
+            _ => None,
+        };
+        let marker = self.session.doc.marker.unwrap_or(features.len());
+        if let Some(from) = from.filter(|from| *from < marker) {
+            self.run("timeline.rollback", &json!({ "position": from }))?;
         }
         Ok(())
     }

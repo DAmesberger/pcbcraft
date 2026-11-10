@@ -160,8 +160,10 @@ pub(crate) struct Replay {
     /// activated on the design.
     active: Value,
     synced: Option<Value>,
-    /// Whether a command ran on the design (its evaluation is put off).
+    /// Whether a command ran on the design (its evaluation is put off),
+    /// and how many did.
     live: bool,
+    counted: usize,
     /// Each component's first occurrence (where its copies are placed
     /// from), and how far an edit moves a first occurrence.
     first_of: BTreeMap<u64, u64>,
@@ -341,6 +343,7 @@ impl Replay {
             active: json!("root"),
             synced: None,
             live: false,
+            counted: 0,
             first_of: BTreeMap::new(),
             moved: BTreeMap::new(),
             placing: None,
@@ -353,6 +356,10 @@ impl Replay {
 
     /// Note that a command runs on the design; returns whether one did
     /// before (whose evaluation is already put off).
+    pub(super) fn count(&mut self, commands: usize) {
+        self.counted = self.counted.saturating_add(commands);
+    }
+
     pub(super) fn go_live(&mut self) -> bool {
         std::mem::replace(&mut self.live, true)
     }
@@ -812,20 +819,20 @@ impl Replay {
     /// Apply every difference to `native` (the recorded design); returns the
     /// new command stream and how many commands the update ran.
     pub(super) fn apply(mut self, native: &mut Native) -> Result<(Log, usize)> {
-        let mut ran = 0usize;
+        let mut ran = self.counted;
         // The recorded units after the last one built are removed too.
         let removed = self.skip_units();
         if self.cursor != self.previous.ran.len() {
             return Err(diverged(self.now.ran.len(), "the build ran fewer commands"));
         }
         let mut live = self.live;
-        for (command, params) in removed {
+        if !removed.is_empty() {
             if !live {
                 native.defer()?;
                 live = true;
             }
-            native.run(&command, &params)?;
-            ran += 1;
+            ran += removed.len();
+            native.run_live(removed)?;
         }
         // Parameters no longer used, once what used them is gone.
         for name in &self.dropped {
@@ -1005,7 +1012,13 @@ impl Replay {
                 native.session.doc.features.iter().position(|f| f.id == id)
             })
             .min();
-        if let Some(position) = first {
+        // Units deleted may have rolled the history back already
+        // ([`Native::delete_rolled_back`]); it is rolled back further only.
+        let marker = |native: &Native| {
+            let doc = &native.session.doc;
+            doc.marker.unwrap_or(doc.features.len())
+        };
+        if let Some(position) = first.filter(|p| *p < marker(native)) {
             native.run("timeline.rollback", &json!({"position": position}))?;
             ran += 1;
         }
@@ -1108,7 +1121,7 @@ impl Replay {
                 ran += 1;
             }
         }
-        if first.is_some() {
+        if native.session.doc.marker.is_some() {
             native.run("timeline.rollback", &json!({"position": "end"}))?;
             ran += 1;
         }

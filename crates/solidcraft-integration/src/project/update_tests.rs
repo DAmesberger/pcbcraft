@@ -404,8 +404,10 @@ fn vias_added_and_removed_update_the_board_in_place() -> Result<()> {
 /// On the shipped showcase (a sketched board with a cutout and a slot,
 /// a bottom and a top pour and an inner plane), a pour refilled after a
 /// stitching via moved, and a pour's copper alone changed, update the
-/// model in place as a fresh build would: the fill bodies are redrawn, and
-/// the slabs with the inner plane's foil level and the drills.
+/// model in place as a fresh build would: the tiles whose copper changed
+/// are built again (at the end of the history, so the bodies compare as
+/// [`same_board`] compares them), and the slabs with the inner plane's
+/// foil level and the drills are redrawn.
 #[test]
 fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
     use pcbcraft_core::layout::fill::{RefillTarget, refill};
@@ -443,7 +445,7 @@ fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
         .ok_or_else(|| Error::Verification("stitching via".into()))?;
     project.vias[via].position[0] += 0.2;
     refilled(&mut project)?;
-    let (next, how) = updated(model, &project)?;
+    let (next, how) = restructured(model, &project)?;
     assert!(
         matches!(how, Rebuilt::InPlace(n) if n > 0),
         "via moved, refilled: {how:?}"
@@ -464,10 +466,65 @@ fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
         corner[0] + 0.1 * (next[0] - corner[0]),
         corner[1] + 0.1 * (next[1] - corner[1]),
     ];
-    let (_, how) = updated(model, &project)?;
+    let (_, how) = restructured(model, &project)?;
     assert!(
         matches!(how, Rebuilt::InPlace(n) if n > 0),
         "plane copper: {how:?}"
+    );
+    Ok(())
+}
+
+/// A refill that changes how many regions a pour has (a part moved, a
+/// thermal split off an island) updates the model in place, as a fresh
+/// build would: a region added to the bottom pour, then the first region
+/// removed. Only the tiles whose copper changed are built again: the
+/// update runs a few commands per changed tile, not the pour's.
+#[test]
+fn a_refill_of_another_number_of_regions_updates_in_place() -> Result<()> {
+    let mut project = Engine::showcase_hosted(pcbcraft_core::Evaluators {
+        footprint: Some(&crate::footprint::SketchEvaluator),
+        board: Some(&crate::board::SketchBoardEvaluator),
+    })
+    .map_err(|e| Error::Verification(e.to_string()))?
+    .project()
+    .clone();
+    let mut model = build(&project)?;
+    let bottom = project
+        .fills
+        .iter()
+        .position(|f| f.layer == CopperLayer::Bottom && f.computed.is_some())
+        .ok_or_else(|| Error::Verification("a bottom pour".into()))?;
+    let tiles_of = |p: &Project| -> usize {
+        p.fills[bottom].computed.as_ref().map_or(0, |c| {
+            fill::tiles(&c.regions, fill::TILE_MM, fill::MODEL_CHORD_MM).len()
+        })
+    };
+    let before = tiles_of(&project);
+    // A small island in a corner of the board, in one tile of its own.
+    if let Some(copper) = project.fills[bottom].computed.as_mut() {
+        copper
+            .regions
+            .push(pcbcraft_core::model::fill::FilledRegion {
+                outer: vec![[0.6, 0.6], [1.6, 0.6], [1.6, 1.2], [0.6, 1.2]],
+                holes: vec![],
+            });
+    }
+    let (next, how) = restructured(model, &project)?;
+    assert!(
+        matches!(how, Rebuilt::InPlace(n) if n > 0),
+        "a region added: {how:?}"
+    );
+    model = next;
+    let added = tiles_of(&project);
+    assert!(added > before, "{added} tiles against {before}");
+    // The pour's first region gone (refilled without it).
+    if let Some(copper) = project.fills[bottom].computed.as_mut() {
+        copper.regions.remove(0);
+    }
+    let (_, how) = restructured(model, &project)?;
+    assert!(
+        matches!(how, Rebuilt::InPlace(n) if n > 0 && n < 4 * added),
+        "a region removed: {how:?}"
     );
     Ok(())
 }

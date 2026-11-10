@@ -21,6 +21,7 @@ solidcraft-color.workspace = true
 solidcore-record.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+i_overlay.workspace = true
 schemars.workspace = true
 thiserror.workspace = true
 # Element structure of SVG artwork (MIT); the same version Solidcraft's reader uses.

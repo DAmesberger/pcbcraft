@@ -14,7 +14,8 @@
 //!   outer track 10 µm wider and back instead; `width`: the board 1 mm wider
 //!   through the engine and undone, each followed as the app follows it,
 //!   the stale fills refilled; `route`: a routed step (a track and a via)
-//!   added and removed);
+//!   added and removed; `move`: a part, `PCBCRAFT_PROFILE_PART` or J1, moved
+//!   0.5 mm and the stale fills refilled);
 //!   `PCBCRAFT_PROFILE_REFILL=1` then refills the stale fills and updates again.
 //! - `PCBCRAFT_PROFILE_PART`: the part turned (default SW1).
 //! - `PCBCRAFT_PROFILE_TRACE`: write Solidcraft's Chrome trace there.
@@ -200,6 +201,40 @@ fn board_build_profile() {
     };
     if edit == "width" {
         board_width(model);
+        return;
+    }
+    // A part (`PCBCRAFT_PROFILE_PART`, default J1) moved 0.5 mm, then the
+    // fills it made stale refilled, as the app's fill worker does.
+    if edit == "move" {
+        let part = std::env::var("PCBCRAFT_PROFILE_PART").unwrap_or_else(|_| "J1".into());
+        let instance = project.instance_by_designator(&part).unwrap().id;
+        let placement = project
+            .placements
+            .iter_mut()
+            .find(|p| p.instance == instance)
+            .unwrap();
+        placement.position[1] += 0.5;
+        let start = Instant::now();
+        let (model, how) = project::update(model, &project, &sources, None).unwrap();
+        eprintln!(
+            "{part} moved: update {:.1} s ({how:?})",
+            start.elapsed().as_secs_f64()
+        );
+        let mut cache = pcbcraft_core::layout::fill::FillCache::default();
+        let fresh = pcbcraft_core::layout::fill::compute_stale(&project, &mut cache).unwrap();
+        let count = fresh.len();
+        for (id, copper) in fresh {
+            let fill = project.fills.iter_mut().find(|f| f.id == id).unwrap();
+            fill.computed = Some(copper);
+        }
+        let start = Instant::now();
+        let (model, how) = project::update(model, &project, &sources, None).unwrap();
+        eprintln!(
+            "{part} moved, {count} fills refilled: update {:.1} s ({how:?})",
+            start.elapsed().as_secs_f64()
+        );
+        features(&model);
+        spans("refilled");
         return;
     }
     // A routed step added (a copy of an outer track, 0.5 mm aside, and a

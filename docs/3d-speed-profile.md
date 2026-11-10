@@ -303,3 +303,25 @@ Same host and `ci` profile, load average 12–15. `PCBCRAFT_PROFILE_EDIT=width` 
 | --- | --- | --- |
 | Routed step added (track and via), stale fills | built anew, 27–36 s | **2.1 s**, in place |
 | …removed again | built anew | **2.2 s**, in place |
+
+## Update, 10 November 2026: refills in tiles
+
+`PCBCRAFT_PROFILE_EDIT=move`: J1 moved 0.5 mm, then the four fills it made stale refilled, as the app's fill worker does; same host, load average 5–25.
+
+**Why a refill was built anew.** Each fill region was one sketch and one extrusion, numbered by its place in the fill's copper; a refill that split or joined a region (J1's move takes the GND pour from 29 to 31 regions) changed the command stream, and even with the same regions every changed region was redrawn and redefined (`timeline.redefine`, two evaluations of a 2,500–3,500-face extrusion).
+
+**What was chosen, and why.** The fills are built in **tiles**: each fill's regions are cut along a fixed 12 mm grid of the board (an exact cut on a nanometre grid, `i_overlay`'s integer overlay, so a cell's pieces depend only on the copper in that cell), and each loop is simplified to the model's 10 µm chord with every point on the cell's border kept, so neighbouring tiles meet along the same cut edges (copper joining copper). A tile is a replay unit known by its fill, cell and place in the cell, and by a digest of its outline: a refill deletes the tiles whose copper changed and builds them again at the end of the history; the others are passed over. No profile pick is involved, so nothing of Solidcraft's own profile-pick rule is reproduced, and nothing in the Solidcraft fork changed. Deletions roll the history back to the first feature they take, so the design is evaluated once, when it is rolled forward. The other way to stop a region-count change forcing a rebuild, region units without tiles, would still re-extrude a whole 3,500-face region for a change around one pad; tiles make the build cheaper too, because extruding one profile costs more than linearly in its edges.
+
+| ESP32 board | Before | Tiles of 4 mm | 8 mm | **12 mm (chosen)** |
+| --- | --- | --- | --- | --- |
+| Open in 3D (build) | 34.4 s (27 s at lower load) | 25.5 s | 17.4 s | **15.0–16.1 s** |
+| J1 moved 0.5 mm, stale fills | 7.2 s | 3.5 s | 3.3 s | **3.3 s** |
+| …the 4 stale fills refilled | 35.9 s, built anew | 13.4 s | 8.4 s* | **8.9 s** (7.3 s*) |
+| Outer track 10 µm wider | — | — | — | **2.3 s** (4.9 s*) |
+| Width +1 mm, then all 4 fills refilled | 4.4 + 42.6 s | — | — | **4.9 + 11.0 s** |
+
+\* the fills placed just before the laminate instead of first; kept first, since the edit's own update (what moves first on screen) is the faster one there.
+
+More tiles cost more than their smaller extrusions save: Solidcraft's evaluation bookkeeping grows with every body made before a feature (`doc evaluate` self time 8.0 s at 4 mm, 2.3 s at 12 mm), while the extrusions stay about 4.3 s at every size.
+
+**What remains.** A refill still evaluates every feature after the first tile it deletes: the later tiles, parts, pads, tracks and the laminate (1,128 SMLib extrusions in the J1 refill, the inner foil-level slabs 0.6 s each), because Solidcraft keys each feature's cached result on the digest of every body made before it. Only a generic Solidcraft change removes that: a feature's cache key built from what it reads (a new-body extrusion reads its sketch and parameters), option c2 above. It needs the founder's go and was not made.
