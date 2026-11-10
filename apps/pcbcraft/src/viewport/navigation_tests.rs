@@ -385,6 +385,43 @@ fn space_drag_pans() -> Result<()> {
     Ok(())
 }
 
+/// With Space held, a click (also one pressed right after the pointer
+/// jumped there, or moved 2 pt before the release) still selects and never
+/// moves the camera: the pan starts only once the press is a drag.
+#[test]
+fn a_click_with_space_held_selects_and_does_not_pan() -> Result<()> {
+    let mut nav = Nav::new(NavCaps::BOARD)?;
+    let (item, on_part) = nav.package()?;
+    let space = Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    };
+    let far = on_part + vec2(-80.0, -60.0);
+    nav.frame(vec![Event::PointerMoved(far), space], Modifiers::NONE);
+    let before = nav.viewport.camera;
+    let press = |at| Nav::button(at, PointerButton::Primary, true, Modifiers::NONE);
+    let release = |at| Nav::button(at, PointerButton::Primary, false, Modifiers::NONE);
+    let mut picks = vec![];
+    picks.extend(nav.frame(
+        vec![Event::PointerMoved(on_part), press(on_part)],
+        Modifiers::NONE,
+    ));
+    picks.extend(nav.frame(vec![release(on_part)], Modifiers::NONE));
+    assert_eq!(picks, vec![Some(item)]);
+    assert_eq!(nav.viewport.camera, before, "the jump and click panned");
+    let near = on_part + vec2(2.0, 1.0);
+    let mut picks = vec![];
+    picks.extend(nav.frame(vec![press(on_part)], Modifiers::NONE));
+    picks.extend(nav.frame(vec![Event::PointerMoved(near)], Modifiers::NONE));
+    picks.extend(nav.frame(vec![release(near)], Modifiers::NONE));
+    assert_eq!(picks, vec![Some(item)]);
+    assert_eq!(nav.viewport.camera, before, "a 2 pt click panned");
+    Ok(())
+}
+
 /// Component 3D keeps the left button for its triad: Space and Cmd/Ctrl
 /// drags do not navigate there, while the trackpad and right-drag do.
 #[test]

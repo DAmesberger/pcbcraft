@@ -133,6 +133,13 @@ pub struct Viewport {
     primary_nav: Option<NavMode>,
     /// The right button is past being a click and orbits.
     right_drag: bool,
+    /// The left button's press is past being a click and pans or orbits.
+    primary_drag: bool,
+    /// Space is held for panning: it went down while no field had the
+    /// keyboard and is still down. A space typed into a field never pans,
+    /// even when the field's text arrives without the key's release (as
+    /// synthetic typing sends it), which would leave egui's key down.
+    space_held: bool,
     /// The last click was the middle button's (a middle double-click fits).
     middle_clicked: bool,
     /// The layers drawn and picked.
@@ -251,6 +258,8 @@ impl Viewport {
             trackpad: Default::default(),
             primary_nav: None,
             right_drag: false,
+            primary_drag: false,
+            space_held: false,
             middle_clicked: false,
             layers: LayerView::default(),
             display: pcbcraft_core::geometry::Transform3::IDENTITY,
@@ -911,9 +920,10 @@ impl Viewport {
         if caps.cube {
             self.paint_cube(ui, rect);
         }
+        // A press that ended as a click selects, Space or Cmd/Ctrl held or
+        // not: navigation only begins once it is a drag.
         if response.clicked()
             && !cube_owns
-            && self.primary_nav != Some(NavMode::Pan)
             && let Some(p) = response.interact_pointer_pos()
         {
             let (x, y) = local(p);
@@ -1063,11 +1073,25 @@ impl Viewport {
             }
         }
         // A left press with Space held pans, and with Cmd/Ctrl on empty
-        // space orbits, until the button is let go (kept through the release
-        // frame, so the end of the drag selects nothing). A Cmd/Ctrl+click
-        // that does not move still selects.
+        // space orbits, until the button is let go. Either starts only once
+        // the press can no longer be a click, so a click selects and never
+        // moves the camera.
         let typing = ui.ctx().egui_wants_keyboard_input();
-        let space = caps.primary && !typing && ui.input(|i| i.key_down(egui::Key::Space));
+        let (space_pressed, space_down) = ui.input(|i| {
+            let pressed = i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::Space,
+                        pressed: true,
+                        ..
+                    }
+                )
+            });
+            (pressed, i.key_down(egui::Key::Space))
+        });
+        self.space_held = space_down && (self.space_held || (space_pressed && !typing));
+        let space = caps.primary && !typing && self.space_held;
         if primary_pressed && inside && primary_here {
             let command = (mods.command || mods.ctrl) && !mods.shift && !mods.alt;
             let empty = |viewport: &Self| {
@@ -1096,23 +1120,32 @@ impl Viewport {
         // The right button also clicks, so it orbits only once the press can
         // no longer be one; that frame catches up with the whole way from
         // the press.
+        // The left button's Space pan and Cmd/Ctrl orbit wait the same way.
         let right_drag = secondary_down && pressed_here && !could_click;
+        let primary_mode = if space {
+            Some(NavMode::Pan)
+        } else {
+            self.primary_nav
+        };
+        let primary_drag = primary_down && primary_here && !could_click && primary_mode.is_some();
         let delta = match (press, latest) {
             (Some(from), Some(to)) if right_drag && !self.right_drag && !middle => to - from,
+            (Some(from), Some(to))
+                if primary_drag && !self.primary_drag && !middle && !right_drag =>
+            {
+                to - from
+            }
             _ => delta,
         };
         self.right_drag = right_drag;
+        self.primary_drag = primary_drag;
         let mode = if middle && pressed_here {
             let shift = mods.shift && !mods.command && !mods.ctrl && !mods.alt;
             Some(if shift { NavMode::Orbit } else { NavMode::Pan })
         } else if right_drag {
             Some(NavMode::Orbit)
-        } else if primary_down && primary_here {
-            if space {
-                Some(NavMode::Pan)
-            } else {
-                self.primary_nav
-            }
+        } else if primary_drag {
+            primary_mode
         } else {
             None
         };
