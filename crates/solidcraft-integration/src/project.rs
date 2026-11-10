@@ -1889,6 +1889,9 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             None => Mount::Height(inner_base(stackup, track.layer)?.into()),
         };
         let prefix = format!("trace_{}", track.id);
+        // A track added or removed is a unit of its own: an update makes or
+        // deletes it alone.
+        b.native.unit(&prefix, None)?;
         let created = b.native.component(&prefix, false)?;
         let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
         // The stadium in the track's frame: start at the origin, along +x.
@@ -1902,6 +1905,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             height: copper_param(track.layer).into(),
         })?;
         b.record(&prefix, BodyKind::CopperTrack)?;
+        b.native.unit_end()?;
         joints.push((
             BoardJoint {
                 board,

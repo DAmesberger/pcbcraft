@@ -72,6 +72,107 @@ fn same_model(a: &NativeModel, b: &NativeModel) -> Result<()> {
     Ok(())
 }
 
+/// [`same_model`] for a model updated with objects added or removed: an
+/// added object's component and occurrence get the design's next ids and
+/// its features come at the end of the history, so the native bodies are
+/// compared as sets (each by kind, source, layer, box and volume) and the
+/// sources and saved identity without the native component and occurrence
+/// ids. Everything else is compared as [`same_model`] compares it.
+fn same_board(a: &NativeModel, b: &NativeModel) -> Result<()> {
+    let native = |m: &NativeModel| -> Vec<Geometry> {
+        let mut bodies: Vec<Geometry> = m
+            .geometry
+            .iter()
+            .filter(|g| !g.kind.is_appearance())
+            .cloned()
+            .collect();
+        bodies.sort_by(|g, h| {
+            let key = |g: &Geometry| (format!("{:?}", g.kind), g.item, format!("{:?}", g.layer));
+            let at = |g: &Geometry| [g.min[2], g.min[0], g.min[1], g.max[0], g.max[1], g.max[2]];
+            key(g).cmp(&key(h)).then_with(|| {
+                at(g)
+                    .iter()
+                    .zip(at(h))
+                    .map(|(p, q)| p.total_cmp(&q))
+                    .find(|o| o.is_ne())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        });
+        bodies
+    };
+    let (x, y) = (native(a), native(b));
+    assert_eq!(x.len(), y.len(), "native bodies");
+    for (k, (g, h)) in x.iter().zip(&y).enumerate() {
+        assert_eq!(
+            (g.kind, g.item, g.layer),
+            (h.kind, h.item, h.layer),
+            "body {k}"
+        );
+        for axis in 0..3 {
+            for (p, q) in [(g.min[axis], h.min[axis]), (g.max[axis], h.max[axis])] {
+                assert!((p - q).abs() < 1e-6, "body {k} {:?}: {p} != {q}", g.kind);
+            }
+        }
+        let (v, w) = (g.volume(), h.volume());
+        assert!(
+            (v - w).abs() <= 1e-6 * (1.0 + w.abs()),
+            "body {k} {:?} volume {v} != {w}",
+            g.kind
+        );
+    }
+    let shown = |m: &NativeModel| {
+        m.geometry
+            .iter()
+            .filter(|g| g.kind.is_appearance())
+            .map(|g| (g.kind, g.item, g.mesh.triangles.len()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(shown(a), shown(b), "display layers");
+    let anonymous = |sources: &[Source]| -> Result<Vec<serde_json::Value>> {
+        sources
+            .iter()
+            .map(|s| {
+                let mut v = serde_json::to_value(s)?;
+                if let Some(map) = v.as_object_mut() {
+                    map.remove("component");
+                    map.remove("occurrence");
+                }
+                Ok(v)
+            })
+            .collect()
+    };
+    assert_eq!(anonymous(&a.sources)?, anonymous(&b.sources)?, "sources");
+    let (saved_a, kinds_a) = identity::read(&a.native)?;
+    let (saved_b, kinds_b) = identity::read(&b.native)?;
+    assert_eq!(anonymous(&saved_a)?, anonymous(&saved_b)?, "saved sources");
+    assert_eq!(kinds_a, kinds_b, "saved body kinds");
+    let other = |m: &NativeModel| {
+        m.native
+            .session()
+            .doc
+            .metadata
+            .0
+            .iter()
+            .filter(|(k, _)| !k.starts_with("org.pcbcraft.electronics.identity."))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(other(a), other(b), "other saved metadata");
+    // Every body keeps the look a fresh build assigns, and no body that is
+    // gone keeps one.
+    let looks = |m: &NativeModel| m.native.session().doc.appearances.bodies.clone();
+    assert_eq!(looks(a), looks(b), "body looks");
+    Ok(())
+}
+
+/// Update `model` to `project` and check it matches a fresh build as
+/// [`same_board`] compares them.
+fn restructured(model: NativeModel, project: &Project) -> Result<(NativeModel, Rebuilt)> {
+    let (model, how) = update(model, project, &SourceCache::default(), None)?;
+    same_board(&model, &build(project)?)?;
+    Ok((model, how))
+}
+
 /// A small 4-layer board: the showcase with vias and inner tracks.
 fn board() -> Result<Project> {
     via_board(40)
@@ -149,23 +250,89 @@ fn value_edits_update_the_board_in_place_as_a_fresh_build_would() -> Result<()> 
         model = next;
     }
     // An update of an unchanged board runs nothing.
-    let (model, how) = updated(model, &project)?;
+    let (_, how) = updated(model, &project)?;
     assert_eq!(how, Rebuilt::InPlace(0));
-    // A new track changes the board's structure: built anew.
+    Ok(())
+}
+
+/// Tracks added (as a carry or the router adds them) and removed update the
+/// model in place, as a fresh build of the edited board would be: an outer
+/// and an inner track added, the added one moved, an original removed, the
+/// added ones removed again. A new via size is still built anew.
+#[test]
+fn tracks_added_and_removed_update_the_board_in_place() -> Result<()> {
+    let mut project = board()?;
+    let mut model = build(&project)?;
+    let in_place = |what: &str, how: &Rebuilt| {
+        assert!(
+            matches!(how, Rebuilt::InPlace(n) if *n > 0),
+            "{what}: {how:?}"
+        );
+    };
     let net = project.nets[0].id;
-    let id = project
+    let inner = project
+        .tracks
+        .iter()
+        .find(|t| t.layer.side().is_none())
+        .map(|t| t.layer)
+        .ok_or_else(|| Error::Verification("an inner track".into()))?;
+    let mut added = Vec::new();
+    for (start, end, layer) in [
+        ([2.0, 2.0], [6.0, 2.0], CopperLayer::Top),
+        ([2.0, 3.0], [5.0, 4.0], inner),
+    ] {
+        let id = project
+            .allocate()
+            .map_err(|e| Error::Verification(e.to_string()))?;
+        project.tracks.push(Track {
+            id,
+            net,
+            start,
+            end,
+            width: 0.2,
+            layer,
+            locked: false,
+        });
+        added.push(id);
+        let (next, how) = restructured(model, &project)?;
+        in_place("a track added", &how);
+        model = next;
+    }
+    // The added track moved: a value of the object the update made.
+    if let Some(track) = project.tracks.iter_mut().find(|t| t.id == added[0]) {
+        track.end[1] += 0.5;
+        track.width = 0.25;
+    }
+    let (next, how) = restructured(model, &project)?;
+    in_place("an added track edited", &how);
+    model = next;
+    // Unchanged: nothing runs.
+    let (next, how) = restructured(model, &project)?;
+    assert_eq!(how, Rebuilt::InPlace(0));
+    model = next;
+    // An original track removed, then the added ones.
+    let first = project.tracks.remove(0).id;
+    assert!(!added.contains(&first));
+    let (next, how) = restructured(model, &project)?;
+    in_place("a track removed", &how);
+    model = next;
+    project.tracks.retain(|t| !added.contains(&t.id));
+    let (next, how) = restructured(model, &project)?;
+    in_place("the added tracks removed", &how);
+    model = next;
+    // A via of a new size needs a definition the board did not have.
+    let mut via = project
+        .vias
+        .first()
+        .cloned()
+        .ok_or_else(|| Error::Verification("a via".into()))?;
+    via.id = project
         .allocate()
         .map_err(|e| Error::Verification(e.to_string()))?;
-    project.tracks.push(Track {
-        id,
-        net,
-        start: [2.0, 2.0],
-        end: [6.0, 2.0],
-        width: 0.2,
-        layer: CopperLayer::Top,
-        locked: false,
-    });
-    let (_, how) = updated(model, &project)?;
+    via.diameter += 0.1;
+    via.position[0] += 1.0;
+    project.vias.push(via);
+    let (_, how) = restructured(model, &project)?;
     assert!(
         matches!(&how, Rebuilt::Anew(Some(why)) if why.contains("more than values")),
         "{how:?}"

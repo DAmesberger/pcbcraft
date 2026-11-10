@@ -1,13 +1,23 @@
-//! Updating a built design in place. A board build is a fixed sequence of
-//! native commands for a given structure (which parts, pads, tracks and via
-//! sizes there are); an edit mostly changes values inside it: a parameter's
+//! Updating a built design in place. A board build is a sequence of
+//! native commands; an edit mostly changes values inside it: a parameter's
 //! expression, the drawing of a sketch, where a placement stands. A build
 //! of the edited board is run against the recorded sequence instead of a
 //! new session: each command is compared with the one at its step and
 //! answered with that step's recorded reply, and only the differences are
 //! applied to the design afterwards, so evaluation reuses every feature an
-//! edit did not reach. Any other difference ends the replay and the board
-//! is built anew.
+//! edit did not reach.
+//!
+//! The commands that build one object (a track) can be marked as a
+//! [`Unit`] of its name. An object the edit added is a unit the recorded
+//! build did not have: its commands run on the design as they come (its
+//! features go at the end of the history, where evaluating them reads
+//! nothing evaluated before); an object the edit removed is a recorded unit
+//! the build no longer runs, and what it created is deleted. A unit
+//! recorded with a digest of its content (a fill tile) that comes again
+//! with another digest is deleted and run again, instead of being redrawn.
+//! The board's aggregate commands follow: parameters added or dropped,
+//! joints added, looks assigned again, metadata recorded again. Any other
+//! difference ends the replay and the board is built anew.
 use super::Native;
 use crate::{Error, Result};
 use serde_json::{Map, Value, json};
@@ -43,6 +53,18 @@ struct Ran {
 pub(crate) struct Log {
     ran: Vec<Ran>,
     marks: Vec<(String, usize, usize)>,
+    units: Vec<Unit>,
+}
+
+/// The commands `start..end` of a log that built the object `name`
+/// ([`super::Native::unit`]); `content` is a digest of what it builds when
+/// another one is to replace it rather than be updated in place.
+#[derive(Clone, Debug)]
+struct Unit {
+    name: String,
+    content: Option<u64>,
+    start: usize,
+    end: usize,
 }
 
 impl Log {
@@ -60,6 +82,25 @@ impl Log {
 
     pub(super) fn mark(&mut self, name: &str, start: usize, end: usize) {
         self.marks.push((name.to_owned(), start, end));
+    }
+
+    /// Begin the unit `name` at the next command.
+    pub(super) fn begin_unit(&mut self, name: &str, content: Option<u64>) {
+        let at = self.ran.len();
+        self.units.push(Unit {
+            name: name.to_owned(),
+            content,
+            start: at,
+            end: at,
+        });
+    }
+
+    /// End the unit begun last.
+    pub(super) fn end_unit(&mut self) {
+        let at = self.ran.len();
+        if let Some(unit) = self.units.last_mut() {
+            unit.end = at;
+        }
     }
 
     /// The parameters and reply recorded at `step`.
@@ -94,8 +135,63 @@ impl Log {
 pub(crate) struct Replay {
     previous: Log,
     now: Log,
-    /// Steps whose parameters differ from the recorded ones.
+    /// The next recorded step to compare with.
+    cursor: usize,
+    /// Each step of `now`: the recorded step it was compared with, `None`
+    /// for one run on the design (an added unit's).
+    origin: Vec<Option<usize>>,
+    /// Steps of `now` whose parameters differ from the recorded ones.
     changed: Vec<usize>,
+    /// The recorded units by name.
+    by_name: BTreeMap<String, usize>,
+    /// The first recorded unit not yet reached.
+    next_unit: usize,
+    /// The unit being built: the recorded one it is compared with, or
+    /// `None` for one that runs on the design.
+    open: Option<Option<usize>>,
+    /// Parameters the build no longer adds, dropped once their users are.
+    dropped: Vec<String>,
+    /// Bodies of units removed (not built again), whose looks go too.
+    gone: BTreeSet<String>,
+    /// Steps of `now` to run again once the design is changed (looks
+    /// assigned to other bodies).
+    again: Vec<usize>,
+    /// The component active at this point of the build, and the one last
+    /// activated on the design.
+    active: Value,
+    synced: Option<Value>,
+    /// Whether a command ran on the design (its evaluation is put off).
+    live: bool,
+}
+
+/// What the replay makes of the next command: commands to run on the
+/// design first, then the recorded reply, or `None` to run the command
+/// itself ([`Replay::ran`]).
+pub(super) struct Next {
+    pub before: Vec<(String, Value)>,
+    pub reply: Option<Value>,
+}
+
+/// A joint list's joints by name.
+fn joints(params: &Value) -> Option<BTreeMap<&str, &Value>> {
+    params
+        .get("joints")?
+        .as_array()?
+        .iter()
+        .map(|j| Some((j.get("name")?.as_str()?, j)))
+        .collect()
+}
+
+/// Whether `old` and `new` differ only in `key`.
+fn same_but(old: &Value, new: &Value, key: &str) -> bool {
+    match (old.as_object(), new.as_object()) {
+        (Some(a), Some(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(k, v)| k == key || b.get(k).is_some_and(|w| w == v))
+        }
+        _ => false,
+    }
 }
 
 fn diverged(step: usize, why: impl std::fmt::Display) -> Error {
@@ -116,32 +212,6 @@ fn rows(params: &Value) -> Option<Vec<(String, String)>> {
             ))
         })
         .collect()
-}
-
-/// Which parameters a `parameters.import` added or dropped (an object
-/// added or removed: a structural change), as `: added a, b; dropped c`.
-fn renamed(old: &Value, new: &Value) -> String {
-    let (Some(old), Some(new)) = (rows(old), rows(new)) else {
-        return String::new();
-    };
-    let names = |rows: &[(String, String)]| -> BTreeSet<String> {
-        rows.iter().map(|r| r.0.clone()).collect()
-    };
-    let (old, new) = (names(&old), names(&new));
-    let list = |a: &BTreeSet<String>, b: &BTreeSet<String>| {
-        a.difference(b)
-            .take(4)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let (added, dropped) = (list(&new, &old), list(&old, &new));
-    match (added.is_empty(), dropped.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => format!(": added {added}"),
-        (true, false) => format!(": dropped {dropped}"),
-        (false, false) => format!(": added {added}; dropped {dropped}"),
-    }
 }
 
 /// A 3 × 4 matrix's rotation and translation.
@@ -227,10 +297,27 @@ fn minus(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 
 impl Replay {
     pub(super) fn new(previous: Log) -> Self {
+        let by_name = previous
+            .units
+            .iter()
+            .enumerate()
+            .map(|(k, u)| (u.name.clone(), k))
+            .collect();
         Self {
             previous,
             now: Log::default(),
+            cursor: 0,
+            origin: Vec::new(),
             changed: Vec::new(),
+            by_name,
+            next_unit: 0,
+            open: None,
+            dropped: Vec::new(),
+            gone: BTreeSet::new(),
+            again: Vec::new(),
+            active: json!("root"),
+            synced: None,
+            live: false,
         }
     }
 
@@ -238,11 +325,201 @@ impl Replay {
         self.now.ran.len()
     }
 
-    /// Compare the next command with the recorded one; answer with its
-    /// recorded reply.
-    pub(super) fn next(&mut self, command: &str, params: Value) -> Result<Value> {
+    /// Note that a command runs on the design; returns whether one did
+    /// before (whose evaluation is already put off).
+    pub(super) fn go_live(&mut self) -> bool {
+        std::mem::replace(&mut self.live, true)
+    }
+
+    /// The commands that delete what recorded unit `k` created: its
+    /// components (with their features, occurrences and joints), else its
+    /// features.
+    fn remove(&self, k: usize) -> Vec<(String, Value)> {
+        let Some(unit) = self.previous.units.get(k) else {
+            return Vec::new();
+        };
+        let ran = self.previous.ran.get(unit.start..unit.end).unwrap_or(&[]);
+        let components: Vec<u64> = ran
+            .iter()
+            .filter(|r| r.command == "component.create")
+            .filter_map(|r| r.reply.get("component").and_then(Value::as_u64))
+            .collect();
+        if !components.is_empty() {
+            return components
+                .into_iter()
+                .map(|c| ("component.delete".to_owned(), json!({"component": c})))
+                .collect();
+        }
+        let features: Vec<u64> = ran
+            .iter()
+            .filter_map(|r| match r.command.as_str() {
+                "sketch.create" => r.reply.get("sketch").and_then(Value::as_u64),
+                _ => r.reply.get("feature").and_then(Value::as_u64),
+            })
+            .collect();
+        if features.is_empty() {
+            return Vec::new();
+        }
+        vec![("timeline.delete".to_owned(), json!({"features": features}))]
+    }
+
+    /// Note the bodies recorded unit `k` made, which a removal takes away.
+    fn forget(&mut self, k: usize) {
+        let Some(unit) = self.previous.units.get(k) else {
+            return;
+        };
+        for r in self.previous.ran.get(unit.start..unit.end).unwrap_or(&[]) {
+            let made = r.reply.get("created_bodies").and_then(Value::as_array);
+            self.gone.extend(
+                made.into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned),
+            );
+            if r.command.starts_with("solid.")
+                && let Some(name) = r.params.get("body_name").and_then(Value::as_str)
+            {
+                self.gone.insert(name.to_owned());
+            }
+        }
+    }
+
+    /// The recorded units starting at the cursor, which the build passed
+    /// over: removed.
+    fn skip_units(&mut self) -> Vec<(String, Value)> {
+        let mut out = Vec::new();
+        while let Some(unit) = self.previous.units.get(self.next_unit) {
+            if unit.start != self.cursor {
+                break;
+            }
+            let end = unit.end;
+            self.forget(self.next_unit);
+            out.extend(self.remove(self.next_unit));
+            self.cursor = end;
+            self.next_unit += 1;
+        }
+        out
+    }
+
+    /// Activate the build's active component on the design before
+    /// `command` runs there, unless it is active.
+    fn sync(&mut self, command: &str) -> Vec<(String, Value)> {
+        if command == "component.activate" || self.synced.as_ref() == Some(&self.active) {
+            return Vec::new();
+        }
+        self.synced = Some(self.active.clone());
+        vec![(
+            "component.activate".to_owned(),
+            json!({"component": self.active}),
+        )]
+    }
+
+    /// Follow the component the build activates.
+    fn follow(&mut self, command: &str, params: &Value, reply: &Value) {
+        match command {
+            "component.activate" => {
+                if let Some(c) = params.get("component") {
+                    self.active = c.clone();
+                }
+            }
+            "component.create" if params.get("activate") != Some(&Value::Bool(false)) => {
+                if let Some(c) = reply.get("component") {
+                    self.active = c.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Begin the unit `name` ([`Log::begin_unit`]): the recorded one of
+    /// that name when it is next (the units recorded before it removed),
+    /// else a unit that runs on the design. Returns the commands to run
+    /// first: deleting the removed units, and the recorded one when its
+    /// content changed.
+    pub(super) fn begin_unit(
+        &mut self,
+        name: &str,
+        content: Option<u64>,
+    ) -> Result<Vec<(String, Value)>> {
         let step = self.step();
-        let Some(old) = self.previous.ran.get(step) else {
+        if self.open.is_some() {
+            return Err(diverged(step, format!("unit {name} inside another")));
+        }
+        let mut out = Vec::new();
+        let mut open = None;
+        if let Some(&u) = self.by_name.get(name) {
+            let units = &self.previous.units;
+            let contiguous = u >= self.next_unit
+                && units.get(self.next_unit..=u).is_some_and(|run| {
+                    run.first().is_some_and(|f| f.start == self.cursor)
+                        && run.windows(2).all(|w| w[0].end == w[1].start)
+                });
+            if !contiguous {
+                return Err(diverged(step, format!("{name} built out of order")));
+            }
+            let (start, end, same) = match units.get(u) {
+                Some(unit) => (unit.start, unit.end, unit.content == content),
+                None => return Err(diverged(step, "a unit out of range")),
+            };
+            for k in self.next_unit..u {
+                self.forget(k);
+                out.extend(self.remove(k));
+            }
+            self.next_unit = u + 1;
+            if same {
+                self.cursor = start;
+                open = Some(u);
+            } else {
+                out.extend(self.remove(u));
+                self.cursor = end;
+            }
+        }
+        self.open = Some(open);
+        self.now.begin_unit(name, content);
+        Ok(out)
+    }
+
+    /// End the unit begun last.
+    pub(super) fn end_unit(&mut self) -> Result<()> {
+        let step = self.step();
+        match self.open.take() {
+            Some(Some(u)) => {
+                let end = self.previous.units.get(u).map(|unit| unit.end);
+                if end != Some(self.cursor) {
+                    return Err(diverged(step, "a unit ran fewer commands"));
+                }
+            }
+            Some(None) => {}
+            None => return Err(diverged(step, "a unit ended twice")),
+        }
+        self.now.end_unit();
+        Ok(())
+    }
+
+    /// Compare the next command with the recorded one and answer with its
+    /// recorded reply, or (in a unit that runs on the design) have it run.
+    pub(super) fn next(&mut self, command: &str, params: Value) -> Result<Next> {
+        let step = self.step();
+        if self.open == Some(None) {
+            return Ok(Next {
+                before: self.sync(command),
+                reply: None,
+            });
+        }
+        let mut before = Vec::new();
+        if self.open.is_none() {
+            before = self.skip_units();
+        }
+        if let Some(Some(u)) = self.open
+            && self
+                .previous
+                .units
+                .get(u)
+                .is_some_and(|unit| self.cursor >= unit.end)
+        {
+            return Err(diverged(step, format!("{command} is new in its unit")));
+        }
+        let Some(old) = self.previous.ran.get(self.cursor) else {
             return Err(diverged(step, format!("{command} is new")));
         };
         if old.command != command {
@@ -252,18 +529,79 @@ impl Replay {
             ));
         }
         if old.params != params {
-            if !diffable(command, &old.params, &params) {
-                let what = match command {
-                    "parameters.import" => renamed(&old.params, &params),
-                    _ => String::new(),
-                };
-                return Err(diverged(step, format!("{command} changed{what}")));
+            match command {
+                "parameters.import" => {
+                    let (Some(was), Some(now)) = (rows(&old.params), rows(&params)) else {
+                        return Err(diverged(step, "unreadable parameters"));
+                    };
+                    let known: BTreeSet<&str> = was.iter().map(|r| r.0.as_str()).collect();
+                    let kept: BTreeSet<&str> = now.iter().map(|r| r.0.as_str()).collect();
+                    let added: Vec<Value> = now
+                        .iter()
+                        .filter(|r| !known.contains(r.0.as_str()))
+                        .map(|(name, expression)| json!({"name": name, "expression": expression}))
+                        .collect();
+                    self.dropped.extend(
+                        was.iter()
+                            .filter(|r| !kept.contains(r.0.as_str()))
+                            .map(|r| r.0.clone()),
+                    );
+                    if !added.is_empty() {
+                        before.push((
+                            "parameters.import".to_owned(),
+                            json!({"text": serde_json::to_string(&added)?}),
+                        ));
+                    }
+                }
+                "joint.create" => {
+                    let (Some(was), Some(now)) = (joints(&old.params), joints(&params)) else {
+                        return Err(diverged(step, format!("{command} changed")));
+                    };
+                    let mut added = Vec::new();
+                    for (name, joint) in &now {
+                        match was.get(name) {
+                            Some(recorded) if recorded == joint => {}
+                            Some(_) => return Err(diverged(step, format!("{command} changed"))),
+                            None => added.push((*joint).clone()),
+                        }
+                    }
+                    // A joint no longer made held an occurrence deleted with
+                    // its unit's component, and went with it.
+                    if !added.is_empty() {
+                        before.push(("joint.create".to_owned(), json!({"joints": added})));
+                    }
+                }
+                "appearance.assign" if same_but(&old.params, &params, "bodies") => {
+                    self.again.push(step);
+                }
+                "document.metadata.set" => {}
+                _ if diffable(command, &old.params, &params) => {}
+                _ => return Err(diverged(step, format!("{command} changed"))),
             }
             self.changed.push(step);
         }
         let reply = old.reply.clone();
+        self.follow(command, &params, &reply);
         self.now.push(command, params, reply.clone());
-        Ok(reply)
+        self.origin.push(Some(self.cursor));
+        self.cursor += 1;
+        Ok(Next {
+            before,
+            reply: Some(reply),
+        })
+    }
+
+    /// Record `command`, which ran on the design ([`Next::reply`] `None`).
+    pub(super) fn ran(&mut self, command: &str, params: Value, reply: Value) {
+        self.follow(command, &params, &reply);
+        self.synced = Some(self.active.clone());
+        self.now.push(command, params, reply);
+        self.origin.push(None);
+    }
+
+    /// Commands that ran on the design leave its active component unknown.
+    pub(super) fn unsynced(&mut self) {
+        self.synced = None;
     }
 
     pub(super) fn mark(&mut self, name: &str, start: usize, end: usize) {
@@ -272,36 +610,82 @@ impl Replay {
 
     /// Pass over the recorded commands that built the definition `name`.
     pub(super) fn pass(&mut self, name: &str) -> bool {
-        let step = self.step();
         let Some((_, start, end)) = self
             .previous
             .marks
             .iter()
-            .find(|(n, start, _)| n == name && *start == step)
+            .find(|(n, start, _)| n == name && *start == self.cursor)
             .cloned()
         else {
             return false;
         };
-        let Some(ran) = self.previous.ran.get(start..end) else {
+        let Some(ran) = self.previous.ran.get(start..end).map(<[Ran]>::to_vec) else {
             return false;
         };
-        self.now.ran.extend_from_slice(ran);
-        self.now.mark(name, start, end);
+        let at = self.now.ran.len();
+        for (k, r) in ran.iter().enumerate() {
+            self.follow(&r.command, &r.params, &r.reply);
+            self.origin.push(Some(start + k));
+        }
+        let len = ran.len();
+        self.now.ran.extend(ran);
+        self.now.mark(name, at, at + len);
+        self.cursor = end;
         true
     }
 
     /// Apply every difference to `native` (the recorded design); returns the
     /// new command stream and how many commands the update ran.
-    pub(super) fn apply(self, native: &mut Native) -> Result<(Log, usize)> {
+    pub(super) fn apply(mut self, native: &mut Native) -> Result<(Log, usize)> {
+        let mut ran = 0usize;
+        // The recorded units after the last one built are removed too.
+        let removed = self.skip_units();
+        if self.cursor != self.previous.ran.len() {
+            return Err(diverged(self.now.ran.len(), "the build ran fewer commands"));
+        }
+        let mut live = self.live;
+        for (command, params) in removed {
+            if !live {
+                native.defer()?;
+                live = true;
+            }
+            native.run(&command, &params)?;
+            ran += 1;
+        }
+        // Parameters no longer used, once what used them is gone.
+        for name in &self.dropped {
+            if !live {
+                native.defer()?;
+                live = true;
+            }
+            native.run("parameters.delete", &json!({"name": name}))?;
+            ran += 1;
+        }
+        // A removed body keeps no look (Solidcraft's `appearance.assign`
+        // takes only bodies that are there).
+        if !self.gone.is_empty() {
+            let looks = &mut native.session_mut().doc_mut().appearances.bodies;
+            looks.retain(|name, _| !self.gone.contains(name));
+        }
+        // What ran on the design is evaluated once.
+        if live {
+            native.evaluate_deferred()?;
+        }
         let Self {
             previous,
             mut now,
             changed,
+            origin,
+            again,
+            ..
         } = self;
-        if now.ran.len() != previous.ran.len() {
-            return Err(diverged(now.ran.len(), "the build ran fewer commands"));
-        }
-        let old = |step: usize| previous.ran.get(step);
+        let old = |step: usize| {
+            origin
+                .get(step)
+                .copied()
+                .flatten()
+                .and_then(|at| previous.ran.get(at))
+        };
         // The sketch (its creating step) each changed drawing step is in.
         let mut sketch_of: BTreeMap<usize, usize> = BTreeMap::new();
         let mut open: Option<usize> = None;
@@ -344,8 +728,11 @@ impl Replay {
                     let (Some(a), Some(b)) = (rows(a), rows(b)) else {
                         return Err(diverged(step, "unreadable parameters"));
                     };
-                    for ((_, was), (name, now)) in a.iter().zip(b) {
-                        if *was != now {
+                    // Parameters added or dropped were added or are
+                    // dropped on their own.
+                    let was: BTreeMap<String, String> = a.into_iter().collect();
+                    for (name, now) in b {
+                        if was.get(&name).is_some_and(|w| *w != now) {
                             parameters.insert(name, Value::String(now));
                         }
                     }
@@ -402,7 +789,26 @@ impl Replay {
                         }
                     }
                 }
-                "document.metadata.set" => metadata.push(b.clone()),
+                "document.metadata.set" => {
+                    // Values recorded before and no longer are removed.
+                    let mut values = b.get("values").cloned().unwrap_or_else(|| json!({}));
+                    if let (Some(set), Some(was)) = (
+                        values.as_object_mut(),
+                        a.get("values").and_then(Value::as_object),
+                    ) {
+                        for key in was.keys() {
+                            if !set.contains_key(key) {
+                                set.insert(key.clone(), Value::Null);
+                            }
+                        }
+                    }
+                    metadata.push(json!({"values": values}));
+                }
+                // Added joints were made as they came, and a joint the
+                // build no longer makes went with its component.
+                "joint.create" => {}
+                // Assigned again below.
+                "appearance.assign" if again.contains(&step) => {}
                 other => return Err(diverged(step, format!("{other} cannot change"))),
             }
         }
@@ -413,7 +819,6 @@ impl Replay {
                 format!("{} placements moved", moves.len()),
             ));
         }
-        let mut ran = 0usize;
         // Every command that changes the design evaluates it again from the
         // first feature it changed: while sketches are redrawn, the history
         // is rolled back to the first of them, so the features after it
@@ -541,6 +946,20 @@ impl Replay {
         }
         for values in metadata {
             native.run("document.metadata.set", &values)?;
+            ran += 1;
+        }
+        // Looks assigned to other bodies (one added or removed): assigned
+        // as the build assigns them.
+        for step in again {
+            let Some(r) = now.ran.get(step) else {
+                continue;
+            };
+            native.run(&r.command, &r.params)?;
+            ran += 1;
+        }
+        // The design is left as a build leaves it, with the root active.
+        if live {
+            native.run("component.activate", &json!({"component": "root"}))?;
             ran += 1;
         }
         Ok((now, ran))

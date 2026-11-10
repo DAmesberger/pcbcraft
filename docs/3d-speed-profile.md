@@ -281,3 +281,16 @@ The worker made the edit's model in place, but the app dropped it: by the time i
 **Fixed:** a finished model of an earlier request of the same project is shown (under the "Updating" note, picks ignored) when it is newer than the model shown. J1 now moves in **3.7 s**, as headless, and the refilled fills follow at 26.9 s.
 
 **What remains: the refill, 86 % of the edit's 27 s.** Updating the refilled fills in place would not be cheaper today. Each of the 4 fills changed around J1's pads, so each would be redrawn and redefined, and a redefinition evaluates its extrusion twice (the width edit's refill update above: 40.6 s against a 26.5 s build). The smallest correct fix is upstream: keep the trial's evaluation for a redefined extrusion (Solidcraft), or make solidcore's sweep stitching linear. Both need the founder's go. Tiling the fills (option d1) would make both the build and the refill a few seconds.
+
+## Update, 10 November 2026: a board width change in place
+
+Same host and `ci` profile, load average 12–15. `PCBCRAFT_PROFILE_EDIT=width` (ESP32 board, 40 → 41 mm through the engine).
+
+**Why the width edit was built anew.** Not the outline: the laminate's outline is a sketch the update redraws, and the mask, silkscreen, edge and fill films are drawn from 2D data. The engine's carry (`dimensions::carry`) adds a track that joins a track stretched to the new edge (`trace_648`), and the update compared the build's command stream step by step: `parameters.import changed: added trace_648_x0 …`, so any added or removed track built the board anew. Undo removes the track and fell back the same way.
+
+**Fixed:** the commands that build one track are a *unit* of the replay (`Native::unit`). A unit the recorded build did not have runs on the design as it comes; its features go at the end of the history, where evaluating them reads nothing evaluated before. A recorded unit the build passes over is deleted (`component.delete`, which takes its features, occurrence and joints). The aggregate commands follow: parameters added (before the units that use them) or dropped (`parameters.delete`, once their users are gone), the new joints made, looks assigned again, identity metadata written again, and a removed body's look dropped. The design's evaluation is put off while the units run and done once. Tests compare the result with a fresh build as sets of bodies (kind, source, layer, box and volume) and sources and saved identity without native ids, since an added object's component takes the design's next id.
+
+| ESP32 board | Before | After |
+| --- | --- | --- |
+| Width +1 mm (carry adds a track), stale fills | 27.7 s, built anew | **4.4 s**, in place (73 commands) |
+| …then the 4 fills refilled | 50.0 s in place | 42.6 s in place (unchanged: see the refill) |
