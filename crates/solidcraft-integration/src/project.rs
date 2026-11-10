@@ -186,6 +186,9 @@ struct Builder {
     sources: SourceCache,
     /// Each laminate slab's input digest, by body name.
     slabs: BTreeMap<String, u64>,
+    /// Each laminate slab: its name, input digest and the native step
+    /// that extruded it.
+    laminate: Vec<(String, u64, usize)>,
     /// Replaying: the previous model's geometry.
     previous: Option<Previous>,
     /// Display layers made before ([`appearance::Memo`]).
@@ -207,6 +210,7 @@ impl Builder {
             custom_looks: BTreeMap::new(),
             sources: sources.clone(),
             slabs: BTreeMap::new(),
+            laminate: Vec::new(),
             previous: None,
             display: appearance::Memo::default(),
         })
@@ -233,6 +237,7 @@ impl Builder {
             custom_looks: BTreeMap::new(),
             sources: sources.clone(),
             slabs: BTreeMap::new(),
+            laminate: Vec::new(),
             previous: Some(previous),
             display,
         }
@@ -446,12 +451,131 @@ impl Builder {
         Ok(())
     }
 
+    /// After an update, name each laminate slab's pieces as evaluated. A
+    /// replayed slab's pieces are the previous build's reply, and a slab
+    /// whose holes the edit moved can fall into more or fewer pieces (a
+    /// drill splitting off a sliver of laminate): the body kinds, the
+    /// identity saved in the design (from `recorded_at`) and the recorded
+    /// extrusion replies are made what a fresh build of the edited board
+    /// records, with the laminate's look (the commands at `looks`)
+    /// assigned to the pieces as made. A body of no slab that no build
+    /// recorded is still refused ([`finish_with`]).
+    fn repiece(
+        &mut self,
+        sources: &[Source],
+        looks: std::ops::Range<usize>,
+        recorded_at: usize,
+    ) -> Result<()> {
+        let world = self.native.world_state()?;
+        // Every evaluated body name once, in the design's order.
+        let mut seen = BTreeSet::new();
+        let made: Vec<&str> = world
+            .bodies
+            .iter()
+            .map(|b| b.definition_name())
+            .filter(|n| seen.insert(*n))
+            .collect();
+        let mut changed = false;
+        for (slab, inputs, step) in &self.laminate {
+            // The slab's body and its pieces: `Substrate 2`, `Substrate 2 (2)`, …
+            let family = |name: &str| {
+                name == slab
+                    || name
+                        .strip_prefix(slab.as_str())
+                        .and_then(|rest| rest.strip_prefix(" ("))
+                        .and_then(|rest| rest.strip_suffix(')'))
+                        .is_some_and(|n| n.parse::<u64>().is_ok())
+            };
+            let recorded: BTreeSet<String> = self
+                .bodies
+                .iter()
+                .filter(|(name, kind)| **kind == BodyKind::Substrate && family(name))
+                .map(|(name, _)| name.clone())
+                .collect();
+            let pieces: Vec<&str> = made.iter().copied().filter(|n| family(n)).collect();
+            if pieces.len() == recorded.len() && pieces.iter().all(|p| recorded.contains(*p)) {
+                continue;
+            }
+            if pieces.is_empty() {
+                return Err(Error::Verification(format!("slab {slab} made no body")));
+            }
+            if pieces
+                .iter()
+                .any(|p| self.bodies.contains_key(*p) && !recorded.contains(*p))
+            {
+                return Err(Error::Verification(format!(
+                    "slab {slab}'s pieces take another body's name"
+                )));
+            }
+            changed = true;
+            for gone in &recorded {
+                self.bodies.remove(gone);
+                self.slabs.remove(gone);
+            }
+            for piece in &pieces {
+                self.bodies.insert((*piece).to_owned(), BodyKind::Substrate);
+                self.slabs.insert((*piece).to_owned(), *inputs);
+            }
+            // A piece no longer made keeps no look of its own (Solidcraft's
+            // `appearance.assign` takes only bodies that are there).
+            let gone: Vec<&String> = recorded
+                .iter()
+                .filter(|g| !pieces.contains(&g.as_str()))
+                .collect();
+            if !gone.is_empty() {
+                let looks = &mut self.native.session_mut().doc_mut().appearances.bodies;
+                for name in gone {
+                    looks.remove(name);
+                }
+            }
+            let (_, mut reply) = self.native.recorded(*step).ok_or_else(|| {
+                Error::Verification(format!("slab {slab} has no recorded extrusion"))
+            })?;
+            if let Some(map) = reply.as_object_mut() {
+                map.insert("created_bodies".into(), json!(pieces));
+            }
+            self.native
+                .amend(*step, "solid.extrude", None, Some(reply))?;
+        }
+        if !changed {
+            return Ok(());
+        }
+        // The laminate's look, assigned to its pieces as a fresh build
+        // assigns it: the same chunks of the same names.
+        let names: Vec<&str> = self
+            .bodies
+            .iter()
+            .filter(|(_, k)| **k == BodyKind::Substrate)
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let chunks: Vec<&[&str]> = names.chunks(crate::native::APPEARANCE_CHUNK).collect();
+        if chunks.len() != looks.len() {
+            return Err(Error::Verification(
+                "the laminate's pieces take another number of look assignments".into(),
+            ));
+        }
+        for (step, chunk) in looks.zip(chunks) {
+            let (mut params, _) = self
+                .native
+                .recorded(step)
+                .ok_or_else(|| Error::Verification("the laminate's look is not recorded".into()))?;
+            if let Some(map) = params.as_object_mut() {
+                map.insert("bodies".into(), json!(chunk));
+            }
+            self.native.run_unrecorded("appearance.assign", &params)?;
+            self.native
+                .amend(step, "appearance.assign", Some(params), None)?;
+        }
+        identity::rewrite(&mut self.native, recorded_at, sources, &self.bodies)
+    }
+
     /// Store each kind's physical look (one assignment per kind) and the
     /// body → kind map, then evaluate.
     fn finish(mut self, sources: Vec<Source>) -> Result<NativeModel> {
         self.native.evaluate_deferred()?;
         self.native.activate_root()?;
         // Generated bodies already carry their materials' looks.
+        let mut laminate_looks = 0..0;
         for kind in BodyKind::ALL.into_iter().filter(|k| !k.is_generated()) {
             let names: Vec<&str> = self
                 .bodies
@@ -462,6 +586,10 @@ impl Builder {
             // Saved bodies look the same for every fabrication; only the
             // display-only layers take the project's mask and finish.
             if !names.is_empty() {
+                let start = self.native.step();
+                if kind == BodyKind::Substrate {
+                    laminate_looks = start..start;
+                }
                 self.native.appearance(
                     &names,
                     &material::material(
@@ -470,8 +598,12 @@ impl Builder {
                         &crate::stack::Stack::default(),
                     ),
                 )?;
+                if kind == BodyKind::Substrate {
+                    laminate_looks.end = self.native.step();
+                }
             }
         }
+        let recorded_at = self.native.step();
         identity::write(&mut self.native, &sources, &self.bodies)?;
         models::record(&mut self.native, &self.models)?;
         let updated = self
@@ -480,20 +612,7 @@ impl Builder {
             .then(|| self.native.settle())
             .transpose()?;
         if updated.is_some() {
-            // The kinds were recorded from the previous build's replies: a
-            // slab whose edit left it in other pieces is built anew.
-            let world = self.native.world_state()?;
-            let made: BTreeSet<&str> = world.bodies.iter().map(|b| b.definition_name()).collect();
-            if let Some(gone) = self
-                .bodies
-                .iter()
-                .find(|(name, kind)| **kind == BodyKind::Substrate && !made.contains(name.as_str()))
-            {
-                return Err(Error::Verification(format!(
-                    "the laminate is in other pieces ({} is gone)",
-                    gone.0
-                )));
-            }
+            self.repiece(&sources, laminate_looks, recorded_at)?;
         }
         self.native.forget_history();
         let mut model = finish_with(
@@ -2277,6 +2396,9 @@ fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Resul
         if !made.contains(&name) {
             return Err(Error::Verification(format!("slab {name} made no body")));
         }
+        // The slab's extrusion is the last command it ran.
+        let step = b.native.step().saturating_sub(1);
+        b.laminate.push((name.clone(), inputs, step));
         for piece in made {
             b.slabs.insert(piece.clone(), inputs);
             b.record(&piece, BodyKind::Substrate)?;

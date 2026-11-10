@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Body names per `appearance.assign` call.
-const APPEARANCE_CHUNK: usize = 1024;
+pub(crate) const APPEARANCE_CHUNK: usize = 1024;
 
 /// A Solidcraft expression: a number (millimetres where a length is expected)
 /// or an expression string such as `"board_thickness"` or `"2 mm + x"`.
@@ -328,6 +328,47 @@ impl Native {
         let (log, ran) = applied?;
         self.log = Some(log);
         Ok(ran)
+    }
+
+    /// The parameters and reply recorded at `step` (not while replaying).
+    pub(crate) fn recorded(&self, step: usize) -> Option<(Value, Value)> {
+        let (params, reply) = self.log.as_ref()?.get(step)?;
+        Some((params.clone(), reply.clone()))
+    }
+
+    /// Correct the recorded `command` at `step` after an update learned what
+    /// a fresh build would have recorded there (the pieces a laminate slab
+    /// fell into, the identity naming them), so the next update compares
+    /// against that.
+    pub(crate) fn amend(
+        &mut self,
+        step: usize,
+        command: &str,
+        params: Option<Value>,
+        reply: Option<Value>,
+    ) -> Result<()> {
+        let amended = self
+            .log
+            .as_mut()
+            .is_some_and(|log| log.amend(step, command, params, reply));
+        if amended {
+            Ok(())
+        } else {
+            Err(Error::Verification(format!(
+                "native step {step} is not a recorded {command}"
+            )))
+        }
+    }
+
+    /// Run `command` on the design without recording it; refused while
+    /// replaying, when every command is compared with the recorded ones.
+    pub(crate) fn run_unrecorded(&mut self, command: &str, params: &Value) -> Result<Value> {
+        if self.is_replaying() {
+            return Err(Error::Verification(format!(
+                "{command} cannot run unrecorded during a replay"
+            )));
+        }
+        self.run(command, params)
     }
 
     /// Drop the design's undo history: a built model is never undone, and
