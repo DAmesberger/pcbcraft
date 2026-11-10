@@ -22,9 +22,11 @@
 //! the engine for CLI and MCP callers. Because the preview is recomputed
 //! from the committed board on every pointer move, shoved copper springs
 //! back as soon as the head moves away. Differential pairs route through
-//! [`pair_plan`], which treats both halves as one unit.
+//! [`pair_plan`], which treats both halves as one unit. Dragging an
+//! existing track shoves through the same code ([`drag::drag_plan`]).
 mod clean;
 mod corner;
+pub mod drag;
 mod hull;
 mod shove;
 mod walk;

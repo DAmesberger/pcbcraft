@@ -1,4 +1,4 @@
-//! What each of the 229 catalog entries (the requests, `project.apply`'s
+//! What each of the 231 catalog entries (the requests, `project.apply`'s
 //! operations and `project.query`'s queries) is, for the MCP surface
 //! (`docs/mcp-surface.md` §3): a title, a one-line summary, its kind, whether
 //! the person owns a step of it, whether it can run long, whether its result
@@ -164,6 +164,7 @@ pub const LINKED: &[&str] = &[
     "diff_pair.suggest",
     "layout.length_report",
     "layout.route_preview",
+    "layout.track_drag_preview",
     "layout.tune_preview",
     "fabrication.preflight",
 ];

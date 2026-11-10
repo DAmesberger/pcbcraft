@@ -376,6 +376,13 @@ pub enum Query {
     RoutePreview {
         request: layout::router::RouteStepRequest,
     },
+    /// What `layout.track_drag` would do, without applying it. The plan has
+    /// the moved segment, its neighbours and every shoved track and via, the
+    /// moved segment's midpoint (`end`) and why it stopped short.
+    #[serde(rename = "layout.track_drag_preview")]
+    TrackDragPreview {
+        request: layout::router::drag::TrackDragRequest,
+    },
     /// What `layout.tune_length` would build, without applying it.
     #[serde(rename = "layout.tune_preview")]
     TunePreview {
@@ -432,6 +439,7 @@ declare_classes!(Query {
     SuggestPairs "diff_pair.suggest" Read "Suggest differential pairs",
     LengthReport "layout.length_report" Read "Length report",
     RoutePreview "layout.route_preview" Read "Preview a route",
+    TrackDragPreview "layout.track_drag_preview" Read "Preview a track drag",
     TunePreview "layout.tune_preview" Read "Preview length tuning",
     Preflight "fabrication.preflight" Read "Production check",
 });
@@ -1120,6 +1128,22 @@ impl Engine {
                     detour_factor: plan.detour_factor,
                 }
             }
+            Operation::Layout(layout::LayoutCommand::TrackDrag { request }) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                let original = project
+                    .tracks
+                    .iter()
+                    .find(|t| t.id == request.track)
+                    .cloned();
+                let plan = layout::track_drag(project, &request)?;
+                layout::validate(project)?;
+                Outcome::TrackDragged {
+                    offset: original
+                        .as_ref()
+                        .map_or(0.0, |t| layout::router::drag::dragged_by(t, &plan)),
+                    reached: plan.reached,
+                }
+            }
             Operation::Layout(command) => {
                 let part = command.places_part();
                 let before = candidate.project.library.components.len();
@@ -1485,6 +1509,14 @@ impl Engine {
                 Ok(QueryResult::RoutePreview(Box::new(layout::router::plan(
                     project, &index, &request,
                 ))))
+            }
+            Query::TrackDragPreview { request } => {
+                request.check()?;
+                let project = &self.document.project;
+                let index = layout::router::RouteIndex::with_graph(project, self.copper_graph());
+                Ok(QueryResult::RoutePreview(Box::new(
+                    layout::router::drag::drag_plan(project, &index, &request),
+                )))
             }
             Query::TunePreview { request } => {
                 let project = &self.document.project;

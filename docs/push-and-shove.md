@@ -25,7 +25,7 @@ The Route tool cycles the router with **M** (⇧M backwards). The Route card's *
 - the undo edits that put the shoved copper back;
 - the reason the head stopped short, if it did.
 
-- **Desktop.** The preview recomputes the plan from the committed board on each pointer move; it is cached per revision and input, so a still pointer costs nothing. The click sends the same plan's edit set as one `layout.route_apply`. That is one engine transaction and one undo step, and it includes every shoved item. The board draws shoved tracks and vias at their new places only. The preview outlines shoved copper in the accent colour. A head that stops short gets a warning ring and a line to the pointer.
+- **Desktop.** The preview recomputes the plan from the committed board on each pointer move; it is cached per revision and input, so a still pointer costs nothing. The click sends the same plan's edit set as one `layout.route_apply`. That is one engine transaction and one undo step, and it includes every shoved item. The board draws shoved tracks and vias at their new places only. The preview draws the routed step at its width in `preview_add` and outlines shoved copper round its edge in the accent colour, so it reads over a pour of its own layer (`hovering_across_the_showcase_bundle_previews_the_shove`). A head that stops short gets a warning ring and a line to the pointer.
 - **Spring-back.** The preview always starts from the committed board, so shoved copper returns as soon as the head moves away within the gesture (`shoved_copper_springs_back`).
 - **CLI and MCP.** `layout.route_step { request }` runs the same `plan` inside the engine and applies it as one undo step. A step that cannot move the head is refused with the blocking reason, and nothing changes. Its outcome (`route_stepped`) gives the head's end, whether it reached the target and its `detour_factor`: the path over the straight line, through the via if the step places one, not counting shoved copper. A request's `max_detour` (at least 1) refuses a longer path; `layout.route_preview` then returns a plan with no edits and the reason. Desktop steps set no limit, and pair steps have neither field. `layout.route_preview { request }` returns the `RoutePlan` without applying it. The request has the net, width, layer, head, target, posture, flip, optional via and via layer, `mode` (default `shove`) and `move_vias` (default true).
 - **Backspace** unwinds a step with one `layout.route_apply`. It removes the step's new tracks and via, puts shoved tracks back with their identities (`replace`, and `restore` for segments a shove merged away) and moves vias back (`move_vias`). `RouteEditSet` gained `restore` and `move_vias` for this. The engine checks both: a restored identity must be free and issued before, a locked via refuses the edit, and moved vias are clearance-checked once the tracks are in place.
@@ -114,7 +114,8 @@ Core (`layout/router/tests.rs`, `hull.rs`, `clean.rs`). Every proposal goes thro
 - `layout.route_step` as one transaction: one revision, undo and redo restore every shoved track and via exactly, the preview query agrees, the plan's undo edits restore the board, and a step that cannot move is refused without change;
 - Ignore proposes exactly `posture::step` (from a head with no incoming track to move);
 - entry into pads (`crates/io/tests/route_entry.rs`, on the ESP32 board's USB-C receptacle J1 at 0.5 mm pitch): steps from 216 heads round CC1's and CC2's pins, at every 5° and three distances, in both 45° and 90° elbows. Then two-step routes from R4 and R5 through every grid corner between the resistor and the pin. No step into a pin has a leg that runs back or a corner sharper than 90°. A corner past the pin's column moves back to it;
-- the corner moved back on the demo board: down from a track running right, past its end, moves the corner back. No turn is sharper than 90°, and the track shortens in the same edit set.
+- the corner moved back on the demo board: down from a track running right, past its end, moves the corner back. No turn is sharper than 90°, and the track shortens in the same edit set;
+- track drag (`tests/drag.rs`): a straight run between two 45° tracks moves up 1 mm and both neighbours stretch to meet it with their far ends and identities kept; an end at a via jogs at 45° and a free end follows; another net's track is shoved and springs back, and previews never touch the board; a locked track stops the drag at 0.5 mm centre to centre, and Walkaround never pushes; `layout.track_drag` is one revision that one undo restores, the preview query agrees, and a drag that cannot move (or a non-finite offset) is refused without change.
 
 Desktop (`pcb_editor/shove_tests.rs`), headless through the canvas:
 
@@ -122,6 +123,8 @@ Desktop (`pcb_editor/shove_tests.rs`), headless through the canvas:
 - a click in Shove sends the shoving `layout.route_apply` and the preview hides the shoved track's old place;
 - Backspace puts the shoved track back;
 - Walkaround goes round, and Ignore is refused by the engine;
+- the Route tool from the showcase's U1 pad 4 hovered down across the U1 → U2 bundle shoves it in the preview only, and it springs back (`hovering_across_the_showcase_bundle_previews_the_shove`); the preview outlines shoved copper in the accent;
+- a Select drag of a track (`pcb_editor/track_drag_tests.rs`) shoves the other net's track live, springs it back, and on release sends one `layout.route_apply` that one undo takes back; Esc cancels it;
 - (`pcb_editor/route_entry_tests.rs`) the founder's hook: on the ESP32 board, R5 pad 1, a corner click that snaps past J1 B5's column, then B5, with the last elbow flipped or not. The route enters B5 straight up from the moved corner. Backspace after a moved corner restores the shortened track exactly.
 
 ## Performance
@@ -133,18 +136,22 @@ Measured on Apple silicon (this checkout, release build), with `cargo test -p pc
 | Showcase (10 connections × 20 pointer positions) | 0.12 ms | 0.012 / 0.048 / 0.10 ms | 0.012 / 0.27 / 0.73 ms |
 | Dense: 10,000 vias at 1.27 mm and 1,500 tracks, 140 × 160 mm (400 positions sweeping across channels) | 4.4 ms | 0.049 / 0.12 / 0.15 ms | 0.29 / 3.2 / 11.6 ms |
 
+A track drag on the showcase (`track_drag_timings`: every unlocked top-layer track through 20 offsets from −1 to +1 mm, 700 moves, 380 of them moving more than the dragged track) costs 0.002 / 0.079 / 0.36 ms per move (median / p95 / max), so it plans on the UI thread like a route step.
+
 The target is 16 ms per pointer move, one frame at 60 Hz. Both boards meet it with room: the worst dense-board shove is 11.6 ms. The budgets are counted (collision queries), not timed, so a preview and its commit always agree. The index is built once per revision. `a_dense_board_routes_legally_within_bounds` runs on every build: it applies every dense-board proposal through the engine and bounds each plan at 2 s, a runaway guard that also holds in debug builds.
 
-## Track drag with shove (planned)
+## Track drag with shove
 
-Dragging an existing segment or corner in Select is not delivered. The plan:
+With **Select**, pressing on a track and dragging moves that segment along its normal with the pointer (in 0.01 mm steps). `layout::router::drag::drag_plan(project, index, request) -> RoutePlan` is pure, and the desktop preview, the release, `layout.track_drag` and `layout.track_drag_preview` all call it:
 
-1. A drag adopts the segment's chain as a `Line`.
-2. It replaces the dragged segment with one offset along its normal (or the corner with a moved vertex), keeping the neighbours' directions with 45° joins, as the via-follow elbow does.
-3. It runs the same `shove::shove` with the new segments as the fixed copper and the chain's net frozen.
-4. The preview and release commit share a pure `router::drag_plan`, and release sends one `layout.route_apply`.
+1. The segment keeps its direction and moves by the request's `offset` (mm, positive to the left of start → end).
+2. At each end, a neighbour that the copper graph joins end to end, and that is the only joint there, stretches along its own direction to meet the moved segment, keeping its far end, its identity and its mid-span joints. An end nothing meets moves with the segment. Any other end (a pad, a via, several tracks, a locked or parallel neighbour) stays where it is and joins the moved segment with a jog at 45° to it (90° in the orthogonal posture). A track with copper joined in mid-span does not drag.
+3. The new copper is the fixed copper of the same `shove::shove` a route step runs, with the dragged net frozen and the copper it replaces hidden. Walkaround never pushes and Ignore does not check, as for a step; the mode and *Shove vias* are the Route tool's.
+4. When no room exists the segment stops at the last legal offset (bisected, as a step stops short) and the plan says why; a drag that cannot move at all proposes nothing.
 
-The seam (`Line`, `State`, `shove`, the undo edits) is in place.
+The plan's `end` is the moved segment's midpoint, and `shoved` lists the dragged and stretched tracks with other nets' pushed tracks. The desktop draws the dragged net's moved copper in `preview_add` and shoved copper outlined in the accent, from the committed board on every move, so pushed copper springs back; a drag that stops short gets the warning ring and a line to the pointer. Release sends the edit set as one `layout.route_apply`, one undo step with every moved item, and Esc cancels. `layout.track_drag { request }` applies the plan as one undo step and reports `track_dragged` (the offset reached and whether it is the requested one); a drag that cannot move is refused with the reason, and nothing changes. The request has the track, `offset`, `posture` (default 45°), `mode` (default `shove`) and `move_vias` (default true).
+
+Dragging a corner (one vertex of a chain) is not built.
 
 ## Limits and follow-ups
 
@@ -155,4 +162,4 @@ The seam (`Line`, `State`, `shove`, the undo edits) is in place.
 - **Shove scope.** A chain's ends and pins never move, so a pusher reaching a chain's end at a pad or via, or a mid-span joint, fails rather than dragging the joint. A via moves only when it is the obstacle hit, not to make room for a chain. Shoves stay on the pushed copper's layer.
 - **Stateless preview.** Each move plans from the committed board. A head swept along a long track re-decides the push side each frame from geometry; the shorter clear side wins, which is stable in practice but not hysteretic.
 - **Pairs.** The pair router commits through `layout.route_apply` with the plan's edits. There is no serialisable `layout.route_pair_step` for CLI and MCP yet; `layout.route_pair` routes a whole pair without shove. The fan-out limits of [high-speed routing](high-speed-routing.md#limits-and-follow-ups) remain.
-- **Track drag** is planned, above.
+- **Track drag.** A dragged segment does not walk round what it cannot push; it stops at the last legal offset. Corner drags are not built.

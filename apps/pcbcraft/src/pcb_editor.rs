@@ -81,6 +81,9 @@ mod shove_tests;
 mod signal_card;
 mod stackup_panel;
 mod text_card;
+mod track_drag;
+#[cfg(test)]
+mod track_drag_tests;
 mod tune_tool;
 pub use rules_panel::{RuleTopic, topic_for as rule_topic_for};
 mod track_card;
@@ -380,6 +383,8 @@ pub struct PcbEditor {
     pan: Vec2,
     drag: Option<(Placement, Point)>,
     drag_position: Option<Point>,
+    /// A track dragged with Select (`track_drag`).
+    track_drag: Option<track_drag::TrackDrag>,
     drag_airwires: Option<DragAirwires>,
     show_airwires: bool,
     cached_revision: Option<u64>,
@@ -523,6 +528,7 @@ impl Default for PcbEditor {
             pan: Vec2::ZERO,
             drag: None,
             drag_position: None,
+            track_drag: None,
             drag_airwires: None,
             show_airwires: true,
             cached_revision: None,
@@ -896,6 +902,7 @@ impl PcbEditor {
 
     fn cancel_drag(&mut self) {
         self.drag = None;
+        self.track_drag = None;
         self.drag_position = None;
         self.drag_airwires = None;
     }
@@ -1615,7 +1622,14 @@ impl PcbEditor {
             let start = ui.input(|i| i.pointer.press_origin()).or(pointer);
             if let Some(start) = start {
                 let at = world(start);
-                if let Some(id) = self.pick_instance(project, at, tolerance, metric) {
+                // A track under the press drags with shove (`track_drag`).
+                let hit = self.hit_at(project, at, tolerance, metric);
+                if let menu::Hit::Track(id, _) = hit
+                    && let Some(drag) = track_drag::TrackDrag::of(project, id, at)
+                {
+                    self.select_hit(hit);
+                    self.track_drag = Some(drag);
+                } else if let Some(id) = self.pick_instance(project, at, tolerance, metric) {
                     self.set_selection(Some(id), None, None);
                     // A locked part, or one its dimensions hold in place,
                     // does not follow the pointer: the engine says why, in
@@ -1635,6 +1649,12 @@ impl PcbEditor {
                     }
                 }
             }
+        }
+        if let Some(at) = cursor {
+            self.plan_track_drag(project, engine.revision(), at);
+        }
+        if response.drag_stopped_by(PointerButton::Primary) && self.track_drag.is_some() {
+            operation = self.finish_track_drag(engine.revision());
         }
         if let (Some((placement, start)), Some(at)) = (&self.drag, cursor) {
             let to = snap([
@@ -1721,7 +1741,9 @@ impl PcbEditor {
         if let Some(end) = route_end {
             let _ = self.route_plan(project, engine.revision(), end);
         }
-        self.shoved = self.route_moved(engine.revision());
+        self.shoved = self
+            .track_drag_moved(engine.revision())
+            .unwrap_or_else(|| self.route_moved(engine.revision()));
         self.paint_board(&painter, view, project);
         self.paint_fill_handles(&painter, view, project);
         self.paint_fill_draw(&painter, view, cursor);
@@ -1743,6 +1765,9 @@ impl PcbEditor {
         }
         if let Some(end) = route_end {
             self.paint_route_preview(&painter, view, project, end);
+        }
+        if let Some(at) = cursor {
+            self.paint_track_drag(&painter, view, project, at);
         }
         if self.tool == Tool::Tune {
             self.paint_tune_preview(&painter, view, project, engine.revision(), pointer);
