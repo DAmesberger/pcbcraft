@@ -518,7 +518,7 @@ fn the_open_page_lists_each_component_once() -> TestResult {
     let mut editor = PartEditor::default();
     editor.show_start();
     frame(&mut editor, &engine, &ctx);
-    let _ = ctx.run_ui(
+    ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 600.0))),
             events: vec![egui::Event::Text("APT1608".to_owned())],
@@ -528,7 +528,9 @@ fn the_open_page_lists_each_component_once() -> TestResult {
             editor.identity_strip(ui, &engine);
             editor.canvas(ui, &engine);
         },
-    );
+    )
+    .textures_delta
+    .clear();
     let shown = frame(&mut editor, &engine, &ctx);
     let rows = shown.iter().filter(|t| *t == "APT1608SGC").count();
     assert_eq!(rows, 1, "{shown:?}");

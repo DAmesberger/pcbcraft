@@ -340,6 +340,18 @@ impl PcbEditor {
             .collect()
     }
 
+    /// The dimensions drawn lit last frame (in whichever view): selected,
+    /// edited, or hovered in the view or in their Properties row.
+    #[cfg(test)]
+    pub fn dimensions_lit(&self) -> Vec<Id> {
+        self.dims
+            .drawn
+            .iter()
+            .filter(|d| d.hot)
+            .map(|d| d.id)
+            .collect()
+    }
+
     /// The value open at a dimension's label: the dimension, the text and
     /// why it was refused.
     #[cfg(test)]

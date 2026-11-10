@@ -10,12 +10,16 @@
 //! panels supply content and commands only; chrome and control looks come
 //! from this module.
 //!
+//! `item_row` is the one row of every Properties list (name, badge, value,
+//! end action).
+//!
 //! The sidebar redesign (docs/sidebar-ia.md) adds the column card, issue,
 //! feedback and dialog kits below; slice S0 fixed their signatures.
 pub mod card;
 pub mod dialog;
 mod form;
 pub mod issues;
+mod item_row;
 pub mod messages;
 pub mod pick;
 pub mod review;
@@ -28,6 +32,7 @@ mod tree;
 
 pub use form::*;
 pub use issues::{count_badge, issues_bar, issues_list};
+pub use item_row::*;
 pub use pick::{PickResponse, PickRow, Tick, pick_row};
 pub use rows::*;
 pub use search::*;

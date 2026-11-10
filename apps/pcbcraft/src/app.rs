@@ -1430,6 +1430,9 @@ mod dimension_2d_tests;
 #[path = "app/dimension_3d_tests.rs"]
 mod dimension_3d_tests;
 #[cfg(test)]
+#[path = "app/dimension_list_tests.rs"]
+mod dimension_list_tests;
+#[cfg(test)]
 #[path = "app/flow_tests.rs"]
 mod flow_tests;
 

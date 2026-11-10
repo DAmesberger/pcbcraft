@@ -60,6 +60,9 @@ pub(super) struct Drawn {
     /// What the label reads.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) label: String,
+    /// Drawn lit: selected, edited, or hovered here or in its row.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) hot: bool,
 }
 
 impl Drawn {
@@ -119,9 +122,6 @@ pub(in crate::pcb_editor) struct Dimensions {
     pub(super) edit: Option<InPlace>,
     /// The dimension under the pointer in the view last frame.
     pub(super) hovered: Option<Id>,
-    /// The dimension whose row the Properties card has under the pointer:
-    /// drawn hot in the view, as if hovered there.
-    pub(super) row_hovered: Option<Id>,
     /// Layout's own picking: the parts' body traces and the chooser.
     pub(super) layout: Layout2d,
 }
@@ -351,26 +351,6 @@ impl PcbEditor {
             self.set_selection(Some(part), None, None);
         }
         self.dimension = Some(id);
-    }
-
-    /// The selected part dimension (shared by Layout, 3D and the card).
-    #[allow(dead_code)]
-    pub(in crate::pcb_editor) fn dimension_selected(&self) -> Option<Id> {
-        self.dimension
-    }
-
-    /// The dimension under the pointer in the view, or whose card row is:
-    /// what the card's row hover and the view's hover share.
-    #[allow(dead_code)]
-    pub(in crate::pcb_editor) fn dimension_hovered(&self) -> Option<Id> {
-        self.dims.hovered.or(self.dims.row_hovered)
-    }
-
-    /// The card's row under the pointer, drawn hot in the view (`None`
-    /// when no row is): call once per frame from the card.
-    #[allow(dead_code)]
-    pub(in crate::pcb_editor) fn hover_dimension_row(&mut self, id: Option<Id>) {
-        self.dims.row_hovered = id;
     }
 
     /// The dimension the tool just added is selected once the engine has

@@ -220,7 +220,9 @@ impl PcbEditor {
             }
         });
         self.dims.hovered = hovered;
-        let hot_hover = hovered.or(self.dims.row_hovered);
+        // Under the pointer here, or its Properties row under the pointer.
+        let row = self.hovered_dimension(ui.ctx());
+        let hot_hover = hovered.or(row);
         let editing = self.dims.edit.as_ref().map(|e| e.id);
         let mut drawn = Vec::new();
         let mut placed = Vec::new();
@@ -238,7 +240,7 @@ impl PcbEditor {
             let shows = armed
                 || self.dimension == Some(d.id)
                 || editing == Some(d.id)
-                || self.dims.row_hovered == Some(d.id)
+                || row == Some(d.id)
                 || part.is_some_and(|p| self.instance == Some(p) || self.also.contains(&p));
             if !shows {
                 continue;
@@ -334,6 +336,7 @@ impl PcbEditor {
                     [shown.to[0], shown.to[1], z],
                 ],
                 label: text,
+                hot,
             });
         }
         self.dims.drawn = drawn;

@@ -1182,53 +1182,60 @@ impl PcbEditor {
             true,
             Some(board.parameters.len()),
             |ui| {
-                for param in &board.parameters {
+                // Each parameter is one row: its name, its expression (an
+                // `fx` row shows what it evaluates to) and its remove icon.
+                let results: Vec<Option<String>> = board
+                    .parameters
+                    .iter()
+                    .map(|p| match values.iter().find(|v| v.name == p.name) {
+                        Some(ParamEvaluation { value: Ok(v), .. }) => {
+                            let shown = footprint_params::value_text(*v);
+                            (kit::parse_number(&p.expr.0, "mm").is_none()
+                                && p.expr.0.trim() != shown)
+                                .then_some(shown)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let column = kit::value_column(
+                    ui,
+                    board.parameters.iter().zip(&results).map(|(p, r)| match r {
+                        Some(r) => format!("fx {} = {r}", p.expr.0),
+                        None => p.expr.0.clone(),
+                    }),
+                );
+                let count = board.parameters.len();
+                kit::list_frame(ui, count, count, |ui, index| {
+                    let Some(param) = board.parameters.get(index) else {
+                        return;
+                    };
                     let Some(text) = rows.exprs.get_mut(&param.name) else {
-                        continue;
+                        return;
                     };
                     let failed = rows
                         .error
                         .as_ref()
                         .is_some_and(|(n, _)| n.as_ref() == Some(&param.name));
-                    let field = kit::row(ui, &param.name.0, |ui| {
-                        ui.horizontal(|ui| {
-                            let t = Tokens::get();
-                            let width = ui.available_width()
-                                - if editable {
-                                    t.control_height + t.space_4
-                                } else {
-                                    0.0
-                                };
-                            let r = ui
-                                .scope(|ui| {
-                                    ui.set_max_width(width.max(48.0));
-                                    ui.spacing_mut().text_edit_width = width.max(48.0);
-                                    kit::text_field(
-                                        ui,
-                                        &format!("board-param-{}", param.name.0),
-                                        text,
-                                        "expression",
-                                        failed,
-                                    )
-                                })
-                                .inner;
-                            if editable
-                                && ui_kit::button(ui, "×", ui_kit::Button::Small)
-                                    .on_hover_text(
-                                        "Remove this parameter (refused while it is read)",
-                                    )
-                                    .clicked()
-                            {
-                                operation =
-                                    Some(shape::operation(vec![BoardEdit::RemoveParameter {
-                                        name: param.name.clone(),
-                                    }]));
-                                sent = Some(Some(param.name.clone()));
-                            }
-                            r
-                        })
-                        .inner
+                    let name = [param.name.0.as_str()];
+                    let remove = format!("Remove parameter {}", param.name.0);
+                    let mut row = kit::ItemRow::new(&name, column);
+                    if editable {
+                        row.action = Some(kit::RowAction {
+                            icon: "delete",
+                            label: &remove,
+                            tip: "Refused while it is read",
+                        });
+                    }
+                    let result = results.get(index).cloned().flatten();
+                    let (response, field) = kit::item_row(ui, &row, |ui| {
+                        kit::value_field(ui, "expression", text, failed, result.as_deref())
                     });
+                    if response.action {
+                        operation = Some(shape::operation(vec![BoardEdit::RemoveParameter {
+                            name: param.name.clone(),
+                        }]));
+                        sent = Some(Some(param.name.clone()));
+                    }
                     if field.lost_focus() && text.trim() != param.expr.0 {
                         match shape::parameter_edit(board, &param.name, text, param.unit) {
                             Ok(edit) => {
@@ -1254,9 +1261,6 @@ impl PcbEditor {
                         _ if refused.is_some() => {
                             kit::field_refused(ui, &field, refused.as_deref().unwrap_or_default());
                         }
-                        (_, Some(ParamEvaluation { value: Ok(v), .. })) => {
-                            kit::note(ui, &format!("= {}", footprint_params::value_text(*v)));
-                        }
                         (
                             _,
                             Some(ParamEvaluation {
@@ -1267,7 +1271,7 @@ impl PcbEditor {
                         }
                         _ => {}
                     }
-                }
+                });
                 if board.parameters.is_empty() {
                     kit::hint(
                         ui,
@@ -1336,7 +1340,8 @@ impl PcbEditor {
         operation
     }
 
-    /// NAMED EDGES: each name with its edge; × unnames it.
+    /// NAMED EDGES: each name with the parts dimensioned to it; its row's
+    /// icon unnames it.
     fn edges_section(
         &mut self,
         ui: &mut Ui,
@@ -1351,33 +1356,50 @@ impl PcbEditor {
             true,
             Some(board.edges.len()),
             |ui| {
-                for edge in board.edges.iter().take(kit::LIST_MAX_ROWS) {
-                    let used =
-                        pcbcraft_core::layout::dimensions::dimensioned(project, Some(&edge.curve));
-                    if kit::row(ui, &edge.name.0, |ui| {
-                        kit::summary_row(
-                            ui,
-                            &match used {
-                                0 => "No parts".to_owned(),
-                                1 => "1 part".to_owned(),
-                                n => format!("{n} parts"),
-                            },
-                            Some("Unname"),
-                        )
-                    }) {
+                // Each edge is one row: its name, the parts dimensioned to
+                // it, and its unname icon.
+                let used: Vec<String> = board
+                    .edges
+                    .iter()
+                    .map(|edge| {
+                        match pcbcraft_core::layout::dimensions::dimensioned(
+                            project,
+                            Some(&edge.curve),
+                        ) {
+                            0 => "No parts".to_owned(),
+                            1 => "1 part".to_owned(),
+                            n => format!("{n} parts"),
+                        }
+                    })
+                    .collect();
+                let column = kit::value_column(ui, &used);
+                let all = ui.make_persistent_id("board-edges-all");
+                let max = if ui.data(|d| d.get_temp::<bool>(all)).unwrap_or(false) {
+                    board.edges.len()
+                } else {
+                    kit::LIST_MAX_ROWS
+                };
+                let list = kit::list_frame(ui, board.edges.len(), max, |ui, index| {
+                    let (Some(edge), Some(used)) = (board.edges.get(index), used.get(index)) else {
+                        return;
+                    };
+                    let name = [edge.name.0.as_str()];
+                    let unname = format!("Unname edge {}", edge.name.0);
+                    let mut row = kit::ItemRow::new(&name, column);
+                    row.action = Some(kit::RowAction {
+                        icon: "close",
+                        label: &unname,
+                        tip: "",
+                    });
+                    let (response, _) = kit::item_row(ui, &row, |ui| kit::value_text(ui, used));
+                    if response.action {
                         operation = Some(shape::operation(vec![BoardEdit::UnnameEdge {
                             name: edge.name.clone(),
                         }]));
                     }
-                }
-                if board.edges.len() > kit::LIST_MAX_ROWS {
-                    kit::note(
-                        ui,
-                        &format!(
-                            "{} more named edges",
-                            board.edges.len() - kit::LIST_MAX_ROWS
-                        ),
-                    );
+                });
+                if list.show_all {
+                    ui.data_mut(|d| d.insert_temp(all, true));
                 }
                 if board.edges.is_empty() {
                     kit::hint(ui, "Name an edge (E) to place parts relative to it", "");

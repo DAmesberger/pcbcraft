@@ -37,7 +37,7 @@ use pcbcraft_core::model::dimension::{BoardRef, BoxSide, FeatureRef, PadPoint};
 use pcbcraft_core::{Engine, Id, Operation, Project};
 use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::context_menu::menu_frame;
-use solidcraft_ui_egui::ui_kit::{Container, Surface};
+use solidcraft_ui_egui::ui_kit::{Container, Surface as Panel};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
@@ -600,7 +600,7 @@ impl PcbEditor {
         let mut chosen = None;
         let mut rows = Vec::new();
         let ctx = ui.ctx().clone();
-        Container::new(&ctx, Surface::Popup)
+        Container::new(&ctx, Panel::Popup)
             .area(egui::Id::unique("pcb-dimension-chooser"))
             .fixed_pos(chooser.at + vec2(8.0, 8.0))
             .constrain(true)

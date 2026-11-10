@@ -486,31 +486,59 @@ fn group_section(
                 });
             }
             let rules = &project.rules;
-            for pair in group.pairs.iter().filter_map(|p| rules.diff_pair(*p)) {
-                kit::row(ui, "Pair", |ui| {
-                    if kit::summary_row(ui, &pair.name, Some("Remove")) {
-                        edited = Some(LengthGroup {
-                            pairs: group
-                                .pairs
+            // Each member is one row: its name, whether it is a pair or a
+            // net, and its remove icon.
+            let pairs: Vec<_> = group
+                .pairs
+                .iter()
+                .filter_map(|p| rules.diff_pair(*p))
+                .collect();
+            let column = kit::value_column(ui, ["Pair", "Net"]);
+            let count = pairs.len() + group.nets.len();
+            kit::list_frame(ui, count, count, |ui, index| {
+                let (name, kind) = match pairs.get(index) {
+                    Some(pair) => (pair.name.as_str(), "Pair"),
+                    None => match group.nets.get(index - pairs.len()) {
+                        Some(net) => (project.net_name(*net), "Net"),
+                        None => return,
+                    },
+                };
+                let parts = [name];
+                let remove = format!("Remove {} {name} from the group", kind.to_lowercase());
+                let mut row = kit::ItemRow::new(&parts, column);
+                row.action = Some(kit::RowAction {
+                    icon: "close",
+                    label: &remove,
+                    tip: "",
+                });
+                let (response, _) = kit::item_row(ui, &row, |ui| kit::value_text(ui, kind));
+                if !response.action {
+                    return;
+                }
+                edited = Some(match pairs.get(index) {
+                    Some(pair) => LengthGroup {
+                        pairs: group
+                            .pairs
+                            .iter()
+                            .copied()
+                            .filter(|p| *p != pair.id)
+                            .collect(),
+                        ..group.clone()
+                    },
+                    None => {
+                        let net = group.nets.get(index - pairs.len()).copied();
+                        LengthGroup {
+                            nets: group
+                                .nets
                                 .iter()
                                 .copied()
-                                .filter(|p| *p != pair.id)
+                                .filter(|n| Some(*n) != net)
                                 .collect(),
                             ..group.clone()
-                        });
+                        }
                     }
                 });
-            }
-            for net in &group.nets {
-                kit::row(ui, "Net", |ui| {
-                    if kit::summary_row(ui, project.net_name(*net), Some("Remove")) {
-                        edited = Some(LengthGroup {
-                            nets: group.nets.iter().copied().filter(|n| n != net).collect(),
-                            ..group.clone()
-                        });
-                    }
-                });
-            }
+            });
             if let Some(net) = highlighted
                 .filter(|n| !group.member_nets(rules).contains(n) && project.net(*n).is_some())
             {
