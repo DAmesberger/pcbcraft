@@ -111,7 +111,7 @@ fn instanced_vias_draw_as_their_copied_meshes() -> Result<(), Box<dyn std::error
             ("instanced", &pictures[1]),
             ("bare", &without),
         ] {
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba.clone())
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba.clone())
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("vias-{name}.png")), png)?;
         }
@@ -134,7 +134,7 @@ fn instanced_vias_draw_as_their_copied_meshes() -> Result<(), Box<dyn std::error
                 ]
             })
             .collect();
-        let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, diff).ok_or("png")?;
+        let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, diff).ok_or("png")?;
         std::fs::write(dir.join("vias-diff.png"), png)?;
     }
     assert!(covered * 10 > pixels, "the vias cover the view: {covered}");
@@ -196,7 +196,7 @@ fn a_picked_via_keeps_its_drill_open_and_stands_out() -> Result<(), Box<dyn std:
             ("picked", &picked_shown),
             ("net", &net_shown),
         ] {
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba.clone())
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba.clone())
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("via-select-{name}.png")), png)?;
         }
@@ -380,7 +380,7 @@ fn via_display_timings() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(dir) = std::env::var_os("PCBCRAFT_PICTURES") {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir)?;
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, overview)
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, overview)
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("vias-{count}.png")), png)?;
         }
@@ -436,7 +436,7 @@ fn esp32_display_timings() -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir)?;
         let png =
-            pcbcraft_solidcraft::render::png(1280, 800, picture).ok_or("png encoding failed")?;
+            pcbcraft_solidcraft::viewport::png(1280, 800, picture).ok_or("png encoding failed")?;
         std::fs::write(dir.join("esp32-overview.png"), png)?;
     }
     eprintln!(

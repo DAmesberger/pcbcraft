@@ -543,7 +543,7 @@ impl Atlas {
         let primitives = ctx.tessellate(output.shapes.clone(), ppp);
         let (w, h) = ((size.x * ppp) as usize, (size.y * ppp) as usize);
         let rgba = rasterize(&primitives, &self.0, (w, h), ppp, Tokens::get().panel);
-        Ok(pcbcraft_solidcraft::render::png(w, h, rgba).ok_or("png encoding failed")?)
+        Ok(pcbcraft_solidcraft::viewport::png(w, h, rgba).ok_or("png encoding failed")?)
     }
 }
 
@@ -559,6 +559,8 @@ impl Screen {
     pub(crate) fn new(size: egui::Vec2) -> Self {
         let ctx = egui::Context::default();
         solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        // The icons the app installs at startup (`App::new`).
+        solidcraft_ui_egui::icon_svg::install();
         Self {
             ctx,
             size,

@@ -36,7 +36,7 @@ use pcbcraft_core::model::board::ConstraintTarget;
 use pcbcraft_core::model::dimension::{BoardRef, BoxSide, FeatureRef, PadPoint};
 use pcbcraft_core::{Engine, Id, Operation, Project};
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::context_menu::menu_frame;
+use solidcraft_ui_egui::ui_kit::menu::menu_frame;
 use solidcraft_ui_egui::ui_kit::{Container, Surface as Panel};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};

@@ -364,8 +364,8 @@ pub const MENU_WIDTH: f32 = 250.0;
 /// the right, thin separators between groups, a disabled row dimmed.
 /// Returns the command of the row clicked.
 pub fn show_rows(ui: &mut egui::Ui, rows: &[Option<Row>]) -> Option<&'static str> {
-    use solidcraft_ui_egui::context_menu::list_row;
     use solidcraft_ui_egui::ui_kit::Item;
+    use solidcraft_ui_egui::ui_kit::menu::list_row;
     ui.set_width(MENU_WIDTH);
     ui.spacing_mut().item_spacing.y = 0.0;
     let mut chosen = None;

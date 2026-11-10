@@ -535,7 +535,7 @@ fn the_fixture_has_a_part_and_empty_space() -> Result<()> {
 /// selects what lies under the cube.
 #[test]
 fn the_cube_turns_the_view_to_a_face_and_drags_orbit() -> Result<()> {
-    use pcbcraft_solidcraft::render::StandardView;
+    use pcbcraft_solidcraft::viewport::StandardView;
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let rect = nav.rect()?;
     let (cube, home) = nav_cube::layout(rect);

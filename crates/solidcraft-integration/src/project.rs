@@ -30,7 +30,7 @@ use pcbcraft_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use solidcraft_engine::render::surface::OpaqueSurface;
+use solidcraft_viewport::surface::OpaqueSurface;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Chords of each round end cap of a track's 3D copper. The core checks

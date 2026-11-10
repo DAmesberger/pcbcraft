@@ -11,8 +11,8 @@ use crate::stack::Stack;
 use crate::{Error, Result};
 use pcbcraft_core::{Fabrication, MaskColour, MaskFinish, PadFinish, SilkscreenColour};
 use serde::{Deserialize, Serialize};
-use solidcraft_engine::render::clear_coat::ClearCoat;
-use solidcraft_engine::render::surface::OpaqueSurface;
+use solidcraft_viewport::clear_coat::ClearCoat;
+use solidcraft_viewport::surface::OpaqueSurface;
 
 /// What a native body represents, stored per body in the model metadata so a
 /// reopened file renders and picks the same way.
@@ -500,7 +500,7 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication, stack: &Stack) -> Ma
 impl Material {
     /// Solidcraft's validated surface for this look.
     pub fn surface(&self) -> Result<OpaqueSurface> {
-        let invalid = |error: solidcraft_engine::render::surface::SurfaceError| {
+        let invalid = |error: solidcraft_viewport::surface::SurfaceError| {
             Error::Invalid(format!("{}: {error}", self.name))
         };
         let [r, g, b] = self.base_linear;
