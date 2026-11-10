@@ -153,6 +153,13 @@ pub fn slab(region: &Region, z0: f64, z1: f64, tile: f64) -> Mesh {
                         ts.push(t);
                     }
                 }
+                // And at the far side of the fills' box (no tile line
+                // need lie there): a cut's edge running out of the box is
+                // kept up to it, not dropped whole by its midpoint.
+                let t = (hi[k] - a[k]) / d;
+                if t > 0.0 && t < 1.0 {
+                    ts.push(t);
+                }
             }
             ts.sort_by(f64::total_cmp);
             ts.dedup_by(|x, y| (*x - *y).abs() < EPS);
@@ -634,6 +641,22 @@ mod tests {
             near(mesh.measure().volume, 0.8 - 0.04);
             near(face_area(&mesh, 0), 0.76);
             near(face_area(&mesh, 2), 8.0);
+        }
+    }
+
+    /// An opening reaching out past the fill (a moved part's pad over a
+    /// small pour island): its walls stand inside the fill up to the
+    /// fill's edge, so the slab stays closed whatever the tiling.
+    #[test]
+    fn an_opening_running_out_of_the_fill_keeps_its_walls() {
+        let region = Region {
+            fills: vec![square([0.5, 0.5], 0.5)],
+            cuts: vec![vec![[0.5, 0.5], [0.8, 0.5], [0.8, 5.0], [0.5, 5.0]]],
+        };
+        for tile in [100.0, 0.3, 0.07] {
+            let mesh = slab(&region, 0.0, 0.1, tile);
+            near(mesh.measure().volume, (1.0 - 0.3 * 0.5) * 0.1);
+            near(face_area(&mesh, 2), (4.0 - 0.3 + 0.5 + 0.3 + 0.5) * 0.1);
         }
     }
 
