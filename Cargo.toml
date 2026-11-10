@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/editor-core",
+    "crates/units-derive",
     "crates/io",
     "crates/solidcraft-integration",
     "crates/automation",
@@ -20,6 +21,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 pcbcraft-core = { path = "crates/editor-core" }
+pcbcraft-units-derive = { path = "crates/units-derive" }
 pcbcraft-io = { path = "crates/io" }
 pcbcraft-solidcraft = { path = "crates/solidcraft-integration" }
 pcbcraft-automation = { path = "crates/automation" }

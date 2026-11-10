@@ -3,7 +3,7 @@
 //! where `250000` invites ×1000 mistakes. This is presentation, like the UI,
 //! not a second stored unit.
 use super::text::{LengthUnit, parse_length};
-use super::{MAX_COORD_NM, Nm};
+use super::{Angle, ArcDirection, ArcNm, MAX_COORD_NM, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -119,5 +119,131 @@ pub mod point_mm {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<PointNm, D::Error> {
         let [x, y] = <[Length; 2]>::deserialize(d)?;
         Ok(PointNm::new(x.0, y.0))
+    }
+}
+
+impl From<Nm> for Length {
+    fn from(nm: Nm) -> Self {
+        Self(nm)
+    }
+}
+
+impl From<Length> for Nm {
+    fn from(length: Length) -> Self {
+        length.0
+    }
+}
+
+/// A position as MCP and CLI payloads carry it: `[x, y]`, each a
+/// [`Length`]. The wire form of [`PointNm`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PointMm(pub PointNm);
+
+impl Serialize for PointMm {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        point_mm::serialize(&self.0, s)
+    }
+}
+
+impl<'de> Deserialize<'de> for PointMm {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        point_mm::deserialize(d).map(Self)
+    }
+}
+
+impl JsonSchema for PointMm {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "PointMm".into()
+    }
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        <[Length; 2]>::json_schema(generator)
+    }
+}
+
+impl From<PointNm> for PointMm {
+    fn from(p: PointNm) -> Self {
+        Self(p)
+    }
+}
+
+impl From<PointMm> for PointNm {
+    fn from(p: PointMm) -> Self {
+        p.0
+    }
+}
+
+/// A rotation as MCP and CLI payloads carry it: a number of degrees,
+/// counter-clockwise, kept to whole millidegrees and reduced to one turn.
+/// The wire form of [`Angle`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Degrees(pub Angle);
+
+impl Serialize for Degrees {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        // Millidegrees / 1000 is the nearest f64 to the exact decimal.
+        s.serialize_f64(self.0.to_degrees_f64())
+    }
+}
+
+impl<'de> Deserialize<'de> for Degrees {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let degrees = f64::deserialize(d)?;
+        Angle::from_degrees_f64_rounded(degrees)
+            .map(Self)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl JsonSchema for Degrees {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Degrees".into()
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "number",
+            "description": "An angle in degrees, counter-clockwise; kept to 0.001°."
+        })
+    }
+}
+
+impl From<Angle> for Degrees {
+    fn from(a: Angle) -> Self {
+        Self(a)
+    }
+}
+
+impl From<Degrees> for Angle {
+    fn from(d: Degrees) -> Self {
+        d.0
+    }
+}
+
+/// An arc as MCP and CLI payloads carry it: [`ArcNm`] with its points in
+/// millimetres.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ArcMm {
+    pub end: PointMm,
+    pub centre: PointMm,
+    pub direction: ArcDirection,
+}
+
+impl From<ArcNm> for ArcMm {
+    fn from(a: ArcNm) -> Self {
+        Self {
+            end: a.end.into(),
+            centre: a.centre.into(),
+            direction: a.direction,
+        }
+    }
+}
+
+impl From<ArcMm> for ArcNm {
+    fn from(a: ArcMm) -> Self {
+        Self {
+            end: a.end.into(),
+            centre: a.centre.into(),
+            direction: a.direction,
+        }
     }
 }

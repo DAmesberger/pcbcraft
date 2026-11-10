@@ -9,6 +9,10 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+# `convert-v1` reads converted files back as the app does and recomputes
+# the revision and design hashes a project remembers.
+pcbcraft-core.workspace = true
+pcbcraft-io.workspace = true
 serde_json.workspace = true
 # Parses Rust for the UI container gate (MIT OR Apache-2.0; already in the tree).
 syn = { version = "2", features = ["full", "visit"] }

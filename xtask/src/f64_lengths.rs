@@ -184,7 +184,7 @@ pub fn check() -> Result<()> {
     if violations.is_empty() {
         let count = |slice| ALLOWED.iter().filter(|(_, s)| *s == slice).count();
         println!(
-            "f64-lengths: {} f64 length fields left (U1 {}, U2 {}, U3 {}); {} f64 fields are not lengths",
+            "f64-lengths: {} f64 length fields left (U1 {}, U2 {}, U3 {}); {} f64 fields are exempt (not lengths, or Solidcraft parameters)",
             ALLOWED.len(),
             count(Slice::U1),
             count(Slice::U2),
@@ -196,8 +196,81 @@ pub fn check() -> Result<()> {
     Err(format!("f64 length fields:\n  {}", violations.join("\n  ")).into())
 }
 
-/// Serialized f64 fields that are not lengths or rotations, with why.
+/// Why a Solidcraft parameter stays f64 millimetres (founder decision,
+/// 10 November 2026).
+const SOLIDCRAFT: &str = "Solidcraft parameter: Solidcraft computes in f64 mm; converted only at the pcbcraft-solidcraft boundary";
+
+/// Serialized f64 fields that are not stored lengths, permanently, with
+/// why: values that are not lengths or rotations, and Solidcraft
+/// parameters.
 const NOT_LENGTHS: &[(&str, &str)] = &[
+    ("library/footprint_source.rs DimValue::Fixed.0", SOLIDCRAFT),
+    (
+        "library/footprint_source.rs FootprintEdit::AddPad.at",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs ParamValue::Angle.0",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs ParamValue::Length.0",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddArc.center",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddArc.end",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddArc.start",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddCircle.center",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddCircle.radius",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddLine.a",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddLine.b",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddPoint.at",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddPolyline.points",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddRect.a",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddRect.b",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::Drag.to",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::Move.delta",
+        SOLIDCRAFT,
+    ),
+    ("library/package_model.rs PartValue::Deg.0", SOLIDCRAFT),
+    ("library/package_model.rs PartValue::Mm.0", SOLIDCRAFT),
     (
         "library/footprint.rs PadShape::RoundRect.radius_ratio",
         "a ratio",
@@ -277,7 +350,7 @@ const ALLOWED: &[(&str, Slice)] = &[
     ("library/footprint.rs HoleShape::Slot.length", Slice::U2),
     ("library/footprint.rs HoleShape::Slot.width", Slice::U2),
     ("library/footprint.rs MaskRule::Expansion.0", Slice::U2),
-    ("library/footprint.rs Outline.start", Slice::U2),
+    ("library/footprint.rs Outline.start", Slice::U3),
     ("library/footprint.rs Pad.position", Slice::U2),
     ("library/footprint.rs Pad.rotation_deg", Slice::U2),
     (
@@ -299,68 +372,11 @@ const ALLOWED: &[(&str, Slice)] = &[
     ("library/footprint.rs PadVia.at", Slice::U2),
     ("library/footprint.rs PadVia.drill", Slice::U2),
     ("library/footprint.rs PasteRule::Reduction.0", Slice::U2),
-    ("library/footprint.rs Segment::Arc.bulge", Slice::U2),
-    ("library/footprint.rs Segment::Arc.to", Slice::U2),
-    ("library/footprint.rs Segment::Line.to", Slice::U2),
-    ("library/footprint_source.rs DimValue::Fixed.0", Slice::U2),
-    (
-        "library/footprint_source.rs FootprintEdit::AddPad.at",
-        Slice::U2,
-    ),
-    ("library/footprint_source.rs ParamValue::Angle.0", Slice::U2),
-    (
-        "library/footprint_source.rs ParamValue::Length.0",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddArc.center",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddArc.end",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddArc.start",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddCircle.center",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddCircle.radius",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddLine.a",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddLine.b",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddPoint.at",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddPolyline.points",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddRect.a",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddRect.b",
-        Slice::U2,
-    ),
-    ("library/footprint_source.rs SketchEdit::Drag.to", Slice::U2),
-    (
-        "library/footprint_source.rs SketchEdit::Move.delta",
-        Slice::U2,
-    ),
+    // Shared with board outlines, cutouts, fills and keepouts: converts
+    // with them.
+    ("library/footprint.rs Segment::Arc.bulge", Slice::U3),
+    ("library/footprint.rs Segment::Arc.to", Slice::U3),
+    ("library/footprint.rs Segment::Line.to", Slice::U3),
     ("library/graphics.rs Grid.footprint_mm", Slice::U2),
     ("library/graphics.rs Grid.symbol_mm", Slice::U2),
     ("library/graphics.rs Item::Shape.width", Slice::U2),
@@ -729,8 +745,6 @@ const ALLOWED: &[(&str, Slice)] = &[
         Slice::U2,
     ),
     ("library/package_model.rs PartDerived.bounds_mm", Slice::U2),
-    ("library/package_model.rs PartValue::Deg.0", Slice::U2),
-    ("library/package_model.rs PartValue::Mm.0", Slice::U2),
     ("library/pad_table.rs HoleRow.at", Slice::U2),
     ("library/pad_table.rs HoleRow.diameter", Slice::U2),
     ("library/pad_table.rs PadRow.at", Slice::U2),

@@ -1,26 +1,29 @@
 //! Dependency boundaries between workspace crates, checked from `cargo metadata`.
 //!
 //! Layers (a crate may depend only on strictly lower workspace layers):
-//! - 0 `pcbcraft-core`: document, commands, engine. Pure: no files, UI or Solidcraft.
-//! - 1 `pcbcraft-io`: file effects. `pcbcraft-solidcraft`: native 3D via `solidcraft-engine` only.
+//! - 0 `pcbcraft-units-derive`: the core's compile-time derive of the
+//!   millimetre wire form of its nanometre records.
+//! - 1 `pcbcraft-core`: document, commands, engine. Pure: no files, UI or Solidcraft.
+//! - 2 `pcbcraft-io`: file effects. `pcbcraft-solidcraft`: native 3D via `solidcraft-engine` only.
 //!   `pcbcraft-firmware`: firmware pin-configuration emitters over the core IR (slice C4).
-//! - 2 `pcbcraft-automation`: headless session, JSON-lines and MCP transports, and
+//! - 3 `pcbcraft-automation`: headless session, JSON-lines and MCP transports, and
 //!   the live channel into the open window over `solidcraft-control`.
-//! - 3 `pcbcraft-assist`: AI-assisted part design over the automation session
+//! - 4 `pcbcraft-assist`: AI-assisted part design over the automation session
 //!   (the only crate with an HTTP client).
-//! - 4 apps: `pcbcraft` (desktop UI) and `pcbcraft-cli`.
+//! - 5 apps: `pcbcraft` (desktop UI) and `pcbcraft-cli`.
 use crate::{Result, root};
 use std::process::Command;
 
 const LAYERS: &[(&str, u8)] = &[
-    ("pcbcraft-core", 0),
-    ("pcbcraft-io", 1),
-    ("pcbcraft-solidcraft", 1),
-    ("pcbcraft-firmware", 1),
-    ("pcbcraft-automation", 2),
-    ("pcbcraft-assist", 3),
-    ("pcbcraft-cli", 4),
-    ("pcbcraft", 4),
+    ("pcbcraft-units-derive", 0),
+    ("pcbcraft-core", 1),
+    ("pcbcraft-io", 2),
+    ("pcbcraft-solidcraft", 2),
+    ("pcbcraft-firmware", 2),
+    ("pcbcraft-automation", 3),
+    ("pcbcraft-assist", 4),
+    ("pcbcraft-cli", 5),
+    ("pcbcraft", 5),
 ];
 
 /// Window, GPU, dialog and executor crates belong to the desktop app only.

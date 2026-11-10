@@ -1,0 +1,19 @@
+//! U2 3D models: model definitions, model placement on packages and lead
+//! fits.
+use crate::Result;
+use serde_json::{Map, Value};
+
+/// One definition body of `kind`; the number of values changed.
+pub fn definition(_kind: &str, _body: &mut Map<String, Value>) -> Result<usize> {
+    Ok(0)
+}
+
+/// Settings saved with a project's drafts.
+pub fn drafts(_drafts: &mut Map<String, Value>) -> Result<usize> {
+    Ok(0)
+}
+
+/// Data of this domain a project holds outside its library.
+pub fn project(_project: &mut Map<String, Value>) -> Result<usize> {
+    Ok(0)
+}

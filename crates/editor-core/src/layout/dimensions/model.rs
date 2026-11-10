@@ -364,6 +364,18 @@ fn trace_model<'a>(
     Ok((model, design_key(&model)?))
 }
 
+/// The [`design_key`] of the model a package revision is traced on. A
+/// trace's `design` is this key of its `package`.
+pub fn package_design_key(project: &Project, package: PackageRef) -> Result<ContentHash> {
+    let published = project.library.package(package).ok_or_else(|| {
+        Error::NotFound(format!(
+            "layout.dimension_model: {} is not in the library",
+            project.library.describe(package.erased())
+        ))
+    })?;
+    trace_model(project, &published.definition).map(|(_, key)| key)
+}
+
 /// What a design's face names depend on, hashed: the part file's bytes and
 /// values; the generated model's form, builder revision and materials, or
 /// the envelope; the STEP file's bytes and frame. The model placement is
