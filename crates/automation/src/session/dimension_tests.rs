@@ -195,10 +195,41 @@ fn a_second_distance_that_only_a_turn_would_satisfy_is_refused() -> TestResult {
 /// shows 11.5 mm (from the edge's middle); 11 mm moves R5 0.5 mm down to
 /// y = 11, and the distance shown afterwards is the 11 mm the card holds.
 /// (Before, the solve measured from the edge's start, already 11 mm up, so
-/// it committed and nothing moved.)
+/// it committed and nothing moved.) The example holds R5 at fixed offsets
+/// from J1, so those two dimensions are deleted first.
 #[test]
 fn an_edge_dimension_moves_the_part_to_the_value_shown() -> TestResult {
     let mut session = open()?;
+    let r5 = session
+        .engine()
+        .project()
+        .instance_by_designator("R5")
+        .ok_or("R5")?
+        .id;
+    let held: Vec<u64> = session
+        .engine()
+        .project()
+        .part_dimensions
+        .iter()
+        .filter(|d| {
+            d.refs.iter().any(|r| {
+                matches!(r, pcbcraft_core::model::dimension::BoardRef::Part(
+                    pcbcraft_core::model::dimension::FeatureRef::Origin {
+                        target: pcbcraft_core::model::board::ConstraintTarget::Placement(p),
+                    }) if *p == r5)
+            })
+        })
+        .map(|d| d.id)
+        .collect();
+    assert_eq!(held.len(), 2, "R5 held by J1");
+    for id in held {
+        let deleted = apply(
+            &mut session,
+            json!({"editor": "Dimension", "operation": {"command": "layout.dimension_delete",
+                "params": {"id": id}}}),
+        );
+        assert_eq!(deleted["ok"], true, "{deleted}");
+    }
     let (edge, now) = pick_to_bottom(&session, "R5", [24.4, 11.5, 0.2])?;
     assert!((now - 11.5).abs() < 1e-9, "{now}");
     let refs = json!([edge, bottom_edge(&session)?]);

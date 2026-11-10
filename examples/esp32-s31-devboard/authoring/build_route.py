@@ -56,8 +56,8 @@ def build(s, L, S, PCB):
     R.path("USB_DN", [(20.25, 6.0), (19.25, 6.0)], USBW, BOT, note="A7 jumper")
     R.drop("GND", pad("U3", "3"), (20.0, 10.5))
     # CC pull-downs.
-    R.path("CC1", [pad("J1", "A5"), (18.75, 9.8), (16.0, 9.8), pad("R4", "1")], SIG)
-    R.path("CC2", [pad("J1", "B5"), (21.75, 9.8), (24.0, 9.8), pad("R5", "1")], SIG)
+    R.path("CC1", [pad("J1", "A5"), (18.75, 10.4), (16.0, 10.4), pad("R4", "1")], SIG)
+    R.path("CC2", [pad("J1", "B5"), (21.75, 10.4), (24.0, 10.4), pad("R5", "1")], SIG)
     R.drop("GND", pad("R4", "2"), (16.0, 13.0))
     R.drop("GND", pad("R5", "2"), (24.0, 13.0))
     # GND and VBUS pads of the receptacle.
@@ -67,12 +67,14 @@ def build(s, L, S, PCB):
         at = pad("J1", land)
         stake = min(pp[("J1", "S")], key=lambda q: (q[0] - at[0]) ** 2 + (q[1] - at[1]) ** 2)
         R.path("GND", [at, stake], 0.4, note=f"{land} to shell")
-    R.drop("VBUS", pad("J1", "A4B9"), (17.6, 9.0), 0.4)
-    R.drop("VBUS", pad("J1", "B4A9"), (22.4, 9.0), 0.4)
-    R.path("VBUS", [(22.4, 9.0), (17.6, 9.0)], PWR, BOT, note="B4A9 to A4B9")
+    # The VBUS vias and the run to the LDO keep clear of the pad row by
+    # more than 1 mm, room for J1 to move up by its dimension.
+    R.drop("VBUS", pad("J1", "A4B9"), (17.6, 9.6), 0.4)
+    R.drop("VBUS", pad("J1", "B4A9"), (22.4, 9.6), 0.4)
+    R.path("VBUS", [(22.4, 9.6), (17.6, 9.6)], PWR, BOT, note="B4A9 to A4B9")
 
     # --- LDO -------------------------------------------------------------
-    R.path("VBUS", [(17.6, 9.0), (11.6, 9.0), (10.95, 9.65), pad("U2", "3")], PWR, note="to LDO EN")
+    R.path("VBUS", [(17.6, 9.6), (11.6, 9.6), (10.95, 10.25), pad("U2", "3")], PWR, note="to LDO EN")
     R.path("VBUS", [(10.95, 10.6), (9.05, 10.6), pad("U2", "1")], PWR, note="to LDO IN")
     R.path("VBUS", [(9.05, 10.6), pad("C1", "1")], PWR, note="to C1")
     R.path("VBUS", [pad("C1", "1"), (5.6, 9.35), (5.6, 7.03), pad("J2", "1")], PWR, note="to J2.1")
@@ -85,8 +87,8 @@ def build(s, L, S, PCB):
 
     # --- LEDs ---------------------------------------------------------------
     R.path("LED_PWR", [pad("R2", "2"), pad("D1", "2")], SIG)
-    R.drop("+3V3", pad("R2", "1"), (27.3, 10.0))
-    R.drop("GND", pad("D1", "1"), (27.2, 12.5))
+    R.drop("+3V3", pad("R2", "1"), (31.3, 10.0))
+    R.drop("GND", pad("D1", "1"), (31.2, 12.5))
     R.drop("GND", pad("D2", "1"), (2.0, 46.175))
     R.path("LED_USR_A", [pad("R3", "2"), pad("D2", "2")], SIG)
     R.drop("LED_USR", pad("U1", "6"), (8.4, 51.95))
