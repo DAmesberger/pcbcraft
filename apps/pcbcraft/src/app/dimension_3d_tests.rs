@@ -632,3 +632,40 @@ fn board_edges_are_reached_like_part_edges_and_j1_wins_over_its_flush_edge() -> 
     assert_eq!(said, "Board · bottom edge");
     Ok(())
 }
+
+/// With Select, a click on J1 in PCB 3D selects J1, shared with Layout
+/// (the same selection), and nothing is rebuilt for it.
+#[test]
+fn a_3d_click_with_select_selects_the_part() -> Fallible {
+    let _serial = serial();
+    let engine = esp32()?;
+    let j1 = engine
+        .project()
+        .instances
+        .iter()
+        .find(|i| i.designator == "J1")
+        .map(|i| i.id)
+        .ok_or("no J1")?;
+    let mut h = Harness::new(engine)?;
+    h.until_shown()?;
+    let items = h.app.scene.selected_items(Some(j1), None, None);
+    h.app
+        .scene
+        .viewport
+        .view_from(pcbcraft_solidcraft::geom::Vec3::new(0.15, -1.0, 0.35));
+    assert!(h.app.scene.viewport.fit_items(&items));
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let rect = h.app.scene.viewport.rect().ok_or("no 3D view")?;
+    let at = rect.center();
+    let hit = h.app.scene.viewport.surface_hit(at).ok_or("nothing there")?;
+    let source = hit.item.and_then(|i| h.app.scene.source(i)).ok_or("J1")?;
+    assert_eq!(source.instance, Some(j1));
+    assert_eq!(h.app.pcb.selected_instance(), None);
+    let (requests, revision) = (h.app.scene.requests(), h.app.engine.revision());
+    h.click(at);
+    assert_eq!(h.app.pcb.selected_instance(), Some(j1));
+    assert_eq!(h.app.scene.requests(), requests, "selection built a model");
+    assert_eq!(h.app.engine.revision(), revision);
+    Ok(())
+}
