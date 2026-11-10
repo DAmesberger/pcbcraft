@@ -127,6 +127,53 @@ fn the_bar_names_the_subject_and_its_state() -> TestResult {
     Ok(())
 }
 
+/// The Details card's Revision row agrees with the bar: right after
+/// Publish it reads published, and an edit makes it a draft.
+#[test]
+fn the_revision_row_agrees_with_the_bar_after_publish() -> TestResult {
+    let ctx = context();
+    let mut engine = Engine::default();
+    let mut editor = PartEditor::default();
+    editor.commit(&ctx, &engine);
+    create(&mut editor, &mut engine, &ctx, Template::TwoTerminal)?;
+    let publish = editor.on_tool("publish", &engine).ok_or("publish")?;
+    engine.apply(engine.revision(), publish)?;
+    editor.commit(&ctx, &engine);
+    let revision_row = |editor: &mut PartEditor, engine: &Engine| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let unpublished = editor.unpublished(engine);
+            editor.definition_section(ui, engine, unpublished);
+        });
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.job.text.starts_with("r1") => {
+                    Some(t.galley.job.text.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        editor.identity_text(&engine).map(|(_, state)| state),
+        Some("published r1".into())
+    );
+    assert_eq!(revision_row(&mut editor, &engine), ["r1 · published"]);
+    if let Some(set) = &mut editor.draft {
+        set.metas.component.name = "Resistor 0603".into();
+    }
+    let edit = editor.commit(&ctx, &engine).ok_or("the rename commits")?;
+    engine.apply(engine.revision(), edit)?;
+    editor.commit(&ctx, &engine);
+    assert_eq!(
+        revision_row(&mut editor, &engine),
+        ["r1 · unpublished edits"]
+    );
+    Ok(())
+}
+
 /// The ribbon's Component group is New, Open and Publish.
 #[test]
 fn the_component_group_is_new_open_and_publish() -> TestResult {
