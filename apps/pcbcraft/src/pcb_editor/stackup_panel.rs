@@ -264,19 +264,20 @@ fn row_key(row: DraftRow) -> (bool, usize) {
 /// clicked, which the editor below the table then edits.
 fn table(ui: &mut Ui, draft: &StackupDraft, selected: Option<DraftRow>) -> Option<DraftRow> {
     let columns = [
-        // Thickness, what a stackup is read for, gets the most room; layer
-        // names are short. A cut caption shows whole on hover.
+        // Room for the indented "Prepreg" and for "THICKNESS", what a
+        // stackup is read for; uses are short words. A cut caption shows
+        // whole on hover.
         kit::TableColumn {
             title: "Layer",
-            weight: 1.05,
+            weight: 1.1,
         },
         kit::TableColumn {
             title: "Thickness",
-            weight: 1.15,
+            weight: 1.05,
         },
         kit::TableColumn {
             title: "Use · glass",
-            weight: 1.0,
+            weight: 0.85,
         },
     ];
     let stackup = &draft.stackup;
@@ -461,8 +462,8 @@ mod tests {
     use super::*;
     use solidcraft_ui_egui::fonts;
 
-    /// At the Properties column's width (the app's is about 230 points;
-    /// a little less here, for margin), the table shows every value and
+    /// At the Properties column's width (about 230 points, as measured in
+    /// the app), in the dialog's form, the table shows every value and
     /// the Thickness caption whole: the 4-layer preset's "0.2 mm" is not
     /// cut to "0.2 m…", nor "Prepreg" to "Prep…". Only the last caption
     /// may be cut (it shows whole on hover).
@@ -475,7 +476,7 @@ mod tests {
         let input = || egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(222.0, 600.0),
+                egui::vec2(230.0, 600.0),
             )),
             ..Default::default()
         };
@@ -483,7 +484,8 @@ mod tests {
         // The second frame lays out with the fonts the first loaded.
         for _ in 0..2 {
             let mut output = ctx.run_ui(input(), |ui| {
-                table(ui, &draft, None);
+                // In the dialog's form, with its label font.
+                kit::form(ui, |ui| table(ui, &draft, None));
             });
             output.textures_delta.clear();
             cut = output
