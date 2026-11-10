@@ -3721,6 +3721,7 @@ name = "pcbcraft-solidcraft"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "i_overlay",
  "js-sys",
  "pcbcraft-core",
  "png",

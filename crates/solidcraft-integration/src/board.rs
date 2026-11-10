@@ -1168,12 +1168,33 @@ fn slot(board: &BoardSketch, a: Point, b: Point, width: &DimValue) -> Outcome<Dr
 /// Draw a free-form curve over new points: a cubic spline, an ellipse or a
 /// conic, as Solidcraft's own sketch does. An end drawn on an existing
 /// point (a corner of the edge it replaces) is tied to it with a
-/// Coincident, so the outline stays closed when the corner moves.
+/// Coincident, so the outline stays closed when the corner moves. A drawn
+/// curve with both ends on the ends of a drawn line joined at both ends (an
+/// edge of a loop) replaces that edge: the line turns construction (out of
+/// the outline) and keeps its constraints, so the dimensions and parameters
+/// that hold its corners move the curve.
 fn free_form(board: &BoardSketch, curve: &FreeFormCurve) -> Outcome<SketchOutcome> {
     let stored = check::check_board_sketch(&board.sketch.0)?;
     let mut sk = stored.clone();
     let index = add_free_form(&mut sk, curve)?;
     let ends = sk.curves.get(index).and_then(|c| c.kind.ends());
+    if let Some((a, b)) = ends.filter(|_| sk.curves.get(index).is_some_and(|c| !c.construction))
+        && let (Some(a), Some(b)) = (sk.point(a), sk.point(b))
+    {
+        let on = |p: usize, at: Vec2| stored.point(p).is_some_and(|q| q.dist(at) <= JOIN_MM);
+        // An edge is a line joined at both ends; a lone line the curve
+        // closes into a loop stays.
+        let open = loose_ends(&stored).open;
+        for c in sk.curves.iter_mut().take(stored.curves.len()) {
+            if let (false, CurveKind::Line { a: p, b: q }) = (c.construction, &c.kind)
+                && !open.contains(p)
+                && !open.contains(q)
+                && ((on(*p, a) && on(*q, b)) || (on(*p, b) && on(*q, a)))
+            {
+                c.construction = true;
+            }
+        }
+    }
     for p in ends.into_iter().flat_map(|(a, b)| [a, b]) {
         let Some(at) = sk.point(p) else { continue };
         let corner = (0..stored.points.len())

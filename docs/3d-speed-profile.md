@@ -281,3 +281,59 @@ The worker made the edit's model in place, but the app dropped it: by the time i
 **Fixed:** a finished model of an earlier request of the same project is shown (under the "Updating" note, picks ignored) when it is newer than the model shown. J1 now moves in **3.7 s**, as headless, and the refilled fills follow at 26.9 s.
 
 **What remains: the refill, 86 % of the edit's 27 s.** Updating the refilled fills in place would not be cheaper today. Each of the 4 fills changed around J1's pads, so each would be redrawn and redefined, and a redefinition evaluates its extrusion twice (the width edit's refill update above: 40.6 s against a 26.5 s build). The smallest correct fix is upstream: keep the trial's evaluation for a redefined extrusion (Solidcraft), or make solidcore's sweep stitching linear. Both need the founder's go. Tiling the fills (option d1) would make both the build and the refill a few seconds.
+
+## Update, 10 November 2026: a board width change in place
+
+Same host and `ci` profile, load average 12–15. `PCBCRAFT_PROFILE_EDIT=width` (ESP32 board, 40 → 41 mm through the engine).
+
+**Why the width edit was built anew.** Not the outline: the laminate's outline is a sketch the update redraws, and the mask, silkscreen, edge and fill films are drawn from 2D data. The engine's carry (`dimensions::carry`) adds a track that joins a track stretched to the new edge (`trace_648`), and the update compared the build's command stream step by step: `parameters.import changed: added trace_648_x0 …`, so any added or removed track built the board anew. Undo removes the track and fell back the same way.
+
+**Fixed:** the commands that build one track are a *unit* of the replay (`Native::unit`). A unit the recorded build did not have runs on the design as it comes; its features go at the end of the history, where evaluating them reads nothing evaluated before. A recorded unit the build passes over is deleted (`component.delete`, which takes its features, occurrence and joints). The aggregate commands follow: parameters added (before the units that use them) or dropped (`parameters.delete`, once their users are gone), the new joints made, looks assigned again, identity metadata written again, and a removed body's look dropped. The design's evaluation is put off while the units run and done once. Tests compare the result with a fresh build as sets of bodies (kind, source, layer, box and volume) and sources and saved identity without native ids, since an added object's component takes the design's next id.
+
+| ESP32 board | Before | After |
+| --- | --- | --- |
+| Width +1 mm (carry adds a track), stale fills | 27.7 s, built anew | **4.4 s**, in place (73 commands) |
+| …then the 4 fills refilled | 50.0 s in place | 42.6 s in place (unchanged: see the refill) |
+
+## Update, 10 November 2026: tracks and vias added or removed by routing
+
+`PCBCRAFT_PROFILE_EDIT=route`: a routed step on the ESP32 board (an outer track and a via at its end) added, then removed. Before, any added or removed track or via built the board anew (the full build, 27–36 s under this load). Tracks are units since the width fix. Vias are placements of one definition per size, copied in one command per size; a via added or removed changes that command's number of copies. Now every recorded copy that stands where a copy is asked for is kept, the others are deleted (`selection.delete`), and the new ones are copied on the design; a via removed where the definition's first occurrence stood moves that occurrence to the next via, as a fresh build places it. A via of a new size still needs a new definition and is built anew.
+
+| ESP32 board | Before | After |
+| --- | --- | --- |
+| Routed step added (track and via), stale fills | built anew, 27–36 s | **2.1 s**, in place |
+| …removed again | built anew | **2.2 s**, in place |
+
+## Update, 10 November 2026: refills in tiles
+
+`PCBCRAFT_PROFILE_EDIT=move`: J1 moved 0.5 mm, then the four fills it made stale refilled, as the app's fill worker does; same host, load average 5–25.
+
+**Why a refill was built anew.** Each fill region was one sketch and one extrusion, numbered by its place in the fill's copper; a refill that split or joined a region (J1's move takes the GND pour from 29 to 31 regions) changed the command stream, and even with the same regions every changed region was redrawn and redefined (`timeline.redefine`, two evaluations of a 2,500–3,500-face extrusion).
+
+**What was chosen, and why.** The fills are built in **tiles**: each fill's regions are cut along a fixed 12 mm grid of the board (an exact cut on a nanometre grid, `i_overlay`'s integer overlay, so a cell's pieces depend only on the copper in that cell), and each loop is simplified to the model's 10 µm chord with every point on the cell's border kept, so neighbouring tiles meet along the same cut edges (copper joining copper). A tile is a replay unit known by its fill, cell and place in the cell, and by a digest of its outline: a refill deletes the tiles whose copper changed and builds them again at the end of the history; the others are passed over. No profile pick is involved, so nothing of Solidcraft's own profile-pick rule is reproduced, and nothing in the Solidcraft fork changed. Deletions roll the history back to the first feature they take, so the design is evaluated once, when it is rolled forward. The other way to stop a region-count change forcing a rebuild, region units without tiles, would still re-extrude a whole 3,500-face region for a change around one pad; tiles make the build cheaper too, because extruding one profile costs more than linearly in its edges.
+
+| ESP32 board | Before | Tiles of 4 mm | 8 mm | **12 mm (chosen)** |
+| --- | --- | --- | --- | --- |
+| Open in 3D (build) | 34.4 s (27 s at lower load) | 25.5 s | 17.4 s | **15.0–16.1 s** |
+| J1 moved 0.5 mm, stale fills | 7.2 s | 3.5 s | 3.3 s | **3.3 s** |
+| …the 4 stale fills refilled | 35.9 s, built anew | 13.4 s | 8.4 s* | **8.9 s** (7.3 s*) |
+| Outer track 10 µm wider | — | — | — | **2.3 s** (4.9 s*) |
+| Width +1 mm, then all 4 fills refilled | 4.4 + 42.6 s | — | — | **4.9 + 11.0 s** |
+
+\* the fills placed just before the laminate instead of first; kept first, since the edit's own update (what moves first on screen) is the faster one there.
+
+More tiles cost more than their smaller extrusions save: Solidcraft's evaluation bookkeeping grows with every body made before a feature (`doc evaluate` self time 8.0 s at 4 mm, 2.3 s at 12 mm), while the extrusions stay about 4.3 s at every size.
+
+**What remains.** A refill still evaluates every feature after the first tile it deletes: the later tiles, parts, pads, tracks and the laminate (1,128 SMLib extrusions in the J1 refill, the inner foil-level slabs 0.6 s each), because Solidcraft keys each feature's cached result on the digest of every body made before it. Only a generic Solidcraft change removes that: a feature's cache key built from what it reads (a new-body extrusion reads its sketch and parameters), option c2 above. It needs the founder's go and was not made.
+
+**In the VM** (8 cores, `ci` profile, `PcbcraftSpeedCheck.app` at d08cbb3 with `PCBCRAFT_TIMINGS`; the model worker's own lines), ESP32 example, 3D view open:
+
+| | Before (VM, 10 November, earlier runs) | After |
+| --- | --- | --- |
+| Open in 3D (build) | about 26 s | 17.7 s |
+| Width 40 → 41 mm from the board card (carry adds a track) | full rebuild, about 26 s | 5.3 s, in place (81 commands) |
+| …its 4 fills refilled | rebuilt, 23–27 s | 11.4 s, in place (283 commands) |
+| R2 moved 0.5 mm from the placement card | — | 0.16 s, in place (1 command) |
+| …its stale fills refilled | rebuilt, 23–27 s | 6.0 s, in place (8 commands) |
+
+Selecting R2 and switching between Layout and 3D made no board model. The app's own benchmark (`edit_timing_tests`, host, J1 0 → 1 mm): J1 shown at 4.4 s, the refilled model at 14.2 s (was 26.9 s; the refill updated in place in 9.7 s, was built anew in 21–23 s).
