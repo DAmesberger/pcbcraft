@@ -175,10 +175,11 @@ fn a_step_into_a_usb_c_pin_never_hooks() -> Fallible {
     Ok(())
 }
 
-/// Resistor pad, a grid corner, the pin: every corner on the 0.5 mm grid,
-/// and on the 0.25 mm grid between its lines, between the resistor and the
-/// pin row from which the straight posture step to the pin is clear, in
-/// the 45° elbow either way. The route never turns back or by more than
+/// Resistor pad, a grid corner, the pin: every corner on the 0.5 mm grid
+/// between the resistor and the pin row (its rows rounded up past the
+/// resistor pad), and on the 0.25 mm grid between its lines up to the
+/// resistor pad's row, from which the straight posture step to the pin is
+/// clear, in the 45° elbow either way. The route never turns back or by more than
 /// 90°. A corner past the pin's column (the pins are at x.25 and x.75, off
 /// the 0.5 mm grid) is moved back to it.
 #[test]
@@ -189,13 +190,27 @@ fn a_route_through_a_grid_corner_enters_the_pin_cleanly() -> Fallible {
     for (net, pin, from) in &jobs {
         let [x0, x1] = [pin[0].min(from[0]), pin[0].max(from[0])];
         let row = pin[1] + 1.0;
-        let columns = ((x1 - x0) * 4.0).ceil() as i32 + 2;
-        let rows = ((from[1] - row) * 4.0).floor() as i32;
+        // Corners in quarter millimetres from the grid's origin: the 0.5 mm
+        // grid as first swept, and the 0.25 mm grid inside the region.
+        let mut quarters = std::collections::BTreeSet::new();
+        let columns = ((x1 - x0) * 2.0).ceil() as i32 + 1;
+        let rows = ((from[1] - row) * 2.0).ceil() as i32;
         for gx in 0..=columns {
             for gy in 0..=rows {
+                quarters.insert((2 * gx, 2 * gy));
+            }
+        }
+        let (origin_x, origin_y) = ((x0 * 2.0).floor() / 2.0, (row * 2.0).ceil() / 2.0);
+        for gx in 0..=2 * columns {
+            for gy in 0..=((from[1] - origin_y) * 4.0).floor() as i32 {
+                quarters.insert((gx, gy));
+            }
+        }
+        for (gx, gy) in quarters {
+            {
                 let corner = [
-                    (x0 * 2.0).floor() / 2.0 + f64::from(gx) * 0.25,
-                    (row * 2.0).ceil() / 2.0 + f64::from(gy) * 0.25,
+                    origin_x + f64::from(gx) * 0.25,
+                    origin_y + f64::from(gy) * 0.25,
                 ];
                 for flipped in [false, true] {
                     let one = request(*net, *from, corner, Posture::Diagonal, flipped);
@@ -240,7 +255,7 @@ fn a_route_through_a_grid_corner_enters_the_pin_cleanly() -> Fallible {
     // 32 routes and 4 moved corners on the 0.5 mm grid when written; the
     // board's VBUS vias and run rose to y 9.6 mm since (room for J1 to move
     // up), boxing in more of those corners, so the sweep takes the 0.25 mm
-    // grid too (75 and 4), up to the resistor pad's row. It must stay real.
+    // grid inside the region too (81 and 5). It must stay real.
     assert!(routes >= 30, "{routes}");
     assert!(moved > 0, "no corner was moved back");
     Ok(())
