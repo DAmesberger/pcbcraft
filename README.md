@@ -3,7 +3,7 @@
 **Parametric PCB design software with deep integrated 3D, built for designers and AI agents alike.**
 Parts, schematic, board layout and 3D in one app, on [Solidcraft](https://github.com/tangency-labs/solidcraft)'s CAD engine.
 
-https://github.com/user-attachments/assets/3da46faa-128f-4c90-a563-dd01e53b8c44
+<img src="docs/media/highlight.webp" width="960" alt="Highlights: a board designed from schematic to 3D, a board parameter changed with everything following, a part dimensioned in 3D, the realistic view, and a track dragged with push-and-shove">
 
 ## Why it's different
 
@@ -19,8 +19,24 @@ https://github.com/user-attachments/assets/3da46faa-128f-4c90-a563-dd01e53b8c44
 
 <table>
   <tr>
-    <td><img src="examples/esp32-s31-devboard/images/app-pcb-3d.png" alt="The 4-layer ESP32-S31 dev board in the integrated 3D view, with the board parameters width, height and corner_r in the properties panel"></td>
-    <td><img src="examples/esp32-s31-devboard/images/app-pcb-2d.png" alt="The same board in the PCB layout view, routed, with its top copper fill"></td>
+    <td width="50%"><img src="docs/media/parametric.webp" alt="Board parameters changed: the outline, the parts held to its edges, their tracks and the fills follow"><br><b>Parametric boards.</b> Change a parameter; the outline, the parts held to it, their tracks and the fills follow.</td>
+    <td width="50%"><img src="docs/media/3d-dimension.webp" alt="A face of the USB-C receptacle picked in 3D and dimensioned to the board edge; the part moves to the typed value"><br><b>Dimensions in 3D.</b> Pick a part's face and a board edge, type a value, and the part moves.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/ai-part.webp" alt="A model reads a regulator datasheet and drafts the part with the app's own tools; every value cites its page"><br><b>Parts from datasheets.</b> A model drafts symbol, typed pins, footprint and 3D, citing every value; you review and publish.</td>
+    <td><img src="docs/media/shove.webp" alt="A route and a dragged track push neighbouring tracks aside live"><br><b>Push-and-shove.</b> Route or drag a track; other nets make room live, in one undo step.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/realistic.webp" alt="The board in the realistic studio view, orbiting"><br><b>Realistic 3D.</b> The same model in a studio look, one key away.</td>
+    <td><img src="docs/media/3d-layers.webp" alt="The 3D board peeled layer by layer"><br><b>Real copper.</b> Peel the stackup layer by layer; copper, holes and fills are solids.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/timelapse.webp" alt="A new design from schematic to a placed, routed board in 3D, sped up"><br><b>End to end.</b> Schematic, placement, routing, fills and 3D in one app (sped up).</td>
+    <td><img src="docs/media/components.webp" alt="The ESP32-S31 module's pins with their typed function lists"><br><b>Typed pins.</b> Pins carry typed function lists, peripherals and pin-mux rules.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/media/production.webp" alt="The production check reports no issues and the export writes the production files"><br><b>Production.</b> A pre-flight check, then Gerber, drill, pick-and-place, BOM and drawings.</td>
+    <td><img src="examples/esp32-s31-devboard/images/app-pcb-2d.png" alt="The ESP32-S31 dev board in the PCB layout view, routed, with its top copper fill"><br><b>The reference board.</b> A 4-layer ESP32-S31 dev board, from parts to Gerbers.</td>
   </tr>
 </table>
 
@@ -42,7 +58,7 @@ The goal is one workflow from idea to product: design, simulate, test without ha
 - **Smart parts.** Parts that carry electrical and behavioural models next to their symbol, footprint and 3D body, mapped pin by pin, so they simulate both as circuits and in software.
 - **Idea to production, AI-driven.** An assistant takes a description to a board: parts from datasheets, schematic, layout, virtual testing and the production files.
 
-Nearer steps, also planned: build and test the ESP32-S31 reference board; drag existing tracks with shove; a realistic render mode; buses and reusable schematic sheets. The [roadmap](ROADMAP.md) tracks the work, and the [product plan](docs/pcbcraft-plan.md) defines the first release.
+Nearer steps, also planned: build and test the ESP32-S31 reference board; buses and reusable schematic sheets. The [roadmap](ROADMAP.md) tracks the work, and the [product plan](docs/pcbcraft-plan.md) defines the first release.
 
 ## Status
 
