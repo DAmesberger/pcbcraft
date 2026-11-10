@@ -964,8 +964,8 @@ fn a_spline_top_edge_keeps_the_header_on_its_own_edges() -> Fallible<()> {
     Ok(())
 }
 
-/// Second VM test drive (§17): with the showcase's top line replaced by a
-/// spline between the corner fillets, `height` holds only the virtual
+/// Second VM test drive (§17): with the showcase's top line deleted and a
+/// spline drawn between the corner fillets in its place, `height` holds only the virtual
 /// top-right corner, which no curve uses, so it moves no outline edge. A
 /// warning says so in words, naming the parameter and no solver id; the
 /// untouched showcase has none.
@@ -998,5 +998,122 @@ fn a_parameter_that_drives_no_outline_edge_is_reported() -> Fallible<()> {
             && i.severity == pcbcraft_core::issues::Severity::Warning
             && !i.blocks()
     }));
+    Ok(())
+}
+
+fn param_idle(engine: &Engine) -> Vec<String> {
+    pcbcraft_core::layout::outline::checks(engine.project())
+        .into_iter()
+        .filter(|f| f.code == pcbcraft_core::layout::outline::PARAM_IDLE)
+        .map(|f| f.message)
+        .collect()
+}
+
+fn is_construction(engine: &Engine, id: &SketchCurveId) -> Fallible<bool> {
+    let sk = crate::footprint::check::check_board_sketch(&sketch(engine)?.sketch.0)
+        .map_err(|p| p.message)?;
+    let c = sk.curves.iter().find(|c| c.id == id.0).ok_or("curve")?;
+    Ok(c.construction)
+}
+
+/// §17 follow-up: a spline or conic drawn over the showcase's top line
+/// (between the corner fillets) replaces it. The line stays as construction,
+/// out of the outline, with its tangencies and the virtual corner `height`
+/// holds, so `height` moves the curve's ends with the corners and the
+/// outline stays closed; no parameter is idle. Deleting the construction
+/// line on purpose leaves `height` idle, which the warning reports.
+#[test]
+fn a_curve_over_a_filleted_edge_keeps_the_board_parameters_driving_it() -> Fallible<()> {
+    use pcbcraft_core::layout::outline::{SHAPE_INVALID, SHAPE_OPEN};
+    let curves = [
+        BoardEdit::AddSpline {
+            points: vec![[42.0, 28.0], [22.0, 29.5], [2.0, 28.0]],
+            control: false,
+            periodic: false,
+            construction: false,
+        },
+        BoardEdit::AddConic {
+            a: [42.0, 28.0],
+            b: [2.0, 28.0],
+            apex: [22.0, 31.0],
+            rho: 0.5,
+            construction: false,
+        },
+    ];
+    let faults = |engine: &Engine| -> Vec<String> {
+        pcbcraft_core::layout::outline::checks(engine.project())
+            .into_iter()
+            .filter(|f| f.code == SHAPE_OPEN || f.code == SHAPE_INVALID)
+            .map(|f| f.message)
+            .collect()
+    };
+    for curve in curves {
+        let mut engine = Engine::showcase_hosted(hosted())?;
+        let top = super::super::tests::created_curves_of(apply(
+            &mut engine,
+            Operation::Board(pcbcraft_core::layout::outline::BoardCommand::Edit {
+                edits: vec![curve],
+            }),
+        )?);
+        assert_eq!(top.len(), 1, "{top:?}");
+        let line = self::curve(&engine, "top")?;
+        assert!(is_construction(&engine, &line)?);
+        assert!(!is_construction(&engine, &top[0])?);
+        assert!(faults(&engine).is_empty(), "{:?}", faults(&engine));
+        assert!(param_idle(&engine).is_empty(), "{:?}", param_idle(&engine));
+        assert!(engine.project().board_size[1] >= 28.0 - 1e-6);
+
+        edit(&mut engine, vec![set("height", "34 mm")])?;
+        assert!(faults(&engine).is_empty(), "{:?}", faults(&engine));
+        assert!(param_idle(&engine).is_empty(), "{:?}", param_idle(&engine));
+        let board = engine.project().board().into_owned();
+        let poly = pcbcraft_core::model::board::flatten(&board.outer, 1e-3);
+        for end in [[42.0, 34.0], [2.0, 34.0]] {
+            assert!(
+                poly.iter()
+                    .any(|p| (p[0] - end[0]).hypot(p[1] - end[1]) < 1e-6),
+                "{end:?} not on {poly:?}"
+            );
+        }
+        assert!(engine.project().board_size[1] >= 34.0 - 1e-6);
+
+        edit(
+            &mut engine,
+            vec![BoardEdit::Sketch {
+                edit: SketchEdit::Delete {
+                    ids: vec![SketchRef::Curve(line)],
+                },
+            }],
+        )?;
+        assert_eq!(param_idle(&engine).len(), 1, "{:?}", param_idle(&engine));
+        assert!(param_idle(&engine)[0].contains("‘height’"));
+    }
+    Ok(())
+}
+
+/// Construction geometry reaches no fabrication output: the showcase with a
+/// construction line drawn across it writes the same bytes as the unchanged
+/// showcase.
+#[test]
+fn a_construction_line_leaves_the_fabrication_output_unchanged() -> Fallible<()> {
+    use pcbcraft_core::fabrication::{FabricationOptions, generate};
+    let plain = Engine::showcase_hosted(hosted())?;
+    let mut engine = Engine::showcase_hosted(hosted())?;
+    edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::AddLine {
+                a: [-5.0, 14.0],
+                b: [50.0, 14.0],
+                construction: true,
+            },
+        }],
+    )?;
+    assert_ne!(sketch(&engine)?.sketch, sketch(&plain)?.sketch);
+    let options = FabricationOptions::default();
+    assert_eq!(
+        generate(engine.project(), &options)?,
+        generate(plain.project(), &options)?
+    );
     Ok(())
 }
