@@ -288,9 +288,10 @@ fn a_3d_pick_dimensions_j1_to_the_bottom_edge_in_one_undo_step() -> Fallible {
     h.frame(vec![]);
     h.frame(vec![]);
     let screen = |h: &Harness, p: [f64; 3]| h.app.scene.viewport.to_screen(p).ok_or("off screen");
-    // On the shell's rim below the opening, and on the laminate's side
-    // under J1, a little to the side of the face's middle.
-    let on_face = screen(&h, [mid[0] + 1.0, mid[1], seat + 0.2])?;
+    // On the shell's rim below the opening (the stadium's lower wall, from
+    // 0.15 to 0.45 mm up: half way, clear of its edges), and on the
+    // laminate's side under J1, a little to the side of the face's middle.
+    let on_face = screen(&h, [mid[0] + 1.0, mid[1], seat + 0.3])?;
     let on_edge = screen(&h, [mid[0] + 1.0, mid[1], laminate / 2.0])?;
     let hit = h
         .app

@@ -577,32 +577,110 @@ pub fn author_b3u_1000p() -> Vec<u8> {
     finish_part(s, "body_height")
 }
 
+/// In the active sketch: a stadium (a slot with fully rounded ends), its
+/// straight sides along the sketch's u axis, centred on its v axis at `v`,
+/// `length` overall and `high` across (expressions over the design's
+/// parameters; `at` their values now). Every point is placed by
+/// expressions, so the profile follows the parameters. `tag` keeps the
+/// point ids of two stadiums in one sketch apart.
+fn stadium(s: &mut Session, tag: &str, [length, high, v]: [&str; 3], at: [f64; 3]) {
+    let [l, h, v0] = at;
+    let r = format!("(({high}) / 2)");
+    let flat = format!("(({length}) / 2 - {r})");
+    let (f, rr) = (l / 2.0 - h / 2.0, h / 2.0);
+    let points = [
+        (
+            "bl",
+            format!("-{flat}"),
+            format!("({v}) - {r}"),
+            [-f, v0 - rr],
+        ),
+        ("br", flat.clone(), format!("({v}) - {r}"), [f, v0 - rr]),
+        ("tr", flat.clone(), format!("({v}) + {r}"), [f, v0 + rr]),
+        (
+            "tl",
+            format!("-{flat}"),
+            format!("({v}) + {r}"),
+            [-f, v0 + rr],
+        ),
+        ("cr", flat.clone(), format!("({v})"), [f, v0]),
+        ("cl", format!("-{flat}"), format!("({v})"), [-f, v0]),
+    ];
+    for (id, x, y, _) in &points {
+        run(
+            s,
+            "sketch.point",
+            json!({"point": [x, y], "id": format!("{tag}{id}")}),
+        );
+    }
+    let p = |id: &str| format!("{tag}{id}");
+    run(
+        s,
+        "sketch.line",
+        json!({"points": [p("bl"), p("br")], "infer": false}),
+    );
+    run(
+        s,
+        "sketch.arc.center_point",
+        json!({"center": p("cr"), "start": p("br"), "end": p("tr")}),
+    );
+    run(
+        s,
+        "sketch.line",
+        json!({"points": [p("tr"), p("tl")], "infer": false}),
+    );
+    run(
+        s,
+        "sketch.arc.center_point",
+        json!({"center": p("cl"), "start": p("tl"), "end": p("bl")}),
+    );
+}
+
 /// The GCT USB4105-GF-A USB-C receptacle of the ESP32-S31 dev board
-/// example: a nickel shell over the outline, open at the mating face (−y),
-/// and the LCP tongue inside. Origin at the outline centre, as the
-/// footprint's; the shell's front face (`F1:-y` of the Shell body) is
-/// what the board holds flush to its edge. Outline 8.94 × 7.35 × 3.31 mm
-/// and the 8.34 × 2.56 mm opening centred 1.73 mm up, from GCT's public
-/// USB4105 drawing (rev B4, sheet 1), as the example's package form
-/// records them. The cavity depth and the tongue are illustrative, and the
-/// shell stakes and pegs below the seating plane are left out (the part
-/// file's lowest geometry is the seating plane). No CAD or EDA library
+/// example, from GCT's public USB4105 drawing (rev B4, sheet 1):
+///
+/// - **Shell**: a nickel stadium tube, open at the mating face (−y), from a
+///   sketch of its outer and inner outline extruded over the depth. The
+///   outline is 8.94 × 7.35 × 3.31 mm and the 8.34 × 2.56 mm opening is
+///   centred 1.73 mm up; the 0.30 mm sheet and the outer stadium (3.16 mm
+///   high, from 0.15 mm up) follow from those. Its four stakes stand in the
+///   plane of the side walls, joined to it: the front pair centred 2.60 mm
+///   from the mating face and 1.10 mm long, the rear pair 4.18 mm behind.
+///   Only the part above the seating plane is drawn (a part file's lowest
+///   geometry is the seating plane), from z = 0 up to the opening's centre,
+///   where they meet the rounded walls.
+/// - **Insulator** (LCP) closing the shell's rear behind the cavity, and the
+///   **Tongue** (LCP), a plate with rounded corners centred in the opening.
+/// - Twelve gold solder **tails** in the rear row, at the drawing's x
+///   positions and widths (0.20 mm signal, 0.45 mm shared VBUS and GND).
+///
+/// Origin at the outline centre, as the footprint's. The shell's front
+/// face (the extrusion's start face, `F2:start` of the Shell body) is what
+/// the board holds flush to its edge. Illustrative, as their parameters
+/// say: the cavity depth, the tongue, the rear stakes' length and the
+/// tails' thickness, reach and run under the shell. No CAD or EDA library
 /// data was copied.
 pub fn author_usb4105() -> Vec<u8> {
     let mut s = new_part(
         "GCT USB4105-GF-A USB-C receptacle",
         &[
-            ("width", "8.94 mm", "mm", "outline across (x)"),
+            ("width", "8.94 mm", "mm", "shell across (x)"),
             (
                 "depth",
                 "7.35 mm",
                 "mm",
-                "outline deep (y), mating face at -y",
+                "shell deep (y), mating face at -y",
             ),
             ("height", "3.31 mm", "mm", "seated height"),
             ("opening_w", "8.34 mm", "mm", "mating opening across"),
             ("opening_h", "2.56 mm", "mm", "mating opening high"),
             ("opening_z", "1.73 mm", "mm", "mating opening centre height"),
+            (
+                "shell_t",
+                "(width - opening_w) / 2",
+                "mm",
+                "shell sheet thickness",
+            ),
             (
                 "cavity_depth",
                 "6.2 mm",
@@ -616,31 +694,170 @@ pub fn author_usb4105() -> Vec<u8> {
                 "mm",
                 "tongue thickness (illustrative)",
             ),
+            (
+                "tongue_recess",
+                "0.6 mm",
+                "mm",
+                "tongue tip behind the mating face (illustrative)",
+            ),
+            (
+                "tongue_r",
+                "0.3 mm",
+                "mm",
+                "tongue corner radius (illustrative)",
+            ),
+            (
+                "stake_front_y",
+                "2.6 mm",
+                "mm",
+                "front stake centre from the mating face",
+            ),
+            (
+                "stake_pitch",
+                "4.18 mm",
+                "mm",
+                "front to rear stake centres",
+            ),
+            ("stake_len", "1.1 mm", "mm", "front stake length along y"),
+            (
+                "rear_stake_len",
+                "stake_len",
+                "mm",
+                "rear stake length along y (illustrative)",
+            ),
+            ("pitch", "0.5 mm", "mm", "signal tail pitch"),
+            ("signal_tail_w", "0.2 mm", "mm", "signal tail width"),
+            (
+                "power_tail_w",
+                "0.45 mm",
+                "mm",
+                "shared VBUS and GND tail width",
+            ),
+            ("vbus_x", "2.4 mm", "mm", "VBUS tail centres from x = 0"),
+            ("gnd_x", "3.2 mm", "mm", "GND tail centres from x = 0"),
+            ("tail_t", "0.15 mm", "mm", "tail thickness (illustrative)"),
+            (
+                "tail_reach",
+                "0.38 mm",
+                "mm",
+                "how far the tails reach past the rear (illustrative)",
+            ),
+            (
+                "tail_under",
+                "0.6 mm",
+                "mm",
+                "how far the tails run under the shell (illustrative)",
+            ),
         ],
         ["width * 0.6", "depth * 0.6"],
     );
+    let (w, h, ow, oh, oz) = (8.94, 3.31, 8.34, 2.56, 1.73);
+    let opening = ["opening_w", "opening_h", "-opening_z"];
+    // The XZ plane maps sketch (u, v) to (u, offset, −v), normal +y: the
+    // shell's sketch lies in the mating face and is extruded back.
     run(
         &mut s,
-        "solid.box",
-        json!({"corner": ["-width / 2", "-depth / 2", "0 mm"], "length": "width",
-            "width": "depth", "height": "height", "name": "Shell", "body_name": "Shell"}),
+        "sketch.create",
+        json!({"plane": "XZ", "offset": "-depth / 2", "name": "Shell profile"}),
+    );
+    stadium(
+        &mut s,
+        "o",
+        ["width", "2 * (height - opening_z)", "-opening_z"],
+        [w, 2.0 * (h - oz), -oz],
+    );
+    stadium(&mut s, "i", opening, [ow, oh, -oz]);
+    run(&mut s, "sketch.finish", json!({}));
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "Shell profile", "distance": "depth", "operation": "new",
+            "name": "Shell", "body_name": "Shell"}),
+    );
+    // The stakes, in the side walls' plane, joined to the shell.
+    let rear = "stake_front_y + stake_pitch";
+    for (name, x, y, len) in [
+        ("Stake 1", "-width / 2", "stake_front_y", "stake_len"),
+        (
+            "Stake 2",
+            "width / 2 - shell_t",
+            "stake_front_y",
+            "stake_len",
+        ),
+        ("Stake 3", "-width / 2", rear, "rear_stake_len"),
+        ("Stake 4", "width / 2 - shell_t", rear, "rear_stake_len"),
+    ] {
+        run(
+            &mut s,
+            "solid.box",
+            json!({"corner": [x, format!("-depth / 2 + {y} - {len} / 2"), "0 mm"],
+                "length": "shell_t", "width": len, "height": "opening_z",
+                "operation": "join", "targets": ["Shell"], "name": name}),
+        );
+    }
+    // The insulator closing the rear: the opening's stadium, behind the
+    // cavity.
+    run(
+        &mut s,
+        "sketch.create",
+        json!({"plane": "XZ", "offset": "-depth / 2 + cavity_depth", "name": "Insulator profile"}),
+    );
+    stadium(&mut s, "i", opening, [ow, oh, -oz]);
+    run(&mut s, "sketch.finish", json!({}));
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "Insulator profile", "distance": "depth - cavity_depth",
+            "operation": "new", "name": "Insulator", "body_name": "Insulator"}),
+    );
+    // The tongue: a rounded rectangle at its lower face, from its tip to
+    // the insulator, extruded up its thickness.
+    run(
+        &mut s,
+        "sketch.create",
+        json!({"plane": "XY", "offset": "opening_z - tongue_t / 2", "name": "Tongue profile"}),
     );
     run(
         &mut s,
-        "solid.box",
-        json!({"corner": ["-opening_w / 2", "-depth / 2 - 1 mm", "opening_z - opening_h / 2"],
-            "length": "opening_w", "width": "cavity_depth + 1 mm", "height": "opening_h",
-            "operation": "cut", "targets": ["Shell"], "name": "Opening"}),
+        "sketch.rectangle.rounded",
+        json!({"p0": ["-tongue_w / 2", "-depth / 2 + tongue_recess"],
+            "p1": ["tongue_w / 2", "-depth / 2 + cavity_depth"], "radius": "tongue_r"}),
     );
+    run(&mut s, "sketch.finish", json!({}));
     run(
         &mut s,
-        "solid.box",
-        json!({"corner": ["-tongue_w / 2", "-depth / 2 + 0.6 mm", "opening_z - tongue_t / 2"],
-            "length": "tongue_w", "width": "cavity_depth - 0.6 mm", "height": "tongue_t",
+        "solid.extrude",
+        json!({"sketch": "Tongue profile", "distance": "tongue_t", "operation": "new",
             "name": "Tongue", "body_name": "Tongue"}),
     );
+    // The solder tails in the drawing's x order (the footprint's lands).
+    let mut centres: Vec<(String, &str)> = vec![
+        ("-gnd_x".into(), "power_tail_w"),
+        ("-vbus_x".into(), "power_tail_w"),
+    ];
+    for k in 0..8 {
+        centres.push((format!("({k} - 3.5) * pitch"), "signal_tail_w"));
+    }
+    centres.push(("vbus_x".into(), "power_tail_w"));
+    centres.push(("gnd_x".into(), "power_tail_w"));
+    let mut tails = Vec::new();
+    for ((x, tw), designation) in centres.iter().zip([
+        "A1B12", "A4B9", "B8", "A5", "B7", "A6", "A7", "B6", "A8", "B5", "B4A9", "B1A12",
+    ]) {
+        let name = format!("Tail {designation}");
+        run(
+            &mut s,
+            "solid.box",
+            json!({"corner": [format!("{x} - {tw} / 2"), "depth / 2 - tail_under", "0 mm"],
+                "length": tw, "width": "tail_under + tail_reach", "height": "tail_t",
+                "name": name, "body_name": name}),
+        );
+        tails.push(name);
+    }
+    let tails: Vec<&str> = tails.iter().map(String::as_str).collect();
     assign_look(&mut s, &["Shell"], MaterialId::Nickel);
-    assign_look(&mut s, &["Tongue"], MaterialId::Lcp);
+    assign_look(&mut s, &["Insulator", "Tongue"], MaterialId::Lcp);
+    assign_look(&mut s, &tails, MaterialId::Gold);
     finish_part(s, "height")
 }
 
