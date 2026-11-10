@@ -124,9 +124,11 @@ fn the_tune_readout_stays_inside_the_canvas() -> TestResult {
         (track.start[0] + track.end[0]) / 2.0,
         (track.start[1] + track.end[1]) / 2.0,
     ];
-    let mut editor = PcbEditor::default();
-    editor.tool = Tool::Tune;
-    editor.zoom = 4.0;
+    let mut editor = PcbEditor {
+        tool: Tool::Tune,
+        zoom: 4.0,
+        ..Default::default()
+    };
     frame(&mut editor, &engine, &ctx, vec![]);
     let at = Pos2::new(SCREEN[0] - 40.0, 300.0);
     editor.pan += at - screen(&editor, &engine, mid);
