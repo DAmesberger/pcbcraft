@@ -10,7 +10,7 @@ use super::tests::{Fallible, apply, edit, sketch, sketched};
 use super::*;
 use pcbcraft_core::fabrication::PreflightReport;
 use pcbcraft_core::issues::Severity;
-use pcbcraft_core::layout::outline::{BoardEdit, SHAPE_INVALID, SHAPE_OPEN};
+use pcbcraft_core::layout::outline::{BoardEdit, PARAM_IDLE, SHAPE_INVALID, SHAPE_OPEN};
 use pcbcraft_core::library::footprint_source::SketchRef;
 use pcbcraft_core::model::board::{CutoutKind, flatten};
 use pcbcraft_core::{Engine, Operation, Outcome, Query, QueryResult};
@@ -470,5 +470,57 @@ fn fitted_arcs_follow_the_analytic_ellipse_within_the_fit() -> Fallible<()> {
         fit <= 0.001 + 1e-6,
         "the ellipse {fit} mm off the fitted arcs"
     );
+    Ok(())
+}
+
+/// A spline (or conic) drawn over the top edge's corners replaces the edge:
+/// its ends are tied to the corners, so `height` still moves the outline
+/// and the outline stays closed. Drawn over loose points, `height` moved
+/// the right line's top corner away from the spline's end and opened the
+/// board.
+#[test]
+fn a_curve_replacing_an_edge_follows_the_corners_it_was_drawn_on() -> Fallible<()> {
+    let curves = [
+        BoardEdit::AddSpline {
+            points: vec![[60.0, 40.0], [30.0, 44.0], [0.0, 40.0]],
+            control: false,
+            periodic: false,
+            construction: false,
+        },
+        BoardEdit::AddConic {
+            a: [60.0, 40.0],
+            b: [0.0, 40.0],
+            apex: [30.0, 46.0],
+            rho: 0.5,
+            construction: false,
+        },
+    ];
+    for curve in curves {
+        let mut engine = sketched()?;
+        let top = edge_curve(&engine, "top")?;
+        edit(
+            &mut engine,
+            vec![BoardEdit::Sketch {
+                edit: SketchEdit::Delete {
+                    ids: vec![SketchRef::Curve(top)],
+                },
+            }],
+        )?;
+        edit(&mut engine, vec![curve])?;
+        assert!(codes(&engine, SHAPE_OPEN).is_empty());
+        edit(&mut engine, vec![super::tests::set("height", "50 mm")])?;
+        assert!(
+            codes(&engine, SHAPE_OPEN).is_empty(),
+            "{:#?}",
+            codes(&engine, SHAPE_OPEN)
+        );
+        assert!(codes(&engine, PARAM_IDLE).is_empty());
+        // The right corner went up to 50 mm and the curve's end with it;
+        // before, the opened board kept its last 40 mm shape.
+        let board = engine.project().board().into_owned();
+        let poly = flatten(&board.outer, 1e-3);
+        assert!(distance_to(&poly, [60.0, 50.0]) < 1e-6, "{poly:?}");
+        assert!(engine.project().board_size[1] >= 50.0 - 1e-6);
+    }
     Ok(())
 }

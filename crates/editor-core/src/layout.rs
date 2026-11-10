@@ -90,6 +90,8 @@ pub enum LayoutCommand {
         layer: Layer,
     },
     /// Move a placed instance to a new `position`, `rotation_deg` and `layer`.
+    /// The unlocked tracks and vias attached to its pads come with it in the
+    /// same undo step, as for a part its dimensions move.
     #[serde(rename = "layout.move")]
     Move {
         instance: Id,
@@ -651,7 +653,7 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             placement.position = position;
             placement.rotation_deg = rotation_deg;
             placement.layer = layer;
-            // Existing tracks stay where they were. checks() exposes detached pads.
+            // The engine carries the attached copper (`dimensions::carry`).
         }
         LayoutCommand::SetPlacementLock { instance, locked } => {
             project

@@ -163,6 +163,35 @@ impl CopperGraph {
 
     /// Every joint of the board via at `index`, on any of its lands; its
     /// own barrel is not a joint. Empty for an unknown via.
+    /// The vias joined to pads of one carrier each and to no other pad,
+    /// with that carrier: what parts moving those pads take along
+    /// (`dimensions::carry`). `carrier` gives a pad's (by index into
+    /// [`Self::pads`]); `None` for a pad that stays.
+    pub fn carried_vias<M: Copy + PartialEq>(
+        &self,
+        carrier: impl Fn(usize) -> Option<M>,
+    ) -> std::collections::BTreeMap<usize, M> {
+        let mut out = std::collections::BTreeMap::new();
+        for index in 0..self.via_lands.len() {
+            let mut found: Option<M> = None;
+            let mut carried = true;
+            for meets in self.joints_of_via(index) {
+                if let Meets::Pad { index: pad } = meets {
+                    match (carrier(pad), found) {
+                        (None, _) => carried = false,
+                        (Some(m), None) => found = Some(m),
+                        (Some(m), Some(f)) if m != f => carried = false,
+                        _ => {}
+                    }
+                }
+            }
+            if carried && let Some(m) = found {
+                out.insert(index, m);
+            }
+        }
+        out
+    }
+
     pub fn joints_of_via(&self, index: usize) -> Vec<Meets> {
         let Some(lands) = self.via_lands.get(index) else {
             return Vec::new();

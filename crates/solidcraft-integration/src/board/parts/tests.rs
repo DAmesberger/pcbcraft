@@ -963,3 +963,40 @@ fn a_spline_top_edge_keeps_the_header_on_its_own_edges() -> Fallible<()> {
     assert!(pcbcraft_core::layout::dimensions::checks(engine.project()).is_empty());
     Ok(())
 }
+
+/// Second VM test drive (§17): with the showcase's top line replaced by a
+/// spline between the corner fillets, `height` holds only the virtual
+/// top-right corner, which no curve uses, so it moves no outline edge. A
+/// warning says so in words, naming the parameter and no solver id; the
+/// untouched showcase has none.
+#[test]
+fn a_parameter_that_drives_no_outline_edge_is_reported() -> Fallible<()> {
+    let idle = |engine: &Engine| -> Vec<String> {
+        pcbcraft_core::layout::outline::checks(engine.project())
+            .into_iter()
+            .filter(|f| f.code == pcbcraft_core::layout::outline::PARAM_IDLE)
+            .map(|f| f.message)
+            .collect()
+    };
+    assert!(idle(&Engine::showcase_hosted(hosted())?).is_empty());
+    let engine = showcase_with_a_spline_top()?;
+    assert_eq!(
+        idle(&engine),
+        [
+            "The board parameter ‘height’ no longer drives any outline edge: the dimensions it \
+          sets move nothing on the outline. Dimension an outline edge to it, or remove the \
+          parameter."
+        ]
+    );
+    let pcbcraft_core::QueryResult::Preflight(report) =
+        engine.query(pcbcraft_core::Query::Preflight { profile: None })?
+    else {
+        return Err("preflight".into());
+    };
+    assert!(report.items.iter().any(|i| {
+        i.code == pcbcraft_core::layout::outline::PARAM_IDLE
+            && i.severity == pcbcraft_core::issues::Severity::Warning
+            && !i.blocks()
+    }));
+    Ok(())
+}

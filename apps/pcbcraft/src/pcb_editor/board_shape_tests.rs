@@ -93,6 +93,7 @@ fn board_of(size: Point, parameters: Vec<FootprintParam>) -> Result<BoardSketch>
         solved: SolvedBoard::rectangle(size),
         outline_fit: pcbcraft_core::rules::DEFAULT_OUTLINE_FIT_MM,
         fault: None,
+        idle: Vec::new(),
     })
 }
 
@@ -1374,6 +1375,14 @@ fn a_conic_tied_to_a_line_closes_a_cutout_in_one_step() -> Fallible {
     d.key(egui::Key::A, true);
     assert_eq!(d.editor.shape.tool, ShapeTool::Conic);
     let revision = d.engine.revision();
+    let coincident = |board: &BoardSketch| -> Result<usize> {
+        Ok(scene_view(board)?
+            .constraints
+            .iter()
+            .filter(|k| k.kind == "Coincident")
+            .count())
+    };
+    let before = coincident(&d.board()?)?;
     assert!(d.click(b).is_none());
     assert!(d.click(a).is_none());
     d.hover(apex);
@@ -1384,22 +1393,23 @@ fn a_conic_tied_to_a_line_closes_a_cutout_in_one_step() -> Fallible {
         e,
         BoardEdit::AddConic { rho, .. } if (*rho - 0.5).abs() < 1e-12
     )));
-    let ties = edits
-        .iter()
-        .filter(|e| {
-            matches!(
-                e,
-                BoardEdit::Sketch {
-                    edit: SketchEdit::AddConstraint {
-                        kind: GeomConstraint::Coincident,
-                        ..
-                    }
-                }
-            )
-        })
-        .count();
-    assert_eq!(ties, 2, "both ends tied to the line");
+    // The engine's AddConic ties the ends to the points they are drawn on;
+    // the tool adds no second tie.
+    assert!(!edits.iter().any(|e| matches!(
+        e,
+        BoardEdit::Sketch {
+            edit: SketchEdit::AddConstraint {
+                kind: GeomConstraint::Coincident,
+                ..
+            }
+        }
+    )));
     let board = d.board()?;
+    assert_eq!(
+        coincident(&board)?,
+        before + 2,
+        "both ends tied to the line"
+    );
     assert!(board.fault.is_none(), "{:?}", board.fault);
     let [cutout] = board.solved.cutouts.as_slice() else {
         return Err("no D-shaped cutout".into());

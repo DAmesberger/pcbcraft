@@ -930,7 +930,7 @@ impl PcbEditor {
         ];
         self.drag_airwires = Some(DragAirwires {
             key,
-            connections: self.graph.moved_airwires(placement.instance, delta),
+            connections: self.graph.carried_airwires(placement.instance, delta),
         });
     }
 
@@ -3090,6 +3090,11 @@ mod tests {
     -> pcbcraft_core::Result<()> {
         let mut engine = routed_board()?;
         let (_, r2) = ids(&engine);
+        // A locked track stays when its part moves, so the drag opens an
+        // airwire (an unlocked one is carried: see below).
+        let track = engine.project().tracks[0].id;
+        let lock = |locked| Operation::Layout(LayoutCommand::SetTrackLock { id: track, locked });
+        engine.apply(engine.revision(), lock(true))?;
         let original = engine.project().clone();
         let revision = engine.revision();
         let mut editor = PcbEditor::default();
@@ -3141,6 +3146,27 @@ mod tests {
         editor.sync(&engine);
         assert!(editor.visible_airwires().is_empty());
         assert_eq!(engine.project(), &original);
+
+        // Unlocked, the track follows the dragged part: no airwire opens,
+        // in the preview as on the moved board.
+        engine.apply(engine.revision(), lock(false))?;
+        editor.sync(&engine);
+        editor.drag = Some((placement.clone(), placement.position));
+        editor.drag_position = Some([22.0, 15.0]);
+        editor.refresh_drag_airwires(&engine);
+        assert!(editor.visible_airwires().is_empty());
+        editor.cancel_drag();
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::Move {
+                instance: r2,
+                position: [22.0, 15.0],
+                rotation_deg: placement.rotation_deg,
+                layer: placement.layer,
+            }),
+        )?;
+        editor.sync(&engine);
+        assert!(editor.visible_airwires().is_empty());
         Ok(())
     }
 

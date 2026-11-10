@@ -93,24 +93,7 @@ pub fn carry(
             .copied()
     };
     // Vias joined to pads of exactly one carried part, and to no other pad.
-    let mut via_motion: BTreeMap<usize, Motion> = BTreeMap::new();
-    for index in 0..before.vias.len() {
-        let mut found: Option<Motion> = None;
-        let mut carried = true;
-        for meets in graph.joints_of_via(index) {
-            if let Meets::Pad { index: pad } = meets {
-                match (pad_motion(pad), found) {
-                    (None, _) => carried = false,
-                    (Some(m), None) => found = Some(m),
-                    (Some(m), Some(f)) if m != f => carried = false,
-                    _ => {}
-                }
-            }
-        }
-        if carried && let Some(m) = found {
-            via_motion.insert(index, m);
-        }
-    }
+    let via_motion = graph.carried_vias(pad_motion);
     // Track ends joined to a carried pad or via.
     let moving = |meets: Meets| match meets {
         Meets::Pad { index } => pad_motion(index),

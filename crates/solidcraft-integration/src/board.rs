@@ -163,6 +163,7 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
             solved: SolvedBoard::rectangle(size),
             outline_fit: DEFAULT_OUTLINE_FIT_MM,
             fault: None,
+            idle: Vec::new(),
         };
         let evaluation = self.evaluate(&board)?;
         if let Some(f) = evaluation.findings.iter().find(|f| refuses(&f.code)) {
@@ -253,6 +254,7 @@ fn unsolved(board: &BoardSketch, p: Problem) -> BoardEvaluation {
         },
         findings: vec![Finding::new(code, p.message, vec![ObjectRef::Board])],
         fault: None,
+        idle: Vec::new(),
         sketch_out: None,
     }
 }
@@ -720,6 +722,11 @@ fn run(board: &BoardSketch, stored: &Sketch) -> Outcome<BoardEvaluation> {
         Ok(solved) => (solved, open_ends(&sk)),
         Err(fault) => (board.solved.clone(), Some(open_ends(&sk).unwrap_or(fault))),
     };
+    let idle = if fault.is_none() {
+        idle(board, &sk)
+    } else {
+        Vec::new()
+    };
     let bytes =
         serde_json::to_vec(&solved).map_err(|e| problem("board.internal", e.to_string()))?;
     let dof = u32::try_from(dof).unwrap_or(u32::MAX);
@@ -738,7 +745,67 @@ fn run(board: &BoardSketch, stored: &Sketch) -> Outcome<BoardEvaluation> {
         findings: Vec::new(),
         fault,
         sketch_out: Some(SketchBlob(check::canonical(&sk)?)),
+        idle,
     })
+}
+
+/// The board parameters that drive a sketch dimension but move no outline
+/// curve or mounting hole: each, nudged by 1 %, re-solved from `sk` (the
+/// solved sketch) by the same solve; one whose nudge moves no point or
+/// radius of a drawn curve and no hole centre drives nothing of the board.
+/// A nudge that does not evaluate or solve is not reported.
+fn idle(board: &BoardSketch, sk: &Sketch) -> Vec<ParamName> {
+    /// Moves smaller than this are the solver's, not the nudge's, mm.
+    const STILL_MM: f64 = 1e-6;
+    let mut used: BTreeSet<usize> = board
+        .holes
+        .iter()
+        .filter_map(|h| sk.point_index(&h.center.0))
+        .collect();
+    let radius = |k: &CurveKind| match k {
+        CurveKind::Circle { r, .. } | CurveKind::Ellipse { r, .. } => *r,
+        _ => 0.0,
+    };
+    for c in sk.curves.iter().filter(|c| !c.construction) {
+        used.extend(c.kind.point_ids());
+    }
+    let moves = |b: &Sketch| -> bool {
+        used.iter().any(|&p| {
+            sk.point(p)
+                .zip(b.point(p))
+                .is_none_or(|(pa, pb)| pa.dist(pb) > STILL_MM)
+        }) || sk
+            .curves
+            .iter()
+            .zip(&b.curves)
+            .any(|(ca, cb)| (radius(&ca.kind) - radius(&cb.kind)).abs() > STILL_MM)
+    };
+    let driving = sk.driving_values();
+    let mut out = Vec::new();
+    for (k, p) in board.parameters.iter().enumerate() {
+        if p.unit == ParamUnit::Count {
+            continue;
+        }
+        let mut nudged = board.parameters.clone();
+        if let Some(n) = nudged.get_mut(k) {
+            n.expr = Expr(format!("({}) * 1.01", p.expr.0));
+        }
+        let Ok(values) = params::evaluate(&nudged, &[]) else {
+            continue;
+        };
+        let mut applied = sk.clone();
+        if crate::footprint::evaluate::apply_values(&mut applied, &values).is_err()
+            || applied.driving_values() == driving
+        {
+            continue;
+        }
+        if let Ok((moved, _)) = solve(sk, &values)
+            && !moves(&moved)
+        {
+            out.push(p.name.clone());
+        }
+    }
+    out
 }
 
 /// The solved board of a valid region: the outline counter-clockwise, its
@@ -1099,11 +1166,25 @@ fn slot(board: &BoardSketch, a: Point, b: Point, width: &DimValue) -> Outcome<Dr
 }
 
 /// Draw a free-form curve over new points: a cubic spline, an ellipse or a
-/// conic, as Solidcraft's own sketch does.
+/// conic, as Solidcraft's own sketch does. An end drawn on an existing
+/// point (a corner of the edge it replaces) is tied to it with a
+/// Coincident, so the outline stays closed when the corner moves.
 fn free_form(board: &BoardSketch, curve: &FreeFormCurve) -> Outcome<SketchOutcome> {
     let stored = check::check_board_sketch(&board.sketch.0)?;
     let mut sk = stored.clone();
-    add_free_form(&mut sk, curve)?;
+    let index = add_free_form(&mut sk, curve)?;
+    let ends = sk.curves.get(index).and_then(|c| c.kind.ends());
+    for p in ends.into_iter().flat_map(|(a, b)| [a, b]) {
+        let Some(at) = sk.point(p) else { continue };
+        let corner = (0..stored.points.len())
+            .filter_map(|q| Some((q, stored.point(q)?.dist(at))))
+            .filter(|(_, d)| *d <= JOIN_MM)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((q, _)) = corner {
+            sk.add_constraint(ConstraintKind::Coincident { p, q }, None)
+                .map_err(sketch_error)?;
+        }
+    }
     finish(&stored, &sk)
 }
 

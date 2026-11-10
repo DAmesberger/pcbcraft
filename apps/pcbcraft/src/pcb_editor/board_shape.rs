@@ -1133,7 +1133,8 @@ fn draw(
                     construction,
                 },
             )?;
-            tie_all(&mut stage, &points, &[a, b, apex])?;
+            // The engine ties the ends to the points they are drawn on.
+            tie_all(&mut stage, points.get(2..).unwrap_or_default(), &[apex])?;
         }
         (ShapeTool::Slot, [a, b]) => {
             let curves = slot(&mut stage, a.at, b.at, options.slot_width)?;
@@ -1237,7 +1238,17 @@ fn spline_commit(
         },
     )?;
     let clicks: Vec<&Click> = clicks.iter().collect();
-    tie_all(&mut stage, &points, &clicks)?;
+    // An open spline's ends the engine ties to the points they are drawn on.
+    let inner = if periodic {
+        0..points.len()
+    } else {
+        1..points.len().saturating_sub(1)
+    };
+    tie_all(
+        &mut stage,
+        points.get(inner.clone()).unwrap_or_default(),
+        clicks.get(inner).unwrap_or_default(),
+    )?;
     Ok(commit(stage))
 }
 

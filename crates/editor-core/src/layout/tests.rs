@@ -1232,3 +1232,85 @@ fn route_presets_follow_the_rules_and_classes() -> Result<()> {
     assert!(via_size_fits(&project, 0.3, 0.5).is_ok());
     Ok(())
 }
+
+/// Through the engine an ordinary `layout.move` (the one UI, CLI and MCP
+/// share) carries the track end on the moved part's pad, as a part its
+/// dimensions move does (`dimensions::carry`), in the same undo step: the
+/// board stays routed. A locked track stays, and a refused move leaves the
+/// document and revision as they were.
+#[test]
+fn a_moved_part_carries_its_tracks_in_one_undo_step() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    engine.apply(engine.revision(), Operation::Layout(LayoutCommand::Sync))?;
+    let (r1, r2) = ids()?;
+    let mv = |instance, position| {
+        Operation::Layout(LayoutCommand::Move {
+            instance,
+            position,
+            rotation_deg: 0.0,
+            layer: Layer::Top,
+        })
+    };
+    for (instance, position) in [(r1, [10.0, 10.0]), (r2, [25.0, 10.0])] {
+        engine.apply(engine.revision(), mv(instance, position))?;
+    }
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route { request: request() }),
+    )?;
+    let before = engine.project().clone();
+    let track = before.tracks[0].clone();
+    let unrouted = |p: &Project| {
+        checks(p)
+            .iter()
+            .filter(|f| f.code == "board.unrouted")
+            .count()
+    };
+    assert_eq!(unrouted(&before), 0);
+    // The drag preview gives the airwires the move leaves.
+    let preview = CopperGraph::of(&before).carried_airwires(r2, [0.0, 3.0]);
+
+    engine.apply(engine.revision(), mv(r2, [25.0, 13.0]))?;
+    assert_eq!(preview, airwires(engine.project()));
+    let moved = &engine.project().tracks;
+    assert_eq!(moved.len(), 1);
+    assert_eq!((moved[0].id, moved[0].start), (track.id, track.start));
+    let end = moved[0].end;
+    assert!(
+        (end[0] - 23.8).abs() < 1e-9 && (end[1] - 13.0).abs() < 1e-9,
+        "{end:?}"
+    );
+    assert_eq!(unrouted(engine.project()), 0);
+    engine.undo()?;
+    assert_eq!(engine.project(), &before, "one undo step");
+
+    // A locked track stays where it is.
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::SetTrackLock {
+            id: track.id,
+            locked: true,
+        }),
+    )?;
+    engine.apply(engine.revision(), mv(r2, [25.0, 13.0]))?;
+    assert_eq!(engine.project().tracks[0].end, track.end);
+    engine.undo()?;
+
+    // A refused move changes nothing.
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::SetPlacementLock {
+            instance: r2,
+            locked: true,
+        }),
+    )?;
+    let locked = engine.project().clone();
+    let revision = engine.revision();
+    assert!(matches!(
+        engine.apply(revision, mv(r2, [25.0, 13.0])),
+        Err(Error::Conflict(_))
+    ));
+    assert_eq!(engine.project(), &locked);
+    assert_eq!(engine.revision(), revision);
+    Ok(())
+}
