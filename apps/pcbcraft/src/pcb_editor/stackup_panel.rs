@@ -268,7 +268,7 @@ fn table(ui: &mut Ui, draft: &StackupDraft, selected: Option<DraftRow>) -> Optio
         // names are short. A cut caption shows whole on hover.
         kit::TableColumn {
             title: "Layer",
-            weight: 1.0,
+            weight: 1.05,
         },
         kit::TableColumn {
             title: "Thickness",
@@ -461,10 +461,11 @@ mod tests {
     use super::*;
     use solidcraft_ui_egui::fonts;
 
-    /// At the Properties column's width, the table shows every value and
+    /// At the Properties column's width (the app's is about 230 points;
+    /// a little less here, for margin), the table shows every value and
     /// the Thickness caption whole: the 4-layer preset's "0.2 mm" is not
-    /// cut to "0.2 m…". Only the last caption may be cut (it shows whole
-    /// on hover).
+    /// cut to "0.2 m…", nor "Prepreg" to "Prep…". Only the last caption
+    /// may be cut (it shows whole on hover).
     #[test]
     fn the_layer_table_fits_the_properties_column() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
@@ -474,7 +475,7 @@ mod tests {
         let input = || egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(230.0, 600.0),
+                egui::vec2(222.0, 600.0),
             )),
             ..Default::default()
         };
