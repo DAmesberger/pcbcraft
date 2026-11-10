@@ -2771,11 +2771,20 @@ fn copper_options(stack: &[CopperLayer]) -> Vec<(CopperLayer, String)> {
 fn board_view(rect: Rect, board: Point, zoom: f32, pan: Vec2, from_bottom: bool) -> BoardView {
     let scale = fit_scale(rect, board) * zoom;
     let centring = egui::vec2(-board[0] as f32, board[1] as f32) * 0.5;
-    let origin = rect.center() + pan + centring * scale;
+    let origin = fit_area(rect).center() + pan + centring * scale;
     BoardView::new(View { origin, scale }, board[0], from_bottom)
 }
 
+/// The part of the canvas `rect` a fitted board is centred in: above the
+/// navigation bar's band, so the bar never covers the board or a label at
+/// its bottom edge.
+fn fit_area(rect: Rect) -> Rect {
+    let band = kit::navigation_band().min(rect.height() / 4.0);
+    Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.max.y - band))
+}
+
 fn fit_scale(rect: Rect, board: Point) -> f32 {
+    let rect = fit_area(rect);
     ((rect.width() - 100.0).max(20.0) / board[0] as f32)
         .min((rect.height() - 100.0).max(20.0) / board[1] as f32)
 }
@@ -2787,9 +2796,10 @@ fn zoom_pan(rect: Rect, board: Point, before: f32, after: f32, pan: Vec2, pointe
     let fit = fit_scale(rect, board);
     let centring = egui::vec2(-board[0] as f32, board[1] as f32) * 0.5;
     let (from, to) = (fit * before, fit * after);
-    let origin = rect.center() + pan + centring * from;
+    let centre = fit_area(rect).center();
+    let origin = centre + pan + centring * from;
     let moved = pointer - (pointer - origin) * (to / from);
-    moved - rect.center() - centring * to
+    moved - centre - centring * to
 }
 
 fn snap(p: Point) -> Point {
@@ -4201,6 +4211,33 @@ mod tests {
                     assert!((view.view.scale / fit_scale(rect, board) - after).abs() < 1e-5);
                 }
             }
+        }
+    }
+
+    /// The fitted board keeps its margin clear of the navigation bar at
+    /// the canvas's bottom (the fit and layers buttons and the gap under
+    /// them), so a label under the board's bottom edge is not drawn under
+    /// the buttons.
+    #[test]
+    fn the_fitted_board_leaves_room_for_the_navigation_bar() {
+        let t = Tokens::get();
+        let rect = Rect::from_min_size(Pos2::new(40.0, 30.0), egui::vec2(900.0, 500.0));
+        let bar_top = rect.bottom() - (t.control_height + 2.0 * t.space_4 + t.space_16);
+        let board = [40.0, 30.0];
+        for from_bottom in [false, true] {
+            let view = board_view(rect, board, 1.0, Vec2::ZERO, from_bottom);
+            let low = [[0.0, 0.0], [board[0], 0.0], [0.0, board[1]], board]
+                .into_iter()
+                .map(|p| view.screen(p).y)
+                .fold(f32::MIN, f32::max);
+            let high = [[0.0, 0.0], [board[0], 0.0], [0.0, board[1]], board]
+                .into_iter()
+                .map(|p| view.screen(p).y)
+                .fold(f32::MAX, f32::min);
+            assert!(
+                bar_top - low >= high - rect.top() - 1e-3,
+                "{from_bottom}: board {high}..{low}, bar at {bar_top}"
+            );
         }
     }
 

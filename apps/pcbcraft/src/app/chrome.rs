@@ -596,12 +596,12 @@ impl App {
         let buttons = 1.0 + f32::from(u8::from(pcb_view)) + 2.0 * f32::from(u8::from(pcb_3d));
         let size = vec2(
             buttons * t.control_height + (buttons + 1.0) * t.space_4,
-            t.control_height + 2.0 * t.space_4,
+            crate::kit::navigation_bar_height(),
         );
         let rect = Rect::from_center_size(
             pos2(
                 canvas.center().x,
-                canvas.bottom() - t.space_16 - size.y / 2.0,
+                canvas.bottom() - crate::kit::navigation_band() + size.y / 2.0,
             ),
             size,
         );

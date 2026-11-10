@@ -103,6 +103,20 @@ pub fn contrast(a: egui::Color32, b: egui::Color32) -> f32 {
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
+/// The height of the canvas's floating navigation bar (fit view and view
+/// options) and of the gap under it: the band at the canvas's bottom that
+/// a fitted view keeps clear.
+pub fn navigation_band() -> f32 {
+    let t = Tokens::get();
+    navigation_bar_height() + t.space_16
+}
+
+/// The navigation bar's own height: a button and its padding.
+pub fn navigation_bar_height() -> f32 {
+    let t = Tokens::get();
+    t.control_height + 2.0 * t.space_4
+}
+
 /// The canvas's one dim hint line at its bottom-left corner, `inset` from
 /// the edges. It ends before the centred canvas buttons (fit view and view
 /// options, at most two), with an ellipsis when cut; the full text stays in
