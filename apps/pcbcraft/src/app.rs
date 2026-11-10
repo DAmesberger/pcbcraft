@@ -121,6 +121,10 @@ pub struct App {
     /// Commands chosen in the menu bar, run in the next update.
     #[cfg(target_os = "macos")]
     menu_runs: Vec<String>,
+    /// This frame's "Updating" chip over a 3D view: the view's area and
+    /// the error when the newer model failed. It is drawn after the issues
+    /// badge, beside it.
+    updating: Option<(egui::Rect, Option<String>)>,
 }
 
 impl App {
@@ -275,6 +279,7 @@ impl App {
             native_menu,
             #[cfg(target_os = "macos")]
             menu_runs: Vec::new(),
+            updating: None,
         }
     }
 
@@ -1140,7 +1145,7 @@ impl App {
                 // value shows at its new place while the model updates.
                 self.pcb.board_3d_updating(ui, &self.scene, &self.engine);
             }
-            updating_chip(ui, area, failed.as_deref());
+            self.updating = Some((area, failed));
             return;
         }
         if self.workspace == Workspace::Pcb {
@@ -1372,12 +1377,19 @@ impl eframe::App for App {
 }
 
 /// The chip over a 3D view showing its last model while a newer one is
-/// prepared (or failed: the error, the last model still shown).
-fn updating_chip(ui: &mut egui::Ui, area: egui::Rect, failed: Option<&str>) {
+/// prepared (or failed: the error, the last model still shown), at the
+/// top right of `area`, left of the issues badge (`badge`) when one shows.
+fn updating_chip(
+    ui: &mut egui::Ui,
+    area: egui::Rect,
+    badge: Option<egui::Rect>,
+    failed: Option<&str>,
+) {
     let t = solidcraft_theme::Tokens::get();
     let text = failed.unwrap_or("Updating");
+    let right = badge.map_or(area.right(), |b| b.left());
     let width = if failed.is_some() {
-        (area.width() - 2.0 * t.space_8).min(480.0)
+        (right - area.left() - 2.0 * t.space_8).clamp(0.0, 480.0)
     } else {
         ui.painter()
             .layout_no_wrap(
@@ -1391,7 +1403,7 @@ fn updating_chip(ui: &mut egui::Ui, area: egui::Rect, failed: Option<&str>) {
             + 3.0 * t.space_8
     };
     let rect = egui::Rect::from_min_size(
-        area.right_top() + egui::vec2(-width - t.space_8, t.space_8),
+        egui::pos2(right - width - t.space_8, area.top() + t.space_8),
         egui::vec2(width, t.control_height),
     );
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));

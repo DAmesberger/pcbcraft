@@ -178,6 +178,14 @@ impl Ax {
         }
     }
 
+    /// Every node of `role` whose name starts with `prefix`.
+    pub(crate) fn all_prefix(&self, role: Role, prefix: &str) -> Vec<&Node> {
+        self.nodes
+            .iter()
+            .filter(|n| n.role == role && n.name.starts_with(prefix))
+            .collect()
+    }
+
     /// The first node of `role` whose name starts with `prefix`.
     pub(crate) fn find_prefix(&self, role: Role, prefix: &str) -> Fallible<Node> {
         self.nodes

@@ -261,8 +261,12 @@ impl App {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(layout.canvas), |ui| {
                     ui.set_clip_rect(layout.canvas);
                     self.canvas(ui);
-                    self.issues
+                    let badge = self
+                        .issues
                         .badge(ui, layout.canvas, &self.engine, self.workspace);
+                    if let Some((area, failed)) = self.updating.take() {
+                        super::updating_chip(ui, area, badge, failed.as_deref());
+                    }
                     let selection = self.selection();
                     let shown = self.issues.pill(
                         ui,

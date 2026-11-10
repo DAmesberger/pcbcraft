@@ -904,13 +904,18 @@ impl Surface {
 
     /// The canvas count badge, top right: the workspace's counts, To do
     /// hidden while errors exist. A click expands or collapses Issues. It
-    /// is left out while nothing is counted or nothing is open.
-    pub fn badge(&mut self, ui: &mut Ui, canvas: Rect, engine: &Engine, workspace: Workspace) {
-        let Some(counts) = self.summary(engine, workspace).counts() else {
-            return;
-        };
+    /// is left out while nothing is counted or nothing is open. Returns
+    /// where it is drawn.
+    pub fn badge(
+        &mut self,
+        ui: &mut Ui,
+        canvas: Rect,
+        engine: &Engine,
+        workspace: Workspace,
+    ) -> Option<Rect> {
+        let counts = self.summary(engine, workspace).counts()?;
         if counts.error + counts.warning + counts.to_do == 0 {
-            return;
+            return None;
         }
         let t = Tokens::get();
         let rect = Rect::from_min_max(
@@ -925,9 +930,11 @@ impl Surface {
                 .max_rect(rect)
                 .layout(Layout::right_to_left(Align::Min)),
         );
-        if kit::count_badge(&mut child, &counts, true).clicked() {
+        let badge = kit::count_badge(&mut child, &counts, true);
+        if badge.clicked() {
             self.toggle();
         }
+        Some(badge.rect)
     }
 
     /// The ribbon's Issues toggle: the workspace's counts, lit while the
