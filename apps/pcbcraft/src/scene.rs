@@ -104,6 +104,19 @@ enum Job {
     /// replaces it.
     Project(u64, Arc<Project>, Arc<AtomicBool>),
     Package(u64, Box<PackageDefinition>, Option<Box<LibraryAsset>>),
+    /// A build that panics, as a dependency's bug would.
+    #[cfg(test)]
+    Panic(u64),
+}
+
+impl Job {
+    fn ticket(&self) -> u64 {
+        match self {
+            Self::Project(ticket, ..) | Self::Package(ticket, ..) => *ticket,
+            #[cfg(test)]
+            Self::Panic(ticket) => *ticket,
+        }
+    }
 }
 
 /// A built job's display geometry, pick sources and board stack.
@@ -243,6 +256,8 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
             };
             (ticket, built.map_err(|e| e.to_string()))
         }
+        #[cfg(test)]
+        Job::Panic(_) => std::panic::resume_unwind(Box::new("a build panicked")),
     }
 }
 
@@ -270,10 +285,24 @@ impl Worker {
                 while let Ok(newer) = jobs.try_recv() {
                     job = newer;
                 }
-                let (ticket, result) = build(job, &mut kept);
-                let started = std::time::Instant::now();
-                let result = result.and_then(|(geometry, sources, stack)| {
-                    model_scene::build(geometry, &stack).map(|scene| (scene, sources))
+                let ticket = job.ticket();
+                // A build that panics (a bug in a dependency) fails its
+                // request; the worker goes on with the next one, from no
+                // kept model, so the view never waits on a dead worker.
+                let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let (_, result) = build(job, &mut kept);
+                    let started = std::time::Instant::now();
+                    let result = result.and_then(|(geometry, sources, stack)| {
+                        model_scene::build(geometry, &stack).map(|scene| (scene, sources))
+                    });
+                    (result, started)
+                }));
+                let (result, started) = made.unwrap_or_else(|_| {
+                    kept = Kept::default();
+                    (
+                        Err("The 3D model could not be built (internal error)".to_owned()),
+                        std::time::Instant::now(),
+                    )
                 });
                 if std::env::var_os("PCBCRAFT_TIMINGS").is_some() {
                     eprintln!(
@@ -899,6 +928,26 @@ mod tests {
         })?;
         scene.receive();
         assert_eq!(scene.display(&key(&refilled)), Display::Current);
+        Ok(())
+    }
+
+    /// A build that panics fails its request, and the worker builds the
+    /// next one: the view never waits forever ("Updating") on a dead worker.
+    #[test]
+    fn a_panicking_build_fails_and_the_worker_goes_on() -> Result<(), Box<dyn std::error::Error>> {
+        let worker = Worker::start(egui::Context::default());
+        worker.sender.send(Job::Panic(1))?;
+        let wait = std::time::Duration::from_secs(30);
+        let failed = worker.receiver.recv_timeout(wait)?;
+        assert_eq!(failed.ticket, 1);
+        assert!(failed.result.is_err());
+        let project = Arc::new(Engine::demo()?.project().clone());
+        worker
+            .sender
+            .send(Job::Project(2, project, Arc::new(AtomicBool::new(false))))?;
+        let built = worker.receiver.recv_timeout(wait)?;
+        assert_eq!(built.ticket, 2);
+        assert!(built.result.is_ok());
         Ok(())
     }
 
