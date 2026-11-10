@@ -348,6 +348,7 @@ fn sketched() -> Fallible<Project> {
         solved,
         outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
         fault: None,
+        idle: Vec::new(),
     }));
     refill(&mut p)?;
     Ok(p)

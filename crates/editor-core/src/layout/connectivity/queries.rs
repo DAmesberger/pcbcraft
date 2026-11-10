@@ -443,11 +443,42 @@ impl CopperGraph {
     /// move of that placement gives, without rebuilding the graph: only the
     /// moved pads' lands are joined again, against their new neighbours.
     pub fn moved_airwires(&self, instance: Id, delta: Point) -> Vec<(WorldPad, WorldPad)> {
+        self.airwires_moving(instance, delta, false)
+    }
+
+    /// The airwires with one placement moved by `delta` as `layout.move`
+    /// moves it (`dimensions::carry`), without rebuilding the graph: the
+    /// vias it carries move with its pads, its unlocked tracks stretch and
+    /// stay joined, and the moved lands are joined again against their new
+    /// neighbours.
+    pub fn carried_airwires(&self, instance: Id, delta: Point) -> Vec<(WorldPad, WorldPad)> {
+        self.airwires_moving(instance, delta, true)
+    }
+
+    fn airwires_moving(
+        &self,
+        instance: Id,
+        delta: Point,
+        carry: bool,
+    ) -> Vec<(WorldPad, WorldPad)> {
+        let own = |index: usize| self.pads.get(index).is_some_and(|p| p.instance == instance);
+        let vias: BTreeSet<usize> = if carry {
+            self.carried_vias(|pad| own(pad).then_some(()))
+                .into_keys()
+                .filter(|v| self.vias.get(*v).is_some_and(|v| !v.locked))
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
         let moved = |kind: ElementKind| match kind {
-            ElementKind::Pad { index } => {
-                self.pads.get(index).is_some_and(|p| p.instance == instance)
-            }
+            ElementKind::Pad { index } => own(index),
+            ElementKind::Via { index } => vias.contains(&index),
             _ => false,
+        };
+        let stretches = |k: Option<ElementKind>| {
+            carry
+                && matches!(k, Some(ElementKind::Track { index })
+                    if self.tracks.get(index).is_some_and(|t| !t.locked))
         };
         let element_moved = |v: usize| self.element_of(v).is_some_and(moved);
         let mut dsu = Dsu::new(self.vertices.len());
@@ -456,7 +487,11 @@ impl CopperGraph {
                 let (a, b) = (self.element_of(e.a), self.element_of(e.b));
                 // Fill joins stay as stored, as the committed board's do.
                 let fill = |k: Option<ElementKind>| matches!(k, Some(ElementKind::Fill { .. }));
-                fill(a) || fill(b) || element_moved(e.a) == element_moved(e.b)
+                fill(a)
+                    || fill(b)
+                    || element_moved(e.a) == element_moved(e.b)
+                    || stretches(a)
+                    || stretches(b)
             };
             if keep {
                 dsu.union(e.a, e.b);

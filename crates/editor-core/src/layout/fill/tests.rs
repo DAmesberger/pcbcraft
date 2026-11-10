@@ -782,6 +782,7 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
         solved,
         outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
         fault: None,
+        idle: Vec::new(),
     }));
     p.rules.overrides.push(crate::rules::RuleOverride {
         key: RuleKey::Clearance {

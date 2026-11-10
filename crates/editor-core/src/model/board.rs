@@ -7,7 +7,8 @@
 use crate::geometry::{Bounds, Point};
 use crate::ids::Id;
 use crate::library::footprint_source::{
-    EvaluatorRef, Expr, FootprintParam, SketchBlob, SketchCurveId, SketchPointId, SolveSummary,
+    EvaluatorRef, Expr, FootprintParam, ParamName, SketchBlob, SketchCurveId, SketchPointId,
+    SolveSummary,
 };
 use crate::library::{Outline, Segment};
 use schemars::JsonSchema;
@@ -350,6 +351,11 @@ pub struct BoardSketch {
     /// a touching hole); `solved` is then the last valid shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fault: Option<ShapeFault>,
+    /// Board parameters that drive sketch dimensions but move no outline
+    /// curve or mounting hole (`board.param_idle`), as the last solve found
+    /// them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub idle: Vec<ParamName>,
 }
 
 fn default_outline_fit() -> f64 {

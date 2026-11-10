@@ -591,6 +591,7 @@ fn sketched(project: &mut Project, slot: bool) {
         solved,
         outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
         fault: None,
+        idle: Vec::new(),
     }));
 }
 
@@ -786,6 +787,7 @@ fn with_hole(project: &mut Project, at: Point) {
         solved,
         outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
         fault: None,
+        idle: Vec::new(),
     }));
 }
 

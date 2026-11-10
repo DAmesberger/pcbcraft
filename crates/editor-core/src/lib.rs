@@ -1065,6 +1065,10 @@ impl Engine {
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
         let merge_named = matches!(&operation, Operation::Update(u) if u.merge_named_nets);
+        let moved_part = match &operation {
+            Operation::Layout(layout::LayoutCommand::Move { instance, .. }) => Some(*instance),
+            _ => None,
+        };
         let outcome = match operation {
             Operation::Library(command) => {
                 commands::apply_library(&mut candidate, command, evaluator)?
@@ -1239,9 +1243,15 @@ impl Engine {
             }
             // Dimensioned parts, fills and keepouts are solved after the
             // board (and a move that cannot land is refused); a solved
-            // part carries the copper attached to its pads.
-            let placed =
+            // part, like a part moved by hand, carries the copper attached
+            // to its pads.
+            let mut placed =
                 layout::dimensions::follow(&self.document.project, project, evaluators.board)?;
+            if let Some(instance) = moved_part
+                && !placed.contains(&instance)
+            {
+                placed.push(instance);
+            }
             if !placed.is_empty() {
                 layout::dimensions::carry(
                     &self.document.project,

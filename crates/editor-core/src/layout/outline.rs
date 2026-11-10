@@ -51,6 +51,10 @@ pub const SHAPE_OPEN: &str = "board.shape_open";
 /// its last valid shape (slice S1, §5.1). Not a refusal, although it starts
 /// with [`FATAL_PREFIX`].
 pub const SHAPE_INVALID: &str = "board.shape_invalid";
+/// Finding code: a board parameter drives sketch dimensions but moves no
+/// outline curve or mounting hole (an edge it held was replaced by curves
+/// tied to nothing it moves). A warning, kept with the sketch.
+pub const PARAM_IDLE: &str = "board.param_idle";
 /// Evaluator findings with this code prefix refuse the edit that caused
 /// them (the board would have no valid shape); others are advisory.
 /// [`SHAPE_OPEN`] and [`SHAPE_INVALID`] are exempt ([`refuses`]).
@@ -79,6 +83,10 @@ pub struct BoardEvaluation {
     /// next solve starts from it (`None`: keep the stored sketch).
     #[serde(default)]
     pub sketch_out: Option<SketchBlob>,
+    /// Board parameters that drive sketch dimensions but move no outline
+    /// curve or mounting hole ([`PARAM_IDLE`]).
+    #[serde(default)]
+    pub idle: Vec<ParamName>,
 }
 
 /// What [`BoardShapeEvaluator::fillet`] drew: the sketch and, per new
@@ -713,6 +721,7 @@ fn commit(
     sketch.solve = evaluation.solve;
     sketch.solved = evaluation.solved;
     sketch.fault = evaluation.fault.map(bounded);
+    sketch.idle = evaluation.idle;
     if let Some(blob) = evaluation.sketch_out {
         sketch.sketch = blob;
     }
@@ -815,6 +824,18 @@ pub fn checks(project: &Project) -> Vec<Finding> {
                 vec![ObjectRef::Board],
             ));
         }
+        for name in &sketch.idle {
+            out.push(Finding::new(
+                PARAM_IDLE,
+                format!(
+                    "The board parameter ‘{}’ no longer drives any outline edge: the \
+                     dimensions it sets move nothing on the outline. Dimension an outline edge \
+                     to it, or remove the parameter.",
+                    name.0
+                ),
+                vec![ObjectRef::Board],
+            ));
+        }
     }
     out
 }
@@ -857,6 +878,7 @@ fn validate_sketch(sketch: &BoardSketch) -> Result<()> {
         || sketch.holes.len() > MAX_MOUNTING_HOLES
         || sketch.edges.len() > MAX_NAMED_EDGES
         || sketch.parameters.len() > MAX_BOARD_PARAMETERS
+        || sketch.idle.len() > MAX_BOARD_PARAMETERS
     {
         return Err(Error::Limit("board.sketch: too many roles".into()));
     }
@@ -891,6 +913,9 @@ fn validate_sketch(sketch: &BoardSketch) -> Result<()> {
         if !p.name.valid() || p.name.is_package() || !p.expr.valid() || !params.insert(&p.name) {
             return bad("board parameters have unique names and expressions");
         }
+    }
+    if sketch.idle.iter().any(|n| !params.contains(&n)) {
+        return bad("idle parameters are board parameters");
     }
     for h in &sketch.holes {
         if !h.drill.valid() || h.pad_diameter.as_ref().is_some_and(|d| !d.valid()) {
