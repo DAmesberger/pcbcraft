@@ -294,3 +294,12 @@ Same host and `ci` profile, load average 12–15. `PCBCRAFT_PROFILE_EDIT=width` 
 | --- | --- | --- |
 | Width +1 mm (carry adds a track), stale fills | 27.7 s, built anew | **4.4 s**, in place (73 commands) |
 | …then the 4 fills refilled | 50.0 s in place | 42.6 s in place (unchanged: see the refill) |
+
+## Update, 10 November 2026: tracks and vias added or removed by routing
+
+`PCBCRAFT_PROFILE_EDIT=route`: a routed step on the ESP32 board (an outer track and a via at its end) added, then removed. Before, any added or removed track or via built the board anew (the full build, 27–36 s under this load). Tracks are units since the width fix. Vias are placements of one definition per size, copied in one command per size; a via added or removed changes that command's number of copies. Now every recorded copy that stands where a copy is asked for is kept, the others are deleted (`selection.delete`), and the new ones are copied on the design; a via removed where the definition's first occurrence stood moves that occurrence to the next via, as a fresh build places it. A via of a new size still needs a new definition and is built anew.
+
+| ESP32 board | Before | After |
+| --- | --- | --- |
+| Routed step added (track and via), stale fills | built anew, 27–36 s | **2.1 s**, in place |
+| …removed again | built anew | **2.2 s**, in place |

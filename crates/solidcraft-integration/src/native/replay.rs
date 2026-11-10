@@ -162,6 +162,12 @@ pub(crate) struct Replay {
     synced: Option<Value>,
     /// Whether a command ran on the design (its evaluation is put off).
     live: bool,
+    /// Each component's first occurrence (where its copies are placed
+    /// from), and how far an edit moves a first occurrence.
+    first_of: BTreeMap<u64, u64>,
+    moved: BTreeMap<u64, [f64; 3]>,
+    /// Copies being placed ([`Next::instead`]).
+    placing: Option<Placing>,
 }
 
 /// What the replay makes of the next command: commands to run on the
@@ -170,6 +176,23 @@ pub(crate) struct Replay {
 pub(super) struct Next {
     pub before: Vec<(String, Value)>,
     pub reply: Option<Value>,
+    /// Run the command with these parameters instead, and answer with
+    /// what [`Replay::complete`] makes of its reply.
+    pub instead: Option<Value>,
+}
+
+/// Copies of a definition placed again in another number: each placement
+/// the build asks for, the recorded occurrence that stands there or `None`
+/// for one copied now ([`Replay::complete`]).
+struct Placing {
+    params: Value,
+    reply: Value,
+    slots: Vec<Option<u64>>,
+}
+
+/// A translation on a nanometre grid, to find a copy by where it stands.
+fn grid(t: [f64; 3]) -> [i64; 3] {
+    t.map(|v| (v * 1e6).round() as i64)
 }
 
 /// A joint list's joints by name.
@@ -318,6 +341,9 @@ impl Replay {
             active: json!("root"),
             synced: None,
             live: false,
+            first_of: BTreeMap::new(),
+            moved: BTreeMap::new(),
+            placing: None,
         }
     }
 
@@ -416,6 +442,14 @@ impl Replay {
 
     /// Follow the component the build activates.
     fn follow(&mut self, command: &str, params: &Value, reply: &Value) {
+        if command == "component.create"
+            && let (Some(c), Some(o)) = (
+                reply.get("component").and_then(Value::as_u64),
+                reply.get("occurrence").and_then(Value::as_u64),
+            )
+        {
+            self.first_of.insert(c, o);
+        }
         match command {
             "component.activate" => {
                 if let Some(c) = params.get("component") {
@@ -504,6 +538,7 @@ impl Replay {
             return Ok(Next {
                 before: self.sync(command),
                 reply: None,
+                instead: None,
             });
         }
         let mut before = Vec::new();
@@ -571,6 +606,26 @@ impl Replay {
                         before.push(("joint.create".to_owned(), json!({"joints": added})));
                     }
                 }
+                "occurrence.move" => {
+                    if let (Some(o), Some((_, was)), Some((_, now))) = (
+                        params.get("occurrence").and_then(Value::as_u64),
+                        matrix(&old.params),
+                        matrix(&params),
+                    ) {
+                        self.moved.insert(o, minus(now, was));
+                    }
+                    if !diffable(command, &old.params, &params) {
+                        return Err(diverged(step, format!("{command} changed")));
+                    }
+                }
+                "occurrence.copy"
+                    if same_but(&old.params, &params, "translations")
+                        && translations(&old.params).map(|t| t.len())
+                            != translations(&params).map(|t| t.len()) =>
+                {
+                    let (reply, was) = (old.reply.clone(), old.params.clone());
+                    return self.place(step, reply, &was, params, before);
+                }
                 "appearance.assign" if same_but(&old.params, &params, "bodies") => {
                     self.again.push(step);
                 }
@@ -588,7 +643,127 @@ impl Replay {
         Ok(Next {
             before,
             reply: Some(reply),
+            instead: None,
         })
+    }
+
+    /// Copies of a definition in another number than recorded (a via added
+    /// or removed): every recorded copy that stands where a copy is asked
+    /// for is kept, the others are deleted, and the new ones are copied on
+    /// the design ([`Next::instead`], then [`Self::complete`]). A copy is
+    /// placed from where its first occurrence stands, which an edit may
+    /// move (that move is applied last, with the others): a copy stands
+    /// where it stood when its translation and that move cancel out.
+    fn place(
+        &mut self,
+        step: usize,
+        recorded: Value,
+        was: &Value,
+        params: Value,
+        mut before: Vec<(String, Value)>,
+    ) -> Result<Next> {
+        let (Some(component), Some(was), Some(now)) = (
+            params.get("component").and_then(Value::as_u64),
+            translations(was),
+            translations(&params),
+        ) else {
+            return Err(diverged(step, "unreadable copies"));
+        };
+        let placed: Vec<u64> = recorded
+            .get("occurrences")
+            .and_then(Value::as_array)
+            .map(|o| o.iter().filter_map(Value::as_u64).collect())
+            .unwrap_or_default();
+        if placed.len() != was.len() {
+            return Err(diverged(step, "copies without occurrences"));
+        }
+        let first = self
+            .first_of
+            .get(&component)
+            .and_then(|o| self.moved.get(o))
+            .copied()
+            .unwrap_or_default();
+        let mut stood: BTreeMap<[i64; 3], Vec<u64>> = BTreeMap::new();
+        for (t, o) in was.iter().zip(&placed).rev() {
+            stood.entry(grid(*t)).or_default().push(*o);
+        }
+        let slots: Vec<Option<u64>> = now
+            .iter()
+            .map(|t| {
+                let at: [f64; 3] = std::array::from_fn(|i| t[i] + first[i]);
+                stood.get_mut(&grid(at)).and_then(Vec::pop)
+            })
+            .collect();
+        let gone: Vec<u64> = stood.into_values().flatten().collect();
+        if !gone.is_empty() {
+            before.push(("selection.delete".to_owned(), json!({"occurrences": gone})));
+        }
+        // The new copies from where the first occurrence stands now.
+        let new: Vec<[f64; 3]> = now
+            .iter()
+            .zip(&slots)
+            .filter(|(_, s)| s.is_none())
+            .map(|(t, _)| std::array::from_fn(|i| t[i] + first[i]))
+            .collect();
+        let placing = Placing {
+            params,
+            reply: recorded,
+            slots,
+        };
+        if new.is_empty() {
+            let reply = self.complete_with(placing, &[])?;
+            return Ok(Next {
+                before,
+                reply: Some(reply),
+                instead: None,
+            });
+        }
+        let mut instead = placing.params.clone();
+        if let Some(map) = instead.as_object_mut() {
+            map.insert("translations".into(), json!(new));
+        }
+        self.placing = Some(placing);
+        Ok(Next {
+            before,
+            reply: None,
+            instead: Some(instead),
+        })
+    }
+
+    /// Finish placing copies ([`Self::place`]) with the reply of the
+    /// command that copied the new ones.
+    pub(super) fn complete(&mut self, reply: Value) -> Result<Value> {
+        let step = self.step();
+        let placing = self
+            .placing
+            .take()
+            .ok_or_else(|| diverged(step, "no copies being placed"))?;
+        let made: Vec<u64> = reply
+            .get("occurrences")
+            .and_then(Value::as_array)
+            .map(|o| o.iter().filter_map(Value::as_u64).collect())
+            .unwrap_or_default();
+        self.complete_with(placing, &made)
+    }
+
+    fn complete_with(&mut self, placing: Placing, made: &[u64]) -> Result<Value> {
+        let step = self.step();
+        let mut made = made.iter();
+        let occurrences: Vec<u64> = placing
+            .slots
+            .iter()
+            .map(|slot| slot.or_else(|| made.next().copied()))
+            .collect::<Option<_>>()
+            .ok_or_else(|| diverged(step, "copies went missing"))?;
+        let mut reply = placing.reply;
+        if let Some(map) = reply.as_object_mut() {
+            map.insert("occurrences".into(), json!(occurrences));
+        }
+        self.now
+            .push("occurrence.copy", placing.params, reply.clone());
+        self.origin.push(Some(self.cursor));
+        self.cursor += 1;
+        Ok(reply)
     }
 
     /// Record `command`, which ran on the design ([`Next::reply`] `None`).

@@ -317,8 +317,69 @@ fn tracks_added_and_removed_update_the_board_in_place() -> Result<()> {
     in_place("a track removed", &how);
     model = next;
     project.tracks.retain(|t| !added.contains(&t.id));
-    let (next, how) = restructured(model, &project)?;
+    let (_, how) = restructured(model, &project)?;
     in_place("the added tracks removed", &how);
+    Ok(())
+}
+
+/// Vias added and removed (as the router adds them with a layer change)
+/// update the model in place, as a fresh build of the edited board would
+/// be: a routed track with a via, more vias of that size, the first via of
+/// a size removed (the next one becomes the definition's first), the added
+/// ones removed. A via of a new size is still built anew.
+#[test]
+fn vias_added_and_removed_update_the_board_in_place() -> Result<()> {
+    let mut project = board()?;
+    let mut model = build(&project)?;
+    let in_place = |what: &str, how: &Rebuilt| {
+        assert!(
+            matches!(how, Rebuilt::InPlace(n) if *n > 0),
+            "{what}: {how:?}"
+        );
+    };
+    let template = project
+        .vias
+        .first()
+        .cloned()
+        .ok_or_else(|| Error::Verification("a via".into()))?;
+    let mut added = Vec::new();
+    // A routed step: a track and a via at its end.
+    let track = project
+        .allocate()
+        .map_err(|e| Error::Verification(e.to_string()))?;
+    project.tracks.push(Track {
+        id: track,
+        net: template.net,
+        start: [3.0, 3.0],
+        end: [7.0, 3.0],
+        width: 0.2,
+        layer: CopperLayer::Top,
+        locked: false,
+    });
+    for at in [[7.0, 3.0], [8.5, 3.5], [9.5, 4.5]] {
+        let mut via = template.clone();
+        via.id = project
+            .allocate()
+            .map_err(|e| Error::Verification(e.to_string()))?;
+        via.position = at;
+        added.push(via.id);
+        project.vias.push(via);
+        let (next, how) = restructured(model, &project)?;
+        in_place("a via added", &how);
+        model = next;
+    }
+    // The first via of its size removed, and one in the middle moved.
+    project.vias.remove(0);
+    if let Some(via) = project.vias.get_mut(2) {
+        via.position[1] += 0.3;
+    }
+    let (next, how) = restructured(model, &project)?;
+    in_place("the first via removed", &how);
+    model = next;
+    project.vias.retain(|v| !added.contains(&v.id));
+    project.tracks.retain(|t| t.id != track);
+    let (next, how) = restructured(model, &project)?;
+    in_place("the routed step removed", &how);
     model = next;
     // A via of a new size needs a definition the board did not have.
     let mut via = project

@@ -13,7 +13,8 @@
 //! - `PCBCRAFT_PROFILE_EDIT=1`: also time the part turn and its undo (`track`: an
 //!   outer track 10 µm wider and back instead; `width`: the board 1 mm wider
 //!   through the engine and undone, each followed as the app follows it,
-//!   the stale fills refilled);
+//!   the stale fills refilled; `route`: a routed step (a track and a via)
+//!   added and removed);
 //!   `PCBCRAFT_PROFILE_REFILL=1` then refills the stale fills and updates again.
 //! - `PCBCRAFT_PROFILE_PART`: the part turned (default SW1).
 //! - `PCBCRAFT_PROFILE_TRACE`: write Solidcraft's Chrome trace there.
@@ -199,6 +200,42 @@ fn board_build_profile() {
     };
     if edit == "width" {
         board_width(model);
+        return;
+    }
+    // A routed step added (a copy of an outer track, 0.5 mm aside, and a
+    // via of the first via's size at its end), then removed again.
+    if edit == "route" {
+        let mut model = model;
+        let mut track = project
+            .tracks
+            .iter()
+            .find(|t| t.layer.side().is_some())
+            .cloned()
+            .unwrap();
+        let mut via = project.vias[0].clone();
+        track.id = project.allocate().unwrap();
+        track.start[1] += 0.5;
+        track.end[1] += 0.5;
+        via.id = project.allocate().unwrap();
+        via.position = track.end;
+        let (tracks, vias) = (project.tracks.clone(), project.vias.clone());
+        for what in ["routed step added", "routed step removed"] {
+            if what == "routed step added" {
+                project.tracks.push(track.clone());
+                project.vias.push(via.clone());
+            } else {
+                project.tracks = tracks.clone();
+                project.vias = vias.clone();
+            }
+            let start = Instant::now();
+            let (next, how) = project::update(model, &project, &sources, None).unwrap();
+            eprintln!(
+                "{what}: update {:.1} s ({how:?})",
+                start.elapsed().as_secs_f64()
+            );
+            spans(what);
+            model = next;
+        }
         return;
     }
     // An outer track 10 µm wider, then as it was (an edit that changes a

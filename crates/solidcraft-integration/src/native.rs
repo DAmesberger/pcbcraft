@@ -987,12 +987,23 @@ impl Native {
             return Err(Error::Cancelled);
         }
         if let Some(replay) = &mut self.replay {
-            let replay::Next { before, reply } = replay.next(command, params.clone())?;
+            let replay::Next {
+                before,
+                reply,
+                instead,
+            } = replay.next(command, params.clone())?;
             if !before.is_empty() || reply.is_none() {
                 self.run_live(before)?;
             }
             if let Some(reply) = reply {
                 return Ok(reply);
+            }
+            if let Some(instead) = instead {
+                let reply = self.run(command, &instead)?;
+                return match &mut self.replay {
+                    Some(replay) => replay.complete(reply),
+                    None => Ok(reply),
+                };
             }
             let reply = self.run(command, &params)?;
             if let Some(replay) = &mut self.replay {
