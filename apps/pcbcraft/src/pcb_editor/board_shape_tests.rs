@@ -1546,3 +1546,41 @@ fn the_esp32_examples_holes_follow_the_board_width() -> Fallible {
     }
     Ok(())
 }
+
+/// Each of J1's Dimensions rows on the ESP32 example reads differently:
+/// the horizontal and the vertical dimension between the same two
+/// references name their axis ("Origin → U3 · x", "Origin → U3 · y").
+#[test]
+fn j1s_dimension_rows_name_their_axis() -> Fallible {
+    use pcbcraft_core::library::footprint_source::DimKind;
+    use pcbcraft_core::model::dimension::PartRelation;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
+    let engine = Engine::from_file(pcbcraft_io::read_project(&path)?)?;
+    let project = engine.project();
+    let j1 = project
+        .instance_by_designator("J1")
+        .map(|i| i.id)
+        .ok_or("no J1")?;
+    let rows: Vec<(PartRelation, String)> = edge_card::dimensions_of(project, j1)
+        .into_iter()
+        .map(|d| {
+            (
+                d.kind,
+                edge_card::name_parts(project, None, j1, d).join(" → "),
+            )
+        })
+        .collect();
+    let axis = |kind: DimKind, end: &str| {
+        rows.iter()
+            .any(|(k, n)| *k == PartRelation::Dim(kind) && n.ends_with(end))
+    };
+    assert!(axis(DimKind::HorizontalDistance, " · x"), "{rows:?}");
+    assert!(axis(DimKind::VerticalDistance, " · y"), "{rows:?}");
+    let mut names: Vec<&str> = rows.iter().map(|(_, n)| n.as_str()).collect();
+    names.sort_unstable();
+    let count = names.len();
+    names.dedup();
+    assert_eq!(names.len(), count, "{rows:?}");
+    Ok(())
+}
