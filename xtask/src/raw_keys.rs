@@ -52,9 +52,9 @@ const EXCEPTIONS: &[(&str, usize, &str)] = &[
         "text field: Enter commits and Esc reverts the dimension being typed",
     ),
     (
-        "pcb_editor/dimension_3d.rs",
+        "pcb_editor/dimensions/edit.rs",
         2,
-        "text field: Enter commits and Esc drops the 3D dimension value being typed (one helper for both fields)",
+        "text field: Enter commits and Esc drops the part dimension value being typed, in Layout or 3D (one helper for both fields)",
     ),
     (
         "part_editor/model_view.rs",

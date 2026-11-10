@@ -744,6 +744,16 @@ Dimensions are drawn from the document. A dimension made in Layout appears in 3D
 
 The Dimension tool sits in the ribbon's Edit group in both views. `pcb.dimension` (Shift+D) moves from PCB › 3D to PCB, so the same key arms it in Layout. In Layout, Esc is `pcb.cancel` and Delete is `pcb.delete`. In 3D they stay `pcb.dimension-cancel` and `pcb.dimension-delete`. Board shape mode is an exclusive key context: its own sketch Dimension tool (`shape.dimension`, D) dimensions the outline, and `pcb.dimension` does not reach it. Entering the mode ends the part Dimension tool.
 
-### For the Properties card
+### The Properties card
 
-The card's Dimensions rows share the selection and hover with the views. `select_dimension(project, id)` and `dimension_selected()` select a row's dimension and read the selection. `hover_dimension_row(Some(id))`, called each frame, draws a hovered row's dimension hot in the view. `dimension_hovered()` reads what the view has under the pointer, so the card can light that row.
+The card's Dimensions rows (`kit::item_row`, `edge_card.rs`) share the selection and the hover with both views. A row click calls `select_dimension`, and a dimension selected in either view selects its row. The card records the row under the pointer, and `hovered_dimension` reads it. The shared drawing lights that dimension in Layout and in 3D, as it lights one hovered in the view.
+
+### Tests
+
+- `app::dimension_2d_tests` (raw egui input through the whole app, ESP32 dev board):
+  - `j1s_dimensions_are_drawn_and_edited_in_place_in_layout`: a click selects J1, and its face dimension is drawn from the front-face trace to the bottom edge. A double-click on "0.00 mm", then "1 mm" and Enter, move J1 1 mm. One undo restores it.
+  - `a_layout_pick_on_r5s_body_trace_is_the_reference_a_3d_pick_makes`: Shift+D, R5's end-face trace, then the bottom edge, then Enter. The reference equals `model::pick` at the same point, and a 3D pick elsewhere on the face names the same face.
+  - `stacked_traces_on_j1_open_the_chooser`: the chooser on J1's back faces (Shell, Insulator), with Esc. The Insulator row picks the insulator's face.
+  - `a_dimension_made_in_either_view_shows_in_the_other`: one made with the 3D tool and one made in Layout. Each shows in the other view with the same label and ends, and stays selected.
+- `model_refs_tests::faces_lists_every_traceable_face_as_a_pick_and_a_trace_give_it` (host).
+- The 3D tests (`app::dimension_3d_tests`) and `app::dimension_list_tests` pass unchanged.

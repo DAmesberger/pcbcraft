@@ -372,7 +372,7 @@ impl PcbEditor {
         if let Some(pad) = self.pick_pad(at, |pad| layers.pad(pad)) {
             let feature = FeatureRef::Pad {
                 placement: pad.instance,
-                pad: pad.pad.id.clone(),
+                pad: pad.pad.id,
                 at: PadPoint::Centre,
             };
             let centre = FeatureGeometry::Point { at: pad.center() };

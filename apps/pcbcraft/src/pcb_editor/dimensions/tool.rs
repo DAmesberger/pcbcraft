@@ -10,11 +10,13 @@ use crate::kit;
 use crate::pcb_editor::{PcbEditor, Tool, edge_card};
 use crate::refusal::{self, Origin};
 use egui::{Pos2, Rect, Ui, vec2};
+#[cfg(test)]
+use pcbcraft_core::Id;
 use pcbcraft_core::layout::dimensions::DimensionCommand;
 use pcbcraft_core::layout::dimensions::view::{self, Shown};
 use pcbcraft_core::library::footprint_source::DimKind;
 use pcbcraft_core::model::dimension::{BoardRef, PartDimensionSpec, PartRelation};
-use pcbcraft_core::{Engine, Id, Operation, Project};
+use pcbcraft_core::{Engine, Operation, Project};
 use solidcraft_theme::Tokens;
 
 impl PcbEditor {

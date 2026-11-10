@@ -553,13 +553,14 @@ fn the_placement_card_states_the_hold_at_once() -> Fallible {
             .any(|(t, _)| t == "Held 8 mm from the bottom edge"),
         "{shown:?}"
     );
-    // The canvas draws the selected part's distance to its edge.
+    // The canvas draws the selected part's distance to its edge, labelled
+    // as 3D labels it (the one dimension drawing, §20).
     let (output, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
     let mut painted = Vec::new();
     for clipped in &output.shapes {
         collect_texts(&clipped.shape, &mut painted);
     }
-    assert!(painted.iter().any(|t| t == "8 mm"), "{painted:?}");
+    assert!(painted.iter().any(|t| t == "8.00 mm"), "{painted:?}");
     // Its Dimensions section (in a taller card) lists the dimension with its
     // value and its delete icon.
     let id = super::edge_card::dimensions_of(engine.project(), r2)
