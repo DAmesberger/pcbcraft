@@ -459,6 +459,26 @@ pub fn check_row(ui: &mut Ui, label: &str, value: &mut bool) -> bool {
     row(ui, "", |ui| ui.checkbox(value, label).changed())
 }
 
+/// A checkbox row from the left edge, for a list of checkboxes alone (a
+/// popover of toggles), where no label column lines up with it.
+pub fn check(ui: &mut Ui, label: &str, value: &mut bool) -> bool {
+    let t = Tokens::get();
+    let width = ui.available_width().max(0.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, t.control_height), egui::Sense::hover());
+    let inner = egui::Rect::from_min_max(
+        egui::pos2((rect.left() + t.space_4).min(rect.right()), rect.top()),
+        rect.max,
+    );
+    ui.scope_builder(
+        UiBuilder::new()
+            .id_salt(label)
+            .max_rect(inner)
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| ui.checkbox(value, label).changed(),
+    )
+    .inner
+}
+
 /// Rows a read-only value wraps to before it is cut.
 const VALUE_MAX_ROWS: usize = 3;
 
