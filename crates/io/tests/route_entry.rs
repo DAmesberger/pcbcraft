@@ -175,11 +175,12 @@ fn a_step_into_a_usb_c_pin_never_hooks() -> Fallible {
     Ok(())
 }
 
-/// Resistor pad, a grid corner, the pin: every corner on the 0.5 mm grid
-/// between the resistor and the pin row from which the straight posture
-/// step to the pin is clear, in the 45° elbow either way. The route never
-/// turns back or by more than 90°. A corner past the pin's column (the
-/// pins are at x.25 and x.75, off the grid) is moved back to it.
+/// Resistor pad, a grid corner, the pin: every corner on the 0.5 mm grid,
+/// and on the 0.25 mm grid between its lines, between the resistor and the
+/// pin row from which the straight posture step to the pin is clear, in
+/// the 45° elbow either way. The route never turns back or by more than
+/// 90°. A corner past the pin's column (the pins are at x.25 and x.75, off
+/// the 0.5 mm grid) is moved back to it.
 #[test]
 fn a_route_through_a_grid_corner_enters_the_pin_cleanly() -> Fallible {
     let (p, jobs) = board()?;
@@ -188,13 +189,13 @@ fn a_route_through_a_grid_corner_enters_the_pin_cleanly() -> Fallible {
     for (net, pin, from) in &jobs {
         let [x0, x1] = [pin[0].min(from[0]), pin[0].max(from[0])];
         let row = pin[1] + 1.0;
-        let columns = ((x1 - x0) * 2.0).ceil() as i32 + 1;
-        let rows = ((from[1] - row) * 2.0).ceil() as i32;
+        let columns = ((x1 - x0) * 4.0).ceil() as i32 + 2;
+        let rows = ((from[1] - row) * 4.0).floor() as i32;
         for gx in 0..=columns {
             for gy in 0..=rows {
                 let corner = [
-                    (x0 * 2.0).floor() / 2.0 + f64::from(gx) * 0.5,
-                    (row * 2.0).ceil() / 2.0 + f64::from(gy) * 0.5,
+                    (x0 * 2.0).floor() / 2.0 + f64::from(gx) * 0.25,
+                    (row * 2.0).ceil() / 2.0 + f64::from(gy) * 0.25,
                 ];
                 for flipped in [false, true] {
                     let one = request(*net, *from, corner, Posture::Diagonal, flipped);
@@ -236,11 +237,11 @@ fn a_route_through_a_grid_corner_enters_the_pin_cleanly() -> Fallible {
         }
     }
     println!("{routes} routes, {moved} corners moved back");
-    // 32 routes and 4 moved corners when written; 16 and 2 since the
-    // board's VBUS vias and run rose to y 9.6 mm (room for J1 to move up),
-    // which boxes in more of the corners between the pins and resistors.
-    // The sweep must stay real.
-    assert!(routes >= 15, "{routes}");
+    // 32 routes and 4 moved corners on the 0.5 mm grid when written; the
+    // board's VBUS vias and run rose to y 9.6 mm since (room for J1 to move
+    // up), boxing in more of those corners, so the sweep takes the 0.25 mm
+    // grid too (75 and 4), up to the resistor pad's row. It must stay real.
+    assert!(routes >= 30, "{routes}");
     assert!(moved > 0, "no corner was moved back");
     Ok(())
 }
