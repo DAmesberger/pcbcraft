@@ -27,14 +27,14 @@ use crate::lighting;
 use crate::model_scene::{self, ModelScene, ShadowVertex, next_key};
 use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3, prelude::*},
-    render::Camera,
     scene::{Geometry, Place},
+    viewport::Camera,
 };
 use solidcraft_theme as theme;
 use solidcraft_ui_egui::gpu::{
     self, Frame, GpuScene, GpuTarget, Palette, Renderer, SceneSlot, StudioEnvironment,
-    ViewportCallback,
 };
+use solidcraft_viewport_egui::ViewportCallback;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
@@ -190,7 +190,9 @@ impl Viewport {
             depth: Some(egui_wgpu::wgpu::TextureFormat::Depth32Float),
             ..window
         };
-        gpu::install(rs, scene, window, false);
+        // Bodies come meshed (no GPU plan evaluation); GPU errors no scope
+        // catches are logged by the viewport.
+        solidcraft_viewport_egui::install(rs, scene, window, false, false, |_| {});
         Self::bake_studio(rs, ctx);
         Self::detached()
     }
@@ -906,7 +908,10 @@ impl Viewport {
         let size_px = [rect.width() * pp, rect.height() * pp];
         let view_proj = self
             .camera
-            .view_proj_bounds(f64::from(rect.width() / rect.height()), &self.bounds)
+            .view_proj_bounds(
+                f64::from(rect.width() / rect.height()),
+                &pcbcraft_solidcraft::render::view_bounds(&self.bounds),
+            )
             .to_f32();
         let ssaa = self.supersampling(ui.ctx(), &view_proj, size_px);
         let cb = ViewportCallback(self.frame(view_proj, size_px, ssaa));
@@ -1266,9 +1271,9 @@ impl Viewport {
 impl Viewport {
     /// Look at the model from a standard view, keeping the target and
     /// distance; the isometric (home) view also fits.
-    pub fn standard_view(&mut self, view: pcbcraft_solidcraft::render::StandardView) {
+    pub fn standard_view(&mut self, view: pcbcraft_solidcraft::viewport::StandardView) {
         self.camera.set_view(view);
-        if view == pcbcraft_solidcraft::render::StandardView::Iso {
+        if view == pcbcraft_solidcraft::viewport::StandardView::Iso {
             self.fit();
         }
     }
@@ -1340,7 +1345,7 @@ impl Viewport {
             {
                 match target {
                     nav_cube::Target::Home => {
-                        self.standard_view(pcbcraft_solidcraft::render::StandardView::Iso)
+                        self.standard_view(pcbcraft_solidcraft::viewport::StandardView::Iso)
                     }
                     nav_cube::Target::View(direction) => self.view_from(direction),
                 }

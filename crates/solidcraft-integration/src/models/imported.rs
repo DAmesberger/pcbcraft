@@ -41,8 +41,8 @@ use pcbcraft_core::library::model3d::{
 };
 use serde_json::json;
 use solidcraft_engine::doc::FeatureKind;
-use solidcraft_engine::render::clear_coat::ClearCoat;
-use solidcraft_engine::render::surface::{MIN_ROUGHNESS, OpaqueSurface};
+use solidcraft_viewport::clear_coat::ClearCoat;
+use solidcraft_viewport::surface::{MIN_ROUGHNESS, OpaqueSurface};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -583,7 +583,7 @@ pub fn surface(
         }
         ModelMaterial::Custom(index) => {
             let m = custom(model, index)?;
-            let invalid = |e: solidcraft_engine::render::surface::SurfaceError| {
+            let invalid = |e: solidcraft_viewport::surface::SurfaceError| {
                 Error::Invalid(format!("model.material: {}: {e}", m.name))
             };
             let [r, g, b, _] = m.base_colour.map(|c| c.clamp(0.0, 1.0));

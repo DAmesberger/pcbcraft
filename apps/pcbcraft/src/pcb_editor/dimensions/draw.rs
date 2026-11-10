@@ -79,7 +79,7 @@ pub(super) fn draw(
     let galley = painter.layout_no_wrap(look.label.to_owned(), font, colour);
     let size = galley.size() + vec2(6.0, 2.0);
     let half = Vec2::new(f64::from(size.x) * 0.5 * px, f64::from(size.y) * 0.5 * px);
-    let mut text = default_text(&frame, to_vec(away), px);
+    let mut text = default_text(&frame, to_vec(away), px, half);
     let mut lay = dim_layout_reaching(&frame, text, px, half, [None, None]);
     for _ in 0..6 {
         let Some(at) = to(lay.text) else { break };
@@ -88,7 +88,7 @@ pub(super) fn draw(
             break;
         }
         let row = (f64::from(size.y) + 2.0) * px;
-        let base = text.unwrap_or_else(|| default_text_offset(&frame, px));
+        let base = text.unwrap_or_else(|| default_text_offset(&frame, px, half));
         let side = if base.y < 0.0 { -1.0 } else { 1.0 };
         text = Some(base + Vec2::new(0.0, row * side));
         lay = dim_layout_reaching(&frame, text, px, half, [None, None]);

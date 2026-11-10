@@ -125,7 +125,10 @@ impl Gpu {
         viewport.publish_shadows();
         let view_proj = viewport
             .camera
-            .view_proj_bounds(f64::from(w) / f64::from(h), &viewport.bounds)
+            .view_proj_bounds(
+                f64::from(w) / f64::from(h),
+                &pcbcraft_solidcraft::render::view_bounds(&viewport.bounds),
+            )
             .to_f32();
         let mut frame = viewport.frame(view_proj, [w as f32, h as f32], ssaa);
         Self::tweak(&mut frame);
@@ -334,7 +337,7 @@ fn write_pictures() -> Result<(), Box<dyn std::error::Error>> {
                 "{name}: {:.3} % of pixels at white",
                 100.0 * clipped as f64 / f64::from(w * h)
             );
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba)
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("{name}.png")), png)?;
             Ok(())
@@ -595,7 +598,7 @@ fn write_model_pictures() -> Result<(), Box<dyn std::error::Error>> {
         |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
             let (w, h) = (1024, 768);
             let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba)
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("{name}.png")), png)?;
             Ok(())
@@ -689,7 +692,7 @@ fn write_showcase_pictures() -> Result<(), Box<dyn std::error::Error>> {
                 "{name}: {:.3} % of pixels at white",
                 100.0 * clipped as f64 / f64::from(w * h)
             );
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba)
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("{name}.png")), png)?;
             Ok(())
@@ -1072,7 +1075,7 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
         |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
             let (w, h) = (1280, 960);
             let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba)
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("{name}.png")), png)?;
             Ok(())
@@ -1272,7 +1275,7 @@ fn write_wroom_board_pictures() -> Result<(), Box<dyn std::error::Error>> {
         |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
             let (w, h) = (1280, 960);
             let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba)
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("{name}.png")), png)?;
             Ok(())
@@ -1371,7 +1374,7 @@ fn write_mechanical_board_pictures() -> Result<(), Box<dyn std::error::Error>> {
         |viewport: &mut Viewport, name: &str| -> Result<(), Box<dyn std::error::Error>> {
             let (w, h) = (1280, 960);
             let rgba = gpu.draw(viewport, w, h, 2.0).ok_or("no picture")?;
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba)
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("{name}.png")), png)?;
             Ok(())

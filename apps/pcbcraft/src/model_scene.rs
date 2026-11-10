@@ -39,9 +39,9 @@ use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3, prelude::*, srgb},
     look_graph::{self, LookKey, LoweredLook},
     material::BodyKind,
-    render::surface::{OpaqueSurface, unit_direction},
     scene::{Geometry, Place},
     stack::{Slot, Stack},
+    viewport::surface::{OpaqueSurface, unit_direction},
 };
 use solidcraft_ui_egui::gpu::{
     BlockBuilder, GpuScene, InstanceLook, InstancedMesh, LOD_PX, PaletteIndex, SceneBlock,

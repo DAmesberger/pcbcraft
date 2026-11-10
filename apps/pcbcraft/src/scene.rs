@@ -415,7 +415,7 @@ pub struct SceneController {
     status: Status,
     /// The camera each kind of model (board, package) was last seen with,
     /// so switching workspaces keeps each view's framing.
-    cameras: [Option<pcbcraft_solidcraft::render::Camera>; 2],
+    cameras: [Option<pcbcraft_solidcraft::viewport::Camera>; 2],
     /// Another document was opened: its first board model is framed.
     fit_board: bool,
     /// Results taken from the worker, current or dropped.

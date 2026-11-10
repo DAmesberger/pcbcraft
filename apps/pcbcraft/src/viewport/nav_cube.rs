@@ -17,7 +17,7 @@
 use egui::{Align2, Color32, FontId, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
 use pcbcraft_solidcraft::{
     geom::{Vec3, prelude::*},
-    render::Camera,
+    viewport::Camera,
 };
 use solidcraft_theme::Tokens;
 
@@ -326,7 +326,7 @@ pub fn tooltip(target: Target) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_solidcraft::render::StandardView;
+    use pcbcraft_solidcraft::viewport::StandardView;
 
     fn camera(view: StandardView) -> Camera {
         let mut cam = Camera::default();

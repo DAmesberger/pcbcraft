@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use solidcraft_engine::render::material_graph::{
     Ir, MaterialGraph, SurfaceSample, base_sample, lower, uniform_words, validate,
 };
-use solidcraft_engine::render::surface::OpaqueSurface;
+use solidcraft_viewport::surface::OpaqueSurface;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

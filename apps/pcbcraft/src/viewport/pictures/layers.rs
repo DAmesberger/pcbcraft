@@ -75,7 +75,7 @@ fn write_layer_pictures() -> Result<(), Box<dyn std::error::Error>> {
             }
             let (w, h) = (1024, 768);
             let rgba = gpu.draw(&mut v, w, h, 2.0).ok_or("no picture")?;
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba)
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("{name}{suffix}.png")), png)?;
         }

@@ -31,7 +31,7 @@ use pcbcraft_core::library::marking::surface::{self, CylinderArea, SurfaceGeomet
 use pcbcraft_core::library::marking::{BoxFace, MarkingLayout, Placement, SurfaceRef};
 use pcbcraft_core::library::model3d::MarkingArea;
 use pcbcraft_core::{Layer, Project};
-use solidcraft_engine::render::surface::OpaqueSurface;
+use solidcraft_viewport::surface::OpaqueSurface;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 

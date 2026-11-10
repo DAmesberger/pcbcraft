@@ -17,8 +17,8 @@
 use super::*;
 use crate::lighting;
 use pcbcraft_solidcraft::material::Detail;
-use pcbcraft_solidcraft::render::surface::OpaqueSurface;
 use pcbcraft_solidcraft::stack::Stack;
+use pcbcraft_solidcraft::viewport::surface::OpaqueSurface;
 
 /// Gold's normal-incidence reflectance, chromaticity and luminance band.
 ///
@@ -825,7 +825,7 @@ fn write_look_pictures() -> Result<(), Box<dyn std::error::Error>> {
             v.set_realistic(realistic);
             let (w, h) = (1280, 960);
             let rgba = gpu.draw(&mut v, w, h, 2.0).ok_or("no picture")?;
-            let png = pcbcraft_solidcraft::render::png(w as usize, h as usize, rgba)
+            let png = pcbcraft_solidcraft::viewport::png(w as usize, h as usize, rgba)
                 .ok_or("png encoding failed")?;
             std::fs::write(dir.join(format!("{name}-{look}.png")), png)?;
         }

@@ -352,7 +352,7 @@ impl App {
     /// Turn the PCB 3D view to a standard view, opening it if needed.
     pub(super) fn view_3d(&mut self, view: crate::commands::View3d) {
         use crate::commands::View3d as V;
-        use pcbcraft_solidcraft::render::StandardView as S;
+        use pcbcraft_solidcraft::viewport::StandardView as S;
         self.enter(Workspace::Pcb);
         if !self.pcb.is_3d() {
             self.pcb.set_3d(true);

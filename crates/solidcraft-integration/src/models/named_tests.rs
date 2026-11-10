@@ -68,7 +68,10 @@ fn built_names() -> Fallible<Vec<Names>> {
     Ok(vec![generated, envelope, step])
 }
 
-/// The resistor's face names as this builder revision makes them.
+/// The resistor's face names as this builder revision makes them. Solidcraft
+/// writes a fillet's nested edge in parentheses (`F5:blend(<edge>)`, upstream
+/// #11359); names saved in the older colon form (`F5:blend:<edge>`) still read
+/// as the same names (`old_blend_names_read_as_the_current_ones`).
 const RESISTOR_NAMES: [(&str, &[&str]); 4] = [
     (
         "body",
@@ -77,12 +80,12 @@ const RESISTOR_NAMES: [(&str, &[&str]); 4] = [
             "F1:-x",
             "F1:-y",
             "F1:+x",
-            "F5:blend:F1:+y|F1:+z",
+            "F5:blend(F1:+y|F1:+z)",
             "F1:+y",
-            "F5:blend:F1:+y|F1:-z",
+            "F5:blend(F1:+y|F1:-z)",
             "F1:-z",
-            "F5:blend:F1:-y|F1:-z",
-            "F5:blend:F1:+z|F1:-y",
+            "F5:blend(F1:-y|F1:-z)",
+            "F5:blend(F1:+z|F1:-y)",
         ],
     ),
     (
@@ -92,25 +95,25 @@ const RESISTOR_NAMES: [(&str, &[&str]); 4] = [
     (
         "termination 1",
         &[
-            "F6:blend:F3:-x|F3:-y",
-            "F6:blend:F3:+z|F3:-x",
+            "F6:blend(F3:-x|F3:-y)",
+            "F6:blend(F3:+z|F3:-x)",
             "F3:-x",
-            "F6:blend:F3:-x|F3:-z",
+            "F6:blend(F3:-x|F3:-z)",
             "F3:-z",
             "F3:-y",
             "F3:+z",
             "F3:+y",
             "F3:+x",
-            "F6:blend:F3:+y|F3:-x",
+            "F6:blend(F3:+y|F3:-x)",
         ],
     ),
     (
         "termination 2",
         &[
-            "F7:blend:F4:+x|F4:+y",
-            "F7:blend:F4:+x|F4:-y",
-            "F7:blend:F4:+x|F4:-z",
-            "F7:blend:F4:+x|F4:+z",
+            "F7:blend(F4:+x|F4:+y)",
+            "F7:blend(F4:+x|F4:-y)",
+            "F7:blend(F4:+x|F4:-z)",
+            "F7:blend(F4:+x|F4:+z)",
             "F4:-y",
             "F4:-z",
             "F4:-x",
@@ -135,6 +138,27 @@ fn a_generated_model_is_a_design_with_its_own_names() -> Fallible {
         .collect();
     assert_eq!(got, expected);
     assert!(design.generated.iter().any(|b| b.terminal == Some(1)));
+    Ok(())
+}
+
+/// A reference saved before Solidcraft wrote nested names in parentheses
+/// names a fillet face `F5:blend:F1:+y|F1:+z`: it reads as the same face
+/// name as the current text, so it still finds its face.
+#[test]
+fn old_blend_names_read_as_the_current_ones() -> Fallible {
+    use solidcraft_engine::doc::persistent_name::FaceName;
+    let mut blends = 0;
+    for name in RESISTOR_NAMES.iter().flat_map(|(_, faces)| faces.iter()) {
+        let Some((head, edge)) = name.split_once(":blend(") else {
+            continue;
+        };
+        let edge = edge.strip_suffix(')').ok_or("a closed blend name")?;
+        let old = format!("{head}:blend:{edge}");
+        assert_eq!(FaceName::parse(&old)?, FaceName::parse(name)?, "{old}");
+        assert_eq!(FaceName::parse(&old)?.to_string(), *name);
+        blends += 1;
+    }
+    assert_eq!(blends, 12);
     Ok(())
 }
 

@@ -17,7 +17,7 @@
 //! with kind 0 directional (xyz toward the light), 1 point, 4 ambient.
 use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
-    render::Camera,
+    viewport::Camera,
 };
 use solidcraft_ui_egui::gpu::{ProductLook, StudioPreset};
 
@@ -176,7 +176,7 @@ pub(crate) mod tests {
     use pcbcraft_core::Fabrication;
     use pcbcraft_solidcraft::geom::prelude::*;
     use pcbcraft_solidcraft::material::{BodyKind, material};
-    use pcbcraft_solidcraft::render::surface::OpaqueSurface;
+    use pcbcraft_solidcraft::viewport::surface::OpaqueSurface;
 
     /// The rig's unshadowed direct radiance at one point through the
     /// surface's base BRDF (before the studio, exposure and tone mapping).
@@ -229,7 +229,7 @@ pub(crate) mod tests {
             pitch: pitch.to_radians(),
             ..Camera::default()
         };
-        camera.fit(&board());
+        camera.fit(&pcbcraft_solidcraft::render::view_bounds(&board()));
         camera
     }
 
