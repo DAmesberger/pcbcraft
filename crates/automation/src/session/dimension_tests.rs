@@ -91,3 +91,129 @@ fn a_face_the_part_lacks_is_refused_with_the_faces_it_has() -> TestResult {
     assert_eq!(session.engine().to_file(), before);
     Ok(())
 }
+
+/// The seat of a top-side part: the top of the top copper, board mm.
+fn seat(session: &Session) -> f64 {
+    session
+        .engine()
+        .project()
+        .stackup
+        .copper_span(pcbcraft_core::CopperLayer::Top)
+        .map_or(0.0, |s| s.1)
+}
+
+/// What the 3D Dimension tool does on a pick of `designator`'s model at
+/// `at` (board mm, z above the top copper): the reference, as JSON, and
+/// the distance the tool shows from it to the bottom edge (y = 0) now.
+fn pick_to_bottom(session: &Session, designator: &str, at: [f64; 3]) -> TestResult<(Value, f64)> {
+    use pcbcraft_core::layout::dimensions::{FeatureGeometry, model, view};
+    let project = session.engine().project();
+    let id = project.instance_by_designator(designator).ok_or("part")?.id;
+    let placement = project.placement_of(id).ok_or("placed")?;
+    let (feature, trace) = model::pick(
+        project,
+        &pcbcraft_solidcraft::board::SketchBoardEvaluator,
+        id,
+        [at[0], at[1], seat(session) + at[2]],
+        0.2,
+    )?;
+    let on_board = view::transformed(trace, &view::part_transform(placement));
+    let bottom = FeatureGeometry::Line {
+        a: [0.0, 0.0],
+        b: [project.board_size[0], 0.0],
+    };
+    let shown = view::shown(&on_board, &bottom).ok_or("shown")?;
+    Ok((
+        serde_json::to_value(pcbcraft_core::model::dimension::BoardRef::Part(feature))?,
+        shown.value,
+    ))
+}
+
+fn bottom_edge(session: &Session) -> TestResult<Value> {
+    let pcbcraft_core::model::board::BoardShape::Sketch(s) =
+        &session.engine().project().board_shape
+    else {
+        return Err("a sketch board".into());
+    };
+    let e = s
+        .edges
+        .iter()
+        .find(|e| e.name.0 == "bottom")
+        .ok_or("bottom")?;
+    Ok(json!({"board": {"curve": e.curve.0}}))
+}
+
+fn add_distance(session: &mut Session, refs: Value, value: f64) -> Value {
+    apply(
+        session,
+        json!({"editor": "Dimension", "operation": {"command": "layout.dimension_add", "params": {
+            "dimension": {"kind": {"dim": "distance"}, "refs": refs, "value": {"fixed": value}}}}}),
+    )
+}
+
+/// Second VM test drive, blocker 1: J1's shell face is already flush with
+/// the bottom edge. A second dimension from the tongue's front lower edge,
+/// 0.6 mm above that edge (shell face y = -3.675, tongue edge y = -3.075 in
+/// the part frame), to the bottom edge at 1 mm cannot hold with it unless
+/// J1 turns; a distance never turns a part, so it is refused in words that
+/// name both dimensions and the part, and nothing changes. (Before, the
+/// solve turned J1 by 23.7° to put the tongue edge's start 1 mm up.)
+#[test]
+fn a_second_distance_that_only_a_turn_would_satisfy_is_refused() -> TestResult {
+    let mut session = open()?;
+    let (_, at) = j1(&session)?;
+    assert!(close(at, [20.0, 3.675]), "{at:?}");
+    let (tongue, now) = pick_to_bottom(&session, "J1", [20.0, 0.6, 1.4])?;
+    assert!(tongue.to_string().contains("Tongue"), "{tongue}");
+    assert!((now - 0.6).abs() < 1e-9, "{now}");
+    let before = session.engine().to_file();
+    let refs = json!([tongue, bottom_edge(&session)?]);
+    let refused = add_distance(&mut session, refs, 1.0);
+    assert_eq!(refused["ok"], false, "{refused}");
+    let text = refused.to_string();
+    assert!(
+        text.contains(
+            "J1's Tongue edge to the bottom edge (1 mm) conflicts with J1's Shell face to the \
+             bottom edge (0 mm), which already holds J1"
+        ),
+        "{text}"
+    );
+    // No solver or model ids in the words.
+    for id in ["F3:", "F1:", "k1", "l1"] {
+        assert!(!text.contains(id), "{id} in {text}");
+    }
+    assert_eq!(session.engine().to_file(), before);
+    let project = session.engine().project();
+    let id = project.instance_by_designator("J1").ok_or("J1")?.id;
+    assert_eq!(project.placement_of(id).ok_or("J1")?.rotation_deg, 0.0);
+    Ok(())
+}
+
+/// Second VM test drive, blocker 3: R5 (a generated 0603 at (24, 11.5),
+/// turned 90°) dimensioned from its body's side edge, which runs along the
+/// board's y from (24.4, 11) to (24.4, 12), to the bottom edge. The tool
+/// shows 11.5 mm (from the edge's middle); 11 mm moves R5 0.5 mm down to
+/// y = 11, and the distance shown afterwards is the 11 mm the card holds.
+/// (Before, the solve measured from the edge's start, already 11 mm up, so
+/// it committed and nothing moved.)
+#[test]
+fn an_edge_dimension_moves_the_part_to_the_value_shown() -> TestResult {
+    let mut session = open()?;
+    let (edge, now) = pick_to_bottom(&session, "R5", [24.4, 11.5, 0.2])?;
+    assert!((now - 11.5).abs() < 1e-9, "{now}");
+    let refs = json!([edge, bottom_edge(&session)?]);
+    let added = add_distance(&mut session, refs, 11.0);
+    assert_eq!(added["ok"], true, "{added}");
+    let project = session.engine().project();
+    let r5 = project.instance_by_designator("R5").ok_or("R5")?.id;
+    let placed = project.placement_of(r5).ok_or("R5")?;
+    assert!(
+        close(placed.position, [24.0, 11.0]),
+        "{:?}",
+        placed.position
+    );
+    assert_eq!(placed.rotation_deg, 90.0);
+    let (_, shown) = pick_to_bottom(&session, "R5", [24.4, 11.0, 0.2])?;
+    assert!((shown - 11.0).abs() < 1e-9, "{shown}");
+    Ok(())
+}

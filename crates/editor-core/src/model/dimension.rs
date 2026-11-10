@@ -74,6 +74,27 @@ pub enum PartRelation {
     },
 }
 
+impl PartRelation {
+    /// Whether the relation sets a direction (an angle, parallel,
+    /// perpendicular, horizontal, vertical or tangent), so it may turn the
+    /// parts it names. Every other relation places a point and never turns
+    /// a part: a part's rotation no direction holds keeps its stored value,
+    /// so two distances that only a turn would satisfy are a conflict.
+    pub fn orients(self) -> bool {
+        matches!(
+            self,
+            Self::Dim(DimKind::Angle)
+                | Self::Geom(
+                    GeomConstraint::Horizontal
+                        | GeomConstraint::Vertical
+                        | GeomConstraint::Parallel
+                        | GeomConstraint::Perpendicular
+                        | GeomConstraint::Tangent
+                )
+        )
+    }
+}
+
 /// One reference of a part dimension.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]

@@ -903,3 +903,63 @@ fn parts_solve_timing() -> Fallible<()> {
     }
     Ok(())
 }
+
+/// The showcase with its top edge, (42, 28) → (2, 28) between the corner
+/// fillets, replaced by a spline through (22, 29.5) between those ends, as
+/// in the second VM test drive.
+fn showcase_with_a_spline_top() -> Fallible<Engine> {
+    let mut engine = Engine::showcase_hosted(hosted())?;
+    let top = curve(&engine, "top")?;
+    edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::Delete {
+                ids: vec![SketchRef::Curve(top)],
+            },
+        }],
+    )?;
+    edit(
+        &mut engine,
+        vec![BoardEdit::AddSpline {
+            points: vec![[42.0, 28.0], [22.0, 29.5], [2.0, 28.0]],
+            control: false,
+            periodic: false,
+            construction: false,
+        }],
+    )?;
+    Ok(engine)
+}
+
+/// Second VM test drive, issue 5: replacing the showcase's top edge with a
+/// spline retires the name `top` with its line, but J1 is dimensioned to
+/// the left and bottom edges, which keep their names and curves, so no
+/// reference is lost. `height` 28 → 34 then puts J1 where its own value,
+/// `height / 2 + 1 mm` from the bottom edge, says: (6, 18), exactly where
+/// it lands on the untouched showcase. It does not jump elsewhere.
+#[test]
+fn a_spline_top_edge_keeps_the_header_on_its_own_edges() -> Fallible<()> {
+    let mut plain = Engine::showcase_hosted(hosted())?;
+    let mut engine = showcase_with_a_spline_top()?;
+    let names: Vec<String> = sketch(&engine)?
+        .edges
+        .iter()
+        .map(|e| e.name.0.clone())
+        .collect();
+    assert_eq!(names, ["bottom", "right", "left"]);
+    let j1 = |engine: &Engine| -> Fallible<Id> {
+        Ok(engine
+            .project()
+            .instance_by_designator("J1")
+            .ok_or("J1")?
+            .id)
+    };
+    let id = j1(&engine)?;
+    assert!(close(pose(&engine, id)?.0, [6.0, 15.0]));
+    for e in [&mut plain, &mut engine] {
+        edit(e, vec![set("height", "34 mm")])?;
+    }
+    assert!(close(pose(&engine, id)?.0, [6.0, 18.0]));
+    assert_eq!(pose(&engine, id)?, pose(&plain, j1(&plain)?)?);
+    assert!(pcbcraft_core::layout::dimensions::checks(engine.project()).is_empty());
+    Ok(())
+}

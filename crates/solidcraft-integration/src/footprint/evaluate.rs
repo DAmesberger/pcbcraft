@@ -94,32 +94,59 @@ pub(crate) fn solve(stored: &Sketch, values: &Values) -> Outcome<(Sketch, usize)
     let report =
         solve_after_edit_with_analysis(&mut sketch, &old, Some(&reference), Analysis::Full);
     if !report.ok() {
-        return Err(problem(
-            "footprint.solve_failed",
-            report
-                .failure(|_| format!("{} cannot be satisfied", conflict(stored, &report.failing))),
-        ));
+        let why = if report.folded.is_empty() {
+            report.failure(|_| format!("{} cannot be satisfied", conflict(stored, &report.failing)))
+        } else {
+            flipped(stored, &report.folded)
+        };
+        return Err(problem("footprint.solve_failed", why));
     }
     if !report.folded.is_empty() {
         return Err(problem(
             "footprint.flipped",
-            report.failure(|c| c.to_string()),
+            flipped(stored, &report.folded),
         ));
     }
     let flips = flips_from_stored(&sketch, stored);
     if !flips.is_empty() {
-        return Err(problem("footprint.flipped", flips.join(", ")));
+        return Err(problem("footprint.flipped", flipped(stored, &flips)));
     }
     Ok((sketch, report.dof))
+}
+
+/// Why a solve that turns the sketch over (`ids`, the constraints whose
+/// orientation would change) is refused, naming the dimensions among them
+/// by their values, never by id.
+fn flipped(sketch: &Sketch, ids: &[String]) -> String {
+    let (named, _) = named_constraints(sketch, ids);
+    let what = if named.is_empty() {
+        "the new values".to_owned()
+    } else {
+        named
+    };
+    format!("{what} would turn the shape inside out; choose a value that keeps it as drawn")
 }
 
 /// The violated constraints `failing` (sketch ids) as a person names
 /// them: the dimensions by the value that drives them ("the dimension
 /// ‘width’"), the rest counted, never by id.
 fn conflict(sketch: &Sketch, failing: &[String]) -> String {
+    let (list, others) = named_constraints(sketch, failing);
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    match (list.is_empty(), others) {
+        (true, n) => format!("{n} sketch constraint{} together", plural(n)),
+        (false, 0) => list,
+        (false, n) => format!("{list} with {n} other constraint{}", plural(n)),
+    }
+}
+
+/// The dimensions among `ids` (sketch constraint ids) by the values that
+/// drive them ("the dimension ‘width’"; empty when none is), and how many
+/// other constraints there are.
+fn named_constraints(sketch: &Sketch, ids: &[String]) -> (String, usize) {
     let mut named: Vec<&str> = Vec::new();
     let mut others = 0usize;
-    for id in failing {
+    for id in ids {
         match sketch
             .constraints
             .iter()
@@ -139,12 +166,7 @@ fn conflict(sketch: &Sketch, failing: &[String]) -> String {
         (many, 0) => format!("the dimensions {}", many.join(", ")),
         (many, more) => format!("the dimensions {} and {more} more", many.join(", ")),
     };
-    let plural = |n: usize| if n == 1 { "" } else { "s" };
-    match (list.is_empty(), others) {
-        (true, n) => format!("{n} sketch constraint{} together", plural(n)),
-        (false, 0) => list,
-        (false, n) => format!("{list} with {n} other constraint{}", plural(n)),
-    }
+    (list, others)
 }
 
 fn point_at(sk: &Sketch, id: &str, code: &'static str) -> Outcome<Vec2> {
@@ -1114,4 +1136,58 @@ fn pipeline(request: EvaluationRequest<'_>) -> Outcome<Evaluation> {
         new_keys,
         findings,
     })
+}
+
+#[cfg(test)]
+mod flip_words_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use solidcraft_engine::sketch::ConstraintKind;
+
+    /// Second VM test drive, issue 6: Solidcraft reports a flip by
+    /// constraint ids ("the new values would flip the sketch over (k15, k16
+    /// would change orientation)"), which reached the Shape card's
+    /// `corner_r` field as they were. The refusal names the dimension by
+    /// the value that drives it and never an id.
+    #[test]
+    fn a_flip_names_the_dimension_never_the_constraint_ids() {
+        let mut sk = Sketch::new();
+        let a = sk.add_point(Vec2::new(0.0, 0.0), None).unwrap();
+        let b = sk.add_point(Vec2::new(10.0, 0.0), None).unwrap();
+        let c = sk.add_point(Vec2::new(5.0, 4.0), None).unwrap();
+        let driven = sk
+            .add_constraint(
+                ConstraintKind::Distance {
+                    p: a,
+                    q: c,
+                    value: 41f64.sqrt(),
+                },
+                Some("corner_r".into()),
+            )
+            .unwrap();
+        let plain = sk
+            .add_constraint(
+                ConstraintKind::Distance {
+                    p: b,
+                    q: c,
+                    value: 41f64.sqrt(),
+                },
+                None,
+            )
+            .unwrap();
+        let words = flipped(&sk, &[driven.clone(), plain.clone()]);
+        assert_eq!(
+            words,
+            "the dimension ‘corner_r’ would turn the shape inside out; choose a value that \
+             keeps it as drawn"
+        );
+        assert!(
+            !words.contains(&driven) && !words.contains(&plain),
+            "{words}"
+        );
+        // With no dimension among them, the values are named as a whole.
+        let words = flipped(&sk, std::slice::from_ref(&plain));
+        assert!(words.starts_with("the new values would turn"), "{words}");
+        assert!(!words.contains(&plain), "{words}");
+    }
 }

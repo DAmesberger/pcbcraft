@@ -5,6 +5,11 @@
 //! that frame with `PatternPoint` (y mirrored on the bottom side), and the
 //! dimensions, whose expressions evaluate over the board parameters.
 //!
+//! A part's rotation is solved only when a relation that sets a direction
+//! names it (`PartRelation::orients`); otherwise it is pinned at its stored
+//! (or moved-to) value before the first solve, so a distance never turns a
+//! part, and two distances only a turn would satisfy are a conflict.
+//!
 //! The solve keeps every degree of freedom the dimensions leave free at its
 //! stored value (or, for a part the operation moved, at the value it was
 //! moved to): it solves the dimensions once with a freedom analysis, reads
@@ -62,6 +67,10 @@ struct Frame {
     mirrored: bool,
     /// Fills and keepouts only translate.
     turns: bool,
+    /// The rotation a part keeps because no relation that sets a direction
+    /// names it ([`PartRelation::orients`]): pinned before the first solve,
+    /// so distances never turn the part.
+    turn_held: Option<f64>,
     origin: usize,
     axis_end: usize,
     axis: usize,
@@ -316,6 +325,7 @@ fn frame(
         dragged,
         mirrored: part.mirrored,
         turns,
+        turn_held: None,
         origin,
         axis_end,
         axis,
@@ -378,14 +388,6 @@ fn relation(sk: &Sketch, kind: PartRelation, refs: &[Ref]) -> Outcome<Constraint
             [Ref::C(l), Ref::P(p)] => {
                 edit::dimension(sk, DimKind::Distance, &[Ref::P(*p), Ref::C(*l)])
             }
-            // Two lines (a pad side to an edge): from the first line's start.
-            [Ref::C(a), Ref::C(b)] if is_line(sk, *a) && is_line(sk, *b) => {
-                let Some(CurveKind::Line { a: start, .. }) = sk.curves.get(*a).map(|c| &c.kind)
-                else {
-                    return Err(err("the dimension needs a line"));
-                };
-                edit::dimension(sk, DimKind::Distance, &[Ref::P(*start), Ref::C(*b)])
-            }
             _ => edit::dimension(sk, DimKind::Distance, refs),
         },
         PartRelation::Dim(k) => edit::dimension(sk, k, refs),
@@ -407,6 +409,29 @@ fn relation(sk: &Sketch, kind: PartRelation, refs: &[Ref]) -> Outcome<Constraint
             _ => Err(err("a point along a curve names a point and a curve")),
         },
     }
+}
+
+/// A distance between two lines (a pad side or model face to an edge)
+/// measures from the first line's middle, square to the second, as the
+/// distance the views show (`dimensions::view::shown`): the first line
+/// becomes a point held at its middle.
+fn from_middle(sk: &mut Sketch, kind: PartRelation, refs: Vec<Ref>) -> Outcome<Vec<Ref>> {
+    let [Ref::C(a), Ref::C(b)] = refs.as_slice() else {
+        return Ok(refs);
+    };
+    if kind != PartRelation::Dim(DimKind::Distance) || !is_line(sk, *a) || !is_line(sk, *b) {
+        return Ok(refs);
+    }
+    let Some(CurveKind::Line { a: start, b: end }) = sk.curves.get(*a).map(|c| &c.kind) else {
+        return Err(err("the dimension needs a line"));
+    };
+    let (Some(s), Some(e)) = (sk.point(*start), sk.point(*end)) else {
+        return Err(err("the dimension needs a line"));
+    };
+    let (line, other) = (*a, *b);
+    let middle = add_point(sk, (s + e) * 0.5)?;
+    constrain(sk, ConstraintKind::Midpoint { p: middle, l: line })?;
+    Ok(vec![Ref::P(middle), Ref::C(other)])
 }
 
 /// A driving dimension's value, mm or radians.
@@ -609,6 +634,33 @@ fn solve_outcome(request: &PartsRequest<'_>) -> Outcome<PartsSolution> {
             .map(|d| d.to);
         frames.push(frame(&mut sk, zero, part, dragged)?);
     }
+    // A part no direction relation names keeps its rotation: pin it now,
+    // so the dimensions solve for its position alone and two distances only
+    // a turn would satisfy conflict.
+    let oriented: Vec<ConstraintTarget> = request
+        .dimensions
+        .iter()
+        .filter(|d| !d.reference && d.kind.orients())
+        .flat_map(|d| {
+            d.refs.iter().filter_map(|r| match r {
+                BoardRef::Part(f) => Some(f.target()),
+                _ => None,
+            })
+        })
+        .collect();
+    for i in 0..frames.len() {
+        let Some(f) = frames.get(i) else {
+            continue;
+        };
+        if !f.turns || oriented.contains(&f.target) {
+            continue;
+        }
+        let deg = f.dragged.unwrap_or(f.stored).rotation_deg;
+        add_pin(&mut sk, &frames, Pin::Rotation(i, deg))?;
+        if let Some(f) = frames.get_mut(i) {
+            f.turn_held = Some(deg);
+        }
+    }
     let mut owner: BTreeMap<String, Id> = BTreeMap::new();
     let mut measures: Vec<(Id, ConstraintKind)> = Vec::new();
     let mut findings = Vec::new();
@@ -625,6 +677,7 @@ fn solve_outcome(request: &PartsRequest<'_>) -> Outcome<PartsSolution> {
             ));
             continue;
         };
+        let refs = from_middle(&mut sk, d.kind, refs)?;
         let mut kind = relation(&sk, d.kind, &refs)?;
         if !d.reference && matches!(d.kind, PartRelation::Dim(_)) {
             kind.set_value(value(&values, d, kind.is_angle())?);
@@ -651,7 +704,12 @@ fn solve_outcome(request: &PartsRequest<'_>) -> Outcome<PartsSolution> {
             .collect();
         findings.push(Finding::new(
             CONFLICT,
-            first.failure(|_| "the dimensions cannot all hold".into()),
+            // Never the solver's constraint ids: the core names the
+            // dimensions from `failing`.
+            match first.oversized {
+                Some(_) => first.failure(|_| String::new()),
+                None => "the dimensions cannot all hold".into(),
+            },
             vec![ObjectRef::Board],
         ));
         return Ok(PartsSolution {
@@ -672,7 +730,7 @@ fn solve_outcome(request: &PartsRequest<'_>) -> Outcome<PartsSolution> {
                 PartFreedom {
                     x: !determined(f.x_of),
                     y: !determined(f.y_of),
-                    rotation: f.turns && !determined(f.turn_of),
+                    rotation: f.turns && (f.turn_held.is_some() || !determined(f.turn_of)),
                 },
             )
         })
@@ -686,7 +744,7 @@ fn solve_outcome(request: &PartsRequest<'_>) -> Outcome<PartsSolution> {
             continue;
         };
         let to = f.dragged.unwrap_or(f.stored);
-        if free.rotation {
+        if free.rotation && f.turn_held.is_none() {
             pins.push(Pin::Rotation(i, to.rotation_deg));
         }
         if free.x {
@@ -716,6 +774,9 @@ fn solve_outcome(request: &PartsRequest<'_>) -> Outcome<PartsSolution> {
         };
         // Pinned values are exact; anything left where it was keeps its
         // stored value exactly.
+        if let Some(v) = f.turn_held {
+            rotation_deg = v;
+        }
         for pin in placed.iter().filter(|p| p.frame() == i) {
             match *pin {
                 Pin::Rotation(_, v) => rotation_deg = v,
