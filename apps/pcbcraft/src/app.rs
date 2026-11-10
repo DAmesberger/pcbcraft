@@ -1415,8 +1415,16 @@ fn updating_chip(
 }
 
 /// Follow the operating system's light or dark appearance, like Solidcraft's
-/// default "system" theme.
+/// default "system" theme. `theme::apply` sets egui's theme to light or
+/// dark, and egui would pass that on to the native window; a macOS window
+/// given an appearance no longer reports the system's changes, so the app
+/// would keep its launch theme. The window is left to follow the system,
+/// as Solidcraft's `prefs::sync_window_theme` does (MIT option; see
+/// ATTRIBUTION.md).
 fn follow_system_theme(ctx: &egui::Context, force: bool) {
+    if force {
+        ctx.options_mut(|o| o.sync_window_theme = false);
+    }
     let dark = ctx.system_theme().is_none_or(|t| t == egui::Theme::Dark);
     if force || dark != theme::is_dark() {
         theme::set_dark(dark);
@@ -1671,5 +1679,35 @@ mod quit_tests {
         output.textures_delta.clear();
         assert!(!commands(&output).contains(&egui::ViewportCommand::Close));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    /// The app follows the system's appearance, so it never tells the
+    /// native window to be light or dark: a macOS window given an
+    /// appearance stops reporting the system's changes, and the app would
+    /// keep its launch theme.
+    #[test]
+    fn following_the_system_theme_leaves_the_window_appearance_alone() {
+        let ctx = egui::Context::default();
+        super::follow_system_theme(&ctx, true);
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    system_theme: Some(egui::Theme::Dark),
+                    ..Default::default()
+                },
+                |ui| super::follow_system_theme(ui.ctx(), false),
+            );
+            output.textures_delta.clear();
+            let told: Vec<_> = output
+                .viewport_output
+                .values()
+                .flat_map(|v| v.commands.iter())
+                .filter(|c| matches!(c, egui::ViewportCommand::SetTheme(_)))
+                .collect();
+            assert!(told.is_empty(), "{told:?}");
+        }
     }
 }
