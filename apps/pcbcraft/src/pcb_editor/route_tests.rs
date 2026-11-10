@@ -25,6 +25,10 @@ impl Canvas {
         Self { ctx, time: 0.0 }
     }
 
+    pub(super) fn ctx(&self) -> &egui::Context {
+        &self.ctx
+    }
+
     pub(super) fn frame(
         &mut self,
         editor: &mut PcbEditor,

@@ -1670,7 +1670,7 @@ impl PcbEditor {
             self.plan_track_drag(project, engine.revision(), at);
         }
         if response.drag_stopped_by(PointerButton::Primary) && self.track_drag.is_some() {
-            operation = self.finish_track_drag(engine.revision());
+            operation = self.finish_track_drag(ui.ctx(), engine.revision());
         }
         if let (Some((placement, start)), Some(at)) = (&self.drag, cursor) {
             let to = snap([

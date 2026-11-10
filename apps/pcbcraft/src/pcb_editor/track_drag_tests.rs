@@ -1,6 +1,7 @@
 //! Dragging a track with Select through the Layout canvas: the other net's
 //! track is shoved live during the drag and springs back, release sends one
-//! `layout.route_apply` that one undo takes back, and Esc cancels.
+//! `layout.route_apply` that one undo takes back, Esc cancels, and a drag
+//! that cannot move says why on release.
 use super::route_tests::{Canvas, TestResult, edits, screen};
 use super::*;
 use pcbcraft_core::layout::RouteRequest;
@@ -150,5 +151,37 @@ fn esc_cancels_a_track_drag() -> TestResult {
     let event = button(&editor, &engine, [30.0, 27.0], false);
     let release = send(&mut canvas, &mut editor, &engine, event);
     assert!(release.is_none(), "release after Esc sends nothing");
+    Ok(())
+}
+
+/// A drag of a track that cannot move (here a locked one) sends nothing
+/// on release and says why in a toast, not silently.
+#[test]
+fn a_track_drag_that_cannot_move_says_why() -> TestResult {
+    let (mut engine, middle, _) = setup()?;
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::SetTrackLock {
+            id: middle,
+            locked: true,
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    let _ = crate::kit::toast::take_posted(canvas.ctx());
+    press_and_move(
+        &mut canvas,
+        &mut editor,
+        &engine,
+        &[[30.0, 26.0], [30.0, 27.0]],
+    );
+    assert!(editor.track_drag.is_some(), "the press grips the track");
+    let event = button(&editor, &engine, [30.0, 27.0], false);
+    let release = send(&mut canvas, &mut editor, &engine, event);
+    assert!(release.is_none(), "{release:?}");
+    let posted = crate::kit::toast::take_posted(canvas.ctx());
+    let texts: Vec<&str> = posted.iter().map(|p| p.text.as_str()).collect();
+    assert_eq!(texts, ["Can't drag the track: The track is locked"]);
     Ok(())
 }
