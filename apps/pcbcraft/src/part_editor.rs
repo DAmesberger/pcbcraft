@@ -403,15 +403,7 @@ impl PartEditor {
                     i.component.id == published.id && i.component.revision != published.revision
                 })
                 .count();
-            let name = &set.metas.component.name;
-            let text = match older {
-                0 => format!("Published {name} r{}", published.revision.0),
-                n => format!(
-                    "Published {name} r{} · {n} placed {} keep older revisions",
-                    published.revision.0,
-                    if n == 1 { "instance" } else { "instances" }
-                ),
-            };
+            let text = published_text(&set.metas.component.name, published.revision.0, older);
             self.tell(Level::Ok, text);
             // Publishing clears the import review: Unreviewed is empty now.
             if self.pins.table.filter == pins_table::Filter::Unreviewed {
@@ -2456,6 +2448,16 @@ impl PartEditor {
     }
 }
 
+/// The publish toast: the revision, and how many placed instances still
+/// use an older one.
+fn published_text(name: &str, revision: u32, older: usize) -> String {
+    match older {
+        0 => format!("Published {name} r{revision}"),
+        1 => format!("Published {name} r{revision} · 1 placed instance keeps an older revision"),
+        n => format!("Published {name} r{revision} · {n} placed instances keep older revisions"),
+    }
+}
+
 #[cfg(test)]
 mod draft_tests {
     use super::details_card::set_field_default;
@@ -2630,6 +2632,24 @@ mod draft_tests {
             "{posted:?}"
         );
         Ok(())
+    }
+
+    /// Demo run 2, finding 10: the publish toast agrees with its count.
+    #[test]
+    fn the_publish_toast_agrees_with_its_count() {
+        assert_eq!(published_text("R", 2, 0), "Published R r2");
+        assert_eq!(
+            published_text("R", 2, 1),
+            "Published R r2 · 1 placed instance keeps an older revision"
+        );
+        assert_eq!(
+            published_text("R", 2, 3),
+            "Published R r2 · 3 placed instances keep older revisions"
+        );
+        for n in 0..3 {
+            let text = published_text("R", 2, n);
+            assert_eq!(pcbcraft_core::issues::style::check(&text), vec![], "{text}");
+        }
     }
 
     /// Run 3, finding 17: after publishing, the Browser no longer calls the

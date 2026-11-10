@@ -430,7 +430,9 @@ fn subject_of(entry: &CatalogEntry) -> Option<Subject> {
     }
 }
 
-/// `library.search` with drafts listed, as the catalog shows them.
+/// `library.search` with drafts listed, as the catalog shows them, one row
+/// per component: a project part opens the component it implements, so a
+/// part whose component is listed too is left out ([`one_per_component`]).
 fn search(
     engine: &Engine,
     query: &str,
@@ -440,18 +442,39 @@ fn search(
     match engine.query_with(
         Query::Search {
             query: query.to_owned(),
-            limit: Some(limit),
+            // Every row "Show all" lists, so the count is of what is shown.
+            limit: Some(limit.max(ALL)),
             include_drafts: true,
         },
         context,
     ) {
-        Ok(QueryResult::Search(report)) => Ok((
-            report.results.into_iter().map(|h| h.entry).collect(),
-            report.total,
-        )),
+        Ok(QueryResult::Search(report)) => {
+            let mut entries: Vec<CatalogEntry> =
+                report.results.into_iter().map(|h| h.entry).collect();
+            let before = entries.len();
+            one_per_component(&mut entries);
+            let total = report.total.saturating_sub(before - entries.len());
+            entries.truncate(limit);
+            Ok((entries, total))
+        }
         Ok(_) => Err("library.search returned an unexpected report".into()),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Leave out each project part whose component is listed as well: both
+/// open the same component (demo run 2, finding 8).
+fn one_per_component(entries: &mut Vec<CatalogEntry>) {
+    let components: std::collections::BTreeSet<DefinitionId> = entries
+        .iter()
+        .filter(|e| e.source == Source::Project && e.kind == DefinitionKind::Component)
+        .map(|e| e.lineage)
+        .collect();
+    entries.retain(|e| {
+        !(e.source == Source::Project
+            && e.kind == DefinitionKind::Part
+            && e.implements.is_some_and(|c| components.contains(&c.id)))
+    });
 }
 
 #[cfg(test)]

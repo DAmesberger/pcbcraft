@@ -151,8 +151,9 @@ impl ReviewReport {
             .filter(|v| v.confidence == Confidence::Low)
             .count();
         if low > 0 && self.open_questions.is_empty() {
+            let values = if low == 1 { "value is" } else { "values are" };
             out.push(format!(
-                "{low} values are low confidence: list what a reviewer must settle in open_questions"
+                "{low} {values} low confidence: list what a reviewer must settle in open_questions"
             ));
         }
         out.truncate(MAX_PROBLEMS);
@@ -295,16 +296,22 @@ pub fn check(snapshot: &Value, report: &ReviewReport) -> Value {
     }
     let uncertain: usize = drafts.iter().map(|d| d.uncertain).sum();
     if uncertain > 0 && report.open_questions.is_empty() {
+        let pins = if uncertain == 1 { "pin is" } else { "pins are" };
         problems.push(format!(
-            "{uncertain} imported pins are flagged uncertain: say in open_questions what a reviewer must check on each"
+            "{uncertain} imported {pins} flagged uncertain: say in open_questions what a reviewer must check on each"
         ));
     }
     for d in &drafts {
         if !d.unsourced.is_empty() {
             let mut named: Vec<&str> = d.unsourced.iter().map(String::as_str).collect();
             named.truncate(MAX_NAMED);
+            let pins = if d.unsourced.len() == 1 {
+                "pin has"
+            } else {
+                "pins have"
+            };
             problems.push(format!(
-                "{} {} ‘{}’: {} imported pins have a function without a source page ({}{}); give each pinout row its page and table and re-import",
+                "{} {} ‘{}’: {} imported {pins} a function without a source page ({}{}); give each pinout row its page and table and re-import",
                 d.kind,
                 d.id,
                 d.name,
@@ -404,7 +411,12 @@ mod tests {
         let problems = r.citation_problems();
         assert_eq!(problems.len(), 3, "{problems:?}");
         assert!(problems.iter().any(|p| p.contains("location")));
-        assert!(problems.iter().any(|p| p.contains("open_questions")));
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.starts_with("1 value is low confidence:")),
+            "one value reads in the singular: {problems:?}"
+        );
         assert!(problems.iter().any(|p| p.contains("distinct")));
         r.values.clear();
         assert!(

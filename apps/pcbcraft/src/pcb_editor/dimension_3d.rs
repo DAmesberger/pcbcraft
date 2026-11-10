@@ -3,10 +3,14 @@
 //! the model as Solidcraft draws sketch dimensions.
 //!
 //! **The tool.** Pick two references: a face, edge or hole of a part's 3D
-//! model, a pad, a board edge, or another part's feature. The face or edge
-//! under the pointer is highlighted as Solidcraft pre-highlights
-//! ([`crate::viewport::surface`]); an edge within a few points of the
-//! pointer is taken instead of its face. A model pick is named by the host
+//! model, a pad, a board edge, or another part's feature. What a click
+//! picks is what the pointer highlights, as Solidcraft pre-highlights
+//! ([`crate::viewport::surface`]): an edge of a part or of the board
+//! within Solidcraft's 6 points of the pointer, in front, nearest first;
+//! else the face under it (the board's top or side near its outline is
+//! that board edge). A pick is named in the card in a designer's words
+//! ("J1 · front face", "Board · bottom edge"); the persistent face name
+//! stays in the stored reference. A model pick is named by the host
 //! (`layout::dimensions::model::pick`) and traced once, so a sloped face or
 //! one parallel to the board is refused in the tool card, in the trace's
 //! words, before anything is committed. Two picks open the value at the
@@ -48,9 +52,13 @@ use pcbcraft_solidcraft::dims::{ConstraintKind, DimFrame, default_text, dim_layo
 use pcbcraft_solidcraft::geom::Vec2;
 use solidcraft_theme::Tokens;
 
-/// How near the pointer an edge of the hovered face is taken instead of
-/// the face (screen points).
+/// How near the pointer an edge is taken instead of the face under it
+/// (screen points): Solidcraft's edge pick reach (`viewport.rs`, `pick`).
 pub(super) const EDGE_REACH_PT: f32 = 6.0;
+/// How far from the highlighted edge's point the host may find it
+/// (screen points): the display mesh and the model's design may chord a
+/// curved edge differently.
+const EDGE_SNAP_PT: f64 = 2.0;
 /// How near a board edge a pick on the laminate's side must land (screen
 /// points), and at least (mm).
 const BOARD_REACH_PT: f64 = 8.0;
@@ -72,6 +80,8 @@ struct Picked {
     geometry: FeatureGeometry,
     /// The height it is drawn at (mm): the part's seat, or the board top.
     z: f64,
+    /// The card's words for it ("J1 · front face").
+    words: String,
 }
 
 /// What a click would pick under the pointer.
@@ -150,26 +160,39 @@ fn height(project: &Project, r: &BoardRef) -> f64 {
     seat(project, side)
 }
 
-/// "J1 pad A6", "the bottom edge": a reference in the card's words.
-fn words(project: &Project, evaluator: Option<&dyn BoardShapeEvaluator>, r: &BoardRef) -> String {
+/// "J1 · pad A6", "J1 · front face", "Board · bottom edge": a reference in
+/// the card's words; `local` is a new model pick's trace in the part frame.
+fn words(
+    project: &Project,
+    evaluator: Option<&dyn BoardShapeEvaluator>,
+    r: &BoardRef,
+    local: Option<&FeatureGeometry>,
+) -> String {
     match r {
         BoardRef::Board(SketchRef::Curve(c)) => evaluator
             .and_then(|ev| dimensions::board_sketch(project, ev).ok())
-            .and_then(|b| dimensions::edge_name(&b, c).map(dimensions::edge_words))
-            .unwrap_or_else(|| "a board curve".into()),
-        BoardRef::Board(_) => "a board point".into(),
+            .and_then(|b| {
+                dimensions::edge_name(&b, c).map(|n| {
+                    let edge = dimensions::edge_words(n);
+                    format!("Board · {}", edge.trim_start_matches("the "))
+                })
+            })
+            .unwrap_or_else(|| "Board · edge".into()),
+        BoardRef::Board(_) => "Board · point".into(),
         BoardRef::Housing(_) => "the housing".into(),
-        BoardRef::Part(f) if f.is_model() => dimensions::model_feature_words(project, f),
+        BoardRef::Part(f) if f.is_model() => {
+            dimensions::model_feature_words_with(project, f, local)
+        }
         BoardRef::Part(FeatureRef::Pad { placement, pad, .. }) => {
             let part = project
                 .instance(*placement)
                 .map_or_else(|| "A part".into(), |i| i.designator.clone());
-            format!("{part} pad {}", pad.0)
+            format!("{part} · pad {}", pad.0)
         }
         BoardRef::Part(f) => match f.target() {
             ConstraintTarget::Placement(id) => project
                 .instance(id)
-                .map_or_else(|| "a part".into(), |i| format!("{} origin", i.designator)),
+                .map_or_else(|| "a part".into(), |i| format!("{} · origin", i.designator)),
             _ => "a fill".into(),
         },
     }
@@ -297,6 +320,16 @@ impl PcbEditor {
         self.shape.evaluator = Some(evaluator);
     }
 
+    /// The Dimension tool's picks, each with what its card calls it.
+    #[cfg(test)]
+    pub fn dimension_picks(&self) -> Vec<(BoardRef, String)> {
+        self.dim3d
+            .picks
+            .iter()
+            .map(|p| (p.reference.clone(), p.words.clone()))
+            .collect()
+    }
+
     /// How many references the Dimension tool has picked, the value
     /// being typed and why the last pick was refused.
     #[cfg(test)]
@@ -358,7 +391,10 @@ impl PcbEditor {
         }
     }
 
-    /// What a click would pick under `pos`.
+    /// What a click would pick under `pos`, and its highlight: hover and
+    /// click both ask here, so the highlight is the pick. An edge of a
+    /// part body or of the board within [`EDGE_REACH_PT`], in front,
+    /// nearest first; else the face under the pointer.
     fn target_at(
         &self,
         project: &Project,
@@ -366,57 +402,89 @@ impl PcbEditor {
         pos: Pos2,
     ) -> Option<(Target, Hovered)> {
         let viewport = &scene.viewport;
+        // The part a body is the 3D model of; pads, copper and fills are
+        // not model bodies.
+        let part_of = |item: u64| {
+            let source = scene.source(item)?;
+            let plain = source.pad.is_none()
+                && source.track.is_none()
+                && source.via.is_none()
+                && source.fill.is_none();
+            source.instance.filter(|_| plain)
+        };
+        let board_reach = |at: [f64; 3]| {
+            let mm = viewport.mm_per_point(at).unwrap_or(0.0);
+            (BOARD_REACH_PT * mm).max(BOARD_REACH_MM)
+        };
+        let board_at = |at: [f64; 3]| {
+            view::board_curve_at(
+                project,
+                self.shape.evaluator,
+                [at[0], at[1]],
+                board_reach(at),
+            )
+        };
+        let edges = viewport.edges_near(pos, EDGE_REACH_PT, |g| {
+            g.item.is_none_or(|item| part_of(item).is_some())
+        });
+        for e in edges {
+            let hovered = Hovered::Edge {
+                geometry: e.geometry,
+                edge: e.edge,
+            };
+            match e.item {
+                Some(item) => {
+                    let Some(instance) = part_of(item) else {
+                        continue;
+                    };
+                    let mm = viewport.mm_per_point(e.point).unwrap_or(0.0);
+                    let target = Target::Model {
+                        instance,
+                        at: e.point,
+                        reach: EDGE_SNAP_PT * mm + 1e-3,
+                    };
+                    return Some((target, hovered));
+                }
+                // A board-level body's edge (laminate, mask or film) is a
+                // board edge where it runs along the outline; an opening's
+                // edge is not.
+                None => {
+                    if let Some((curve, geometry)) = board_at(e.point) {
+                        return Some((Target::Board { curve, geometry }, hovered));
+                    }
+                }
+            }
+        }
         let hit: SurfaceHit = viewport.surface_hit(pos)?;
         let face = Hovered::Face {
             geometry: hit.geometry,
             face: hit.face,
         };
-        if let Some(source) = hit.item.and_then(|i| scene.source(i)) {
+        if let Some(item) = hit.item {
+            let source = scene.source(item)?;
             let instance = source.instance?;
-            if source.track.is_some() || source.via.is_some() || source.fill.is_some() {
-                return None;
-            }
             if let Some(pad) = source.pad {
                 return Some((Target::Pad { instance, pad }, face));
             }
-            let mm = viewport.mm_per_point(hit.point).unwrap_or(0.0);
-            return Some(match viewport.edge_near(&hit, pos, EDGE_REACH_PT) {
-                Some(edge) => (
-                    Target::Model {
-                        instance,
-                        at: hit.point,
-                        reach: f64::from(EDGE_REACH_PT) * mm * 1.5 + 1e-3,
-                    },
-                    Hovered::Edge {
-                        geometry: hit.geometry,
-                        edge,
-                    },
-                ),
-                None => (
-                    Target::Model {
-                        instance,
-                        at: hit.point,
-                        reach: 0.0,
-                    },
-                    face,
-                ),
+            part_of(item)?;
+            let target = Target::Model {
+                instance,
+                at: hit.point,
+                reach: 0.0,
+            };
+            return Some((target, face));
+        }
+        // The laminate's side, or a board-level top or bottom near the
+        // outline: the board curve there, shown by the face's edge along it
+        // when one is within reach.
+        let (curve, geometry) = board_at(hit.point)?;
+        let shown = viewport
+            .edge_near(&hit, pos, BOARD_REACH_PT as f32)
+            .map_or(face, |edge| Hovered::Edge {
+                geometry: hit.geometry,
+                edge,
             });
-        }
-        // A board-level body (laminate, its edge, a mask or film) has no
-        // pick identity: its side at the board's edge is the board curve
-        // there.
-        if hit.item.is_some() || hit.normal[2].abs() > 0.2 {
-            return None;
-        }
-        let mm = viewport.mm_per_point(hit.point).unwrap_or(0.0);
-        let reach = (BOARD_REACH_PT * mm).max(BOARD_REACH_MM);
-        let (curve, geometry) = view::board_curve_at(
-            project,
-            self.shape.evaluator,
-            [hit.point[0], hit.point[1]],
-            reach,
-        )?;
-        Some((Target::Board { curve, geometry }, face))
+        Some((Target::Board { curve, geometry }, shown))
     }
 
     /// The reference a click on `target` picks, with its geometry in the
@@ -438,9 +506,11 @@ impl PcbEditor {
                     .placement_of(*instance)
                     .ok_or("The part is not on the board")?;
                 let geometry = view::transformed(local, &view::part_transform(placement));
+                let reference = BoardRef::Part(feature);
                 return Ok(Picked {
                     z: seat(project, placement.layer),
-                    reference: BoardRef::Part(feature),
+                    words: words(project, Some(evaluator), &reference, Some(&local)),
+                    reference,
                     geometry,
                 });
             }
@@ -450,8 +520,10 @@ impl PcbEditor {
                 at: PadPoint::Centre,
             }),
             Target::Board { curve, geometry } => {
+                let reference = BoardRef::Board(SketchRef::Curve(curve.clone()));
                 return Ok(Picked {
-                    reference: BoardRef::Board(SketchRef::Curve(curve.clone())),
+                    words: words(project, self.shape.evaluator, &reference, None),
+                    reference,
                     geometry: *geometry,
                     z: seat(project, Layer::Top),
                 });
@@ -470,6 +542,7 @@ impl PcbEditor {
         Ok(Picked {
             geometry: view::transformed(local, &view::part_transform(placement)),
             z: seat(project, placement.layer),
+            words: words(project, self.shape.evaluator, &reference, None),
             reference,
         })
     }
@@ -490,6 +563,11 @@ impl PcbEditor {
             self.dim3d.clear();
         }
         let Some((target, _)) = self.target_at(project, scene, pos) else {
+            // Say so: a click that picks nothing is not lost silently.
+            self.dim3d.error = Some(
+                "Nothing to dimension there: pick a part's face, edge or pad, or a board edge"
+                    .into(),
+            );
             return;
         };
         let picked = match self.pick_target(project, &target) {
@@ -830,7 +908,7 @@ impl PcbEditor {
 
     /// The Dimension tool's card: what is picked, the next step, and why
     /// the last pick or value was refused.
-    pub(super) fn dimension_card(&mut self, ui: &mut Ui, project: &Project) -> Option<Operation> {
+    pub(super) fn dimension_card(&mut self, ui: &mut Ui) -> Option<Operation> {
         let hint = match self.dim3d.picks.len() {
             0 => "Pick a part's face, edge, hole or pad, or a board edge",
             1 => "Pick what to dimension it to",
@@ -842,18 +920,12 @@ impl PcbEditor {
             key: "",
             hint,
             tip: "Holds a part at a distance from a board edge or another part's feature. \
-                  An edge of a face is taken within a few points of it. Sloped faces and \
+                  An edge is taken within a few points of it. Sloped faces and \
                   faces parallel to the board have no single trace on the board: pick one \
                   of their edges instead.",
             finish: None,
         };
-        let evaluator = self.shape.evaluator;
-        let picks: Vec<String> = self
-            .dim3d
-            .picks
-            .iter()
-            .map(|p| words(project, evaluator, &p.reference))
-            .collect();
+        let picks: Vec<String> = self.dim3d.picks.iter().map(|p| p.words.clone()).collect();
         let error = self.dim3d.error.clone();
         let shown = self.draft_shown();
         let t = Tokens::get();

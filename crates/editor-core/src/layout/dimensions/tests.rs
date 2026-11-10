@@ -302,3 +302,86 @@ fn the_held_refusal_fits_one_line_and_keeps_the_way_out() {
         assert!(crate::issues::style::check(&text).is_empty(), "{text}");
     }
 }
+
+/// Demo run 2, finding 4: a 3D model reference reads in a designer's
+/// words from where it lies on the part, never by its persistent name.
+#[test]
+fn model_references_read_as_sides_of_the_part() -> Fallible<()> {
+    use crate::model::dimension::{End, ModelEdgeName, ModelEdgeRef};
+    let engine = Engine::demo()?;
+    let project = engine.project();
+    let placement = project.placements.first().ok_or("a placed part")?;
+    let part = placement.instance;
+    let instance = project.instance(part).ok_or("its instance")?;
+    let designator = instance.designator.clone();
+    let physical = crate::instances::resolve(&project.library, instance)?
+        .physical
+        .ok_or("a package")?;
+    let package = &physical.package.definition;
+    let frame = package.placement.transform();
+    let [l, w, h] = package.envelope;
+    assert!(
+        l >= 1.5 * w,
+        "the demo part is long in x: {:?}",
+        package.envelope
+    );
+    // The envelope's centre and top in the part frame.
+    let c = frame.apply([0.0, 0.0, h / 2.0]);
+    // The model point a part-frame point comes from: the rigid frame
+    // undone.
+    let back = |p: [f64; 3]| -> [f64; 3] {
+        let d: [f64; 3] = std::array::from_fn(|k| p[k] - frame.translation[k]);
+        std::array::from_fn(|j| (0..3).map(|i| frame.rotation[i][j] * d[i]).sum())
+    };
+    let face = |pick: [f64; 3]| FeatureRef::Face {
+        placement: part,
+        face: ModelFaceRef {
+            body: BodyName("body".into()),
+            face: FaceName("F1:+x".into()),
+            pick,
+        },
+    };
+    let edge = |pick: [f64; 3]| ModelEdgeRef {
+        body: BodyName("body".into()),
+        edge: ModelEdgeName("F1:-y|F1:+z".into()),
+        pick,
+    };
+    let (x1, y0) = (c[0] + l / 2.0, c[1] - w / 2.0);
+    // The +x end, square to the board: a line along y.
+    let end = FeatureGeometry::Line {
+        a: [x1, c[1] - w / 2.0],
+        b: [x1, c[1] + w / 2.0],
+    };
+    let words = model_feature_words_with(project, &face(back([x1, c[1], c[2]])), Some(&end));
+    assert_eq!(words, format!("{designator} · right end face"));
+    // The front side's top edge: a line along x at −y, up high.
+    let front = FeatureGeometry::Line {
+        a: [c[0] - l / 2.0, y0],
+        b: [c[0] + l / 2.0, y0],
+    };
+    let top = back([c[0], y0, c[2] + h / 2.0]);
+    let edge_ref = FeatureRef::Edge {
+        placement: part,
+        edge: edge(top),
+    };
+    let words = model_feature_words_with(project, &edge_ref, Some(&front));
+    assert_eq!(words, format!("{designator} · top-front edge"));
+    let vertex = FeatureRef::Vertex {
+        placement: part,
+        edge: edge(top),
+        end: End::Start,
+    };
+    let words = model_feature_words_with(project, &vertex, Some(&front));
+    assert_eq!(words, format!("{designator} · start of the top-front edge"));
+    // A vertical edge at the front-left corner traces a point.
+    let corner = FeatureGeometry::Point {
+        at: [c[0] - l / 2.0, y0],
+    };
+    let upright = FeatureRef::Edge {
+        placement: part,
+        edge: edge(back([c[0] - l / 2.0, y0, c[2]])),
+    };
+    let words = model_feature_words_with(project, &upright, Some(&corner));
+    assert_eq!(words, format!("{designator} · front-left edge"));
+    Ok(())
+}

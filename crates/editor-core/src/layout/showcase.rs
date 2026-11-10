@@ -22,10 +22,10 @@ use super::{LayerChangeRequest, LayoutCommand, RouteRequest, ViaRequest};
 use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::ids::{Endpoint, Id, TerminalId};
+use crate::library::Outline;
 use crate::library::footprint_source::{
     DimKind, DimValue, Expr, FootprintParam, ParamName, ParamUnit, SketchEdit, SketchRef,
 };
-use crate::library::{Outline, Segment};
 use crate::model::board::{BoardShape, ConstraintTarget};
 use crate::model::dimension::{BoardRef, FeatureRef, PartDimensionSpec, PartRelation};
 use crate::model::fill::{FillSettings, FillSpec, PadConnections};
@@ -227,11 +227,6 @@ const VIAS: &[(&str, Point, bool)] = &[
     ("GND", [30.2, 10.0], true),
 ];
 
-/// How far the pours stand in from the board edge, mm, and the radius of
-/// their rounded corners.
-const POUR_INSET_MM: f64 = 0.5;
-const POUR_CORNER_MM: f64 = 1.5;
-
 /// The pours: (name, net, layer, priority).
 const POURS: &[(&str, &str, CopperLayer, u32)] = &[
     ("GND bottom pour", "GND", BOTTOM, 0),
@@ -243,9 +238,10 @@ const POURS: &[(&str, &str, CopperLayer, u32)] = &[
 /// its pins, leaves no room for spokes).
 const TOP_POUR: (&str, &str, CopperLayer, u32) = ("GND top pour", "GND", TOP, 0);
 
-/// The hosted showcase's board corner radius, mm: the pours' corners
-/// ([`POUR_CORNER_MM`] at [`POUR_INSET_MM`]) are concentric with it.
-pub const CORNER_MM: f64 = POUR_INSET_MM + POUR_CORNER_MM;
+/// The showcase project's name.
+pub const PROJECT_NAME: &str = "Showcase";
+/// The hosted showcase's board corner radius, mm.
+pub const CORNER_MM: f64 = 2.0;
 /// The hosted showcase's round cutout: (centre, radius), mm.
 pub const CUTOUT: (Point, f64) = ([40.0, 4.5], 1.75);
 /// The hosted showcase's milled slot: (cap centres, width), mm.
@@ -380,33 +376,11 @@ pub fn commands(project: &Project) -> Result<Vec<LayoutCommand>> {
     Ok(commands)
 }
 
-/// The board outline inset by [`POUR_INSET_MM`], with quarter-circle
-/// corners of [`POUR_CORNER_MM`], counter-clockwise from the bottom edge.
-pub fn pour_outline() -> Outline {
-    let (i, r) = (POUR_INSET_MM, POUR_CORNER_MM);
-    let [w, h] = BOARD_MM;
-    // A quarter turn counter-clockwise: tan(90° / 4).
-    let quarter = std::f64::consts::FRAC_PI_8.tan();
-    let line = |to: Point| Segment::Line { to };
-    let arc = |to: Point| Segment::Arc { to, bulge: quarter };
-    Outline {
-        start: [i + r, i],
-        segments: vec![
-            line([w - i - r, i]),
-            arc([w - i, i + r]),
-            line([w - i, h - i - r]),
-            arc([w - i - r, h - i]),
-            line([i + r, h - i]),
-            arc([i, h - i - r]),
-            line([i, i + r]),
-            arc([i + r, i]),
-        ],
-    }
-}
-
 /// The fill commands that add the showcase pours over `project` (a
-/// bottom ground pour and the inner ground plane). Their copper is
-/// computed by a `fill.refill` after them.
+/// bottom ground pour and the inner ground plane). Each follows the board
+/// outline (`region: board`), so a board parameter or shape edit moves it
+/// and the next refill fills the new shape. Their copper is computed by a
+/// `fill.refill` after them.
 pub fn fill_commands(project: &Project) -> Result<Vec<FillCommand>> {
     pours(project, POURS)
 }
@@ -429,11 +403,15 @@ fn pours(project: &Project, pours: &[(&str, &str, CopperLayer, u32)]) -> Result<
                 .ok_or_else(|| Error::NotFound(format!("showcase net {net}")))?;
             Ok(FillCommand::Add {
                 fill: Box::new(FillSpec {
-                    region: crate::model::fill::FillRegion::Drawn,
+                    region: crate::model::fill::FillRegion::Board,
                     name: (*name).into(),
                     net: Some(net),
                     layer: *layer,
-                    outline: pour_outline(),
+                    // Derived from the board after every operation.
+                    outline: Outline {
+                        start: [0.0, 0.0],
+                        segments: Vec::new(),
+                    },
                     priority: *priority,
                     settings: if *name == top {
                         FillSettings {

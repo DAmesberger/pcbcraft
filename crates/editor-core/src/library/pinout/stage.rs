@@ -877,8 +877,10 @@ fn number_findings(document: &PinoutDocument, component: DefinitionId, out: &mut
             out.findings.push(Finding::blocking(
                 "package.terminal_count",
                 format!(
-                    "{} states {} terminals but {count} rows are numbered in it.",
-                    variant.name, variant.terminal_count
+                    "{} states {} terminals but {count} {} numbered in it.",
+                    variant.name,
+                    variant.terminal_count,
+                    if count == 1 { "row is" } else { "rows are" }
                 ),
                 this.clone(),
                 Stage::Publish,

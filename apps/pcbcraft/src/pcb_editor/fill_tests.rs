@@ -51,6 +51,21 @@ fn filled_showcase() -> Result<(Engine, Id), Box<dyn std::error::Error>> {
     Ok((Engine::from_file(file)?, id))
 }
 
+/// [`filled_showcase`] with its bottom pour made a drawn fill: the
+/// showcase's pours follow the board, and only a drawn outline has handles.
+fn drawn_showcase() -> Result<(Engine, Id), Box<dyn std::error::Error>> {
+    let (engine, id) = filled_showcase()?;
+    let mut file = engine.to_file();
+    let pour = file
+        .project
+        .fills
+        .iter_mut()
+        .find(|f| f.id == id)
+        .ok_or("bottom pour")?;
+    pour.region = pcbcraft_core::model::fill::FillRegion::Drawn;
+    Ok((Engine::from_file(file)?, id))
+}
+
 fn canvas(
     editor: &mut PcbEditor,
     engine: &Engine,
@@ -422,7 +437,7 @@ fn the_fill_tool_draws_lines_and_an_arc_and_adds_the_fill() -> TestResult {
 /// `fill.edit` on release; nothing changes before it.
 #[test]
 fn dragging_an_outline_handle_moves_the_vertex_in_one_edit() -> TestResult {
-    let (mut engine, pour) = filled_showcase()?;
+    let (mut engine, pour) = drawn_showcase()?;
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let mut editor = PcbEditor {

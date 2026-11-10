@@ -389,10 +389,15 @@ pub fn diff(a: &Value, b: &Value, names: (&str, &str)) -> String {
     }
     let _ = writeln!(
         s,
-        "\n## Pads\n\n{} pads in {na}, {} in {nb}; {} numbers differ.\n",
+        "\n## Pads\n\n{} pads in {na}, {} in {nb}; {} {}.\n",
         pa.values().map(Vec::len).sum::<usize>(),
         pb.values().map(Vec::len).sum::<usize>(),
-        pad_lines.len()
+        pad_lines.len(),
+        if pad_lines.len() == 1 {
+            "number differs"
+        } else {
+            "numbers differ"
+        }
     );
     for l in pad_lines {
         let _ = writeln!(s, "{l}");

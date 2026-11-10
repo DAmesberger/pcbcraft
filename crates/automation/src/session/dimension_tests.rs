@@ -173,7 +173,7 @@ fn a_second_distance_that_only_a_turn_would_satisfy_is_refused() -> TestResult {
     let text = refused.to_string();
     assert!(
         text.contains(
-            "J1's Tongue edge to the bottom edge (1 mm) conflicts with J1's Shell face to the \
+            "J1 · front edge to the bottom edge (1 mm) conflicts with J1 · front face to the \
              bottom edge (0 mm), which already holds J1"
         ),
         "{text}"

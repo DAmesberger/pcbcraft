@@ -491,3 +491,46 @@ fn the_open_page_rows_show_in_full_on_hover() -> TestResult {
     assert!(missing.is_empty(), "cut without a hover: {missing:?}");
     Ok(())
 }
+
+/// Demo run 2, finding 8: the Open page lists each component once, though
+/// the project holds both the component and a part that implements it
+/// (both open the component).
+#[test]
+fn the_open_page_lists_each_component_once() -> TestResult {
+    use pcbcraft_core::DefinitionKind;
+    use pcbcraft_core::catalog::Source;
+    let ctx = context();
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    );
+    let mut engine = Engine::demo()?;
+    engine.replace_document(pcbcraft_io::read_project(std::path::Path::new(path))?)?;
+    let catalog = pcbcraft_core::catalog::entries(engine.project(), engine.drafts());
+    let named = |kind: DefinitionKind| {
+        catalog
+            .iter()
+            .any(|e| e.name == "APT1608SGC" && e.kind == kind && e.source == Source::Project)
+    };
+    // The example holds the component and its part under one name.
+    assert!(named(DefinitionKind::Component), "the component");
+    assert!(named(DefinitionKind::Part), "its part");
+    let mut editor = PartEditor::default();
+    editor.show_start();
+    frame(&mut editor, &engine, &ctx);
+    let _ = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 600.0))),
+            events: vec![egui::Event::Text("APT1608".to_owned())],
+            ..Default::default()
+        },
+        |ui| {
+            editor.identity_strip(ui, &engine);
+            editor.canvas(ui, &engine);
+        },
+    );
+    let shown = frame(&mut editor, &engine, &ctx);
+    let rows = shown.iter().filter(|t| *t == "APT1608SGC").count();
+    assert_eq!(rows, 1, "{shown:?}");
+    Ok(())
+}
