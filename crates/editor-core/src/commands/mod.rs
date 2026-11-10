@@ -171,6 +171,12 @@ pub enum Outcome {
         reached: bool,
         detour_factor: f64,
     },
+    /// How far a `layout.track_drag` moved the segment along its normal,
+    /// mm, and whether it reached the requested offset.
+    TrackDragged {
+        offset: f64,
+        reached: bool,
+    },
     /// The label or power port `label.place` created.
     LabelPlaced {
         label: Id,

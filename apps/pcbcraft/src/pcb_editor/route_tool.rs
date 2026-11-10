@@ -187,6 +187,25 @@ impl Planned {
     }
 }
 
+/// What [`PcbEditor::paint_plan`] draws: a route step's or a track
+/// drag's plan.
+pub(super) struct PlanLook<'a> {
+    pub(super) edits: &'a RouteEditSet,
+    /// Whether a net is the one being routed or dragged.
+    pub(super) own: &'a dyn Fn(Id) -> bool,
+    /// Draw the own net's moved copper as added copper (a drag moves it).
+    pub(super) own_as_new: bool,
+    /// The layer drawn at full strength.
+    pub(super) layer: CopperLayer,
+    pub(super) reached: bool,
+    /// Where the plan stops, and the pointer.
+    pub(super) end: Point,
+    pub(super) pointer: Point,
+    /// Ring the pointer when the plan arrives.
+    pub(super) target_ring: bool,
+    pub(super) note: Option<&'a str>,
+}
+
 /// One accepted step: where it started and what it added.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Step {
@@ -487,7 +506,7 @@ impl PcbEditor {
     }
 
     /// The router's index of the board at `revision`, built once.
-    fn route_index(&mut self, project: &Project, revision: u64) -> Rc<RouteIndex> {
+    pub(super) fn route_index(&mut self, project: &Project, revision: u64) -> Rc<RouteIndex> {
         match &self.route.index {
             Some((at, index)) if *at == revision => Rc::clone(index),
             _ => {
@@ -564,12 +583,6 @@ impl PcbEditor {
         let Some((_, plan)) = &self.route.planned else {
             return;
         };
-        let edits = plan.edits();
-        let t = solidcraft_theme::Tokens::get();
-        let scale = view.view.scale;
-        let screen = |p: Point| view.screen(p);
-        let ink = BoardInk::get();
-        let colors = crate::palette::board();
         let own = |n: Id| {
             Some(n) == self.net
                 || self
@@ -578,6 +591,52 @@ impl PcbEditor {
                     .as_ref()
                     .is_some_and(|p| p.nets.contains(&n))
         };
+        self.paint_plan(
+            painter,
+            view,
+            project,
+            PlanLook {
+                edits: plan.edits(),
+                own: &own,
+                own_as_new: false,
+                layer: self.layer,
+                reached: plan.reached(),
+                end: plan.end(),
+                pointer: end,
+                target_ring: true,
+                note: plan.note(),
+            },
+        );
+    }
+
+    /// A plan's copper over the board: what it adds in `preview_add`, the
+    /// copper it moves at its new place outlined in the accent (its own
+    /// net's in the selection colour, or as added copper with
+    /// `own_as_new`), its vias, and the target ring where it arrives or a
+    /// warning ring and line to the pointer where it stops short.
+    pub(super) fn paint_plan(
+        &self,
+        painter: &egui::Painter,
+        view: BoardView,
+        project: &Project,
+        look: PlanLook<'_>,
+    ) {
+        let PlanLook {
+            edits,
+            own,
+            own_as_new,
+            layer: current,
+            reached,
+            end: stop_at,
+            pointer: end,
+            target_ring,
+            note,
+        } = look;
+        let t = solidcraft_theme::Tokens::get();
+        let scale = view.view.scale;
+        let screen = |p: Point| view.screen(p);
+        let ink = BoardInk::get();
+        let colors = crate::palette::board();
         // Shoved copper on another layer (a moved via's tracks) is drawn as
         // its layer is: dimmed by the focus mode, or not at all.
         let near = if self.from_bottom {
@@ -586,7 +645,7 @@ impl PcbEditor {
             Layer::Top
         };
         let share = |layer: CopperLayer| -> Option<f32> {
-            if layer == self.layer {
+            if layer == current {
                 Some(1.0)
             } else {
                 self.look(layer, near).map(|look| look.shade)
@@ -599,13 +658,14 @@ impl PcbEditor {
             let width = (width as f32 * scale).max(1.0);
             let color = ink.on_board(colors.copper_layer(layer), share);
             let (a, b) = (screen(start), screen(end));
+            // Outlined round its edge, not along its centre: over a pour of
+            // its own layer's colour the outline is what shows it moved.
+            let outline = if own(net) { t.body_selected } else { t.accent };
             painter.add(Shape::convex_polygon(
                 capsule(a, b, width / 2.0),
                 color,
-                Stroke::NONE,
+                Stroke::new(1.5, outline.gamma_multiply(share)),
             ));
-            let outline = if own(net) { t.body_selected } else { t.accent };
-            painter.line_segment([a, b], Stroke::new(1.0, outline.gamma_multiply(share)));
         };
         // The copper the step adds, at its routed width in Solidcraft's
         // preview colour for what an operation adds (`preview_add`),
@@ -626,7 +686,11 @@ impl PcbEditor {
             new_leg(r.start, r.end, r.width, r.layer);
         }
         for track in &edits.replace {
-            leg(track.start, track.end, track.width, track.layer, track.net);
+            if own_as_new && own(track.net) {
+                new_leg(track.start, track.end, track.width, track.layer);
+            } else {
+                leg(track.start, track.end, track.width, track.layer, track.net);
+            }
         }
         let via_ring = |at: Point, diameter: f64, drill: f64, fill, outline| {
             let at = screen(at);
@@ -649,18 +713,20 @@ impl PcbEditor {
         }
         for moved in &edits.move_vias {
             if let Some(via) = project.via(moved.id) {
-                let fill = ink.on_board(colors.copper_layer(self.layer), 1.0);
+                let fill = ink.on_board(colors.copper_layer(current), 1.0);
                 via_ring(moved.position, via.diameter, via.drill, fill, t.accent);
             }
         }
-        if plan.reached() {
-            painter.circle_stroke(screen(end), 5.0, Stroke::new(1.5, t.body_selected));
+        if reached {
+            if target_ring {
+                painter.circle_stroke(screen(end), 5.0, Stroke::new(1.5, t.body_selected));
+            }
         } else {
-            let stop = screen(plan.end());
+            let stop = screen(stop_at);
             painter.circle_stroke(stop, 5.0, Stroke::new(1.5, t.warning));
             painter.line_segment([stop, screen(end)], Stroke::new(1.0, t.warning));
         }
-        if let Some(note) = plan.note() {
+        if let Some(note) = note {
             painter.text(
                 screen(end) + egui::vec2(12.0, -12.0),
                 egui::Align2::LEFT_BOTTOM,
@@ -1069,13 +1135,14 @@ mod tests {
         ));
         let ctx = egui::Context::default();
         let mut scale = 0.0;
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
             let view =
                 super::super::board_view(rect, project.board_size, 1.0, egui::Vec2::ZERO, false);
             scale = view.view.scale;
             editor.paint_route_preview(ui.painter(), view, project, [10.0, 5.0]);
         });
+        output.textures_delta.clear();
         let t = solidcraft_theme::Tokens::get();
         let added: Vec<&egui::epaint::PathShape> = output
             .shapes
@@ -1150,7 +1217,7 @@ mod tests {
                 Rc::new(Planned::Single(Box::new(plan(layer)))),
             ));
             let ctx = egui::Context::default();
-            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
                 let view = super::super::board_view(
                     rect,
@@ -1161,18 +1228,33 @@ mod tests {
                 );
                 editor.paint_route_preview(ui.painter(), view, project, [10.0, 5.0]);
             });
+            output.textures_delta.clear();
             output
                 .shapes
                 .iter()
                 .filter_map(|c| match &c.shape {
-                    Shape::Path(p) => Some(p.fill),
+                    Shape::Path(p) => Some((p.fill, p.stroke.clone())),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
         };
-        // On the routed layer: full strength.
+        // On the routed layer: full strength, outlined round its edge in the
+        // accent, which reads over a pour of the layer's colour (demo runs 2
+        // and 3: a centre line alone left the shove unseen).
         let full = ink.on_board(colors.copper_layer(CopperLayer::Top), 1.0);
-        assert_eq!(fills(&mut editor, CopperLayer::Top), vec![full]);
+        let t = solidcraft_theme::Tokens::get();
+        let drawn = fills(&mut editor, CopperLayer::Top);
+        assert_eq!(drawn.len(), 1, "one shoved leg");
+        let (fill, stroke) = &drawn[0];
+        assert_eq!(*fill, full);
+        assert!(stroke.width >= 1.5, "{stroke:?}");
+        assert_eq!(stroke.color, egui::epaint::ColorMode::Solid(t.accent));
+        let fills = |editor: &mut PcbEditor, layer: CopperLayer| {
+            fills(editor, layer)
+                .into_iter()
+                .map(|(fill, _)| fill)
+                .collect::<Vec<_>>()
+        };
         // On the far layer: as the canvas draws that layer.
         let shade = editor
             .look(CopperLayer::Bottom, Layer::Top)

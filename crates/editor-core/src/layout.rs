@@ -193,6 +193,18 @@ pub enum LayoutCommand {
     /// unapplied.
     #[serde(rename = "layout.route_step")]
     RouteStep { request: router::RouteStepRequest },
+    /// Drag a track segment along its normal by `offset` mm, shoving other
+    /// nets' copper aside. In `layout::router::drag`, end-to-end neighbours on
+    /// its net stretch, free ends follow, held ends jog, and other nets'
+    /// tracks and vias are shoved in `mode`. One undo step with every moved track and via; the
+    /// segment stops at the last legal offset when no room exists, and a
+    /// drag that cannot move at all is refused. The outcome gives the
+    /// offset reached (`Outcome::TrackDragged`); `layout.track_drag_preview`
+    /// returns the plan unapplied.
+    #[serde(rename = "layout.track_drag")]
+    TrackDrag {
+        request: router::drag::TrackDragRequest,
+    },
     /// Place a new instance of a mechanical part spec, finding or making its
     /// variant, as one undo step (`Outcome::PartPlaced`). The variant is its
     /// component, mechanical symbol, package using the part file, footprint and
@@ -245,6 +257,7 @@ declare_classes!(LayoutCommand {
     RoutePair "layout.route_pair" Edit "Route a differential pair",
     TuneLength "layout.tune_length" Edit "Tune a track's length",
     RouteStep "layout.route_step" Edit "Route one step",
+    TrackDrag "layout.track_drag" Edit "Drag a track with shove",
     PlacePart "layout.place_part" Edit "Place a mechanical part",
     SetPart "layout.set_part" Edit "Change a mechanical part",
     RemovePart "layout.remove_part" Edit "Remove a mechanical part",
@@ -734,6 +747,9 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
         LayoutCommand::RouteStep { request } => {
             route_step(project, &request)?;
         }
+        LayoutCommand::TrackDrag { request } => {
+            track_drag(project, &request)?;
+        }
         LayoutCommand::TuneLength { request } => {
             let obstacles = obstacles::Obstacles::of(project);
             let graph = CopperGraph::of(project);
@@ -778,6 +794,25 @@ pub(crate) fn route_step(
     if plan.edits.add.is_empty() && plan.edits.vias.is_empty() {
         return Err(Error::Conflict(
             plan.blocked.unwrap_or_else(|| "Nothing to route".into()),
+        ));
+    }
+    apply_routes(project, std::mem::take(&mut plan.edits))?;
+    Ok(plan)
+}
+
+/// `layout.track_drag` on a candidate: applies the plan and returns it,
+/// its edit set spent. Refused when the segment cannot move.
+pub(crate) fn track_drag(
+    project: &mut Project,
+    request: &router::drag::TrackDragRequest,
+) -> Result<router::RoutePlan> {
+    request.check()?;
+    let index = router::RouteIndex::of(project);
+    let mut plan = router::drag::drag_plan(project, &index, request);
+    if plan.edits.replace.is_empty() {
+        return Err(Error::Conflict(
+            plan.blocked
+                .unwrap_or_else(|| "The track cannot move there".into()),
         ));
     }
     apply_routes(project, std::mem::take(&mut plan.edits))?;

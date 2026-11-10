@@ -159,7 +159,7 @@ fn dispatch_layer_keys(ctx: &egui::Context, editor: &mut PcbEditor) {
     }
 }
 
-fn screen(editor: &PcbEditor, engine: &Engine, p: Point) -> Pos2 {
+pub(super) fn screen(editor: &PcbEditor, engine: &Engine, p: Point) -> Pos2 {
     let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(SCREEN[0], SCREEN[1]));
     board_view(
         rect,
