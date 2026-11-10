@@ -380,3 +380,41 @@ fn a_summary_row_puts_its_action_at_the_right_and_a_hint_wraps_in_the_column() {
         "{hint:?}"
     );
 }
+
+/// A row whose last cell draws nothing (a Reset shown only when there is
+/// something to reset) still takes its full height: the next row starts
+/// under it, not over its lower half.
+#[test]
+fn a_row_with_an_empty_cell_keeps_its_height() {
+    let mut ui = Harness::new(360.0, 900.0);
+    let columns = [
+        TableColumn {
+            title: "Rule",
+            weight: 1.0,
+        },
+        TableColumn {
+            title: "",
+            weight: 1.0,
+        },
+    ];
+    for rows in [3, LIST_MAX_ROWS + 1] {
+        let mut add = |ui: &mut Ui| {
+            table(
+                ui,
+                &columns,
+                rows,
+                |ui, row, column| {
+                    if column == 0 {
+                        ui.label(format!("row {row}"));
+                    }
+                },
+                None,
+            );
+        };
+        ui.frame(vec![], &mut add);
+        let painted = ui.frame(vec![], &mut add);
+        let t = Tokens::get();
+        let step = at(&painted, "row 1").y - at(&painted, "row 0").y;
+        assert!(step >= t.control_height, "{rows} rows: {step} apart");
+    }
+}

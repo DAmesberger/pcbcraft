@@ -542,3 +542,42 @@ fn board_rule_findings_offer_show_rule() {
 fn panic_free_fail(what: &str) {
     assert!(what.is_empty(), "unexpected fix {what}");
 }
+
+/// At the Properties column's width (the app's is about 260 points) the
+/// rule rows stand one under the other at full height, as at any width:
+/// they never overlap.
+#[test]
+fn the_rule_rows_do_not_overlap_in_the_properties_column() -> TestResult {
+    let engine = Engine::demo()?;
+    let ctx = context();
+    solidcraft_theme::apply(&ctx);
+    let mut editor = PcbEditor::default();
+    click(&mut editor, &engine, &ctx, "Rules…")?;
+    assert_eq!(editor.subject(), Subject::Dialog);
+    let mut output = None;
+    for _ in 0..3 {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(262.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                editor.subject_slot(ui, &engine);
+            },
+        );
+        out.textures_delta.clear();
+        output = Some(out);
+    }
+    let output = output.ok_or("no frame")?;
+    let first = positions(&output, "Min track width");
+    let second = positions(&output, "Default track width");
+    let (Some(a), Some(b)) = (first.first(), second.first()) else {
+        return Err(format!("rows not drawn: {:?}", texts(&output)).into());
+    };
+    let t = solidcraft_theme::Tokens::get();
+    assert!(b.y - a.y >= t.control_height, "rows {} apart", b.y - a.y);
+    Ok(())
+}

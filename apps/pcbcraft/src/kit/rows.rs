@@ -373,6 +373,9 @@ pub fn table(
                     );
                     x += w + t.space_4;
                 }
+                // A cell that draws nothing leaves the cursor at its
+                // centre; the next row starts under this one.
+                ui.advance_cursor_after_rect(rect);
             }
         };
         if rows > LIST_MAX_ROWS {
