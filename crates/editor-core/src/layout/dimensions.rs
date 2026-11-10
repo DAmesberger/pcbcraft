@@ -357,19 +357,20 @@ pub fn checks(project: &Project) -> Vec<Finding> {
     out
 }
 
-/// "J1's face ‘F3:side:l2’" for a 3D model reference.
+/// "J1's Shell face" for a 3D model reference: the part, the body as its
+/// model names it, and what was picked; never the solver's face name.
 pub fn model_feature_words(project: &Project, f: &FeatureRef) -> String {
     let name = target_words(project, f.target());
     match f {
-        FeatureRef::Face { face, .. } => format!("{name}'s face ‘{}’", face.face.0),
-        FeatureRef::Edge { edge, .. } => format!("{name}'s edge ‘{}’", edge.edge.0),
+        FeatureRef::Face { face, .. } => format!("{name}'s {} face", face.body.0),
+        FeatureRef::Edge { edge, .. } => format!("{name}'s {} edge", edge.body.0),
         FeatureRef::Vertex { edge, end, .. } => format!(
-            "the {} of {name}'s edge ‘{}’",
+            "the {} of {name}'s {} edge",
             match end {
                 crate::model::dimension::End::Start => "start",
                 crate::model::dimension::End::End => "end",
             },
-            edge.edge.0
+            edge.body.0
         ),
         _ => name,
     }
@@ -639,10 +640,18 @@ fn solve_component(
         solution.status,
         SolveStatus::OverConstrained | SolveStatus::Failed
     ) {
+        // The dimensions this operation added or changed.
+        let new: Vec<Id> = c
+            .dimensions
+            .iter()
+            .filter(|d| !before.part_dimensions.iter().any(|b| b == *d))
+            .map(|d| d.id)
+            .collect();
         return Err(Error::Conflict(conflict_message(
             project,
             board,
             &c.dimensions,
+            &new,
             &solution,
         )));
     }
@@ -1042,7 +1051,7 @@ fn reference_words(project: &Project, board: &BoardSketch, r: &BoardRef) -> Stri
     }
 }
 
-/// "R1 to the right edge (4)".
+/// "R1 to the right edge (4 mm)".
 fn dimension_words(project: &Project, board: &BoardSketch, d: &PartDimension) -> String {
     let what = d
         .refs
@@ -1050,8 +1059,12 @@ fn dimension_words(project: &Project, board: &BoardSketch, d: &PartDimension) ->
         .map(|r| reference_words(project, board, r))
         .collect::<Vec<_>>()
         .join(" to ");
+    let unit = match d.kind {
+        PartRelation::Dim(DimKind::Angle) => "°",
+        _ => " mm",
+    };
     match &d.value {
-        Some(DimValue::Fixed(v)) => format!("{what} ({})", super::limits::mm(*v)),
+        Some(DimValue::Fixed(v)) => format!("{what} ({}{unit})", super::limits::mm(*v)),
         Some(DimValue::Param(p)) => format!("{what} ({})", p.0),
         Some(DimValue::Expr(e)) => format!("{what} ({})", e.0),
         None => what,
@@ -1059,19 +1072,61 @@ fn dimension_words(project: &Project, board: &BoardSketch, d: &PartDimension) ->
 }
 
 /// Why a component's dimensions do not solve, naming the ones that
-/// conflict.
+/// conflict. When the operation added or changed dimensions (`new`), the
+/// refusal names the new one and the existing ones it conflicts with: "J1's
+/// Shell edge to the bottom edge (1 mm) conflicts with J1's Shell face to
+/// the bottom edge (0 mm), which already holds J1; edit or delete that
+/// dimension instead".
 fn conflict_message(
     project: &Project,
     board: &BoardSketch,
     dimensions: &[PartDimension],
+    new: &[Id],
     solution: &PartsSolution,
 ) -> String {
-    let named: Vec<String> = dimensions
+    let words = |ds: &[&PartDimension]| -> Vec<String> {
+        ds.iter()
+            .take(3)
+            .map(|d| dimension_words(project, board, d))
+            .collect()
+    };
+    let added: Vec<&PartDimension> = dimensions.iter().filter(|d| new.contains(&d.id)).collect();
+    if let Some(first) = added.first() {
+        // The existing dimensions it fails with, or else those holding the
+        // same parts.
+        let mut existing: Vec<&PartDimension> = dimensions
+            .iter()
+            .filter(|d| !new.contains(&d.id) && solution.failing.contains(&d.id))
+            .collect();
+        if existing.is_empty() {
+            let held: Vec<ConstraintTarget> = targets_of(first).collect();
+            existing = dimensions
+                .iter()
+                .filter(|d| !new.contains(&d.id) && targets_of(d).any(|t| held.contains(&t)))
+                .collect();
+        }
+        let who = targets_of(first)
+            .next()
+            .map_or_else(|| "the part".into(), |t| target_words(project, t));
+        let one = words(&added).join(" and ");
+        return match words(&existing).as_slice() {
+            [] => format!("layout.dimension_conflict: {one} cannot hold"),
+            [single] => format!(
+                "layout.dimension_conflict: {one} conflicts with {single}, which already holds \
+                 {who}; edit or delete that dimension instead"
+            ),
+            many => format!(
+                "layout.dimension_conflict: {one} conflicts with {}, which already hold {who}; \
+                 edit or delete one of them instead",
+                many.join(" and ")
+            ),
+        };
+    }
+    let failing: Vec<&PartDimension> = dimensions
         .iter()
         .filter(|d| solution.failing.contains(&d.id))
-        .take(3)
-        .map(|d| dimension_words(project, board, d))
         .collect();
+    let named = words(&failing);
     let why = solution
         .findings
         .first()
