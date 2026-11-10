@@ -98,6 +98,11 @@ impl Decimal {
         )
     }
 
+    /// `(mantissa, exponent)`: the value is exactly `mantissa × 10^exponent`.
+    pub fn parts(self) -> (i64, i32) {
+        (self.mantissa, self.exponent)
+    }
+
     pub fn is_zero(self) -> bool {
         self.mantissa == 0
     }

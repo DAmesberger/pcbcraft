@@ -12,6 +12,7 @@ use crate::fields::{self, FieldValue, QuantityKind, ValueType};
 use crate::ids::{ChoiceId, DefinitionId, Revision};
 use crate::library::Library;
 use crate::quantity::{self, SI_PREFIXES, UnitSet};
+use crate::units::{LengthUnit, parse_length};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -909,8 +910,6 @@ fn quantity_value(
         .map_err(|e| e.to_string())
 }
 
-/// A positive length in mm from `0.5`, `0.5mm`, `50mil`, `0.05in` or
-/// `500um`; `None` otherwise.
 /// `12` or `12/3`: a component lineage, or one exact revision of it. Ids
 /// and revisions start at 1.
 fn implements_term(value: &str) -> Option<Term> {
@@ -924,18 +923,11 @@ fn implements_term(value: &str) -> Option<Term> {
     })
 }
 
+/// A positive length in mm from `0.5`, `0.5mm`, `50mil`, `0.05in` or
+/// `500um`; `None` otherwise.
 fn length_mm(text: &str) -> Option<f64> {
-    let (number, unit) = split_number(text.trim())?;
-    let scale = match fold(unit).as_str() {
-        "" | "mm" => 1.0,
-        "mil" | "mils" | "thou" => 0.0254,
-        "in" | "\"" => 25.4,
-        "um" | "\u{3bc}m" => 0.001,
-        _ => return None,
-    };
-    let mm = number * scale;
-    (mm.is_finite() && mm > 0.0 && mm <= crate::library::package_form::FORM_LENGTH_LIMIT_MM)
-        .then_some(mm)
+    let mm = parse_length(text, LengthUnit::Mm).ok()?.to_mm_f64();
+    (mm > 0.0 && mm <= crate::library::package_form::FORM_LENGTH_LIMIT_MM).then_some(mm)
 }
 
 /// `LxW` or `LxWxH` in mm (`x`, `X`, `×` or `*` between, an optional
