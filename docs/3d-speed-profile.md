@@ -265,3 +265,19 @@ A redefinition still evaluates its extrusion twice: once as the trial constructo
 - Solidcraft: evaluation is single-threaded; independent new-body extrusions (the four fills) could be evaluated in parallel.
 
 **Measured option, not applied:** the fills' model chord (`MODEL_CHORD_MM`) at 25 µm instead of 10 µm builds the ESP32 board in 16.0 s (fills 6.5 s instead of about 17 s; 1,505–2,300 faces each). It changes the saved and displayed copper outline by up to 25 µm, not the document's copper or fabrication output; it needs the founder's call.
+
+## Update, 10 November 2026: an edit in the app against headless
+
+Build b8066c8 (`component-model`), same host and `ci` profile, load average 4–6. The app's J1 edit (its dimension 0 → 1 mm, ESP32 board, 3D open) took about 28 s in the VM against 3.7 s headless. The app-side benchmark `apps/pcbcraft/src/scene/edit_timing_tests.rs` runs it through the app's own model worker and fill worker (`PCBCRAFT_TIMINGS=1` prints each board model the worker makes, how, and why an update fell back to a build):
+
+| Step | Time | How |
+| --- | --- | --- |
+| The edit's model | 3.4–3.6 s | updated in place, 61 commands, as headless |
+| The fill worker refills the 4 fills J1's move made stale; the board changes again | — | the GND pour goes from 29 to 31 regions |
+| The refilled board's model | 21.4–23.1 s | built anew: "sketch.create where component.activate ran" (each region is a sketch and an extrusion of its own, so another number of regions is another design) |
+
+The worker made the edit's model in place, but the app dropped it: by the time it was ready, the refilled board had been requested, and only the newest request's model was shown. J1 then moved on screen only with the rebuild, after 25–27 s.
+
+**Fixed:** a finished model of an earlier request of the same project is shown (under the "Updating" note, picks ignored) when it is newer than the model shown. J1 now moves in **3.7 s**, as headless, and the refilled fills follow at 26.9 s.
+
+**What remains: the refill, 86 % of the edit's 27 s.** Updating the refilled fills in place would not be cheaper today. Each of the 4 fills changed around J1's pads, so each would be redrawn and redefined, and a redefinition evaluates its extrusion twice (the width edit's refill update above: 40.6 s against a 26.5 s build). The smallest correct fix is upstream: keep the trial's evaluation for a redefined extrusion (Solidcraft), or make solidcore's sweep stitching linear. Both need the founder's go. Tiling the fills (option d1) would make both the build and the refill a few seconds.
