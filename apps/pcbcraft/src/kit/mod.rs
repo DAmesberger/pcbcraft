@@ -135,5 +135,10 @@ pub fn canvas_hint(painter: &Painter, rect: Rect, inset: f32, text: &str) {
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     let galley = painter.layout_job(job);
     let at = egui::pos2(left, rect.bottom() - inset - galley.size().y);
+    // On the panel colour, as the canvas's hover tags are, so the line
+    // stays readable over copper or anything else drawn under it.
+    let back =
+        egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(t.space_4, t.space_2));
+    painter.rect_filled(back, t.radius_sm, t.panel);
     painter.galley(at, galley, t.text_dim);
 }
