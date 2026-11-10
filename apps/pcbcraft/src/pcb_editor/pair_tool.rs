@@ -184,7 +184,7 @@ impl PcbEditor {
         let end = self
             .route_pad(project, at, scale)
             .map(PlacedPad::center)
-            .unwrap_or_else(|| self.route_point(project, at, scale));
+            .unwrap_or_else(|| self.route_destination(project, at, scale));
         let (to, finish) = self.pair_target(end);
         let request = self.pair_request(project, to, finish)?;
         let planned = self.route_plan(project, revision, end)?;

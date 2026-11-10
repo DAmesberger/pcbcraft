@@ -308,6 +308,51 @@ fn p_routes_one_net_of_a_pair() -> TestResult {
     Ok(())
 }
 
+/// A pair click beside the end of a track of the pair on another layer
+/// does not end there: the step would stop on copper it cannot join
+/// without a via. It lands on the grid of the routing layer, as a single
+/// route's click does.
+#[test]
+fn a_pair_click_at_another_layers_track_end_lands_on_the_grid() -> TestResult {
+    let Usb {
+        mut engine,
+        nets,
+        start,
+        ..
+    } = usb()?;
+    let bottom_end = [18.2, 25.2];
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::Route {
+            request: layout::RouteRequest {
+                net: nets[0],
+                start: bottom_end,
+                end: [18.2, 32.0],
+                width: 0.2,
+                layer: CopperLayer::Bottom,
+            },
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    assert!(canvas.click(&mut editor, &engine, start[0]).is_none());
+    assert_eq!(editor.layer, CopperLayer::Top);
+    let step = canvas.click(&mut editor, &engine, [18.3, 25.3]);
+    canvas.apply(&mut editor, &mut engine, step)?;
+    let head = editor
+        .route
+        .pair
+        .as_ref()
+        .ok_or("no pair route")?
+        .head
+        .center;
+    assert!(!close(head, bottom_end), "ended on the Bottom track's end");
+    assert!(close(head, [18.5, 25.5]), "{head:?}");
+    Ok(())
+}
+
 /// The Tune tool previews and commits the meander that brings the
 /// shorter half to its partner's length.
 #[test]
