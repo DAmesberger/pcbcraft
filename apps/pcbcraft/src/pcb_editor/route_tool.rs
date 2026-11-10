@@ -825,7 +825,7 @@ impl PcbEditor {
             .map(|p| (p.center(), p.net));
         let destination = snapped
             .map(|(c, _)| c)
-            .unwrap_or_else(|| self.route_point(project, at, scale));
+            .unwrap_or_else(|| self.route_destination(project, at, scale));
         let net = self.net?;
         self.follow_class_width(project);
         let finish = snapped.is_some_and(|(_, n)| n == Some(net))
