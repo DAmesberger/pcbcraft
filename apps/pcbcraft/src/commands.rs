@@ -310,7 +310,8 @@ pub mod keys {
 pub const SHADOWS: &[(Context, Chord, &str)] = &[
     // Routing: V places a via instead of arming the Via tool, F flips the
     // elbow instead of fitting the view, D cycles the via size instead of
-    // switching to 3D, and Esc ends the route before it cancels the tool.
+    // switching to 3D (⇧D instead of arming Dimension), and Esc ends the
+    // route before it cancels the tool.
     (Context::PcbRoute, Chord::key(egui::Key::V), "pcb.via"),
     (Context::PcbRoute, Chord::key(egui::Key::F), "view.fit"),
     (
@@ -319,6 +320,12 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
         "pcb.from-bottom",
     ),
     (Context::PcbRoute, Chord::key(egui::Key::D), "pcb.toggle-3d"),
+    // ⇧D steps the via size back instead of arming the Dimension tool.
+    (
+        Context::PcbRoute,
+        Chord::key(egui::Key::D).with_shift(),
+        "pcb.dimension",
+    ),
     // P switches pair routing instead of arming the Fill tool.
     (Context::PcbRoute, Chord::key(egui::Key::P), "pcb.fill"),
     // M cycles the router instead of placing a 3D part.
@@ -1632,10 +1639,11 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::key(K::P))
             .icon("polygon")
             .keywords("pour zone plane copper area"),
+        // Layout and 3D share one Dimension tool and its key.
         tool(
             "pcb.dimension",
             "Dimension",
-            C::Pcb3d,
+            C::Pcb,
             Workspace::Pcb,
             "dimension",
         )
@@ -1704,7 +1712,7 @@ fn defaults() -> Vec<Command> {
         ),
         key(
             "pcb.delete",
-            "Delete the selected track, via or fill",
+            "Delete the selected track, via, fill or dimension",
             C::PcbLayout,
             Chord::key(K::Delete),
         )

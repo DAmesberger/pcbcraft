@@ -109,6 +109,10 @@ pub struct PickRequest<'a> {
     /// An edge of the picked face within this distance (mm) is picked
     /// instead of the face.
     pub reach: f64,
+    /// Only this body's faces are named (a face the Layout view picks from
+    /// its trace, where bodies' faces may touch); `None`: the first body
+    /// holding the point, as the 3D view picks.
+    pub body: Option<&'a str>,
 }
 
 /// What the host named at a picked point.
@@ -116,6 +120,104 @@ pub struct PickRequest<'a> {
 pub enum ModelPicked {
     Face(ModelFaceRef),
     Edge(ModelEdgeRef),
+}
+
+/// A part's 3D model for the host to list the faces of
+/// ([`BoardShapeEvaluator::model_faces`]).
+#[derive(Clone, Copy, Debug)]
+pub struct FacesRequest<'a> {
+    pub model: TraceModel<'a>,
+    /// Model frame → part frame: the package's model placement.
+    pub frame: Transform3,
+}
+
+/// The most faces [`body_faces`] gives for one part.
+pub const MAX_BODY_FACES: usize = 4096;
+
+/// One face of a part's 3D model with a trace in the board plane: a face
+/// square to the board (a line), or a vertical hole or boss (its centre).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BodyFace {
+    /// The face by body and persistent name, with a point on it in the
+    /// model frame: the point a pick of this face is made at.
+    pub face: ModelFaceRef,
+    /// That point in the part frame (z up from the seating plane).
+    pub at: [f64; 3],
+    /// Its trace in the part frame, as [`BoardShapeEvaluator::trace_model`]
+    /// traces it.
+    pub trace: FeatureGeometry,
+    /// How high it reaches over the seating plane (mm): lowest, highest.
+    pub z: [f64; 2],
+}
+
+/// A placed part's model faces with a trace, and the package revision they
+/// were listed for (they change with nothing else).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BodyFaces {
+    pub package: PackageRef,
+    pub faces: Vec<BodyFace>,
+}
+
+/// The package revision a placed part's model comes from, which keys its
+/// [`body_faces`].
+pub fn package_of(project: &Project, placement: Id) -> Option<PackageRef> {
+    source(project, placement).map(|s| s.package)
+}
+
+/// The faces of `placement`'s 3D model with a trace in the board plane
+/// (§5.4), in the part frame, by the host: what a 2D view draws of a
+/// part's body and picks as the 3D view picks a face. At most
+/// [`MAX_BODY_FACES`]. A model without faces (glTF) is refused as a pick
+/// is.
+pub fn body_faces(
+    project: &Project,
+    evaluator: &dyn BoardShapeEvaluator,
+    placement: Id,
+) -> Result<BodyFaces> {
+    let source = source(project, placement).ok_or_else(|| {
+        Error::NotFound("layout.dimension_reference: the part has no 3D model".into())
+    })?;
+    let (model, _, frame) = source.model?;
+    let mut faces = evaluator.model_faces(&FacesRequest { model, frame })?;
+    faces.retain(|f| {
+        f.trace.valid()
+            && f.at
+                .iter()
+                .chain(&f.z)
+                .chain(&f.face.pick)
+                .all(|v| v.is_finite())
+    });
+    faces.truncate(MAX_BODY_FACES);
+    Ok(BodyFaces {
+        package: source.package,
+        faces,
+    })
+}
+
+/// The board point (board mm, as the 3D view has it) of a point in a
+/// placed part's frame: the inverse of [`part_point`].
+pub fn board_point(project: &Project, placement: &Placement, at: [f64; 3]) -> [f64; 3] {
+    let top = placement.layer == Layer::Top;
+    let seat = if top {
+        project
+            .stackup
+            .copper_span(CopperLayer::Top)
+            .map_or(0.0, |s| s.1)
+    } else {
+        project
+            .stackup
+            .copper_span(CopperLayer::Bottom)
+            .map_or(0.0, |s| s.0)
+    };
+    let p = [at[0], if top { at[1] } else { -at[1] }];
+    let (c, s) = cos_sin(placement.rotation_deg);
+    let d = [c * p[0] - s * p[1], s * p[0] + c * p[1]];
+    let z = if top { seat + at[2] } else { seat - at[2] };
+    [
+        placement.position[0] + d[0],
+        placement.position[1] + d[1],
+        z,
+    ]
 }
 
 /// The part frame of a point on the board (board mm, z = 0 the bottom of
@@ -157,6 +259,19 @@ pub fn pick(
     at: [f64; 3],
     reach: f64,
 ) -> Result<(FeatureRef, FeatureGeometry)> {
+    pick_on(project, evaluator, placement, None, at, reach)
+}
+
+/// [`pick`] on one body of the model only (`None`: any), as the Layout
+/// view picks a face it listed ([`body_faces`]) at its point.
+pub fn pick_on(
+    project: &Project,
+    evaluator: &dyn BoardShapeEvaluator,
+    placement: Id,
+    body: Option<&str>,
+    at: [f64; 3],
+    reach: f64,
+) -> Result<(FeatureRef, FeatureGeometry)> {
     let placed = project.placement_of(placement).ok_or_else(|| {
         Error::NotFound("layout.dimension_reference: the part is not on the board".into())
     })?;
@@ -175,6 +290,7 @@ pub fn pick(
         frame,
         at: local,
         reach: reach.max(0.0),
+        body,
     })?;
     let feature = match picked {
         ModelPicked::Face(face) => FeatureRef::Face { placement, face },

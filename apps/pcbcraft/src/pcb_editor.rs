@@ -39,7 +39,7 @@ pub(crate) use commands::LAYER_KEYS;
 pub(crate) use commands::shape_tool_entries;
 pub(crate) use route_tool::ROUTE_KEYS;
 pub(crate) use tune_tool::TUNE_KEYS;
-mod dimension_3d;
+mod dimensions;
 mod edge_card;
 mod fill_card;
 mod fill_paint;
@@ -105,8 +105,8 @@ enum Tool {
     Fill,
     /// Meander a track segment to its length target (`tune_tool`).
     Tune,
-    /// Dimension a part to a face, edge or board edge in 3D
-    /// (`dimension_3d`).
+    /// Dimension a part to a face, edge, hole or board edge, in Layout or
+    /// 3D (`dimensions`).
     Dimension,
 }
 
@@ -491,8 +491,9 @@ pub struct PcbEditor {
     /// The selected part dimension, shared by Layout, 3D and the
     /// Properties card (its part is selected with it).
     dimension: Option<Id>,
-    /// PCB 3D's Dimension tool and drawn dimensions (`dimension_3d`).
-    dim3d: dimension_3d::Dimension3d,
+    /// The Dimension tool and the drawn part dimensions of both views
+    /// (`dimensions`).
+    dims: dimensions::Dimensions,
 }
 
 impl Default for PcbEditor {
@@ -582,7 +583,7 @@ impl Default for PcbEditor {
             menu: Default::default(),
             menu_command: None,
             dimension: None,
-            dim3d: Default::default(),
+            dims: Default::default(),
         }
     }
 }
@@ -640,16 +641,15 @@ impl PcbEditor {
         self.view_3d
     }
     /// Switch between Layout and 3D. 3D has no 2D tools: an armed Route
-    /// ends, so no 2D tool card shows there; selection is kept.
+    /// ends, so no 2D tool card shows there; selection is kept. The
+    /// Dimension tool is both views': it stays on with its picks.
     pub fn set_3d(&mut self, enabled: bool) {
         self.view_3d = enabled;
         self.reset_route();
-        if enabled {
+        if enabled && self.tool != Tool::Dimension {
             self.end_route();
-        } else if self.tool == Tool::Dimension {
-            // The Dimension tool is 3D's.
-            self.arm_dimension(false);
         }
+        self.dims.view_switched();
         self.cancel_drag();
     }
     pub fn selected_instance(&self) -> Option<Id> {
@@ -1011,9 +1011,8 @@ impl PcbEditor {
                             .selected(self.tool == Tool::Tune)
                             .tip("Meander a track to its length target; switch to Layout to tune"),
                         Button::new("dimension", "dimension", "Dimension")
-                            .enabled(self.view_3d)
                             .selected(self.tool == Tool::Dimension)
-                            .tip("Dimension a part to a face, edge, hole or board edge; switch to 3D to dimension"),
+                            .tip("Dimension a part to a face, edge, hole or board edge"),
                         Button::new("board-shape", "sketch", "Shape")
                             .enabled(!self.view_3d)
                             .tip("Edit the board outline, cutouts and named edges as a sketch"),
@@ -1213,7 +1212,7 @@ impl PcbEditor {
         } else if ((self.shape.active
             || matches!(self.tool, Tool::Route | Tool::Via | Tool::Fill | Tool::Tune))
             && !self.view_3d)
-            || (self.tool == Tool::Dimension && self.view_3d)
+            || self.tool == Tool::Dimension
         {
             Subject::Tool
         } else {
@@ -1439,6 +1438,9 @@ impl PcbEditor {
             return self.shape.tool == board_shape::ShapeTool::Select
                 && !self.shape.selection.is_empty();
         }
+        if self.dimension.is_some() && matches!(self.tool, Tool::Select | Tool::Dimension) {
+            return true;
+        }
         self.tool == Tool::Select
             && matches!(
                 self.inspected(project),
@@ -1446,7 +1448,14 @@ impl PcbEditor {
             )
     }
 
-    fn delete_key(&self, ui: &Ui, project: &Project) -> Option<Operation> {
+    fn delete_key(&mut self, ui: &Ui, project: &Project) -> Option<Operation> {
+        // A selected part dimension first: its part is selected with it.
+        if self.dimension.is_some()
+            && matches!(self.tool, Tool::Select | Tool::Dimension)
+            && crate::keys::pressed(ui.ctx(), "pcb.delete")
+        {
+            return self.layout_dimension_delete();
+        }
         if self.tool != Tool::Select {
             return None;
         }
@@ -1488,6 +1497,7 @@ impl PcbEditor {
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
             return None;
         }
+        self.layout_dimension_start(ui, engine);
         if response.dragged_by(PointerButton::Middle) {
             self.pan += response.drag_delta();
         }
@@ -1544,7 +1554,13 @@ impl PcbEditor {
             let typing = ui.ctx().egui_wants_keyboard_input();
             let end =
                 self.tool == Tool::Route && !typing && crate::keys::pressed(ui.ctx(), "route.end");
-            if end && (self.route_start.is_some() || self.route.ended) {
+            if self.tool == Tool::Dimension {
+                // The Dimension tool's Esc: the chooser, the picks, then
+                // the tool.
+                if crate::keys::pressed(ui.ctx(), "pcb.cancel") {
+                    self.layout_dimension_cancel();
+                }
+            } else if end && (self.route_start.is_some() || self.route.ended) {
                 // The first Esc ends the route, or follows one that has
                 // just finished, and keeps Route; the next leaves it.
                 self.finish_route();
@@ -1718,9 +1734,10 @@ impl PcbEditor {
                         kit::toast::post(ui.ctx(), kit::severity::Level::Warning, why, Vec::new());
                     }
                 }
-            } else if let Some(id) = self.dimension_label_at(screen(at)) {
-                // A dimension's label selects the dimension, as in 3D.
-                self.select_dimension(project, id);
+            } else if self.layout_dimension_click(ui, project, &view, screen(at)) {
+                // The Dimension tool's pick, or a click on a drawn
+                // dimension: it selects it, a double-click opens its value
+                // (shared with 3D).
             } else if self.fill_handle_at(project, view, screen(at)).is_none() {
                 // A click on a handle of the selected fill keeps it
                 // selected, so a double-click there can remove the vertex.
@@ -1748,7 +1765,20 @@ impl PcbEditor {
         self.paint_fill_handles(&painter, view, project);
         self.paint_fill_draw(&painter, view, cursor);
         hold_mark::paint_marks(&painter, &view, project);
-        self.paint_part_dimensions(&painter, &view, project);
+        // Part dimensions, the body traces and the Dimension tool, as in
+        // 3D (`dimensions`).
+        let hovered_part = match (self.tool, cursor) {
+            (Tool::Select, Some(at)) if response.hovered() => {
+                self.pick_instance(project, at, tolerance, metric)
+            }
+            _ => None,
+        };
+        let shown_pointer = pointer.filter(|_| response.hovered());
+        if let Some(dimensioned) =
+            self.layout_dimensions(ui, &painter, &view, engine, shown_pointer, hovered_part)
+        {
+            operation = Some(dimensioned);
+        }
         // Slice R1: the docked review's canvas preview.
         if let Some(marks) = self.update.marks() {
             crate::update_preview::paint_board(
@@ -1795,7 +1825,8 @@ impl PcbEditor {
                     Tool::Via => "Via",
                     Tool::Fill => "Fill (A arcs, Enter closes)",
                     Tool::Tune => "Tune",
-                    Tool::Select | Tool::Dimension => "Select / move",
+                    Tool::Dimension => "Dimension",
+                    Tool::Select => "Select / move",
                 },
                 self.layer.name(),
                 self.visible_airwires().len(),

@@ -33,7 +33,7 @@ use pcbcraft_core::diagnostics::{Error, Result};
 use pcbcraft_core::geometry::Transform3;
 use pcbcraft_core::layout::dimensions::FeatureGeometry;
 use pcbcraft_core::layout::dimensions::model::{
-    ModelPicked, PickRequest, TraceModel, TraceRequest, Traced,
+    BodyFace, FacesRequest, ModelPicked, PickRequest, TraceModel, TraceRequest, Traced,
 };
 use pcbcraft_core::model::dimension::{
     BodyName, End, FaceName, FeatureRef, ModelEdgeName, ModelEdgeRef, ModelFaceRef, ReferenceStatus,
@@ -152,7 +152,8 @@ pub fn pick(request: &PickRequest<'_>) -> Result<ModelPicked> {
     if !at.is_finite() {
         return Err(none());
     }
-    for b in design.state().bodies.iter().filter(|b| !b.body.is_mesh()) {
+    let wanted = |b: &&ModelBody| !b.body.is_mesh() && request.body.is_none_or(|n| n == b.name);
+    for b in design.state().bodies.iter().filter(wanted) {
         let Some(face) = naming::face_name_at_body(b, at) else {
             continue;
         };
@@ -166,6 +167,78 @@ pub fn pick(request: &PickRequest<'_>) -> Result<ModelPicked> {
         }));
     }
     Err(none())
+}
+
+/// Every named face of a part's 3D model with a trace in the board plane
+/// (the evaluator's `model_faces`), on the design a trace reads: a planar
+/// face square to the board as its line, a vertical cylinder or cone as
+/// its axis point, each traced as [`trace`] traces it, with the point a
+/// pick of it is made at (its spot, which Solidcraft names it at) and its
+/// height range. The view draws these as the part's body in 2D.
+pub fn faces(request: &FacesRequest<'_>) -> Result<Vec<BodyFace>> {
+    let design = ModelDesign::of(&request.model)?;
+    let frame = &request.frame;
+    let mut out = Vec::new();
+    for b in design.state().bodies.iter().filter(|b| !b.body.is_mesh()) {
+        let names = naming::face_names(b);
+        let spots = naming::face_spots(b);
+        let mesh = b.mesh();
+        if mesh.triangles.len() > MAX_FACE_TRIANGLES {
+            continue;
+        }
+        for (i, (name, spot)) in names.iter().zip(&spots).enumerate() {
+            let Some(spot) = spot.as_ref() else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let trace = match face_surface(&b.body, i) {
+                Some(FaceSurface::Plane { normal, point }) => {
+                    let n = frame.apply_vector(arr(normal.vec()));
+                    if n[2].abs() > SQUARE {
+                        continue;
+                    }
+                    plane_line(b, i, n, frame.apply(arr(point)), frame)
+                }
+                Some(FaceSurface::Cylinder { origin, axis, .. }) => {
+                    axis_point(frame, arr(origin), arr(axis.vec()))
+                }
+                Some(FaceSurface::Cone { apex, axis, .. }) => {
+                    axis_point(frame, arr(apex), arr(axis.vec()))
+                }
+                _ => None,
+            };
+            let Some(trace) = trace else {
+                continue;
+            };
+            let mut z: Option<[f64; 2]> = None;
+            for (tri, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+                if *f as usize != i {
+                    continue;
+                }
+                for corner in mesh.tri(tri).into_iter().flatten() {
+                    let h = frame.apply(arr(corner))[2];
+                    z = Some(z.map_or([h, h], |[lo, hi]| [lo.min(h), hi.max(h)]));
+                }
+            }
+            let Some(z) = z else {
+                continue;
+            };
+            let pick = arr(spot.point);
+            out.push(BodyFace {
+                face: ModelFaceRef {
+                    body: BodyName(b.name.clone()),
+                    face: FaceName(name.clone()),
+                    pick,
+                },
+                at: frame.apply(pick),
+                trace,
+                z,
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// The edge of face `face` on `b` nearest `at`, within `reach` mm, as a

@@ -106,8 +106,9 @@ pub struct DrawnSlot {
     pub curves: Vec<SketchCurveId>,
 }
 
-/// The host's board sketch engine.
-pub trait BoardShapeEvaluator {
+/// The host's board sketch engine. `Sync`, so a view can list a part's
+/// faces off the UI thread ([`Self::model_faces`]).
+pub trait BoardShapeEvaluator: Sync {
     fn evaluator(&self) -> EvaluatorRef;
     /// A sketch of a `size` rectangle (lower-left corner at the origin)
     /// with `width`/`height` parameters driving it and its edges named
@@ -179,6 +180,18 @@ pub trait BoardShapeEvaluator {
         &self,
         _request: &super::dimensions::model::PickRequest<'_>,
     ) -> Result<super::dimensions::model::ModelPicked> {
+        Err(Error::Unsupported(
+            "layout.dimension: this board evaluator cannot read 3D models".into(),
+        ))
+    }
+    /// Every face of a part's 3D model that has a trace in the board plane
+    /// (square to the board, or a vertical hole or boss), with its name, a
+    /// point on it and its trace (`layout::dimensions::model::body_faces`):
+    /// what the Layout view draws and picks of a part's body.
+    fn model_faces(
+        &self,
+        _request: &super::dimensions::model::FacesRequest<'_>,
+    ) -> Result<Vec<super::dimensions::model::BodyFace>> {
         Err(Error::Unsupported(
             "layout.dimension: this board evaluator cannot read 3D models".into(),
         ))

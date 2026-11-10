@@ -687,10 +687,63 @@ The cold build pays once per process for each generated model's standalone desig
 
 ## 19. Dimensions edited in 3D
 
-After the fourth demo, part dimensions read as CAD dimensions in PCB 3D, and their values are edited at the label (`pcb_editor/dimension_3d.rs`).
+After the fourth demo, part dimensions read as CAD dimensions in PCB 3D, and their values are edited at the label (now `pcb_editor/dimensions/`, §20).
 
 - **Drawn.** The view draws the selected part's dimensions, the selected one, the one being edited, and every one while the Dimension tool is on. Extension lines start on the references (`view::shown`: a face's or edge's trace at the part's seat, an origin, the board edge). A dark rim under the lines keeps them readable over the board. The references of the hovered or selected dimension are traced in its colour. Labels stand level on screen, on the board's inner side, and step clear of each other, as Solidcraft stacks sketch dimension texts.
 - **Selected and deleted.** A click on a label, or within 4 points of a line, selects the dimension and its part (shared with Layout and the card). Delete or Backspace (`pcb.dimension-delete`, PCB › 3D) sends `layout.dimension_delete`, one undo step.
 - **Edited in place.** A double-click, or one click on a label with the Dimension tool (Solidcraft's rule), opens the value at the label with the whole value selected. It takes what the card takes (`1 mm`, `width / 2`). Enter sends one `layout.dimension_edit`. A field-level or engine refusal stays at the label in words, with the text kept. Esc or a click elsewhere closes it.
 - **While the model updates.** The dimensions are drawn from the document, so during the in-place model update (the Updating chip) the dimension already shows its new value at the part's new place. The part's mesh follows when the update lands.
 - **Test.** `app::dimension_3d_tests::j1s_dimensions_are_drawn_and_edited_in_place_in_3d`.
+
+## 20. One dimensioning system in Layout and 3D
+
+Founder-approved after §19: part dimensions come to the Layout view as the same system 3D has, not a second one. Until now Layout only drew an origin's distance to an edge as a dashed line, and part dimensions were made and edited there only in the Properties card.
+
+### Why nothing is lost in 2D
+
+Every part dimension is a measurement in the board plane. The seating fixes z (§5.3), and only references with a trace in the board plane can be dimensioned (§5.4, S3). So every reference has a **board-plane trace**:
+
+| Reference | Trace |
+| --- | --- |
+| Face square to the board | Its line |
+| Edge parallel to the board | Its segment or arc |
+| Vertical hole or boss | Its centre |
+| Origin, pad centre | A point |
+| Courtyard side | Its line |
+| Board edge | Its curve |
+
+`dimensions::view::shown` already computes the shown measurement between two traces, and it is what both views draw.
+
+### Shared, one implementation
+
+The app module `pcb_editor/dimensions/` holds everything but picking:
+
+- **Data.** `PartDimension` and its references, unchanged.
+- **Geometry.** Reference → trace → shown measurement: `view::reference_geometry` and `view::shown`, one function each.
+- **The tool** (`tool.rs`). Pick A, pick B, type the value, commit `layout.dimension_add`; the new dimension is selected once the engine has it. Esc closes Layout's chooser, then drops the picks, then ends the tool. The tool stays on, with its picks, when the view switches.
+- **The drawing** (`draw.rs`). Extension lines, dimension line, arrows, label, stacking, and hover and selection colours. It is drawn through a view mapping (`Surface`): board → screen in Layout, world → screen in 3D. Hovering a label names what the dimension measures between, with the body a face is on ("J1 · back face (Insulator) to Board · bottom edge").
+- **The value in place** (`edit.rs`). Double-click a label, or click it once with the tool. Enter sends `layout.dimension_edit`. A refusal stays at the label in words, and Esc closes it.
+- **Selection and Delete.** `PcbEditor::dimension` is the one selection, shared by Layout, 3D and the card (`select_dimension`). Delete sends `layout.dimension_delete`: in 3D through `pcb.dimension-delete`, and in Layout through `pcb.delete`, which takes a selected dimension before anything else.
+- **Words** (`state.rs`). "J1 · front face", "Board · bottom edge", "R5 · pad 1", "J1 · courtyard left side".
+
+### Per view: picking only
+
+- **3D** (`view_3d.rs`) keeps its ray pick on the model (§15, §18).
+- **Layout** (`view_2d.rs`) picks traces. Nearest first, within Solidcraft's 6 points, it looks for a part's origin, a body trace, a courtyard side, a pad (from inside it, at its centre), then a board edge. A body trace flush on a board edge wins, as J1 wins over its edge in 3D (§18).
+- **Body traces.** Layout draws each part's 3D body as its faces square to the board (lines) and its vertical holes and bosses (small rings), in a faint body colour (the theme's surface accent), apart from pads, silkscreen and the courtyard. They show while the Dimension tool is on, and for the hovered or selected part.
+  - A new evaluator seam, `BoardShapeEvaluator::model_faces` (`model_refs::faces`), lists them on the design a trace reads. It gives each face's body and persistent name, a point on the face (Solidcraft's face spot), its trace (traced as `trace_model` traces it) and its height range.
+  - `model::body_faces` lists them once per package revision, on a worker thread. The view moves them with the placement as it draws. Selection, hover and the camera never list them again or trace anything. `BoardShapeEvaluator` is now `Sync` for that worker.
+- **Same reference as 3D.** Hovering a trace names it as 3D does (`model::feature_term`). A click picks the face as the 3D view would: by the host, at the face's point, through `model::pick_on`, which is `model::pick` limited to the face's body. So a face picked in Layout is the `FeatureRef` a 3D pick at that point makes.
+- **Ambiguity.** Several faces can lie on one line at the current zoom: they are parallel and all within reach of the click. J1's shell back face and its insulator's back face are the same plane. At overview zoom the shell's front face and the tongue's front face, 0.6 mm behind it, are within reach too. A click on such traces opens a small chooser. It lists each face by name and body with its height range ("J1 · back face (Insulator)   0.45–3.01 mm high"). The pick, the card and the label's hover name the face chosen. Coincident faces measure the same, because the trace is the same. A face 0.6 mm behind measures 0.6 mm more.
+
+### A dimension made in either view shows in both
+
+Dimensions are drawn from the document. A dimension made in Layout appears in 3D and the reverse, with the same value, label and selection.
+
+### Keys and modes
+
+The Dimension tool sits in the ribbon's Edit group in both views. `pcb.dimension` (Shift+D) moves from PCB › 3D to PCB, so the same key arms it in Layout. In Layout, Esc is `pcb.cancel` and Delete is `pcb.delete`. In 3D they stay `pcb.dimension-cancel` and `pcb.dimension-delete`. Board shape mode is an exclusive key context: its own sketch Dimension tool (`shape.dimension`, D) dimensions the outline, and `pcb.dimension` does not reach it. Entering the mode ends the part Dimension tool.
+
+### For the Properties card
+
+The card's Dimensions rows share the selection and hover with the views. `select_dimension(project, id)` and `dimension_selected()` select a row's dimension and read the selection. `hover_dimension_row(Some(id))`, called each frame, draws a hovered row's dimension hot in the view. `dimension_hovered()` reads what the view has under the pointer, so the card can light that row.

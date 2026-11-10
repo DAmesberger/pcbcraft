@@ -12,15 +12,12 @@
 //! mm`), so editing a parameter moves the part when the board re-solves.
 //! "Delete" removes one dimension (`layout.dimension_delete`) and leaves the
 //! part where it is.
+use super::PcbEditor;
 use super::board_shape_ui::sketch_of;
-use super::{BoardView, PcbEditor};
 use crate::kit;
 use crate::refusal::{self, Origin};
-use egui::{Align2, Pos2, Stroke, Ui, vec2};
-use pcbcraft_core::geometry::Transform2;
-use pcbcraft_core::layout::dimensions::{
-    self, DimensionCommand, FeatureGeometry, PartFreedom, features,
-};
+use egui::Ui;
+use pcbcraft_core::layout::dimensions::{self, DimensionCommand, PartFreedom};
 use pcbcraft_core::layout::outline::BoardShapeEvaluator;
 use pcbcraft_core::library::footprint_source::{
     DimKind, DimValue, Expr, FootprintParam, FootprintSource, ParamName, ParamUnit, ParamValue,
@@ -30,10 +27,9 @@ use pcbcraft_core::model::board::{BoardSketch, ConstraintTarget, SolvedBoard, So
 use pcbcraft_core::model::dimension::{
     BoardRef, FeatureRef, PartDimension, PartDimensionSpec, PartRelation,
 };
-use pcbcraft_core::{Id, Layer, Operation, Placement, Point, Project};
+use pcbcraft_core::{Id, Operation, Placement, Point, Project};
 use pcbcraft_solidcraft::footprint::view as sketch_view;
 use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::type_face;
 
 /// The Dimensions section's text buffers, and what the part's dimensions
 /// leave free, for one document revision.
@@ -48,8 +44,6 @@ pub(super) struct EdgeEdit {
     /// The selected part's hold: (revision, instance) → why a move is
     /// refused, and what its dimensions leave free.
     hold: Option<((u64, Id), Hold)>,
-    /// The dimension labels drawn on the canvas last frame, for clicks.
-    labels: Vec<(Id, egui::Rect)>,
 }
 
 /// Why a hand move is refused, and what the dimensions leave free.
@@ -462,137 +456,5 @@ impl PcbEditor {
             self.dimension = select;
         }
         operation
-    }
-
-    /// The selected part's distances to named board edges (every part's in
-    /// the Board shape mode), as dimension lines from the edge to the
-    /// feature, labelled with their values.
-    pub(super) fn paint_part_dimensions(
-        &mut self,
-        painter: &egui::Painter,
-        view: &BoardView,
-        project: &Project,
-    ) {
-        self.edge.labels.clear();
-        if project.part_dimensions.is_empty() {
-            return;
-        }
-        let Some(evaluator) = self.shape.evaluator else {
-            return;
-        };
-        let Ok(board) = dimensions::board_sketch(project, evaluator) else {
-            return;
-        };
-        let solved = project.board();
-        let t = Tokens::get();
-        let font = type_face::medium(t.font_small);
-        let color = t.sketch_accent;
-        let stroke = Stroke::new(1.0, color);
-        for d in project.part_dimensions.iter() {
-            if !matches!(d.kind, PartRelation::Dim(DimKind::Distance)) {
-                continue;
-            }
-            let (Some(BoardRef::Part(f)), Some(edge)) = (
-                d.refs.iter().find(|r| matches!(r, BoardRef::Part(_))),
-                d.refs.iter().find_map(|r| match r {
-                    BoardRef::Board(SketchRef::Curve(c)) => dimensions::edge_name(&board, c),
-                    _ => None,
-                }),
-            ) else {
-                continue;
-            };
-            let ConstraintTarget::Placement(instance) = f.target() else {
-                continue;
-            };
-            if !(self.shape.active
-                || self.instance == Some(instance)
-                || self.dimension == Some(d.id))
-            {
-                continue;
-            }
-            // The selected dimension in the selection's accent, as in 3D.
-            let (color, stroke) = if self.dimension == Some(d.id) {
-                (t.accent, Stroke::new(1.5, t.accent))
-            } else {
-                (color, stroke)
-            };
-            let (Some(placement), Some(edge)) = (
-                project.placement_of(instance),
-                solved
-                    .edges
-                    .iter()
-                    .find(|e| e.name.0 == edge && e.bulge == 0.0),
-            ) else {
-                continue;
-            };
-            let Some(at) = feature_point(project, placement, f) else {
-                continue;
-            };
-            let Some((along, offset)) = along_offset(edge, at) else {
-                continue;
-            };
-            let len = edge_length(edge).max(1e-9);
-            let u = [(edge.b[0] - edge.a[0]) / len, (edge.b[1] - edge.a[1]) / len];
-            let foot = [edge.a[0] + u[0] * along, edge.a[1] + u[1] * along];
-            let (f_screen, p_screen) = (view.screen(foot), view.screen(at));
-            dimension(painter, f_screen, p_screen, stroke);
-            if (p_screen - f_screen).length() > 12.0 {
-                let mid = f_screen + (p_screen - f_screen) * 0.5;
-                let text = format!("{} mm", kit::number_text(round_um(offset.abs())));
-                let galley = painter.layout_no_wrap(text.clone(), font.clone(), color);
-                let r = egui::Rect::from_center_size(mid, galley.size() + vec2(6.0, 2.0));
-                painter.rect_filled(r, 2.0, t.panel);
-                painter.text(mid, Align2::CENTER_CENTER, text, font.clone(), color);
-                self.edge.labels.push((d.id, r));
-            }
-        }
-    }
-}
-
-impl PcbEditor {
-    /// The dimension whose label was drawn at `p` last frame.
-    pub(super) fn dimension_label_at(&self, p: Pos2) -> Option<Id> {
-        self.edge
-            .labels
-            .iter()
-            .find(|(_, r)| r.contains(p))
-            .map(|(id, _)| *id)
-    }
-}
-
-/// A part feature's point on the board (a line or arc's start, a circle's
-/// centre), through the placement.
-fn feature_point(project: &Project, placement: &Placement, f: &FeatureRef) -> Option<Point> {
-    let at = match features::geometry(project, f).ok()? {
-        FeatureGeometry::Point { at } => at,
-        FeatureGeometry::Line { a, .. } | FeatureGeometry::Arc { a, .. } => a,
-        FeatureGeometry::Circle { center, .. } => center,
-    };
-    Some(
-        Transform2 {
-            translate: placement.position,
-            rotation_deg: placement.rotation_deg,
-            mirror: placement.layer == Layer::Bottom,
-        }
-        .apply(at),
-    )
-}
-
-/// A dimension line from `a` to `b` with arrowheads at both ends.
-fn dimension(painter: &egui::Painter, a: Pos2, b: Pos2, stroke: Stroke) {
-    let d = b - a;
-    if d.length() < 1.0 {
-        return;
-    }
-    painter.add(egui::Shape::dashed_line(&[a, b], stroke, 4.0, 2.0));
-    let u = d.normalized();
-    let n = vec2(-u.y, u.x);
-    for (tip, dir) in [(a, -u), (b, u)] {
-        let back = tip - dir * 7.0;
-        painter.add(egui::Shape::convex_polygon(
-            vec![tip, back + n * 2.4, back - n * 2.4],
-            stroke.color,
-            Stroke::NONE,
-        ));
     }
 }

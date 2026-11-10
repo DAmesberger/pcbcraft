@@ -231,6 +231,13 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
     ) -> Result<pcbcraft_core::layout::dimensions::model::ModelPicked> {
         model_refs::pick(request)
     }
+
+    fn model_faces(
+        &self,
+        request: &pcbcraft_core::layout::dimensions::model::FacesRequest<'_>,
+    ) -> Result<Vec<pcbcraft_core::layout::dimensions::model::BodyFace>> {
+        model_refs::faces(request)
+    }
 }
 
 /// A failed solve: the last solved shape kept, a fatal finding.

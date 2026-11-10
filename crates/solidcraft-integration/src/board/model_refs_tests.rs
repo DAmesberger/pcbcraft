@@ -305,6 +305,7 @@ fn picked(bytes: &[u8], at: [f64; 3], reach: f64, frame: Transform3) -> Result<M
         frame,
         at,
         reach,
+        body: None,
     })
 }
 
@@ -370,5 +371,47 @@ fn a_pick_names_the_face_or_the_edge_under_it() -> Fallible {
         picked(&bytes, [9.0, 9.0, 9.0], 0.1, Transform3::IDENTITY),
         Err(Error::NotFound(_))
     ));
+    Ok(())
+}
+
+/// The Layout view's body traces (`model_faces`): the box's four sides
+/// and its hole, never its top or bottom. Each is listed with the trace a
+/// trace of it gives, a pick at its point names it, and its heights span
+/// the box (0 to 1 mm). Turned a quarter by the model placement, the
+/// traces turn with it.
+#[test]
+fn faces_lists_every_traceable_face_as_a_pick_and_a_trace_give_it() -> Fallible {
+    let (bytes, body) = boxed();
+    let part = PartFileModel::default();
+    for frame in [Transform3::IDENTITY, Transform3::rot_z(90.0)] {
+        let listed = faces(&FacesRequest {
+            model: TraceModel::PartFile {
+                part: &part,
+                bytes: &bytes,
+            },
+            frame,
+        })?;
+        let lines = listed
+            .iter()
+            .filter(|f| matches!(f.trace, FeatureGeometry::Line { .. }))
+            .count();
+        let points = listed
+            .iter()
+            .filter(|f| matches!(f.trace, FeatureGeometry::Point { .. }))
+            .count();
+        assert_eq!((lines, points), (4, 1), "{listed:?}");
+        for f in &listed {
+            assert_eq!(f.face.body.0, body);
+            assert!(f.z[0].abs() < 1e-9 && (f.z[1] - 1.0).abs() < 1e-9, "{f:?}");
+            let traced = run(&bytes, &face_ref(&body, &f.face.face.0, f.face.pick), frame)?;
+            assert_eq!(traced.status, ReferenceStatus::Resolved, "{}", traced.note);
+            assert_eq!(traced.geometry, f.trace);
+            let named = picked(&bytes, f.at, 0.0, frame)?;
+            let ModelPicked::Face(named) = named else {
+                panic!("{named:?}")
+            };
+            assert_eq!(named.face, f.face.face, "{f:?}");
+        }
+    }
     Ok(())
 }

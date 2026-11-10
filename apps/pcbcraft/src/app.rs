@@ -1424,6 +1424,9 @@ pub(crate) fn sheet_rows(
 }
 
 #[cfg(test)]
+#[path = "app/dimension_2d_tests.rs"]
+mod dimension_2d_tests;
+#[cfg(test)]
 #[path = "app/dimension_3d_tests.rs"]
 mod dimension_3d_tests;
 #[cfg(test)]
