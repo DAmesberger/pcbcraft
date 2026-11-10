@@ -1250,7 +1250,7 @@ impl PcbEditor {
                 self.rules_slot(ui, engine)
             }
             Subject::Tool if self.tool == Tool::Dimension => {
-                CardResponse::output(self.dimension_card(ui, engine.project()))
+                CardResponse::output(self.dimension_card(ui))
             }
             Subject::Tool if self.shape.active => CardResponse::output(self.shape_card(ui, engine)),
             Subject::Tool if self.tool == Tool::Via => {

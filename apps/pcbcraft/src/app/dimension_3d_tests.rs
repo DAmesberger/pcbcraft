@@ -86,6 +86,15 @@ impl BoardShapeEvaluator for Counting {
 
 static COUNTING: Counting = Counting;
 
+/// The counters are shared: the tests that read them run one at a time.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 struct Harness {
     app: App,
     ctx: egui::Context,
@@ -197,6 +206,7 @@ fn esp32() -> Fallible<Engine> {
 
 #[test]
 fn a_3d_pick_dimensions_j1_to_the_bottom_edge_in_one_undo_step() -> Fallible {
+    let _serial = serial();
     let mut engine = esp32()?;
     let project = engine.project();
     let j1 = project
@@ -324,6 +334,14 @@ fn a_3d_pick_dimensions_j1_to_the_bottom_edge_in_one_undo_step() -> Fallible {
     let (n, value, error) = h.app.pcb.dimension_draft();
     assert_eq!((n, error), (2, None));
     assert_eq!(value.as_deref(), Some("0 mm"));
+    let words: Vec<String> = h
+        .app
+        .pcb
+        .dimension_picks()
+        .into_iter()
+        .map(|p| p.1)
+        .collect();
+    assert_eq!(words, ["J1 · front face", "Board · bottom edge"]);
     assert_eq!(h.app.engine.revision(), revision, "nothing committed yet");
     h.frame(vec![]);
     h.frame(vec![]);
@@ -381,5 +399,107 @@ fn a_3d_pick_dimensions_j1_to_the_bottom_edge_in_one_undo_step() -> Fallible {
         project.placement_of(j1).map(|p| p.position),
         Some(placement.position)
     );
+    Ok(())
+}
+
+/// Demo run 2, finding 4: at overview zoom the board's edge is picked from
+/// a few points inside or outside it, and J1's top front edge from just
+/// above it; what the pointer highlights is what the click picks, named in
+/// a designer's words. Hover never builds, traces or picks.
+#[test]
+fn overview_picks_land_on_edges_and_read_as_words() -> Fallible {
+    let _serial = serial();
+    let engine = esp32()?;
+    let project = engine.project();
+    let j1 = project
+        .instances
+        .iter()
+        .find(|i| i.designator == "J1")
+        .map(|i| i.id)
+        .ok_or("no J1")?;
+    let face = project
+        .model_traces
+        .iter()
+        .find(|t| matches!(&t.feature, FeatureRef::Face { placement, .. } if *placement == j1))
+        .ok_or("J1's face trace")?;
+    let Some(FeatureGeometry::Line { a, b }) = face.geometry else {
+        return Err("the face traces a line".into());
+    };
+    let placement = project.placement_of(j1).ok_or("J1 placed")?.clone();
+    let to_board = pcbcraft_core::layout::dimensions::view::part_transform(&placement);
+    let mid = to_board.apply([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]);
+    let seat = project
+        .stackup
+        .copper_span(pcbcraft_core::CopperLayer::Top)
+        .map_or(0.0, |s| s.1);
+    let board = project.board();
+    let outline: Vec<[f64; 2]> = std::iter::once(board.outer.start)
+        .chain(board.outer.segments.iter().map(|s| s.to()))
+        .collect();
+    let bottom = outline.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
+    let left = outline.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
+    let mut h = Harness::new(engine)?;
+    h.until_shown()?;
+    h.app
+        .scene
+        .viewport
+        .view_from(pcbcraft_solidcraft::geom::Vec3::new(0.15, -1.0, 0.8));
+    h.app.scene.viewport.fit();
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let screen = |h: &Harness, p: [f64; 3]| h.app.scene.viewport.to_screen(p).ok_or("off screen");
+    let engine = &h.app.engine;
+    let _ = h.app.pcb.on_tool("dimension", engine);
+    h.frame(vec![]);
+    let (requests, traces, picks) = (
+        h.app.scene.requests(),
+        TRACES.load(Ordering::SeqCst),
+        PICKS.load(Ordering::SeqCst),
+    );
+
+    // The bottom edge, 8 mm in from the left, 3 points inside the board
+    // and 3 points below it: the edge lights either way.
+    let edge = screen(&h, [left + 8.0, bottom, seat])?;
+    for dy in [-3.0, 3.0] {
+        h.frame(vec![egui::Event::PointerMoved(edge + egui::vec2(0.0, dy))]);
+        assert!(
+            matches!(h.app.scene.viewport.hovered(), Some(Hovered::Edge { .. })),
+            "{dy}: {:?}",
+            h.app.scene.viewport.hovered()
+        );
+    }
+    // J1's top front edge, from 3 points above it.
+    let top_edge = screen(&h, [mid[0], mid[1], seat + 3.2])? + egui::vec2(0.0, -3.0);
+    h.frame(vec![egui::Event::PointerMoved(top_edge)]);
+    let hovered = h.app.scene.viewport.hovered();
+    assert!(matches!(hovered, Some(Hovered::Edge { .. })), "{hovered:?}");
+    assert_eq!(h.app.scene.requests(), requests, "hover asked for a model");
+    assert_eq!(TRACES.load(Ordering::SeqCst), traces, "hover traced");
+    assert_eq!(PICKS.load(Ordering::SeqCst), picks, "hover picked");
+
+    // The clicks pick what lit: J1's edge, then the board's bottom edge.
+    h.click(top_edge);
+    h.click(edge + egui::vec2(0.0, -3.0));
+    let (n, value, error) = h.app.pcb.dimension_draft();
+    assert_eq!((n, error), (2, None));
+    assert!(value.is_some());
+    let picked = h.app.pcb.dimension_picks();
+    let [(first, j1_words), (second, board_words)] = picked.as_slice() else {
+        return Err(format!("{picked:?}").into());
+    };
+    assert!(
+        matches!(first, BoardRef::Part(FeatureRef::Edge { placement, .. }) if *placement == j1),
+        "{first:?}"
+    );
+    assert!(
+        matches!(second, BoardRef::Board(SketchRef::Curve(_))),
+        "{second:?}"
+    );
+    assert_eq!(j1_words, "J1 · top-front edge");
+    assert_eq!(board_words, "Board · bottom edge");
+    // The card shows the words, never the stored name.
+    for words in [j1_words, board_words] {
+        assert!(!words.contains(':') && !words.contains('|'), "{words}");
+    }
     Ok(())
 }

@@ -357,22 +357,28 @@ pub fn checks(project: &Project) -> Vec<Finding> {
     out
 }
 
-/// "J1's face ‘F3:side:l2’" for a 3D model reference.
+/// "J1 · front face", "R5 · left end face" for a 3D model reference
+/// ([`model::feature_term`]); its persistent name stays in the reference.
 pub fn model_feature_words(project: &Project, f: &FeatureRef) -> String {
+    model_feature_words_with(project, f, None)
+}
+
+/// [`model_feature_words`] for a reference picked but not yet stored, with
+/// its trace in the part frame.
+pub fn model_feature_words_with(
+    project: &Project,
+    f: &FeatureRef,
+    geometry: Option<&FeatureGeometry>,
+) -> String {
     let name = target_words(project, f.target());
-    match f {
-        FeatureRef::Face { face, .. } => format!("{name}'s face ‘{}’", face.face.0),
-        FeatureRef::Edge { edge, .. } => format!("{name}'s edge ‘{}’", edge.edge.0),
-        FeatureRef::Vertex { edge, end, .. } => format!(
-            "the {} of {name}'s edge ‘{}’",
-            match end {
-                crate::model::dimension::End::Start => "start",
-                crate::model::dimension::End::End => "end",
-            },
-            edge.edge.0
-        ),
-        _ => name,
-    }
+    let term = model::feature_term(project, f, geometry).unwrap_or_else(|| {
+        match f {
+            FeatureRef::Edge { .. } | FeatureRef::Vertex { .. } => "model edge",
+            _ => "model face",
+        }
+        .into()
+    });
+    format!("{name} · {term}")
 }
 
 /// The finding code and words of an unresolved 3D model reference.

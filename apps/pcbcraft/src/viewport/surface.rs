@@ -10,6 +10,12 @@
 //! revision 4f3ac07; see ATTRIBUTION.md): a hovered face is lifted by the
 //! theme's `hover_face_lift` and outlined in `hover_edge` at 1.5 points, a
 //! hovered edge drawn in `hover_edge` at 2 points.
+//!
+//! Edges are found as Solidcraft's view pick finds them (`viewport.rs`,
+//! `pick`, revision 1f6e28a): any pickable edge of a shown body within a
+//! few points of the pointer, nearest first, taken where it is not hidden
+//! behind a face in front ([`Viewport::edges_near`]). So an edge is as
+//! easy to hit at any zoom, also from just off the body.
 use super::Viewport;
 use crate::model_scene::next_key;
 use pcbcraft_solidcraft::geom::{Vec3, prelude::*};
@@ -31,6 +37,21 @@ pub struct SurfaceHit {
     pub point: [f64; 3],
     /// The face's normal there (unit).
     pub normal: [f64; 3],
+}
+
+/// A pickable edge near the pointer ([`Viewport::edges_near`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EdgeHit {
+    /// The body, by its index in the shown model's geometry.
+    pub geometry: usize,
+    /// Its pick identity (`None` for the laminate, masks and films).
+    pub item: Option<u64>,
+    /// The edge, by its index in the body's mesh.
+    pub edge: usize,
+    /// The edge's point under the pointer ray, in the board (mm).
+    pub point: [f64; 3],
+    /// How far the edge is from the pointer on screen (points).
+    pub distance: f32,
 }
 
 /// What a tool highlights under the pointer: a face of a body, or one of
@@ -56,17 +77,23 @@ impl Viewport {
         self.rect.filter(|r| r.width() >= 1.0 && r.height() >= 1.0)
     }
 
-    /// The shown body surface under `pos` (screen points), on shown layers.
-    pub fn surface_hit(&self, pos: egui::Pos2) -> Option<SurfaceHit> {
+    /// The pointer ray through `pos` (screen points), in the board: its
+    /// origin and unit direction.
+    fn ray_at(&self, pos: egui::Pos2) -> Option<(Vec3, Vec3)> {
         let rect = self.area()?;
-        let model = self.model.as_ref()?;
         let (w, h) = (f64::from(rect.width()), f64::from(rect.height()));
         let (x, y) = (
             f64::from(pos.x - rect.left()),
             f64::from(pos.y - rect.top()),
         );
         let (origin, direction) = self.camera.ray(x, y, w, h);
-        let (origin, direction) = self.model_ray(origin, direction);
+        Some(self.model_ray(origin, direction))
+    }
+
+    /// The shown body surface under `pos` (screen points), on shown layers.
+    pub fn surface_hit(&self, pos: egui::Pos2) -> Option<SurfaceHit> {
+        let model = self.model.as_ref()?;
+        let (origin, direction) = self.ray_at(pos)?;
         let (d, index, triangle) = model
             .geometry
             .iter()
@@ -113,6 +140,100 @@ impl Viewport {
         let b = self.to_screen(q)?;
         let px = f64::from(a.distance(b));
         (px > 1e-9).then(|| 1.0 / px)
+    }
+
+    /// The pickable edges of shown bodies that `keep` accepts within
+    /// `reach` screen points of `pos`, nearest first, each at its point
+    /// under the pointer ray; an edge hidden there behind a face in front
+    /// is left out. At most [`MAX_EDGE_HITS`]. Reads the cached meshes only.
+    pub fn edges_near(
+        &self,
+        pos: egui::Pos2,
+        reach: f32,
+        keep: impl Fn(&Geometry) -> bool,
+    ) -> Vec<EdgeHit> {
+        let (Some(model), Some((origin, direction))) = (self.model.as_ref(), self.ray_at(pos))
+        else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for (index, g) in model.geometry.iter().enumerate() {
+            if !self.layers.shows(g) || !keep(g) || !self.box_near(g, pos, reach) {
+                continue;
+            }
+            let mesh = &g.mesh;
+            for (i, polyline) in mesh.edges.iter().enumerate() {
+                if !mesh.edge_pickable(i) {
+                    continue;
+                }
+                let mut best: Option<(f32, Vec3, Vec3)> = None;
+                for w in polyline.windows(2) {
+                    let (p, q) = (placed(g, w[0]), placed(g, w[1]));
+                    let (Some(a), Some(b)) = (self.to_screen(arr(p)), self.to_screen(arr(q)))
+                    else {
+                        continue;
+                    };
+                    let d = segment_distance(pos, a, b);
+                    if d <= reach && best.is_none_or(|(n, _, _)| d < n) {
+                        best = Some((d, p, q));
+                    }
+                }
+                if let Some((distance, p, q)) = best {
+                    found.push(EdgeHit {
+                        geometry: index,
+                        item: g.item,
+                        edge: i,
+                        point: arr(ray_segment_closest(origin, direction, p, q)),
+                        distance,
+                    });
+                }
+            }
+        }
+        found.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+        found.truncate(MAX_EDGE_CANDIDATES);
+        found.retain(|e| self.in_view(e.point));
+        found.truncate(MAX_EDGE_HITS);
+        found
+    }
+
+    /// Whether body `g`'s box comes within `reach` points of `pos` on
+    /// screen (a corner off screen behind the eye keeps it).
+    fn box_near(&self, g: &Geometry, pos: egui::Pos2, reach: f32) -> bool {
+        let mut area: Option<egui::Rect> = None;
+        for k in 0..8 {
+            let corner = [
+                if k & 1 == 0 { g.min[0] } else { g.max[0] },
+                if k & 2 == 0 { g.min[1] } else { g.max[1] },
+                if k & 4 == 0 { g.min[2] } else { g.max[2] },
+            ];
+            let Some(s) = self.to_screen(corner) else {
+                return true;
+            };
+            area = Some(area.map_or(egui::Rect::from_min_max(s, s), |r| {
+                r.union(egui::Rect::from_min_max(s, s))
+            }));
+        }
+        area.is_some_and(|r| r.expand(reach).contains(pos))
+    }
+
+    /// Whether board point `p` is seen: no shown face lies in front of it
+    /// on its own ray, within a point's depth.
+    fn in_view(&self, p: [f64; 3]) -> bool {
+        let Some(model) = self.model.as_ref() else {
+            return false;
+        };
+        let Some((origin, direction)) = self.to_screen(p).and_then(|s| self.ray_at(s)) else {
+            return false;
+        };
+        let depth = (Vec3::new(p[0], p[1], p[2]) - origin).dot(direction);
+        let slack = self.mm_per_point(p).unwrap_or(0.0).max(1e-3);
+        !model
+            .geometry
+            .iter()
+            .filter(|g| self.layers.shows(g))
+            .filter(|g| super::box_hit(g, origin, direction))
+            .filter_map(|g| g.raycast(origin, direction).map(|(d, _)| d))
+            .any(|d| d < depth - slack)
     }
 
     /// The edge of the hit face nearest `pos` within `reach` screen
@@ -208,6 +329,28 @@ impl Viewport {
             bytes: builder.freeze(),
         })
     }
+}
+
+/// Edges near the pointer checked for being in view, and kept.
+const MAX_EDGE_CANDIDATES: usize = 16;
+pub const MAX_EDGE_HITS: usize = 8;
+
+/// The point of segment `a`–`b` nearest the ray from `o` along `d`: the
+/// edge's point under the pointer.
+fn ray_segment_closest(o: Vec3, d: Vec3, a: Vec3, b: Vec3) -> Vec3 {
+    let u = b - a;
+    let w = a - o;
+    let (dd, du, uu) = (d.dot(d), d.dot(u), u.dot(u));
+    let den = dd * uu - du * du;
+    // Parallel or degenerate: the start stands for the segment.
+    if !(den.is_finite() && den > 1e-12 * dd * uu) {
+        return a;
+    }
+    let s = (du * d.dot(w) - dd * u.dot(w)) / den;
+    if !s.is_finite() {
+        return a;
+    }
+    a + u * s.clamp(0.0, 1.0)
 }
 
 /// Distance from `p` to the segment `a`–`b` (screen points).

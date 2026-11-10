@@ -3,7 +3,8 @@
 //!
 //! Slice K4 (docs/sidebar-ia.md, "Dialogs and reviews"); R1 supplies its
 //! content from slice C2's structured plan. Order: a one-line summary, the
-//! blockers with their acknowledgements, collapsed change groups, then the
+//! blockers with their acknowledgements, the change groups (open when they
+//! list changes, so the moves are read without a click), then the
 //! gated Apply with the reason it is gated beside it. A stale preview turns
 //! the summary into "× The project changed · Recompute". The canvas keeps
 //! the preview visible. Adapted from Solidcraft 4f3ac07a
@@ -31,7 +32,8 @@ pub struct ReviewLine {
     pub locate: bool,
 }
 
-/// One collapsed group of changes ("CHANGES · 6 placements · 12 pads").
+/// One group of changes ("CHANGES · 6 placements · 12 pads"), open by
+/// default when it lists any.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReviewGroup {
     pub title: String,
@@ -191,7 +193,7 @@ impl ReviewPanel<'_> {
                     ui,
                     (self.id, n),
                     &group.title,
-                    false,
+                    !group.lines.is_empty(),
                     Some(group.lines.len()),
                     |ui| {
                         if !group.summary.is_empty() {
@@ -322,11 +324,18 @@ mod tests {
         use std::cell::{Cell, RefCell};
         let mut ui = Harness::new(380.0, 700.0);
         let blockers = [line(Level::Error, true)];
-        let groups = [ReviewGroup {
-            title: "Changes".to_owned(),
-            summary: "6 placements · 12 pads".to_owned(),
-            lines: (17..40).map(|n| format!("Adds R{n}")).collect(),
-        }];
+        let groups = [
+            ReviewGroup {
+                title: "Changes".to_owned(),
+                summary: "6 placements · 12 pads".to_owned(),
+                lines: (17..40).map(|n| format!("Adds R{n}")).collect(),
+            },
+            ReviewGroup {
+                title: "After this update".to_owned(),
+                summary: "No new issues".to_owned(),
+                lines: Vec::new(),
+            },
+        ];
         let stale = Cell::new(false);
         let acked = RefCell::new([false]);
         let action = Cell::new(None);
@@ -349,9 +358,14 @@ mod tests {
         let y = |text: &str| at(&painted, text).y;
         assert!(y("Adds 6 placements: R17–R22") < y("1 track on N22 would join two nets"));
         assert!(y("1 track on N22 would join two nets") < y("CHANGES"));
+        // A group that lists changes opens by default, bounded at 8
+        // lines; one with none stays folded.
+        assert!(find(&painted, "Adds R17").is_some(), "{painted:?}");
+        assert!(find(&painted, "Adds R25").is_none(), "bounded at 8 lines");
+        assert!(find(&painted, "8 of 23").is_some());
         assert!(
-            find(&painted, "Adds R17").is_none(),
-            "groups start collapsed"
+            find(&painted, "No new issues").is_none(),
+            "a group without changes stays folded"
         );
         assert!(
             find(&painted, "Confirm each blocker above to apply").is_some(),
@@ -366,10 +380,7 @@ mod tests {
         assert_eq!(action.get(), Some(ReviewAction::Apply));
         ui.click(at(&painted, "Show"), &mut add);
         assert_eq!(action.get(), Some(ReviewAction::Locate(0)));
-        let open = ui.click(at(&painted, "CHANGES"), &mut add);
-        assert!(find(&open, "Adds R24").is_some(), "{open:?}");
-        assert!(find(&open, "Adds R25").is_none(), "bounded at 8 lines");
-        assert!(find(&open, "8 of 23").is_some());
+        let open = ui.frame(vec![], &mut add);
         let all = ui.click(at(&open, "Show all \u{203a}"), &mut add);
         let all = if find(&all, "Adds R39").is_some() {
             all

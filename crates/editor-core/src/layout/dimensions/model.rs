@@ -282,6 +282,104 @@ fn source(project: &Project, placement: Id) -> Option<Source<'_>> {
     })
 }
 
+/// Where a 3D model reference lies on its part, in a designer's words:
+/// "front face", "top-front edge", "left end face", "front-left edge".
+/// Read in the part frame (front is −y, left −x, top up) against the
+/// package envelope: a face square to the board by the side its trace
+/// lies on ("end" where the part is long that way), an edge also by its
+/// height. `geometry` is the reference's trace in the part frame, or the
+/// stored one. The persistent name stays in the reference only; `None`
+/// when the part or its package is gone.
+pub fn feature_term(
+    project: &Project,
+    f: &FeatureRef,
+    geometry: Option<&FeatureGeometry>,
+) -> Option<String> {
+    let (placement, pick) = match f {
+        FeatureRef::Face { placement, face } => (*placement, face.pick),
+        FeatureRef::Edge { placement, edge }
+        | FeatureRef::Vertex {
+            placement, edge, ..
+        } => (*placement, edge.pick),
+        _ => return None,
+    };
+    let instance = project.instance(placement)?;
+    let physical = instances::resolve(&project.library, instance)
+        .ok()?
+        .physical?;
+    let package = &physical.package.definition;
+    let frame = package.placement.transform();
+    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for c in package.envelope_corners() {
+        let c = frame.apply(c);
+        for k in 0..3 {
+            lo[k] = lo[k].min(c[k]);
+            hi[k] = hi[k].max(c[k]);
+        }
+    }
+    let p = frame.apply(pick);
+    if !lo.iter().chain(&hi).chain(&p).all(|v| v.is_finite()) {
+        return None;
+    }
+    let centre: [f64; 3] = std::array::from_fn(|k| (lo[k] + hi[k]) / 2.0);
+    let size: [f64; 3] = std::array::from_fn(|k| hi[k] - lo[k]);
+    let stored = find(project, f).and_then(|t| t.geometry);
+    let geometry = geometry.copied().or(stored);
+    // The side of the part a point lies on across `axis` (0: x, 1: y).
+    let side = |axis: usize, at: [f64; 2]| match (axis, at[axis] < centre[axis]) {
+        (0, true) => "left",
+        (0, false) => "right",
+        (_, true) => "front",
+        (_, false) => "back",
+    };
+    // The axis a trace line runs across: its normal's.
+    let across = |a: [f64; 2], b: [f64; 2]| usize::from((b[0] - a[0]).abs() >= (b[1] - a[1]).abs());
+    let mid = |a: [f64; 2], b: [f64; 2]| [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+    let height = (p[2] - lo[2]) / size[2].max(1e-9);
+    let level = if height >= 2.0 / 3.0 {
+        Some("top")
+    } else if height <= 1.0 / 3.0 {
+        Some("bottom")
+    } else {
+        None
+    };
+    let edge = |what: &str| match level {
+        Some(level) => format!("{level}-{what} edge"),
+        None => format!("{what} edge"),
+    };
+    let edge_term = || match geometry {
+        Some(FeatureGeometry::Line { a, b }) => edge(side(across(a, b), mid(a, b))),
+        Some(FeatureGeometry::Point { at }) => format!("{}-{} edge", side(1, at), side(0, at)),
+        Some(FeatureGeometry::Arc { .. } | FeatureGeometry::Circle { .. }) => edge("round"),
+        None => edge("model"),
+    };
+    Some(match f {
+        FeatureRef::Face { .. } => match geometry {
+            Some(FeatureGeometry::Line { a, b }) => {
+                let axis = across(a, b);
+                let end = if size[axis] >= 1.5 * size[1 - axis] {
+                    " end"
+                } else {
+                    ""
+                };
+                format!("{}{end} face", side(axis, mid(a, b)))
+            }
+            Some(FeatureGeometry::Circle { .. }) => "round face".into(),
+            Some(FeatureGeometry::Arc { .. }) => "curved face".into(),
+            Some(FeatureGeometry::Point { .. }) | None => "model face".into(),
+        },
+        FeatureRef::Vertex { end, .. } => format!(
+            "{} of the {}",
+            match end {
+                crate::model::dimension::End::Start => "start",
+                crate::model::dimension::End::End => "end",
+            },
+            edge_term()
+        ),
+        _ => edge_term(),
+    })
+}
+
 /// A library model and its packed bytes.
 fn bytes(project: &Project, model: ModelRef) -> Result<(&ModelDefinition, &[u8])> {
     let found = project.library.model(model).ok_or_else(|| {

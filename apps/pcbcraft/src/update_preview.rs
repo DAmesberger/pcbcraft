@@ -4,8 +4,8 @@
 //! reviews").
 //!
 //! The panel reads slice C2's structured plan: its summary line first, then
-//! the blockers (conflicting tracks with their acknowledgement), then
-//! collapsed change groups by area and what the update does to the
+//! the blockers (conflicting tracks with their acknowledgement), then the
+//! change groups by area, open where they list changes, and what the update does to the
 //! document's findings. Apply is gated until the preview is current and
 //! every blocker is cleared. The canvas keeps showing the document with the
 //! objects the update touches outlined ([`Marks`], [`paint_board`]); while

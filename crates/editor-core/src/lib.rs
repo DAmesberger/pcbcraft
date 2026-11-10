@@ -561,6 +561,12 @@ impl Engine {
 
     fn showcase_in(hosted: Option<Evaluators<'_>>) -> Result<Self> {
         let mut engine = Self::default();
+        engine.apply(
+            engine.revision,
+            Operation::Schematic(schematic::SchematicCommand::RenameProject {
+                name: layout::showcase::PROJECT_NAME.into(),
+            }),
+        )?;
         let mut refs = Vec::new();
         for part in samples::showcase_parts() {
             let lineages = engine.reserve_lineages()?;

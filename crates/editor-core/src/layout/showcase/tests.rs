@@ -157,3 +157,60 @@ fn the_showcase_saves_and_reopens_unchanged() -> Result<()> {
     assert_eq!(reopened.project().stackup, Stackup::preset(4)?);
     Ok(())
 }
+
+/// Demo run 2, findings 7 and 11: the showcase has its own name, and its
+/// pours follow the board, so a wider board refills to the new edge.
+#[test]
+fn the_showcase_is_named_and_its_pours_follow_a_wider_board() -> Result<()> {
+    use crate::layout::fill::{FillCommand, RefillTarget};
+    use crate::model::fill::FillRegion;
+    let mut engine = Engine::showcase()?;
+    assert_eq!(engine.project().name, super::PROJECT_NAME);
+    assert!(!engine.project().fills.is_empty());
+    assert!(
+        engine
+            .project()
+            .fills
+            .iter()
+            .all(|f| f.region == FillRegion::Board),
+        "every showcase pour follows the board"
+    );
+    // The right edge of a fill's copper, mm.
+    let reach = |engine: &Engine| -> Vec<f64> {
+        engine
+            .project()
+            .fills
+            .iter()
+            .map(|f| {
+                f.computed
+                    .iter()
+                    .flat_map(|c| &c.regions)
+                    .flat_map(|r| &r.outer)
+                    .map(|p| p[0])
+                    .fold(f64::NEG_INFINITY, f64::max)
+            })
+            .collect()
+    };
+    let [w, h] = BOARD_MM;
+    assert!(
+        reach(&engine).iter().all(|x| *x < w),
+        "{:?}",
+        reach(&engine)
+    );
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::SetBoardSize { size: [w + 8.0, h] }),
+    )?;
+    engine.apply(
+        engine.revision(),
+        Operation::Fill(FillCommand::Refill {
+            target: RefillTarget::All,
+        }),
+    )?;
+    let after = reach(&engine);
+    assert!(
+        after.iter().all(|x| *x > w + 6.0 && *x < w + 8.0),
+        "the refilled pours reach the new right edge: {after:?}"
+    );
+    Ok(())
+}

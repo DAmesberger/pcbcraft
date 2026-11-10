@@ -281,7 +281,9 @@ fn label(
                 FeatureRef::Pad { pad, .. } => format!("pad {}", pad.0),
                 FeatureRef::Courtyard { .. } => "courtyard".into(),
                 FeatureRef::Anchor { name, .. } => format!("‘{}’", name.0),
-                _ => "3D model".into(),
+                // "front face", "top-front edge": where on the model.
+                _ => dimensions::model::feature_term(project, f, None)
+                    .unwrap_or_else(|| "3D model".into()),
             },
         }
     };
