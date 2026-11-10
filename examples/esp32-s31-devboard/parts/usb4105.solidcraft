@@ -7,14 +7,14 @@
       "name": "width",
       "expr": "8.94 mm",
       "unit": "mm",
-      "comment": "outline across (x)",
+      "comment": "shell across (x)",
       "model": false
     },
     {
       "name": "depth",
       "expr": "7.35 mm",
       "unit": "mm",
-      "comment": "outline deep (y), mating face at -y",
+      "comment": "shell deep (y), mating face at -y",
       "model": false
     },
     {
@@ -46,6 +46,13 @@
       "model": false
     },
     {
+      "name": "shell_t",
+      "expr": "(width - opening_w) / 2",
+      "unit": "mm",
+      "comment": "shell sheet thickness",
+      "model": false
+    },
+    {
       "name": "cavity_depth",
       "expr": "6.2 mm",
       "unit": "mm",
@@ -67,6 +74,104 @@
       "model": false
     },
     {
+      "name": "tongue_recess",
+      "expr": "0.6 mm",
+      "unit": "mm",
+      "comment": "tongue tip behind the mating face (illustrative)",
+      "model": false
+    },
+    {
+      "name": "tongue_r",
+      "expr": "0.3 mm",
+      "unit": "mm",
+      "comment": "tongue corner radius (illustrative)",
+      "model": false
+    },
+    {
+      "name": "stake_front_y",
+      "expr": "2.6 mm",
+      "unit": "mm",
+      "comment": "front stake centre from the mating face",
+      "model": false
+    },
+    {
+      "name": "stake_pitch",
+      "expr": "4.18 mm",
+      "unit": "mm",
+      "comment": "front to rear stake centres",
+      "model": false
+    },
+    {
+      "name": "stake_len",
+      "expr": "1.1 mm",
+      "unit": "mm",
+      "comment": "front stake length along y",
+      "model": false
+    },
+    {
+      "name": "rear_stake_len",
+      "expr": "stake_len",
+      "unit": "mm",
+      "comment": "rear stake length along y (illustrative)",
+      "model": false
+    },
+    {
+      "name": "pitch",
+      "expr": "0.5 mm",
+      "unit": "mm",
+      "comment": "signal tail pitch",
+      "model": false
+    },
+    {
+      "name": "signal_tail_w",
+      "expr": "0.2 mm",
+      "unit": "mm",
+      "comment": "signal tail width",
+      "model": false
+    },
+    {
+      "name": "power_tail_w",
+      "expr": "0.45 mm",
+      "unit": "mm",
+      "comment": "shared VBUS and GND tail width",
+      "model": false
+    },
+    {
+      "name": "vbus_x",
+      "expr": "2.4 mm",
+      "unit": "mm",
+      "comment": "VBUS tail centres from x = 0",
+      "model": false
+    },
+    {
+      "name": "gnd_x",
+      "expr": "3.2 mm",
+      "unit": "mm",
+      "comment": "GND tail centres from x = 0",
+      "model": false
+    },
+    {
+      "name": "tail_t",
+      "expr": "0.15 mm",
+      "unit": "mm",
+      "comment": "tail thickness (illustrative)",
+      "model": false
+    },
+    {
+      "name": "tail_reach",
+      "expr": "0.38 mm",
+      "unit": "mm",
+      "comment": "how far the tails reach past the rear (illustrative)",
+      "model": false
+    },
+    {
+      "name": "tail_under",
+      "expr": "0.6 mm",
+      "unit": "mm",
+      "comment": "how far the tails run under the shell (illustrative)",
+      "model": false
+    },
+    {
       "name": "marking_top_u",
       "expr": "width * 0.6",
       "unit": "mm",
@@ -79,84 +184,1178 @@
       "unit": "mm",
       "comment": "marking-top size across it",
       "model": false
+    },
+    {
+      "name": "d18",
+      "expr": "tongue_r",
+      "unit": "mm",
+      "model": true
     }
   ],
   "features": [
     {
       "id": 1,
+      "name": "Shell profile",
+      "suppressed": false,
+      "param_names": [
+        "d1"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XZ"
+        },
+        "distance": "-depth / 2"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "obl",
+            "pos": [
+              -2.8899999999999997,
+              -3.31
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-((width) / 2 - ((2 * (height - opening_z)) / 2))",
+              "y": "(-opening_z) - ((2 * (height - opening_z)) / 2)"
+            }
+          },
+          {
+            "id": "obr",
+            "pos": [
+              2.8899999999999997,
+              -3.31
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "((width) / 2 - ((2 * (height - opening_z)) / 2))",
+              "y": "(-opening_z) - ((2 * (height - opening_z)) / 2)"
+            }
+          },
+          {
+            "id": "otr",
+            "pos": [
+              2.8899999999999997,
+              -0.1499999999999999
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "((width) / 2 - ((2 * (height - opening_z)) / 2))",
+              "y": "(-opening_z) + ((2 * (height - opening_z)) / 2)"
+            }
+          },
+          {
+            "id": "otl",
+            "pos": [
+              -2.8899999999999997,
+              -0.1499999999999999
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-((width) / 2 - ((2 * (height - opening_z)) / 2))",
+              "y": "(-opening_z) + ((2 * (height - opening_z)) / 2)"
+            }
+          },
+          {
+            "id": "ocr",
+            "pos": [
+              2.8899999999999997,
+              -1.73
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "((width) / 2 - ((2 * (height - opening_z)) / 2))",
+              "y": "(-opening_z)"
+            }
+          },
+          {
+            "id": "ocl",
+            "pos": [
+              -2.8899999999999997,
+              -1.73
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-((width) / 2 - ((2 * (height - opening_z)) / 2))",
+              "y": "(-opening_z)"
+            }
+          },
+          {
+            "id": "ibl",
+            "pos": [
+              -2.8899999999999997,
+              -3.01
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z) - ((opening_h) / 2)"
+            }
+          },
+          {
+            "id": "ibr",
+            "pos": [
+              2.8899999999999997,
+              -3.01
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z) - ((opening_h) / 2)"
+            }
+          },
+          {
+            "id": "itr",
+            "pos": [
+              2.8899999999999997,
+              -0.44999999999999996
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z) + ((opening_h) / 2)"
+            }
+          },
+          {
+            "id": "itl",
+            "pos": [
+              -2.8899999999999997,
+              -0.44999999999999996
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z) + ((opening_h) / 2)"
+            }
+          },
+          {
+            "id": "icr",
+            "pos": [
+              2.8899999999999997,
+              -1.73
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z)"
+            }
+          },
+          {
+            "id": "icl",
+            "pos": [
+              -2.8899999999999997,
+              -1.73
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z)"
+            }
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": false
+          },
+          {
+            "id": "a1",
+            "type": "arc",
+            "c": 5,
+            "a": 2,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false
+          },
+          {
+            "id": "a2",
+            "type": "arc",
+            "c": 6,
+            "a": 4,
+            "b": 1,
+            "construction": false
+          },
+          {
+            "id": "l3",
+            "type": "line",
+            "a": 7,
+            "b": 8,
+            "construction": false
+          },
+          {
+            "id": "a3",
+            "type": "arc",
+            "c": 11,
+            "a": 8,
+            "b": 9,
+            "construction": false
+          },
+          {
+            "id": "l4",
+            "type": "line",
+            "a": 9,
+            "b": 10,
+            "construction": false
+          },
+          {
+            "id": "a4",
+            "type": "arc",
+            "c": 12,
+            "a": 10,
+            "b": 7,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "a": 4,
+          "l": 4
+        }
+      }
+    },
+    {
+      "id": 2,
       "name": "Shell",
       "suppressed": false,
       "body_names": [
         "Shell"
       ],
       "param_names": [
-        "d1",
-        "d2",
-        "d3"
+        "d2"
       ],
-      "type": "box",
-      "corner": [
-        "-width / 2",
-        "-depth / 2",
-        "0 mm"
-      ],
-      "length": "width",
-      "width": "depth",
-      "height": "height",
+      "type": "extrude",
+      "sketch": 1,
+      "profiles": {
+        "type": "curves",
+        "loops": [
+          [
+            "l1",
+            "a1",
+            "l2",
+            "a2"
+          ]
+        ]
+      },
+      "extent": {
+        "distance": "depth",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
       "operation": "new_body"
     },
     {
-      "id": 2,
-      "name": "Opening",
+      "id": 3,
+      "name": "Stake 1",
       "suppressed": false,
       "param_names": [
+        "d3",
         "d4",
-        "d5",
-        "d6"
+        "d5"
       ],
       "participants": [
         "Shell"
       ],
       "type": "box",
       "corner": [
-        "-opening_w / 2",
-        "-depth / 2 - 1 mm",
-        "opening_z - opening_h / 2"
+        "-width / 2",
+        "-depth / 2 + stake_front_y - stake_len / 2",
+        "0 mm"
       ],
-      "length": "opening_w",
-      "width": "cavity_depth + 1 mm",
-      "height": "opening_h",
-      "operation": "cut"
+      "length": "shell_t",
+      "width": "stake_len",
+      "height": "opening_z",
+      "operation": "join"
     },
     {
-      "id": 3,
+      "id": 4,
+      "name": "Stake 2",
+      "suppressed": false,
+      "param_names": [
+        "d6",
+        "d7",
+        "d8"
+      ],
+      "participants": [
+        "Shell"
+      ],
+      "type": "box",
+      "corner": [
+        "width / 2 - shell_t",
+        "-depth / 2 + stake_front_y - stake_len / 2",
+        "0 mm"
+      ],
+      "length": "shell_t",
+      "width": "stake_len",
+      "height": "opening_z",
+      "operation": "join"
+    },
+    {
+      "id": 5,
+      "name": "Stake 3",
+      "suppressed": false,
+      "param_names": [
+        "d9",
+        "d10",
+        "d11"
+      ],
+      "participants": [
+        "Shell"
+      ],
+      "type": "box",
+      "corner": [
+        "-width / 2",
+        "-depth / 2 + stake_front_y + stake_pitch - rear_stake_len / 2",
+        "0 mm"
+      ],
+      "length": "shell_t",
+      "width": "rear_stake_len",
+      "height": "opening_z",
+      "operation": "join"
+    },
+    {
+      "id": 6,
+      "name": "Stake 4",
+      "suppressed": false,
+      "param_names": [
+        "d12",
+        "d13",
+        "d14"
+      ],
+      "participants": [
+        "Shell"
+      ],
+      "type": "box",
+      "corner": [
+        "width / 2 - shell_t",
+        "-depth / 2 + stake_front_y + stake_pitch - rear_stake_len / 2",
+        "0 mm"
+      ],
+      "length": "shell_t",
+      "width": "rear_stake_len",
+      "height": "opening_z",
+      "operation": "join"
+    },
+    {
+      "id": 7,
+      "name": "Insulator profile",
+      "suppressed": false,
+      "param_names": [
+        "d15"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XZ"
+        },
+        "distance": "-depth / 2 + cavity_depth"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "ibl",
+            "pos": [
+              -2.8899999999999997,
+              -3.01
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z) - ((opening_h) / 2)"
+            }
+          },
+          {
+            "id": "ibr",
+            "pos": [
+              2.8899999999999997,
+              -3.01
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z) - ((opening_h) / 2)"
+            }
+          },
+          {
+            "id": "itr",
+            "pos": [
+              2.8899999999999997,
+              -0.44999999999999996
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z) + ((opening_h) / 2)"
+            }
+          },
+          {
+            "id": "itl",
+            "pos": [
+              -2.8899999999999997,
+              -0.44999999999999996
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z) + ((opening_h) / 2)"
+            }
+          },
+          {
+            "id": "icr",
+            "pos": [
+              2.8899999999999997,
+              -1.73
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z)"
+            }
+          },
+          {
+            "id": "icl",
+            "pos": [
+              -2.8899999999999997,
+              -1.73
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-((opening_w) / 2 - ((opening_h) / 2))",
+              "y": "(-opening_z)"
+            }
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 1,
+            "b": 2,
+            "construction": false
+          },
+          {
+            "id": "a1",
+            "type": "arc",
+            "c": 5,
+            "a": 2,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 3,
+            "b": 4,
+            "construction": false
+          },
+          {
+            "id": "a2",
+            "type": "arc",
+            "c": 6,
+            "a": 4,
+            "b": 1,
+            "construction": false
+          }
+        ],
+        "constraints": [],
+        "counters": {
+          "a": 2,
+          "l": 2
+        }
+      }
+    },
+    {
+      "id": 8,
+      "name": "Insulator",
+      "suppressed": false,
+      "body_names": [
+        "Insulator"
+      ],
+      "param_names": [
+        "d16"
+      ],
+      "type": "extrude",
+      "sketch": 7,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "depth - cavity_depth",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
+      "operation": "new_body"
+    },
+    {
+      "id": 9,
+      "name": "Tongue profile",
+      "suppressed": false,
+      "param_names": [
+        "d17"
+      ],
+      "type": "sketch",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "origin",
+          "name": "XY"
+        },
+        "distance": "opening_z - tongue_t / 2"
+      },
+      "sketch": {
+        "points": [
+          {
+            "id": "origin",
+            "pos": [
+              0.0,
+              0.0
+            ],
+            "fixed": true
+          },
+          {
+            "id": "corner1",
+            "pos": [
+              -3.35,
+              -3.0749999999999997
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "-tongue_w / 2",
+              "y": "-depth / 2 + tongue_recess"
+            }
+          },
+          {
+            "id": "corner2",
+            "pos": [
+              3.35,
+              2.5250000000000004
+            ],
+            "fixed": true,
+            "exprs": {
+              "x": "tongue_w / 2",
+              "y": "-depth / 2 + cavity_depth"
+            }
+          },
+          {
+            "id": "p5",
+            "pos": [
+              -3.0500000000000003,
+              -3.0749999999999997
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p6",
+            "pos": [
+              -3.35,
+              -2.775
+            ],
+            "fixed": false
+          },
+          {
+            "id": "a1.center",
+            "pos": [
+              -3.0500000000000003,
+              -2.775
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p7",
+            "pos": [
+              3.0500000000000003,
+              -3.0749999999999997
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p8",
+            "pos": [
+              3.35,
+              -2.7750000000000004
+            ],
+            "fixed": false
+          },
+          {
+            "id": "a2.center",
+            "pos": [
+              3.0500000000000003,
+              -2.775
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p9",
+            "pos": [
+              3.35,
+              2.2250000000000005
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p10",
+            "pos": [
+              3.0500000000000003,
+              2.5250000000000004
+            ],
+            "fixed": false
+          },
+          {
+            "id": "a3.center",
+            "pos": [
+              3.0500000000000003,
+              2.2250000000000005
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p11",
+            "pos": [
+              -3.0500000000000003,
+              2.5250000000000004
+            ],
+            "fixed": false
+          },
+          {
+            "id": "p12",
+            "pos": [
+              -3.35,
+              2.225
+            ],
+            "fixed": false
+          },
+          {
+            "id": "a4.center",
+            "pos": [
+              -3.0500000000000003,
+              2.225
+            ],
+            "fixed": false
+          }
+        ],
+        "curves": [
+          {
+            "id": "l1",
+            "type": "line",
+            "a": 3,
+            "b": 6,
+            "construction": false
+          },
+          {
+            "id": "l2",
+            "type": "line",
+            "a": 7,
+            "b": 9,
+            "construction": false
+          },
+          {
+            "id": "l3",
+            "type": "line",
+            "a": 10,
+            "b": 12,
+            "construction": false
+          },
+          {
+            "id": "l4",
+            "type": "line",
+            "a": 13,
+            "b": 4,
+            "construction": false
+          },
+          {
+            "id": "a1",
+            "type": "arc",
+            "c": 5,
+            "a": 4,
+            "b": 3,
+            "construction": false
+          },
+          {
+            "id": "a2",
+            "type": "arc",
+            "c": 8,
+            "a": 6,
+            "b": 7,
+            "construction": false
+          },
+          {
+            "id": "a3",
+            "type": "arc",
+            "c": 11,
+            "a": 9,
+            "b": 10,
+            "construction": false
+          },
+          {
+            "id": "a4",
+            "type": "arc",
+            "c": 14,
+            "a": 12,
+            "b": 13,
+            "construction": false
+          }
+        ],
+        "constraints": [
+          {
+            "id": "k1",
+            "type": "horizontal",
+            "l": 0
+          },
+          {
+            "id": "k2",
+            "type": "horizontal",
+            "l": 2
+          },
+          {
+            "id": "k3",
+            "type": "vertical",
+            "l": 1
+          },
+          {
+            "id": "k4",
+            "type": "vertical",
+            "l": 3
+          },
+          {
+            "id": "k5",
+            "type": "point_on_curve",
+            "p": 1,
+            "c": 0
+          },
+          {
+            "id": "k6",
+            "type": "point_on_curve",
+            "p": 1,
+            "c": 3
+          },
+          {
+            "id": "k7",
+            "type": "tangent",
+            "a": 0,
+            "b": 4
+          },
+          {
+            "id": "k8",
+            "type": "tangent",
+            "a": 3,
+            "b": 4
+          },
+          {
+            "id": "k9",
+            "type": "radius",
+            "c": 4,
+            "value": 0.3,
+            "param": "d18"
+          },
+          {
+            "id": "k10",
+            "type": "tangent",
+            "a": 0,
+            "b": 5
+          },
+          {
+            "id": "k11",
+            "type": "tangent",
+            "a": 1,
+            "b": 5
+          },
+          {
+            "id": "k12",
+            "type": "equal",
+            "a": 4,
+            "b": 5
+          },
+          {
+            "id": "k13",
+            "type": "point_on_curve",
+            "p": 2,
+            "c": 1
+          },
+          {
+            "id": "k14",
+            "type": "point_on_curve",
+            "p": 2,
+            "c": 2
+          },
+          {
+            "id": "k15",
+            "type": "tangent",
+            "a": 1,
+            "b": 6
+          },
+          {
+            "id": "k16",
+            "type": "tangent",
+            "a": 2,
+            "b": 6
+          },
+          {
+            "id": "k17",
+            "type": "equal",
+            "a": 4,
+            "b": 6
+          },
+          {
+            "id": "k18",
+            "type": "tangent",
+            "a": 2,
+            "b": 7
+          },
+          {
+            "id": "k19",
+            "type": "tangent",
+            "a": 3,
+            "b": 7
+          },
+          {
+            "id": "k20",
+            "type": "equal",
+            "a": 4,
+            "b": 7
+          }
+        ],
+        "counters": {
+          "a": 4,
+          "corner": 2,
+          "k": 20,
+          "l": 4,
+          "p": 12
+        }
+      }
+    },
+    {
+      "id": 10,
       "name": "Tongue",
       "suppressed": false,
       "body_names": [
         "Tongue"
       ],
       "param_names": [
-        "d7",
-        "d8",
-        "d9"
+        "d19"
       ],
-      "type": "box",
-      "corner": [
-        "-tongue_w / 2",
-        "-depth / 2 + 0.6 mm",
-        "opening_z - tongue_t / 2"
-      ],
-      "length": "tongue_w",
-      "width": "cavity_depth - 0.6 mm",
-      "height": "tongue_t",
+      "type": "extrude",
+      "sketch": 9,
+      "profiles": {
+        "type": "all"
+      },
+      "extent": {
+        "distance": "tongue_t",
+        "convention": "total_distance",
+        "direction": "positive"
+      },
       "operation": "new_body"
     },
     {
-      "id": 4,
+      "id": 11,
+      "name": "Tail A1B12",
+      "suppressed": false,
+      "body_names": [
+        "Tail A1B12"
+      ],
+      "param_names": [
+        "d20",
+        "d21",
+        "d22"
+      ],
+      "type": "box",
+      "corner": [
+        "-gnd_x - power_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "power_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 12,
+      "name": "Tail A4B9",
+      "suppressed": false,
+      "body_names": [
+        "Tail A4B9"
+      ],
+      "param_names": [
+        "d23",
+        "d24",
+        "d25"
+      ],
+      "type": "box",
+      "corner": [
+        "-vbus_x - power_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "power_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 13,
+      "name": "Tail B8",
+      "suppressed": false,
+      "body_names": [
+        "Tail B8"
+      ],
+      "param_names": [
+        "d26",
+        "d27",
+        "d28"
+      ],
+      "type": "box",
+      "corner": [
+        "(0 - 3.5) * pitch - signal_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "signal_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 14,
+      "name": "Tail A5",
+      "suppressed": false,
+      "body_names": [
+        "Tail A5"
+      ],
+      "param_names": [
+        "d29",
+        "d30",
+        "d31"
+      ],
+      "type": "box",
+      "corner": [
+        "(1 - 3.5) * pitch - signal_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "signal_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 15,
+      "name": "Tail B7",
+      "suppressed": false,
+      "body_names": [
+        "Tail B7"
+      ],
+      "param_names": [
+        "d32",
+        "d33",
+        "d34"
+      ],
+      "type": "box",
+      "corner": [
+        "(2 - 3.5) * pitch - signal_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "signal_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 16,
+      "name": "Tail A6",
+      "suppressed": false,
+      "body_names": [
+        "Tail A6"
+      ],
+      "param_names": [
+        "d35",
+        "d36",
+        "d37"
+      ],
+      "type": "box",
+      "corner": [
+        "(3 - 3.5) * pitch - signal_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "signal_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 17,
+      "name": "Tail A7",
+      "suppressed": false,
+      "body_names": [
+        "Tail A7"
+      ],
+      "param_names": [
+        "d38",
+        "d39",
+        "d40"
+      ],
+      "type": "box",
+      "corner": [
+        "(4 - 3.5) * pitch - signal_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "signal_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 18,
+      "name": "Tail B6",
+      "suppressed": false,
+      "body_names": [
+        "Tail B6"
+      ],
+      "param_names": [
+        "d41",
+        "d42",
+        "d43"
+      ],
+      "type": "box",
+      "corner": [
+        "(5 - 3.5) * pitch - signal_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "signal_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 19,
+      "name": "Tail A8",
+      "suppressed": false,
+      "body_names": [
+        "Tail A8"
+      ],
+      "param_names": [
+        "d44",
+        "d45",
+        "d46"
+      ],
+      "type": "box",
+      "corner": [
+        "(6 - 3.5) * pitch - signal_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "signal_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 20,
+      "name": "Tail B5",
+      "suppressed": false,
+      "body_names": [
+        "Tail B5"
+      ],
+      "param_names": [
+        "d47",
+        "d48",
+        "d49"
+      ],
+      "type": "box",
+      "corner": [
+        "(7 - 3.5) * pitch - signal_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "signal_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 21,
+      "name": "Tail B4A9",
+      "suppressed": false,
+      "body_names": [
+        "Tail B4A9"
+      ],
+      "param_names": [
+        "d50",
+        "d51",
+        "d52"
+      ],
+      "type": "box",
+      "corner": [
+        "vbus_x - power_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "power_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 22,
+      "name": "Tail B1A12",
+      "suppressed": false,
+      "body_names": [
+        "Tail B1A12"
+      ],
+      "param_names": [
+        "d53",
+        "d54",
+        "d55"
+      ],
+      "type": "box",
+      "corner": [
+        "gnd_x - power_tail_w / 2",
+        "depth / 2 - tail_under",
+        "0 mm"
+      ],
+      "length": "power_tail_w",
+      "width": "tail_under + tail_reach",
+      "height": "tail_t",
+      "operation": "new_body"
+    },
+    {
+      "id": 23,
       "name": "marking-top",
       "suppressed": false,
       "param_names": [
-        "d10"
+        "d56"
       ],
       "type": "construction_plane",
       "plane": {
@@ -183,16 +1382,198 @@
       }
     }
   ],
-  "next_id": 5,
+  "next_id": 24,
   "next_component_color_index": 0,
   "appearances": {
     "bodies": {
+      "Insulator": {
+        "name": "lcp",
+        "color": [
+          44,
+          44,
+          47
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 0.0,
+          "roughness": 0.35,
+          "dielectric_ior": 1.6
+        }
+      },
       "Shell": {
         "name": "nickel",
         "color": [
           212,
           205,
           192
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail A1B12": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail A4B9": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail A5": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail A6": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail A7": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail A8": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail B1A12": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail B4A9": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail B5": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail B6": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail B7": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.5
+        }
+      },
+      "Tail B8": {
+        "name": "gold",
+        "color": [
+          255,
+          229,
+          158
         ],
         "opacity": 1.0,
         "pbr": {

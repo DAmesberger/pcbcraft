@@ -13,8 +13,9 @@ PLACE = {  # designator: (x, y, rotation); J1's y puts its mating face on the bo
 }
 HOLES = [(3.5, 3.5), (36.5, 3.5), (3.5, 60.5), (36.5, 60.5)]
 # The front face of the USB4105 part file's Shell body (parts/usb4105.solidcraft):
-# its persistent Solidcraft name, and a point on it below the opening.
-USB_FRONT = ("Shell", "F1:-y", [0.0, -3.675, 0.2])
+# its persistent Solidcraft name (the start face of the extruded shell
+# profile), and a point on it below the opening.
+USB_FRONT = ("Shell", "F2:start", [0.0, -3.675, 0.2])
 
 
 def oid(r):
