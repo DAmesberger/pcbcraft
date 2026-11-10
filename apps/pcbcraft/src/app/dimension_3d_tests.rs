@@ -632,3 +632,126 @@ fn board_edges_are_reached_like_part_edges_and_j1_wins_over_its_flush_edge() -> 
     assert_eq!(said, "Board · bottom edge");
     Ok(())
 }
+
+/// With Select, a click on J1 in PCB 3D selects J1, shared with Layout
+/// (the same selection), and nothing is rebuilt for it. The board is
+/// opened in place over another one (the showcase), then edited and the
+/// edit undone, as in the demo: its model comes up to date (the Updating
+/// chip clears) and the click is not dropped.
+#[test]
+fn a_3d_click_with_select_selects_the_part() -> Fallible {
+    let _serial = serial();
+    let mut h = Harness::new(Engine::showcase()?)?;
+    h.until_shown()?;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
+    h.app
+        .replace(pcbcraft_io::read_project(&path)?, None, false);
+    h.until_shown()?;
+    let j1 = h
+        .app
+        .engine
+        .project()
+        .instances
+        .iter()
+        .find(|i| i.designator == "J1")
+        .map(|i| i.id)
+        .ok_or("no J1")?;
+    let placement = h
+        .app
+        .engine
+        .project()
+        .placement_of(j1)
+        .ok_or("J1 placed")?
+        .clone();
+    let ctx = h.ctx.clone();
+    h.app.apply(
+        &ctx,
+        Origin::Command,
+        Some(Operation::Layout(
+            pcbcraft_core::layout::LayoutCommand::Move {
+                instance: j1,
+                position: [placement.position[0] + 1.0, placement.position[1]],
+                rotation_deg: placement.rotation_deg,
+                layer: placement.layer,
+            },
+        )),
+    );
+    h.until_shown()?;
+    h.app.run_command(&ctx, "edit.undo");
+    h.until_shown()?;
+    assert_eq!(h.app.engine.project().placement_of(j1), Some(&placement));
+    // The Board card's parameters, as in the demo, in quick succession
+    // (each build is replaced by the next): edits, some undone.
+    for (name, expr, undo) in [
+        ("width", "44 mm", true),
+        ("inset", "4 mm", true),
+        ("height", "70 mm", false),
+        ("height", "64 mm", false),
+    ] {
+        let BoardShape::Sketch(sketch) = &h.app.engine.project().board_shape else {
+            return Err("a sketched board".into());
+        };
+        let mut param = sketch
+            .parameters
+            .iter()
+            .find(|p| p.name.0 == name)
+            .cloned()
+            .ok_or(name)?;
+        param.expr = pcbcraft_core::library::footprint_source::Expr(expr.into());
+        let before = h.app.engine.revision();
+        h.app.apply(
+            &ctx,
+            Origin::Command,
+            Some(Operation::Board(
+                pcbcraft_core::layout::outline::BoardCommand::Edit {
+                    edits: vec![pcbcraft_core::layout::outline::BoardEdit::SetParameter { param }],
+                },
+            )),
+        );
+        assert_ne!(h.app.engine.revision(), before, "{name} = {expr}");
+        for _ in 0..30 {
+            h.frame(vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if undo {
+            h.app.run_command(&ctx, "edit.undo");
+            for _ in 0..30 {
+                h.frame(vec![]);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
+    h.until_shown()?;
+    // Fills and the model settle before the click.
+    for _ in 0..200 {
+        h.frame(vec![]);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    h.until_shown()?;
+    let items = h.app.scene.selected_items(Some(j1), None, None);
+    h.app
+        .scene
+        .viewport
+        .view_from(pcbcraft_solidcraft::geom::Vec3::new(0.15, -1.0, 0.35));
+    assert!(h.app.scene.viewport.fit_items(&items));
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let rect = h.app.scene.viewport.rect().ok_or("no 3D view")?;
+    let at = rect.center();
+    let hit = h
+        .app
+        .scene
+        .viewport
+        .surface_hit(at)
+        .ok_or("nothing there")?;
+    let source = hit.item.and_then(|i| h.app.scene.source(i)).ok_or("J1")?;
+    assert_eq!(source.instance, Some(j1));
+    assert_eq!(h.app.pcb.selected_instance(), None);
+    let (requests, revision) = (h.app.scene.requests(), h.app.engine.revision());
+    h.click(at);
+    assert_eq!(h.app.pcb.selected_instance(), Some(j1));
+    assert_eq!(h.app.scene.requests(), requests, "selection built a model");
+    assert_eq!(h.app.engine.revision(), revision);
+    Ok(())
+}
