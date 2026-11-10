@@ -987,13 +987,155 @@ impl Native {
             return Err(Error::Cancelled);
         }
         if let Some(replay) = &mut self.replay {
-            return replay.next(command, params);
+            let replay::Next {
+                before,
+                reply,
+                instead,
+            } = replay.next(command, params.clone())?;
+            if !before.is_empty() || reply.is_none() {
+                self.run_live(before)?;
+            }
+            if let Some(reply) = reply {
+                return Ok(reply);
+            }
+            if let Some(instead) = instead {
+                let reply = self.run(command, &instead)?;
+                return match &mut self.replay {
+                    Some(replay) => {
+                        replay.count(1);
+                        replay.complete(reply)
+                    }
+                    None => Ok(reply),
+                };
+            }
+            let reply = self.run(command, &params)?;
+            if let Some(replay) = &mut self.replay {
+                replay.count(1);
+                replay.ran(command, params, reply.clone());
+            }
+            return Ok(reply);
         }
         let reply = self.run(command, &params)?;
         if let Some(log) = &mut self.log {
             log.push(command, params, reply.clone());
         }
         Ok(reply)
+    }
+
+    /// Replaying, run `commands` on the design (a unit added or removed),
+    /// its evaluation put off until the replay is settled ([`Self::settle`]):
+    /// a feature added at the end of the history is then evaluated once,
+    /// reading nothing evaluated before.
+    fn run_live(&mut self, commands: Vec<(String, Value)>) -> Result<()> {
+        let first = self.replay.as_mut().is_some_and(|r| !r.go_live());
+        if first {
+            self.defer()?;
+        }
+        let mut changed_active = false;
+        for (command, mut params) in commands {
+            changed_active |= command == "component.delete";
+            // Features already deleted with their component are passed over.
+            if command == "timeline.delete" {
+                let features: Vec<Value> = params
+                    .get("features")
+                    .and_then(Value::as_array)
+                    .map(|f| {
+                        f.iter()
+                            .filter(|id| {
+                                id.as_u64()
+                                    .is_some_and(|id| self.session.doc.feature(id).is_some())
+                            })
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if features.is_empty() {
+                    continue;
+                }
+                params = json!({ "features": features });
+            }
+            self.delete_rolled_back(&command, &params)?;
+            self.run(&command, &params)?;
+            if let Some(replay) = &mut self.replay {
+                replay.count(1);
+            }
+        }
+        if changed_active && let Some(replay) = &mut self.replay {
+            replay.unsynced();
+        }
+        Ok(())
+    }
+
+    /// Before a command that deletes features (`timeline.delete`, or
+    /// `component.delete` with the component's features), roll the history
+    /// back to the first of them unless it is: a deletion evaluates the
+    /// design again from where it deleted, and every feature after a
+    /// deleted one evaluates anew (its input state changed). Rolled back,
+    /// the deletions, and features added at the marker, are evaluated once,
+    /// when the history is rolled forward ([`replay::Replay::apply`]).
+    fn delete_rolled_back(&mut self, command: &str, params: &Value) -> Result<()> {
+        let features = &self.session.doc.features;
+        let from = match command {
+            "timeline.delete" => {
+                let ids: std::collections::BTreeSet<u64> = params
+                    .get("features")
+                    .and_then(Value::as_array)
+                    .map(|f| f.iter().filter_map(Value::as_u64).collect())
+                    .unwrap_or_default();
+                features.iter().position(|f| ids.contains(&f.id))
+            }
+            "component.delete" => {
+                let component = params.get("component").and_then(Value::as_u64);
+                features.iter().position(|f| Some(f.component) == component)
+            }
+            _ => None,
+        };
+        let marker = self.session.doc.marker.unwrap_or(features.len());
+        if let Some(from) = from.filter(|from| *from < marker) {
+            self.run("timeline.rollback", &json!({ "position": from }))?;
+        }
+        Ok(())
+    }
+
+    /// Put off evaluating the design after each command (Solidcraft's
+    /// `Session::defer_evaluation`), replaying or not.
+    fn defer(&mut self) -> Result<()> {
+        self.session
+            .defer_evaluation()
+            .map_err(|error| Error::Engine {
+                command: "defer evaluation".into(),
+                message: error.to_string(),
+            })
+    }
+
+    /// Mark the commands from now to [`Self::unit_end`] as the ones that
+    /// build the object `name` (unique in the build). Replaying, an object
+    /// the recorded build did not make runs on the design, and recorded
+    /// objects the build passes over are deleted. With `content` (a digest
+    /// of what it builds), a recorded object of another content is deleted
+    /// and built again rather than updated in place.
+    pub(crate) fn unit(&mut self, name: &str, content: Option<u64>) -> Result<()> {
+        if let Some(log) = &mut self.log {
+            log.begin_unit(name, content);
+        }
+        if let Some(replay) = &mut self.replay {
+            let first = replay.begin_unit(name, content)?;
+            if !first.is_empty() {
+                self.run_live(first)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// End the object begun by [`Self::unit`].
+    pub(crate) fn unit_end(&mut self) -> Result<()> {
+        if let Some(log) = &mut self.log {
+            log.end_unit();
+        }
+        if let Some(replay) = &mut self.replay {
+            replay.end_unit()?;
+        }
+        Ok(())
     }
 
     /// Run one command on the session, unrecorded.

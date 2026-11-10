@@ -72,6 +72,107 @@ fn same_model(a: &NativeModel, b: &NativeModel) -> Result<()> {
     Ok(())
 }
 
+/// [`same_model`] for a model updated with objects added or removed: an
+/// added object's component and occurrence get the design's next ids and
+/// its features come at the end of the history, so the native bodies are
+/// compared as sets (each by kind, source, layer, box and volume) and the
+/// sources and saved identity without the native component and occurrence
+/// ids. Everything else is compared as [`same_model`] compares it.
+fn same_board(a: &NativeModel, b: &NativeModel) -> Result<()> {
+    let native = |m: &NativeModel| -> Vec<Geometry> {
+        let mut bodies: Vec<Geometry> = m
+            .geometry
+            .iter()
+            .filter(|g| !g.kind.is_appearance())
+            .cloned()
+            .collect();
+        bodies.sort_by(|g, h| {
+            let key = |g: &Geometry| (format!("{:?}", g.kind), g.item, format!("{:?}", g.layer));
+            let at = |g: &Geometry| [g.min[2], g.min[0], g.min[1], g.max[0], g.max[1], g.max[2]];
+            key(g).cmp(&key(h)).then_with(|| {
+                at(g)
+                    .iter()
+                    .zip(at(h))
+                    .map(|(p, q)| p.total_cmp(&q))
+                    .find(|o| o.is_ne())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        });
+        bodies
+    };
+    let (x, y) = (native(a), native(b));
+    assert_eq!(x.len(), y.len(), "native bodies");
+    for (k, (g, h)) in x.iter().zip(&y).enumerate() {
+        assert_eq!(
+            (g.kind, g.item, g.layer),
+            (h.kind, h.item, h.layer),
+            "body {k}"
+        );
+        for axis in 0..3 {
+            for (p, q) in [(g.min[axis], h.min[axis]), (g.max[axis], h.max[axis])] {
+                assert!((p - q).abs() < 1e-6, "body {k} {:?}: {p} != {q}", g.kind);
+            }
+        }
+        let (v, w) = (g.volume(), h.volume());
+        assert!(
+            (v - w).abs() <= 1e-6 * (1.0 + w.abs()),
+            "body {k} {:?} volume {v} != {w}",
+            g.kind
+        );
+    }
+    let shown = |m: &NativeModel| {
+        m.geometry
+            .iter()
+            .filter(|g| g.kind.is_appearance())
+            .map(|g| (g.kind, g.item, g.mesh.triangles.len()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(shown(a), shown(b), "display layers");
+    let anonymous = |sources: &[Source]| -> Result<Vec<serde_json::Value>> {
+        sources
+            .iter()
+            .map(|s| {
+                let mut v = serde_json::to_value(s)?;
+                if let Some(map) = v.as_object_mut() {
+                    map.remove("component");
+                    map.remove("occurrence");
+                }
+                Ok(v)
+            })
+            .collect()
+    };
+    assert_eq!(anonymous(&a.sources)?, anonymous(&b.sources)?, "sources");
+    let (saved_a, kinds_a) = identity::read(&a.native)?;
+    let (saved_b, kinds_b) = identity::read(&b.native)?;
+    assert_eq!(anonymous(&saved_a)?, anonymous(&saved_b)?, "saved sources");
+    assert_eq!(kinds_a, kinds_b, "saved body kinds");
+    let other = |m: &NativeModel| {
+        m.native
+            .session()
+            .doc
+            .metadata
+            .0
+            .iter()
+            .filter(|(k, _)| !k.starts_with("org.pcbcraft.electronics.identity."))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(other(a), other(b), "other saved metadata");
+    // Every body keeps the look a fresh build assigns, and no body that is
+    // gone keeps one.
+    let looks = |m: &NativeModel| m.native.session().doc.appearances.bodies.clone();
+    assert_eq!(looks(a), looks(b), "body looks");
+    Ok(())
+}
+
+/// Update `model` to `project` and check it matches a fresh build as
+/// [`same_board`] compares them.
+fn restructured(model: NativeModel, project: &Project) -> Result<(NativeModel, Rebuilt)> {
+    let (model, how) = update(model, project, &SourceCache::default(), None)?;
+    same_board(&model, &build(project)?)?;
+    Ok((model, how))
+}
+
 /// A small 4-layer board: the showcase with vias and inner tracks.
 fn board() -> Result<Project> {
     via_board(40)
@@ -149,23 +250,150 @@ fn value_edits_update_the_board_in_place_as_a_fresh_build_would() -> Result<()> 
         model = next;
     }
     // An update of an unchanged board runs nothing.
-    let (model, how) = updated(model, &project)?;
+    let (_, how) = updated(model, &project)?;
     assert_eq!(how, Rebuilt::InPlace(0));
-    // A new track changes the board's structure: built anew.
+    Ok(())
+}
+
+/// Tracks added (as a carry or the router adds them) and removed update the
+/// model in place, as a fresh build of the edited board would be: an outer
+/// and an inner track added, the added one moved, an original removed, the
+/// added ones removed again. A new via size is still built anew.
+#[test]
+fn tracks_added_and_removed_update_the_board_in_place() -> Result<()> {
+    let mut project = board()?;
+    let mut model = build(&project)?;
+    let in_place = |what: &str, how: &Rebuilt| {
+        assert!(
+            matches!(how, Rebuilt::InPlace(n) if *n > 0),
+            "{what}: {how:?}"
+        );
+    };
     let net = project.nets[0].id;
-    let id = project
+    let inner = project
+        .tracks
+        .iter()
+        .find(|t| t.layer.side().is_none())
+        .map(|t| t.layer)
+        .ok_or_else(|| Error::Verification("an inner track".into()))?;
+    let mut added = Vec::new();
+    for (start, end, layer) in [
+        ([2.0, 2.0], [6.0, 2.0], CopperLayer::Top),
+        ([2.0, 3.0], [5.0, 4.0], inner),
+    ] {
+        let id = project
+            .allocate()
+            .map_err(|e| Error::Verification(e.to_string()))?;
+        project.tracks.push(Track {
+            id,
+            net,
+            start,
+            end,
+            width: 0.2,
+            layer,
+            locked: false,
+        });
+        added.push(id);
+        let (next, how) = restructured(model, &project)?;
+        in_place("a track added", &how);
+        model = next;
+    }
+    // The added track moved: a value of the object the update made.
+    if let Some(track) = project.tracks.iter_mut().find(|t| t.id == added[0]) {
+        track.end[1] += 0.5;
+        track.width = 0.25;
+    }
+    let (next, how) = restructured(model, &project)?;
+    in_place("an added track edited", &how);
+    model = next;
+    // Unchanged: nothing runs.
+    let (next, how) = restructured(model, &project)?;
+    assert_eq!(how, Rebuilt::InPlace(0));
+    model = next;
+    // An original track removed, then the added ones.
+    let first = project.tracks.remove(0).id;
+    assert!(!added.contains(&first));
+    let (next, how) = restructured(model, &project)?;
+    in_place("a track removed", &how);
+    model = next;
+    project.tracks.retain(|t| !added.contains(&t.id));
+    let (_, how) = restructured(model, &project)?;
+    in_place("the added tracks removed", &how);
+    Ok(())
+}
+
+/// Vias added and removed (as the router adds them with a layer change)
+/// update the model in place, as a fresh build of the edited board would
+/// be: a routed track with a via, more vias of that size, the first via of
+/// a size removed (the next one becomes the definition's first), the added
+/// ones removed. A via of a new size is still built anew.
+#[test]
+fn vias_added_and_removed_update_the_board_in_place() -> Result<()> {
+    let mut project = board()?;
+    let mut model = build(&project)?;
+    let in_place = |what: &str, how: &Rebuilt| {
+        assert!(
+            matches!(how, Rebuilt::InPlace(n) if *n > 0),
+            "{what}: {how:?}"
+        );
+    };
+    let template = project
+        .vias
+        .first()
+        .cloned()
+        .ok_or_else(|| Error::Verification("a via".into()))?;
+    let mut added = Vec::new();
+    // A routed step: a track and a via at its end.
+    let track = project
         .allocate()
         .map_err(|e| Error::Verification(e.to_string()))?;
     project.tracks.push(Track {
-        id,
-        net,
-        start: [2.0, 2.0],
-        end: [6.0, 2.0],
+        id: track,
+        net: template.net,
+        start: [3.0, 3.0],
+        end: [7.0, 3.0],
         width: 0.2,
         layer: CopperLayer::Top,
         locked: false,
     });
-    let (_, how) = updated(model, &project)?;
+    for at in [[7.0, 3.0], [8.5, 3.5], [9.5, 4.5]] {
+        let mut via = template.clone();
+        via.id = project
+            .allocate()
+            .map_err(|e| Error::Verification(e.to_string()))?;
+        via.position = at;
+        added.push(via.id);
+        project.vias.push(via);
+        let (next, how) = restructured(model, &project)?;
+        in_place("a via added", &how);
+        model = next;
+    }
+    // The first via of its size removed, and one in the middle moved.
+    project.vias.remove(0);
+    if let Some(via) = project.vias.get_mut(2) {
+        via.position[1] += 0.3;
+    }
+    let (next, how) = restructured(model, &project)?;
+    in_place("the first via removed", &how);
+    model = next;
+    project.vias.retain(|v| !added.contains(&v.id));
+    project.tracks.retain(|t| t.id != track);
+    let (next, how) = restructured(model, &project)?;
+    in_place("the routed step removed", &how);
+    model = next;
+    // A via of a new size needs a definition the board did not have.
+    let mut via = project
+        .vias
+        .first()
+        .cloned()
+        .ok_or_else(|| Error::Verification("a via".into()))?;
+    via.id = project
+        .allocate()
+        .map_err(|e| Error::Verification(e.to_string()))?;
+    via.diameter += 0.1;
+    via.position[0] += 1.0;
+    project.vias.push(via);
+    let (_, how) = restructured(model, &project)?;
     assert!(
         matches!(&how, Rebuilt::Anew(Some(why)) if why.contains("more than values")),
         "{how:?}"
@@ -176,8 +404,10 @@ fn value_edits_update_the_board_in_place_as_a_fresh_build_would() -> Result<()> 
 /// On the shipped showcase (a sketched board with a cutout and a slot,
 /// a bottom and a top pour and an inner plane), a pour refilled after a
 /// stitching via moved, and a pour's copper alone changed, update the
-/// model in place as a fresh build would: the fill bodies are redrawn, and
-/// the slabs with the inner plane's foil level and the drills.
+/// model in place as a fresh build would: the tiles whose copper changed
+/// are built again (at the end of the history, so the bodies compare as
+/// [`same_board`] compares them), and the slabs with the inner plane's
+/// foil level and the drills are redrawn.
 #[test]
 fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
     use pcbcraft_core::layout::fill::{RefillTarget, refill};
@@ -215,7 +445,7 @@ fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
         .ok_or_else(|| Error::Verification("stitching via".into()))?;
     project.vias[via].position[0] += 0.2;
     refilled(&mut project)?;
-    let (next, how) = updated(model, &project)?;
+    let (next, how) = restructured(model, &project)?;
     assert!(
         matches!(how, Rebuilt::InPlace(n) if n > 0),
         "via moved, refilled: {how:?}"
@@ -236,10 +466,65 @@ fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
         corner[0] + 0.1 * (next[0] - corner[0]),
         corner[1] + 0.1 * (next[1] - corner[1]),
     ];
-    let (_, how) = updated(model, &project)?;
+    let (_, how) = restructured(model, &project)?;
     assert!(
         matches!(how, Rebuilt::InPlace(n) if n > 0),
         "plane copper: {how:?}"
+    );
+    Ok(())
+}
+
+/// A refill that changes how many regions a pour has (a part moved, a
+/// thermal split off an island) updates the model in place, as a fresh
+/// build would: a region added to the bottom pour, then the first region
+/// removed. Only the tiles whose copper changed are built again: the
+/// update runs a few commands per changed tile, not the pour's.
+#[test]
+fn a_refill_of_another_number_of_regions_updates_in_place() -> Result<()> {
+    let mut project = Engine::showcase_hosted(pcbcraft_core::Evaluators {
+        footprint: Some(&crate::footprint::SketchEvaluator),
+        board: Some(&crate::board::SketchBoardEvaluator),
+    })
+    .map_err(|e| Error::Verification(e.to_string()))?
+    .project()
+    .clone();
+    let mut model = build(&project)?;
+    let bottom = project
+        .fills
+        .iter()
+        .position(|f| f.layer == CopperLayer::Bottom && f.computed.is_some())
+        .ok_or_else(|| Error::Verification("a bottom pour".into()))?;
+    let tiles_of = |p: &Project| -> usize {
+        p.fills[bottom].computed.as_ref().map_or(0, |c| {
+            fill::tiles(&c.regions, fill::TILE_MM, fill::MODEL_CHORD_MM).len()
+        })
+    };
+    let before = tiles_of(&project);
+    // A small island in a corner of the board, in one tile of its own.
+    if let Some(copper) = project.fills[bottom].computed.as_mut() {
+        copper
+            .regions
+            .push(pcbcraft_core::model::fill::FilledRegion {
+                outer: vec![[0.6, 0.6], [1.6, 0.6], [1.6, 1.2], [0.6, 1.2]],
+                holes: vec![],
+            });
+    }
+    let (next, how) = restructured(model, &project)?;
+    assert!(
+        matches!(how, Rebuilt::InPlace(n) if n > 0),
+        "a region added: {how:?}"
+    );
+    model = next;
+    let added = tiles_of(&project);
+    assert!(added > before, "{added} tiles against {before}");
+    // The pour's first region gone (refilled without it).
+    if let Some(copper) = project.fills[bottom].computed.as_mut() {
+        copper.regions.remove(0);
+    }
+    let (_, how) = restructured(model, &project)?;
+    assert!(
+        matches!(how, Rebuilt::InPlace(n) if n > 0 && n < 4 * added),
+        "a region removed: {how:?}"
     );
     Ok(())
 }

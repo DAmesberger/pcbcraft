@@ -1,5 +1,5 @@
 use super::super::{NativeModel, build};
-use super::{MODEL_CHORD_MM, simplify_loop};
+use super::{MODEL_CHORD_MM, TILE_MM, simplify_loop, tiles};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
 use crate::{Error, Result};
@@ -52,7 +52,7 @@ fn pour(project: &mut Project, layer: CopperLayer) -> Result<&mut pcbcraft_core:
         .ok_or_else(|| Error::Verification(format!("no pour on {}", layer.name())))
 }
 
-/// The copper bodies of fill `fill`: one per region, all of its source.
+/// The copper bodies of fill `fill`: one per tile, all of its source.
 fn fill_bodies(model: &NativeModel, fill: Id) -> Result<Vec<&Geometry>> {
     let source = model
         .sources
@@ -91,6 +91,42 @@ fn area(points: &[Point]) -> f64 {
         / 2.0
 }
 
+/// The area of `regions` as the model builds them: in tiles, each loop
+/// simplified to the model's chord tolerance.
+fn model_area(regions: &[FilledRegion]) -> f64 {
+    tiles(regions, TILE_MM, MODEL_CHORD_MM)
+        .iter()
+        .map(|t| area(&t.region.outer) - t.region.holes.iter().map(|h| area(h)).sum::<f64>())
+        .sum()
+}
+
+/// `regions` as the model builds them hold their own area within the
+/// chord tolerance along every boundary: simplifying moves no boundary
+/// point farther than that.
+fn within_chord(regions: &[FilledRegion]) {
+    let length = |ring: &[Point]| -> f64 {
+        ring.iter()
+            .zip(ring.iter().cycle().skip(1))
+            .map(|(a, b)| (b[0] - a[0]).hypot(b[1] - a[1]))
+            .sum()
+    };
+    let exact: f64 = regions
+        .iter()
+        .map(|r| area(&r.outer) - r.holes.iter().map(|h| area(h)).sum::<f64>())
+        .sum();
+    let perimeter: f64 = regions
+        .iter()
+        .flat_map(|r| std::iter::once(&r.outer).chain(&r.holes))
+        .map(|ring| length(ring))
+        .sum();
+    near(model_area(regions), exact, perimeter * MODEL_CHORD_MM);
+}
+
+/// How many tiles the model builds `regions` in.
+fn tile_count(regions: &[FilledRegion]) -> usize {
+    tiles(regions, TILE_MM, MODEL_CHORD_MM).len()
+}
+
 fn near(actual: f64, expected: f64, tolerance: f64) {
     assert!(
         (actual - expected).abs() <= tolerance,
@@ -99,8 +135,9 @@ fn near(actual: f64, expected: f64, tolerance: f64) {
 }
 
 /// A bottom pour of two regions (one with two holes) and an inner plane:
-/// each is one saved copper body on its layer, as thick as its foil and
-/// as large as its regions, its source naming the fill, net and layer.
+/// each is saved copper on its layer in tiles ([`tiles`]), as thick as
+/// its foil and as large as its regions, its source naming the fill, net
+/// and layer.
 /// The inner plane lies in its foil level, so the laminate loses exactly
 /// its copper ([`an_inner_fill_lies_in_its_own_foil_level`]); the bottom
 /// pour wears a display-only mask cap opened at its holes.
@@ -118,7 +155,7 @@ fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
     let mut project = plain.clone();
     let bottom = pour(&mut project, CopperLayer::Bottom)?;
     let bottom_id = bottom.id;
-    bottom.computed = Some(copper(vec![
+    let bottom_regions = vec![
         FilledRegion {
             outer: rect([30.0, 1.0], [40.0, 4.0]),
             holes: vec![hole([32.0, 2.5], 0.5, 48), hole([36.0, 2.5], 0.5, 48)],
@@ -127,13 +164,15 @@ fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
             outer: rect([30.0, 4.5], [34.0, 6.0]),
             holes: vec![],
         },
-    ]));
+    ];
+    bottom.computed = Some(copper(bottom_regions.clone()));
     let inner = pour(&mut project, CopperLayer::Inner(1))?;
     let inner_id = inner.id;
-    inner.computed = Some(copper(vec![FilledRegion {
+    let inner_regions = vec![FilledRegion {
         outer: rect([30.0, 1.0], [40.0, 4.0]),
         holes: vec![],
-    }]));
+    }];
+    inner.computed = Some(copper(inner_regions.clone()));
     let model = build(&project)?;
     let stackup = &project.stackup;
     let thickness = |layer| {
@@ -147,12 +186,15 @@ fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
     let t_inner = thickness(CopperLayer::Inner(1))?;
 
     let bodies = fill_bodies(&model, bottom_id)?;
-    assert_eq!(bodies.len(), 2, "one body per region");
+    // 30–40 × 1–4 mm and 30–34 × 4.5–6 mm on a 12 mm grid: two cells
+    // and one.
+    assert_eq!(bodies.len(), 3, "one body per tile");
+    assert_eq!(bodies.len(), tile_count(&bottom_regions));
     assert!(bodies.iter().all(|g| g.layer == Some(CopperLayer::Bottom)));
     let (lo, hi, volume) = extent(&bodies);
     // The holes as the model simplifies them (MODEL_CHORD_MM).
-    let disc = area(&simplify_loop(&hole([32.0, 2.5], 0.5, 48), MODEL_CHORD_MM));
-    let area = 30.0 - 2.0 * disc + 6.0;
+    within_chord(&bottom_regions);
+    let area = model_area(&bottom_regions);
     near(volume, area * t_bottom, 1e-6);
     near(hi[2], 0.0, 1e-9);
     near(lo[2], -t_bottom, 1e-9);
@@ -160,7 +202,7 @@ fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
     near(hi[0], 40.0, 1e-9);
 
     let plane = fill_bodies(&model, inner_id)?;
-    assert_eq!(plane.len(), 1);
+    assert_eq!(plane.len(), tile_count(&inner_regions));
     assert!(plane.iter().all(|g| g.layer == Some(CopperLayer::Inner(1))));
     let (lo, hi, volume) = extent(&plane);
     near(volume, 30.0 * t_inner, 1e-6);
@@ -279,7 +321,12 @@ fn an_inner_fill_lies_in_its_own_foil_level() -> Result<()> {
         .and_then(|i| project.stackup.copper.get(i))
         .map(|c| c.thickness_um / 1000.0)
         .ok_or_else(|| Error::Verification("foil".into()))?;
-    let plane = 30.0 - area(&simplify_loop(&clearance, MODEL_CHORD_MM));
+    let region = [FilledRegion {
+        outer: rect(lo, hi),
+        holes: vec![clearance.clone()],
+    }];
+    within_chord(&region);
+    let plane = model_area(&region);
     let ring = std::f64::consts::PI * 0.3 * 0.3;
     near(
         substrate(&before) - substrate(&after),
@@ -293,11 +340,11 @@ fn an_inner_fill_lies_in_its_own_foil_level() -> Result<()> {
     Ok(())
 }
 
-/// A pour of many pad clearances builds as one body: one sketch command
-/// and one extrusion, not a command or a Boolean per hole.
+/// A pour of many pad clearances builds in tiles: one sketch command and
+/// one extrusion per tile, not a command or a Boolean per hole.
 /// Prints the build time with and without it.
 #[test]
-fn a_pour_with_many_clearances_is_one_body() -> Result<()> {
+fn a_pour_with_many_clearances_is_built_in_tiles() -> Result<()> {
     let plain = showcase()?;
     let start = std::time::Instant::now();
     build(&plain)?;
@@ -316,19 +363,22 @@ fn a_pour_with_many_clearances_is_one_body() -> Result<()> {
     let count = holes.len();
     let bottom = pour(&mut project, CopperLayer::Bottom)?;
     let id = bottom.id;
-    bottom.computed = Some(copper(vec![FilledRegion {
+    let regions = vec![FilledRegion {
         outer: rect([1.0, 1.0], [43.0, 27.0]),
         holes,
-    }]));
+    }];
+    bottom.computed = Some(copper(regions.clone()));
     let start = std::time::Instant::now();
     let model = build(&project)?;
     let filled = start.elapsed();
     eprintln!("showcase build {base:?}; with a {count}-hole pour {filled:?}");
     let bodies = fill_bodies(&model, id)?;
-    assert_eq!(bodies.len(), 1);
+    // 1–43 × 1–27 mm on a 12 mm grid: 4 columns of 3 cells.
+    assert_eq!(bodies.len(), 12);
+    assert_eq!(bodies.len(), tile_count(&regions));
     let (_, _, volume) = extent(&bodies);
-    let disc = area(&simplify_loop(&hole([2.0, 2.0], 0.45, 32), MODEL_CHORD_MM));
-    let area = 42.0 * 26.0 - count as f64 * disc;
+    within_chord(&regions);
+    let area = model_area(&regions);
     let (z0, z1) = project
         .stackup
         .copper_span(CopperLayer::Bottom)

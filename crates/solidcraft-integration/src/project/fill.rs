@@ -1,7 +1,8 @@
 //! Copper fills in the native model: each fill's computed copper
 //! ([`pcbcraft_core::model::fill::FilledCopper`]) as saved copper on its
-//! layer, one body per region in one component per fill, each extruded
-//! once from its boundary and holes (inserted into the sketch in one
+//! layer, one body per tile of its regions ([`tiles`]) in one component
+//! per fill, each extruded once from its boundary and holes (inserted
+//! into the sketch in one
 //! command, [`crate::native::Native::batched_body`]), so pad clearances
 //! cost no Boolean and no command each. The bodies come before the parts
 //! and the rest of the board's copper, which they do not read (so an edit
@@ -38,11 +39,16 @@ use pcbcraft_core::{CopperLayer, Layer, Point, Project};
 /// Mask cap tiles over a fill, as the board mask's.
 const CAP_TILE_MM: f64 = 4.0;
 
-/// A fill as the display layers see it: its pick, layer and regions.
+mod tiles;
+pub(super) use tiles::{TILE_MM, Tile, tiles};
+
+/// A fill as the display layers see it: its pick, layer and regions, and
+/// the tiles its saved copper is built in.
 pub(super) struct FillMark {
     pub pick: u64,
     pub layer: CopperLayer,
     pub regions: Vec<FilledRegion>,
+    pub tiles: Vec<FilledRegion>,
 }
 
 /// The fills with copper to build, in document order, each region
@@ -208,15 +214,34 @@ fn bodies(
             CopperLayer::Bottom => format!("- {height}").into(),
             CopperLayer::Inner(_) => inner_base(&project.stackup, fill.layer)?.into(),
         };
+        b.native.unit(&name, None)?;
         let created = b.native.component(&name, false)?;
-        // One body per region: the regions are disjoint, so each sketch
-        // makes exactly one body of a known name.
-        for (k, region) in regions.iter().enumerate() {
-            let contours: Vec<Contour> = loops(region).into_iter().filter_map(polygon).collect();
+        b.native.unit_end()?;
+        // One body per tile ([`tiles`]): the tiles are disjoint, so each
+        // sketch makes exactly one body of a known name. A tile is a unit of
+        // its content: refilled, only the tiles whose copper changed are
+        // built again.
+        let raw = fill
+            .computed
+            .as_ref()
+            .map(|c| c.regions.as_slice())
+            .unwrap_or_default();
+        let cut = tiles(raw, TILE_MM, MODEL_CHORD_MM);
+        let mut kept = Vec::with_capacity(cut.len());
+        for Tile {
+            column,
+            row,
+            piece,
+            region,
+        } in cut
+        {
+            let contours: Vec<Contour> = loops(&region).into_iter().filter_map(polygon).collect();
             if contours.is_empty() {
                 continue;
             }
-            let body = format!("{name}_{k}");
+            let body = format!("{name}_{column}_{row}_{piece}");
+            let content = super::digest(&(&offset, &height, &contours));
+            b.native.unit(&body, Some(content))?;
             b.native.batched_body(ProfileBody {
                 name: &body,
                 offset: offset.clone(),
@@ -224,6 +249,8 @@ fn bodies(
                 height: height.as_str().into(),
             })?;
             b.record(&body, BodyKind::FillCopper)?;
+            b.native.unit_end()?;
+            kept.push(region);
         }
         joints.push((
             BoardJoint {
@@ -263,6 +290,7 @@ fn bodies(
             pick,
             layer: fill.layer,
             regions,
+            tiles: kept,
         });
     }
     Ok(marks)
@@ -281,7 +309,7 @@ const CONTACT_MM: f64 = 1e-4;
 /// rings as it does without fills).
 ///
 /// `holes` are the level's non-copper holes (pad drills, cutouts, slots
-/// and mounting holes). The fill regions (simplified as their bodies),
+/// and mounting holes). The fill regions (the tiles of their bodies),
 /// with every track, via ring and hole that overlaps them (directly or
 /// through other copper), are united into disjoint regions; their outer
 /// boundaries and holes go into the slab's sketch, whose even-odd nesting
@@ -293,11 +321,12 @@ pub(super) fn foil_level(
     project: &Project,
     layer: CopperLayer,
     holes: &[Contour],
+    fills: &[FillMark],
 ) -> Option<Vec<Contour>> {
-    let regions: Vec<FilledRegion> = built(project)
-        .into_iter()
-        .filter(|(f, _)| f.layer == layer)
-        .flat_map(|(_, regions)| regions)
+    let regions: Vec<FilledRegion> = fills
+        .iter()
+        .filter(|f| f.layer == layer)
+        .flat_map(|f| f.tiles.iter().cloned())
         .filter(|r| r.outer.len() >= 3)
         .collect();
     if regions.is_empty() {

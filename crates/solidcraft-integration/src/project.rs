@@ -1599,7 +1599,11 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     // reads only its own sketch and the stackup's parameters, never the
     // copper built before it, but Solidcraft keys each feature's cached
     // result on every body made before it. After the parts and tracks,
-    // every edit to them would extrude every fill again.
+    // every edit to them would extrude every fill again. (A refill's
+    // changed tiles are built again at the end of the history, and every
+    // feature after the first one deleted is evaluated again: measured on
+    // the ESP32 board, the fills just before the laminate made a refill
+    // 1.6 s faster and a track edit 2.6 s slower.)
     let fills = fill::build(&mut b, project, board, &mut sources, &mut joints)?;
     for placement in &project.placements {
         let instance = project
@@ -1889,6 +1893,9 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             None => Mount::Height(inner_base(stackup, track.layer)?.into()),
         };
         let prefix = format!("trace_{}", track.id);
+        // A track added or removed is a unit of its own: an update makes or
+        // deletes it alone.
+        b.native.unit(&prefix, None)?;
         let created = b.native.component(&prefix, false)?;
         let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
         // The stadium in the track's frame: start at the origin, along +x.
@@ -1902,6 +1909,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             height: copper_param(track.layer).into(),
         })?;
         b.record(&prefix, BodyKind::CopperTrack)?;
+        b.native.unit_end()?;
         joints.push((
             BoardJoint {
                 board,
@@ -1979,7 +1987,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         // The laminate last: its sketches hold every drill, which each
         // command after it would otherwise read again.
         b.native.activate(substrate.component)?;
-        laminate(&mut b, project, &pads)?;
+        laminate(&mut b, project, &pads, &fills)?;
         // Every joint goes in once the parts are built, solved together (one
         // by one, each would solve all the joints made before it); a copy of
         // a shared definition starts where its first occurrence stands.
@@ -2342,7 +2350,12 @@ fn dielectric_sum(stackup: &Stackup, range: std::ops::Range<usize>) -> String {
 /// where the board's copper is now (they do not follow placement
 /// parameters edited in Solidcraft); the slabs' heights follow the stackup
 /// parameters.
-fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Result<()> {
+fn laminate(
+    b: &mut Builder,
+    project: &Project,
+    pads: &[PlacedPad<'_>],
+    fills: &[fill::FillMark],
+) -> Result<()> {
     let stackup = &project.stackup;
     let pad_drills: Vec<Contour> = pads
         .iter()
@@ -2451,7 +2464,7 @@ fn laminate(b: &mut Builder, project: &Project, pads: &[PlacedPad<'_>]) -> Resul
         );
         // A via ring or drill inside a wide track's copper is already cut
         // with it; drawn too, it would be an island of laminate.
-        let level = match fill::foil_level(project, layer, &holes) {
+        let level = match fill::foil_level(project, layer, &holes, fills) {
             Some(level) => level,
             None => without_nested(level),
         };
