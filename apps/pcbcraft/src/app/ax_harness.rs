@@ -48,6 +48,8 @@ pub(crate) struct Ax {
     time: f64,
     /// The last frame's nodes, in tree order.
     nodes: Vec<Node>,
+    /// The texts the last frame painted, whole (a cut text's full text).
+    pub texts: Vec<String>,
 }
 
 impl Ax {
@@ -92,6 +94,7 @@ impl Ax {
             frame: eframe::Frame::_new_kittest(),
             time: 0.0,
             nodes: Vec::new(),
+            texts: Vec::new(),
         };
         ax.settle();
         Ok(ax)
@@ -118,6 +121,10 @@ impl Ax {
         } = self;
         let mut out = ctx.run_ui(input, |ui| eframe::App::ui(app, ui, frame));
         out.textures_delta.clear();
+        self.texts = crate::kit::text::tests::painted(&out)
+            .into_iter()
+            .map(|(text, ..)| text)
+            .collect();
         if let Some(update) = out.platform_output.accesskit_update.take() {
             self.nodes = nodes(&update);
         }

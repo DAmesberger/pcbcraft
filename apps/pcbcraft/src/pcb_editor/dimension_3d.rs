@@ -147,6 +147,9 @@ struct Drawn {
     /// What the label reads.
     #[cfg_attr(not(test), allow(dead_code))]
     label: String,
+    /// Drawn lit: selected, edited, or hovered here or in its row.
+    #[cfg_attr(not(test), allow(dead_code))]
+    hot: bool,
 }
 
 impl Drawn {
@@ -581,6 +584,18 @@ impl PcbEditor {
             .drawn
             .iter()
             .map(|d| (d.id, d.label.clone(), d.text, d.ends))
+            .collect()
+    }
+
+    /// The dimensions drawn lit in 3D last frame (selected, edited, or
+    /// hovered in the view or in their Properties row).
+    #[cfg(test)]
+    pub fn dimensions_lit(&self) -> Vec<Id> {
+        self.dim3d
+            .drawn
+            .iter()
+            .filter(|d| d.hot)
+            .map(|d| d.id)
             .collect()
     }
 
@@ -1195,13 +1210,16 @@ impl PcbEditor {
                 && ui.rect_contains_pointer(painter.clip_rect())
         });
         let armed = self.tool == Tool::Dimension;
-        let hovered = hover.and_then(|p| {
-            if armed {
-                self.dim3d.hit_text(p)
-            } else {
-                self.dim3d.hit(p)
-            }
-        });
+        // Under the pointer here, or its Properties row under the pointer.
+        let hovered = hover
+            .and_then(|p| {
+                if armed {
+                    self.dim3d.hit_text(p)
+                } else {
+                    self.dim3d.hit(p)
+                }
+            })
+            .or_else(|| self.hovered_dimension(ui.ctx()));
         let editing = self.dim3d.edit.as_ref().map(|e| e.id);
         let mut drawn = Vec::new();
         let mut placed = Vec::new();
@@ -1314,6 +1332,7 @@ impl PcbEditor {
                     [shown.to[0], shown.to[1], z],
                 ],
                 label: text,
+                hot,
             });
         }
         self.dim3d.drawn = drawn;

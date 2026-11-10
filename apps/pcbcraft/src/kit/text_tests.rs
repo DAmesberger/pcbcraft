@@ -151,6 +151,26 @@ fn widgets(ui: &mut Ui) {
                 action: Some("Waive…"),
             },
         );
+        // A list row whose name runs past two lines, whose driven value
+        // and plain value are too long for their column.
+        let parts = [
+            "Top-front edge of the shell of the USB-C receptacle",
+            "bottom edge of the board outline",
+        ];
+        let mut row = ItemRow::new(&parts, 90.0);
+        row.action = Some(RowAction::delete("Delete dimension"));
+        row.badge = Some((Level::Warning, "Inexact"));
+        let mut driven = "board_width / 2 - connector_offset".to_owned();
+        item_row(ui, &row, |ui| {
+            value_field(ui, "driven", &mut driven, false, Some("12.3456 mm"))
+        });
+        let mut plain = "123456.789012 mm".to_owned();
+        item_row(ui, &ItemRow::new(&["Pad 1"], 60.0), |ui| {
+            value_field(ui, "plain", &mut plain, false, None)
+        });
+        item_row(ui, &ItemRow::new(&["Pad 2"], 60.0), |ui| {
+            value_text(ui, "Unrouted on two layers")
+        });
         table(
             ui,
             &[

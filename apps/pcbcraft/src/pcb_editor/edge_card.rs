@@ -10,8 +10,11 @@
 //! dimension's value commits live as one `layout.dimension_edit`: a length
 //! (`5 mm`) or an expression over the board parameters (`width / 2 - 3
 //! mm`), so editing a parameter moves the part when the board re-solves.
-//! "Delete" removes one dimension (`layout.dimension_delete`) and leaves the
-//! part where it is.
+//! Each dimension is one `kit::item_row` ("Front face → bottom edge", its
+//! value, a Lost or Inexact badge); the row's delete icon removes it
+//! (`layout.dimension_delete`) and leaves the part where it is. Hovering a
+//! row lights its dimension on the canvas and in 3D; clicking it selects
+//! the dimension there, and a dimension selected there selects its row.
 use super::board_shape_ui::sketch_of;
 use super::{BoardView, PcbEditor};
 use crate::kit;
@@ -19,7 +22,7 @@ use crate::refusal::{self, Origin};
 use egui::{Align2, Pos2, Stroke, Ui, vec2};
 use pcbcraft_core::geometry::Transform2;
 use pcbcraft_core::layout::dimensions::{
-    self, DimensionCommand, FeatureGeometry, PartFreedom, features,
+    self, DimensionCommand, FeatureGeometry, PartFreedom, features, view,
 };
 use pcbcraft_core::layout::outline::BoardShapeEvaluator;
 use pcbcraft_core::library::footprint_source::{
@@ -28,7 +31,7 @@ use pcbcraft_core::library::footprint_source::{
 };
 use pcbcraft_core::model::board::{BoardSketch, ConstraintTarget, SolvedBoard, SolvedEdge};
 use pcbcraft_core::model::dimension::{
-    BoardRef, FeatureRef, PartDimension, PartDimensionSpec, PartRelation,
+    BoardRef, FeatureRef, PartDimension, PartDimensionSpec, PartRelation, ReferenceStatus,
 };
 use pcbcraft_core::{Id, Layer, Operation, Placement, Point, Project};
 use pcbcraft_solidcraft::footprint::view as sketch_view;
@@ -50,6 +53,10 @@ pub(super) struct EdgeEdit {
     hold: Option<((u64, Id), Hold)>,
     /// The dimension labels drawn on the canvas last frame, for clicks.
     labels: Vec<(Id, egui::Rect)>,
+    /// The dimension whose row is under the pointer, and the frame.
+    hover: Option<(Id, u64)>,
+    /// The selected dimension whose row was last scrolled into view.
+    revealed: Option<Id>,
 }
 
 /// Why a hand move is refused, and what the dimensions leave free.
@@ -216,6 +223,17 @@ pub(super) fn value_text(d: &PartDimension) -> String {
     }
 }
 
+/// What an expression or parameter drives a dimension to ("20 mm"); `None`
+/// for a plain number.
+fn driven(project: &Project, d: &PartDimension) -> Option<String> {
+    match &d.value {
+        Some(v @ (DimValue::Expr(_) | DimValue::Param(_))) => {
+            length(project, v).map(|mm| format!("{} mm", kit::number_text(mm)))
+        }
+        _ => None,
+    }
+}
+
 /// The value typed into a dimension's field, or why it is not one.
 pub(super) fn typed_value(
     project: &Project,
@@ -248,21 +266,30 @@ pub(super) fn length_value(project: &Project, text: &str) -> std::result::Result
     }
 }
 
-/// What a dimension of `instance` holds, from the part's side: "Origin to
-/// the right edge", "Pad 1 to the bottom edge", "X axis to the top edge".
-fn label(
+/// What a dimension of `instance` holds, from the part's side, as the two
+/// references it runs between: ["Origin", "right edge"], ["Pad 1",
+/// "bottom edge"], ["Front face", "U3"]. The card joins them with an
+/// arrow ("Origin → right edge").
+pub(super) fn name_parts(
     project: &Project,
     board: Option<&BoardSketch>,
     instance: Id,
     d: &PartDimension,
-) -> String {
+) -> Vec<String> {
     let words = |r: &BoardRef| -> String {
         match r {
-            BoardRef::Board(SketchRef::Curve(c)) => board
-                .and_then(|b| dimensions::edge_name(b, c))
-                .map_or_else(|| "a board curve".into(), dimensions::edge_words),
-            BoardRef::Board(_) => "a board point".into(),
-            BoardRef::Housing(_) => "the housing".into(),
+            BoardRef::Board(SketchRef::Curve(c)) => {
+                board.and_then(|b| dimensions::edge_name(b, c)).map_or_else(
+                    || "board curve".into(),
+                    |n| {
+                        dimensions::edge_words(n)
+                            .trim_start_matches("the ")
+                            .to_owned()
+                    },
+                )
+            }
+            BoardRef::Board(_) => "board point".into(),
+            BoardRef::Housing(_) => "housing".into(),
             BoardRef::Part(f) if f.target() != ConstraintTarget::Placement(instance) => {
                 match f.target() {
                     ConstraintTarget::Placement(id) => project
@@ -287,11 +314,32 @@ fn label(
             },
         }
     };
-    let text = d.refs.iter().map(words).collect::<Vec<_>>().join(" to ");
-    let mut chars = text.chars();
-    chars.next().map_or_else(String::new, |c| {
-        c.to_uppercase().chain(chars).collect::<String>()
-    })
+    let mut parts: Vec<String> = d.refs.iter().map(words).collect();
+    if let Some(first) = parts.first_mut() {
+        let mut chars = first.chars();
+        *first = chars.next().map_or_else(String::new, |c| {
+            c.to_uppercase().chain(chars).collect::<String>()
+        });
+    }
+    parts
+}
+
+/// The worse status of a dimension's references, where they read as one
+/// (a lost or inexact reference shows as a badge on its row).
+fn reference_status(
+    project: &Project,
+    evaluator: Option<&dyn BoardShapeEvaluator>,
+    d: &PartDimension,
+) -> ReferenceStatus {
+    use ReferenceStatus::*;
+    d.refs
+        .iter()
+        .filter_map(|r| view::reference_geometry(project, evaluator, r).map(|(_, s)| s))
+        .fold(Resolved, |a, b| match (a, b) {
+            (Lost, _) | (_, Lost) => Lost,
+            (Inexact, _) | (_, Inexact) => Inexact,
+            _ => Resolved,
+        })
 }
 
 impl PcbEditor {
@@ -364,12 +412,27 @@ impl PcbEditor {
         let mut operation = None;
         let mut sent = None;
         let mut select = None;
+        let mut hover = None;
         let selected = self.dimension;
+        // A dimension selected in 2D or 3D past the first rows opens the
+        // whole list, so its row shows.
+        if let Some(at) = selected.and_then(|id| dims.iter().position(|d| d.id == id))
+            && at >= kit::LIST_MAX_ROWS
+        {
+            self.edge.show_all = true;
+        }
         let max = if self.edge.show_all {
             dims.len()
         } else {
             kit::LIST_MAX_ROWS
         };
+        let names: Vec<Vec<String>> = dims
+            .iter()
+            .map(|d| name_parts(project, board.as_deref(), placement.instance, d))
+            .collect();
+        let results: Vec<Option<String>> = dims.iter().map(|d| driven(project, d)).collect();
+        let evaluator = self.shape.evaluator;
+        let reveal = selected.filter(|id| self.edge.revealed != Some(*id));
         kit::section(
             ui,
             "pcb-dimensions",
@@ -377,78 +440,93 @@ impl PcbEditor {
             true,
             Some(dims.len()),
             |ui| {
-                for d in dims.iter().take(max) {
-                    // The selected dimension's row (2D and 3D share it) on
-                    // the selection's background, laid behind the row.
-                    let behind = ui.painter().add(egui::Shape::Noop);
-                    let top = ui.cursor().top();
-                    ui.push_id(d.id, |ui| {
-                        let title = label(project, board.as_deref(), placement.instance, d);
-                        if d.reference || d.value.is_none() {
-                            kit::value_row(
-                                ui,
-                                &title,
-                                if d.reference { "Reference" } else { "Held" },
-                            );
-                        } else if let Some((_, text)) =
-                            self.edge.values.iter_mut().find(|(id, _)| *id == d.id)
-                        {
-                            let invalid =
-                                self.edge.error.as_ref().is_some_and(|(id, _)| *id == d.id);
-                            let response =
-                                kit::checked_text_row(ui, &title, text, "value", invalid);
-                            if response.gained_focus() {
-                                select = Some(d.id);
-                            }
-                            if response.lost_focus() && text.trim() != value_text(d) {
-                                match typed_value(project, d, text) {
-                                    Ok(value) => {
-                                        let mut next = d.clone();
-                                        next.value = Some(value);
-                                        operation =
-                                            Some(Operation::Dimension(DimensionCommand::Edit {
-                                                dimension: next,
-                                            }));
-                                        self.edge.error = None;
-                                        sent = Some(d.id);
-                                    }
-                                    Err(why) => self.edge.error = Some((d.id, why)),
-                                }
-                            }
-                            if let Some((id, why)) = &self.edge.error
-                                && *id == d.id
-                            {
-                                kit::field_error(ui, &response, why, true);
-                            } else if let Some(DimValue::Expr(_) | DimValue::Param(_)) = &d.value
-                                && let Some(v) = d.value.as_ref().and_then(|v| length(project, v))
-                            {
-                                kit::note(ui, &format!("= {} mm", kit::number_text(v)));
-                            }
+                let shown: Vec<String> = dims
+                    .iter()
+                    .zip(&results)
+                    .map(|(d, r)| match r {
+                        Some(r) => format!("fx {} = {r}", value_text(d)),
+                        None if d.reference => "Reference".into(),
+                        None if d.value.is_none() => "Held".into(),
+                        None => value_text(d),
+                    })
+                    .collect();
+                let column = kit::value_column(ui, &shown);
+                let list = kit::list_frame(ui, dims.len(), max, |ui, index| {
+                    let (Some(d), Some(name)) = (dims.get(index), names.get(index)) else {
+                        return;
+                    };
+                    let parts: Vec<&str> = name.iter().map(String::as_str).collect();
+                    let delete = format!("Delete dimension {}", kit::name_text(&parts));
+                    let mut row = kit::ItemRow::new(&parts, column);
+                    row.selectable = true;
+                    row.selected = selected == Some(d.id);
+                    row.action = Some(kit::RowAction::delete(&delete));
+                    row.badge = match reference_status(project, evaluator, d) {
+                        ReferenceStatus::Lost => Some((kit::severity::Level::Error, "Lost")),
+                        ReferenceStatus::Inexact => {
+                            Some((kit::severity::Level::Warning, "Inexact"))
                         }
-                        if kit::summary_row(ui, "", Some("Delete")) {
-                            operation =
-                                Some(Operation::Dimension(DimensionCommand::Delete { id: d.id }));
+                        ReferenceStatus::Resolved => None,
+                    };
+                    let text = self
+                        .edge
+                        .values
+                        .iter_mut()
+                        .find(|(id, _)| *id == d.id)
+                        .map(|(_, text)| text);
+                    let invalid = self.edge.error.as_ref().is_some_and(|(id, _)| *id == d.id);
+                    let result = results.get(index).cloned().flatten();
+                    let (response, field) = kit::item_row(ui, &row, |ui| match text {
+                        Some(text) if !(d.reference || d.value.is_none()) => {
+                            let field =
+                                kit::value_field(ui, "dimension", text, invalid, result.as_deref());
+                            Some((field, text.clone()))
+                        }
+                        _ => {
+                            kit::value_text(ui, if d.reference { "Reference" } else { "Held" });
+                            None
                         }
                     });
-                    if selected == Some(d.id) {
-                        let t = Tokens::get();
-                        let row = egui::Rect::from_x_y_ranges(
-                            ui.max_rect().x_range(),
-                            top..=ui.cursor().top(),
-                        );
-                        ui.painter().set(
-                            behind,
-                            egui::Shape::rect_filled(row, t.radius_sm, t.selected_bg),
-                        );
+                    if response.hovered {
+                        hover = Some(d.id);
                     }
-                }
-                if dims.len() > max
-                    && kit::summary_row(
-                        ui,
-                        &format!("{max} of {}", dims.len()),
-                        Some("Show all \u{203a}"),
-                    )
-                {
+                    if response.clicked {
+                        select = Some(d.id);
+                    }
+                    if reveal == Some(d.id) {
+                        response.response.scroll_to_me(None);
+                    }
+                    if response.action {
+                        operation =
+                            Some(Operation::Dimension(DimensionCommand::Delete { id: d.id }));
+                    }
+                    let Some((field, text)) = field else {
+                        return;
+                    };
+                    if field.gained_focus() {
+                        select = Some(d.id);
+                    }
+                    if field.lost_focus() && text.trim() != value_text(d) {
+                        match typed_value(project, d, &text) {
+                            Ok(value) => {
+                                let mut next = d.clone();
+                                next.value = Some(value);
+                                operation = Some(Operation::Dimension(DimensionCommand::Edit {
+                                    dimension: next,
+                                }));
+                                self.edge.error = None;
+                                sent = Some(d.id);
+                            }
+                            Err(why) => self.edge.error = Some((d.id, why)),
+                        }
+                    }
+                    if let Some((id, why)) = &self.edge.error
+                        && *id == d.id
+                    {
+                        kit::field_error(ui, &field, why, true);
+                    }
+                });
+                if list.show_all {
                     self.edge.show_all = true;
                 }
                 kit::note(ui, "Follows the board when it changes");
@@ -461,7 +539,18 @@ impl PcbEditor {
         if select.is_some() {
             self.dimension = select;
         }
+        self.edge.revealed = select.or(selected);
+        self.edge.hover = hover.map(|id| (id, ui.ctx().cumulative_frame_nr()));
         operation
+    }
+
+    /// The dimension whose Properties row is under the pointer (this frame
+    /// or the last), lit in 2D and 3D as if selected.
+    pub(super) fn hovered_dimension(&self, ctx: &egui::Context) -> Option<Id> {
+        self.edge
+            .hover
+            .filter(|(_, frame)| frame + 1 >= ctx.cumulative_frame_nr())
+            .map(|(id, _)| id)
     }
 
     /// The selected part's distances to named board edges (every part's in
@@ -484,6 +573,7 @@ impl PcbEditor {
             return;
         };
         let solved = project.board();
+        let lit = self.hovered_dimension(painter.ctx());
         let t = Tokens::get();
         let font = type_face::medium(t.font_small);
         let color = t.sketch_accent;
@@ -510,8 +600,9 @@ impl PcbEditor {
             {
                 continue;
             }
-            // The selected dimension in the selection's accent, as in 3D.
-            let (color, stroke) = if self.dimension == Some(d.id) {
+            // The selected dimension, and the one whose Properties row is
+            // under the pointer, in the selection's accent, as in 3D.
+            let (color, stroke) = if self.dimension == Some(d.id) || lit == Some(d.id) {
                 (t.accent, Stroke::new(1.5, t.accent))
             } else {
                 (color, stroke)

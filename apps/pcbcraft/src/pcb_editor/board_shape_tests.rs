@@ -730,14 +730,26 @@ fn the_board_card_edits_a_board_parameter() -> Fallible {
         unit: ParamUnit::Mm,
         comment: String::new(),
     };
-    let engine = sketch_engine(vec![width])?;
+    let half = FootprintParam {
+        name: ParamName("half".into()),
+        expr: Expr("width / 2".into()),
+        unit: ParamUnit::Mm,
+        comment: String::new(),
+    };
+    let engine = sketch_engine(vec![width, half])?;
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
     let mut editor = PcbEditor::default();
     let (output, _) = slot(&mut editor, &engine, &ctx, vec![]);
     let shown = painted(&output);
-    assert!(shown.iter().any(|(t, _)| t == "width"));
-    assert!(shown.iter().any(|(t, _)| t == "= 80 mm"));
+    // Each parameter is one row: its name and its value; an expression
+    // reads its result inline after `fx`.
+    assert!(shown.iter().any(|(t, _)| t == "width"), "{shown:?}");
+    assert!(shown.iter().any(|(t, _)| t == "80 mm"), "{shown:?}");
+    assert!(
+        shown.iter().any(|(t, _)| t == "fxwidth / 2 = 40 mm"),
+        "{shown:?}"
+    );
     let board =
         crate::pcb_editor::board_shape_ui::sketch_of(engine.project()).ok_or("no sketch")?;
     let edit = parameter_edit(board, &ParamName("width".into()), "90 mm", ParamUnit::Mm)?;
