@@ -61,6 +61,33 @@ impl Log {
     pub(super) fn mark(&mut self, name: &str, start: usize, end: usize) {
         self.marks.push((name.to_owned(), start, end));
     }
+
+    /// The parameters and reply recorded at `step`.
+    pub(super) fn get(&self, step: usize) -> Option<(&Value, &Value)> {
+        self.ran.get(step).map(|r| (&r.params, &r.reply))
+    }
+
+    /// Record what `step` (a `command`) would have recorded in a fresh
+    /// build: its parameters, its reply, or both; `false` if the step is
+    /// another command.
+    pub(super) fn amend(
+        &mut self,
+        step: usize,
+        command: &str,
+        params: Option<Value>,
+        reply: Option<Value>,
+    ) -> bool {
+        let Some(ran) = self.ran.get_mut(step).filter(|r| r.command == command) else {
+            return false;
+        };
+        if let Some(params) = params {
+            ran.params = params;
+        }
+        if let Some(reply) = reply {
+            ran.reply = reply;
+        }
+        true
+    }
 }
 
 /// A build compared with a recorded one ([`Native::replaying`]).
@@ -89,6 +116,32 @@ fn rows(params: &Value) -> Option<Vec<(String, String)>> {
             ))
         })
         .collect()
+}
+
+/// Which parameters a `parameters.import` added or dropped (an object
+/// added or removed: a structural change), as `: added a, b; dropped c`.
+fn renamed(old: &Value, new: &Value) -> String {
+    let (Some(old), Some(new)) = (rows(old), rows(new)) else {
+        return String::new();
+    };
+    let names = |rows: &[(String, String)]| -> BTreeSet<String> {
+        rows.iter().map(|r| r.0.clone()).collect()
+    };
+    let (old, new) = (names(&old), names(&new));
+    let list = |a: &BTreeSet<String>, b: &BTreeSet<String>| {
+        a.difference(b)
+            .take(4)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let (added, dropped) = (list(&new, &old), list(&old, &new));
+    match (added.is_empty(), dropped.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => format!(": added {added}"),
+        (true, false) => format!(": dropped {dropped}"),
+        (false, false) => format!(": added {added}; dropped {dropped}"),
+    }
 }
 
 /// A 3 × 4 matrix's rotation and translation.
@@ -200,7 +253,11 @@ impl Replay {
         }
         if old.params != params {
             if !diffable(command, &old.params, &params) {
-                return Err(diverged(step, format!("{command} changed")));
+                let what = match command {
+                    "parameters.import" => renamed(&old.params, &params),
+                    _ => String::new(),
+                };
+                return Err(diverged(step, format!("{command} changed{what}")));
             }
             self.changed.push(step);
         }
