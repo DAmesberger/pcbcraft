@@ -561,11 +561,12 @@ fn the_placement_card_states_the_hold_at_once() -> Fallible {
     }
     assert!(painted.iter().any(|t| t == "8 mm"), "{painted:?}");
     // Its Dimensions section (in a taller card) lists the dimension with its
-    // value and its Delete.
+    // value and its delete icon.
     let id = super::edge_card::dimensions_of(engine.project(), r2)
         .first()
         .map(|d| d.id)
         .ok_or("no dimension")?;
+    ctx.enable_accesskit();
     let mut output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(Rect::from_min_size(
@@ -584,9 +585,29 @@ fn the_placement_card_states_the_hold_at_once() -> Fallible {
     for clipped in &output.shapes {
         collect_texts(&clipped.shape, &mut painted);
     }
-    for want in ["DIMENSIONS", "Origin to the bottom edge", "Delete"] {
+    for want in ["DIMENSIONS", "Origin → bottom edge"] {
         assert!(painted.iter().any(|t| t == want), "{want}: {painted:?}");
     }
+    // Its delete is an icon at the row's end, named for screen readers
+    // and the keyboard by what it deletes.
+    let named: Vec<String> = output
+        .platform_output
+        .accesskit_update
+        .as_ref()
+        .map(|u| {
+            u.nodes
+                .iter()
+                .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+                .filter_map(|(_, n)| n.label().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        named
+            .iter()
+            .any(|n| n == "Delete dimension Origin → bottom edge"),
+        "{named:?}"
+    );
     // "Free part" removes the one dimension as one step, in place.
     let held = engine.project().placement_of(r2).cloned();
     let op = click(&mut editor, &engine, &ctx, "Free part")?;

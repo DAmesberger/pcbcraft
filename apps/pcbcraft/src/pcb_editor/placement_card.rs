@@ -303,38 +303,33 @@ impl PcbEditor {
             true,
             Some(rows.len()),
             |ui| {
+                // Each pad is one row: its number, whether it is routed (a
+                // badge) and its net, which highlights the net.
+                let nets: Vec<&str> = rows
+                    .iter()
+                    .map(|row| row.net.map_or("No net", |id| project.net_name(id)))
+                    .collect();
+                let column = kit::value_column(ui, &nets);
                 let list = kit::list_frame(ui, rows.len(), max, |ui, index| {
-                    let row = &rows[index];
-                    kit::row(ui, &row.pad, |ui| {
-                        let t = Tokens::get();
-                        let net = row.net.map_or("No net", |id| project.net_name(id));
-                        let clicked = ui_kit::button(ui, net, Button::Small)
+                    let (Some(row), Some(net)) = (rows.get(index), nets.get(index)) else {
+                        return;
+                    };
+                    let name = [row.pad.as_str()];
+                    let mut item = kit::ItemRow::new(&name, column);
+                    item.badge = match row.state {
+                        "" => None,
+                        state if row.unrouted => Some((Level::ToDo, state)),
+                        "routed" => Some((Level::Ok, row.state)),
+                        state => Some((Level::Info, state)),
+                    };
+                    let (_, clicked) = kit::item_row(ui, &item, |ui| {
+                        ui_kit::button(ui, *net, Button::Small)
                             .on_hover_text("Highlight this net")
-                            .clicked();
-                        if clicked {
-                            highlight = row.net;
-                        }
-                        if row.unrouted {
-                            let (glyph, _) = ui.allocate_exact_size(
-                                egui::vec2(t.font_small, t.font_small),
-                                egui::Sense::hover(),
-                            );
-                            kit::severity_glyph(
-                                ui.painter(),
-                                glyph.center(),
-                                t.font_small,
-                                Level::ToDo,
-                            );
-                        }
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(row.state)
-                                    .size(t.font_small)
-                                    .color(t.form_dim),
-                            )
-                            .truncate(),
-                        );
+                            .clicked()
                     });
+                    if clicked {
+                        highlight = row.net;
+                    }
                 });
                 if list.show_all {
                     self.connections_all = true;

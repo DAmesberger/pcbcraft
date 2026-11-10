@@ -108,13 +108,13 @@ pub fn row<R>(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R
 }
 
 /// Temp memory: the label of the form row whose control is being drawn.
-fn row_label_key() -> egui::Id {
+pub(super) fn row_label_key() -> egui::Id {
     egui::Id::unique("pcbcraft-form-row-label")
 }
 
 /// A field drawn in a [`row`] is named by the row's label in the
 /// accessibility tree, as screen readers and UI automation read it.
-fn named_by_row(ui: &Ui, response: Response) -> Response {
+pub(super) fn named_by_row(ui: &Ui, response: Response) -> Response {
     match ui.data(|d| d.get_temp::<egui::Id>(row_label_key())) {
         Some(label) => response.labelled_by(label),
         None => response,
