@@ -852,6 +852,14 @@ fn a_component_update_keeps_or_clears_the_part_and_never_repoints_it() -> Result
         .collect();
     assert_eq!(stale.len(), 1, "{:?}", plan.warnings);
     assert!(stale[0].contains("R1"));
+    // The review's headline says what disagrees, so two findings on one
+    // instance never read as the same line twice.
+    assert!(
+        plan.warning_lines.iter().any(|l| l.line
+            == "R1: Part EX-R0603-10K0-F is for an older revision of the component"),
+        "{:?}",
+        plan.warning_lines
+    );
     assert!(
         plan.changes
             .iter()

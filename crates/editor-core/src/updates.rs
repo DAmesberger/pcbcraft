@@ -2319,8 +2319,17 @@ fn part_details(plan: &mut UpdatePlan, project: &Project, next: &Project) {
         for finding in instances::part_findings(&next.library, new) {
             if !known.contains(&(finding.code.clone(), finding.message.clone())) {
                 let part = mpn(next, new).unwrap_or_default();
+                // What disagrees, so two findings on one instance read
+                // as two lines.
+                let why = match finding.code.as_str() {
+                    "part.stale_component" => "is for an older revision of the component",
+                    "part.newer_component" => "is for a newer revision of the component",
+                    "part.component_mismatch" => "is for another component",
+                    "part.binding_mismatch" => "is implemented differently from the instance",
+                    _ => "no longer agrees with the instance",
+                };
                 plan.warn(
-                    &format!("{d}: Part {part} no longer agrees with the instance"),
+                    &format!("{d}: Part {part} {why}"),
                     format!("Part finding {}: {}", finding.code, finding.message),
                     refs(),
                 );
