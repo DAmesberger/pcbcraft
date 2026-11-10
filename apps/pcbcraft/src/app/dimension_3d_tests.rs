@@ -755,3 +755,130 @@ fn a_3d_click_with_select_selects_the_part() -> Fallible {
     assert_eq!(h.app.engine.revision(), revision);
     Ok(())
 }
+
+/// A click on U1 in the showcase's PCB 3D, sent as the window sends it,
+/// selects U1 and leaves the camera where it was, after text with a space
+/// was typed into a field and the Space key's release never arrived (as
+/// the VM's synthetic typing delivers it: egui then still holds Space down,
+/// which made the 3D view's Space+drag pan swallow every click). Each
+/// press shape counts: still, pressed and released in one frame, pressed
+/// right after a jump of the pointer, and moved 2 pt before the release.
+#[test]
+fn a_3d_click_selects_after_a_space_was_typed_into_a_field() -> Fallible {
+    use egui::accesskit::Role;
+    let _serial = serial();
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    for shape in 0..4 {
+        let mut ax = super::ax_harness::Ax::with_engine(Engine::showcase()?, Workspace::Pcb)?;
+        ax.button("3D")?;
+        let shown = |ax: &super::ax_harness::Ax| {
+            let key = crate::scene::ModelKey::Project(Arc::clone(ax.app.engine.project_arc()));
+            ax.app.scene.display(&key) == crate::scene::Display::Current
+        };
+        for _ in 0..24_000 {
+            if shown(&ax) {
+                break;
+            }
+            ax.frame(vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        if !shown(&ax) {
+            return Err("the board's model was never shown".into());
+        }
+        ax.settle();
+        let rect = ax.app.scene.viewport.rect().ok_or("no 3D view")?;
+        let u1 = ax
+            .app
+            .engine
+            .project()
+            .instances
+            .iter()
+            .find(|i| i.designator == "U1")
+            .map(|i| i.id)
+            .ok_or("no U1")?;
+        let at = (0..60 * 60)
+            .map(|k| {
+                rect.min
+                    + egui::vec2(
+                        rect.width() * (k % 60) as f32 / 60.0,
+                        rect.height() * (k / 60) as f32 / 60.0,
+                    )
+            })
+            .find(|p| {
+                ax.app
+                    .scene
+                    .viewport
+                    .surface_hit(*p)
+                    .and_then(|hit| hit.item)
+                    .and_then(|i| ax.app.scene.source(i))
+                    .is_some_and(|s| s.instance == Some(u1))
+            })
+            .ok_or("U1 is not on screen")?;
+        // "1 mm" typed into the first field, its Space never let go.
+        let field = ax.find_prefix(Role::TextInput, "")?;
+        ax.click_at(field.center());
+        assert!(
+            ax.ctx.egui_wants_keyboard_input(),
+            "the field has the keyboard"
+        );
+        ax.type_text("1");
+        ax.frame(vec![
+            egui::Event::Key {
+                key: egui::Key::Space,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::Text(" ".into()),
+        ]);
+        ax.type_text("mm");
+        ax.key(egui::Key::Enter);
+        assert!(
+            !ax.ctx.egui_wants_keyboard_input(),
+            "Enter leaves the field"
+        );
+        assert!(ax.ctx.input(|i| i.key_down(egui::Key::Space)));
+        assert_eq!(ax.app.pcb.selected_instance(), None);
+        // The pointer comes to the view; the first click leaves the field.
+        ax.hover(at);
+        let (camera, requests) = (ax.app.scene.viewport.camera(), ax.app.scene.requests());
+        let far = at + egui::vec2(-120.0, -90.0);
+        let near = at + egui::vec2(2.0, 1.0);
+        match shape {
+            0 => {
+                ax.frame(vec![button(at, true)]);
+                ax.frame(vec![button(at, false)]);
+            }
+            1 => ax.frame(vec![button(at, true), button(at, false)]),
+            2 => {
+                ax.hover(far);
+                ax.frame(vec![egui::Event::PointerMoved(at), button(at, true)]);
+                ax.frame(vec![button(at, false)]);
+            }
+            _ => {
+                ax.frame(vec![button(at, true)]);
+                ax.frame(vec![egui::Event::PointerMoved(near)]);
+                ax.frame(vec![button(near, false)]);
+            }
+        }
+        ax.settle();
+        assert_eq!(
+            ax.app.pcb.selected_instance(),
+            Some(u1),
+            "press shape {shape}"
+        );
+        assert_eq!(
+            ax.app.scene.viewport.camera(),
+            camera,
+            "press shape {shape}"
+        );
+        assert_eq!(ax.app.scene.requests(), requests, "selection built a model");
+    }
+    Ok(())
+}
