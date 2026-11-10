@@ -202,3 +202,42 @@ fn a_held_pair_stays_and_the_preview_says_so() -> TestResult {
     assert!(note.contains("USB"), "{note}");
     Ok(())
 }
+
+/// Demo runs 2 and 3: on the showcase, the Route tool from U1 pad 4
+/// hovered down across the U1 → U2 bundle previews the shove before any
+/// click (the board hides the bundle's old places), and the bundle springs
+/// back when the pointer moves away.
+#[test]
+fn hovering_across_the_showcase_bundle_previews_the_shove() -> TestResult {
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    let engine = Engine::showcase()?;
+    let project = engine.project();
+    let u1 = project.instance_by_designator("U1").ok_or("U1")?.id;
+    let pad4 = pcbcraft_core::layout::placed_pads(project)
+        .into_iter()
+        .find(|p| p.instance == u1 && p.pad.number == "4")
+        .ok_or("U1 pad 4")?
+        .center();
+    editor.on_tool("route", &engine);
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    assert!(canvas.click(&mut editor, &engine, pad4).is_none());
+    let mut hover = |editor: &mut PcbEditor, at: Point| {
+        let p = super::route_tests::screen(editor, &engine, at);
+        canvas.frame(
+            editor,
+            &engine,
+            vec![egui::Event::PointerMoved(p)],
+            egui::Modifiers::NONE,
+        );
+        editor.shoved.0.clone()
+    };
+    let revision = engine.revision();
+    // Across the bundle: its tracks are pushed in the preview only.
+    let pushed = hover(&mut editor, [pad4[0] + 3.0, pad4[1] - 1.5]);
+    assert!(pushed.len() >= 3, "the bundle is shoved: {pushed:?}");
+    assert_eq!(engine.revision(), revision);
+    // Back above it: everything springs back.
+    assert!(hover(&mut editor, [pad4[0] + 3.0, pad4[1] + 0.5]).is_empty());
+    Ok(())
+}

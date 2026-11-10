@@ -599,13 +599,14 @@ impl PcbEditor {
             let width = (width as f32 * scale).max(1.0);
             let color = ink.on_board(colors.copper_layer(layer), share);
             let (a, b) = (screen(start), screen(end));
+            // Outlined round its edge, not along its centre: over a pour of
+            // its own layer's colour the outline is what shows it moved.
+            let outline = if own(net) { t.body_selected } else { t.accent };
             painter.add(Shape::convex_polygon(
                 capsule(a, b, width / 2.0),
                 color,
-                Stroke::NONE,
+                Stroke::new(1.5, outline.gamma_multiply(share)),
             ));
-            let outline = if own(net) { t.body_selected } else { t.accent };
-            painter.line_segment([a, b], Stroke::new(1.0, outline.gamma_multiply(share)));
         };
         // The copper the step adds, at its routed width in Solidcraft's
         // preview colour for what an operation adds (`preview_add`),
@@ -1069,13 +1070,14 @@ mod tests {
         ));
         let ctx = egui::Context::default();
         let mut scale = 0.0;
-        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
             let view =
                 super::super::board_view(rect, project.board_size, 1.0, egui::Vec2::ZERO, false);
             scale = view.view.scale;
             editor.paint_route_preview(ui.painter(), view, project, [10.0, 5.0]);
         });
+        output.textures_delta.clear();
         let t = solidcraft_theme::Tokens::get();
         let added: Vec<&egui::epaint::PathShape> = output
             .shapes
@@ -1150,7 +1152,7 @@ mod tests {
                 Rc::new(Planned::Single(Box::new(plan(layer)))),
             ));
             let ctx = egui::Context::default();
-            let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
                 let view = super::super::board_view(
                     rect,
@@ -1161,18 +1163,33 @@ mod tests {
                 );
                 editor.paint_route_preview(ui.painter(), view, project, [10.0, 5.0]);
             });
+            output.textures_delta.clear();
             output
                 .shapes
                 .iter()
                 .filter_map(|c| match &c.shape {
-                    Shape::Path(p) => Some(p.fill),
+                    Shape::Path(p) => Some((p.fill, p.stroke.clone())),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
         };
-        // On the routed layer: full strength.
+        // On the routed layer: full strength, outlined round its edge in the
+        // accent, which reads over a pour of the layer's colour (demo runs 2
+        // and 3: a centre line alone left the shove unseen).
         let full = ink.on_board(colors.copper_layer(CopperLayer::Top), 1.0);
-        assert_eq!(fills(&mut editor, CopperLayer::Top), vec![full]);
+        let t = solidcraft_theme::Tokens::get();
+        let drawn = fills(&mut editor, CopperLayer::Top);
+        assert_eq!(drawn.len(), 1, "one shoved leg");
+        let (fill, stroke) = &drawn[0];
+        assert_eq!(*fill, full);
+        assert!(stroke.width >= 1.5, "{stroke:?}");
+        assert_eq!(stroke.color, egui::epaint::ColorMode::Solid(t.accent));
+        let fills = |editor: &mut PcbEditor, layer: CopperLayer| {
+            fills(editor, layer)
+                .into_iter()
+                .map(|(fill, _)| fill)
+                .collect::<Vec<_>>()
+        };
         // On the far layer: as the canvas draws that layer.
         let shade = editor
             .look(CopperLayer::Bottom, Layer::Top)
