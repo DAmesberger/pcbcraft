@@ -312,7 +312,7 @@ impl UpdatePreview {
                 Some(count),
                 |ui| {
                     for (_, designator, on) in choices.iter_mut() {
-                        chose |= crate::kit::check_row(ui, designator, on);
+                        chose |= crate::kit::check(ui, designator, on);
                     }
                     crate::kit::hint(
                         ui,
@@ -1049,6 +1049,36 @@ mod tests {
             other => return Err(format!("unexpected {other:?}").into()),
         }
         assert_eq!(review.take_closed(), None);
+        Ok(())
+    }
+
+    /// The instance checkboxes start under the "Instances" caption, not
+    /// after an empty label column.
+    #[test]
+    fn the_instance_checkboxes_start_under_the_caption() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let instances: Vec<_> = engine.project().instances.iter().map(|i| i.id).collect();
+        let first = engine.project().instances.first().ok_or("an instance")?;
+        let designator = first.designator.clone();
+        let change = Change::ComponentRevision {
+            instances,
+            target: first.component,
+            resolutions: Default::default(),
+        };
+        let ctx = egui::Context::default();
+        let mut review = UpdatePreview::default();
+        review.begin_choosing(&engine, change, None);
+        let (output, _) = frame(&mut review, &engine, &ctx, vec![]);
+        let caption =
+            text_where(&output, |t| t.eq_ignore_ascii_case("Instances")).ok_or("no caption")?;
+        let row = text_at(&output, &designator).ok_or("no row")?;
+        let t = solidcraft_theme::Tokens::get();
+        assert!(
+            row.x - caption.x < t.form_label_width / 2.0,
+            "row text at {}, caption at {}",
+            row.x,
+            caption.x
+        );
         Ok(())
     }
 
