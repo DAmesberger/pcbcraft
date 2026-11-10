@@ -12,13 +12,13 @@ use crate::fields::{
     PropertyEdit, PropertyInput,
 };
 use crate::functions::{self, FunctionEdit, FunctionSelections, Resolution};
-use crate::geometry::{Point, point_valid};
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, FieldRef, Id, SheetId, TerminalId, UnitId};
 use crate::library::{
     BindingDefinition, ComponentDefinition, FieldView, FootprintDefinition, Library,
     PackageDefinition, Published, Rotation, SymbolDefinition, designator_prefix_valid,
 };
 use crate::model::{ComponentInstance, PhysicalChoice, Project, SymbolOccurrence, WireEnd};
+use crate::units::PointNm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -279,11 +279,6 @@ fn check_with<'a>(
                 "{name}: unit {} is already placed.",
                 occurrence.unit
             )));
-        }
-        if !point_valid(occurrence.position) {
-            return Err(invalid(
-                "Schematic position must be finite and within ±10000 mm.".into(),
-            ));
         }
     }
     for unit in &instance.unused_units {
@@ -579,7 +574,9 @@ pub struct NewInstance {
     pub properties: Vec<PropertyEdit>,
     pub representation: DefinitionId,
     pub unit: UnitId,
-    pub position: Point,
+    #[serde(with = "crate::units::point_mm")]
+    #[schemars(with = "[crate::units::Length; 2]")]
+    pub position: PointNm,
     pub physical: Option<PhysicalChoice>,
     /// The sheet the first unit is drawn on; the first sheet when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -600,7 +597,7 @@ pub(crate) fn add_occurrence(
     project: &mut Project,
     instance: Id,
     unit: UnitId,
-    position: Point,
+    position: PointNm,
     sheet: SheetId,
 ) -> Result<Id> {
     if project.occurrences.len() >= MAX_OCCURRENCES {
@@ -1182,7 +1179,11 @@ pub(crate) fn wired_terminals(project: &Project, id: Id) -> BTreeSet<TerminalId>
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum RegroupAction {
     /// Place the target unit here (clearing its unused flag).
-    PlaceUnit { position: Point },
+    PlaceUnit {
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
+    },
     /// Remove the terminal's wires; the plan lists them.
     AcceptDisconnect,
 }
@@ -1190,7 +1191,7 @@ pub enum RegroupAction {
 /// The decisions [`regroup`] collects for one instance.
 pub(crate) struct Regroup {
     /// Units to place; the first placement named for a unit wins.
-    pub places: Vec<(UnitId, Point)>,
+    pub places: Vec<(UnitId, PointNm)>,
     /// Terminals whose wires are removed.
     pub disconnects: BTreeSet<TerminalId>,
 }

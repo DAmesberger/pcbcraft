@@ -7,6 +7,15 @@ use pcbcraft_core::{Engine, Operation, Outcome};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
+/// A sheet point a test writes in mm; test points lie within the range.
+fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
+fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
 fn apply(
     engine: &mut Engine,
     command: C,
@@ -24,8 +33,8 @@ fn two_sheets() -> std::result::Result<(Engine, SheetId), Box<dyn std::error::Er
             sheet: None,
             child: None,
             name: Some("Power supply".into()),
-            position: [150.0, -40.0],
-            size: [40.0, 30.0],
+            position: pt([150.0, -40.0]),
+            size: pt([40.0, 30.0]),
         },
     )?
     else {
@@ -39,7 +48,7 @@ fn two_sheets() -> std::result::Result<(Engine, SheetId), Box<dyn std::error::Er
             kind: LabelKind::Global {
                 shape: PortShape::Input,
             },
-            position: [60.0, -60.0],
+            position: pt([60.0, -60.0]),
             rotation: Default::default(),
             attach: None,
         },
@@ -52,7 +61,7 @@ fn two_sheets() -> std::result::Result<(Engine, SheetId), Box<dyn std::error::Er
             kind: LabelKind::Power {
                 style: PowerStyle::Ground,
             },
-            position: [80.0, -80.0],
+            position: pt([80.0, -80.0]),
             rotation: Default::default(),
             attach: None,
         },
@@ -62,9 +71,9 @@ fn two_sheets() -> std::result::Result<(Engine, SheetId), Box<dyn std::error::Er
         C::AddDrawing {
             sheet: None,
             item: SheetItem::Text {
-                at: [20.0, -150.0],
+                at: pt([20.0, -150.0]),
                 text: "Printed note".into(),
-                height: 2.5,
+                height_nm: nm(2.5),
                 rotation: Default::default(),
             },
         },
@@ -313,7 +322,7 @@ fn a_rounded_wire_corner_prints_as_its_arc() -> TestResult {
         C::DrawWire {
             sheet: None,
             from: free([20.0, -20.0])?,
-            corners: vec![Corner::sharp([60.0, -20.0])],
+            corners: vec![Corner::sharp(pt([60.0, -20.0]))],
             to: free([60.0, -60.0])?,
         },
     )?;
@@ -325,7 +334,7 @@ fn a_rounded_wire_corner_prints_as_its_arc() -> TestResult {
         C::SetWireRadius {
             wire,
             index: 0,
-            radius: 10.0,
+            radius: nm(10.0),
         },
     )?;
     let rounded = schematic_pdf(engine.project(), &[])?;

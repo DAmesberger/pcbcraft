@@ -149,7 +149,7 @@ impl SchematicEditor {
         let operation = Operation::Schematic(SchematicCommand::Paste {
             sheet: Some(sheet),
             clip: Box::new(buffer.clip.clone()),
-            offset: [target[0] - anchor[0], target[1] - anchor[1]],
+            offset: super::sheet_nm([target[0] - anchor[0], target[1] - anchor[1]])?,
         });
         // A tool in progress ends: the result is selected, as after a click.
         let _ = self.on_tool("select", engine);

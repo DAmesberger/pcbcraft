@@ -967,7 +967,7 @@ fn place_from(
             source: PlaceSource::Bundle {
                 bundle: Box::new(bundle.clone()),
             },
-            position: [0.0, 0.0],
+            position: pt([0.0, 0.0]),
             designator: None,
             other_revision,
         }),

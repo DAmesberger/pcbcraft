@@ -1068,7 +1068,7 @@ mod tests {
                     properties: vec![],
                     representation: first.representation,
                     unit: pcbcraft_core::UnitId(1),
-                    position: [30.0, 0.0],
+                    position: crate::schematic_editor::pt([30.0, 0.0]),
                     physical: first.physical,
                 },
             )),
@@ -1723,7 +1723,7 @@ mod tests {
             sheet: None,
             name: name.into(),
             kind: LabelKind::Power { style },
-            position: middle,
+            position: crate::schematic_editor::pt(middle),
             rotation: Default::default(),
             attach: Some(attach),
         };
@@ -1739,7 +1739,10 @@ mod tests {
         let drop = port(
             "GND",
             PowerStyle::Ground,
-            WireTarget::OnWire(WirePoint { wire, at: middle }),
+            WireTarget::OnWire(WirePoint {
+                wire,
+                at: crate::schematic_editor::pt(middle),
+            }),
         );
         let ctx = egui::Context::default();
         solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);

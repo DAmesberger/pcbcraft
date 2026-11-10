@@ -721,7 +721,7 @@ fn an_unconnected_pin_row_marks_it_no_connect_with_one_undo() -> Fallible<()> {
                 properties: vec![],
                 representation: first.representation,
                 unit: UnitId(1),
-                position: at,
+                position: crate::schematic_editor::pt(at),
                 physical: None,
             })),
         )?;

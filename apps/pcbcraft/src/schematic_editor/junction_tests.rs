@@ -103,7 +103,7 @@ fn engine() -> Result<(Engine, [Id; 4], Id), Box<dyn std::error::Error>> {
                 properties: vec![],
                 representation: first.representation,
                 unit: pcbcraft_core::UnitId(1),
-                position: at,
+                position: pt(at),
                 physical: None,
             })),
         )?;
@@ -170,7 +170,7 @@ fn junction_dots_mark_three_conductors_and_scale_with_zoom() -> TestResult {
         engine.revision(),
         Operation::Schematic(SchematicCommand::Connect {
             from: ep(r92, 1).into(),
-            to: WireTarget::OnWire(WirePoint { wire, at }),
+            to: WireTarget::OnWire(WirePoint { wire, at: pt(at) }),
         }),
     )?;
     // R93.1 ends on R91.1, which already has a wire: end on end at a pin.
@@ -182,7 +182,12 @@ fn junction_dots_mark_three_conductors_and_scale_with_zoom() -> TestResult {
         }),
     )?;
     let project = engine.project();
-    let junction = project.junctions.first().ok_or("junction")?.position;
+    let junction = project
+        .junctions
+        .first()
+        .ok_or("junction")?
+        .position
+        .to_mm_f64();
     let pin = |e| schematic::pin_position(project, e).ok_or("pin");
     let ctx = egui::Context::default();
     fonts::setup_bundled_fonts(&ctx);
@@ -261,8 +266,9 @@ fn the_wire_tool_lands_a_wire_end_on_a_segment() -> TestResult {
         return Err(format!("not on the wire: {to:?}").into());
     };
     assert_eq!(point.wire, wire);
-    let on = schematic::nearest_on_wire(engine.project(), wire, point.at).ok_or("on")?;
-    assert!((on[0] - point.at[0]).hypot(on[1] - point.at[1]) < 1e-9);
+    let at = point.at.to_mm_f64();
+    let on = schematic::nearest_on_wire(engine.project(), wire, at).ok_or("on")?;
+    assert!((on[0] - at[0]).hypot(on[1] - at[1]) < 1e-9);
     // The wire applies as one undo step that joins the nets.
     let mut engine = engine;
     let before = engine.project().clone();
@@ -320,7 +326,11 @@ fn draw_of(
         return Err(format!("not a wire.draw: {:?}", update.change).into());
     };
     assert!(!update.remove_conflicting_tracks);
-    Ok((from, corners.into_iter().map(|c| c.at).collect(), to))
+    Ok((
+        from,
+        corners.iter().map(pcbcraft_core::Corner::at_mm).collect(),
+        to,
+    ))
 }
 
 #[test]
@@ -442,7 +452,7 @@ fn merging_two_named_nets_opens_the_review() -> TestResult {
                 sheet: None,
                 name: name.into(),
                 kind: pcbcraft_core::model::LabelKind::Local,
-                position: at,
+                position: pt(at),
                 rotation: Default::default(),
                 attach: Some(WireTarget::Terminal(ep(instance, 2))),
             }),
@@ -500,7 +510,7 @@ fn j_places_a_visible_junction_dot_and_a_miss_says_so() -> TestResult {
     let Operation::Schematic(SchematicCommand::PlaceJunction { position, .. }) = &operation else {
         return Err(format!("not a junction: {operation:?}").into());
     };
-    let placed = *position;
+    let placed = position.to_mm_f64();
     engine.apply(engine.revision(), operation)?;
     let (shapes, _) = canvas_frame(&mut editor, &engine, &ctx, vec![]);
     let dots = circles(&shapes, dot_radius(12.0), true);
@@ -872,7 +882,7 @@ fn no_connect_tool_toggles_pins_with_one_undo_step_each() -> TestResult {
         .occurrences
         .iter()
         .find(|o| o.instance == r93)
-        .map(|o| o.position)
+        .map(|o| o.position.to_mm_f64())
         .ok_or("R93")?;
     let mut symbol = centred(body, 12.0);
     symbol.on_tool("no-connect", &engine);

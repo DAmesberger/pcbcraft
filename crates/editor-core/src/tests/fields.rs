@@ -225,7 +225,7 @@ fn a_pasted_symbol_keeps_its_field_values() -> Result<()> {
         crate::Operation::Schematic(SchematicCommand::Paste {
             sheet: None,
             clip,
-            offset: [0.0, -30.0],
+            offset: pt([0.0, -30.0]),
         }),
     )?
     else {
@@ -428,7 +428,7 @@ fn bounds_choices_types_and_text_length_are_rejected_atomically() -> Result<()> 
             properties: vec![text(f.count, "12")],
             representation: part.symbol,
             unit: crate::UnitId(1),
-            position: [40.0, 0.0],
+            position: pt([40.0, 0.0]),
             physical: None,
         },
     ));

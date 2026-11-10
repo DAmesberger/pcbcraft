@@ -13,11 +13,13 @@
 //! the same way: [`move_corner`], [`move_segment`], [`insert_corner`],
 //! [`remove_corner`], [`move_end`] and [`split_at`] are pure functions of a
 //! path, which the canvas previews and the `wire.*` commands store. They
-//! take bare points or [`Corner`]s ([`Vertex`]): a corner keeps its radius
-//! when an edit moves it, and a corner an edit adds is sharp.
+//! take bare points or [`Bend`]s ([`Vertex`]): a corner keeps its radius
+//! when an edit moves it, and a corner an edit adds is sharp. They compute
+//! in millimetres; a stored [`Corner`] is whole nanometres, read as a
+//! [`Bend`] and stored again through [`Bend::stored`].
 use super::wiring::{self, JUNCTION_TOLERANCE_MM, WireTarget, end_position, simplified};
 use super::{Error, MAX_CORNERS, MAX_WIRES, Project, Result, invalid, not_found};
-use crate::geometry::{self, Point, point_valid};
+use crate::geometry::{self, Point};
 use crate::ids::Id;
 use crate::instances;
 use crate::model::{Corner, Wire, WireEnd};
@@ -25,14 +27,55 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// A path vertex: a bare point, or a [`Corner`] with its radius.
+/// A wire path vertex as wire geometry computes it, in millimetres: a
+/// stored [`Corner`] read across the units boundary, or one an edit makes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bend {
+    pub at: Point,
+    /// Fillet radius; 0 is sharp.
+    pub radius: f64,
+}
+
+impl Bend {
+    pub const fn sharp(at: Point) -> Self {
+        Self { at, radius: 0.0 }
+    }
+
+    pub fn of(corner: &Corner) -> Self {
+        Self {
+            at: corner.at_mm(),
+            radius: corner.radius_mm(),
+        }
+    }
+
+    /// The corner as the document stores it, in whole nanometres.
+    pub fn stored(self) -> Result<Corner> {
+        Ok(Corner {
+            at: super::sheet_point(self.at)?,
+            radius_nm: crate::units::Nm::from_mm_f64_rounded(self.radius)
+                .map_err(|_| bad_radius())?,
+        })
+    }
+}
+
+/// A wire's stored corners as [`Bend`]s.
+pub fn bends(corners: &[Corner]) -> Vec<Bend> {
+    corners.iter().map(Bend::of).collect()
+}
+
+/// [`Bend`]s as stored corners.
+pub fn stored(bends: &[Bend]) -> Result<Vec<Corner>> {
+    bends.iter().map(|b| b.stored()).collect()
+}
+
+/// A path vertex: a bare point, or a [`Bend`] with its radius.
 pub trait Vertex: Copy {
     fn at(&self) -> Point;
     /// A new vertex at `at`: a sharp corner.
     fn sharp(at: Point) -> Self;
     /// This vertex moved to `at`, keeping its radius.
     fn moved(self, at: Point) -> Self;
-    fn corner(&self) -> Corner;
+    fn bend(&self) -> Bend;
 }
 
 impl Vertex for Point {
@@ -45,22 +88,22 @@ impl Vertex for Point {
     fn moved(self, at: Point) -> Self {
         at
     }
-    fn corner(&self) -> Corner {
-        Corner::sharp(*self)
+    fn bend(&self) -> Bend {
+        Bend::sharp(*self)
     }
 }
 
-impl Vertex for Corner {
+impl Vertex for Bend {
     fn at(&self) -> Point {
         self.at
     }
     fn sharp(at: Point) -> Self {
-        Corner::sharp(at)
+        Bend::sharp(at)
     }
     fn moved(self, at: Point) -> Self {
-        Corner { at, ..self }
+        Bend { at, ..self }
     }
-    fn corner(&self) -> Corner {
+    fn bend(&self) -> Bend {
         *self
     }
 }
@@ -86,11 +129,11 @@ pub fn movable(wire: &Wire) -> Movable {
     [wire.from, wire.to].map(|end| end.free_point().is_some())
 }
 
-fn corners_of<V: Vertex>(path: &[V]) -> Vec<Corner> {
+fn corners_of<V: Vertex>(path: &[V]) -> Vec<Bend> {
     path.get(1..path.len().saturating_sub(1))
         .unwrap_or_default()
         .iter()
-        .map(Vertex::corner)
+        .map(Vertex::bend)
         .collect()
 }
 
@@ -104,7 +147,7 @@ fn cleaned<V: Vertex>(path: &[V]) -> Vec<V> {
         .unwrap_or_default()
         .to_vec();
     let mut kept = vec![first];
-    kept.extend(simplified(first.at(), interior, last.at()));
+    kept.extend(simplified(first.at(), interior, last.at(), Vertex::at));
     kept.push(last);
     kept
 }
@@ -266,7 +309,7 @@ pub fn remove_corner<V: Vertex>(path: &[V], index: usize) -> Option<Vec<V>> {
 
 /// `path` with corner `index` rounded by `radius` (0: sharp); `None` when
 /// there is no such corner or the radius does not fit ([`radius_limit`]).
-pub fn set_radius(path: &[Corner], index: usize, radius: f64) -> Option<Vec<Corner>> {
+pub fn set_radius(path: &[Bend], index: usize, radius: f64) -> Option<Vec<Bend>> {
     let v = index.checked_add(1).filter(|v| v + 1 < path.len())?;
     if !(radius.is_finite() && radius >= 0.0)
         || radius > radius_limit(path, index)? + JUNCTION_TOLERANCE_MM
@@ -281,7 +324,7 @@ pub fn set_radius(path: &[Corner], index: usize, radius: f64) -> Option<Vec<Corn
 /// `path` with each radius reduced to what is drawn: where neighbouring arcs
 /// would overlap on a segment, both shrink in proportion. Rounded to the
 /// micrometre, so a radius halved on a grid segment reads as a round number.
-pub fn fitted(path: &[Corner]) -> Vec<Corner> {
+pub fn fitted(path: &[Bend]) -> Vec<Bend> {
     let points = points_of(path);
     let radii: Vec<f64> = path.iter().map(|c| c.radius).collect();
     let fit = geometry::fit_corner_radii(&points, &radii, false);
@@ -289,7 +332,7 @@ pub fn fitted(path: &[Corner]) -> Vec<Corner> {
         .enumerate()
         .map(|(i, c)| {
             let r = fit.get(i).copied().unwrap_or(0.0).min(c.radius);
-            Corner {
+            Bend {
                 radius: ((r * 1000.0 + 1e-3).floor() / 1000.0).max(0.0),
                 ..*c
             }
@@ -300,7 +343,7 @@ pub fn fitted(path: &[Corner]) -> Vec<Corner> {
 /// The largest radius corner `index` of `path` takes: what fits its two
 /// segments beside the arcs of its neighbours as drawn. 0 where its segments
 /// run in line or fold back; `None` when there is no such corner.
-pub fn radius_limit(path: &[Corner], index: usize) -> Option<f64> {
+pub fn radius_limit(path: &[Bend], index: usize) -> Option<f64> {
     let v = index.checked_add(1).filter(|v| v + 1 < path.len())?;
     let points = points_of(path);
     let radii: Vec<f64> = path.iter().map(|c| c.radius).collect();
@@ -332,7 +375,7 @@ pub fn split_at<V: Vertex>(path: &[V], index: usize) -> Option<Split<V>> {
 }
 
 /// A wire's drawn path, with its corners' radii, and which ends may move.
-fn editable(project: &Project, id: Id) -> Result<(Vec<Corner>, Movable)> {
+fn editable(project: &Project, id: Id) -> Result<(Vec<Bend>, Movable)> {
     let wire = project
         .wire(id)
         .ok_or_else(|| not_found("Unknown schematic wire."))?;
@@ -351,11 +394,8 @@ fn wire_mut(project: &mut Project, id: Id) -> Result<&mut Wire> {
 
 /// Store `path` as wire `id`'s geometry: its corners, and where its free
 /// ends are. An attached end's position stays with its object.
-fn store(project: &mut Project, id: Id, path: &[Corner]) -> Result<()> {
-    if !path.iter().all(|p| point_valid(p.at)) {
-        return Err(off_sheet());
-    }
-    let corners = corners_of(path);
+fn store(project: &mut Project, id: Id, path: &[Bend]) -> Result<()> {
+    let corners = stored(&corners_of(path))?;
     if corners.len() > MAX_CORNERS {
         return Err(Error::Limit("A wire has at most 256 corners.".into()));
     }
@@ -406,7 +446,7 @@ fn check_ends(project: &Project, id: Id) -> Result<()> {
 }
 
 fn off_sheet() -> Error {
-    invalid("Schematic position must be finite and within ±10000 mm.")
+    invalid(super::POINT_RANGE)
 }
 
 fn no_corner() -> Error {
@@ -430,9 +470,6 @@ pub(super) fn set_path(
 ) -> Result<()> {
     if corners.len() > MAX_CORNERS {
         return Err(Error::Limit("A wire has at most 256 corners.".into()));
-    }
-    if !corners.iter().all(|c| point_valid(c.at)) {
-        return Err(off_sheet());
     }
     if !wiring::radii_valid(&corners) {
         return Err(bad_radius());
@@ -460,9 +497,7 @@ pub(super) fn apply_move_corner(
     to: Point,
     free: bool,
 ) -> Result<()> {
-    if !point_valid(to) {
-        return Err(off_sheet());
-    }
+    super::sheet_point(to)?;
     let (path, movable) = editable(project, id)?;
     let path = move_corner(&path, movable, index, to, free).ok_or_else(no_corner)?;
     store(project, id, &path)
@@ -483,9 +518,7 @@ pub(super) fn apply_move_segment(
 }
 
 pub(super) fn apply_insert_corner(project: &mut Project, id: Id, at: Point) -> Result<()> {
-    if !point_valid(at) {
-        return Err(off_sheet());
-    }
+    super::sheet_point(at)?;
     let (path, _) = editable(project, id)?;
     let (path, _) = insert_corner(&path, at)
         .ok_or_else(|| invalid("A new corner goes on the wire, away from its corners and ends."))?;
@@ -504,14 +537,15 @@ pub(super) fn apply_set_radius(
     project: &mut Project,
     id: Id,
     index: usize,
-    radius: f64,
+    radius: crate::units::Nm,
 ) -> Result<()> {
     if !wiring::radii_valid(&[Corner {
-        at: [0.0, 0.0],
-        radius,
+        radius_nm: radius,
+        ..Corner::sharp(crate::units::PointNm::ORIGIN)
     }]) {
         return Err(bad_radius());
     }
+    let radius = radius.to_mm_f64();
     let (path, _) = editable(project, id)?;
     let limit = radius_limit(&path, index).ok_or_else(no_corner)?;
     let path = set_radius(&path, index, radius).ok_or_else(|| {
@@ -551,12 +585,12 @@ pub(super) fn remove_segment(project: &mut Project, id: Id, index: usize) -> Res
         .position(|w| w.id == id)
         .ok_or_else(|| not_found("Unknown schematic wire."))?;
     let wire = project.wires.remove(position);
-    let free = |p: Option<&Corner>| p.and_then(|p| WireEnd::free(p.at)).ok_or_else(off_sheet);
+    let free = |p: Option<&Bend>| p.and_then(|p| WireEnd::free(p.at)).ok_or_else(off_sheet);
     let mut at = position;
     if let Some(head) = &head {
         let piece = Wire {
             to: free(head.last())?,
-            corners: corners_of(head),
+            corners: stored(&corners_of(head))?,
             ..wire.clone()
         };
         project.wires.insert(at, piece);
@@ -572,7 +606,7 @@ pub(super) fn remove_segment(project: &mut Project, id: Id, index: usize) -> Res
             sheet: wire.sheet,
             from: free(tail.first())?,
             to: wire.to,
-            corners: corners_of(tail),
+            corners: stored(&corners_of(tail))?,
         };
         project.wires.insert(at, piece);
     }
@@ -764,7 +798,7 @@ pub(super) fn ends(project: &Project) -> Ends {
 }
 
 /// `wire`'s corners once its ends, drawn at `a` and `b` with these corners,
-/// are at `na` and `nb`; `None` past the corner limit.
+/// are at `na` and `nb`; `None` past the corner limit or the sheet's range.
 pub(super) fn followed(
     wire: &Wire,
     a: Point,
@@ -773,11 +807,14 @@ pub(super) fn followed(
     nb: Point,
 ) -> Option<Vec<Corner>> {
     let mut path = Vec::with_capacity(wire.corners.len() + 2);
-    path.push(Corner::sharp(a));
-    path.extend(wire.corners.iter().copied());
-    path.push(Corner::sharp(b));
+    path.push(Bend::sharp(a));
+    path.extend(wire.corners.iter().map(Bend::of));
+    path.push(Bend::sharp(b));
     let corners = corners_of(&follow(&path, na, nb));
-    (corners.len() <= MAX_CORNERS).then_some(corners)
+    if corners.len() > MAX_CORNERS {
+        return None;
+    }
+    stored(&corners).ok()
 }
 
 /// Rubber-band every wire whose attached end moved since `before` was

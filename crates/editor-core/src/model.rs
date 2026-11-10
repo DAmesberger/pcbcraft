@@ -6,6 +6,7 @@ pub use crate::geometry::Point;
 use crate::ids::{ComponentRef, DefinitionId, Endpoint, Id, PartRef, SheetId, TerminalId, UnitId};
 use crate::library::{Drafts, Library, Rotation};
 use crate::shared::Shared;
+use crate::units::{Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -108,7 +109,7 @@ pub struct SymbolOccurrence {
     pub sheet: SheetId,
     pub instance: Id,
     pub unit: UnitId,
-    pub position: Point,
+    pub position: PointNm,
     /// Quarter turns counter-clockwise about the unit origin, applied after
     /// `mirror`.
     pub rotation: Rotation,
@@ -148,22 +149,38 @@ pub struct Wire {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Corner {
-    pub at: Point,
-    /// Fillet radius in mm; 0 is a sharp corner. A radius larger than its
+    pub at: PointNm,
+    /// Fillet radius; 0 is a sharp corner. A radius larger than its
     /// segments allow is drawn as large as fits; `wire.set_radius` refuses
     /// one.
     #[serde(default, skip_serializing_if = "is_zero_radius")]
-    pub radius: f64,
+    pub radius_nm: Nm,
 }
 
-fn is_zero_radius(radius: &f64) -> bool {
-    *radius == 0.0
+fn is_zero_radius(radius: &Nm) -> bool {
+    *radius == Nm::ZERO
 }
 
 impl Corner {
     /// A sharp corner at `at`.
-    pub const fn sharp(at: Point) -> Self {
-        Self { at, radius: 0.0 }
+    pub const fn sharp(at: PointNm) -> Self {
+        Self {
+            at,
+            radius_nm: Nm::ZERO,
+        }
+    }
+
+    /// A sharp corner at `at` mm, rounded to whole nanometres.
+    pub fn sharp_mm(at: Point) -> crate::diagnostics::Result<Self> {
+        PointNm::from_mm_f64_rounded(at).map(Self::sharp)
+    }
+
+    pub fn at_mm(&self) -> Point {
+        self.at.to_mm_f64()
+    }
+
+    pub fn radius_mm(&self) -> f64 {
+        self.radius_nm.to_mm_f64()
     }
 }
 
@@ -171,8 +188,8 @@ impl Corner {
 /// port), a sheet pin, or a free end attached to nothing. A terminal end is
 /// written as the terminal itself, `{"instance", "terminal"}`; a junction
 /// end as `{"junction"}`, a label end as `{"label"}`, a sheet-pin end as
-/// `{"sheet_pin"}` and a free end as `{"free": [x, y]}`. An attached end
-/// lies on its wire's sheet.
+/// `{"sheet_pin"}` and a free end as `{"free": {"x_nm", "y_nm"}}`. An
+/// attached end lies on its wire's sheet.
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
@@ -185,62 +202,27 @@ pub enum WireEnd {
     Free(FreeEnd),
 }
 
-/// A wire end attached to nothing, at a point on its wire's sheet. Written
-/// in millimetres; held in whole nanometres so ends compare exactly and a
-/// [`WireEnd`] stays a map key.
+/// A wire end attached to nothing, at a point on its wire's sheet, in
+/// whole nanometres so ends compare exactly and a [`WireEnd`] stays a map
+/// key.
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
 #[serde(deny_unknown_fields)]
 pub struct FreeEnd {
-    pub free: ExactPoint,
+    pub free: PointNm,
 }
 
 impl FreeEnd {
-    /// A free end at `p`; `None` off the sheet's range.
+    /// A free end at `p` mm, rounded to whole nanometres; `None` off the
+    /// sheet's range.
     pub fn new(p: Point) -> Option<Self> {
-        ExactPoint::new(p).map(|free| Self { free })
+        PointNm::from_mm_f64_rounded(p)
+            .ok()
+            .map(|free| Self { free })
     }
     pub fn point(self) -> Point {
-        self.free.point()
-    }
-}
-
-/// A sheet point in whole nanometres, written as `[x, y]` millimetres.
-#[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
-)]
-#[serde(try_from = "Point", into = "Point")]
-#[schemars(with = "Point")]
-pub struct ExactPoint([i64; 2]);
-
-impl ExactPoint {
-    /// `p` to the nearest nanometre; `None` off the sheet's range.
-    pub fn new(p: Point) -> Option<Self> {
-        if !crate::geometry::point_valid(p) {
-            return None;
-        }
-        // Within ±10000 mm, so within ±1e10 nm: it fits.
-        Some(Self([
-            (p[0] * 1e6).round() as i64,
-            (p[1] * 1e6).round() as i64,
-        ]))
-    }
-    pub fn point(self) -> Point {
-        [self.0[0] as f64 / 1e6, self.0[1] as f64 / 1e6]
-    }
-}
-
-impl TryFrom<Point> for ExactPoint {
-    type Error = String;
-    fn try_from(p: Point) -> std::result::Result<Self, String> {
-        Self::new(p).ok_or_else(|| "A free wire end must be finite and within ±10000 mm.".into())
-    }
-}
-
-impl From<ExactPoint> for Point {
-    fn from(p: ExactPoint) -> Point {
-        p.point()
+        self.free.to_mm_f64()
     }
 }
 
@@ -338,7 +320,7 @@ pub struct Junction {
     pub id: Id,
     #[serde(default, skip_serializing_if = "SheetId::is_first")]
     pub sheet: SheetId,
-    pub position: Point,
+    pub position: PointNm,
     /// Put there as a junction point (`junction.place`), so it shows as a
     /// dot even where only two wires pass through it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

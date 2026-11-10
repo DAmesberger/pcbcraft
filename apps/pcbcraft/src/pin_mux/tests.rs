@@ -230,7 +230,7 @@ fn fixture(engine: &mut Engine) -> Result<Ids, Box<dyn std::error::Error>> {
             properties: Vec::new(),
             representation: symbol.id,
             unit,
-            position: [0.0, 20.0],
+            position: crate::schematic_editor::pt([0.0, 20.0]),
             physical,
         })),
     )?;

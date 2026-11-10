@@ -54,7 +54,7 @@ fn usb(signal: SignalRules) -> Result<Usb> {
                 properties: vec![],
                 representation: template.representation,
                 unit: UnitId(1),
-                position: [x, 40.0],
+                position: pt([x, 40.0]),
                 physical: template.physical,
             })),
         )?;
@@ -806,7 +806,7 @@ fn a_pin_to_pin_branch_is_a_track_between_pins_and_raises_nothing() -> Result<()
             properties: vec![],
             representation: template.representation,
             unit: UnitId(1),
-            position: [15.0, 80.0],
+            position: pt([15.0, 80.0]),
             physical: template.physical,
         })),
     )?;

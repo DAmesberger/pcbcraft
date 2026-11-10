@@ -367,7 +367,7 @@ impl SchematicEditor {
             Act::Junction(position) => {
                 Some(Operation::Schematic(SchematicCommand::PlaceJunction {
                     sheet: Some(self.sheet),
-                    position,
+                    position: super::sheet_nm(position)?,
                 }))
             }
             Act::EditItem(item) => {

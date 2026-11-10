@@ -5,13 +5,14 @@
 //! sheet-symbol and drawing tools' clicks, and the gestures on those
 //! objects. Every edit is one typed `SchematicCommand`
 //! (docs/schematic-capture.md).
-use super::{SchematicEditor, Tool};
+use super::{SchematicEditor, Tool, sheet_nm};
 use crate::symbol_view::{self, View};
 use egui::{Color32, Painter, Stroke};
 use pcbcraft_core::geometry::Bounds;
 use pcbcraft_core::library::{Rotation, TextMetric};
 use pcbcraft_core::schematic::scene::{self, Drawing};
 use pcbcraft_core::schematic::{self, SchematicCommand, WireTarget};
+use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{
     Engine, Id, LabelKind, Operation, Point, PortShape, PowerStyle, Project, SheetId, SheetItem,
     WireEnd,
@@ -137,12 +138,12 @@ pub(super) fn anchor(project: &Project, item: Item) -> Option<Point> {
         Item::Label(id) => project
             .label(id)
             .map(|l| schematic::labels::anchor(project, l)),
-        Item::SheetSymbol(id) => project.sheet_symbol(id).map(|s| s.position),
+        Item::SheetSymbol(id) => project.sheet_symbol(id).map(|s| s.position_mm()),
         Item::SheetPin(id) => project.sheet_pin(id).map(|(s, p)| s.pin_position(p)),
         Item::Drawing(id) => project.drawing(id).map(|d| match &d.item {
-            SheetItem::Text { at, .. } => *at,
-            SheetItem::Line { from, .. } => *from,
-            SheetItem::Rect { min, .. } => *min,
+            SheetItem::Text { at, .. } => at.to_mm_f64(),
+            SheetItem::Line { from, .. } => from.to_mm_f64(),
+            SheetItem::Rect { min, .. } => min.to_mm_f64(),
         }),
     }
 }
@@ -163,37 +164,40 @@ pub(super) fn moved(project: &Project, item: Item, to: Point) -> Option<Operatio
     let command = match item {
         Item::Label(label) => SchematicCommand::MoveLabel {
             label,
-            position: to,
+            position: sheet_nm(to)?,
         },
         Item::SheetSymbol(symbol) => SchematicCommand::MoveSheetSymbol {
             symbol,
-            position: to,
+            position: sheet_nm(to)?,
         },
         Item::SheetPin(_) => return None,
         Item::Drawing(drawing) => {
             let item = &project.drawing(drawing)?.item;
             let from = anchor(project, Item::Drawing(drawing))?;
             let d = [to[0] - from[0], to[1] - from[1]];
-            let shift = |p: Point| [p[0] + d[0], p[1] + d[1]];
+            let shift = |p: PointNm| {
+                let p = p.to_mm_f64();
+                sheet_nm([p[0] + d[0], p[1] + d[1]])
+            };
             let item = match item.clone() {
                 SheetItem::Text {
                     at,
                     text,
-                    height,
+                    height_nm,
                     rotation,
                 } => SheetItem::Text {
-                    at: shift(at),
+                    at: shift(at)?,
                     text,
-                    height,
+                    height_nm,
                     rotation,
                 },
                 SheetItem::Line { from, to } => SheetItem::Line {
-                    from: shift(from),
-                    to: shift(to),
+                    from: shift(from)?,
+                    to: shift(to)?,
                 },
                 SheetItem::Rect { min, max } => SheetItem::Rect {
-                    min: shift(min),
-                    max: shift(max),
+                    min: shift(min)?,
+                    max: shift(max)?,
                 },
             };
             SchematicCommand::EditDrawing { drawing, item }
@@ -360,8 +364,8 @@ impl SchematicEditor {
                     .iter()
                     .filter(|s| s.sheet == self.sheet)
                     .find(|s| {
-                        let [x, y] = s.position;
-                        p[0] >= x && p[0] <= x + s.size[0] && p[1] <= y && p[1] >= y - s.size[1]
+                        let ([x, y], [w, h]) = (s.position_mm(), s.size_mm());
+                        p[0] >= x && p[0] <= x + w && p[1] <= y && p[1] >= y - h
                     })
                     .map(|s| Item::SheetSymbol(s.id))
             })
@@ -498,7 +502,7 @@ impl SchematicEditor {
                     sheet,
                     name,
                     kind,
-                    position,
+                    position: sheet_nm(position)?,
                     rotation: Rotation::R0,
                     attach,
                 }))
@@ -509,17 +513,17 @@ impl SchematicEditor {
                     sheet,
                     child: None,
                     name: (!name.is_empty()).then(|| name.to_owned()),
-                    position: at,
-                    size: SHEET_SYMBOL_MM,
+                    position: sheet_nm(at)?,
+                    size: sheet_nm(SHEET_SYMBOL_MM)?,
                 }))
             }
             Tool::Draw(DrawTool::Note) => {
                 Some(Operation::Schematic(SchematicCommand::AddDrawing {
                     sheet,
                     item: SheetItem::Text {
-                        at,
+                        at: sheet_nm(at)?,
                         text: self.drafts.note.clone(),
-                        height: self.drafts.note_height,
+                        height_nm: Nm::from_mm_f64_rounded(self.drafts.note_height).ok()?,
                         rotation: Rotation::R0,
                     },
                 }))
@@ -536,11 +540,14 @@ impl SchematicEditor {
                 Some(from) => Some(Operation::Schematic(SchematicCommand::AddDrawing {
                     sheet,
                     item: if kind == DrawTool::Line {
-                        SheetItem::Line { from, to: at }
+                        SheetItem::Line {
+                            from: sheet_nm(from)?,
+                            to: sheet_nm(at)?,
+                        }
                     } else {
                         SheetItem::Rect {
-                            min: [from[0].min(at[0]), from[1].min(at[1])],
-                            max: [from[0].max(at[0]), from[1].max(at[1])],
+                            min: sheet_nm([from[0].min(at[0]), from[1].min(at[1])])?,
+                            max: sheet_nm([from[0].max(at[0]), from[1].max(at[1])])?,
                         }
                     },
                 })),
@@ -560,8 +567,8 @@ impl SchematicEditor {
             sheet: Some(self.sheet),
             child: None,
             name: (!name.is_empty()).then(|| name.to_owned()),
-            position: [a[0].min(b[0]), a[1].max(b[1])],
-            size,
+            position: sheet_nm([a[0].min(b[0]), a[1].max(b[1])])?,
+            size: sheet_nm(size)?,
         }))
     }
 

@@ -180,7 +180,7 @@ fn shift_command_u_updates_the_pcb_from_the_schematic() -> Result<(), Box<dyn st
                 properties: vec![],
                 representation: first.representation,
                 unit: pcbcraft_core::UnitId(1),
-                position: [30.0, 0.0],
+                position: crate::schematic_editor::pt([30.0, 0.0]),
                 physical: first.physical,
             },
         )),

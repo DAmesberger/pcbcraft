@@ -47,7 +47,7 @@ fn port(engine: &mut Engine, name: &str, kind: LabelKind, at: WireTarget) -> Res
             sheet: None,
             name: name.into(),
             kind,
-            position: [0.0, 0.0],
+            position: pt([0.0, 0.0]),
             rotation: Default::default(),
             attach: Some(at),
         },
@@ -107,11 +107,11 @@ fn gnd_on_vbus(wire: Id) -> C {
         sheet: None,
         name: "GND".into(),
         kind: ground(),
-        position: [10.0, 0.0],
+        position: pt([10.0, 0.0]),
         rotation: Default::default(),
         attach: Some(WireTarget::OnWire(WirePoint {
             wire,
-            at: [10.0, 0.0],
+            at: pt([10.0, 0.0]),
         })),
     }
 }
@@ -230,11 +230,11 @@ fn joining_an_unnamed_net_or_the_same_name_stays_direct() -> Result<()> {
             sheet: None,
             name: "VBUS".into(),
             kind: supply(),
-            position: [10.0, 0.0],
+            position: pt([10.0, 0.0]),
             rotation: Default::default(),
             attach: Some(WireTarget::OnWire(WirePoint {
                 wire,
-                at: [10.0, 0.0],
+                at: pt([10.0, 0.0]),
             })),
         },
     )?;
@@ -291,7 +291,7 @@ fn every_path_that_joins_named_nets_goes_through_the_same_review() -> Result<()>
             from: WireTarget::Label(crate::model::LabelRef { label: gnd_port }),
             to: WireTarget::OnWire(WirePoint {
                 wire,
-                at: [10.0, 0.0],
+                at: pt([10.0, 0.0]),
             }),
         },
         "a wire from the GND port onto the VBUS wire",
@@ -304,8 +304,8 @@ fn every_path_that_joins_named_nets_goes_through_the_same_review() -> Result<()>
             sheet: None,
             from: ep(u3, 1).into(),
             corners: vec![
-                crate::model::Corner::sharp([-5.0, -50.0]),
-                crate::model::Corner::sharp([10.0, -50.0]),
+                crate::model::Corner::sharp(pt([-5.0, -50.0])),
+                crate::model::Corner::sharp(pt([10.0, -50.0])),
             ],
             to: crate::model::FreeEnd::new([10.0, 10.0])
                 .map(WireTarget::Free)
@@ -317,7 +317,7 @@ fn every_path_that_joins_named_nets_goes_through_the_same_review() -> Result<()>
         &mut engine,
         C::PlaceJunction {
             sheet: None,
-            position: [10.0, 0.0],
+            position: pt([10.0, 0.0]),
         },
         "a junction on the crossing",
     )?;
@@ -345,7 +345,7 @@ fn every_path_that_joins_named_nets_goes_through_the_same_review() -> Result<()>
         C::Paste {
             sheet: None,
             clip,
-            offset: [8.0 - pin[0], -pin[1]],
+            offset: pt([8.0 - pin[0], -pin[1]]),
         },
         "a pasted ground stub",
     )?;
@@ -364,8 +364,8 @@ fn renaming_a_sheet_pin_onto_another_named_net_is_reviewed() -> Result<()> {
             sheet: None,
             child: None,
             name: Some("Power".into()),
-            position: [60.0, -70.0],
-            size: [30.0, 20.0],
+            position: pt([60.0, -70.0]),
+            size: pt([30.0, 20.0]),
         },
     )? {
         Outcome::SheetSymbolPlaced { symbol, child } => (symbol, child),
@@ -381,7 +381,7 @@ fn renaming_a_sheet_pin_onto_another_named_net_is_reviewed() -> Result<()> {
                 properties: vec![],
                 representation: f.symbol,
                 unit: crate::UnitId(1),
-                position: [40.0, -40.0],
+                position: pt([40.0, -40.0]),
                 physical: Some(f.physical()),
             },
         )),
@@ -399,7 +399,7 @@ fn renaming_a_sheet_pin_onto_another_named_net_is_reviewed() -> Result<()> {
                 sheet: Some(child),
                 name: name.into(),
                 kind: hier,
-                position: [0.0, 0.0],
+                position: pt([0.0, 0.0]),
                 rotation: Default::default(),
                 attach: Some(ep(u2, terminal).into()),
             },
@@ -412,7 +412,7 @@ fn renaming_a_sheet_pin_onto_another_named_net_is_reviewed() -> Result<()> {
             name: "VBUS".into(),
             shape: Default::default(),
             side: SheetSide::Left,
-            offset: 10.0,
+            offset: nm(10.0),
         },
     )? {
         Outcome::SheetPinsAdded { pins } => pins.first().copied(),

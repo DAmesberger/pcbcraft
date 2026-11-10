@@ -19,7 +19,7 @@ pub mod text;
 mod wire;
 
 pub use text::{LengthUnit, format_length, format_number, parse_length};
-pub use wire::Length;
+pub use wire::{Length, length_mm, option_length_mm, point_mm};
 
 #[cfg(test)]
 mod tests;

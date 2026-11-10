@@ -1,5 +1,6 @@
 mod clean_room;
 mod connectivity;
+mod convert_v1;
 mod core_modules;
 mod f64_lengths;
 mod layers;
@@ -44,6 +45,11 @@ fn cargo(args: &[&str]) -> Result<()> {
 
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if let Some((command, files)) = args.split_first()
+        && command == "convert-v1"
+    {
+        return convert_v1::run(files);
+    }
     let command = match args.as_slice() {
         [command] => command.as_str(),
         [command, flag] if command == "licences" && flag == "--check" => "licences --check",
@@ -92,7 +98,7 @@ fn run() -> Result<()> {
         "raw-keys" => raw_keys::check(),
         _ => Err(
             "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
-             | licences --check | clean-room | ui-containers | ui-forms | raw-keys"
+             | licences --check | clean-room | ui-containers | ui-forms | raw-keys | convert-v1 FILE…"
                 .into(),
         ),
     }

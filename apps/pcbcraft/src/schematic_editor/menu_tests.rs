@@ -240,7 +240,7 @@ fn a_wire_offers_a_junction_and_its_reviewed_removal() -> TestResult {
         editor.menu_act(&engine, Act::Junction(at)),
         Some(Operation::Schematic(SchematicCommand::PlaceJunction {
             sheet: Some(editor.sheet),
-            position: at,
+            position: crate::schematic_editor::pt(at),
         }))
     );
     assert!(editor.menu_act(&engine, Act::Disconnect(wire)).is_none());
@@ -261,7 +261,7 @@ fn a_label_offers_edit_rotate_and_delete() -> TestResult {
             sheet: None,
             name: "SIG".into(),
             kind: LabelKind::Local,
-            position: [0.0, 30.0],
+            position: crate::schematic_editor::pt([0.0, 30.0]),
             rotation: Rotation::R0,
             attach: None,
         }),
@@ -454,7 +454,7 @@ fn rotate_turns_a_port_on_a_pin_from_its_drawn_rotation() -> TestResult {
             kind: LabelKind::Power {
                 style: pcbcraft_core::model::PowerStyle::Ground,
             },
-            position: [0.0, 0.0],
+            position: crate::schematic_editor::pt([0.0, 0.0]),
             rotation: Rotation::R0,
             attach: Some(WireTarget::Terminal(Endpoint {
                 instance: r1,

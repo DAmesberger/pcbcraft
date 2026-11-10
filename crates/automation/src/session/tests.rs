@@ -3,6 +3,11 @@ use pcbcraft_core::{
     DefinitionKind, Engine, InstanceCommand, Operation, QueryResult, UnitId, instances::NewInstance,
 };
 
+/// A sheet point a test writes in mm; test points lie within the range.
+fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 fn r1(engine: &Engine) -> u64 {
@@ -203,7 +208,7 @@ fn placing_and_inspecting_through_json_matches_the_engine() -> TestResult {
         properties: vec![],
         representation: first.representation,
         unit: UnitId(1),
-        position: [30.0, 0.0],
+        position: pt([30.0, 0.0]),
         physical: first.physical,
     }));
     let reply = session.dispatch(apply(&place, session.engine().revision()));
@@ -424,7 +429,7 @@ fn library_search_through_json_matches_the_engine_and_places() -> TestResult {
         properties: vec![],
         representation: id(&report["symbols"][0]["symbol"]["id"]).ok_or("symbol")?,
         unit: UnitId(1),
-        position: [0.0, 0.0],
+        position: pt([0.0, 0.0]),
         physical: Some(pcbcraft_core::PhysicalChoice {
             binding: id(&report["implementations"][0]["binding"]["id"]).ok_or("binding")?,
             footprint: id(&report["implementations"][0]["footprints"][0]["footprint"]["id"])

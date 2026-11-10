@@ -65,7 +65,7 @@ fn paste_op(clip: SheetClip, offset: Point) -> Operation {
     Operation::Schematic(C::Paste {
         sheet: None,
         clip: Box::new(clip),
-        offset,
+        offset: pt(offset),
     })
 }
 
@@ -109,7 +109,7 @@ fn a_symbol_pastes_as_a_new_instance_with_a_new_designator() -> Result<()> {
     let placed = project
         .occurrence(symbol.occurrence)
         .ok_or(Error::Invalid("no occurrence".into()))?;
-    assert_eq!(placed.position, [0.0, -30.0]);
+    assert_eq!(placed.position, pt([0.0, -30.0]));
     assert_eq!((placed.rotation, placed.mirror), (Rotation::R90, true));
     assert_ne!(
         net_of(&engine, pin(symbol.instance, 2))?,
@@ -138,7 +138,11 @@ fn a_label_keeps_its_name_and_joins_its_net() -> Result<()> {
         .label(*new)
         .ok_or(Error::Invalid("no label".into()))?;
     assert_eq!(label.name, "SIG");
-    assert_eq!(label.position, [-5.0, -30.0], "where the source is drawn");
+    assert_eq!(
+        label.position,
+        pt([-5.0, -30.0]),
+        "where the source is drawn"
+    );
     assert!(label.manual, "alone it stays where it was pasted");
     apply(
         &mut engine,
@@ -159,7 +163,7 @@ fn signal_label(engine: &mut Engine, u1: Id) -> Result<Id> {
             sheet: None,
             name: "SIG".into(),
             kind: LabelKind::Local,
-            position: [100.0, 100.0],
+            position: pt([100.0, 100.0]),
             rotation: Rotation::R0,
             attach: Some(WireTarget::Terminal(pin(u1, 1))),
         }),
@@ -249,8 +253,8 @@ fn a_clip_outlives_its_objects_and_drawings_shift() -> Result<()> {
         Operation::Schematic(C::AddDrawing {
             sheet: None,
             item: SheetItem::Line {
-                from: [0.0, 0.0],
-                to: [5.0, 0.0],
+                from: pt([0.0, 0.0]),
+                to: pt([5.0, 0.0]),
             },
         }),
     )? {
@@ -270,8 +274,8 @@ fn a_clip_outlives_its_objects_and_drawings_shift() -> Result<()> {
     assert_eq!(
         new.map(|d| d.item.clone()),
         Some(SheetItem::Line {
-            from: [1.0, 2.0],
-            to: [6.0, 2.0],
+            from: pt([1.0, 2.0]),
+            to: pt([6.0, 2.0]),
         })
     );
     Ok(())
@@ -305,8 +309,7 @@ fn refusals_change_nothing() -> Result<()> {
     }
     for (name, clip, offset) in [
         ("nothing", SheetClip::default(), [0.0, 0.0]),
-        ("off range", symbol.clone(), [1e9, 0.0]),
-        ("not finite", symbol.clone(), [f64::NAN, 0.0]),
+        ("off range", lost.clone(), [1_999.0, 0.0]),
         ("unknown component", unknown_component, [0.0, 10.0]),
         ("no units", no_units, [0.0, 10.0]),
         ("foreign wire end", foreign_end, [0.0, 10.0]),
@@ -318,10 +321,21 @@ fn refusals_change_nothing() -> Result<()> {
         assert_eq!(engine.project(), &before, "{name}");
         assert_eq!(engine.revision(), revision, "{name}");
     }
+    // An offset beyond the range, or not finite, is refused where the
+    // command is read.
+    for offset in [
+        serde_json::json!([1e9, 0.0]),
+        serde_json::json!(["NaN", 0.0]),
+    ] {
+        let command = serde_json::json!({"command": "schematic.paste", "params": {
+            "clip": symbol, "offset": offset
+        }});
+        assert!(serde_json::from_value::<C>(command).is_err(), "{offset}");
+    }
     let unknown_sheet = Operation::Schematic(C::Paste {
         sheet: Some(crate::SheetId(9)),
         clip: Box::new(symbol.clone()),
-        offset: [0.0, 10.0],
+        offset: pt([0.0, 10.0]),
     });
     assert!(engine.apply(revision, unknown_sheet).is_err());
     assert!(matches!(

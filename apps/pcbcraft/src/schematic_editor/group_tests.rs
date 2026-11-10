@@ -141,7 +141,7 @@ fn with_r3(s: &mut Sheet) -> Result<(Id, Id), Box<dyn std::error::Error>> {
                 properties: Vec::new(),
                 representation: like.representation,
                 unit: pcbcraft_core::UnitId(1),
-                position: [30.0, 15.0],
+                position: crate::schematic_editor::pt([30.0, 15.0]),
                 physical: like.physical,
             },
         )),
@@ -359,7 +359,7 @@ fn select_all_takes_everything_on_the_sheet() -> TestResult {
             sheet: None,
             name: "SIG".into(),
             kind: pcbcraft_core::LabelKind::Local,
-            position: [0.0, 20.0],
+            position: crate::schematic_editor::pt([0.0, 20.0]),
             rotation: Rotation::R0,
             attach: None,
         }),
@@ -375,7 +375,7 @@ fn select_all_takes_everything_on_the_sheet() -> TestResult {
             kind: pcbcraft_core::LabelKind::Power {
                 style: PowerStyle::Ground,
             },
-            position: [10.0, 20.0],
+            position: crate::schematic_editor::pt([10.0, 20.0]),
             rotation: Rotation::R0,
             attach: None,
         }),
@@ -388,8 +388,8 @@ fn select_all_takes_everything_on_the_sheet() -> TestResult {
         op(SchematicCommand::AddDrawing {
             sheet: None,
             item: SheetItem::Line {
-                from: [0.0, 30.0],
-                to: [10.0, 30.0],
+                from: crate::schematic_editor::pt([0.0, 30.0]),
+                to: crate::schematic_editor::pt([10.0, 30.0]),
             },
         }),
     )?;
@@ -469,7 +469,12 @@ fn a_group_drag_is_one_undo_step_with_rigid_and_rubber_banded_wires() -> TestRes
     s.engine.apply(revision, sent)?;
     assert_eq!(s.engine.revision(), revision + 1);
     let project = s.engine.project();
-    let moved = |id: Id| project.occurrences_of(id).next().map(|o| o.position);
+    let moved = |id: Id| {
+        project
+            .occurrences_of(id)
+            .next()
+            .map(|o| o.position.to_mm_f64())
+    };
     assert_eq!(moved(s.r1), Some([-9.5, 5.0]));
     assert_eq!(moved(s.r2), Some([14.5, 5.0]));
     assert_eq!(moved(r3), Some([30.0, 15.0]), "R3 stays");
@@ -552,14 +557,14 @@ fn rotate_and_mirror_act_on_the_group_about_its_centre() -> TestResult {
         turned
             .occurrences_of(s.r1)
             .next()
-            .map(|o| (o.position, o.rotation)),
+            .map(|o| (o.position.to_mm_f64(), o.rotation)),
         Some(([0.0, -12.0], Rotation::R90)),
     );
     assert_eq!(
         turned
             .occurrences_of(s.r2)
             .next()
-            .map(|o| (o.position, o.rotation)),
+            .map(|o| (o.position.to_mm_f64(), o.rotation)),
         Some(([0.0, 12.0], Rotation::R90)),
     );
     let wire = turned.wire(s.wire).ok_or("no wire")?;
@@ -571,7 +576,10 @@ fn rotate_and_mirror_act_on_the_group_about_its_centre() -> TestResult {
     s.engine.apply(s.engine.revision(), mirrored)?;
     let flipped = s.engine.project();
     assert_eq!(
-        flipped.occurrences_of(s.r1).next().map(|o| o.position),
+        flipped
+            .occurrences_of(s.r1)
+            .next()
+            .map(|o| o.position.to_mm_f64()),
         Some([12.0, 0.0]),
     );
     Ok(())
@@ -589,7 +597,7 @@ fn delete_opens_the_review_with_the_whole_group() -> TestResult {
                 sheet: None,
                 name: "SIG".into(),
                 kind: pcbcraft_core::LabelKind::Local,
-                position: [0.0, 20.0],
+                position: crate::schematic_editor::pt([0.0, 20.0]),
                 rotation: Rotation::R0,
                 attach: None,
             }),
@@ -787,7 +795,7 @@ fn a_right_click_on_the_group_keeps_it_and_offers_group_actions() -> TestResult 
         .project()
         .occurrences_of(r3)
         .next()
-        .map(|o| o.position)
+        .map(|o| o.position.to_mm_f64())
         .ok_or("R3")?;
     click(
         &mut s.editor,

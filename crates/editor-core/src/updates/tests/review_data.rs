@@ -466,7 +466,7 @@ fn update_pcb_names_its_placements_and_titles_findings_as_issues() -> Result<()>
                     properties: vec![],
                     representation: first.representation,
                     unit: crate::UnitId(1),
-                    position: [x, 0.0],
+                    position: pt([x, 0.0]),
                     physical: first.physical,
                 },
             )),

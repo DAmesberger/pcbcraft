@@ -69,7 +69,7 @@ fn place(engine: &mut Engine, f: &Fixture, designator: &str, at: Point) -> Resul
                 properties: vec![],
                 representation: f.symbol,
                 unit: crate::UnitId(1),
-                position: at,
+                position: pt(at),
                 physical: Some(f.physical()),
             },
         )),
@@ -94,7 +94,7 @@ fn attach(engine: &mut Engine, name: &str, kind: LabelKind, instance: Id, t: u32
             sheet: None,
             name: name.into(),
             kind,
-            position: [at[0] + 5.0, at[1]],
+            position: pt([at[0] + 5.0, at[1]]),
             rotation: Rotation::R0,
             attach: Some(WireTarget::Terminal(ep(instance, t))),
         },
@@ -306,7 +306,7 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
         &mut engine,
         C::MoveLabel {
             label: moved,
-            position: [-20.0, -2.5],
+            position: pt([-20.0, -2.5]),
         },
     )?;
     run(
@@ -350,7 +350,7 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
         &mut engine,
         C::MoveUnit {
             occurrence,
-            position: [10.0, 0.0],
+            position: pt([10.0, 0.0]),
         },
     );
     assert!(
@@ -362,15 +362,15 @@ fn a_moved_or_turned_label_stays_where_a_person_put_it() -> Result<()> {
         &mut engine,
         C::MoveUnit {
             occurrence,
-            position: [0.0, 10.0],
+            position: pt([0.0, 10.0]),
         },
     )?;
     let project = engine.project();
     assert_eq!(
         project.label(moved).map(|l| l.position),
-        Some([-20.0, -2.5])
+        Some(pt([-20.0, -2.5]))
     );
-    assert_eq!(project.label(turned).map(|l| l.position), Some(pin4));
+    assert_eq!(project.label(turned).map(|l| l.position), Some(pt(pin4)));
     // The wire from the moved port to its pin is drawn again.
     let scene = scene::sheet_scene(project, project.sheets.first());
     assert_eq!(scene.wires.len(), 2);
@@ -399,7 +399,7 @@ fn a_self_placing_label_follows_its_pin_and_undo_restores_it() -> Result<()> {
         &mut engine,
         C::MoveUnit {
             occurrence,
-            position: [10.0, -10.0],
+            position: pt([10.0, -10.0]),
         },
     )?;
     assert_eq!(anchor(&engine), Some([10.0, -5.0]));
@@ -411,7 +411,7 @@ fn a_self_placing_label_follows_its_pin_and_undo_restores_it() -> Result<()> {
         .project()
         .label(id)
         .ok_or_else(|| Error::Invalid("label".into()))?;
-    assert_eq!(label.position, [5.0, 5.0]);
+    assert_eq!(label.position, pt([5.0, 5.0]));
     assert!(!label.manual);
     Ok(())
 }

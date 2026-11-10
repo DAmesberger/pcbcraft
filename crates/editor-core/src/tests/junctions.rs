@@ -59,7 +59,7 @@ fn connect_to(engine: &mut Engine, from: WireTarget, to: WireTarget) -> Result<(
 }
 
 fn on(wire: Id, at: Point) -> WireTarget {
-    WireTarget::OnWire(WirePoint { wire, at })
+    WireTarget::OnWire(WirePoint { wire, at: pt(at) })
 }
 
 /// Every wire's drawn path, in sheet millimetres.
@@ -91,7 +91,7 @@ fn a_wire_ending_on_a_segment_splits_it_at_a_junction_and_joins_the_net() -> Res
     let project = engine.project();
     assert_eq!(project.junctions.len(), 1);
     let junction = project.junctions[0].clone();
-    assert_eq!(junction.position, [15.0, 0.0]);
+    assert_eq!(junction.position, pt([15.0, 0.0]));
     let at = WireEnd::junction(junction.id);
     assert_eq!(project.wires.len(), 3);
     assert_eq!(project.wires_at(at).count(), 3);
@@ -145,7 +145,7 @@ fn a_t_on_the_vertical_leg_of_a_bent_wire_keeps_its_path() -> Result<()> {
     // One wire, its bend a corner.
     assert_eq!(
         engine.project().wire(bent).map(|w| w.corners.clone()),
-        Some(vec![crate::model::Corner::sharp([25.0, 30.0])])
+        Some(vec![crate::model::Corner::sharp(pt([25.0, 30.0]))])
     );
     connect_to(&mut engine, ep(u[2], 1).into(), on(bent, [25.0, 40.0]))?;
     let project = engine.project();
@@ -319,7 +319,7 @@ fn junction_wires_round_trip_and_the_command_json_names_targets() -> Result<()> 
     let saved = serde_json::to_value(engine.project())?;
     assert_eq!(
         saved["junctions"],
-        json!([{ "id": junction, "position": [15.0, 0.0] }])
+        json!([{ "id": junction, "position": { "x_nm": 15_000_000, "y_nm": 0 } }])
     );
     assert!(
         saved["wires"]
@@ -343,20 +343,16 @@ fn free(p: Point) -> Result<WireTarget> {
 }
 
 /// `wire.draw` from `from` through `corners` to `to`.
+/// Through the command's JSON form, as MCP sends it: a corner that is not
+/// finite is refused where the command is read.
 fn draw(engine: &mut Engine, from: WireTarget, corners: &[Point], to: WireTarget) -> Result<()> {
-    apply(
-        engine,
-        Operation::Schematic(SchematicCommand::DrawWire {
-            sheet: None,
-            from,
-            corners: corners
-                .iter()
-                .map(|at| crate::model::Corner::sharp(*at))
-                .collect(),
-            to,
-        }),
-    )
-    .map(|_| ())
+    let corners: Vec<_> = corners.iter().map(|at| json!({ "at": at })).collect();
+    let command: SchematicCommand = serde_json::from_value(json!({
+        "command": "wire.draw",
+        "params": { "from": from, "corners": corners, "to": to }
+    }))
+    .map_err(|e| Error::Invalid(e.to_string()))?;
+    apply(engine, Operation::Schematic(command)).map(|_| ())
 }
 
 /// The objects of the free-end findings.
@@ -394,11 +390,11 @@ fn wire_draw_stores_corners_and_a_free_end_that_saves_and_warns() -> Result<()> 
         free_ends(&engine),
         vec![crate::ObjectRef::Wire { id: wire.id }]
     );
-    // Saved as `{"free": [x, y]}` and read back unchanged.
+    // Saved as `{"free": {"x_nm", "y_nm"}}` and read back unchanged.
     let saved = serde_json::to_value(engine.project())?;
     assert!(saved["wires"].as_array().is_some_and(|w| w.iter().any(|w| {
-        w["to"] == json!({ "free": [40.0, 30.0] })
-            && w["corners"] == json!([{ "at": [10.0, 30.0] }])
+        w["to"] == json!({ "free": { "x_nm": 40_000_000, "y_nm": 30_000_000 } })
+            && w["corners"] == json!([{ "at": { "x_nm": 10_000_000, "y_nm": 30_000_000 } }])
     })));
     let bytes = format::encode(&engine.to_file())?;
     let opened = Engine::from_file(format::decode(&bytes)?)?;
@@ -452,7 +448,7 @@ fn free_ends_join_paths_land_as_ts_and_crossings_stay_apart() -> Result<()> {
     draw(&mut engine, ep(u[2], 1).into(), &[], free([10.0, 0.0])?)?;
     let project = engine.project();
     assert_eq!(project.junctions.len(), 1);
-    assert_eq!(project.junctions[0].position, [10.0, 0.0]);
+    assert_eq!(project.junctions[0].position, pt([10.0, 0.0]));
     assert_eq!(project.wires.len(), 3);
     assert!(project.wire(wire).is_some(), "the split wire keeps its ID");
     assert_eq!(dots(&engine), vec![[10.0, 0.0]]);
@@ -501,7 +497,7 @@ fn a_junction_left_with_one_wire_leaves_a_free_end_that_erc_reports() -> Result<
             sheet: None,
             name: "OUT".into(),
             kind: crate::model::LabelKind::Local,
-            position: [50.0, 0.0],
+            position: pt([50.0, 0.0]),
             rotation: Default::default(),
             attach: None,
         }),

@@ -199,7 +199,7 @@ fn the_wire_tool_draws_arc_corners() -> Fallible {
     let drawn = wires.last().ok_or("wire")?;
     assert!(!drawn.corners.is_empty(), "it has a corner: {drawn:?}");
     assert!(
-        drawn.corners.iter().all(|c| c.radius > 0.0),
+        drawn.corners.iter().all(|c| c.radius_mm() > 0.0),
         "rounded: {:?}",
         drawn.corners
     );
@@ -222,7 +222,7 @@ fn update_pcb_opens_its_review_on_the_first_press() -> Fallible {
                     properties: vec![],
                     representation: first.representation,
                     unit: pcbcraft_core::UnitId(1),
-                    position: [30.0, -150.0],
+                    position: crate::schematic_editor::pt([30.0, -150.0]),
                     physical: first.physical,
                 },
             )),

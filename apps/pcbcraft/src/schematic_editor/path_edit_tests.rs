@@ -170,7 +170,7 @@ fn place(engine: &mut Engine, name: &str, at: Point) -> TestResult<Id> {
             properties: vec![],
             representation: first.representation,
             unit: pcbcraft_core::UnitId(1),
-            position: at,
+            position: pt(at),
             physical: None,
         })),
     )?;
@@ -192,7 +192,7 @@ fn draw(
         Operation::Schematic(SchematicCommand::DrawWire {
             sheet: None,
             from,
-            corners: corners.iter().map(|&at| Corner::sharp(at)).collect(),
+            corners: corners.iter().map(|&at| Corner::sharp(pt(at))).collect(),
             to,
         }),
     )?;
@@ -732,7 +732,7 @@ fn a_free_end_merging_two_named_nets_opens_the_review() -> TestResult {
         kind: LabelKind::Power {
             style: PowerStyle::Ground,
         },
-        position: [0.0, 0.0],
+        position: pt([0.0, 0.0]),
         rotation: Default::default(),
         attach: Some(WireTarget::Terminal(on)),
     };
@@ -788,7 +788,7 @@ fn a_symbol_goes_first_over_a_segment() -> TestResult {
     let mut f = fixture()?;
     frame(&mut f.editor, &f.engine, &f.ctx, vec![]);
     let occurrence = f.engine.project().occurrences_of(f.r92).next().ok_or("o")?;
-    let at = occurrence.position;
+    let at = occurrence.position.to_mm_f64();
     let (preview, sent) = drag(&mut f.editor, &f.engine, &f.ctx, at, [at[0], at[1] - 10.0]);
     assert!(preview.is_none());
     assert!(
@@ -884,7 +884,7 @@ fn round(f: &mut Fixture, radius: f64) -> TestResult {
     let operation = Operation::Schematic(SchematicCommand::SetWireRadius {
         wire: f.wire,
         index: 0,
-        radius,
+        radius: nm(radius),
     });
     f.engine.apply(f.engine.revision(), operation)?;
     Ok(())
@@ -926,12 +926,17 @@ fn a_rounded_corner_is_picked_on_its_arc_and_its_dot_sets_the_radius() -> TestRe
     assert_eq!(preview, Some(path.clone()), "the vertices stay");
     match &sent {
         Some(Operation::Schematic(SchematicCommand::SetWireRadius { radius, index, .. })) => {
-            assert_eq!((*index, *radius), (0, 2.5));
+            assert_eq!((*index, *radius), (0, crate::schematic_editor::nm(2.5)));
         }
         other => return Err(format!("{other:?}").into()),
     }
     f.accept(sent, "wire.set_radius")?;
-    let radius = |f: &Fixture| f.engine.project().wire(f.wire).map(|w| w.corners[0].radius);
+    let radius = |f: &Fixture| {
+        f.engine
+            .project()
+            .wire(f.wire)
+            .map(|w| w.corners[0].radius_mm())
+    };
     assert_eq!(radius(&f), Some(2.5));
     assert_eq!(f.path()?, path);
     f.engine.undo()?;
@@ -955,7 +960,7 @@ fn a_rounds_the_picked_corner_and_makes_it_sharp() -> TestResult {
         f.engine
             .project()
             .wire(f.wire)
-            .map(|w| w.corners.iter().map(|c| c.radius).collect())
+            .map(|w| w.corners.iter().map(Corner::radius_mm).collect())
             .unwrap_or_default()
     };
     assert_eq!(radii(&f), vec![0.0, 2.5]);
@@ -997,8 +1002,8 @@ fn the_wire_tool_rounds_new_corners_with_a() -> TestResult {
             assert_eq!(
                 corners,
                 &vec![Corner {
-                    at: [15.0, -415.0],
-                    radius: 2.5
+                    at: pt([15.0, -415.0]),
+                    radius_nm: crate::schematic_editor::nm(2.5)
                 }]
             );
         }
@@ -1041,7 +1046,7 @@ fn a_rounds_a_tight_corner_by_the_most_that_fits() -> TestResult {
         .engine
         .project()
         .wire(f.wire)
-        .map(|w| w.corners[1].radius)
+        .map(|w| w.corners[1].radius_mm())
         .ok_or("wire")?;
     assert!((radius - most).abs() < 1e-3, "{radius} vs {most}");
     let text = format!("{radius:.3}");
@@ -1057,7 +1062,7 @@ fn a_rounds_a_tight_corner_by_the_most_that_fits() -> TestResult {
         Operation::Schematic(SchematicCommand::SetWireRadius {
             wire: f.wire,
             index: 1,
-            radius: most + 10.0,
+            radius: crate::schematic_editor::nm(most + 10.0),
         }),
     );
     assert!(refused.is_err(), "wire.set_radius refuses, not clamps");
@@ -1096,8 +1101,8 @@ fn the_wire_tool_rounds_a_tight_corner_by_the_most_that_fits() -> TestResult {
             assert_eq!(
                 corners,
                 &vec![Corner {
-                    at: [15.0, -415.0],
-                    radius: 5.0
+                    at: pt([15.0, -415.0]),
+                    radius_nm: crate::schematic_editor::nm(5.0)
                 }]
             );
         }

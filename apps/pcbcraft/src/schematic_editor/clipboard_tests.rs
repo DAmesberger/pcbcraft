@@ -84,7 +84,8 @@ fn paste_goes_to_the_pointer_or_moves_on_from_the_last_one() -> TestResult {
         .occurrences_of(r1)
         .next()
         .ok_or("R1")?
-        .position;
+        .position
+        .to_mm_f64();
     let grid = engine.drafts().grid.symbol_mm;
     let offset = |operation: Option<Operation>| match operation {
         Some(Operation::Schematic(SchematicCommand::Paste { offset, .. })) => Some(offset),
@@ -93,9 +94,16 @@ fn paste_goes_to_the_pointer_or_moves_on_from_the_last_one() -> TestResult {
     // Off the canvas: down and to the right of the source.
     assert!(editor.pointer.is_none());
     let first = offset(editor.paste_at_pointer(&engine)).ok_or("no paste")?;
-    assert_eq!(first, [2.0 * grid, -2.0 * grid]);
+    assert_eq!(
+        first,
+        crate::schematic_editor::pt([2.0 * grid, -2.0 * grid])
+    );
     let second = offset(editor.paste_at_pointer(&engine)).ok_or("no paste")?;
-    assert_eq!(second, [4.0 * grid, -4.0 * grid], "moves on");
+    assert_eq!(
+        second,
+        crate::schematic_editor::pt([4.0 * grid, -4.0 * grid]),
+        "moves on"
+    );
     // Over the canvas: the pointer's snapped sheet point.
     frame(
         &mut editor,
@@ -105,7 +113,10 @@ fn paste_goes_to_the_pointer_or_moves_on_from_the_last_one() -> TestResult {
     );
     let at = editor.pointer.ok_or("the pointer is over the canvas")?;
     let shifted = offset(editor.paste_at_pointer(&engine)).ok_or("no paste")?;
-    assert_eq!(shifted, [at[0] - anchor[0], at[1] - anchor[1]]);
+    assert_eq!(
+        shifted,
+        crate::schematic_editor::pt([at[0] - anchor[0], at[1] - anchor[1]])
+    );
     let again = offset(editor.paste_at_pointer(&engine)).ok_or("no paste")?;
     assert_ne!(again, shifted, "the same point again moves on");
     Ok(())
@@ -139,7 +150,7 @@ fn cut_removes_as_delete_does() -> TestResult {
             sheet: None,
             name: "CUTME".into(),
             kind: pcbcraft_core::LabelKind::Local,
-            position: [0.0, 40.0],
+            position: crate::schematic_editor::pt([0.0, 40.0]),
             rotation: Default::default(),
             attach: None,
         }),
@@ -178,8 +189,8 @@ fn what_cannot_be_copied_or_pasted_says_so() -> TestResult {
             sheet: None,
             child: None,
             name: Some("Child".into()),
-            position: [0.0, 60.0],
-            size: [20.0, 10.0],
+            position: crate::schematic_editor::pt([0.0, 60.0]),
+            size: crate::schematic_editor::pt([20.0, 10.0]),
         }),
     )? {
         Outcome::SheetSymbolPlaced { symbol, .. } => symbol,
@@ -229,10 +240,14 @@ fn the_sheet_menu_pastes_where_it_was_opened() -> TestResult {
         .occurrences_of(r1)
         .next()
         .ok_or("R1")?
-        .position;
+        .position
+        .to_mm_f64();
     match editor.menu_act(&engine, Act::Paste(at)) {
         Some(Operation::Schematic(SchematicCommand::Paste { offset, .. })) => {
-            assert_eq!(offset, [at[0] - anchor[0], at[1] - anchor[1]]);
+            assert_eq!(
+                offset,
+                crate::schematic_editor::pt([at[0] - anchor[0], at[1] - anchor[1]])
+            );
         }
         other => return Err(format!("unexpected {other:?}").into()),
     }

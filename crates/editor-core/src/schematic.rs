@@ -11,7 +11,7 @@
 //! what a unit being authored draws and [`scene`] everything else a sheet
 //! draws. See docs/schematic-capture.md.
 use crate::diagnostics::{Error, Result};
-use crate::geometry::{Bounds, Point, Shape, Transform2, point_valid, segment_distance};
+use crate::geometry::{Bounds, Point, Shape, Transform2, segment_distance};
 use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, SheetId, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
 pub use crate::library::graphics::PlacedText;
@@ -26,6 +26,7 @@ use crate::model::{
     ProjectProperties, SheetItem, SheetSide, SymbolOccurrence, Wire, WireEnd,
 };
 use crate::nets;
+use crate::units::{Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -38,6 +39,7 @@ pub mod annotate;
 pub mod arrange;
 pub mod clipboard;
 pub mod labels;
+pub mod params;
 pub mod scene;
 pub mod sheets;
 pub mod wire_edit;
@@ -60,7 +62,9 @@ pub enum SchematicCommand {
     PlaceUnit {
         instance: Id,
         unit: UnitId,
-        position: Point,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
         /// The sheet to draw it on: the sheet of the instance's other
         /// units, else the first sheet, when omitted.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -69,7 +73,12 @@ pub enum SchematicCommand {
     /// Move a unit; wires follow its pins, the segment on each pin staying
     /// horizontal or vertical. A pin moved onto a wire connects to it.
     #[serde(rename = "symbol.move_unit")]
-    MoveUnit { occurrence: Id, position: Point },
+    MoveUnit {
+        occurrence: Id,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
+    },
     /// Move, turn or mirror several sheet objects together, as one undo step.
     /// A wire with both ends in the group keeps its shape and a wire with one
     /// rubber-bands. A symbol brings all its units on the sheet; a named
@@ -113,7 +122,12 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sheet: Option<SheetId>,
         from: WireTarget,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(
+            default,
+            skip_serializing_if = "Vec::is_empty",
+            with = "params::corners"
+        )]
+        #[schemars(with = "Vec<params::CornerParams>")]
         corners: Vec<Corner>,
         to: WireTarget,
     },
@@ -122,7 +136,12 @@ pub enum SchematicCommand {
     #[serde(rename = "wire.set_path")]
     SetWirePath {
         wire: Id,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(
+            default,
+            skip_serializing_if = "Vec::is_empty",
+            with = "params::corners"
+        )]
+        #[schemars(with = "Vec<params::CornerParams>")]
         corners: Vec<Corner>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         from: Option<WireTarget>,
@@ -137,7 +156,9 @@ pub enum SchematicCommand {
     MoveWireCorner {
         wire: Id,
         index: usize,
-        to: Point,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        to: PointNm,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         free: bool,
     },
@@ -147,10 +168,21 @@ pub enum SchematicCommand {
     /// to the side of +x. Its neighbours stretch; on an attached end a short
     /// perpendicular segment is added.
     #[serde(rename = "wire.move_segment")]
-    MoveWireSegment { wire: Id, index: usize, offset: f64 },
+    MoveWireSegment {
+        wire: Id,
+        index: usize,
+        #[serde(with = "crate::units::length_mm")]
+        #[schemars(with = "crate::units::Length")]
+        offset: Nm,
+    },
     /// Add a corner at `at`, a point on the wire, without changing its shape.
     #[serde(rename = "wire.insert_corner")]
-    InsertWireCorner { wire: Id, at: Point },
+    InsertWireCorner {
+        wire: Id,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        at: PointNm,
+    },
     /// Remove corner `index`, merging its two segments; the result may slant.
     #[serde(rename = "wire.remove_corner")]
     RemoveWireCorner { wire: Id, index: usize },
@@ -158,7 +190,13 @@ pub enum SchematicCommand {
     /// segments; 0 makes it sharp. Refused when the radius does not fit the
     /// segments beside the arcs of the neighbouring corners.
     #[serde(rename = "wire.set_radius")]
-    SetWireRadius { wire: Id, index: usize, radius: f64 },
+    SetWireRadius {
+        wire: Id,
+        index: usize,
+        #[serde(with = "crate::units::length_mm")]
+        #[schemars(with = "crate::units::Length")]
+        radius: Nm,
+    },
     /// Remove segment `index`: the wire splits in two, with free ends at the
     /// gap. A segment at the end of the wire shortens it instead.
     #[serde(rename = "wire.remove_segment")]
@@ -183,7 +221,9 @@ pub enum SchematicCommand {
         /// The first sheet when omitted.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sheet: Option<SheetId>,
-        position: Point,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
     },
     /// Remove a junction point where straight wires pass through it, so a
     /// crossing stops joining. Each pair of wires leaving it in opposite
@@ -201,7 +241,9 @@ pub enum SchematicCommand {
     MoveUnitToSheet {
         occurrence: Id,
         sheet: SheetId,
-        position: Point,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
     },
     /// Place a net label or power port. `attach` wires it on placement: a
     /// point on a wire splits the wire at the label; a terminal, junction,
@@ -213,7 +255,9 @@ pub enum SchematicCommand {
         sheet: Option<SheetId>,
         name: String,
         kind: LabelKind,
-        position: Point,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
         #[serde(default)]
         rotation: Rotation,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,7 +265,12 @@ pub enum SchematicCommand {
     },
     /// Move a label to `position`: presentation only; wires follow.
     #[serde(rename = "label.move")]
-    MoveLabel { label: Id, position: Point },
+    MoveLabel {
+        label: Id,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
+    },
     /// Rename, change the kind of, or turn a label. A name or kind change
     /// may join or split nets.
     #[serde(rename = "label.edit")]
@@ -277,15 +326,29 @@ pub enum SchematicCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
         /// Top-left corner.
-        position: Point,
-        size: Point,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        size: PointNm,
     },
     /// Move a sheet symbol to `position`.
     #[serde(rename = "sheet_symbol.move")]
-    MoveSheetSymbol { symbol: Id, position: Point },
+    MoveSheetSymbol {
+        symbol: Id,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        position: PointNm,
+    },
     /// Resize a sheet symbol; `size` is its width and height in mm.
     #[serde(rename = "sheet_symbol.resize")]
-    ResizeSheetSymbol { symbol: Id, size: Point },
+    ResizeSheetSymbol {
+        symbol: Id,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        size: PointNm,
+    },
     /// Point a sheet symbol at another child sheet.
     #[serde(rename = "sheet_symbol.set_child")]
     SetSheetChild { symbol: Id, child: SheetId },
@@ -304,7 +367,9 @@ pub enum SchematicCommand {
         #[serde(default)]
         shape: PortShape,
         side: SheetSide,
-        offset: f64,
+        #[serde(with = "crate::units::length_mm")]
+        #[schemars(with = "crate::units::Length")]
+        offset: Nm,
     },
     /// Change a sheet pin's name, shape, side or offset; omitted fields stay.
     #[serde(rename = "sheet_pin.edit")]
@@ -316,8 +381,13 @@ pub enum SchematicCommand {
         shape: Option<PortShape>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         side: Option<SheetSide>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        offset: Option<f64>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "crate::units::option_length_mm"
+        )]
+        #[schemars(with = "Option<crate::units::Length>")]
+        offset: Option<Nm>,
     },
     /// Remove a sheet pin.
     #[serde(rename = "sheet_pin.remove")]
@@ -327,11 +397,18 @@ pub enum SchematicCommand {
     AddDrawing {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sheet: Option<SheetId>,
+        #[serde(with = "params::sheet_item")]
+        #[schemars(with = "params::SheetItemParams")]
         item: SheetItem,
     },
     /// Replace a drawing's item.
     #[serde(rename = "drawing.edit")]
-    EditDrawing { drawing: Id, item: SheetItem },
+    EditDrawing {
+        drawing: Id,
+        #[serde(with = "params::sheet_item")]
+        #[schemars(with = "params::SheetItemParams")]
+        item: SheetItem,
+    },
     /// Remove a drawing.
     #[serde(rename = "drawing.remove")]
     RemoveDrawing { drawing: Id },
@@ -371,7 +448,9 @@ pub enum SchematicCommand {
         sheet: Option<SheetId>,
         clip: Box<SheetClip>,
         /// Added to every position, in mm.
-        offset: Point,
+        #[serde(with = "crate::units::point_mm")]
+        #[schemars(with = "[crate::units::Length; 2]")]
+        offset: PointNm,
     },
 }
 
@@ -437,6 +516,15 @@ pub enum Applied {
     Drawing(Id),
     Annotated(Vec<Renumbered>),
     Pasted(Pasted),
+}
+
+/// Why a sheet point is refused.
+pub(crate) const POINT_RANGE: &str = "Schematic position must be finite and within ±2000 mm.";
+
+/// A computed sheet point as the document stores it, in whole nanometres:
+/// the one crossing from the millimetres schematic geometry computes in.
+pub(crate) fn sheet_point(p: Point) -> Result<PointNm> {
+    PointNm::from_mm_f64_rounded(p).map_err(|_| invalid(POINT_RANGE))
 }
 
 fn invalid(message: &str) -> Error {
@@ -534,13 +622,28 @@ fn apply_command(
             index,
             to,
             free,
-        } => none(wire_edit::apply_move_corner(project, wire, index, to, free)),
+        } => none(wire_edit::apply_move_corner(
+            project,
+            wire,
+            index,
+            to.to_mm_f64(),
+            free,
+        )),
         C::MoveWireSegment {
             wire,
             index,
             offset,
-        } => none(wire_edit::apply_move_segment(project, wire, index, offset)),
-        C::InsertWireCorner { wire, at } => none(wire_edit::apply_insert_corner(project, wire, at)),
+        } => none(wire_edit::apply_move_segment(
+            project,
+            wire,
+            index,
+            offset.to_mm_f64(),
+        )),
+        C::InsertWireCorner { wire, at } => none(wire_edit::apply_insert_corner(
+            project,
+            wire,
+            at.to_mm_f64(),
+        )),
         C::RemoveWireCorner { wire, index } => {
             none(wire_edit::apply_remove_corner(project, wire, index))
         }
@@ -555,7 +658,8 @@ fn apply_command(
         C::MoveWireEnd { wire, end, to } => none(wire_edit::apply_move_end(project, wire, end, to)),
         C::Disconnect { wire } => none(disconnect(project, wire)),
         C::PlaceJunction { sheet, position } => {
-            wiring::place_junction(project, sheet.unwrap_or(first), position).map(Applied::Junction)
+            wiring::place_junction(project, sheet.unwrap_or(first), position.to_mm_f64())
+                .map(Applied::Junction)
         }
         C::RemoveJunction { junction } => none(wiring::remove_junction(project, junction)),
         C::RenameNet { net, name } => none(rename_net(project, net, name)),
@@ -680,7 +784,7 @@ pub fn place_unit(
     project: &mut Project,
     instance: Id,
     unit: UnitId,
-    position: Point,
+    position: PointNm,
 ) -> Result<Id> {
     place_units(project, instance, &[(unit, position)], None)?
         .first()
@@ -694,7 +798,7 @@ pub fn place_unit(
 pub fn place_units(
     project: &mut Project,
     instance: Id,
-    units: &[(UnitId, Point)],
+    units: &[(UnitId, PointNm)],
     sheet: Option<SheetId>,
 ) -> Result<Vec<Id>> {
     if project.instance(instance).is_none() {
@@ -713,12 +817,7 @@ pub fn place_units(
     Ok(placed)
 }
 
-pub fn move_unit(project: &mut Project, occurrence: Id, position: Point) -> Result<()> {
-    if !point_valid(position) {
-        return Err(invalid(
-            "Schematic position must be finite and within ±10000 mm.",
-        ));
-    }
+pub fn move_unit(project: &mut Project, occurrence: Id, position: PointNm) -> Result<()> {
     project
         .occurrences
         .iter_mut()
@@ -909,8 +1008,8 @@ pub fn connect(project: &mut Project, from: WireTarget, to: WireTarget) -> Resul
         .get(1..path.len().saturating_sub(1))
         .unwrap_or_default()
         .iter()
-        .map(|at| Corner::sharp(*at))
-        .collect();
+        .map(|at| Corner::sharp_mm(*at))
+        .collect::<crate::diagnostics::Result<_>>()?;
     add_wire(project, sheet, from, corners, to).map(|_| ())
 }
 
@@ -964,11 +1063,6 @@ pub fn draw_wire(
 ) -> Result<Id> {
     if corners.len() > MAX_CORNERS {
         return Err(Error::Limit("A wire has at most 256 corners.".into()));
-    }
-    if !corners.iter().all(|c| point_valid(c.at)) {
-        return Err(invalid(
-            "Schematic position must be finite and within ±10000 mm.",
-        ));
     }
     if !wiring::radii_valid(&corners) {
         return Err(wire_edit::bad_radius());
@@ -1076,7 +1170,7 @@ pub fn validate(project: &Project) -> Result<()> {
 /// through it.
 pub fn occurrence_transform(occurrence: &SymbolOccurrence) -> Transform2 {
     Transform2 {
-        translate: occurrence.position,
+        translate: occurrence.position.to_mm_f64(),
         rotation_deg: occurrence.rotation.degrees(),
         mirror: occurrence.mirror,
     }

@@ -441,7 +441,7 @@ fn place_mcu(engine: &mut Engine, m: &Mcu, designator: &str, y: f64) -> Result<I
             properties: vec![],
             representation: m.symbol,
             unit: UnitId(1),
-            position: [0.0, y],
+            position: pt([0.0, y]),
             physical: Some(m.choice(m.b1)),
         })),
     )? {

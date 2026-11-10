@@ -12,11 +12,12 @@
 use super::wiring::{self, WirePoint, WireTarget};
 use super::{PlacedUnit, Result, connect, invalid, not_found, placed_unit};
 use crate::diagnostics::Error;
-use crate::geometry::{Bounds, Point, point_valid};
+use crate::geometry::{Bounds, Point};
 use crate::ids::{Endpoint, Id, SheetId, TerminalId};
 use crate::library::Rotation;
 use crate::model::{Junction, Label, LabelKind, PowerStyle, Project, WireEnd};
 use crate::nets;
+use crate::units::PointNm;
 
 /// Labels and power ports a project holds.
 pub const MAX_LABELS: usize = 16384;
@@ -36,22 +37,12 @@ pub(super) fn check_sheet(project: &Project, sheet: SheetId) -> Result<()> {
         .ok_or_else(|| not_found("Unknown sheet."))
 }
 
-pub(super) fn check_point(p: Point) -> Result<()> {
-    if point_valid(p) {
-        Ok(())
-    } else {
-        Err(invalid(
-            "Schematic position must be finite and within ±10000 mm.",
-        ))
-    }
-}
-
 /// What `label.place` puts down.
 pub struct NewLabel {
     pub sheet: SheetId,
     pub name: String,
     pub kind: LabelKind,
-    pub position: Point,
+    pub position: PointNm,
     pub rotation: Rotation,
     pub attach: Option<WireTarget>,
 }
@@ -63,7 +54,7 @@ pub struct NewLabel {
 pub fn place(project: &mut Project, new: NewLabel) -> Result<Id> {
     check_name(&new.name)?;
     check_sheet(project, new.sheet)?;
-    check_point(new.position)?;
+    let position = new.position;
     if project.labels.len() >= MAX_LABELS {
         return Err(Error::Limit(
             "This edition supports at most 16384 labels.".into(),
@@ -75,7 +66,7 @@ pub fn place(project: &mut Project, new: NewLabel) -> Result<Id> {
         sheet: new.sheet,
         name: new.name,
         kind: new.kind,
-        position: new.position,
+        position,
         rotation: new.rotation,
         // Attached to a pin, it places itself; anywhere else it stays
         // where it was put.
@@ -84,6 +75,7 @@ pub fn place(project: &mut Project, new: NewLabel) -> Result<Id> {
     match new.attach {
         Some(WireTarget::OnWire(point)) => {
             let (at, _, end) = wiring::on_path(project, point)?;
+            let at = super::sheet_point(at)?;
             label.position = at;
             project.labels.push(label);
             match end {
@@ -126,8 +118,7 @@ fn label_mut(project: &mut Project, id: Id) -> Result<&mut Label> {
 /// Presentation: wires on the label follow it. Joins by name are unchanged.
 /// A label that placed itself keeps the way it faced and stays where it is
 /// put from now on.
-pub fn move_to(project: &mut Project, id: Id, position: Point) -> Result<()> {
-    check_point(position)?;
+pub fn move_to(project: &mut Project, id: Id, position: PointNm) -> Result<()> {
     let rotation = current_rotation(project, id)?;
     let label = label_mut(project, id)?;
     label.position = position;
@@ -166,7 +157,7 @@ pub fn edit(
         label.manual = true;
     }
     if let Some(at) = at {
-        label.position = at;
+        label.position = super::sheet_point(at)?;
     }
     Ok(())
 }
@@ -197,7 +188,7 @@ pub fn attached_pin(project: &Project, label: &Label) -> Option<Endpoint> {
 pub fn anchor(project: &Project, label: &Label) -> Point {
     attached_pin(project, label)
         .and_then(|e| super::pin_position(project, e))
-        .unwrap_or(label.position)
+        .unwrap_or_else(|| label.position.to_mm_f64())
 }
 
 /// The axis pointing away from a placed pin's symbol: from where the pin
@@ -313,6 +304,7 @@ pub(super) fn detach_point(
             "This edition supports at most 16384 junctions.".into(),
         ));
     }
+    let position = super::sheet_point(position)?;
     let junction = project.allocate()?;
     project.junctions.push(Junction {
         id: junction,

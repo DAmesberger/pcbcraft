@@ -619,7 +619,7 @@ impl Engine {
                     properties: vec![],
                     representation: lineages.symbol.id,
                     unit: UnitId(1),
-                    position: [column * 40.0, -row * 40.0],
+                    position: units::PointNm::from_mm_f64_rounded([column * 40.0, -row * 40.0])?,
                     physical: Some(PhysicalChoice {
                         binding: lineages.binding.id,
                         footprint: lineages.footprint.id,
@@ -663,7 +663,7 @@ impl Engine {
                                     sheet: None,
                                     name: (*name).into(),
                                     kind: model::LabelKind::Local,
-                                    position,
+                                    position: units::PointNm::from_mm_f64_rounded(position)?,
                                     rotation: Default::default(),
                                     attach: Some(end.into()),
                                 }),
@@ -830,6 +830,7 @@ impl Engine {
         )?;
         let mut placed = Vec::new();
         for position in [[-12.0, 0.0], [12.0, 0.0]] {
+            let position = units::PointNm::from_mm_f64_rounded(position)?;
             let outcome = engine.apply(
                 engine.revision,
                 Operation::Instance(InstanceCommand::Place(instances::NewInstance {

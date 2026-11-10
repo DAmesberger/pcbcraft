@@ -13,3 +13,6 @@ serde_json.workspace = true
 # Parses Rust for the UI container gate (MIT OR Apache-2.0; already in the tree).
 syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
+# Reads and rewrites `.pcbcraft` containers for `convert-v1` (MIT; the
+# version and features pcbcraft-io uses).
+zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }

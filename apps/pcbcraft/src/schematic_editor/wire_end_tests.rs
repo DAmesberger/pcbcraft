@@ -130,7 +130,7 @@ fn ported() -> TestResult<(Engine, Id, Id, Id)> {
                 properties: vec![],
                 representation: first.representation,
                 unit: pcbcraft_core::UnitId(1),
-                position: at,
+                position: pt(at),
                 physical: None,
             })),
         )?;
@@ -148,7 +148,7 @@ fn ported() -> TestResult<(Engine, Id, Id, Id)> {
             kind: LabelKind::Power {
                 style: PowerStyle::Ground,
             },
-            position: [0.0, -400.0],
+            position: pt([0.0, -400.0]),
             rotation: Default::default(),
             attach: Some(WireTarget::Terminal(ep(ids[0], 2))),
         }),
@@ -333,7 +333,7 @@ fn cancelling_a_wire_review_returns_to_the_drawing() -> TestResult {
             sheet: None,
             name: "VBUS".into(),
             kind: LabelKind::Local,
-            position: [0.0, -430.0],
+            position: pt([0.0, -430.0]),
             rotation: Default::default(),
             attach: Some(WireTarget::Terminal(ep(r91, 2))),
         }),

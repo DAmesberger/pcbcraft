@@ -1,5 +1,5 @@
 use super::*;
-use crate::tests::support::{by_designator, demo_fixture, ep};
+use crate::tests::support::{by_designator, demo_fixture, ep, pt};
 use crate::{Engine, Operation, PadId, TerminalId, UnitId, instances, nets};
 
 pub(crate) fn ids() -> Result<(Id, Id)> {
@@ -93,7 +93,7 @@ fn sync_adds_missing_instances_without_moving_or_ripping_up() -> Result<()> {
             properties: vec![],
             representation: f.symbol,
             unit: UnitId(1),
-            position: [40.0, 0.0],
+            position: pt([40.0, 0.0]),
             physical: Some(f.physical()),
         },
     )?;

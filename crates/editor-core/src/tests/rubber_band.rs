@@ -6,7 +6,7 @@
 //! not change. The canvas previews a drag with the same core function.
 use super::support::*;
 use crate::library::Rotation;
-use crate::model::{LabelKind, PortShape, SheetSide};
+use crate::model::{Corner, LabelKind, PortShape, SheetSide};
 use crate::schematic::{self, SchematicCommand as C, WireTarget, wire_edit};
 use crate::{Engine, Error, Id, Operation, Outcome, Point, Result};
 
@@ -46,7 +46,7 @@ fn run(engine: &mut Engine, command: C) -> Result<Outcome> {
 /// The one wire's corners.
 fn corners(engine: &Engine) -> Result<Vec<Point>> {
     match &engine.project().wires[..] {
-        [wire] => Ok(wire.corners.iter().map(|c| c.at).collect()),
+        [wire] => Ok(wire.corners.iter().map(Corner::at_mm).collect()),
         wires => Err(Error::Invalid(format!("expected one wire, got {wires:?}"))),
     }
 }
@@ -156,7 +156,7 @@ fn a_moved_part_keeps_its_wires_orthogonal() -> Result<()> {
             &mut engine,
             C::MoveUnit {
                 occurrence,
-                position: to,
+                position: pt(to),
             },
         )?;
         assert_eq!(corners(&engine)?, after, "{case}");
@@ -225,7 +225,7 @@ fn a_moved_label_drags_its_wire_along() -> Result<()> {
             kind: LabelKind::Global {
                 shape: PortShape::Bidirectional,
             },
-            position: [20.0, 10.0],
+            position: pt([20.0, 10.0]),
             rotation: Rotation::R0,
             attach: None,
         },
@@ -249,7 +249,7 @@ fn a_moved_label_drags_its_wire_along() -> Result<()> {
         &mut engine,
         C::MoveLabel {
             label,
-            position: [25.0, 15.0],
+            position: pt([25.0, 15.0]),
         },
     )?;
     // The label's vertical segment stays vertical; its corner slides.
@@ -274,8 +274,8 @@ fn a_moved_sheet_symbol_drags_the_wires_on_all_its_pins() -> Result<()> {
             sheet: None,
             child: None,
             name: Some("Sensor".into()),
-            position: [60.0, -30.0],
-            size: [30.0, 20.0],
+            position: pt([60.0, -30.0]),
+            size: pt([30.0, 20.0]),
         },
     )? {
         Outcome::SheetSymbolPlaced { symbol, .. } => symbol,
@@ -290,7 +290,7 @@ fn a_moved_sheet_symbol_drags_the_wires_on_all_its_pins() -> Result<()> {
                 name: name.into(),
                 shape: PortShape::Input,
                 side: SheetSide::Left,
-                offset,
+                offset: nm(offset),
             },
         )? {
             Outcome::SheetPinsAdded { pins: added } => pins.extend(added),
@@ -314,7 +314,7 @@ fn a_moved_sheet_symbol_drags_the_wires_on_all_its_pins() -> Result<()> {
         engine
             .project()
             .wires_at(from)
-            .map(|w| w.corners.iter().map(|c| c.at).collect())
+            .map(|w| w.corners.iter().map(Corner::at_mm).collect())
             .collect()
     };
     // U1.2 (25, −35) runs straight to A (60, −35); U2.2 (25, −50) turns up
@@ -336,7 +336,7 @@ fn a_moved_sheet_symbol_drags_the_wires_on_all_its_pins() -> Result<()> {
         &mut engine,
         C::MoveSheetSymbol {
             symbol,
-            position: [70.0, -25.0],
+            position: pt([70.0, -25.0]),
         },
     )?;
     // A straight wire steps once, keeping A's segment horizontal; the
@@ -369,7 +369,7 @@ fn a_free_end_does_not_move() -> Result<()> {
         C::DrawWire {
             sheet: None,
             from: ep(u1, 2).into(),
-            corners: vec![crate::model::Corner::sharp([20.0, 0.0])],
+            corners: vec![crate::model::Corner::sharp(pt([20.0, 0.0]))],
             to: WireTarget::Free(
                 crate::model::FreeEnd::new([20.0, 10.0]).ok_or(Error::Invalid("free".into()))?,
             ),
@@ -379,7 +379,7 @@ fn a_free_end_does_not_move() -> Result<()> {
         &mut engine,
         C::MoveUnit {
             occurrence,
-            position: [0.0, -5.0],
+            position: pt([0.0, -5.0]),
         },
     )?;
     let [(_, path)] = &paths(&engine)[..] else {
