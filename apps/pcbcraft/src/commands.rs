@@ -1706,7 +1706,7 @@ fn defaults() -> Vec<Command> {
         .keywords("outline edge cutout sketch"),
         key(
             "pcb.cancel",
-            "Cancel the tool or gesture",
+            "Cancel the tool or gesture, else deselect",
             C::PcbLayout,
             Chord::key(K::Escape),
         ),

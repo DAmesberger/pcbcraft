@@ -57,7 +57,7 @@ fn badges_resolve_context_and_shadowing() -> Result<(), String> {
     let free = free_rows(&registry, &active(Context::PcbLayout), false, &["view.fit"]);
     assert!(
         free.iter()
-            .any(|(_, what)| what == "Cancel the tool or gesture")
+            .any(|(_, what)| what == "Cancel the tool or gesture, else deselect")
     );
     assert!(free.iter().any(|(_, what)| what == "View from bottom"));
     assert!(

@@ -65,6 +65,8 @@ pub(crate) mod net_classes;
 mod pair_tests;
 mod pair_tool;
 mod part_place;
+#[cfg(test)]
+mod pick_tests;
 mod placement_card;
 mod production;
 #[cfg(test)]
@@ -1566,6 +1568,15 @@ impl PcbEditor {
                 self.finish_route();
                 self.route.ended = false;
             } else if end || crate::keys::pressed(ui.ctx(), "pcb.cancel") {
+                // With Select and nothing under way, Esc clears the
+                // selection; otherwise it ends the tool or gesture first.
+                let idle = self.tool == Tool::Select
+                    && self.drag.is_none()
+                    && self.track_drag.is_none()
+                    && self.fill_drag.is_none();
+                if idle {
+                    self.set_selection(None, None, None);
+                }
                 self.end_route();
                 self.cancel_drag();
                 self.discard_staged();
@@ -2049,7 +2060,9 @@ impl PcbEditor {
     }
 
     /// What a click at `at` picks: a visible pad, via, track, part body,
-    /// then fill.
+    /// then fill. A track picks within `tolerance` (a few pixels) of its
+    /// copper, so a thin one is easy to hit; the active layer's tracks
+    /// come first, then the one whose copper is nearest, topmost on a tie.
     fn hit_at(
         &self,
         project: &Project,
@@ -2059,13 +2072,27 @@ impl PcbEditor {
     ) -> menu::Hit {
         use menu::Hit;
         let layers = self.seen();
+        let track = project
+            .tracks
+            .iter()
+            .rev()
+            .filter(|track| {
+                layers.copper_layer(track.layer) && layout::track_contains(track, at, tolerance)
+            })
+            .min_by(|a, b| {
+                let gap = |t: &pcbcraft_core::Track| {
+                    (pcbcraft_core::geometry::segment_distance(at, t.start, t.end) - t.width / 2.0)
+                        .max(0.0)
+                };
+                (a.layer != self.layer)
+                    .cmp(&(b.layer != self.layer))
+                    .then(gap(a).total_cmp(&gap(b)))
+            });
         if let Some(pad) = self.pick_pad(at, |p| layers.pad(p)) {
             Hit::Pad(pad.instance, pad.net)
         } else if let Some(via) = self.pick_via(project, at) {
             Hit::Via(via.id, via.net)
-        } else if let Some(track) = project.tracks.iter().rev().find(|track| {
-            layers.copper_layer(track.layer) && layout::track_contains(track, at, 0.0)
-        }) {
+        } else if let Some(track) = track {
             Hit::Track(track.id, track.net)
         } else if let Some(instance) = self.pick_instance(project, at, tolerance, metric) {
             Hit::Part(instance)
