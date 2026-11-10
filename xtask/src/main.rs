@@ -1,6 +1,7 @@
 mod clean_room;
 mod connectivity;
 mod core_modules;
+mod f64_lengths;
 mod layers;
 mod licences;
 mod raw_keys;
@@ -54,6 +55,7 @@ fn run() -> Result<()> {
             layers::check()?;
             core_modules::check()?;
             connectivity::check()?;
+            f64_lengths::check()?;
             licences::check()?;
             clean_room::check()?;
             ui_containers::check()?;
@@ -82,13 +84,14 @@ fn run() -> Result<()> {
         "layers" => layers::check(),
         "core-modules" => core_modules::check(),
         "connectivity" => connectivity::check(),
+        "f64-lengths" => f64_lengths::check(),
         "clean-room" => clean_room::check(),
         "licences --check" => licences::check(),
         "ui-containers" => ui_containers::check(),
         "ui-forms" => ui_forms::check(),
         "raw-keys" => raw_keys::check(),
         _ => Err(
-            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity \
+            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
              | licences --check | clean-room | ui-containers | ui-forms | raw-keys"
                 .into(),
         ),

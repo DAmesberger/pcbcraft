@@ -21,6 +21,7 @@ use crate::library::{
     Published,
 };
 use crate::model::Project;
+use crate::units::{LengthUnit, parse_length};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -108,8 +109,6 @@ pub struct ModelReport {
 
 /// Pitch values within this distance match, mm.
 const PITCH_TOLERANCE_MM: f64 = 0.005;
-/// Millimetres per mil.
-const MM_PER_MIL: f64 = 0.0254;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Flag {
@@ -158,18 +157,10 @@ fn op_value(value: &str) -> (Op, &str) {
     (Op::Eq, value.strip_prefix('=').unwrap_or(value))
 }
 
-/// A length in mm: a number with an optional `mm` or `mil` suffix.
+/// A positive length in mm: a number in mm or with a unit (`50mil`).
 fn length_mm(text: &str) -> Option<f64> {
-    let text = text.trim();
-    let (number, scale) = if let Some(n) = text.strip_suffix("mil") {
-        (n, MM_PER_MIL)
-    } else if let Some(n) = text.strip_suffix("mm") {
-        (n, 1.0)
-    } else {
-        (text, 1.0)
-    };
-    let value: f64 = number.trim().parse().ok()?;
-    (value.is_finite() && value > 0.0 && value <= 10_000.0).then_some(value * scale)
+    let mm = parse_length(text, LengthUnit::Mm).ok()?.to_mm_f64();
+    (mm > 0.0).then_some(mm)
 }
 
 fn filter(token: &str) -> Result<Option<Filter>> {

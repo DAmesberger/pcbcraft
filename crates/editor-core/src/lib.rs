@@ -34,6 +34,7 @@ pub mod scripting;
 pub mod shared;
 #[cfg(test)]
 mod tests;
+pub mod units;
 pub mod updates;
 pub mod validate;
 pub use commands::{InstanceCommand, LibraryCommand, OffGridPin, Outcome};

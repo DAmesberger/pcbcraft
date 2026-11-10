@@ -19,6 +19,7 @@ const MAP: &[(&str, &[&str])] = &[
     ("shared", &[]),
     ("diagnostics", &["ids"]),
     ("quantity", &["diagnostics"]),
+    ("units", &["diagnostics", "quantity"]),
     ("fields", &["ids", "diagnostics", "quantity"]),
     ("functions", &["ids", "diagnostics"]),
     ("materials", &["diagnostics"]),
@@ -150,6 +151,7 @@ const MAP: &[(&str, &[&str])] = &[
             "ids",
             "diagnostics",
             "quantity",
+            "units",
             "fields",
             "library",
             "model",
@@ -222,6 +224,7 @@ const BELOW_UPDATES: &[&str] = &[
     "ids",
     "diagnostics",
     "quantity",
+    "units",
     "fields",
     "functions",
     "library",
@@ -245,6 +248,7 @@ const BELOW_COMMANDS: &[&str] = &[
     "ids",
     "diagnostics",
     "quantity",
+    "units",
     "fields",
     "functions",
     "library",
@@ -460,7 +464,7 @@ fn declared_modules(src: &Path) -> Result<Vec<String>> {
 }
 
 /// `src/<module>.rs` and every non-test file under `src/<module>/`.
-fn module_files(src: &Path, module: &str) -> Result<Vec<PathBuf>> {
+pub(crate) fn module_files(src: &Path, module: &str) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let single = src.join(format!("{module}.rs"));
     if single.is_file() {
@@ -497,7 +501,7 @@ fn collect(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn read(path: &Path) -> Result<String> {
+pub(crate) fn read(path: &Path) -> Result<String> {
     if fs::metadata(path)?.len() > MAX_FILE_BYTES {
         return Err(format!("{} exceeds the size limit", path.display()).into());
     }
