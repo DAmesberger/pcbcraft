@@ -205,7 +205,7 @@ fn is_angle(d: &PartDimension) -> bool {
 }
 
 /// A dimension's value as the card shows it.
-fn value_text(d: &PartDimension) -> String {
+pub(super) fn value_text(d: &PartDimension) -> String {
     let unit = if is_angle(d) { "°" } else { "mm" };
     match &d.value {
         Some(DimValue::Fixed(v)) if unit == "°" => format!("{}°", kit::number_text(*v)),
@@ -217,7 +217,7 @@ fn value_text(d: &PartDimension) -> String {
 }
 
 /// The value typed into a dimension's field, or why it is not one.
-fn typed_value(
+pub(super) fn typed_value(
     project: &Project,
     d: &PartDimension,
     text: &str,

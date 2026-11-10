@@ -611,7 +611,7 @@ S5 built picking in PCB 3D and the dimension display there.
 
 - Only `Distance` is made. Angles and the 3D display of non-distance relations are not drawn.
 - Picks reach every model kind but glTF since S4 (§16). Housing faces are S9.
-- A dimension's text cannot be dragged, and the 3D label cannot be edited in place. Values are edited in the Placement card.
+- A dimension's text cannot be dragged. Since §19 the 3D label is edited in place as well as in the Placement card.
 
 ## 16. S4 notes
 
@@ -684,3 +684,13 @@ The cold build pays once per process for each generated model's standalone desig
 - **Refusals name the reference in words.** `TraceRequest::words` carries how the reference reads ("J1 · top face", `dimensions::model_feature_words`), and the host's refusals lead with it: "J1 · top face is parallel to the board; pick an edge of it", "J1 · front-right edge is not parallel to the board; pick a vertex of it". An untraced face is named by its height (top, bottom) or side, an untraced edge by the corner it is picked at. A missing face or edge reads "… is no longer on the 3D model; pick it again"; the faces an agent may pick instead, by persistent name, follow in a second sentence, which the app does not show and a stored note does not keep.
 - **Whole messages.** The tool card's refusal wraps (`kit::refusal_wrapped`) instead of showing one clipped line with a tooltip over the hint. The update review's lines wrap too, with Show on the first row.
 - **Flush parts win over the board edge.** Over a part's body, board edges are not candidates, so a click on J1's front face picks J1 (its face, or its own edge within reach), not the board edge J1 stands flush on. Off the parts, board edges are taken within Solidcraft's 6 points, as part edges are.
+
+## 19. Dimensions edited in 3D
+
+After the fourth demo, part dimensions read as CAD dimensions in PCB 3D, and their values are edited at the label (`pcb_editor/dimension_3d.rs`).
+
+- **Drawn.** The view draws the selected part's dimensions, the selected one, the one being edited, and every one while the Dimension tool is on. Extension lines start on the references (`view::shown`: a face's or edge's trace at the part's seat, an origin, the board edge). A dark rim under the lines keeps them readable over the board. The references of the hovered or selected dimension are traced in its colour. Labels stand level on screen, on the board's inner side, and step clear of each other, as Solidcraft stacks sketch dimension texts.
+- **Selected and deleted.** A click on a label, or within 4 points of a line, selects the dimension and its part (shared with Layout and the card). Delete or Backspace (`pcb.dimension-delete`, PCB › 3D) sends `layout.dimension_delete`, one undo step.
+- **Edited in place.** A double-click, or one click on a label with the Dimension tool (Solidcraft's rule), opens the value at the label with the whole value selected. It takes what the card takes (`1 mm`, `width / 2`). Enter sends one `layout.dimension_edit`. A field-level or engine refusal stays at the label in words, with the text kept. Esc or a click elsewhere closes it.
+- **While the model updates.** The dimensions are drawn from the document, so during the in-place model update (the Updating chip) the dimension already shows its new value at the part's new place. The part's mesh follows when the update lands.
+- **Test.** `app::dimension_3d_tests::j1s_dimensions_are_drawn_and_edited_in_place_in_3d`.

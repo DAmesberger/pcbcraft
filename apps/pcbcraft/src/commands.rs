@@ -1648,6 +1648,13 @@ fn defaults() -> Vec<Command> {
             C::Pcb3d,
             Chord::key(K::Escape),
         ),
+        key(
+            "pcb.dimension-delete",
+            "Delete the selected dimension",
+            C::Pcb3d,
+            Chord::key(K::Delete),
+        )
+        .also(&[Chord::key(K::Backspace)]),
         tool(
             "pcb.place-part",
             "Place 3D part…",

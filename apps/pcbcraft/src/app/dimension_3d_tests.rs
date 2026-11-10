@@ -882,3 +882,262 @@ fn a_3d_click_selects_after_a_space_was_typed_into_a_field() -> Fallible {
     }
     Ok(())
 }
+
+/// The distance from `p` to the line through `a` and `b` (board mm).
+fn off_line(p: [f64; 3], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    ((p[0] - a[0]) * dy - (p[1] - a[1]) * dx).abs() / dx.hypot(dy)
+}
+
+impl Harness {
+    fn double_click(&mut self, at: egui::Pos2) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // Half a second after any earlier click, as a person pauses.
+        for _ in 0..30 {
+            self.frame(vec![]);
+        }
+        self.frame(vec![egui::Event::PointerMoved(at)]);
+        self.frame(vec![button(true)]);
+        self.frame(vec![button(false)]);
+        self.frame(vec![button(true)]);
+        self.frame(vec![button(false)]);
+        self.frame(vec![]);
+    }
+
+    /// The 3D dimension labelled `label`, as drawn last frame.
+    fn drawn(&self, label: &str) -> Fallible<(pcbcraft_core::Id, egui::Rect, [[f64; 3]; 2])> {
+        let drawn = self.app.pcb.dimensions_drawn();
+        drawn
+            .iter()
+            .find(|d| d.1 == label)
+            .map(|d| (d.0, d.2, d.3))
+            .ok_or_else(|| format!("no dimension reads {label:?}: {drawn:?}").into())
+    }
+}
+
+/// The founder's ask after the demo: J1's dimensions drawn in PCB 3D
+/// between what they measure, and the value edited at the label. With J1
+/// selected, its face dimension runs from the shell's front face to the
+/// board's bottom edge and its origin dimension from J1's origin to the
+/// left edge. A double-click on "0.00 mm" opens it in place, with the
+/// value selected; "1 mm" and Enter move J1 1 mm off the edge in one undo
+/// step, and the dimension shows 1 mm at J1's new place, also while the
+/// model updates. A refused value shows the engine's words at the label
+/// and changes nothing; Esc closes it. A click selects a dimension and
+/// Delete removes it, one undo step.
+#[test]
+fn j1s_dimensions_are_drawn_and_edited_in_place_in_3d() -> Fallible {
+    let _serial = serial();
+    let engine = esp32()?;
+    let project = engine.project();
+    let j1 = project
+        .instances
+        .iter()
+        .find(|i| i.designator == "J1")
+        .map(|i| i.id)
+        .ok_or("no J1")?;
+    let face_dim = project
+        .part_dimensions
+        .iter()
+        .find(|d| {
+            d.refs.iter().any(
+                |r| matches!(r, BoardRef::Part(FeatureRef::Face { placement, .. }) if *placement == j1),
+            )
+        })
+        .ok_or("J1's face dimension")?
+        .id;
+    let trace = project
+        .model_traces
+        .iter()
+        .find(|t| matches!(&t.feature, FeatureRef::Face { placement, .. } if *placement == j1))
+        .and_then(|t| t.geometry)
+        .ok_or("J1's face trace")?;
+    let FeatureGeometry::Line { a, b } = trace else {
+        return Err("the face traces a line".into());
+    };
+    let placement = project.placement_of(j1).ok_or("J1 placed")?.clone();
+    let seat = project
+        .stackup
+        .copper_span(pcbcraft_core::CopperLayer::Top)
+        .map_or(0.0, |s| s.1);
+    let board = project.board();
+    let outline: Vec<[f64; 2]> = std::iter::once(board.outer.start)
+        .chain(board.outer.segments.iter().map(|s| s.to()))
+        .collect();
+    let bottom = outline.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
+    let left = outline.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
+    // The face's trace on the board, with J1 where `at` puts it.
+    let face_at = |at: &pcbcraft_core::Placement| {
+        let to_board = pcbcraft_core::layout::dimensions::view::part_transform(at);
+        (to_board.apply(a), to_board.apply(b))
+    };
+    let (fa, fb) = face_at(&placement);
+    let mid = [(fa[0] + fb[0]) / 2.0, (fa[1] + fb[1]) / 2.0];
+
+    let mut h = Harness::new(engine)?;
+    h.until_shown()?;
+    let items = h.app.scene.selected_items(Some(j1), None, None);
+    h.app
+        .scene
+        .viewport
+        .view_from(pcbcraft_solidcraft::geom::Vec3::new(0.15, -1.0, 0.6));
+    assert!(h.app.scene.viewport.fit_items(&items));
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let screen = |h: &Harness, p: [f64; 3]| h.app.scene.viewport.to_screen(p).ok_or("off screen");
+
+    // Select J1 with a click on its body: both its dimensions are drawn.
+    assert!(h.app.pcb.dimensions_drawn().is_empty(), "nothing selected");
+    let (requests, revision) = (h.app.scene.requests(), h.app.engine.revision());
+    h.click(screen(&h, [mid[0] + 1.0, mid[1] + 2.0, seat + 3.31])?);
+    assert_eq!(h.app.pcb.selected_instance(), Some(j1));
+    let drawn = h.app.pcb.dimensions_drawn();
+    assert_eq!(drawn.len(), 2, "{drawn:?}");
+    // The face dimension: one end on the face's trace at the seat, the
+    // other on the bottom edge.
+    let (id, label_rect, ends) = h.drawn("0.00 mm")?;
+    assert_eq!(id, face_dim);
+    let on_face = ends.iter().any(|e| off_line(*e, fa, fb) < 1e-6);
+    let on_edge = ends.iter().any(|e| (e[1] - bottom).abs() < 1e-6);
+    assert!(on_face && on_edge, "{ends:?}");
+    assert!(ends.iter().all(|e| (e[2] - seat).abs() < 1e-9), "{ends:?}");
+    // The origin dimension: from J1's origin to the left edge, driven by
+    // an expression.
+    let origin = drawn
+        .iter()
+        .find(|d| d.0 != face_dim)
+        .ok_or("the origin dimension")?;
+    assert!(origin.1.starts_with("fx: "), "{}", origin.1);
+    let at_origin = origin.3.iter().any(|e| {
+        (e[0] - placement.position[0]).abs() < 1e-6 && (e[1] - placement.position[1]).abs() < 1e-6
+    });
+    let on_left = origin.3.iter().any(|e| (e[0] - left).abs() < 1e-6);
+    assert!(at_origin && on_left, "{:?}", origin.3);
+    assert_eq!(h.app.scene.requests(), requests, "drawing built a model");
+    assert_eq!(h.app.engine.revision(), revision);
+
+    // A double-click on "0.00 mm" opens it there, the value selected:
+    // typing replaces it.
+    h.double_click(label_rect.center());
+    assert_eq!(h.app.pcb.selected_dimension(), Some(face_dim));
+    assert_eq!(
+        h.app.pcb.dimension_in_place(),
+        Some((face_dim, "0 mm".to_owned(), None))
+    );
+    assert!(h.ctx.text_edit_focused(), "the value takes the keyboard");
+    assert_eq!(h.app.engine.revision(), revision, "opening changes nothing");
+    h.frame(vec![egui::Event::Text("1 mm".into())]);
+    assert_eq!(
+        h.app.pcb.dimension_in_place().map(|e| e.1),
+        Some("1 mm".to_owned())
+    );
+    h.frame(vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+    h.frame(vec![]);
+    let moved = h.app.engine.project().placement_of(j1).ok_or("J1")?.clone();
+    assert!(
+        (moved.position[1] - placement.position[1] - 1.0).abs() < 1e-6,
+        "{} -> {}",
+        placement.position[1],
+        moved.position[1]
+    );
+    assert_eq!(h.app.pcb.dimension_in_place(), None, "committed and closed");
+    // While the model updates, the dimension already reads 1 mm, from the
+    // face's new place to the edge.
+    let (fa, fb) = face_at(&moved);
+    let check = |h: &Harness| -> Fallible {
+        let (_, _, ends) = h.drawn("1.00 mm")?;
+        let on_face = ends.iter().any(|e| off_line(*e, fa, fb) < 1e-6);
+        let on_edge = ends.iter().any(|e| (e[1] - bottom).abs() < 1e-6);
+        assert!(on_face && on_edge, "{ends:?}");
+        let span = (ends[0][1] - ends[1][1]).abs();
+        assert!((span - 1.0).abs() < 1e-6, "{span}");
+        Ok(())
+    };
+    let now = crate::scene::ModelKey::Project(Arc::clone(h.app.engine.project_arc()));
+    assert_eq!(
+        h.app.scene.display(&now),
+        crate::scene::Display::Stale,
+        "the model is updating"
+    );
+    check(&h)?;
+    h.until_shown()?;
+    check(&h)?;
+    // One undo step puts J1 and the value back.
+    let ctx = h.ctx.clone();
+    h.app.run_command(&ctx, "edit.undo");
+    h.until_shown()?;
+    assert_eq!(h.app.engine.project().placement_of(j1), Some(&placement));
+    let (_, label_rect, _) = h.drawn("0.00 mm")?;
+
+    // A value past the board's coordinate range is refused by the engine:
+    // its words show at the label, the text stays, and nothing changes.
+    let revision = h.app.engine.revision();
+    h.double_click(label_rect.center());
+    h.frame(vec![egui::Event::Text("20000 mm".into())]);
+    h.frame(vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let (id, text, why) = h
+        .app
+        .pcb
+        .dimension_in_place()
+        .ok_or("the refused value closed")?;
+    assert_eq!((id, text.as_str()), (face_dim, "20000 mm"));
+    let why = why.ok_or("no refusal at the label")?;
+    assert!(why.contains("out of range"), "{why}");
+    assert!(!why.contains("layout."), "{why}");
+    assert_eq!(h.app.engine.revision(), revision);
+    assert_eq!(h.app.engine.project().placement_of(j1), Some(&placement));
+    // A field-level refusal shows there too, before anything is sent.
+    h.frame(vec![
+        key(egui::Key::A, egui::Modifiers::COMMAND),
+        egui::Event::Text("-2 mm".into()),
+    ]);
+    h.frame(vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+    h.frame(vec![]);
+    let why = h.app.pcb.dimension_in_place().and_then(|e| e.2);
+    assert_eq!(why.as_deref(), Some("A distance is at least 0 mm"));
+    // Esc closes it, unchanged.
+    h.frame(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
+    h.frame(vec![]);
+    assert_eq!(h.app.pcb.dimension_in_place(), None);
+    assert_eq!(h.app.engine.revision(), revision);
+    assert_eq!(h.app.pcb.selected_instance(), Some(j1), "Esc kept J1");
+
+    // A click on the label selects the dimension, and Delete removes it:
+    // one undo step brings it back. (Half a second on, so the click is
+    // not a double-click with the last one.)
+    for _ in 0..30 {
+        h.frame(vec![]);
+    }
+    h.click(label_rect.center());
+    assert_eq!(h.app.pcb.selected_dimension(), Some(face_dim));
+    assert_eq!(
+        h.app.pcb.dimension_in_place(),
+        None,
+        "one click only selects"
+    );
+    h.frame(vec![key(egui::Key::Delete, egui::Modifiers::NONE)]);
+    h.frame(vec![]);
+    let project = h.app.engine.project();
+    assert!(!project.part_dimensions.iter().any(|d| d.id == face_dim));
+    assert!(project.instance(j1).is_some(), "J1 stays");
+    assert_eq!(h.app.pcb.selected_dimension(), None);
+    h.app.run_command(&ctx, "edit.undo");
+    h.frame(vec![]);
+    assert!(
+        h.app
+            .engine
+            .project()
+            .part_dimensions
+            .iter()
+            .any(|d| d.id == face_dim && d.value == Some(DimValue::Fixed(0.0)))
+    );
+    assert_eq!(h.app.engine.project().placement_of(j1), Some(&placement));
+    Ok(())
+}

@@ -27,8 +27,25 @@
 //! upstream, reproduced; MIT, revision 4f3ac07, see ATTRIBUTION.md). A
 //! lost reference is drawn in the error colour and an inexact one in the
 //! warning colour, both dashed and named so in the label, with their
-//! finding on hover. A click on a label selects the dimension: its part is
-//! selected with it, in 2D and in the Properties card too.
+//! finding on hover. While the Dimension tool is on, every part dimension
+//! is drawn. Extension lines start on the two references (a face's or
+//! edge's trace, a part's origin, the board edge), and the references of
+//! the dimension under the pointer or selected are traced in its colour.
+//! Labels stand level on screen and step clear of each other, as
+//! Solidcraft stacks sketch dimension texts.
+//!
+//! **Selecting and editing.** A click on a label or a line selects the
+//! dimension: its part is selected with it, in 2D and in the Properties
+//! card too. Delete (`pcb.dimension-delete`) removes it, one undo step. A
+//! double-click on it, or one click on its label with the Dimension tool,
+//! opens its value in place at the label, as Solidcraft edits a sketch
+//! dimension: the whole value selected, so typing replaces it; a number,
+//! a board parameter or an expression. Enter commits one
+//! `layout.dimension_edit`, one undo step; a refusal stays at the label in
+//! the engine's words with the text kept, and Esc or a click elsewhere
+//! closes it unchanged. The part then moves through the board model's
+//! in-place update; the dimension is drawn from the document, so while
+//! the model updates it already shows the new value at its new place.
 //!
 //! Hover, selection and the camera read the document and the cached meshes
 //! only; nothing here rebuilds geometry or traces a model but a pick.
@@ -48,7 +65,9 @@ use pcbcraft_core::model::dimension::{
     BoardRef, FeatureRef, PadPoint, PartDimension, PartDimensionSpec, PartRelation, ReferenceStatus,
 };
 use pcbcraft_core::{CopperLayer, Engine, Id, Layer, Operation, PadId, Project};
-use pcbcraft_solidcraft::dims::{ConstraintKind, DimFrame, default_text, dim_layout_reaching};
+use pcbcraft_solidcraft::dims::{
+    ConstraintKind, DimFrame, default_text, default_text_offset, dim_layout_reaching,
+};
 use pcbcraft_solidcraft::geom::Vec2;
 use solidcraft_theme::Tokens;
 
@@ -67,9 +86,17 @@ const BOARD_REACH_MM: f64 = 0.05;
 const DECIMALS: u8 = 2;
 /// The value field over the canvas, points wide.
 const FIELD_W: f32 = 120.0;
+/// Points from a dimension line or label that still count as on it
+/// (Solidcraft's `dim_view` hit reach).
+const HIT_PT: f32 = 4.0;
 
 fn field_id() -> egui::Id {
     egui::Id::unique("pcb-3d-dimension-value")
+}
+
+/// The value of a drawn dimension, edited in place.
+fn edit_id() -> egui::Id {
+    egui::Id::unique("pcb-3d-dimension-edit")
 }
 
 /// One reference picked for the dimension being made.
@@ -104,6 +131,60 @@ enum Target {
     },
 }
 
+/// A dimension as drawn last frame, for hover, clicks and its value
+/// edited in place.
+#[derive(Clone, Debug)]
+struct Drawn {
+    id: Id,
+    /// The label's text box (screen).
+    text: Rect,
+    /// Its extension and dimension lines (screen).
+    segs: Vec<[Pos2; 2]>,
+    /// Where its extension lines start, on its two references (board mm);
+    /// what the tests check the drawing against.
+    #[cfg_attr(not(test), allow(dead_code))]
+    ends: [[f64; 3]; 2],
+    /// What the label reads.
+    #[cfg_attr(not(test), allow(dead_code))]
+    label: String,
+}
+
+impl Drawn {
+    fn on_text(&self, p: Pos2) -> bool {
+        self.text.expand(2.0).contains(p)
+    }
+    fn on_line(&self, p: Pos2) -> bool {
+        self.segs.iter().any(|s| seg_dist(p, s[0], s[1]) <= HIT_PT)
+    }
+}
+
+/// How far `p` is from the segment `a`–`b` (points).
+fn seg_dist(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let t = if ab.length_sq() > 0.0 {
+        ((p - a).dot(ab) / ab.length_sq()).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    p.distance(a + ab * t)
+}
+
+/// A drawn dimension's value, open for editing at its label.
+#[derive(Clone, Debug)]
+struct InPlace {
+    id: Id,
+    text: String,
+    /// Frames the field takes the keyboard back in.
+    fresh: u8,
+    /// Something was typed: until then the whole value is selected, so
+    /// the first key replaces it.
+    owned: bool,
+    /// Why the value was refused, by the field or by the engine.
+    error: Option<String>,
+    /// The revision the edit was sent at, until the engine has answered.
+    sent: Option<u64>,
+}
+
 /// The Dimension tool and the drawn dimensions' state.
 #[derive(Default)]
 pub(super) struct Dimension3d {
@@ -116,13 +197,27 @@ pub(super) struct Dimension3d {
     error: Option<String>,
     /// The dimension sent, to select once the engine added it.
     sent: Option<PartDimensionSpec>,
-    /// Dimension labels drawn last frame, for clicks and hover.
-    drawn: Vec<(Id, Rect)>,
+    /// Dimensions drawn last frame, for clicks and hover.
+    drawn: Vec<Drawn>,
     /// Where the draft's text was drawn last frame.
     draft_at: Option<Pos2>,
+    /// A drawn dimension's value being edited in place.
+    edit: Option<InPlace>,
 }
 
 impl Dimension3d {
+    /// The drawn dimension whose label is under `p`.
+    fn hit_text(&self, p: Pos2) -> Option<Id> {
+        self.drawn.iter().rev().find(|d| d.on_text(p)).map(|d| d.id)
+    }
+
+    /// The drawn dimension under `p`: labels first (they lie over the
+    /// lines), then lines.
+    fn hit(&self, p: Pos2) -> Option<Id> {
+        self.hit_text(p)
+            .or_else(|| self.drawn.iter().rev().find(|d| d.on_line(p)).map(|d| d.id))
+    }
+
     fn clear(&mut self) {
         self.picks.clear();
         self.value = None;
@@ -213,20 +308,31 @@ fn arrow(painter: &egui::Painter, tip: Pos2, back: Pos2, colour: egui::Color32) 
     ));
 }
 
+/// How one dimension is drawn: its label, colour and line style.
+struct Look<'a> {
+    label: &'a str,
+    colour: egui::Color32,
+    dashed: bool,
+}
+
 /// Draw one linear dimension in the plane `z` above the board, laid out
-/// by Solidcraft's sketch dimension layout; its text box on screen.
-#[allow(clippy::too_many_arguments)]
+/// by Solidcraft's sketch dimension layout: extension lines from the
+/// measured points, the dimension line with its arrows, and the label
+/// level on screen. A label that would land on one already drawn this
+/// frame (`placed`) steps to the next row across the dimension line, as
+/// Solidcraft's `dim_view::show` stacks sketch dimension texts. Its text
+/// box and its lines on screen.
 fn draw(
     painter: &egui::Painter,
     viewport: &Viewport,
     shown: &Shown,
     z: f64,
     away: [f64; 2],
-    label: &str,
-    colour: egui::Color32,
-    dashed: bool,
-) -> Option<Rect> {
+    look: &Look<'_>,
+    placed: &mut Vec<Rect>,
+) -> Option<(Rect, Vec<[Pos2; 2]>)> {
     let t = Tokens::get();
+    let colour = look.colour;
     let to = |p: Vec2| viewport.to_screen([p.x, p.y, z]);
     let (p0, p1) = (to_vec(shown.from), to_vec(shown.to));
     let frame = DimFrame::Linear {
@@ -245,15 +351,33 @@ fn draw(
         return None;
     }
     let font = FontId::monospace(t.font_body);
-    let galley = painter.layout_no_wrap(label.to_owned(), font, colour);
+    let galley = painter.layout_no_wrap(look.label.to_owned(), font, colour);
     let size = galley.size() + vec2(6.0, 2.0);
     let half = Vec2::new(f64::from(size.x) * 0.5 * px, f64::from(size.y) * 0.5 * px);
-    let text = default_text(&frame, to_vec(away), px);
-    let lay = dim_layout_reaching(&frame, text, px, half, [None, None]);
+    let mut text = default_text(&frame, to_vec(away), px);
+    let mut lay = dim_layout_reaching(&frame, text, px, half, [None, None]);
+    for _ in 0..6 {
+        let Some(at) = to(lay.text) else { break };
+        let here = Rect::from_center_size(at, size).expand(-0.5);
+        if !placed.iter().any(|q| q.expand(-0.5).intersects(here)) {
+            break;
+        }
+        let row = (f64::from(size.y) + 2.0) * px;
+        let base = text.unwrap_or_else(|| default_text_offset(&frame, px));
+        let side = if base.y < 0.0 { -1.0 } else { 1.0 };
+        text = Some(base + Vec2::new(0.0, row * side));
+        lay = dim_layout_reaching(&frame, text, px, half, [None, None]);
+    }
     let stroke = Stroke::new(1.0, colour);
+    // A dark rim under each line keeps it readable over the copper and
+    // the parts' bodies.
+    let rim = Stroke::new(3.0, t.viewport_top.gamma_multiply(0.6));
+    let mut segs = Vec::new();
     for line in &lay.lines {
         let points: Vec<Pos2> = line.iter().filter_map(|q| to(*q)).collect();
-        if dashed {
+        segs.extend(points.windows(2).map(|w| [w[0], w[1]]));
+        painter.add(Shape::line(points.clone(), rim));
+        if look.dashed {
             painter.extend(Shape::dashed_line(&points, stroke, 4.0, 3.0));
         } else {
             painter.add(Shape::line(points, stroke));
@@ -266,13 +390,71 @@ fn draw(
     }
     let centre = to(lay.text)?;
     let rect = Rect::from_center_size(centre, size);
+    placed.push(rect);
     painter.rect_filled(
         rect,
         f32::from(t.radius_sm) / 2.0,
         t.viewport_top.gamma_multiply(0.85),
     );
     painter.galley(rect.min + vec2(3.0, 1.0), galley, colour);
-    Some(rect)
+    Some((rect, segs))
+}
+
+/// Trace a reference's geometry in the plane `z`: a line or arc along
+/// itself, a circle round, a point as a dot.
+fn trace_reference(
+    painter: &egui::Painter,
+    viewport: &Viewport,
+    g: &FeatureGeometry,
+    z: f64,
+    colour: egui::Color32,
+) {
+    let to = |p: [f64; 2]| viewport.to_screen([p[0], p[1], z]);
+    let stroke = Stroke::new(2.0, colour);
+    let points: Vec<[f64; 2]> = match *g {
+        FeatureGeometry::Point { at } => {
+            if let Some(p) = to(at) {
+                painter.circle_filled(p, 3.0, colour);
+            }
+            return;
+        }
+        FeatureGeometry::Line { a, b } => vec![a, b],
+        FeatureGeometry::Arc { a, b, bulge } => arc_points(a, b, bulge),
+        FeatureGeometry::Circle { center, radius } => (0..=48)
+            .map(|i| {
+                let t = std::f64::consts::TAU * f64::from(i) / 48.0;
+                [center[0] + radius * t.cos(), center[1] + radius * t.sin()]
+            })
+            .collect(),
+    };
+    let points: Vec<Pos2> = points.into_iter().filter_map(to).collect();
+    painter.add(Shape::line(points, stroke));
+}
+
+/// Points along a bulge arc from `a` to `b` (`library::Segment::Arc`:
+/// the bulge is the tangent of a quarter of the counter-clockwise sweep).
+fn arc_points(a: [f64; 2], b: [f64; 2], bulge: f64) -> Vec<[f64; 2]> {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let chord = dx.hypot(dy);
+    if !(chord > 1e-12 && bulge.is_finite() && bulge != 0.0) {
+        return vec![a, b];
+    }
+    let sweep = 4.0 * bulge.atan();
+    let radius = chord / (2.0 * (sweep / 2.0).sin());
+    // The centre: from the chord's middle, square to it to the left of
+    // a → b for a counter-clockwise sweep under half a turn.
+    let mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
+    let off = radius * (sweep / 2.0).cos();
+    let n = [-dy / chord, dx / chord];
+    let c = [mid[0] + n[0] * off, mid[1] + n[1] * off];
+    let start = (a[1] - c[1]).atan2(a[0] - c[0]);
+    let r = radius.abs();
+    (0..=24)
+        .map(|i| {
+            let t = start + sweep * f64::from(i) / 24.0;
+            [c[0] + r * t.cos(), c[1] + r * t.sin()]
+        })
+        .collect()
 }
 
 /// A dimension's label: its measured length, "fx:" when an expression
@@ -291,6 +473,49 @@ fn label(value: f64, d: Option<&PartDimension>) -> String {
         "mm",
         DECIMALS,
     )
+}
+
+/// Enter and Esc this frame, for a value field over the view: Enter
+/// commits the value typed, Esc drops it.
+fn field_keys(ui: &Ui) -> (bool, bool) {
+    ui.input(|i| {
+        (
+            i.key_pressed(egui::Key::Enter),
+            i.key_pressed(egui::Key::Escape),
+        )
+    })
+}
+
+/// The middle of the board outline's bounds (board mm).
+fn board_centre(project: &Project) -> [f64; 2] {
+    let board = project.board();
+    let points =
+        std::iter::once(board.outer.start).chain(board.outer.segments.iter().map(|s| s.to()));
+    let (lo, hi) = points.fold(
+        ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]),
+        |(lo, hi), p| {
+            (
+                [lo[0].min(p[0]), lo[1].min(p[1])],
+                [hi[0].max(p[0]), hi[1].max(p[1])],
+            )
+        },
+    );
+    if lo[0].is_finite() && hi[0].is_finite() {
+        [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0]
+    } else {
+        [0.0, 0.0]
+    }
+}
+
+/// The point a dimension's label is put away from: its middle mirrored
+/// through the board's centre, so the label sits on the board's inner
+/// side, readable over the board and clear of the edges the tool picks.
+fn inward(centre: [f64; 2], shown: &Shown) -> [f64; 2] {
+    let mid = [
+        (shown.from[0] + shown.to[0]) / 2.0,
+        (shown.from[1] + shown.to[1]) / 2.0,
+    ];
+    [2.0 * mid[0] - centre[0], 2.0 * mid[1] - centre[1]]
 }
 
 /// The worse of two statuses.
@@ -345,6 +570,28 @@ impl PcbEditor {
     #[cfg(test)]
     pub fn selected_dimension(&self) -> Option<Id> {
         self.dimension
+    }
+
+    /// The dimensions drawn in 3D last frame: id, label, the label's text
+    /// box on screen, and where the extension lines start on the two
+    /// references (board mm).
+    #[cfg(test)]
+    pub fn dimensions_drawn(&self) -> Vec<(Id, String, Rect, [[f64; 3]; 2])> {
+        self.dim3d
+            .drawn
+            .iter()
+            .map(|d| (d.id, d.label.clone(), d.text, d.ends))
+            .collect()
+    }
+
+    /// The value open at a 3D dimension's label: the dimension, the text
+    /// and why it was refused.
+    #[cfg(test)]
+    pub fn dimension_in_place(&self) -> Option<(Id, String, Option<String>)> {
+        self.dim3d
+            .edit
+            .as_ref()
+            .map(|e| (e.id, e.text.clone(), e.error.clone()))
     }
 
     /// Select a part dimension: its part is selected with it.
@@ -642,9 +889,9 @@ impl PcbEditor {
     }
 
     /// PCB 3D's part dimensions, after the view is drawn: the tool's hover,
-    /// picks and value, the dimensions of the selection, and clicks on
-    /// them. `pick` is the view's click this frame. The operation commits a
-    /// new dimension.
+    /// picks and value, the dimensions drawn, clicks on them and the value
+    /// edited in place. `pick` is the view's click this frame. The
+    /// operation commits a new dimension, an edited value or a deletion.
     pub fn board_3d(
         &mut self,
         ui: &mut Ui,
@@ -660,12 +907,13 @@ impl PcbEditor {
             self.dim3d.sent = None;
             self.dim3d.fresh = 2;
         }
+        self.answered(ui.ctx(), engine);
         let armed = self.tool == Tool::Dimension;
         let pointer = ui
             .input(|i| i.pointer.hover_pos())
             .filter(|p| rect.contains(*p) && ui.rect_contains_pointer(rect));
         let over_label = pointer.is_some_and(|p| {
-            self.dim3d.drawn.iter().any(|(_, r)| r.contains(p))
+            self.dim3d.hit_text(p).is_some()
                 || self
                     .dim3d
                     .draft_at
@@ -686,19 +934,38 @@ impl PcbEditor {
                 self.dim3d.clear();
             }
         }
-        // A click: on a label selects its dimension; with the tool, picks;
-        // else selects what is under it, as a Layout click.
+        // Delete removes the selected dimension (never while its value or
+        // a new one's is typed: the field keeps the key).
+        let mut operation = None;
+        if let Some(id) = self.dimension
+            && crate::keys::pressed(ui.ctx(), "pcb.dimension-delete")
+        {
+            self.dim3d.edit = None;
+            operation = Some(Operation::Dimension(DimensionCommand::Delete { id }));
+        }
+        // A click on a dimension selects it, and a double-click opens its
+        // value; with the tool, a click on a label opens it (its lines are
+        // left to the picks). Otherwise the tool picks, or the click
+        // selects what is under it, as a Layout click.
         if let Some(pick) = pick {
             let at = scene.viewport.clicked_at();
-            let on_label = at.and_then(|p| {
-                self.dim3d
-                    .drawn
-                    .iter()
-                    .find(|(_, r)| r.contains(p))
-                    .map(|(id, _)| *id)
+            // A quick third click (after the part's) counts as well.
+            let double = ui.input(|i| {
+                let primary = egui::PointerButton::Primary;
+                i.pointer.button_double_clicked(primary) || i.pointer.button_triple_clicked(primary)
             });
-            if let Some(id) = on_label {
+            let on = at.and_then(|p| {
+                if armed {
+                    self.dim3d.hit_text(p)
+                } else {
+                    self.dim3d.hit(p)
+                }
+            });
+            if let Some(id) = on {
                 self.select_dimension(project, id);
+                if armed || double {
+                    self.open_in_place(project, id);
+                }
             } else if armed {
                 if let Some(at) = at {
                     self.dimension_click(project, scene, at);
@@ -708,25 +975,237 @@ impl PcbEditor {
             }
         }
         let painter = ui.painter_at(rect);
-        self.paint_dimensions_3d(ui, &painter, &scene.viewport, project);
-        self.value_field(ui, project)
+        self.paint_dimensions_3d(ui, &painter, &scene.viewport, project, true);
+        let edited = self.in_place_field(ui, engine);
+        let added = self.value_field(ui, project);
+        operation.or(edited).or(added)
     }
 
-    /// The dimensions of the selected part (and of the selected
-    /// dimension), and the tool's draft.
+    /// PCB 3D while a newer board model is made: the last model stays up,
+    /// and the dimensions are drawn from the document, so an edited value
+    /// shows at once, at the part's new place. Nothing is picked.
+    pub fn board_3d_updating(&mut self, ui: &mut Ui, scene: &SceneController, engine: &Engine) {
+        self.sync(engine);
+        self.answered(ui.ctx(), engine);
+        if let Some(rect) = scene.viewport.rect() {
+            let painter = ui.painter_at(rect);
+            self.paint_dimensions_3d(ui, &painter, &scene.viewport, engine.project(), false);
+        }
+    }
+
+    /// Open a drawn dimension's value at its label: its expression or
+    /// value, all selected. A dimension that only measures, or holds
+    /// without a value, has none to edit.
+    fn open_in_place(&mut self, project: &Project, id: Id) {
+        let Some(d) = project.part_dimensions.iter().find(|d| d.id == id) else {
+            return;
+        };
+        if d.reference || d.value.is_none() {
+            return;
+        }
+        // The tool's picks give way to the value opened.
+        self.dim3d.clear();
+        self.dim3d.edit = Some(InPlace {
+            id,
+            text: super::edge_card::value_text(d),
+            fresh: 3,
+            owned: false,
+            error: None,
+            sent: None,
+        });
+    }
+
+    /// The engine's answer to the value sent last frame: a refusal stays
+    /// at the label with the text kept and selected; an applied edit (or a
+    /// dimension gone) closes the field.
+    fn answered(&mut self, ctx: &egui::Context, engine: &Engine) {
+        let Some(edit) = self.dim3d.edit.as_mut() else {
+            return;
+        };
+        if !engine
+            .project()
+            .part_dimensions
+            .iter()
+            .any(|d| d.id == edit.id)
+        {
+            self.dim3d.edit = None;
+            return;
+        }
+        let Some(revision) = edit.sent else {
+            return;
+        };
+        if let Some(text) = refusal::claim(ctx, Origin::Field(edit_id())) {
+            edit.error = Some(text);
+            edit.sent = None;
+            edit.fresh = 2;
+            edit.owned = false;
+        } else if engine.revision() != revision {
+            self.dim3d.edit = None;
+        }
+    }
+
+    /// The value of a drawn dimension, open at its label: Enter commits one
+    /// `layout.dimension_edit`, Esc or a click elsewhere closes it.
+    fn in_place_field(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
+        let project = engine.project();
+        let edit = self.dim3d.edit.as_mut()?;
+        if edit.sent.is_some() {
+            // Waiting for the engine: the label shows what is stored.
+            return None;
+        }
+        let Some(label) = self
+            .dim3d
+            .drawn
+            .iter()
+            .find(|d| d.id == edit.id)
+            .map(|d| d.text)
+        else {
+            // Not drawn (off the view, or no longer shown): nothing to type
+            // into.
+            self.dim3d.edit = None;
+            return None;
+        };
+        let t = Tokens::get();
+        let r = Rect::from_center_size(
+            label.center(),
+            vec2(FIELD_W.max(label.width() + t.space_8), t.control_height),
+        );
+        let mut text = edit.text.clone();
+        let invalid = edit.error.is_some();
+        let response = ui
+            .scope_builder(
+                egui::UiBuilder::new().max_rect(r).id_salt(edit_id()),
+                |ui| {
+                    kit::text_field(
+                        ui,
+                        "pcb-3d-dimension-edit",
+                        &mut text,
+                        "distance, like 5 mm or width / 2",
+                        invalid,
+                    )
+                },
+            )
+            .inner;
+        if text != edit.text {
+            edit.error = None;
+        }
+        edit.text = text;
+        // Read before any focus request below, which would take the focus
+        // straight back and hide Enter's surrender.
+        let lost = response.lost_focus();
+        if edit.fresh > 0 {
+            edit.fresh -= 1;
+            if !lost {
+                response.request_focus();
+            }
+        }
+        let typed = ui.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Text(_)
+                        | egui::Event::Paste(_)
+                        | egui::Event::Key { pressed: true, .. }
+                )
+            })
+        });
+        edit.owned |= response.changed() || (response.has_focus() && typed);
+        if !edit.owned {
+            // The whole value stays selected until something is typed, so
+            // the first key replaces it (Solidcraft's inline value).
+            let n = edit.text.chars().count();
+            let mut state = egui::TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(0),
+                    egui::text::CCursor::new(n),
+                )));
+            state.store(ui.ctx(), response.id);
+        }
+        if let Some(why) = &edit.error {
+            // The refusal at the label, whole, wrapped under the field.
+            let painter = ui.painter();
+            let galley = painter.layout(
+                why.clone(),
+                FontId::proportional(t.font_small),
+                t.error,
+                FIELD_W * 2.5,
+            );
+            let at = Pos2::new(r.left(), r.bottom() + t.space_2);
+            let back = Rect::from_min_size(at, galley.size() + vec2(t.space_8, t.space_4));
+            painter.rect_filled(back, t.radius_sm, t.panel);
+            painter.rect_stroke(
+                back,
+                t.radius_sm,
+                Stroke::new(1.0, t.error),
+                egui::StrokeKind::Inside,
+            );
+            painter.galley(at + vec2(t.space_4, t.space_2), galley, t.error);
+        }
+        let (enter, escape) = field_keys(ui);
+        if escape || (lost && !enter && edit.fresh == 0) {
+            self.dim3d.edit = None;
+            return None;
+        }
+        if !(lost && enter) {
+            return None;
+        }
+        let d = project.part_dimensions.iter().find(|d| d.id == edit.id)?;
+        match super::edge_card::typed_value(project, d, &edit.text) {
+            Ok(value) if Some(&value) == d.value.as_ref() => {
+                self.dim3d.edit = None;
+                None
+            }
+            Ok(value) => {
+                let mut next = d.clone();
+                next.value = Some(value);
+                edit.sent = Some(engine.revision());
+                edit.error = None;
+                refusal::mark(ui.ctx(), Origin::Field(edit_id()));
+                Some(Operation::Dimension(DimensionCommand::Edit {
+                    dimension: next,
+                }))
+            }
+            Err(why) => {
+                edit.error = Some(why);
+                edit.fresh = 2;
+                edit.owned = false;
+                None
+            }
+        }
+    }
+
+    /// The dimensions drawn: the selected part's and the selected one,
+    /// every one while the Dimension tool is on, and the one being edited;
+    /// then the tool's draft. `live` is false while a newer board model is
+    /// made: no hover then.
     fn paint_dimensions_3d(
         &mut self,
         ui: &Ui,
         painter: &egui::Painter,
         viewport: &Viewport,
         project: &Project,
+        live: bool,
     ) {
         let t = Tokens::get();
         let evaluator = self.shape.evaluator;
-        let hover = ui
-            .input(|i| i.pointer.hover_pos())
-            .filter(|p| painter.clip_rect().contains(*p));
+        let hover = ui.input(|i| i.pointer.hover_pos()).filter(|p| {
+            live && painter.clip_rect().contains(*p)
+                && ui.rect_contains_pointer(painter.clip_rect())
+        });
+        let armed = self.tool == Tool::Dimension;
+        let hovered = hover.and_then(|p| {
+            if armed {
+                self.dim3d.hit_text(p)
+            } else {
+                self.dim3d.hit(p)
+            }
+        });
+        let editing = self.dim3d.edit.as_ref().map(|e| e.id);
         let mut drawn = Vec::new();
+        let mut placed = Vec::new();
+        let centre = board_centre(project);
         let findings = if project.part_dimensions.is_empty() {
             Vec::new()
         } else {
@@ -743,7 +1222,9 @@ impl PcbEditor {
                 },
                 _ => None,
             });
-            let shows = self.dimension == Some(d.id)
+            let shows = armed
+                || self.dimension == Some(d.id)
+                || editing == Some(d.id)
                 || part.is_some_and(|p| self.instance == Some(p) || self.also.contains(&p));
             if !shows {
                 continue;
@@ -762,9 +1243,7 @@ impl PcbEditor {
             };
             let status = worse(sa, sb);
             let z = height(project, a).max(height(project, b));
-            let away = part
-                .and_then(|p| project.placement_of(p))
-                .map_or(shown.from, |p| p.position);
+            let away = inward(centre, &shown);
             let mut text = label(shown.value, Some(d));
             let (colour, dashed) = match status {
                 ReferenceStatus::Lost => {
@@ -777,48 +1256,70 @@ impl PcbEditor {
                 }
                 ReferenceStatus::Resolved => (t.dimension, false),
             };
-            let last = self.dim3d.drawn.iter().find(|(id, _)| *id == d.id);
-            let hot = self.dimension == Some(d.id)
-                || last.is_some_and(|(_, r)| hover.is_some_and(|p| r.contains(p)));
+            let hot =
+                self.dimension == Some(d.id) || hovered == Some(d.id) || editing == Some(d.id);
             let colour = if hot && status == ReferenceStatus::Resolved {
                 t.accent
             } else {
                 colour
             };
-            if let Some(rect) = draw(painter, viewport, &shown, z, away, &text, colour, dashed) {
-                drawn.push((d.id, rect));
-                // A lost or inexact reference says why on hover.
-                if status != ReferenceStatus::Resolved
-                    && let Some(part) = part
-                {
-                    let why: Vec<&str> = findings
-                        .iter()
-                        .filter(|f| {
-                            f.code == dimensions::REFERENCE_LOST
-                                || f.code == dimensions::REFERENCE_INEXACT
-                        })
-                        .filter(|f| {
-                            f.objects.iter().any(|o| {
-                                matches!(o, pcbcraft_core::ObjectRef::Instance { id } if *id == part)
-                            })
-                        })
-                        .map(|f| f.message.as_str())
-                        .collect();
-                    if !why.is_empty() {
-                        ui.interact(
-                            rect,
-                            egui::Id::unique(("pcb-3d-dimension-why", d.id)),
-                            egui::Sense::hover(),
-                        )
-                        .on_hover_text(why.join("\n"));
-                    }
+            if hot {
+                // What it measures between, traced in its colour.
+                for g in [&ga, &gb] {
+                    trace_reference(painter, viewport, g, z, colour);
                 }
             }
+            let look = Look {
+                label: &text,
+                colour,
+                dashed,
+            };
+            let Some((rect, segs)) = draw(painter, viewport, &shown, z, away, &look, &mut placed)
+            else {
+                continue;
+            };
+            // A lost or inexact reference says why on hover.
+            if live
+                && status != ReferenceStatus::Resolved
+                && let Some(part) = part
+            {
+                let why: Vec<&str> = findings
+                    .iter()
+                    .filter(|f| {
+                        f.code == dimensions::REFERENCE_LOST
+                            || f.code == dimensions::REFERENCE_INEXACT
+                    })
+                    .filter(|f| {
+                        f.objects.iter().any(|o| {
+                            matches!(o, pcbcraft_core::ObjectRef::Instance { id } if *id == part)
+                        })
+                    })
+                    .map(|f| f.message.as_str())
+                    .collect();
+                if !why.is_empty() {
+                    ui.interact(
+                        rect,
+                        egui::Id::unique(("pcb-3d-dimension-why", d.id)),
+                        egui::Sense::hover(),
+                    )
+                    .on_hover_text(why.join("\n"));
+                }
+            }
+            drawn.push(Drawn {
+                id: d.id,
+                text: rect,
+                segs,
+                ends: [
+                    [shown.from[0], shown.from[1], z],
+                    [shown.to[0], shown.to[1], z],
+                ],
+                label: text,
+            });
         }
         self.dim3d.drawn = drawn;
         // The draft: the picks so far, and their dimension once measured.
         self.dim3d.draft_at = None;
-        if self.tool == Tool::Dimension {
+        if armed && live {
             for p in &self.dim3d.picks {
                 if let FeatureGeometry::Point { at } | FeatureGeometry::Circle { center: at, .. } =
                     p.geometry
@@ -846,9 +1347,13 @@ impl PcbEditor {
                     _ => None,
                 }
                 .unwrap_or(shown.from);
-                self.dim3d.draft_at =
-                    draw(painter, viewport, &shown, z, away, &text, t.accent, false)
-                        .map(|r| r.center());
+                let look = Look {
+                    label: &text,
+                    colour: t.accent,
+                    dashed: false,
+                };
+                self.dim3d.draft_at = draw(painter, viewport, &shown, z, away, &look, &mut placed)
+                    .map(|(r, _)| r.center());
             }
         }
     }
@@ -886,12 +1391,7 @@ impl PcbEditor {
                 response.request_focus();
             }
         }
-        let (enter, escape) = ui.input(|i| {
-            (
-                i.key_pressed(egui::Key::Enter),
-                i.key_pressed(egui::Key::Escape),
-            )
-        });
+        let (enter, escape) = field_keys(ui);
         if escape {
             self.dim3d.clear();
             return None;

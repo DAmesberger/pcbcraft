@@ -39,7 +39,7 @@ pub mod geom {
 /// dimensions with, as Solidcraft draws sketch dimensions.
 pub mod dims {
     pub use solidcraft_engine::sketch::{
-        ConstraintKind, DimFrame, DimLayout, default_text, dim_layout_reaching,
+        ConstraintKind, DimFrame, DimLayout, default_text, default_text_offset, dim_layout_reaching,
     };
 }
 

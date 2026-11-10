@@ -1135,6 +1135,11 @@ impl App {
             // small chip at the top right; picks on it could name objects
             // that no longer exist, so they are ignored.
             self.scene.viewport.set_hover(None);
+            if self.workspace == Workspace::Pcb {
+                // The dimensions follow the document at once: an edited
+                // value shows at its new place while the model updates.
+                self.pcb.board_3d_updating(ui, &self.scene, &self.engine);
+            }
             updating_chip(ui, area, failed.as_deref());
             return;
         }
