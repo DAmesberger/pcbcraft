@@ -607,8 +607,23 @@ impl PcbEditor {
             let outline = if own(net) { t.body_selected } else { t.accent };
             painter.line_segment([a, b], Stroke::new(1.0, outline.gamma_multiply(share)));
         };
+        // The copper the step adds, at its routed width in Solidcraft's
+        // preview colour for what an operation adds (`preview_add`),
+        // outlined: it reads over a pour of its own layer's colour too.
+        let new_leg = |start: Point, end: Point, width: f64, layer: CopperLayer| {
+            let Some(share) = share(layer) else {
+                return;
+            };
+            let width = (width as f32 * scale).max(1.0);
+            let (a, b) = (screen(start), screen(end));
+            painter.add(Shape::convex_polygon(
+                capsule(a, b, width / 2.0),
+                t.preview_add.gamma_multiply(share),
+                Stroke::new(1.0, t.body_selected.gamma_multiply(share)),
+            ));
+        };
         for r in &edits.add {
-            leg(r.start, r.end, r.width, r.layer, r.net);
+            new_leg(r.start, r.end, r.width, r.layer);
         }
         for track in &edits.replace {
             leg(track.start, track.end, track.width, track.layer, track.net);
@@ -1009,6 +1024,82 @@ mod tests {
         assert!(said.contains("track ends there"), "{said}");
         assert!(said.contains("goes on from its end"), "{said}");
         assert!(said.contains("Undo takes the step back"), "{said}");
+    }
+
+    /// Demo run 3: the step being routed is previewed at its routed width in
+    /// Solidcraft's added-geometry colour, not as a thin line or in its
+    /// layer's copper colour (which a pour of that layer hides).
+    #[test]
+    fn the_routed_step_is_previewed_at_its_width() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = pcbcraft_core::Engine::demo()?;
+        let project = engine.project();
+        let mut editor = PcbEditor {
+            net: Some(1),
+            route_start: Some([5.0, 5.0]),
+            ..PcbEditor::default()
+        };
+        let step = editor.route_step(project, [10.0, 5.0]).ok_or("no step")?;
+        let width = 0.5;
+        let plan = RoutePlan {
+            edits: RouteEditSet {
+                add: vec![layout::RouteRequest {
+                    start: [5.0, 5.0],
+                    end: [10.0, 5.0],
+                    width,
+                    layer: CopperLayer::Top,
+                    net: 1,
+                }],
+                ..RouteEditSet::default()
+            },
+            end: [10.0, 5.0],
+            end_layer: CopperLayer::Top,
+            reached: true,
+            via_placed: false,
+            used: RouteMode::Shove,
+            shoved: vec![],
+            moved_vias: vec![],
+            undo: RouteEditSet::default(),
+            blocked: None,
+            detour_factor: 1.0,
+            note: None,
+        };
+        editor.route.planned = Some((
+            PlanKey::Single(0, RouteStepRequest::of(&step, RouteMode::Shove, true)),
+            Rc::new(Planned::Single(Box::new(plan))),
+        ));
+        let ctx = egui::Context::default();
+        let mut scale = 0.0;
+        let output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+            let view =
+                super::super::board_view(rect, project.board_size, 1.0, egui::Vec2::ZERO, false);
+            scale = view.view.scale;
+            editor.paint_route_preview(ui.painter(), view, project, [10.0, 5.0]);
+        });
+        let t = solidcraft_theme::Tokens::get();
+        let added: Vec<&egui::epaint::PathShape> = output
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                Shape::Path(p) if p.fill == t.preview_add => Some(p),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(added.len(), 1, "one added leg");
+        let across = added[0]
+            .points
+            .iter()
+            .map(|p| p.y)
+            .fold(f32::NEG_INFINITY, f32::max)
+            - added[0]
+                .points
+                .iter()
+                .map(|p| p.y)
+                .fold(f32::INFINITY, f32::min);
+        let expected = width as f32 * scale;
+        assert!(expected > 2.0, "a visible width: {expected}");
+        assert!((across - expected).abs() < 0.5, "{across} vs {expected}");
+        Ok(())
     }
 
     /// Demo run item 9: a shove that moves a via moves its tracks on the

@@ -56,6 +56,8 @@ struct Job {
 /// The form, the running job and its log.
 pub struct DatasheetAssist {
     pub open: bool,
+    /// Scroll the form into view on its next draw (it was just opened).
+    reveal: bool,
     datasheets: String,
     name: String,
     out: String,
@@ -76,6 +78,7 @@ impl Default for DatasheetAssist {
     fn default() -> Self {
         Self {
             open: false,
+            reveal: false,
             datasheets: String::new(),
             name: String::new(),
             out: String::new(),
@@ -102,6 +105,12 @@ struct Plan {
 }
 
 impl DatasheetAssist {
+    /// Open the form, scrolled into view on its next draw.
+    pub fn show(&mut self) {
+        self.open = true;
+        self.reveal = true;
+    }
+
     /// Take the background thread's messages.
     fn poll(&mut self) {
         let Some(job) = &self.job else {
@@ -131,7 +140,19 @@ impl DatasheetAssist {
         if !self.open {
             return;
         }
-        kit::search_heading(ui, "Create from datasheet", 0);
+        let heading = kit::form_heading(ui, "Create from datasheet");
+        self.form(ui);
+        if std::mem::take(&mut self.reveal) {
+            // Just opened: the whole form in view, from its heading.
+            let form = heading.union(egui::Rect::from_min_max(
+                heading.min,
+                egui::pos2(heading.right(), ui.min_rect().bottom()),
+            ));
+            ui.scroll_to_rect(form, Some(egui::Align::TOP));
+        }
+    }
+
+    fn form(&mut self, ui: &mut Ui) {
         kit::note(
             ui,
             "A model reads the datasheets and drafts the component, symbol, package, footprint and 3D model through the Pcbcraft tools. The result is a new project of unreviewed drafts with a review report; nothing is published.",

@@ -340,7 +340,14 @@ impl Viewport {
     }
 
     /// Show a model built on the worker. Its PBR bytes move into the slot.
+    /// A model of another size (the board made wider) that would leave the
+    /// view where the last one was framed in it is fitted again; any other
+    /// new model keeps the camera, and nothing else moves it.
     pub fn set_model(&mut self, mut model: ModelScene) {
+        let board =
+            self.model.is_some() && self.display == pcbcraft_core::geometry::Transform3::IDENTITY;
+        let framed = board && self.frames(&self.bounds);
+        let before = self.model_bounds;
         if !model.bounds.is_empty() {
             self.model_bounds = model.bounds;
         }
@@ -366,9 +373,37 @@ impl Viewport {
         // transform again before drawing.
         self.display = pcbcraft_core::geometry::Transform3::IDENTITY;
         self.refresh_bounds();
+        if framed && self.model_bounds != before && !self.frames(&self.bounds) {
+            self.fit();
+        }
         self.publish_shadows();
         self.publish_highlight();
         self.model_changed_decals();
+    }
+
+    /// Whether every corner of `b` is inside the view, in the view's last
+    /// shape.
+    fn frames(&self, b: &Aabb3) -> bool {
+        if b.is_empty() || !b.min.is_finite() || !b.max.is_finite() {
+            return false;
+        }
+        let aspect = if self.aspect.is_finite() && self.aspect > 1e-3 {
+            self.aspect
+        } else {
+            1.0
+        };
+        let (w, h) = (1000.0 * aspect, 1000.0);
+        let radius = b.diagonal().max(self.bounds.diagonal());
+        (0..8).all(|k| {
+            let p = Vec3::new(
+                if k & 1 == 0 { b.min.x } else { b.max.x },
+                if k & 2 == 0 { b.min.y } else { b.max.y },
+                if k & 4 == 0 { b.min.z } else { b.max.z },
+            );
+            self.camera
+                .to_screen(p, w, h, radius)
+                .is_some_and(|(x, y, _)| (0.0..=w).contains(&x) && (0.0..=h).contains(&y))
+        })
     }
 
     #[cfg(test)]
@@ -1898,6 +1933,48 @@ mod tests {
                     .ok_or_else(|| "behind the eye".to_string())
             })
             .collect()
+    }
+
+    /// Demo run 3: a board made wider than the view is fitted again when
+    /// its model arrives; a model of the same size (an edit elsewhere, or
+    /// the view zoomed in on purpose) keeps the camera.
+    #[test]
+    fn a_board_grown_out_of_view_is_fitted_again() -> Result<(), Box<dyn std::error::Error>> {
+        let (w, h) = (1500.0, 800.0);
+        let built = |grow: f64| -> Result<ModelScene, Box<dyn std::error::Error>> {
+            let mut project = crate::model_scene::tests::demo_project()?;
+            project.board_size[0] *= grow;
+            let model = pcbcraft_solidcraft::project::build(&project)?;
+            Ok(crate::model_scene::build(model.geometry, &model.stack)?)
+        };
+        let mut viewport = demo()?;
+        viewport.aspect = w / h;
+        viewport.fit_to(w / h);
+        viewport.fit_pending = false;
+        let inside = |viewport: &Viewport| -> Result<bool, String> {
+            Ok(corner_shares(viewport, w, h)?
+                .iter()
+                .all(|(x, y)| (0.0..=1.0).contains(x) && (0.0..=1.0).contains(y)))
+        };
+        assert!(inside(&viewport)?);
+        // The same board again: the camera stays.
+        let camera = viewport.camera;
+        viewport.set_model(built(1.0)?);
+        assert_eq!(viewport.camera, camera);
+        // Twice as wide: it would leave the view, so it is fitted.
+        let before = viewport.model_bounds;
+        viewport.set_model(built(2.0)?);
+        assert!(viewport.model_bounds.max.x > before.max.x + 1.0, "grew");
+        viewport.fit_to(w / h);
+        assert!(inside(&viewport)?);
+        // Zoomed in on purpose: a new model of that size keeps the camera.
+        viewport.camera.distance *= 0.3;
+        let zoomed = viewport.camera;
+        viewport.fit_pending = false;
+        viewport.set_model(built(2.0)?);
+        assert_eq!(viewport.camera, zoomed);
+        assert!(!viewport.fit_pending);
+        Ok(())
     }
 
     #[test]

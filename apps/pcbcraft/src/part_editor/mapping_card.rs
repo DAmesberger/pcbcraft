@@ -30,9 +30,9 @@ impl PartEditor {
             std::iter::once((None, "Unmapped".to_owned()))
                 .chain(
                     set.component
-                        .terminals
-                        .iter()
-                        .map(|t| (Some(t.id), t.name.clone())),
+                        .terminal_labels()
+                        .into_iter()
+                        .map(|(id, label)| (Some(id), label)),
                 )
                 .collect();
         let count = set.package.terminals.len();

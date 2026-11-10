@@ -122,10 +122,14 @@ pub fn trace(request: &TraceRequest<'_>) -> Result<Traced> {
         history: !matches!(request.model, TraceModel::Step { .. }),
     };
     match request.feature {
-        FeatureRef::Face { face, .. } => trace_face(state, face, &request.frame, here),
-        FeatureRef::Edge { edge, .. } => trace_edge(state, edge, None, &request.frame, here),
+        FeatureRef::Face { face, .. } => {
+            trace_face(state, face, request.words, &request.frame, here)
+        }
+        FeatureRef::Edge { edge, .. } => {
+            trace_edge(state, edge, request.words, None, &request.frame, here)
+        }
         FeatureRef::Vertex { edge, end, .. } => {
-            trace_edge(state, edge, Some(*end), &request.frame, here)
+            trace_edge(state, edge, request.words, Some(*end), &request.frame, here)
         }
         _ => Err(Error::Invalid(
             "layout.dimension: only faces, edges and vertices are traced on a 3D model".into(),
@@ -350,6 +354,7 @@ fn square_faces(body: &ModelBody, frame: &Transform3) -> String {
 fn trace_face(
     state: &ModelState,
     face: &ModelFaceRef,
+    words: &str,
     frame: &Transform3,
     trust: Trust,
 ) -> Result<Traced> {
@@ -358,7 +363,8 @@ fn trace_face(
     let hit = naming::locate_face_on_body(state, Some(&face.body.0), &face.face.0, pick)
         .ok_or_else(|| {
             Error::NotFound(format!(
-                "layout.dimension_reference: body ‘{}’ of the 3D model has no face ‘{}’ ({})",
+                "layout.dimension_reference: {words} is no longer on the 3D model; pick it \
+                 again. Body ‘{}’ has no face ‘{}’; {}",
                 face.body.0,
                 face.face.0,
                 square_faces(named, frame)
@@ -369,9 +375,8 @@ fn trace_face(
     })?;
     let sloped = || {
         Error::Unsupported(format!(
-            "layout.dimension_sloped: face ‘{}’ has no single trace in the board plane; pick an \
-             edge of it",
-            face.face.0
+            "layout.dimension_sloped: {words} has no single trace in the board plane; pick an \
+             edge of it"
         ))
     };
     let geometry = match face_surface(&b.body, hit.face) {
@@ -379,9 +384,7 @@ fn trace_face(
             let n = frame.apply_vector(arr(normal.vec()));
             if (n[2].abs() - 1.0).abs() <= SQUARE {
                 return Err(Error::Unsupported(format!(
-                    "layout.dimension_sloped: face ‘{}’ is parallel to the board; pick an edge of \
-                     it",
-                    face.face.0
+                    "layout.dimension_sloped: {words} is parallel to the board; pick an edge of it"
                 )));
             }
             if n[2].abs() > SQUARE {
@@ -462,6 +465,7 @@ fn plane_line(
 fn trace_edge(
     state: &ModelState,
     edge: &ModelEdgeRef,
+    words: &str,
     end: Option<End>,
     frame: &Transform3,
     trust: Trust,
@@ -469,7 +473,8 @@ fn trace_edge(
     let b = body(state, &edge.body.0)?;
     let hit = naming::locate_edge(b, &edge.edge.0, vec(edge.pick)).map_err(|why| {
         Error::NotFound(format!(
-            "layout.dimension_reference: body ‘{}’ of the 3D model has no edge ‘{}’: {why}",
+            "layout.dimension_reference: {words} is no longer on the 3D model; pick it again. \
+             Body ‘{}’ has no edge ‘{}’: {why}",
             edge.body.0, edge.edge.0
         ))
     })?;
@@ -496,16 +501,14 @@ fn trace_edge(
         },
         None if !flat => {
             return Err(Error::Unsupported(format!(
-                "layout.dimension_sloped: edge ‘{}’ is not parallel to the board; pick a vertex \
-                 of it",
-                edge.edge.0
+                "layout.dimension_sloped: {words} is not parallel to the board; pick a vertex of \
+                 it"
             )));
         }
         None => edge_trace(b, hit.edge, &points, frame).ok_or_else(|| {
             Error::Unsupported(format!(
-                "layout.dimension_sloped: edge ‘{}’ is neither straight nor circular; pick a \
-                 vertex of it",
-                edge.edge.0
+                "layout.dimension_sloped: {words} is neither straight nor circular; pick a vertex \
+                 of it"
             ))
         })?,
     };

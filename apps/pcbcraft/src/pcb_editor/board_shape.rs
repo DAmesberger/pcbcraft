@@ -1389,15 +1389,31 @@ pub(crate) fn dimension_value_edits(
     board_edits(dims::input_edits(constraint, kind, input, fallback)).map_err(|e| e.to_string())
 }
 
+/// `text` with `unit` after it when it is a bare number ("52" → "52 mm");
+/// anything else as typed.
+fn with_unit(text: &str, unit: ParamUnit) -> String {
+    let suffix = match unit {
+        ParamUnit::Mm => "mm",
+        ParamUnit::Deg => "deg",
+        ParamUnit::Count => return text.to_owned(),
+    };
+    match text.parse::<f64>() {
+        Ok(v) if v.is_finite() => format!("{text} {suffix}"),
+        _ => text.to_owned(),
+    }
+}
+
 /// The parameter edit a parameters row commits, checked against the
-/// other parameters first (syntax, unknown names, units).
+/// other parameters first (syntax, unknown names, units). A bare number
+/// is stored with the parameter's unit ("52" is "52 mm"), as every other
+/// length field shows it.
 pub(crate) fn parameter_edit(
     board: &BoardSketch,
     name: &ParamName,
     expr: &str,
     unit: ParamUnit,
 ) -> std::result::Result<BoardEdit, String> {
-    let expr = Expr(expr.trim().to_owned());
+    let expr = Expr(with_unit(expr.trim(), unit));
     if !expr.valid() {
         return Err("Type an expression".into());
     }

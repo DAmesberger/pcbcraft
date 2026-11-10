@@ -109,6 +109,9 @@ impl PartEditor {
                         ui.add_space(t.space_16);
                         let new = start_new(ui, &mut self.assist);
                         self.assist.ui(ui);
+                        // The page scrolls clear of the canvas's floating
+                        // navigation bar, so its last row is never under it.
+                        ui.add_space(crate::navigation::bar_band());
                         (found.or(recent), new)
                     })
                     .inner
@@ -397,7 +400,7 @@ fn start_new(ui: &mut Ui, assist: &mut super::datasheet_assist::DatasheetAssist)
             .on_hover_text("Draft a part from its datasheets with a model you configure: Claude or any OpenAI-compatible endpoint, local or hosted")
             .clicked()
         {
-            assist.open = true;
+            assist.show();
         }
         ui.add_enabled_ui(false, |ui| {
             ui_kit::button(ui, "Import pinout…", Button::Normal)

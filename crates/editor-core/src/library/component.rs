@@ -93,6 +93,32 @@ impl ComponentDefinition {
     pub fn terminal(&self, id: TerminalId) -> Option<&Terminal> {
         self.terminals.iter().find(|t| t.id == id)
     }
+    /// Every terminal with a label that tells it apart from the others, in
+    /// declaration order: its name, and where several share a name (a
+    /// module's GND terminals are separate connection points), the name
+    /// with its place among them ("GND · 2"). For a list to choose a
+    /// terminal from, where equal names would read as one choice.
+    pub fn terminal_labels(&self) -> Vec<(TerminalId, String)> {
+        let mut count: std::collections::BTreeMap<&str, usize> = Default::default();
+        for t in &self.terminals {
+            *count.entry(t.name.trim()).or_default() += 1;
+        }
+        let mut seen: std::collections::BTreeMap<&str, usize> = Default::default();
+        self.terminals
+            .iter()
+            .map(|t| {
+                let name = t.name.trim();
+                let label = if count.get(name).copied().unwrap_or(0) > 1 {
+                    let n = seen.entry(name).or_default();
+                    *n += 1;
+                    format!("{name} · {n}")
+                } else {
+                    name.to_owned()
+                };
+                (t.id, label)
+            })
+            .collect()
+    }
     /// Every terminal as the function resolver sees it.
     pub fn declarations(&self) -> Vec<TerminalDeclaration<'_>> {
         self.terminals
@@ -422,4 +448,50 @@ pub fn designator_prefix_valid(prefix: &str) -> bool {
 pub(super) fn unique_lineages(ids: impl Iterator<Item = DefinitionId>) -> bool {
     let mut seen = BTreeSet::new();
     ids.into_iter().all(|id| seen.insert(id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Demo run 3: a module's GND and 3V3 terminals are separate
+    /// connection points with one name each; a list to choose from tells
+    /// them apart, and a unique name stays as it is.
+    #[test]
+    fn terminals_sharing_a_name_are_told_apart() {
+        let terminal = |id: u32, name: &str| Terminal {
+            id: TerminalId(id),
+            name: name.into(),
+            class: TerminalClass::DeviceNc,
+        };
+        let component = ComponentDefinition {
+            terminals: vec![
+                terminal(1, "GND"),
+                terminal(2, "GND"),
+                terminal(3, "3V3"),
+                terminal(4, "EN"),
+                terminal(5, "3V3"),
+                terminal(6, "GND"),
+            ],
+            ..ComponentDefinition::default()
+        };
+        let labels: Vec<(u32, String)> = component
+            .terminal_labels()
+            .into_iter()
+            .map(|(id, label)| (id.0, label))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                (1, "GND · 1".to_owned()),
+                (2, "GND · 2".to_owned()),
+                (3, "3V3 · 1".to_owned()),
+                (4, "EN".to_owned()),
+                (5, "3V3 · 2".to_owned()),
+                (6, "GND · 3".to_owned()),
+            ]
+        );
+        let unique: BTreeSet<&str> = labels.iter().map(|(_, l)| l.as_str()).collect();
+        assert_eq!(unique.len(), labels.len());
+    }
 }

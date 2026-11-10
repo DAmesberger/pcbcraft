@@ -424,8 +424,17 @@ impl PcbEditor {
                 board_reach(at),
             )
         };
-        let edges = viewport.edges_near(pos, EDGE_REACH_PT, |g| {
-            g.item.is_none_or(|item| part_of(item).is_some())
+        // What the pointer is over. On a part's body, a board edge flush
+        // with it (J1's front on the bottom edge) is not taken: the part's
+        // face or edges are. A board edge is taken off the parts: over the
+        // board's own bodies, or just off the board.
+        let under = viewport.surface_hit(pos);
+        let over_part = under
+            .and_then(|hit| hit.item)
+            .is_some_and(|item| part_of(item).is_some());
+        let edges = viewport.edges_near(pos, EDGE_REACH_PT, |g| match g.item {
+            Some(item) => part_of(item).is_some(),
+            None => !over_part,
         });
         for e in edges {
             let hovered = Hovered::Edge {
@@ -455,7 +464,7 @@ impl PcbEditor {
                 }
             }
         }
-        let hit: SurfaceHit = viewport.surface_hit(pos)?;
+        let hit: SurfaceHit = under?;
         let face = Hovered::Face {
             geometry: hit.geometry,
             face: hit.face,
@@ -573,7 +582,8 @@ impl PcbEditor {
         let picked = match self.pick_target(project, &target) {
             Ok(p) => p,
             Err(why) => {
-                self.dim3d.error = Some(why);
+                // The host's words follow a code; the card starts a sentence.
+                self.dim3d.error = Some(capital(&why));
                 return;
             }
         };
@@ -945,7 +955,7 @@ impl PcbEditor {
                         );
                     }
                     if let Some(why) = &error {
-                        kit::refusal(ui, why);
+                        kit::refusal_wrapped(ui, why);
                     }
                 })
             })

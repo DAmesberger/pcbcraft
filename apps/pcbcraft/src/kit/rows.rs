@@ -561,6 +561,49 @@ pub fn refusal(ui: &mut Ui, message: &str) -> Response {
     text::hover(response, message, "", cut)
 }
 
+/// Rows a tool card's refusal wraps to before it is cut (with the full
+/// text on hover).
+const REFUSAL_MAX_ROWS: usize = 8;
+
+/// A tool card's refusal: the error band of [`refusal`], with the whole
+/// reason wrapped to the card's width, so a sentence that names parts and
+/// distances is read where it shows, not in a tooltip over the rows below.
+pub fn refusal_wrapped(ui: &mut Ui, message: &str) -> Response {
+    let t = Tokens::get();
+    let font = FontId::proportional(t.font_label);
+    let size = t.font_label;
+    let indent = t.space_6 + size + t.space_6;
+    let width = (ui.available_width() - indent - t.space_6).max(1.0);
+    let galley = text::wrapped(ui, message, font.clone(), t.error, width, REFUSAL_MAX_ROWS);
+    let cut = galley.elided;
+    let row = ui.fonts_mut(|f| f.row_height(&font));
+    let pad = ((t.control_height - row) / 2.0).max(0.0);
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(
+            ui.available_width().max(0.0),
+            (galley.size().y + 2.0 * pad).max(t.control_height),
+        ),
+        Sense::hover(),
+    );
+    ui.painter()
+        .rect_filled(rect, t.radius_sm, t.form_error_fill);
+    severity_glyph(
+        ui.painter(),
+        pos2(
+            rect.left() + t.space_6 + size / 2.0,
+            rect.top() + t.control_height / 2.0,
+        ),
+        size,
+        Level::Error,
+    );
+    ui.painter().galley(
+        pos2(rect.left() + indent, rect.top() + pad),
+        galley,
+        t.error,
+    );
+    text::hover(response, message, "", cut)
+}
+
 #[cfg(test)]
 #[path = "rows_tests.rs"]
 pub(super) mod tests;

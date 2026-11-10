@@ -376,10 +376,20 @@ fn key_cap(ui: &Ui, right: egui::Pos2, label: &str, ink: egui::Color32) -> f32 {
 
 /// A group caption with its count (upstream `CommandSearch::heading`).
 pub fn search_heading(ui: &mut Ui, label: &str, count: usize) {
+    heading_line(ui, &format!("{}  {count}", label.to_uppercase()));
+}
+
+/// A heading in the style of [`search_heading`] for a form, which has no
+/// count. Returns where it is.
+pub fn form_heading(ui: &mut Ui, label: &str) -> egui::Rect {
+    heading_line(ui, &label.to_uppercase())
+}
+
+fn heading_line(ui: &mut Ui, text: &str) -> egui::Rect {
     let t = Tokens::get();
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), t.space_24), Sense::hover());
     let mut job = egui::text::LayoutJob::simple_singleline(
-        format!("{}  {count}", label.to_uppercase()),
+        text.to_owned(),
         type_face::semibold(t.font_small),
         t.form_dim,
     );
@@ -392,6 +402,7 @@ pub fn search_heading(ui: &mut Ui, label: &str, count: usize) {
         galley,
         t.form_dim,
     );
+    r
 }
 
 /// The key-hint footer along the sheet's bottom edge (upstream

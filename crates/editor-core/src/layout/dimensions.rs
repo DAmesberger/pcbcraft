@@ -400,6 +400,9 @@ fn model_words(
             REFERENCE_INEXACT,
             format!("{what} may not be the face it was; pick it again"),
         ),
+        // The host's reason already names it ("J1 · top face is parallel
+        // to the board; …").
+        (_, Some(why)) if why.starts_with(&what) => (REFERENCE_LOST, why),
         (_, Some(why)) => (REFERENCE_LOST, format!("{what} is lost: {why}")),
         (_, None) => (REFERENCE_LOST, format!("{what} is lost")),
     }

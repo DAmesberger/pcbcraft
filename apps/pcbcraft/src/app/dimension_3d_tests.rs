@@ -198,6 +198,20 @@ fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
     }
 }
 
+/// Whether `text` names a face or edge by its persistent Solidcraft name
+/// (`F1:+z`, `F3:-x|F6:blend:…`): an `F`, digits and a colon.
+fn names_a_model_id(text: &str) -> bool {
+    let b = text.as_bytes();
+    (0..b.len()).any(|i| {
+        b[i] == b'F'
+            && (i == 0 || !b[i - 1].is_ascii_alphanumeric())
+            && b[i + 1..]
+                .iter()
+                .position(|c| !c.is_ascii_digit())
+                .is_some_and(|n| n > 0 && b.get(i + 1 + n) == Some(&b':'))
+    })
+}
+
 fn esp32() -> Fallible<Engine> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
@@ -322,6 +336,13 @@ fn a_3d_pick_dimensions_j1_to_the_bottom_edge_in_one_undo_step() -> Fallible {
     assert_eq!(n, 0);
     let error = error.ok_or("the top face was not refused")?;
     assert!(error.contains("pick an edge"), "{error}");
+    // Named in a designer's words, never by its persistent name ("face
+    // ‘F1:+z’").
+    assert!(
+        error.starts_with("J1 · top face is parallel to the board"),
+        "{error}"
+    );
+    assert!(!names_a_model_id(&error), "{error}");
     assert_eq!(h.app.engine.revision(), revision);
     let picks = PICKS.load(Ordering::SeqCst);
 
@@ -501,5 +522,112 @@ fn overview_picks_land_on_edges_and_read_as_words() -> Fallible {
     for words in [j1_words, board_words] {
         assert!(!words.contains(':') && !words.contains('|'), "{words}");
     }
+    Ok(())
+}
+
+/// Demo run 3, finding 4: at overview zoom the board's bottom edge is
+/// taken within Solidcraft's edge reach of it (6 points) all along it,
+/// inside the board and off it, as a part's edge is. J1 stands flush on
+/// that edge: a click on J1's front face picks J1 (its face, or its own
+/// edge near the bottom), never the board edge behind it; the board edge
+/// is still picked just below J1, off the part. Hover is the pick.
+#[test]
+fn board_edges_are_reached_like_part_edges_and_j1_wins_over_its_flush_edge() -> Fallible {
+    let _serial = serial();
+    let engine = esp32()?;
+    let project = engine.project();
+    let j1 = project
+        .instances
+        .iter()
+        .find(|i| i.designator == "J1")
+        .map(|i| i.id)
+        .ok_or("no J1")?;
+    let face = project
+        .model_traces
+        .iter()
+        .find(|t| matches!(&t.feature, FeatureRef::Face { placement, .. } if *placement == j1))
+        .ok_or("J1's face trace")?;
+    let Some(FeatureGeometry::Line { a, b }) = face.geometry else {
+        return Err("the face traces a line".into());
+    };
+    let placement = project.placement_of(j1).ok_or("J1 placed")?.clone();
+    let to_board = pcbcraft_core::layout::dimensions::view::part_transform(&placement);
+    let mid = to_board.apply([(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]);
+    let seat = project
+        .stackup
+        .copper_span(pcbcraft_core::CopperLayer::Top)
+        .map_or(0.0, |s| s.1);
+    let board = project.board();
+    let outline: Vec<[f64; 2]> = std::iter::once(board.outer.start)
+        .chain(board.outer.segments.iter().map(|s| s.to()))
+        .collect();
+    let bottom = outline.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
+    let left = outline.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min);
+    let right = outline
+        .iter()
+        .map(|p| p[0])
+        .fold(f64::NEG_INFINITY, f64::max);
+    let mut h = Harness::new(engine)?;
+    h.until_shown()?;
+    h.app
+        .scene
+        .viewport
+        .view_from(pcbcraft_solidcraft::geom::Vec3::new(0.15, -1.0, 0.8));
+    h.app.scene.viewport.fit();
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let screen = |h: &Harness, p: [f64; 3]| h.app.scene.viewport.to_screen(p).ok_or("off screen");
+    let engine = &h.app.engine;
+    let _ = h.app.pcb.on_tool("dimension", engine);
+    h.frame(vec![]);
+
+    // Along the bottom edge, away from J1: 5 points inside or outside the
+    // board, the edge lights.
+    for x in [left + 3.0, left + 8.0, (left + right) / 2.0, right - 8.0] {
+        if (x - mid[0]).abs() < 8.0 {
+            continue;
+        }
+        let at = screen(&h, [x, bottom, seat])?;
+        for dy in [-5.0, -3.0, 0.0, 3.0, 5.0] {
+            h.frame(vec![egui::Event::PointerMoved(at + egui::vec2(0.0, dy))]);
+            let hovered = h.app.scene.viewport.hovered();
+            assert!(
+                matches!(hovered, Some(Hovered::Edge { .. })),
+                "x {x}, {dy} points: {hovered:?}"
+            );
+        }
+    }
+
+    // J1's front, low on it (where the flush board edge is within reach)
+    // and half way up (the shell's opening): J1 each time.
+    for height in [0.4, 1.6] {
+        let at = screen(&h, [mid[0] + 1.0, mid[1], seat + height])?;
+        h.click(at);
+        let picked = h.app.pcb.dimension_picks();
+        let [(first, said)] = picked.as_slice() else {
+            return Err(format!("{height}: {picked:?} {:?}", h.app.pcb.dimension_draft()).into());
+        };
+        assert!(
+            matches!(first, BoardRef::Part(f) if f.target() == pcbcraft_core::model::board::ConstraintTarget::Placement(j1)),
+            "{height}: {first:?} ({said})"
+        );
+        assert!(said.starts_with("J1 · "), "{said}");
+        // Esc drops the pick for the next one.
+        h.frame(vec![key(egui::Key::Escape, egui::Modifiers::NONE)]);
+        h.frame(vec![]);
+        assert!(h.app.pcb.dimension_picks().is_empty());
+    }
+    // Just below J1, off the part: the board's bottom edge.
+    let below = screen(&h, [mid[0] + 1.0, mid[1], 0.0])? + egui::vec2(0.0, 3.0);
+    h.click(below);
+    let picked = h.app.pcb.dimension_picks();
+    let [(first, said)] = picked.as_slice() else {
+        return Err(format!("below J1: {picked:?}").into());
+    };
+    assert!(
+        matches!(first, BoardRef::Board(SketchRef::Curve(_))),
+        "{first:?}"
+    );
+    assert_eq!(said, "Board · bottom edge");
     Ok(())
 }

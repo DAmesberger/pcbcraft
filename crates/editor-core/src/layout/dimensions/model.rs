@@ -78,6 +78,10 @@ pub struct TraceRequest<'a> {
     /// the ones picked. `false` once the design changed: a name worked out
     /// from geometry is then only `Inexact`.
     pub picked_here: bool,
+    /// The reference in a designer's words ("J1 · top face",
+    /// [`super::model_feature_words`]): what a refusal names it by. Its
+    /// persistent name stays in the reference, never in a message.
+    pub words: &'a str,
 }
 
 /// What the host found for a reference it could trace.
@@ -176,11 +180,13 @@ pub fn pick(
         ModelPicked::Face(face) => FeatureRef::Face { placement, face },
         ModelPicked::Edge(edge) => FeatureRef::Edge { placement, edge },
     };
+    let words = super::model_feature_words(project, &feature);
     let traced = evaluator.trace_model(&TraceRequest {
         model,
         frame,
         feature: &feature,
         picked_here: true,
+        words: &words,
     })?;
     if !traced.geometry.valid() {
         return Err(Error::Invalid(
@@ -351,7 +357,19 @@ pub fn feature_term(
         Some(FeatureGeometry::Line { a, b }) => edge(side(across(a, b), mid(a, b))),
         Some(FeatureGeometry::Point { at }) => format!("{}-{} edge", side(1, at), side(0, at)),
         Some(FeatureGeometry::Arc { .. } | FeatureGeometry::Circle { .. }) => edge("round"),
-        None => edge("model"),
+        // Not traced (a sloped or upright edge, refused): by the corner
+        // of the part it is picked at.
+        None => format!("{}-{} edge", side(1, [p[0], p[1]]), side(0, [p[0], p[1]])),
+    };
+    // An untraced face (one parallel to the board, or sloped, refused): by
+    // its height, else by the side it is picked on.
+    let untraced_face = || match level {
+        Some(level) => format!("{level} face"),
+        None => {
+            let off = |k: usize| (p[k] - centre[k]).abs() / size[k].max(1e-9);
+            let axis = usize::from(off(1) > off(0));
+            format!("{} face", side(axis, [p[0], p[1]]))
+        }
     };
     Some(match f {
         FeatureRef::Face { .. } => match geometry {
@@ -366,7 +384,8 @@ pub fn feature_term(
             }
             Some(FeatureGeometry::Circle { .. }) => "round face".into(),
             Some(FeatureGeometry::Arc { .. }) => "curved face".into(),
-            Some(FeatureGeometry::Point { .. }) | None => "model face".into(),
+            Some(FeatureGeometry::Point { .. }) => "model face".into(),
+            None => untraced_face(),
         },
         FeatureRef::Vertex { end, .. } => format!(
             "{} of the {}",
@@ -399,6 +418,13 @@ fn bytes(project: &Project, model: ModelRef) -> Result<(&ModelDefinition, &[u8])
                 "layout.dimension_model: the 3D model {model} has no bytes in the project"
             ))
         })
+}
+
+/// The first sentence of a refusal: what a person reads. What follows
+/// (the faces an agent may pick instead, by their persistent names) stays
+/// in the refusal itself.
+fn first_sentence(text: &str) -> &str {
+    text.split_once(". ").map_or(text, |(first, _)| first)
 }
 
 /// A note to follow a colon: the sentence's capital dropped ("The 3D model
@@ -456,7 +482,7 @@ fn trace(
             design: picked_on,
             status: ReferenceStatus::Lost,
             geometry: last,
-            note: note(&why.to_string()),
+            note: note(first_sentence(&why.to_string())),
         };
         (trace, Some(why))
     };
@@ -488,11 +514,13 @@ fn trace(
         Err(why) => return Ok(lost(Some(source.package), why)),
     };
     let evaluator = evaluator.ok_or_else(super::needs_evaluator)?;
+    let words = super::model_feature_words(project, feature);
     let found = evaluator.trace_model(&TraceRequest {
         model,
         frame,
         feature,
         picked_here: previous.is_none() || picked_on == Some(key),
+        words: &words,
     });
     Ok(match found {
         Ok(t) if t.geometry.valid() && t.status != ReferenceStatus::Lost => {

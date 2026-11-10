@@ -741,6 +741,17 @@ fn the_board_card_edits_a_board_parameter() -> Fallible {
         crate::pcb_editor::board_shape_ui::sketch_of(engine.project()).ok_or("no sketch")?;
     let edit = parameter_edit(board, &ParamName("width".into()), "90 mm", ParamUnit::Mm)?;
     assert!(matches!(edit, BoardEdit::SetParameter { param } if param.expr.0 == "90 mm"));
+    // Demo run 3: a bare number keeps the unit every other field shows.
+    let edit = parameter_edit(board, &ParamName("width".into()), " 52 ", ParamUnit::Mm)?;
+    assert!(
+        matches!(&edit, BoardEdit::SetParameter { param } if param.expr.0 == "52 mm"),
+        "{edit:?}"
+    );
+    let edit = parameter_edit(board, &ParamName("width".into()), "40 + 12", ParamUnit::Mm)?;
+    assert!(
+        matches!(&edit, BoardEdit::SetParameter { param } if param.expr.0 == "40 + 12"),
+        "an expression is kept as typed: {edit:?}"
+    );
     assert!(
         parameter_edit(
             board,

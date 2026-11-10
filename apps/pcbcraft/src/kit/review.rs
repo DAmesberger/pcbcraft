@@ -230,50 +230,75 @@ impl ReviewPanel<'_> {
     }
 }
 
-/// One clipped body line, with an optional severity glyph before it and an
-/// optional action at the right. Returns whether the action was clicked.
+/// Rows a review line wraps to before it is cut (with the full text on
+/// hover).
+const LINE_MAX_ROWS: usize = 6;
+
+/// One body line, wrapped to the panel's width, with an optional severity
+/// glyph before it and an optional action at the right of its first row.
+/// Returns whether the action was clicked.
 fn glyph_line(ui: &mut Ui, level: Option<Level>, text: &str, action: Option<&str>) -> bool {
     let t = Tokens::get();
-    let (rect, response) = ui.allocate_exact_size(
+    let font = FontId::proportional(t.font_label);
+    let top = ui.available_rect_before_wrap();
+    let first = Rect::from_min_size(
+        top.min,
         vec2(ui.available_width().max(0.0), t.control_height),
+    );
+    let mut left = first.left();
+    if level.is_some() {
+        left += t.font_label + t.space_8;
+    }
+    let mut right = first.right();
+    let mut clicked = false;
+    if let Some(action) = action {
+        // On the first row, beside the text; the row is allocated below.
+        let mut row = ui.new_child(
+            UiBuilder::new()
+                .id_salt(("line_action", action))
+                .max_rect(first)
+                .layout(Layout::right_to_left(Align::Center)),
+        );
+        let button = ui_kit::button(&mut row, action, ui_kit::Button::Enabled(true));
+        clicked = button.clicked();
+        right = button.rect.left() - t.space_8;
+    }
+    let galley = super::text::wrapped(
+        ui,
+        text,
+        font.clone(),
+        t.form_ink,
+        (right - left).max(1.0),
+        LINE_MAX_ROWS,
+    );
+    let cut = galley.elided;
+    let pad = ((t.control_height - ui.fonts_mut(|f| f.row_height(&font))) / 2.0).max(0.0);
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(
+            first.width(),
+            (galley.size().y + 2.0 * pad).max(t.control_height),
+        ),
         Sense::hover(),
     );
-    let mut left = rect.left();
     if let Some(level) = level {
         severity_glyph(
             ui.painter(),
-            pos2(left + t.font_label / 2.0, rect.center().y),
+            pos2(
+                rect.left() + t.font_label / 2.0,
+                rect.top() + t.control_height / 2.0,
+            ),
             t.font_label,
             level,
         );
-        left += t.font_label + t.space_8;
     }
-    let mut right = rect.right();
-    let mut clicked = false;
-    if let Some(action) = action {
-        ui.scope_builder(
-            UiBuilder::new()
-                .id_salt(("line_action", action))
-                .max_rect(rect)
-                .layout(Layout::right_to_left(Align::Center)),
-            |ui| {
-                let button = ui_kit::button(ui, action, ui_kit::Button::Enabled(true));
-                clicked = button.clicked();
-                right = button.rect.left() - t.space_8;
-            },
-        );
-    }
-    let text_rect =
-        Rect::from_min_max(pos2(left, rect.top()), pos2(right.max(left), rect.bottom()));
+    let text_rect = Rect::from_min_size(pos2(left, rect.top() + pad), galley.size());
+    ui.painter().galley(text_rect.min, galley, t.form_ink);
     // The hover covers the text only, so the action keeps its own.
-    super::text::line(
-        ui,
-        response.id.with("text"),
-        text_rect,
+    super::text::hover(
+        ui.interact(text_rect, response.id.with("text"), Sense::hover()),
         text,
         "",
-        FontId::proportional(t.font_label),
-        t.form_ink,
+        cut,
     );
     clicked
 }
@@ -316,6 +341,69 @@ mod tests {
             None,
             "information never gates"
         );
+    }
+
+    /// Demo run 3: the Update review's long lines (the summary, a warning
+    /// with Show, a component change, what the update leaves) wrap in the
+    /// panel instead of being cut, and Show stays on the warning's line.
+    #[test]
+    fn long_review_lines_wrap_instead_of_being_cut() {
+        use crate::kit::rows::tests::{Harness, at, find};
+        use std::cell::Cell;
+        let mut ui = Harness::new(250.0, 900.0);
+        let summary = "Changes 1 component, 2 terminals, 2 pads and 1 instance of U1";
+        let warning = "U1: Part ESP32-S31-WROOM-3 r1 keeps an older revision of its component";
+        let change = "U1: a package terminal now maps to another electrical terminal";
+        let left = "fill GND top needs refilling: the board changed under it";
+        let blockers = [ReviewLine {
+            level: Level::Warning,
+            title: warning.to_owned(),
+            ack: None,
+            locate: true,
+        }];
+        let after = [ReviewLine {
+            level: Level::Warning,
+            title: left.to_owned(),
+            ack: None,
+            locate: false,
+        }];
+        let groups = [ReviewGroup {
+            title: "Component".to_owned(),
+            summary: String::new(),
+            lines: vec![change.to_owned()],
+        }];
+        let action = Cell::new(None);
+        let mut add = |ui: &mut Ui| {
+            let panel = ReviewPanel {
+                id: egui::Id::unique("review-wrap"),
+                icon: "library",
+                title: "Update instances",
+                summary,
+                stale: false,
+                blockers: &blockers,
+                after: &after,
+                groups: &groups,
+                apply: "Apply update",
+                destructive: false,
+            };
+            action.set(panel.show(ui, &mut [][..]));
+        };
+        ui.frame(vec![], &mut add);
+        let painted = ui.frame(vec![], &mut add);
+        for text in [summary, warning, change, left] {
+            let shown = find(&painted, text);
+            assert!(shown.is_some(), "{text}: {painted:?}");
+            let Some(shown) = shown else { return };
+            assert!(!shown.elided, "{text} is shown whole: {shown:?}");
+            assert!(shown.rows > 1, "{text} wraps: {shown:?}");
+            assert!(shown.rect.right() <= 250.0 + 0.5, "{shown:?}");
+        }
+        // Show sits on the warning's first row, and still works.
+        let show = at(&painted, "Show");
+        let first = find(&painted, warning).map_or(0.0, |p| p.rect.top());
+        assert!(show.y < first + 30.0, "{show:?} {first}");
+        ui.click(show, &mut add);
+        assert_eq!(action.get(), Some(ReviewAction::Locate(0)));
     }
 
     #[test]

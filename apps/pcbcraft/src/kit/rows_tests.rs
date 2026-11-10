@@ -268,6 +268,54 @@ fn a_field_error_and_a_refusal_are_one_red_line() {
     }
 }
 
+/// Demo run 3: a tool card's refusal is read in full in the card, wrapped
+/// over several lines, with no tooltip, and the hint line comes below it,
+/// clear of it.
+#[test]
+fn a_tool_cards_refusal_wraps_whole_above_its_hint() {
+    let mut ui = Harness::new(260.0, 500.0);
+    let long = "J1 · top-front edge to the bottom edge (1 mm) conflicts with J1 · front face to \
+                the bottom edge (0 mm), which already holds J1; edit or delete that dimension \
+                instead";
+    let hint_text = "Pick a part's face, edge, hole or pad, or a board edge";
+    let card = ToolCard {
+        icon: "dimension",
+        name: "Dimension",
+        key: "",
+        hint: hint_text,
+        tip: "",
+        finish: None,
+    };
+    let mut add = |ui: &mut Ui| {
+        tool_card(ui, &card, |ui| {
+            refusal_wrapped(ui, long);
+        });
+    };
+    let painted = ui.frame(vec![], &mut add);
+    let refused = find(&painted, long);
+    assert!(refused.is_some(), "{painted:?}");
+    let Some(refused) = refused else { return };
+    assert!(!refused.elided, "the whole sentence shows");
+    assert!(refused.rows > 1, "wrapped: {refused:?}");
+    assert!(refused.rect.right() <= 260.0 + 0.5, "{refused:?}");
+    let hint = find(&painted, hint_text);
+    assert!(hint.is_some(), "{painted:?}");
+    let Some(hint) = hint else { return };
+    assert!(
+        hint.rect.top() >= refused.rect.bottom(),
+        "the hint is below the refusal: {hint:?} {refused:?}"
+    );
+    // Hovering it shows no tooltip over the hint: nothing was cut.
+    let over = refused.rect.center();
+    ui.frame(vec![Event::PointerMoved(over)], &mut add);
+    let painted = ui.frame(vec![], &mut add);
+    assert_eq!(
+        painted.iter().filter(|p| p.text == long).count(),
+        1,
+        "no tooltip repeats it: {painted:?}"
+    );
+}
+
 #[test]
 fn a_tool_card_ends_with_done_and_finishes_through_its_footer() {
     let mut ui = Harness::new(360.0, 400.0);

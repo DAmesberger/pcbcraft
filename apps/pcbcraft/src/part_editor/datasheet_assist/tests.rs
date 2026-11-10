@@ -105,6 +105,70 @@ fn the_start_page_button_opens_the_form() -> Result<(), String> {
     Ok(())
 }
 
+/// Demo run 3: the form opens below a long start page; opening it scrolls
+/// it into view, its heading carries no count, and its last rows clear the
+/// canvas's floating navigation bar.
+#[test]
+fn the_form_opens_in_view() -> Result<(), String> {
+    let ctx = egui::Context::default();
+    solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+    let mut assist = DatasheetAssist::default();
+    let view = 500.0;
+    let page = |ui: &mut Ui, assist: &mut DatasheetAssist| {
+        egui::ScrollArea::vertical()
+            .id_salt("start-page-test")
+            .max_height(view)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // The search and recent lists above it.
+                ui.add_space(380.0);
+                draw(ui, assist);
+                ui.add_space(crate::navigation::bar_band());
+            });
+    };
+    let painted = frame(&ctx, vec![], |ui| page(ui, &mut assist));
+    let button = painted
+        .iter()
+        .find(|(t, r)| t == "Create from datasheet…" && r.bottom() < view)
+        .map(|(_, r)| r.center());
+    let at = button.ok_or("the button is in view, near the bottom")?;
+    let press = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    for events in [
+        vec![egui::Event::PointerMoved(at)],
+        vec![press(true)],
+        vec![press(false)],
+    ] {
+        frame(&ctx, events, |ui| page(ui, &mut assist));
+    }
+    assert!(assist.open);
+    let mut painted = Vec::new();
+    // The scroll eases in over a few frames.
+    for _ in 0..60 {
+        painted = frame(&ctx, vec![], |ui| page(ui, &mut assist));
+    }
+    let heading = painted
+        .iter()
+        .find(|(t, _)| t.starts_with("CREATE FROM DATASHEET"))
+        .ok_or_else(|| format!("the heading: {painted:?}"))?;
+    assert_eq!(heading.0, "CREATE FROM DATASHEET", "no count");
+    assert!(
+        // Unscrolled it would sit near the bottom, past 400.
+        heading.1.top() >= 0.0 && heading.1.top() < view / 2.0,
+        "scrolled to the form's heading: {heading:?}"
+    );
+    let key = painted
+        .iter()
+        .find(|(t, _)| t == "API key")
+        .ok_or_else(|| format!("the key row: {painted:?}"))?;
+    assert!(key.1.bottom() <= view, "the key row is in view: {key:?}");
+    Ok(())
+}
+
 #[test]
 fn progress_and_the_result_arrive_from_the_thread() {
     let (tx, rx) = channel();

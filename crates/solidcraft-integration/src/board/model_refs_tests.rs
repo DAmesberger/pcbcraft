@@ -80,7 +80,30 @@ fn run(bytes: &[u8], feature: &FeatureRef, frame: Transform3) -> Result<Traced> 
         frame,
         feature,
         picked_here: true,
+        words: WORDS,
     })
+}
+
+/// How the tests' references read to a person.
+const WORDS: &str = "U1 · top face";
+
+/// A refusal a person reads names the reference in their words, never by a
+/// persistent name (`F3:-x`, `F6:blend:…`): only what follows its first
+/// sentence, for an agent, may list names.
+fn readable(why: &str) {
+    let first = why.split_once(". ").map_or(why, |(first, _)| first);
+    assert!(first.contains(WORDS), "{why}");
+    let bytes = first.as_bytes();
+    let named = (0..bytes.len()).any(|i| {
+        bytes[i] == b'F'
+            && (i == 0 || !bytes[i - 1].is_ascii_alphanumeric())
+            && bytes[i + 1..]
+                .iter()
+                .position(|b| !b.is_ascii_digit())
+                .is_some_and(|n| n > 0 && bytes.get(i + 1 + n) == Some(&b':'))
+    });
+    assert!(!named, "a persistent name in {first:?}");
+    assert!(!first.contains('‘') && !first.contains('|'), "{first}");
 }
 
 fn close(a: [f64; 2], b: [f64; 2]) -> bool {
@@ -145,12 +168,14 @@ fn sloped_and_flat_faces_are_refused() -> Fallible {
         panic!("{sloped:?}")
     };
     assert!(why.contains("pick an edge"), "{why}");
+    readable(&why);
     let (top, pick) = face_with(&part, &body, plane([0.0, 0.0, 1.0]));
     let flat = run(&bytes, &face_ref(&body, &top, pick), Transform3::IDENTITY);
     let Err(Error::Unsupported(why)) = flat else {
         panic!("{flat:?}")
     };
     assert!(why.contains("parallel to the board"), "{why}");
+    readable(&why);
     Ok(())
 }
 
@@ -170,6 +195,7 @@ fn a_missing_face_is_not_found_and_a_stray_pick_is_inexact() -> Fallible {
         panic!("{gone:?}")
     };
     assert!(why.contains("faces square to the board"), "{why}");
+    readable(&why);
     let (name, _) = face_with(&part, &body, plane([1.0, 0.0, 0.0]));
     let stray = run(
         &bytes,
@@ -230,6 +256,45 @@ fn an_edge_parallel_to_the_board_traces_its_line_and_ends() -> Fallible {
         Transform3::IDENTITY,
     )?;
     assert_eq!(start.geometry, FeatureGeometry::Point { at: a });
+    Ok(())
+}
+
+/// Demo run 3: the upright edge at the box's front-right corner is not
+/// parallel to the board, so it is refused, and the refusal names it in a
+/// designer's words; a name that is gone is refused the same way.
+#[test]
+fn an_upright_or_missing_edge_is_refused_in_words() -> Fallible {
+    let (bytes, body) = boxed();
+    let part = evaluated(&bytes);
+    let b = part.state().bodies.iter().find(|b| b.name == body).unwrap();
+    let mesh = b.mesh();
+    let names = naming::edge_names(b);
+    let i = (0..names.len())
+        .find(|i| {
+            let e = &mesh.edges[*i];
+            e.iter()
+                .all(|p| (p.x - 2.0).abs() < 1e-9 && (p.y + 1.0).abs() < 1e-9)
+        })
+        .unwrap();
+    let upright = |name: &str| FeatureRef::Edge {
+        placement: 1,
+        edge: ModelEdgeRef {
+            body: BodyName(body.clone()),
+            edge: ModelEdgeName(name.into()),
+            pick: arr(mesh.edges[i][0]),
+        },
+    };
+    let refused = run(&bytes, &upright(&names[i]), Transform3::IDENTITY);
+    let Err(Error::Unsupported(why)) = refused else {
+        panic!("{refused:?}")
+    };
+    assert!(why.contains("not parallel to the board"), "{why}");
+    readable(&why);
+    let gone = run(&bytes, &upright("F99:-x|F98:+y"), Transform3::IDENTITY);
+    let Err(Error::NotFound(why)) = gone else {
+        panic!("{gone:?}")
+    };
+    readable(&why);
     Ok(())
 }
 
