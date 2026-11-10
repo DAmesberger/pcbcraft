@@ -325,3 +325,15 @@ Same host and `ci` profile, load average 12–15. `PCBCRAFT_PROFILE_EDIT=width` 
 More tiles cost more than their smaller extrusions save: Solidcraft's evaluation bookkeeping grows with every body made before a feature (`doc evaluate` self time 8.0 s at 4 mm, 2.3 s at 12 mm), while the extrusions stay about 4.3 s at every size.
 
 **What remains.** A refill still evaluates every feature after the first tile it deletes: the later tiles, parts, pads, tracks and the laminate (1,128 SMLib extrusions in the J1 refill, the inner foil-level slabs 0.6 s each), because Solidcraft keys each feature's cached result on the digest of every body made before it. Only a generic Solidcraft change removes that: a feature's cache key built from what it reads (a new-body extrusion reads its sketch and parameters), option c2 above. It needs the founder's go and was not made.
+
+**In the VM** (8 cores, `ci` profile, `PcbcraftSpeedCheck.app` at d08cbb3 with `PCBCRAFT_TIMINGS`; the model worker's own lines), ESP32 example, 3D view open:
+
+| | Before (VM, 10 November, earlier runs) | After |
+| --- | --- | --- |
+| Open in 3D (build) | about 26 s | 17.7 s |
+| Width 40 → 41 mm from the board card (carry adds a track) | full rebuild, about 26 s | 5.3 s, in place (81 commands) |
+| …its 4 fills refilled | rebuilt, 23–27 s | 11.4 s, in place (283 commands) |
+| R2 moved 0.5 mm from the placement card | — | 0.16 s, in place (1 command) |
+| …its stale fills refilled | rebuilt, 23–27 s | 6.0 s, in place (8 commands) |
+
+Selecting R2 and switching between Layout and 3D made no board model. The app's own benchmark (`edit_timing_tests`, host, J1 0 → 1 mm): J1 shown at 4.4 s, the refilled model at 14.2 s (was 26.9 s; the refill updated in place in 9.7 s, was built anew in 21–23 s).
