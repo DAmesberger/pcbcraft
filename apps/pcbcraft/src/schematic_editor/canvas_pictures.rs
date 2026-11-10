@@ -164,7 +164,7 @@ fn picture(
     let primitives = ctx.tessellate(output.shapes, ppp);
     let n = (SIZE * ppp) as usize;
     let rgba = rasterize(&primitives, textures, n, n, ppp);
-    Ok(pcbcraft_solidcraft::render::png(n, n, rgba).ok_or("png encoding failed")?)
+    Ok(pcbcraft_solidcraft::viewport::png(n, n, rgba).ok_or("png encoding failed")?)
 }
 
 #[test]

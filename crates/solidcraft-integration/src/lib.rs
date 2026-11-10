@@ -24,6 +24,9 @@ pub mod svg;
 /// it is switched on; otherwise every call is empty.
 pub use solidcraft_engine::profile;
 pub use solidcraft_engine::render;
+/// Solidcraft's shared viewport renderer: camera, standard views, the CPU
+/// picture and the shading models (surface, clear coat, material graph).
+pub use solidcraft_viewport as viewport;
 
 /// Solidcraft's geometry, with the plain vector and profile data its public
 /// API uses, which live in solidcore's record crate, and its sRGB transfer
@@ -48,10 +51,10 @@ pub mod dims {
 #[cfg(test)]
 mod fixtures;
 
-/// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-font-order`
-/// branch of the DAmesberger/solidcraft fork (upstream 4f3ac07 plus the
+/// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-smlib-open`
+/// branch of the DAmesberger/solidcraft fork (upstream a34756830 plus the
 /// opt-in product look, via scaling and a font-order fix).
-pub const SOLIDCRAFT_REVISION: &str = "1f6e28a9a2855b37e693b6b5060e2823247fe739";
+pub const SOLIDCRAFT_REVISION: &str = "64bebfef0a77dab8c79666114c7601c9dda55d12";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

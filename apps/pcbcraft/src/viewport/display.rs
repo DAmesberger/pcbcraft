@@ -251,7 +251,10 @@ impl Viewport {
         let aspect = f64::from(rect.width() / rect.height().max(1.0));
         Proj {
             cam: self.camera,
-            vp: self.camera.view_proj_bounds(aspect, &self.bounds),
+            vp: self.camera.view_proj_bounds(
+                aspect,
+                &pcbcraft_solidcraft::render::view_bounds(&self.bounds),
+            ),
             rect,
         }
     }

@@ -1,8 +1,8 @@
 //! Evaluated geometry handed to renderers. Meshes are shared, so selection,
 //! highlighting and camera changes reuse them without rebuilding.
-use crate::geom::{Mesh, Vec3};
+use crate::geom::{Mesh, MeshGeom, Vec3};
 use crate::material::{BodyKind, Detail};
-use solidcraft_engine::render::surface::OpaqueSurface;
+use solidcraft_viewport::surface::OpaqueSurface;
 use std::sync::{Arc, OnceLock};
 
 /// A body's volume in mm³, known or measured once when first read: the

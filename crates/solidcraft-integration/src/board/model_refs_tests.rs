@@ -88,7 +88,7 @@ fn run(bytes: &[u8], feature: &FeatureRef, frame: Transform3) -> Result<Traced> 
 const WORDS: &str = "U1 · top face";
 
 /// A refusal a person reads names the reference in their words, never by a
-/// persistent name (`F3:-x`, `F6:blend:…`): only what follows its first
+/// persistent name (`F3:-x`, `F6:blend(…)`): only what follows its first
 /// sentence, for an agent, may list names.
 fn readable(why: &str) {
     let first = why.split_once(". ").map_or(why, |(first, _)| first);

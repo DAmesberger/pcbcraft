@@ -10,8 +10,8 @@ use crate::material::{Coat, Detail, Material, Pattern, linear_to_srgb8};
 use crate::native::Look;
 use crate::{Error, Result};
 use pcbcraft_core::materials::{self, MaterialCategory, MaterialDef, MaterialId, PatternKind};
-use solidcraft_engine::render::clear_coat::ClearCoat;
-use solidcraft_engine::render::surface::OpaqueSurface;
+use solidcraft_viewport::clear_coat::ClearCoat;
+use solidcraft_viewport::surface::OpaqueSurface;
 
 /// Metals ignore the dielectric IOR; Solidcraft still requires one in [1, 3].
 const METAL_IOR: f64 = 1.5;
@@ -40,7 +40,7 @@ pub fn saved(def: &MaterialDef) -> Look<'_> {
 
 /// The product look of `def`: Solidcraft's validated surface with its coat.
 pub fn surface(def: &MaterialDef) -> Result<OpaqueSurface> {
-    let invalid = |error: solidcraft_engine::render::surface::SurfaceError| {
+    let invalid = |error: solidcraft_viewport::surface::SurfaceError| {
         Error::Invalid(format!("{}: {error}", def.name))
     };
     let [r, g, b] = def.base_linear;

@@ -199,7 +199,7 @@ fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
 }
 
 /// Whether `text` names a face or edge by its persistent Solidcraft name
-/// (`F1:+z`, `F3:-x|F6:blend:…`): an `F`, digits and a colon.
+/// (`F1:+z`, `F3:-x|F6:blend(…)`): an `F`, digits and a colon.
 fn names_a_model_id(text: &str) -> bool {
     let b = text.as_bytes();
     (0..b.len()).any(|i| {

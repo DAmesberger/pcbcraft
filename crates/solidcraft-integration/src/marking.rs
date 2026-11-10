@@ -68,7 +68,7 @@ use pcbcraft_core::library::marking::{
     Finish, LaidElement, MarkingLayout, Placement, PolarityMark, Symbol,
 };
 use pcbcraft_core::library::model3d::MarkingArea;
-use solidcraft_engine::render::surface::OpaqueSurface;
+use solidcraft_viewport::surface::OpaqueSurface;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;

@@ -666,8 +666,10 @@ impl LiveSketch {
                     .first()
                     .and_then(|i| centres.get(*i).copied())
                     .unwrap_or(Vec2::ZERO);
-                let text = k.text.or_else(|| default_text(&frame, away, px));
                 let [hx, hy] = half(&id);
+                let text = k
+                    .text
+                    .or_else(|| default_text(&frame, away, px, Vec2::new(hx, hy)));
                 let layout = dim_layout_reaching(
                     &frame,
                     text,

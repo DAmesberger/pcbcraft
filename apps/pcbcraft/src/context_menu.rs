@@ -2,7 +2,7 @@
 //! (`crates/ui-egui/src/context_menu.rs`): a list of the commands that act
 //! on the thing under the pointer, each with its key from the shortcut
 //! registry, a disabled row dimmed rather than hidden, thin separators
-//! between groups. The rows are Solidcraft's own (`context_menu::list_row`
+//! between groups. The rows are Solidcraft's own (`ui_kit::menu::list_row`
 //! in `menu_frame`, in a popup `Container`), placed as its `place` places
 //! them.
 //!
@@ -17,7 +17,8 @@
 //! and would take Esc for itself, and ⌘Z would act underneath, so the app
 //! calls [`hold_keys`] before any of them.
 use egui::{Pos2, Vec2, vec2};
-use solidcraft_ui_egui::context_menu::{list_row, menu_frame, place};
+use solidcraft_ui_egui::context_menu::place;
+use solidcraft_ui_egui::ui_kit::menu::{list_row, menu_frame};
 use solidcraft_ui_egui::ui_kit::{Container, Surface};
 use solidcraft_ui_egui::ui_kit::{Item, LIST_W};
 

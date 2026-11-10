@@ -103,13 +103,15 @@ pub fn check() -> Result<()> {
                 (name, dep),
                 (
                     "pcbcraft-solidcraft",
-                    "solidcraft-engine" | "solidcraft-color"
-                ) | ("pcbcraft", "solidcraft-ui-egui" | "solidcraft-theme")
-                    | ("pcbcraft-automation", "solidcraft-control")
+                    "solidcraft-engine" | "solidcraft-color" | "solidcraft-viewport"
+                ) | (
+                    "pcbcraft",
+                    "solidcraft-ui-egui" | "solidcraft-theme" | "solidcraft-viewport-egui"
+                ) | ("pcbcraft-automation", "solidcraft-control")
             );
             if solidcraft && !allowed {
                 violations.push(format!(
-                    "{name} depends on {dep}; Solidcraft is reached through pcbcraft-solidcraft (engine, colour), pcbcraft-automation (control channel) or the app (UI kit, tokens) only"
+                    "{name} depends on {dep}; Solidcraft is reached through pcbcraft-solidcraft (engine, colour, viewport shading models), pcbcraft-automation (control channel) or the app (UI kit, tokens, viewport paint callbacks) only"
                 ));
             }
         }

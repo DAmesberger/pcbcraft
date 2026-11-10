@@ -44,7 +44,7 @@ impl Picture {
                 [*r, *g, *b, 1.0].map(|v| (v * 255.0).round().clamp(0.0, 255.0) as u8)
             })
             .collect();
-        pcbcraft_solidcraft::render::png(self.width, self.height, bytes)
+        pcbcraft_solidcraft::viewport::png(self.width, self.height, bytes)
     }
 }
 

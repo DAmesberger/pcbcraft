@@ -128,6 +128,9 @@ impl App {
         cc: &eframe::CreationContext<'_>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         follow_system_theme(&cc.egui_ctx, true);
+        // Solidcraft's icons and glyphs, which its UI kit draws only once
+        // a host installs them (once per process).
+        solidcraft_ui_egui::icon_svg::install();
         fonts::setup_bundled_fonts(&cc.egui_ctx);
         fonts::load_system_fonts_in_background(&cc.egui_ctx);
         let render_state = cc.wgpu_render_state.as_ref().ok_or("wgpu is required")?;
