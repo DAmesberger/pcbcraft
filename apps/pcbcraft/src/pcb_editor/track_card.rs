@@ -5,6 +5,7 @@ use super::{Field, PcbEditor, focus_within};
 use crate::kit;
 use crate::refusal::{self, Origin};
 use egui::Ui;
+use pcbcraft_core::layout::connectivity::{Meets, TrackEnd};
 use pcbcraft_core::{Id, Operation, Point, Project, Track, layout::LayoutCommand};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
@@ -145,19 +146,46 @@ impl PcbEditor {
         Some(Operation::Layout(command))
     }
 
-    /// What each end of `track` meets: a pad of its net ("R1 pad 2"), or
-    /// nothing ("open").
+    /// What each end of `track` joins in the copper graph: a pad ("R1 pad
+    /// 2"), else a via, another track or a fill, or nothing ("open").
     pub(super) fn track_ends(&self, project: &Project, track: &Track) -> String {
-        let end = |at: Point| {
-            self.board_pads
-                .iter()
-                .find(|b| b.placed.net == Some(track.net) && b.contains(at))
-                .map_or_else(
-                    || "open".to_owned(),
-                    |b| pad_name(project, b.placed.instance, &b.placed.pad.number),
-                )
+        let joints = project
+            .tracks
+            .iter()
+            .position(|t| t.id == track.id)
+            .map(|index| self.graph.joints_on(index))
+            .unwrap_or_default();
+        let end = |which: TrackEnd| {
+            let met = || {
+                joints
+                    .iter()
+                    .filter(move |j| j.end == Some(which))
+                    .map(|j| j.meets)
+            };
+            let pad = met().find_map(|m| match m {
+                Meets::Pad { index } => self.graph.pads().get(index),
+                _ => None,
+            });
+            if let Some(pad) = pad {
+                let number = self
+                    .board_pads
+                    .iter()
+                    .find(|b| b.placed.instance == pad.instance && b.placed.pad.id == pad.pad)
+                    .map_or("", |b| b.placed.pad.number.as_str());
+                return pad_name(project, pad.instance, number);
+            }
+            let word = if met().any(|m| matches!(m, Meets::Via { .. })) {
+                "via"
+            } else if met().any(|m| matches!(m, Meets::Track { .. })) {
+                "track"
+            } else if met().any(|m| matches!(m, Meets::Fill)) {
+                "fill"
+            } else {
+                "open"
+            };
+            word.to_owned()
         };
-        format!("{} → {}", end(track.start), end(track.end))
+        format!("{} → {}", end(TrackEnd::Start), end(TrackEnd::End))
     }
 }
 
