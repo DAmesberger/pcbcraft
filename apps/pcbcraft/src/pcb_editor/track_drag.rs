@@ -95,11 +95,27 @@ impl PcbEditor {
     }
 
     /// Release: the planned edits as one `layout.route_apply`, or nothing
-    /// when the drag moved nothing.
-    pub(super) fn finish_track_drag(&mut self, revision: u64) -> Option<Operation> {
+    /// when the drag moved nothing; then a toast says why, as the Route
+    /// tool's refused click does.
+    pub(super) fn finish_track_drag(
+        &mut self,
+        ctx: &egui::Context,
+        revision: u64,
+    ) -> Option<Operation> {
         let drag = self.track_drag.take()?;
         let (at, _, plan) = drag.planned?;
-        if at != revision || plan.edits.replace.is_empty() {
+        if at != revision {
+            return None;
+        }
+        if plan.edits.replace.is_empty() {
+            if let Some(why) = &plan.blocked {
+                crate::kit::toast::post(
+                    ctx,
+                    crate::kit::severity::Level::Warning,
+                    format!("Can't drag the track: {why}"),
+                    Vec::new(),
+                );
+            }
             return None;
         }
         Some(Operation::Layout(LayoutCommand::ApplyRoute {

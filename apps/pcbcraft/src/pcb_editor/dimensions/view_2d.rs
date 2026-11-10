@@ -614,8 +614,28 @@ impl PcbEditor {
                             kit::number_text(super::state::round_um(choice.face.z[0])),
                             kit::number_text(super::state::round_um(choice.face.z[1]))
                         );
+                        // The face on its line and how high it reaches
+                        // under it, dim: in the menu's width a row on
+                        // one line wraps mid-phrase.
+                        let mut job = egui::text::LayoutJob::default();
+                        job.append(
+                            &capital(&choice.words),
+                            0.0,
+                            egui::TextFormat::simple(
+                                FontId::proportional(t.font_label),
+                                t.form_ink,
+                            ),
+                        );
+                        job.append(
+                            &format!("\n{detail}"),
+                            0.0,
+                            egui::TextFormat::simple(
+                                FontId::proportional(t.font_small),
+                                t.form_dim,
+                            ),
+                        );
                         let response = ui.add(
-                            egui::Button::new(format!("{}   {detail}", capital(&choice.words)))
+                            egui::Button::new(job)
                                 .frame(false)
                                 .min_size(vec2(0.0, t.control_height)),
                         );

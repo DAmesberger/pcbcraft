@@ -25,6 +25,10 @@ impl Canvas {
         Self { ctx, time: 0.0 }
     }
 
+    pub(super) fn ctx(&self) -> &egui::Context {
+        &self.ctx
+    }
+
     pub(super) fn frame(
         &mut self,
         editor: &mut PcbEditor,
@@ -960,5 +964,37 @@ fn a_new_route_starts_on_the_clicked_copper_net() -> TestResult {
     let head = editor.route_start.ok_or("started")?;
     assert!((head[0] - 12.25).abs() < 1e-9, "{head:?} is on the track");
     assert!((head[1] - 4.0).abs() < 0.2, "{head:?} is at the click");
+    Ok(())
+}
+
+/// A route click beside the end of a track of the net on another layer
+/// does not end there: the step would stop on copper it cannot join
+/// without a via and leave its end joining nothing. It lands on the grid
+/// of the routing layer, as anywhere else.
+#[test]
+fn a_click_at_another_layers_track_end_lands_on_the_grid() -> TestResult {
+    let mut engine = Engine::demo()?;
+    let net = shared_net(&engine)?;
+    let bottom_end = [12.2, 11.2];
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route {
+            request: layout::RouteRequest {
+                net,
+                start: bottom_end,
+                end: [12.2, 14.0],
+                width: 0.25,
+                layer: CopperLayer::Bottom,
+            },
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    start(&mut canvas, &mut editor, &engine)?;
+    assert_eq!(editor.layer, CopperLayer::Top);
+    let step = canvas.click(&mut editor, &engine, [12.3, 11.3]);
+    let end = edits(&step)?.add.last().map(|r| r.end).ok_or("no legs")?;
+    assert!(!close(end, bottom_end), "ended on the Bottom track's end");
+    assert!(close(end, [12.5, 11.5]), "{end:?}");
     Ok(())
 }

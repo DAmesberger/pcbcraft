@@ -1670,7 +1670,7 @@ impl PcbEditor {
             self.plan_track_drag(project, engine.revision(), at);
         }
         if response.drag_stopped_by(PointerButton::Primary) && self.track_drag.is_some() {
-            operation = self.finish_track_drag(engine.revision());
+            operation = self.finish_track_drag(ui.ctx(), engine.revision());
         }
         if let (Some((placement, start)), Some(at)) = (&self.drag, cursor) {
             let to = snap([
@@ -1751,7 +1751,7 @@ impl PcbEditor {
             (Some(_), Some(at)) => Some(
                 self.route_pad(project, at, scale)
                     .map(PlacedPad::center)
-                    .unwrap_or_else(|| self.route_point(project, at, scale)),
+                    .unwrap_or_else(|| self.route_destination(project, at, scale)),
             ),
             _ => None,
         };
@@ -1931,7 +1931,7 @@ impl PcbEditor {
         self.route_snap(at, scale).filter(|pad| {
             self.route_start.is_none()
                 || pad.net == self.net
-                || (self.track_end(at, scale, self.net).is_none()
+                || (self.track_end(at, scale, self.net, None).is_none()
                     && self.net_track_point(project, at, scale).is_none())
         })
     }
@@ -1941,20 +1941,36 @@ impl PcbEditor {
     /// on the routing layer during a route, else the 0.5 mm grid. A layer
     /// change at a track end continues that track through a via.
     fn route_point(&self, project: &Project, at: Point, scale: f32) -> Point {
-        self.track_end(at, scale, self.net)
+        self.track_end(at, scale, self.net, None)
             .or_else(|| self.net_track_point(project, at, scale))
             .unwrap_or_else(|| snap(at))
     }
 
-    /// The nearest end of a visible track (of `net`, if given) within 8
-    /// pixels of `at`.
-    fn track_end(&self, at: Point, scale: f32, net: Option<Id>) -> Option<Point> {
+    /// Where a route step to `at` ends: [`Self::route_point`], but only at
+    /// the end of a track on the routing layer. A step ending on another
+    /// layer's track end would leave its own end joining nothing.
+    pub(super) fn route_destination(&self, project: &Project, at: Point, scale: f32) -> Point {
+        self.track_end(at, scale, self.net, Some(self.layer))
+            .or_else(|| self.net_track_point(project, at, scale))
+            .unwrap_or_else(|| snap(at))
+    }
+
+    /// The nearest end of a visible track (of `net` and on `on`, if given)
+    /// within 8 pixels of `at`.
+    fn track_end(
+        &self,
+        at: Point,
+        scale: f32,
+        net: Option<Id>,
+        on: Option<CopperLayer>,
+    ) -> Option<Point> {
         let reach = f64::from(8.0 / scale);
         let seen = self.seen();
         self.track_ends
             .iter()
             .filter(|(end, track_net, layer)| {
                 net.is_none_or(|n| n == *track_net)
+                    && on.is_none_or(|l| l == *layer)
                     && seen.copper_layer(*layer)
                     && pcbcraft_core::geometry::distance(*end, at) < reach
             })
@@ -1968,7 +1984,8 @@ impl PcbEditor {
     /// Where the Via tool places a via for a click at `at`: a track end
     /// within 8 pixels, else the 0.5 mm grid.
     fn via_point(&self, at: Point, scale: f32) -> Point {
-        self.track_end(at, scale, None).unwrap_or_else(|| snap(at))
+        self.track_end(at, scale, None, None)
+            .unwrap_or_else(|| snap(at))
     }
 
     /// The via the Via tool places for a click at `at`: on the net of the
