@@ -1,0 +1,4 @@
+# Check files out byte for byte on every platform. Fixtures, examples and
+# golden outputs are compared exactly, so Git must not convert line endings
+# (for example to CRLF on Windows).
+* -text
