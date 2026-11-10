@@ -5,7 +5,7 @@ W, H = 40.0, 64.0
 PLACE = {  # designator: (x, y, rotation); J1's y puts its mating face on the bottom edge (see build)
     "J1": (20.0, None, 0), "U3": (20.0, 12.5, 180), "R4": (16.0, 11.5, 90), "R5": (24.0, 11.5, 90),
     "U2": (10.0, 13.0, 0), "C1": (7.0, 11.5, 90), "C2": (7.0, 15.5, 90),
-    "R2": (29.0, 10.0, 0), "D1": (29.0, 12.5, 0),
+    "R2": (33.0, 10.0, 0), "D1": (33.0, 12.5, 0),
     "U1": (20.0, 49.0, 0), "J2": (2.54, 21.0, 90), "J3": (37.46, 21.0, 90), "J4": (37.5, 52.0, 90),
     "SW1": (4.5, 42.0, 90), "SW2": (33.0, 57.0, 90),
     "R1": (6.6, 53.3, 270), "C4": (6.6, 50.3, 270), "C3": (6.6, 56.2, 90),
@@ -100,6 +100,17 @@ def build(s, L, S):
                               ([origin, {"board": {"curve": edges["left"]}}], {"expr": "width / 2"}, "J1 on the centre line")):
         s.apply({"editor": "Dimension", "operation": {"command": "layout.dimension_add", "params": {
             "dimension": {"kind": {"dim": "distance"}, "refs": refs, "value": value}}}}, note)
+    # The ESD array and the CC pull-downs sit at fixed offsets from J1, so
+    # the receptacle's cluster moves as one when J1 does, and its routes
+    # with it (`layout::dimensions::carry`).
+    at_j1 = place["J1"]
+    for des in ("U3", "R4", "R5"):
+        part = {"part": {"feature": "origin", "target": {"kind": "placement", "id": S["instances"][des]["id"]}}}
+        x, y, _ = place[des]
+        for kind, value in (("horizontal_distance", abs(x - at_j1[0])), ("vertical_distance", abs(y - at_j1[1]))):
+            s.apply({"editor": "Dimension", "operation": {"command": "layout.dimension_add", "params": {
+                "dimension": {"kind": {"dim": kind}, "refs": [origin, part], "value": {"fixed": round(value, 6)}}}}},
+                    f"{des} {kind.split('_')[0]} from J1")
 
     nets, p = nets_by_name(s)
     out["nets"] = nets

@@ -236,8 +236,11 @@ fn a_route_through_a_grid_corner_enters_the_pin_cleanly() -> Fallible {
         }
     }
     println!("{routes} routes, {moved} corners moved back");
-    // 32 routes and 4 moved corners when written; the sweep must stay real.
-    assert!(routes >= 30, "{routes}");
+    // 32 routes and 4 moved corners when written; 16 and 2 since the
+    // board's VBUS vias and run rose to y 9.6 mm (room for J1 to move up),
+    // which boxes in more of the corners between the pins and resistors.
+    // The sweep must stay real.
+    assert!(routes >= 15, "{routes}");
     assert!(moved > 0, "no corner was moved back");
     Ok(())
 }

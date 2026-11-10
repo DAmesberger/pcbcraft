@@ -5,12 +5,13 @@
 //! pour still has (pours are refilled after the edit); the island's mask
 //! cap, the island less that opening, must still be a closed solid.
 //!
-//! A move of 0.5 or 1 mm changes values only, and the model is updated in
-//! place as a fresh build of the edited board would be, though the inner
-//! foil's laminate falls into another number of pieces (J1's drills move
-//! through it). A move of 2 mm, or the board widened from 45 to 50 mm,
-//! carries J1's fan-out with a new track segment (`layout::dimensions::
-//! carry`): another object, so the model is built anew.
+//! Every edit changes values only: J1's cluster (its ESD array and CC
+//! pull-downs, held at fixed offsets from it) moves with its routes, and
+//! the routes leaving it keep their directions (`layout::dimensions::
+//! carry`), so no track is added and the model is updated in place. For a
+//! move of 0.5, 1 or 2 mm it is as a fresh build of the edited board would
+//! be, though the inner foil's laminate falls into another number of
+//! pieces (J1's drills move through it).
 use pcbcraft_automation::session::hosted;
 use pcbcraft_core::layout::dimensions::DimensionCommand;
 use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
@@ -166,8 +167,8 @@ fn the_model_follows_j1_moved_by_its_dimension_or_the_board_width() -> Fallible 
         println!("{what}: J1 y {at} -> {:?}, {how:?}", y(&engine));
         match k {
             // Values only: in place, as a fresh build. The first starts from
-            // a fresh build, the second from the first's update.
-            0 | 1 => {
+            // a fresh build, each next from the previous one's update.
+            0..=2 => {
                 assert!(
                     matches!(how, Rebuilt::InPlace(n) if n > 0),
                     "{what}: {how:?}"
@@ -177,13 +178,7 @@ fn the_model_follows_j1_moved_by_its_dimension_or_the_board_width() -> Fallible 
                     &project::build_with(engine.project(), &sources, None)?,
                 )?;
             }
-            // A carried track segment more: built anew, and the reason
-            // says which object is new.
-            2 => assert!(
-                matches!(&how, Rebuilt::Anew(Some(why)) if why.contains("added trace_")),
-                "{what}: {how:?}"
-            ),
-            // From the 2 mm board, which has a carried segment too.
+            // The board widened, from the 2 mm board's update.
             _ => assert!(
                 matches!(how, Rebuilt::InPlace(n) if n > 0),
                 "{what}: {how:?}"

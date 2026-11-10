@@ -97,9 +97,10 @@ fn held_and_routed() -> Fallible<(Engine, Id)> {
 }
 
 /// The VM's J1 case: a part held at `width / 2` with two routed tracks.
-/// Widening the board moves the part, and the track end on its pad comes
-/// with it while the corner stays: no unconnected item, no new finding, and
-/// undo restores the board exactly.
+/// Widening the board moves the part; the track on its pad slides with it
+/// and the first track stretches along its own line to meet it, so both
+/// keep their directions: no unconnected item, no new finding, and undo
+/// restores the board exactly.
 #[test]
 fn a_part_held_at_half_the_width_keeps_its_tracks_when_the_width_changes() -> Fallible<()> {
     let (mut engine, r2) = held_and_routed()?;
@@ -112,9 +113,22 @@ fn a_part_held_at_half_the_width_keeps_its_tracks_when_the_width_changes() -> Fa
     assert!((project.placement_of(r2).ok_or("placement")?.position[0] - 40.0).abs() < 1e-6);
     let first = project.tracks.first().ok_or("track")?;
     let second = project.tracks.get(1).ok_or("track")?;
-    // The first track and the corner are untouched; the second stretches.
-    assert_eq!(first, tracks.first().ok_or("track")?);
-    assert!(close(second.start, [20.0, 14.0]));
+    let (was_first, was_second) = (
+        tracks.first().ok_or("track")?,
+        tracks.get(1).ok_or("track")?,
+    );
+    let way = |t: &pcbcraft_core::Track| {
+        let (dx, dy) = (t.end[0] - t.start[0], t.end[1] - t.start[1]);
+        let length = dx.hypot(dy);
+        [dx / length, dy / length]
+    };
+    let same_way = |a: [f64; 2], b: [f64; 2]| close([a[0] - b[0], a[1] - b[1]], [0.0, 0.0]);
+    // The first track keeps its start and direction; the corner moves
+    // along it, and the second track meets it there, slid with the pad.
+    assert!(close(first.start, was_first.start), "{first:?}");
+    assert!(same_way(way(first), way(was_first)), "{first:?}");
+    assert!(close(second.start, first.end), "{second:?}");
+    assert!(same_way(way(second), way(was_second)), "{second:?}");
     assert!(close(second.end, moved.position), "{:?}", second.end);
     assert_eq!(unrouted(project), 0);
     assert_eq!(board_codes(project), codes);

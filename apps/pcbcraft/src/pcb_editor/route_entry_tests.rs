@@ -84,7 +84,7 @@ fn unrouted_cc2() -> Result<(Engine, Id), Box<dyn std::error::Error>> {
     Ok((engine, net))
 }
 
-/// R5 pad 1, a corner click past B5's column (it snaps to [21.5, 9.5]),
+/// R5 pad 1, a corner click past B5's column (it snaps to [21.5, 10.5]),
 /// then B5, with the last step's elbow flipped or not. Each way the route
 /// enters B5 straight up from the corner, moved back to the pin's column:
 /// no leg runs back and no corner turns by more than 90°.
@@ -96,7 +96,7 @@ fn a_route_into_a_usb_c_pin_past_its_column_enters_it_straight() -> TestResult {
         let mut editor = PcbEditor::default();
         editor.on_tool("route", &engine);
         canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
-        // Diagonal first, so the first step ends running left along y 9.5.
+        // Diagonal first, so the first step ends running left along y 10.5.
         canvas.key(
             &mut editor,
             &engine,
@@ -106,15 +106,14 @@ fn a_route_into_a_usb_c_pin_past_its_column_enters_it_straight() -> TestResult {
         );
         assert!(canvas.click(&mut editor, &engine, R5_1).is_none());
         assert_eq!(editor.net, Some(net));
-        let corner = canvas.click(&mut editor, &engine, [21.6, 9.45]);
+        let corner = canvas.click(&mut editor, &engine, [21.6, 10.45]);
         let legs = &edits(&corner)?.add;
-        // (The step shoves the VBUS via beside it; its copper follows.)
         let end = legs
             .iter()
             .rfind(|r| r.net == net)
             .map(|r| r.end)
             .ok_or("no legs")?;
-        assert!(close(end, [21.5, 9.5]), "{legs:?}");
+        assert!(close(end, [21.5, 10.5]), "{legs:?}");
         canvas.apply(&mut editor, &mut engine, corner)?;
         if !flip_last {
             canvas.key(
@@ -130,13 +129,13 @@ fn a_route_into_a_usb_c_pin_past_its_column_enters_it_straight() -> TestResult {
         // The incoming track is shortened to the pin's column.
         let shortened: Vec<_> = step.replace.iter().filter(|t| t.net == net).collect();
         assert_eq!(shortened.len(), 1, "{step:?}");
-        assert!(close(shortened[0].end, [21.75, 9.5]), "{step:?}");
+        assert!(close(shortened[0].end, [21.75, 10.5]), "{step:?}");
         canvas.apply(&mut editor, &mut engine, last)?;
         assert_eq!(editor.route_start, None, "finished on the pin");
         let points = polyline(engine.project(), net, R5_1);
         assert!(close(*points.last().ok_or("no route")?, B5), "{points:?}");
         assert_eq!(points.len(), 4, "{points:?}");
-        assert!(close(points[2], [21.75, 9.5]), "{points:?}");
+        assert!(close(points[2], [21.75, 10.5]), "{points:?}");
         assert!(
             turns(&points).iter().all(|t| *t <= 90.0 + 1e-6),
             "flip {flip_last}: {points:?}"

@@ -168,7 +168,13 @@ pub struct ModelFaceRef { pub body: BodyName, pub face: FaceName, pub pick: [f64
 
 Feature geometry is rebuilt from the library snapshot for each solve and never stored. A move or rotate of a dimensioned part is a solver drag, so a part with one dimension to an edge slides along it. A move that cannot land is refused in `outline::held_message`'s words.
 
-A part the solve moves or turns carries the copper on its pads in the same operation and undo step (`dimensions::carry`): what is attached is read off the copper graph of the document before the operation. A via joined only to that part's pads moves rigidly with it. A track end on a carried pad or via moves rigidly too, so its segment stretches and the corners beyond it stay; when stretching would take the segment off copper that meets it in mid-span, the segment stays and a new segment like it joins its old end to the carried one. Locked copper stays. Nothing is deleted and no edit is refused for it: copper that lands too close to another net is a normal clearance finding, and fills refill as before. A plain `layout.move` of a part no dimension holds still leaves its tracks where they were.
+A part the solve moves or turns, or a `layout.move`, carries the copper on its pads in the same operation and undo step (`dimensions::carry`): what is attached is read off the copper graph of the document before the operation, island by island (a net's tracks and vias joined other than through a pad).
+
+- An island whose pads all move with one motion moves rigidly with them, so the routes inside a group of parts held together keep their shape.
+- An island between moved and unmoved pads, when the parts slid without turning, keeps every segment's direction, as a dragged track does: from each moved pad, a segment running along the move stretches; else, at a corner where one other segment meets it end to end, it slides and that neighbour stretches along its own line to meet it; else it slides whole with the copper at its far end. Both halves of a differential pair, parallel where they leave the part, change alike, so the pair stays coupled and its skew is kept.
+- Otherwise (a turn, parts moving differently, locked copper, or a slide that would reach an unmoved pad or flip a segment), a via joined only to the part's pads moves rigidly with it, and a track end on a carried pad or via moves rigidly too, so its segment stretches and the corners beyond it stay; when stretching would take the segment off copper that meets it in mid-span, the segment stays and a new segment like it joins its old end to the carried one.
+
+Locked copper stays. Nothing is deleted and no edit is refused for it: copper that lands too close to another net is a normal clearance finding, and fills refill as before.
 
 ### 5.3 Seating
 

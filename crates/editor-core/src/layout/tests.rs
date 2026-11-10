@@ -1233,6 +1233,89 @@ fn route_presets_follow_the_rules_and_classes() -> Result<()> {
     Ok(())
 }
 
+/// A moved part's route keeps its segments' directions: the segment on its
+/// pad slides with it and the corner's other segment stretches along its
+/// own line to meet it, instead of the pad's segment running askew. Moved
+/// along that segment, it stretches. One undo step each.
+#[test]
+fn a_moved_part_keeps_its_route_square() -> Result<()> {
+    let mut engine = Engine::demo()?;
+    engine.apply(engine.revision(), Operation::Layout(LayoutCommand::Sync))?;
+    let (r1, r2) = ids()?;
+    let mv = |instance, position| {
+        Operation::Layout(LayoutCommand::Move {
+            instance,
+            position,
+            rotation_deg: 0.0,
+            layer: Layer::Top,
+        })
+    };
+    for (instance, position) in [(r1, [10.0, 10.0]), (r2, [25.0, 14.0])] {
+        engine.apply(engine.revision(), mv(instance, position))?;
+    }
+    for (start, end) in [
+        ([11.2, 10.0], [17.0, 10.0]),
+        ([17.0, 10.0], [17.0, 14.0]),
+        ([17.0, 14.0], [23.8, 14.0]),
+    ] {
+        let request = RouteRequest {
+            start,
+            end,
+            ..request()
+        };
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::Route { request }),
+        )?;
+    }
+    let before = engine.project().clone();
+    let ends = |p: &Project| {
+        p.tracks
+            .iter()
+            .map(|t| (t.start, t.end))
+            .collect::<Vec<_>>()
+    };
+    let close = |got: Vec<(Point, Point)>, want: [(Point, Point); 3]| {
+        got.len() == 3
+            && got
+                .iter()
+                .zip(want)
+                .all(|((a, b), (c, d))| distance(*a, c) < 1e-9 && distance(*b, d) < 1e-9)
+    };
+    engine.apply(engine.revision(), mv(r2, [25.0, 16.0]))?;
+    let up = ends(engine.project());
+    assert!(
+        close(
+            up.clone(),
+            [
+                ([11.2, 10.0], [17.0, 10.0]),
+                ([17.0, 10.0], [17.0, 16.0]),
+                ([17.0, 16.0], [23.8, 16.0]),
+            ]
+        ),
+        "{up:?}"
+    );
+    assert!(airwires(engine.project()).is_empty());
+    engine.undo()?;
+    assert_eq!(engine.project(), &before, "one undo step");
+    engine.apply(engine.revision(), mv(r2, [27.0, 14.0]))?;
+    let along = ends(engine.project());
+    assert!(
+        close(
+            along.clone(),
+            [
+                ([11.2, 10.0], [17.0, 10.0]),
+                ([17.0, 10.0], [17.0, 14.0]),
+                ([17.0, 14.0], [25.8, 14.0]),
+            ]
+        ),
+        "{along:?}"
+    );
+    engine.undo()?;
+    assert_eq!(engine.project(), &before, "one undo step");
+    Ok(())
+}
+
 /// Through the engine an ordinary `layout.move` (the one UI, CLI and MCP
 /// share) carries the track end on the moved part's pad, as a part its
 /// dimensions move does (`dimensions::carry`), in the same undo step: the
