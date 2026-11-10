@@ -136,34 +136,74 @@ struct Kept {
     sources: SourceCache,
 }
 
+/// How the worker made a board model, for `PCBCRAFT_TIMINGS`.
+enum Made {
+    /// An earlier model of the same board, shown again.
+    Earlier,
+    /// The last model, updated in place or built anew (and why).
+    Updated(pcbcraft_solidcraft::project::Rebuilt),
+    /// Built: the worker kept no board model.
+    Built,
+}
+
+impl Made {
+    /// With `PCBCRAFT_TIMINGS` set, print how board request `ticket` was
+    /// made, why an update fell back to a build, and how long it took.
+    fn report<T, E: std::fmt::Display>(&self, ticket: u64, took: Duration, made: &Result<T, E>) {
+        if std::env::var_os("PCBCRAFT_TIMINGS").is_none() {
+            return;
+        }
+        use pcbcraft_solidcraft::project::Rebuilt;
+        let how = match (self, made) {
+            (_, Err(error)) => format!("failed: {error}"),
+            (Self::Earlier, _) => "shown again from an earlier model".to_owned(),
+            (Self::Updated(Rebuilt::InPlace(n)), _) => format!("updated in place ({n} commands)"),
+            (Self::Updated(Rebuilt::Anew(Some(why))), _) => format!("built anew: {why}"),
+            (Self::Updated(Rebuilt::Anew(None)) | Self::Built, _) => "built".to_owned(),
+        };
+        eprintln!(
+            "pcbcraft: board model {ticket} {how} in {:.2} s",
+            took.as_secs_f64()
+        );
+    }
+}
+
 /// Build one job's display geometry and pick sources.
 fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
     match job {
         Job::Project(ticket, project, cancel) => {
+            let started = std::time::Instant::now();
             let same = |board: &Arc<Project>| Arc::ptr_eq(board, &project) || **board == *project;
-            let made = if let Some(at) = kept.earlier.iter().position(|(board, _)| same(board)) {
-                let (_, model) = kept.earlier.remove(at);
-                kept.earlier.extend(kept.board.take());
-                Ok(model)
-            } else {
-                match kept.board.take() {
-                    Some((board, previous)) => {
-                        kept.earlier.push((board, previous.snapshot()));
-                        pcbcraft_solidcraft::project::update(
-                            previous,
-                            &project,
-                            &kept.sources,
-                            Some(cancel),
-                        )
-                        .map(|(model, _)| model)
+            let (made, how) =
+                if let Some(at) = kept.earlier.iter().position(|(board, _)| same(board)) {
+                    let (_, model) = kept.earlier.remove(at);
+                    kept.earlier.extend(kept.board.take());
+                    (Ok(model), Made::Earlier)
+                } else {
+                    match kept.board.take() {
+                        Some((board, previous)) => {
+                            kept.earlier.push((board, previous.snapshot()));
+                            match pcbcraft_solidcraft::project::update(
+                                previous,
+                                &project,
+                                &kept.sources,
+                                Some(cancel),
+                            ) {
+                                Ok((model, how)) => (Ok(model), Made::Updated(how)),
+                                Err(error) => (Err(error), Made::Built),
+                            }
+                        }
+                        None => (
+                            pcbcraft_solidcraft::project::build_with(
+                                &project,
+                                &kept.sources,
+                                Some(cancel),
+                            ),
+                            Made::Built,
+                        ),
                     }
-                    None => pcbcraft_solidcraft::project::build_with(
-                        &project,
-                        &kept.sources,
-                        Some(cancel),
-                    ),
-                }
-            };
+                };
+            how.report(ticket, started.elapsed(), &made);
             let excess = kept.earlier.len().saturating_sub(EARLIER_BOARDS);
             kept.earlier.drain(..excess);
             let built = made.map(|model| {
@@ -231,9 +271,16 @@ impl Worker {
                     job = newer;
                 }
                 let (ticket, result) = build(job, &mut kept);
+                let started = std::time::Instant::now();
                 let result = result.and_then(|(geometry, sources, stack)| {
                     model_scene::build(geometry, &stack).map(|scene| (scene, sources))
                 });
+                if std::env::var_os("PCBCRAFT_TIMINGS").is_some() {
+                    eprintln!(
+                        "pcbcraft: model {ticket} packed for drawing in {:.2} s",
+                        started.elapsed().as_secs_f64()
+                    );
+                }
                 if results.send(Built { ticket, result }).is_err() {
                     break;
                 }
@@ -330,7 +377,11 @@ pub struct SceneController {
     cancel: Option<Arc<AtomicBool>>,
     ticket: u64,
     key: Option<ModelKey>,
+    /// Requests sent to the worker and not answered yet, oldest first.
+    sent: Vec<(u64, ModelKey)>,
     shown: Option<ModelKey>,
+    /// The request whose model is shown.
+    shown_ticket: u64,
     sources: Vec<Source>,
     status: Status,
     /// The camera each kind of model (board, package) was last seen with,
@@ -338,6 +389,9 @@ pub struct SceneController {
     cameras: [Option<pcbcraft_solidcraft::render::Camera>; 2],
     /// Another document was opened: its first board model is framed.
     fit_board: bool,
+    /// Results taken from the worker, current or dropped.
+    #[cfg(test)]
+    received: u64,
 }
 
 impl SceneController {
@@ -349,20 +403,44 @@ impl SceneController {
             cancel: None,
             ticket: 0,
             key: None,
+            sent: Vec::new(),
             shown: None,
+            shown_ticket: 0,
             sources: vec![],
             status: Status::Idle,
             cameras: [None; 2],
             fit_board: false,
+            #[cfg(test)]
+            received: 0,
         }
     }
 
     /// Another project was opened (or a new one made): the board camera
     /// kept was the previous project's, so the new board's first model is
     /// framed instead. Later models of it keep the camera.
+    ///
+    /// Nothing of the previous project is shown again: a build in flight
+    /// stops at its next native command, a result still to come (an update
+    /// always finishes) is dropped, and the view shows the building state
+    /// until the opened project's own model arrives.
     pub fn document_opened(&mut self) {
         self.cameras[0] = None;
         self.fit_board = true;
+        if let Some(cancel) = self.cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        match self.ticket.checked_add(1) {
+            Some(ticket) => {
+                self.ticket = ticket;
+                self.status = Status::Idle;
+            }
+            None => self.status = Status::Failed("model request identity exhausted".into()),
+        }
+        self.key = None;
+        self.sent.clear();
+        self.shown = None;
+        self.sources.clear();
+        self.prefetch = Prefetch::default();
     }
 
     pub fn status(&self) -> &Status {
@@ -419,6 +497,7 @@ impl SceneController {
                     previous.store(true, Ordering::Relaxed);
                 }
                 self.ticket = ticket;
+                self.sent.push((ticket, key.clone()));
                 self.key = Some(key);
                 self.status = Status::Building;
             }
@@ -441,16 +520,39 @@ impl SceneController {
         }
     }
 
-    /// Apply finished builds that still match the latest request.
+    /// Apply finished builds of the latest request, and of an earlier one
+    /// of the same document and kind that is newer than the model shown.
     pub fn receive(&mut self) {
         while let Ok(built) = self.worker.receiver.try_recv() {
-            if built.ticket != self.ticket {
+            #[cfg(test)]
+            {
+                self.received += 1;
+            }
+            // The request this answers, and those the worker skipped before it.
+            let at = self
+                .sent
+                .partition_point(|(ticket, _)| *ticket <= built.ticket);
+            let answered = self.sent.drain(..at).next_back();
+            let current = built.ticket == self.ticket;
+            // An earlier request of this document, finished while a newer
+            // one is made, is newer than the model shown: it is shown, still
+            // under the "Updating" note (an edit's model updated in place is
+            // shown while its refilled fills are built in the background).
+            let key = match answered {
+                Some((ticket, key)) if ticket == built.ticket => key,
+                _ => continue,
+            };
+            let kind = |k: &ModelKey| k.is_package();
+            let earlier = !current
+                && built.ticket > self.shown_ticket
+                && self.key.as_ref().map(kind) == Some(kind(&key));
+            if !current && !earlier {
                 continue;
             }
             match built.result {
                 Ok((scene, sources)) => {
                     let was = self.shown.as_ref().map(ModelKey::is_package);
-                    let now = self.key.as_ref().map(ModelKey::is_package);
+                    let now = Some(kind(&key));
                     self.viewport.set_model(scene);
                     if self.fit_board && now == Some(false) {
                         if was == Some(true) {
@@ -469,10 +571,15 @@ impl SceneController {
                         }
                     }
                     self.sources = sources;
-                    self.shown = self.key.clone();
-                    self.status = Status::Ready;
+                    self.shown = Some(key);
+                    self.shown_ticket = built.ticket;
+                    if current {
+                        self.status = Status::Ready;
+                    }
                 }
-                Err(error) => self.status = Status::Failed(error),
+                Err(error) if current => self.status = Status::Failed(error),
+                // An earlier request's failure: the newer one decides.
+                Err(_) => {}
             }
         }
     }
@@ -727,6 +834,74 @@ mod tests {
         Ok(())
     }
 
+    /// Demo run 3, item 1: an edit's model, updated in place, is shown as
+    /// soon as it is made, although the board changed again meanwhile (its
+    /// stale fills refilled and stored) and that board's model is still
+    /// being made: under the "Updating" note, until the newer one comes.
+    /// A model older than the one shown never replaces it.
+    #[test]
+    fn an_earlier_requests_model_is_shown_while_a_newer_one_is_made()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut scene = SceneController::new(
+            egui::Context::default(),
+            crate::viewport::Viewport::detached(),
+        );
+        // The worker's side, answered by hand.
+        let (sender, jobs) = mpsc::channel::<Job>();
+        let (results, receiver) = mpsc::channel();
+        scene.worker = Worker { sender, receiver };
+        let board = |dx: f64| -> Result<Arc<Project>, Box<dyn std::error::Error>> {
+            let mut project = Engine::demo()?.project().clone();
+            project.placements[0].position[0] += dx;
+            Ok(Arc::new(project))
+        };
+        let (edited, refilled) = (board(1.0)?, board(2.0)?);
+        let made = |project: &Arc<Project>| -> Result<Built, Box<dyn std::error::Error>> {
+            let job = Job::Project(0, Arc::clone(project), Arc::new(AtomicBool::new(false)));
+            let (_, built) = build(job, &mut Kept::default());
+            let (geometry, sources, stack) = built?;
+            Ok(Built {
+                ticket: 0,
+                result: Ok((model_scene::build(geometry, &stack)?, sources)),
+            })
+        };
+        let key = |project: &Arc<Project>| ModelKey::Project(Arc::clone(project));
+        scene.request(key(&edited), None, || Ok(None));
+        scene.request(key(&refilled), None, || Ok(None));
+        assert_eq!(jobs.try_iter().count(), 2);
+        assert_eq!(scene.display(&key(&refilled)), Display::Blank);
+        // The edit's model comes first.
+        results.send(Built {
+            ticket: 1,
+            ..made(&edited)?
+        })?;
+        scene.receive();
+        assert_eq!(scene.shown, Some(key(&edited)));
+        assert_eq!(scene.display(&key(&refilled)), Display::Stale);
+        assert!(matches!(scene.status(), Status::Building));
+        // Then the refilled board's.
+        results.send(Built {
+            ticket: 2,
+            ..made(&refilled)?
+        })?;
+        scene.receive();
+        assert_eq!(scene.display(&key(&refilled)), Display::Current);
+        // An answer to a request older than the one shown is dropped.
+        scene.request(key(&edited), None, || Ok(None));
+        scene.request(key(&refilled), None, || Ok(None));
+        results.send(Built {
+            ticket: 4,
+            ..made(&refilled)?
+        })?;
+        results.send(Built {
+            ticket: 3,
+            ..made(&edited)?
+        })?;
+        scene.receive();
+        assert_eq!(scene.display(&key(&refilled)), Display::Current);
+        Ok(())
+    }
+
     #[test]
     fn worker_builds_only_the_newest_request() -> Result<(), Box<dyn std::error::Error>> {
         let worker = Worker::start(egui::Context::default());
@@ -817,6 +992,75 @@ mod open_tests {
         scene.viewport.set_camera(kept);
         show(&mut scene, &ModelKey::Project(Arc::new(edited)))?;
         assert_eq!(scene.viewport.camera(), kept);
+        Ok(())
+    }
+
+    /// Demo run 3, item 2: another project opened while the previous
+    /// project's model is still being made never shows that model. The
+    /// view shows the building state until the opened project's own model
+    /// arrives, and the previous project's result is dropped.
+    #[test]
+    fn an_opened_project_never_shows_the_previous_projects_model() -> Fallible<()> {
+        let mut scene = SceneController::new(
+            egui::Context::default(),
+            crate::viewport::Viewport::detached(),
+        );
+        let demo = Engine::demo()?;
+        show(
+            &mut scene,
+            &ModelKey::Project(Arc::clone(demo.project_arc())),
+        )?;
+        // An edit of the previous project: its model is in the making.
+        let mut edited = demo.project().clone();
+        edited.placements[0].position[0] += 1.0;
+        let edited = ModelKey::Project(Arc::new(edited));
+        scene.request(edited.clone(), None, || Ok(None));
+        assert_eq!(scene.display(&edited), Display::Stale);
+        scene.document_opened();
+        let opened = Engine::showcase()?;
+        let key = ModelKey::Project(Arc::clone(opened.project_arc()));
+        // Before the opened project's model is even asked for, nothing of
+        // the previous project is shown, also once its model arrives.
+        let received = scene.received;
+        for _ in 0..12_000 {
+            scene.receive();
+            assert_eq!(scene.display(&key), Display::Blank);
+            assert_eq!(scene.display(&edited), Display::Blank);
+            if scene.received > received {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(scene.received > received, "the edit's model never came");
+        assert!(scene.shown.is_none(), "the previous project's model");
+        assert!(scene.sources.is_empty(), "the previous project's picks");
+        for _ in 0..12_000 {
+            scene.request(key.clone(), None, || Ok(None));
+            scene.receive();
+            match scene.display(&key) {
+                Display::Current => break,
+                shown => assert_eq!(shown, Display::Blank, "another project's model"),
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(scene.display(&key), Display::Current);
+        // What is shown is the opened board's model, and picks name its
+        // objects.
+        let fresh = pcbcraft_solidcraft::project::build(opened.project())?;
+        let model = scene.viewport.shown_model().ok_or("no model")?;
+        assert_eq!(scene.sources.len(), fresh.sources.len());
+        assert_eq!(
+            model
+                .geometry
+                .iter()
+                .filter(|g| !g.kind.is_appearance())
+                .count(),
+            fresh
+                .geometry
+                .iter()
+                .filter(|g| !g.kind.is_appearance())
+                .count()
+        );
         Ok(())
     }
 
@@ -911,3 +1155,6 @@ mod open_tests {
 
 #[cfg(test)]
 mod coplanar_tests;
+
+#[cfg(test)]
+mod edit_timing_tests;
