@@ -5,7 +5,7 @@ use super::*;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const SCREEN: [f32; 2] = [900.0, 700.0];
+pub(super) const SCREEN: [f32; 2] = [900.0, 700.0];
 
 pub(super) fn frame(
     editor: &mut PcbEditor,

@@ -272,13 +272,18 @@ impl PcbEditor {
             None => {}
         }
         if let Some(at) = pointer {
-            painter.text(
-                at + egui::vec2(12.0, -12.0),
-                egui::Align2::LEFT_BOTTOM,
-                readout,
-                egui::FontId::proportional(t.font_label),
-                t.text,
-            );
+            // On the panel colour, as the canvas's hover tags are, and kept
+            // inside the canvas: near its right edge it moves left.
+            let galley =
+                painter.layout_no_wrap(readout, egui::FontId::proportional(t.font_label), t.text);
+            let pad = egui::vec2(t.space_4, t.space_2);
+            let size = galley.size() + 2.0 * pad;
+            let clip = painter.clip_rect();
+            let x = (at.x + 12.0).min(clip.right() - size.x).max(clip.left());
+            let y = (at.y - 12.0 - size.y).max(clip.top());
+            let back = egui::Rect::from_min_size(egui::pos2(x, y), size);
+            painter.rect_filled(back, t.radius_sm, t.panel);
+            painter.galley(back.min + pad, galley, t.text);
         }
     }
 

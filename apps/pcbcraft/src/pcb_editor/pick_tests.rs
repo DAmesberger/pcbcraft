@@ -1,7 +1,8 @@
-//! Select clicks on the ESP32 board: a click a few pixels beside a thin
-//! track on the active layer picks the track, not a plane on an inner
-//! layer under it, and Esc clears the selection.
-use super::via_tests::{click, frame, key, screen};
+//! Pointing at the ESP32 board: a click a few pixels beside a thin track
+//! on the active layer picks the track, not a plane on an inner layer
+//! under it, Esc clears the selection, and the Tune readout at the
+//! pointer stays inside the canvas.
+use super::via_tests::{SCREEN, click, frame, key, screen};
 use super::*;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -93,5 +94,67 @@ fn a_click_just_beside_a_top_track_selects_it_and_esc_clears() -> TestResult {
     editor.select_fill(fill.id, fill.net);
     frame(&mut editor, &engine, &ctx, key(point, egui::Key::Escape));
     assert_eq!(editor.fill, None);
+    Ok(())
+}
+
+/// The Tune tool's length readout at the pointer sits inside the canvas:
+/// near the right edge it is not cut off.
+#[test]
+fn the_tune_readout_stays_inside_the_canvas() -> TestResult {
+    let engine = esp32()?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let project = engine.project();
+    let net = project
+        .nets
+        .iter()
+        .find(|n| n.name == "USB_DN")
+        .map(|n| n.id)
+        .ok_or("USB_DN")?;
+    let track = project
+        .tracks
+        .iter()
+        .filter(|t| t.net == net && t.layer == CopperLayer::Top)
+        .max_by(|a, b| {
+            let l = |t: &pcbcraft_core::Track| pcbcraft_core::geometry::distance(t.start, t.end);
+            l(a).total_cmp(&l(b))
+        })
+        .ok_or("a USB_DN track")?;
+    let mid = [
+        (track.start[0] + track.end[0]) / 2.0,
+        (track.start[1] + track.end[1]) / 2.0,
+    ];
+    let mut editor = PcbEditor::default();
+    editor.tool = Tool::Tune;
+    editor.zoom = 4.0;
+    frame(&mut editor, &engine, &ctx, vec![]);
+    let at = Pos2::new(SCREEN[0] - 40.0, 300.0);
+    editor.pan += at - screen(&editor, &engine, mid);
+    frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![egui::Event::PointerMoved(at)],
+    );
+    let (output, _) = frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![egui::Event::PointerMoved(at)],
+    );
+    let readout = output
+        .shapes
+        .iter()
+        .find_map(|c| match &c.shape {
+            Shape::Text(t) if t.galley.job.text.starts_with("USB_DN ") => {
+                Some(Rect::from_min_size(t.pos, t.galley.size()))
+            }
+            _ => None,
+        })
+        .ok_or("no readout")?;
+    assert!(
+        readout.right() <= SCREEN[0] && readout.left() >= 0.0,
+        "readout at {readout:?}"
+    );
     Ok(())
 }
