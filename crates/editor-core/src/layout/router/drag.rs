@@ -358,6 +358,7 @@ pub fn drag_plan(project: &Project, index: &RouteIndex, request: &TrackDragReque
         moved_vias: Vec::new(),
         undo: RouteEditSet::default(),
         blocked: Some(why),
+        blocker: None,
         detour_factor: 1.0,
         note: None,
     };
@@ -424,6 +425,7 @@ pub fn drag_plan(project: &Project, index: &RouteIndex, request: &TrackDragReque
         moved_vias: pushed.vias,
         undo,
         blocked: (!reached).then(|| why(&state)),
+        blocker: None,
         detour_factor: 1.0,
         note: ctx.held_note(&state),
     }

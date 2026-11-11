@@ -173,6 +173,43 @@ fn walkaround_stops_short_and_ignore_is_refused() -> TestResult {
     Ok(())
 }
 
+/// A step stopped by another net's track names that track in its plan, and
+/// the preview rings its outline, so a "Blocked by a track on …" refusal
+/// points at copper the user can see even on a dim inner layer.
+#[test]
+fn a_blocked_step_points_at_the_blocking_track() -> TestResult {
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    let (engine, track) = setup(&mut canvas, &mut editor)?;
+    editor.route.mode = RouteMode::Walkaround;
+    let hover = |editor: &PcbEditor, at: Point| {
+        vec![egui::Event::PointerMoved(super::route_tests::screen(
+            editor, &engine, at,
+        ))]
+    };
+    let events = hover(&editor, [12.0, 10.5]);
+    canvas.frame(&mut editor, &engine, events, egui::Modifiers::NONE);
+    let (_, planned) = editor.route.planned.as_ref().ok_or("no plan")?;
+    assert!(!planned.reached());
+    let blocker = planned.blocker().ok_or("no blocker")?;
+    assert_eq!(blocker, ObjectRef::Track { id: track.id });
+    let outline = editor
+        .blocker_outline(engine.project(), blocker)
+        .ok_or("no outline")?;
+    let xs: Vec<f64> = outline.iter().map(|p| p[0]).collect();
+    let ys: Vec<f64> = outline.iter().map(|p| p[1]).collect();
+    let min = |v: &[f64]| v.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = |v: &[f64]| v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    assert!(min(&xs) < 12.0 && max(&xs) > 12.0, "{xs:?}");
+    assert!(min(&ys) < 10.8 && max(&ys) > 10.8, "{ys:?}");
+    // Where the step arrives, nothing is ringed.
+    let events = hover(&editor, [10.0, 8.0]);
+    canvas.frame(&mut editor, &engine, events, egui::Modifiers::NONE);
+    let (_, planned) = editor.route.planned.as_ref().ok_or("no plan")?;
+    assert!(planned.reached() && planned.blocker().is_none());
+    Ok(())
+}
+
 /// A push reaching a pair where its halves do not run coupled cannot keep it
 /// whole: the pair's track stays, and the plan names the pair for the
 /// message the preview paints.
