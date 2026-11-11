@@ -583,3 +583,80 @@ fn the_open_page_lists_each_component_once() -> TestResult {
     assert_eq!(rows, 1, "{shown:?}");
     Ok(())
 }
+
+/// R7-6: a bounded result group on the Open page reads "8 of n" with
+/// "Show all ›", as the cards' bounded lists do, not "Show all n"; Show
+/// all lists them all.
+#[test]
+fn the_open_page_bounds_results_as_the_cards_do() -> TestResult {
+    let ctx = context();
+    // The ESP32 example holds 11 components, more than the page shows.
+    let engine = Engine::from_file(pcbcraft_io::read_project(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    )))?)?;
+    let mut editor = PartEditor::default();
+    editor.show_start();
+    let run = |editor: &mut PartEditor, events: Vec<egui::Event>| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                editor.canvas(ui, &engine);
+            },
+        );
+        output.textures_delta.clear();
+        fn walk(shape: &egui::Shape, out: &mut Vec<(String, Pos2)>) {
+            match shape {
+                egui::Shape::Text(text) => out.push((
+                    text.galley.job.text.clone(),
+                    text.pos + text.galley.size() * 0.5,
+                )),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        for shape in &output.shapes {
+            walk(&shape.shape, &mut texts);
+        }
+        texts
+    };
+    run(&mut editor, vec![]);
+    let texts = run(&mut editor, vec![]);
+    assert!(
+        !texts
+            .iter()
+            .any(|(t, _)| t.starts_with("Show all") && t != "Show all \u{203a}"),
+        "{texts:?}"
+    );
+    let count = texts
+        .iter()
+        .find(|(t, _)| {
+            t.split_once(" of ")
+                .is_some_and(|(a, b)| a.parse::<usize>().is_ok() && b.parse::<usize>().is_ok())
+        })
+        .map(|(t, _)| t.clone())
+        .ok_or_else(|| format!("no \"n of m\": {texts:?}"))?;
+    let all = texts
+        .iter()
+        .find(|(t, _)| t == "Show all \u{203a}")
+        .map(|(_, at)| *at)
+        .ok_or_else(|| format!("no Show all: {texts:?}"))?;
+    let click = |pressed| egui::Event::PointerButton {
+        pos: all,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    run(&mut editor, vec![egui::Event::PointerMoved(all)]);
+    run(&mut editor, vec![click(true)]);
+    run(&mut editor, vec![click(false)]);
+    run(&mut editor, vec![]);
+    let texts = run(&mut editor, vec![]);
+    assert!(!texts.iter().any(|(t, _)| *t == count), "{texts:?}");
+    Ok(())
+}
