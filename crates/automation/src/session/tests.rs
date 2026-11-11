@@ -505,10 +505,20 @@ fn board_fabrication_through_json_is_undoable_and_discoverable() -> TestResult {
     assert_eq!(session.engine().revision(), revision + 1);
     let undo = session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
     assert_eq!(undo["ok"], true);
+    // The reply names the step by its title, as the desktop's toast does.
+    let step = json!({"title": "Set fabrication settings", "area": "pcb"});
+    assert_eq!(undo["result"]["step"], step, "{undo}");
     assert_eq!(
         session.engine().project().fabrication,
         pcbcraft_core::Fabrication::default()
     );
+    let redo = session.dispatch(json!({"command": "project.redo", "params": {"expected_revision": session.engine().revision()}}));
+    assert_eq!(redo["result"]["step"], step, "{redo}");
+    let compact = session.respond(
+        crate::Caller::Operator,
+        json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}),
+    );
+    assert_eq!(compact["result"]["step"], step, "{compact}");
     let schemas = schemas().to_string();
     assert!(schemas.contains("layout.set_fabrication"));
     assert!(schemas.contains("immersion_silver"));

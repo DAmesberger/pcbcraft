@@ -108,6 +108,14 @@ impl Toasts {
         }
     }
 
+    /// Drop the newest toast when it says `text`, so the one that follows
+    /// replaces it (a held ⌘Z's undos).
+    pub fn remove_newest(&mut self, text: &str) {
+        if self.items.back().is_some_and(|toast| toast.text == text) {
+            self.items.pop_back();
+        }
+    }
+
     /// Drop toasts older than [`TOAST_SECONDS`].
     pub fn expire(&mut self, now: f64) {
         self.items.retain(|toast| now - toast.at < TOAST_SECONDS);

@@ -107,6 +107,29 @@ impl Operation {
         }
     }
 
+    /// This operation's title for people, from [`Self::titles`].
+    pub fn title(&self) -> &'static str {
+        let name = self.command();
+        Self::titles()
+            .find(|(wire, _)| *wire == name)
+            .map_or("Change", |(_, title)| *title)
+    }
+
+    /// The area of the design this operation changes.
+    pub const fn area(&self) -> Area {
+        match self {
+            Self::Library(_) => Area::Component,
+            Self::Instance(InstanceCommand::SetTextPlacement { .. })
+            | Self::Layout(_)
+            | Self::Rules(_)
+            | Self::Fill(_)
+            | Self::Board(_)
+            | Self::Dimension(_)
+            | Self::Fabrication(_) => Area::Pcb,
+            Self::Instance(_) | Self::Schematic(_) | Self::Update(_) => Area::Schematic,
+        }
+    }
+
     /// Every operation by wire name with its class, for discovery.
     pub fn classes() -> impl Iterator<Item = &'static (&'static str, Class)> {
         const UPDATE: &[(&str, Class)] = &[("update", Class::Edit)];
@@ -506,6 +529,36 @@ pub const MAX_UNDO: usize = 100;
 /// Operations [`Engine::apply_all_hosted`] takes in one step.
 pub const MAX_BATCH: usize = 256;
 
+/// The area of the design an undo step changed, as the workspaces name it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Area {
+    Component,
+    Schematic,
+    Pcb,
+}
+
+/// What one undo step did, for people: its operation's title and the area
+/// it changed. A batch of one kind of operation takes that operation's
+/// title; a mixed batch is [`Step::MIXED`], in its first operation's area.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Step {
+    pub title: &'static str,
+    pub area: Area,
+}
+
+impl Step {
+    /// The title of a batch of different operations.
+    pub const MIXED: &'static str = "Several changes";
+
+    fn of(operation: &Operation) -> Self {
+        Self {
+            title: operation.title(),
+            area: operation.area(),
+        }
+    }
+}
+
 /// The document, its revision and one shared undo history.
 ///
 /// Every mutation is staged on a candidate and validated before it replaces
@@ -515,8 +568,10 @@ pub const MAX_BATCH: usize = 256;
 pub struct Engine {
     document: Document,
     revision: u64,
-    undo: VecDeque<Document>,
-    redo: Vec<Document>,
+    /// The documents before each step, with what the step did.
+    undo: VecDeque<(Document, Step)>,
+    /// The documents after each undone step, with what it did.
+    redo: Vec<(Document, Step)>,
     /// The revision the latest undo step was applied at, until an undo,
     /// redo or new document ([`Engine::join_last_step`]).
     last_step: Option<u64>,
@@ -967,6 +1022,14 @@ impl Engine {
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
+    /// What [`Engine::undo`] would take back, if anything.
+    pub fn undo_step(&self) -> Option<Step> {
+        self.undo.back().map(|(_, step)| *step)
+    }
+    /// What [`Engine::redo`] would apply again, if anything.
+    pub fn redo_step(&self) -> Option<Step> {
+        self.redo.last().map(|(_, step)| *step)
+    }
 
     /// Replace the whole document (open, new, recover). History is cleared;
     /// an invalid file leaves everything unchanged.
@@ -1041,6 +1104,14 @@ impl Engine {
                 "a batch takes at most {MAX_BATCH} operations, not {count}"
             )));
         }
+        // One kind of operation names the step; a mix is several changes.
+        let mut step = operations.first().map(Step::of).unwrap_or(Step {
+            title: Step::MIXED,
+            area: Area::Schematic,
+        });
+        if operations.iter().any(|o| o.title() != step.title) {
+            step.title = Step::MIXED;
+        }
         // The steps run on a copy without history; only the end commits.
         let mut scratch = Engine {
             document: self.document.clone(),
@@ -1060,7 +1131,7 @@ impl Engine {
             outcomes.push(outcome);
         }
         if scratch.revision != self.revision {
-            self.commit(scratch.document)?;
+            self.commit(scratch.document, step)?;
         }
         self.rerouted = rerouted;
         Ok(outcomes)
@@ -1091,6 +1162,7 @@ impl Engine {
         let evaluator = evaluators.footprint;
         self.check_revision(expected_revision)?;
         self.rerouted = Default::default();
+        let step = Step::of(&operation);
         let mut rerouted = layout::router::reroute::Rerouted::default();
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
@@ -1349,7 +1421,7 @@ impl Engine {
         } else {
             validate::drafts_only(&candidate.project, &candidate.drafts)?;
         }
-        self.commit(candidate)?;
+        self.commit(candidate, step)?;
         self.rerouted = rerouted;
         Ok(outcome)
     }
@@ -1747,12 +1819,12 @@ impl Engine {
     pub fn undo_at(&mut self, expected_revision: u64) -> Result<()> {
         self.check_revision(expected_revision)?;
         let revision = self.next_revision()?;
-        let previous = self
+        let (previous, step) = self
             .undo
             .pop_back()
             .ok_or_else(|| Error::History("nothing to undo".into()))?;
         self.redo
-            .push(std::mem::replace(&mut self.document, previous));
+            .push((std::mem::replace(&mut self.document, previous), step));
         self.set_revision(revision);
         self.last_step = None;
         Ok(())
@@ -1763,12 +1835,12 @@ impl Engine {
     pub fn redo_at(&mut self, expected_revision: u64) -> Result<()> {
         self.check_revision(expected_revision)?;
         let revision = self.next_revision()?;
-        let next = self
+        let (next, step) = self
             .redo
             .pop()
             .ok_or_else(|| Error::History("nothing to redo".into()))?;
         self.undo
-            .push_back(std::mem::replace(&mut self.document, next));
+            .push_back((std::mem::replace(&mut self.document, next), step));
         self.set_revision(revision);
         self.last_step = None;
         Ok(())
@@ -1787,8 +1859,12 @@ impl Engine {
             ));
         }
         // The document between the two steps goes; the one before both
-        // stays the undo target.
-        self.undo.pop_back();
+        // stays the undo target, named by the latest step.
+        if let Some((_, step)) = self.undo.pop_back()
+            && let Some(earlier) = self.undo.back_mut()
+        {
+            earlier.1 = step;
+        }
         self.last_step = None;
         Ok(())
     }
@@ -1813,13 +1889,13 @@ impl Engine {
             .ok_or_else(|| Error::Limit("revision exhausted".into()))
     }
 
-    fn commit(&mut self, candidate: Document) -> Result<()> {
+    fn commit(&mut self, candidate: Document, step: Step) -> Result<()> {
         let revision = self.next_revision()?;
         if self.undo.len() >= MAX_UNDO {
             self.undo.pop_front();
         }
         self.undo
-            .push_back(std::mem::replace(&mut self.document, candidate));
+            .push_back((std::mem::replace(&mut self.document, candidate), step));
         self.redo.clear();
         self.last_step = Some(self.revision);
         self.set_revision(revision);
