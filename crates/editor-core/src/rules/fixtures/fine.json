@@ -1,0 +1,195 @@
+{
+  "format": 1,
+  "profile": {
+    "id": "test-fine",
+    "name": "Test fine",
+    "source": {
+      "publisher": "Pcbcraft test fixture",
+      "date": "2026-11-11",
+      "notes": "For tests only; not a fabricator's numbers and never offered in the app."
+    },
+    "drill_files": {
+      "kind": "finished",
+      "source": "Test fixture."
+    },
+    "rules": {
+      "aspect_ratio_max": {
+        "value": 10.0
+      },
+      "board_outline_fit": {
+        "value": 0.01
+      },
+      "chip_gap_min": {
+        "value": 0.2
+      },
+      "clearance_board_edge_board_edge": {
+        "value": 0.25
+      },
+      "clearance_board_edge_hole": {
+        "value": 0.25
+      },
+      "clearance_fill_board_edge": {
+        "value": 0.25
+      },
+      "clearance_fill_fill": {
+        "value": 0.1016
+      },
+      "clearance_fill_hole": {
+        "value": 0.2
+      },
+      "clearance_hole_hole": {
+        "value": 0.2
+      },
+      "clearance_pad_board_edge": {
+        "value": 0.25
+      },
+      "clearance_pad_fill": {
+        "value": 0.1016
+      },
+      "clearance_pad_hole": {
+        "value": 0.2
+      },
+      "clearance_pad_pad": {
+        "value": 0.1016
+      },
+      "clearance_pad_via": {
+        "value": 0.1016
+      },
+      "clearance_track_board_edge": {
+        "value": 0.25
+      },
+      "clearance_track_fill": {
+        "value": 0.1016
+      },
+      "clearance_track_hole": {
+        "value": 0.2
+      },
+      "clearance_track_pad": {
+        "value": 0.1016
+      },
+      "clearance_track_track": {
+        "value": 0.1016
+      },
+      "clearance_track_via": {
+        "value": 0.1016
+      },
+      "clearance_via_board_edge": {
+        "value": 0.25
+      },
+      "clearance_via_fill": {
+        "value": 0.1016
+      },
+      "clearance_via_hole": {
+        "value": 0.2
+      },
+      "clearance_via_via": {
+        "value": 0.1016
+      },
+      "copper_angle_min": {
+        "value": 0.0
+      },
+      "courtyard_clearance": {
+        "value": 0.0
+      },
+      "drill_min": {
+        "value": 0.2
+      },
+      "exposed_pad_clearance": {
+        "value": 0.2
+      },
+      "fill_clearance": {
+        "value": 0.2
+      },
+      "fill_connection": {
+        "value": "thermal"
+      },
+      "fill_width_min": {
+        "value": 0.2
+      },
+      "gull_wing_toe_shift": {
+        "value": 0.1
+      },
+      "gull_wing_width_extra": {
+        "value": 0.2
+      },
+      "island_area_min": {
+        "value": 0.0
+      },
+      "mask_expansion": {
+        "value": 0.05
+      },
+      "mask_web_min": {
+        "value": 0.1
+      },
+      "pair_gap_tolerance": {
+        "value": 0.02
+      },
+      "pair_gap_tolerance_share": {
+        "value": 0.1
+      },
+      "paste_reduction": {
+        "value": 0.0
+      },
+      "pth_annular_ring_min": {
+        "value": 0.125
+      },
+      "silk_edge_clearance": {
+        "value": 0.0
+      },
+      "silk_line_width_min": {
+        "value": 0.1
+      },
+      "silk_pad_clearance": {
+        "value": 0.1
+      },
+      "silk_text_height_min": {
+        "value": 0.6
+      },
+      "silk_text_stroke_share": {
+        "formula": "1.0 / 7.0"
+      },
+      "sliver_width_min": {
+        "value": 0.0
+      },
+      "tent_vias": {
+        "value": true
+      },
+      "thermal_angle": {
+        "value": 45.0
+      },
+      "thermal_gap": {
+        "value": 0.25
+      },
+      "thermal_spoke_count": {
+        "value": 4
+      },
+      "thermal_spoke_width": {
+        "value": 0.3
+      },
+      "tht_drill_clearance": {
+        "value": 0.3
+      },
+      "tht_land_extra": {
+        "value": 0.6
+      },
+      "tht_land_gap": {
+        "value": 0.25
+      },
+      "track_width_default": {
+        "value": 0.2
+      },
+      "track_width_min": {
+        "value": 0.1016
+      },
+      "via_annular_ring_min": {
+        "value": 0.125
+      },
+      "via_diameter_default": {
+        "formula": "via_drill_default + 2.0 * via_annular_ring_min"
+      },
+      "via_drill_default": {
+        "value": 0.2
+      }
+    }
+  }
+}

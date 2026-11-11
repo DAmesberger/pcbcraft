@@ -10,8 +10,7 @@ use crate::library::{Outline, Segment};
 use crate::model::board::{BoardFeatureId, BoardSketch, CutoutKind, SolvedBoard, SolvedCutout};
 use crate::model::{BoardShape, CopperLayer, Project, Track, Via, ViaSpan};
 use crate::rules::{
-    CopperObject, NetClassSpec, ProjectRules, RuleKey, RuleProfile, RuleValue, RulesCommand,
-    builtin,
+    CopperObject, NetClassSpec, RuleKey, RuleProfile, RuleValue, RulesCommand, fixtures,
 };
 use crate::{Engine, Operation, Outcome, Query, QueryResult};
 
@@ -74,16 +73,19 @@ fn found(project: &Project, code: &str) -> Vec<Finding> {
         .collect()
 }
 
-/// A profile named `name` from the default with `edit` applied.
-fn profile(name: &str, edit: impl FnOnce(&mut crate::rules::DesignRules)) -> RuleProfile {
-    let mut p = builtin::default_profile();
-    p.id = name.to_lowercase().replace(' ', "-");
-    p.name = name.into();
-    // Changed values make a user profile: `rules.set_profile` refuses a
-    // built-in profile whose values differ from the shipped ones.
-    p.provenance.origin = crate::rules::ProfileOrigin::User;
-    edit(&mut p.rules);
-    p
+/// A profile named `name` from the test prototype with `edit` applied.
+fn profile(name: &str, edit: impl FnOnce(&mut crate::rules::DesignRules)) -> Result<RuleProfile> {
+    let base = fixtures::prototype()?;
+    let mut rules = base.rules().clone();
+    edit(&mut rules);
+    RuleProfile::from_values(
+        &name.to_lowercase().replace(' ', "-"),
+        name,
+        base.source.clone(),
+        base.drill_files.clone(),
+        &rules,
+        "",
+    )
 }
 
 /// Two parallel 0.3 mm tracks on different nets, centre lines 0.55 mm
@@ -130,7 +132,7 @@ fn copper_clearance_follows_overrides_profiles_and_net_classes() -> Result<()> {
         r.copper
             .clearance
             .set(CopperObject::Track, CopperObject::Track, 0.26)
-    });
+    })?;
     with(
         &mut fine,
         RulesCommand::SetProfile {
@@ -242,7 +244,7 @@ fn routing_refuses_what_the_net_class_forbids() -> Result<()> {
     )?;
     // A via of the class keeps the class clearance too.
     // Its pad 0.3 mm below the first track (copper edge at y 29.85).
-    let close = ViaRequest::through(b, [25.0, 29.25]);
+    let close = ViaRequest::fixture(b, [25.0, 29.25]);
     let refused = engine.apply(
         engine.revision(),
         Operation::Layout(LayoutCommand::AddVia { via: close }),
@@ -377,7 +379,7 @@ fn board_edge_clearance_flips_with_the_profile_and_previews() -> Result<()> {
         for o in CopperObject::ALL {
             r.copper.clearance.set(o, CopperObject::BoardEdge, 0.5);
         }
-    });
+    })?;
     let QueryResult::ProfileImpact(impact) = engine.query(Query::PreviewProfile {
         profile: Box::new(edgy.clone()),
         keep_overrides: false,
@@ -520,7 +522,7 @@ fn the_default_profile_reports_copper_at_the_board_edge() -> Result<()> {
     assert_eq!(hits.len(), 1, "{hits:#?}");
     assert!(
         hits[0].message.ends_with(
-            "is 0.25 mm from the board edge; needs 0.3 mm (Pcbcraft default: track to board edge clearance)"
+            "is 0.25 mm from the board edge; needs 0.3 mm (Test prototype: track to board edge clearance)"
         ),
         "{}",
         hits[0].message
@@ -818,7 +820,7 @@ fn a_mounting_hole_measures_its_gap_to_copper_edge_to_edge() -> Result<()> {
         "{message}"
     );
     assert!(
-        message.ends_with("needs 0.25 mm (Pcbcraft default: track to hole clearance)"),
+        message.ends_with("needs 0.25 mm (Test prototype: track to hole clearance)"),
         "{message}"
     );
     // Copper over the hole overlaps it: no "0 mm".
@@ -872,14 +874,15 @@ fn a_mounting_hole_measures_its_gap_to_copper_edge_to_edge() -> Result<()> {
 #[test]
 fn the_default_rules_keep_every_former_verdict() -> Result<()> {
     // The showcase and demo boards check exactly as with the former
-    // constants: the default project rules are the default profile.
+    // constants: their rules are the test prototype profile, whose values
+    // are those constants, written out as plain values.
     let (project, _, _) = board()?;
-    assert_eq!(project.rules, ProjectRules::default());
+    assert_eq!(project.rules, fixtures::rules()?);
     let mut explicit = project.clone();
     with(
         &mut explicit,
         RulesCommand::SetProfile {
-            profile: Box::new(builtin::default_profile()),
+            profile: Box::new(profile("Plain", |_| {})?),
             keep_overrides: false,
         },
     )?;
@@ -1047,7 +1050,7 @@ fn a_dangling_track_end_warns_and_a_connected_one_does_not() -> Result<()> {
     let outcome = engine.apply(
         engine.revision(),
         Operation::Layout(LayoutCommand::AddVia {
-            via: ViaRequest::through(net, [25.0, 25.0]),
+            via: ViaRequest::fixture(net, [25.0, 25.0]),
         }),
     )?;
     let open = dangling(&engine);

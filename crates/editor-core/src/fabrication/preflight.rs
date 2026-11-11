@@ -128,24 +128,23 @@ pub fn apply(
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(
     untagged,
-    expecting = "a rule profile id such as std-6-6, or a whole rule profile"
+    expecting = "a rule profile id from the profile library, or a whole rule profile"
 )]
 pub enum ProfileChoice {
-    /// A profile id. The engine knows the built-in profiles; a host with a
-    /// user profile library resolves the rest before it asks.
+    /// A profile id. Pcbcraft has no built-in profiles: a host with a
+    /// profile library resolves an id to its profile before it asks.
     Id(String),
     Profile(Box<RuleProfile>),
 }
 
 impl ProfileChoice {
-    /// The profile chosen. An id that is not a built-in profile is not found.
+    /// The profile chosen. An id the host did not resolve is not found.
     pub fn into_profile(self) -> Result<RuleProfile> {
         match self {
-            Self::Id(id) => rules::builtin::by_id(&id).ok_or_else(|| {
-                Error::NotFound(format!(
-                    "rules.profile_unknown: no rule profile has the id {id}"
-                ))
-            }),
+            Self::Id(id) => Err(Error::NotFound(format!(
+                "rules.profile_unknown: no rule profile {id} here; pass the profile file's \
+                 profile, or its id where a profile library is open"
+            ))),
             Self::Profile(profile) => Ok(*profile),
         }
     }
@@ -210,6 +209,7 @@ const MAX_LEGEND_NAME: usize = 16;
 pub const NO_WAIVER: &[&str] = &[
     layout::dimensions::REFERENCE_LOST,
     layout::dimensions::REFERENCE_INEXACT,
+    "rules.no_profile",
 ];
 
 /// Whether the finding a waiver key names may not be waived.
@@ -261,7 +261,7 @@ pub fn report(
 ) -> Result<PreflightReport> {
     let mut items = Vec::new();
     let checked: Cow<'_, Project> = match profile {
-        Some(p) if *p != project.rules.profile => {
+        Some(p) if project.rules.profile.as_ref() != Some(p) => {
             let mut candidate = project.clone();
             match rules::apply(
                 &mut candidate.rules,
@@ -300,6 +300,15 @@ pub fn report(
         ));
     }
     production_findings(p, drafts, &mut items);
+    if p.rules.profile.is_none() {
+        items.push(item(
+            "rules.no_profile",
+            Severity::Error,
+            "The board has no rule profile, so no manufacturing rule was checked".into(),
+            Some("Choose the fabricator's rule profile (Board › Rules)".into()),
+            Vec::new(),
+        ));
+    }
     for i in &mut items {
         i.waiver = if unwaivable(&i.key) {
             None
@@ -316,7 +325,7 @@ pub fn report(
     items.dedup_by(|a, b| a.key == b.key);
     let count = |s: Severity| items.iter().filter(|i| i.severity == s).count();
     Ok(PreflightReport {
-        profile: p.rules.profile.name.clone(),
+        profile: p.rules.profile_name(),
         errors: count(Severity::Error),
         warnings: count(Severity::Warning),
         waived: items.iter().filter(|i| i.waiver.is_some()).count(),
@@ -522,7 +531,7 @@ fn legend_against_the_board(project: &Project, items: &mut Vec<PreflightItem>) {
         let PlacedItem::Text(text) = &graphic.item else {
             continue;
         };
-        let strokes = layout::legend::text_strokes(text);
+        let strokes = layout::legend::text_strokes(text, &project.rules.effective().silkscreen);
         let mut worst: Option<LegendFault> = None;
         for points in &strokes.strokes {
             let single = points.first().map(|p| [*p, *p]);
@@ -634,7 +643,7 @@ fn silk_over_pads(project: &Project, items: &mut Vec<PreflightItem>) {
         let strokes: Vec<(Vec<Point>, f64)> = match &graphic.item {
             PlacedItem::Shape { shape, width, .. } => vec![(shape.flatten(tol), *width)],
             PlacedItem::Text(text) => {
-                let s = layout::legend::text_strokes(text);
+                let s = layout::legend::text_strokes(text, &rules.silkscreen);
                 s.strokes.into_iter().map(|p| (p, s.width)).collect()
             }
         };

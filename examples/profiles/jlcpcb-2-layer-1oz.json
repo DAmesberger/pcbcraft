@@ -1,0 +1,256 @@
+{
+  "format": 1,
+  "profile": {
+    "id": "jlcpcb-2-layer-1oz",
+    "name": "JLCPCB 2-layer 1 oz",
+    "source": {
+      "publisher": "JLCPCB",
+      "document": "PCB Manufacturing & Assembly Capabilities",
+      "url": "https://jlcpcb.com/capabilities/pcb-capabilities",
+      "date": "2026-11-11",
+      "notes": "Rigid FR-4, 1 and 2 layers, 1 oz outer copper. Each rule names the row it comes from; rules marked as the author's choice are defaults, not limits. Re-read the page before ordering: JLCPCB changes it."
+    },
+    "drill_files": {
+      "kind": "not_published",
+      "source": "The capabilities page (read 2026-11-11) gives hole tolerances (\"Through-holes: +0.13 / -0.08 mm\") but does not say whether drill-file sizes are finished or drilled sizes."
+    },
+    "rules": {
+      "aspect_ratio_max": {
+        "value": null,
+        "source": "JLCPCB does not publish an aspect ratio: not checked."
+      },
+      "board_outline_fit": {
+        "value": 0.01,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "chip_gap_min": {
+        "value": 0.2,
+        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+      },
+      "clearance_board_edge_board_edge": {
+        "value": 0.0,
+        "source": "Not a meaningful pair: 0."
+      },
+      "clearance_board_edge_hole": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit: 0, not checked."
+      },
+      "clearance_fill_board_edge": {
+        "value": 0.2,
+        "source": "Outline: Copper clearance from routed board edges: ≧0.2 mm."
+      },
+      "clearance_fill_fill": {
+        "value": 0.1,
+        "source": "Traces: Min. trace width/spacing, 1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)."
+      },
+      "clearance_fill_hole": {
+        "value": 0.2,
+        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm), which one hole rule cannot tell apart: check plated holes by hand."
+      },
+      "clearance_hole_hole": {
+        "value": 0.2,
+        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm), which one hole rule cannot tell apart: check plated holes by hand."
+      },
+      "clearance_pad_board_edge": {
+        "value": 0.2,
+        "source": "Outline: Copper clearance from routed board edges: ≧0.2 mm."
+      },
+      "clearance_pad_fill": {
+        "value": 0.1,
+        "source": "Traces: Min. trace width/spacing, 1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)."
+      },
+      "clearance_pad_hole": {
+        "value": 0.2,
+        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm), which one hole rule cannot tell apart: check plated holes by hand."
+      },
+      "clearance_pad_pad": {
+        "value": 0.15,
+        "source": "Traces: SMD pad to pad clearance (different nets) 0.15mm."
+      },
+      "clearance_pad_via": {
+        "value": 0.1,
+        "source": "Traces: Min. trace width/spacing, 1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)."
+      },
+      "clearance_track_board_edge": {
+        "value": 0.2,
+        "source": "Outline: Copper clearance from routed board edges: ≧0.2 mm."
+      },
+      "clearance_track_fill": {
+        "value": 0.1,
+        "source": "Traces: Min. trace width/spacing, 1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)."
+      },
+      "clearance_track_hole": {
+        "value": 0.2,
+        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm), which one hole rule cannot tell apart: check plated holes by hand."
+      },
+      "clearance_track_pad": {
+        "value": 0.1,
+        "source": "Traces: Pad to track clearance (1oz) 0.1mm."
+      },
+      "clearance_track_track": {
+        "value": 0.1,
+        "source": "Traces: Min. trace width/spacing, 1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)."
+      },
+      "clearance_track_via": {
+        "value": 0.1,
+        "source": "Traces: Min. trace width/spacing, 1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)."
+      },
+      "clearance_via_board_edge": {
+        "value": 0.2,
+        "source": "Outline: Copper clearance from routed board edges: ≧0.2 mm."
+      },
+      "clearance_via_fill": {
+        "value": 0.1,
+        "source": "Traces: Min. trace width/spacing, 1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)."
+      },
+      "clearance_via_hole": {
+        "value": 0.2,
+        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm), which one hole rule cannot tell apart: check plated holes by hand."
+      },
+      "clearance_via_via": {
+        "value": 0.1,
+        "source": "Traces: Min. trace width/spacing, 1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)."
+      },
+      "copper_angle_min": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit: 0, not checked."
+      },
+      "courtyard_clearance": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit: 0, not checked."
+      },
+      "drill_min": {
+        "value": 0.15,
+        "source": "Drilling: Drill Diameter, 2-layer: 0.15 – 6.3 mm."
+      },
+      "exposed_pad_clearance": {
+        "value": 0.2,
+        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+      },
+      "fill_clearance": {
+        "value": 0.2,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "fill_connection": {
+        "value": "thermal",
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "fill_width_min": {
+        "formula": "track_width_min",
+        "source": "The narrowest copper JLCPCB etches (min. trace width)."
+      },
+      "gull_wing_toe_shift": {
+        "value": 0.1,
+        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+      },
+      "gull_wing_width_extra": {
+        "value": 0.2,
+        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+      },
+      "island_area_min": {
+        "value": 0.0,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "mask_expansion": {
+        "value": 0.0,
+        "source": "Soldermask: Soldermask Expansion 1:1."
+      },
+      "mask_web_min": {
+        "value": 0.1,
+        "source": "Soldermask: Soldermask bridge 0.10 mm (green, red, yellow, blue, purple); 0.13 mm for black and white."
+      },
+      "pair_gap_tolerance": {
+        "value": 0.02,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "pair_gap_tolerance_share": {
+        "value": 0.1,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "paste_reduction": {
+        "value": 0.0,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "pth_annular_ring_min": {
+        "value": 0.18,
+        "source": "Traces: PTH annular ring, 2-layer 1 oz: Recommended 0.25 mm or above; absolute minimum 0.18 mm."
+      },
+      "silk_edge_clearance": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit: 0, not checked."
+      },
+      "silk_line_width_min": {
+        "value": 0.15,
+        "source": "Legend: Minimum Line Width ≥0.15mm."
+      },
+      "silk_pad_clearance": {
+        "value": 0.15,
+        "source": "Legend: Pad To Silkscreen 0.15mm."
+      },
+      "silk_text_height_min": {
+        "value": 1.0,
+        "source": "Legend: Minimum text height 40 mil (1.0mm)."
+      },
+      "silk_text_stroke_share": {
+        "formula": "silk_line_width_min / silk_text_height_min",
+        "source": "Text at the least height prints at the least line width."
+      },
+      "sliver_width_min": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit: 0, not checked."
+      },
+      "tent_vias": {
+        "value": true,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "thermal_angle": {
+        "value": 45.0,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "thermal_gap": {
+        "value": 0.25,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "thermal_spoke_count": {
+        "value": 4,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "thermal_spoke_width": {
+        "value": 0.3,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "tht_drill_clearance": {
+        "value": 0.3,
+        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+      },
+      "tht_land_extra": {
+        "value": 0.6,
+        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+      },
+      "tht_land_gap": {
+        "value": 0.25,
+        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+      },
+      "track_width_default": {
+        "value": 0.25,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      },
+      "track_width_min": {
+        "value": 0.1,
+        "source": "Traces: Min. trace width/spacing, 1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)."
+      },
+      "via_annular_ring_min": {
+        "formula": "(0.25 - 0.15) / 2.0",
+        "source": "Drilling: Min. Via hole size/diameter, 2-layer: 0.15 mm hole size / 0.25 mm via diameter."
+      },
+      "via_diameter_default": {
+        "formula": "via_drill_default + 0.15",
+        "source": "Drilling: \"Via diameter should be 0.1mm(0.15mm preferred) larger than Via hole size\"; the preferred margin."
+      },
+      "via_drill_default": {
+        "value": 0.3,
+        "source": "Profile author's choice (a default, not a JLCPCB limit)."
+      }
+    }
+  }
+}

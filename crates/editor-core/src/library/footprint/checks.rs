@@ -765,7 +765,7 @@ mod rules_tests {
     use super::*;
     use crate::ids::{GraphicId, PackageTerminalId, PadId};
     use crate::library::graphics::{FootprintGraphic, Side};
-    use crate::rules::{RuleValue, RulesCommand, builtin};
+    use crate::rules::{RuleValue, RulesCommand};
 
     /// Two 0.5 mm square lands 0.3 mm apart (copper), each opening grown
     /// by the default 0.05 mm: a 0.2 mm mask web; and a 0.12 mm silk line.
@@ -810,12 +810,17 @@ mod rules_tests {
         );
 
         let mut fine = default.clone();
-        let mut profile = builtin::default_profile();
-        profile.id = "fine-test".into();
-        profile.name = "Fine Test".into();
-        // Changed values are a user profile; built-ins keep shipped values.
-        profile.provenance.origin = crate::rules::ProfileOrigin::User;
-        profile.rules.mask.web_min = 0.25;
+        let base = crate::rules::fixtures::prototype()?;
+        let mut values = base.rules().clone();
+        values.mask.web_min = 0.25;
+        let profile = crate::rules::RuleProfile::from_values(
+            "fine-test",
+            "Fine Test",
+            base.source.clone(),
+            base.drill_files.clone(),
+            &values,
+            "",
+        )?;
         crate::rules::apply(
             &mut fine,
             RulesCommand::SetProfile {
@@ -831,7 +836,7 @@ mod rules_tests {
             ]
         );
 
-        let mut strict = default.clone();
+        let mut strict = crate::rules::fixtures::rules()?;
         for (key, mm) in [
             (RuleKey::SilkLineWidthMin, 0.15),
             (RuleKey::SilkPadClearance, 0.6),

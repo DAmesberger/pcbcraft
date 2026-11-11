@@ -25,23 +25,10 @@ use std::collections::BTreeSet;
 
 /// Most vias on one board.
 pub const MAX_VIAS: usize = 16_384;
-/// Default through-via drill and pad, in mm (a common fabricator standard
-/// via, not a qualification).
-pub const DEFAULT_VIA_DRILL_MM: f64 = 0.3;
-pub const DEFAULT_VIA_DIAMETER_MM: f64 = 0.6;
-const MIN_DRILL_MM: f64 = 0.1;
-const MAX_DIAMETER_MM: f64 = 6.0;
-/// The default profile's smallest via annular ring, in mm (an estimated
-/// prototype default, not a fabricator qualification); the check reads
-/// the project's `min via annular ring`.
-pub const MIN_ANNULAR_RING_MM: f64 = 0.1;
-/// The default profile's least gap from a drilled hole to another net's
-/// copper on any layer, in mm (estimated); the check reads the `hole`
-/// pairs of the project's clearance matrix.
-pub const DRILL_TO_COPPER_MM: f64 = 0.25;
-/// The default profile's least gap between two drilled holes, any nets,
-/// in mm (estimated); the check reads `hole to hole clearance`.
-pub const HOLE_TO_HOLE_MM: f64 = 0.25;
+/// Largest via pad, mm: an input bound on the document, not a rule (the
+/// rule profile's `min drill` and `min via annular ring` are the limits
+/// vias are placed and checked against).
+pub const MAX_DIAMETER_MM: f64 = 6.0;
 
 /// A via to add: everything but its identity.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -56,13 +43,28 @@ pub struct ViaRequest {
 }
 
 impl ViaRequest {
-    /// A default through via on `net` at `position`, tented.
-    pub fn through(net: Id, position: Point) -> Self {
+    /// A through via on `net` at `position` of the rules' default via
+    /// drill and pad, tented as `tent vias` says.
+    pub fn through(rules: &crate::rules::DesignRules, net: Id, position: Point) -> Self {
         Self {
             net,
             position,
-            drill: DEFAULT_VIA_DRILL_MM,
-            diameter: DEFAULT_VIA_DIAMETER_MM,
+            drill: rules.holes.via_drill_default,
+            diameter: rules.holes.via_diameter_default,
+            span: ViaSpan::Through,
+            tented: rules.mask.tent_vias,
+        }
+    }
+
+    /// A test fixture, never in the product: the test prototype profile's
+    /// default via (0.3 mm drill, 0.6 mm pad, tented).
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn fixture(net: Id, position: Point) -> Self {
+        Self {
+            net,
+            position,
+            drill: 0.3,
+            diameter: 0.6,
             span: ViaSpan::Through,
             tented: true,
         }
@@ -582,11 +584,13 @@ pub(super) fn validate(project: &Project, nets: &BTreeSet<Id>) -> Result<()> {
         if !point_valid(via.position)
             || !via.drill.is_finite()
             || !via.diameter.is_finite()
-            || via.drill < MIN_DRILL_MM
+            || via.drill <= 0.0
             || via.diameter > MAX_DIAMETER_MM
             || via.diameter <= via.drill + EPS
         {
-            return invalid("via drill must be at least 0.1 mm and smaller than its pad");
+            return invalid(&format!(
+                "via drill must be positive and smaller than its pad, at most {MAX_DIAMETER_MM} mm"
+            ));
         }
         let r = via.diameter / 2.0;
         let [w, h] = project.board_size;

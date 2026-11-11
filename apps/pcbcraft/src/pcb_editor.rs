@@ -378,8 +378,9 @@ pub struct PcbEditor {
     /// The tracks and vias the previewed route step shoves: drawn at their
     /// new places by the preview, not at their old ones.
     shoved: (Vec<Id>, Vec<Id>),
-    /// Whether vias the Via tool and layer changes place are tented.
-    via_tented: bool,
+    /// Whether vias the Via tool and layer changes place are tented:
+    /// the tool's own choice, else the rules' `tent vias` ([`Self::via_tented`]).
+    via_tented: Option<bool>,
     property_key: Option<(u64, Option<Id>)>,
     position: Point,
     rotation: f64,
@@ -534,7 +535,7 @@ impl Default for PcbEditor {
             pending_via: None,
             route: Default::default(),
             shoved: Default::default(),
-            via_tented: true,
+            via_tented: None,
             property_key: None,
             position: [0.0; 2],
             rotation: 0.0,
@@ -2129,7 +2130,7 @@ impl PcbEditor {
         self.route_highlight(Some(net));
         Some(Operation::Layout(LayoutCommand::AddVia {
             via: layout::ViaRequest {
-                tented: self.via_tented,
+                tented: self.via_tented(project),
                 ..layout::class_via(project, net, position)
             },
         }))

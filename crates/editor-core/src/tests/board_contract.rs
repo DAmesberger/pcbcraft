@@ -1,20 +1,20 @@
-//! The board contract (docs/board-rules-and-shape.md): default rules equal the
-//! limits the checks used before rules were configurable, the new
+//! The board contract (docs/board-rules-and-shape.md): the test prototype
+//! profile holds the limits the checks used before rules were configurable, the new
 //! operations are atomic and undoable, the new fields stay out of existing
 //! files, and their schemas are served. Each slice tests its behaviour.
 use crate::layout::fill::FillCommand;
 use crate::library::{Outline, Segment};
 use crate::model::fill::FillSpec;
 use crate::rules::{
-    CopperObject, DesignRules, NetClassSpec, RuleKey, RuleValue, RulesCommand, builtin,
+    CopperObject, DesignRules, NetClassSpec, RuleKey, RuleValue, RulesCommand, fixtures,
 };
 use crate::{CopperLayer, Engine, Operation, Outcome, Query, QueryResult, format, layout, library};
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[test]
-fn default_rules_equal_the_former_hardcoded_limits() {
-    let r = DesignRules::default();
+fn the_prototype_fixture_holds_the_former_hardcoded_limits() -> Fallible<()> {
+    let r = fixtures::prototype()?.rules().clone();
     let c = &r.copper.clearance;
     for a in [
         CopperObject::Track,
@@ -30,21 +30,15 @@ fn default_rules_equal_the_former_hardcoded_limits() {
         ] {
             assert_eq!(c.get(a, b), layout::CLEARANCE_MM);
         }
-        assert_eq!(c.get(a, CopperObject::Hole), layout::DRILL_TO_COPPER_MM);
+        assert_eq!(c.get(a, CopperObject::Hole), 0.25);
         // The one limit that moved on purpose: 0 let fill copper reach
         // 5 µm from the edge and pass (docs/e2e-esp32-devboard.md, gap 6).
         assert_eq!(c.get(a, CopperObject::BoardEdge), 0.3);
     }
-    assert_eq!(
-        c.get(CopperObject::Hole, CopperObject::Hole),
-        layout::HOLE_TO_HOLE_MM
-    );
-    assert_eq!(r.holes.via_annular_ring_min, layout::MIN_ANNULAR_RING_MM);
-    assert_eq!(r.holes.via_drill_default, layout::DEFAULT_VIA_DRILL_MM);
-    assert_eq!(
-        r.holes.via_diameter_default,
-        layout::DEFAULT_VIA_DIAMETER_MM
-    );
+    assert_eq!(c.get(CopperObject::Hole, CopperObject::Hole), 0.25);
+    assert_eq!(r.holes.via_annular_ring_min, 0.1);
+    assert_eq!(r.holes.via_drill_default, 0.3);
+    assert_eq!(r.holes.via_diameter_default, 0.6);
     assert_eq!(r.mask.expansion, library::MASK_EXPANSION_MM);
     assert_eq!(r.mask.web_min, library::MIN_MASK_WEB_MM);
     assert_eq!(r.silkscreen.line_width_min, library::MIN_SILK_WIDTH_MM);
@@ -56,7 +50,9 @@ fn default_rules_equal_the_former_hardcoded_limits() {
         r.land.exposed_pad_clearance,
         library::samples::EXPOSED_PAD_CLEARANCE_MM
     );
-    assert_eq!(builtin::default_profile().rules, r);
+    // The library's interim land-estimator values are the same set.
+    assert_eq!(DesignRules::default(), r);
+    Ok(())
 }
 
 #[test]
@@ -65,12 +61,9 @@ fn existing_documents_do_not_mention_the_board_fields() -> Fallible<()> {
     // it names `fills`; it still names no other board field, and a
     // document without fills does not name `fills` either.
     let text = serde_json::to_string(&Engine::showcase()?.to_file())?;
-    for key in [
-        "\"rules\"",
-        "\"board_shape\"",
-        "\"part_dimensions\"",
-        "\"keepouts\"",
-    ] {
+    // A board always names its rule profile.
+    assert!(text.contains("\"rules\""));
+    for key in ["\"board_shape\"", "\"part_dimensions\"", "\"keepouts\""] {
         assert!(!text.contains(key), "{key}");
     }
     assert!(text.contains("\"fills\""));
@@ -117,7 +110,7 @@ fn board_operations_are_atomic_undoable_and_persist() -> Fallible<()> {
     engine.apply(
         engine.revision(),
         Operation::Rules(RulesCommand::SetProfile {
-            profile: Box::new(builtin::fine()),
+            profile: Box::new(fixtures::fine()?),
             keep_overrides: false,
         }),
     )?;
@@ -194,13 +187,16 @@ fn board_operations_are_atomic_undoable_and_persist() -> Fallible<()> {
     let QueryResult::Rules(report) = engine.query(Query::RulesEffective {})? else {
         return Err("rules".into());
     };
-    assert_eq!(report.profile_name, "Fine 4/4");
+    assert_eq!(
+        report.profile.as_ref().map(|p| p.name.as_str()),
+        Some("Test fine")
+    );
     let QueryResult::BoardShape(board) = engine.query(Query::BoardShape {})? else {
         return Err("board".into());
     };
     assert_eq!(board.edges.len(), 4);
     let QueryResult::ProfileImpact(impact) = engine.query(Query::PreviewProfile {
-        profile: Box::new(builtin::default_profile()),
+        profile: Box::new(fixtures::prototype()?),
         keep_overrides: false,
     })?
     else {

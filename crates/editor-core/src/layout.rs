@@ -65,10 +65,7 @@ pub use placed::{
     PlacedKeepout, PlacedPad, pick_graphic, pick_pad, placed_graphics, placed_keepouts,
     placed_pads, placement_transform,
 };
-pub use via::{
-    DEFAULT_VIA_DIAMETER_MM, DEFAULT_VIA_DRILL_MM, DRILL_TO_COPPER_MM, HOLE_TO_HOLE_MM,
-    LayerChangeRequest, MIN_ANNULAR_RING_MM, ViaRequest, via_pad_clearance_conflict,
-};
+pub use via::{LayerChangeRequest, ViaRequest, via_pad_clearance_conflict};
 /// Most nearby copper pairs one check compares (shapes whose bounds come
 /// within [`copper::check_reach`]; farther pairs are never compared, so
 /// a board of the most vias, pads and tracks is checked whole). Only
@@ -1190,14 +1187,14 @@ pub fn route_width(project: &Project, net: Id) -> crate::rules::Resolved<f64> {
     project.rules.track_width(net_class(project, net))
 }
 
-/// A tented through via on `net` at `position` with its class's drill and
-/// pad (else the effective defaults).
+/// A through via on `net` at `position` with its class's drill and pad
+/// (else the effective defaults), tented as the rules' `tent vias` says.
 pub fn class_via(project: &Project, net: Id, position: Point) -> ViaRequest {
     let (drill, diameter) = project.rules.via_size(net_class(project, net)).value;
     ViaRequest {
         drill,
         diameter,
-        ..ViaRequest::through(net, position)
+        ..ViaRequest::through(&project.rules.effective(), net, position)
     }
 }
 

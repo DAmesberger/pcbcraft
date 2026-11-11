@@ -140,7 +140,7 @@ fn routed() -> Result<(Engine, Id, Id, Id), Box<dyn std::error::Error>> {
     engine.apply(
         engine.revision(),
         Operation::Layout(LayoutCommand::AddVia {
-            via: ViaRequest::through(net, [12.0, 11.0]),
+            via: ViaRequest::fixture(net, [12.0, 11.0]),
         }),
     )?;
     let track = engine.project().tracks.first().ok_or("track")?.id;

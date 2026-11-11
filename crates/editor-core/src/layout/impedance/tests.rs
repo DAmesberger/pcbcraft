@@ -198,6 +198,7 @@ fn usb_class(project: &mut Project, signal: SignalRules) -> Result<NetClassId> {
 fn a_90_ohm_usb_pair_derives_its_width_and_gap() -> Result<()> {
     let mut project = Project {
         stackup: Stackup::preset(4)?,
+        rules: crate::rules::fixtures::rules()?,
         ..Default::default()
     };
     let class = usb_class(
@@ -215,7 +216,7 @@ fn a_90_ohm_usb_pair_derives_its_width_and_gap() -> Result<()> {
         derived.zdiff.unwrap_or_default(),
     );
     assert!(near(z, 90.0, 1e-4), "{z}");
-    // The tightest gap the default profile allows sets the width.
+    // The tightest gap the test prototype allows sets the width.
     assert!((g - 0.2).abs() < 1e-9, "{g}");
     assert!((0.1..0.4).contains(&w), "{w}");
     Ok(())

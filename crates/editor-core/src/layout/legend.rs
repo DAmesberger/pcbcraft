@@ -4,22 +4,20 @@
 //! Gerber legend layers both draw these strokes, so both print the same ink.
 use crate::geometry::{Point, cos_sin};
 use crate::library::graphics::{HAlign, PlacedText, TextMetric};
+use crate::rules::SilkscreenRules;
 
 mod font;
 
 pub use font::{GRID_HEIGHT, GRID_WIDTH, glyph};
 
-/// Text stroke width as a share of the cap height, at least the thinnest
-/// legend line fabricators print (est. 0.1 mm).
-pub const TEXT_STROKE_SHARE: f64 = 1.0 / 7.0;
-pub const MIN_STROKE_MM: f64 = 0.1;
 /// Glyph width inside its advance, and its left bearing, as cap-height
 /// shares (the core metric's advance is 0.6).
 pub const GLYPH_WIDTH_SHARE: f64 = 0.42;
 pub const GLYPH_BEARING_SHARE: f64 = 0.09;
 
-/// One placed text as centre lines of a round pen `width` wide. A stroke
-/// of one point is a dot.
+/// One placed text as centre lines of a round pen `width` wide (the
+/// rules' [`SilkscreenRules::text_stroke`]). A stroke of one point is a
+/// dot.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextStrokes {
     pub width: f64,
@@ -29,13 +27,13 @@ pub struct TextStrokes {
 /// The pen strokes of placed legend text in board coordinates. Characters
 /// without a glyph print nothing but keep their advance; text of no
 /// positive finite height prints nothing.
-pub fn text_strokes(text: &PlacedText) -> TextStrokes {
+pub fn text_strokes(text: &PlacedText, silk: &SilkscreenRules) -> TextStrokes {
     let h = text.height;
     if !(h > 0.0 && h.is_finite()) {
         return TextStrokes::default();
     }
     let advance = TextMetric::default().advance * h;
-    let width = (TEXT_STROKE_SHARE * h).max(MIN_STROKE_MM);
+    let width = silk.text_stroke(h);
     let (rotation_deg, lines) = text.lines();
     let justify = text.line_justify();
     let (c, s) = cos_sin(rotation_deg);

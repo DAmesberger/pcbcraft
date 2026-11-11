@@ -1035,7 +1035,7 @@ fn consistent_pads_of_every_kind_and_shape_publish() -> Result<()> {
 
 #[test]
 fn footprint_lint_is_advisory_and_follows_drawings() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let f = draft(&mut engine, &two("Pair"))?;
     // Three pads 0.6 mm wide at 0.7 mm pitch leave a 0.1 - 2 × 0.05 = 0 mm
     // mask web; no courtyard; no polarity.

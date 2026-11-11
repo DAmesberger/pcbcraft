@@ -355,7 +355,7 @@ fn findings(engine: &Engine) -> Fallible<Vec<PreflightItem>> {
 /// the stroke font's own output.
 fn designator_extent(project: &Project, instance: Id) -> Fallible<(f64, f64)> {
     let text = designator_text(project, instance)?;
-    let strokes = layout::legend::text_strokes(&text);
+    let strokes = layout::legend::text_strokes(&text, &project.rules.effective().silkscreen);
     let half = strokes.width / 2.0;
     let xs = strokes.strokes.iter().flatten().map(|p| p[0]);
     let min = xs.clone().fold(f64::INFINITY, f64::min) - half;

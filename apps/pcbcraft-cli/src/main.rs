@@ -38,7 +38,9 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
                                    window's undo history, its permission choice
                                    and its Allow/Deny; the token comes from the
                                    window's token file or PCBCRAFT_CONTROL_TOKEN
-  showcase NEW_FILE.pcbcraft       write the 4-layer PCB showcase project
+  showcase NEW_FILE.pcbcraft [--profile ID]
+                                   write the 4-layer PCB showcase project on a profile
+                                   from the rule profile library (else the default)
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
   sample-library NEW_DIR [NAME]    write the synthetic catalog as a library folder
   export FILE.pcbcraft NEW_FILE.solidcraft
@@ -221,12 +223,17 @@ fn run() -> Result<()> {
             let mut server = mcp::Server::new(session, options.policy()?);
             Ok(server.serve(io::stdin().lock(), io::stdout().lock())?)
         }
-        [command, path] if ["showcase", "parts"].contains(&command.as_str()) => {
+        [command, path, rest @ ..]
+            if ["showcase", "parts"].contains(&command.as_str())
+                && (rest.is_empty()
+                    || (command == "showcase" && rest.len() == 2 && rest[0] == "--profile")) =>
+        {
             if std::path::Path::new(path).try_exists()? {
                 return Err("output exists; choose a new .pcbcraft filename".into());
             }
             let engine = if command == "showcase" {
-                session::showcase()?
+                let choice = rest.get(1).map(String::as_str);
+                session::showcase(pcbcraft_io::rule_profiles::for_new_board_from_env(choice)?)?
             } else {
                 Engine::from_file(pcbcraft_core::format::EditorFile {
                     version: pcbcraft_core::format::FILE_VERSION,

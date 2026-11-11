@@ -716,6 +716,7 @@ fn commit(
     mut sketch: BoardSketch,
     evaluator: &dyn BoardShapeEvaluator,
 ) -> Result<()> {
+    project.rules.require()?;
     sketch.outline_fit = outline_fit(project);
     let evaluation = evaluator.evaluate(&sketch)?;
     if let Some(f) = evaluation.findings.iter().find(|f| refuses(&f.code)) {
@@ -751,7 +752,7 @@ fn outline_fit(project: &Project) -> f64 {
         .value
     {
         crate::rules::RuleValue::Length(mm) => mm,
-        _ => crate::rules::DEFAULT_OUTLINE_FIT_MM,
+        _ => 0.0,
     }
 }
 
@@ -762,7 +763,7 @@ pub fn refit(project: &mut Project, evaluator: Option<&dyn BoardShapeEvaluator>)
     let BoardShape::Sketch(sketch) = &project.board_shape else {
         return Ok(());
     };
-    if sketch.outline_fit == outline_fit(project) {
+    if project.rules.profile.is_none() || sketch.outline_fit == outline_fit(project) {
         return Ok(());
     }
     let sketch = (**sketch).clone();
@@ -859,6 +860,7 @@ pub fn checks(project: &Project) -> Vec<Finding> {
 pub fn validate(project: &Project) -> Result<()> {
     if let BoardShape::Sketch(sketch) = &project.board_shape {
         validate_sketch(sketch)?;
+        project.rules.require()?;
         if sketch.outline_fit != outline_fit(project) {
             return Err(Error::Invalid(
                 "board.outline_fit: the board was fitted at another board.outline_fit than the \

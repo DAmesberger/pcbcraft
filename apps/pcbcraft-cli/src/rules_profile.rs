@@ -4,14 +4,15 @@
 //! Switching a project's profile is the typed `rules.set_profile` request
 //! (`stdio`/`mcp`); this subcommand only moves profile files.
 use super::{Result, open, print};
-use pcbcraft_core::rules::{ProfileOrigin, RuleProfile, builtin};
+use pcbcraft_core::rules::{RuleEntry, RuleProfile};
 use pcbcraft_io::rule_profiles::{self, ProfileLibrary};
 use pcbcraft_io::settings::UserDirs;
 use serde_json::json;
 use std::path::Path;
 
 /// The usage line(s).
-pub const USAGE: &str = "rules-profile list      list built-in and user design-rule profiles
+pub const USAGE: &str =
+    "rules-profile list      list the user's rule profiles (Pcbcraft ships none)
   rules-profile import FILE.json
                                    add a profile file to the user profile library
   rules-profile export ID|FILE.pcbcraft NEW_FILE.json
@@ -26,27 +27,21 @@ fn summary(profile: &RuleProfile, kind: &str) -> serde_json::Value {
         "id": profile.id,
         "name": profile.name,
         "kind": kind,
-        "provenance": profile.provenance,
+        "source": profile.source,
+        "drill_files": profile.drill_files,
     })
 }
 
-/// A built-in or user profile by id.
-fn find(library: &ProfileLibrary, id: &str) -> Result<RuleProfile> {
-    if let Some(profile) = builtin::all().into_iter().find(|p| p.id == id) {
-        return Ok(profile);
-    }
-    Ok(library.get(id)?)
-}
-
-/// The project's effective rules as a profile: its snapshot with every
-/// project override applied. With overrides it is the user's own profile.
+/// The project's rules as a profile: its snapshot with every project
+/// override written in as a value whose source says so.
 fn project_profile(path: &str) -> Result<RuleProfile> {
     let session = open(Some(&path.to_owned()))?;
     let rules = &session.engine().project().rules;
-    let mut profile = rules.profile.clone();
+    let mut profile = rules.require()?.clone();
     if !rules.overrides.is_empty() {
-        profile.rules = rules.effective();
-        profile.provenance.origin = ProfileOrigin::User;
+        for o in &rules.overrides {
+            profile.set(o.key, RuleEntry::value(o.value, "Project override"))?;
+        }
         let name = format!("{} with project overrides", profile.name);
         if name.len() <= pcbcraft_core::rules::MAX_PROFILE_TEXT {
             profile.name = name;
@@ -65,10 +60,10 @@ fn reply(library: &ProfileLibrary, args: &[String]) -> Result<serde_json::Value>
     match args {
         [command] if command == "list" => {
             let listing = library.list()?;
-            let profiles: Vec<_> = builtin::all()
+            let profiles: Vec<_> = listing
+                .profiles
                 .iter()
-                .map(|p| summary(p, "built_in"))
-                .chain(listing.profiles.iter().map(|p| summary(p, "user")))
+                .map(|p| summary(p, "user"))
                 .collect();
             let problems: Vec<_> = listing
                 .problems
@@ -92,7 +87,7 @@ fn reply(library: &ProfileLibrary, args: &[String]) -> Result<serde_json::Value>
             {
                 project_profile(source)?
             } else {
-                find(library, source)?
+                library.get(source)?
             };
             rule_profiles::export(&profile, Path::new(target))?;
             Ok(json!({"exported": summary(&profile, "file"), "path": target}))
@@ -109,41 +104,47 @@ mod tests {
         list.iter().map(|s| (*s).to_owned()).collect()
     }
 
+    /// The sourced example profile file in `examples/profiles/`.
+    const EXAMPLE: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/profiles/jlcpcb-2-layer-1oz.json"
+    );
+
     #[test]
-    fn list_export_import_through_the_subcommand() -> Result<()> {
+    fn list_import_export_through_the_subcommand() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let library = ProfileLibrary::new(dir.path().join("rule-profiles"));
         let listed = reply(&library, &args(&["list"]))?;
-        let ids: Vec<_> = listed["profiles"]
-            .as_array()
-            .map(|a| a.iter().filter_map(|p| p["id"].as_str()).collect())
-            .unwrap_or_default();
-        assert_eq!(ids, ["pcbcraft-default", "std-6-6", "fine-4-4", "hdi-3-3"]);
-        assert_eq!(listed["profiles"][0]["provenance"]["basis"], "estimated");
+        assert_eq!(
+            listed["profiles"].as_array().map(Vec::len),
+            Some(0),
+            "Pcbcraft ships no profiles"
+        );
+        let imported = reply(&library, &args(&["import", EXAMPLE]))?;
+        assert_eq!(imported["imported"]["id"], "jlcpcb-2-layer-1oz");
+        assert_eq!(imported["imported"]["source"]["publisher"], "JLCPCB");
+        let listed = reply(&library, &args(&["list"]))?;
+        assert_eq!(listed["profiles"].as_array().map(Vec::len), Some(1));
+        assert_eq!(listed["profiles"][0]["kind"], "user");
 
-        let file = dir.path().join("fine.json");
+        let file = dir.path().join("again.json");
         let file_text = file.to_string_lossy().into_owned();
-        reply(&library, &args(&["export", "fine-4-4", &file_text]))?;
+        reply(
+            &library,
+            &args(&["export", "jlcpcb-2-layer-1oz", &file_text]),
+        )?;
         assert!(
-            reply(&library, &args(&["export", "fine-4-4", &file_text])).is_err(),
+            reply(
+                &library,
+                &args(&["export", "jlcpcb-2-layer-1oz", &file_text])
+            )
+            .is_err(),
             "an export never replaces a file"
         );
         assert!(reply(&library, &args(&["export", "no-such", "x.json"])).is_err());
-        let imported = reply(&library, &args(&["import", &file_text]))?;
-        assert_eq!(imported["imported"]["id"], "fine-4-4-2");
-        assert_eq!(imported["imported"]["provenance"]["origin"], "imported");
-        let listed = reply(&library, &args(&["list"]))?;
-        assert_eq!(listed["profiles"].as_array().map(Vec::len), Some(5));
-        assert_eq!(listed["profiles"][4]["kind"], "user");
-        // The user profile exports by its id too.
-        let again = dir.path().join("again.json");
-        reply(
-            &library,
-            &args(&["export", "fine-4-4-2", &again.to_string_lossy()]),
-        )?;
         assert_eq!(
-            rule_profiles::read_profile_file(&again)?.rules,
-            builtin::fine().rules
+            rule_profiles::read_profile_file(&file)?,
+            rule_profiles::read_profile_file(Path::new(EXAMPLE))?
         );
         assert!(reply(&library, &args(&["bogus"])).is_err());
         Ok(())

@@ -787,6 +787,13 @@ impl PcbEditor {
         }
     }
 
+    /// Whether the vias the tools place are tented: the tool's own choice,
+    /// else the rules' `tent vias`.
+    pub(super) fn via_tented(&self, project: &Project) -> bool {
+        self.via_tented
+            .unwrap_or_else(|| project.rules.effective().mask.tent_vias)
+    }
+
     /// The via size a layer change places on the routed net: the size
     /// chosen while routing it, else its class's.
     pub(super) fn route_via_size(&self, project: &Project) -> (f64, f64) {
@@ -814,8 +821,10 @@ impl PcbEditor {
                     ViaRequest {
                         drill,
                         diameter,
-                        tented: self.via_tented,
-                        ..ViaRequest::through(net, at)
+                        tented: self.via_tented(project),
+                        net,
+                        position: at,
+                        span: pcbcraft_core::model::ViaSpan::Through,
                     },
                     self.layer,
                 )

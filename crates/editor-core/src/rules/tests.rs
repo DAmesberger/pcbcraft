@@ -1,41 +1,205 @@
 use super::*;
 use crate::ids::Id;
 
-#[test]
-fn every_builtin_profile_is_valid_and_estimated() -> Result<()> {
-    let all = builtin::all();
-    assert_eq!(all[0].id, builtin::DEFAULT_PROFILE_ID);
-    assert_eq!(all[0].rules, DesignRules::default());
-    for p in &all {
-        p.validate()?;
-        assert_eq!(p.provenance.basis, ProfileBasis::Estimated);
-        assert_eq!(p.provenance.origin, ProfileOrigin::BuiltIn);
-    }
-    let ids: std::collections::BTreeSet<_> = all.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(ids.len(), all.len());
-    Ok(())
+fn proto() -> Result<ProjectRules> {
+    fixtures::rules()
+}
+
+fn j<E: std::fmt::Display>(e: E) -> Error {
+    Error::Invalid(e.to_string())
 }
 
 #[test]
-fn every_key_round_trips_through_get_and_set() -> Result<()> {
-    let base = DesignRules::default();
+fn every_key_round_trips_through_get_set_and_its_name() -> Result<()> {
+    let base = fixtures::prototype()?.rules().clone();
     for key in RuleKey::all() {
         let mut rules = base.clone();
         key.set(&mut rules, key.get(&base))?;
         assert_eq!(rules, base, "{key:?}");
+        assert_eq!(RuleKey::from_name(&key.name()), Some(key), "{key:?}");
     }
     // 2 track widths, 21 clearance pairs, 25 contract scalars, the 5
-    // appended silkscreen-edge and land keys, the 2 etch-hazard keys and
-    // the board outline fit.
-    assert_eq!(RuleKey::all().len(), 2 + 21 + 25 + 5 + 2 + 1);
-    let unique: std::collections::BTreeSet<_> = RuleKey::all().into_iter().collect();
-    assert_eq!(unique.len(), RuleKey::all().len());
+    // appended silkscreen-edge and land keys, the 2 etch-hazard keys, the
+    // board outline fit, the legend stroke share and the pair gap
+    // tolerance's minimum and share.
+    assert_eq!(RuleKey::all().len(), 2 + 21 + 25 + 5 + 2 + 1 + 3);
+    let names: std::collections::BTreeSet<_> = RuleKey::all().iter().map(|k| k.name()).collect();
+    assert_eq!(names.len(), RuleKey::all().len(), "names are unique");
+    assert_eq!(
+        RuleKey::Clearance {
+            a: CopperObject::BoardEdge,
+            b: CopperObject::Track
+        }
+        .name(),
+        "clearance_track_board_edge"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_profile_file_must_set_every_rule_with_a_source() -> Result<()> {
+    let value: serde_json::Value = serde_json::from_str(fixtures::PROTOTYPE_JSON).map_err(j)?;
+    let parse = |v: &serde_json::Value| serde_json::from_value::<ProfileFile>(v.clone());
+    assert!(parse(&value).is_ok());
+    let mut missing = value.clone();
+    if let Some(rules) = missing["profile"]["rules"].as_object_mut() {
+        rules.remove("mask_web_min");
+    }
+    let err = parse(&missing).map_err(|e| e.to_string());
+    assert!(
+        err.as_ref()
+            .is_err_and(|e| e.contains("does not set mask_web_min")),
+        "{err:?}"
+    );
+    let mut unknown = value.clone();
+    unknown["profile"]["rules"]["future_rule"] = serde_json::json!({"value": 1.0});
+    assert!(parse(&unknown).is_err(), "unknown rules are refused");
+    let mut both = value.clone();
+    both["profile"]["rules"]["drill_min"] = serde_json::json!({"value": 0.1, "formula": "0.1"});
+    assert!(parse(&both).is_err(), "a value or a formula, not both");
+    let mut wrong_kind = value.clone();
+    wrong_kind["profile"]["rules"]["tent_vias"] = serde_json::json!({"value": 1.0});
+    assert!(parse(&wrong_kind).is_err());
+    let mut extra = value.clone();
+    extra["profile"]["basis"] = "estimated".into();
+    assert!(parse(&extra).is_err(), "unknown fields are refused");
+    let mut unsourced = value;
+    unsourced["profile"]["source"]["publisher"] = "".into();
+    let err = parse(&unsourced).map_err(|e| e.to_string());
+    assert!(
+        err.as_ref()
+            .is_err_and(|e| e.contains("must name who published its numbers")),
+        "{err:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_profile_round_trips_byte_for_byte() -> Result<()> {
+    for json in [fixtures::PROTOTYPE_JSON, fixtures::FINE_JSON] {
+        let file: ProfileFile = serde_json::from_str(json).map_err(j)?;
+        let mut text = serde_json::to_string_pretty(&file).map_err(j)?;
+        text.push('\n');
+        assert_eq!(text, json);
+    }
+    Ok(())
+}
+
+#[test]
+fn formulas_follow_their_inputs_and_project_overrides() -> Result<()> {
+    let fine = fixtures::fine()?;
+    // via_diameter_default = via_drill_default + 2.0 * via_annular_ring_min
+    assert!((fine.rules().holes.via_diameter_default - 0.45).abs() < 1e-12);
+    let mut rules = ProjectRules {
+        profile: Some(fine),
+        ..ProjectRules::default()
+    };
+    apply(
+        &mut rules,
+        RulesCommand::SetOverride {
+            key: RuleKey::ViaDrillDefault,
+            value: RuleValue::Length(0.3),
+        },
+    )?;
+    assert!((rules.effective().holes.via_diameter_default - 0.55).abs() < 1e-12);
+    let row = report(&rules)
+        .rows
+        .into_iter()
+        .find(|r| r.key == RuleKey::ViaDiameterDefault)
+        .ok_or_else(|| Error::Invalid("no row".into()))?;
+    assert_eq!(
+        row.formula.as_deref(),
+        Some("via_drill_default + 2.0 * via_annular_ring_min")
+    );
+    // An override of the formula's own rule replaces the formula.
+    apply(
+        &mut rules,
+        RulesCommand::SetOverride {
+            key: RuleKey::ViaDiameterDefault,
+            value: RuleValue::Length(0.7),
+        },
+    )?;
+    assert_eq!(rules.effective().holes.via_diameter_default, 0.7);
+    Ok(())
+}
+
+#[test]
+fn a_formula_cycle_is_refused_with_its_chain() -> Result<()> {
+    let mut p = fixtures::prototype()?;
+    p.set(
+        RuleKey::ViaDrillDefault,
+        RuleEntry::formula("via_diameter_default - 0.3", ""),
+    )?;
+    let before = p.clone();
+    let (rule, text) = refusal(p.set(
+        RuleKey::ViaDiameterDefault,
+        RuleEntry::formula("via_drill_default + 0.3", ""),
+    ));
+    assert_eq!(rule, "rules.formula_cycle", "{text}");
+    assert!(
+        text.contains("via_diameter_default → via_drill_default → via_diameter_default")
+            || text.contains("via_drill_default → via_diameter_default → via_drill_default"),
+        "{text}"
+    );
+    assert_eq!(p, before, "a refused formula changes nothing");
+    Ok(())
+}
+
+#[test]
+fn a_bad_formula_is_refused_in_plain_words() -> Result<()> {
+    let mut p = fixtures::prototype()?;
+    let refused = |p: &mut RuleProfile, key: RuleKey, text: &str| {
+        let (rule, text) = refusal(p.set(key, RuleEntry::formula(text, "")));
+        format!("{rule}: {text}")
+    };
+    let text = refused(&mut p, RuleKey::DrillMin, "pin_diagonal + 0.1");
+    assert!(text.contains("pin_diagonal is not a rule name"), "{text}");
+    let text = refused(&mut p, RuleKey::TentVias, "drill_min * 2.0");
+    assert!(text.contains("another kind"), "{text}");
+    let text = refused(&mut p, RuleKey::DrillMin, "loop { }");
+    assert!(text.starts_with("rules.formula:"), "{text}");
+    let text = refused(&mut p, RuleKey::DrillMin, "drill_min * 1000.0");
+    assert!(
+        text.starts_with("rules.formula_cycle:"),
+        "a formula naming itself: {text}"
+    );
+    let text = refused(&mut p, RuleKey::DrillMin, "0.0");
+    assert!(text.contains("min drill must be positive"), "{text}");
+    // A sound formula of other rules is taken.
+    p.set(
+        RuleKey::FillWidthMin,
+        RuleEntry::formula("max(track_width_min * 2.0, 0.1)", "derived"),
+    )?;
+    assert_eq!(p.rules().fill.width_min, 0.1);
+    Ok(())
+}
+
+#[test]
+fn a_project_without_a_profile_has_no_rules_and_tools_refuse() -> Result<()> {
+    let rules = ProjectRules::default();
+    assert!(rules.profile.is_none());
+    assert_eq!(rules.effective(), DesignRules::unset());
+    assert_eq!(refusal(rules.require()).0, "rules.no_profile");
+    let mut rules = rules;
+    assert!(
+        apply(
+            &mut rules,
+            RulesCommand::SetOverride {
+                key: RuleKey::MaskWebMin,
+                value: RuleValue::Length(0.1),
+            },
+        )
+        .is_err(),
+        "an override needs a profile to depart from"
+    );
+    apply(&mut rules, set_profile_cmd(fixtures::prototype()?, false))?;
+    assert_eq!(&rules.effective(), fixtures::prototype()?.rules());
     Ok(())
 }
 
 #[test]
 fn overrides_win_and_name_their_source() -> Result<()> {
-    let mut rules = ProjectRules::default();
+    let mut rules = proto()?;
     let key = RuleKey::Clearance {
         a: CopperObject::Via,
         b: CopperObject::Track,
@@ -63,13 +227,13 @@ fn overrides_win_and_name_their_source() -> Result<()> {
             key: key.normalized(),
         },
     )?;
-    assert_eq!(rules, ProjectRules::default());
+    assert_eq!(rules, proto()?);
     Ok(())
 }
 
 #[test]
 fn net_class_clearance_takes_the_largest_value() -> Result<()> {
-    let mut rules = ProjectRules::default();
+    let mut rules = proto()?;
     let power = apply(
         &mut rules,
         RulesCommand::AddNetClass {
@@ -151,105 +315,24 @@ fn glob_patterns() {
 }
 
 #[test]
-fn invalid_rules_are_refused() {
-    let mut rules = DesignRules::default();
+fn invalid_rules_are_refused() -> Result<()> {
+    let mut rules = fixtures::prototype()?.rules().clone();
     rules.holes.via_diameter_default = 0.4;
     assert!(rules.validate().is_err());
-    let mut rules = DesignRules::default();
+    let mut rules = fixtures::prototype()?.rules().clone();
     rules.copper.clearance.pairs.pop();
     assert!(rules.validate().is_err());
+    Ok(())
 }
 
 #[test]
-fn appended_defaults_equal_the_estimator_constants() {
-    use crate::library::package_form::tht;
-    let r = DesignRules::default();
-    assert_eq!(r.land.tht_drill_clearance, tht::DRILL_CLEARANCE_MM);
-    assert_eq!(r.land.tht_land_extra, tht::RING_MM);
-    assert_eq!(r.land.tht_land_gap, tht::LAND_GAP_MM);
-    // `library::samples::TOE_HEEL_SHIFT_MM` (private) and no silkscreen
-    // edge check before rules.
-    assert_eq!(r.land.gull_wing_toe_shift, 0.1);
-    assert_eq!(r.silkscreen.edge_clearance, 0.0);
-    assert_eq!(r.land.gull_wing_width_extra, 0.2);
-    assert_eq!(r.land.chip_gap_min, 0.2);
-}
-
-/// Every built-in keeps copper off the edge, and a fill computed under one
-/// stays that far inside (`the_fill_keeps_the_profile_edge`).
-/// The values are this project's estimates, in the 0.25–0.3 mm range routed
-/// boards generally need; a zero here would mean "not checked".
-#[test]
-fn every_builtin_profile_keeps_copper_off_the_board_edge() {
-    let expected = [
-        ("pcbcraft-default", 0.3),
-        ("std-6-6", 0.3),
-        ("fine-4-4", 0.25),
-        ("hdi-3-3", 0.25),
-    ];
-    let all = builtin::all();
-    assert_eq!(all.len(), expected.len());
-    for (profile, (id, edge)) in all.iter().zip(expected) {
-        assert_eq!(profile.id, id);
-        assert_eq!(profile.provenance.basis, ProfileBasis::Estimated, "{id}");
-        assert!(profile.provenance.notes.contains("stimated"), "{id}");
-        for object in [
-            CopperObject::Track,
-            CopperObject::Pad,
-            CopperObject::Via,
-            CopperObject::Fill,
-            CopperObject::Hole,
-        ] {
-            assert_eq!(
-                profile
-                    .rules
-                    .copper
-                    .clearance
-                    .get(object, CopperObject::BoardEdge),
-                edge,
-                "{id} {object:?}"
-            );
-        }
-    }
-}
-
-#[test]
-fn builtin_classes_tighten_in_order_and_fit_their_aspect_ratio() {
-    let [_, std, fine, hdi] = [
-        builtin::default_profile(),
-        builtin::standard(),
-        builtin::fine(),
-        builtin::hdi(),
-    ];
-    for (loose, tight) in [(&std, &fine), (&fine, &hdi)] {
-        let (l, t) = (&loose.rules, &tight.rules);
-        assert!(t.copper.track_width_min < l.copper.track_width_min);
-        assert!(
-            t.copper
-                .clearance
-                .get(CopperObject::Track, CopperObject::Track)
-                < l.copper
-                    .clearance
-                    .get(CopperObject::Track, CopperObject::Track)
-        );
-        assert!(t.holes.drill_min < l.holes.drill_min);
-        assert!(t.holes.via_diameter_default < l.holes.via_diameter_default);
-    }
-    for p in [&std, &fine, &hdi] {
-        let h = &p.rules.holes;
-        let ratio = h.aspect_ratio_max.unwrap_or(f64::INFINITY);
-        // A 1.6 mm board's default via is buildable under the profile.
-        assert!(1.6 / h.via_drill_default <= ratio, "{}", p.name);
-        assert_eq!(
-            h.via_diameter_default,
-            h.via_drill_default + 2.0 * h.via_annular_ring_min
-        );
-        assert!(p.provenance.notes.contains("stimated"));
-        assert_eq!(builtin::by_id(&p.id).as_ref(), Some(p));
-    }
-    // 6 mil is 0.1524 mm.
-    assert!((std.rules.copper.track_width_min - 0.1524).abs() < 1e-12);
-    assert!(builtin::by_id("no-such-profile").is_none());
+fn the_legend_stroke_is_a_share_of_the_height_and_never_under_the_line_rule() -> Result<()> {
+    let silk = fixtures::prototype()?.rules().silkscreen;
+    // 1/7 of 1 mm, above the 0.1 mm line rule.
+    assert!((silk.text_stroke(1.0) - 1.0 / 7.0).abs() < 1e-12);
+    // 1/7 of 0.6 mm is under it: the rule's width.
+    assert_eq!(silk.text_stroke(0.6), 0.1);
+    Ok(())
 }
 
 /// The rule code and the lower-cased text of a refusal ("" when none).
@@ -272,7 +355,7 @@ fn set_profile_cmd(profile: RuleProfile, keep_overrides: bool) -> RulesCommand {
 
 #[test]
 fn profile_switch_keeps_or_drops_overrides() -> Result<()> {
-    let mut rules = ProjectRules::default();
+    let mut rules = proto()?;
     apply(
         &mut rules,
         RulesCommand::SetOverride {
@@ -281,19 +364,22 @@ fn profile_switch_keeps_or_drops_overrides() -> Result<()> {
         },
     )?;
     let mut kept = rules.clone();
-    apply(&mut kept, set_profile_cmd(builtin::fine(), true))?;
-    assert_eq!(kept.profile.id, "fine-4-4");
+    apply(&mut kept, set_profile_cmd(fixtures::fine()?, true))?;
+    assert_eq!(
+        kept.profile.as_ref().map(|p| p.id.as_str()),
+        Some("test-fine")
+    );
     assert_eq!(kept.effective().mask.web_min, 0.12);
     assert_eq!(kept.source_of(RuleKey::MaskWebMin), RuleSource::Override);
     assert_eq!(
         kept.source_of(RuleKey::DrillMin).describe(),
-        "Fine 4/4",
+        "Test fine",
         "a rule without override names the profile"
     );
     let mut dropped = rules.clone();
-    apply(&mut dropped, set_profile_cmd(builtin::fine(), false))?;
+    apply(&mut dropped, set_profile_cmd(fixtures::fine()?, false))?;
     assert!(dropped.overrides.is_empty());
-    assert_eq!(dropped.effective(), builtin::fine().rules);
+    assert_eq!(&dropped.effective(), fixtures::fine()?.rules());
     let impact = rule_changes(&rules, &dropped);
     assert_eq!(impact.dropped_overrides, vec![RuleKey::MaskWebMin]);
     assert!(rule_changes(&rules, &kept).dropped_overrides.is_empty());
@@ -302,9 +388,9 @@ fn profile_switch_keeps_or_drops_overrides() -> Result<()> {
 
 #[test]
 fn a_kept_override_that_breaks_the_new_profile_is_refused() -> Result<()> {
-    let mut rules = ProjectRules::default();
-    // A 0.1 mm via drill is fine for the default profile (0.1 mm minimum
-    // drill) but below Standard 6/6's 0.3 mm minimum.
+    let mut rules = proto()?;
+    // A 0.1 mm via drill is fine for the prototype (0.1 mm minimum drill)
+    // but below the fine fixture's 0.2 mm minimum.
     apply(
         &mut rules,
         RulesCommand::SetOverride {
@@ -313,51 +399,54 @@ fn a_kept_override_that_breaks_the_new_profile_is_refused() -> Result<()> {
         },
     )?;
     let before = rules.clone();
-    let (rule, err) = refusal(apply(
-        &mut rules,
-        set_profile_cmd(builtin::standard(), true),
-    ));
+    let (rule, err) = refusal(apply(&mut rules, set_profile_cmd(fixtures::fine()?, true)));
     assert_eq!(rule, "rules.override_conflict");
     assert!(err.contains("default via drill"), "{err}");
     assert_eq!(rules, before, "a refused switch changes nothing");
-    let (candidate, refusal) = preview_candidate(&rules, &builtin::standard(), true);
-    assert!(refusal.is_some_and(|r| r.contains("Standard 6/6")));
-    assert_eq!(candidate.profile.id, "std-6-6");
+    let (candidate, refusal) = preview_candidate(&rules, &fixtures::fine()?, true);
+    assert!(refusal.is_some_and(|r| r.contains("Test fine")));
+    assert_eq!(
+        candidate.profile.as_ref().map(|p| p.id.as_str()),
+        Some("test-fine")
+    );
     // Dropping the overrides makes the same switch valid.
-    let (_, refusal) = preview_candidate(&rules, &builtin::standard(), false);
+    let (_, refusal) = preview_candidate(&rules, &fixtures::fine()?, false);
     assert_eq!(refusal, None);
     Ok(())
 }
 
 #[test]
-fn a_modified_builtin_is_refused_and_a_user_profile_accepted() -> Result<()> {
-    let mut rules = ProjectRules::default();
-    let mut tampered = builtin::fine();
-    tampered.rules.holes.drill_min = 0.15;
-    let (rule, _) = refusal(apply(&mut rules, set_profile_cmd(tampered.clone(), false)));
-    assert_eq!(rule, "rules.builtin_modified");
-    assert!(rules.is_default());
-    tampered.id = "my-fab".into();
-    tampered.name = "My fab 4/4".into();
-    tampered.provenance.origin = ProfileOrigin::User;
-    tampered.provenance.basis = ProfileBasis::FabricatorEntered;
-    tampered.provenance.source = "Entered by hand".into();
-    apply(&mut rules, set_profile_cmd(tampered, false))?;
+fn any_sourced_profile_is_accepted_and_an_invalid_one_refused_whole() -> Result<()> {
+    let mut rules = proto()?;
+    let mut mine = fixtures::fine()?;
+    mine.id = "my-fab".into();
+    mine.name = "My fab 4/4".into();
+    mine.set(
+        RuleKey::DrillMin,
+        RuleEntry::value(RuleValue::Length(0.15), "Entered by hand"),
+    )?;
+    apply(&mut rules, set_profile_cmd(mine, false))?;
     assert_eq!(rules.effective().holes.drill_min, 0.15);
     assert_eq!(
         rules.resolve(RuleKey::DrillMin).source.describe(),
         "My fab 4/4"
     );
-    // An invalid user profile is refused whole.
-    let mut broken = rules.profile.clone();
-    broken.rules.copper.track_width_default = 0.01;
-    assert!(apply(&mut rules.clone(), set_profile_cmd(broken, false)).is_err());
+    // An invalid profile cannot even be made.
+    let mut broken = fixtures::fine()?;
+    assert!(
+        broken
+            .set(
+                RuleKey::TrackWidthDefault,
+                RuleEntry::value(RuleValue::Length(0.01), "")
+            )
+            .is_err()
+    );
     Ok(())
 }
 
 #[test]
-fn bounds_name_the_rule() {
-    let cases: [(RuleKey, RuleValue, &str); 6] = [
+fn bounds_name_the_rule() -> Result<()> {
+    let cases: [(RuleKey, RuleValue, &str); 7] = [
         (
             RuleKey::SilkLineWidthMin,
             RuleValue::Length(0.0),
@@ -384,16 +473,21 @@ fn bounds_name_the_rule() {
             RuleValue::Area(f64::NAN),
             "min island area",
         ),
+        (
+            RuleKey::SilkTextStrokeShare,
+            RuleValue::Fraction(1.5),
+            "silkscreen text stroke share",
+        ),
     ];
     for (key, value, label) in cases {
-        let mut rules = ProjectRules::default();
+        let mut rules = proto()?;
         let (rule, err) = refusal(apply(&mut rules, RulesCommand::SetOverride { key, value }));
         assert_eq!(rule, "rules.bounds", "{err}");
         assert!(err.contains(label), "{err}");
-        assert!(rules.is_default());
+        assert_eq!(rules, proto()?);
     }
     // Negative mask expansion shrinks the opening and is allowed.
-    let mut rules = ProjectRules::default();
+    let mut rules = proto()?;
     assert!(
         apply(
             &mut rules,
@@ -413,6 +507,7 @@ fn bounds_name_the_rule() {
         )
         .is_err_and(|e| e.rule() == Some("rules.no_override"))
     );
+    Ok(())
 }
 
 #[test]
@@ -435,7 +530,7 @@ fn resolution_order_is_profile_override_class_pair_region() {
 
 #[test]
 fn net_class_values_win_over_an_override_and_hole_pairs_ignore_classes() -> Result<()> {
-    let mut rules = ProjectRules::default();
+    let mut rules = proto()?;
     apply(
         &mut rules,
         RulesCommand::SetOverride {
@@ -483,8 +578,8 @@ fn net_class_values_win_over_an_override_and_hole_pairs_ignore_classes() -> Resu
 }
 
 #[test]
-fn issue_diff_matches_by_identity_and_counts_repeats() {
-    let mut impact = rule_changes(&ProjectRules::default(), &ProjectRules::default());
+fn issue_diff_matches_by_identity_and_counts_repeats() -> Result<()> {
+    let mut impact = rule_changes(&proto()?, &proto()?);
     assert!(impact.changes.is_empty());
     let pair = |id: &str, title: &str| (id.to_string(), title.to_string());
     diff_issues(
@@ -503,48 +598,34 @@ fn issue_diff_matches_by_identity_and_counts_repeats() {
     );
     assert_eq!(impact.new_issues, vec!["V2 ring", "Twice"]);
     assert_eq!(impact.resolved_issues, vec!["V1 drill"]);
+    Ok(())
 }
 
 #[test]
-fn documented_json_examples_parse_and_rules_round_trip()
--> std::result::Result<(), serde_json::Error> {
+fn documented_json_examples_parse_and_rules_round_trip() -> Result<()> {
     let set: RulesCommand = serde_json::from_str(
         r#"{"command":"rules.set_override","params":{"key":{"rule":"clearance","a":"track","b":"via"},"value":{"kind":"length","value":0.15}}}"#,
-    )?;
+    )
+    .map_err(j)?;
     assert!(
         matches!(set, RulesCommand::SetOverride { key: RuleKey::Clearance { .. }, value: RuleValue::Length(v) } if v == 0.15)
     );
     let clear: RulesCommand = serde_json::from_str(
         r#"{"command":"rules.clear_override","params":{"key":{"rule":"mask_web_min"}}}"#,
-    )?;
+    )
+    .map_err(j)?;
     assert!(matches!(
         clear,
         RulesCommand::ClearOverride {
             key: RuleKey::MaskWebMin
         }
     ));
-    let mut rules = ProjectRules::default();
-    let _ = apply(&mut rules, set);
-    let _ = apply(&mut rules, set_profile_cmd(builtin::hdi(), true));
-    assert_eq!(rules.profile.id, "hdi-3-3");
-    let text = serde_json::to_string(&rules)?;
-    let back: ProjectRules = serde_json::from_str(&text)?;
+    let mut rules = proto()?;
+    apply(&mut rules, set)?;
+    apply(&mut rules, set_profile_cmd(fixtures::fine()?, true))?;
+    let text = serde_json::to_string(&rules).map_err(j)?;
+    let back: ProjectRules = serde_json::from_str(&text).map_err(j)?;
     assert_eq!(back, rules);
-    let file = ProfileFile {
-        format: PROFILE_FILE_FORMAT,
-        profile: builtin::standard(),
-    };
-    let back: ProfileFile = serde_json::from_str(&serde_json::to_string(&file)?)?;
-    assert_eq!(back, file);
-    // Unknown rule fields are refused, not dropped.
-    let mut value = serde_json::to_value(builtin::standard())?;
-    if let Some(copper) = value
-        .pointer_mut("/rules/copper")
-        .and_then(|v| v.as_object_mut())
-    {
-        copper.insert("future_rule".into(), serde_json::json!(1.0));
-    }
-    assert!(serde_json::from_value::<RuleProfile>(value).is_err());
     Ok(())
 }
 
@@ -553,10 +634,10 @@ fn engine_skips_no_op_rules_commands_and_previews_refusals() -> Result<()> {
     use crate::{Engine, Operation, Query, QueryResult};
     let mut engine = Engine::demo()?;
     let rev = engine.revision();
-    // The project already uses the default profile.
+    // The demo already uses the prototype fixture.
     engine.apply(
         rev,
-        Operation::Rules(set_profile_cmd(builtin::default_profile(), true)),
+        Operation::Rules(set_profile_cmd(fixtures::prototype()?, true)),
     )?;
     assert_eq!(engine.revision(), rev, "no change, no undo step");
     engine.apply(
@@ -568,7 +649,7 @@ fn engine_skips_no_op_rules_commands_and_previews_refusals() -> Result<()> {
     )?;
     let rev = engine.revision();
     let QueryResult::ProfileImpact(impact) = engine.query(Query::PreviewProfile {
-        profile: Box::new(builtin::standard()),
+        profile: Box::new(fixtures::fine()?),
         keep_overrides: true,
     })?
     else {
@@ -581,13 +662,13 @@ fn engine_skips_no_op_rules_commands_and_previews_refusals() -> Result<()> {
         engine
             .apply(
                 rev,
-                Operation::Rules(set_profile_cmd(builtin::standard(), true)),
+                Operation::Rules(set_profile_cmd(fixtures::fine()?, true)),
             )
             .is_err()
     );
     assert_eq!(engine.revision(), rev);
     let QueryResult::ProfileImpact(impact) = engine.query(Query::PreviewProfile {
-        profile: Box::new(builtin::standard()),
+        profile: Box::new(fixtures::fine()?),
         keep_overrides: false,
     })?
     else {
@@ -606,9 +687,6 @@ fn engine_skips_no_op_rules_commands_and_previews_refusals() -> Result<()> {
         return Err(Error::Invalid("not profiles".into()));
     };
     let names: Vec<_> = profiles.iter().map(|p| p.name.as_str()).collect();
-    assert_eq!(
-        names,
-        ["Pcbcraft default", "Standard 6/6", "Fine 4/4", "HDI 3/3"]
-    );
+    assert_eq!(names, ["Test prototype"], "only the project's own");
     Ok(())
 }

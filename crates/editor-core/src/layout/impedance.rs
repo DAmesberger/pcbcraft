@@ -684,7 +684,7 @@ pub fn derive(project: &Project, class: Option<NetClassId>, layer: CopperLayer) 
                         }
                     },
                     None => {
-                        let g = gap_min.max(0.05);
+                        let g = gap_min;
                         let w = match s.width_for_diff(target, g, t) {
                             Some(w) => clamp_width(w, &mut out.problems, target),
                             None => min,

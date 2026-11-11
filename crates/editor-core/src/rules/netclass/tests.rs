@@ -85,7 +85,7 @@ fn duplicate_message() -> String {
 
 #[test]
 fn minimum_width_is_the_larger_of_rule_and_class() -> Result<()> {
-    let mut rules = ProjectRules::default();
+    let mut rules = crate::rules::fixtures::rules()?;
     let power = add(
         &mut rules,
         NetClassSpec {

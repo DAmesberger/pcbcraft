@@ -117,7 +117,7 @@ pub fn file(
         materials.push(json!({"Type": "Legend", "Name": "Top legend", "Color": legend_colour(fab.silkscreen_colour)}));
     }
     if stackup.mask_top {
-        materials.push(json!({"Type": "SolderMask", "Name": "Top solder mask", "Color": mask_colour(fab.mask_colour)}));
+        materials.push(json!({"Type": "SolderMask", "Name": "Top solder mask", "Color": mask_colour(fab.mask_colour), "Thickness": mm(stackup.mask_um / 1000.0)}));
     }
     let layers = stackup.layers();
     for (i, layer) in layers.iter().enumerate() {
@@ -139,7 +139,7 @@ pub fn file(
         }
     }
     if stackup.mask_bottom {
-        materials.push(json!({"Type": "SolderMask", "Name": "Bottom solder mask", "Color": mask_colour(fab.mask_colour)}));
+        materials.push(json!({"Type": "SolderMask", "Name": "Bottom solder mask", "Color": mask_colour(fab.mask_colour), "Thickness": mm(stackup.mask_um / 1000.0)}));
     }
     if stackup.silkscreen_bottom {
         materials.push(json!({"Type": "Legend", "Name": "Bottom legend", "Color": legend_colour(fab.silkscreen_colour)}));

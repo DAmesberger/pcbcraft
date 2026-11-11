@@ -1648,7 +1648,7 @@ mod tests {
         engine.apply(
             engine.revision(),
             Operation::Layout(LayoutCommand::AddVia {
-                via: ViaRequest::through(net, [15.2, 8.0]),
+                via: ViaRequest::fixture(net, [15.2, 8.0]),
             }),
         )?;
         let change = Change::Schematic {

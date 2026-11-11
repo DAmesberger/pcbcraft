@@ -7,6 +7,7 @@ M48
 ; #@! TF.FilePolarity,Positive
 FMAT,2
 METRIC
+; Hole sizes are finished sizes; the drill file lists finished sizes. The fabricator does not publish how it reads drill files: confirm with it.
 ; #@! TA.AperFunction,Plated,PTH,ViaDrill
 T1C0.300
 ; #@! TA.AperFunction,Plated,PTH,ComponentDrill

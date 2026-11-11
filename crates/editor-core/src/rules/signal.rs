@@ -57,6 +57,10 @@ pub struct SignalRules {
     /// no limit, and skew is not checked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pair_max_skew: Option<f64>,
+    /// How far, mm, a coupled stretch's edge gap may stray from the pair
+    /// gap; unset: the rules' `pair gap tolerance`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pair_gap_tolerance: Option<f64>,
 }
 
 impl SignalRules {
@@ -91,9 +95,10 @@ impl SignalRules {
         }
         if !within(self.pair_max_uncoupled, &(0.0..=MAX_LENGTH_MM))
             || !within(self.pair_max_skew, &(0.0..=MAX_LENGTH_MM))
+            || !within(self.pair_gap_tolerance, &(0.0..=super::MAX_RULE_MM))
         {
             return Some(format!(
-                "net_class.pair: net class {name} needs pair limits of 0–10000 mm"
+                "net_class.pair: net class {name} needs pair limits of 0–10000 mm and a gap tolerance of 0–25 mm"
             ));
         }
         None

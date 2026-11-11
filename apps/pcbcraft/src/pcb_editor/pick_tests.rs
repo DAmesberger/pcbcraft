@@ -58,7 +58,11 @@ fn beside_a_usb_track(
                 mid[1] + side * normal[1] * off,
             ];
             let fill = editor.pick_fill(project, at, 0.0);
-            let clear = editor.pick_pad(at, |p| layers.pad(p)).is_none()
+            let shown = screen(editor, engine, at);
+            let on_canvas = (20.0..SCREEN[0] - 20.0).contains(&shown.x)
+                && (20.0..SCREEN[1] - 20.0).contains(&shown.y);
+            let clear = on_canvas
+                && editor.pick_pad(at, |p| layers.pad(p)).is_none()
                 && editor.pick_via(project, at).is_none()
                 && !project
                     .tracks
@@ -74,6 +78,8 @@ fn beside_a_usb_track(
 
 /// N1: with Top active, a click 3 px beside a Top track selects the track,
 /// not the GND plane on Inner 1 under it; Esc then clears the selection.
+/// Zoomed in twice: the USB pair's gap under the board's JLCPCB rules is
+/// within the test's 6 px pick margin at the fitted zoom.
 #[test]
 fn a_click_just_beside_a_top_track_selects_it_and_esc_clears() -> TestResult {
     let engine = esp32()?;
@@ -81,6 +87,8 @@ fn a_click_just_beside_a_top_track_selects_it_and_esc_clears() -> TestResult {
     let mut editor = PcbEditor::default();
     frame(&mut editor, &engine, &ctx, vec![]);
     assert_eq!(editor.layer, CopperLayer::Top);
+    editor.zoom *= 2.0;
+    frame(&mut editor, &engine, &ctx, vec![]);
     let (at, track) = beside_a_usb_track(&editor, &engine, 3.0)?;
     let point = screen(&editor, &engine, at);
     frame(&mut editor, &engine, &ctx, click(point));

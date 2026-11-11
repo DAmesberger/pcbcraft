@@ -554,7 +554,7 @@ fn thermal_relief(
 #[test]
 fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible<()> {
     use pcbcraft_core::layout::showcase::{CORNER_MM, CUTOUT, SLOT};
-    let mut engine = Engine::showcase_hosted(hosted())?;
+    let mut engine = Engine::showcase_hosted_fixture(hosted())?;
     let s = sketch(&engine)?;
     // The outline is driven by its parameters; the cutout and slot stand
     // where they were drawn, undimensioned.

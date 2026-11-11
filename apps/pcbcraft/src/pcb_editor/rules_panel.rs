@@ -1,8 +1,10 @@
 //! Design rules: the docked panel the Board card opens (docs/sidebar-ia.md,
 //! "Dialogs and reviews"; docs/board-rules-and-shape.md).
 //!
-//! The panel shows the project's profile snapshot with its provenance, a
-//! picker of the built-in and user profiles, and every rule grouped as the
+//! The panel shows the project's profile snapshot with its source, a
+//! picker of the user's profiles (Pcbcraft ships none: a profile is a file
+//! with a stated source, imported or written by the user), and every rule
+//! grouped as the
 //! core groups them (Copper, Holes & vias, Mask, Silkscreen, Paste, Fills,
 //! Board edge, Placement, Lands) with the profile value beside the
 //! effective value. A value commits live, per field, as one
@@ -30,9 +32,8 @@ use crate::refusal::{self, Origin};
 use crate::shell::Header;
 use egui::{Align, RichText, Ui};
 use pcbcraft_core::rules::{
-    self, CopperObject, MAX_RULE_MM, PadConnection, ProfileBasis, ProfileImpact, ProfileOrigin,
-    ProfileProvenance, ProjectRules, RuleGroup, RuleKey, RuleProfile, RuleRow, RuleValue,
-    RulesCommand, builtin,
+    self, CopperObject, MAX_RULE_MM, PadConnection, ProfileImpact, ProfileSource, ProjectRules,
+    RuleEntry, RuleGroup, RuleKey, RuleProfile, RuleRow, RuleValue, RulesCommand,
 };
 use pcbcraft_core::{Engine, Operation, Query, QueryResult};
 use pcbcraft_io::rule_profiles::{self, Listing, ProfileLibrary};
@@ -142,11 +143,11 @@ struct Preview {
     refusal: Option<String>,
 }
 
-/// The "Save as profile" form.
+/// The "Save as profile" form: a name and where the numbers come from.
 struct SaveForm {
     name: String,
-    basis: ProfileBasis,
-    source: String,
+    publisher: String,
+    document: String,
     url: String,
     date: String,
     notes: String,
@@ -389,6 +390,7 @@ pub fn value_text(value: RuleValue) -> String {
         RuleValue::Length(mm) => format!("{} mm", kit::number_text(mm)),
         RuleValue::Area(a) => format!("{} mm²", kit::number_text(a)),
         RuleValue::Angle(d) => format!("{}°", kit::number_text(d)),
+        RuleValue::Fraction(f) => kit::number_text(f),
         RuleValue::Ratio(Some(r)) => format!("{}:1", kit::number_text(r)),
         RuleValue::Ratio(None) => "Not checked".into(),
         RuleValue::Count(n) => n.to_string(),
@@ -429,6 +431,7 @@ fn numeric(
         RuleValue::Area(a) => Some((a, "mm²", 0.0..=1.0e6)),
         RuleValue::Angle(d) if key == RuleKey::CopperAngleMin => Some((d, "°", 0.0..=180.0)),
         RuleValue::Angle(d) => Some((d, "°", -360.0..=360.0)),
+        RuleValue::Fraction(f) => Some((f, "", 0.0..=1.0)),
         RuleValue::Count(n) => Some((f64::from(n), "", 1.0..=8.0)),
         _ => None,
     }
@@ -439,6 +442,7 @@ fn with_number(like: RuleValue, number: f64) -> RuleValue {
     match like {
         RuleValue::Area(_) => RuleValue::Area(number),
         RuleValue::Angle(_) => RuleValue::Angle(number),
+        RuleValue::Fraction(_) => RuleValue::Fraction(number),
         RuleValue::Count(_) => {
             // The field's range is 1–8, so the rounded value fits.
             let n = number.round().clamp(0.0, f64::from(u32::MAX));
@@ -452,7 +456,8 @@ fn same(a: RuleValue, b: RuleValue) -> bool {
     match (a, b) {
         (RuleValue::Length(x), RuleValue::Length(y))
         | (RuleValue::Area(x), RuleValue::Area(y))
-        | (RuleValue::Angle(x), RuleValue::Angle(y)) => (x - y).abs() < 1e-9,
+        | (RuleValue::Angle(x), RuleValue::Angle(y))
+        | (RuleValue::Fraction(x), RuleValue::Fraction(y)) => (x - y).abs() < 1e-9,
         (RuleValue::Ratio(Some(x)), RuleValue::Ratio(Some(y))) => (x - y).abs() < 1e-9,
         (a, b) => a == b,
     }
@@ -461,7 +466,7 @@ fn same(a: RuleValue, b: RuleValue) -> bool {
 /// The command that makes `key`'s effective value `value`: an override,
 /// its removal when `value` is the profile's again, or nothing.
 pub fn commit_for(rules: &ProjectRules, key: RuleKey, value: RuleValue) -> Option<RulesCommand> {
-    let profile = key.get(&rules.profile.rules);
+    let profile = key.get(rules.profile.as_ref()?.rules());
     let overridden = rules.override_of(key).is_some();
     if same(value, profile) {
         return overridden.then_some(RulesCommand::ClearOverride { key });
@@ -472,35 +477,40 @@ pub fn commit_for(rules: &ProjectRules, key: RuleKey, value: RuleValue) -> Optio
     Some(RulesCommand::SetOverride { key, value })
 }
 
-/// "Built-in · estimated", "Your profile · from fabricator data · Fab X ·
-/// 2026-10-30".
-pub fn provenance_line(p: &ProfileProvenance) -> String {
-    let origin = match p.origin {
-        ProfileOrigin::BuiltIn => "Built-in",
-        ProfileOrigin::User => "Your profile",
-        ProfileOrigin::Imported => "Imported",
-    };
-    let basis = match p.basis {
-        ProfileBasis::Estimated => "estimated",
-        ProfileBasis::FabricatorEntered => "from fabricator data",
-    };
-    let mut parts = vec![origin.to_owned(), basis.to_owned()];
-    parts.extend(
-        [&p.source, &p.date]
-            .into_iter()
-            .filter(|t| !t.trim().is_empty())
-            .map(|t| t.trim().to_owned()),
-    );
-    parts.join(" · ")
+/// "JLCPCB · PCB Capabilities · read 2026-11-11".
+pub fn source_line(s: &ProfileSource) -> String {
+    [&s.publisher, &s.document]
+        .into_iter()
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| t.trim().to_owned())
+        .chain(std::iter::once(format!("read {}", s.date)))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
-/// The Board card's Rules summary: "Standard 6/6 · 2 overrides".
+/// The Board card's Rules summary: "JLCPCB 2-layer · 2 overrides", or
+/// "No rule profile".
 pub fn rules_summary(rules: &ProjectRules) -> String {
+    let Some(profile) = &rules.profile else {
+        return "No rule profile".into();
+    };
     match rules.overrides.len() {
-        0 => rules.profile.name.clone(),
-        1 => format!("{} · 1 override", rules.profile.name),
-        n => format!("{} · {n} overrides", rules.profile.name),
+        0 => profile.name.clone(),
+        1 => format!("{} · 1 override", profile.name),
+        n => format!("{} · {n} overrides", profile.name),
     }
+}
+
+/// The board's profile with every project override written in as a value
+/// whose source says so: what Export and Save as profile write.
+fn with_overrides(rules: &ProjectRules) -> Option<RuleProfile> {
+    let mut profile = rules.profile.clone()?;
+    for o in &rules.overrides {
+        profile
+            .set(o.key, RuleEntry::value(o.value, "Project override"))
+            .ok()?;
+    }
+    Some(profile)
 }
 
 /// "Min track width" from "min track width".
@@ -514,10 +524,11 @@ fn sentence(label: &str) -> String {
 /// One entry of the profile picker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Pick {
-    BuiltIn(String),
     User(String),
     /// The board's own snapshot, matching no library entry.
     Board,
+    /// The board has no profile yet.
+    None,
 }
 
 /// The review's text: summary, groups and the copyable report.
@@ -729,12 +740,17 @@ fn table_card(
             if kit::primary(ui, "Done", true).clicked() {
                 *close = true;
             }
+            let profiled = engine.project().rules.profile.is_some();
             if ui_kit::button(
                 ui,
                 "Save as profile…",
-                Button::Enabled(panel.library.is_some()),
+                Button::Enabled(panel.library.is_some() && profiled),
             )
-            .on_disabled_hover_text("No user config folder: profiles cannot be saved")
+            .on_disabled_hover_text(if profiled {
+                "No user config folder: profiles cannot be saved"
+            } else {
+                "Choose a rule profile first"
+            })
             .clicked()
             {
                 panel.mode = Mode::Save(Box::new(save_form(&engine.project().rules)));
@@ -750,14 +766,16 @@ fn table_card(
 }
 
 fn save_form(rules: &ProjectRules) -> SaveForm {
-    let p = &rules.profile.provenance;
+    let (name, s) = rules.profile.as_ref().map_or_else(Default::default, |p| {
+        (format!("{} copy", p.name), p.source.clone())
+    });
     SaveForm {
-        name: format!("{} copy", rules.profile.name),
-        basis: p.basis,
-        source: p.source.clone(),
-        url: p.url.clone(),
-        date: p.date.clone(),
-        notes: p.notes.clone(),
+        name,
+        publisher: s.publisher,
+        document: s.document,
+        url: s.url,
+        date: s.date,
+        notes: s.notes,
         use_it: true,
         refusal: None,
         opening: true,
@@ -769,21 +787,16 @@ fn picks(
     panel: &RulesPanel,
     rules: &ProjectRules,
 ) -> (Vec<(Pick, String)>, Pick, Option<RuleProfile>) {
-    let snapshot = &rules.profile;
     let mut options = Vec::new();
+    let Some(snapshot) = &rules.profile else {
+        options.push((Pick::None, "Choose a profile…".to_owned()));
+        for p in panel.user_profiles() {
+            options.push((Pick::User(p.id.clone()), p.name.clone()));
+        }
+        return (options, Pick::None, None);
+    };
     let mut current = Pick::Board;
     let mut differs = None;
-    for p in builtin::all() {
-        let pick = Pick::BuiltIn(p.id.clone());
-        if p.id == snapshot.id {
-            if p == *snapshot {
-                current = pick.clone();
-            } else {
-                differs = Some(p.clone());
-            }
-        }
-        options.push((pick, format!("{} · built-in", p.name)));
-    }
     for p in panel.user_profiles() {
         let pick = Pick::User(p.id.clone());
         if p.id == snapshot.id {
@@ -805,9 +818,8 @@ fn picks(
 
 fn profile_of(panel: &RulesPanel, pick: &Pick) -> Option<RuleProfile> {
     match pick {
-        Pick::BuiltIn(id) => builtin::all().into_iter().find(|p| p.id == *id),
         Pick::User(id) => panel.user_profiles().iter().find(|p| p.id == *id).cloned(),
-        Pick::Board => None,
+        Pick::Board | Pick::None => None,
     }
 }
 
@@ -826,9 +838,22 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
         {
             panel.preview(engine, profile, false);
         }
-        kit::row(ui, "Basis", |ui| {
-            kit::summary_row(ui, &provenance_line(&rules.profile.provenance), None);
-        });
+        match &rules.profile {
+            Some(profile) => {
+                kit::row(ui, "Source", |ui| {
+                    kit::summary_row(ui, &source_line(&profile.source), None);
+                });
+            }
+            None => {
+                kit::hint(
+                    ui,
+                    "This board has no rule profile, so nothing is checked",
+                    "Choose your fabricator's profile. Pcbcraft ships none: import a profile \
+                     file (Your profiles › Import…; examples/profiles/ has sourced ones) or \
+                     write one from the fabricator's capability page.",
+                );
+            }
+        }
         if let Some(library) = differs
             && kit::summary_row(ui, "Differs from the library version", Some("Review…"))
         {
@@ -842,10 +867,12 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
                 } else {
                     format!("{n} project overrides")
                 };
-                if kit::summary_row(ui, &text, Some("Reset all")) {
+                if kit::summary_row(ui, &text, Some("Reset all"))
+                    && let Some(profile) = &rules.profile
+                {
                     op = Some((
                         RulesCommand::SetProfile {
-                            profile: Box::new(rules.profile.clone()),
+                            profile: Box::new(profile.clone()),
                             keep_overrides: false,
                         },
                         Origin::Command,
@@ -854,28 +881,24 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
             }
         }
     });
-    let p = &rules.profile.provenance;
-    if [&p.source, &p.url, &p.date, &p.notes]
-        .iter()
-        .any(|t| !t.trim().is_empty())
-    {
-        kit::section(
-            ui,
-            "pcb-rules-provenance",
-            "Provenance",
-            false,
-            None,
-            |ui| {
-                for (label, text) in [("Source", &p.source), ("URL", &p.url), ("Date", &p.date)] {
-                    if !text.trim().is_empty() {
-                        kit::value_row(ui, label, text);
-                    }
+    if let Some(profile) = &rules.profile {
+        let s = &profile.source;
+        kit::section(ui, "pcb-rules-provenance", "Source", false, None, |ui| {
+            for (label, text) in [
+                ("Publisher", &s.publisher),
+                ("Document", &s.document),
+                ("URL", &s.url),
+                ("Read", &s.date),
+            ] {
+                if !text.trim().is_empty() {
+                    kit::value_row(ui, label, text);
                 }
-                if !p.notes.trim().is_empty() {
-                    kit::note(ui, &p.notes);
-                }
-            },
-        );
+            }
+            kit::value_row(ui, "Drill files", &profile.drill_files.note());
+            if !s.notes.trim().is_empty() {
+                kit::note(ui, &s.notes);
+            }
+        });
     }
     let report = rules::report(rules);
     let mut focused = false;
@@ -1000,19 +1023,27 @@ fn group_table(
                     } else {
                         ""
                     };
-                    label.on_hover_text(format!(
+                    let mut tip = format!(
                         "{} · from {}{unset}",
                         sentence(&row.label),
                         row.source.describe()
-                    ));
+                    );
+                    if let Some(formula) = &row.formula {
+                        tip.push_str(&format!("\nProfile formula: {formula}"));
+                    }
+                    if !row.value_source.is_empty() {
+                        tip.push_str(&format!("\nSource: {}", row.value_source));
+                    }
+                    label.on_hover_text(tip);
                 }
                 1 => {
-                    ui.add(
-                        egui::Label::new(
-                            RichText::new(rule_text(key, row.profile)).color(t.form_dim),
-                        )
-                        .truncate(),
-                    );
+                    let text = rule_text(key, row.profile);
+                    let text = if row.formula.is_some() {
+                        format!("ƒ {text}")
+                    } else {
+                        text
+                    };
+                    ui.add(egui::Label::new(RichText::new(text).color(t.form_dim)).truncate());
                 }
                 2 => {
                     if let Some((number, unit, range)) = numeric(key, row.value) {
@@ -1135,7 +1166,7 @@ fn library_section(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Opti
     if profiles.is_empty() {
         kit::hint(
             ui,
-            "Save these rules or import a profile file to add one",
+            "Import a fabricator's profile file to add one",
             &format!("Profiles are kept in {}", library.dir().display()),
         );
     }
@@ -1159,15 +1190,14 @@ fn library_section(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Opti
                         }
                     }
                 });
-                let basis = match profile.provenance.basis {
-                    ProfileBasis::Estimated => "estimated",
-                    ProfileBasis::FabricatorEntered => "fabricator data",
-                };
                 ui.add(
-                    egui::Label::new(RichText::new(format!("{} · {basis}", profile.name)))
-                        .truncate(),
+                    egui::Label::new(RichText::new(format!(
+                        "{} · {}",
+                        profile.name, profile.source.publisher
+                    )))
+                    .truncate(),
                 )
-                .on_hover_text(provenance_line(&profile.provenance));
+                .on_hover_text(source_line(&profile.source));
             });
         });
     });
@@ -1196,13 +1226,12 @@ fn library_section(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Opti
     }
     let busy = panel.job.is_some();
     kit::actions(ui, |ui| {
-        if ui_kit::button(ui, "Export…", Button::Enabled(!busy))
-            .on_hover_text("Write this board's effective rules to a profile file")
+        let board = with_overrides(&engine.project().rules);
+        if ui_kit::button(ui, "Export…", Button::Enabled(!busy && board.is_some()))
+            .on_hover_text("Write this board's rules, overrides included, to a profile file")
             .clicked()
+            && let Some(profile) = board
         {
-            let rules = &engine.project().rules;
-            let mut profile = rules.profile.clone();
-            profile.rules = rules.effective();
             panel.start_export(ui.ctx(), profile);
         }
         if ui_kit::button(ui, "Import…", Button::Enabled(!busy)).clicked() {
@@ -1280,9 +1309,9 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
     };
     let overrides = !engine.project().rules.overrides.is_empty();
     let mut keep = preview.keep_overrides;
-    let provenance = provenance_line(&preview.profile.provenance);
+    let source = source_line(&preview.profile.source);
     let action = review.show_with(ui, &mut [], preview.refusal.as_deref(), |ui| {
-        kit::hint(ui, &provenance, &preview.profile.provenance.notes);
+        kit::hint(ui, &source, &preview.profile.source.notes);
         if overrides {
             kit::check_row(ui, "Keep project overrides", &mut keep);
         }
@@ -1327,9 +1356,9 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
     }
 }
 
-/// The docked "Save as profile" dialog: name and provenance; Save writes
-/// the board's effective rules to the library and, when asked, switches
-/// the board to the saved profile.
+/// The docked "Save as profile" dialog: name and source; Save writes the
+/// board's profile with its overrides as values to the library and, when
+/// asked, switches the board to the saved profile.
 fn save_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
     let Mode::Save(form) = &mut panel.mode else {
         return None;
@@ -1340,26 +1369,25 @@ fn save_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Ope
     dialog.body_rows = 10.0;
     dialog.reset_scroll = form.opening;
     dialog.refusal = form.refusal.as_deref();
-    dialog.primary_disabled = blank.then_some("Enter a name");
+    dialog.primary_disabled = if blank {
+        Some("Enter a name")
+    } else if form.publisher.trim().is_empty() || form.date.trim().is_empty() {
+        Some("Name the publisher and the date the numbers were read")
+    } else {
+        None
+    };
     form.opening = false;
     let action = dialog.show(ui, |ui| {
         kit::text_row(ui, "Name", &mut form.name);
-        let bases = [
-            (ProfileBasis::Estimated, "Estimated".to_owned()),
-            (
-                ProfileBasis::FabricatorEntered,
-                "Fabricator data".to_owned(),
-            ),
-        ];
-        kit::choice_row(ui, "Basis", &mut form.basis, &bases);
-        kit::text_row(ui, "Source", &mut form.source);
+        kit::text_row(ui, "Publisher", &mut form.publisher);
+        kit::text_row(ui, "Document", &mut form.document);
         kit::text_row(ui, "URL", &mut form.url);
-        kit::text_row(ui, "Date", &mut form.date);
+        kit::text_row(ui, "Read on", &mut form.date);
         kit::multiline_row(ui, "Notes", &mut form.notes, false);
         kit::check_row(ui, "Use it for this board", &mut form.use_it);
         kit::hint(
             ui,
-            "Fabricator data: numbers you entered from their published capabilities",
+            "Where the numbers come from: the fabricator's capability page and the date (YYYY-MM-DD) you read it",
             "",
         );
     });
@@ -1370,19 +1398,14 @@ fn save_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Ope
         }
         DialogAction::Primary => {
             let library = panel.library.clone()?;
-            let rules = &engine.project().rules;
-            let profile = RuleProfile {
-                id: "profile".into(),
-                name: form.name.trim().to_owned(),
-                provenance: ProfileProvenance {
-                    origin: ProfileOrigin::User,
-                    basis: form.basis,
-                    source: form.source.trim().to_owned(),
-                    url: form.url.trim().to_owned(),
-                    date: form.date.trim().to_owned(),
-                    notes: form.notes.trim().to_owned(),
-                },
-                rules: rules.effective(),
+            let mut profile = with_overrides(&engine.project().rules)?;
+            profile.name = form.name.trim().to_owned();
+            profile.source = ProfileSource {
+                publisher: form.publisher.trim().to_owned(),
+                document: form.document.trim().to_owned(),
+                url: form.url.trim().to_owned(),
+                date: form.date.trim().to_owned(),
+                notes: form.notes.trim().to_owned(),
             };
             match library.save_as(&profile, &profile.name) {
                 Ok(stored) => {

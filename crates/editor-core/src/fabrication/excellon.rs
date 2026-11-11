@@ -9,6 +9,11 @@
 //! separate files. Each file also carries the X2 attributes as `; #@!`
 //! comment lines (`TF.FileFunction,Plated,1,4,PTH`), which readers that do
 //! not know them skip as comments.
+//!
+//! Hole sizes are finished sizes. The tool sizes written follow the rule
+//! profile's [`crate::rules::DrillFiles`]: finished sizes, or plated holes
+//! at finished size plus the fabricator's plating allowance; a comment
+//! line says which.
 use super::artwork;
 use super::drill::{self, DrillHole, DrillTable, HoleFeature};
 use super::gerber::{Aperture, Seg, Writer};
@@ -121,6 +126,16 @@ pub fn excellon(
     );
     s.push_str("; #@! TF.FilePolarity,Positive\n");
     s.push_str("FMAT,2\nMETRIC\n");
+    let drill_files = project.rules.profile.as_ref().map(|p| &p.drill_files);
+    let file_size = |d: f64| drill_files.map_or(d, |f| f.file_size(d, plated));
+    let _ = writeln!(
+        s,
+        "; {}",
+        drill_files.map_or_else(
+            || "Hole sizes are finished sizes.".to_string(),
+            |f| f.note()
+        )
+    );
     let tools: Vec<_> = table.tools.iter().filter(|t| t.plated == plated).collect();
     for tool in &tools {
         let _ = writeln!(
@@ -130,7 +145,7 @@ pub fn excellon(
             if plated { "PTH" } else { "NPTH" },
             tool.function.aper_function()
         );
-        let _ = writeln!(s, "T{}C{}", tool.number, fixed(tool.diameter));
+        let _ = writeln!(s, "T{}C{}", tool.number, fixed(file_size(tool.diameter)));
     }
     s.push_str("%\nG90\nG05\n");
     for tool in &tools {
@@ -254,7 +269,15 @@ fn mark(w: &mut Writer, pen: u32, symbol: &str, at: Point) -> Result<()> {
 pub fn drill_table_text(project: &Project, table: &DrillTable) -> String {
     let mut s = String::new();
     let _ = writeln!(s, "Drill table: {}", project.name);
-    let _ = writeln!(s, "Units: mm. Diameters are finished hole sizes as drawn.");
+    let _ = writeln!(
+        s,
+        "Units: mm. Diameters are finished hole sizes as drawn. {}",
+        project
+            .rules
+            .profile
+            .as_ref()
+            .map_or_else(String::new, |p| p.drill_files.note())
+    );
     let _ = writeln!(s);
     let _ = writeln!(
         s,

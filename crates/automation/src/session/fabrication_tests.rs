@@ -40,7 +40,7 @@ fn names(result: &Value) -> Vec<String> {
 #[test]
 fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let mut session = Session::new(showcase()?);
+    let mut session = Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?);
     let revision = session.engine().revision();
     let folder = dir.path().join("fab");
     let result = ok(&mut session, export(&folder, false, None))?;
@@ -101,7 +101,7 @@ fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
 #[test]
 fn the_project_name_reaches_the_production_files() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let mut session = Session::new(showcase()?);
+    let mut session = Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?);
     let was = session.engine().project().name.clone();
     let revision = session.engine().revision();
     let renamed = ok(
@@ -157,39 +157,38 @@ fn the_project_name_reaches_the_production_files() -> Fallible<()> {
     Ok(())
 }
 
-/// The query takes a profile id as the export does, with the same result
-/// as the whole profile; an unknown id and a malformed one are refused.
+/// The query takes a whole profile; an id the profile library does not
+/// hold and a malformed profile are refused. Pcbcraft has no built-in ids.
 #[test]
-fn the_production_check_takes_a_profile_id() -> Fallible<()> {
-    let mut session = Session::new(showcase()?);
+fn the_production_check_takes_a_whole_profile() -> Fallible<()> {
+    let mut session = Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?);
     let query = |profile: Value| {
         json!({"command": "project.query", "params": {
             "query": "fabrication.preflight",
             "params": {"profile": profile},
         }})
     };
-    let by_id = ok(&mut session, query(json!("std-6-6")))?;
     let whole = ok(
         &mut session,
-        query(serde_json::to_value(pcbcraft_core::rules::builtin::by_id(
-            "std-6-6",
-        ))?),
+        query(serde_json::to_value(
+            pcbcraft_core::rules::fixtures::fine()?
+        )?),
     )?;
-    assert_eq!(by_id, whole);
-    // The report names the profile it checked under.
-    assert_eq!(by_id["result"]["profile"], "Standard 6/6");
-    assert!(by_id["result"]["blocking"].as_u64() > Some(0));
+    // The report names the profile it checked under; the fills computed
+    // under the board's own rules are stale under it.
+    assert_eq!(whole["result"]["profile"], "Test fine");
+    assert!(whole["result"]["blocking"].as_u64() > Some(0));
 
     let revision = session.engine().revision();
     let unknown = session.dispatch(query(json!("no-such-profile")));
     assert_eq!(unknown["ok"], false, "{unknown}");
-    for malformed in [json!(6), json!({"id": "std-6-6"})] {
+    for malformed in [json!(6), json!({"id": "test-fine"})] {
         let reply = session.dispatch(query(malformed));
         assert_eq!(reply["ok"], false, "{reply}");
     }
     assert_eq!(session.engine().revision(), revision);
 
-    // The engine alone knows the built-in profiles.
+    // The engine alone resolves no id.
     let engine = session.engine();
     let refused = engine.query(pcbcraft_core::Query::Preflight {
         profile: Some(pcbcraft_core::fabrication::ProfileChoice::Id("mine".into())),
@@ -201,11 +200,21 @@ fn the_production_check_takes_a_profile_id() -> Fallible<()> {
 #[test]
 fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let mut session = Session::new(showcase()?);
-    // Under the Standard 6/6 profile the fills were computed under other
+    let mut session = Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?);
+    // Switched to a finer profile, the fills were computed under other
     // rules: they are stale, an error that blocks production.
+    let revision = session.engine().revision();
+    ok(
+        &mut session,
+        json!({"command": "project.apply", "params": {
+            "expected_revision": revision,
+            "operation": {"editor": "Rules", "operation": {
+                "command": "rules.set_profile",
+                "params": {"profile": pcbcraft_core::rules::fixtures::fine()?}}},
+        }}),
+    )?;
     let out = dir.path().join("blocked");
-    let refused = session.dispatch(export(&out, false, Some("std-6-6")));
+    let refused = session.dispatch(export(&out, false, None));
     assert_eq!(refused["ok"], false, "{refused}");
     assert!(
         refused["error"].to_string().contains("fabrication.blocked"),
@@ -216,7 +225,7 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
         &mut session,
         json!({"command": "project.query", "params": {
             "query": "fabrication.preflight",
-            "params": {"profile": pcbcraft_core::rules::builtin::by_id("std-6-6")},
+            "params": {},
         }}),
     )?;
     let blocking: Vec<String> = report["result"]["items"]
@@ -269,7 +278,7 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
                 "params": {"keys": blocking, "reason": "fabricator refills planes"}}},
         }}),
     )?;
-    let result = ok(&mut session, export(&out, false, Some("std-6-6")))?;
+    let result = ok(&mut session, export(&out, false, None))?;
     assert_eq!(result["preflight"]["blocking"], 0);
     assert_eq!(result["preflight"]["waived"], blocking.len());
     // Waivers are saved with the project.
