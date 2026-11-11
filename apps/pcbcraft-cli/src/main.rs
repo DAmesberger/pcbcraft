@@ -38,7 +38,6 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
                                    window's undo history, its permission choice
                                    and its Allow/Deny; the token comes from the
                                    window's token file or PCBCRAFT_CONTROL_TOKEN
-  demo NEW_FILE.pcbcraft           write the two-component demo project
   showcase NEW_FILE.pcbcraft       write the 4-layer PCB showcase project
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
   sample-library NEW_DIR [NAME]    write the synthetic catalog as a library folder
@@ -222,13 +221,11 @@ fn run() -> Result<()> {
             let mut server = mcp::Server::new(session, options.policy()?);
             Ok(server.serve(io::stdin().lock(), io::stdout().lock())?)
         }
-        [command, path] if ["demo", "showcase", "parts"].contains(&command.as_str()) => {
+        [command, path] if ["showcase", "parts"].contains(&command.as_str()) => {
             if std::path::Path::new(path).try_exists()? {
                 return Err("output exists; choose a new .pcbcraft filename".into());
             }
-            let engine = if command == "demo" {
-                Engine::demo()?
-            } else if command == "showcase" {
+            let engine = if command == "showcase" {
                 session::showcase()?
             } else {
                 Engine::from_file(pcbcraft_core::format::EditorFile {

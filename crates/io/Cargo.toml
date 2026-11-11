@@ -22,3 +22,4 @@ getrandom.workspace = true
 zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
+pcbcraft-core = { workspace = true, features = ["test-fixtures"] }

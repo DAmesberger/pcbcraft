@@ -138,7 +138,7 @@ impl App {
         fonts::setup_bundled_fonts(&cc.egui_ctx);
         fonts::load_system_fonts_in_background(&cc.egui_ctx);
         let render_state = cc.wgpu_render_state.as_ref().ok_or("wgpu is required")?;
-        let mut engine = Engine::demo()?;
+        let mut engine = file_ui::new_project();
         let mut files = FileUi::new(cc, &engine);
         // `pcbcraft FILE.pcbcraft` opens that project through the file workflow.
         if let Some(path) = std::env::args_os()

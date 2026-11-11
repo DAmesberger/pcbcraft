@@ -78,6 +78,12 @@ fn run() -> Result<()> {
                 "-D",
                 "warnings",
             ])?;
+            // The shipped binaries alone, without dev-dependencies: test
+            // fixtures (`pcbcraft-core/test-fixtures`) never build into them.
+            cargo(&[
+                "check", "--locked", "-p", "pcbcraft", "-p", "pcbcraft-cli", "--bins", "--profile",
+                "ci",
+            ])?;
             cargo(&["test", "--locked", "--workspace", "--profile", "ci"])?;
             if command == "ci" {
                 wasm()?;

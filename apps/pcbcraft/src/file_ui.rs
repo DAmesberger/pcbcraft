@@ -599,7 +599,7 @@ impl FileUi {
     fn proceed(&mut self, transition: Transition) {
         match transition {
             Transition::New => self.effects.push(Effect::Replace {
-                document: Box::new(Engine::default().to_file()),
+                document: Box::new(new_project().to_file()),
                 path: None,
                 recovered: false,
             }),
@@ -1231,6 +1231,12 @@ fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {
             .map_err(|e| e.to_string())
     }
 }
+/// The project a launch without a file and File › New open: empty, with
+/// no parts, library or drafts, so it has no issues.
+pub(crate) fn new_project() -> Engine {
+    Engine::default()
+}
+
 fn home_directory() -> PathBuf {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))

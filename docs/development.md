@@ -16,7 +16,7 @@ cargo run --locked --profile ci -p pcbcraft [FILE.pcbcraft]
 cargo xtask ci
 ```
 
-The app starts with two connected resistor instances. Component authoring includes Symbol, Footprint, Mapping and 3D modes; each finished edit of the five component drafts (component, symbol, package, footprint, binding) is one undo step, and Publish creates immutable project revisions. In Schematic, Place (or P) opens the Place palette: type a query such as `10k 0603`, `res>=10k` or `tol<=1%`, move with ↑/↓, press Enter to place (Shift+Enter keeps the palette open) or click a row to place it with the mouse; the properties card previews the highlighted part. Connect terminals with Wire and rename a selected wire's net. The Browser's Components section has a filter field that uses the same search. In PCB, preview/apply Update PCB, move placements and route between pads. Switch between 2D and 3D within PCB; selection and whole-net highlighting are shared.
+The app starts with an empty project (as File › New does); open a project, or write the showcase with the CLI below. Component authoring includes Symbol, Footprint, Mapping and 3D modes; each finished edit of the five component drafts (component, symbol, package, footprint, binding) is one undo step, and Publish creates immutable project revisions. In Schematic, Place (or P) opens the Place palette: type a query such as `10k 0603`, `res>=10k` or `tol<=1%`, move with ↑/↓, press Enter to place (Shift+Enter keeps the palette open) or click a row to place it with the mouse; the properties card previews the highlighted part. Connect terminals with Wire and rename a selected wire's net. The Browser's Components section has a filter field that uses the same search. In PCB, preview/apply Update PCB, move placements and route between pads. Switch between 2D and 3D within PCB; selection and whole-net highlighting are shared.
 
 File offers New, Open, Save, Save as and Export to Solidcraft through native dialogs; reads, writes and exports run in the background. Unsaved work is snapshotted for crash recovery and offered at the next launch. Project files contain the revisioned library snapshot and the definition drafts, so they reopen offline. Native export writes a new parametric `.solidcraft` file; package models are clearly identified envelopes.
 
@@ -39,8 +39,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 ## CLI, JSON lines and MCP
 
 ```sh
-cargo run --locked --profile ci -p pcbcraft-cli -- demo example.pcbcraft
-cargo run --locked --profile ci -p pcbcraft-cli -- showcase showcase.pcbcraft   # a routed 4-layer board with via examples; open it in the app
+cargo run --locked --profile ci -p pcbcraft-cli -- showcase example.pcbcraft   # a routed 4-layer board with via examples; open it in the app
 cargo run --locked --profile ci -p pcbcraft-cli -- parts parts.pcbcraft   # 24 invented EX- parts for the Place palette
 cargo run --locked --profile ci -p pcbcraft-cli -- sample-library NEW_DIR [NAME]   # the same catalog as a library folder
 cargo run --locked --profile ci -p pcbcraft-cli -- export example.pcbcraft example.solidcraft

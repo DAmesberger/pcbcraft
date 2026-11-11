@@ -25,4 +25,5 @@ hayro = "0.9"
 keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
 
 [dev-dependencies]
+pcbcraft-core = { workspace = true, features = ["test-fixtures"] }
 tempfile.workspace = true

@@ -23,6 +23,7 @@ rmcp = { workspace = true, features = ["server", "transport-io"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 
 [dev-dependencies]
+pcbcraft-core = { workspace = true, features = ["test-fixtures"] }
 tempfile.workspace = true
 rmcp = { workspace = true, features = ["client"] }
 tokio = { workspace = true, features = ["time"] }

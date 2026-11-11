@@ -288,3 +288,58 @@ fn a_ribbon_tab_click_redraws_the_ribbon_in_its_new_state() -> Fallible {
     assert_eq!(ax.find(Role::Button, "Layout")?.toggled, Some(true));
     Ok(())
 }
+
+/// Whether `engine` holds an empty project: no parts, library, drafts,
+/// wires or board objects, and no issues in any area.
+fn assert_empty(engine: &Engine, what: &str) -> Fallible {
+    let project = engine.project();
+    assert!(project.instances.is_empty(), "{what}: instances");
+    assert!(project.placements.is_empty(), "{what}: placements");
+    assert!(project.wires.is_empty(), "{what}: wires");
+    assert!(project.nets.is_empty(), "{what}: nets");
+    assert!(
+        project.tracks.is_empty() && project.vias.is_empty(),
+        "{what}: copper"
+    );
+    assert_eq!(
+        project.library,
+        pcbcraft_core::library::Library::default(),
+        "{what}: library"
+    );
+    assert!(engine.drafts().items.is_empty(), "{what}: library drafts");
+    let pcbcraft_core::QueryResult::Issues(report) =
+        engine.query(pcbcraft_core::Query::Issues {
+            scope: pcbcraft_core::issues::IssueScope::All,
+        })?
+    else {
+        return Err("the issues query answered something else".into());
+    };
+    assert!(report.rows.is_empty(), "{what}: issues {:?}", report.rows);
+    Ok(())
+}
+
+/// A launch without a file opens an empty project with no issues; there
+/// is no built-in sample design.
+#[test]
+fn a_launch_without_a_file_opens_an_empty_project() -> Fallible {
+    let ax = Ax::with_engine(file_ui::new_project(), Workspace::Schematic)?;
+    assert_empty(&ax.app.engine, "launch")
+}
+
+/// File › New replaces a design with the same empty project a launch
+/// opens.
+#[test]
+fn file_new_opens_the_same_empty_project() -> Fallible {
+    let mut ax = Ax::new(Workspace::Schematic)?;
+    assert!(
+        !ax.app.engine.project().instances.is_empty(),
+        "a design to replace"
+    );
+    ax.command_key(Key::N);
+    ax.until("the new project", |ax| {
+        ax.app.engine.project().instances.is_empty()
+    })?;
+    assert_empty(&ax.app.engine, "File › New")?;
+    assert_eq!(ax.app.engine.to_file(), file_ui::new_project().to_file());
+    Ok(())
+}

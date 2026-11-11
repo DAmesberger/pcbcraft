@@ -553,7 +553,7 @@ impl Engine {
     /// commands. The sample parts live in `library::samples`.
     ///
     /// Unconnected terminals are marked no-connect. The undo history is
-    /// cleared, as for [`Engine::demo`].
+    /// cleared.
     pub fn showcase() -> Result<Self> {
         Self::showcase_in(None)
     }
@@ -786,10 +786,13 @@ impl Engine {
         Ok(())
     }
 
-    /// Two connected two-terminal components, placed on the board, with a
-    /// typed resistance field shown on the symbol. The sample library is
-    /// built through the public commands and its drafts stay open for
-    /// editing.
+    /// A test fixture, never in the product: two connected two-terminal
+    /// components, placed on the board, with a typed resistance field
+    /// shown on the symbol. The sample library is built through the public
+    /// commands and its drafts stay open for editing. Other crates' tests
+    /// reach it through the `test-fixtures` feature of their
+    /// dev-dependency; a launch and File › New open an empty project.
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub fn demo() -> Result<Self> {
         let mut engine = Self::default();
         let refs = engine.reserve_lineages()?;
