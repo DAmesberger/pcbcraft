@@ -364,7 +364,8 @@ impl App {
         );
         if let Some(slot) = slot {
             if slot.show_issues {
-                self.issues.show_selection();
+                let selection = self.selection();
+                self.issues.show_selection(&selection);
             }
             // Editors mark a field or dialog origin themselves; the rest
             // are commands.
@@ -395,12 +396,13 @@ impl App {
     fn selection(&self) -> Vec<pcbcraft_core::ObjectRef> {
         match self.workspace {
             Workspace::Part => {
-                issues::selection(self.workspace, self.part.lineage(), None, None, None)
+                issues::selection(self.workspace, self.part.lineage(), None, None, None, None)
             }
             Workspace::Schematic => issues::selection(
                 self.workspace,
                 None,
                 self.schematic.selected_instance(),
+                None,
                 None,
                 self.schematic.selected_net(&self.engine),
             ),
@@ -409,6 +411,7 @@ impl App {
                 None,
                 self.pcb.selected_instance(),
                 self.pcb.selected_track(),
+                self.pcb.selected_via(),
                 self.pcb.highlighted_net(),
             ),
         }

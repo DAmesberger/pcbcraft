@@ -288,6 +288,23 @@ impl Summary {
     }
 }
 
+/// The Selection scope's empty list with nothing selected: what to select,
+/// and which scope lists the issues the bar counts here.
+fn nothing_selected(summary: &Summary, workspace: Workspace) -> String {
+    let here = match summary {
+        Summary::Counted { counts, .. } => {
+            counts.error + counts.warning + counts.to_do + counts.info
+        }
+        Summary::NotCounted(_) => 0,
+    };
+    let only = format!("{} only", workspace.label());
+    match here {
+        0 => "Select an object to list its issues".to_owned(),
+        1 => format!("Nothing is selected; {only} lists the 1 issue here"),
+        n => format!("Nothing is selected; {only} lists the {n} issues here"),
+    }
+}
+
 /// Shown on the bar while the issues cannot be counted, in place of counts.
 const NOT_COUNTED: &str = "Not counted";
 
@@ -522,10 +539,15 @@ impl Surface {
         self.expanded = true;
     }
 
-    /// Expand the card scoped to the selection (a card's issue slot).
-    pub fn show_selection(&mut self) {
+    /// Expand the card on what a card's issue slot counted: the selection,
+    /// or with nothing selected (the Board or sheet card) the workspace.
+    pub fn show_selection(&mut self, selection: &[ObjectRef]) {
         self.expanded = true;
-        self.scope = Scope::Selection;
+        self.scope = if selection.is_empty() {
+            Scope::Workspace
+        } else {
+            Scope::Selection
+        };
     }
 
     /// The bar's counts: always the active workspace, whatever the card
@@ -607,6 +629,7 @@ impl Surface {
             self.toolbar(ui, workspace);
         });
         let answer = self.listed(engine, workspace, selection);
+        let idle = nothing_selected(&summary, workspace);
         let full = ui.available_rect_before_wrap();
         let footer_height = t.control_height + 2.0 * t.space_4;
         let split = (full.bottom() - footer_height).max(full.top());
@@ -626,7 +649,7 @@ impl Surface {
                                 kit::hint(ui, "The issues could not be counted", why);
                             }
                             Answer::Report(report) => {
-                                request = self.list(ui, engine, report, selection);
+                                request = self.list(ui, engine, report, selection, &idle);
                             }
                         });
                 })
@@ -692,17 +715,18 @@ impl Surface {
         engine: &Engine,
         report: &Arc<IssueReport>,
         selection: &[ObjectRef],
+        idle: &str,
     ) -> Option<Request> {
         let groups = groups(report, self.filter);
         if groups.is_empty() {
             let empty = match (self.scope, self.filter, report.rows.is_empty()) {
-                (Scope::Selection, _, _) if selection.is_empty() => {
-                    "Select an object to list its issues"
+                (Scope::Selection, _, _) if selection.is_empty() => idle.to_owned(),
+                (_, Some(_), false) => {
+                    "None of this kind; choose Every kind to see the rest".to_owned()
                 }
-                (_, Some(_), false) => "None of this kind; choose Every kind to see the rest",
-                _ => "No issues",
+                _ => "No issues".to_owned(),
             };
-            kit::hint(ui, empty, &report.coverage);
+            kit::hint(ui, &empty, &report.coverage);
             return None;
         }
         let views: Vec<IssueGroupView> = groups
@@ -973,6 +997,7 @@ pub fn selection(
     part: Option<DefinitionId>,
     instance: Option<Id>,
     track: Option<Id>,
+    via: Option<Id>,
     net: Option<Id>,
 ) -> Vec<ObjectRef> {
     let mut out = Vec::new();
@@ -981,6 +1006,7 @@ pub fn selection(
         Workspace::Schematic | Workspace::Pcb => {
             out.extend(instance.map(|id| ObjectRef::Instance { id }));
             out.extend(track.map(|id| ObjectRef::Track { id }));
+            out.extend(via.map(|id| ObjectRef::Via { id }));
             out.extend(net.map(|id| ObjectRef::Net { id }));
         }
     }

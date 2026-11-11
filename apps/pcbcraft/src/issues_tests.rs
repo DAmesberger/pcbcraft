@@ -430,19 +430,49 @@ fn the_pill_steps_to_the_next_issue_and_ends() -> Fallible<()> {
     Ok(())
 }
 
+/// Night round 3 (R3-2): the Board card's "N on this board ›" row (nothing
+/// selected) lists the board's issues; the Selection scope with nothing
+/// selected says which scope lists the ones the bar counts.
 #[test]
 fn the_selection_scope_without_a_selection_says_so() -> Fallible<()> {
     let engine = Engine::demo()?;
+    let board = report(
+        &engine,
+        IssueScope::Area {
+            area: IssueArea::Board,
+        },
+    )?;
+    let first = groups(&board, None).into_iter().next().ok_or("a group")?;
     let mut surface = Surface::default();
-    surface.show_selection();
+    surface.show_selection(&[]);
     let mut h = Harness::new();
     let (_, painted) = h.frame(Vec::new(), |ui| {
         surface.card(ui, &engine, Workspace::Pcb, &[])
     });
-    assert!(
-        at(&painted, "Select an object to list its issues").is_some(),
-        "{painted:?}"
-    );
+    assert!(at(&painted, &first.title).is_some(), "{painted:?}");
+
+    surface.scope = Scope::Selection;
+    let here = match surface.summary(&engine, Workspace::Pcb) {
+        Summary::Counted { counts, .. } => {
+            counts.error + counts.warning + counts.to_do + counts.info
+        }
+        Summary::NotCounted(why) => return Err(why.into()),
+    };
+    let (_, painted) = h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let said = if here == 1 {
+        "Nothing is selected; PCB only lists the 1 issue here".to_owned()
+    } else {
+        format!("Nothing is selected; PCB only lists the {here} issues here")
+    };
+    assert!(here > 0 && at(&painted, &said).is_some(), "{painted:?}");
+
+    let part = ObjectRef::Instance {
+        id: engine.project().instances.first().ok_or("a part")?.id,
+    };
+    surface.show_selection(&[part]);
+    assert_eq!(surface.scope, Scope::Selection);
     Ok(())
 }
 
