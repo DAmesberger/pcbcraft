@@ -3,7 +3,7 @@
 //! evaluation time and Solidcraft's own span profile, then one part turned
 //! by 90° and turned back (the edit and its undo) through `project::update`.
 //!
-//! `nix develop -c cargo test --profile ci -p pcbcraft-automation --test build_profile -- --ignored --nocapture`
+//! `nix develop -c cargo test --profile ci -p pcbcraft-automation --features profile --test build_profile -- --ignored --nocapture`
 //!
 //! - `PCBCRAFT_PROFILE_BOARD`: another `.pcbcraft` file.
 //! - `PCBCRAFT_PROFILE_VARIANT`: `full` (default), `no-vias`, `no-fills`,
