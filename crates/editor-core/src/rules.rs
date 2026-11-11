@@ -715,9 +715,7 @@ impl RuleKey {
             {
                 RuleGroup::BoardEdge
             }
-            Self::Clearance { a, b } if a.is_hole() || b.is_hole() => {
-                RuleGroup::HolesAndVias
-            }
+            Self::Clearance { a, b } if a.is_hole() || b.is_hole() => RuleGroup::HolesAndVias,
             Self::BoardOutlineFit => RuleGroup::BoardEdge,
             Self::TrackWidthMin
             | Self::TrackWidthDefault
@@ -1141,12 +1139,12 @@ impl ProjectRules {
         *self == Self::default()
     }
 
-    /// The project's profile, or `rules.no_profile` for a tool or output
+    /// The project's profile, or `rules.no_fab_profile` for a tool or output
     /// that needs a default or a limit the profile sets.
     pub fn require(&self) -> Result<&RuleProfile> {
         self.profile.as_ref().ok_or_else(|| {
             Error::Invalid(
-                "rules.no_profile: this board has no rule profile; choose one (Board › Rules) \
+                "rules.no_fab_profile: this board has no fab profile; choose one (Board › Rules) \
                  before routing, filling or making production files"
                     .into(),
             )
@@ -1229,11 +1227,11 @@ impl ProjectRules {
         }
     }
 
-    /// The profile's name, or "no rule profile".
+    /// The profile's name, or "no fab profile".
     pub fn profile_name(&self) -> String {
         self.profile
             .as_ref()
-            .map_or_else(|| "no rule profile".into(), |p| p.name.clone())
+            .map_or_else(|| "no fab profile".into(), |p| p.name.clone())
     }
 
     /// One effective rule with its source.
@@ -1359,7 +1357,7 @@ impl ProjectRules {
         let Some(profile) = &self.profile else {
             if !self.overrides.is_empty() {
                 return Err(Error::Invalid(
-                    "rules.no_profile: overrides need a rule profile to depart from".into(),
+                    "rules.no_fab_profile: overrides need a fab profile to depart from".into(),
                 ));
             }
             netclass::validate(self)?;
@@ -1393,8 +1391,8 @@ impl ProjectRules {
 /// no undo step.
 ///
 /// JSON examples (the `params` of `Operation::Rules`):
-/// `{"command":"rules.set_profile","params":{"profile":{...},"keep_overrides":true}}`
-/// with a profile from `rules.profiles`;
+/// `{"command":"rules.set_fab_profile","params":{"profile":{...},"keep_overrides":true}}`
+/// with a profile from `rules.fab_profiles`;
 /// `{"command":"rules.set_override","params":{"key":{"rule":"clearance","a":"track","b":"via"},"value":{"kind":"length","value":0.15}}}`;
 /// `{"command":"rules.clear_override","params":{"key":{"rule":"mask_web_min"}}}`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -1405,8 +1403,8 @@ pub enum RulesCommand {
     /// `keep_overrides` keeps the project overrides, which must still give
     /// valid rules on the new profile (`rules.override_conflict`
     /// otherwise); without it they are dropped. Preview with
-    /// `rules.preview_profile`.
-    #[serde(rename = "rules.set_profile")]
+    /// `rules.preview_fab_profile`.
+    #[serde(rename = "rules.set_fab_profile")]
     SetProfile {
         profile: Box<RuleProfile>,
         #[serde(default)]
@@ -1474,7 +1472,7 @@ pub enum RulesCommand {
 
 // A new command chooses its permission class here.
 declare_classes!(RulesCommand {
-    SetProfile "rules.set_profile" Edit "Set the rule profile",
+    SetProfile "rules.set_fab_profile" Edit "Set the fab profile",
     SetOverride "rules.set_override" Edit "Override a rule",
     ClearOverride "rules.clear_override" Edit "Clear a rule override",
     AddNetClass "net_class.add" Edit "Add a net class",
@@ -1557,7 +1555,7 @@ fn apply_to(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<si
     Ok(added)
 }
 
-/// `rules.set_profile`: the profile itself must be valid and kept
+/// `rules.set_fab_profile`: the profile itself must be valid and kept
 /// overrides must leave valid effective rules (the error names the
 /// overrides to clear first).
 fn set_profile(rules: &mut ProjectRules, profile: RuleProfile, keep_overrides: bool) -> Result<()> {
@@ -1677,9 +1675,9 @@ pub struct RuleChange {
     pub to: RuleValue,
 }
 
-/// `rules.preview_profile`: what switching would change, without changing
+/// `rules.preview_fab_profile`: what switching would change, without changing
 /// the document. Issue rows are the board issues that would appear or go.
-/// A switch `rules.set_profile` would refuse is still previewed: the rule
+/// A switch `rules.set_fab_profile` would refuse is still previewed: the rule
 /// changes are listed, `refusal` holds the reason and the issue lists stay
 /// empty.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -1692,13 +1690,13 @@ pub struct ProfileImpact {
     pub new_issues: Vec<String>,
     /// Titles of issues the switch would resolve (one per resolved issue).
     pub resolved_issues: Vec<String>,
-    /// Why `rules.set_profile` would refuse this switch; `None` when it
+    /// Why `rules.set_fab_profile` would refuse this switch; `None` when it
     /// would succeed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<String>,
 }
 
-/// The rules a switch would give and why `rules.set_profile` would refuse
+/// The rules a switch would give and why `rules.set_fab_profile` would refuse
 /// it (then the candidate is the unvalidated result, for listing changes).
 pub fn preview_candidate(
     rules: &ProjectRules,

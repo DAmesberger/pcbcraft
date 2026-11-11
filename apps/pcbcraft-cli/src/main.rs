@@ -2,11 +2,11 @@
 //! thin transport over `pcbcraft_automation::Session`.
 mod design_part;
 mod fab;
+mod fab_profile;
 mod firmware;
 mod part;
 mod pinout;
 mod review_diff;
-mod rules_profile;
 mod sample_packages;
 
 use pcbcraft_automation::{Caller, Mode, Policy, Session, lines, live, mcp, session};
@@ -40,7 +40,7 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
                                    window's token file or PCBCRAFT_CONTROL_TOKEN
   showcase NEW_FILE.pcbcraft [--profile ID]
                                    write the 4-layer PCB showcase project on a profile
-                                   from the rule profile library (else the default)
+                                   from the fab profile library (else the default)
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
   sample-library NEW_DIR [NAME]    write the synthetic catalog as a library folder
   export FILE.pcbcraft NEW_FILE.solidcraft
@@ -65,7 +65,7 @@ fn usage() -> String {
         pinout::USAGE,
         sample_packages::USAGE,
         firmware::USAGE,
-        rules_profile::USAGE,
+        fab_profile::USAGE,
         design_part::USAGE,
         fab::USAGE,
         review_diff::USAGE,
@@ -271,7 +271,7 @@ fn run() -> Result<()> {
         [command, rest @ ..] if command == "pinout" => pinout::run(rest),
         [command, rest @ ..] if command == "sample-packages" => sample_packages::run(rest),
         [command, rest @ ..] if command == "firmware" => firmware::run(rest),
-        [command, rest @ ..] if command == "rules-profile" => rules_profile::run(rest),
+        [command, rest @ ..] if command == "fab-profile" => fab_profile::run(rest),
         [command, rest @ ..] if command == "design-part" => design_part::run(rest),
         [command, rest @ ..] if command == "llm-key" => design_part::key(rest),
         [command, rest @ ..] if command == "llm-profile" => design_part::profile(rest),

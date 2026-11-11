@@ -68,7 +68,7 @@ fn existing_documents_do_not_mention_the_board_fields() -> Fallible<()> {
     // it names `fills`; it still names no other board field, and a
     // document without fills does not name `fills` either.
     let text = serde_json::to_string(&Engine::showcase()?.to_file())?;
-    // A board always names its rule profile.
+    // A board always names its fab profile.
     assert!(text.contains("\"rules\""));
     for key in ["\"board_shape\"", "\"part_dimensions\"", "\"keepouts\""] {
         assert!(!text.contains(key), "{key}");
@@ -225,7 +225,7 @@ fn board_operations_are_atomic_undoable_and_persist() -> Fallible<()> {
 fn board_schemas_are_served() {
     let text = crate::schemas().to_string();
     for name in [
-        "rules.set_profile",
+        "rules.set_fab_profile",
         "rules.set_override",
         "net_class.assign",
         "fill.add",
@@ -234,7 +234,7 @@ fn board_schemas_are_served() {
         "keepout.add",
         "board.edit",
         "layout.dimension_add",
-        "rules.preview_profile",
+        "rules.preview_fab_profile",
         "board.shape",
     ] {
         assert!(text.contains(name), "{name}");

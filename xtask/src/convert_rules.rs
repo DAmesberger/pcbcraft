@@ -9,7 +9,9 @@
 //! into the new form; an estimated built-in one is refused, naming it. A
 //! project with no saved rules (the old implicit default) gets the
 //! `--profile` given, or stays without a profile. Old profile library
-//! files (`rule-profiles/*.json`) convert the same way.
+//! files (`rule-profiles/*.json`) convert the same way, and become fab
+//! profile files: the file's `profile` is now `fab_profile` (move them to
+//! `fab-profiles/`).
 //!
 //! The hole split: the one `hole` clearance object became `via_hole` (via
 //! drills and unplated holes) and `pth_hole` (plated pad and mounting
@@ -75,17 +77,25 @@ pub fn convert_project_rules(
     }
 }
 
-/// An old profile library file's `{format, profile}`; the number of
-/// changes.
+/// An old profile library file (`{format, profile}`) as a fab profile
+/// file (`{format, fab_profile}`); the number of changes.
 pub fn convert_profile_file(file: &mut Value) -> Result<usize> {
-    let profile = file
-        .get_mut("profile")
-        .ok_or("not a rule profile file: it has no profile")?;
+    let object = file
+        .as_object_mut()
+        .ok_or("not a fab profile file: it is not an object")?;
+    let mut n = 0;
+    if let Some(old) = object.remove("profile") {
+        object.insert("fab_profile".into(), old);
+        n += 1;
+    }
+    let profile = object
+        .get_mut("fab_profile")
+        .ok_or("not a fab profile file: it has no fab_profile")?;
     if profile.get("provenance").is_some() {
         *profile = convert_profile(profile)?;
-        return Ok(1);
+        return Ok(n + 1);
     }
-    Ok(split_holes(profile))
+    Ok(n + split_holes(profile))
 }
 
 /// The hole split in a project's rules: its profile snapshot's rules and
@@ -146,7 +156,11 @@ pub fn split_holes(profile: &mut Value) -> usize {
         }
     }
     if let Some(entry) = rules.remove("clearance_hole_hole") {
-        for pair in ["via_hole_via_hole", "via_hole_pth_hole", "pth_hole_pth_hole"] {
+        for pair in [
+            "via_hole_via_hole",
+            "via_hole_pth_hole",
+            "pth_hole_pth_hole",
+        ] {
             rules.insert(format!("clearance_{pair}"), entry.clone());
         }
         n += 1;
@@ -161,7 +175,7 @@ pub fn convert_profile(old: &Value) -> Result<Value> {
     let text = |key: &str| p[key].as_str().unwrap_or_default().to_owned();
     if p["basis"] != "fabricator_entered" || text("source").is_empty() || text("date").is_empty() {
         return Err(format!(
-            "the rule profile {name:?} is an estimate without a source and date; \
+            "the profile {name:?} is an estimate without a source and date; \
              pass --profile FILE.json naming a sourced profile (examples/profiles/)"
         )
         .into());
@@ -380,6 +394,20 @@ mod tests {
         );
         let map = project.as_object_mut().ok_or("object")?;
         assert_eq!(convert_project_rules(map, None)?, 0, "once");
+        Ok(())
+    }
+
+    #[test]
+    fn a_profile_file_becomes_a_fab_profile_file_once() -> Result<()> {
+        let mut file = json!({"format": 1, "profile": {"id": "fab", "rules": {
+            "clearance_track_hole": {"value": 0.2}}}});
+        assert_eq!(convert_profile_file(&mut file)?, 2);
+        assert!(file.get("profile").is_none());
+        assert_eq!(
+            file["fab_profile"]["rules"]["clearance_track_pth_hole"],
+            json!({"value": 0.2})
+        );
+        assert_eq!(convert_profile_file(&mut file)?, 0, "once");
         Ok(())
     }
 

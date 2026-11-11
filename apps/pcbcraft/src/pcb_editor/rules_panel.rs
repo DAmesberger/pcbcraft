@@ -10,9 +10,9 @@
 //! effective value. A value commits live, per field, as one
 //! `rules.set_override` (or `rules.clear_override` when it returns to the
 //! profile value) and one undo step; Reset clears an override. Choosing
-//! another profile first shows its impact (`rules.preview_profile`): the
+//! another profile first shows its impact (`rules.preview_fab_profile`): the
 //! rules that change, the overrides dropped and the board issues that
-//! appear or go; Switch then commits `rules.set_profile` as one undo step.
+//! appear or go; Switch then commits `rules.set_fab_profile` as one undo step.
 //!
 //! The user profile library (`pcbcraft_io::rule_profiles`) is file
 //! effects, not document edits: saving, renaming, deleting, importing and
@@ -143,7 +143,7 @@ struct Preview {
     refusal: Option<String>,
 }
 
-/// The "Save as profile" form: a name and where the numbers come from.
+/// The "Save as fab profile" form: a name and where the numbers come from.
 struct SaveForm {
     name: String,
     publisher: String,
@@ -331,8 +331,8 @@ impl RulesPanel {
             return;
         }
         let future = rfd::AsyncFileDialog::new()
-            .set_title("Import a design-rule profile")
-            .add_filter("Rule profile", &[rule_profiles::EXTENSION])
+            .set_title("Import a fab profile")
+            .add_filter("Fab profile", &[rule_profiles::EXTENSION])
             .pick_file();
         let (sender, receiver) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
@@ -359,8 +359,8 @@ impl RulesPanel {
             return;
         }
         let future = rfd::AsyncFileDialog::new()
-            .set_title("Export a design-rule profile")
-            .add_filter("Rule profile", &[rule_profiles::EXTENSION])
+            .set_title("Export a fab profile")
+            .add_filter("Fab profile", &[rule_profiles::EXTENSION])
             .set_file_name(format!("{}.{}", profile.id, rule_profiles::EXTENSION))
             .save_file();
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -489,10 +489,10 @@ pub fn source_line(s: &ProfileSource) -> String {
 }
 
 /// The Board card's Rules summary: "JLCPCB 2-layer · 2 overrides", or
-/// "No rule profile".
+/// "No fab profile".
 pub fn rules_summary(rules: &ProjectRules) -> String {
     let Some(profile) = &rules.profile else {
-        return "No rule profile".into();
+        return "No fab profile".into();
     };
     match rules.overrides.len() {
         0 => profile.name.clone(),
@@ -600,7 +600,7 @@ pub fn impact_summary(name: &str, impact: &ProfileImpact) -> String {
 impl PcbEditor {
     /// Open the Design rules panel (the Board card's Rules…), at the rule
     /// of `topic` when an issue asked for it. The user profile library is
-    /// the config folder's `rule-profiles/`.
+    /// the config folder's `fab-profiles/`.
     pub(super) fn open_rules(&mut self, topic: Option<RuleTopic>) {
         let library = pcbcraft_io::settings::UserDirs::from_env()
             .ok()
@@ -743,13 +743,13 @@ fn table_card(
             let profiled = engine.project().rules.profile.is_some();
             if ui_kit::button(
                 ui,
-                "Save as profile…",
+                "Save as fab profile…",
                 Button::Enabled(panel.library.is_some() && profiled),
             )
             .on_disabled_hover_text(if profiled {
                 "No user config folder: profiles cannot be saved"
             } else {
-                "Choose a rule profile first"
+                "Choose a fab profile first"
             })
             .clicked()
             {
@@ -829,10 +829,10 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
     let rules = &engine.project().rules;
     let mut op: Option<(RulesCommand, Origin)> = None;
     // PROFILE: the picker, provenance, and the overrides with Reset all.
-    kit::section(ui, "pcb-rules-profile", "Profile", true, None, |ui| {
+    kit::section(ui, "pcb-rules-profile", "Fab profile", true, None, |ui| {
         let (options, current, differs) = picks(panel, rules);
         let mut chosen = current.clone();
-        kit::choice_row(ui, "Profile", &mut chosen, &options);
+        kit::choice_row(ui, "Fab profile", &mut chosen, &options);
         if chosen != current
             && let Some(profile) = profile_of(panel, &chosen)
         {
@@ -847,7 +847,7 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
             None => {
                 kit::hint(
                     ui,
-                    "This board has no rule profile, so nothing is checked",
+                    "This board has no fab profile, so nothing is checked",
                     "Choose your fabricator's profile. Pcbcraft ships none: import a profile \
                      file (Your profiles › Import…; examples/profiles/ has sourced ones) or \
                      write one from the fabricator's capability page.",
@@ -942,7 +942,7 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
     kit::section(
         ui,
         "pcb-rules-library",
-        "Your profiles",
+        "Your fab profiles",
         true,
         Some(panel.user_profiles().len()),
         |ui| {
@@ -1302,7 +1302,7 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
     let review = ReviewPanel {
         id: preview_id(),
         icon: "constraint",
-        title: "Switch rules profile",
+        title: "Switch fab profile",
         summary: &summary,
         stale,
         blockers: &blockers,
@@ -1360,7 +1360,7 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
     }
 }
 
-/// The docked "Save as profile" dialog: name and source; Save writes the
+/// The docked "Save as fab profile" dialog: name and source; Save writes the
 /// board's profile with its overrides as values to the library and, when
 /// asked, switches the board to the saved profile.
 fn save_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
@@ -1368,7 +1368,7 @@ fn save_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Ope
         return None;
     };
     let blank = form.name.trim().is_empty();
-    let mut dialog = DialogPanel::new(save_id(), "constraint", "Save as profile", "Save");
+    let mut dialog = DialogPanel::new(save_id(), "constraint", "Save as fab profile", "Save");
     dialog.kind = "Rules";
     dialog.body_rows = 10.0;
     dialog.reset_scroll = form.opening;

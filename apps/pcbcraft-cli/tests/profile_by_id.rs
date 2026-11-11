@@ -1,7 +1,7 @@
 //! A fabrication profile named by id resolves through the user's profile
 //! library: the CLI runs with a temporary config folder
 //! (`PCBCRAFT_CONFIG_DIR`) holding the two sourced test fixture profiles,
-//! imported through `rules-profile import`.
+//! imported through `fab-profile import`.
 use serde_json::{Value, json};
 use std::io::Write;
 use std::path::Path;
@@ -61,9 +61,9 @@ fn the_production_check_resolves_a_profile_id_through_the_library() -> Fallible 
     let (config, cache) = (dir.path().join("config"), dir.path().join("cache"));
     for fixture in ["prototype", "fine"] {
         let file = format!("{FIXTURES}/{fixture}.json");
-        run(&config, &cache, &["rules-profile", "import", &file])?;
+        run(&config, &cache, &["fab-profile", "import", &file])?;
     }
-    let listed: Value = serde_json::from_str(&run(&config, &cache, &["rules-profile", "list"])?)?;
+    let listed: Value = serde_json::from_str(&run(&config, &cache, &["fab-profile", "list"])?)?;
     let ids: Vec<&str> = listed["profiles"]
         .as_array()
         .ok_or("profiles")?
@@ -92,7 +92,7 @@ fn the_production_check_resolves_a_profile_id_through_the_library() -> Fallible 
         &[
             json!({"command": "project.open", "params": {"expected_revision": 0, "path": board_text}}),
             preflight(json!("test-fine")),
-            preflight(fine["profile"].clone()),
+            preflight(fine["fab_profile"].clone()),
             preflight(json!("no-such-profile")),
         ],
     )?;

@@ -322,11 +322,11 @@ pub enum Query {
     RulesEffective {},
     /// The project's own profile snapshot, if any; hosts with a profile
     /// library (desktop, CLI, MCP) append its profiles. Pcbcraft ships none.
-    #[serde(rename = "rules.profiles")]
+    #[serde(rename = "rules.fab_profiles")]
     RuleProfiles {},
-    /// What `rules.set_profile` with these arguments would change: rules
+    /// What `rules.set_fab_profile` with these arguments would change: rules
     /// and the board issues that would appear or go.
-    #[serde(rename = "rules.preview_profile")]
+    #[serde(rename = "rules.preview_fab_profile")]
     PreviewProfile {
         profile: Box<rules::RuleProfile>,
         #[serde(default)]
@@ -414,7 +414,7 @@ pub enum Query {
         request: layout::meander::TuneRequest,
     },
     /// The production check before fabrication export: the design and
-    /// production findings under a rule profile. `profile` is a profile id such
+    /// production findings under a fab profile. `profile` is a profile id such
     /// as `std-6-6` or a whole profile, and the project's rules when omitted;
     /// each finding has its waiver key and saved waiver.
     #[serde(rename = "fabrication.preflight")]
@@ -449,8 +449,8 @@ declare_classes!(Query {
     PinConfig "project.pin_config" Read "Firmware pin configuration",
     Marking "instance.marking" Read "Resolve an instance's marking",
     RulesEffective "rules.effective" Read "Effective rules",
-    RuleProfiles "rules.profiles" Read "List rule profiles",
-    PreviewProfile "rules.preview_profile" Read "Preview a rule profile",
+    RuleProfiles "rules.fab_profiles" Read "List fab profiles",
+    PreviewProfile "rules.preview_fab_profile" Read "Preview a fab profile",
     NetClasses "net_class.list" Read "List net classes",
     PreviewNetClassPatterns "net_class.preview_patterns" Read "Preview net class patterns",
     BoardShape "board.shape" Read "Board shape",

@@ -8,7 +8,7 @@
 //! `height` become `radius_nm`, `offset_nm` and `height_nm`. Rounding is
 //! the app's own, half away from zero (`units::Nm::from_mm_f64_rounded`).
 //!
-//! Rule profiles as files ([`crate::convert_rules`]): the old profile
+//! Fab profiles as files ([`crate::convert_rules`]): the old profile
 //! snapshot becomes `--profile FILE.json`'s profile, or, for one the user
 //! entered from a fabricator, the same values in the new form. An old
 //! profile library file (`FILE.json`) converts in place too.
@@ -65,13 +65,13 @@ fn backup(path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The `profile` of a new-format profile file.
+/// The `fab_profile` of a current fab profile file.
 fn read_profile(path: &str) -> Result<Value> {
     let file: Value = serde_json::from_slice(&fs::read(path)?)?;
     let profile = file
-        .get("profile")
+        .get("fab_profile")
         .filter(|p| file["format"] == 1 && p.get("source").is_some() && p.get("rules").is_some())
-        .ok_or_else(|| format!("{path} is not a format 1 rule profile file with a source"))?;
+        .ok_or_else(|| format!("{path} is not a format 1 fab profile file with a source"))?;
     Ok(profile.clone())
 }
 
@@ -94,7 +94,7 @@ fn convert_json(path: &Path) -> Result<usize> {
 /// `EntryData`); other keys follow sorted.
 const PROFILE_KEY_ORDER: &[&str] = &[
     "format",
-    "profile",
+    "fab_profile",
     "id",
     "name",
     "publisher",

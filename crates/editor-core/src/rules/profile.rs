@@ -1,4 +1,4 @@
-//! Rule profiles as files: every rule and default a board reads, each a
+//! Fab profiles as files: every rule and default a board reads, each a
 //! value or a formula ([`super::formula`]), with the profile's source (a
 //! fabricator's capability page, its URL and the date it was read) and an
 //! optional source per value. Pcbcraft ships no estimated profiles: a
@@ -12,7 +12,7 @@
 //! refused, never filled in.
 //!
 //! ```json
-//! {"format": 1, "profile": {
+//! {"format": 1, "fab_profile": {
 //!   "id": "jlcpcb-2-layer", "name": "JLCPCB 2-layer",
 //!   "source": {"publisher": "JLCPCB", "url": "https://…", "date": "2026-11-11"},
 //!   "drill_files": {"kind": "not_published", "source": "…"},
@@ -174,7 +174,7 @@ impl RuleProfile {
             .find(|k| !entries.contains_key(k))
         {
             return Err(Error::Invalid(format!(
-                "rules.profile_incomplete: the profile does not set {}",
+                "rules.fab_profile_incomplete: the profile does not set {}",
                 missing.name()
             )));
         }
@@ -313,13 +313,13 @@ impl RuleProfile {
                 .any(|t| t.len() > MAX_PROFILE_NOTES || !printable(t))
         {
             return Err(Error::Invalid(
-                "rules.profile_text: a profile needs an id and a name; texts are bounded and printable"
+                "rules.fab_profile_text: a profile needs an id and a name; texts are bounded and printable"
                     .into(),
             ));
         }
         if s.publisher.trim().is_empty() || !valid_date(&s.date) {
             return Err(Error::Invalid(format!(
-                "rules.profile_source: {} must name who published its numbers and the date \
+                "rules.fab_profile_source: {} must name who published its numbers and the date \
                  (YYYY-MM-DD) they were read",
                 self.name
             )));
@@ -349,11 +349,13 @@ pub fn valid_date(date: &str) -> bool {
     (1..=12).contains(&m) && (1..=31).contains(&d)
 }
 
-/// One profile file: [`PROFILE_FILE_FORMAT`] and the profile.
+/// One fab profile file: [`PROFILE_FILE_FORMAT`] and the profile
+/// (`fab_profile`).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileFile {
     pub format: u32,
+    #[serde(rename = "fab_profile")]
     pub profile: RuleProfile,
 }
 

@@ -56,16 +56,16 @@ pub struct RevisionParams {
     pub expected_revision: u64,
 }
 
-/// Start a new project (`project.new`) with its board's rule profile.
+/// Start a new project (`project.new`) with its board's fab profile.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NewParams {
     /// The revision of the last reply; refused as stale when the document
     /// has moved since.
     pub expected_revision: u64,
-    /// The board's rule profile: a profile library id or a whole profile
-    /// file's `profile`. Omitted: the user's default rule profile
-    /// (Settings); with neither, `rules.no_profile` refuses.
+    /// The board's fab profile: a profile library id or a whole profile
+    /// file's `profile`. Omitted: the user's default fab profile
+    /// (Settings); with neither, `rules.no_fab_profile` refuses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<pcbcraft_core::fabrication::ProfileChoice>,
 }
@@ -269,7 +269,7 @@ pub struct FabricationParams {
     pub output: String,
     #[serde(default)]
     pub zip: bool,
-    /// The fabrication rule profile to check against, by its id in the
+    /// The fabrication fab profile to check against, by its id in the
     /// user's profile library (Pcbcraft ships none). The project's own
     /// rules when omitted.
     #[serde(default)]
@@ -707,8 +707,8 @@ impl Request {
             ),
             info::<NewParams>(
                 "project.new",
-                "Start a new empty project at expected_revision with its board's rule profile, clearing history.",
-                "Start a new empty project at expected_revision; clears history. profile is the board's rule profile: a profile library id (project.query rules.profiles lists them) or a whole profile file's profile; omitted, the user's default rule profile; with neither, rules.no_profile refuses. Refused without changes on a stale revision.",
+                "Start a new empty project at expected_revision with its board's fab profile, clearing history.",
+                "Start a new empty project at expected_revision; clears history. profile is the board's fab profile: a profile library id (project.query rules.fab_profiles lists them) or a whole profile file's profile; omitted, the user's default fab profile; with neither, rules.no_fab_profile refuses. Refused without changes on a stale revision.",
             ),
             info::<OpenParams>(
                 "project.open",
@@ -738,7 +738,7 @@ impl Request {
             info::<FabricationParams>(
                 "project.export_fabrication",
                 "Check the board for production, then write Gerber, drill, pick-and-place, BOM and drawing files.",
-                "Run the production check (fabrication.preflight) under the chosen rule profile, then write the production files to a new or empty folder, or one new .zip: Gerber X2 copper, solder mask, paste, legend and profile layers with file, aperture and object attributes; plated and non-plated Excellon drill files with routed slots, a drill map and table; a Gerber job file; pick-and-place and BOM CSVs; fabrication and assembly drawings (PDF). Refused, writing nothing, while unwaived errors remain (waive with project.apply fabrication.waive). Returns the preflight report, the files with sizes and step timings. Not a document change.",
+                "Run the production check (fabrication.preflight) under the chosen fab profile, then write the production files to a new or empty folder, or one new .zip: Gerber X2 copper, solder mask, paste, legend and profile layers with file, aperture and object attributes; plated and non-plated Excellon drill files with routed slots, a drill map and table; a Gerber job file; pick-and-place and BOM CSVs; fabrication and assembly drawings (PDF). Refused, writing nothing, while unwaived errors remain (waive with project.apply fabrication.waive). Returns the preflight report, the files with sizes and step timings. Not a document change.",
             ),
             info::<NoParams>(
                 "library.sources",

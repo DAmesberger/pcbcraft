@@ -78,7 +78,7 @@ pub struct DrawingData {
     pub finish: String,
     pub mask: String,
     pub legend: String,
-    /// The rule profile's name and provenance line.
+    /// The fab profile's name and provenance line.
     pub profile: String,
     /// Fabrication notes from the effective rules (minimum track and gap,
     /// drill, annular ring, mask web, …), one sentence each.
@@ -285,7 +285,7 @@ fn notes(project: &Project) -> Vec<String> {
         format!(
             "Dimensions in millimetres. {}",
             project.rules.profile.as_ref().map_or_else(
-                || "Hole sizes are finished sizes; no rule profile says how the fabricator \
+                || "Hole sizes are finished sizes; no fab profile says how the fabricator \
                     reads drill files."
                     .to_string(),
                 |p| p.drill_files.note()
@@ -297,7 +297,7 @@ fn notes(project: &Project) -> Vec<String> {
 
 fn profile_line(project: &Project) -> String {
     let Some(p) = &project.rules.profile else {
-        return "No rule profile: no manufacturing rule was checked".into();
+        return "No fab profile: no manufacturing rule was checked".into();
     };
     let mut source = p.source.publisher.clone();
     if !p.source.document.is_empty() {

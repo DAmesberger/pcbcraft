@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 /// Most vias on one board.
 pub const MAX_VIAS: usize = 16_384;
 /// Largest via pad, mm: an input bound on the document, not a rule (the
-/// rule profile's `min drill` and `min via annular ring` are the limits
+/// fab profile's `min drill` and `min via annular ring` are the limits
 /// vias are placed and checked against).
 pub const MAX_DIAMETER_MM: f64 = 6.0;
 

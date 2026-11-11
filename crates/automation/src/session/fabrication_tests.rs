@@ -209,7 +209,7 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
         json!({"command": "project.apply", "params": {
             "expected_revision": revision,
             "operation": {"editor": "Rules", "operation": {
-                "command": "rules.set_profile",
+                "command": "rules.set_fab_profile",
                 "params": {"profile": pcbcraft_core::rules::fixtures::fine()?}}},
         }}),
     )?;

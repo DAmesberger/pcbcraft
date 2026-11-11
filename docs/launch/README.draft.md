@@ -83,7 +83,7 @@ The whole board exports as a native, parametric `.solidcraft` model that plain S
 | --- | --- |
 | <img src="docs/launch/media/component-3d.webp" alt="Component 3D tab: a generated package model with markings"> | **Component authoring.** Symbol, Footprint, Pins, Mapping and 3D tabs over five revisioned drafts. 196 cited or estimated package rows over eight families build the package, its lands and a generated 3D model in one step. Footprints are sketches with dimensions and constraints. Publishing creates immutable revisions; placed instances keep the exact revision they use. |
 | <img src="docs/launch/media/schematic.webp" alt="Schematic with sheets, net labels and the Place palette"> | **Schematic capture.** Several sheets with a hierarchy, net labels, power ports, title blocks, annotation, ERC and vector PDF printing. Press **P** and type `res>=10k 0603`: the Place palette searches with units (50,000 entries at ≤ 3.85 ms p95). The pin-mux panel assigns MCU peripherals with a solver that respects the part's pin rules. |
-| <img src="docs/launch/media/route-shove.webp" alt="Route tool shoving a neighbouring track on the showcase board"> | **PCB layout.** Explicit schematic-to-board updates with a preview, placement, 45°/90°/free routing on any of 2 to 64 copper layers, vias, design-rule profiles and net classes, copper fills with thermals and hatching computed off the UI thread, and parametric board outlines with named edges. |
+| <img src="docs/launch/media/route-shove.webp" alt="Route tool shoving a neighbouring track on the showcase board"> | **PCB layout.** Explicit schematic-to-board updates with a preview, placement, 45°/90°/free routing on any of 2 to 64 copper layers, vias, fab profiles and net classes, copper fills with thermals and hatching computed off the UI thread, and parametric board outlines with named edges. |
 | <img src="docs/launch/media/board-3d.webp" alt="The showcase board in the 3D view"> | **Integrated 3D.** One keystroke from 2D. Fit, a navigation cube and trackpad gestures; a Layers popover hides mask, silk, copper layers or parts without rebuilding geometry. A finished 10,000-via board draws its first 3D frame in 8–37 ms in the running app. |
 | <img src="docs/launch/media/production.webp" alt="The Production files dialog with its pre-flight report"> | **Production output.** Profiles, a pre-flight report computed on a worker, waivers with reasons, Folder or ZIP. The showcase's whole export takes 0.13 s; a 200 × 200 mm plane over 10,000 vias is generated in 0.12 s. |
 
@@ -193,7 +193,7 @@ integrated 3D view; production output with a pre-flight check; MCP, CLI and the 
 Not there yet, so you know before you try:
 
 - **Not a manufacturing-ready release.** No first board has been fabricated from Pcbcraft's
-  output yet; the built-in design-rule profiles are estimates, and zero findings is not a DRC sign-off.
+  output yet; the built-in fab profiles are estimates, and zero findings is not a DRC sign-off.
 - **Routing:** dragging existing tracks with shove is planned; differential pairs and tuning do not
   shove; no autorouter; through vias only (no blind or buried vias).
 - **Schematic:** no buses, and a child sheet cannot yet be reused under several sheet symbols.

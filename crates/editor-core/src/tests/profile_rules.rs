@@ -1,5 +1,5 @@
 //! Rules that a tool, check or output used to fix in code now come from
-//! the board's rule profile (docs/board-rules-and-shape.md): the via tent
+//! the board's fab profile (docs/board-rules-and-shape.md): the via tent
 //! default, the via drill floor, the legend stroke, the drill files' hole
 //! sizes, the stackup's mask in the fabrication outputs and the pair gap
 //! tolerance and floor.

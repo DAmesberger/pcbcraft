@@ -42,7 +42,7 @@ fn a_profile_file_must_set_every_rule_with_a_source() -> Result<()> {
     let parse = |v: &serde_json::Value| serde_json::from_value::<ProfileFile>(v.clone());
     assert!(parse(&value).is_ok());
     let mut missing = value.clone();
-    if let Some(rules) = missing["profile"]["rules"].as_object_mut() {
+    if let Some(rules) = missing["fab_profile"]["rules"].as_object_mut() {
         rules.remove("mask_web_min");
     }
     let err = parse(&missing).map_err(|e| e.to_string());
@@ -52,19 +52,19 @@ fn a_profile_file_must_set_every_rule_with_a_source() -> Result<()> {
         "{err:?}"
     );
     let mut unknown = value.clone();
-    unknown["profile"]["rules"]["future_rule"] = serde_json::json!({"value": 1.0});
+    unknown["fab_profile"]["rules"]["future_rule"] = serde_json::json!({"value": 1.0});
     assert!(parse(&unknown).is_err(), "unknown rules are refused");
     let mut both = value.clone();
-    both["profile"]["rules"]["drill_min"] = serde_json::json!({"value": 0.1, "formula": "0.1"});
+    both["fab_profile"]["rules"]["drill_min"] = serde_json::json!({"value": 0.1, "formula": "0.1"});
     assert!(parse(&both).is_err(), "a value or a formula, not both");
     let mut wrong_kind = value.clone();
-    wrong_kind["profile"]["rules"]["tent_vias"] = serde_json::json!({"value": 1.0});
+    wrong_kind["fab_profile"]["rules"]["tent_vias"] = serde_json::json!({"value": 1.0});
     assert!(parse(&wrong_kind).is_err());
     let mut extra = value.clone();
-    extra["profile"]["basis"] = "estimated".into();
+    extra["fab_profile"]["basis"] = "estimated".into();
     assert!(parse(&extra).is_err(), "unknown fields are refused");
     let mut unsourced = value;
-    unsourced["profile"]["source"]["publisher"] = "".into();
+    unsourced["fab_profile"]["source"]["publisher"] = "".into();
     let err = parse(&unsourced).map_err(|e| e.to_string());
     assert!(
         err.as_ref()
@@ -179,7 +179,7 @@ fn a_project_without_a_profile_has_no_rules_and_tools_refuse() -> Result<()> {
     let rules = ProjectRules::default();
     assert!(rules.profile.is_none());
     assert_eq!(rules.effective(), DesignRules::unset());
-    assert_eq!(refusal(rules.require()).0, "rules.no_profile");
+    assert_eq!(refusal(rules.require()).0, "rules.no_fab_profile");
     let mut rules = rules;
     assert!(
         apply(
