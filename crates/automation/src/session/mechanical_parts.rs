@@ -494,7 +494,7 @@ fn model_source(
             file_name: read.file_name.clone(),
         },
         format: ModelFormat::Solidcraft,
-        bounds_mm: as_is,
+        bounds_nm: pcbcraft_core::library::model3d::bounds_nm(as_is)?,
         provenance: ModelProvenance {
             redistribution: if builtin {
                 Redistribution::Permitted
@@ -571,7 +571,7 @@ pub fn place_part_operation(
         },
         model,
         values: params.values.clone(),
-        derived: part_file::derived(&part),
+        derived: part_file::derived(&part)?,
         lands,
         pads: params.pads,
         bom: params.bom.unwrap_or(true),
@@ -660,7 +660,7 @@ pub fn set_part_operation(
             model: placed.model,
         },
         values: params.values.clone(),
-        derived: part_file::derived(&part),
+        derived: part_file::derived(&part)?,
         lands,
         pads: params.pads.unwrap_or(placed.record.pads),
         bom: params.bom.unwrap_or(placed.record.bom),

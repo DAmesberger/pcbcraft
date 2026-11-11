@@ -248,7 +248,7 @@ fn form_problem(form: &PackageForm) -> Option<String> {
 
 fn header_plan(rows_: u32, columns: u32, pitch: Decimal) -> Result<GenericPlan, String> {
     let mm = pitch.to_f64();
-    let same = |h: &HeaderForm, p: f64| (h.pitch - p).abs() < 1e-9;
+    let same = |h: &HeaderForm, p: f64| (h.pitch() - p).abs() < 1e-9;
     let headers: Vec<(&StarterRow, HeaderForm)> = rows()?
         .iter()
         .filter_map(|row| match &row.definition.values {
@@ -275,8 +275,9 @@ fn header_plan(rows_: u32, columns: u32, pitch: Decimal) -> Result<GenericPlan, 
         ..*base
     };
     if !same(base, mm) {
-        form.pitch = mm;
-        form.row_pitch = mm;
+        let pitch_nm = crate::units::Nm::from_mm_f64_rounded(mm).map_err(|e| e.to_string())?;
+        form.pitch_nm = pitch_nm;
+        form.row_pitch_nm = pitch_nm;
     }
     let form = PackageForm::Header(Box::new(form));
     if let Some(problem) = form_problem(&form) {
@@ -332,7 +333,7 @@ pub fn recognise(request: &NewFromTemplate, form: &PackageForm) -> Option<Generi
         PackageForm::Header(h) => GenericSpec::Header {
             rows: h.rows,
             columns: h.pins_per_row,
-            pitch_mm: Decimal::from_f64(h.pitch).ok()?,
+            pitch_mm: Decimal::from_f64(h.pitch()).ok()?,
         },
         PackageForm::Chip(c) => {
             let part = ChipPart::of(c.kind);

@@ -356,9 +356,9 @@ fn ce05_power_unit_decisions_and_regrouping_are_explicit() -> Result<()> {
         }
         s.units[0].pins.push(crate::library::Pin::new(
             TerminalId(6),
-            [5.0, -4.0],
+            pt([5.0, -4.0]),
             crate::library::PinDirection::Left,
-            2.5,
+            nm(2.5),
         ));
     })?;
     with(&mut engine, amp.component, component_body, |c| {

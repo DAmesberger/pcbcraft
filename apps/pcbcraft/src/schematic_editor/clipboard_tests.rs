@@ -86,7 +86,7 @@ fn paste_goes_to_the_pointer_or_moves_on_from_the_last_one() -> TestResult {
         .ok_or("R1")?
         .position
         .to_mm_f64();
-    let grid = engine.drafts().grid.symbol_mm;
+    let grid = engine.drafts().grid.symbol_mm();
     let offset = |operation: Option<Operation>| match operation {
         Some(Operation::Schematic(SchematicCommand::Paste { offset, .. })) => Some(offset),
         _ => None,

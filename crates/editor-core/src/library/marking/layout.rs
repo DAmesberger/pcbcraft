@@ -14,6 +14,7 @@ use super::{
 };
 use crate::diagnostics::{Error, Finding, Result};
 use crate::quantity::format_number;
+use crate::units::Nm;
 
 /// The tallest auto-fitted text, mm: typical package top marks are 0.5–1.2
 /// mm tall (an estimate, data rather than a rule), so large bodies do not
@@ -389,16 +390,9 @@ fn fit(cx: &mut Context<'_>, lines: &mut Vec<Line>, rect: Rect) -> f64 {
 }
 
 pub(super) fn run(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingLayout> {
-    let min_height = spec
-        .min_text_height_mm
-        .unwrap_or(super::DEFAULT_MIN_TEXT_HEIGHT_MM);
-    let explicit_heights = spec.items.iter().all(|item| match item {
-        MarkingItem::Text { height_mm, .. } => height_mm.is_none_or(f64::is_finite),
-        MarkingItem::Artwork { size_mm, .. } => size_mm.iter().all(|s| s.is_finite()),
-        _ => true,
-    });
-    if !min_height.is_finite() || !explicit_heights || !inputs.area_mm.iter().all(|a| a.is_finite())
-    {
+    // Stored sizes are whole nanometres: finite by type.
+    let min_height = spec.min_text_height_mm();
+    if !inputs.area_mm.iter().all(|a| a.is_finite()) {
         return Err(Error::Invalid(
             "marking.template: marking sizes must be finite".into(),
         ));
@@ -475,11 +469,12 @@ pub(super) fn run(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingL
             MarkingItem::Code2d {
                 symbology,
                 payload,
-                size_mm,
+                size_nm,
                 anchor,
                 ecc,
             } => {
-                if let Some(element) = code2d(&mut cx, *symbology, &payload.0, *size_mm, *ecc) {
+                let size_mm = size_nm.to_mm_f64();
+                if let Some(element) = code2d(&mut cx, *symbology, &payload.0, size_mm, *ecc) {
                     let (symbol, module) = element;
                     let quiet = f64::from(super::matrix::QUIET_ZONE) * module;
                     let boxed = [size_mm + 2.0 * quiet; 2];
@@ -507,19 +502,20 @@ pub(super) fn run(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingL
             MarkingItem::Electrolytic { .. } => lines.append(&mut texts),
             MarkingItem::Artwork {
                 svg,
-                size_mm,
+                size_nm,
                 anchor,
                 ..
             } => {
+                let size_mm = size_nm.map(Nm::to_mm_f64);
                 if size_mm[0] > w - 2.0 * margin || size_mm[1] > h - 2.0 * margin {
                     cx.does_not_fit("The artwork");
                 } else {
-                    let origin = anchored(*anchor, *size_mm, area, margin);
-                    shrink(&mut rect, *anchor, origin, *size_mm, margin);
+                    let origin = anchored(*anchor, size_mm, area, margin);
+                    shrink(&mut rect, *anchor, origin, size_mm, margin);
                     out.elements.push(LaidElement::Artwork {
                         svg: *svg,
                         origin,
-                        size_mm: *size_mm,
+                        size_mm,
                     });
                 }
             }
@@ -550,9 +546,14 @@ pub(super) fn run(spec: &MarkingSpec, inputs: &MarkingInputs) -> Result<MarkingL
             }
             MarkingItem::Text {
                 template,
-                height_mm,
+                height_nm,
                 align,
-            } => lines.extend(text_lines(&mut cx, &template.0, *height_mm, *align)),
+            } => lines.extend(text_lines(
+                &mut cx,
+                &template.0,
+                height_nm.map(Nm::to_mm_f64),
+                *align,
+            )),
             MarkingItem::Code { scheme, field } => {
                 if let Some(line) = code_line(&mut cx, scheme, field.id, rect) {
                     lines.push(line);

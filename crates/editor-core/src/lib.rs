@@ -742,7 +742,7 @@ impl Engine {
         for part in samples::showcase_parts() {
             let lineages = engine.reserve_lineages()?;
             let mut part_edits =
-                samples::packaged_symbol(part.name, part.form, part.prefix, part.symbol, lineages);
+                samples::packaged_symbol(part.name, part.form, part.prefix, part.symbol, lineages)?;
             samples::trim_heels(&mut part_edits, part.heel_trim_mm);
             if part.pin_one {
                 samples::mark_pin_one(&mut part_edits);
@@ -971,7 +971,7 @@ impl Engine {
         let refs = engine.reserve_lineages()?;
         let kind = engine.reserve(DefinitionKind::QuantityKind)?;
         let field = engine.reserve(DefinitionKind::Field)?;
-        let mut edits = samples::two_terminal("Resistor", samples::Kind::RESISTOR, refs);
+        let mut edits = samples::two_terminal("Resistor", samples::Kind::RESISTOR, refs)?;
         for edit in &mut edits {
             if let Definition::Component(component) = &mut edit.definition {
                 component.fields.push(fields::FieldSelection {

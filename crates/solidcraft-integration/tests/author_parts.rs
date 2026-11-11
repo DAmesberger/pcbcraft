@@ -32,11 +32,27 @@ use solidcraft_engine::doc::clone_expression;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+/// A test length in mm, as stored.
+#[allow(dead_code)]
+fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
+/// A test point or size in mm, as stored.
+#[allow(dead_code)]
+fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
 const STEM: &str = "pkgT";
 
 fn wroom3() -> PackageDefinition {
-    let form: PackageForm =
-        serde_json::from_str(include_str!("template_spike_wroom3.json")).unwrap();
+    // The fixture is the module datasheet's millimetres: the wire form.
+    let form: PackageForm = serde_json::from_str::<
+        pcbcraft_core::library::package_form::PackageFormParams,
+    >(include_str!("template_spike_wroom3.json"))
+    .unwrap()
+    .into();
     PackageDefinition {
         next_local: 100,
         terminals: (1..=99)
@@ -213,7 +229,7 @@ pub fn author_wroom3() -> Vec<u8> {
     // stay numbers here too.
     use pcbcraft_core::library::marking::surface::{BoxFace, MODULE_TRACE_MM};
     let mm = |v: f64| format!("({v} mm)");
-    let [cx, cy] = form.can_centre;
+    let [cx, cy] = form.can_centre();
     let board_top = "(pad_thickness + board_thickness)".to_owned();
     let top = format!("({board_top} + can_height)");
     let side_z = format!("({board_top} + {top}) / 2");
@@ -230,7 +246,7 @@ pub fn author_wroom3() -> Vec<u8> {
         }
     };
     let (up, x) = BoxFace::Top.frame();
-    let antenna_from = form.length / 2.0 - form.antenna_length.min(form.length);
+    let antenna_from = form.length() / 2.0 - form.antenna_length().min(form.length());
     let marks = vec![
         Mark {
             name: "top",

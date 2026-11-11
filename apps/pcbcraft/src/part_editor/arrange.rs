@@ -6,11 +6,13 @@
 use super::Selected;
 use super::snap::segment_touches_box;
 use pcbcraft_core::geometry::{Bounds, Transform2};
+use pcbcraft_core::library::ShapeNm;
 use pcbcraft_core::library::graphics::GRID_TOLERANCE_MM;
 use pcbcraft_core::library::{
     Graphic, HAlign, Item, PinDirection, Rotation, SymbolDefinition, TextMetric, Unit, VAlign,
 };
 use pcbcraft_core::schematic::PlacedUnit;
+use pcbcraft_core::units::PointNm;
 use pcbcraft_core::{GraphicId, Point};
 use std::collections::BTreeSet;
 
@@ -28,20 +30,43 @@ pub fn bounds(unit: &Unit, selection: &Selection) -> Option<Bounds> {
         .pins
         .iter()
         .filter(|p| selection.contains(&Selected::Pin(p.terminal)))
-        .map(|p| Bounds::point(p.position).including(p.body_end()));
+        .map(|p| Bounds::point(p.position_mm()).including(p.body_end()));
     graphics.chain(pins).reduce(Bounds::union)
 }
 
-/// Move the selection by `delta`.
+/// `p` mapped by `f` in millimetres and stored rounded to nanometres; `p`
+/// itself when the result would leave the ±2 m coordinate range.
+fn mapped(p: PointNm, f: impl Fn(Point) -> Point) -> PointNm {
+    PointNm::from_mm_f64_rounded(f(p.to_mm_f64())).unwrap_or(p)
+}
+
+/// `shape` under `t`, stored rounded; `shape` itself when the result would
+/// leave the coordinate range.
+fn transformed(shape: &ShapeNm, t: &Transform2) -> ShapeNm {
+    ShapeNm::from_mm_rounded(&shape.to_mm().transformed(t)).unwrap_or_else(|_| shape.clone())
+}
+
+/// Move the selection by `delta`. Nothing moves beyond the ±2 m
+/// coordinate range.
 pub fn translate(unit: &mut Unit, selection: &Selection, delta: Point) {
+    let Ok(delta) = PointNm::from_mm_f64_rounded(delta) else {
+        return;
+    };
     for g in &mut unit.graphics {
-        if selection.contains(&Selected::Graphic(g.id)) {
-            g.item = g.item.translated(delta);
+        if selection.contains(&Selected::Graphic(g.id))
+            && let Ok(item) = g.item.translated(delta)
+        {
+            g.item = item;
         }
     }
     for p in &mut unit.pins {
-        if selection.contains(&Selected::Pin(p.terminal)) {
-            p.position = [p.position[0] + delta[0], p.position[1] + delta[1]];
+        if selection.contains(&Selected::Pin(p.terminal))
+            && let (Ok(x), Ok(y)) = (
+                p.position.x_nm.checked_add(delta.x_nm),
+                p.position.y_nm.checked_add(delta.y_nm),
+            )
+        {
+            p.position = PointNm::new(x, y);
         }
     }
 }
@@ -88,14 +113,18 @@ pub fn rotate(unit: &mut Unit, selection: &Selection, about: Point) {
             continue;
         }
         g.item = match &g.item {
-            Item::Shape { shape, width, fill } => Item::Shape {
-                shape: shape.transformed(&t),
-                width: *width,
+            Item::Shape {
+                shape,
+                width_nm,
+                fill,
+            } => Item::Shape {
+                shape: transformed(shape, &t),
+                width_nm: *width_nm,
                 fill: *fill,
             },
             Item::Text(text) => {
                 let mut text = text.clone();
-                text.at = t.apply(text.at);
+                text.at = mapped(text.at, |p| t.apply(p));
                 text.rotation = next_rotation(text.rotation);
                 Item::Text(text)
             }
@@ -103,7 +132,7 @@ pub fn rotate(unit: &mut Unit, selection: &Selection, about: Point) {
     }
     for p in &mut unit.pins {
         if selection.contains(&Selected::Pin(p.terminal)) {
-            p.position = t.apply(p.position);
+            p.position = mapped(p.position, |q| t.apply(q));
             p.direction = rotate_direction(p.direction);
         }
     }
@@ -124,14 +153,18 @@ pub fn mirror(unit: &mut Unit, selection: &Selection, about: Point) {
             continue;
         }
         g.item = match &g.item {
-            Item::Shape { shape, width, fill } => Item::Shape {
-                shape: shape.transformed(&t),
-                width: *width,
+            Item::Shape {
+                shape,
+                width_nm,
+                fill,
+            } => Item::Shape {
+                shape: transformed(shape, &t),
+                width_nm: *width_nm,
                 fill: *fill,
             },
             Item::Text(text) => {
                 let mut text = text.clone();
-                text.at = t.apply(text.at);
+                text.at = mapped(text.at, |p| t.apply(p));
                 if matches!(text.rotation, Rotation::R0 | Rotation::R180) {
                     text.justify.h = match text.justify.h {
                         HAlign::Left => HAlign::Right,
@@ -151,7 +184,7 @@ pub fn mirror(unit: &mut Unit, selection: &Selection, about: Point) {
     }
     for p in &mut unit.pins {
         if selection.contains(&Selected::Pin(p.terminal)) {
-            p.position = t.apply(p.position);
+            p.position = mapped(p.position, |q| t.apply(q));
             p.direction = match p.direction {
                 PinDirection::Right => PinDirection::Left,
                 PinDirection::Left => PinDirection::Right,
@@ -171,12 +204,13 @@ pub fn duplicate(
     offset: Point,
 ) -> Option<(Selection, usize)> {
     let source = symbol.units.get(unit)?;
+    let offset = PointNm::from_mm_f64_rounded(offset).ok()?;
     let copies: Vec<Item> = source
         .graphics
         .iter()
         .filter(|g| selection.contains(&Selected::Graphic(g.id)))
-        .map(|g| g.item.translated(offset))
-        .collect();
+        .map(|g| g.item.translated(offset).ok())
+        .collect::<Option<_>>()?;
     let skipped = selection
         .iter()
         .filter(|s| matches!(s, Selected::Pin(_)))
@@ -267,11 +301,13 @@ pub fn boxed(drawn: &PlacedUnit, a: Point, b: Point, m: TextMetric) -> Selection
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schematic_editor::{nm, pt, shape_nm};
     use pcbcraft_core::geometry::Shape;
     use pcbcraft_core::library::graphics::{self, Fill};
     use pcbcraft_core::library::{Justify, Pin, TextContent};
     use pcbcraft_core::{TerminalId, UnitId};
 
+    #[allow(clippy::expect_used)]
     fn unit() -> Unit {
         Unit {
             id: UnitId(1),
@@ -280,8 +316,8 @@ mod tests {
                 Graphic {
                     id: GraphicId(2),
                     item: Item::Shape {
-                        shape: Shape::rect([0.0, 0.0], [5.0, 2.5]),
-                        width: 0.25,
+                        shape: shape_nm(Shape::rect([0.0, 0.0], [5.0, 2.5])),
+                        width_nm: nm(0.25),
                         fill: Fill::None,
                     },
                 },
@@ -293,13 +329,14 @@ mod tests {
                         h: HAlign::Left,
                         v: VAlign::Middle,
                     },
-                ),
+                )
+                .expect("a test point within range"),
             ],
             pins: vec![Pin::new(
                 TerminalId(1),
-                [-2.5, 0.0],
+                pt([-2.5, 0.0]),
                 PinDirection::Right,
-                2.5,
+                nm(2.5),
             )],
         }
     }
@@ -321,11 +358,11 @@ mod tests {
         let about = [2.5, 2.5];
         rotate(&mut u, &all(), about);
         assert_eq!(u.pins[0].direction, PinDirection::Up);
-        assert_eq!(u.pins[0].position, [5.0, -2.5]);
+        assert_eq!(u.pins[0].position, pt([5.0, -2.5]));
         assert!(matches!(
             &u.graphics[0].item,
             Item::Shape {
-                shape: Shape::Rect { .. },
+                shape: ShapeNm::Rect { .. },
                 ..
             }
         ));
@@ -335,9 +372,9 @@ mod tests {
         assert_eq!(u, original);
         mirror(&mut u, &all(), about);
         assert_eq!(u.pins[0].direction, PinDirection::Left);
-        assert_eq!(u.pins[0].position, [7.5, 0.0]);
+        assert_eq!(u.pins[0].position, pt([7.5, 0.0]));
         assert!(
-            matches!(&u.graphics[1].item, Item::Text(t) if t.justify.h == HAlign::Right && t.at == [5.0, 5.0])
+            matches!(&u.graphics[1].item, Item::Text(t) if t.justify.h == HAlign::Right && t.at == pt([5.0, 5.0]))
         );
         mirror(&mut u, &all(), about);
         assert_eq!(u, original);

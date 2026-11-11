@@ -17,14 +17,15 @@ use egui::Ui;
 use pcbcraft_core::library::MAX_LABEL;
 use pcbcraft_core::library::bundle::{AssetBytes, asset_hash};
 use pcbcraft_core::library::model3d::{
-    AssetRef, AssignModel, CustomMaterial, ImportModel, LeadMapEntry, LeadTag, MarkingArea,
+    self, AssetRef, AssignModel, CustomMaterial, ImportModel, LeadMapEntry, LeadTag, MarkingArea,
     ModelBody, ModelDefinition, ModelFormat, ModelHints, ModelMaterial, ModelProvenance, Mount,
-    Redistribution, SourceFrame, UpAxis,
+    Redistribution, SourceFrame, UpAxis, triple_nm,
 };
 use pcbcraft_core::library::{
     Basis, BodyRole, Definition, FootprintDefinition, PackageDefinition, PackedAsset, Provenance,
 };
 use pcbcraft_core::materials::MaterialId;
+use pcbcraft_core::units::Nm;
 use pcbcraft_core::{DefinitionId, Engine, LibraryCommand, Operation};
 use pcbcraft_solidcraft::models::imported;
 use pcbcraft_solidcraft::models::inspect::{self, InspectedBody, ModelInspection};
@@ -144,7 +145,7 @@ pub fn measure(mut request: ImportModel) -> Result<ImportModel, String> {
         return Err("Measuring the lead contacts gave a different lead count".into());
     }
     for (lead, at) in definition.leads.iter_mut().zip(contacts) {
-        lead.contact = at;
+        lead.contact_nm = triple_nm(at).map_err(|e| e.to_string())?;
     }
     Ok(request)
 }
@@ -283,7 +284,18 @@ impl Wizard {
         };
         let low = bounds[0][2];
         if low.is_finite() {
-            self.frame.origin_offset[2] -= low;
+            self.set_offset(2, self.frame.origin_offset()[2] - low);
+        }
+    }
+
+    /// Set one axis of the frame's origin offset, mm, through the one
+    /// crossing; a value it refuses leaves the offset as it is.
+    fn set_offset(&mut self, axis: usize, mm: f64) {
+        if let (Some(slot), Ok(nm)) = (
+            self.frame.origin_offset_nm.get_mut(axis),
+            Nm::from_mm_f64_rounded(mm),
+        ) {
+            *slot = nm;
         }
     }
 
@@ -292,16 +304,11 @@ impl Wizard {
         let Ok([low, high]) = self.bounds() else {
             return;
         };
-        for (offset, (lo, hi)) in self
-            .frame
-            .origin_offset
-            .iter_mut()
-            .zip(low.iter().zip(high.iter()))
-            .take(2)
-        {
-            let mid = (lo + hi) / 2.0;
+        let offset = self.frame.origin_offset();
+        for axis in 0..2 {
+            let mid = (low[axis] + high[axis]) / 2.0;
             if mid.is_finite() {
-                *offset -= mid;
+                self.set_offset(axis, offset[axis] - mid);
             }
         }
     }
@@ -417,7 +424,7 @@ impl Wizard {
             Step::Frame => {
                 let ok = self.frame.unit_mm.is_finite()
                     && UNIT_MM.contains(&self.frame.unit_mm)
-                    && self.frame.origin_offset.iter().all(|v| v.is_finite())
+                    && self.frame.origin_offset().iter().all(|v| v.is_finite())
                     && self.bounds().is_ok();
                 (!ok).then(|| "The unit and offset must be finite numbers in range".into())
             }
@@ -504,25 +511,32 @@ impl Wizard {
                 Ok(LeadTag {
                     key: b.source.key.clone(),
                     designation: b.designation.trim().to_owned(),
-                    contact: contact(&self.frame, self.format, b.source.bounds_mm)
+                    contact_nm: contact(&self.frame, self.format, b.source.bounds_mm)
+                        .and_then(|c| triple_nm(c).ok())
                         .ok_or("The frame is out of range")?,
                 })
             })
             .collect::<Result<_, String>>()?;
         let bounds = self.bounds()?;
-        let marking_area = self.marking_on_top.then(|| MarkingArea {
-            origin: [
-                (bounds[0][0] + bounds[1][0]) / 2.0,
-                (bounds[0][1] + bounds[1][1]) / 2.0,
-                bounds[1][2],
-            ],
-            normal: [0.0, 0.0, 1.0],
-            u_axis: [1.0, 0.0, 0.0],
-            size_mm: [
-                (bounds[1][0] - bounds[0][0]) * 0.8,
-                (bounds[1][1] - bounds[0][1]) * 0.8,
-            ],
-        });
+        let marking_area = self
+            .marking_on_top
+            .then(|| {
+                MarkingArea::from_mm(
+                    [
+                        (bounds[0][0] + bounds[1][0]) / 2.0,
+                        (bounds[0][1] + bounds[1][1]) / 2.0,
+                        bounds[1][2],
+                    ],
+                    [0.0, 0.0, 1.0],
+                    [1.0, 0.0, 0.0],
+                    [
+                        (bounds[1][0] - bounds[0][0]) * 0.8,
+                        (bounds[1][1] - bounds[0][1]) * 0.8,
+                    ],
+                )
+            })
+            .transpose()
+            .map_err(|e| e.to_string())?;
         let text = |t: &str| {
             let t = t.trim();
             (!t.is_empty()).then(|| t.to_owned())
@@ -539,7 +553,7 @@ impl Wizard {
             pair: None,
             format: self.format,
             frame: self.frame,
-            bounds_mm: bounds,
+            bounds_nm: model3d::bounds_nm(bounds).map_err(|e| e.to_string())?,
             bodies,
             custom_materials: self.inspection.materials.clone(),
             leads,
@@ -547,7 +561,7 @@ impl Wizard {
             hints: ModelHints {
                 mount: m.mount,
                 pins,
-                pitch_mm: None,
+                pitch_nm: None,
                 family: text(&m.family),
             },
             provenance: ModelProvenance {
@@ -1121,14 +1135,11 @@ fn frame_rows(ui: &mut Ui, wizard: &mut Wizard) {
         (UpAxis::Y, "Y up".to_owned()),
     ];
     kit::choice_row(ui, "Up axis", &mut wizard.frame.up, &options);
+    let mut offset = wizard.frame.origin_offset();
     for (axis, label) in ["Offset X", "Offset Y", "Offset Z"].into_iter().enumerate() {
-        kit::number_row(
-            ui,
-            label,
-            &mut wizard.frame.origin_offset[axis],
-            "mm",
-            -1000.0..=1000.0,
-        );
+        if kit::number_row(ui, label, &mut offset[axis], "mm", -1000.0..=1000.0) {
+            wizard.set_offset(axis, offset[axis]);
+        }
     }
     match wizard.bounds() {
         Ok(b) => {
@@ -1489,7 +1500,7 @@ mod tests {
         let inch = SourceFrame {
             unit_mm: 25.4,
             up: UpAxis::Y,
-            origin_offset: [1.0, 2.0, 3.0],
+            origin_offset_nm: triple_nm([1.0, 2.0, 3.0])?,
         };
         // Y-up (0, 1, 0) is Z-up (0, 0, 1), then scaled and offset.
         let point = |p| imported::frame_point(&inch, ModelFormat::Step, p);
@@ -1511,7 +1522,7 @@ mod tests {
     #[test]
     fn seat_and_centre_put_the_model_on_the_origin() -> Result<(), String> {
         let mut w = wizard();
-        w.frame.origin_offset = [3.0, -2.0, 1.5];
+        w.frame.origin_offset_nm = triple_nm([3.0, -2.0, 1.5]).map_err(|e| e.to_string())?;
         w.seat();
         w.centre();
         let b = w.bounds()?;
@@ -1783,9 +1794,9 @@ mod tests {
         }
         w.meta.licence = "CC0-1.0".into();
         let estimated = w.request()?;
-        assert!((estimated.definition.leads[0].contact[0] - 2.15).abs() < 1e-6);
+        assert!((estimated.definition.leads[0].contact()[0] - 2.15).abs() < 1e-6);
         let measured = measure(estimated.clone())?;
-        let c = measured.definition.leads[0].contact;
+        let c = measured.definition.leads[0].contact();
         assert!((c[0] - 2.25).abs() < 1e-4 && c[2].abs() < 1e-4, "{c:?}");
         let use_ = LibraryModel {
             lead_map: vec![LeadMapEntry {
@@ -1834,14 +1845,14 @@ mod tests {
         assert_eq!(d.leads[0].designation, "1");
         // Contacts are estimated as the bottom centres of the lead bodies;
         // Finish measures them on the geometry (`measure`).
-        assert_eq!(d.leads[0].contact, [-0.9, 0.0, 0.0]);
+        assert_eq!(d.leads[0].contact(), [-0.9, 0.0, 0.0]);
         assert_eq!(d.hints.pins, Some(2));
         assert_eq!(d.provenance.record.licence.as_deref(), Some("CC0-1.0"));
         assert_eq!(d.provenance.record.basis, Basis::Imported);
         assert_eq!(d.provenance.redistribution, Redistribution::Unknown);
         let area = d.marking_area.ok_or("expected a marking area")?;
         assert_eq!(area.normal, [0.0, 0.0, 1.0]);
-        assert!((area.origin[2] - 0.45).abs() < 1e-12);
+        assert!((area.origin()[2] - 0.45).abs() < 1e-12);
         // The previewed lead map: both leads, by exact designation.
         let map = lead_map_of(d, &package);
         assert_eq!(map.len(), 2);
@@ -2155,9 +2166,9 @@ mod tests {
             // The measured contacts are the caps' footprints on the board.
             for (lead, x) in definition.leads.iter().zip([-0.9, 0.9]) {
                 assert!(
-                    (lead.contact[0] - x).abs() < 1e-4 && lead.contact[2].abs() < 1e-4,
+                    (lead.contact()[0] - x).abs() < 1e-4 && lead.contact()[2].abs() < 1e-4,
                     "{:?}",
-                    lead.contact
+                    lead.contact()
                 );
             }
             // Finish assigns the model in the same command.

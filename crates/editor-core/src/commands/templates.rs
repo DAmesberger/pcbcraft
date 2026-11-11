@@ -735,7 +735,7 @@ fn replaced_package(
         summary,
     };
     next.terminals = terminals;
-    next.envelope = form.envelope().unwrap_or(next.envelope);
+    next.envelope_nm = form.envelope_nm()?.unwrap_or(next.envelope_nm);
     next.form = form;
     Ok(Replaced {
         package: next,

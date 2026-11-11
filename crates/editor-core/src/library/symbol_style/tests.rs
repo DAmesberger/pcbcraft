@@ -55,11 +55,11 @@ fn every_kind_is_a_valid_symbol_on_the_grid() -> Result<()> {
             for k in 1..=count as u32 {
                 let pin = pin(&symbol, k)?;
                 assert!(
-                    on_grid(pin.position, graphics::SYMBOL_MODULE_MM),
+                    on_grid(pin.position_mm(), graphics::SYMBOL_MODULE_MM),
                     "{kind:?} pin {k} at {:?} is off the module",
                     pin.position
                 );
-                assert!(pin.length > 0.0, "{kind:?} pin {k} has no stub");
+                assert!(pin.length_nm.get() > 0, "{kind:?} pin {k} has no stub");
                 assert!(!pin.name.visible, "{kind:?} shows pin names");
                 assert_eq!(
                     pin.number.visible,
@@ -95,7 +95,7 @@ fn every_kind_is_a_valid_symbol_on_the_grid() -> Result<()> {
             // Pins reach out of the drawing: each connection end is on the
             // bounds' edge.
             for pin in &unit.pins {
-                let p = pin.position;
+                let p = pin.position_mm();
                 let edge = [bounds.min[0], bounds.max[0]].contains(&p[0])
                     || [bounds.min[1], bounds.max[1]].contains(&p[1]);
                 assert!(edge, "{kind:?} pin end {p:?} is inside {bounds:?}");
@@ -109,7 +109,11 @@ fn every_kind_is_a_valid_symbol_on_the_grid() -> Result<()> {
 fn two_terminal_kinds_share_one_pin_span() -> Result<()> {
     for kind in drawn().filter(|k| k.terminal_count() == Some(2)) {
         let symbol = build(kind, SymbolConventions::default())?;
-        let mut ends: Vec<Point> = unit(&symbol)?.pins.iter().map(|p| p.position).collect();
+        let mut ends: Vec<Point> = unit(&symbol)?
+            .pins
+            .iter()
+            .map(|p| p.position_mm())
+            .collect();
         ends.sort_by(|a, b| a[0].total_cmp(&b[0]));
         assert_eq!(ends, vec![[-5.0, 0.0], [5.0, 0.0]], "{kind:?}");
     }
@@ -141,11 +145,11 @@ fn the_box_kinds_and_wrong_counts_are_refused() {
     );
 }
 
-fn shapes(symbol: &SymbolDefinition) -> Vec<(&Shape, Fill)> {
+fn shapes(symbol: &SymbolDefinition) -> Vec<(Shape, Fill)> {
     symbol
         .graphics()
         .filter_map(|g| match &g.item {
-            Item::Shape { shape, fill, .. } => Some((shape, *fill)),
+            Item::Shape { shape, fill, .. } => Some((shape.to_mm(), *fill)),
             Item::Text(_) => None,
         })
         .collect()
@@ -160,7 +164,7 @@ fn resistor_style_follows_the_conventions() -> Result<()> {
     assert!(matches!(
         first,
         Some(Item::Shape {
-            shape: Shape::Rect { .. },
+            shape: crate::library::ShapeNm::Rect { .. },
             fill: Fill::Body,
             ..
         })
@@ -197,7 +201,10 @@ fn capacitors_draw_plates_and_polarity() -> Result<()> {
             .iter()
             .any(|(s, _)| matches!(s, Shape::Arc { center, .. } if center[0] > 0.0))
     );
-    assert!(pin(&polar, 1)?.position[0] < 0.0, "+ is terminal 1, left");
+    assert!(
+        pin(&polar, 1)?.position_mm()[0] < 0.0,
+        "+ is terminal 1, left"
+    );
     // The + mark's vertical stroke sits on the + side.
     assert!(shapes(&polar).iter().any(|(s, _)| matches!(
         s,
@@ -225,8 +232,8 @@ fn diodes_put_the_cathode_at_the_bar() -> Result<()> {
                 _ => None,
             })
             .ok_or_else(|| Error::Invalid("no triangle".into()))?;
-        assert!(pin(&symbol, 1)?.position[0] > apex, "{kind:?}");
-        assert!(pin(&symbol, 2)?.position[0] < 0.0, "{kind:?}");
+        assert!(pin(&symbol, 1)?.position_mm()[0] > apex, "{kind:?}");
+        assert!(pin(&symbol, 2)?.position_mm()[0] < 0.0, "{kind:?}");
     }
     let led = build(SymbolKind::Led, SymbolConventions::default())?;
     let heads = shapes(&led)

@@ -4,11 +4,11 @@
 //! within the persistence bounds, so a failure leaves the draft unchanged.
 //! Graphics a footprint source derives are edited through their role, not
 //! here.
-use super::{DrawingLayer, FootprintGraphic, Item, Pin, Polarity, Side};
+use super::{DrawingLayer, FootprintGraphic, Item, ItemParams, Pin, PinParams, Polarity, Side};
 use crate::diagnostics::{Error, Result};
-use crate::geometry::{Point, point_valid};
 use crate::ids::{GraphicId, TerminalId, UnitId};
 use crate::library::{Definition, FootprintDefinition, SymbolDefinition};
+use crate::units::{self, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -28,31 +28,44 @@ pub enum GraphicTarget {
 }
 
 /// One change to a draft's drawing. Graphics are named by their stable
-/// local ID; pins by their terminal.
+/// local ID; pins by their terminal. Lengths are millimetres on the wire
+/// (a number, or text with a unit); the draft stores nanometres.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum GraphicEdit {
     /// Add a graphic with a new ID; the outcome lists new IDs in order.
-    Add { target: GraphicTarget, item: Item },
+    Add {
+        target: GraphicTarget,
+        item: ItemParams,
+    },
     /// Replace what a graphic draws; its ID and place in the order stay.
-    Replace { id: GraphicId, item: Item },
+    Replace { id: GraphicId, item: ItemParams },
     /// Move a footprint graphic to another layer or side.
     SetLayer {
         id: GraphicId,
         layer: DrawingLayer,
         side: Side,
     },
-    /// Move graphics by `delta` millimetres.
-    Translate { ids: Vec<GraphicId>, delta: Point },
+    /// Move graphics by `delta`.
+    Translate {
+        ids: Vec<GraphicId>,
+        #[serde(with = "units::point_mm")]
+        #[schemars(with = "units::PointMm")]
+        delta: PointNm,
+    },
     /// Remove a graphic; its ID is retired.
     Remove { id: GraphicId },
     /// Add or replace the pin of `pin.terminal`, moving it to `unit`. The
     /// terminal must exist on the owning component; none is inferred.
-    SetPin { unit: UnitId, pin: Pin },
+    SetPin { unit: UnitId, pin: PinParams },
     /// Remove a terminal's pin; the terminal stays.
     RemovePin { terminal: TerminalId },
     /// Height of pin names and numbers, 0.1–50 mm.
-    SetPinTextHeight { height: f64 },
+    SetPinTextHeight {
+        #[serde(with = "units::length_mm")]
+        #[schemars(with = "units::Length")]
+        height: Nm,
+    },
     /// Set or clear a footprint's authored pin-1 pad and its markers. The
     /// pad and every marker must exist; markers are silkscreen or assembly
     /// graphics.
@@ -101,10 +114,7 @@ pub fn apply(
     }
 }
 
-fn translate_ids(ids: &[GraphicId], delta: Point) -> Result<()> {
-    if !point_valid(delta) {
-        return Err(Error::Invalid("the move must be finite".into()));
-    }
+fn translate_ids(ids: &[GraphicId]) -> Result<()> {
     let unique: BTreeSet<_> = ids.iter().collect();
     if ids.is_empty() || unique.len() != ids.len() {
         return Err(Error::Invalid(
@@ -146,18 +156,18 @@ fn apply_symbol(
                     .graphics
                     .push(super::Graphic {
                         id,
-                        item: item.clone(),
+                        item: Item::from(item.clone()),
                     });
                 added.push(id);
             }
             GraphicEdit::Replace { id, item } => {
-                graphic_mut(&mut symbol, *id)?.item = item.clone();
+                graphic_mut(&mut symbol, *id)?.item = Item::from(item.clone());
             }
             GraphicEdit::Translate { ids, delta } => {
-                translate_ids(ids, *delta)?;
+                translate_ids(ids)?;
                 for id in ids {
                     let graphic = graphic_mut(&mut symbol, *id)?;
-                    graphic.item = graphic.item.translated(*delta);
+                    graphic.item = graphic.item.translated(*delta)?;
                 }
             }
             GraphicEdit::Remove { id } => {
@@ -169,6 +179,7 @@ fn apply_symbol(
                 unit.graphics.retain(|g| g.id != *id);
             }
             GraphicEdit::SetPin { unit, pin } => {
+                let pin = Pin::from(pin.clone());
                 if !terminals.contains(&pin.terminal) {
                     return Err(Error::NotFound(format!(
                         "terminal {} is not on the owning component",
@@ -202,7 +213,7 @@ fn apply_symbol(
                 }
             }
             GraphicEdit::SetPinTextHeight { height } => {
-                symbol.pin_text_height = *height;
+                symbol.pin_text_height_nm = *height;
             }
             GraphicEdit::SetLayer { .. } | GraphicEdit::SetPolarity { .. } => {
                 return Err(Error::Invalid(
@@ -254,12 +265,12 @@ fn apply_footprint(
                     id,
                     layer,
                     side,
-                    item: item.clone(),
+                    item: Item::from(item.clone()),
                 });
                 added.push(id);
             }
             GraphicEdit::Replace { id, item } => {
-                footprint_graphic_mut(&mut footprint, *id)?.item = item.clone();
+                footprint_graphic_mut(&mut footprint, *id)?.item = Item::from(item.clone());
             }
             GraphicEdit::SetLayer { id, layer, side } => {
                 let graphic = footprint_graphic_mut(&mut footprint, *id)?;
@@ -267,10 +278,10 @@ fn apply_footprint(
                 graphic.side = *side;
             }
             GraphicEdit::Translate { ids, delta } => {
-                translate_ids(ids, *delta)?;
+                translate_ids(ids)?;
                 for id in ids {
                     let graphic = footprint_graphic_mut(&mut footprint, *id)?;
-                    graphic.item = graphic.item.translated(*delta);
+                    graphic.item = graphic.item.translated(*delta)?;
                 }
             }
             GraphicEdit::Remove { id } => {

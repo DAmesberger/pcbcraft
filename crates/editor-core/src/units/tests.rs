@@ -303,3 +303,125 @@ fn the_wire_schema_offers_a_number_or_unit_text() {
     assert_eq!(nm_schema["type"], "integer");
     assert_eq!(nm_schema["maximum"], MAX_COORD_NM);
 }
+
+mod params {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    fn three() -> Nm {
+        Nm::new(3_000_000).unwrap()
+    }
+
+    /// A stored record with every kind of field the derive maps.
+    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, Params)]
+    #[serde(deny_unknown_fields)]
+    struct Pad {
+        name: String,
+        width_nm: Nm,
+        at: PointNm,
+        rotation_mdeg: Angle,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        drill_nm: Option<Nm>,
+        #[serde(default = "three")]
+        gap_nm: Nm,
+        outline: Vec<PointNm>,
+        corners_nm: [Nm; 2],
+    }
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, Params)]
+    #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+    enum Row {
+        One {
+            #[params]
+            pad: Box<Pad>,
+        },
+        Many {
+            #[params]
+            pads: Vec<Pad>,
+            pitch_nm: Nm,
+        },
+        Arc(ArcNm),
+        Empty,
+    }
+
+    #[test]
+    fn stored_records_carry_millimetres_on_the_wire() {
+        let pad = Pad {
+            name: "1".into(),
+            width_nm: nm(250_000),
+            at: p(1_270_000, -2_540_000),
+            rotation_mdeg: Angle::new(90_000).unwrap(),
+            drill_nm: Some(nm(300_000)),
+            gap_nm: nm(1),
+            outline: vec![p(1, 2)],
+            corners_nm: [nm(1_000), nm(2_000)],
+        };
+        let stored = serde_json::to_value(&pad).unwrap();
+        assert_eq!(stored["width_nm"], 250_000);
+        assert_eq!(
+            stored["at"],
+            serde_json::json!({"x_nm": 1_270_000, "y_nm": -2_540_000})
+        );
+        let wire = serde_json::to_value(PadParams::from(pad.clone())).unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "name": "1", "width": 0.25, "at": [1.27, -2.54], "rotation": 90.0,
+                "drill": 0.3, "gap": 0.000001, "outline": [[0.000001, 0.000002]],
+                "corners": [0.001, 0.002]
+            })
+        );
+        let back: PadParams = serde_json::from_value(wire).unwrap();
+        assert_eq!(Pad::from(back), pad);
+
+        // Text with units, defaults through the stored default function.
+        let typed: PadParams = serde_json::from_value(serde_json::json!({
+            "name": "2", "width": "10mil", "at": [0, "1in"], "rotation": -90,
+            "outline": [], "corners": [0, 0]
+        }))
+        .unwrap();
+        let typed = Pad::from(typed);
+        assert_eq!(typed.width_nm, nm(254_000));
+        assert_eq!(typed.at, p(0, 25_400_000));
+        assert_eq!(typed.rotation_mdeg.millidegrees(), 270_000);
+        assert_eq!(typed.gap_nm, three());
+        assert_eq!(typed.drill_nm, None);
+        assert!(serde_json::from_value::<PadParams>(serde_json::json!({"width_nm": 1})).is_err());
+    }
+
+    #[test]
+    fn nested_records_and_enums_convert_both_ways() {
+        let rows = vec![
+            Row::One {
+                pad: Box::default(),
+            },
+            Row::Many {
+                pads: vec![Pad::default()],
+                pitch_nm: nm(500_000),
+            },
+            Row::Arc(ArcNm {
+                end: p(1_000_000, 0),
+                centre: p(0, 0),
+                direction: ArcDirection::Clockwise,
+            }),
+            Row::Empty,
+        ];
+        for row in rows {
+            let wire = RowParams::from(row.clone());
+            let text = serde_json::to_value(&wire).unwrap();
+            let back: RowParams = serde_json::from_value(text).unwrap();
+            assert_eq!(Row::from(back), row);
+        }
+        let many = serde_json::to_value(RowParams::from(Row::Many {
+            pads: vec![],
+            pitch_nm: nm(500_000),
+        }))
+        .unwrap();
+        assert_eq!(
+            many,
+            serde_json::json!({"kind": "many", "pads": [], "pitch": 0.5})
+        );
+        let schema = serde_json::to_string(&schemars::schema_for!(RowParams)).unwrap();
+        assert!(schema.contains("\"pitch\"") && !schema.contains("pitch_nm"));
+    }
+}

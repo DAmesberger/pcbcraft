@@ -221,7 +221,7 @@ impl Family {
         }
     }
 
-    fn edits(self, name: &str, refs: SampleRefs) -> Vec<DraftEdit> {
+    fn edits(self, name: &str, refs: SampleRefs) -> Result<Vec<DraftEdit>> {
         match self {
             Self::Header => samples::two_terminal_header(name, self.kind(), refs),
             _ => samples::two_terminal(name, self.kind(), refs),
@@ -247,7 +247,7 @@ fn shared_package(
         footprint,
         binding: BindingRef::default(),
     };
-    let edits = family.edits(label, refs);
+    let edits = family.edits(label, refs)?;
     let small = label == "0402";
     let mut body = None;
     for mut edit in edits {
@@ -425,7 +425,7 @@ fn build(parts: usize, exact: bool) -> Result<Project> {
             footprint,
             binding: BindingRef::new(ids.next()?, Revision::FIRST),
         };
-        for mut edit in part.family.edits(&part.name, refs) {
+        for mut edit in part.family.edits(&part.name, refs)? {
             match &mut edit.definition {
                 Definition::Component(component) => {
                     component.fields = part
@@ -484,7 +484,7 @@ fn generic(
         footprint,
         binding: BindingRef::new(ids.next()?, Revision::FIRST),
     };
-    for mut edit in family.edits(name, refs) {
+    for mut edit in family.edits(name, refs)? {
         match &mut edit.definition {
             Definition::Component(component) => {
                 component.fields = selected

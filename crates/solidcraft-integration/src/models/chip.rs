@@ -27,28 +27,28 @@ const LENS_EDGE_MM: f64 = 0.1;
 
 pub(super) fn check(c: &ChipForm) -> Result<()> {
     check_positive(&[
-        ("chip length", c.length),
-        ("chip width", c.width),
-        ("chip height", c.height),
-        ("termination length", c.termination),
+        ("chip length", c.length()),
+        ("chip width", c.width()),
+        ("chip height", c.height()),
+        ("termination length", c.termination()),
     ])?;
     require(
-        2.0 * c.termination < c.length,
+        2.0 * c.termination() < c.length(),
         "the two terminations must leave part of the body between them",
     )?;
     Ok(())
 }
 
 pub(super) fn build(b: &mut Build<'_>, c: &ChipForm) -> Result<()> {
-    let l = b.length("length", c.length)?;
-    let w = b.length("width", c.width)?;
-    let h = b.length("height", c.height)?;
-    let t = b.length("termination", c.termination)?;
+    let l = b.length("length", c.length())?;
+    let w = b.length("width", c.width())?;
+    let h = b.length("height", c.height())?;
+    let t = b.length("termination", c.termination())?;
     let resistor = c.kind == ChipKind::Resistor;
-    let overcoat = (c.height / 10.0).min(OVERCOAT_MM);
-    let inset = OVERCOAT_INSET_MM.min(c.width / 4.0);
+    let overcoat = (c.height() / 10.0).min(OVERCOAT_MM);
+    let inset = OVERCOAT_INSET_MM.min(c.width() / 4.0);
     let led = c.kind == ChipKind::Led;
-    let substrate = LED_SUBSTRATE_MM.min(c.height / 2.0);
+    let substrate = LED_SUBSTRATE_MM.min(c.height() / 2.0);
     let body_height = if resistor {
         let oc = b.length("overcoat", overcoat)?;
         format!("{h} - {oc}")
@@ -113,20 +113,20 @@ pub(super) fn build(b: &mut Build<'_>, c: &ChipForm) -> Result<()> {
                 format!("{h} - {body_height}"),
             ],
         )?;
-        let half = (c.length / 2.0 - c.termination, c.width / 2.0);
+        let half = (c.length() / 2.0 - c.termination(), c.width() / 2.0);
         let radius = LENS_EDGE_MM
             .min(half.1 / 2.0)
-            .min((c.height - substrate) / 2.0);
+            .min((c.height() - substrate) / 2.0);
         b.round(
             "lens_round",
             &name,
-            &top_edges([-half.0, -half.1, substrate], [half.0, half.1, c.height]),
+            &top_edges([-half.0, -half.1, substrate], [half.0, half.1, c.height()]),
             radius,
         )?;
     }
     // An LED's terminations wrap only its substrate.
     let end_height = if led { body_height.clone() } else { h.clone() };
-    let end_top = if led { substrate } else { c.height };
+    let end_top = if led { substrate } else { c.height() };
     let material = b.material(BodyRole::Termination);
     let mut ends = Vec::new();
     for (part, x) in [
@@ -145,10 +145,10 @@ pub(super) fn build(b: &mut Build<'_>, c: &ChipForm) -> Result<()> {
     }
     // The body's four long edges, kept below the overcoat's inset so the
     // overcoat sits on the flat; then the edges round each outer end face.
-    let (hl, hw) = (c.length / 2.0, c.width / 2.0);
-    let small = c.width.min(end_top);
+    let (hl, hw) = (c.length() / 2.0, c.width() / 2.0);
+    let small = c.width().min(end_top);
     let top = if resistor {
-        c.height - overcoat
+        c.height() - overcoat
     } else {
         end_top
     };
@@ -168,7 +168,7 @@ pub(super) fn build(b: &mut Build<'_>, c: &ChipForm) -> Result<()> {
         ],
         body_edge,
     )?;
-    let end_edge = END_EDGE_MM.min(0.15 * small).min(c.termination / 3.0);
+    let end_edge = END_EDGE_MM.min(0.15 * small).min(c.termination() / 3.0);
     let r = b.length("end_round", end_edge)?;
     for (name, x) in ends.iter().zip([-hl, hl]) {
         let edges = [

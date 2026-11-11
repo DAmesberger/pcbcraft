@@ -384,7 +384,7 @@ fn paste(board: &Board<'_>, side: Layer, attributes: &[(&str, String)]) -> Resul
             },
             PasteRule::None => Vec::new(),
             PasteRule::Reduction(r) => shrink(*r).into_iter().collect(),
-            PasteRule::Windows(windows) => windows.iter().map(|w| w.shape.clone()).collect(),
+            PasteRule::Windows(windows) => windows.iter().map(|w| w.shape.to_mm()).collect(),
         };
         for shape in &shapes {
             let exact = match (&pad.pad.shape, &pad.pad.paste) {

@@ -69,10 +69,12 @@ pub fn convert_shape(shape: &PadShape, to: ShapeChoice) -> Option<PadShape> {
     })
 }
 
-/// Set a pad's shape and keep its rotation canonical for the new symmetry.
+/// Set a pad's shape and keep its rotation canonical for the new symmetry
+/// (a fold whose turned paste windows would leave the coordinate range
+/// leaves the rotation as it is).
 pub fn set_shape(pad: &mut Pad, shape: PadShape) {
     pad.shape = shape;
-    pad.fold_rotation();
+    let _unfolded = pad.fold_rotation();
 }
 
 /// A default drill for a land: half its short side.

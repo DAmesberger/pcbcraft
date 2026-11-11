@@ -5,7 +5,7 @@ use crate::library::{
     CornerMask, FootprintGraphic, Hole, HoleShape, Outline, PadKind, PadShape, PadVia, Segment,
     designator_placeholder,
 };
-use crate::tests::support::by_designator;
+use crate::tests::support::{by_designator, nm, pt, shape_nm};
 use crate::{Engine, Error, Result};
 
 /// The demo board with R1 at `position`, turned `rotation_deg`, on `layer`,
@@ -223,22 +223,26 @@ fn graphics_place_mirrored_on_the_bottom_and_pick_by_stroke_and_text_box() -> Re
                 layer: DrawingLayer::Silkscreen,
                 side: Side::Component,
                 item: Item::Shape {
-                    shape: Shape::Line {
+                    shape: shape_nm(Shape::Line {
                         a: [-1.0, 1.0],
                         b: [1.0, 1.0],
-                    },
-                    width: 0.15,
+                    }),
+                    width_nm: nm(0.15),
                     fill: Fill::None,
                 },
             },
-            designator_placeholder(crate::GraphicId(11), [0.0, 1.5], DrawingLayer::Silkscreen),
+            designator_placeholder(
+                crate::GraphicId(11),
+                pt([0.0, 1.5]),
+                DrawingLayer::Silkscreen,
+            ),
             FootprintGraphic {
                 id: crate::GraphicId(12),
                 layer: DrawingLayer::Courtyard,
                 side: Side::Opposite,
                 item: Item::Shape {
-                    shape: Shape::rect([-2.0, -2.0], [2.0, 2.0]),
-                    width: 0.05,
+                    shape: shape_nm(Shape::rect([-2.0, -2.0], [2.0, 2.0])),
+                    width_nm: nm(0.05),
                     fill: Fill::None,
                 },
             },

@@ -3,10 +3,11 @@
 use super::*;
 use crate::library::PackageTerminal;
 use crate::library::footprint_source::FakeEvaluator;
+use crate::tests::support::nm;
 
 fn package(n: u32, body: [f64; 3]) -> PackageDefinition {
     PackageDefinition {
-        envelope: body,
+        envelope_nm: body.map(nm),
         terminals: (1..=n)
             .map(|k| PackageTerminal {
                 id: crate::ids::PackageTerminalId(k),

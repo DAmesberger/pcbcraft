@@ -26,14 +26,14 @@ const TOP_EDGE_MM: f64 = 0.12;
 
 pub(super) fn check(f: &TabbedForm) -> Result<()> {
     check_positive(&[
-        ("pitch", f.pitch),
-        ("body length", f.body_length),
-        ("body width", f.body_width),
-        ("body height", f.body_height),
-        ("span", f.span),
-        ("lead width", f.lead_width),
-        ("lead thickness", f.lead_thickness),
-        ("foot length", f.foot_length),
+        ("pitch", f.pitch()),
+        ("body length", f.body_length()),
+        ("body width", f.body_width()),
+        ("body height", f.body_height()),
+        ("span", f.span()),
+        ("lead width", f.lead_width()),
+        ("lead thickness", f.lead_thickness()),
+        ("foot length", f.foot_length()),
     ])?;
     check_count("leads on the −y side", f.leads_per_side[0])?;
     if f.leads_per_side[1] > 0 {
@@ -44,10 +44,10 @@ pub(super) fn check(f: &TabbedForm) -> Result<()> {
         "the +y side needs a lead or a tab",
     )?;
     if let Some(tab) = f.tab {
-        check_positive(&[("tab width", tab.width), ("tab length", tab.length)])?;
+        check_positive(&[("tab width", tab.width()), ("tab length", tab.length())])?;
     }
     require(
-        f.bend_room() > f.lead_thickness,
+        f.bend_room() > f.lead_thickness(),
         "the span must leave room outside the body for the lead to bend down to its foot",
     )?;
     Ok(())
@@ -56,9 +56,9 @@ pub(super) fn check(f: &TabbedForm) -> Result<()> {
 /// The bent side profile of a lead whose tip is `half_span` from the
 /// centre and whose foot is `foot` long, in (distance across y, z).
 fn profile(f: &TabbedForm, half_span: f64, foot: f64) -> Result<crate::pad_outline::Contour> {
-    let t = f.lead_thickness;
+    let t = f.lead_thickness();
     let exit = f.lead_exit();
-    let half_body = f.body_width / 2.0;
+    let half_body = f.body_width() / 2.0;
     let root = ROOT_MM.min(half_body / 3.0);
     let foot_in = half_span - foot;
     let shoulder = half_body + SHOULDER_SHARE * (foot_in - half_body);
@@ -75,17 +75,17 @@ fn profile(f: &TabbedForm, half_span: f64, foot: f64) -> Result<crate::pad_outli
 }
 
 pub(super) fn build(b: &mut Build<'_>, f: &TabbedForm) -> Result<()> {
-    let t = f.lead_thickness;
+    let t = f.lead_thickness();
     let [n, m] = f.leads_per_side;
-    let pitch = b.length("pitch", f.pitch)?;
-    let bl = b.length("body_length", f.body_length)?;
-    let bw = b.length("body_width", f.body_width)?;
-    let bh = b.length("body_height", f.body_height)?;
-    let standoff = b.length("standoff", f.standoff)?;
-    b.length("span", f.span)?;
-    let lw = b.length("lead_width", f.lead_width)?;
+    let pitch = b.length("pitch", f.pitch())?;
+    let bl = b.length("body_length", f.body_length())?;
+    let bw = b.length("body_width", f.body_width())?;
+    let bh = b.length("body_height", f.body_height())?;
+    let standoff = b.length("standoff", f.standoff())?;
+    b.length("span", f.span())?;
+    let lw = b.length("lead_width", f.lead_width())?;
     b.length("lead_thickness", t)?;
-    b.length("foot_length", f.foot_length)?;
+    b.length("foot_length", f.foot_length())?;
 
     let body = b.name("body");
     let material = b.material(BodyRole::Body);
@@ -102,7 +102,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &TabbedForm) -> Result<()> {
     )?;
 
     let lead_material = b.material(BodyRole::Lead);
-    let shape = profile(f, f.span / 2.0, f.foot_length)?;
+    let shape = profile(f, f.span() / 2.0, f.foot_length())?;
     let mut ordered_rows = Vec::new();
     for (row, part, count, plus) in [(0usize, "row_s", n, false), (1, "row_n", m, true)] {
         if count == 0 {
@@ -148,12 +148,12 @@ pub(super) fn build(b: &mut Build<'_>, f: &TabbedForm) -> Result<()> {
     let mut leads = b.order(&ordered_rows)?;
 
     if let Some(tab) = f.tab {
-        let tw = b.length("tab_width", tab.width)?;
-        let tl = b.length("tab_length", tab.length)?;
+        let tw = b.length("tab_width", tab.width())?;
+        let tl = b.length("tab_length", tab.length())?;
         let name = b.name("tab");
-        match tab.flange {
+        match tab.flange() {
             None => {
-                let contour = profile(f, f.span / 2.0, tab.length)?;
+                let contour = profile(f, f.span() / 2.0, tab.length())?;
                 b.native.plane_body(
                     Plane::Yz,
                     ProfileBody {
@@ -190,7 +190,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &TabbedForm) -> Result<()> {
     // Rounded upright corners clear of the end leads and the tab, then
     // rounded top edges clear of the lead exit.
     let row_length = |count: u32, step: u32| {
-        f64::from(count.saturating_sub(1)) * f64::from(step) * f.pitch + f.lead_width
+        f64::from(count.saturating_sub(1)) * f64::from(step) * f.pitch() + f.lead_width()
     };
     let widest = row_length(n, f.lead_step[0])
         .max(if m > 0 {
@@ -198,18 +198,18 @@ pub(super) fn build(b: &mut Build<'_>, f: &TabbedForm) -> Result<()> {
         } else {
             0.0
         })
-        .max(f.tab.map_or(0.0, |tab| tab.width));
-    let short = f.body_length.min(f.body_width);
+        .max(f.tab.map_or(0.0, |tab| tab.width()));
+    let short = f.body_length().min(f.body_width());
     let corner = CORNER_MM
         .min(0.06 * short)
-        .min((f.body_length - widest) / 4.0);
-    let top = f.standoff + f.body_height;
+        .min((f.body_length() - widest) / 4.0);
+    let top = f.standoff() + f.body_height();
     let edge = TOP_EDGE_MM
-        .min(0.1 * f.body_height)
+        .min(0.1 * f.body_height())
         .min((top - f.lead_exit() - t / 2.0) / 2.0)
         .min(corner.max(0.0));
-    let lo = [-f.body_length / 2.0, -f.body_width / 2.0, f.standoff];
-    let hi = [f.body_length / 2.0, f.body_width / 2.0, top];
+    let lo = [-f.body_length() / 2.0, -f.body_width() / 2.0, f.standoff()];
+    let hi = [f.body_length() / 2.0, f.body_width() / 2.0, top];
     // Pick the upright edges above the flange and lead roots.
     let mut uprights = upright_edges(lo, hi);
     for p in &mut uprights {
@@ -223,6 +223,8 @@ pub(super) fn build(b: &mut Build<'_>, f: &TabbedForm) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::super::*;
+    #[allow(unused_imports)]
+    use crate::models::tests::{nm, pt};
     use crate::native::Native;
     use pcbcraft_core::PackageTerminalId;
     use pcbcraft_core::library::PackageTerminal;
@@ -253,15 +255,15 @@ mod tests {
     fn sot23_5() -> TabbedForm {
         TabbedForm {
             leads_per_side: [3, 2],
-            pitch: 0.95,
-            body_length: 2.9,
-            body_width: 1.6,
-            body_height: 1.1,
-            standoff: 0.05,
-            span: 2.8,
-            lead_width: 0.4,
-            lead_thickness: 0.12,
-            foot_length: 0.45,
+            pitch_nm: nm(0.95),
+            body_length_nm: nm(2.9),
+            body_width_nm: nm(1.6),
+            body_height_nm: nm(1.1),
+            standoff_nm: nm(0.05),
+            span_nm: nm(2.8),
+            lead_width_nm: nm(0.4),
+            lead_thickness_nm: nm(0.12),
+            foot_length_nm: nm(0.45),
             tab: None,
             lead_step: [1, 2],
             lands: Default::default(),
@@ -271,19 +273,19 @@ mod tests {
     fn sot223() -> TabbedForm {
         TabbedForm {
             leads_per_side: [3, 0],
-            pitch: 2.3,
-            body_length: 6.5,
-            body_width: 3.5,
-            body_height: 1.6,
-            standoff: 0.05,
-            span: 7.0,
-            lead_width: 0.7,
-            lead_thickness: 0.25,
-            foot_length: 0.9,
+            pitch_nm: nm(2.3),
+            body_length_nm: nm(6.5),
+            body_width_nm: nm(3.5),
+            body_height_nm: nm(1.6),
+            standoff_nm: nm(0.05),
+            span_nm: nm(7.0),
+            lead_width_nm: nm(0.7),
+            lead_thickness_nm: nm(0.25),
+            foot_length_nm: nm(0.9),
             tab: Some(Tab {
-                width: 3.0,
-                length: 0.9,
-                flange: None,
+                width_nm: nm(3.0),
+                length_nm: nm(0.9),
+                flange_nm: None,
             }),
             lead_step: [1, 1],
             lands: Default::default(),
@@ -293,19 +295,19 @@ mod tests {
     fn dpak() -> TabbedForm {
         TabbedForm {
             leads_per_side: [2, 0],
-            pitch: 2.3,
-            body_length: 6.5,
-            body_width: 6.0,
-            body_height: 2.3,
-            standoff: 0.0,
-            span: 11.0,
-            lead_width: 0.8,
-            lead_thickness: 0.5,
-            foot_length: 1.5,
+            pitch_nm: nm(2.3),
+            body_length_nm: nm(6.5),
+            body_width_nm: nm(6.0),
+            body_height_nm: nm(2.3),
+            standoff_nm: nm(0.0),
+            span_nm: nm(11.0),
+            lead_width_nm: nm(0.8),
+            lead_thickness_nm: nm(0.5),
+            foot_length_nm: nm(1.5),
             tab: Some(Tab {
-                width: 5.3,
-                length: 5.5,
-                flange: Some(1.0),
+                width_nm: nm(5.3),
+                length_nm: nm(5.5),
+                flange_nm: Some(nm(1.0)),
             }),
             lead_step: [2, 1],
             lands: Default::default(),

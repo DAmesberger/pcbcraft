@@ -409,7 +409,7 @@ fn connection_points(project: &Project) -> Vec<(SheetId, Point, WireEnd)> {
                 instance: instance.id,
                 terminal: pin.terminal,
             });
-            points.push((occurrence.sheet, transform.apply(pin.position), end));
+            points.push((occurrence.sheet, transform.apply(pin.position_mm()), end));
         }
     }
     points.extend(

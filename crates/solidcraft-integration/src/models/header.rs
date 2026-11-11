@@ -13,21 +13,21 @@ const TOP_EDGE_MM: f64 = 0.2;
 
 pub(super) fn check(h: &HeaderForm) -> Result<()> {
     check_positive(&[
-        ("pitch", h.pitch),
-        ("row pitch", h.row_pitch),
-        ("body height", h.body_height),
-        ("pin side", h.pin_side),
-        ("pin length above the body", h.pin_above),
+        ("pitch", h.pitch()),
+        ("row pitch", h.row_pitch()),
+        ("body height", h.body_height()),
+        ("pin side", h.pin_side()),
+        ("pin length above the body", h.pin_above()),
     ])?;
     require(
-        h.pin_below.is_finite() && h.pin_below >= 0.0,
+        h.pin_below().is_finite() && h.pin_below() >= 0.0,
         "the pin length below the seating plane must be zero or more",
     )?;
     check_count("rows", h.rows)?;
     check_count("pins per row", h.pins_per_row)?;
     check_count("pins", h.rows.saturating_mul(h.pins_per_row))?;
     require(
-        h.pin_side < h.pitch && h.pin_side < h.row_pitch,
+        h.pin_side() < h.pitch() && h.pin_side() < h.row_pitch(),
         "the pins must be thinner than the pitch",
     )?;
     Ok(())
@@ -36,12 +36,12 @@ pub(super) fn check(h: &HeaderForm) -> Result<()> {
 pub(super) fn build(b: &mut Build<'_>, h: &HeaderForm) -> Result<()> {
     let rows = b.count("rows", h.rows)?;
     let n = b.count("pins", h.pins_per_row)?;
-    let pitch = b.length("pitch", h.pitch)?;
-    let row_pitch = b.length("row_pitch", h.row_pitch)?;
-    let bh = b.length("body_height", h.body_height)?;
-    let side = b.length("pin_side", h.pin_side)?;
-    let above = b.length("pin_above", h.pin_above)?;
-    let below = b.length("pin_below", h.pin_below)?;
+    let pitch = b.length("pitch", h.pitch())?;
+    let row_pitch = b.length("row_pitch", h.row_pitch())?;
+    let bh = b.length("body_height", h.body_height())?;
+    let side = b.length("pin_side", h.pin_side())?;
+    let above = b.length("pin_above", h.pin_above())?;
+    let below = b.length("pin_below", h.pin_below())?;
 
     let body = b.name("body");
     let material = b.material(BodyRole::Body);
@@ -107,7 +107,7 @@ pub(super) fn build(b: &mut Build<'_>, h: &HeaderForm) -> Result<()> {
         .iter()
         .map(|p| {
             let c = b.centre(p)?;
-            Ok(((c[0] / h.pitch).round() as i64, c[1], p.clone()))
+            Ok(((c[0] / h.pitch()).round() as i64, c[1], p.clone()))
         })
         .collect::<Result<Vec<_>>>()?;
     keyed.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
@@ -117,16 +117,16 @@ pub(super) fn build(b: &mut Build<'_>, h: &HeaderForm) -> Result<()> {
     b.number(&ordered);
     // Rounds kept clear of the outermost pins.
     let half = [
-        f64::from(h.pins_per_row) * h.pitch / 2.0,
-        f64::from(h.rows) * h.row_pitch / 2.0,
+        f64::from(h.pins_per_row) * h.pitch() / 2.0,
+        f64::from(h.rows) * h.row_pitch() / 2.0,
     ];
-    let clear = ((h.pitch - h.pin_side) / 2.0).min((h.row_pitch - h.pin_side) / 2.0);
+    let clear = ((h.pitch() - h.pin_side()) / 2.0).min((h.row_pitch() - h.pin_side()) / 2.0);
     let lo = [-half[0], -half[1], 0.0];
-    let hi = [half[0], half[1], h.body_height];
+    let hi = [half[0], half[1], h.body_height()];
     let corner = CORNER_MM.min(clear / 2.0);
     b.round("corner_round", &body, &upright_edges(lo, hi), corner)?;
     // Where the rounds meet, the top one may not outgrow the corner.
-    let edge = TOP_EDGE_MM.min(0.1 * h.body_height).min(corner);
+    let edge = TOP_EDGE_MM.min(0.1 * h.body_height()).min(corner);
     b.round("edge_round", &body, &top_edges(lo, hi), edge)?;
     Ok(())
 }

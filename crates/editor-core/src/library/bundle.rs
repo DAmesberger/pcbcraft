@@ -352,7 +352,7 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
             let SymbolDefinition {
                 component,
                 next_local: _,
-                pin_text_height: _,
+                pin_text_height_nm: _,
                 units,
             } = symbol;
             *component = map.lineage(DefinitionKind::Component, *component)?;
@@ -373,7 +373,7 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 next_local: _,
                 terminals: _,
                 form,
-                envelope: _,
+                envelope_nm: _,
                 model,
                 placement,
                 mechanical: _,
@@ -428,8 +428,8 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 }
             }
             let ModelPlacement {
-                translation: _,
-                rotation_deg: _,
+                translation_nm: _,
+                rotation_mdeg: _,
             } = placement;
         }
         Definition::Footprint(footprint) => {

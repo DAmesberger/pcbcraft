@@ -353,7 +353,7 @@ impl Builder {
         if let Some(refusal) = part.refusal() {
             return Err(refusal);
         }
-        if !part_file::matches(&use_.derived, &part_file::derived(&part)) {
+        if !part_file::matches(&use_.derived, &part_file::derived(&part)?) {
             return Err(Error::Invalid(format!(
                 "part_file.stale: the part file of package {package} no longer builds what the package \
                  recorded (bounds, bodies or marking surfaces); set its values again"
@@ -2285,7 +2285,7 @@ fn object_params(
         if !models::is_generated(package) {
             for (axis, value) in ["length", "width", "height"]
                 .into_iter()
-                .zip(package.envelope)
+                .zip(package.envelope())
             {
                 out.push((format!("{prefix}_{axis}"), value, "mm"));
             }
@@ -2519,7 +2519,7 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
     let mut b = Builder::new("Package envelope", &SourceCache::default())?;
     for (name, value) in ["length", "width", "height"]
         .into_iter()
-        .zip(package.envelope)
+        .zip(package.envelope())
     {
         b.param(name, value, "mm")?;
     }
@@ -2584,11 +2584,6 @@ pub fn preview_part(package: &PackageDefinition, bytes: &[u8]) -> Result<NativeM
             "model.unsupported: the package does not use a part file".into(),
         ));
     };
-    if !package.placement.finite() {
-        return Err(Error::Invalid(
-            "package.placement: placement values must be finite and within ±10000".into(),
-        ));
-    }
     let mut b = Builder::new("Package model", &SourceCache::default())?;
     let stem = b.define_part(DRAFT_MODEL, use_, bytes)?;
     let created = b.model_occurrence(&stem)?;
@@ -2602,11 +2597,6 @@ pub const DRAFT_MODEL: &str = "pkgdraft";
 /// The generated model of one package, draft or published, at its
 /// placement in the datum frame (z = 0 the seating plane).
 fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
-    if !package.placement.finite() {
-        return Err(Error::Invalid(
-            "package.placement: placement values must be finite and within ±10000".into(),
-        ));
-    }
     let mut b = Builder::new("Package model", &SourceCache::default())?;
     let created = b.model(DRAFT_MODEL, package)?;
     move_by(&mut b.native, created.occurrence, &package.placement)?;

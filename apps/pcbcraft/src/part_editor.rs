@@ -69,18 +69,22 @@ pub use identity::FolderAction;
 pub use model_view::reset_model_view;
 pub use part_props::{PartReturn, meaning_label, spec_text};
 use pcbcraft_core::functions::{Direction, TerminalFunctions};
-use pcbcraft_core::geometry::{Bounds, Shape};
+use pcbcraft_core::geometry::Bounds;
 use pcbcraft_core::library::graphics::{
-    self, Fill, HAlign, Justify, PIN_TEXT_HEIGHT_MM, SYMBOL_MODULE_MM, SYMBOL_STROKE_MM,
+    self, Fill, HAlign, Justify, PIN_TEXT_HEIGHT, SYMBOL_MODULE_MM, SYMBOL_STROKE_MM, ShapeNm,
     TextContent, VAlign,
 };
 use pcbcraft_core::library::{
     Drafts, Item, PackageTerminal, Pad, Pin, PinDirection, Terminal, TerminalClass, TerminalMap,
     Unit,
 };
+use pcbcraft_core::units::{Nm, PointNm};
+// The tests below take points in millimetres.
+#[cfg(test)]
+use pcbcraft_core::Point;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FunctionId, GraphicId, LibraryCommand, ObjectRef,
-    Operation, PackageTerminalId, PadId, Point, Query, QueryResult, TerminalId, UnitId,
+    Operation, PackageTerminalId, PadId, Query, QueryResult, TerminalId, UnitId,
 };
 use solidcraft_theme::Tokens;
 #[cfg(test)]
@@ -894,7 +898,7 @@ impl PartEditor {
             return None;
         }
         if let Some(action) = symbol_canvas::Arrange::from_id(tool) {
-            self.arrange(action, engine.drafts().grid.symbol_mm);
+            self.arrange(action, engine.drafts().grid.symbol_mm());
             return None;
         }
         if self.footprint_layers.toggle(tool) {
@@ -1022,8 +1026,8 @@ impl PartEditor {
             .map(|g| &g.item);
         match item {
             Some(Item::Shape { shape, .. }) => (
-                symbol_props::shape_icon(shape),
-                symbol_props::shape_name(shape).to_owned(),
+                symbol_props::shape_icon(&shape.to_mm()),
+                symbol_props::shape_name(&shape.to_mm()).to_owned(),
             ),
             Some(Item::Text(_)) => ("text", "Text".to_owned()),
             None => ("select", "Graphic".to_owned()),
@@ -1178,6 +1182,7 @@ impl PartEditor {
         };
         let row = set.component.terminals.len().saturating_sub(1) as f64;
         let tracked = self.body;
+        let mut beyond = false;
         if let Some(unit) = set.symbol.units.first_mut() {
             let position = [-2.0 * SYMBOL_MODULE_MM, -row * SYMBOL_MODULE_MM];
             // Grow the tracked body only; without it nothing is resized and
@@ -1189,7 +1194,7 @@ impl PartEditor {
                     unit.graphics
                         .iter()
                         .filter_map(|g| match &g.item {
-                            Item::Shape { shape, .. } => Some(shape.bounds(0.0)),
+                            Item::Shape { shape, .. } => Some(shape.to_mm().bounds(0.0)),
                             Item::Text(_) => None,
                         })
                         .reduce(Bounds::union)
@@ -1197,9 +1202,20 @@ impl PartEditor {
                 });
             let pin = match body {
                 Some(body) => graphics::pin_toward(electrical, position, body),
-                None => Pin::new(electrical, position, PinDirection::Right, SYMBOL_MODULE_MM),
+                None => PointNm::from_mm_f64_rounded(position).map(|at| {
+                    Pin::new(electrical, at, PinDirection::Right, graphics::SYMBOL_MODULE)
+                }),
             };
-            unit.pins.push(pin);
+            match pin {
+                Ok(pin) => unit.pins.push(pin),
+                Err(_) => beyond = true,
+            }
+        }
+        if beyond {
+            self.tell(
+                Level::Error,
+                "No pin placed: it would lie beyond the ±2 m a symbol holds",
+            );
         }
     }
 
@@ -1243,11 +1259,11 @@ impl PartEditor {
                 self.tell(Level::Error, NO_MORE_TERMINALS);
                 return None;
             };
-            set.symbol.pin_text_height = PIN_TEXT_HEIGHT_MM;
+            set.symbol.pin_text_height_nm = PIN_TEXT_HEIGHT;
             set.symbol.units.push(first_unit(
                 UnitId(unit),
                 [GraphicId(body), GraphicId(designator), GraphicId(name)],
-            ));
+            )?);
             self.body = Some((UnitId(unit), GraphicId(body)));
         }
         let row = set.component.terminals.len() as f64;
@@ -1724,7 +1740,7 @@ impl PartEditor {
         if clicked {
             self.arrange(
                 symbol_canvas::Arrange::Delete,
-                engine.drafts().grid.symbol_mm,
+                engine.drafts().grid.symbol_mm(),
             );
         }
     }
@@ -1878,7 +1894,7 @@ impl PartEditor {
             return None;
         }
         // A finished sketch gesture is sent by `commit`, after the frame.
-        self.footprint_canvas(ui, rect, &response, engine.drafts().grid.footprint_mm);
+        self.footprint_canvas(ui, rect, &response, engine.drafts().grid.footprint_mm());
         None
     }
 
@@ -2320,17 +2336,17 @@ fn component_of(engine: &Engine, id: DefinitionId) -> Option<DefinitionId> {
 /// The first unit of a part built by hand: a one-module body with the
 /// designator above it and the component name below it, as the templates
 /// draw them. `ids` are the body, designator and name graphics.
-fn first_unit(id: UnitId, ids: [GraphicId; 3]) -> Unit {
+fn first_unit(id: UnitId, ids: [GraphicId; 3]) -> Option<Unit> {
     let body = Bounds {
         min: [-SYMBOL_MODULE_MM, -SYMBOL_MODULE_MM],
         max: [SYMBOL_MODULE_MM, SYMBOL_MODULE_MM],
     };
     let gap = 0.5;
-    Unit {
+    Some(Unit {
         id,
         label: "A".into(),
         graphics: vec![
-            graphics::body_rect(ids[0], body),
+            graphics::body_rect(ids[0], body).ok()?,
             graphics::text(
                 ids[1],
                 TextContent::Designator,
@@ -2339,7 +2355,8 @@ fn first_unit(id: UnitId, ids: [GraphicId; 3]) -> Unit {
                     h: HAlign::Center,
                     v: VAlign::Bottom,
                 },
-            ),
+            )
+            .ok()?,
             graphics::text(
                 ids[2],
                 TextContent::ComponentName,
@@ -2348,10 +2365,11 @@ fn first_unit(id: UnitId, ids: [GraphicId; 3]) -> Unit {
                     h: HAlign::Center,
                     v: VAlign::Top,
                 },
-            ),
+            )
+            .ok()?,
         ],
         pins: vec![],
-    }
+    })
 }
 
 /// The body rectangle a template or first unit lays out: the first unit's
@@ -2362,7 +2380,7 @@ fn layout_body(set: &WorkingSet) -> Option<(UnitId, GraphicId)> {
     matches!(
         first.item,
         Item::Shape {
-            shape: Shape::Rect { .. },
+            shape: ShapeNm::Rect { .. },
             fill: Fill::Body,
             ..
         }
@@ -2374,10 +2392,10 @@ fn layout_body(set: &WorkingSet) -> Option<(UnitId, GraphicId)> {
 /// module above its lower edge, moving text below the body along with it.
 /// Returns the body, or `None` when the unit has no such rectangle.
 fn grow_body_to(unit: &mut Unit, body: GraphicId, y: f64) -> Option<Bounds> {
-    fn rect(g: &mut pcbcraft_core::library::Graphic) -> Option<(&mut Point, &mut Point)> {
+    fn rect(g: &mut pcbcraft_core::library::Graphic) -> Option<(&mut PointNm, &mut PointNm)> {
         match &mut g.item {
             Item::Shape {
-                shape: Shape::Rect { a, b, .. },
+                shape: ShapeNm::Rect { a, b, .. },
                 ..
             } => Some((a, b)),
             _ => None,
@@ -2388,20 +2406,21 @@ fn grow_body_to(unit: &mut Unit, body: GraphicId, y: f64) -> Option<Bounds> {
         .iter_mut()
         .find(|g| g.id == body)
         .and_then(rect)?;
-    let bottom = a[1].min(b[1]);
-    let wanted = y - SYMBOL_MODULE_MM;
-    let shift = wanted - bottom;
-    if shift < 0.0 {
-        if a[1] <= b[1] {
-            a[1] = wanted;
+    let bottom = a.y_nm.min(b.y_nm);
+    let wanted = Nm::from_mm_f64_rounded(y - SYMBOL_MODULE_MM).ok()?;
+    let shift = wanted.checked_sub(bottom).ok()?;
+    if shift < Nm::ZERO {
+        if a.y_nm <= b.y_nm {
+            a.y_nm = wanted;
         } else {
-            b[1] = wanted;
+            b.y_nm = wanted;
         }
         for graphic in &mut unit.graphics {
             if let Item::Text(text) = &mut graphic.item
-                && text.at[1] < bottom
+                && text.at.y_nm < bottom
+                && let Ok(y) = text.at.y_nm.checked_add(shift)
             {
-                text.at[1] += shift;
+                text.at.y_nm = y;
             }
         }
     }
@@ -2409,7 +2428,7 @@ fn grow_body_to(unit: &mut Unit, body: GraphicId, y: f64) -> Option<Bounds> {
         .iter_mut()
         .find(|g| g.id == body)
         .and_then(rect)
-        .and_then(|(a, b)| Bounds::of([*a, *b]))
+        .and_then(|(a, b)| Bounds::of([a.to_mm_f64(), b.to_mm_f64()]))
 }
 
 /// One draft finding, as the tests read the engine's checks.
@@ -2558,9 +2577,9 @@ mod draft_tests {
             .iter()
             .find_map(|g| match &g.item {
                 Item::Shape {
-                    shape: Shape::Rect { a, b, .. },
+                    shape: ShapeNm::Rect { a, b, .. },
                     ..
-                } => Bounds::of([*a, *b]),
+                } => Bounds::of([a.to_mm_f64(), b.to_mm_f64()]),
                 _ => None,
             })
             .ok_or(pcbcraft_core::Error::Limit("no body".into()))?;
@@ -2574,7 +2593,7 @@ mod draft_tests {
         // The component name stays below the grown body.
         assert!(unit.graphics.iter().any(|g| matches!(
             &g.item,
-            Item::Text(t) if t.content == TextContent::ComponentName && t.at[1] < body.min[1]
+            Item::Text(t) if t.content == TextContent::ComponentName && t.at.to_mm_f64()[1] < body.min[1]
         )));
         Ok(())
     }
@@ -3046,7 +3065,7 @@ mod draft_tests {
         let pin = set.symbol.units[0]
             .pin(TerminalId(1))
             .ok_or("pin 1 missing")?;
-        assert_eq!(pin.position, [-7.5, 2.5]);
+        assert_eq!(pin.position_mm(), [-7.5, 2.5]);
         Ok(())
     }
 

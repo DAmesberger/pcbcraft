@@ -221,7 +221,7 @@ fn row_pad(id: PadId, row: &PadRow, package: &PackageDefinition) -> Result<Pad> 
         paste: PasteRule::Inherit,
         vias: Vec::new(),
     };
-    pad.fold_rotation();
+    pad.fold_rotation()?;
     Ok(pad)
 }
 
@@ -426,7 +426,7 @@ pub fn build(
         graphics,
         unassigned,
         unlanded,
-        envelope_moved_to: placement.map(|p| p.translation),
+        envelope_moved_to: placement.map(|p| p.translation()),
         findings,
     };
     Ok(BuiltPads {

@@ -624,7 +624,11 @@ pub fn preview_package(form: &PackageForm) -> PackageDefinition {
             .saturating_add(1),
         terminals,
         form: form.clone(),
-        envelope: form.envelope().unwrap_or([1.0, 1.0, 1.0]),
+        envelope_nm: form
+            .envelope_nm()
+            .ok()
+            .flatten()
+            .unwrap_or([pcbcraft_core::library::package_form::typical_nm(1.0); 3]),
         ..PackageDefinition::default()
     }
 }
@@ -1933,6 +1937,7 @@ fn bounded_row(ui: &mut Ui, label: &str, value: &mut String, limit: usize) -> eg
 mod tests {
     use super::*;
     use crate::refusal::Refused;
+    use pcbcraft_core::library::package_form::{typical_nm as nm, typical_point as pt};
     use pcbcraft_core::library::{ChipForm, DefinitionMeta, LeadSides, NoLeadForm, SourceRevision};
     use pcbcraft_core::{LibraryId, PackageRowRef, Revision, SourceLineageId};
 
@@ -1941,20 +1946,20 @@ mod tests {
     use pcbcraft_core::library::ChipKind;
 
     fn chip(kind: ChipKind) -> PackageForm {
-        PackageForm::Chip(Box::new(ChipForm::new(kind, [1.6, 0.8, 0.45])))
+        PackageForm::Chip(Box::new(ChipForm::new(kind, [nm(1.6), nm(0.8), nm(0.45)])))
     }
 
     fn qfn16() -> PackageForm {
         PackageForm::NoLead(Box::new(NoLeadForm {
             sides: LeadSides::Four,
             terminals_per_side: [4, 4],
-            pitch: 0.5,
-            body_length: 3.0,
-            body_width: 3.0,
-            body_height: 0.9,
-            terminal_length: 0.4,
-            terminal_width: 0.25,
-            exposed_pad: Some([1.7, 1.7]),
+            pitch_nm: nm(0.5),
+            body_length_nm: nm(3.0),
+            body_width_nm: nm(3.0),
+            body_height_nm: nm(0.9),
+            terminal_length_nm: nm(0.4),
+            terminal_width_nm: nm(0.25),
+            exposed_pad: Some(pt([1.7, 1.7])),
         }))
     }
 
@@ -2135,7 +2140,7 @@ mod tests {
         assert_eq!(request.designator_prefix.as_deref(), Some("R"));
         let mut edited = row.values.clone();
         if let PackageForm::Chip(c) = &mut edited {
-            c.height = 0.55;
+            c.height_nm = nm(0.55);
         }
         let changed = new_request(source, &row, Some(&edited), SkeletonHint::Blank, "R", "  ");
         let Operation::Library(LibraryCommand::NewFromTemplate(request)) = changed else {
@@ -2433,7 +2438,7 @@ mod tests {
         );
         let mut bad = chip(ChipKind::Resistor);
         if let PackageForm::Chip(c) = &mut bad {
-            c.width = -1.0;
+            c.width_nm = nm(-1.0);
         }
         assert!(!bad.range_problems().is_empty());
         if let Some(open) = gallery.open.as_mut() {

@@ -22,11 +22,14 @@
 //! Values are the module datasheet's mechanical drawing and recommended
 //! land pattern; the typical values below are an original synthetic
 //! module in round numbers, not any product's.
-use super::{FORM_LENGTH_LIMIT_MM, FORM_LENGTH_MIN_MM, FamilyForm, MAX_FORM_LEADS};
+use super::{
+    FORM_LENGTH_LIMIT_NM, FamilyForm, MAX_FORM_LEADS, length_problem, typical_nm, typical_point,
+};
 use crate::geometry::Point3;
 use crate::ids::{PackageTerminalId, PadId};
 use crate::library::footprint::Pad;
 use crate::library::footprint_source::{PACKAGE_PREFIX, PackageValue, ParamName, ParamValue};
+use crate::units::{self, Angle, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -82,17 +85,19 @@ impl ModuleSide {
 }
 
 /// One row of edge pads.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(deny_unknown_fields)]
 pub struct PadRow {
     pub side: ModuleSide,
     pub count: u32,
     /// Centre of the row's first pad (lowest number) in the module frame.
-    pub first: [f64; 2],
+    pub first: PointNm,
 }
 
+mm_accessors!(PadRow { first: first => point });
+
 /// The bottom ground-pad array: `rows` × `cols` square-cornered pads at
-/// `pitch`, each `size`, in a grid turned `rotation_deg` counter-clockwise
+/// `pitch`, each `size`, in a grid turned `rotation_mdeg` counter-clockwise
 /// about `centre`, all landing one terminal numbered `number`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -100,75 +105,162 @@ pub struct GroundPads {
     pub rows: u32,
     pub cols: u32,
     /// Centre-to-centre pitch along the grid's x and y.
-    pub pitch: [f64; 2],
+    pub pitch: PointNm,
     /// Pad size along the grid's x and y.
-    pub size: [f64; 2],
-    pub centre: [f64; 2],
+    pub size: PointNm,
+    pub centre: PointNm,
     #[serde(default)]
-    pub rotation_deg: f64,
+    pub rotation_mdeg: Angle,
     /// The terminal's number (the datasheet's pin number, e.g. "95").
     pub number: String,
 }
 
-/// One single pad that is its own terminal (a corner ground pad).
+/// The wire form of [`GroundPads`]: millimetres and degrees. Written by
+/// hand, not derived, because the payloads name the turn `rotation_deg`
+/// (the derive would drop the suffix).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GroundPadsParams {
+    pub rows: u32,
+    pub cols: u32,
+    /// Centre-to-centre pitch along the grid's x and y.
+    pub pitch: units::PointMm,
+    /// Pad size along the grid's x and y.
+    pub size: units::PointMm,
+    pub centre: units::PointMm,
+    /// Counter-clockwise, in degrees.
+    #[serde(default)]
+    pub rotation_deg: units::Degrees,
+    /// The terminal's number (the datasheet's pin number, e.g. "95").
+    pub number: String,
+}
+
+impl From<GroundPads> for GroundPadsParams {
+    fn from(g: GroundPads) -> Self {
+        Self {
+            rows: g.rows,
+            cols: g.cols,
+            pitch: g.pitch.into(),
+            size: g.size.into(),
+            centre: g.centre.into(),
+            rotation_deg: g.rotation_mdeg.into(),
+            number: g.number,
+        }
+    }
+}
+
+impl From<GroundPadsParams> for GroundPads {
+    fn from(g: GroundPadsParams) -> Self {
+        Self {
+            rows: g.rows,
+            cols: g.cols,
+            pitch: g.pitch.into(),
+            size: g.size.into(),
+            centre: g.centre.into(),
+            rotation_mdeg: g.rotation_deg.into(),
+            number: g.number,
+        }
+    }
+}
+
+mm_accessors!(GroundPads {
+    pitch: pitch => point,
+    size: size => point,
+    centre: centre => point,
+});
+
+impl GroundPads {
+    /// The grid's turn in degrees, counter-clockwise.
+    pub fn rotation_deg(&self) -> f64 {
+        self.rotation_mdeg.to_degrees_f64()
+    }
+}
+
+/// One single pad that is its own terminal (a corner ground pad).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(deny_unknown_fields)]
 pub struct SinglePad {
     pub number: String,
-    pub centre: [f64; 2],
-    pub size: [f64; 2],
+    pub centre: PointNm,
+    pub size: PointNm,
 }
+
+mm_accessors!(SinglePad {
+    centre: centre => point,
+    size: size => point,
+});
 
 /// The host-board keep-out over the antenna: the antenna region (full
 /// width, `antenna_length` deep from the +y edge) grown beyond the
 /// module's −x, +x and +y edges. It applies to every copper layer and
 /// forbids fills, tracks and vias.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(deny_unknown_fields)]
 pub struct AntennaKeepout {
-    /// Growth beyond the −x edge, the +x edge and the +y edge, mm.
-    pub beyond: [f64; 3],
+    /// Growth beyond the −x edge, the +x edge and the +y edge.
+    pub beyond_nm: [Nm; 3],
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+mm_accessors!(AntennaKeepout { beyond: beyond_nm => triple });
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(deny_unknown_fields)]
 pub struct ModuleForm {
     /// Module outline across (x) and along (y; the antenna end is +y).
-    pub width: f64,
-    pub length: f64,
+    pub width_nm: Nm,
+    pub length_nm: Nm,
     /// Seated height: the board and the shield can.
-    pub height: f64,
+    pub height_nm: Nm,
     /// The module board's thickness.
-    pub pcb_thickness: f64,
+    pub pcb_thickness_nm: Nm,
     /// Depth of the antenna region from the +y edge; 0 for a module
     /// without an on-board antenna (connector or external antenna).
-    pub antenna_length: f64,
+    pub antenna_length_nm: Nm,
     /// Shield can size (x, y) and centre in the module frame.
-    pub can_size: [f64; 2],
-    pub can_centre: [f64; 2],
+    pub can_size: PointNm,
+    pub can_centre: PointNm,
     /// Pitch within every row.
-    pub pitch: f64,
+    pub pitch_nm: Nm,
     /// Row pad size: across its edge, along it.
-    pub pad_size: [f64; 2],
+    pub pad_size_nm: [Nm; 2],
     /// Pad rows in numbering order.
+    #[params]
     pub rows: Vec<PadRow>,
     /// Half-hole (castellation) diameter where a row pad meets the
     /// outline; 0 for LGA pads.
     #[serde(default)]
-    pub castellation: f64,
+    pub castellation_nm: Nm,
     /// The recommended host land of a row pad: its width along the edge
     /// and its growth beyond the module pad's outer and inner ends
     /// (0, 0 when the land pattern equals the module pads).
-    pub land_width: f64,
+    pub land_width_nm: Nm,
     #[serde(default)]
-    pub land_extend: [f64; 2],
+    pub land_extend_nm: [Nm; 2],
     #[serde(default)]
+    #[params]
     pub ground: Option<GroundPads>,
     #[serde(default)]
+    #[params]
     pub singles: Vec<SinglePad>,
     #[serde(default)]
+    #[params]
     pub keepout: Option<AntennaKeepout>,
 }
+
+mm_accessors!(ModuleForm {
+    width: width_nm => len,
+    length: length_nm => len,
+    height: height_nm => len,
+    pcb_thickness: pcb_thickness_nm => len,
+    antenna_length: antenna_length_nm => len,
+    can_size: can_size => point,
+    can_centre: can_centre => point,
+    pitch: pitch_nm => len,
+    pad_size: pad_size_nm => pair,
+    castellation: castellation_nm => len,
+    land_width: land_width_nm => len,
+    land_extend: land_extend_nm => pair,
+});
 
 impl ModuleForm {
     /// Original typical values (a synthetic 18 × 25 mm castellated module
@@ -176,48 +268,50 @@ impl ModuleForm {
     /// array and a 6 mm antenna end): the family's custom entry.
     pub fn typical() -> Self {
         let (hw, hl) = (9.0, 12.5);
+        let mm = typical_nm;
+        let at = typical_point;
         Self {
-            width: 18.0,
-            length: 25.0,
-            height: 3.2,
-            pcb_thickness: 0.8,
-            antenna_length: 6.0,
-            can_size: [16.6, 17.4],
-            can_centre: [0.0, -2.5],
-            pitch: 1.27,
-            pad_size: [1.2, 0.9],
+            width_nm: mm(18.0),
+            length_nm: mm(25.0),
+            height_nm: mm(3.2),
+            pcb_thickness_nm: mm(0.8),
+            antenna_length_nm: mm(6.0),
+            can_size: at([16.6, 17.4]),
+            can_centre: at([0.0, -2.5]),
+            pitch_nm: mm(1.27),
+            pad_size_nm: [mm(1.2), mm(0.9)],
             rows: vec![
                 PadRow {
                     side: ModuleSide::Left,
                     count: 14,
-                    first: [-hw + 0.6, hl - 7.0],
+                    first: at([-hw + 0.6, hl - 7.0]),
                 },
                 PadRow {
                     side: ModuleSide::Bottom,
                     count: 10,
-                    first: [-5.715, -hl + 0.6],
+                    first: at([-5.715, -hl + 0.6]),
                 },
                 PadRow {
                     side: ModuleSide::Right,
                     count: 14,
-                    first: [hw - 0.6, hl - 7.0 - 13.0 * 1.27],
+                    first: at([hw - 0.6, hl - 7.0 - 13.0 * 1.27]),
                 },
             ],
-            castellation: 0.6,
-            land_width: 0.9,
-            land_extend: [0.3, 0.0],
+            castellation_nm: mm(0.6),
+            land_width_nm: mm(0.9),
+            land_extend_nm: [mm(0.3), Nm::ZERO],
             ground: Some(GroundPads {
                 rows: 3,
                 cols: 3,
-                pitch: [1.6, 1.6],
-                size: [1.1, 1.1],
-                centre: [0.0, -2.0],
-                rotation_deg: 0.0,
+                pitch: at([1.6, 1.6]),
+                size: at([1.1, 1.1]),
+                centre: at([0.0, -2.0]),
+                rotation_mdeg: Angle::ZERO,
                 number: "39".into(),
             }),
             singles: Vec::new(),
             keepout: Some(AntennaKeepout {
-                beyond: [0.0, 0.0, 0.0],
+                beyond_nm: [Nm::ZERO; 3],
             }),
         }
     }
@@ -244,8 +338,11 @@ impl ModuleForm {
         for row in &self.rows {
             let d = row.side.step();
             for k in 0..row.count {
-                let t = f64::from(k) * self.pitch;
-                out.push((row.side, [row.first[0] + d[0] * t, row.first[1] + d[1] * t]));
+                let t = f64::from(k) * self.pitch();
+                out.push((
+                    row.side,
+                    [row.first()[0] + d[0] * t, row.first()[1] + d[1] * t],
+                ));
             }
         }
         out
@@ -253,7 +350,7 @@ impl ModuleForm {
 
     /// A row pad's size in the module frame (x, y).
     pub fn row_pad_size(&self, side: ModuleSide) -> [f64; 2] {
-        let [across, along] = self.pad_size;
+        let [across, along] = self.pad_size();
         if side.across_x() {
             [across, along]
         } else {
@@ -265,8 +362,8 @@ impl ModuleForm {
     /// order: the module pad grown by `land_extend` at its outer and inner
     /// ends, `land_width` wide.
     pub fn row_lands(&self) -> Vec<([f64; 2], [f64; 2])> {
-        let [outer, inner] = self.land_extend;
-        let across = self.pad_size[0] + outer + inner;
+        let [outer, inner] = self.land_extend();
+        let across = self.pad_size()[0] + outer + inner;
         let shift = (outer - inner) / 2.0;
         self.row_centres()
             .into_iter()
@@ -274,9 +371,9 @@ impl ModuleForm {
                 let n = side.outward();
                 let centre = [x + n[0] * shift, y + n[1] * shift];
                 let size = if side.across_x() {
-                    [across, self.land_width]
+                    [across, self.land_width()]
                 } else {
-                    [self.land_width, across]
+                    [self.land_width(), across]
                 };
                 (centre, size)
             })
@@ -295,13 +392,13 @@ impl ModuleForm {
         let along = |i: u32, n: u32, pitch: f64| {
             (f64::from(i) - f64::from(n.saturating_sub(1)) / 2.0) * pitch
         };
-        let (c, s) = crate::geometry::cos_sin(g.rotation_deg);
+        let (c, s) = crate::geometry::cos_sin(g.rotation_deg());
         (0..g.rows)
             .flat_map(|r| (0..g.cols).map(move |col| (r, col)))
             .map(|(r, col)| {
-                let u = along(col, g.cols, g.pitch[0]);
-                let v = -along(r, g.rows, g.pitch[1]);
-                [g.centre[0] + c * u - s * v, g.centre[1] + s * u + c * v]
+                let u = along(col, g.cols, g.pitch()[0]);
+                let v = -along(r, g.rows, g.pitch()[1]);
+                [g.centre()[0] + c * u - s * v, g.centre()[1] + s * u + c * v]
             })
             .collect()
     }
@@ -355,8 +452,8 @@ impl ModuleForm {
         if let Some(g) = &self.ground {
             let (t, number) = terminal.next()?;
             for centre in self.ground_centres() {
-                let mut pad = Pad::smd_rect(PadId(0), *t, number.clone(), centre, g.size);
-                pad.rotation_deg = pad.shape.canonical_rotation(g.rotation_deg);
+                let mut pad = Pad::smd_rect(PadId(0), *t, number.clone(), centre, g.size());
+                pad.rotation_deg = pad.shape.canonical_rotation(g.rotation_deg());
                 push(pad)?;
             }
         }
@@ -366,8 +463,8 @@ impl ModuleForm {
                 PadId(0),
                 *t,
                 number,
-                single.centre,
-                single.size,
+                single.centre(),
+                single.size(),
             ))?;
         }
         Some(pads)
@@ -377,26 +474,26 @@ impl ModuleForm {
     /// `None` without an antenna or a keep-out.
     pub fn antenna_keepout(&self) -> Option<[[f64; 2]; 2]> {
         let k = self.keepout?;
-        if self.antenna_length <= 0.0 {
+        if self.antenna_length() <= 0.0 {
             return None;
         }
-        let (hw, hl) = (self.width / 2.0, self.length / 2.0);
+        let (hw, hl) = (self.width() / 2.0, self.length() / 2.0);
         Some([
-            [-hw - k.beyond[0], hl - self.antenna_length],
-            [hw + k.beyond[1], hl + k.beyond[2]],
+            [-hw - k.beyond()[0], hl - self.antenna_length()],
+            [hw + k.beyond()[1], hl + k.beyond()[2]],
         ])
     }
 
     /// The shield can's height above the module board.
     pub fn can_height(&self) -> f64 {
-        self.height - self.pcb_thickness
+        self.height() - self.pcb_thickness()
     }
 
     /// Whether a row pad at `centre` on `side` reaches the outline (gets a
     /// castellation).
     pub fn at_edge(&self, side: ModuleSide, centre: [f64; 2]) -> bool {
-        let half = self.pad_size[0] / 2.0;
-        let (hw, hl) = (self.width / 2.0, self.length / 2.0);
+        let half = self.pad_size()[0] / 2.0;
+        let (hw, hl) = (self.width() / 2.0, self.length() / 2.0);
         let reach = match side {
             ModuleSide::Left => -centre[0] + half - hw,
             ModuleSide::Right => centre[0] + half - hw,
@@ -418,42 +515,42 @@ impl FamilyForm for ModuleForm {
     }
     fn lengths(&self) -> Vec<f64> {
         let mut v = vec![
-            self.width,
-            self.length,
-            self.height,
-            self.pcb_thickness,
-            self.antenna_length,
-            self.can_size[0],
-            self.can_size[1],
-            self.can_centre[0],
-            self.can_centre[1],
-            self.pitch,
-            self.pad_size[0],
-            self.pad_size[1],
-            self.castellation,
-            self.land_width,
-            self.land_extend[0],
-            self.land_extend[1],
+            self.width(),
+            self.length(),
+            self.height(),
+            self.pcb_thickness(),
+            self.antenna_length(),
+            self.can_size()[0],
+            self.can_size()[1],
+            self.can_centre()[0],
+            self.can_centre()[1],
+            self.pitch(),
+            self.pad_size()[0],
+            self.pad_size()[1],
+            self.castellation(),
+            self.land_width(),
+            self.land_extend()[0],
+            self.land_extend()[1],
         ];
         for r in &self.rows {
-            v.extend(r.first);
+            v.extend(r.first());
         }
         if let Some(g) = &self.ground {
-            v.extend(g.pitch);
-            v.extend(g.size);
-            v.extend(g.centre);
+            v.extend(g.pitch());
+            v.extend(g.size());
+            v.extend(g.centre());
         }
         for p in &self.singles {
-            v.extend(p.centre);
-            v.extend(p.size);
+            v.extend(p.centre());
+            v.extend(p.size());
         }
         if let Some(k) = &self.keepout {
-            v.extend(k.beyond);
+            v.extend(k.beyond());
         }
         v
     }
     fn envelope(&self) -> Option<[f64; 3]> {
-        Some([self.width, self.length, self.height])
+        Some([self.width(), self.length(), self.height()])
     }
     fn lead_count(&self) -> u64 {
         self.row_pads()
@@ -470,9 +567,13 @@ impl FamilyForm for ModuleForm {
             .map(|(_, [x, y])| [x, y, 0.0])
             .collect();
         if let Some(g) = &self.ground {
-            out.push([g.centre[0], g.centre[1], 0.0]);
+            out.push([g.centre()[0], g.centre()[1], 0.0]);
         }
-        out.extend(self.singles.iter().map(|p| [p.centre[0], p.centre[1], 0.0]));
+        out.extend(
+            self.singles
+                .iter()
+                .map(|p| [p.centre()[0], p.centre()[1], 0.0]),
+        );
         out
     }
     /// `W`, `Lm`, `A` (outline and seated height), `A1` (board), `e`
@@ -484,60 +585,56 @@ impl FamilyForm for ModuleForm {
             value: ParamValue::Length(v),
         };
         vec![
-            length("W", self.width),
-            length("Lm", self.length),
-            length("A", self.height),
-            length("A1", self.pcb_thickness),
-            length("e", self.pitch),
-            length("Lp", self.pad_size[0]),
-            length("b", self.pad_size[1]),
-            length("Lant", self.antenna_length),
+            length("W", self.width()),
+            length("Lm", self.length()),
+            length("A", self.height()),
+            length("A1", self.pcb_thickness()),
+            length("e", self.pitch()),
+            length("Lp", self.pad_size()[0]),
+            length("b", self.pad_size()[1]),
+            length("Lant", self.antenna_length()),
         ]
     }
     fn range_problems(&self) -> Vec<String> {
         let mut out = Vec::new();
-        let in_range =
-            |v: f64| v.is_finite() && (FORM_LENGTH_MIN_MM..=FORM_LENGTH_LIMIT_MM).contains(&v);
-        let mut positive = |name: &str, v: f64| {
-            if !in_range(v) {
-                out.push(format!(
-                    "{name} must be {FORM_LENGTH_MIN_MM}–{FORM_LENGTH_LIMIT_MM} mm (is {v})."
-                ));
-            }
-        };
-        positive("Module width", self.width);
-        positive("Module length", self.length);
-        positive("Height", self.height);
-        positive("Board thickness", self.pcb_thickness);
-        positive("Can width", self.can_size[0]);
-        positive("Can length", self.can_size[1]);
-        positive("Pitch", self.pitch);
-        positive("Pad length", self.pad_size[0]);
-        positive("Pad width", self.pad_size[1]);
-        positive("Land width", self.land_width);
+        let in_range = |v: Nm| length_problem("", v).is_none();
+        let in_range_point = |p: PointNm| in_range(p.x_nm) && in_range(p.y_nm);
+        let mut positive = |name: &str, v: Nm| out.extend(length_problem(name, v));
+        positive("Module width", self.width_nm);
+        positive("Module length", self.length_nm);
+        positive("Height", self.height_nm);
+        positive("Board thickness", self.pcb_thickness_nm);
+        positive("Can width", self.can_size.x_nm);
+        positive("Can length", self.can_size.y_nm);
+        positive("Pitch", self.pitch_nm);
+        positive("Pad length", self.pad_size_nm[0]);
+        positive("Pad width", self.pad_size_nm[1]);
+        positive("Land width", self.land_width_nm);
         let mut rule = |ok: bool, message: String| {
             if !ok {
                 out.push(message);
             }
         };
-        let finite = |v: f64| v.is_finite() && v.abs() <= FORM_LENGTH_LIMIT_MM;
+        let limit = FORM_LENGTH_LIMIT_NM.to_mm_f64();
+        let finite = |v: f64| v.is_finite() && v.abs() <= limit;
         if !self.lengths().into_iter().all(finite) {
             rule(false, "Every length must be finite.".into());
             return out;
         }
         rule(
-            self.antenna_length >= 0.0 && self.antenna_length < self.length,
+            self.antenna_length() >= 0.0 && self.antenna_length() < self.length(),
             "The antenna depth is 0 (no antenna) or positive and shorter than the module.".into(),
         );
         rule(
-            self.castellation >= 0.0 && self.castellation < self.pad_size[1],
+            self.castellation() >= 0.0 && self.castellation() < self.pad_size()[1],
             "The castellation diameter is 0 (LGA pads) or narrower than its pad.".into(),
         );
         rule(
-            self.height > self.pcb_thickness,
+            self.height() > self.pcb_thickness(),
             format!(
                 "The height ({}) must exceed the board thickness ({}) by the can.",
-                self.height, self.pcb_thickness
+                self.height(),
+                self.pcb_thickness()
             ),
         );
         rule(
@@ -552,16 +649,16 @@ impl FamilyForm for ModuleForm {
             format!("A module has 1–{MAX_FORM_LEADS} row pads and no empty row (has {n})."),
         );
         rule(
-            self.pad_size[1] < self.pitch && self.land_width < self.pitch,
+            self.pad_size()[1] < self.pitch() && self.land_width() < self.pitch(),
             "Row pads and lands must not touch (width < pitch).".into(),
         );
         rule(
-            self.land_extend
+            self.land_extend()
                 .iter()
-                .all(|v| *v > -self.pad_size[0] / 2.0),
+                .all(|v| *v > -self.pad_size()[0] / 2.0),
             "A land may shrink by less than half the pad length at each end.".into(),
         );
-        let (hw, hl) = (self.width / 2.0, self.length / 2.0);
+        let (hw, hl) = (self.width() / 2.0, self.length() / 2.0);
         let inside = |c: [f64; 2], s: [f64; 2]| {
             c[0] - s[0] / 2.0 >= -hw - EDGE_EPS_MM
                 && c[0] + s[0] / 2.0 <= hw + EDGE_EPS_MM
@@ -574,13 +671,13 @@ impl FamilyForm for ModuleForm {
                 .all(|(side, c)| inside(*c, self.row_pad_size(*side))),
             "Every row pad must lie within the module outline.".into(),
         );
-        let [cw, cl] = self.can_size;
-        let [cx, cy] = self.can_centre;
+        let [cw, cl] = self.can_size();
+        let [cx, cy] = self.can_centre();
         rule(
-            inside(self.can_centre, self.can_size)
-                && cy + cl / 2.0 <= hl - self.antenna_length + EDGE_EPS_MM
+            inside(self.can_centre(), self.can_size())
+                && cy + cl / 2.0 <= hl - self.antenna_length() + EDGE_EPS_MM
                 && cx.abs() <= hw
-                && cw <= self.width,
+                && cw <= self.width(),
             "The shield can must lie within the module, clear of the antenna region.".into(),
         );
         if let Some(g) = &self.ground {
@@ -590,14 +687,15 @@ impl FamilyForm for ModuleForm {
                 format!("A ground array has 1–{MAX_GROUND_PADS} pads."),
             );
             rule(
-                g.pitch.iter().chain(&g.size).all(|v| in_range(*v)) && g.rotation_deg.is_finite(),
+                in_range_point(g.pitch) && in_range_point(g.size),
                 "Ground pad sizes and pitches must be positive and finite.".into(),
             );
             rule(
-                (g.cols < 2 || g.size[0] < g.pitch[0]) && (g.rows < 2 || g.size[1] < g.pitch[1]),
+                (g.cols < 2 || g.size()[0] < g.pitch()[0])
+                    && (g.rows < 2 || g.size()[1] < g.pitch()[1]),
                 "Ground pads must not touch (size < pitch).".into(),
             );
-            let r = g.size[0].hypot(g.size[1]) / 2.0;
+            let r = g.size()[0].hypot(g.size()[1]) / 2.0;
             rule(
                 self.ground_centres()
                     .iter()
@@ -613,9 +711,7 @@ impl FamilyForm for ModuleForm {
         }
         rule(
             self.singles.iter().all(|p| {
-                valid_number(&p.number)
-                    && p.size.iter().all(|v| in_range(*v))
-                    && inside(p.centre, p.size)
+                valid_number(&p.number) && in_range_point(p.size) && inside(p.centre(), p.size())
             }),
             "Single pads need a number, a positive size and a place within the module.".into(),
         );
@@ -627,7 +723,7 @@ impl FamilyForm for ModuleForm {
         );
         if let Some(k) = &self.keepout {
             rule(
-                k.beyond.iter().all(|v| *v >= 0.0),
+                k.beyond().iter().all(|v| *v >= 0.0),
                 "Keep-out growth beyond the edges is 0 or positive.".into(),
             );
         }
@@ -638,6 +734,7 @@ impl FamilyForm for ModuleForm {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::support::{nm, pt};
 
     #[test]
     fn typical_values_are_in_range_and_count_their_terminals() {
@@ -677,7 +774,7 @@ mod tests {
     fn a_turned_ground_array_keeps_its_pitch() {
         let mut m = ModuleForm::typical();
         if let Some(g) = &mut m.ground {
-            g.rotation_deg = 45.0;
+            g.rotation_mdeg = Angle::new(45_000).unwrap_or_default();
         }
         let c = m.ground_centres();
         let d = (c[1][0] - c[0][0]).hypot(c[1][1] - c[0][1]);
@@ -691,17 +788,17 @@ mod tests {
         let mut m = ModuleForm::typical();
         assert_eq!(m.antenna_keepout(), Some([[-9.0, 6.5], [9.0, 12.5]]));
         m.keepout = Some(AntennaKeepout {
-            beyond: [1.0, 2.0, 3.0],
+            beyond_nm: [nm(1.0), nm(2.0), nm(3.0)],
         });
         assert_eq!(m.antenna_keepout(), Some([[-10.0, 6.5], [11.0, 15.5]]));
-        m.antenna_length = 0.0;
+        m.antenna_length_nm = Nm::ZERO;
         assert_eq!(m.antenna_keepout(), None);
     }
 
     #[test]
     fn inconsistent_values_are_named() {
         let mut m = ModuleForm::typical();
-        m.can_centre = [0.0, 3.0];
+        m.can_centre = pt([0.0, 3.0]);
         assert!(m.range_problems().iter().any(|p| p.contains("shield can")));
         let mut m = ModuleForm::typical();
         m.rows[0].count = 30;
@@ -711,7 +808,7 @@ mod tests {
                 .any(|p| p.contains("row pad must"))
         );
         let mut m = ModuleForm::typical();
-        m.height = 0.5;
+        m.height_nm = nm(0.5);
         assert!(!m.range_problems().is_empty());
         let mut m = ModuleForm::typical();
         if let Some(g) = &mut m.ground {

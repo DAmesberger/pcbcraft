@@ -90,6 +90,9 @@ pub enum InstanceCommand {
     #[serde(rename = "instance.set_marking")]
     SetMarking {
         instance: Id,
+        /// Sizes in millimetres, turns in degrees.
+        #[serde(with = "crate::library::marking::instance_mm")]
+        #[schemars(with = "crate::library::marking::InstanceMarkingParams")]
         marking: InstanceMarking,
     },
     /// Move or turn one footprint text on this instance only, such as a

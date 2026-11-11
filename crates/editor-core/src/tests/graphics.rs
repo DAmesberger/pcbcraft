@@ -33,12 +33,16 @@ fn two(name: &str) -> Spec<'_> {
 fn shape(id: u32, shape: Shape, width: f64, fill: Fill) -> Graphic {
     Graphic {
         id: GraphicId(id),
-        item: Item::Shape { shape, width, fill },
+        item: Item::Shape {
+            shape: shape_nm(shape),
+            width_nm: nm(width),
+            fill,
+        },
     }
 }
 
 fn literal(id: u32, text: &str) -> Graphic {
-    graphics::text(
+    text_graphic(
         GraphicId(id),
         TextContent::Literal(text.into()),
         [0.0, 0.0],
@@ -106,15 +110,18 @@ fn each_blocking_graphic_finding_names_its_graphic_and_blocks_publish() -> Resul
                 Fill::None,
             ),
         ),
+        // An arc of no sweep has no stored form (its ends would be one
+        // point, a whole turn); an arc's degenerate stored form is a radius
+        // below 0.01 mm.
         (
             "graphic.degenerate",
             shape(
                 10,
                 Shape::Arc {
                     center: [0.0, 0.0],
-                    radius: 1.0,
+                    radius: 0.005,
                     start_deg: 0.0,
-                    sweep_deg: 0.0,
+                    sweep_deg: 180.0,
                 },
                 0.25,
                 Fill::None,
@@ -205,7 +212,7 @@ fn pins_units_and_field_text_have_structural_rules() -> Result<()> {
     add_graphic(
         &mut engine,
         f.symbol,
-        graphics::text(
+        text_graphic(
             GraphicId(20),
             TextContent::Field(unknown),
             [0.0, 4.0],
@@ -263,12 +270,13 @@ fn a_retired_graphic_id_is_never_reused() -> Result<()> {
 fn drafts_beyond_the_persistence_bounds_are_refused_unchanged() -> Result<()> {
     let mut engine = Engine::default();
     let f = draft(&mut engine, &two("Pair"))?;
+    // Within the ±2 m a stored coordinate may take.
     let line = |i: u32| {
         shape(
             100 + i,
             Shape::Line {
                 a: [0.0, 0.0],
-                b: [1.0, f64::from(i)],
+                b: [1.0, f64::from(i) / 10.0],
             },
             0.25,
             Fill::None,
@@ -333,8 +341,8 @@ fn drafts_beyond_the_persistence_bounds_are_refused_unchanged() -> Result<()> {
             "invalid_input",
             Box::new(move |s| {
                 let mut g = line(1);
-                if let Item::Shape { width, .. } = &mut g.item {
-                    *width = 5.5;
+                if let Item::Shape { width_nm, .. } = &mut g.item {
+                    *width_nm = nm(5.5);
                 }
                 s.units[0].graphics = vec![g];
             }),
@@ -345,47 +353,53 @@ fn drafts_beyond_the_persistence_bounds_are_refused_unchanged() -> Result<()> {
             Box::new(|s| {
                 let mut g = literal(10, "R");
                 if let Item::Text(t) = &mut g.item {
-                    t.height = 0.05;
+                    t.height_nm = nm(0.05);
                 }
                 s.units[0].graphics = vec![g];
             }),
         ),
+        // An arc beyond one turn and a non-finite point cannot be stored
+        // in nanometres: an arc is its ends around a centre, and a stored
+        // coordinate is a bounded integer. Their stored counterparts are an
+        // arc whose ends are not on one circle and a negative pin length.
         (
-            "arc beyond one turn",
+            "arc ends off one circle",
             "invalid_input",
             Box::new(|s| {
-                s.units[0].graphics = vec![shape(
-                    10,
-                    Shape::Arc {
-                        center: [0.0, 0.0],
-                        radius: 1.0,
-                        start_deg: 0.0,
-                        sweep_deg: 400.0,
+                s.units[0].graphics = vec![Graphic {
+                    id: GraphicId(10),
+                    item: Item::Shape {
+                        shape: crate::library::ShapeNm::Arc {
+                            start: pt([1.0, 0.0]),
+                            end: pt([0.0, 1.5]),
+                            centre: pt([0.0, 0.0]),
+                            direction: crate::units::ArcDirection::CounterClockwise,
+                        },
+                        width_nm: nm(0.25),
+                        fill: Fill::None,
                     },
-                    0.25,
-                    Fill::None,
-                )]
+                }]
             }),
         ),
         (
-            "non-finite point",
+            "negative pin length",
             "invalid_input",
-            Box::new(|s| s.units[0].pins[0].position = [f64::NAN, 0.0]),
+            Box::new(|s| s.units[0].pins[0].length_nm = nm(-1.0)),
         ),
         (
             "pin too long",
             "invalid_input",
-            Box::new(|s| s.units[0].pins[0].length = 60.0),
+            Box::new(|s| s.units[0].pins[0].length_nm = nm(60.0)),
         ),
         (
             "pin text far away",
             "invalid_input",
-            Box::new(|s| s.units[0].pins[0].name.offset = -11.0),
+            Box::new(|s| s.units[0].pins[0].name.offset_nm = nm(-11.0)),
         ),
         (
             "pin text height",
             "invalid_input",
-            Box::new(|s| s.pin_text_height = 0.0),
+            Box::new(|s| s.pin_text_height_nm = nm(0.0)),
         ),
     ];
     for (why, code, breaker) in cases {
@@ -422,12 +436,12 @@ fn lint_is_advisory_draft_only_and_follows_the_grid() -> Result<()> {
 
     // Off the 2.5 mm grid: advisory, still publishable.
     with(&mut engine, f.symbol, symbol_body, |s| {
-        s.units[0].pins[1].position = [5.0, 1.0]
+        s.units[0].pins[1].position = pt([5.0, 1.0])
     })?;
     add_graphic(
         &mut engine,
         f.symbol,
-        graphics::text(
+        text_graphic(
             GraphicId(9),
             TextContent::Designator,
             [0.0, 4.0],
@@ -473,9 +487,10 @@ fn set_grid(engine: &mut Engine, symbol_mm: f64) -> Result<Outcome> {
         engine,
         Operation::Library(LibraryCommand::SetGrid {
             grid: Grid {
-                symbol_mm,
-                footprint_mm: 0.05,
-            },
+                symbol_nm: nm(symbol_mm),
+                footprint_nm: nm(0.05),
+            }
+            .into(),
         }),
     )
 }
@@ -503,9 +518,9 @@ fn set_grid_is_undoable_saved_and_never_moves_geometry() -> Result<()> {
         }
     );
     assert_eq!(body(&engine, f.symbol)?, before);
-    assert_eq!(engine.drafts().grid.symbol_mm, 2.0);
+    assert_eq!(engine.drafts().grid.symbol_mm(), 2.0);
     let reopened = Engine::from_file(format::decode(&format::encode(&engine.to_file())?)?)?;
-    assert_eq!(reopened.drafts().grid.symbol_mm, 2.0);
+    assert_eq!(reopened.drafts().grid.symbol_mm(), 2.0);
     engine.undo()?;
     assert_eq!(engine.drafts().grid, Grid::default());
     engine.redo()?;
@@ -534,8 +549,8 @@ fn sample_symbols_are_drawn_on_grid_and_publish_without_lint() -> Result<()> {
         binding: BindingRef::new(DefinitionId(5), Revision::FIRST),
     };
     for edits in [
-        samples::two_terminal("R", samples::Kind::RESISTOR, refs),
-        samples::two_terminal_header("J", samples::Kind::CONNECTOR, refs),
+        samples::two_terminal("R", samples::Kind::RESISTOR, refs)?,
+        samples::two_terminal_header("J", samples::Kind::CONNECTOR, refs)?,
     ] {
         let Some(symbol) = edits.iter().find_map(|e| match &e.definition {
             crate::library::Definition::Symbol(s) => Some(s.clone()),
@@ -553,10 +568,10 @@ fn sample_symbols_are_drawn_on_grid_and_publish_without_lint() -> Result<()> {
             let Item::Text(text) = &graphic.item else {
                 return Err(Error::Invalid(format!("{graphic:?}")));
             };
-            assert_eq!(text.height, 1.25, "{graphic:?}");
-            assert!(text.height < body_height);
+            assert_eq!(text.height_nm, nm(1.25), "{graphic:?}");
+            assert!(text.height_nm.to_mm_f64() < body_height);
         }
-        assert_eq!(symbol.pin_text_height, 1.0);
+        assert_eq!(symbol.pin_text_height_nm, nm(1.0));
         // A two-terminal passive hides its numbers too; the connector,
         // pins all on its left, shows them.
         let connector = unit
@@ -571,13 +586,13 @@ fn sample_symbols_are_drawn_on_grid_and_publish_without_lint() -> Result<()> {
         assert!(matches!(
             unit.graphics[0].item,
             Item::Shape {
-                shape: Shape::Rect { .. },
+                shape: crate::library::ShapeNm::Rect { .. },
                 fill: Fill::Body,
                 ..
             }
         ));
         for pin in &unit.pins {
-            assert!(graphics::on_grid(pin.position, 2.5));
+            assert!(graphics::on_grid(pin.position_mm(), 2.5));
             // Each pin ends on the body edge.
             let body = unit.graphics[0].item.bounds(TextMetric::default());
             let edge = pin.body_end();
@@ -641,7 +656,7 @@ fn unit_bounds_and_hits_use_hand_derived_extents() -> Result<()> {
 
 #[test]
 fn pin_decorations_shorten_the_stub_and_sit_on_the_body() {
-    let mut pin = Pin::new(TerminalId(1), [-5.0, 0.0], PinDirection::Right, 2.5);
+    let mut pin = Pin::new(TerminalId(1), pt([-5.0, 0.0]), PinDirection::Right, nm(2.5));
     assert_eq!(pin.line(), [[-5.0, 0.0], [-2.5, 0.0]]);
     assert!(pin.decoration_shapes().is_empty());
     pin.decorations = Decorations {
@@ -712,8 +727,8 @@ fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<(
                 id: GraphicId(5),
                 item: Item::Text(Text {
                     content: TextContent::Field(field),
-                    at: [0.0, -4.0],
-                    height: 1.5,
+                    at: pt([0.0, -4.0]),
+                    height_nm: nm(1.5),
                     rotation: Rotation::R0,
                     justify: Justify {
                         h: HAlign::Center,
@@ -868,7 +883,7 @@ fn named_part(engine: &mut Engine, spec: &Spec<'_>) -> Result<Fixture> {
     with(engine, fixture.symbol, symbol_body, |s| {
         let id = GraphicId(s.next_local);
         s.next_local += 1;
-        s.units[0].graphics.push(graphics::text(
+        s.units[0].graphics.push(text_graphic(
             id,
             TextContent::ComponentName,
             [0.0, -2.0],
@@ -1143,7 +1158,7 @@ fn symbols_round_trip_and_reject_unknown_shape_fields() -> Result<()> {
     let symbol = SymbolDefinition {
         component: DefinitionId(7),
         next_local: 9,
-        pin_text_height: 1.25,
+        pin_text_height_nm: nm(1.25),
         units: vec![Unit {
             id: UnitId(1),
             label: "A".into(),
@@ -1171,7 +1186,7 @@ fn symbols_round_trip_and_reject_unknown_shape_fields() -> Result<()> {
                     0.0,
                     Fill::Solid,
                 ),
-                graphics::text(
+                text_graphic(
                     GraphicId(5),
                     TextContent::UnitLabel,
                     [0.0, 0.0],
@@ -1180,9 +1195,9 @@ fn symbols_round_trip_and_reject_unknown_shape_fields() -> Result<()> {
             ],
             pins: vec![Pin::new(
                 TerminalId(1),
-                [-5.0, 0.0],
+                pt([-5.0, 0.0]),
                 PinDirection::Right,
-                2.5,
+                nm(2.5),
             )],
         }],
     };
@@ -1235,8 +1250,8 @@ fn full_limit_symbol(coordinate: impl Fn(usize) -> f64) -> SymbolDefinition {
             graphics.push(Graphic {
                 id: GraphicId(id),
                 item: Item::Shape {
-                    shape,
-                    width: 0.25,
+                    shape: shape_nm(shape),
+                    width_nm: nm(0.25),
                     fill: Fill::None,
                 },
             });
@@ -1250,9 +1265,9 @@ fn full_limit_symbol(coordinate: impl Fn(usize) -> f64) -> SymbolDefinition {
                 .map(|t| {
                     Pin::new(
                         TerminalId(u * 64 + t + 1),
-                        [coordinate(t as usize), coordinate(1)],
+                        pt([coordinate(t as usize), coordinate(1)]),
                         PinDirection::Right,
-                        2.5,
+                        nm(2.5),
                     )
                 })
                 .collect(),
@@ -1261,7 +1276,7 @@ fn full_limit_symbol(coordinate: impl Fn(usize) -> f64) -> SymbolDefinition {
     SymbolDefinition {
         component: DefinitionId(1),
         next_local: id + 1,
-        pin_text_height: 1.25,
+        pin_text_height_nm: nm(1.25),
         units,
     }
 }
@@ -1289,7 +1304,7 @@ fn encoded_symbol_sizes_fit_the_file_budget() -> Result<()> {
         footprint: FootprintRef::new(DefinitionId(4), Revision::FIRST),
         binding: BindingRef::new(DefinitionId(5), Revision::FIRST),
     };
-    let typical = samples::two_terminal("Resistor", samples::Kind::RESISTOR, refs)
+    let typical = samples::two_terminal("Resistor", samples::Kind::RESISTOR, refs)?
         .into_iter()
         .find_map(|e| match e.definition {
             crate::library::Definition::Symbol(s) => Some(s),
@@ -1329,9 +1344,9 @@ fn assert_names_fit(symbol: &SymbolDefinition, names: &[&str]) -> Result<()> {
     let unit = &symbol.units[0];
     let Some(body) = unit.graphics.iter().find_map(|g| match &g.item {
         Item::Shape {
-            shape: Shape::Rect { a, b, .. },
+            shape: crate::library::ShapeNm::Rect { a, b, .. },
             ..
-        } => Bounds::of([*a, *b]),
+        } => Bounds::of([a.to_mm_f64(), b.to_mm_f64()]),
         _ => None,
     }) else {
         return Err(Error::NotFound("no body".into()));
@@ -1344,12 +1359,12 @@ fn assert_names_fit(symbol: &SymbolDefinition, names: &[&str]) -> Result<()> {
             let (at, rotation, justify) = pin.name_anchor();
             let b = m.bounds(
                 at,
-                symbol.pin_text_height,
+                symbol.pin_text_height_nm.to_mm_f64(),
                 rotation,
                 justify,
                 TextSize::of(name, 1.6),
             );
-            (pin.position[1], b)
+            (pin.position_mm()[1], b)
         })
         .collect();
     for (y, b) in &boxes {
@@ -1364,7 +1379,7 @@ fn assert_names_fit(symbol: &SymbolDefinition, names: &[&str]) -> Result<()> {
         }
     }
     for pin in &unit.pins {
-        for c in pin.position {
+        for c in pin.position_mm() {
             let k = c / graphics::SYMBOL_MODULE_MM;
             assert!((k - k.round()).abs() < 1e-9, "off grid {c}");
         }
@@ -1379,7 +1394,7 @@ fn a_generated_ic_box_is_as_wide_as_its_pin_names() -> Result<()> {
         .enumerate()
         .map(|(k, name)| (TerminalId(k as u32 + 1), *name))
         .collect();
-    let symbol = samples::named_block_symbol(DefinitionId(7), &terminals);
+    let symbol = samples::named_block_symbol(DefinitionId(7), &terminals)?;
     assert_names_fit(&symbol, &MCU_PINS)
 }
 
@@ -1388,7 +1403,7 @@ fn an_existing_narrow_box_widens_when_its_pins_are_renamed() -> Result<()> {
     // Drawn while the pins were named by number, as a package template
     // draws it, then renamed by a pin table.
     let ids: Vec<TerminalId> = (1..=14).map(TerminalId).collect();
-    let mut symbol = samples::block_symbol(DefinitionId(7), &ids);
+    let mut symbol = samples::block_symbol(DefinitionId(7), &ids)?;
     let before = symbol.clone();
     let name = |t: TerminalId| MCU_PINS.get(t.0 as usize - 1).map(|n| (*n).to_owned());
     assert!(samples::fit_pin_names(&mut symbol, name));
@@ -1396,8 +1411,8 @@ fn an_existing_narrow_box_widens_when_its_pins_are_renamed() -> Result<()> {
     // Rows, pin lengths and graphics IDs are kept: only the width changed.
     for (a, b) in symbol.units[0].pins.iter().zip(&before.units[0].pins) {
         assert_eq!(
-            (a.terminal, a.position[1], a.length),
-            (b.terminal, b.position[1], b.length)
+            (a.terminal, a.position.y_nm, a.length_nm),
+            (b.terminal, b.position.y_nm, b.length_nm)
         );
     }
     // Fitting again changes nothing.
@@ -1421,7 +1436,7 @@ fn a_long_pin_number_stays_clear_of_the_body() {
         (PinDirection::Up, [0.0, -2.54]),
         (PinDirection::Down, [0.0, 2.54]),
     ] {
-        let pin = Pin::new(TerminalId(1), position, direction, 2.54);
+        let pin = Pin::new(TerminalId(1), pt(position), direction, nm(2.54));
         assert_eq!(pin.body_end(), body);
         let (at, rotation, justify) = pin.number_anchor(width);
         let d = direction.vector();

@@ -4,12 +4,12 @@
 //! and is interpreted by a [`FootprintEvaluator`](super::footprint_source::FootprintEvaluator)
 //! outside the core. Opening a project never needs the solver.
 use super::footprint_source::FootprintSource;
-use super::graphics::{FootprintGraphic, Polarity};
+use super::graphics::{FootprintGraphic, Polarity, ShapeNm};
 use super::package::PackageDefinition;
 use super::publish::{issue, object};
 use super::{Library, MAX_PADS};
-use crate::diagnostics::{Finding, ObjectRef};
-use crate::geometry::{Bounds, Point, Shape, finite_within, point_valid};
+use crate::diagnostics::{Finding, ObjectRef, Result};
+use crate::geometry::{Bounds, Point, finite_within, point_valid};
 use crate::ids::{DefinitionId, PackageRef, PackageTerminalId, PadId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -469,7 +469,7 @@ pub enum PasteRule {
 pub struct PasteWindow {
     /// Pad-local aperture identity, stable across re-evaluations.
     pub id: ApertureId,
-    pub shape: Shape,
+    pub shape: ShapeNm,
 }
 
 /// A pad-owned plated hole (thermal or via-in-pad), in the pad frame.
@@ -492,18 +492,34 @@ impl Pad {
     /// Normalise `rotation_deg` per shape symmetry without moving anything:
     /// the turn the fold removes is applied to the pad-frame features the
     /// shape symmetry does not cover (hole offset and slot angle, vias,
-    /// paste windows), so the pad's world geometry is unchanged.
-    pub fn fold_rotation(&mut self) {
+    /// paste windows), so the pad's world geometry is unchanged. A paste
+    /// window turned by other than quarter turns is stored rounded to
+    /// nanometres; an error, leaving the pad unchanged, when it leaves the
+    /// coordinate bound.
+    pub fn fold_rotation(&mut self) -> Result<()> {
         let canonical = self.shape.canonical_rotation(self.rotation_deg);
         let removed = (self.rotation_deg - canonical).rem_euclid(360.0);
-        self.rotation_deg = canonical;
         if removed.abs() < 1e-12 || (360.0 - removed).abs() < 1e-12 {
-            return;
+            self.rotation_deg = canonical;
+            return Ok(());
         }
         let turn = crate::geometry::Transform2 {
             rotation_deg: removed,
             ..crate::geometry::Transform2::IDENTITY
         };
+        let windows = match &self.paste {
+            PasteRule::Windows(windows) => windows
+                .iter()
+                .map(|w| {
+                    Ok(PasteWindow {
+                        id: w.id,
+                        shape: ShapeNm::from_mm_rounded(&w.shape.to_mm().transformed(&turn))?,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?,
+            _ => Vec::new(),
+        };
+        self.rotation_deg = canonical;
         if let Some(hole) = &mut self.hole {
             hole.offset = turn.apply(hole.offset);
             if let HoleShape::Slot { angle_deg, .. } = &mut hole.shape {
@@ -513,11 +529,10 @@ impl Pad {
         for via in &mut self.vias {
             via.at = turn.apply(via.at);
         }
-        if let PasteRule::Windows(windows) = &mut self.paste {
-            for w in windows.iter_mut() {
-                w.shape = w.shape.transformed(&turn);
-            }
+        if let PasteRule::Windows(w) = &mut self.paste {
+            *w = windows;
         }
+        Ok(())
     }
 
     /// A rectangular top-side SMD land with inherited mask and paste: the
@@ -571,7 +586,7 @@ impl Pad {
             }
             && match &self.paste {
                 PasteRule::Reduction(v) => v.is_finite(),
-                PasteRule::Windows(w) => w.iter().all(|w| w.shape.finite()),
+                PasteRule::Windows(w) => w.iter().all(|w| w.shape.valid()),
                 _ => true,
             }
             && self

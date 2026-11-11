@@ -14,7 +14,7 @@
 use crate::diagnostics::{Error, Result};
 use crate::ids::MAX_LABEL;
 use crate::library::MAX_NOTE;
-use crate::library::package_form::PackageForm;
+use crate::library::package_form::{PackageForm, PackageFormParams};
 use crate::library::part::{Basis, Provenance};
 use crate::library::symbol_style::SymbolKind;
 use crate::library::templates::catalog::{
@@ -247,7 +247,9 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
                 "{context}: at most {MAX_ROW_ALIASES} aliases of 1–{MAX_ALIAS} bytes"
             )));
         }
-        let values: PackageForm = typed(row.get("values"), &format!("{context}: values"))?;
+        // The tables are hand-edited millimetres: the form's wire form.
+        let values: PackageForm =
+            typed::<PackageFormParams>(row.get("values"), &format!("{context}: values"))?.into();
         if FamilyKind::of(&values) != Some(family) {
             return Err(invalid(format!(
                 "{context}: the values are not of the {family_text} family"

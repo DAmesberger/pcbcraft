@@ -707,7 +707,8 @@ mod tests {
             .cloned()
             .ok_or("demo package draft")?;
         if let Definition::Package(package) = &mut draft.definition {
-            package.envelope[0] += 1.0;
+            package.envelope_nm[0] =
+                package.envelope_nm[0].checked_add(pcbcraft_core::units::Nm::new(1_000_000)?)?;
         }
         engine.apply(
             engine.revision(),
@@ -789,7 +790,8 @@ mod tests {
     fn edited_package_previews_get_new_keys() -> Result<(), Box<dyn std::error::Error>> {
         let mut package = demo_package()?;
         let key = ModelKey::package(&package);
-        package.envelope[0] += 1.0;
+        package.envelope_nm[0] =
+            package.envelope_nm[0].checked_add(pcbcraft_core::units::Nm::new(1_000_000)?)?;
         assert_ne!(key, ModelKey::package(&package));
         Ok(())
     }

@@ -8,7 +8,7 @@ use super::model_place::{self, PointToPoint};
 use crate::kit::{self, Tone};
 use egui::Ui;
 use pcbcraft_core::library::package_fit;
-use pcbcraft_core::library::{Axis, PackageEdit, QuickAction};
+use pcbcraft_core::library::{Axis, ModelPlacement, PackageEdit, QuickAction};
 use pcbcraft_core::{Engine, Operation};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
@@ -64,17 +64,21 @@ impl PartEditor {
             false,
             &summary,
             |ui| {
-                let mut values = tab.shown(&package);
+                let shown = tab.shown(&package);
+                let (mut translation, mut rotation) = (shown.translation(), shown.rotation_deg());
                 let mut changed = false;
                 for (index, label) in ["X", "Y", "Z"].into_iter().enumerate() {
-                    changed |=
-                        kit::number_row(ui, label, &mut values.translation[index], "mm", LENGTH);
+                    changed |= kit::number_row(ui, label, &mut translation[index], "mm", LENGTH);
                 }
                 for (index, label) in ["Rotate X", "Rotate Y", "Rotate Z"].into_iter().enumerate() {
-                    changed |=
-                        kit::number_row(ui, label, &mut values.rotation_deg[index], "°", ANGLE);
+                    changed |= kit::number_row(ui, label, &mut rotation[index], "°", ANGLE);
                 }
-                if changed && tab.drag.is_none() {
+                // The stored placement takes the rows through the one
+                // crossing; a value it refuses changes nothing.
+                if changed
+                    && tab.drag.is_none()
+                    && let Ok(values) = ModelPlacement::from_mm(translation, rotation)
+                {
                     tab.fields = Some(values);
                 }
                 kit::hint(
@@ -206,24 +210,24 @@ impl PartEditor {
 
 /// The folded Model offset's one line: "0, 0, 0 mm · 0°", or the three
 /// turns when any is set ("1, 0, 0.5 mm · 90°, 0°, 0°").
-fn offset_summary(values: &pcbcraft_core::library::ModelPlacement) -> String {
+fn offset_summary(values: &ModelPlacement) -> String {
     let join = |v: &[f64; 3]| {
         v.iter()
             .map(|x| kit::number_text(*x))
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let turns = if values.rotation_deg.iter().all(|r| *r == 0.0) {
+    let turns = if values.rotation_deg().iter().all(|r| *r == 0.0) {
         "0°".to_owned()
     } else {
         values
-            .rotation_deg
+            .rotation_deg()
             .iter()
             .map(|r| format!("{}°", kit::number_text(*r)))
             .collect::<Vec<_>>()
             .join(", ")
     };
-    format!("{} mm · {turns}", join(&values.translation))
+    format!("{} mm · {turns}", join(&values.translation()))
 }
 
 /// Plain guidance for a fit that cannot run, without the rule code.

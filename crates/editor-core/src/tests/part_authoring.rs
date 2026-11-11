@@ -15,6 +15,7 @@ use crate::library::{
     Definition, FootprintDefinition, HoleShape, ModelPlacement, PackageDefinition, PackageEdit,
     PackageForm, PadKind, QuickAction, SymbolDefinition, standard_fields,
 };
+use crate::tests::support::{nm, pt};
 use crate::{
     Engine, Error, FieldRef, LibraryCommand, Operation, Outcome, Query, QueryResult, Result,
     TerminalId, UnitId,
@@ -66,7 +67,7 @@ fn connector(engine: &mut Engine) -> Result<Fixture> {
     };
     let fixture = support::draft(engine, &spec)?;
     let mut sized = package(engine, fixture.package)?;
-    sized.envelope = [9.0, 7.0, 3.2];
+    sized.envelope_nm = [nm(9.0), nm(7.0), nm(3.2)];
     let meta = support::meta("Receptacle package");
     support::edit(
         engine,
@@ -147,7 +148,7 @@ fn courtyard(footprint: &FootprintDefinition) -> Result<Bounds> {
         .iter()
         .find(|g| g.layer == DrawingLayer::Courtyard)
         .and_then(|g| match &g.item {
-            Item::Shape { shape, .. } => Some(shape.bounds(0.0)),
+            Item::Shape { shape, .. } => Some(shape.to_mm().bounds(0.0)),
             Item::Text(_) => None,
         })
         .ok_or_else(|| Error::NotFound("no courtyard".into()))
@@ -199,7 +200,7 @@ fn a_pad_table_makes_the_footprint_and_one_undo_step() -> Result<()> {
     // Everything spans x ±4.82 (slot land 4.32 + 0.5) and y −0.6 (land
     // 1.2 / 2) to 3.0 (slot 2 + land 1), so the middle is (0, 1.2).
     assert_eq!(report.envelope_moved_to, Some([0.0, 1.2, 0.0]));
-    assert_eq!(package_now.placement.translation, [0.0, 1.2, 0.0]);
+    assert_eq!(package_now.placement.translation(), [0.0, 1.2, 0.0]);
     // The 9 × 7 body there is x ±4.5, y −2.3 to 4.7. The courtyard adds
     // 0.25 and rounds out to 0.05: x ±5.10 from the land, y −2.55 to 4.95.
     let yard = courtyard(&built)?;
@@ -382,15 +383,12 @@ fn a_set_placement_stays_and_a_plain_edit_is_stored_as_given() -> Result<()> {
         },
     )?;
     assert_eq!(
-        package(&engine, f.package)?.placement.translation,
+        package(&engine, f.package)?.placement.translation(),
         [11.0, 0.0, 0.0]
     );
 
     // A placement someone set stays when a table rebuilds the pads.
-    let set = ModelPlacement {
-        translation: [1.0, 0.0, 0.0],
-        rotation_deg: [0.0; 3],
-    };
+    let set = ModelPlacement::from_mm([1.0, 0.0, 0.0], [0.0; 3])?;
     library(
         &mut engine,
         LibraryCommand::EditPackage {
@@ -420,9 +418,12 @@ fn a_typed_form_or_another_model_keeps_its_placement() -> Result<()> {
     };
     let generic = PackageDefinition::default();
     let moved = envelope_default(&generic, &footprint)?.ok_or(Error::NotFound("moved".into()))?;
-    assert_eq!(moved.translation, [5.0, 0.0, 0.0]);
+    assert_eq!(moved.translation(), [5.0, 0.0, 0.0]);
     let typed = PackageDefinition {
-        form: PackageForm::Chip(Box::new(ChipForm::new(ChipKind::Resistor, [1.0, 0.5, 0.5]))),
+        form: PackageForm::Chip(Box::new(ChipForm::new(
+            ChipKind::Resistor,
+            [nm(1.0), nm(0.5), nm(0.5)],
+        ))),
         ..PackageDefinition::default()
     };
     assert_eq!(envelope_default(&typed, &footprint)?, None);
@@ -457,13 +458,13 @@ fn a_datum_offset_moves_the_body_to_the_same_place() -> Result<()> {
     };
     footprint.datum.offset = [1.0, 1.0];
     let package = PackageDefinition {
-        envelope: [2.0, 2.0, 1.0],
+        envelope_nm: [nm(2.0), nm(2.0), nm(1.0)],
         ..PackageDefinition::default()
     };
     let placement =
         envelope_default(&package, &footprint)?.ok_or(Error::NotFound("moved".into()))?;
     // In the datum frame the pad centre is (5 − 1, 2 − 1).
-    assert_eq!(placement.translation, [4.0, 1.0, 0.0]);
+    assert_eq!(placement.translation(), [4.0, 1.0, 0.0]);
     // Through the one frame the outline is centred on the pad again.
     let mut placed = package.clone();
     placed.placement = placement;
@@ -623,7 +624,7 @@ fn a_symbol_is_redrawn_as_another_kind_keeping_its_unit() -> Result<()> {
     assert_eq!(unit.label, "A");
     assert!(!unit.graphics.is_empty());
     // A two-terminal symbol ends at x = ±5; terminal 1 (the cathode) first.
-    let at = |t: u32| unit.pin(TerminalId(t)).map(|p| p.position);
+    let at = |t: u32| unit.pin(TerminalId(t)).map(|p| p.position_mm());
     let (one, two) = (at(1).unwrap_or_default(), at(2).unwrap_or_default());
     assert_eq!([one[0].abs(), two[0].abs()], [5.0, 5.0]);
     assert!(one[0] != two[0]);
@@ -644,8 +645,8 @@ fn a_symbol_is_redrawn_as_another_kind_keeping_its_unit() -> Result<()> {
         .units
         .first()
         .ok_or(Error::NotFound("unit".into()))?;
-    assert_eq!(unit2.pin(TerminalId(2)).map(|p| p.position), Some(one));
-    assert_eq!(unit2.pin(TerminalId(1)).map(|p| p.position), Some(two));
+    assert_eq!(unit2.pin(TerminalId(2)).map(|p| p.position_mm()), Some(one));
+    assert_eq!(unit2.pin(TerminalId(1)).map(|p| p.position_mm()), Some(two));
 
     // Back to a box, any count.
     restyle(&mut engine, f.symbol, SymbolKind::IcBox, None)?;
@@ -730,8 +731,8 @@ fn a_symbol_of_several_units_is_not_redrawn() -> Result<()> {
 fn dbz() -> TabbedForm {
     let mut form = TabbedForm::typical();
     form.lands = TabbedLands {
-        size: Some([0.6, 1.3]),
-        span: Some(2.1),
+        size: Some(pt([0.6, 1.3])),
+        span_nm: Some(nm(2.1)),
         tab_size: None,
     };
     form
@@ -789,19 +790,19 @@ fn a_tab_keeps_its_place_and_takes_its_own_land() -> Result<()> {
     use crate::library::samples::form_lands;
     let mut form = TabbedForm {
         leads_per_side: [3, 0],
-        pitch: 2.3,
-        body_length: 6.5,
-        body_width: 3.5,
-        body_height: 1.6,
-        standoff: 0.05,
-        span: 7.0,
-        lead_width: 0.7,
-        lead_thickness: 0.25,
-        foot_length: 0.9,
+        pitch_nm: nm(2.3),
+        body_length_nm: nm(6.5),
+        body_width_nm: nm(3.5),
+        body_height_nm: nm(1.6),
+        standoff_nm: nm(0.05),
+        span_nm: nm(7.0),
+        lead_width_nm: nm(0.7),
+        lead_thickness_nm: nm(0.25),
+        foot_length_nm: nm(0.9),
         tab: Some(Tab {
-            width: 3.0,
-            length: 0.9,
-            flange: None,
+            width_nm: nm(3.0),
+            length_nm: nm(0.9),
+            flange_nm: None,
         }),
         lead_step: [1, 1],
         lands: TabbedLands::default(),
@@ -810,9 +811,9 @@ fn a_tab_keeps_its_place_and_takes_its_own_land() -> Result<()> {
     let estimate = form_lands(&PackageForm::Tabbed(Box::new(form)), &ids)
         .ok_or(Error::NotFound("lands".into()))?;
     form.lands = TabbedLands {
-        size: Some([1.0, 2.0]),
-        span: Some(6.0),
-        tab_size: Some([3.5, 2.5]),
+        size: Some(pt([1.0, 2.0])),
+        span_nm: Some(nm(6.0)),
+        tab_size: Some(pt([3.5, 2.5])),
     };
     let cited = form_lands(&PackageForm::Tabbed(Box::new(form)), &ids)
         .ok_or(Error::NotFound("lands".into()))?;
@@ -834,14 +835,14 @@ fn bad_land_values_are_the_form_s_range_problems() {
             .range_problems()
             .is_empty()
     );
-    form.lands.size = Some([0.0, 1.3]);
+    form.lands.size = Some(pt([0.0, 1.3]));
     assert!(
         !PackageForm::Tabbed(Box::new(form))
             .range_problems()
             .is_empty()
     );
     form = dbz();
-    form.lands.span = Some(f64::NAN);
+    form.lands.span_nm = Some(nm(f64::NAN));
     assert!(
         !PackageForm::Tabbed(Box::new(form))
             .range_problems()

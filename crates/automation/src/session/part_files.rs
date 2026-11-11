@@ -272,7 +272,7 @@ pub fn use_part_file_operation(
     let file = &request.file;
     package_draft(engine, request.package)?;
     let part = checked(&file.bytes, &request.values)?;
-    let derived = part_file::derived(&part);
+    let derived = part_file::derived(&part)?;
     let hash = asset_hash(&file.bytes);
     let operation = match model_with(engine, hash) {
         Some(model) => Operation::Library(LibraryCommand::EditPackage {
@@ -311,7 +311,7 @@ pub fn use_part_file_operation(
                     file_name: file.file_name.clone(),
                 },
                 format: ModelFormat::Solidcraft,
-                bounds_mm: as_is.bounds_mm,
+                bounds_nm: pcbcraft_core::library::model3d::bounds_nm(as_is.bounds_mm)?,
                 provenance: ModelProvenance {
                     redistribution: if file.builtin {
                         Redistribution::Permitted
@@ -380,7 +380,7 @@ pub fn set_part_values_operation(
             PartFileModel {
                 model: current.model,
                 values: values.clone(),
-                derived: part_file::derived(&part),
+                derived: part_file::derived(&part)?,
             },
         )))],
     });

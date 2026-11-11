@@ -3699,6 +3699,7 @@ name = "pcbcraft-core"
 version = "0.1.0"
 dependencies = [
  "i_overlay",
+ "pcbcraft-units-derive",
  "qrcodegen",
  "rhai",
  "rqrr",
@@ -3756,6 +3757,15 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "pcbcraft-units-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -6978,6 +6988,8 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "pcbcraft-core",
+ "pcbcraft-io",
  "proc-macro2",
  "serde_json",
  "syn 2.0.119",

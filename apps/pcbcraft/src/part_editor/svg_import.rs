@@ -280,8 +280,8 @@ impl super::PartEditor {
             Some(Event::Place(placement)) => {
                 let grid = engine.drafts().grid;
                 let step = match placement.target {
-                    Target::Symbol => grid.symbol_mm,
-                    Target::Footprint => grid.footprint_mm,
+                    Target::Symbol => grid.symbol_mm(),
+                    Target::Footprint => grid.footprint_mm(),
                 };
                 self.place_svg(placement, step);
             }
