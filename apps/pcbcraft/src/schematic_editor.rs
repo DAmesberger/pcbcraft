@@ -3609,8 +3609,10 @@ mod tests {
         let count = engine.project().sheets.list.len();
         let ctx = egui::Context::default();
         fonts::setup_bundled_fonts(&ctx);
-        let mut editor = SchematicEditor::default();
-        editor.tool = Tool::SheetSymbol;
+        let mut editor = SchematicEditor {
+            tool: Tool::SheetSymbol,
+            ..Default::default()
+        };
         let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
         let next = format!("Sheet {}", count + 1);
         let shown = shown(&output);
