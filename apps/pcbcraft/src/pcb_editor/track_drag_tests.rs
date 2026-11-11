@@ -197,33 +197,38 @@ fn dragging_one_half_of_the_usb_pair_previews_and_moves_both() -> TestResult {
     );
     let mut engine = Engine::demo()?;
     engine.replace_document(pcbcraft_io::read_project(std::path::Path::new(path))?)?;
-    let run = |x: f64| {
-        engine
-            .project()
-            .tracks
+    // Each half's long run below U3: the longest track on its net.
+    let run = |name: &str| {
+        let p = engine.project();
+        let net = p.nets.iter().find(|n| n.name == name).ok_or("no net")?;
+        let length =
+            |t: &&pcbcraft_core::model::Track| (t.end[0] - t.start[0]).hypot(t.end[1] - t.start[1]);
+        p.tracks
             .iter()
-            .find(|t| (t.start[0] - x).abs() < 0.01 && (t.start[1] - 14.8).abs() < 1e-6)
-            .map(|t| t.id)
+            .filter(|t| t.net == net.id)
+            .max_by(|a, b| length(a).total_cmp(&length(b)))
+            .cloned()
             .ok_or("no run")
     };
-    let (dn, dp) = (run(19.79)?, run(20.21)?);
+    let (dn_run, dp) = (run("USB_DN")?, run("USB_DP")?.id);
+    let (dn, x, y) = (dn_run.id, dn_run.start[0], 21.0);
     let mut canvas = Canvas::new();
     let mut editor = PcbEditor::default();
     let none = egui::Modifiers::NONE;
     canvas.frame(&mut editor, &engine, vec![], none);
-    let start = [19.79, 21.0];
+    let start = [x, y];
     let hover = moved(&editor, &engine, start);
     canvas.frame(&mut editor, &engine, vec![hover], none);
     let press = button(&editor, &engine, start, true);
     canvas.frame(&mut editor, &engine, vec![press], none);
-    for x in [19.5, 19.0, 18.79] {
-        let event = moved(&editor, &engine, [x, 21.0]);
+    for dx in [0.29, 0.79, 1.0] {
+        let event = moved(&editor, &engine, [x - dx, y]);
         send(&mut canvas, &mut editor, &engine, event);
     }
     assert_eq!(editor.track_drag.as_ref().map(|d| d.track), Some(dn));
     assert!(editor.shoved.0.contains(&dn), "{:?}", editor.shoved.0);
     assert!(editor.shoved.0.contains(&dp), "{:?}", editor.shoved.0);
-    let event = button(&editor, &engine, [18.79, 21.0], false);
+    let event = button(&editor, &engine, [x - 1.0, y], false);
     let release = send(&mut canvas, &mut editor, &engine, event);
     let sent = edits(&release)?;
     for id in [dn, dp] {

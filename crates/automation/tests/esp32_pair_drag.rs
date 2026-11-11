@@ -27,34 +27,61 @@ fn example() -> Fallible<Engine> {
     Ok(Engine::from_file(pcbcraft_io::read_project(&path)?)?)
 }
 
-/// The USB pair's long coupled runs below U3: USB_DN's at x 19.79 and
-/// USB_DP's at x 20.21, by their start points.
-fn long_runs(engine: &Engine) -> Fallible<(Track, Track)> {
-    let at = |x: f64, y: f64| -> Fallible<Track> {
-        Ok(engine
-            .project()
-            .tracks
-            .iter()
-            .find(|t| (t.start[0] - x).abs() < 0.01 && (t.start[1] - y).abs() < 0.01)
-            .cloned()
-            .ok_or("no such track")?)
-    };
-    Ok((at(19.79, 14.8)?, at(20.21, 14.8)?))
+/// The tracks of the net named `name`.
+fn net_tracks(engine: &Engine, name: &str) -> Fallible<Vec<Track>> {
+    let p = engine.project();
+    let net = p
+        .nets
+        .iter()
+        .find(|n| n.name == name)
+        .ok_or("no such net")?;
+    Ok(p.tracks
+        .iter()
+        .filter(|t| t.net == net.id)
+        .cloned()
+        .collect())
 }
 
-/// The short coupled runs above U1: USB_DN's at x 24.89 and USB_DP's at
-/// x 25.31, from y 32.0–32.2 to 33.
-fn short_runs(engine: &Engine) -> Fallible<(Track, Track)> {
-    let at = |x: f64| -> Fallible<Track> {
-        Ok(engine
-            .project()
-            .tracks
+/// A net's long coupled run below U3: its longest track, a +y run.
+fn long_run(engine: &Engine, name: &str) -> Fallible<Track> {
+    let length = |t: &Track| (t.end[0] - t.start[0]).hypot(t.end[1] - t.start[1]);
+    let run = net_tracks(engine, name)?
+        .into_iter()
+        .max_by(|a, b| length(a).total_cmp(&length(b)))
+        .ok_or("no such track")?;
+    plus_y(name, run)
+}
+
+/// A net's short coupled run above U1: two tracks on from its long run,
+/// past the diagonal between them, a +y run.
+fn short_run(engine: &Engine, name: &str) -> Fallible<Track> {
+    let tracks = net_tracks(engine, name)?;
+    let next = |t: &Track| -> Fallible<Track> {
+        Ok(tracks
             .iter()
-            .find(|t| (t.start[0] - x).abs() < 0.01 && (t.end[1] - 33.0).abs() < 1e-6)
+            .find(|n| n.id != t.id && n.start == t.end)
             .cloned()
             .ok_or("no such track")?)
     };
-    Ok((at(24.89)?, at(25.31)?))
+    plus_y(name, next(&next(&long_run(engine, name)?)?)?)
+}
+
+/// `run`, checked to be a run along +y (the drags below move it in x).
+fn plus_y(name: &str, run: Track) -> Fallible<Track> {
+    if (run.start[0] - run.end[0]).abs() > 1e-9 || run.end[1] <= run.start[1] {
+        return Err(format!("{name}'s run is not along +y: {run:?}").into());
+    }
+    Ok(run)
+}
+
+/// The USB pair's long coupled runs below U3, USB_DN's and USB_DP's.
+fn long_runs(engine: &Engine) -> Fallible<(Track, Track)> {
+    Ok((long_run(engine, "USB_DN")?, long_run(engine, "USB_DP")?))
+}
+
+/// The USB pair's short coupled runs above U1, USB_DN's and USB_DP's.
+fn short_runs(engine: &Engine) -> Fallible<(Track, Track)> {
+    Ok((short_run(engine, "USB_DN")?, short_run(engine, "USB_DP")?))
 }
 
 fn drag(track: Id, offset: f64) -> TrackDragRequest {
