@@ -1007,3 +1007,37 @@ fn power_and_ground_pins_read_sensibly() -> TestResult {
     );
     Ok(())
 }
+
+/// A passive pin's card offers no GPIO port or pin options; a digital
+/// bidirectional function brings them back.
+#[test]
+fn gpio_options_show_only_for_a_gpio_pin() -> TestResult {
+    use pcbcraft_core::functions::{Direction, SignalKind};
+    let mut h = Harness::new()?;
+    let first = *h.terminals()?.first().ok_or("no terminal")?;
+    h.editor.pins.subject = Some(Subject::Terminal(first));
+    let gpio_rows = ["GPIO port", "Pull-up", "Speeds", "Schmitt trigger"];
+    let shown = h.texts();
+    assert!(shown.iter().any(|t| t == "Class"), "terminal card shown");
+    for row in gpio_rows {
+        assert!(!shown.iter().any(|t| t == row), "{row} on a passive pin");
+    }
+    let function = h
+        .component_mut()?
+        .terminals
+        .iter_mut()
+        .find(|t| t.id == first)
+        .and_then(|t| match &mut t.class {
+            pcbcraft_core::library::TerminalClass::Electrical(f) => f.functions.first_mut(),
+            _ => None,
+        })
+        .ok_or("no function")?;
+    assert_eq!(function.direction, Direction::Passive);
+    function.direction = Direction::Bidirectional;
+    function.signal = SignalKind::Digital;
+    let shown = h.texts();
+    for row in gpio_rows {
+        assert!(shown.iter().any(|t| t == row), "{row} on a GPIO pin");
+    }
+    Ok(())
+}
