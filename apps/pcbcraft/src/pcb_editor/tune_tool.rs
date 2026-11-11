@@ -161,9 +161,28 @@ impl PcbEditor {
         });
     }
 
-    /// A click: tune the hovered segment as one `layout.tune_length`.
-    pub(super) fn tune_click(&mut self, project: &Project, revision: u64) -> Option<Operation> {
+    /// A click: tune the hovered segment as one `layout.tune_length`. A net
+    /// already at its target has nothing to add: the click says so as
+    /// information, not as a refused edit.
+    pub(super) fn tune_click(
+        &mut self,
+        ctx: &egui::Context,
+        project: &Project,
+        revision: u64,
+    ) -> Option<Operation> {
         let request = self.tune_request(project, revision)?;
+        if let TuneAmount::Target { mm } = request.amount
+            && let Some((net, length_now, _)) = self.tune_net(project, revision)
+            && mm - length_now <= meander::LENGTH_TOLERANCE_MM
+        {
+            kit::toast::post(
+                ctx,
+                kit::severity::Level::Info,
+                format!("{} is already at or past its target", project.net_name(net)),
+                Vec::new(),
+            );
+            return None;
+        }
         Some(Operation::Layout(LayoutCommand::TuneLength { request }))
     }
 

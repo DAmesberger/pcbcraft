@@ -160,3 +160,60 @@ fn the_tune_readout_stays_inside_the_canvas() -> TestResult {
     );
     Ok(())
 }
+
+/// Night round 3 (R3-5): a Tune click on a net already at its target sends
+/// nothing and says so as information, not as a red refusal.
+#[test]
+fn tuning_a_net_at_its_target_is_information() -> TestResult {
+    let engine = esp32()?;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor {
+        tool: Tool::Tune,
+        zoom: 4.0,
+        ..Default::default()
+    };
+    let project = engine.project();
+    let net = project
+        .nets
+        .iter()
+        .find(|n| n.name == "USB_DN")
+        .map(|n| n.id)
+        .ok_or("USB_DN")?;
+    let track = project
+        .tracks
+        .iter()
+        .filter(|t| t.net == net && t.layer == CopperLayer::Top)
+        .max_by(|a, b| {
+            let l = |t: &pcbcraft_core::Track| pcbcraft_core::geometry::distance(t.start, t.end);
+            l(a).total_cmp(&l(b))
+        })
+        .ok_or("a USB_DN track")?;
+    let mid = [
+        (track.start[0] + track.end[0]) / 2.0,
+        (track.start[1] + track.end[1]) / 2.0,
+    ];
+    editor.tune.target = Some(layout::length::signal_length(project, net));
+    frame(&mut editor, &engine, &ctx, vec![]);
+    let point = Pos2::new(400.0, 300.0);
+    editor.pan += point - screen(&editor, &engine, mid);
+    frame(
+        &mut editor,
+        &engine,
+        &ctx,
+        vec![egui::Event::PointerMoved(point)],
+    );
+    let _ = crate::kit::toast::take_posted(&ctx);
+    let (_, operation) = frame(&mut editor, &engine, &ctx, click(point));
+    assert!(operation.is_none(), "{operation:?}");
+    let posted = crate::kit::toast::take_posted(&ctx);
+    let said: Vec<_> = posted.iter().map(|p| (p.level, p.text.as_str())).collect();
+    assert_eq!(
+        said,
+        [(
+            crate::kit::severity::Level::Info,
+            "USB_DN is already at or past its target"
+        )]
+    );
+    Ok(())
+}

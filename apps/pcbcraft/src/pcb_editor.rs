@@ -1737,7 +1737,7 @@ impl PcbEditor {
             } else if self.tool == Tool::Fill {
                 operation = self.fill_click(view, at);
             } else if self.tool == Tool::Tune {
-                operation = self.tune_click(project, engine.revision());
+                operation = self.tune_click(ui.ctx(), project, engine.revision());
             } else if self.tool == Tool::Route {
                 if !double {
                     operation = self.route_click(project, engine.revision(), at, scale);
