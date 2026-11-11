@@ -10,6 +10,13 @@
 //! project with no saved rules (the old implicit default) gets the
 //! `--profile` given, or stays without a profile. Old profile library
 //! files (`rule-profiles/*.json`) convert the same way.
+//!
+//! The hole split: the one `hole` clearance object became `via_hole` (via
+//! drills and unplated holes) and `pth_hole` (plated pad and mounting
+//! holes). Every `clearance_*_hole` rule of a profile, and every project
+//! override of a `hole` pair, becomes one per hole kind with the same
+//! value and source, so a converted board is checked as before; enter the
+//! fabricator's plated-hole values afterwards.
 use crate::Result;
 use serde_json::{Map, Value, json};
 
@@ -50,9 +57,9 @@ pub fn convert_project_rules(
                 None => convert_profile(old)?,
             };
             rules.insert("profile".into(), new);
-            Ok(1)
+            Ok(1 + split_project_holes(rules))
         }
-        Some(_) => Ok(0),
+        Some(_) => Ok(split_project_holes(rules)),
         None => match pinned {
             Some(profile) => {
                 rules.insert("profile".into(), profile.clone());
@@ -68,16 +75,83 @@ pub fn convert_project_rules(
     }
 }
 
-/// An old profile library file's `{format, profile}`; 1 if it changed.
+/// An old profile library file's `{format, profile}`; the number of
+/// changes.
 pub fn convert_profile_file(file: &mut Value) -> Result<usize> {
     let profile = file
         .get_mut("profile")
         .ok_or("not a rule profile file: it has no profile")?;
-    if profile.get("provenance").is_none() {
-        return Ok(0);
+    if profile.get("provenance").is_some() {
+        *profile = convert_profile(profile)?;
+        return Ok(1);
     }
-    *profile = convert_profile(profile)?;
-    Ok(1)
+    Ok(split_holes(profile))
+}
+
+/// The hole split in a project's rules: its profile snapshot's rules and
+/// its overrides of `hole` pairs; the number of changes.
+fn split_project_holes(rules: &mut Map<String, Value>) -> usize {
+    let mut n = rules.get_mut("profile").map_or(0, split_holes);
+    let Some(overrides) = rules.get_mut("overrides").and_then(Value::as_array_mut) else {
+        return n;
+    };
+    let mut out = Vec::new();
+    for o in overrides.drain(..) {
+        let key = &o["key"];
+        let (a, b) = (key["a"].as_str(), key["b"].as_str());
+        if key["rule"] != "clearance" || (a != Some("hole") && b != Some("hole")) {
+            out.push(o);
+            continue;
+        }
+        n += 1;
+        fn kinds(s: Option<&str>) -> Vec<String> {
+            match s {
+                Some("hole") => vec!["via_hole".into(), "pth_hole".into()],
+                Some(other) => vec![other.into()],
+                None => vec![],
+            }
+        }
+        let (a, b) = (kinds(a), kinds(b));
+        let mut seen = Vec::new();
+        for x in &a {
+            for y in &b {
+                let pair = if x <= y { (x, y) } else { (y, x) };
+                if seen.contains(&pair) {
+                    continue;
+                }
+                seen.push(pair);
+                let mut split = o.clone();
+                split["key"]["a"] = x.as_str().into();
+                split["key"]["b"] = y.as_str().into();
+                out.push(split);
+            }
+        }
+    }
+    *overrides = out;
+    n
+}
+
+/// A profile's `clearance_<x>_hole` rules, one per hole kind (same value
+/// and source); the number of rules split.
+pub fn split_holes(profile: &mut Value) -> usize {
+    let Some(rules) = profile.get_mut("rules").and_then(Value::as_object_mut) else {
+        return 0;
+    };
+    let mut n = 0;
+    for x in ["track", "pad", "via", "fill", "board_edge"] {
+        if let Some(entry) = rules.remove(&format!("clearance_{x}_hole")) {
+            rules.insert(format!("clearance_{x}_via_hole"), entry.clone());
+            rules.insert(format!("clearance_{x}_pth_hole"), entry);
+            n += 1;
+        }
+    }
+    if let Some(entry) = rules.remove("clearance_hole_hole") {
+        for pair in ["via_hole_via_hole", "via_hole_pth_hole", "pth_hole_pth_hole"] {
+            rules.insert(format!("clearance_{pair}"), entry.clone());
+        }
+        n += 1;
+    }
+    n
 }
 
 /// An old profile the user entered from a fabricator, in the new form.
@@ -112,7 +186,7 @@ pub fn convert_profile(old: &Value) -> Result<Value> {
         };
         rules.entry(name.to_string()).or_insert(entry);
     }
-    Ok(json!({
+    let mut new = json!({
         "id": old["id"],
         "name": old["name"],
         "source": source,
@@ -122,7 +196,9 @@ pub fn convert_profile(old: &Value) -> Result<Value> {
                        fabricator reads drill files; check and set it."
         },
         "rules": rules,
-    }))
+    });
+    split_holes(&mut new);
+    Ok(new)
 }
 
 /// Every value of an old `DesignRules` object by its rule name.
@@ -234,11 +310,15 @@ mod tests {
         assert_eq!(new["source"]["publisher"], "My Fab capabilities");
         assert_eq!(new["source"]["date"], "2026-10-30");
         let rules = new["rules"].as_object().ok_or("rules")?;
-        // 21 clearance pairs and 38 other rules.
-        assert_eq!(rules.len(), 59);
+        // 28 clearance pairs (the old hole pairs split by hole kind) and
+        // 38 other rules.
+        assert_eq!(rules.len(), 66);
         assert_eq!(rules["drill_min"], json!({"value": 0.2}));
         assert_eq!(rules["clearance_track_board_edge"], json!({"value": 0.2}));
         assert_eq!(rules["board_outline_fit"], json!({"value": 0.01}));
+        assert_eq!(rules["clearance_track_pth_hole"], json!({"value": 0.2}));
+        assert_eq!(rules["clearance_via_hole_pth_hole"], json!({"value": 0.2}));
+        assert!(rules.get("clearance_track_hole").is_none());
         assert_eq!(rules["aspect_ratio_max"], json!({"value": null}));
         assert!(rules["pair_gap_tolerance"]["source"].is_string());
         assert!(new.get("provenance").is_none());
@@ -256,6 +336,50 @@ mod tests {
         assert_eq!(project["rules"]["overrides"], json!([1]), "overrides kept");
         let map = project.as_object_mut().ok_or("object")?;
         assert_eq!(convert_project_rules(map, Some(&pinned))?, 0, "once");
+        Ok(())
+    }
+
+    #[test]
+    fn the_hole_rules_split_by_hole_kind_once() -> Result<()> {
+        let override_of = |a: &str, b: &str| {
+            json!({"key": {"rule": "clearance", "a": a, "b": b},
+                   "value": {"kind": "length", "value": 0.4}})
+        };
+        let mut project = json!({"rules": {
+            "profile": {"id": "fab", "rules": {
+                "clearance_track_hole": {"value": 0.2, "source": "Via hole to Track"},
+                "clearance_hole_hole": {"value": 0.25},
+                "clearance_track_track": {"value": 0.1}}},
+            "overrides": [override_of("track", "hole"), override_of("hole", "hole"),
+                          override_of("track", "pad")]}});
+        let map = project.as_object_mut().ok_or("object")?;
+        assert_eq!(convert_project_rules(map, None)?, 4);
+        let rules = &project["rules"]["profile"]["rules"];
+        assert_eq!(
+            rules["clearance_track_pth_hole"],
+            json!({"value": 0.2, "source": "Via hole to Track"})
+        );
+        assert_eq!(rules["clearance_track_via_hole"]["value"], 0.2);
+        assert_eq!(rules["clearance_pth_hole_pth_hole"]["value"], 0.25);
+        assert_eq!(rules["clearance_track_track"]["value"], 0.1);
+        assert_eq!(rules.as_object().ok_or("rules")?.len(), 6);
+        let overrides = project["rules"]["overrides"]
+            .as_array()
+            .ok_or("overrides")?
+            .clone();
+        assert_eq!(
+            overrides,
+            vec![
+                override_of("track", "via_hole"),
+                override_of("track", "pth_hole"),
+                override_of("via_hole", "via_hole"),
+                override_of("via_hole", "pth_hole"),
+                override_of("pth_hole", "pth_hole"),
+                override_of("track", "pad"),
+            ]
+        );
+        let map = project.as_object_mut().ok_or("object")?;
+        assert_eq!(convert_project_rules(map, None)?, 0, "once");
         Ok(())
     }
 

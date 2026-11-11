@@ -81,11 +81,75 @@ fn convert_json(path: &Path) -> Result<usize> {
     let mut file: Value = serde_json::from_slice(&original)?;
     let changed = crate::convert_rules::convert_profile_file(&mut file)?;
     if changed > 0 {
-        let mut bytes = serde_json::to_vec_pretty(&file)?;
-        bytes.push(b'\n');
-        replace(path, &original, &bytes)?;
+        let mut text = String::new();
+        pretty(&file, 0, &mut text)?;
+        text.push('\n');
+        replace(path, &original, text.as_bytes())?;
     }
     Ok(changed)
+}
+
+/// Keys a profile file writes first, in the order the app writes them
+/// (`ProfileFile`, `ProfileData`, `ProfileSource`, `DrillFiles`,
+/// `EntryData`); other keys follow sorted.
+const PROFILE_KEY_ORDER: &[&str] = &[
+    "format",
+    "profile",
+    "id",
+    "name",
+    "publisher",
+    "document",
+    "url",
+    "date",
+    "notes",
+    "kind",
+    "pth_allowance",
+    "value",
+    "formula",
+    "source",
+    "drill_files",
+    "rules",
+];
+
+/// `value` as `serde_json::to_string_pretty` writes it, but with object
+/// keys in [`PROFILE_KEY_ORDER`], so a converted profile file keeps the
+/// app's own layout.
+fn pretty(value: &Value, depth: usize, out: &mut String) -> Result<()> {
+    let pad = |n: usize| "  ".repeat(n);
+    match value {
+        Value::Object(map) if !map.is_empty() => {
+            let rank = |k: &str| {
+                PROFILE_KEY_ORDER
+                    .iter()
+                    .position(|o| *o == k)
+                    .unwrap_or(PROFILE_KEY_ORDER.len())
+            };
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_by(|a, b| rank(a).cmp(&rank(b)).then(a.cmp(b)));
+            out.push_str("{\n");
+            for (i, key) in keys.iter().enumerate() {
+                out.push_str(&pad(depth + 1));
+                out.push_str(&serde_json::to_string(key)?);
+                out.push_str(": ");
+                pretty(&map[key.as_str()], depth + 1, out)?;
+                out.push_str(if i + 1 < keys.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&pad(depth));
+            out.push('}');
+        }
+        Value::Array(items) if !items.is_empty() => {
+            out.push_str("[\n");
+            for (i, item) in items.iter().enumerate() {
+                out.push_str(&pad(depth + 1));
+                pretty(item, depth + 1, out)?;
+                out.push_str(if i + 1 < items.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&pad(depth));
+            out.push(']');
+        }
+        other => out.push_str(&serde_json::to_string(other)?),
+    }
+    Ok(())
 }
 
 /// Converts one container in place; the number of values changed.
