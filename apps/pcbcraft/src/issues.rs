@@ -288,8 +288,9 @@ impl Summary {
     }
 }
 
-/// The Selection scope's empty list with nothing selected: what to select,
-/// and which scope lists the issues the bar counts here.
+/// The Selection scope's empty list when the selection names nothing it
+/// lists (nothing selected, or a sheet symbol or drawing, which it does not
+/// cover): which scope lists the issues the bar counts here.
 fn nothing_selected(summary: &Summary, workspace: Workspace) -> String {
     let here = match summary {
         Summary::Counted { counts, .. } => {
@@ -300,8 +301,8 @@ fn nothing_selected(summary: &Summary, workspace: Workspace) -> String {
     let only = format!("{} only", workspace.label());
     match here {
         0 => "Select an object to list its issues".to_owned(),
-        1 => format!("Nothing is selected; {only} lists the 1 issue here"),
-        n => format!("Nothing is selected; {only} lists the {n} issues here"),
+        1 => format!("None on the selection; {only} lists the 1 issue here"),
+        n => format!("None on the selection; {only} lists the {n} issues here"),
     }
 }
 

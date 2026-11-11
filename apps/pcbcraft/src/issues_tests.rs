@@ -462,9 +462,9 @@ fn the_selection_scope_without_a_selection_says_so() -> Fallible<()> {
         surface.card(ui, &engine, Workspace::Pcb, &[])
     });
     let said = if here == 1 {
-        "Nothing is selected; PCB only lists the 1 issue here".to_owned()
+        "None on the selection; PCB only lists the 1 issue here".to_owned()
     } else {
-        format!("Nothing is selected; PCB only lists the {here} issues here")
+        format!("None on the selection; PCB only lists the {here} issues here")
     };
     assert!(here > 0 && at(&painted, &said).is_some(), "{painted:?}");
 
