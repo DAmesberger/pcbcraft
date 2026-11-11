@@ -1749,7 +1749,8 @@ impl PcbEditor {
             self.finish_box(project, picked, add);
         }
         if let Some(at) = cursor {
-            self.plan_track_drag(project, engine.revision(), at);
+            let alone = ui.input(|i| i.modifiers.alt);
+            self.plan_track_drag(project, engine.revision(), at, alone);
         }
         if response.drag_stopped_by(PointerButton::Primary) && self.track_drag.is_some() {
             operation = self.finish_track_drag(ui.ctx(), engine.revision());
@@ -1915,6 +1916,9 @@ impl PcbEditor {
                     Tool::Fill => "Fill (A arcs, Enter closes)",
                     Tool::Tune => "Tune",
                     Tool::Dimension => "Dimension",
+                    Tool::Select if self.dragging_pair_half(project) => {
+                        "Drag the pair (⌥: this half alone)"
+                    }
                     Tool::Select => "Select / move",
                 },
                 self.layer.name(),

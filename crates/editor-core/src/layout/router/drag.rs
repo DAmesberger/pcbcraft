@@ -12,7 +12,8 @@
 //! cannot make room, the segment stops at the last legal offset
 //! (bisected, as a route step stops short). A differential pair's track
 //! moves with its partner's coupled segment beside it, as one gesture
-//! (see [`drag_plan`] for when the partner cannot follow). [`drag_plan`]
+//! (see [`drag_plan`] for when the partner cannot follow), unless the
+//! request moves that half alone ([`PairDrag::Alone`]). [`drag_plan`]
 //! is pure: the
 //! desktop's preview and release, and `layout.track_drag` and
 //! `layout.track_drag_preview` for CLI and MCP, all call it.
@@ -52,6 +53,29 @@ pub struct TrackDragRequest {
     /// Whether a shove may move vias (locked vias never move).
     #[serde(default = "yes")]
     pub move_vias: bool,
+    /// For a differential pair's track: move its partner with it (the
+    /// default), or move this half alone (the desktop's ⌥-drag).
+    #[serde(default, skip_serializing_if = "PairDrag::is_together")]
+    pub pair: PairDrag,
+}
+
+/// What a drag of one half of a differential pair does with the other.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PairDrag {
+    /// The partner's coupled segment moves beside it, when it can.
+    #[default]
+    Together,
+    /// This half moves alone, with the same shove or walkaround, and the
+    /// partner stays where it is (it is not shoved). The pair findings
+    /// this may cause are the caller's explicit choice.
+    Alone,
+}
+
+impl PairDrag {
+    fn is_together(&self) -> bool {
+        *self == Self::Together
+    }
 }
 
 impl TrackDragRequest {
@@ -474,8 +498,16 @@ fn attempt(
     offset: f64,
 ) -> std::result::Result<(Moved, State), Option<Hit>> {
     let copper = moved_all(grips, offset, request.posture).ok_or(None)?;
+    let mut frozen: Vec<Id> = grips.iter().map(|g| g.track.net).collect();
+    // A half moved alone leaves its partner where it is.
+    if request.pair == PairDrag::Alone {
+        frozen.extend(grips.iter().filter_map(|g| {
+            let net = g.track.net;
+            ctx.project.rules.pair_of(net)?.partner(net)
+        }));
+    }
     let mut state = State {
-        frozen: grips.iter().map(|g| g.track.net).collect(),
+        frozen,
         move_vias: request.move_vias,
         fixed: copper.pieces.clone(),
         hidden: copper.hidden.iter().copied().collect(),
@@ -528,7 +560,8 @@ fn refused(request: &TrackDragRequest, why: String, at: Point, layer: CopperLaye
 /// pair keeps its gap and width. When the partner cannot follow (locked,
 /// held in mid-span, not coupled there, or no room for both), the track
 /// moves alone only if the pair gains no skew, uncoupled-length or gap
-/// finding; otherwise the drag is refused naming the pair.
+/// finding; otherwise the drag is refused naming the pair. With
+/// [`PairDrag::Alone`] the track moves alone whatever that does to the pair.
 pub fn drag_plan(project: &Project, index: &RouteIndex, request: &TrackDragRequest) -> RoutePlan {
     let ctx = Ctx::new(project, index);
     let one = match grip(&ctx, request.track) {
@@ -545,7 +578,10 @@ pub fn drag_plan(project: &Project, index: &RouteIndex, request: &TrackDragReque
         }
     };
     let t = one.track;
-    let Some(pair) = project.rules.pair_of(t.net) else {
+    let Some(pair) = project.rules
+        .pair_of(t.net)
+        .filter(|_| request.pair == PairDrag::Together)
+    else {
         return plan_with(&ctx, request, &[one]);
     };
     let partner = coupled_partner(project, pair, t.id)

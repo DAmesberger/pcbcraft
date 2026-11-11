@@ -236,3 +236,52 @@ fn dragging_one_half_of_the_usb_pair_previews_and_moves_both() -> TestResult {
     }
     Ok(())
 }
+
+/// ⌥-drag on USB_DN's long run moves that half alone: USB_DP is neither
+/// drawn moved nor in the one `layout.route_apply` release sends, and the
+/// canvas hint names ⌥ during the drag.
+#[test]
+fn an_option_drag_moves_one_pair_half_alone() -> TestResult {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    );
+    let mut engine = Engine::demo()?;
+    engine.replace_document(pcbcraft_io::read_project(std::path::Path::new(path))?)?;
+    let run = |name: &str| {
+        let p = engine.project();
+        let net = p.nets.iter().find(|n| n.name == name).ok_or("no net")?;
+        let length =
+            |t: &&pcbcraft_core::model::Track| (t.end[0] - t.start[0]).hypot(t.end[1] - t.start[1]);
+        p.tracks
+            .iter()
+            .filter(|t| t.net == net.id)
+            .max_by(|a, b| length(a).total_cmp(&length(b)))
+            .cloned()
+            .ok_or("no run")
+    };
+    let (dn_run, dp) = (run("USB_DN")?, run("USB_DP")?.id);
+    let (dn, x, y) = (dn_run.id, dn_run.start[0], 21.0);
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    let (none, alt) = (egui::Modifiers::NONE, egui::Modifiers::ALT);
+    canvas.frame(&mut editor, &engine, vec![], none);
+    let start = [x, y];
+    let hover = moved(&editor, &engine, start);
+    canvas.frame(&mut editor, &engine, vec![hover], none);
+    let press = button(&editor, &engine, start, true);
+    canvas.frame(&mut editor, &engine, vec![press], none);
+    for dx in [0.29, 0.79, 1.0] {
+        let event = moved(&editor, &engine, [x - dx, y]);
+        canvas.frame(&mut editor, &engine, vec![event], alt);
+    }
+    assert!(editor.dragging_pair_half(engine.project()));
+    assert!(editor.shoved.0.contains(&dn), "{:?}", editor.shoved.0);
+    assert!(!editor.shoved.0.contains(&dp), "{:?}", editor.shoved.0);
+    let event = button(&editor, &engine, [x - 1.0, y], false);
+    let release = canvas.frame(&mut editor, &engine, vec![event], alt);
+    let sent = edits(&release)?;
+    assert!(sent.replace.iter().any(|t| t.id == dn), "{sent:?}");
+    assert!(!sent.replace.iter().any(|t| t.id == dp), "{sent:?}");
+    Ok(())
+}
