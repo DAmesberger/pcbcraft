@@ -41,7 +41,7 @@ fn package_placement_commands_through_json_report_store_and_undo() -> TestResult
     ));
     assert_eq!(reply["ok"], true, "{reply}");
     let turned = package(&session).ok_or("no package")?.1;
-    assert_eq!(turned.rotation_deg, [0.0, 0.0, 90.0]);
+    assert_eq!(turned.rotation_deg(), [0.0, 0.0, 90.0]);
     // Report only: the residuals of a fit, nothing stored.
     let fit = |confirm: bool, revision: u64| {
         library(
@@ -60,7 +60,7 @@ fn package_placement_commands_through_json_report_store_and_undo() -> TestResult
     assert_eq!(reply["ok"], true, "{reply}");
     assert_eq!(reply["result"]["outcome"]["applied"], true);
     assert_eq!(
-        package(&session).ok_or("no package")?.1.rotation_deg,
+        package(&session).ok_or("no package")?.1.rotation_deg(),
         [0.0; 3]
     );
     // Unknown pair IDs are refused and change nothing.

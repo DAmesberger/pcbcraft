@@ -211,7 +211,10 @@ fn prefix_and_chip_body_are_checked_at_publication() -> Result<()> {
             .any(|c| c == "package.form_terminals"))
     };
     with(&mut engine, f.package, package_body, |p| {
-        p.form = PackageForm::Chip(Box::new(ChipForm::new(ChipKind::Capacitor, p.envelope)))
+        p.form = PackageForm::Chip(Box::new(ChipForm::new(
+            ChipKind::Capacitor,
+            (p.envelope()).map(nm),
+        )))
     })?;
     assert!(!chip_finding(&engine)?);
     with(&mut engine, f.package, package_body, |p| {

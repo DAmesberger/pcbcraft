@@ -167,8 +167,8 @@ fn chip_size_codes_are_explicit_and_match_the_body() -> Fallible<()> {
         let (l, w) = (code(0).ok_or("metric code")?, code(1).ok_or("metric code")?);
         assert!(
             size.metric.len() == 4
-                && (l - tenths(chip.length)).abs() <= 1.0
-                && (w - tenths(chip.width)).abs() <= 1.0,
+                && (l - tenths(chip.length())).abs() <= 1.0
+                && (w - tenths(chip.width())).abs() <= 1.0,
             "{}",
             row.name
         );
@@ -199,10 +199,13 @@ fn known_outlines_keep_their_registered_values() -> Fallible<()> {
         return Err("SOIC-8 is gull-wing".into());
     };
     assert_eq!(
-        (g.sides, g.leads_per_side, g.pitch),
+        (g.sides, g.leads_per_side, g.pitch()),
         (LeadSides::Two, [4, 0], 1.27)
     );
-    assert_eq!((g.body_length, g.body_width, g.span[0]), (4.90, 3.90, 6.00));
+    assert_eq!(
+        (g.body_length(), g.body_width(), g.span()[0]),
+        (4.90, 3.90, 6.00)
+    );
     assert!(
         soic.definition
             .citation
@@ -223,7 +226,7 @@ fn known_outlines_keep_their_registered_values() -> Fallible<()> {
     assert_eq!(header.status(), "estimated");
     assert_eq!(header.definition.skeleton, SkeletonHint::Connector);
     let dip = find(rows, "DIP-8 300 mil")?;
-    assert!(matches!(&dip.definition.values, PackageForm::Tht(t) if t.lead_pitch == 2.54));
+    assert!(matches!(&dip.definition.values, PackageForm::Tht(t) if t.lead_pitch() == 2.54));
     assert_eq!(find(rows, "SOT-89")?.definition.values.lead_count(), 4);
     Ok(())
 }

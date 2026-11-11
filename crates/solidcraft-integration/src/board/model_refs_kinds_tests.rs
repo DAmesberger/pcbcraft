@@ -171,9 +171,10 @@ fn with_library_model(format: ModelFormat, bytes: &[u8]) -> Fallible<(Engine, Mo
     definition.leads = vec![LeadTag {
         key: lead_key(&seen)?,
         designation: "1".into(),
-        contact: [0.0; 3],
+        contact_nm: crate::test_units::nm3([0.0; 3]),
     }];
-    definition.leads[0].contact = crate::models::imported::lead_contacts(&definition, bytes)?[0];
+    definition.leads[0].contact_nm =
+        crate::test_units::nm3(crate::models::imported::lead_contacts(&definition, bytes)?[0]);
     definition.provenance.record.licence = Some("CC0-1.0".into());
     let id = DefinitionId(project.allocate()?);
     let reference = ModelRef::new(id, Revision(1));

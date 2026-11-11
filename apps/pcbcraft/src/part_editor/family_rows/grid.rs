@@ -5,15 +5,13 @@ use crate::kit;
 use egui::Ui;
 use pcbcraft_core::library::package_form::GridForm;
 use pcbcraft_core::library::package_form::grid::{GridContact, MAX_DEPOPULATED, MAX_GRID_SIDE};
-use std::ops::RangeInclusive;
-
-const LENGTH: RangeInclusive<f64> = 0.01..=1000.0;
+use pcbcraft_core::units::Nm;
 /// A starting ball height for a land grid turned into a ball grid: a
 /// share of the ball diameter (est.).
 const BALL_HEIGHT_SHARE: f64 = 0.75;
 
-fn length(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
-    kit::number_row(ui, label, value, "mm", LENGTH)
+fn length(ui: &mut Ui, label: &str, value: &mut Nm) -> bool {
+    super::nm_row(ui, label, value, super::length_range())
 }
 
 fn side(ui: &mut Ui, label: &str, value: &mut u32) -> bool {
@@ -65,19 +63,22 @@ pub(super) fn rows(ui: &mut Ui, form: &mut GridForm) -> bool {
         (GridContact::Land, "Lands (LGA)".to_owned()),
     ];
     if kit::choice_row(ui, "Contacts", &mut form.contact, &options) && form.contact != before {
-        form.contact_height = match form.contact {
-            GridContact::Ball => BALL_HEIGHT_SHARE * form.contact_diameter,
-            GridContact::Land => 0.0,
+        form.contact_height_nm = match form.contact {
+            GridContact::Ball => {
+                Nm::from_mm_f64_rounded(BALL_HEIGHT_SHARE * form.contact_diameter())
+                    .unwrap_or(Nm::ZERO)
+            }
+            GridContact::Land => Nm::ZERO,
         };
         changed = true;
     }
     changed |= side(ui, "Rows", &mut form.rows);
     changed |= side(ui, "Columns", &mut form.cols);
-    changed |= length(ui, "Pitch along a row", &mut form.pitch[0]);
-    changed |= length(ui, "Pitch between rows", &mut form.pitch[1]);
-    changed |= length(ui, "Body length", &mut form.body_length);
-    changed |= length(ui, "Body width", &mut form.body_width);
-    changed |= length(ui, "Body height", &mut form.body_height);
+    changed |= length(ui, "Pitch along a row", &mut form.pitch.x_nm);
+    changed |= length(ui, "Pitch between rows", &mut form.pitch.y_nm);
+    changed |= length(ui, "Body length", &mut form.body_length_nm);
+    changed |= length(ui, "Body width", &mut form.body_width_nm);
+    changed |= length(ui, "Body height", &mut form.body_height_nm);
     let ball = form.contact == GridContact::Ball;
     changed |= length(
         ui,
@@ -86,10 +87,10 @@ pub(super) fn rows(ui: &mut Ui, form: &mut GridForm) -> bool {
         } else {
             "Land diameter"
         },
-        &mut form.contact_diameter,
+        &mut form.contact_diameter_nm,
     );
     if ball {
-        changed |= length(ui, "Ball height", &mut form.contact_height);
+        changed |= length(ui, "Ball height", &mut form.contact_height_nm);
     }
     let letters = kit::checked_text_row(
         ui,
@@ -145,9 +146,14 @@ fn empty_positions(ui: &mut Ui, form: &mut GridForm) -> bool {
 mod tests {
     use super::*;
 
+    fn nm(mm: f64) -> Nm {
+        Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+    }
+
     #[test]
     fn empty_positions_round_trip_by_ball_name() {
-        let mut form = GridForm::ball_grid(10, 10, 0.5, [5.5, 5.5, 0.6], [0.3, 0.2]);
+        let mut form =
+            GridForm::ball_grid(10, 10, nm(0.5), [5.5, 5.5, 0.6].map(nm), [0.3, 0.2].map(nm));
         assert_eq!(
             parse(&form, "e5, A2  j10;a2"),
             Ok(vec![[0, 1], [4, 4], [8, 9]])

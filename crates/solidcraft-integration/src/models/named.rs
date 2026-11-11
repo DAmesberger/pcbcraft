@@ -177,12 +177,12 @@ pub fn envelope(package: &PackageDefinition) -> Result<Arc<NamedDesign>> {
             "package envelope dimensions must be finite and positive".into(),
         ));
     }
-    let what = json!({ "envelope": package.envelope });
+    let what = json!({ "envelope": package.envelope() });
     cached(&what, || {
         let mut native = Native::new("Package envelope")?;
         for (name, value) in ["length", "width", "height"]
             .into_iter()
-            .zip(package.envelope)
+            .zip(package.envelope())
         {
             native.parameter(name, crate::native::mm(value))?;
         }

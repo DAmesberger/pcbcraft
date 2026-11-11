@@ -5,10 +5,11 @@
 //! ([`MoldedForm::marking_area`]) are data. The footprint template is
 //! `templates/footprint_family/molded.rs` and the model builder
 //! `pcbcraft-solidcraft` `models/molded.rs`.
-use super::{FORM_LENGTH_LIMIT_MM, FORM_LENGTH_MIN_MM, FamilyForm};
+use super::{FamilyForm, length_problem, typical_nm};
 use crate::geometry::Point3;
 use crate::library::footprint_source::{PACKAGE_PREFIX, PackageValue, ParamName, ParamValue};
 use crate::library::model3d::MarkingArea;
+use crate::units::{self, Nm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -42,25 +43,34 @@ pub enum MoldedLead {
     Melf,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(deny_unknown_fields)]
 pub struct MoldedForm {
     pub lead: MoldedLead,
     /// Moulded body length (x), width (y) and height above the seating
     /// plane. A MELF body is round: its width and height are its diameter.
-    pub body_length: f64,
-    pub body_width: f64,
-    pub body_height: f64,
+    pub body_length_nm: Nm,
+    pub body_width_nm: Nm,
+    pub body_height_nm: Nm,
     /// Overall length, terminal tip to tip.
-    pub span: f64,
+    pub span_nm: Nm,
     /// Terminal contact length on the seating plane, from the tip inward
     /// (a MELF cap's length).
-    pub terminal_length: f64,
+    pub terminal_length_nm: Nm,
     /// Terminal width across y (a MELF cap's diameter).
-    pub terminal_width: f64,
+    pub terminal_width_nm: Nm,
     /// A polarity band at terminal 1, as data.
     pub polarised: bool,
 }
+
+mm_accessors!(MoldedForm {
+    body_length: body_length_nm => len,
+    body_width: body_width_nm => len,
+    body_height: body_height_nm => len,
+    span: span_nm => len,
+    terminal_length: terminal_length_nm => len,
+    terminal_width: terminal_width_nm => len,
+});
 
 impl MoldedForm {
     /// Original typical values (a SOD-123-sized body in round numbers, from
@@ -68,12 +78,12 @@ impl MoldedForm {
     pub fn typical() -> Self {
         Self {
             lead: MoldedLead::Bent,
-            body_length: 2.7,
-            body_width: 1.6,
-            body_height: 1.1,
-            span: 3.7,
-            terminal_length: 0.3,
-            terminal_width: 0.6,
+            body_length_nm: typical_nm(2.7),
+            body_width_nm: typical_nm(1.6),
+            body_height_nm: typical_nm(1.1),
+            span_nm: typical_nm(3.7),
+            terminal_length_nm: typical_nm(0.3),
+            terminal_width_nm: typical_nm(0.6),
             polarised: true,
         }
     }
@@ -81,7 +91,7 @@ impl MoldedForm {
     /// The lead (leadframe) thickness the model and the rules use; 0 for a
     /// MELF.
     pub fn lead_thickness(&self) -> f64 {
-        let quarter = self.body_height / 4.0;
+        let quarter = self.body_height() / 4.0;
         match self.lead {
             MoldedLead::Flat | MoldedLead::Bent => FLAT_LEAD_MM.min(quarter),
             MoldedLead::JLead => J_LEAD_MM.min(quarter),
@@ -93,32 +103,32 @@ impl MoldedForm {
     pub fn body_bottom(&self) -> f64 {
         match self.lead {
             MoldedLead::Flat | MoldedLead::JLead => 0.0,
-            MoldedLead::Bent => BENT_STANDOFF_MM.min(self.body_height / 10.0),
-            MoldedLead::Melf => ((self.terminal_width - self.body_width) / 2.0).max(0.0),
+            MoldedLead::Bent => BENT_STANDOFF_MM.min(self.body_height() / 10.0),
+            MoldedLead::Melf => ((self.terminal_width() - self.body_width()) / 2.0).max(0.0),
         }
     }
 
     /// Height of the body's top.
     pub fn body_top(&self) -> f64 {
         match self.lead {
-            MoldedLead::Melf => self.body_bottom() + self.body_width,
-            _ => self.body_height,
+            MoldedLead::Melf => self.body_bottom() + self.body_width(),
+            _ => self.body_height(),
         }
     }
 
     /// Height of a bent or J-lead's centre line where it leaves the body.
     pub fn lead_exit(&self) -> f64 {
         let bottom = self.body_bottom();
-        bottom + 0.5 * (self.body_height - bottom)
+        bottom + 0.5 * (self.body_height() - bottom)
     }
 
     /// The x range of body visible on top between the terminals, from −x.
     fn top_span(&self) -> [f64; 2] {
         let half = match self.lead {
             MoldedLead::Melf => {
-                (self.span / 2.0 - self.terminal_length).min(self.body_length / 2.0)
+                (self.span() / 2.0 - self.terminal_length()).min(self.body_length() / 2.0)
             }
-            _ => self.body_length / 2.0,
+            _ => self.body_length() / 2.0,
         };
         [-half, half]
     }
@@ -130,40 +140,43 @@ impl MoldedForm {
             return None;
         }
         let [lo, _] = self.top_span();
-        let width = BAND_SHARE * self.body_length;
-        let start = lo + BAND_INSET_SHARE * self.body_length;
-        Some(MarkingArea {
-            origin: [start + width / 2.0, 0.0, self.body_top()],
-            normal: [0.0, 0.0, 1.0],
-            u_axis: [1.0, 0.0, 0.0],
-            size_mm: [width, ACROSS_SHARE * self.body_width],
-        })
+        let width = BAND_SHARE * self.body_length();
+        let start = lo + BAND_INSET_SHARE * self.body_length();
+        MarkingArea::from_mm(
+            [start + width / 2.0, 0.0, self.body_top()],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [width, ACROSS_SHARE * self.body_width()],
+        )
+        .ok()
     }
 
     /// The top area left for text markings: the visible top beside the
-    /// band, origin at its centre, u along +x.
-    pub fn marking_area(&self) -> MarkingArea {
+    /// band, origin at its centre, u along +x. Computed from the stored
+    /// form, it is always storable; `None` only if it were not.
+    pub fn marking_area(&self) -> Option<MarkingArea> {
         let [mut lo, hi] = self.top_span();
-        let inset = BAND_INSET_SHARE * self.body_length;
+        let inset = BAND_INSET_SHARE * self.body_length();
         if let Some(band) = self.band_area() {
-            lo = band.origin[0] + band.size_mm[0] / 2.0;
+            lo = band.origin()[0] + band.size()[0] / 2.0;
         } else {
             lo += inset;
         }
         let hi = hi - inset;
-        MarkingArea {
-            origin: [(lo + hi) / 2.0, 0.0, self.body_top()],
-            normal: [0.0, 0.0, 1.0],
-            u_axis: [1.0, 0.0, 0.0],
-            size_mm: [(hi - lo).max(0.0), ACROSS_SHARE * self.body_width],
-        }
+        MarkingArea::from_mm(
+            [(lo + hi) / 2.0, 0.0, self.body_top()],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [(hi - lo).max(0.0), ACROSS_SHARE * self.body_width()],
+        )
+        .ok()
     }
 
     /// Estimated land sizes [along x, along y] of terminals 1 and 2 (toe
     /// 0.4 mm, heel 0.2 mm, side 0.1 mm; estimated prototype values, not a
     /// compliance claim).
     pub fn land_sizes(&self) -> Vec<[f64; 2]> {
-        vec![[self.terminal_length + 0.6, self.terminal_width + 0.2]; 2]
+        vec![[self.terminal_length() + 0.6, self.terminal_width() + 0.2]; 2]
     }
 }
 
@@ -174,24 +187,27 @@ impl FamilyForm for MoldedForm {
 
     fn lengths(&self) -> Vec<f64> {
         vec![
-            self.body_length,
-            self.body_width,
-            self.body_height,
-            self.span,
-            self.terminal_length,
-            self.terminal_width,
+            self.body_length(),
+            self.body_width(),
+            self.body_height(),
+            self.span(),
+            self.terminal_length(),
+            self.terminal_width(),
         ]
     }
 
     fn envelope(&self) -> Option<[f64; 3]> {
         let (width, height) = match self.lead {
             MoldedLead::Melf => {
-                let d = self.terminal_width.max(self.body_width);
+                let d = self.terminal_width().max(self.body_width());
                 (d, d)
             }
-            _ => (self.body_width.max(self.terminal_width), self.body_height),
+            _ => (
+                self.body_width().max(self.terminal_width()),
+                self.body_height(),
+            ),
         };
-        Some([self.span.max(self.body_length), width, height])
+        Some([self.span().max(self.body_length()), width, height])
     }
 
     fn lead_count(&self) -> u64 {
@@ -199,7 +215,7 @@ impl FamilyForm for MoldedForm {
     }
 
     fn lead_points(&self) -> Vec<Point3> {
-        let x = self.span / 2.0 - self.terminal_length / 2.0;
+        let x = self.span() / 2.0 - self.terminal_length() / 2.0;
         vec![[-x, 0.0, 0.0], [x, 0.0, 0.0]]
     }
 
@@ -209,37 +225,31 @@ impl FamilyForm for MoldedForm {
             value: ParamValue::Length(v),
         };
         vec![
-            length("D", self.span),
-            length("D1", self.body_length),
-            length("E", self.body_width),
-            length("A", self.body_height),
-            length("Lt", self.terminal_length),
-            length("bt", self.terminal_width),
+            length("D", self.span()),
+            length("D1", self.body_length()),
+            length("E", self.body_width()),
+            length("A", self.body_height()),
+            length("Lt", self.terminal_length()),
+            length("bt", self.terminal_width()),
         ]
     }
 
     fn range_problems(&self) -> Vec<String> {
         let mut out = Vec::new();
-        let mut positive = |name: &str, v: f64| {
-            if !(v.is_finite() && (FORM_LENGTH_MIN_MM..=FORM_LENGTH_LIMIT_MM).contains(&v)) {
-                out.push(format!(
-                    "{name} must be {FORM_LENGTH_MIN_MM}–{FORM_LENGTH_LIMIT_MM} mm (is {v})."
-                ));
-            }
-        };
-        positive("Body length", self.body_length);
-        positive("Body width", self.body_width);
-        positive("Body height", self.body_height);
-        positive("Overall length", self.span);
-        positive("Terminal length", self.terminal_length);
-        positive("Terminal width", self.terminal_width);
+        let mut positive = |name: &str, v: Nm| out.extend(length_problem(name, v));
+        positive("Body length", self.body_length_nm);
+        positive("Body width", self.body_width_nm);
+        positive("Body height", self.body_height_nm);
+        positive("Overall length", self.span_nm);
+        positive("Terminal length", self.terminal_length_nm);
+        positive("Terminal width", self.terminal_width_nm);
         let mut rule = |ok: bool, message: &str| {
             if !ok {
                 out.push(message.to_owned());
             }
         };
         let t = self.lead_thickness();
-        let (bl, span, tl) = (self.body_length, self.span, self.terminal_length);
+        let (bl, span, tl) = (self.body_length(), self.span(), self.terminal_length());
         rule(
             2.0 * tl < span,
             "The two terminals must not meet (2 × terminal length < overall length).",
@@ -247,11 +257,11 @@ impl FamilyForm for MoldedForm {
         match self.lead {
             MoldedLead::Melf => {
                 rule(
-                    (self.body_height - self.body_width).abs() <= 1e-6,
+                    (self.body_height() - self.body_width()).abs() <= 1e-6,
                     "A MELF body is round: its height must equal its width.",
                 );
                 rule(
-                    self.terminal_width >= self.body_width,
+                    self.terminal_width() >= self.body_width(),
                     "A MELF cap must be at least as wide as the body (terminal width ≥ body width).",
                 );
                 rule(
@@ -261,7 +271,7 @@ impl FamilyForm for MoldedForm {
             }
             MoldedLead::Flat | MoldedLead::Bent | MoldedLead::JLead => {
                 rule(
-                    self.terminal_width <= self.body_width + 1e-9,
+                    self.terminal_width() <= self.body_width() + 1e-9,
                     "The terminals must not be wider than the body.",
                 );
                 rule(
@@ -312,17 +322,18 @@ impl FamilyForm for MoldedForm {
 mod tests {
     use super::*;
     use crate::library::PackageForm;
+    use crate::tests::support::nm;
 
     /// Original fixtures in the range of the outlines (round numbers).
     fn sod123() -> MoldedForm {
         MoldedForm {
             lead: MoldedLead::Bent,
-            body_length: 2.7,
-            body_width: 1.6,
-            body_height: 1.1,
-            span: 3.7,
-            terminal_length: 0.3,
-            terminal_width: 0.6,
+            body_length_nm: nm(2.7),
+            body_width_nm: nm(1.6),
+            body_height_nm: nm(1.1),
+            span_nm: nm(3.7),
+            terminal_length_nm: nm(0.3),
+            terminal_width_nm: nm(0.6),
             polarised: true,
         }
     }
@@ -330,12 +341,12 @@ mod tests {
     fn sma() -> MoldedForm {
         MoldedForm {
             lead: MoldedLead::JLead,
-            body_length: 4.3,
-            body_width: 2.6,
-            body_height: 2.2,
-            span: 5.2,
-            terminal_length: 1.1,
-            terminal_width: 1.4,
+            body_length_nm: nm(4.3),
+            body_width_nm: nm(2.6),
+            body_height_nm: nm(2.2),
+            span_nm: nm(5.2),
+            terminal_length_nm: nm(1.1),
+            terminal_width_nm: nm(1.4),
             polarised: true,
         }
     }
@@ -343,12 +354,12 @@ mod tests {
     fn sod523() -> MoldedForm {
         MoldedForm {
             lead: MoldedLead::Flat,
-            body_length: 1.2,
-            body_width: 0.8,
-            body_height: 0.6,
-            span: 1.6,
-            terminal_length: 0.3,
-            terminal_width: 0.3,
+            body_length_nm: nm(1.2),
+            body_width_nm: nm(0.8),
+            body_height_nm: nm(0.6),
+            span_nm: nm(1.6),
+            terminal_length_nm: nm(0.3),
+            terminal_width_nm: nm(0.3),
             polarised: true,
         }
     }
@@ -356,12 +367,12 @@ mod tests {
     fn minimelf() -> MoldedForm {
         MoldedForm {
             lead: MoldedLead::Melf,
-            body_length: 3.0,
-            body_width: 1.4,
-            body_height: 1.4,
-            span: 3.5,
-            terminal_length: 0.4,
-            terminal_width: 1.5,
+            body_length_nm: nm(3.0),
+            body_width_nm: nm(1.4),
+            body_height_nm: nm(1.4),
+            span_nm: nm(3.5),
+            terminal_length_nm: nm(0.4),
+            terminal_width_nm: nm(1.5),
             polarised: true,
         }
     }
@@ -386,49 +397,54 @@ mod tests {
     }
 
     #[test]
-    fn the_band_lies_at_terminal_one_and_the_marking_beside_it() {
+    fn the_band_lies_at_terminal_one_and_the_marking_beside_it() -> crate::diagnostics::Result<()> {
+        let missing = || crate::diagnostics::Error::Invalid("no area".into());
         let f = sma();
-        let band = f.band_area().unwrap_or(f.marking_area());
-        let mark = f.marking_area();
-        assert!(band.origin[0] < 0.0 && mark.origin[0] > band.origin[0]);
-        let band_hi = band.origin[0] + band.size_mm[0] / 2.0;
-        let mark_lo = mark.origin[0] - mark.size_mm[0] / 2.0;
-        assert!((band_hi - mark_lo).abs() < 1e-12);
-        assert!(mark.origin[0] + mark.size_mm[0] / 2.0 < f.body_length / 2.0);
-        assert_eq!(band.origin[2], 2.2);
+        let band = f.band_area().ok_or_else(missing)?;
+        let mark = f.marking_area().ok_or_else(missing)?;
+        let (bo, bs, mo, ms) = (band.origin(), band.size(), mark.origin(), mark.size());
+        assert!(bo[0] < 0.0 && mo[0] > bo[0]);
+        let band_hi = bo[0] + bs[0] / 2.0;
+        let mark_lo = mo[0] - ms[0] / 2.0;
+        // Each area is stored to the nanometre: they meet within a rounding.
+        assert!((band_hi - mark_lo).abs() <= 1e-6);
+        assert!(mo[0] + ms[0] / 2.0 < f.body_length() / 2.0);
+        assert_eq!(bo[2], 2.2);
         let mut plain = f;
         plain.polarised = false;
         assert!(plain.band_area().is_none());
         // A MELF band sits on the glass between the caps.
         let m = minimelf();
-        let band = m.band_area().unwrap_or(m.marking_area());
-        assert!(band.origin[0] - band.size_mm[0] / 2.0 >= -(3.5 / 2.0 - 0.4));
-        assert!((band.origin[2] - (0.05 + 1.4)).abs() < 1e-12);
+        let band = m.band_area().ok_or_else(missing)?;
+        let (bo, bs) = (band.origin(), band.size());
+        assert!(bo[0] - bs[0] / 2.0 >= -(3.5 / 2.0 - 0.4));
+        assert!((bo[2] - (0.05 + 1.4)).abs() < 1e-12);
+        Ok(())
     }
 
     #[test]
     fn inconsistent_forms_are_found() {
         let problems = |f: MoldedForm| PackageForm::Molded(Box::new(f)).range_problems();
         let mut f = minimelf();
-        f.body_height = 1.0;
+        f.body_height_nm = nm(1.0);
         assert!(problems(f).iter().any(|p| p.contains("round")));
         let mut f = minimelf();
-        f.terminal_width = 1.2;
+        f.terminal_width_nm = nm(1.2);
         assert!(problems(f).iter().any(|p| p.contains("cap")));
         let mut f = sod123();
-        f.terminal_length = 0.6;
+        f.terminal_length_nm = nm(0.6);
         assert!(problems(f).iter().any(|p| p.contains("outside the body")));
         let mut f = sma();
-        f.span = 4.5;
+        f.span_nm = nm(4.5);
         assert!(problems(f).iter().any(|p| p.contains("room beside")));
         let mut f = sod523();
-        f.terminal_length = 0.9;
+        f.terminal_length_nm = nm(0.9);
         assert!(problems(f).iter().any(|p| p.contains("meet")));
         let mut f = sod523();
-        f.terminal_width = 1.0;
+        f.terminal_width_nm = nm(1.0);
         assert!(problems(f).iter().any(|p| p.contains("wider")));
         let mut f = sma();
-        f.body_width = -1.0;
+        f.body_width_nm = nm(-1.0);
         assert!(!problems(f).is_empty());
     }
 }

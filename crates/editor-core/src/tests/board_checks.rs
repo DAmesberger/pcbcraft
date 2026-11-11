@@ -13,6 +13,7 @@ use crate::rules::{
     CopperObject, NetClassSpec, ProjectRules, RuleKey, RuleProfile, RuleValue, RulesCommand,
     builtin,
 };
+use crate::tests::support::nm;
 use crate::{Engine, Operation, Outcome, Query, QueryResult};
 
 fn track(id: Id, net: Id, start: Point, end: Point, width: f64) -> Track {
@@ -696,7 +697,7 @@ fn with_large_body(project: &mut Project, x: f64, rotation: f64) -> Result<Strin
     project.board_size = [50.0, 50.0];
     for published in &mut project.library.packages {
         if published.id == package {
-            published.definition.envelope = [10.0, 4.0, 1.0];
+            published.definition.envelope_nm = [nm(10.0), nm(4.0), nm(1.0)];
         }
     }
     Ok(designator)

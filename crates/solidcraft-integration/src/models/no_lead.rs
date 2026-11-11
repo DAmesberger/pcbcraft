@@ -18,12 +18,12 @@ const DIMPLE_DEPTH_MM: f64 = 0.03;
 
 pub(super) fn check(f: &NoLeadForm) -> Result<()> {
     check_positive(&[
-        ("pitch", f.pitch),
-        ("body length", f.body_length),
-        ("body width", f.body_width),
-        ("body height", f.body_height),
-        ("terminal length", f.terminal_length),
-        ("terminal width", f.terminal_width),
+        ("pitch", f.pitch()),
+        ("body length", f.body_length()),
+        ("body width", f.body_width()),
+        ("body height", f.body_height()),
+        ("terminal length", f.terminal_length()),
+        ("terminal width", f.terminal_width()),
     ])?;
     let four = f.sides == LeadSides::Four;
     check_count("terminals per long side", f.terminals_per_side[0])?;
@@ -31,34 +31,34 @@ pub(super) fn check(f: &NoLeadForm) -> Result<()> {
         check_count("terminals per short side", f.terminals_per_side[1])?;
     }
     require(
-        f.terminal_width < f.pitch,
+        f.terminal_width() < f.pitch(),
         "the terminal width must be below the pitch",
     )?;
-    let row_length = |n: u32| f64::from(n.saturating_sub(1)) * f.pitch + f.terminal_width;
+    let row_length = |n: u32| f64::from(n.saturating_sub(1)) * f.pitch() + f.terminal_width();
     require(
-        row_length(f.terminals_per_side[0]) <= f.body_length,
+        row_length(f.terminals_per_side[0]) <= f.body_length(),
         "the long-side terminals must fit along the body length",
     )?;
     require(
-        2.0 * f.terminal_length < f.body_width,
+        2.0 * f.terminal_length() < f.body_width(),
         "the terminals of opposite sides must not meet",
     )?;
     if four {
         require(
-            row_length(f.terminals_per_side[1]) <= f.body_width
-                && 2.0 * f.terminal_length < f.body_length,
+            row_length(f.terminals_per_side[1]) <= f.body_width()
+                && 2.0 * f.terminal_length() < f.body_length(),
             "the short-side terminals must fit along the body width",
         )?;
     }
-    if let Some([el, ew]) = f.exposed_pad {
+    if let Some([el, ew]) = f.exposed_pad() {
         check_positive(&[("exposed pad length", el), ("exposed pad width", ew)])?;
         let x_room = if four {
-            f.body_length - 2.0 * f.terminal_length
+            f.body_length() - 2.0 * f.terminal_length()
         } else {
-            f.body_length
+            f.body_length()
         };
         require(
-            el < x_room && ew < f.body_width - 2.0 * f.terminal_length,
+            el < x_room && ew < f.body_width() - 2.0 * f.terminal_length(),
             "the exposed pad must stay clear of the terminals",
         )?;
     }
@@ -67,7 +67,7 @@ pub(super) fn check(f: &NoLeadForm) -> Result<()> {
 
 pub(super) fn build(b: &mut Build<'_>, f: &NoLeadForm) -> Result<()> {
     let four = f.sides == LeadSides::Four;
-    let frame = FRAME_MM.min(f.body_height / 3.0);
+    let frame = FRAME_MM.min(f.body_height() / 3.0);
 
     let n = b.count("terminals", f.terminals_per_side[0])?;
     let m = if four {
@@ -75,12 +75,12 @@ pub(super) fn build(b: &mut Build<'_>, f: &NoLeadForm) -> Result<()> {
     } else {
         None
     };
-    let pitch = b.length("pitch", f.pitch)?;
-    let bl = b.length("body_length", f.body_length)?;
-    let bw = b.length("body_width", f.body_width)?;
-    let bh = b.length("body_height", f.body_height)?;
-    let tl = b.length("terminal_length", f.terminal_length)?;
-    let tw = b.length("terminal_width", f.terminal_width)?;
+    let pitch = b.length("pitch", f.pitch())?;
+    let bl = b.length("body_length", f.body_length())?;
+    let bw = b.length("body_width", f.body_width())?;
+    let bh = b.length("body_height", f.body_height())?;
+    let tl = b.length("terminal_length", f.terminal_length())?;
+    let tw = b.length("terminal_width", f.terminal_width())?;
     let fr = b.length("frame", frame)?;
 
     let body = b.name("body");
@@ -169,7 +169,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &NoLeadForm) -> Result<()> {
         ordered.push((names, axis, ascending));
     }
     let mut numbered = b.order(&ordered)?;
-    if let Some([el, ew]) = f.exposed_pad {
+    if let Some([el, ew]) = f.exposed_pad() {
         let el = b.length("pad_length", el)?;
         let ew = b.length("pad_width", ew)?;
         let name = b.name("exposed pad");
@@ -187,18 +187,18 @@ pub(super) fn build(b: &mut Build<'_>, f: &NoLeadForm) -> Result<()> {
     b.native
         .cut_keeping(&b.name("frame pockets"), &body, &tools)?;
     b.number(&numbered);
-    let edge = TOP_EDGE_MM.min(0.1 * f.body_height);
-    let (hl, hw) = (f.body_length / 2.0, f.body_width / 2.0);
+    let edge = TOP_EDGE_MM.min(0.1 * f.body_height());
+    let (hl, hw) = (f.body_length() / 2.0, f.body_width() / 2.0);
     b.round(
         "edge_round",
         &body,
-        &top_edges([-hl, -hw, 0.0], [hl, hw, f.body_height]),
+        &top_edges([-hl, -hw, 0.0], [hl, hw, f.body_height()]),
         edge,
     )?;
 
-    let short = f.body_length.min(f.body_width);
+    let short = f.body_length().min(f.body_width());
     let radius = (0.08 * short).clamp(0.1, 0.4);
-    if 6.0 * radius < short && DIMPLE_DEPTH_MM < f.body_height / 4.0 {
+    if 6.0 * radius < short && DIMPLE_DEPTH_MM < f.body_height() / 4.0 {
         let at = 2.0 * radius;
         b.native.cylinder_cut(
             &b.name("pin 1 mark"),

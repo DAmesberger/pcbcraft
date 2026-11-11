@@ -356,7 +356,7 @@ pub fn decal_with(
     artwork: ArtworkSource<'_>,
 ) -> Result<DecalMesh> {
     let map = SurfaceMap::plane(area)?;
-    let flat = flatten(layout, &Region::plane(area.size_mm), artwork)?;
+    let flat = flatten(layout, &Region::plane(area.size()), artwork)?;
     place_on(&flat, &map)
 }
 
@@ -720,7 +720,7 @@ pub fn flatten(
         ],
     };
     let mirror = placement.mirror;
-    let (s, c) = placement.rotation_deg.to_radians().sin_cos();
+    let (s, c) = placement.rotation_deg().to_radians().sin_cos();
     // A direction through the placement's linear part (no shift).
     let turn = |d: [f64; 2]| {
         let x = if mirror { -d[0] } else { d[0] };

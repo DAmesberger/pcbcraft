@@ -167,7 +167,7 @@ pub fn hit_detail(hit: &ModelHit) -> String {
     if let Some(pins) = hit.hints.pins {
         parts.push(format!("{pins} pins"));
     }
-    if let Some(pitch) = hit.hints.pitch_mm {
+    if let Some(pitch) = hit.hints.pitch_mm() {
         parts.push(format!("{pitch} mm pitch"));
     }
     if let Some(body) = hit.body_mm {
@@ -824,7 +824,7 @@ mod tests {
                 .map(|(i, d)| LeadTag {
                     key: format!("lead{i}"),
                     designation: (*d).to_owned(),
-                    contact: [0.0; 3],
+                    contact_nm: Default::default(),
                 })
                 .collect(),
             ..ModelDefinition::default()

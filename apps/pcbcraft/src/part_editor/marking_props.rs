@@ -32,6 +32,7 @@ use pcbcraft_core::library::marking::{
     SurfaceRef, Symbology, Template,
 };
 use pcbcraft_core::library::{ComponentDefinition, Definition, DraftEdit, Library, PackedAsset};
+use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{DefinitionId, Engine, FieldRef, LibraryCommand, Operation};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::path::PathBuf;
@@ -41,6 +42,45 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 const AREA_MM: std::ops::RangeInclusive<f64> = -100.0..=100.0;
 const SIZE_MM: std::ops::RangeInclusive<f64> = 0.01..=100.0;
 const HEIGHT_MM: std::ops::RangeInclusive<f64> = 0.05..=20.0;
+
+/// `mm` as stored, through the one crossing; `None` if it refuses.
+fn stored(mm: f64) -> Option<Nm> {
+    Nm::from_mm_f64_rounded(mm).ok()
+}
+
+/// A row editing a stored length in millimetres; whether it changed.
+fn nm_row(ui: &mut Ui, label: &str, value: &mut Nm, range: std::ops::RangeInclusive<f64>) -> bool {
+    let mut mm = value.to_mm_f64();
+    match (kit::number_row(ui, label, &mut mm, "mm", range), stored(mm)) {
+        (true, Some(nm)) => {
+            *value = nm;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// A row editing a stored pair of lengths in millimetres; whether it
+/// changed.
+fn nm_pair_row(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut [Nm; 2],
+    range: std::ops::RangeInclusive<f64>,
+) -> bool {
+    let mut mm = value.map(Nm::to_mm_f64);
+    match (
+        kit::pair_row(ui, label, &mut mm, "mm", range),
+        stored(mm[0]),
+        stored(mm[1]),
+    ) {
+        (true, Some(a), Some(b)) => {
+            *value = [a, b];
+            true
+        }
+        _ => false,
+    }
+}
 
 /// Which marking the section edits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -119,7 +159,7 @@ pub fn artwork_item(text: &str, natural: [f64; 2], area: [f64; 2]) -> (PackedAss
         },
         MarkingItem::Artwork {
             svg: hash,
-            size_mm: artwork_size(natural, area),
+            size_nm: artwork_size(natural, area).map(|v| stored(v).unwrap_or_default()),
             anchor: Anchor::Centre,
             licence: None,
         },
@@ -175,7 +215,7 @@ impl Kind {
         Some(match self {
             Self::Text => MarkingItem::Text {
                 template: Template("{mpn}".into()),
-                height_mm: None,
+                height_nm: None,
                 align: Align::Centre,
             },
             Self::Code => MarkingItem::Code {
@@ -193,7 +233,7 @@ impl Kind {
             Self::Code2d => MarkingItem::Code2d {
                 symbology: Symbology::Qr,
                 payload: Template("{designator}".into()),
-                size_mm: 3.0,
+                size_nm: stored(3.0).unwrap_or_default(),
                 anchor: Anchor::End,
                 ecc: Ecc::Medium,
             },
@@ -428,7 +468,7 @@ fn layout_text(layout: &marking::MarkingLayout) -> String {
 fn text_rows(
     ui: &mut Ui,
     template: &mut Template,
-    height_mm: &mut Option<f64>,
+    height_nm: &mut Option<Nm>,
     align: &mut Align,
     fields: &[(FieldRef, String)],
 ) -> bool {
@@ -486,17 +526,17 @@ fn text_rows(
         template.0.push_str(&placeholder);
         changed = true;
     }
-    let mut auto = height_mm.is_none();
+    let mut auto = height_nm.is_none();
     if kit::check_row(ui, "Fit the height to the area", &mut auto) {
-        *height_mm = if auto {
+        *height_nm = if auto {
             None
         } else {
-            Some(DEFAULT_MIN_TEXT_HEIGHT_MM * 2.0)
+            stored(DEFAULT_MIN_TEXT_HEIGHT_MM * 2.0)
         };
         changed = true;
     }
-    if let Some(height) = height_mm {
-        changed |= kit::number_row(ui, "Height", height, "mm", HEIGHT_MM);
+    if let Some(height) = height_nm {
+        changed |= nm_row(ui, "Height", height, HEIGHT_MM);
     }
     let aligns = [
         (Align::Centre, "Centre".to_owned()),
@@ -531,9 +571,9 @@ fn item_rows(ui: &mut Ui, item: &mut MarkingItem, fields: &[(FieldRef, String)])
     match item {
         MarkingItem::Text {
             template,
-            height_mm,
+            height_nm,
             align,
-        } => text_rows(ui, template, height_mm, align, fields),
+        } => text_rows(ui, template, height_nm, align, fields),
         MarkingItem::Code { scheme, field } => {
             let mut changed = kit::choice_row(ui, "Code", scheme, &schemes());
             let mut chosen = Some(*field);
@@ -569,7 +609,7 @@ fn item_rows(ui: &mut Ui, item: &mut MarkingItem, fields: &[(FieldRef, String)])
         }
         MarkingItem::Code2d {
             payload,
-            size_mm,
+            size_nm,
             anchor,
             ecc,
             ..
@@ -600,7 +640,7 @@ fn item_rows(ui: &mut Ui, item: &mut MarkingItem, fields: &[(FieldRef, String)])
                 (Ecc::Quartile, "Quartile (25 %)".to_owned()),
                 (Ecc::High, "High (30 %)".to_owned()),
             ];
-            changed |= kit::number_row(ui, "Side", size_mm, "mm", SIZE_MM)
+            changed |= nm_row(ui, "Side", size_nm, SIZE_MM)
                 | kit::choice_row(ui, "At", anchor, &anchors())
                 | kit::choice_row(ui, "Recovery", ecc, &eccs);
             kit::note(ui, "A QR code; its quiet zone is kept clear");
@@ -626,13 +666,13 @@ fn item_rows(ui: &mut Ui, item: &mut MarkingItem, fields: &[(FieldRef, String)])
         }
         MarkingItem::Artwork {
             svg,
-            size_mm,
+            size_nm,
             anchor,
             licence,
         } => {
             let hash: String = svg.to_string().chars().take(12).collect();
             kit::value_row(ui, "SVG", &hash);
-            let mut changed = kit::pair_row(ui, "Size", size_mm, "mm", SIZE_MM)
+            let mut changed = nm_pair_row(ui, "Size", size_nm, SIZE_MM)
                 | kit::choice_row(ui, "At", anchor, &anchors());
             let mut text = licence.clone().unwrap_or_default();
             let missing = text.trim().is_empty();
@@ -702,23 +742,27 @@ pub fn spec_rows(
         if on_model && kit::choice_row(ui, "Area", &mut explicit, &areas) {
             body.area = if explicit {
                 AreaChoice::Explicit {
-                    centre: [0.0, 0.0],
-                    size_mm: [1.0, 0.5],
+                    centre: PointNm::ORIGIN,
+                    size_nm: [1.0, 0.5].map(|v| stored(v).unwrap_or_default()),
                 }
             } else {
                 AreaChoice::FromModel
             };
             changed = true;
         }
-        if let (true, AreaChoice::Explicit { centre, size_mm }) = (on_model, &mut body.area) {
-            changed |= kit::pair_row(ui, "Centre", centre, "mm", AREA_MM);
-            changed |= kit::pair_row(ui, "Size", size_mm, "mm", SIZE_MM);
+        if let (true, AreaChoice::Explicit { centre, size_nm }) = (on_model, &mut body.area) {
+            let mut at = [centre.x_nm, centre.y_nm];
+            if nm_pair_row(ui, "Centre", &mut at, AREA_MM) {
+                *centre = PointNm::new(at[0], at[1]);
+                changed = true;
+            }
+            changed |= nm_pair_row(ui, "Size", size_nm, SIZE_MM);
         }
-        let mut smallest = body
-            .min_text_height_mm
-            .unwrap_or(DEFAULT_MIN_TEXT_HEIGHT_MM);
-        if kit::number_row(ui, "Smallest text", &mut smallest, "mm", HEIGHT_MM) {
-            body.min_text_height_mm = Some(smallest);
+        let mut smallest = body.min_text_height_mm();
+        if kit::number_row(ui, "Smallest text", &mut smallest, "mm", HEIGHT_MM)
+            && let Some(nm) = stored(smallest)
+        {
+            body.min_text_height_nm = Some(nm);
             changed = true;
         }
     }
@@ -811,10 +855,10 @@ impl PartEditor {
                 Scope::Part(_) => state.part.as_ref().and_then(|p| p.mark.as_deref()),
             }
             .and_then(|m| match m.area {
-                AreaChoice::Explicit { size_mm, .. } => Some(size_mm),
+                AreaChoice::Explicit { size_nm, .. } => Some(size_nm.map(Nm::to_mm_f64)),
                 AreaChoice::FromModel => None,
             })
-            .unwrap_or([set.package.envelope[0], set.package.envelope[1]]);
+            .unwrap_or([set.package.envelope()[0], set.package.envelope()[1]]);
             let (asset, item) = artwork_item(&read.text, read.size_mm, area);
             let spec = match scope {
                 Scope::Component => Some(&mut set.component.marking),
@@ -843,7 +887,7 @@ impl PartEditor {
             }
         }
         let fields = field_names(&set.component, library);
-        let envelope = set.package.envelope;
+        let envelope = set.package.envelope();
         let surfaces = marking_place::surfaces(&set.package);
         let package = set.package.clone();
         let part_open = self.parts.is_open();
@@ -1202,7 +1246,7 @@ mod tests {
             stored.items,
             vec![MarkingItem::Text {
                 template: Template("{mpn}".into()),
-                height_mm: None,
+                height_nm: None,
                 align: Align::Centre,
             }]
         );
@@ -1301,7 +1345,7 @@ mod tests {
         let [
             MarkingItem::Artwork {
                 svg: named,
-                size_mm,
+                size_nm,
                 licence,
                 ..
             },
@@ -1310,8 +1354,9 @@ mod tests {
             return Err(format!("{:?}", stored.items).into());
         };
         assert_eq!(*named, hash);
+        let size_mm = size_nm.map(Nm::to_mm_f64);
         assert!(
-            (size_mm[0] / size_mm[1] - 2.0).abs() < 1e-9,
+            (size_mm[0] / size_mm[1] - 2.0).abs() < 1e-6,
             "aspect kept: {size_mm:?}"
         );
         assert_eq!(licence, &None);

@@ -314,7 +314,7 @@ impl Candidate<'_> {
             Filter::Pins(op, pins) => model
                 .and_then(ModelDefinition::pin_count)
                 .is_some_and(|n| op.holds(f64::from(n), f64::from(*pins))),
-            Filter::Pitch(op, pitch) => self.hints.pitch_mm.is_some_and(|p| match op {
+            Filter::Pitch(op, pitch) => self.hints.pitch_mm().is_some_and(|p| match op {
                 Op::Eq => (p - pitch).abs() <= PITCH_TOLERANCE_MM,
                 _ => op.holds(p, *pitch),
             }),
@@ -515,12 +515,11 @@ fn fit(target: &Target<'_>, model: &ModelDefinition) -> FitScore {
             let sum = centres
                 .iter()
                 .fold([0.0, 0.0], |a, p| [a[0] + p[0], a[1] + p[1]]);
-            pairs.push(LeadPair {
-                terminal: terminal.id,
-                pad: first.id,
-                lead: lead.contact,
-                pad_centre: [sum[0] / n, sum[1] / n],
-            });
+            let centre = [sum[0] / n, sum[1] / n];
+            let Ok(pair) = LeadPair::from_mm(terminal.id, first.id, lead.contact(), centre) else {
+                continue;
+            };
+            pairs.push(pair);
         }
         if pairs.len() >= 2
             && pairs.len() == landed
@@ -533,7 +532,7 @@ fn fit(target: &Target<'_>, model: &ModelDefinition) -> FitScore {
         }
     }
     FitScore::Bounds {
-        excess_mm: bounds_excess(model, target.package.envelope),
+        excess_mm: bounds_excess(model, target.package.envelope()),
     }
 }
 
@@ -575,7 +574,7 @@ fn facets(hits: &[ModelHit]) -> ModelFacets {
         if let Some(n) = hit.hints.pins {
             add(&mut pins, n.to_string());
         }
-        if let Some(p) = hit.hints.pitch_mm {
+        if let Some(p) = hit.hints.pitch_mm() {
             add(&mut pitch, format!("{p}"));
         }
         add(

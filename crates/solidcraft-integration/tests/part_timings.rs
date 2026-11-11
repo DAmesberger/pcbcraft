@@ -19,8 +19,12 @@ fn ms(d: Duration) -> f64 {
 }
 
 fn wroom3() -> PackageDefinition {
-    let form: PackageForm =
-        serde_json::from_str(include_str!("template_spike_wroom3.json")).unwrap();
+    // The fixture is the module datasheet's millimetres: the wire form.
+    let form: PackageForm = serde_json::from_str::<
+        pcbcraft_core::library::package_form::PackageFormParams,
+    >(include_str!("template_spike_wroom3.json"))
+    .unwrap()
+    .into();
     PackageDefinition {
         next_local: 100,
         terminals: (1..=99)

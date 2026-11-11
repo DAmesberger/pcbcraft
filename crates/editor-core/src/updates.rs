@@ -1207,11 +1207,11 @@ pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<Stri
             out.push(format!("chip kind {:?} → {:?}.", x.kind, y.kind));
         }
     }
-    if a.envelope != b.envelope {
+    if a.envelope() != b.envelope() {
         out.push(format!(
             "body {} → {} mm (L×W×H).",
-            size_text(&a.envelope),
-            size_text(&b.envelope)
+            size_text(&a.envelope()),
+            size_text(&b.envelope())
         ));
     }
     match (&a.model, &b.model) {
@@ -1241,10 +1241,10 @@ pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<Stri
     if a.placement != b.placement {
         out.push(format!(
             "model placement {:?} mm, {:?}° → {:?} mm, {:?}°.",
-            a.placement.translation,
-            a.placement.rotation_deg,
-            b.placement.translation,
-            b.placement.rotation_deg
+            a.placement.translation(),
+            a.placement.rotation_deg(),
+            b.placement.translation(),
+            b.placement.rotation_deg()
         ));
     }
     out

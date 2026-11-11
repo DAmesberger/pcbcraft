@@ -150,7 +150,7 @@ fn text_templates_stack_lines_and_render_variables() -> Fallible<()> {
     let spec = MarkingSpec {
         items: vec![MarkingItem::Text {
             template: Template("{mpn}\n{var:date_code}".into()),
-            height_mm: None,
+            height_nm: None,
             align: Align::Centre,
         }],
         ..Default::default()
@@ -184,7 +184,7 @@ fn lines_that_do_not_fit_are_dropped_from_the_end() -> Fallible<()> {
     let spec = MarkingSpec {
         items: vec![MarkingItem::Text {
             template: Template("A1\nB2\nC3".into()),
-            height_mm: None,
+            height_nm: None,
             align: Align::Start,
         }],
         ..Default::default()
@@ -256,7 +256,7 @@ fn colour_bands_and_artwork() -> Fallible<()> {
             },
             MarkingItem::Artwork {
                 svg: ContentHash([7; 32]),
-                size_mm: [1.0, 0.5],
+                size_nm: [nm(1.0), nm(0.5)],
                 anchor: Anchor::Pin1Corner,
                 licence: None,
             },
@@ -282,7 +282,7 @@ fn colour_bands_and_artwork() -> Fallible<()> {
     let big = MarkingSpec {
         items: vec![MarkingItem::Artwork {
             svg: ContentHash([7; 32]),
-            size_mm: [9.0, 0.5],
+            size_nm: [nm(9.0), nm(0.5)],
             anchor: Anchor::Centre,
             licence: None,
         }],
@@ -314,7 +314,7 @@ fn spec_findings_check_templates_schemes_and_sizes() {
         items: vec![
             MarkingItem::Text {
                 template: Template("{mpn} {field:D70|code3}".into()),
-                height_mm: Some(0.5),
+                height_nm: Some(nm(0.5)),
                 align: Align::Centre,
             },
             MarkingItem::Code {
@@ -329,7 +329,7 @@ fn spec_findings_check_templates_schemes_and_sizes() {
         items: vec![
             MarkingItem::Text {
                 template: Template("{nope}".into()),
-                height_mm: Some(-1.0),
+                height_nm: Some(nm(-1.0)),
                 align: Align::Centre,
             },
             MarkingItem::Code {
@@ -346,16 +346,17 @@ fn spec_findings_check_templates_schemes_and_sizes() {
             },
             MarkingItem::Artwork {
                 svg: ContentHash([0; 32]),
-                size_mm: [0.0, 1.0],
+                size_nm: [nm(0.0), nm(1.0)],
                 anchor: Anchor::Centre,
                 licence: None,
             },
         ],
         area: AreaChoice::Explicit {
-            centre: [0.0, f64::NAN],
-            size_mm: [1.0, 1.0],
+            // Beyond the largest marking area.
+            centre: pt([0.0, 1500.0]),
+            size_nm: [nm(1.0), nm(1.0)],
         },
-        min_text_height_mm: Some(0.0),
+        min_text_height_nm: Some(nm(0.0)),
         ..Default::default()
     };
     let findings = spec_findings(owner, &bad);
@@ -481,7 +482,7 @@ fn set_marking_hides_replaces_and_sets_variables_in_one_step() -> Fallible<()> {
         replace: Some(MarkingSpec {
             items: vec![MarkingItem::Text {
                 template: Template("{designator} {var:date_code}".into()),
-                height_mm: None,
+                height_nm: None,
                 align: Align::Centre,
             }],
             ..Default::default()
@@ -546,7 +547,7 @@ fn set_marking_refuses_bad_input_and_changes_nothing() -> Fallible<()> {
             replace: Some(MarkingSpec {
                 items: vec![MarkingItem::Text {
                     template: Template("{unclosed".into()),
-                    height_mm: None,
+                    height_nm: None,
                     align: Align::Centre,
                 }],
                 ..Default::default()
@@ -586,7 +587,7 @@ fn an_unmarked_component_has_no_marking_and_specs_gate_publishing() -> Fallible<
         c.marking = Some(Box::new(MarkingSpec {
             items: vec![MarkingItem::Text {
                 template: Template("{field:x}".into()),
-                height_mm: None,
+                height_nm: None,
                 align: Align::Centre,
             }],
             ..Default::default()
@@ -617,7 +618,7 @@ fn svg_asset(text: &str) -> crate::library::PackedAsset {
 fn artwork_item(hash: ContentHash, licence: Option<&str>) -> MarkingItem {
     MarkingItem::Artwork {
         svg: hash,
-        size_mm: [1.0, 1.0],
+        size_nm: [nm(1.0), nm(1.0)],
         anchor: Anchor::Centre,
         licence: licence.map(str::to_owned),
     }
@@ -920,13 +921,13 @@ fn a_2d_code_encodes_its_payload_and_keeps_its_quiet_zone_clear_of_text() -> Fal
         items: vec![
             MarkingItem::Text {
                 template: Template("MODEL-3".into()),
-                height_mm: None,
+                height_nm: None,
                 align: Align::Centre,
             },
             MarkingItem::Code2d {
                 symbology: Symbology::Qr,
                 payload: Template("{designator}:{var:lot}".into()),
-                size_mm: 4.0,
+                size_nm: nm(4.0),
                 anchor: Anchor::End,
                 ecc: Ecc::Medium,
             },
@@ -965,14 +966,14 @@ fn a_2d_code_encodes_its_payload_and_keeps_its_quiet_zone_clear_of_text() -> Fal
     }
     // Too big for the area: nothing drawn, said so.
     let mut big = spec.clone();
-    if let Some(MarkingItem::Code2d { size_mm, .. }) = big.items.get_mut(1) {
-        *size_mm = 7.9;
+    if let Some(MarkingItem::Code2d { size_nm, .. }) = big.items.get_mut(1) {
+        *size_nm = nm(7.9);
     }
     let laid = layout(&big, &inputs)?;
     assert!(finding_codes(&laid).contains(&"marking.does_not_fit"));
     // Modules below the smallest drawn: unrepresentable.
-    if let Some(MarkingItem::Code2d { size_mm, .. }) = big.items.get_mut(1) {
-        *size_mm = 1.0;
+    if let Some(MarkingItem::Code2d { size_nm, .. }) = big.items.get_mut(1) {
+        *size_nm = nm(1.0);
     }
     let laid = layout(&big, &inputs)?;
     assert!(finding_codes(&laid).contains(&"marking.unrepresentable"));
@@ -981,7 +982,7 @@ fn a_2d_code_encodes_its_payload_and_keeps_its_quiet_zone_clear_of_text() -> Fal
     bad.items[1] = MarkingItem::Code2d {
         symbology: Symbology::Qr,
         payload: Template("{nope}".into()),
-        size_mm: 0.0,
+        size_nm: nm(0.0),
         anchor: Anchor::Centre,
         ecc: Ecc::Low,
     };
@@ -996,7 +997,7 @@ fn a_2d_code_encodes_its_payload_and_keeps_its_quiet_zone_clear_of_text() -> Fal
 fn decals_lay_out_on_their_own_surfaces() -> Fallible<()> {
     let text = |t: &str| MarkingItem::Text {
         template: Template(t.into()),
-        height_mm: None,
+        height_nm: None,
         align: Align::Centre,
     };
     let spec = MarkingSpec {
@@ -1014,7 +1015,7 @@ fn decals_lay_out_on_their_own_surfaces() -> Fallible<()> {
                 on: SurfaceRef::Anchor {
                     name: "pcb_top".into(),
                 },
-                rotation_deg: 90.0,
+                rotation_mdeg: crate::units::Angle::normalized(90_000),
                 ..Placement::default()
             },
             finish: Finish::InkWhite,
@@ -1034,7 +1035,7 @@ fn decals_lay_out_on_their_own_surfaces() -> Fallible<()> {
     let pcb = &laid.decals[0];
     assert_eq!(texts(pcb), ["PCB"]);
     assert_eq!(pcb.finish, Finish::InkWhite);
-    assert_eq!(pcb.placement.rotation_deg, 90.0);
+    assert_eq!(pcb.placement.rotation_deg(), 90.0);
     // Turned a quarter, the 22 × 4 strip lays out 4 wide and 22 tall:
     // three letters fit only small.
     assert!(inside(pcb, [4.0, 22.0]));

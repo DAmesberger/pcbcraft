@@ -6,6 +6,8 @@
 
 use std::collections::BTreeSet;
 
+use crate::models::tests::nm;
+
 use pcbcraft_core::diagnostics::{Error, Result};
 use pcbcraft_core::geometry::Shape;
 use pcbcraft_core::ids::{PackageTerminalId, PadId};
@@ -29,7 +31,7 @@ const EV: SketchEvaluator = SketchEvaluator;
 
 fn package(terminals: usize) -> PackageDefinition {
     PackageDefinition {
-        envelope: [4.9, 3.9, 1.5],
+        envelope_nm: [nm(4.9), nm(3.9), nm(1.5)],
         terminals: (1..=terminals)
             .map(|n| PackageTerminal {
                 id: PackageTerminalId(u32::try_from(n).unwrap_or(0) + 100),

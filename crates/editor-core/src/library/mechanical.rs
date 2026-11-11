@@ -211,7 +211,7 @@ impl PartSpec {
                 "values are at most 256 finite literals named by part parameters".into(),
             ));
         }
-        let [lo, hi] = self.derived.bounds_mm;
+        let [lo, hi] = self.derived.bounds();
         if !finite_within(&lo) || !finite_within(&hi) || (0..3).any(|i| hi[i] < lo[i]) {
             return Err(invalid("the part's bounds are not a finite box".into()));
         }
@@ -480,7 +480,7 @@ pub fn make_variant(
     };
     let count =
         u32::try_from(terminal_lands.len()).map_err(|_| invalid("too many terminals".into()))?;
-    let package_body = package_definition(spec, model, count, key);
+    let package_body = package_definition(spec, model, count, key)?;
     let footprint_body = footprint_definition(spec, package, &package_body)?;
     let terminals: Vec<TerminalId> = (1..=count).map(TerminalId).collect();
     let set = [
@@ -582,9 +582,13 @@ fn package_definition(
     model: ModelRef,
     terminals: u32,
     key: ContentHash,
-) -> PackageDefinition {
-    let [lo, hi] = spec.derived.bounds_mm;
-    PackageDefinition {
+) -> Result<PackageDefinition> {
+    let [lo, hi] = spec.derived.bounds();
+    let mut envelope_nm = [crate::units::Nm::ZERO; 3];
+    for (i, size) in envelope_nm.iter_mut().enumerate() {
+        *size = crate::units::Nm::from_mm_f64_rounded((hi[i] - lo[i]).max(0.01))?;
+    }
+    Ok(PackageDefinition {
         next_local: terminals + 1,
         terminals: (1..=terminals)
             .map(|n| PackageTerminal {
@@ -593,7 +597,7 @@ fn package_definition(
             })
             .collect(),
         form: PackageForm::Generic,
-        envelope: [0, 1, 2].map(|i| (hi[i] - lo[i]).max(0.01)),
+        envelope_nm,
         model: PackageModel::PartFile(Box::new(PartFileModel {
             model,
             values: spec.values.clone(),
@@ -608,7 +612,7 @@ fn package_definition(
             pick_and_place: spec.in_pick_and_place(),
         })),
         ..PackageDefinition::default()
-    }
+    })
 }
 
 /// Four ring segments of an annular land, in the pad frame.
@@ -711,7 +715,7 @@ fn footprint_definition(
         pads,
         ..FootprintDefinition::default()
     };
-    let [lo, hi] = spec.derived.bounds_mm;
+    let [lo, hi] = spec.derived.bounds();
     let body = Bounds {
         min: [lo[0], lo[1]],
         max: [hi[0], hi[1]],

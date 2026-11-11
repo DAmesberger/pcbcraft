@@ -11,6 +11,7 @@
 use super::*;
 use crate::layer_view::ViewLayer;
 use egui_wgpu::wgpu;
+use pcbcraft_core::library::package_form::{typical_nm as nm, typical_point as pt};
 use pcbcraft_core::{Fabrication, Layer, MaskColour, PadFinish, Project};
 use pcbcraft_solidcraft::material::BodyKind;
 use solidcraft_ui_egui::gpu::StudioPreset;
@@ -362,7 +363,7 @@ fn write_pictures() -> Result<(), Box<dyn std::error::Error>> {
                 },
                 ..Default::default()
             };
-            package.envelope = package.form.envelope().unwrap_or([1.0; 3]);
+            package.envelope_nm = (package.form.envelope().unwrap_or([1.0; 3])).map(nm);
             let model = pcbcraft_solidcraft::project::preview(&package)?;
             let mut v = Viewport::detached();
             v.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
@@ -487,10 +488,10 @@ fn generated_packages() -> Vec<(&'static str, pcbcraft_core::library::PackageDef
     };
     let chip = |kind| ChipForm {
         kind,
-        length: 1.6,
-        width: 0.8,
-        height: 0.45,
-        termination: 0.3,
+        length_nm: nm(1.6),
+        width_nm: nm(0.8),
+        height_nm: nm(0.45),
+        termination_nm: nm(0.3),
     };
     vec![
         (
@@ -501,7 +502,7 @@ fn generated_packages() -> Vec<(&'static str, pcbcraft_core::library::PackageDef
             "chip-capacitor-0603",
             package(
                 PackageForm::Chip(Box::new(ChipForm {
-                    height: 0.8,
+                    height_nm: nm(0.8),
                     ..chip(ChipKind::Capacitor)
                 })),
                 2,
@@ -513,15 +514,15 @@ fn generated_packages() -> Vec<(&'static str, pcbcraft_core::library::PackageDef
                 PackageForm::GullWing(Box::new(GullWingForm {
                     sides: LeadSides::Two,
                     leads_per_side: [4, 0],
-                    pitch: 1.27,
-                    body_length: 4.9,
-                    body_width: 3.9,
-                    body_height: 1.45,
-                    standoff: 0.1,
-                    span: [6.0, 0.0],
-                    lead_width: 0.41,
-                    lead_thickness: 0.2,
-                    foot_length: 0.6,
+                    pitch_nm: nm(1.27),
+                    body_length_nm: nm(4.9),
+                    body_width_nm: nm(3.9),
+                    body_height_nm: nm(1.45),
+                    standoff_nm: nm(0.1),
+                    span_nm: [nm(6.0), nm(0.0)],
+                    lead_width_nm: nm(0.41),
+                    lead_thickness_nm: nm(0.2),
+                    foot_length_nm: nm(0.6),
                 })),
                 8,
             ),
@@ -532,15 +533,15 @@ fn generated_packages() -> Vec<(&'static str, pcbcraft_core::library::PackageDef
                 PackageForm::GullWing(Box::new(GullWingForm {
                     sides: LeadSides::Four,
                     leads_per_side: [8, 8],
-                    pitch: 0.8,
-                    body_length: 7.0,
-                    body_width: 7.0,
-                    body_height: 1.0,
-                    standoff: 0.1,
-                    span: [9.0, 9.0],
-                    lead_width: 0.37,
-                    lead_thickness: 0.15,
-                    foot_length: 0.6,
+                    pitch_nm: nm(0.8),
+                    body_length_nm: nm(7.0),
+                    body_width_nm: nm(7.0),
+                    body_height_nm: nm(1.0),
+                    standoff_nm: nm(0.1),
+                    span_nm: [nm(9.0), nm(9.0)],
+                    lead_width_nm: nm(0.37),
+                    lead_thickness_nm: nm(0.15),
+                    foot_length_nm: nm(0.6),
                 })),
                 32,
             ),
@@ -551,13 +552,13 @@ fn generated_packages() -> Vec<(&'static str, pcbcraft_core::library::PackageDef
                 PackageForm::NoLead(Box::new(NoLeadForm {
                     sides: LeadSides::Four,
                     terminals_per_side: [4, 4],
-                    pitch: 0.5,
-                    body_length: 3.0,
-                    body_width: 3.0,
-                    body_height: 0.85,
-                    terminal_length: 0.4,
-                    terminal_width: 0.25,
-                    exposed_pad: Some([1.7, 1.7]),
+                    pitch_nm: nm(0.5),
+                    body_length_nm: nm(3.0),
+                    body_width_nm: nm(3.0),
+                    body_height_nm: nm(0.85),
+                    terminal_length_nm: nm(0.4),
+                    terminal_width_nm: nm(0.25),
+                    exposed_pad: Some(pt([1.7, 1.7])),
                 })),
                 17,
             ),
@@ -568,12 +569,12 @@ fn generated_packages() -> Vec<(&'static str, pcbcraft_core::library::PackageDef
                 PackageForm::Header(Box::new(HeaderForm {
                     rows: 2,
                     pins_per_row: 5,
-                    pitch: 2.54,
-                    row_pitch: 2.54,
-                    body_height: 2.5,
-                    pin_side: 0.64,
-                    pin_above: 6.0,
-                    pin_below: 3.0,
+                    pitch_nm: nm(2.54),
+                    row_pitch_nm: nm(2.54),
+                    body_height_nm: nm(2.5),
+                    pin_side_nm: nm(0.64),
+                    pin_above_nm: nm(6.0),
+                    pin_below_nm: nm(3.0),
                 })),
                 10,
             ),
@@ -619,10 +620,10 @@ fn write_model_pictures() -> Result<(), Box<dyn std::error::Error>> {
     package.form =
         pcbcraft_core::library::PackageForm::Chip(Box::new(pcbcraft_core::library::ChipForm {
             kind: pcbcraft_core::library::ChipKind::Resistor,
-            length: 2.0,
-            width: 1.2,
-            height: 0.6,
-            termination: 0.4,
+            length_nm: nm(2.0),
+            width_nm: nm(1.2),
+            height_nm: nm(0.6),
+            termination_nm: nm(0.4),
         }));
     package.model = pcbcraft_core::library::PackageModel::Generated {
         family_rev: 1,
@@ -757,13 +758,13 @@ fn write_showcase_pictures() -> Result<(), Box<dyn std::error::Error>> {
         ),
         (
             "06-passive-0603",
-            Box::new(|f| matches!(f, PackageForm::Chip(c) if c.length < 1.8)),
+            Box::new(|f| matches!(f, PackageForm::Chip(c) if c.length() < 1.8)),
             6.0,
             30.0,
         ),
         (
             "07-passive-0805",
-            Box::new(|f| matches!(f, PackageForm::Chip(c) if c.length >= 1.8)),
+            Box::new(|f| matches!(f, PackageForm::Chip(c) if c.length() >= 1.8)),
             7.0,
             210.0,
         ),
@@ -1135,12 +1136,12 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
     let radial = picture_package(
         PackageForm::Tht(Box::new(ThtForm::new(
             ThtKind::Radial {
-                body_diameter: 6.3,
-                body_height: 11.0,
+                body_diameter_nm: nm(6.3),
+                body_height_nm: nm(11.0),
             },
-            2.5,
-            0.5,
-            3.0,
+            nm(2.5),
+            nm(0.5),
+            nm(3.0),
         ))),
         2,
     );
@@ -1166,7 +1167,7 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
             },
             MarkingItem::Text {
                 template: pcbcraft_core::library::marking::Template("LOW ESR".into()),
-                height_mm: Some(0.9),
+                height_nm: pcbcraft_core::units::Nm::from_mm_f64_rounded(0.9).ok(),
                 align: Default::default(),
             },
         ],
@@ -1177,7 +1178,8 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
         decals: vec![MarkingSpec {
             items: vec![MarkingItem::Artwork {
                 svg: vent_hash,
-                size_mm: [2.6, 2.6],
+                size_nm: [pcbcraft_core::units::Nm::from_mm_f64_rounded(2.6).unwrap_or_default();
+                    2],
                 anchor: Default::default(),
                 licence: Some("CC0-1.0".into()),
             }],
@@ -1206,12 +1208,12 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
     let axial = picture_package(
         PackageForm::Tht(Box::new(ThtForm::new(
             ThtKind::Axial {
-                body_diameter: 2.5,
-                body_length: 6.5,
+                body_diameter_nm: nm(2.5),
+                body_length_nm: nm(6.5),
             },
-            10.16,
-            0.6,
-            3.0,
+            nm(10.16),
+            nm(0.6),
+            nm(3.0),
         ))),
         2,
     );

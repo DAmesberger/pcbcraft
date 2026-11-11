@@ -7,6 +7,7 @@ use super::{MAX_LABEL, MAX_PACKAGE_TERMINALS, printable};
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::geometry::{Point3, finite_within, size_valid};
 use crate::ids::{DefinitionId, PackageTerminalId};
+use crate::units::Nm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -19,10 +20,10 @@ pub struct PackageDefinition {
     /// Typed physical parameters, the only source of `pkg_*` values.
     /// `Generic` has only the authored envelope.
     pub form: PackageForm,
-    /// Envelope length, width and height in mm, in the model frame from the
+    /// Envelope length, width and height, in the model frame from the
     /// seating plane up, centred in x and y. Derived from a typed `form`
     /// (`PackageForm::envelope`); authored for `Generic`.
-    pub envelope: [f64; 3],
+    pub envelope_nm: [Nm; 3],
     /// Where the 3D model comes from and its body materials.
     pub model: PackageModel,
     /// The model in the datum frame (`model_frame`).
@@ -48,10 +49,15 @@ impl PackageDefinition {
         self.terminals.iter().find(|t| t.id == id)
     }
 
-    /// A positive finite envelope with a finite placement: the condition
-    /// for a native envelope model.
+    /// The envelope's length, width and height in millimetres.
+    pub fn envelope(&self) -> [f64; 3] {
+        self.envelope_nm.map(Nm::to_mm_f64)
+    }
+
+    /// A positive finite envelope (the placement is in range by type): the
+    /// condition for a native envelope model.
     pub fn envelope_valid(&self) -> bool {
-        size_valid(&self.envelope) && self.placement.finite()
+        size_valid(&self.envelope())
     }
 
     /// The chip construction of a typed chip form.
@@ -67,13 +73,20 @@ impl PackageDefinition {
     /// kept, or clamped below half the length). Other typed forms derive
     /// the envelope from several parameters, so they refuse.
     pub fn resize_envelope(&mut self, size: [f64; 3]) -> Result<()> {
+        let stored = [
+            Nm::from_mm_f64_rounded(size[0])?,
+            Nm::from_mm_f64_rounded(size[1])?,
+            Nm::from_mm_f64_rounded(size[2])?,
+        ];
         match &mut self.form {
             PackageForm::Generic => {}
             PackageForm::Chip(c) => {
-                let termination = c.termination.min(0.45 * size[0]);
+                let termination = c
+                    .termination_nm
+                    .min(Nm::from_mm_f64_rounded(0.45 * size[0])?);
                 **c = ChipForm {
-                    termination,
-                    ..ChipForm::new(c.kind, size)
+                    termination_nm: termination,
+                    ..ChipForm::new(c.kind, stored)
                 };
             }
             other => {
@@ -83,13 +96,13 @@ impl PackageDefinition {
                 )));
             }
         }
-        self.envelope = size;
+        self.envelope_nm = stored;
         Ok(())
     }
 
     /// The envelope box's corners in the model frame (z = 0 up).
     pub fn envelope_corners(&self) -> [Point3; 8] {
-        let [l, w, h] = self.envelope;
+        let [l, w, h] = self.envelope();
         std::array::from_fn(|i| {
             [
                 if i & 1 == 0 { -l / 2.0 } else { l / 2.0 },
@@ -119,9 +132,7 @@ impl PackageDefinition {
     }
 
     pub(super) fn geometry_finite(&self) -> bool {
-        finite_within(&self.envelope)
-            && finite_within(&self.form.lengths())
-            && self.placement.finite()
+        finite_within(&self.envelope()) && finite_within(&self.form.lengths())
     }
 
     pub(super) fn local_ids(&self) -> Vec<u32> {
@@ -173,13 +184,13 @@ impl PackageDefinition {
             ));
         }
         if let Some(derived) = self.form.envelope()
-            && derived != self.envelope
+            && self.form.envelope_nm().ok().flatten() != Some(self.envelope_nm)
         {
             out.push(issue(
                 "package.envelope_derived",
                 format!(
                     "The envelope {} mm differs from the {} form's {} mm.",
-                    size_text(&self.envelope),
+                    size_text(&self.envelope()),
                     self.form.label().to_lowercase(),
                     size_text(&derived)
                 ),
@@ -243,6 +254,7 @@ mod tests {
     use crate::library::package_form::{LeadSides, NoLeadForm};
     use crate::library::package_model::{BodyRole, GeneratedMaterials, RoleMaterial};
     use crate::materials::MaterialId;
+    use crate::tests::support::{nm, pt};
 
     fn codes(package: &PackageDefinition) -> Vec<String> {
         let mut out = Vec::new();
@@ -251,7 +263,7 @@ mod tests {
     }
 
     fn chip(kind: ChipKind) -> PackageDefinition {
-        let form = ChipForm::new(kind, [1.6, 0.8, 0.45]);
+        let form = ChipForm::new(kind, [1.6, 0.8, 0.45].map(nm));
         PackageDefinition {
             next_local: 3,
             terminals: (1..=2)
@@ -261,7 +273,7 @@ mod tests {
                 })
                 .collect(),
             form: PackageForm::Chip(Box::new(form)),
-            envelope: [1.6, 0.8, 0.45],
+            envelope_nm: [1.6, 0.8, 0.45].map(nm),
             model: PackageModel::Generated {
                 family_rev: 1,
                 materials: GeneratedMaterials::default(),
@@ -285,11 +297,11 @@ mod tests {
         });
         assert!(codes(&p).contains(&"package.form_terminals".to_owned()));
         let mut p = chip(ChipKind::Capacitor);
-        p.envelope[2] = 1.0;
+        p.envelope_nm[2] = nm(1.0);
         assert_eq!(codes(&p), ["package.envelope_derived"]);
         let mut p = chip(ChipKind::Capacitor);
         if let PackageForm::Chip(c) = &mut p.form {
-            c.termination = 1.0;
+            c.termination_nm = nm(1.0);
         }
         assert_eq!(codes(&p), ["package.form_range"]);
     }
@@ -299,13 +311,13 @@ mod tests {
         let form = NoLeadForm {
             sides: LeadSides::Two,
             terminals_per_side: [3, 0],
-            pitch: 0.95,
-            body_length: 3.0,
-            body_width: 3.0,
-            body_height: 0.9,
-            terminal_length: 0.4,
-            terminal_width: 0.35,
-            exposed_pad: Some([2.4, 1.6]),
+            pitch_nm: nm(0.95),
+            body_length_nm: nm(3.0),
+            body_width_nm: nm(3.0),
+            body_height_nm: nm(0.9),
+            terminal_length_nm: nm(0.4),
+            terminal_width_nm: nm(0.35),
+            exposed_pad: Some(pt([2.4, 1.6])),
         };
         let mut p = PackageDefinition {
             terminals: (1..=6)
@@ -314,7 +326,7 @@ mod tests {
                     designation: i.to_string(),
                 })
                 .collect(),
-            envelope: [3.0, 3.0, 0.9],
+            envelope_nm: [3.0, 3.0, 0.9].map(nm),
             form: PackageForm::NoLead(Box::new(form)),
             ..PackageDefinition::default()
         };
@@ -382,9 +394,11 @@ mod tests {
             ["model.leads", "model.leads", "model.leads"],
             "a repeated lead, a foreign terminal and a repeated terminal"
         );
-        let mut p = chip(ChipKind::Resistor);
-        p.placement.rotation_deg[0] = f64::INFINITY;
-        assert!(!p.geometry_finite());
+        // A placement is whole nanometres and millidegrees: an infinite
+        // turn never becomes one.
+        assert!(
+            crate::library::ModelPlacement::from_mm([0.0; 3], [f64::INFINITY, 0.0, 0.0]).is_err()
+        );
     }
 
     #[test]
@@ -395,24 +409,24 @@ mod tests {
         assert!(codes(&p).is_empty(), "{:?}", codes(&p));
         let mut generic = PackageDefinition::default();
         generic.resize_envelope([5.0, 4.0, 1.0])?;
-        assert_eq!(generic.envelope, [5.0, 4.0, 1.0]);
+        assert_eq!(generic.envelope(), [5.0, 4.0, 1.0]);
         let mut p = PackageDefinition {
             form: PackageForm::NoLead(Box::new(NoLeadForm {
                 sides: LeadSides::Two,
                 terminals_per_side: [1, 0],
-                pitch: 1.0,
-                body_length: 1.0,
-                body_width: 1.0,
-                body_height: 0.5,
-                terminal_length: 0.3,
-                terminal_width: 0.5,
+                pitch_nm: nm(1.0),
+                body_length_nm: nm(1.0),
+                body_width_nm: nm(1.0),
+                body_height_nm: nm(0.5),
+                terminal_length_nm: nm(0.3),
+                terminal_width_nm: nm(0.5),
                 exposed_pad: None,
             })),
-            envelope: [1.0, 1.0, 0.5],
+            envelope_nm: [1.0, 1.0, 0.5].map(nm),
             ..PackageDefinition::default()
         };
         assert!(p.resize_envelope([2.0, 2.0, 2.0]).is_err());
-        assert_eq!(p.envelope, [1.0, 1.0, 0.5], "a refusal changes nothing");
+        assert_eq!(p.envelope(), [1.0, 1.0, 0.5], "a refusal changes nothing");
         Ok(())
     }
 }

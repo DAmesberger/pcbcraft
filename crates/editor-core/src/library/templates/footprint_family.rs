@@ -271,7 +271,7 @@ impl FootprintTemplate {
     /// claim.
     pub fn defaults(kind: TemplateKind, package: &PackageDefinition) -> Self {
         let excess = e(TEMPLATE_COURTYARD_EXCESS);
-        let [l, w, _] = package.envelope;
+        let [l, w, _] = package.envelope();
         let sized = |v: f64| v.is_finite() && v > 0.0;
         let n = package.terminals.len();
         match kind {

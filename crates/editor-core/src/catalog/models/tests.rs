@@ -47,7 +47,7 @@ fn three(engine: &mut Engine) -> Fallible<()> {
     let mut header = model(&b);
     header.asset = asset_of(&b, "model/gltf-binary", "header.glb");
     header.format = ModelFormat::Gltf;
-    header.bounds_mm = [[-5.0, -4.0, 0.0], [5.0, 4.0, 3.0]];
+    header.bounds_nm = crate::tests::support::nm_bounds([[-5.0, -4.0, 0.0], [5.0, 4.0, 3.0]]);
     header.leads.clear();
     header.marking_area = None;
     header
@@ -66,7 +66,7 @@ fn three(engine: &mut Engine) -> Fallible<()> {
     header.hints = ModelHints {
         mount: Some(Mount::Tht),
         pins: Some(8),
-        pitch_mm: Some(2.54),
+        pitch_nm: Some(crate::tests::support::nm(2.54)),
         family: Some("pin header".into()),
     };
     header.provenance.redistribution = Redistribution::Forbidden;
@@ -74,13 +74,13 @@ fn three(engine: &mut Engine) -> Fallible<()> {
 
     let c = packed(&bytes("catalog-c"), "model/step");
     let mut soic = model(&c);
-    soic.bounds_mm = [[-2.45, -1.95, 0.0], [2.45, 1.95, 1.75]];
+    soic.bounds_nm = crate::tests::support::nm_bounds([[-2.45, -1.95, 0.0], [2.45, 1.95, 1.75]]);
     soic.leads.clear();
     soic.marking_area = None;
     soic.hints = ModelHints {
         mount: Some(Mount::Smd),
         pins: Some(8),
-        pitch_mm: Some(1.27),
+        pitch_nm: Some(crate::tests::support::nm(1.27)),
         family: Some("gull-wing".into()),
     };
     soic.provenance.record.licence = Some("MIT".into());
@@ -299,14 +299,14 @@ fn source_models_are_listed_with_their_source() -> Fallible<()> {
 /// A copy of `base` with leads on `pads` (designation, datum point).
 fn leads_on(base: &ModelDefinition, pads: &[(String, [f64; 2])], shift: f64) -> ModelDefinition {
     let mut m = base.clone();
-    m.bounds_mm = [[-20.0, -20.0, 0.0], [20.0, 20.0, 1.0]];
+    m.bounds_nm = crate::tests::support::nm_bounds([[-20.0, -20.0, 0.0], [20.0, 20.0, 1.0]]);
     m.leads = pads
         .iter()
         .enumerate()
         .map(|(i, (designation, p))| LeadTag {
             key: format!("lead-{i}"),
             designation: designation.clone(),
-            contact: [p[0] * shift, p[1], 0.0],
+            contact_nm: crate::tests::support::nm3([p[0] * shift, p[1], 0.0]),
         })
         .collect();
     m.marking_area = None;
@@ -354,8 +354,9 @@ fn fits_rank_lead_fits_then_bounds_and_never_assign() -> Fallible<()> {
     let (mut m, a) = base("fit-untagged");
     m.leads.clear();
     m.marking_area = None;
-    let [l, w, h] = package.envelope;
-    m.bounds_mm = [[-l / 2.0, -w / 2.0, 0.0], [l / 2.0 + 0.3, w / 2.0, h]];
+    let [l, w, h] = package.envelope();
+    m.bounds_nm =
+        crate::tests::support::nm_bounds([[-l / 2.0, -w / 2.0, 0.0], [l / 2.0 + 0.3, w / 2.0, h]]);
     named(&mut engine, "Untagged body", m, &a)?;
     let before = engine.to_file();
     let report = super::search(

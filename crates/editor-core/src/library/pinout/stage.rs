@@ -1077,7 +1077,7 @@ pub fn stage(
                 }
                 let next_local = u32::try_from(terminals.len() + 1)
                     .map_err(|_| Error::Limit("too many package terminals".into()))?;
-                let envelope = form.envelope().unwrap_or_default();
+                let envelope_nm = form.envelope_nm()?.unwrap_or_default();
                 staged.push(StagedDraft {
                     id: *package_id,
                     create: true,
@@ -1086,7 +1086,7 @@ pub fn stage(
                         next_local,
                         terminals,
                         form,
-                        envelope,
+                        envelope_nm,
                         ..PackageDefinition::default()
                     }),
                 });

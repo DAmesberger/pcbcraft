@@ -409,7 +409,7 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
                 designation: (*designation).into(),
             })
             .collect(),
-        envelope: [4.0, 3.0, 1.0],
+        envelope_nm: [nm(4.0), nm(3.0), nm(1.0)],
         ..PackageDefinition::default()
     };
     let footprint = FootprintDefinition {
@@ -919,4 +919,14 @@ pub fn text_graphic(
     justify: crate::library::Justify,
 ) -> crate::library::Graphic {
     crate::library::graphics::text(id, content, at, justify).expect("a test point within bounds")
+}
+
+/// A 3D point or size a test writes in mm, as the document stores it.
+pub fn nm3(mm: [f64; 3]) -> [crate::units::Nm; 3] {
+    mm.map(nm)
+}
+
+/// Bounds `[min, max]` a test writes in mm, as the document stores them.
+pub fn nm_bounds(mm: [[f64; 3]; 2]) -> [[crate::units::Nm; 3]; 2] {
+    mm.map(nm3)
 }

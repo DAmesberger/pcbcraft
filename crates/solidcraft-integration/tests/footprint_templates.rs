@@ -20,6 +20,18 @@ use pcbcraft_core::library::{
 use pcbcraft_core::units::PointNm;
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 
+/// A test length in mm, as stored.
+#[allow(dead_code)]
+fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
+/// A test point or size in mm, as stored.
+#[allow(dead_code)]
+fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
 const EV: SketchEvaluator = SketchEvaluator;
 const TOL: f64 = 1e-6;
 
@@ -90,7 +102,7 @@ fn an_edited_footprint_carries_its_envelope_over_the_pads() -> Result<()> {
         &EV,
     )?;
     assert_eq!(engine.revision(), revision + 1, "one undo step");
-    assert_eq!(placement(&engine).translation, [10.0, 0.0, 0.0]);
+    assert_eq!(placement(&engine).translation(), [10.0, 0.0, 0.0]);
     engine.undo()?;
     assert_eq!(placement(&engine), ModelPlacement::default());
     Ok(())
@@ -98,7 +110,7 @@ fn an_edited_footprint_carries_its_envelope_over_the_pads() -> Result<()> {
 
 fn package(terminals: usize, body: [f64; 3]) -> PackageDefinition {
     PackageDefinition {
-        envelope: body,
+        envelope_nm: body.map(nm),
         terminals: (1..=terminals)
             .map(|n| PackageTerminal {
                 id: PackageTerminalId(u32::try_from(n).unwrap_or(0) + 100),

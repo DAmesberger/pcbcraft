@@ -112,10 +112,10 @@ fn all_ccw_decal(flat: &FlatDecal) -> bool {
 
 fn top(origin: [f64; 3], size: [f64; 2]) -> MarkingArea {
     MarkingArea {
-        origin,
+        origin_nm: crate::test_units::nm3(origin),
         normal: [0.0, 0.0, 1.0],
         u_axis: [1.0, 0.0, 0.0],
-        size_mm: size,
+        size_nm: crate::test_units::nm2(size),
     }
 }
 
@@ -129,7 +129,7 @@ fn check_plane(mesh: &DecalMesh, area: &MarkingArea) {
         .unwrap_or_default()
         .map(f64::from);
     let at = |i: u32| mesh.positions[i as usize].map(f64::from);
-    let plane: f64 = (0..3).map(|k| area.origin[k] * n[k]).sum::<f64>()
+    let plane: f64 = (0..3).map(|k| area.origin()[k] * n[k]).sum::<f64>()
         + mesh.finish.lift_mm().max(DECAL_OFFSET_MM);
     for p in &mesh.positions {
         let d: f64 = (0..3).map(|k| f64::from(p[k]) * n[k]).sum();
@@ -213,10 +213,10 @@ fn a_line_the_font_sets_wider_than_the_area_is_shrunk_to_fit() -> TestResult {
 fn the_decal_follows_the_area_frame() -> TestResult {
     // A bottom face, u along +y: the decal is below the face, faces down.
     let area = MarkingArea {
-        origin: [3.0, 4.0, -1.6],
+        origin_nm: crate::test_units::nm3([3.0, 4.0, -1.6]),
         normal: [0.0, 0.0, -1.0],
         u_axis: [0.0, 1.0, 0.0],
-        size_mm: [3.0, 1.5],
+        size_nm: crate::test_units::nm2([3.0, 1.5]),
     };
     let mesh = decal(&layout(vec![text("U1", 0.8)], Finish::InkWhite), &area)?;
     assert!(mesh.normals.iter().all(|n| *n == [0.0, 0.0, -1.0]));
@@ -422,11 +422,13 @@ fn bad_layouts_and_areas_are_refused() {
             ..area
         },
         MarkingArea {
-            size_mm: [0.0, 1.0],
+            size_nm: crate::test_units::nm2([0.0, 1.0]),
             ..area
         },
+        // A stored origin is whole nanometres; a direction can still be
+        // non-finite.
         MarkingArea {
-            origin: [f64::INFINITY, 0.0, 0.0],
+            normal: [f64::INFINITY, 0.0, 0.0],
             ..area
         },
     ] {
@@ -470,7 +472,11 @@ fn board_decals_sit_on_each_marked_instance_s_top_face() -> TestResult {
         &layouts,
         &mut cache,
     );
-    assert_eq!(cache.built() as usize, layouts.len());
+    // The demo's two instances are the same part: their top-face areas,
+    // stored to the nanometre, are the same region, so the one layout is
+    // built once and placed on each (each still gets its decal below).
+    assert_eq!(layouts.len(), 2);
+    assert_eq!(cache.built(), 1);
     for placement in &project.placements {
         let picks: Vec<u64> = model
             .sources
@@ -524,7 +530,8 @@ fn board_decals_sit_on_each_marked_instance_s_top_face() -> TestResult {
         &layouts,
         &mut cache,
     );
-    assert_eq!(cache.built() as usize, layouts.len() + 1);
+    // One more build, for the changed layout; the other keeps the shared one.
+    assert_eq!(cache.built(), 2);
     assert_eq!(cache.len(), layouts.len());
     assert_eq!(again.len(), decals.len());
     // The native model is untouched: decals are never part of it.
@@ -605,8 +612,8 @@ fn bottom_faces_are_marked_from_below() -> TestResult {
     };
     let area = board::face_area(&[&body], false, [1.0, 0.0]).ok_or("no face")?;
     assert_eq!(area.normal, [0.0, 0.0, -1.0]);
-    assert_eq!(area.size_mm, [2.0, 1.0]);
-    assert_eq!(area.origin, [1.0, 0.5, -2.6]);
+    assert_eq!(area.size(), [2.0, 1.0]);
+    assert_eq!(area.origin(), [1.0, 0.5, -2.6]);
     // A body has no up-facing flat face at its top here.
     assert!(board::face_area(&[&body], true, [1.0, 0.0]).is_none());
     Ok(())
@@ -624,12 +631,12 @@ fn instance_layouts_read_the_project_in_place() -> TestResult {
     let spec = MarkingSpec {
         items: vec![MarkingItem::Text {
             template: Template("{designator}".into()),
-            height_mm: None,
+            height_nm: None,
             align: Align::Centre,
         }],
         area: pcbcraft_core::library::marking::AreaChoice::Explicit {
-            centre: [0.0, 0.0],
-            size_mm: [1.2, 0.6],
+            centre: crate::test_units::pt([0.0, 0.0]),
+            size_nm: crate::test_units::nm2([1.2, 0.6]),
         },
         ..Default::default()
     };
@@ -695,13 +702,13 @@ fn board_artwork_is_drawn_from_the_project_s_packed_svg() -> TestResult {
     let spec = MarkingSpec {
         items: vec![MarkingItem::Artwork {
             svg: asset.hash,
-            size_mm: [0.8, 0.4],
+            size_nm: crate::test_units::nm2([0.8, 0.4]),
             anchor: Anchor::Centre,
             licence: Some("CC0-1.0".into()),
         }],
         area: AreaChoice::Explicit {
-            centre: [0.0, 0.0],
-            size_mm: [1.0, 0.6],
+            centre: crate::test_units::pt([0.0, 0.0]),
+            size_nm: crate::test_units::nm2([1.0, 0.6]),
         },
         ..Default::default()
     };

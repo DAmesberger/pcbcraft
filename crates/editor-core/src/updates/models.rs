@@ -54,7 +54,7 @@ pub fn model_details(
     if x.pair.as_ref().map(|p| p.hash) != y.pair.as_ref().map(|p| p.hash) {
         out.push("3D model appearance pair changes.".into());
     }
-    if x.bounds_mm != y.bounds_mm || x.frame != y.frame {
+    if x.bounds_nm != y.bounds_nm || x.frame != y.frame {
         out.push(format!(
             "3D model bounds {} → {} mm (L×W×H).",
             size(x),
@@ -78,7 +78,7 @@ pub fn model_details(
             ));
         }
         let d = (0..3)
-            .map(|i| (p.contact[i] - q.contact[i]).powi(2))
+            .map(|i| (p.contact()[i] - q.contact()[i]).powi(2))
             .sum::<f64>()
             .sqrt();
         if d > 0.0 && moved.is_none_or(|(m, _)| d > m) {

@@ -33,20 +33,20 @@ const DIMPLE_DEPTH_MM: f64 = 0.03;
 
 pub(super) fn check(form: &GridForm) -> Result<()> {
     check_positive(&[
-        ("pitch along a row", form.pitch[0]),
-        ("pitch between rows", form.pitch[1]),
-        ("body length", form.body_length),
-        ("body width", form.body_width),
-        ("body height", form.body_height),
-        ("contact diameter", form.contact_diameter),
+        ("pitch along a row", form.pitch()[0]),
+        ("pitch between rows", form.pitch()[1]),
+        ("body length", form.body_length()),
+        ("body width", form.body_width()),
+        ("body height", form.body_height()),
+        ("contact diameter", form.contact_diameter()),
     ])?;
     check_count("rows", form.rows)?;
     check_count("columns", form.cols)?;
     let leads = u32::try_from(form.populated().len()).unwrap_or(u32::MAX);
     check_count("contacts", leads)?;
     match form.contact {
-        GridContact::Ball => check_positive(&[("ball height", form.contact_height)]),
-        GridContact::Land => require(form.contact_height == 0.0, "lands have no ball height"),
+        GridContact::Ball => check_positive(&[("ball height", form.contact_height())]),
+        GridContact::Land => require(form.contact_height() == 0.0, "lands have no ball height"),
     }
 }
 
@@ -64,15 +64,15 @@ pub(super) fn build(b: &mut Build<'_>, form: &GridForm) -> Result<()> {
     let balls = form.contact == GridContact::Ball;
     let rows = b.count("rows", form.rows)?;
     let cols = b.count("cols", form.cols)?;
-    let pitch = b.length("pitch", form.pitch[0])?;
-    let row_pitch = b.length("row_pitch", form.pitch[1])?;
-    let bl = b.length("body_length", form.body_length)?;
-    let bw = b.length("body_width", form.body_width)?;
-    let bh = b.length("body_height", form.body_height)?;
-    b.length("contact_diameter", form.contact_diameter)?;
-    let land = LAND_MM.min(form.body_height / 4.0);
+    let pitch = b.length("pitch", form.pitch()[0])?;
+    let row_pitch = b.length("row_pitch", form.pitch()[1])?;
+    let bl = b.length("body_length", form.body_length())?;
+    let bw = b.length("body_width", form.body_width())?;
+    let bh = b.length("body_height", form.body_height())?;
+    b.length("contact_diameter", form.contact_diameter())?;
+    let land = LAND_MM.min(form.body_height() / 4.0);
     let (contact_h, base) = if balls {
-        let h = b.length("ball_height", form.contact_height)?;
+        let h = b.length("ball_height", form.contact_height())?;
         (h.clone(), h)
     } else {
         (b.length("land_thickness", land)?, "0 mm".to_owned())
@@ -99,7 +99,7 @@ pub(super) fn build(b: &mut Build<'_>, form: &GridForm) -> Result<()> {
             material_or(b, BodyRole::Termination, MaterialId::Gold),
         )
     };
-    let radius = form.contact_diameter / 2.0;
+    let radius = form.contact_diameter() / 2.0;
     let full = form.depopulated.is_empty();
     // (row, first column, run length) of each seed and its pattern.
     let runs: Vec<(u32, u32, u32)> = if full {
@@ -160,8 +160,8 @@ pub(super) fn build(b: &mut Build<'_>, form: &GridForm) -> Result<()> {
         .map(|n| {
             let c = b.centre(n)?;
             Ok((
-                (-c[1] / form.pitch[1]).round() as i64,
-                (c[0] / form.pitch[0]).round() as i64,
+                (-c[1] / form.pitch()[1]).round() as i64,
+                (c[0] / form.pitch()[0]).round() as i64,
                 n.clone(),
             ))
         })
@@ -175,10 +175,10 @@ pub(super) fn build(b: &mut Build<'_>, form: &GridForm) -> Result<()> {
     }
     b.number(&ordered);
 
-    let (hl, hw) = (form.body_length / 2.0, form.body_width / 2.0);
-    let z0 = if balls { form.contact_height } else { 0.0 };
-    let top = z0 + form.body_height;
-    let edge = TOP_EDGE_MM.min(0.1 * form.body_height);
+    let (hl, hw) = (form.body_length() / 2.0, form.body_width() / 2.0);
+    let z0 = if balls { form.contact_height() } else { 0.0 };
+    let top = z0 + form.body_height();
+    let edge = TOP_EDGE_MM.min(0.1 * form.body_height());
     b.round(
         "edge_round",
         &body,
@@ -186,9 +186,9 @@ pub(super) fn build(b: &mut Build<'_>, form: &GridForm) -> Result<()> {
         edge,
     )?;
     // A pin-1 dimple in the top at the A1 corner (−x, +y).
-    let short = form.body_length.min(form.body_width);
+    let short = form.body_length().min(form.body_width());
     let mark = (0.06 * short).clamp(0.1, 0.4);
-    if 6.0 * mark < short && DIMPLE_DEPTH_MM < form.body_height / 4.0 {
+    if 6.0 * mark < short && DIMPLE_DEPTH_MM < form.body_height() / 4.0 {
         let at = 2.0 * mark;
         b.native.cylinder_cut(
             &b.name("pin 1 mark"),
@@ -209,6 +209,8 @@ pub(super) fn build(b: &mut Build<'_>, form: &GridForm) -> Result<()> {
 mod tests {
     use super::super::*;
     use crate::Error;
+    #[allow(unused_imports)]
+    use crate::models::tests::{nm, pt};
     use pcbcraft_core::PackageTerminalId;
     use pcbcraft_core::library::PackageTerminal;
     use pcbcraft_core::library::package_form::GridForm;
@@ -292,7 +294,13 @@ mod tests {
 
     #[test]
     fn a_ball_grid_stands_on_solder_balls_numbered_from_a1() -> Result<()> {
-        let form = GridForm::ball_grid(3, 4, 0.8, [4.0, 3.0, 0.7], [0.4, 0.3]);
+        let form = GridForm::ball_grid(
+            3,
+            4,
+            nm(0.8),
+            [nm(4.0), nm(3.0), nm(0.7)],
+            [nm(0.4), nm(0.3)],
+        );
         let (native, def) = built(form.clone())?;
         let body = def
             .bodies
@@ -319,7 +327,13 @@ mod tests {
 
     #[test]
     fn depopulated_positions_have_no_ball() -> Result<()> {
-        let mut form = GridForm::ball_grid(5, 5, 0.5, [3.0, 3.0, 0.5], [0.3, 0.2]);
+        let mut form = GridForm::ball_grid(
+            5,
+            5,
+            nm(0.5),
+            [nm(3.0), nm(3.0), nm(0.5)],
+            [nm(0.3), nm(0.2)],
+        );
         form.depopulated = vec![[2, 2], [0, 1], [4, 4]];
         let (native, def) = built(form.clone())?;
         let balls = def
@@ -334,7 +348,13 @@ mod tests {
 
     #[test]
     fn a_land_grid_sets_gold_lands_into_the_body() -> Result<()> {
-        let mut form = GridForm::ball_grid(2, 3, 1.0, [3.5, 2.5, 0.8], [0.6, 0.0]);
+        let mut form = GridForm::ball_grid(
+            2,
+            3,
+            nm(1.0),
+            [nm(3.5), nm(2.5), nm(0.8)],
+            [nm(0.6), nm(0.0)],
+        );
         form.contact = GridContact::Land;
         let (native, def) = built(form.clone())?;
         let lands: Vec<_> = def
@@ -360,7 +380,13 @@ mod tests {
     fn a_large_grid_with_a_centre_void_builds_every_ball() -> Result<()> {
         // 20 × 20 at 0.8 mm with a 6 × 6 centre void: 364 balls, two
         // runs on each of the void's rows.
-        let mut form = GridForm::ball_grid(20, 20, 0.8, [17.0, 17.0, 1.2], [0.45, 0.35]);
+        let mut form = GridForm::ball_grid(
+            20,
+            20,
+            nm(0.8),
+            [nm(17.0), nm(17.0), nm(1.2)],
+            [nm(0.45), nm(0.35)],
+        );
         form.depopulated = (7..13).flat_map(|r| (7..13).map(move |c| [r, c])).collect();
         let (native, def) = built(form.clone())?;
         let balls = def

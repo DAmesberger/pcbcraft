@@ -54,7 +54,7 @@ fn spec(bytes: &[u8]) -> PartSpec {
                     file_name: "housing.solidcraft".into(),
                 },
                 format: ModelFormat::Solidcraft,
-                bounds_mm: part.bounds_mm,
+                bounds_nm: crate::test_units::bounds(part.bounds_mm),
                 provenance: ModelProvenance {
                     record: Provenance {
                         licence: Some("MIT OR Apache-2.0".into()),
@@ -68,7 +68,7 @@ fn spec(bytes: &[u8]) -> PartSpec {
         },
         values: Default::default(),
         derived: PartDerived {
-            bounds_mm: part.bounds_mm,
+            bounds_nm: crate::test_units::bounds(part.bounds_mm),
             bodies: 1,
             surfaces: vec![],
         },
@@ -201,7 +201,7 @@ fn a_dimension_to_a_sloped_face_is_refused() -> Fallible<()> {
     let mut project = engine.project().clone();
     for p in project.library.packages.iter_mut() {
         if matches!(p.definition.model, PackageModel::PartFile(_)) {
-            p.definition.placement.rotation_deg = [30.0, 0.0, 0.0];
+            p.definition.placement.rotation_mdeg = [30.0, 0.0, 0.0].map(crate::test_units::deg);
         }
     }
     let mut file = engine.to_file();

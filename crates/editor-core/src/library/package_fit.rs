@@ -17,6 +17,7 @@ use super::{Datum, PackageDefinition, Pad};
 use crate::diagnostics::{Error, Finding, Result};
 use crate::geometry::{Bounds, Point, Point3, Transform3, cos_sin};
 use crate::ids::{DefinitionId, PackageTerminalId, PadId};
+use crate::units::{self, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -47,14 +48,63 @@ pub enum FitRotation {
 }
 
 /// One terminal's lead-contact centroid in the model frame and the centre
-/// of the pad it lands on, in the datum frame.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+/// of the pad it lands on, in the datum frame: a `library.fit_leads`
+/// parameter, held in nanometres and carried in millimetres (`lead`
+/// `[x, y, z]`, `pad_centre` `[x, y]`). [`Self::lead`] and
+/// [`Self::pad_centre`] give millimetres for the fit.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LeadPair {
     pub terminal: PackageTerminalId,
     pub pad: PadId,
-    pub lead: Point3,
-    pub pad_centre: Point,
+    #[serde(rename = "lead", with = "triple_mm")]
+    #[schemars(with = "[units::Length; 3]")]
+    pub lead_nm: [Nm; 3],
+    #[serde(rename = "pad_centre", with = "units::point_mm")]
+    #[schemars(with = "units::PointMm")]
+    pub pad_centre_nm: PointNm,
+}
+
+impl LeadPair {
+    /// A pair from computed millimetres, through the one crossing.
+    pub fn from_mm(
+        terminal: PackageTerminalId,
+        pad: PadId,
+        lead: Point3,
+        pad_centre: Point,
+    ) -> Result<Self> {
+        Ok(Self {
+            terminal,
+            pad,
+            lead_nm: super::model3d::triple_nm(lead)?,
+            pad_centre_nm: PointNm::from_mm_f64_rounded(pad_centre)?,
+        })
+    }
+
+    /// The lead-contact centroid in the model frame, mm.
+    pub fn lead(&self) -> Point3 {
+        self.lead_nm.map(Nm::to_mm_f64)
+    }
+
+    /// The pad's centre in the datum frame, mm.
+    pub fn pad_centre(&self) -> Point {
+        self.pad_centre_nm.to_mm_f64()
+    }
+}
+
+/// Serde adapter: an `[x, y, z]` of [`Nm`] carried as three
+/// [`units::Length`]s.
+mod triple_mm {
+    use crate::units::{Length, Nm};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(p: &[Nm; 3], s: S) -> Result<S::Ok, S::Error> {
+        p.map(Length).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[Nm; 3], D::Error> {
+        <[Length; 3]>::deserialize(d).map(|p| p.map(|l| l.0))
+    }
 }
 
 /// Residual of one terminal after the fit, in mm.
@@ -65,10 +115,13 @@ pub struct LeadResidual {
     pub error_mm: f64,
 }
 
-/// The fit result: the placement that seats the leads, and its errors.
+/// The fit result: the placement that seats the leads, and its errors. A
+/// reply: the placement is carried in millimetres and degrees.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LeadFit {
+    #[serde(with = "package_model::model_placement_mm")]
+    #[schemars(with = "package_model::ModelPlacementParams")]
     pub placement: ModelPlacement,
     pub rms_mm: f64,
     pub residuals: Vec<LeadResidual>,
@@ -89,13 +142,13 @@ pub fn fit_leads(
     pairs: &[LeadPair],
     rotation: FitRotation,
 ) -> Result<LeadFit> {
-    validate_pairs(current, pairs)?;
+    validate_pairs(pairs)?;
     // The z turn is solved from scratch; only the tilt is kept, so a
     // quarter-turn fit of an untilted model is exact.
-    let [rx, ry, _] = current.rotation_deg;
+    let [rx, ry, _] = current.rotation_deg();
     let base = Transform3::intrinsic_xyz([rx, ry, 0.0]);
-    let turned: Vec<Point3> = pairs.iter().map(|p| base.apply(p.lead)).collect();
-    let targets: Vec<Point> = pairs.iter().map(|p| p.pad_centre).collect();
+    let turned: Vec<Point3> = pairs.iter().map(|p| base.apply(p.lead())).collect();
+    let targets: Vec<Point> = pairs.iter().map(LeadPair::pad_centre).collect();
     let flat: Vec<Point> = turned.iter().map(|q| [q[0], q[1]]).collect();
     let (angle, shift) = solve_2d(&flat, &targets, rotation);
     let lowest = turned.iter().map(|q| q[2]).fold(f64::INFINITY, f64::min);
@@ -107,10 +160,11 @@ pub fn fit_leads(
     let residuals: Vec<LeadResidual> = pairs
         .iter()
         .map(|p| {
-            let q = frame.apply(p.lead);
+            let q = frame.apply(p.lead());
+            let c = p.pad_centre();
             LeadResidual {
                 terminal: p.terminal,
-                error_mm: (q[0] - p.pad_centre[0]).hypot(q[1] - p.pad_centre[1]),
+                error_mm: (q[0] - c[0]).hypot(q[1] - c[1]),
             }
         })
         .collect();
@@ -131,30 +185,16 @@ pub fn fit_leads(
     })
 }
 
-fn validate_pairs(current: &ModelPlacement, pairs: &[LeadPair]) -> Result<()> {
+/// Pairs and the placement hold whole nanometres within ±2 m: finite and in
+/// range by type.
+fn validate_pairs(pairs: &[LeadPair]) -> Result<()> {
     if pairs.is_empty() || pairs.len() > MAX_LEAD_PAIRS {
         return Err(Error::Invalid(format!(
             "package.fit_pairs: fitting takes 1–{MAX_LEAD_PAIRS} lead/pad pairs"
         )));
     }
-    if !current.finite() {
-        return Err(Error::Invalid(
-            "package.placement: placement values must be finite and within ±10000".into(),
-        ));
-    }
     let mut seen = BTreeSet::new();
     for pair in pairs {
-        let finite = pair
-            .lead
-            .iter()
-            .chain(&pair.pad_centre)
-            .all(|v| v.is_finite() && v.abs() <= crate::geometry::COORDINATE_LIMIT_MM);
-        if !finite {
-            return Err(Error::Invalid(format!(
-                "package.fit_pairs: terminal {} has a non-finite or out-of-range point",
-                pair.terminal
-            )));
-        }
         if !seen.insert(pair.terminal) {
             return Err(Error::Invalid(format!(
                 "package.fit_pairs: terminal {} is paired twice",
@@ -267,19 +307,12 @@ pub fn intrinsic_xyz_of(r: &[[f64; 3]; 3]) -> Point3 {
     [a, b, c].map(|v| snap_degrees(v.to_degrees()))
 }
 
-/// The placement of a rigid model → datum transform (no mirror).
+/// The placement of a rigid model → datum transform (no mirror), stored
+/// through the one crossing.
 fn placement_of(t: &Transform3) -> Result<ModelPlacement> {
-    let placement = ModelPlacement {
-        translation: t.translation.map(|v| if v == 0.0 { 0.0 } else { v }),
-        rotation_deg: intrinsic_xyz_of(&t.rotation),
-    };
-    if placement.finite() {
-        Ok(placement)
-    } else {
-        Err(Error::Invalid(
-            "package.placement: the result is not finite or exceeds ±10000 mm".into(),
-        ))
-    }
+    ModelPlacement::from_mm(t.translation, intrinsic_xyz_of(&t.rotation)).map_err(|_| {
+        Error::Invalid("package.placement: the result is not finite or exceeds ±2 m".into())
+    })
 }
 
 /// `outer ∘ placement`: the placement moved by a datum-frame transform.
@@ -305,22 +338,22 @@ fn body_box(package: &PackageDefinition) -> (Point3, Point3) {
         |l: f64, w: f64, z0: f64, z1: f64| ([-l / 2.0, -w / 2.0, z0], [l / 2.0, w / 2.0, z1]);
     match &package.form {
         PackageForm::Generic => {
-            let s = package.envelope;
+            let s = package.envelope();
             centred(s[0], s[1], 0.0, s[2])
         }
-        PackageForm::Chip(c) => centred(c.length, c.width, 0.0, c.height),
+        PackageForm::Chip(c) => centred(c.length(), c.width(), 0.0, c.height()),
         PackageForm::GullWing(g) => centred(
-            g.body_length,
-            g.body_width,
-            g.standoff,
-            g.standoff + g.body_height,
+            g.body_length(),
+            g.body_width(),
+            g.standoff(),
+            g.standoff() + g.body_height(),
         ),
-        PackageForm::NoLead(n) => centred(n.body_length, n.body_width, 0.0, n.body_height),
+        PackageForm::NoLead(n) => centred(n.body_length(), n.body_width(), 0.0, n.body_height()),
         PackageForm::Header(h) => centred(
-            h.pitch * f64::from(h.pins_per_row.min(MAX_FORM_LEADS)),
-            h.row_pitch * f64::from(h.rows.min(MAX_FORM_LEADS)),
+            h.pitch() * f64::from(h.pins_per_row.min(MAX_FORM_LEADS)),
+            h.row_pitch() * f64::from(h.rows.min(MAX_FORM_LEADS)),
             0.0,
-            h.body_height,
+            h.body_height(),
         ),
         PackageForm::Tabbed(_)
         | PackageForm::Molded(_)
@@ -328,7 +361,7 @@ fn body_box(package: &PackageDefinition) -> (Point3, Point3) {
         | PackageForm::Tht(_)
         | PackageForm::Module(_)
         | PackageForm::UsbC(_) => {
-            let s = package.form.envelope().unwrap_or(package.envelope);
+            let s = package.form.envelope().unwrap_or(package.envelope());
             centred(s[0], s[1], 0.0, s[2])
         }
     }
@@ -408,14 +441,14 @@ pub fn form_pairs(
                 .iter()
                 .map(|p| to_datum(&footprint.datum, p.position))
                 .collect();
-            Some(LeadPair {
-                terminal: terminal.id,
-                pad: first.id,
+            Some(LeadPair::from_mm(
+                terminal.id,
+                first.id,
                 lead,
-                pad_centre: centroid(&centres),
-            })
+                centroid(&centres),
+            ))
         })
-        .collect();
+        .collect::<Result<_>>()?;
     if pairs.is_empty() {
         return Err(Error::Invalid(
             "package.fit_no_pads: no footprint pad lands a terminal of the package".into(),
@@ -465,15 +498,16 @@ pub fn check_pair_ids(
 pub fn spacing_mismatch(pairs: &[LeadPair], tolerance_mm: f64) -> Option<(f64, f64)> {
     let distance = |p: Point, q: Point| (p[0] - q[0]).hypot(p[1] - q[1]);
     let furthest = |from: Point| {
-        pairs
-            .iter()
-            .max_by(|a, b| distance(a.pad_centre, from).total_cmp(&distance(b.pad_centre, from)))
+        pairs.iter().max_by(|a, b| {
+            distance(a.pad_centre(), from).total_cmp(&distance(b.pad_centre(), from))
+        })
     };
-    let centre = centroid(&pairs.iter().map(|p| p.pad_centre).collect::<Vec<_>>());
+    let centre = centroid(&pairs.iter().map(LeadPair::pad_centre).collect::<Vec<_>>());
     let a = furthest(centre)?;
-    let b = furthest(a.pad_centre)?;
-    let leads = distance([a.lead[0], a.lead[1]], [b.lead[0], b.lead[1]]);
-    let pads = distance(a.pad_centre, b.pad_centre);
+    let b = furthest(a.pad_centre())?;
+    let (la, lb) = (a.lead(), b.lead());
+    let leads = distance([la[0], la[1]], [lb[0], lb[1]]);
+    let pads = distance(a.pad_centre(), b.pad_centre());
     ((leads - pads).abs() > tolerance_mm).then_some((leads, pads))
 }
 
@@ -517,12 +551,12 @@ fn centre_on_pads(
                 &pairs
                     .iter()
                     .map(|p| {
-                        let q = t.apply(p.lead);
+                        let q = t.apply(p.lead());
                         [q[0], q[1]]
                     })
                     .collect::<Vec<_>>(),
             ),
-            centroid(&pairs.iter().map(|p| p.pad_centre).collect::<Vec<_>>()),
+            centroid(&pairs.iter().map(LeadPair::pad_centre).collect::<Vec<_>>()),
         ),
         Err(_) => {
             let pads: Vec<Point> = footprint
@@ -566,8 +600,9 @@ fn pin1_to_pad1(
     for k in 0..4 {
         let turned = moved(placement, &turn_about(Axis::Z, 90.0 * f64::from(k), pivot))?;
         let centred = centre_on_pads(package, footprint, &turned)?;
-        let q = centred.transform().apply(pin1.lead);
-        let error = (q[0] - pin1.pad_centre[0]).hypot(q[1] - pin1.pad_centre[1]);
+        let q = centred.transform().apply(pin1.lead());
+        let c = pin1.pad_centre();
+        let error = (q[0] - c[0]).hypot(q[1] - c[1]);
         if best.as_ref().is_none_or(|(e, _)| error < *e - 1e-9) {
             best = Some((error, centred));
         }
@@ -584,11 +619,6 @@ pub fn apply_quick(
     action: QuickAction,
 ) -> Result<ModelPlacement> {
     let current = &package.placement;
-    if !current.finite() {
-        return Err(Error::Invalid(
-            "package.placement: placement values must be finite and within ±10000".into(),
-        ));
-    }
     let pivot = body_centre(package, current);
     match action {
         QuickAction::Rotate {
@@ -673,7 +703,8 @@ pub fn envelope_default(
         return Ok(None);
     }
     let placement = apply_quick(package, Some(footprint), QuickAction::CentreOnCourtyard)?;
-    let moved = placement.translation[0].abs() > 1e-9 || placement.translation[1].abs() > 1e-9;
+    let [x, y, _] = placement.translation_nm;
+    let moved = x != Nm::ZERO || y != Nm::ZERO;
     Ok(moved.then_some(placement))
 }
 
@@ -724,7 +755,7 @@ pub fn lead_states(
     placement: &ModelPlacement,
 ) -> Vec<LeadState> {
     let contacts = package.form.lead_points();
-    if contacts.len() != package.terminals.len() || !placement.finite() {
+    if contacts.len() != package.terminals.len() {
         return Vec::new();
     }
     let datum = placement.transform();
@@ -774,9 +805,6 @@ pub fn placement_findings(
     footprint_id: DefinitionId,
 ) -> Vec<Finding> {
     let mut out = Vec::new();
-    if !package.placement.finite() {
-        return out;
-    }
     let package_id = footprint.package.id;
     let lowest = body_corners(package, &package.placement)
         .iter()
