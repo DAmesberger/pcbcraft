@@ -221,6 +221,10 @@ fn notes(project: &Project) -> Vec<String> {
         .copper
         .clearance
         .get(CopperObject::PthHole, CopperObject::Track);
+    let npth_hole = rules
+        .copper
+        .clearance
+        .get(CopperObject::NpthHole, CopperObject::Track);
     let weights: Vec<String> = project
         .stackup
         .copper
@@ -251,10 +255,12 @@ fn notes(project: &Project) -> Vec<String> {
             mm(gap)
         ),
         format!(
-            "Minimum finished drill {}, via hole to copper {}, plated hole to copper {}.",
+            "Minimum finished drill {}, via hole to copper {}, plated hole to copper {}, \
+             unplated hole to copper {}.",
             mm(rules.holes.drill_min),
             mm(via_hole),
-            mm(pth_hole)
+            mm(pth_hole),
+            mm(npth_hole)
         ),
         format!(
             "Minimum annular ring: vias {}, plated holes {}.",

@@ -494,16 +494,20 @@ mod tests {
         Ok(())
     }
 
-    /// The JLCPCB examples check plated holes by JLCPCB's plated-hole rows
-    /// and via holes by its via rows (one hole rule held the via values for
-    /// both), and the PTH annular ring at the recommended value rather
-    /// than the absolute minimum (0.18 mm on 2 layers, 0.15 mm on 4).
+    /// The JLCPCB examples check plated holes by JLCPCB's plated-hole rows,
+    /// via holes by its via rows and unplated holes by its NPTH row (one
+    /// hole rule held the via values for all three), copper to a plated
+    /// hole at the recommended 0.35 mm rather than the 0.28 mm minimum, and
+    /// the PTH annular ring at the recommended value rather than the
+    /// absolute minimum (0.18 mm on 2 layers, 0.15 mm on 4). JLCPCB
+    /// publishes no unplated hole-to-hole row: those pairs are 0, not
+    /// checked.
     #[test]
-    fn the_jlcpcb_examples_split_holes_and_take_the_recommended_ring() -> Result<()> {
-        use pcbcraft_core::rules::CopperObject::{PthHole, Track, ViaHole};
+    fn the_jlcpcb_examples_split_holes_and_take_the_recommended_values() -> Result<()> {
+        use pcbcraft_core::rules::CopperObject::{NpthHole, Pad, PthHole, Track, ViaHole};
         const FOUR: &str = include_str!("../../../examples/profiles/jlcpcb-4-layer-1oz.json");
         // (file, PTH ring, PTH to track, via hole to track)
-        for (text, ring, pth, via) in [(JLCPCB, 0.25, 0.28, 0.2), (FOUR, 0.2, 0.3, 0.2)] {
+        for (text, ring, pth, via) in [(JLCPCB, 0.25, 0.35, 0.2), (FOUR, 0.2, 0.35, 0.2)] {
             let p = decode(text.as_bytes())?;
             assert!(p.entries().all(|(_, e)| !e.source.is_empty()), "{}", p.id);
             let r = p.rules();
@@ -514,6 +518,11 @@ mod tests {
             assert_eq!(c.get(ViaHole, ViaHole), 0.2, "{}", p.id);
             assert_eq!(c.get(PthHole, PthHole), 0.45, "{}", p.id);
             assert_eq!(c.get(ViaHole, PthHole), 0.45, "{}", p.id);
+            assert_eq!(c.get(NpthHole, Track), 0.2, "{}", p.id);
+            assert_eq!(c.get(NpthHole, Pad), 0.2, "{}", p.id);
+            for hole in [ViaHole, PthHole, NpthHole] {
+                assert_eq!(c.get(NpthHole, hole), 0.0, "{}", p.id);
+            }
         }
         Ok(())
     }

@@ -31,6 +31,10 @@
         "value": 0.0,
         "source": "Not a meaningful pair: 0."
       },
+      "clearance_board_edge_npth_hole": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit: 0, not checked."
+      },
       "clearance_board_edge_pth_hole": {
         "value": 0.0,
         "source": "JLCPCB does not publish this limit: 0, not checked."
@@ -47,13 +51,21 @@
         "value": 0.09,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
+      "clearance_fill_npth_hole": {
+        "value": 0.2,
+        "source": "Traces, \"NPTH to Track\": \"0.2mm\". JLCPCB gives no inner-layer NPTH row."
+      },
       "clearance_fill_pth_hole": {
-        "value": 0.3,
-        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\". One rule covers every layer, so the larger, inner-layer value."
+        "value": 0.35,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\". One rule covers every layer: the recommended value, chosen over the minimum (0.28 mm), which is also above the inner-layer value."
       },
       "clearance_fill_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\"."
+      },
+      "clearance_npth_hole_npth_hole": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit (Drilling gives \"Via Hole-to-Hole Spacing\" and \"Pad Hole-to-Hole Spacing\" but no unplated-hole row): 0, not checked."
       },
       "clearance_pad_board_edge": {
         "value": 0.2,
@@ -63,13 +75,17 @@
         "value": 0.09,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
+      "clearance_pad_npth_hole": {
+        "value": 0.2,
+        "source": "Traces, \"NPTH to Track\": \"0.2mm\". JLCPCB gives no inner-layer NPTH row."
+      },
       "clearance_pad_pad": {
         "value": 0.15,
         "source": "Traces, \"SMD pad to pad clearance (different nets)\": \"0.15mm\"."
       },
       "clearance_pad_pth_hole": {
-        "value": 0.3,
-        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\". One rule covers every layer, so the larger, inner-layer value."
+        "value": 0.35,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\". One rule covers every layer: the recommended value, chosen over the minimum (0.28 mm), which is also above the inner-layer value."
       },
       "clearance_pad_via": {
         "value": 0.09,
@@ -77,7 +93,11 @@
       },
       "clearance_pad_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\"."
+      },
+      "clearance_pth_hole_npth_hole": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit (Drilling gives \"Via Hole-to-Hole Spacing\" and \"Pad Hole-to-Hole Spacing\" but no unplated-hole row): 0, not checked."
       },
       "clearance_pth_hole_pth_hole": {
         "value": 0.45,
@@ -91,13 +111,17 @@
         "value": 0.09,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
+      "clearance_track_npth_hole": {
+        "value": 0.2,
+        "source": "Traces, \"NPTH to Track\": \"0.2mm\". JLCPCB gives no inner-layer NPTH row."
+      },
       "clearance_track_pad": {
         "value": 0.1,
         "source": "Traces, \"Pad to track clearance (1oz)\": \"0.1mm\"; \"Min. 0.1 mm (stay well above if possible)\"."
       },
       "clearance_track_pth_hole": {
-        "value": 0.3,
-        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\". One rule covers every layer, so the larger, inner-layer value."
+        "value": 0.35,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\". One rule covers every layer: the recommended value, chosen over the minimum (0.28 mm), which is also above the inner-layer value."
       },
       "clearance_track_track": {
         "value": 0.09,
@@ -109,7 +133,7 @@
       },
       "clearance_track_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\"."
       },
       "clearance_via_board_edge": {
         "value": 0.2,
@@ -119,6 +143,10 @@
         "value": 0.09,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
+      "clearance_via_hole_npth_hole": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit (Drilling gives \"Via Hole-to-Hole Spacing\" and \"Pad Hole-to-Hole Spacing\" but no unplated-hole row): 0, not checked."
+      },
       "clearance_via_hole_pth_hole": {
         "value": 0.45,
         "source": "Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no via-to-pad-hole row: the larger, the pad hole's."
@@ -127,9 +155,13 @@
         "value": 0.2,
         "source": "Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"."
       },
+      "clearance_via_npth_hole": {
+        "value": 0.2,
+        "source": "Traces, \"NPTH to Track\": \"0.2mm\". JLCPCB gives no inner-layer NPTH row."
+      },
       "clearance_via_pth_hole": {
-        "value": 0.3,
-        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\". One rule covers every layer, so the larger, inner-layer value."
+        "value": 0.35,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\". One rule covers every layer: the recommended value, chosen over the minimum (0.28 mm), which is also above the inner-layer value."
       },
       "clearance_via_via": {
         "value": 0.09,
@@ -137,7 +169,7 @@
       },
       "clearance_via_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\"."
       },
       "copper_angle_min": {
         "value": 0.0,

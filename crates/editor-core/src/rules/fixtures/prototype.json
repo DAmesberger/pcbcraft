@@ -25,6 +25,9 @@
       "clearance_board_edge_board_edge": {
         "value": 0.3
       },
+      "clearance_board_edge_npth_hole": {
+        "value": 0.3
+      },
       "clearance_board_edge_pth_hole": {
         "value": 0.3
       },
@@ -37,10 +40,16 @@
       "clearance_fill_fill": {
         "value": 0.2
       },
+      "clearance_fill_npth_hole": {
+        "value": 0.25
+      },
       "clearance_fill_pth_hole": {
         "value": 0.25
       },
       "clearance_fill_via_hole": {
+        "value": 0.25
+      },
+      "clearance_npth_hole_npth_hole": {
         "value": 0.25
       },
       "clearance_pad_board_edge": {
@@ -48,6 +57,9 @@
       },
       "clearance_pad_fill": {
         "value": 0.2
+      },
+      "clearance_pad_npth_hole": {
+        "value": 0.25
       },
       "clearance_pad_pad": {
         "value": 0.2
@@ -61,6 +73,9 @@
       "clearance_pad_via_hole": {
         "value": 0.25
       },
+      "clearance_pth_hole_npth_hole": {
+        "value": 0.25
+      },
       "clearance_pth_hole_pth_hole": {
         "value": 0.25
       },
@@ -69,6 +84,9 @@
       },
       "clearance_track_fill": {
         "value": 0.2
+      },
+      "clearance_track_npth_hole": {
+        "value": 0.25
       },
       "clearance_track_pad": {
         "value": 0.2
@@ -91,10 +109,16 @@
       "clearance_via_fill": {
         "value": 0.2
       },
+      "clearance_via_hole_npth_hole": {
+        "value": 0.25
+      },
       "clearance_via_hole_pth_hole": {
         "value": 0.25
       },
       "clearance_via_hole_via_hole": {
+        "value": 0.25
+      },
+      "clearance_via_npth_hole": {
         "value": 0.25
       },
       "clearance_via_pth_hole": {

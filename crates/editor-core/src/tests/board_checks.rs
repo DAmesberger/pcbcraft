@@ -821,7 +821,7 @@ fn a_mounting_hole_measures_its_gap_to_copper_edge_to_edge() -> Result<()> {
         "{message}"
     );
     assert!(
-        message.ends_with("needs 0.25 mm (Test prototype: track to via hole clearance)"),
+        message.ends_with("needs 0.25 mm (Test prototype: track to unplated hole clearance)"),
         "{message}"
     );
     // Copper over the hole overlaps it: no "0 mm".
@@ -872,20 +872,78 @@ fn a_mounting_hole_measures_its_gap_to_copper_edge_to_edge() -> Result<()> {
     Ok(())
 }
 
-/// A plated hole keeps the plated-hole clearance, an unplated one the via
-/// hole clearance. Under the shipped JLCPCB example, a track 0.25 mm from
-/// a mounting hole passes when the hole is unplated ("NPTH to Track":
-/// 0.2 mm) and fails when it is plated ("PTH to Track": 0.28 mm); one hole
-/// rule (0.2 mm) passed both.
+/// A plated mounting hole keeps the PTH annular ring: a 3.6 mm ring on a
+/// 3.2 mm drill leaves 0.2 mm, under JLCPCB's recommended 0.25 mm; 3.7 mm
+/// passes; a plated hole with no ring has none. An unplated hole has no
+/// ring rule.
+#[test]
+fn a_plated_mounting_hole_keeps_the_pth_annular_ring() -> Result<()> {
+    let (mut project, _) = hole_and_track(5.0)?;
+    project.rules = ProjectRules {
+        profile: Some(fixtures::jlcpcb_example()?),
+        ..ProjectRules::default()
+    };
+    assert!(found(&project, "board.pth_annular_ring").is_empty());
+    let ring = |project: &mut Project, pad: Option<f64>| {
+        if let BoardShape::Sketch(sketch) = &mut project.board_shape {
+            for hole in &mut sketch.solved.holes {
+                hole.plated = true;
+                hole.pad_diameter = pad;
+            }
+        }
+        found(project, "board.pth_annular_ring")
+    };
+    let findings = ring(&mut project, Some(3.6));
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(
+        findings[0].message,
+        "A plated mounting hole: annular ring 0.2 mm; needs at least 0.25 mm \
+         (JLCPCB 2-layer 1 oz: min PTH annular ring)"
+    );
+    assert!(ring(&mut project, Some(3.7)).is_empty());
+    let findings = ring(&mut project, None);
+    assert!(findings[0].message.contains(": annular ring 0 mm;"));
+    Ok(())
+}
+
+/// A plated hole keeps the plated-hole clearance, an unplated one the
+/// unplated-hole clearance (never the via hole's). Under the shipped JLCPCB
+/// example, a track 0.3 mm from a mounting hole passes when the hole is
+/// unplated ("NPTH to Track": 0.2 mm) and fails when it is plated ("PTH to
+/// Track": 0.35 mm recommended; it passed the 0.28 mm minimum).
 #[test]
 fn a_plated_hole_keeps_the_plated_hole_clearance() -> Result<()> {
-    let (mut project, _) = hole_and_track(20.0 + 1.725 + 0.25)?;
+    let (mut project, _) = hole_and_track(20.0 + 1.725 + 0.3)?;
     project.rules = ProjectRules {
         profile: Some(fixtures::jlcpcb_example()?),
         ..ProjectRules::default()
     };
     let findings = found(&project, "board.hole_clearance");
     assert!(findings.is_empty(), "{findings:?}");
+    // The via hole rule does not reach an unplated hole; its own does.
+    let set = |project: &mut Project, b: CopperObject, mm: f64| {
+        project.rules.overrides.push(crate::rules::RuleOverride {
+            key: RuleKey::Clearance {
+                a: CopperObject::Track,
+                b,
+            },
+            value: crate::rules::RuleValue::Length(mm),
+        });
+    };
+    set(&mut project, CopperObject::ViaHole, 0.5);
+    let findings = found(&project, "board.hole_clearance");
+    assert!(findings.is_empty(), "{findings:?}");
+    set(&mut project, CopperObject::NpthHole, 0.4);
+    let findings = found(&project, "board.hole_clearance");
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(
+        findings[0]
+            .message
+            .ends_with("needs 0.4 mm (project override: track to unplated hole clearance)"),
+        "{}",
+        findings[0].message
+    );
+    project.rules.overrides.clear();
     if let BoardShape::Sketch(sketch) = &mut project.board_shape {
         for hole in &mut sketch.solved.holes {
             hole.plated = true;
@@ -896,7 +954,7 @@ fn a_plated_hole_keeps_the_plated_hole_clearance() -> Result<()> {
     assert!(
         findings[0]
             .message
-            .ends_with("needs 0.28 mm (JLCPCB 2-layer 1 oz: track to plated hole clearance)"),
+            .ends_with("needs 0.35 mm (JLCPCB 2-layer 1 oz: track to plated hole clearance)"),
         "{}",
         findings[0].message
     );
