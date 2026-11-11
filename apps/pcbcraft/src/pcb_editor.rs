@@ -3120,15 +3120,9 @@ impl crate::issues::Locate for PcbEditor {
     }
 }
 
+/// A part's outline on the board: the one align and distribute line up.
 fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> {
-    let instance = project.instance(placement.instance)?;
-    let physical = instances::resolve(&project.library, instance)
-        .ok()?
-        .physical?;
-    let footprint = &physical.footprint.definition;
-    let envelope = footprint.envelope_outline(&physical.package.definition);
-    let t = layout::placement_transform(placement, &footprint.datum);
-    Some(envelope.corners().map(|p| t.apply(p)))
+    layout::part_envelope(project, placement)
 }
 
 #[cfg(test)]
