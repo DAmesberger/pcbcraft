@@ -517,7 +517,7 @@ impl App {
         let text = format!(
             "{done}: {} · {}",
             step.title,
-            Workspace::from(step.area).label()
+            crate::shell::area_label(step.area)
         );
         self.messages.push(Level::Info, &text, self.now);
         let shown = refusal::clip(&text, refusal::MAX_SHOWN);

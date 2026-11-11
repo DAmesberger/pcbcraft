@@ -126,6 +126,10 @@ impl Operation {
             | Self::Board(_)
             | Self::Dimension(_)
             | Self::Fabrication(_) => Area::Pcb,
+            Self::Schematic(
+                schematic::SchematicCommand::SetProperties { .. }
+                | schematic::SchematicCommand::RenameProject { .. },
+            ) => Area::Project,
             Self::Instance(_) | Self::Schematic(_) | Self::Update(_) => Area::Schematic,
         }
     }
@@ -537,6 +541,8 @@ pub enum Area {
     Component,
     Schematic,
     Pcb,
+    /// The project itself: its name and properties.
+    Project,
 }
 
 /// What one undo step did, for people: its operation's title and the area

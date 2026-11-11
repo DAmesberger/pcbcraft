@@ -391,6 +391,22 @@ fn delete_on_a_mixed_selection_names_the_kept_parts() -> Fallible {
     Ok(())
 }
 
+/// A project-level step (its name, its properties) says Project, not
+/// Schematic.
+#[test]
+fn undo_of_a_project_rename_says_project() -> Fallible {
+    let mut h = Harness::new()?;
+    h.app.engine.apply(
+        h.app.engine.revision(),
+        Operation::Schematic(SchematicCommand::RenameProject {
+            name: "Renamed board".into(),
+        }),
+    )?;
+    h.app.history(false);
+    assert_eq!(toasts(&h.app), ["Undid: Rename the project · Project"]);
+    Ok(())
+}
+
 /// ⌘Z after ⌘Z undoes step after step with one toast, which names the
 /// latest step; Messages keeps each. (The app acts on presses, not key
 /// repeats, so a key held down undoes once.)
@@ -427,7 +443,7 @@ fn the_undo_toast_is_the_history_title() -> Fallible {
     let toast = format!(
         "Undid: {} · {}",
         step.title,
-        Workspace::from(step.area).label()
+        crate::shell::area_label(step.area)
     );
     assert_eq!(toasts(&h.app), [toast]);
     assert_eq!(h.app.engine.redo_step(), Some(step));
