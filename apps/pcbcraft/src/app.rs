@@ -516,7 +516,7 @@ impl App {
     fn say_step(&mut self, done: &str, step: pcbcraft_core::Step) {
         let text = format!(
             "{done}: {} · {}",
-            step.title,
+            step.line(),
             crate::shell::area_label(step.area)
         );
         self.messages.push(Level::Info, &text, self.now);

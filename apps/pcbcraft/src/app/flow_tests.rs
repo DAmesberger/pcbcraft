@@ -407,6 +407,31 @@ fn undo_of_a_project_rename_says_project() -> Fallible {
     Ok(())
 }
 
+/// A step on one part names it: "Move R1", not the registry's "Move a
+/// placed part"; a step on several parts keeps the title.
+#[test]
+fn undo_names_the_one_part_it_took_back() -> Fallible {
+    use pcbcraft_core::layout::LayoutCommand;
+    let mut h = Harness::new()?;
+    let project = h.app.engine.project();
+    let r1 = project.instance_by_designator("R1").ok_or("R1")?.id;
+    let placed = project.placement_of(r1).ok_or("R1 placed")?.clone();
+    h.app.engine.apply(
+        h.app.engine.revision(),
+        Operation::Layout(LayoutCommand::Move {
+            instance: r1,
+            position: [placed.position[0] + 2.0, placed.position[1]],
+            rotation_deg: placed.rotation_deg,
+            layer: placed.layer,
+        }),
+    )?;
+    h.app.history(false);
+    assert_eq!(toasts(&h.app), ["Undid: Move R1 · PCB"]);
+    h.app.history(true);
+    assert_eq!(toasts(&h.app), ["Redid: Move R1 · PCB"]);
+    Ok(())
+}
+
 /// ⌘Z after ⌘Z undoes step after step with one toast, which names the
 /// latest step; Messages keeps each. (The app acts on presses, not key
 /// repeats, so a key held down undoes once.)
@@ -442,7 +467,7 @@ fn the_undo_toast_is_the_history_title() -> Fallible {
     h.app.history(false);
     let toast = format!(
         "Undid: {} · {}",
-        step.title,
+        step.line(),
         crate::shell::area_label(step.area)
     );
     assert_eq!(toasts(&h.app), [toast]);

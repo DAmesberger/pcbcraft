@@ -134,6 +134,38 @@ impl Operation {
         }
     }
 
+    /// The one component instance this operation concerns, if it names
+    /// exactly one.
+    pub fn instance(&self) -> Option<Id> {
+        use layout::LayoutCommand as L;
+        match self {
+            Self::Layout(
+                L::Place { instance, .. }
+                | L::Move { instance, .. }
+                | L::SetPlacementLock { instance, .. }
+                | L::SetPart { instance, .. }
+                | L::RemovePart { instance },
+            )
+            | Self::Instance(
+                InstanceCommand::Remove { instance }
+                | InstanceCommand::SetDesignator { instance, .. }
+                | InstanceCommand::SetProperties { instance, .. }
+                | InstanceCommand::SelectFunctions { instance, .. }
+                | InstanceCommand::SetUnitUnused { instance, .. }
+                | InstanceCommand::SetNoConnect { instance, .. }
+                | InstanceCommand::SetPhysical { instance, .. }
+                | InstanceCommand::SetPinConfig { instance, .. }
+                | InstanceCommand::SetMarking { instance, .. }
+                | InstanceCommand::SetTextPlacement { instance, .. },
+            ) => Some(*instance),
+            Self::Instance(InstanceCommand::AssignPart { instances, .. }) => match instances[..] {
+                [one] => Some(one),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Every operation by wire name with its class, for discovery.
     pub fn classes() -> impl Iterator<Item = &'static (&'static str, Class)> {
         const UPDATE: &[(&str, Class)] = &[("update", Class::Edit)];
@@ -545,24 +577,58 @@ pub enum Area {
     Project,
 }
 
-/// What one undo step did, for people: its operation's title and the area
-/// it changed. A batch of one kind of operation takes that operation's
-/// title; a mixed batch is [`Step::MIXED`], in its first operation's area.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+/// What one undo step did, for people: its operation's title, the area
+/// it changed and, when it concerns exactly one part, that part's
+/// designator as it was. A batch of one kind of operation takes that
+/// operation's title; a mixed batch is [`Step::MIXED`], in its first
+/// operation's area.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Step {
     pub title: &'static str,
     pub area: Area,
+    /// The one part the step concerns, by designator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
 }
+
+/// The registry phrases a step's part replaces: "Move a placed part" on R1
+/// reads "Move R1".
+const PART_NOUNS: [&str; 4] = [
+    "a placed part",
+    "a part on the board",
+    "a mechanical part",
+    "a component",
+];
 
 impl Step {
     /// The title of a batch of different operations.
     pub const MIXED: &'static str = "Several changes";
 
-    fn of(operation: &Operation) -> Self {
+    /// `operation`'s step on `project`, the document it applies to.
+    fn of(operation: &Operation, project: &Project) -> Self {
         Self {
             title: operation.title(),
             area: operation.area(),
+            subject: operation
+                .instance()
+                .and_then(|id| project.instance(id))
+                .map(|i| i.designator.clone()),
         }
+    }
+
+    /// The step for people: its title, naming its part when it has one
+    /// ("Move R1", "Set instance properties (R1)").
+    pub fn line(&self) -> String {
+        let Some(name) = &self.subject else {
+            return self.title.to_owned();
+        };
+        PART_NOUNS
+            .iter()
+            .find_map(|noun| self.title.strip_suffix(noun))
+            .map_or_else(
+                || format!("{} ({name})", self.title),
+                |verb| format!("{verb}{name}"),
+            )
     }
 }
 
@@ -1066,11 +1132,11 @@ impl Engine {
     }
     /// What [`Engine::undo`] would take back, if anything.
     pub fn undo_step(&self) -> Option<Step> {
-        self.undo.back().map(|(_, step)| *step)
+        self.undo.back().map(|(_, step)| step.clone())
     }
     /// What [`Engine::redo`] would apply again, if anything.
     pub fn redo_step(&self) -> Option<Step> {
-        self.redo.last().map(|(_, step)| *step)
+        self.redo.last().map(|(_, step)| step.clone())
     }
 
     /// Replace the whole document (open, new, recover). History is cleared;
@@ -1147,12 +1213,23 @@ impl Engine {
             )));
         }
         // One kind of operation names the step; a mix is several changes.
-        let mut step = operations.first().map(Step::of).unwrap_or(Step {
-            title: Step::MIXED,
-            area: Area::Schematic,
-        });
+        let project = &self.document.project;
+        let mut step = operations
+            .first()
+            .map(|o| Step::of(o, project))
+            .unwrap_or(Step {
+                title: Step::MIXED,
+                area: Area::Schematic,
+                subject: None,
+            });
         if operations.iter().any(|o| o.title() != step.title) {
             step.title = Step::MIXED;
+        }
+        if operations
+            .iter()
+            .any(|o| Step::of(o, project).subject != step.subject)
+        {
+            step.subject = None;
         }
         // The steps run on a copy without history; only the end commits.
         let mut scratch = Engine {
@@ -1204,7 +1281,7 @@ impl Engine {
         let evaluator = evaluators.footprint;
         self.check_revision(expected_revision)?;
         self.rerouted = Default::default();
-        let step = Step::of(&operation);
+        let step = Step::of(&operation, &self.document.project);
         let mut rerouted = layout::router::reroute::Rerouted::default();
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
