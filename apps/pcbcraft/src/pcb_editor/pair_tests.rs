@@ -611,3 +611,48 @@ fn the_high_speed_card_lists_the_paths_and_not_the_copper_off_them() -> TestResu
     }
     Ok(())
 }
+
+/// The High speed card's footer buttons share one height: Delete pair is
+/// a secondary button as tall as Done, as in every other card footer,
+/// not a small one.
+#[test]
+fn the_high_speed_footer_buttons_share_one_height() -> TestResult {
+    let Usb { engine, .. } = usb()?;
+    let pair = engine.project().rules.diff_pairs.first().ok_or("pair")?.id;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    editor.open_signals();
+    if let Some(card) = &mut editor.signals {
+        card.select_pair(pair);
+    }
+    let mut heights = Vec::new();
+    for _ in 0..2 {
+        ctx.enable_accesskit();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(700.0, 2400.0))),
+                ..Default::default()
+            },
+            |ui| {
+                editor.subject_slot(ui, &engine);
+            },
+        );
+        output.textures_delta.clear();
+        let update = output
+            .platform_output
+            .accesskit_update
+            .take()
+            .ok_or("no accessibility tree")?;
+        heights = update
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+            .filter_map(|(_, n)| Some((n.label()?.to_owned(), n.bounds()?.height() as f32)))
+            .collect();
+    }
+    let height = |label: &str| heights.iter().find(|(t, _)| t == label).map(|(_, h)| *h);
+    let done = height("Done").ok_or("no Done")?;
+    assert_eq!(height("Delete pair"), Some(done), "{heights:?}");
+    Ok(())
+}
