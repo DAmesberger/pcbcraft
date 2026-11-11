@@ -779,14 +779,18 @@ impl SchematicEditor {
                 });
             }
             if count > 1
-                && kit::summary_row(ui, "Removes what is drawn on it", Some("Delete sheet"))
+                && kit::action_row(
+                    ui,
+                    "Delete sheet",
+                    "Removes the sheet and what is drawn on it",
+                )
             {
                 output = op(SchematicCommand::DeleteSheet { sheet: sheet.id });
             }
         });
         kit::section(ui, "design", "Design", true, None, |ui| {
             let connected = self.nets.iter().filter(|n| n.terminals.len() >= 2).count();
-            ui.scope(|ui| kit::value_row(ui, "Connected nets", &connected.to_string()))
+            ui.scope(|ui| kit::value_row(ui, "Nets", &format!("{connected} connected")))
                 .response
                 .on_hover_text("Nets of the whole design that join two or more terminals");
         });

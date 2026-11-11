@@ -246,6 +246,7 @@ pub fn list_frame(
                 &format!("{shown} of {len}"),
                 t.form_dim,
                 Some("Show all \u{203a}"),
+                None,
             );
         }
     });
@@ -435,10 +436,23 @@ fn dashed_button(ui: &mut Ui, label: &str) -> Response {
 /// the right ("Edit sketch ›", "Choose…"). Returns whether the action was
 /// clicked.
 pub fn summary_row(ui: &mut Ui, summary: &str, action: Option<&str>) -> bool {
-    summary_line(ui, summary, Tokens::get().form_ink, action)
+    summary_line(ui, summary, Tokens::get().form_ink, action, None)
 }
 
-fn summary_line(ui: &mut Ui, summary: &str, ink: Color32, action: Option<&str>) -> bool {
+/// One action at the right of a row with no summary, saying what it does
+/// on hover ("Delete sheet": what goes with it). Returns whether it was
+/// clicked.
+pub fn action_row(ui: &mut Ui, action: &str, hover: &str) -> bool {
+    summary_line(ui, "", Tokens::get().form_ink, Some(action), Some(hover))
+}
+
+fn summary_line(
+    ui: &mut Ui,
+    summary: &str,
+    ink: Color32,
+    action: Option<&str>,
+    hover: Option<&str>,
+) -> bool {
     let t = Tokens::get();
     let (rect, response) = ui.allocate_exact_size(
         vec2(ui.available_width().max(0.0), t.control_height),
@@ -453,7 +467,10 @@ fn summary_line(ui: &mut Ui, summary: &str, ink: Color32, action: Option<&str>) 
                 .max_rect(rect)
                 .layout(Layout::right_to_left(Align::Center)),
             |ui| {
-                let button = ui_kit::button(ui, action, ui_kit::Button::Enabled(true));
+                let mut button = ui_kit::button(ui, action, ui_kit::Button::Enabled(true));
+                if let Some(hover) = hover {
+                    button = button.on_hover_text(hover);
+                }
                 clicked = button.clicked();
                 right = button.rect.left() - t.space_8;
             },

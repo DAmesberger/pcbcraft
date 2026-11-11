@@ -3430,7 +3430,7 @@ mod tests {
         Ok((engine, r3))
     }
 
-    /// B-e: the Sheet card's "Connected nets" leaves out single-terminal
+    /// B-e: the Sheet card's connected nets leave out single-terminal
     /// nets, and sits in the Design section, not under "On this sheet",
     /// because it counts the whole design (run 3, finding 20).
     #[test]
@@ -3452,19 +3452,70 @@ mod tests {
                 .map(|(_, p)| *p)
                 .ok_or(format!("no {text}"))
         };
-        let label = at("Connected nets")?;
-        assert!(!shown.iter().any(|(t, _)| t == "Nets"), "one name only");
+        // "Nets", its value "N connected": the row fits the Properties
+        // column (night round 4 Q5), and it still says which nets count.
+        let label = at("Nets")?;
+        assert!(
+            !shown.iter().any(|(t, _)| t == "Connected nets"),
+            "one name only"
+        );
         // The value is the text on the row's line.
         let value = shown
             .iter()
-            .find(|(t, p)| t != "Connected nets" && (p.y - label.y).abs() < 2.0 && p.x > label.x)
-            .ok_or("no Connected nets value")?;
-        assert_eq!(value.0, connected.to_string());
+            .find(|(t, p)| t != "Nets" && (p.y - label.y).abs() < 2.0 && p.x > label.x)
+            .ok_or("no Nets value")?;
+        assert_eq!(value.0, format!("{connected} connected"));
         let (sheet, design, pages) = (at("ON THIS SHEET")?, at("DESIGN")?, at("PAGES")?);
         assert!(
             sheet.y < pages.y && pages.y < design.y && design.y < label.y,
             "the row is in the Design section, after the sheet's own"
         );
+        Ok(())
+    }
+
+    /// In the Properties column's width the Sheet card cuts none of its
+    /// texts: no "Removes what is drawn…" or "Connected…" (night round 4
+    /// Q5). The Delete sheet hint is on the button's hover.
+    #[test]
+    fn the_sheet_card_fits_the_properties_column() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut engine, _) = with_unwired()?;
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::AddSheet {
+                name: None,
+                paper: None,
+                orientation: None,
+            }),
+        )?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(230.0, 1400.0))),
+                ..Default::default()
+            },
+            |ui| {
+                kit::form(ui, |ui| editor.inspector(ui, &engine));
+            },
+        );
+        output.textures_delta.clear();
+        let shown = shown(&output);
+        assert!(shown.iter().any(|(t, _)| t == "Delete sheet"), "{shown:?}");
+        fn elided(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) if text.galley.elided => {
+                    out.push(text.galley.job.text.clone());
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| elided(s, out)),
+                _ => {}
+            }
+        }
+        let mut cut = Vec::new();
+        for shape in &output.shapes {
+            elided(&shape.shape, &mut cut);
+        }
+        assert!(cut.is_empty(), "cut: {cut:?}");
         Ok(())
     }
 
