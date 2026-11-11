@@ -24,5 +24,8 @@ jobs:
           cache-all-crates: true
           # Keep the build when tests fail, so the next run reuses it.
           cache-on-failure: true
-      - name: Verify native code and wasm library
+      # Includes the generator modules: built for wasm32, compared with
+      # the hash generators/modules.lock records for the runner's host and
+      # their golden cases run natively, under wasmi and under wasm32 wasmi.
+      - name: Verify native code, wasm library and generator modules
         run: cargo xtask ci

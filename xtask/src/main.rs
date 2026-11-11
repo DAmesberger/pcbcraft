@@ -4,6 +4,7 @@ mod convert_rules;
 mod convert_v1;
 mod core_modules;
 mod f64_lengths;
+mod generators;
 mod layers;
 mod licences;
 mod raw_keys;
@@ -51,6 +52,11 @@ fn run() -> Result<()> {
     {
         return convert_v1::run(files);
     }
+    if let Some((command, rest)) = args.split_first()
+        && command == "generators"
+    {
+        return generators::run(rest);
+    }
     let command = match args.as_slice() {
         [command] => command.as_str(),
         [command, flag] if command == "licences" && flag == "--check" => "licences --check",
@@ -96,6 +102,7 @@ fn run() -> Result<()> {
             ])?;
             if command == "ci" {
                 wasm()?;
+                generators::run(&["check".into()])?;
             }
             Ok(())
         }
@@ -113,7 +120,8 @@ fn run() -> Result<()> {
         "raw-keys" => raw_keys::check(),
         _ => Err(
             "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
-             | licences --check | clean-room | ui-containers | ui-forms | raw-keys | convert-v1 [--profile PROFILE.json] PATH…"
+             | licences --check | clean-room | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
+             | convert-v1 [--profile PROFILE.json] PATH…"
                 .into(),
         ),
     }
@@ -160,6 +168,8 @@ fn wasm() -> Result<()> {
         "pcbcraft-core",
         "-p",
         "pcbcraft-solidcraft",
+        "-p",
+        "pcbcraft-generators",
         "--lib",
         "--target",
         "wasm32-unknown-unknown",

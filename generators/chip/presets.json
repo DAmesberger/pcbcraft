@@ -1,0 +1,540 @@
+[
+ {
+  "key": "resistor-01005",
+  "name": "Chip resistor 01005 (0402 metric)",
+  "aliases": [
+   "01005",
+   "0402 metric",
+   "R01005"
+  ],
+  "description": "Thick-film chip resistor, 0.40 × 0.20 × 0.13 mm, nominal values.",
+  "params": {
+   "part": "resistor",
+   "length": 400000,
+   "width": 200000,
+   "height": 130000,
+   "termination": 100000
+  },
+  "citation": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "resistor-0201",
+  "name": "Chip resistor 0201 (0603 metric)",
+  "aliases": [
+   "0201",
+   "0603 metric",
+   "R0201"
+  ],
+  "description": "Thick-film chip resistor, 0.60 × 0.30 × 0.23 mm, nominal values.",
+  "params": {
+   "part": "resistor",
+   "length": 600000,
+   "width": 300000,
+   "height": 230000,
+   "termination": 150000
+  },
+  "citation": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "resistor-0402",
+  "name": "Chip resistor 0402 (1005 metric)",
+  "aliases": [
+   "0402",
+   "1005 metric",
+   "R0402"
+  ],
+  "description": "Thick-film chip resistor, 1.00 × 0.50 × 0.35 mm, nominal values.",
+  "params": {
+   "part": "resistor",
+   "length": 1000000,
+   "width": 500000,
+   "height": 350000,
+   "termination": 250000
+  },
+  "citation": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "resistor-0603",
+  "name": "Chip resistor 0603 (1608 metric)",
+  "aliases": [
+   "0603",
+   "1608 metric",
+   "R0603"
+  ],
+  "description": "Thick-film chip resistor, 1.60 × 0.80 × 0.45 mm, nominal values.",
+  "params": {
+   "part": "resistor",
+   "length": 1600000,
+   "width": 800000,
+   "height": 450000,
+   "termination": 300000
+  },
+  "citation": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "resistor-0805",
+  "name": "Chip resistor 0805 (2012 metric)",
+  "aliases": [
+   "0805",
+   "2012 metric",
+   "R0805"
+  ],
+  "description": "Thick-film chip resistor, 2.00 × 1.25 × 0.50 mm, nominal values.",
+  "params": {
+   "part": "resistor",
+   "length": 2000000,
+   "width": 1250000,
+   "height": 500000,
+   "termination": 350000
+  },
+  "citation": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "resistor-1206",
+  "name": "Chip resistor 1206 (3216 metric)",
+  "aliases": [
+   "1206",
+   "3216 metric",
+   "R1206"
+  ],
+  "description": "Thick-film chip resistor, 3.10 × 1.60 × 0.55 mm, nominal values.",
+  "params": {
+   "part": "resistor",
+   "length": 3100000,
+   "width": 1600000,
+   "height": 550000,
+   "termination": 450000
+  },
+  "citation": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "resistor-1210",
+  "name": "Chip resistor 1210 (3225 metric)",
+  "aliases": [
+   "1210",
+   "3225 metric",
+   "R1210"
+  ],
+  "description": "Thick-film chip resistor, 3.10 × 2.60 × 0.55 mm, nominal values.",
+  "params": {
+   "part": "resistor",
+   "length": 3100000,
+   "width": 2600000,
+   "height": 550000,
+   "termination": 500000
+  },
+  "citation": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "resistor-2010",
+  "name": "Chip resistor 2010 (5025 metric)",
+  "aliases": [
+   "2010",
+   "5025 metric",
+   "R2010"
+  ],
+  "description": "Thick-film chip resistor, 5.00 × 2.50 × 0.55 mm, nominal values.",
+  "params": {
+   "part": "resistor",
+   "length": 5000000,
+   "width": 2500000,
+   "height": 550000,
+   "termination": 550000
+  },
+  "citation": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "resistor-2512",
+  "name": "Chip resistor 2512 (6332 metric)",
+  "aliases": [
+   "2512",
+   "6332 metric",
+   "R2512"
+  ],
+  "description": "Thick-film chip resistor, 6.35 × 3.20 × 0.55 mm, nominal values.",
+  "params": {
+   "part": "resistor",
+   "length": 6350000,
+   "width": 3200000,
+   "height": 550000,
+   "termination": 600000
+  },
+  "citation": {
+   "document": "Yageo, General purpose chip resistors, RC_L series datasheet: dimensions table"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "capacitor-01005",
+  "name": "Chip capacitor 01005 (0402 metric)",
+  "aliases": [
+   "01005",
+   "0402 metric",
+   "C01005"
+  ],
+  "description": "Multilayer ceramic chip capacitor, 0.40 × 0.20 mm, thickness 0.20 mm (the size code's thickest common variant; thickness depends on the value).",
+  "params": {
+   "part": "capacitor",
+   "length": 400000,
+   "width": 200000,
+   "height": 200000,
+   "termination": 100000
+  },
+  "citation": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "capacitor-0201",
+  "name": "Chip capacitor 0201 (0603 metric)",
+  "aliases": [
+   "0201",
+   "0603 metric",
+   "C0201"
+  ],
+  "description": "Multilayer ceramic chip capacitor, 0.60 × 0.30 mm, thickness 0.30 mm (the size code's thickest common variant; thickness depends on the value).",
+  "params": {
+   "part": "capacitor",
+   "length": 600000,
+   "width": 300000,
+   "height": 300000,
+   "termination": 150000
+  },
+  "citation": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "capacitor-0402",
+  "name": "Chip capacitor 0402 (1005 metric)",
+  "aliases": [
+   "0402",
+   "1005 metric",
+   "C0402"
+  ],
+  "description": "Multilayer ceramic chip capacitor, 1.00 × 0.50 mm, thickness 0.50 mm (the size code's thickest common variant; thickness depends on the value).",
+  "params": {
+   "part": "capacitor",
+   "length": 1000000,
+   "width": 500000,
+   "height": 500000,
+   "termination": 250000
+  },
+  "citation": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "capacitor-0603",
+  "name": "Chip capacitor 0603 (1608 metric)",
+  "aliases": [
+   "0603",
+   "1608 metric",
+   "C0603"
+  ],
+  "description": "Multilayer ceramic chip capacitor, 1.60 × 0.80 mm, thickness 0.80 mm (the size code's thickest common variant; thickness depends on the value).",
+  "params": {
+   "part": "capacitor",
+   "length": 1600000,
+   "width": 800000,
+   "height": 800000,
+   "termination": 350000
+  },
+  "citation": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "capacitor-0805",
+  "name": "Chip capacitor 0805 (2012 metric)",
+  "aliases": [
+   "0805",
+   "2012 metric",
+   "C0805"
+  ],
+  "description": "Multilayer ceramic chip capacitor, 2.00 × 1.25 mm, thickness 1.25 mm (the size code's thickest common variant; thickness depends on the value).",
+  "params": {
+   "part": "capacitor",
+   "length": 2000000,
+   "width": 1250000,
+   "height": 1250000,
+   "termination": 500000
+  },
+  "citation": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "capacitor-1206",
+  "name": "Chip capacitor 1206 (3216 metric)",
+  "aliases": [
+   "1206",
+   "3216 metric",
+   "C1206"
+  ],
+  "description": "Multilayer ceramic chip capacitor, 3.20 × 1.60 mm, thickness 1.60 mm (the size code's thickest common variant; thickness depends on the value).",
+  "params": {
+   "part": "capacitor",
+   "length": 3200000,
+   "width": 1600000,
+   "height": 1600000,
+   "termination": 500000
+  },
+  "citation": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "capacitor-1210",
+  "name": "Chip capacitor 1210 (3225 metric)",
+  "aliases": [
+   "1210",
+   "3225 metric",
+   "C1210"
+  ],
+  "description": "Multilayer ceramic chip capacitor, 3.20 × 2.50 mm, thickness 2.50 mm (the size code's thickest common variant; thickness depends on the value).",
+  "params": {
+   "part": "capacitor",
+   "length": 3200000,
+   "width": 2500000,
+   "height": 2500000,
+   "termination": 500000
+  },
+  "citation": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "capacitor-1812",
+  "name": "Chip capacitor 1812 (4532 metric)",
+  "aliases": [
+   "1812",
+   "4532 metric",
+   "C1812"
+  ],
+  "description": "Multilayer ceramic chip capacitor, 4.50 × 3.20 mm, thickness 2.50 mm (the size code's thickest common variant; thickness depends on the value).",
+  "params": {
+   "part": "capacitor",
+   "length": 4500000,
+   "width": 3200000,
+   "height": 2500000,
+   "termination": 600000
+  },
+  "citation": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "capacitor-2220",
+  "name": "Chip capacitor 2220 (5750 metric)",
+  "aliases": [
+   "2220",
+   "5750 metric",
+   "C2220"
+  ],
+  "description": "Multilayer ceramic chip capacitor, 5.70 × 5.00 mm, thickness 2.50 mm (the size code's thickest common variant; thickness depends on the value).",
+  "params": {
+   "part": "capacitor",
+   "length": 5700000,
+   "width": 5000000,
+   "height": 2500000,
+   "termination": 600000
+  },
+  "citation": {
+   "document": "Murata, GRM series chip monolithic ceramic capacitors: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "ferrite-0402",
+  "name": "Chip ferrite bead 0402 (1005 metric)",
+  "aliases": [
+   "0402",
+   "1005 metric",
+   "L0402",
+   "FB0402"
+  ],
+  "description": "Chip ferrite bead or inductor, 1.00 × 0.50 × 0.50 mm.",
+  "params": {
+   "part": "ferrite",
+   "length": 1000000,
+   "width": 500000,
+   "height": 500000,
+   "termination": 250000
+  },
+  "citation": {
+   "document": "Murata, BLM series chip ferrite beads: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "ferrite-0603",
+  "name": "Chip ferrite bead 0603 (1608 metric)",
+  "aliases": [
+   "0603",
+   "1608 metric",
+   "L0603",
+   "FB0603"
+  ],
+  "description": "Chip ferrite bead or inductor, 1.60 × 0.80 × 0.80 mm.",
+  "params": {
+   "part": "ferrite",
+   "length": 1600000,
+   "width": 800000,
+   "height": 800000,
+   "termination": 300000
+  },
+  "citation": {
+   "document": "Murata, BLM series chip ferrite beads: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "ferrite-0805",
+  "name": "Chip ferrite bead 0805 (2012 metric)",
+  "aliases": [
+   "0805",
+   "2012 metric",
+   "L0805",
+   "FB0805"
+  ],
+  "description": "Chip ferrite bead or inductor, 2.00 × 1.25 × 0.85 mm.",
+  "params": {
+   "part": "ferrite",
+   "length": 2000000,
+   "width": 1250000,
+   "height": 850000,
+   "termination": 500000
+  },
+  "citation": {
+   "document": "Murata, BLM series chip ferrite beads: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "ferrite-1206",
+  "name": "Chip ferrite bead 1206 (3216 metric)",
+  "aliases": [
+   "1206",
+   "3216 metric",
+   "L1206",
+   "FB1206"
+  ],
+  "description": "Chip ferrite bead or inductor, 3.20 × 1.60 × 1.10 mm.",
+  "params": {
+   "part": "ferrite",
+   "length": 3200000,
+   "width": 1600000,
+   "height": 1100000,
+   "termination": 500000
+  },
+  "citation": {
+   "document": "Murata, BLM series chip ferrite beads: dimensions by size code"
+  },
+  "basis": "cited_unverified"
+ },
+ {
+  "key": "led-0603",
+  "name": "Chip LED 0603 (1608 metric)",
+  "aliases": [
+   "LED",
+   "LED 0603",
+   "0603 LED",
+   "LED0603",
+   "chip LED",
+   "light",
+   "light-emitting diode",
+   "indicator",
+   "diode",
+   "0603",
+   "1608 metric"
+  ],
+  "description": "Chip LED (light-emitting diode), 1.60 × 0.80 × 0.75 mm, clear lens. Pad 1 is the cathode (K), marked on the legend.",
+  "params": {
+   "part": "led",
+   "length": 1600000,
+   "width": 800000,
+   "height": 750000,
+   "termination": 300000,
+   "lands": "explicit",
+   "land_length": 800000,
+   "land_width": 800000,
+   "land_pitch": 1650000
+  },
+  "citation": {
+   "document": "Kingbright APT1608SGC, 1.6 x 0.8 mm SMD chip LED lamp datasheet: package dimensions and recommended soldering pattern, https://www.kingbrightusa.com/images/catalog/SPEC/APT1608SGC.pdf",
+   "revision": "V.22B (2023-12-07)",
+   "page": 1
+  },
+  "basis": "cited",
+  "note": "Lands are the recommended soldering pattern: 0.8 × 0.8 mm, 0.85 mm apart. Choose the colour and forward voltage of the selected LED."
+ },
+ {
+  "key": "led-0805",
+  "name": "Chip LED 0805 (2012 metric)",
+  "aliases": [
+   "LED",
+   "LED 0805",
+   "0805 LED",
+   "LED0805",
+   "chip LED",
+   "light",
+   "light-emitting diode",
+   "indicator",
+   "diode",
+   "0805",
+   "2012 metric"
+  ],
+  "description": "Chip LED (light-emitting diode), 2.00 × 1.25 × 0.75 mm, clear lens. Pad 1 is the cathode (K), marked on the legend.",
+  "params": {
+   "part": "led",
+   "length": 2000000,
+   "width": 1250000,
+   "height": 750000,
+   "termination": 400000,
+   "lands": "explicit",
+   "land_length": 1250000,
+   "land_width": 1100000,
+   "land_pitch": 2350000
+  },
+  "citation": {
+   "document": "Kingbright APT2012SGC, 2.0 x 1.25 mm SMD chip LED lamp datasheet: package dimensions and recommended soldering pattern, https://www.kingbrightusa.com/images/catalog/SPEC/APT2012SGC.pdf",
+   "revision": "V.18B (2025-06-03)",
+   "page": 1
+  },
+  "basis": "cited",
+  "note": "Lands are the recommended soldering pattern: 1.25 × 1.1 mm, 1.1 mm apart. Choose the colour and forward voltage of the selected LED."
+ }
+]

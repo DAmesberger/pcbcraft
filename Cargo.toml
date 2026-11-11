@@ -8,6 +8,11 @@ members = [
     "crates/automation",
     "crates/firmware",
     "crates/assist",
+    "crates/generator-abi",
+    "crates/generator-sdk",
+    "crates/generators",
+    "crates/generators-probe",
+    "generators/chip",
     "apps/pcbcraft-cli",
     "apps/pcbcraft",
     "xtask",
@@ -27,6 +32,9 @@ pcbcraft-solidcraft = { path = "crates/solidcraft-integration" }
 pcbcraft-automation = { path = "crates/automation" }
 pcbcraft-firmware = { path = "crates/firmware" }
 pcbcraft-assist = { path = "crates/assist" }
+pcbcraft-generator-abi = { path = "crates/generator-abi" }
+pcbcraft-generator-sdk = { path = "crates/generator-sdk" }
+pcbcraft-generators = { path = "crates/generators" }
 tempfile = "3"
 sha2 = "0.10"
 getrandom = "0.3"
@@ -92,6 +100,20 @@ overflow-checks = true
 [profile.ci.package."*"]
 opt-level = 2
 debug = false
+
+# Generator modules (`generators/*`, built by `cargo xtask generators build`):
+# small, panic-free and byte-reproducible. A module's SHA-256 is its identity,
+# recorded in generators/modules.lock, so every setting here is part of it.
+[profile.generator]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = 0
+incremental = false
+overflow-checks = true
 
 # Cargo does not inherit a dependency workspace's patches. Keep Solidcraft's
 # geometry fixes pinned to the exact same revision as its engine.

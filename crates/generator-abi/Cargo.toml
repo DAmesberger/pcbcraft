@@ -1,0 +1,23 @@
+[package]
+name = "pcbcraft-generator-abi"
+description = "Generator plugin ABI: wire types and the canonical JSON codec shared by the host and generator modules"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Host-side strictness: decoding also refuses strings that are not in Unicode
+# NFC. Modules leave it off, so the normalisation tables stay out of them.
+nfc = ["dep:unicode-normalization"]
+
+# no_std + alloc throughout: this crate is compiled into every generator
+# module, so it must not pull in `std` or anything that embeds host paths.
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
+unicode-normalization = { version = "0.1", default-features = false, optional = true }
