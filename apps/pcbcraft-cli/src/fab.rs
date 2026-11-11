@@ -177,7 +177,7 @@ mod tests {
             json!({"command": "project.apply", "params": {
                 "expected_revision": revision,
                 "operation": {"editor": "Rules", "operation": {
-                    "command": "rules.set_profile",
+                    "command": "rules.set_fab_profile",
                     "params": {"profile": fixtures::fine()?}}},
             }}),
         )?;

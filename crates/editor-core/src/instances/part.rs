@@ -159,6 +159,26 @@ pub fn part_findings(library: &Library, instance: &ComponentInstance) -> Vec<Fin
     findings_with(library, instance, r, &part.definition)
 }
 
+/// The newest revision of `instance`'s Part lineage that agrees with the
+/// instance as it is now, when its pinned revision no longer does: the
+/// revision `library.publish_with_parts` republished for a new component
+/// revision. Matched by lineage only, never by name; `None` when the Part
+/// still agrees, or no revision of its lineage does.
+pub fn republished_part(library: &Library, instance: &ComponentInstance) -> Option<PartRef> {
+    let pinned = instance.part?;
+    if part_findings(library, instance).is_empty() {
+        return None;
+    }
+    library
+        .parts
+        .iter()
+        .filter(|p| p.id == pinned.id && p.revision > pinned.revision)
+        .map(|p| (PartRef::new(p.id, p.revision), &p.definition))
+        .filter(|(r, part)| findings_with(library, instance, *r, part).is_empty())
+        .max_by_key(|(r, _)| r.revision)
+        .map(|(r, _)| r)
+}
+
 /// Every disagreement between `instance` and the Part revision `r`.
 fn findings_with(
     library: &Library,

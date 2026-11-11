@@ -40,14 +40,15 @@ pub enum Workspace {
     Pcb,
 }
 
-/// The workspace that edits an area of the design.
-impl From<pcbcraft_core::Area> for Workspace {
-    fn from(area: pcbcraft_core::Area) -> Self {
-        match area {
-            pcbcraft_core::Area::Component => Self::Part,
-            pcbcraft_core::Area::Schematic => Self::Schematic,
-            pcbcraft_core::Area::Pcb => Self::Pcb,
-        }
+/// How an area of the design reads in undo and redo feedback: the
+/// workspace that edits it, or Project for the project's own name and
+/// properties.
+pub fn area_label(area: pcbcraft_core::Area) -> &'static str {
+    match area {
+        pcbcraft_core::Area::Component => Workspace::Part.label(),
+        pcbcraft_core::Area::Schematic => Workspace::Schematic.label(),
+        pcbcraft_core::Area::Pcb => Workspace::Pcb.label(),
+        pcbcraft_core::Area::Project => "Project",
     }
 }
 

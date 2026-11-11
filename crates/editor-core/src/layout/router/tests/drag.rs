@@ -16,6 +16,7 @@ fn drag(track: Id, offset: f64, mode: RouteMode) -> TrackDragRequest {
         posture: Posture::Diagonal,
         mode,
         move_vias: true,
+        pair: Default::default(),
     }
 }
 

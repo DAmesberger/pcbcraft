@@ -429,9 +429,10 @@ fn undo_steps_carry_their_title_and_area() -> Result<()> {
     let unit = Step {
         title: "Move a symbol unit",
         area: Area::Schematic,
+        subject: None,
     };
     apply(&mut engine, moved(1.0))?;
-    assert_eq!(engine.undo_step(), Some(unit));
+    assert_eq!(engine.undo_step(), Some(unit.clone()));
     apply(
         &mut engine,
         Operation::Layout(LayoutCommand::Move {
@@ -444,12 +445,14 @@ fn undo_steps_carry_their_title_and_area() -> Result<()> {
     let part = Step {
         title: "Move a placed part",
         area: Area::Pcb,
+        subject: Some("R1".into()),
     };
-    assert_eq!(engine.undo_step(), Some(part));
+    assert_eq!(engine.undo_step(), Some(part.clone()));
+    assert_eq!(part.line(), "Move R1", "named by its part");
     engine.undo()?;
     assert_eq!(
         (engine.undo_step(), engine.redo_step()),
-        (Some(unit), Some(part))
+        (Some(unit.clone()), Some(part.clone()))
     );
     engine.redo()?;
     assert_eq!((engine.undo_step(), engine.redo_step()), (Some(part), None));
@@ -462,6 +465,7 @@ fn undo_steps_carry_their_title_and_area() -> Result<()> {
     let several = Step {
         title: Step::MIXED,
         area: Area::Schematic,
+        subject: None,
     };
     assert_eq!(engine.undo_step(), Some(several), "a mix");
 
@@ -471,8 +475,9 @@ fn undo_steps_carry_their_title_and_area() -> Result<()> {
     let designator = Step {
         title: "Set a designator",
         area: Area::Schematic,
+        subject: Some("R9".into()),
     };
-    assert_eq!(engine.undo_step(), Some(designator), "joined");
+    assert_eq!(engine.undo_step(), Some(designator.clone()), "joined");
     engine.undo()?;
     assert_eq!(engine.redo_step(), Some(designator));
     Ok(())

@@ -109,3 +109,44 @@ fn delete_and_lock_several_objects_in_one_undo_step() -> Fallible {
     }
     Ok(())
 }
+
+/// A Delete of copper and parts together deletes the copper, keeps the
+/// parts and says which, as data: the reply an MCP caller gets.
+#[test]
+fn parts_named_with_copper_are_kept_and_named() -> Fallible {
+    let (mut engine, tracks) = stub()?;
+    let r1 = by_designator(&engine, "R1")?;
+    let placements = engine.project().placements.clone();
+    let outcome = engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::DeleteObjects {
+            objects: Objects {
+                parts: vec![r1],
+                tracks,
+                ..Default::default()
+            },
+        }),
+    )?;
+    assert!(engine.project().tracks.is_empty());
+    assert_eq!(engine.project().placements, placements);
+    assert_eq!(
+        outcome,
+        crate::Outcome::PartsKept {
+            parts: vec![KeptPart {
+                instance: r1,
+                designator: "R1".into(),
+            }],
+        }
+    );
+    let reply = serde_json::to_value(&outcome)?;
+    assert_eq!(reply["outcome"], "parts_kept");
+    assert_eq!(reply["parts"][0]["designator"], "R1");
+    let crate::Outcome::PartsKept { parts } = &outcome else {
+        return Err("no kept parts".into());
+    };
+    assert_eq!(
+        kept_line(parts),
+        "Kept 1 part (R1): delete it in the schematic"
+    );
+    Ok(())
+}

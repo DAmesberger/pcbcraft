@@ -75,7 +75,7 @@ enum ExportMessage {
 
 /// The Production files dialog's state while it is open.
 pub(super) struct ProductionDialog {
-    /// The user's rule profiles, read once when the dialog opens.
+    /// The user's fab profiles, read once when the dialog opens.
     user_profiles: Vec<RuleProfile>,
     pub(super) pick: Pick,
     pub(super) format: Format,
@@ -478,7 +478,7 @@ pub(super) fn export_blocked(
 
 impl PcbEditor {
     /// Open the Production files dialog (the ribbon's Production files…).
-    /// The user profile library is the config folder's `rule-profiles/`.
+    /// The user profile library is the config folder's `fab-profiles/`.
     pub(super) fn open_production(&mut self) {
         let library = pcbcraft_io::settings::UserDirs::from_env()
             .ok()
@@ -611,7 +611,7 @@ fn body(
         |ui| {
             let options = dialog.options_list(engine);
             let mut pick = dialog.pick.clone();
-            if kit::choice_row(ui, "Profile", &mut pick, &options) && pick != dialog.pick {
+            if kit::choice_row(ui, "Fab profile", &mut pick, &options) && pick != dialog.pick {
                 dialog.pick = pick;
                 dialog.waiving = Waiving::default();
             }

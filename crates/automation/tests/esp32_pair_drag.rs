@@ -12,7 +12,7 @@ use pcbcraft_core::format::EditorFile;
 use pcbcraft_core::ids::Id;
 use pcbcraft_core::layout::fill::{FillCache, compute_stale};
 use pcbcraft_core::layout::posture::Posture;
-use pcbcraft_core::layout::router::drag::{TrackDragRequest, drag_plan};
+use pcbcraft_core::layout::router::drag::{PairDrag, TrackDragRequest, drag_plan};
 use pcbcraft_core::layout::router::{RouteIndex, RouteMode};
 use pcbcraft_core::layout::{self, LayoutCommand, length};
 use pcbcraft_core::model::Track;
@@ -91,6 +91,7 @@ fn drag(track: Id, offset: f64) -> TrackDragRequest {
         posture: Posture::Diagonal,
         mode: RouteMode::Shove,
         move_vias: true,
+        pair: PairDrag::Together,
     }
 }
 
@@ -276,6 +277,52 @@ fn layout_track_drag_over_the_session_moves_both_halves() -> Fallible {
         "{moved:?}"
     );
     assert!(session.engine().project().tracks == direct.project().tracks);
+    Ok(())
+}
+
+/// `pair: "alone"` (the desktop's ⌥-drag) moves the dragged half by itself,
+/// over the session as CLI and MCP send it: USB_DP stays put, and the
+/// board gains no clearance error, only the pair findings asked for.
+/// Toward the partner, the half is not allowed to shove it: it stops short
+/// and USB_DP still stays.
+#[test]
+fn a_half_dragged_alone_leaves_its_partner() -> Fallible {
+    let mut session = Session::new(example()?);
+    let (dn, dp) = long_runs(session.engine())?;
+    let apply = |session: &mut Session, offset: f64| -> Fallible {
+        let operation: Operation = serde_json::from_value(serde_json::json!({
+            "editor": "Layout",
+            "operation": {
+                "command": "layout.track_drag",
+                "params": { "request": { "track": dn.id, "offset": offset, "pair": "alone" } }
+            }
+        }))?;
+        session.execute(Request::Apply(ApplyParams {
+            expected_revision: session.engine().revision(),
+            operation,
+        }))?;
+        Ok(())
+    };
+    let errors = |engine: &mut Engine| -> Fallible<Vec<String>> {
+        Ok(issues(engine)?
+            .into_iter()
+            .filter(|i| !i.starts_with("pair."))
+            .collect())
+    };
+    apply(&mut session, 1.0)?;
+    let mut engine = Engine::from_file(session.engine().to_file())?;
+    let dn_now = track(&engine, dn.id)?;
+    assert!(
+        (dn_now.start[0] - (dn.start[0] - 1.0)).abs() < 1e-6,
+        "{dn_now:?}"
+    );
+    assert_eq!(track(&engine, dp.id)?, dp, "the partner stays");
+    assert_eq!(errors(&mut engine)?, Vec::<String>::new());
+    // Back past where it was, toward USB_DP: it stops before it.
+    let _ = apply(&mut session, -3.0);
+    let mut engine = Engine::from_file(session.engine().to_file())?;
+    assert_eq!(track(&engine, dp.id)?, dp, "the partner is not shoved");
+    assert_eq!(errors(&mut engine)?, Vec::<String>::new());
     Ok(())
 }
 

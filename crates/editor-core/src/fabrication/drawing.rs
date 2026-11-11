@@ -78,7 +78,7 @@ pub struct DrawingData {
     pub finish: String,
     pub mask: String,
     pub legend: String,
-    /// The rule profile's name and provenance line.
+    /// The fab profile's name and provenance line.
     pub profile: String,
     /// Fabrication notes from the effective rules (minimum track and gap,
     /// drill, annular ring, mask web, …), one sentence each.
@@ -213,10 +213,14 @@ fn notes(project: &Project) -> Vec<String> {
         .copper
         .clearance
         .get(CopperObject::Track, CopperObject::Track);
-    let hole = rules
+    let via_hole = rules
         .copper
         .clearance
-        .get(CopperObject::Hole, CopperObject::Track);
+        .get(CopperObject::ViaHole, CopperObject::Track);
+    let pth_hole = rules
+        .copper
+        .clearance
+        .get(CopperObject::PthHole, CopperObject::Track);
     let weights: Vec<String> = project
         .stackup
         .copper
@@ -247,9 +251,10 @@ fn notes(project: &Project) -> Vec<String> {
             mm(gap)
         ),
         format!(
-            "Minimum finished drill {}, hole to copper {}.",
+            "Minimum finished drill {}, via hole to copper {}, plated hole to copper {}.",
             mm(rules.holes.drill_min),
-            mm(hole)
+            mm(via_hole),
+            mm(pth_hole)
         ),
         format!(
             "Minimum annular ring: vias {}, plated holes {}.",
@@ -280,7 +285,7 @@ fn notes(project: &Project) -> Vec<String> {
         format!(
             "Dimensions in millimetres. {}",
             project.rules.profile.as_ref().map_or_else(
-                || "Hole sizes are finished sizes; no rule profile says how the fabricator \
+                || "Hole sizes are finished sizes; no fab profile says how the fabricator \
                     reads drill files."
                     .to_string(),
                 |p| p.drill_files.note()
@@ -292,7 +297,7 @@ fn notes(project: &Project) -> Vec<String> {
 
 fn profile_line(project: &Project) -> String {
     let Some(p) = &project.rules.profile else {
-        return "No rule profile: no manufacturing rule was checked".into();
+        return "No fab profile: no manufacturing rule was checked".into();
     };
     let mut source = p.source.publisher.clone();
     if !p.source.document.is_empty() {

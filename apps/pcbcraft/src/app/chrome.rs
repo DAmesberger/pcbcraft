@@ -699,6 +699,7 @@ impl App {
                 .align(egui::RectAlign::TOP_START)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| self.pcb.filter_menu(ui));
+            self.sources.set_selection_filter(self.pcb.filter());
         }
         if pcb_3d {
             // Solidcraft's Realistic look toggle (its navigation bar's

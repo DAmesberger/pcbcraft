@@ -51,7 +51,7 @@ impl BoardSetup {
 
 impl PcbEditor {
     /// BOARD: size and copper layers, then the finish in one line with
-    /// Setup…, which opens the Board setup dialog, and the rules profile
+    /// Setup…, which opens the Board setup dialog, and the fab profile
     /// with Rules…, which opens the Design rules panel.
     pub(super) fn board_section(&mut self, ui: &mut Ui, project: &Project) -> Option<Operation> {
         let mut renamed = None;

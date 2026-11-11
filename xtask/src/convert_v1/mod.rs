@@ -13,7 +13,7 @@
 //! anything is written, and a project's remembered revision and design
 //! hashes are recomputed ([`identity`]).
 //!
-//! Rule profiles as files ([`crate::convert_rules`]): the old profile
+//! Fab profiles as files ([`crate::convert_rules`]): the old profile
 //! snapshot becomes `--profile FILE.json`'s profile, or, for one the user
 //! entered from a fabricator, the same values in the new form. An old
 //! profile library file (`FILE.json`) converts in place too.
@@ -111,13 +111,13 @@ pub fn run(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The `profile` of a new-format profile file.
+/// The `fab_profile` of a current fab profile file.
 fn read_profile(path: &str) -> Result<serde_json::Value> {
     let file: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
     let profile = file
-        .get("profile")
+        .get("fab_profile")
         .filter(|p| file["format"] == 1 && p.get("source").is_some() && p.get("rules").is_some())
-        .ok_or_else(|| format!("{path} is not a format 1 rule profile file with a source"))?;
+        .ok_or_else(|| format!("{path} is not a format 1 fab profile file with a source"))?;
     Ok(profile.clone())
 }
 
@@ -128,12 +128,73 @@ fn convert_profile(path: &Path, backup: &Path) -> Result<usize> {
     let mut file: serde_json::Value = serde_json::from_slice(&original)?;
     let changed = crate::convert_rules::convert_profile_file(&mut file)?;
     if changed > 0 {
-        let mut bytes = serde_json::to_vec_pretty(&file)?;
-        bytes.push(b'\n');
+        let mut text = String::new();
+        pretty(&file, 0, &mut text)?;
+        text.push('\n');
         if !backup.exists() {
             std::fs::write(backup, &original)?;
         }
-        pcbcraft_io::persistence::atomic_write(path, &bytes)?;
+        pcbcraft_io::persistence::atomic_write(path, text.as_bytes())?;
     }
     Ok(changed)
+}
+
+const PROFILE_KEY_ORDER: &[&str] = &[
+    "format",
+    "fab_profile",
+    "id",
+    "name",
+    "publisher",
+    "document",
+    "url",
+    "date",
+    "notes",
+    "kind",
+    "pth_allowance",
+    "value",
+    "formula",
+    "source",
+    "drill_files",
+    "rules",
+];
+
+/// `value` as `serde_json::to_string_pretty` writes it, but with object
+/// keys in [`PROFILE_KEY_ORDER`], so a converted profile file keeps the
+/// app's own layout.
+fn pretty(value: &serde_json::Value, depth: usize, out: &mut String) -> Result<()> {
+    let pad = |n: usize| "  ".repeat(n);
+    match value {
+        serde_json::Value::Object(map) if !map.is_empty() => {
+            let rank = |k: &str| {
+                PROFILE_KEY_ORDER
+                    .iter()
+                    .position(|o| *o == k)
+                    .unwrap_or(PROFILE_KEY_ORDER.len())
+            };
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_by(|a, b| rank(a).cmp(&rank(b)).then(a.cmp(b)));
+            out.push_str("{\n");
+            for (i, key) in keys.iter().enumerate() {
+                out.push_str(&pad(depth + 1));
+                out.push_str(&serde_json::to_string(key)?);
+                out.push_str(": ");
+                pretty(&map[key.as_str()], depth + 1, out)?;
+                out.push_str(if i + 1 < keys.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&pad(depth));
+            out.push('}');
+        }
+        serde_json::Value::Array(items) if !items.is_empty() => {
+            out.push_str("[\n");
+            for (i, item) in items.iter().enumerate() {
+                out.push_str(&pad(depth + 1));
+                pretty(item, depth + 1, out)?;
+                out.push_str(if i + 1 < items.len() { ",\n" } else { "\n" });
+            }
+            out.push_str(&pad(depth));
+            out.push(']');
+        }
+        other => out.push_str(&serde_json::to_string(other)?),
+    }
+    Ok(())
 }

@@ -37,6 +37,67 @@ pub struct PartMove {
     pub layer: Layer,
 }
 
+/// Selected tracks and vias a group drag moves with its parts
+/// (`layout.move_parts`): each slides by `by`. Copper attached to a moved
+/// part is carried with that part instead, so listing it changes nothing.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CopperMove {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tracks: Vec<Id>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vias: Vec<Id>,
+    /// The slide, in mm.
+    pub by: Point,
+}
+
+impl CopperMove {
+    /// Every track and via named once, present and unlocked, and a finite
+    /// slide.
+    fn check(&self, project: &Project) -> Result<()> {
+        if !point_valid(self.by) {
+            return Err(Error::Invalid("the copper's slide is not finite".into()));
+        }
+        let count = self.tracks.len() + self.vias.len();
+        if count > super::several::MAX_OBJECTS {
+            return Err(Error::Limit(format!(
+                "one command moves at most {} tracks and vias, not {count}",
+                super::several::MAX_OBJECTS
+            )));
+        }
+        let mut seen = BTreeSet::new();
+        for &id in &self.tracks {
+            let track = project
+                .tracks
+                .iter()
+                .find(|t| t.id == id)
+                .ok_or_else(|| Error::NotFound(format!("unknown track {id}")))?;
+            if !seen.insert(id) {
+                return Err(Error::Invalid(format!("track {id} is named twice")));
+            }
+            if track.locked {
+                return Err(Error::Conflict(
+                    "A selected track is locked; unlock it to move it".into(),
+                ));
+            }
+        }
+        for &id in &self.vias {
+            let via = project
+                .via(id)
+                .ok_or_else(|| Error::NotFound(format!("unknown via {id}")))?;
+            if !seen.insert(id) {
+                return Err(Error::Invalid(format!("via {id} is named twice")));
+            }
+            if via.locked {
+                return Err(Error::Conflict(
+                    "A selected via is locked; unlock it to move it".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Which outline edge or centre line `layout.align` lines the parts up on.
 /// The board's y axis points up: the top edge is the largest y.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -250,12 +311,19 @@ pub fn distribute(
 
 /// `layout.move_parts`: each part to its new pose, refused as `layout.move`
 /// refuses a locked part.
-pub fn move_parts(project: &mut Project, moves: &[PartMove]) -> Result<()> {
+pub fn move_parts(
+    project: &mut Project,
+    moves: &[PartMove],
+    copper: Option<&CopperMove>,
+) -> Result<()> {
     let instances: Vec<Id> = moves.iter().map(|m| m.instance).collect();
     if moves.is_empty() {
         return Err(Error::Invalid(
             "layout.move_parts needs at least one part".into(),
         ));
+    }
+    if let Some(copper) = copper {
+        copper.check(project)?;
     }
     parts_named(project, &instances, "layout.move_parts")?;
     for m in moves {

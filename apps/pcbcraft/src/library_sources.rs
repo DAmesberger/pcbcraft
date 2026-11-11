@@ -843,10 +843,23 @@ impl LibrarySources {
         self.settings.default_rule_profile.clone()
     }
 
-    /// Keep the default rule profile per user.
+    /// Keep the default fab profile per user.
     pub fn set_default_rule_profile(&mut self, id: Option<String>) {
         if id != self.settings.default_rule_profile {
             self.settings.default_rule_profile = id;
+            self.persist();
+        }
+    }
+
+    /// The board selection filter as last set.
+    pub fn selection_filter(&self) -> settings::SelectionFilter {
+        self.settings.selection_filter
+    }
+
+    /// Keep the board selection filter per user.
+    pub fn set_selection_filter(&mut self, filter: settings::SelectionFilter) {
+        if filter != self.settings.selection_filter {
+            self.settings.selection_filter = filter;
             self.persist();
         }
     }

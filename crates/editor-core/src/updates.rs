@@ -94,9 +94,12 @@ pub struct Resolutions {
     #[serde(default)]
     pub functions: Vec<FunctionResolution>,
     /// What happens to each instance's exact manufacturer Part. An instance
-    /// without an entry keeps its Part, which then pins the old component
-    /// revision and leaves purchasing unresolved until another Part is
-    /// chosen. The Part is never re-pointed to the target revision.
+    /// without an entry takes the newest revision of its Part's lineage
+    /// that agrees with it at the target revision (the one
+    /// `library.publish_with_parts` republished), and otherwise keeps its
+    /// Part, which then pins the old component revision and leaves
+    /// purchasing unresolved until another Part is chosen. `keep` keeps the
+    /// old Part revision explicitly.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<PartResolution>,
 }
@@ -112,7 +115,8 @@ pub struct PartResolution {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PartAction {
-    /// Keep the Part; the preview and purchasing report that it is stale.
+    /// Keep the Part revision; the preview and purchasing report that it
+    /// is stale.
     Keep,
     /// Clear the Part; the instance becomes generic.
     Clear,
@@ -1066,7 +1070,17 @@ fn revise_instance(
             }
             instances::instance_mut(next, id)?.part = Some(part);
         }
-        Some(PartAction::Keep) | None => {}
+        Some(PartAction::Keep) => {}
+        // By default the Part follows to its lineage's revision for the
+        // target, when one was published.
+        None => {
+            let instance = next
+                .instance(id)
+                .ok_or_else(|| not_found("Unknown component instance."))?;
+            if let Some(part) = instances::republished_part(&next.library, instance) {
+                instances::instance_mut(next, id)?.part = Some(part);
+            }
+        }
     }
     if physical.is_none() {
         layout::detach_instance(next, id, EditPolicy::Consequential)?;
@@ -2494,7 +2508,7 @@ pub(crate) fn preview(
         // solved, and a solved part carries its copper.
         let placed = layout::dimensions::follow(project, &mut next, evaluator)?;
         if !placed.is_empty() {
-            layout::dimensions::carry(project, &mut next, graph, &placed)?;
+            layout::dimensions::carry(project, &mut next, graph, &placed, None)?;
         }
         Ok(next)
     });

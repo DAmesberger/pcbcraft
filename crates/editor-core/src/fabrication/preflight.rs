@@ -128,7 +128,7 @@ pub fn apply(
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(
     untagged,
-    expecting = "a rule profile id from the profile library, or a whole rule profile"
+    expecting = "a fab profile id from the profile library, or a whole fab profile"
 )]
 pub enum ProfileChoice {
     /// A profile id. Pcbcraft has no built-in profiles: a host with a
@@ -142,7 +142,7 @@ impl ProfileChoice {
     pub fn into_profile(self) -> Result<RuleProfile> {
         match self {
             Self::Id(id) => Err(Error::NotFound(format!(
-                "rules.profile_unknown: no rule profile {id} here; pass the profile file's \
+                "rules.fab_profile_unknown: no fab profile {id} here; pass the profile file's \
                  profile, or its id where a profile library is open"
             ))),
             Self::Profile(profile) => Ok(*profile),
@@ -179,7 +179,7 @@ impl PreflightItem {
 /// `fabrication.preflight`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PreflightReport {
-    /// The rule profile the design was checked under.
+    /// The fab profile the design was checked under.
     pub profile: String,
     /// Most severe first.
     pub items: Vec<PreflightItem>,
@@ -209,7 +209,7 @@ const MAX_LEGEND_NAME: usize = 16;
 pub const NO_WAIVER: &[&str] = &[
     layout::dimensions::REFERENCE_LOST,
     layout::dimensions::REFERENCE_INEXACT,
-    "rules.no_profile",
+    "rules.no_fab_profile",
 ];
 
 /// Whether the finding a waiver key names may not be waived.
@@ -302,10 +302,10 @@ pub fn report(
     production_findings(p, drafts, &mut items);
     if p.rules.profile.is_none() {
         items.push(item(
-            "rules.no_profile",
+            "rules.no_fab_profile",
             Severity::Error,
-            "The board has no rule profile, so no manufacturing rule was checked".into(),
-            Some("Choose the fabricator's rule profile (Board › Rules)".into()),
+            "The board has no fab profile, so no manufacturing rule was checked".into(),
+            Some("Choose the fabricator's fab profile (Board › Rules)".into()),
             Vec::new(),
         ));
     }

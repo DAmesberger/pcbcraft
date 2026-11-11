@@ -1,5 +1,5 @@
-//! The user's design-rule profile library: one versioned JSON
-//! [`ProfileFile`] per profile in `UserDirs::config/rule-profiles/`, named
+//! The user's fab profile library: one versioned JSON
+//! [`ProfileFile`] per profile in `UserDirs::config/fab-profiles/`, named
 //! `<id>.json`. Writes are atomic; reads are bounded; an unsupported format
 //! or a damaged file is reported, never rewritten or silently skipped.
 //!
@@ -17,7 +17,7 @@ use pcbcraft_core::rules::{PROFILE_FILE_FORMAT, ProfileFile, RuleProfile};
 use std::path::{Path, PathBuf};
 
 /// The library folder's name under the user config directory.
-pub const PROFILES_DIR: &str = "rule-profiles";
+pub const PROFILES_DIR: &str = "fab-profiles";
 /// The extension of a profile file.
 pub const EXTENSION: &str = "json";
 /// Bytes of one profile file.
@@ -126,12 +126,12 @@ pub fn decode(bytes: &[u8]) -> Result<RuleProfile> {
         Some(format) if format == u64::from(PROFILE_FILE_FORMAT) => {}
         Some(format) => {
             return Err(Error::Document(pcbcraft_core::Error::Unsupported(format!(
-                "unsupported rule profile format {format}"
+                "unsupported fab profile format {format}"
             ))));
         }
         None => {
             return Err(Error::Invalid(
-                "not a rule profile file: it has no format".into(),
+                "not a fab profile file: it has no format".into(),
             ));
         }
     }
@@ -150,7 +150,7 @@ pub fn read_profile_file(path: &Path) -> Result<RuleProfile> {
 pub fn export(profile: &RuleProfile, path: &Path) -> Result<()> {
     if path.extension().is_none_or(|e| e != EXTENSION) {
         return Err(Error::Invalid(
-            "use a .json filename for a rule profile".into(),
+            "use a .json filename for a fab profile".into(),
         ));
     }
     if path.as_os_str().len() > crate::settings::MAX_PATH {
@@ -164,7 +164,7 @@ pub fn export(profile: &RuleProfile, path: &Path) -> Result<()> {
 pub fn export_replacing(profile: &RuleProfile, path: &Path) -> Result<()> {
     if path.extension().is_none_or(|e| e != EXTENSION) {
         return Err(Error::Invalid(
-            "use a .json filename for a rule profile".into(),
+            "use a .json filename for a fab profile".into(),
         ));
     }
     atomic_write(path, &encode(profile)?)
@@ -172,7 +172,7 @@ pub fn export_replacing(profile: &RuleProfile, path: &Path) -> Result<()> {
 
 fn not_found(id: &str) -> Error {
     Error::Document(pcbcraft_core::Error::NotFound(format!(
-        "no user rule profile {id}"
+        "no user fab profile {id}"
     )))
 }
 
@@ -181,7 +181,7 @@ impl ProfileLibrary {
         Self { dir }
     }
 
-    /// `rule-profiles/` in the user config directory.
+    /// `fab-profiles/` in the user config directory.
     pub fn from_dirs(dirs: &UserDirs) -> Self {
         Self::new(dirs.config.join(PROFILES_DIR))
     }
@@ -289,7 +289,7 @@ impl ProfileLibrary {
         let taken = |p: &RuleProfile| p.id != id && p.name.trim().eq_ignore_ascii_case(name.trim());
         if listing.profiles.iter().any(taken) {
             return Err(Error::Document(pcbcraft_core::Error::Conflict(format!(
-                "a rule profile named {} exists; choose another name",
+                "a fab profile named {} exists; choose another name",
                 name.trim()
             ))));
         }
@@ -311,7 +311,7 @@ impl ProfileLibrary {
         match atomic_create(&path, &encode(profile)?) {
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 Err(Error::Document(pcbcraft_core::Error::Conflict(format!(
-                    "a user rule profile {} exists",
+                    "a user fab profile {} exists",
                     profile.id
                 ))))
             }
@@ -418,7 +418,7 @@ impl ProfileLibrary {
 
 /// The profile a new board starts with: `choice` (a library id), else the
 /// user's default (`UserSettings::default_rule_profile`). With neither,
-/// `rules.no_profile` says how to choose one: a board is never created
+/// `rules.no_fab_profile` says how to choose one: a board is never created
 /// without rules.
 pub fn for_new_board(
     library: &ProfileLibrary,
@@ -428,8 +428,8 @@ pub fn for_new_board(
     match choice.or(default) {
         Some(id) => library.get(id),
         None => Err(Error::Invalid(
-            "rules.no_profile: a new board needs a rule profile: pass one from the profile \
-             library (rules-profile list), or set a default rule profile in Settings; import a \
+            "rules.no_fab_profile: a new board needs a fab profile: pass one from the profile \
+             library (fab-profile list), or set a default fab profile in Settings; import a \
              fabricator's profile file first (examples/profiles/ has sourced ones)"
                 .into(),
         )),
@@ -494,6 +494,30 @@ mod tests {
         Ok(())
     }
 
+    /// The JLCPCB examples check plated holes by JLCPCB's plated-hole rows
+    /// and via holes by its via rows (one hole rule held the via values for
+    /// both), and the PTH annular ring at the recommended value rather
+    /// than the absolute minimum (0.18 mm on 2 layers, 0.15 mm on 4).
+    #[test]
+    fn the_jlcpcb_examples_split_holes_and_take_the_recommended_ring() -> Result<()> {
+        use pcbcraft_core::rules::CopperObject::{PthHole, Track, ViaHole};
+        const FOUR: &str = include_str!("../../../examples/profiles/jlcpcb-4-layer-1oz.json");
+        // (file, PTH ring, PTH to track, via hole to track)
+        for (text, ring, pth, via) in [(JLCPCB, 0.25, 0.28, 0.2), (FOUR, 0.2, 0.3, 0.2)] {
+            let p = decode(text.as_bytes())?;
+            assert!(p.entries().all(|(_, e)| !e.source.is_empty()), "{}", p.id);
+            let r = p.rules();
+            let c = &r.copper.clearance;
+            assert_eq!(r.holes.pth_annular_ring_min, ring, "{}", p.id);
+            assert_eq!(c.get(PthHole, Track), pth, "{}", p.id);
+            assert_eq!(c.get(ViaHole, Track), via, "{}", p.id);
+            assert_eq!(c.get(ViaHole, ViaHole), 0.2, "{}", p.id);
+            assert_eq!(c.get(PthHole, PthHole), 0.45, "{}", p.id);
+            assert_eq!(c.get(ViaHole, PthHole), 0.45, "{}", p.id);
+        }
+        Ok(())
+    }
+
     #[test]
     fn save_list_rename_delete_round_trip() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -542,13 +566,13 @@ mod tests {
     #[test]
     fn a_profile_without_a_source_or_rule_is_refused() -> Result<()> {
         let mut value: serde_json::Value = serde_json::from_str(JLCPCB)?;
-        value["profile"]["source"]["date"] = "11.11.2026".into();
+        value["fab_profile"]["source"]["date"] = "11.11.2026".into();
         assert!(decode(&serde_json::to_vec(&value)?).is_err(), "date");
         let mut value: serde_json::Value = serde_json::from_str(JLCPCB)?;
-        value["profile"]["source"]["publisher"] = "".into();
+        value["fab_profile"]["source"]["publisher"] = "".into();
         assert!(decode(&serde_json::to_vec(&value)?).is_err(), "publisher");
         let mut value: serde_json::Value = serde_json::from_str(JLCPCB)?;
-        if let Some(rules) = value["profile"]["rules"].as_object_mut() {
+        if let Some(rules) = value["fab_profile"]["rules"].as_object_mut() {
             rules.remove("drill_min");
         }
         let missing = decode(&serde_json::to_vec(&value)?).map_err(|e| e.to_string());
@@ -630,7 +654,7 @@ mod tests {
         assert!(
             refused
                 .as_ref()
-                .is_err_and(|e| e.contains("rules.no_profile")),
+                .is_err_and(|e| e.contains("rules.no_fab_profile")),
             "{refused:?}"
         );
         assert!(for_new_board(&library, Some("no-such"), None).is_err());

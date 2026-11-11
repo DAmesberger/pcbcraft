@@ -1232,7 +1232,7 @@ fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {
     }
 }
 /// The project a launch without a file and File › New open: empty, with
-/// no parts, library or drafts, on the user's default rule profile
+/// no parts, library or drafts, on the user's default fab profile
 /// (Settings). Without one the board has no profile: the Design rules
 /// panel asks for one, and routing, fills and production files refuse
 /// until it is chosen.

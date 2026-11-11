@@ -254,6 +254,8 @@ impl App {
             #[cfg(target_os = "macos")]
             native_menu,
         } = parts;
+        let mut pcb = pcb_editor::PcbEditor::default();
+        *pcb.filter_mut() = sources.selection_filter();
         Self {
             scene: SceneController::new(ctx.clone(), viewport),
             fills: crate::fill_worker::FillWorker::start(ctx.clone()),
@@ -263,7 +265,7 @@ impl App {
             workspace: Workspace::Pcb,
             part: Default::default(),
             schematic: Default::default(),
-            pcb: Default::default(),
+            pcb,
             toasts: Toasts::default(),
             messages,
             messages_open: false,
@@ -347,6 +349,12 @@ impl App {
             Ok(outcome) => {
                 if let pcbcraft_core::Outcome::Pasted { report } = &outcome {
                     self.schematic.select_pasted(self.engine.project(), report);
+                }
+                if let pcbcraft_core::Outcome::PartsKept { parts } = &outcome {
+                    self.say(
+                        Level::Info,
+                        pcbcraft_core::layout::several::kept_line(parts),
+                    );
                 }
                 self.clear_error();
                 // Moved parts' dragged copper the engine re-routed, or
@@ -508,8 +516,8 @@ impl App {
     fn say_step(&mut self, done: &str, step: pcbcraft_core::Step) {
         let text = format!(
             "{done}: {} · {}",
-            step.title,
-            Workspace::from(step.area).label()
+            step.line(),
+            crate::shell::area_label(step.area)
         );
         self.messages.push(Level::Info, &text, self.now);
         let shown = refusal::clip(&text, refusal::MAX_SHOWN);

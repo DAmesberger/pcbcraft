@@ -344,11 +344,11 @@ A named layer of the stackup that carries copper: Top, Inner 1…n or Bottom. Tr
 A plated hole that joins its net's copper on every copper layer it spans, placed on the board (distinct from a pad via inside a footprint pad). It is tented (covered by mask) or open, and it is real copper in the native model. Only through vias exist yet.
 
 **Design rules**:
-The limits a board is checked and routed against: clearances between copper objects, board edges and holes, hole and via sizes, mask, silkscreen, paste, courtyard, fill and land-estimator values. A project's effective rules are its rule profile, then its rule overrides, then net classes and class-to-class clearances. Every finding names the rule, its value and where it came from.
+The limits a board is checked and routed against: clearances between copper objects, board edges and holes, hole and via sizes, mask, silkscreen, paste, courtyard, fill and land-estimator values. A project's effective rules are its fab profile, then its rule overrides, then net classes and class-to-class clearances. Every finding names the rule, its value and where it came from.
 
-**Rule profile**:
-A named, complete set of design rules with its provenance: built in (generic estimates), made by the user or imported. A project keeps a snapshot of its profile, so a changed library profile does not change the project until it is switched. A user profile holds fabricator numbers only when the user enters them.
-_Avoid_: Fab preset
+**Fab profile**:
+The file that holds a fabricator's design rules: a named, complete set of every rule, each citing its source (the fabricator's capability page and the date it was read). Pcbcraft ships none; one is imported or saved by the user. A project keeps a snapshot of its fab profile, so a changed library profile does not change the project until it is switched. The rules themselves stay "design rules".
+_Avoid_: Rule profile, fab preset
 
 **Rule override**:
 A project's own value for one rule, kept above its profile. A profile switch may keep or drop overrides; one that would break the new profile is refused.

@@ -75,6 +75,9 @@ pub fn need(rules: &ProjectRules, effective: &DesignRules, key: RuleKey) -> Need
     }
 }
 
+/// How many kinds of clearance object there are.
+const KINDS: usize = CopperObject::ALL.len();
+
 fn index(object: CopperObject) -> usize {
     CopperObject::ALL
         .iter()
@@ -87,7 +90,7 @@ pub struct BoardRules<'a> {
     project: &'a ProjectRules,
     effective: DesignRules,
     /// The object-pair matrix by [`CopperObject::ALL`] index.
-    pairs: [[f64; 6]; 6],
+    pairs: [[f64; KINDS]; KINDS],
     /// Each net's class; empty when the project has no classes.
     classes: BTreeMap<Id, NetClassId>,
     /// The two halves of each differential pair, `(low, high)`: between
@@ -104,7 +107,7 @@ impl<'a> BoardRules<'a> {
     pub fn of(project: &'a Project) -> Self {
         let rules = &project.rules;
         let effective = rules.effective();
-        let mut pairs = [[0.0; 6]; 6];
+        let mut pairs = [[0.0; KINDS]; KINDS];
         for (i, a) in CopperObject::ALL.iter().enumerate() {
             for (j, b) in CopperObject::ALL.iter().enumerate() {
                 pairs[i][j] = effective.copper.clearance.get(*a, *b);
@@ -201,7 +204,7 @@ impl<'a> BoardRules<'a> {
         if self.classes.is_empty() || self.paired(an, bn) {
             return base;
         }
-        let copper = |o: CopperObject| !matches!(o, CopperObject::BoardEdge | CopperObject::Hole);
+        let copper = CopperObject::is_copper;
         let (ca, cb) = (self.class_of(an), self.class_of(bn));
         let fill = a == CopperObject::Fill || b == CopperObject::Fill;
         let mut best = base;
@@ -298,7 +301,7 @@ mod tests {
         }
         project.rules.overrides.push(RuleOverride {
             key: RuleKey::Clearance {
-                a: CopperObject::Hole,
+                a: CopperObject::PthHole,
                 b: CopperObject::Pad,
             },
             value: RuleValue::Length(0.4),
@@ -354,10 +357,10 @@ mod tests {
             need.text(),
             "needs 0.5 mm (net classes Power / Signal: clearance)"
         );
-        let need = limits.clearance_need(CopperObject::Hole, None, CopperObject::Pad, Some(1));
+        let need = limits.clearance_need(CopperObject::PthHole, None, CopperObject::Pad, Some(1));
         assert_eq!(
             need.text(),
-            "needs 0.4 mm (project override: pad to hole clearance)"
+            "needs 0.4 mm (project override: pad to plated hole clearance)"
         );
         let need = limits.clearance_need(CopperObject::Track, Some(1), CopperObject::Pad, Some(3));
         assert_eq!(
