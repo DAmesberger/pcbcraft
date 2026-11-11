@@ -851,6 +851,19 @@ impl LibrarySources {
         }
     }
 
+    /// The board selection filter as last set.
+    pub fn selection_filter(&self) -> settings::SelectionFilter {
+        self.settings.selection_filter
+    }
+
+    /// Keep the board selection filter per user.
+    pub fn set_selection_filter(&mut self, filter: settings::SelectionFilter) {
+        if filter != self.settings.selection_filter {
+            self.settings.selection_filter = filter;
+            self.persist();
+        }
+    }
+
     /// Whether the app's waivers need a reason (Settings).
     pub fn require_waiver_reason(&self) -> bool {
         self.settings.require_waiver_reason

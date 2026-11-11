@@ -60,6 +60,15 @@ impl Ax {
     }
 
     pub(crate) fn with_engine(engine: Engine, workspace: Workspace) -> Fallible<Self> {
+        Self::with_sources(engine, workspace, LibrarySources::new(None))
+    }
+
+    /// [`Ax::with_engine`] with the user settings and sources `sources`.
+    pub(crate) fn with_sources(
+        engine: Engine,
+        workspace: Workspace,
+        sources: LibrarySources,
+    ) -> Fallible<Self> {
         let dir = tempfile::tempdir()?;
         let ctx = egui::Context::default();
         fonts::setup_bundled_fonts(&ctx);
@@ -76,7 +85,7 @@ impl Ax {
             Parts {
                 engine,
                 files,
-                sources: LibrarySources::new(None),
+                sources,
                 registry: Arc::new(Registry::standard()),
                 keymap_problems: Vec::new(),
                 messages: Messages::default(),

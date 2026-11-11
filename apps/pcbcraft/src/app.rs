@@ -254,6 +254,8 @@ impl App {
             #[cfg(target_os = "macos")]
             native_menu,
         } = parts;
+        let mut pcb = pcb_editor::PcbEditor::default();
+        *pcb.filter_mut() = sources.selection_filter();
         Self {
             scene: SceneController::new(ctx.clone(), viewport),
             fills: crate::fill_worker::FillWorker::start(ctx.clone()),
@@ -263,7 +265,7 @@ impl App {
             workspace: Workspace::Pcb,
             part: Default::default(),
             schematic: Default::default(),
-            pcb: Default::default(),
+            pcb,
             toasts: Toasts::default(),
             messages,
             messages_open: false,
