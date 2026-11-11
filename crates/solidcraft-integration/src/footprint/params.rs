@@ -56,6 +56,12 @@ pub(crate) fn check_name(name: &str) -> Outcome<()> {
 /// injected (each already named `pkg_<name>`).
 pub(crate) fn evaluate(params: &[FootprintParam], package: &[PackageValue]) -> Outcome<Values> {
     let defs = defs(params, package)?;
+    if let Some(p) = params
+        .iter()
+        .find(|p| expr::references(&p.expr.0).contains(&p.name.0))
+    {
+        return Err(problem(EXPR, format!("{} can't refer to itself", p.name.0)));
+    }
     let (values, errors) = expr::eval_params(&defs, 1.0);
     if let Some((name, error)) = errors.into_iter().next() {
         return Err(problem(EXPR, format!("`{name}`: {error}")));
