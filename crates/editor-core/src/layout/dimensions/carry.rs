@@ -31,14 +31,16 @@
 //!   new segment like it joins its old end to the carried one instead.
 //!
 //! Locked tracks and vias stay, and so does copper the operation itself
-//! changed. Nothing is deleted or refused here: copper that lands too
-//! close to another net, or a pad left detached, is reported by the board
-//! checks like any other finding.
+//! changed. The carried copper is then handed to the router
+//! (`router::reroute::dragged`): what now lands too close to other copper,
+//! or no longer reaches its pads, is re-routed with push-and-shove, and
+//! what cannot be is removed and left unrouted, in the same operation.
 use crate::diagnostics::Result;
 use crate::geometry::{Point, distance};
 use crate::ids::Id;
 use crate::layout::connectivity::{CopperGraph, Meets, TrackEnd, keeps_joint};
 use crate::layout::posture::MIN_SEGMENT_MM;
+use crate::layout::router::reroute::{self, Rerouted};
 use crate::model::{Placement, Project, Track};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -97,13 +99,14 @@ impl Motion {
 
 /// Carry the copper attached to `moved` (instances whose pose the parts
 /// solve set) from their poses in `before` to those in `project`. `graph`
-/// is the copper graph of `before`.
+/// is the copper graph of `before`. Returns what the router re-routed
+/// and what it left unrouted.
 pub fn carry(
     before: &Project,
     project: &mut Project,
     graph: &CopperGraph,
     moved: &[Id],
-) -> Result<()> {
+) -> Result<Rerouted> {
     let mut motions = BTreeMap::new();
     for &instance in moved {
         if let (Some(old), Some(new)) = (
@@ -116,7 +119,7 @@ pub fn carry(
         }
     }
     if motions.is_empty() {
-        return Ok(());
+        return Ok(Rerouted::default());
     }
     let pad_motion = |index: usize| {
         graph
@@ -177,8 +180,10 @@ pub fn carry(
             vias.insert(index, m.apply(old.position));
         }
     }
-    move_vias(before, project, &vias, &free_via);
-    move_tracks(before, project, &tracks, &edits, &free_track)
+    let dragged_vias = move_vias(before, project, &vias, &free_via);
+    let dragged = move_tracks(before, project, &tracks, &edits, &free_track)?;
+    let moved = motions.keys().copied().collect();
+    reroute::dragged(before, graph, project, &moved, &dragged, &dragged_vias)
 }
 
 /// One island's copper by index into the board's tracks and vias, and
@@ -632,20 +637,18 @@ fn move_vias(
     project: &mut Project,
     moves: &BTreeMap<usize, Point>,
     free: &dyn Fn(usize) -> bool,
-) {
+) -> BTreeSet<Id> {
     let moves: BTreeMap<Id, Point> = moves
         .iter()
         .filter(|(v, _)| free(**v))
         .filter_map(|(v, to)| before.vias.get(*v).map(|old| (old.id, *to)))
         .collect();
-    if moves.is_empty() {
-        return;
-    }
     for via in project.vias.iter_mut() {
         if let Some(to) = moves.get(&via.id) {
             via.position = *to;
         }
     }
+    moves.into_keys().collect()
 }
 
 fn move_tracks(
@@ -654,7 +657,7 @@ fn move_tracks(
     moved: &BTreeMap<usize, (Point, Point)>,
     edits: &[Edit],
     free: &dyn Fn(usize) -> bool,
-) -> Result<()> {
+) -> Result<BTreeSet<Id>> {
     // Locked tracks, and tracks the operation itself changed, stay.
     let id = |index: usize| before.tracks.get(index).filter(|_| free(index));
     let mut ends: BTreeMap<Id, (Point, Point)> = moved
@@ -688,10 +691,12 @@ fn move_tracks(
             }
         }
     }
+    let mut dragged: BTreeSet<Id> = ends.into_keys().collect();
     for mut track in joins {
         track.id = project.allocate()?;
         track.locked = false;
+        dragged.insert(track.id);
         project.tracks.push(track);
     }
-    Ok(())
+    Ok(dragged)
 }

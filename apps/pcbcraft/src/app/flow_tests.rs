@@ -467,3 +467,41 @@ fn a_refusal_toast_names_the_action_and_the_part() -> Fallible {
     );
     Ok(())
 }
+
+/// A board edit whose moved parts drag copper that the engine re-routes
+/// says so in one toast, with Undo: on the ESP32 board, 40 → 41 mm moves
+/// J1 and U3 and re-routes the USB pair as a pair.
+#[test]
+fn a_reroute_after_a_board_edit_is_one_toast() -> Fallible {
+    use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
+    use pcbcraft_core::library::footprint_source::{Expr, FootprintParam, ParamName, ParamUnit};
+    let mut h = Harness::new()?;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
+    h.app.engine = Engine::from_file(pcbcraft_io::read_project(&path)?)?;
+    let width = Operation::Board(BoardCommand::Edit {
+        edits: vec![BoardEdit::SetParameter {
+            param: FootprintParam {
+                name: ParamName("width".into()),
+                expr: Expr("41 mm".into()),
+                unit: ParamUnit::Mm,
+                comment: String::new(),
+            },
+        }],
+    });
+    h.app.apply(&h.ctx, Origin::Command, Some(width));
+    let shown: Vec<_> = h
+        .app
+        .toasts
+        .items()
+        .map(|t| (t.text.clone(), t.actions.clone()))
+        .collect();
+    assert_eq!(
+        shown,
+        [(
+            "Re-routed 2 connections".to_owned(),
+            vec![ToastAction::Undo]
+        )]
+    );
+    Ok(())
+}

@@ -28,6 +28,7 @@ mod clean;
 mod corner;
 pub mod drag;
 mod hull;
+pub mod reroute;
 mod shove;
 mod walk;
 mod world;
