@@ -348,3 +348,55 @@ fn pair_drag_preview_timings() -> Fallible {
     println!("pair drag plan per move: median {median:.2} ms, max {max:.2} ms");
     Ok(())
 }
+
+/// The USB pair's skew, uncoupled and gap findings, measured on the graph
+/// of the pair's own nets (what a drag checks per pointer move), are the
+/// whole board's: on the board as it is and after drags of both halves and
+/// of one half alone, some of which break the pair.
+#[test]
+fn the_usb_pair_measures_the_same_on_its_own_nets() -> Fallible {
+    use pcbcraft_core::diagnostics::ObjectRef;
+    use pcbcraft_core::layout::CopperGraph;
+    let engine = example()?;
+    let p = engine.project();
+    let (dn, _) = long_runs(&engine)?;
+    let pair = p
+        .rules
+        .pair_of(dn.net)
+        .cloned()
+        .ok_or("USB_DN is not a pair half")?;
+    let index = RouteIndex::of(p);
+    let codes = ["pair.skew", "pair.uncoupled", "pair.gap"];
+    let positive = ObjectRef::Net { id: pair.positive };
+    let mut found = 0;
+    for (offset, half) in [
+        (0.0, PairDrag::Together),
+        (0.3, PairDrag::Together),
+        (-0.4, PairDrag::Together),
+        (0.5, PairDrag::Alone),
+        (-1.0, PairDrag::Alone),
+    ] {
+        let mut next = p.clone();
+        if offset != 0.0 {
+            let mut request = drag(dn.id, offset);
+            request.pair = half;
+            let plan = drag_plan(p, &index, &request);
+            layout::apply(&mut next, LayoutCommand::ApplyRoute { edits: plan.edits })?;
+        }
+        let whole: Vec<String> = length::checks(&next, &CopperGraph::of(&next))
+            .into_iter()
+            .filter(|f| codes.contains(&f.code.as_str()) && f.objects.contains(&positive))
+            .map(|f| f.message)
+            .collect();
+        let own_graph = CopperGraph::of_nets(&next, &[pair.positive, pair.negative]);
+        let own: Vec<String> = length::pair_checks(&next, &own_graph, &pair)
+            .into_iter()
+            .filter(|f| codes.contains(&f.code.as_str()))
+            .map(|f| f.message)
+            .collect();
+        assert_eq!(own, whole, "{offset} mm, {half:?}");
+        found += whole.len();
+    }
+    assert!(found > 0, "some drag breaks the pair");
+    Ok(())
+}
