@@ -917,7 +917,7 @@ fn the_card_never_paints_over_itself_in_a_small_column() -> Fallible<()> {
     let mut surface = Surface::default();
     surface.open();
     surface.scope = Scope::Selection;
-    let mut h = Harness::new();
+    let h = Harness::new();
     for height in (60..=320).step_by(20) {
         let column = Rect::from_min_size(pos2(100.0, 40.0), vec2(220.0, height as f32));
         let mut shown = Vec::new();

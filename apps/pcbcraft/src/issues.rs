@@ -636,7 +636,7 @@ impl Surface {
         // list no room first; nothing is painted above the room it has.
         let full = ui.available_rect_before_wrap();
         let full = Rect::from_min_max(full.min, pos2(full.right(), full.bottom().max(full.top())));
-        let footer_id = ui.id().with("issues-footer-height");
+        let footer_id = ui.scope_id().with("issues-footer-height");
         let least = t.control_height + 2.0 * t.space_4;
         let footer_height = ui
             .data(|d| d.get_temp::<f32>(footer_id))
