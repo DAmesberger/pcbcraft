@@ -27,8 +27,7 @@ mod part;
 pub mod pins;
 pub mod text;
 pub use part::{
-    MAX_ASSIGN_INSTANCES, assign_part, binding_name, part_findings, republished_part,
-    requirements,
+    MAX_ASSIGN_INSTANCES, assign_part, binding_name, part_findings, republished_part, requirements,
 };
 
 pub const MAX_INSTANCES: usize = 4096;

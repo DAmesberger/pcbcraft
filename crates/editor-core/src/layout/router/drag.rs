@@ -578,7 +578,8 @@ pub fn drag_plan(project: &Project, index: &RouteIndex, request: &TrackDragReque
         }
     };
     let t = one.track;
-    let Some(pair) = project.rules
+    let Some(pair) = project
+        .rules
         .pair_of(t.net)
         .filter(|_| request.pair == PairDrag::Together)
     else {

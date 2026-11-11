@@ -366,6 +366,9 @@ fn the_selection_filter_persists_per_user() -> Fallible {
         LibrarySources::new(Some(dirs)),
     )?;
     let kept = again.app.pcb.filter();
-    assert!(!kept.tracks && kept.parts && kept.vias && kept.fills, "{kept:?}");
+    assert!(
+        !kept.tracks && kept.parts && kept.vias && kept.fills,
+        "{kept:?}"
+    );
     Ok(())
 }

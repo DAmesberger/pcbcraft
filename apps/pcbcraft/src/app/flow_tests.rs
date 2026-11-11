@@ -342,7 +342,11 @@ fn delete_on_a_mixed_selection_names_the_kept_parts() -> Fallible {
     use pcbcraft_core::layout::{LayoutCommand, RouteRequest};
     let mut h = Harness::new()?;
     let engine = &mut h.app.engine;
-    let r1 = engine.project().instance_by_designator("R1").ok_or("R1")?.id;
+    let r1 = engine
+        .project()
+        .instance_by_designator("R1")
+        .ok_or("R1")?
+        .id;
     engine.apply(
         engine.revision(),
         Operation::Layout(LayoutCommand::Move {
@@ -381,11 +385,17 @@ fn delete_on_a_mixed_selection_names_the_kept_parts() -> Fallible {
     h.frame(vec![press(egui::Key::Delete, egui::Modifiers::NONE)]);
     h.frame(vec![]);
     assert!(h.app.engine.project().tracks.is_empty(), "the copper went");
-    assert_eq!(h.app.engine.project().placements.len(), project.placements.len());
+    assert_eq!(
+        h.app.engine.project().placements.len(),
+        project.placements.len()
+    );
     let shown = toasts(&h.app);
     assert!(
-        shown.iter().any(|t| t.starts_with(&format!("Kept {parts} parts (")) && t.contains("R1")
-            && t.ends_with(": delete them in the schematic")),
+        shown
+            .iter()
+            .any(|t| t.starts_with(&format!("Kept {parts} parts ("))
+                && t.contains("R1")
+                && t.ends_with(": delete them in the schematic")),
         "{shown:?}"
     );
     Ok(())

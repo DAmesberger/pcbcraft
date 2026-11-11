@@ -434,14 +434,16 @@ impl PcbEditor {
             .collect();
         // The selected tracks and vias come along; the engine carries those
         // attached to a moved part with it and slides the rest.
-        let copper = (!self.group.tracks.is_empty() || !self.group.vias.is_empty()).then(|| {
-            CopperMove {
+        let copper =
+            (!self.group.tracks.is_empty() || !self.group.vias.is_empty()).then(|| CopperMove {
                 tracks: self.group.tracks.iter().copied().collect(),
                 vias: self.group.vias.iter().copied().collect(),
                 by: drag.by,
-            }
-        });
-        Some(Operation::Layout(LayoutCommand::MoveParts { moves, copper }))
+            });
+        Some(Operation::Layout(LayoutCommand::MoveParts {
+            moves,
+            copper,
+        }))
     }
 
     /// Flip every part of the group to the other side, in place: one
