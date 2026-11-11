@@ -738,29 +738,10 @@ fn hatched_fills_keep_a_border_and_grid() -> Fallible<()> {
     Ok(())
 }
 
-#[test]
-fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
+/// `p`'s board as a solved sketch of `solved`.
+fn with_solved_board(p: &mut Project, solved: crate::model::board::SolvedBoard) {
     use crate::library::footprint_source::{EvaluatorRef, SketchBlob, SolveSummary};
-    use crate::model::board::{
-        BoardFeatureId, BoardShape, BoardSketch, CutoutKind, SolvedBoard, SolvedCutout,
-        SolvedMountingHole,
-    };
-    let (engine, id, _) = showcase_with(CopperLayer::Bottom)?;
-    let mut p = engine.project().clone();
-    let mut solved = SolvedBoard::rectangle(p.board_size);
-    solved.cutouts.push(SolvedCutout {
-        id: Some(BoardFeatureId(1)),
-        kind: CutoutKind::Cutout,
-        outline: rect(39.0, 22.0, 42.0, 26.0),
-        curves: Vec::new(),
-    });
-    solved.holes.push(SolvedMountingHole {
-        id: BoardFeatureId(2),
-        at: [3.0, 25.0],
-        drill: 3.2,
-        plated: false,
-        pad_diameter: None,
-    });
+    use crate::model::board::{BoardShape, BoardSketch};
     let evaluator = EvaluatorRef {
         engine: "test".into(),
         rev: "0".into(),
@@ -784,6 +765,30 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
         fault: None,
         idle: Vec::new(),
     }));
+}
+
+#[test]
+fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
+    use crate::model::board::{
+        BoardFeatureId, CutoutKind, SolvedBoard, SolvedCutout, SolvedMountingHole,
+    };
+    let (engine, id, _) = showcase_with(CopperLayer::Bottom)?;
+    let mut p = engine.project().clone();
+    let mut solved = SolvedBoard::rectangle(p.board_size);
+    solved.cutouts.push(SolvedCutout {
+        id: Some(BoardFeatureId(1)),
+        kind: CutoutKind::Cutout,
+        outline: rect(39.0, 22.0, 42.0, 26.0),
+        curves: Vec::new(),
+    });
+    solved.holes.push(SolvedMountingHole {
+        id: BoardFeatureId(2),
+        at: [3.0, 25.0],
+        drill: 3.2,
+        plated: false,
+        pad_diameter: None,
+    });
+    with_solved_board(&mut p, solved);
     p.rules.overrides.push(crate::rules::RuleOverride {
         key: RuleKey::Clearance {
             a: CopperObject::Fill,
@@ -807,6 +812,49 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
     // The mounting hole keeps the hole clearance (0.25 mm by default).
     let gap = gap_to_segment(&f, [3.0, 25.0], [3.0, 25.0]) - 1.6;
     assert!(gap >= 0.25 - 1e-6, "{gap}");
+    Ok(())
+}
+
+/// A plated hole keeps the plated-hole clearance, an unplated one the via
+/// hole clearance. Under the shipped JLCPCB example a fill clears an
+/// unplated mounting hole by 0.2 mm ("NPTH to Track") and the same hole
+/// plated by 0.28 mm ("PTH to Track"); one hole rule cleared both by 0.2.
+#[test]
+fn a_fill_keeps_the_plated_hole_clearance_from_a_plated_hole() -> Fallible<()> {
+    use crate::model::board::{BoardFeatureId, SolvedBoard, SolvedMountingHole};
+    let (engine, id, _) = showcase_with(CopperLayer::Bottom)?;
+    let mut gaps = Vec::new();
+    for plated in [false, true] {
+        let mut p = engine.project().clone();
+        crate::rules::apply(
+            &mut p.rules,
+            RulesCommand::SetProfile {
+                profile: Box::new(crate::rules::fixtures::jlcpcb_example()?),
+                keep_overrides: false,
+            },
+        )?;
+        let mut solved = SolvedBoard::rectangle(p.board_size);
+        solved.holes.push(SolvedMountingHole {
+            id: BoardFeatureId(2),
+            at: [3.0, 25.0],
+            drill: 3.2,
+            plated,
+            pad_diameter: None,
+        });
+        with_solved_board(&mut p, solved);
+        let mut f = fill(&p, id)?.clone();
+        f.computed = Some(super::compute(&p, id)?);
+        gaps.push(gap_to_segment(&f, [3.0, 25.0], [3.0, 25.0]) - 1.6);
+    }
+    let tolerance = FILL_CHORD_MM + 1e-6;
+    let [unplated, plated] = gaps[..] else {
+        return Err("two fills".into());
+    };
+    assert!(
+        unplated >= 0.2 - 1e-6 && unplated < 0.28 - tolerance,
+        "{unplated}"
+    );
+    assert!(plated >= 0.28 - 1e-6, "{plated}");
     Ok(())
 }
 

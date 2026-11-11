@@ -147,7 +147,7 @@ fn commits_set_clear_or_skip_an_override() -> TestResult {
     ));
     assert!(commit_for(&rules, key, RuleValue::Length(0.15)).is_none());
     assert_eq!(rules_summary(&rules), "Test prototype · 1 override");
-    assert_eq!(rules_summary(&ProjectRules::default()), "No rule profile");
+    assert_eq!(rules_summary(&ProjectRules::default()), "No fab profile");
     assert!(
         commit_for(&ProjectRules::default(), key, RuleValue::Length(0.15)).is_none(),
         "no override without a profile"
@@ -213,7 +213,7 @@ fn a_board_without_a_profile_asks_for_one() -> TestResult {
     assert!(
         shown
             .iter()
-            .any(|t| t == "This board has no rule profile, so nothing is checked"),
+            .any(|t| t == "This board has no fab profile, so nothing is checked"),
         "{shown:?}"
     );
     assert!(click(&mut editor, &engine, &ctx, "Choose a profile…")?.is_none());
@@ -321,7 +321,7 @@ fn a_field_commits_one_override_and_reset_clears_it() -> TestResult {
 }
 
 /// Choosing another profile shows its impact first; Switch commits
-/// `rules.set_profile` as one undo step and the panel returns to the
+/// `rules.set_fab_profile` as one undo step and the panel returns to the
 /// table, which now shows the new profile.
 #[test]
 fn a_profile_switch_is_previewed_then_one_undo_step() -> TestResult {
@@ -417,7 +417,7 @@ fn save_as_profile_writes_the_library_and_switches_the_board() -> TestResult {
     let mut editor = PcbEditor::default();
     let (_dir, library) = library()?;
     editor.open_rules_in(Some(library.clone()), None);
-    assert!(click(&mut editor, &engine, &ctx, "Save as profile…")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "Save as fab profile…")?.is_none());
     if let Some(RulesPanel {
         mode: Mode::Save(form),
         ..
@@ -456,7 +456,7 @@ fn save_as_profile_writes_the_library_and_switches_the_board() -> TestResult {
     );
     assert!(shown.iter().any(|t| t == "Test prototype copy"));
     // A second save under the same name is refused on the dialog.
-    assert!(click(&mut editor, &engine, &ctx, "Save as profile…")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "Save as fab profile…")?.is_none());
     if let Some(RulesPanel {
         mode: Mode::Save(form),
         ..

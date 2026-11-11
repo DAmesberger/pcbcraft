@@ -329,7 +329,21 @@ pub fn table(
     cell: impl FnMut(&mut Ui, usize, usize),
     add_row: Option<&str>,
 ) -> TableResponse {
-    table_with(ui, columns, rows, None, cell, add_row)
+    table_with(ui, columns, rows, None, None, cell, add_row)
+}
+
+/// A [`table`] whose scroll frame (more than [`LIST_MAX_ROWS`] rows) is
+/// scrolled this frame to show row `reveal`, so a cell drawn only when
+/// visible can be revealed ("Show rule").
+pub fn table_revealing(
+    ui: &mut Ui,
+    columns: &[TableColumn<'_>],
+    rows: usize,
+    reveal: Option<usize>,
+    cell: impl FnMut(&mut Ui, usize, usize),
+    add_row: Option<&str>,
+) -> TableResponse {
+    table_with(ui, columns, rows, None, reveal, cell, add_row)
 }
 
 /// A [`table`] in a card that shows at most `max_rows` rows, then "n of
@@ -343,7 +357,7 @@ pub fn table_bounded(
     cell: impl FnMut(&mut Ui, usize, usize),
     add_row: Option<&str>,
 ) -> TableResponse {
-    table_with(ui, columns, rows, Some(max_rows), cell, add_row)
+    table_with(ui, columns, rows, Some(max_rows), None, cell, add_row)
 }
 
 fn table_with(
@@ -351,6 +365,7 @@ fn table_with(
     columns: &[TableColumn<'_>],
     rows: usize,
     bound: Option<usize>,
+    reveal: Option<usize>,
     mut cell: impl FnMut(&mut Ui, usize, usize),
     add_row: Option<&str>,
 ) -> TableResponse {
@@ -420,11 +435,17 @@ fn table_with(
                 );
             }
         } else if rows > LIST_MAX_ROWS {
-            egui::ScrollArea::vertical()
+            let mut area = egui::ScrollArea::vertical()
                 .id_salt(id)
                 .max_height(row_height * LIST_MAX_ROWS as f32)
-                .auto_shrink([false, true])
-                .show_rows(ui, row_height, rows, |ui, range| body(ui, range));
+                .auto_shrink([false, true]);
+            if let Some(row) = reveal.filter(|r| *r < rows) {
+                // The row near the frame's middle.
+                let pitch = row_height + ui.spacing().item_spacing.y;
+                let above = row.saturating_sub(LIST_MAX_ROWS / 2);
+                area = area.vertical_scroll_offset(above as f32 * pitch);
+            }
+            area.show_rows(ui, row_height, rows, |ui, range| body(ui, range));
         } else {
             body(ui, 0..rows);
         }

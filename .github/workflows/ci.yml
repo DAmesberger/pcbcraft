@@ -7,7 +7,9 @@ jobs:
       # Each OS reports on its own: a failure on one does not cancel the other.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # Windows runs only on pushes to main and manual runs; Ubuntu on
+        # every push, pull request and manual run.
+        os: ${{ fromJSON((github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

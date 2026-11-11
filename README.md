@@ -42,7 +42,7 @@ Parts, schematic, board layout and 3D in one app, on [Solidcraft](https://github
 
 - **Components.** Symbol, footprint, pin functions, mapping and 3D in one workspace. Publishing creates immutable revisions. A project keeps an exact snapshot of its library, so it reopens offline, and a library change reaches a board only through a reviewed update.
 - **Schematic.** Several sheets with a hierarchy, net labels, power ports, title blocks, annotation, ERC and vector PDF output. The Place palette searches with units: `res>=10k 0603`.
-- **PCB.** 2 to 64 copper layers with a typed stackup. Interactive routing that shoves or walks round other nets. Differential pairs at a gap derived from the stackup's impedance, and length meanders. Design-rule profiles, net classes, copper fills with thermals, and parametric board outlines.
+- **PCB.** 2 to 64 copper layers with a typed stackup. Interactive routing that shoves or walks round other nets. Differential pairs at a gap derived from the stackup's impedance, and length meanders. Fab profiles, net classes, copper fills with thermals, and parametric board outlines.
 - **3D.** One key from the layout. Peel the stackup layer by layer. Generated part models with markings, and imported STEP, GLB and `.solidcraft` models.
 - **Production.** Gerber X2, Excellon, a job file, pick-and-place, BOMs, and fabrication and assembly drawings. Tests read every Gerber layer back and compare it with the design.
 - **Automation.** MCP and JSON lines over the same commands as the UI, including live MCP into the open window.
@@ -62,7 +62,7 @@ Nearer steps, also planned: build and test the ESP32-S31 reference board; buses 
 
 ## Status
 
-Early. It is a working editor, not yet a manufacturing-ready release: no board has been built from its output yet, and the built-in design-rule profiles are estimates. It is developed and tested on macOS (Apple silicon); Linux and Windows have not been checked yet. [Editor evidence](docs/editor-evidence.md) records what was verified and how.
+Early. It is a working editor, not yet a manufacturing-ready release: no board has been built from its output yet, and the built-in fab profiles are estimates. It is developed and tested on macOS (Apple silicon); Linux and Windows have not been checked yet. [Editor evidence](docs/editor-evidence.md) records what was verified and how.
 
 Open source under MIT OR Apache-2.0. The 3D engine, renderer and UI kit come from [Solidcraft](https://github.com/tangency-labs/solidcraft), a parametric CAD application in Rust under the same licences. Its engine builds every solid you see, its native file format holds the 3D model, and its interface conventions shape this one. We are grateful to its authors.
 

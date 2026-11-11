@@ -1,7 +1,7 @@
-//! `rules-profile list|import|export`: the user's design-rule profile
+//! `fab-profile list|import|export`: the user's fab profile
 //! library (`pcbcraft_io::rule_profiles`, JSON files in
-//! `PCBCRAFT_CONFIG_DIR/rule-profiles/` or the platform config folder).
-//! Switching a project's profile is the typed `rules.set_profile` request
+//! `PCBCRAFT_CONFIG_DIR/fab-profiles/` or the platform config folder).
+//! Switching a project's profile is the typed `rules.set_fab_profile` request
 //! (`stdio`/`mcp`); this subcommand only moves profile files.
 use super::{Result, open, print};
 use pcbcraft_core::rules::{RuleEntry, RuleProfile};
@@ -11,12 +11,11 @@ use serde_json::json;
 use std::path::Path;
 
 /// The usage line(s).
-pub const USAGE: &str =
-    "rules-profile list      list the user's rule profiles (Pcbcraft ships none)
-  rules-profile import FILE.json
-                                   add a profile file to the user profile library
-  rules-profile export ID|FILE.pcbcraft NEW_FILE.json
-                                   write a profile (or a project's effective rules)";
+pub const USAGE: &str = "fab-profile list        list the user's fab profiles (Pcbcraft ships none)
+  fab-profile import FILE.json
+                                   add a fab profile file to the user's library
+  fab-profile export ID|FILE.pcbcraft NEW_FILE.json
+                                   write a fab profile (or a project's effective rules)";
 
 fn library() -> Result<ProfileLibrary> {
     Ok(ProfileLibrary::from_dirs(&UserDirs::from_env()?))
@@ -113,7 +112,7 @@ mod tests {
     #[test]
     fn list_import_export_through_the_subcommand() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let library = ProfileLibrary::new(dir.path().join("rule-profiles"));
+        let library = ProfileLibrary::new(dir.path().join("fab-profiles"));
         let listed = reply(&library, &args(&["list"]))?;
         assert_eq!(
             listed["profiles"].as_array().map(Vec::len),

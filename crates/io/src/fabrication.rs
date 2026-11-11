@@ -21,7 +21,7 @@ pub struct ExportRequest {
     /// A new or empty folder, or with `zip` the `.zip` file to create.
     pub output: PathBuf,
     pub zip: bool,
-    /// The fabrication rule profile to check against (the project's own
+    /// The fabrication fab profile to check against (the project's own
     /// rules when `None`).
     pub profile: Option<RuleProfile>,
     pub options: FabricationOptions,
@@ -257,7 +257,7 @@ fn write_zip(output: &Path, files: &[FabFile]) -> Result<()> {
 }
 
 /// A fabrication profile by id from the user's library
-/// (`UserDirs::config/rule-profiles/`); Pcbcraft ships none.
+/// (`UserDirs::config/fab-profiles/`); Pcbcraft ships none.
 pub fn resolve_profile(id: &str) -> Result<RuleProfile> {
     let dirs = crate::settings::UserDirs::from_env()?;
     crate::rule_profiles::ProfileLibrary::from_dirs(&dirs).get(id)

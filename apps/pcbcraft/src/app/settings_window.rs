@@ -5,7 +5,7 @@
 //! once and are kept per user (`pcbcraft_io::settings::KeyboardSettings`).
 //! The Production section's "Require a reason to waive errors" sets the
 //! engine's `require_waiver_reason` (kept in `UserSettings`). The Rules
-//! section's "Default rule profile" is the profile library entry a new
+//! section's "Default fab profile" is the profile library entry a new
 //! board starts with (`UserSettings::default_rule_profile`); with none, a
 //! new board has no profile until one is chosen.
 //!
@@ -52,7 +52,7 @@ pub(crate) struct SettingsWindow {
     show_all: std::collections::BTreeSet<Context>,
     /// The last refusal, shown once at the top.
     refusal: Option<String>,
-    /// The Default rule profile choices, read from the profile library
+    /// The Default fab profile choices, read from the profile library
     /// when the window opens.
     profiles: Option<Vec<(Option<String>, String)>>,
 }
@@ -188,7 +188,7 @@ impl SettingsWindow {
 
     /// Draw the window while open. Returns what to do with the keymap,
     /// whether the reveal settings changed, whether the waiver-reason
-    /// setting changed and whether the default rule profile changed.
+    /// setting changed and whether the default fab profile changed.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
@@ -210,7 +210,7 @@ impl SettingsWindow {
             .show_body(ctx, |ui| {
                 kit::section(ui, "settings-rules", "Rules", true, None, |ui| {
                     profile_changed =
-                        kit::choice_row(ui, "Default rule profile", default_profile, &profiles);
+                        kit::choice_row(ui, "Default fab profile", default_profile, &profiles);
                     kit::hint(
                         ui,
                         "A new board starts with this profile",
@@ -550,7 +550,7 @@ impl super::App {
     }
 }
 
-/// The Default rule profile choices: none, then every readable profile of
+/// The Default fab profile choices: none, then every readable profile of
 /// the user's library by name.
 fn profile_choices() -> Vec<(Option<String>, String)> {
     let mut out = vec![(None, "None: choose for each board".to_owned())];

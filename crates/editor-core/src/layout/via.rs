@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 /// Most vias on one board.
 pub const MAX_VIAS: usize = 16_384;
 /// Largest via pad, mm: an input bound on the document, not a rule (the
-/// rule profile's `min drill` and `min via annular ring` are the limits
+/// fab profile's `min drill` and `min via annular ring` are the limits
 /// vias are placed and checked against).
 pub const MAX_DIAMETER_MM: f64 = 6.0;
 
@@ -335,7 +335,9 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
     let shapes = BoundsGrid::new(copper_shapes.iter().map(|s| s.0.bounds), reach);
     let holes = BoundsGrid::new(drills.iter().map(|d| d.bounds), reach);
     let mut near = Vec::new();
-    let hole = CopperObject::Hole;
+    // Via drills keep the via hole rules; a mounting hole its own kind's
+    // (plated or not, `CopperObject::hole`).
+    let hole = CopperObject::ViaHole;
     let edge = limits.clearance(hole, None, CopperObject::BoardEdge, None);
     let spacing = limits.clearance(hole, None, hole, None);
     for (i, (via, drill)) in vias.iter().zip(&drills).enumerate() {
@@ -449,9 +451,11 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
     // measured against them.
     let board = project.board();
     for mount in &board.holes {
+        let kind = CopperObject::hole(mount.plated);
         let ring = CopperRing::of_circle(mount.at, mount.drill);
+        let edge = limits.clearance(kind, None, CopperObject::BoardEdge, None);
         if let EdgeVerdict::TooClose { gap, near } = edges.verdict(&ring, edge) {
-            let need = limits.clearance_need(hole, None, CopperObject::BoardEdge, None);
+            let need = limits.clearance_need(kind, None, CopperObject::BoardEdge, None);
             issues.push(Finding::new(
                 "board.edge_clearance",
                 format!(
@@ -468,14 +472,14 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
         };
         // Its own plated ring (if any) is not board copper here.
         shapes.near(&bounds, reach, &mut near);
-        for (other, object, kind, net) in near.iter().filter_map(|k| copper_shapes.get(*k)) {
+        for (other, object, other_kind, net) in near.iter().filter_map(|k| copper_shapes.get(*k)) {
             if over(&mut pairs, &mut issues) {
                 return issues;
             }
-            let need = limits.clearance(hole, None, *kind, Some(*net));
+            let need = limits.clearance(kind, None, *other_kind, Some(*net));
             if ring.closer_than(other, need) {
-                let need = limits.clearance_need(hole, None, *kind, Some(*net));
-                let what = copper_words(project, object, *kind, *net);
+                let need = limits.clearance_need(kind, None, *other_kind, Some(*net));
+                let what = copper_words(project, object, *other_kind, *net);
                 let gap = ring.gap(other, need.mm + 1.0);
                 // Touching or overlapping copper is said so, not "0 mm".
                 let how = if gap <= EPS {
@@ -498,8 +502,9 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
             if over(&mut pairs, &mut issues) {
                 return issues;
             }
+            let spacing = limits.clearance(kind, None, hole, None);
             if ring.closer_than(drill, spacing) {
-                let need = limits.clearance_need(hole, None, hole, None);
+                let need = limits.clearance_need(kind, None, hole, None);
                 issues.push(Finding::new(
                     "board.hole_clearance",
                     format!(
