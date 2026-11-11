@@ -862,7 +862,7 @@ mod tests {
             name: None,
         };
         let mut settings = UserSettings {
-            sources: vec![source("/libs/a"), source("/libs/a")],
+            sources: vec![source(&abs("/libs/a")), source(&abs("/libs/a"))],
             ..UserSettings::default()
         };
         assert!(
@@ -871,7 +871,7 @@ mod tests {
         );
         settings.sources = vec![source("libs/relative")];
         assert!(write_settings(&path, &settings).is_err(), "relative source");
-        settings.sources = vec![source("/libs/a")];
+        settings.sources = vec![source(&abs("/libs/a"))];
         settings.recent = vec![
             EntryKey::Library {
                 library: LibraryId(1),
