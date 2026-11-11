@@ -48,6 +48,7 @@ mod placed;
 pub mod posture;
 pub mod restack;
 pub mod router;
+pub mod several;
 pub mod showcase;
 pub mod staging;
 pub mod via;
@@ -256,6 +257,19 @@ pub enum LayoutCommand {
         instances: Vec<Id>,
         axis: arrange::Axis,
     },
+    /// Delete several tracks, vias and fills as one undo step (a
+    /// multi-selection's Delete, or a dangling stub's tracks). A locked
+    /// track or via refuses the whole command. Parts are refused: they
+    /// come from the schematic.
+    #[serde(rename = "layout.delete_objects")]
+    DeleteObjects { objects: several::Objects },
+    /// Lock or unlock several parts, tracks, vias and fills as one undo
+    /// step.
+    #[serde(rename = "layout.lock_objects")]
+    LockObjects {
+        objects: several::Objects,
+        locked: bool,
+    },
 }
 
 // A new command chooses its permission class here.
@@ -289,6 +303,8 @@ declare_classes!(LayoutCommand {
     MoveParts "layout.move_parts" Edit "Move several parts together",
     Align "layout.align" Edit "Align parts",
     Distribute "layout.distribute" Edit "Distribute parts evenly",
+    DeleteObjects "layout.delete_objects" Edit "Delete several board objects",
+    LockObjects "layout.lock_objects" Edit "Lock or unlock several board objects",
 });
 
 impl LayoutCommand {
@@ -822,6 +838,10 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
         LayoutCommand::Align { instances, to } => arrange::align(project, &instances, to, None)?,
         LayoutCommand::Distribute { instances, axis } => {
             arrange::distribute(project, &instances, axis, None)?;
+        }
+        LayoutCommand::DeleteObjects { objects } => several::delete(project, &objects)?,
+        LayoutCommand::LockObjects { objects, locked } => {
+            several::lock(project, &objects, locked)?;
         }
     }
     Ok(None)
