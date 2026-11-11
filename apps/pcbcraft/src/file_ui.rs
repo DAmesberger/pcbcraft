@@ -382,6 +382,9 @@ pub struct FileUi {
     now: f64,
     /// Quitting was asked for while a file operation ran: ask once it ends.
     close_pending: bool,
+    /// The save request whose file is being written (not while its save
+    /// panel is open), for [`FileUi::saving`].
+    writing: Option<u64>,
     /// The window is closing with the user's answer (or nothing unsaved):
     /// the exit keeps no recovery copy.
     closed: bool,
@@ -435,6 +438,7 @@ impl FileUi {
             recovery_retry_at: 0.0,
             now: 0.0,
             close_pending: false,
+            writing: None,
             closed: false,
         }
     }
@@ -461,6 +465,14 @@ impl FileUi {
     }
     pub fn busy(&self) -> bool {
         self.controller.flight.is_some() || self.recovery_choice_pending
+    }
+    /// A save is writing its file: from the request (or the save panel's
+    /// answer) until the write ends, however long the system holds it.
+    pub fn saving(&self) -> bool {
+        self.controller
+            .flight
+            .as_ref()
+            .is_some_and(|f| f.kind == Kind::Save && Some(f.ticket.id) == self.writing)
     }
     pub fn prompting(&self) -> bool {
         self.controller.prompt.is_some() || !self.recoveries.is_empty()
@@ -519,6 +531,9 @@ impl FileUi {
         self.controller.recovered.as_ref() == Some(&self.controller.current)
     }
     fn send(&mut self, job: Job) {
+        if let Job::Write(ticket, ..) = &job {
+            self.writing = Some(ticket.id);
+        }
         if let Err(error) = self.sender.send(job) {
             self.controller.flight = None;
             self.controller.recovery_flight = None;

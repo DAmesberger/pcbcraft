@@ -323,6 +323,23 @@ fn quitting_during_a_save_quits_once_it_is_written() -> Fallible {
     Ok(())
 }
 
+/// R7-4: a save says it runs from the request until its file is written,
+/// so one the system holds (a permission prompt) is not silent.
+#[test]
+fn a_save_says_it_runs_until_it_is_written() -> Fallible {
+    let mut h = Harness::new()?;
+    let path = h.dir.path().join("board.pcbcraft");
+    h.files.adopt(&h.engine, Some(path.clone()), false)?;
+    assert!(!h.files.saving());
+    h.edit("Saving")?;
+    h.files.request(Action::Save);
+    assert!(h.files.saving());
+    h.until("the write", |h| !h.files.saving())?;
+    assert!(!h.files.dirty());
+    assert_eq!(pcbcraft_io::read_project(&path)?.project.name, "Saving");
+    Ok(())
+}
+
 /// The system ending the app without asking (Dock › Quit on macOS, a
 /// logout) keeps the latest edit for recovery, even one made less than
 /// the snapshot delay before.

@@ -179,6 +179,11 @@ impl App {
                     }
                     ui.add_space(t.space_8);
                     self.document_tab(ui);
+                    // A save the system holds (a permission prompt, a slow
+                    // disk) shows that it runs, as the 3D view's update does.
+                    if self.files.saving() {
+                        kit::status_chip(ui, None, "Saving\u{2026}");
+                    }
                     self.live_indicator(ui);
                     let (_, drag) = ui.allocate_exact_size(
                         vec2(ui.available_width().max(0.0), APP_BAR_HEIGHT - t.space_8),
