@@ -24,11 +24,3 @@ jobs:
           cache-on-failure: true
       - name: Verify native code and wasm library
         run: cargo xtask ci
-      # TEMPORARY diagnosis: name the test that crashes the app's test binary.
-      - name: Diagnose the app test crash one test at a time
-        if: always() && runner.os == 'Windows'
-        env:
-          RUST_BACKTRACE: "1"
-        run: >-
-          cargo test --locked --profile ci -p pcbcraft --bin pcbcraft --
-          viewport j1s_dimensions --test-threads=1 --nocapture
