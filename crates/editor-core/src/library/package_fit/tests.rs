@@ -100,18 +100,16 @@ fn lead_points_count_counter_clockwise_from_pin_one() {
 #[test]
 fn a_soic_fits_its_pads_with_an_exact_quarter_turn_and_is_seated() -> Result<()> {
     let fp = soic_footprint(false);
-    let start = ModelPlacement {
-        translation: [0.4, -0.3, 0.7],
-        rotation_deg: [0.0, 0.0, 12.0],
-    };
+    let start = ModelPlacement::from_mm([0.4, -0.3, 0.7], [0.0, 0.0, 12.0])?;
     for rotation in [FitRotation::Free, FitRotation::Quarter] {
         let fit = fit_leads(&start, &soic_pairs(&fp)?, rotation)?;
+        // −90°, stored reduced to one turn.
         assert_eq!(
-            fit.placement.rotation_deg,
-            [0.0, 0.0, -90.0],
+            fit.placement.rotation_deg(),
+            [0.0, 0.0, 270.0],
             "{rotation:?}"
         );
-        assert!(fit.placement.translation.iter().all(|v| v.abs() < 1e-9));
+        assert!(fit.placement.translation().iter().all(|v| v.abs() < 1e-9));
         assert!(fit.rms_mm < 1e-9, "rms {}", fit.rms_mm);
         assert_eq!(fit.residuals.len(), 8);
         assert!(!fit.mirrored_better);
@@ -128,8 +126,11 @@ fn a_turned_land_pattern_fits_freely_but_not_by_quarter_turns() -> Result<()> {
     }
     let pairs = soic_pairs(&fp)?;
     let free = fit_leads(&ModelPlacement::default(), &pairs, FitRotation::Free)?;
-    assert!(close(free.placement.rotation_deg[2], -60.0));
-    assert!(free.rms_mm < 1e-9);
+    // −60°, stored reduced to one turn.
+    assert!(close(free.placement.rotation_deg()[2], 300.0));
+    // Exact but for the nanometre rounding of the turned pads' centres and
+    // of the stored placement (each at most √2/2 nm).
+    assert!(free.rms_mm < 2e-6, "rms {}", free.rms_mm);
     let quarter = fit_leads(&ModelPlacement::default(), &pairs, FitRotation::Quarter)?;
     assert!(quarter.placement.quarter_turns());
     assert!(quarter.rms_mm > 0.5, "rms {}", quarter.rms_mm);
@@ -151,10 +152,7 @@ fn a_clockwise_numbered_land_pattern_reports_a_better_mirrored_fit() -> Result<(
 #[test]
 fn a_flipped_model_keeps_its_tilt_and_is_lifted_onto_the_plane() -> Result<()> {
     let fp = soic_footprint(false);
-    let flipped = ModelPlacement {
-        translation: [0.0, 0.0, -3.0],
-        rotation_deg: [180.0, 0.0, 0.0],
-    };
+    let flipped = ModelPlacement::from_mm([0.0, 0.0, -3.0], [180.0, 0.0, 0.0])?;
     let fit = fit_leads(&flipped, &soic_pairs(&fp)?, FitRotation::Free)?;
     // Upside down the model is mirrored, so it cannot fit exactly, but its
     // tilt is kept and the leads sit on the seating plane.
@@ -170,33 +168,39 @@ fn a_flipped_model_keeps_its_tilt_and_is_lifted_onto_the_plane() -> Result<()> {
 }
 
 #[test]
-fn malformed_pairs_are_refused() {
-    let pair = LeadPair {
-        terminal: PackageTerminalId(1),
-        pad: PadId(1),
-        lead: [0.0; 3],
-        pad_centre: [0.0; 2],
-    };
+fn malformed_pairs_are_refused() -> Result<()> {
+    let pair = LeadPair::from_mm(PackageTerminalId(1), PadId(1), [0.0; 3], [0.0; 2])?;
     let none = ModelPlacement::default();
     assert!(fit_leads(&none, &[], FitRotation::Free).is_err());
     assert!(fit_leads(&none, &[pair, pair], FitRotation::Free).is_err());
-    let bad = LeadPair {
-        lead: [f64::NAN, 0.0, 0.0],
-        ..pair
-    };
-    assert!(fit_leads(&none, &[bad], FitRotation::Free).is_err());
+    // A non-finite point never becomes a pair: the crossing and the wire
+    // refuse it.
+    assert!(
+        LeadPair::from_mm(
+            PackageTerminalId(1),
+            PadId(1),
+            [f64::NAN, 0.0, 0.0],
+            [0.0; 2]
+        )
+        .is_err()
+    );
+    let bad = serde_json::json!({"terminal": 1, "pad": 1, "lead": [1.0e9, 0.0, 0.0], "pad_centre": [0.0, 0.0]});
+    assert!(serde_json::from_value::<LeadPair>(bad).is_err());
     let single = fit_leads(
         &none,
-        &[LeadPair {
-            pad_centre: [1.0, 2.0],
-            ..pair
-        }],
+        &[LeadPair::from_mm(
+            PackageTerminalId(1),
+            PadId(1),
+            [0.0; 3],
+            [1.0, 2.0],
+        )?],
         FitRotation::Free,
     );
     assert_eq!(
-        single.map(|f| f.placement.translation).ok(),
+        single.map(|f| f.placement.translation()).ok(),
         Some([1.0, 2.0, 0.0])
     );
+    Ok(())
 }
 
 #[test]
@@ -221,7 +225,7 @@ fn intrinsic_angles_round_trip_and_quarter_turns_stay_exact() {
 #[test]
 fn quick_turns_keep_the_body_centre_and_undo_each_other() -> Result<()> {
     let mut p = package(soic_form(), 8);
-    p.placement.translation = [1.0, 2.0, 0.0];
+    p.placement.translation_nm = crate::tests::support::nm3([1.0, 2.0, 0.0]);
     let centre = body_centre(&p, &p.placement);
     for axis in [Axis::X, Axis::Y, Axis::Z] {
         let turned = apply_quick(
@@ -245,16 +249,16 @@ fn quick_turns_keep_the_body_centre_and_undo_each_other() -> Result<()> {
                 quarter_turns: -1,
             },
         )?;
-        assert_eq!(back.rotation_deg, [0.0; 3]);
+        assert_eq!(back.rotation_deg(), [0.0; 3]);
         assert!(
-            back.translation
+            back.translation()
                 .iter()
-                .zip(p.placement.translation)
+                .zip(p.placement.translation())
                 .all(|(a, b)| close(*a, b))
         );
     }
     let flipped = apply_quick(&p, None, QuickAction::Flip)?;
-    assert_eq!(flipped.rotation_deg, [180.0, 0.0, 0.0]);
+    assert_eq!(flipped.rotation_deg(), [180.0, 0.0, 0.0]);
     assert!(
         apply_quick(
             &p,
@@ -272,9 +276,9 @@ fn quick_turns_keep_the_body_centre_and_undo_each_other() -> Result<()> {
 #[test]
 fn seat_and_stand_up_put_the_leads_on_the_plane() -> Result<()> {
     let mut p = package(soic_form(), 8);
-    p.placement.translation = [0.0, 0.0, 0.8];
+    p.placement.translation_nm = crate::tests::support::nm3([0.0, 0.0, 0.8]);
     assert!(close(
-        apply_quick(&p, None, QuickAction::Seat)?.translation[2],
+        apply_quick(&p, None, QuickAction::Seat)?.translation()[2],
         0.0
     ));
     p.placement = ModelPlacement::default();
@@ -296,21 +300,22 @@ fn seat_and_stand_up_put_the_leads_on_the_plane() -> Result<()> {
 fn pad_relative_actions_need_the_footprint_and_match_the_fit() -> Result<()> {
     let fp = soic_footprint(false);
     let mut p = package(soic_form(), 8);
-    p.placement.translation = [0.5, 0.5, 0.0];
+    p.placement.translation_nm = crate::tests::support::nm3([0.5, 0.5, 0.0]);
     assert!(apply_quick(&p, None, QuickAction::CentreOnPads).is_err());
     assert!(
         package_model::edit_package(&p, &[PackageEdit::ApplyQuick(QuickAction::Pin1ToPad1)])
             .is_err()
     );
     let centred = apply_quick(&p, Some(&fp), QuickAction::CentreOnPads)?;
-    assert!(centred.translation.iter().all(|v| v.abs() < 1e-9));
+    assert!(centred.translation().iter().all(|v| v.abs() < 1e-9));
     let pin1 = apply_quick(&p, Some(&fp), QuickAction::Pin1ToPad1)?;
-    assert_eq!(pin1.rotation_deg, [0.0, 0.0, -90.0]);
+    // −90°, stored reduced to one turn.
+    assert_eq!(pin1.rotation_deg(), [0.0, 0.0, 270.0]);
     let fit = fit_leads(&p.placement, &form_pairs(&p, &fp)?, FitRotation::Quarter)?;
     assert!(
-        pin1.translation
+        pin1.translation()
             .iter()
-            .zip(fit.placement.translation)
+            .zip(fit.placement.translation())
             .all(|(a, b)| close(*a, b))
     );
     let edited = edit_package_in(
@@ -321,7 +326,7 @@ fn pad_relative_actions_need_the_footprint_and_match_the_fit() -> Result<()> {
             PackageEdit::ApplyQuick(QuickAction::Seat),
         ],
     )?;
-    assert_eq!(edited.placement.rotation_deg, [0.0, 0.0, -90.0]);
+    assert_eq!(edited.placement.rotation_deg(), [0.0, 0.0, 270.0]);
     Ok(())
 }
 
@@ -333,15 +338,15 @@ fn findings_report_leads_off_lands_unseated_leads_and_a_sunken_body() -> Result<
     p.placement = fit_leads(&p.placement, &form_pairs(&p, &fp)?, FitRotation::Free)?.placement;
     assert!(placement_findings(&p, &fp, footprint_id).is_empty());
     // Across the 0.6 mm land: 0.1 mm stays within 25 %, 0.2 mm does not.
-    p.placement.translation[1] = 0.1;
+    p.placement.translation_nm[1] = crate::tests::support::nm(0.1);
     assert!(placement_findings(&p, &fp, footprint_id).is_empty());
-    p.placement.translation[1] = 0.2;
+    p.placement.translation_nm[1] = crate::tests::support::nm(0.2);
     let codes: Vec<String> = placement_findings(&p, &fp, footprint_id)
         .into_iter()
         .map(|f| f.code)
         .collect();
     assert_eq!(codes, ["package.lead_off_land"]);
-    p.placement.translation = [0.0, 0.0, -0.5];
+    p.placement.translation_nm = crate::tests::support::nm3([0.0, 0.0, -0.5]);
     let findings = placement_findings(&p, &fp, footprint_id);
     let codes: Vec<&str> = findings.iter().map(|f| f.code.as_str()).collect();
     assert_eq!(codes, ["package.body_below_board", "package.lead_unseated"]);
@@ -438,8 +443,8 @@ fn fit_leads_and_quick_actions_are_one_undo_step_each_through_the_engine() -> Re
         }),
     )?;
     assert_eq!(
-        draft_placement(&engine, f.package).map(|p| p.rotation_deg),
-        Some([0.0, 0.0, -90.0])
+        draft_placement(&engine, f.package).map(|p| p.rotation_deg()),
+        Some([0.0, 0.0, 270.0])
     );
     // A failing edit list changes nothing, not even the first edit.
     let kept = Snapshot::of(&engine);
@@ -468,7 +473,7 @@ fn placement_findings_reach_draft_checks_as_advisories() -> Result<()> {
     let (mut engine, f) = soic_engine()?;
     rewrite(&mut engine, f.package, |d| {
         if let crate::library::Definition::Package(p) = d {
-            p.placement.translation = [0.0, 0.0, -0.5];
+            p.placement.translation_nm = crate::tests::support::nm3([0.0, 0.0, -0.5]);
         }
     })?;
     let Ok(QueryResult::Drafts(reports)) = engine.query(Query::CheckDrafts {}) else {
@@ -582,9 +587,12 @@ fn a_spacing_mismatch_is_named_and_a_matching_one_is_not() -> Result<()> {
     // Pads pushed 0.4 mm further out on each side.
     let wide: Vec<LeadPair> = pairs
         .iter()
-        .map(|p| LeadPair {
-            pad_centre: [p.pad_centre[0] * (3.1 / 2.7), p.pad_centre[1]],
-            ..*p
+        .map(|p| {
+            let c = p.pad_centre();
+            LeadPair {
+                pad_centre_nm: crate::tests::support::pt([c[0] * (3.1 / 2.7), c[1]]),
+                ..*p
+            }
         })
         .collect();
     let (leads, pads) = spacing_mismatch(&wide, 0.05)

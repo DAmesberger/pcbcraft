@@ -544,7 +544,7 @@ impl ModelCard {
                 let published = engine.project().library.model(model.model).is_some();
                 match crate::model_library::model_definition(engine, model.model) {
                     Some((name, definition)) => {
-                        let b = definition.bounds_mm;
+                        let b = definition.bounds();
                         Self {
                             name: if name.trim().is_empty() {
                                 definition.asset.file_name.clone()
@@ -586,7 +586,7 @@ impl ModelCard {
             }
             PackageModel::PartFile(part) => {
                 let published = engine.project().library.model(part.model).is_some();
-                let [lo, hi] = part.derived.bounds_mm;
+                let [lo, hi] = part.derived.bounds();
                 let name = crate::model_library::model_definition(engine, part.model).map_or_else(
                     || "Missing part file".to_owned(),
                     |(name, definition)| {

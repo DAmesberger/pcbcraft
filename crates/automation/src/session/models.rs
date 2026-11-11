@@ -4,7 +4,7 @@
 //! `library.import_model` with the wizard's mapping. Not a document change.
 use super::Session;
 use crate::Result;
-use pcbcraft_core::library::model3d::{ModelFormat, SourceFrame};
+use pcbcraft_core::library::model3d::{ModelFormat, SourceFrame, SourceFrameParams};
 use pcbcraft_solidcraft::models::inspect;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ pub struct ModelFileParams {
     /// The frame to report bounds in; the format's default frame (glTF:
     /// metres, Y up; STEP and `.solidcraft`: as stated, Z up) when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub frame: Option<SourceFrame>,
+    pub frame: Option<SourceFrameParams>,
 }
 
 /// The file extensions each format accepts.
@@ -59,7 +59,7 @@ impl Session {
         }
         let bytes = pcbcraft_io::persistence::read_bytes(path)?;
         let inspection = match &params.frame {
-            Some(frame) => inspect::inspect_in(&bytes, params.format, frame)?,
+            Some(frame) => inspect::inspect_in(&bytes, params.format, &SourceFrame::from(*frame))?,
             None => inspect::inspect(&bytes, params.format)?,
         };
         Ok(serde_json::to_value(inspection)?)

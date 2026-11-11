@@ -31,7 +31,9 @@ use super::super::model3d::MarkingArea;
 use super::super::package_form::PackageForm;
 use super::super::package_form::molded::MoldedLead;
 use super::super::package_form::tht::ThtBody;
-use super::MAX_AREA_MM;
+use super::MAX_AREA_NM;
+use crate::diagnostics::Result;
+use crate::units::{Angle, MILLIDEGREES_PER_TURN, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -96,24 +98,30 @@ impl BoxFace {
         }
     }
 
-    /// The face of an `[length, width, height]` box (z from 0) as an area.
-    pub fn of_box(self, size: [f64; 3]) -> MarkingArea {
+    /// The face of an `[length, width, height]` box (z from 0), mm: its
+    /// origin and size.
+    fn box_face(self, size: [f64; 3]) -> ([f64; 3], [f64; 2]) {
         let [l, w, h] = size;
-        let (normal, u_axis) = self.frame();
-        let (origin, size_mm) = match self {
+        match self {
             Self::Top => ([0.0, 0.0, h], [l, w]),
             Self::Bottom => ([0.0, 0.0, 0.0], [l, w]),
             Self::PosX => ([l / 2.0, 0.0, h / 2.0], [w, h]),
             Self::NegX => ([-l / 2.0, 0.0, h / 2.0], [w, h]),
             Self::PosY => ([0.0, w / 2.0, h / 2.0], [l, h]),
             Self::NegY => ([0.0, -w / 2.0, h / 2.0], [l, h]),
-        };
-        MarkingArea {
-            origin,
-            normal,
-            u_axis,
-            size_mm,
         }
+    }
+
+    /// The size of the face of an `[length, width, height]` box, mm.
+    pub fn of_box_size(self, size: [f64; 3]) -> [f64; 2] {
+        self.box_face(size).1
+    }
+
+    /// The face of an `[length, width, height]` box (z from 0) as an area.
+    pub fn of_box(self, size: [f64; 3]) -> Result<MarkingArea> {
+        let (normal, u_axis) = self.frame();
+        let (origin, size) = self.box_face(size);
+        MarkingArea::from_mm(origin, normal, u_axis, size)
     }
 }
 
@@ -131,64 +139,86 @@ pub enum SurfaceRef {
     Anchor { name: String },
 }
 
-/// How a marking wraps around a cylinder. Angles are degrees about the
-/// cylinder's axis from its anchor's zero direction ([`CylinderArea`]).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+/// How a marking wraps around a cylinder. Angles are about the cylinder's
+/// axis from its anchor's zero direction ([`CylinderArea`]), in whole
+/// millidegrees; commands carry degrees and millimetres ([`WrapParams`]).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Wrap {
     /// Where the chart's start edge sits. The chart centre is at
-    /// `seam_deg + wrap_deg / 2`.
+    /// `seam + wrap / 2`.
     #[serde(default)]
-    pub seam_deg: f64,
-    /// How far round the chart reaches, 1–360°.
+    pub seam_mdeg: Angle,
+    /// How far round the chart reaches, above 0 and at most a full turn
+    /// (360,000): a sweep, which [`Angle`] cannot hold (it reduces a full
+    /// turn to 0). [`Placement::problem`] checks the range.
     #[serde(default = "full_turn")]
-    pub wrap_deg: f64,
-    /// The part of the side used, mm along the axis from its start; the
-    /// whole side when `None`.
+    pub wrap_mdeg: i32,
+    /// The part of the side used, along the axis from its start; the whole
+    /// side when `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub along_mm: Option<[f64; 2]>,
+    pub along_nm: Option<[Nm; 2]>,
     /// Copies of the layout side by side round the wrap (1–8): each lays
     /// out in `1 / repeat` of it.
     #[serde(default = "one")]
     pub repeat: u32,
 }
 
-fn full_turn() -> f64 {
-    360.0
+pub(super) fn full_turn() -> i32 {
+    MILLIDEGREES_PER_TURN
 }
-fn one() -> u32 {
+pub(super) fn one() -> u32 {
     1
 }
-fn unit_scale() -> f64 {
+pub(super) fn unit_scale() -> f64 {
     1.0
 }
-fn yes() -> bool {
+pub(super) fn yes() -> bool {
     true
 }
 
 impl Default for Wrap {
     fn default() -> Self {
         Self {
-            seam_deg: 0.0,
-            wrap_deg: full_turn(),
-            along_mm: None,
+            seam_mdeg: Angle::ZERO,
+            wrap_mdeg: full_turn(),
+            along_nm: None,
             repeat: 1,
         }
     }
 }
 
-/// Where and how a marking's layout is placed on its surface.
+impl Wrap {
+    /// Where the chart's start edge sits, degrees.
+    pub fn seam_deg(&self) -> f64 {
+        self.seam_mdeg.to_degrees_f64()
+    }
+
+    /// How far round the chart reaches, degrees.
+    pub fn wrap_deg(&self) -> f64 {
+        f64::from(self.wrap_mdeg) / 1_000.0
+    }
+
+    /// The part of the side used, mm along the axis from its start.
+    pub fn along_mm(&self) -> Option<[f64; 2]> {
+        self.along_nm.map(|a| a.map(Nm::to_mm_f64))
+    }
+}
+
+/// Where and how a marking's layout is placed on its surface. Stored in
+/// nanometres and millidegrees; commands carry millimetres and degrees
+/// ([`PlacementParams`]).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Placement {
     #[serde(default)]
     pub on: SurfaceRef,
-    /// Shift of the layout's centre from the region's, chart mm.
+    /// Shift of the layout's centre from the region's, in the chart.
     #[serde(default)]
-    pub offset_mm: [f64; 2],
+    pub offset: PointNm,
     /// Counter-clockwise turn of the layout, seen from outside.
     #[serde(default)]
-    pub rotation_deg: f64,
+    pub rotation_mdeg: Angle,
     #[serde(default = "unit_scale")]
     pub scale: f64,
     /// Mirror the layout across its v axis (read through a clear body or
@@ -207,8 +237,8 @@ impl Default for Placement {
     fn default() -> Self {
         Self {
             on: SurfaceRef::Model,
-            offset_mm: [0.0, 0.0],
-            rotation_deg: 0.0,
+            offset: PointNm::ORIGIN,
+            rotation_mdeg: Angle::ZERO,
             scale: 1.0,
             mirror: false,
             clip: true,
@@ -222,10 +252,20 @@ impl Placement {
         *self == Self::default()
     }
 
+    /// Shift of the layout's centre from the region's, chart mm.
+    pub fn offset_mm(&self) -> [f64; 2] {
+        self.offset.to_mm_f64()
+    }
+
+    /// Counter-clockwise turn of the layout, degrees.
+    pub fn rotation_deg(&self) -> f64 {
+        self.rotation_mdeg.to_degrees_f64()
+    }
+
     /// The layout area for a region `region` in size: the region seen
     /// through the turn (a quarter turn swaps the sides) and the scale.
     pub fn layout_area(&self, region: [f64; 2]) -> [f64; 2] {
-        let (s, c) = self.rotation_deg.to_radians().sin_cos();
+        let (s, c) = self.rotation_deg().to_radians().sin_cos();
         let size = if s.abs() > c.abs() {
             [region[1], region[0]]
         } else {
@@ -243,11 +283,9 @@ impl Placement {
     pub fn apply(&self, p: [f64; 2]) -> [f64; 2] {
         let x = if self.mirror { -p[0] } else { p[0] } * self.scale;
         let y = p[1] * self.scale;
-        let (s, c) = self.rotation_deg.to_radians().sin_cos();
-        [
-            c * x - s * y + self.offset_mm[0],
-            s * x + c * y + self.offset_mm[1],
-        ]
+        let (s, c) = self.rotation_deg().to_radians().sin_cos();
+        let offset = self.offset_mm();
+        [c * x - s * y + offset[0], s * x + c * y + offset[1]]
     }
 
     /// Why the placement cannot be used, if it cannot.
@@ -259,12 +297,7 @@ impl Placement {
                 SCALE.end()
             ));
         }
-        if !self
-            .offset_mm
-            .iter()
-            .chain(std::iter::once(&self.rotation_deg))
-            .all(|v| v.is_finite() && v.abs() <= MAX_AREA_MM)
-        {
+        if !(self.offset.x_nm.abs() <= MAX_AREA_NM && self.offset.y_nm.abs() <= MAX_AREA_NM) {
             return Some("a marking's offset and turn must be finite".into());
         }
         if let SurfaceRef::Anchor { name } = &self.on
@@ -279,17 +312,14 @@ impl Placement {
             ));
         }
         if let Some(w) = &self.wrap {
-            if !(w.wrap_deg.is_finite() && w.wrap_deg > 0.0 && w.wrap_deg <= 360.0) {
+            if !(w.wrap_mdeg > 0 && w.wrap_mdeg <= MILLIDEGREES_PER_TURN) {
                 return Some("a wrap reaches 1–360°".into());
-            }
-            if !(w.seam_deg.is_finite() && w.seam_deg.abs() <= 3600.0) {
-                return Some("a wrap's seam angle must be finite".into());
             }
             if !(1..=MAX_WRAP_REPEAT).contains(&w.repeat) {
                 return Some(format!("a wrap repeats 1–{MAX_WRAP_REPEAT} times"));
             }
-            if let Some([a, b]) = w.along_mm
-                && !(a.is_finite() && b.is_finite() && a >= 0.0 && b > a && b <= MAX_AREA_MM)
+            if let Some([a, b]) = w.along_nm
+                && !(a >= Nm::ZERO && b > a && b <= MAX_AREA_NM)
             {
                 return Some("a wrap's height range runs from a start to a later end".into());
             }
@@ -300,15 +330,17 @@ impl Placement {
 
 /// A cylinder's side, in the package frame: the axis from `base` along the
 /// unit `axis` for `length`, of `radius`. Angle θ about the axis runs from
-/// the unit `zero` (square to the axis) towards `axis × zero`.
+/// the unit `zero` (square to the axis) towards `axis × zero`. Lengths are
+/// stored in nanometres; [`Self::base`], [`Self::radius`] and
+/// [`Self::length`] give millimetres.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CylinderArea {
-    pub base: [f64; 3],
+    pub base_nm: [Nm; 3],
     pub axis: [f64; 3],
     pub zero: [f64; 3],
-    pub radius: f64,
-    pub length: f64,
+    pub radius_nm: Nm,
+    pub length_nm: Nm,
     /// The chart's u runs along the axis (an axial body's text and bands)
     /// rather than round it (a radial sleeve's).
     pub along_u: bool,
@@ -332,15 +364,56 @@ pub struct WrapChart {
 }
 
 impl CylinderArea {
+    /// A cylinder from millimetres, through the one crossing into stored
+    /// lengths ([`Nm::from_mm_f64_rounded`]).
+    pub fn from_mm(
+        base: [f64; 3],
+        axis: [f64; 3],
+        zero: [f64; 3],
+        radius: f64,
+        length: f64,
+        along_u: bool,
+    ) -> Result<Self> {
+        let [x, y, z] = base;
+        Ok(Self {
+            base_nm: [
+                Nm::from_mm_f64_rounded(x)?,
+                Nm::from_mm_f64_rounded(y)?,
+                Nm::from_mm_f64_rounded(z)?,
+            ],
+            axis,
+            zero,
+            radius_nm: Nm::from_mm_f64_rounded(radius)?,
+            length_nm: Nm::from_mm_f64_rounded(length)?,
+            along_u,
+        })
+    }
+
+    /// The axis' start, mm.
+    pub fn base(&self) -> [f64; 3] {
+        self.base_nm.map(Nm::to_mm_f64)
+    }
+
+    /// The radius, mm.
+    pub fn radius(&self) -> f64 {
+        self.radius_nm.to_mm_f64()
+    }
+
+    /// The side's length along the axis, mm.
+    pub fn length(&self) -> f64 {
+        self.length_nm.to_mm_f64()
+    }
+
     /// The chart of `wrap` on this cylinder; `None` when its height range
     /// misses the side.
     pub fn chart(&self, wrap: &Wrap) -> Option<WrapChart> {
-        let [a, b] = wrap.along_mm.unwrap_or([0.0, self.length]);
-        let (a, b) = (a.max(0.0), b.min(self.length));
+        let (radius, length) = (self.radius(), self.length());
+        let [a, b] = wrap.along_mm().unwrap_or([0.0, length]);
+        let (a, b) = (a.max(0.0), b.min(length));
         let along = b - a;
-        let span = wrap.wrap_deg.clamp(1.0, 360.0).to_radians();
-        let round = self.radius * span;
-        if !(along > 1e-6 && round > 1e-6 && self.radius > 0.0) {
+        let span = wrap.wrap_deg().clamp(1.0, 360.0).to_radians();
+        let round = radius * span;
+        if !(along > 1e-6 && round > 1e-6 && radius > 0.0) {
             return None;
         }
         let region = if self.along_u {
@@ -350,7 +423,7 @@ impl CylinderArea {
         };
         Some(WrapChart {
             region,
-            centre: wrap.seam_deg.to_radians() + span / 2.0,
+            centre: wrap.seam_deg().to_radians() + span / 2.0,
             span,
             mid: (a + b) / 2.0,
             along,
@@ -361,10 +434,11 @@ impl CylinderArea {
     /// The angle and axis position of chart point `p` (mm from the chart
     /// centre) under `chart`: arc length round, length along.
     pub fn chart_to_surface(&self, chart: &WrapChart, p: [f64; 2]) -> (f64, f64) {
+        let radius = self.radius();
         if self.along_u {
-            (chart.centre - p[1] / self.radius, chart.mid + p[0])
+            (chart.centre - p[1] / radius, chart.mid + p[0])
         } else {
-            (chart.centre + p[0] / self.radius, chart.mid + p[1])
+            (chart.centre + p[0] / radius, chart.mid + p[1])
         }
     }
 
@@ -375,7 +449,7 @@ impl CylinderArea {
         let tau = std::f64::consts::TAU;
         let d =
             (theta - chart.centre + std::f64::consts::PI).rem_euclid(tau) - std::f64::consts::PI;
-        let arc = d * self.radius;
+        let arc = d * self.radius();
         if self.along_u {
             [t - chart.mid, -arc]
         } else {
@@ -389,9 +463,10 @@ impl CylinderArea {
         let side = cross(self.axis, self.zero);
         let (s, c) = theta.sin_cos();
         let n: [f64; 3] = std::array::from_fn(|k| c * self.zero[k] + s * side[k]);
-        let r = self.radius + lift;
+        let r = self.radius() + lift;
+        let base = self.base();
         (
-            std::array::from_fn(|k| self.base[k] + self.axis[k] * t + n[k] * r),
+            std::array::from_fn(|k| base[k] + self.axis[k] * t + n[k] * r),
             n,
         )
     }
@@ -439,13 +514,11 @@ pub struct AnchorInfo {
     pub geometry: SurfaceGeometry,
 }
 
-fn plane(origin: [f64; 3], size: [f64; 2]) -> MarkingArea {
-    MarkingArea {
-        origin,
-        normal: [0.0, 0.0, 1.0],
-        u_axis: [1.0, 0.0, 0.0],
-        size_mm: size,
-    }
+/// An upward plane of `size` at `origin`, mm. Computed from a form's
+/// stored lengths, it always lies within `Nm`'s range; a value that could
+/// not be stored offers no anchor.
+fn plane(origin: [f64; 3], size: [f64; 2]) -> Option<MarkingArea> {
+    MarkingArea::from_mm(origin, [0.0, 0.0, 1.0], [1.0, 0.0, 0.0], size).ok()
 }
 
 fn anchor(name: &str, description: &str, geometry: SurfaceGeometry) -> AnchorInfo {
@@ -456,14 +529,40 @@ fn anchor(name: &str, description: &str, geometry: SurfaceGeometry) -> AnchorInf
     }
 }
 
+/// A plane with a positive size (at least 1 nm).
 fn sized(a: &MarkingArea) -> bool {
-    a.size_mm.iter().all(|s| s.is_finite() && *s > 1e-6)
+    a.size_nm.iter().all(|s| *s > Nm::ZERO)
+}
+
+/// `area` as an anchor's geometry when it is sized.
+fn sized_plane(area: Option<MarkingArea>) -> Option<SurfaceGeometry> {
+    area.filter(sized).map(SurfaceGeometry::Plane)
+}
+
+/// A cylinder anchor's geometry from millimetres; a value that could not
+/// be stored offers no anchor.
+fn cylinder(
+    base: [f64; 3],
+    axis: [f64; 3],
+    zero: [f64; 3],
+    radius: f64,
+    length: f64,
+    along_u: bool,
+) -> Option<SurfaceGeometry> {
+    CylinderArea::from_mm(base, axis, zero, radius, length, along_u)
+        .ok()
+        .map(SurfaceGeometry::Cylinder)
 }
 
 /// The named anchors a package form offers, in the package frame. Empty
 /// for families without any (their box faces and model area still serve).
 pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
     let mut out = Vec::new();
+    let mut push = |name: &str, what: &str, geometry: Option<SurfaceGeometry>| {
+        if let Some(geometry) = geometry {
+            out.push(anchor(name, what, geometry));
+        }
+    };
     match form {
         PackageForm::Module(m) => {
             let top = m.height();
@@ -473,11 +572,11 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
             let [cx, cy] = m.can_centre();
             let inset = 2.0 * CAN_EDGE_MM;
             let can = plane([cx, cy, top], [cw - inset, cl - inset]);
-            out.push(anchor(
+            push(
                 "can_top",
                 "the shield can's flat top (laser marking: model, logo, certifications, 2D code)",
-                SurfaceGeometry::Plane(can),
-            ));
+                can.map(SurfaceGeometry::Plane),
+            );
             for (name, face, origin, size, what) in [
                 (
                     "can_pos_x",
@@ -509,15 +608,8 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
                 ),
             ] {
                 let (normal, u_axis) = face.frame();
-                let area = MarkingArea {
-                    origin,
-                    normal,
-                    u_axis,
-                    size_mm: size,
-                };
-                if sized(&area) {
-                    out.push(anchor(name, what, SurfaceGeometry::Plane(area)));
-                }
+                let area = MarkingArea::from_mm(origin, normal, u_axis, size).ok();
+                push(name, what, sized_plane(area));
             }
             // The board beyond the can towards the antenna end.
             let (hl, hw) = (m.length() / 2.0, m.width() / 2.0);
@@ -526,26 +618,22 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
                 [0.0, (from + hl) / 2.0, pcb + MODULE_TRACE_MM],
                 [2.0 * hw, hl - from],
             );
-            if sized(&beyond) {
-                out.push(anchor(
-                    "pcb_top",
-                    "the module board's top beyond the can (silkscreen)",
-                    SurfaceGeometry::Plane(beyond),
-                ));
-            }
+            push(
+                "pcb_top",
+                "the module board's top beyond the can (silkscreen)",
+                sized_plane(beyond),
+            );
             if m.antenna_length() > 0.0 {
                 let from = hl - m.antenna_length().min(m.length());
                 let antenna = plane(
                     [0.0, (from + hl) / 2.0, pcb + MODULE_TRACE_MM],
                     [2.0 * hw, hl - from],
                 );
-                if sized(&antenna) {
-                    out.push(anchor(
-                        "antenna_area",
-                        "the antenna end of the module board (silkscreen beside the trace)",
-                        SurfaceGeometry::Plane(antenna),
-                    ));
-                }
+                push(
+                    "antenna_area",
+                    "the antenna end of the module board (silkscreen beside the trace)",
+                    sized_plane(antenna),
+                );
             }
         }
         PackageForm::Tht(t) => match t.kind.mm() {
@@ -564,26 +652,24 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
                         DISC_RECT[1] * (body_diameter - 2.0 * round),
                     ],
                 );
-                if sized(&top) {
-                    out.push(anchor(
-                        "top",
-                        "the can top (vent score, a planar mark)",
-                        SurfaceGeometry::Plane(top),
-                    ));
-                }
+                push(
+                    "top",
+                    "the can top (vent score, a planar mark)",
+                    sized_plane(top),
+                );
                 if r > 0.0 && body_height > 2.0 * round {
-                    out.push(anchor(
+                    push(
                         "sleeve",
                         "the sleeve round the body; angle 0 faces lead 2 (+x, the negative lead)",
-                        SurfaceGeometry::Cylinder(CylinderArea {
-                            base: [0.0, 0.0, s],
-                            axis: [0.0, 0.0, 1.0],
-                            zero: [1.0, 0.0, 0.0],
-                            radius: r,
-                            length: body_height - round,
-                            along_u: false,
-                        }),
-                    ));
+                        cylinder(
+                            [0.0, 0.0, s],
+                            [0.0, 0.0, 1.0],
+                            [1.0, 0.0, 0.0],
+                            r,
+                            body_height - round,
+                            false,
+                        ),
+                    );
                 }
             }
             ThtBody::Axial {
@@ -594,18 +680,18 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
                 let round = 0.3f64.min(0.2 * body_diameter).min(body_length / 6.0);
                 let zc = t.standoff() + r;
                 if r > 0.0 && body_length > 2.0 * round {
-                    out.push(anchor(
+                    push(
                         "body",
                         "the round body lying along x; u runs along it, angle 0 faces down",
-                        SurfaceGeometry::Cylinder(CylinderArea {
-                            base: [-body_length / 2.0 + round, 0.0, zc],
-                            axis: [1.0, 0.0, 0.0],
-                            zero: [0.0, 0.0, -1.0],
-                            radius: r,
-                            length: body_length - 2.0 * round,
-                            along_u: true,
-                        }),
-                    ));
+                        cylinder(
+                            [-body_length / 2.0 + round, 0.0, zc],
+                            [1.0, 0.0, 0.0],
+                            [0.0, 0.0, -1.0],
+                            r,
+                            body_length - 2.0 * round,
+                            true,
+                        ),
+                    );
                 }
             }
             _ => {}
@@ -614,18 +700,18 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
             let r = m.body_width() / 2.0;
             let half = (m.span() / 2.0 - m.terminal_length()).min(m.body_length() / 2.0);
             if r > 0.0 && half > 0.0 {
-                out.push(anchor(
+                push(
                     "body",
                     "the round MELF body between its caps; u runs along it, angle 0 faces down",
-                    SurfaceGeometry::Cylinder(CylinderArea {
-                        base: [-half, 0.0, m.body_bottom() + r],
-                        axis: [1.0, 0.0, 0.0],
-                        zero: [0.0, 0.0, -1.0],
-                        radius: r,
-                        length: 2.0 * half,
-                        along_u: true,
-                    }),
-                ));
+                    cylinder(
+                        [-half, 0.0, m.body_bottom() + r],
+                        [1.0, 0.0, 0.0],
+                        [0.0, 0.0, -1.0],
+                        r,
+                        2.0 * half,
+                        true,
+                    ),
+                );
             }
         }
         _ => {}
@@ -658,7 +744,7 @@ pub fn anchor_of(form: &PackageForm, name: &str) -> Option<AnchorInfo> {
 /// `placement`: a plane's face, or a cylinder's wrap (one repeat's share).
 pub fn region(geometry: &SurfaceGeometry, placement: &Placement) -> Option<([f64; 2], Chart)> {
     match geometry {
-        SurfaceGeometry::Plane(area) => sized(area).then_some((area.size_mm, Chart::Flat)),
+        SurfaceGeometry::Plane(area) => sized(area).then_some((area.size(), Chart::Flat)),
         SurfaceGeometry::Cylinder(c) => {
             let wrap = placement.wrap.unwrap_or_default();
             let chart = c.chart(&wrap)?;
@@ -671,7 +757,7 @@ pub fn region(geometry: &SurfaceGeometry, placement: &Placement) -> Option<([f64
             Some((
                 region,
                 Chart::Wrap {
-                    radius_mm: c.radius,
+                    radius_mm: c.radius(),
                     centre: chart.centre,
                     span: chart.span / n,
                     along_u: c.along_u,
@@ -692,11 +778,11 @@ mod tests {
 
     fn sleeve() -> CylinderArea {
         CylinderArea {
-            base: [0.0, 0.0, 0.5],
+            base_nm: [nm(0.0), nm(0.0), nm(0.5)],
             axis: [0.0, 0.0, 1.0],
             zero: [1.0, 0.0, 0.0],
-            radius: 2.5,
-            length: 7.0,
+            radius_nm: nm(2.5),
+            length_nm: nm(7.0),
             along_u: false,
         }
     }
@@ -732,8 +818,8 @@ mod tests {
         // A height range and a partial wrap shrink the region.
         let part = c
             .chart(&Wrap {
-                wrap_deg: 90.0,
-                along_mm: Some([1.0, 4.0]),
+                wrap_mdeg: 90_000,
+                along_nm: Some([nm(1.0), nm(4.0)]),
                 ..Wrap::default()
             })
             .ok_or("partial")?;
@@ -754,18 +840,18 @@ mod tests {
         else {
             return Err("can top".into());
         };
-        assert_eq!(can.origin, [0.0, -2.5, m.height()]);
-        assert!((can.size_mm[0] - 16.0).abs() < 1e-9 && (can.size_mm[1] - 16.8).abs() < 1e-9);
+        assert_eq!(can.origin(), [0.0, -2.5, m.height()]);
+        assert!((can.size()[0] - 16.0).abs() < 1e-9 && (can.size()[1] - 16.8).abs() < 1e-9);
         let Some(SurfaceGeometry::Plane(pcb)) = anchor_of(&form, "pcb_top").map(|a| a.geometry)
         else {
             return Err("pcb top".into());
         };
         // The can ends at y = −2.5 + 8.7 = 6.2; the board at 12.5.
-        assert!((pcb.size_mm[1] - (12.5 - 6.2)).abs() < 1e-9);
+        assert!((pcb.size()[1] - (12.5 - 6.2)).abs() < 1e-9);
         assert!(
-            (pcb.origin[2] - (MODULE_PAD_MM + m.pcb_thickness() + MODULE_TRACE_MM)).abs() < 1e-12
+            (pcb.origin()[2] - (MODULE_PAD_MM + m.pcb_thickness() + MODULE_TRACE_MM)).abs() < 1e-12
         );
-        assert!((pcb.origin[1] - (6.2 + 12.5) / 2.0).abs() < 1e-9);
+        assert!((pcb.origin()[1] - (6.2 + 12.5) / 2.0).abs() < 1e-9);
         Ok(())
     }
 
@@ -783,7 +869,7 @@ mod tests {
             return Err("sleeve".into());
         };
         assert_eq!(c.zero, [1.0, 0.0, 0.0]);
-        assert_eq!(c.radius, 2.5);
+        assert_eq!(c.radius(), 2.5);
         let p = Placement {
             on: SurfaceRef::Anchor {
                 name: "sleeve".into(),
@@ -805,10 +891,10 @@ mod tests {
     #[test]
     fn placements_turn_scale_and_mirror_about_the_centre() {
         let p = Placement {
-            rotation_deg: 90.0,
+            rotation_mdeg: crate::units::Angle::from_degrees_f64_rounded(90.0).unwrap_or_default(),
             scale: 2.0,
             mirror: true,
-            offset_mm: [1.0, 0.0],
+            offset: PointNm::new(nm(1.0), nm(0.0)),
             ..Placement::default()
         };
         let q = p.apply([1.0, 0.0]);

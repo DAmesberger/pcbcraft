@@ -147,10 +147,10 @@ fn the_wroom3_marking_planes_are_the_module_anchors() -> Fallible {
         };
         let close = |p: &[f64], q: &[f64]| p.iter().zip(q).all(|(u, v)| (u - v).abs() < 1e-9);
         assert!(
-            close(&x.origin, &y.origin)
+            close(&x.origin(), &y.origin())
                 && close(&x.normal, &y.normal)
                 && close(&x.u_axis, &y.u_axis)
-                && close(&x.size_mm, &y.size_mm),
+                && close(&x.size(), &y.size()),
             "{}: form {x:?}, part {y:?}",
             a.name
         );
@@ -159,7 +159,7 @@ fn the_wroom3_marking_planes_are_the_module_anchors() -> Fallible {
     let PackageForm::Module(m) = &package.form else {
         panic!("a module");
     };
-    let derived = derived(&part);
+    let derived = derived(&part)?;
     let file = pcbcraft_core::library::package_model::PartFileModel {
         derived,
         ..Default::default()
@@ -496,10 +496,10 @@ fn the_mechanical_built_ins_pass_their_check_and_follow_their_values() -> Fallib
         panic!("a planar marking-top");
     };
     assert!(
-        close(area.origin[2], 4.0),
+        close(area.origin()[2], 4.0),
         "marking-top on the top: {area:?}"
     );
-    assert!(close(area.size_mm[0], 3.0), "0.6 × outer_d: {area:?}");
+    assert!(close(area.size()[0], 3.0), "0.6 × outer_d: {area:?}");
     // The spacer's diameter. A round body's outline bounds hold the
     // circle but are not tight (they come from its edges' outline), so the
     // check is that the box holds 8 mm and scales with the diameter.

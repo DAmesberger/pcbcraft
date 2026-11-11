@@ -130,7 +130,7 @@ impl ModelTab {
         placement: ModelPlacement,
         revision: u64,
     ) -> Option<Operation> {
-        if placement == *current || !placement.finite() {
+        if placement == *current {
             return None;
         }
         self.pending = Some((placement, revision));
@@ -431,10 +431,7 @@ mod tests {
     #[test]
     fn a_triad_turn_keeps_the_body_centre_and_a_shift_adds() {
         let package = soic();
-        let start = ModelPlacement {
-            translation: [1.0, 0.0, 0.0],
-            rotation_deg: [0.0; 3],
-        };
+        let start = ModelPlacement::from_mm([1.0, 0.0, 0.0], [0.0; 3]).unwrap_or_default();
         let turned = dragged(
             &package,
             &start,
@@ -443,24 +440,22 @@ mod tests {
                 angle: -std::f64::consts::FRAC_PI_2,
             },
         );
-        assert_eq!(turned.map(|p| p.rotation_deg), Some([0.0, 0.0, -90.0]));
-        assert_eq!(turned.map(|p| p.translation), Some([1.0, 0.0, 0.0]));
+        // −90°, stored reduced to one turn.
+        assert_eq!(turned.map(|p| p.rotation_deg()), Some([0.0, 0.0, 270.0]));
+        assert_eq!(turned.map(|p| p.translation()), Some([1.0, 0.0, 0.0]));
         let shifted = dragged(
             &package,
             &start,
             Change::Translate(Vec3::new(0.5, -1.0, 0.25)),
         );
-        assert_eq!(shifted.map(|p| p.translation), Some([1.5, -1.0, 0.25]));
+        assert_eq!(shifted.map(|p| p.translation()), Some([1.5, -1.0, 0.25]));
     }
 
     #[test]
     fn point_to_point_moves_a_lead_onto_a_pad_centre() {
         let package = soic();
         let fp = soic_lands();
-        let placement = ModelPlacement {
-            translation: [0.0; 3],
-            rotation_deg: [0.0, 0.0, -90.0],
-        };
+        let placement = ModelPlacement::from_mm([0.0; 3], [0.0, 0.0, -90.0]).unwrap_or_default();
         let lead = model_points(&package, &placement)
             .into_iter()
             .last()
@@ -480,10 +475,7 @@ mod tests {
         let package = soic();
         let mut tab = ModelTab::default();
         assert_eq!(tab.shown(&package), package.placement);
-        let sent = ModelPlacement {
-            translation: [0.0, 0.0, 1.0],
-            rotation_deg: [0.0; 3],
-        };
+        let sent = ModelPlacement::from_mm([0.0, 0.0, 1.0], [0.0; 3]).unwrap_or_default();
         assert!(
             tab.set(DefinitionId(3), &package.placement, sent, 5)
                 .is_some()

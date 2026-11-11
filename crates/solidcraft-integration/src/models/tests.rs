@@ -2,8 +2,8 @@ use super::*;
 use crate::material::BodyKind;
 use crate::project;
 use pcbcraft_core::library::{
-    ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, ModelPlacement, NoLeadForm,
-    PackageTerminal, RoleMaterial,
+    ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, NoLeadForm, PackageTerminal,
+    RoleMaterial,
 };
 use pcbcraft_core::{Engine, Layer, PackageTerminalId};
 
@@ -707,10 +707,7 @@ fn the_preview_draws_each_body_with_its_material_s_product_look() -> Result<()> 
 #[test]
 fn the_preview_applies_the_placement() -> Result<()> {
     let mut p = package(chip(), 2);
-    p.placement = ModelPlacement {
-        translation: [1.0, 2.0, 0.5],
-        rotation_deg: [0.0, 0.0, 90.0],
-    };
+    p.placement = crate::test_units::placement([1.0, 2.0, 0.5], [0.0, 0.0, 90.0]);
     let model = project::preview(&p)?;
     let min = model
         .geometry

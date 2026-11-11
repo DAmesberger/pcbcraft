@@ -153,7 +153,7 @@ fn a_package_uses_the_part_file_in_one_step_and_refusals_change_nothing() -> Tes
     let Some(PackageModel::PartFile(lower)) = model(&session, package) else {
         return Err("the package uses no part file".into());
     };
-    assert!((part.derived.bounds_mm[1][2] - lower.derived.bounds_mm[1][2] - 0.465).abs() < 1e-6);
+    assert!((part.derived.bounds()[1][2] - lower.derived.bounds()[1][2] - 0.465).abs() < 1e-6);
     let now = session.engine().revision();
     let undo = call(
         &mut session,

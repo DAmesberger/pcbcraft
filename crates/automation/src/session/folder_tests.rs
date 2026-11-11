@@ -837,10 +837,7 @@ fn a_generated_package_model_round_trips_through_a_folder() -> TestResult {
         },
         _ => return Err("no package draft".into()),
     };
-    let placement = ModelPlacement {
-        translation: [0.02, -0.01, 0.0],
-        rotation_deg: [0.0, 0.0, 0.0],
-    };
+    let placement = ModelPlacement::from_mm([0.02, -0.01, 0.0], [0.0, 0.0, 0.0])?;
     engine.apply(
         engine.revision(),
         Operation::Library(LibraryCommand::EditPackage {

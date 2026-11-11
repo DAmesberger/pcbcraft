@@ -51,6 +51,46 @@ pub mod dims {
 #[cfg(test)]
 mod fixtures;
 
+/// Test values written in millimetres and degrees, as the document stores
+/// them (whole nanometres and millidegrees); a value off the range reads
+/// as zero.
+#[cfg(test)]
+pub(crate) mod test_units {
+    use pcbcraft_core::library::ModelPlacement;
+    use pcbcraft_core::units::{Angle, Nm, PointNm};
+
+    pub fn nm(mm: f64) -> Nm {
+        Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+    }
+
+    pub fn nm2(mm: [f64; 2]) -> [Nm; 2] {
+        mm.map(nm)
+    }
+
+    pub fn nm3(mm: [f64; 3]) -> [Nm; 3] {
+        mm.map(nm)
+    }
+
+    pub fn bounds(mm: [[f64; 3]; 2]) -> [[Nm; 3]; 2] {
+        mm.map(nm3)
+    }
+
+    pub fn pt(mm: [f64; 2]) -> PointNm {
+        PointNm::from_mm_f64_rounded(mm).unwrap_or_default()
+    }
+
+    pub fn deg(degrees: f64) -> Angle {
+        Angle::from_degrees_f64_rounded(degrees).unwrap_or_default()
+    }
+
+    pub fn placement(translation: [f64; 3], rotation_deg: [f64; 3]) -> ModelPlacement {
+        ModelPlacement {
+            translation_nm: nm3(translation),
+            rotation_mdeg: rotation_deg.map(deg),
+        }
+    }
+}
+
 /// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-smlib-open`
 /// branch of the DAmesberger/solidcraft fork (upstream a34756830 plus the
 /// opt-in product look, via scaling and a font-order fix).

@@ -1233,10 +1233,10 @@ pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<Stri
     if a.placement != b.placement {
         out.push(format!(
             "model placement {:?} mm, {:?}° → {:?} mm, {:?}°.",
-            a.placement.translation,
-            a.placement.rotation_deg,
-            b.placement.translation,
-            b.placement.rotation_deg
+            a.placement.translation(),
+            a.placement.rotation_deg(),
+            b.placement.translation(),
+            b.placement.rotation_deg()
         ));
     }
     out

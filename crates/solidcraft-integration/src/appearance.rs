@@ -847,7 +847,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
     };
     let package = part.package;
     let [length, width, height] = package.envelope();
-    let offset = package.placement.translation;
+    let offset = package.placement.translation();
     let lo = [offset[0] - length / 2.0, offset[1] - width / 2.0, offset[2]];
     let hi = [
         offset[0] + length / 2.0,
@@ -972,7 +972,7 @@ fn lead_band(
     pad: &pcbcraft_core::library::Pad,
 ) -> Option<([f64; 2], [f64; 2])> {
     let [length, width, _] = package.envelope();
-    let offset = package.placement.translation;
+    let offset = package.placement.translation();
     let body_min = [offset[0] - length / 2.0, offset[1] - width / 2.0];
     let body_max = [offset[0] + length / 2.0, offset[1] + width / 2.0];
     let (center, extent) = pad_box(footprint, pad)?;

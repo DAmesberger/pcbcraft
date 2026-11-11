@@ -142,31 +142,34 @@ impl MoldedForm {
         let [lo, _] = self.top_span();
         let width = BAND_SHARE * self.body_length();
         let start = lo + BAND_INSET_SHARE * self.body_length();
-        Some(MarkingArea {
-            origin: [start + width / 2.0, 0.0, self.body_top()],
-            normal: [0.0, 0.0, 1.0],
-            u_axis: [1.0, 0.0, 0.0],
-            size_mm: [width, ACROSS_SHARE * self.body_width()],
-        })
+        MarkingArea::from_mm(
+            [start + width / 2.0, 0.0, self.body_top()],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [width, ACROSS_SHARE * self.body_width()],
+        )
+        .ok()
     }
 
     /// The top area left for text markings: the visible top beside the
-    /// band, origin at its centre, u along +x.
-    pub fn marking_area(&self) -> MarkingArea {
+    /// band, origin at its centre, u along +x. Computed from the stored
+    /// form, it is always storable; `None` only if it were not.
+    pub fn marking_area(&self) -> Option<MarkingArea> {
         let [mut lo, hi] = self.top_span();
         let inset = BAND_INSET_SHARE * self.body_length();
         if let Some(band) = self.band_area() {
-            lo = band.origin[0] + band.size_mm[0] / 2.0;
+            lo = band.origin()[0] + band.size()[0] / 2.0;
         } else {
             lo += inset;
         }
         let hi = hi - inset;
-        MarkingArea {
-            origin: [(lo + hi) / 2.0, 0.0, self.body_top()],
-            normal: [0.0, 0.0, 1.0],
-            u_axis: [1.0, 0.0, 0.0],
-            size_mm: [(hi - lo).max(0.0), ACROSS_SHARE * self.body_width()],
-        }
+        MarkingArea::from_mm(
+            [(lo + hi) / 2.0, 0.0, self.body_top()],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [(hi - lo).max(0.0), ACROSS_SHARE * self.body_width()],
+        )
+        .ok()
     }
 
     /// Estimated land sizes [along x, along y] of terminals 1 and 2 (toe
@@ -394,24 +397,29 @@ mod tests {
     }
 
     #[test]
-    fn the_band_lies_at_terminal_one_and_the_marking_beside_it() {
+    fn the_band_lies_at_terminal_one_and_the_marking_beside_it() -> crate::diagnostics::Result<()> {
+        let missing = || crate::diagnostics::Error::Invalid("no area".into());
         let f = sma();
-        let band = f.band_area().unwrap_or(f.marking_area());
-        let mark = f.marking_area();
-        assert!(band.origin[0] < 0.0 && mark.origin[0] > band.origin[0]);
-        let band_hi = band.origin[0] + band.size_mm[0] / 2.0;
-        let mark_lo = mark.origin[0] - mark.size_mm[0] / 2.0;
-        assert!((band_hi - mark_lo).abs() < 1e-12);
-        assert!(mark.origin[0] + mark.size_mm[0] / 2.0 < f.body_length() / 2.0);
-        assert_eq!(band.origin[2], 2.2);
+        let band = f.band_area().ok_or_else(missing)?;
+        let mark = f.marking_area().ok_or_else(missing)?;
+        let (bo, bs, mo, ms) = (band.origin(), band.size(), mark.origin(), mark.size());
+        assert!(bo[0] < 0.0 && mo[0] > bo[0]);
+        let band_hi = bo[0] + bs[0] / 2.0;
+        let mark_lo = mo[0] - ms[0] / 2.0;
+        // Each area is stored to the nanometre: they meet within a rounding.
+        assert!((band_hi - mark_lo).abs() <= 1e-6);
+        assert!(mo[0] + ms[0] / 2.0 < f.body_length() / 2.0);
+        assert_eq!(bo[2], 2.2);
         let mut plain = f;
         plain.polarised = false;
         assert!(plain.band_area().is_none());
         // A MELF band sits on the glass between the caps.
         let m = minimelf();
-        let band = m.band_area().unwrap_or(m.marking_area());
-        assert!(band.origin[0] - band.size_mm[0] / 2.0 >= -(3.5 / 2.0 - 0.4));
-        assert!((band.origin[2] - (0.05 + 1.4)).abs() < 1e-12);
+        let band = m.band_area().ok_or_else(missing)?;
+        let (bo, bs) = (band.origin(), band.size());
+        assert!(bo[0] - bs[0] / 2.0 >= -(3.5 / 2.0 - 0.4));
+        assert!((bo[2] - (0.05 + 1.4)).abs() < 1e-12);
+        Ok(())
     }
 
     #[test]

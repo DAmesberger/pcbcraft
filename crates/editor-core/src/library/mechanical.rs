@@ -211,7 +211,7 @@ impl PartSpec {
                 "values are at most 256 finite literals named by part parameters".into(),
             ));
         }
-        let [lo, hi] = self.derived.bounds_mm;
+        let [lo, hi] = self.derived.bounds();
         if !finite_within(&lo) || !finite_within(&hi) || (0..3).any(|i| hi[i] < lo[i]) {
             return Err(invalid("the part's bounds are not a finite box".into()));
         }
@@ -583,7 +583,7 @@ fn package_definition(
     terminals: u32,
     key: ContentHash,
 ) -> Result<PackageDefinition> {
-    let [lo, hi] = spec.derived.bounds_mm;
+    let [lo, hi] = spec.derived.bounds();
     let mut envelope_nm = [crate::units::Nm::ZERO; 3];
     for (i, size) in envelope_nm.iter_mut().enumerate() {
         *size = crate::units::Nm::from_mm_f64_rounded((hi[i] - lo[i]).max(0.01))?;
@@ -715,7 +715,7 @@ fn footprint_definition(
         pads,
         ..FootprintDefinition::default()
     };
-    let [lo, hi] = spec.derived.bounds_mm;
+    let [lo, hi] = spec.derived.bounds();
     let body = Bounds {
         min: [lo[0], lo[1]],
         max: [hi[0], hi[1]],

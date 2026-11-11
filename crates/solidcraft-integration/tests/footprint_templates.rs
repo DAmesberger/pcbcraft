@@ -101,7 +101,7 @@ fn an_edited_footprint_carries_its_envelope_over_the_pads() -> Result<()> {
         &EV,
     )?;
     assert_eq!(engine.revision(), revision + 1, "one undo step");
-    assert_eq!(placement(&engine).translation, [10.0, 0.0, 0.0]);
+    assert_eq!(placement(&engine).translation(), [10.0, 0.0, 0.0]);
     engine.undo()?;
     assert_eq!(placement(&engine), ModelPlacement::default());
     Ok(())

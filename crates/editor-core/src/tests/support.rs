@@ -902,3 +902,13 @@ pub fn pt(p: Point) -> crate::units::PointNm {
 pub fn nm(mm: f64) -> crate::units::Nm {
     crate::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
+
+/// A 3D point or size a test writes in mm, as the document stores it.
+pub fn nm3(mm: [f64; 3]) -> [crate::units::Nm; 3] {
+    mm.map(nm)
+}
+
+/// Bounds `[min, max]` a test writes in mm, as the document stores them.
+pub fn nm_bounds(mm: [[f64; 3]; 2]) -> [[crate::units::Nm; 3]; 2] {
+    mm.map(nm3)
+}

@@ -14,11 +14,12 @@ use super::{Session, hosted};
 use crate::Result;
 use pcbcraft_core::library::marking::surface::{self, SurfaceGeometry};
 use pcbcraft_core::library::marking::{
-    ARTWORK_MEDIA_TYPE, Align, Anchor, AreaChoice, BoxFace, Ecc, Finish, MAX_ARTWORK_BYTES,
-    MAX_DECALS, MAX_MARKING_ITEMS, MarkingItem, MarkingSpec, Placement, PolarityMark, SurfaceRef,
-    Symbology, Template,
+    ARTWORK_MEDIA_TYPE, Align, Anchor, AreaChoiceParams, BoxFace, Ecc, Finish, MAX_ARTWORK_BYTES,
+    MAX_DECALS, MAX_MARKING_ITEMS, MarkingItem, MarkingSpec, PlacementParams, PolarityMark,
+    SurfaceRef, Symbology, Template,
 };
 use pcbcraft_core::library::{Definition, DraftEdit, PackageDefinition, PackedAsset};
+use pcbcraft_core::units::Length;
 use pcbcraft_core::{DefinitionId, FieldRef, LibraryCommand, Operation};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -47,9 +48,10 @@ pub struct MarkingInput {
     /// 1–8 items.
     pub items: Vec<ItemInput>,
     /// With the `model` surface only: the model's marking area, or an
-    /// explicit rectangle on its top face.
+    /// explicit rectangle on its top face (`centre` [x, y] and `size_mm`
+    /// [length, width], mm).
     #[serde(default)]
-    pub area: AreaChoice,
+    pub area: AreaChoiceParams,
     /// `laser_etch` (moulded bodies), `laser_etch_metal` (a shield can:
     /// darker, matte, still metal), `ink_white` (silkscreen, raised),
     /// `{"ink": {"colour": [r, g, b]}}`, `{"pad_print": {"colour": [r, g,
@@ -58,7 +60,7 @@ pub struct MarkingInput {
     #[serde(default)]
     pub finish: Finish,
     #[serde(default)]
-    pub min_text_height_mm: Option<f64>,
+    pub min_text_height_mm: Option<Length>,
     /// Where the marking goes: `on` is `{"surface": "model"}` (default:
     /// the top marking area), `{"surface": "face", "face": "top" |
     /// "bottom" | "pos_x" | "neg_x" | "pos_y" | "neg_y"}` (a box face of
@@ -74,7 +76,7 @@ pub struct MarkingInput {
     /// a chart millimetre is a millimetre on the surface. Curved surfaces
     /// other than cylinders are not mapped.
     #[serde(default)]
-    pub placement: Placement,
+    pub placement: PlacementParams,
     /// Up to four further decals.
     #[serde(default)]
     pub decals: Vec<DecalInput>,
@@ -87,13 +89,13 @@ pub struct DecalInput {
     /// 1–8 items.
     pub items: Vec<ItemInput>,
     #[serde(default)]
-    pub area: AreaChoice,
+    pub area: AreaChoiceParams,
     #[serde(default)]
     pub finish: Finish,
     #[serde(default)]
-    pub min_text_height_mm: Option<f64>,
+    pub min_text_height_mm: Option<Length>,
     #[serde(default)]
-    pub placement: Placement,
+    pub placement: PlacementParams,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -105,7 +107,7 @@ pub enum ItemInput {
     Text {
         template: String,
         #[serde(default)]
-        height_mm: Option<f64>,
+        height_mm: Option<Length>,
         #[serde(default)]
         align: Align,
     },
@@ -116,7 +118,7 @@ pub enum ItemInput {
     /// marks where the user's own logo goes.
     Artwork {
         svg: String,
-        size_mm: [f64; 2],
+        size_mm: [Length; 2],
         #[serde(default)]
         anchor: Anchor,
         licence: String,
@@ -131,7 +133,7 @@ pub enum ItemInput {
     /// without its 4-module quiet zone, which the region must also hold.
     Code2d {
         payload: String,
-        size_mm: f64,
+        size_mm: Length,
         #[serde(default)]
         anchor: Anchor,
         #[serde(default)]
@@ -182,7 +184,7 @@ fn items(inputs: Vec<ItemInput>, artwork: &mut Vec<PackedAsset>) -> Result<Vec<M
                 align,
             } => MarkingItem::Text {
                 template: Template(template),
-                height_mm,
+                height_nm: height_mm.map(|l| l.0),
                 align,
             },
             ItemInput::Artwork {
@@ -208,7 +210,7 @@ fn items(inputs: Vec<ItemInput>, artwork: &mut Vec<PackedAsset>) -> Result<Vec<M
                 }
                 MarkingItem::Artwork {
                     svg: hash,
-                    size_mm,
+                    size_nm: size_mm.map(|l| l.0),
                     anchor,
                     licence: Some(licence),
                 }
@@ -222,7 +224,7 @@ fn items(inputs: Vec<ItemInput>, artwork: &mut Vec<PackedAsset>) -> Result<Vec<M
             } => MarkingItem::Code2d {
                 symbology: Symbology::Qr,
                 payload: Template(payload),
-                size_mm,
+                size_nm: size_mm.0,
                 anchor,
                 ecc,
             },
@@ -243,11 +245,11 @@ fn items(inputs: Vec<ItemInput>, artwork: &mut Vec<PackedAsset>) -> Result<Vec<M
 /// What one surface is, for `library.marking_surfaces`.
 fn described(surface: &SurfaceRef, what: &str, geometry: Option<&SurfaceGeometry>) -> Value {
     let (kind, size) = match geometry {
-        Some(SurfaceGeometry::Plane(a)) => ("plane", json!(a.size_mm)),
+        Some(SurfaceGeometry::Plane(a)) => ("plane", json!(a.size())),
         Some(SurfaceGeometry::Cylinder(c)) => (
             "cylinder",
-            json!({"radius_mm": c.radius, "length_mm": c.length,
-                   "circumference_mm": std::f64::consts::TAU * c.radius,
+            json!({"radius_mm": c.radius(), "length_mm": c.length(),
+                   "circumference_mm": std::f64::consts::TAU * c.radius(),
                    "u_along_axis": c.along_u}),
         ),
         None => ("plane", Value::Null),
@@ -264,11 +266,11 @@ pub fn surfaces(package: &PackageDefinition) -> Vec<Value> {
         None,
     )];
     for face in BoxFace::ALL {
-        let area = face.of_box(envelope);
+        let area = face.of_box(envelope).ok().map(SurfaceGeometry::Plane);
         out.push(described(
             &SurfaceRef::Face { face },
             "a box face of the outermost body (size from the envelope; the built mesh decides)",
-            Some(&SurfaceGeometry::Plane(area)),
+            area.as_ref(),
         ));
     }
     for anchor in surface::package_anchors(package) {
@@ -311,19 +313,19 @@ impl Session {
                 for decal in input.decals {
                     decals.push(MarkingSpec {
                         items: items(decal.items, &mut artwork)?,
-                        area: decal.area,
+                        area: decal.area.into(),
                         finish: decal.finish,
-                        min_text_height_mm: decal.min_text_height_mm,
-                        placement: decal.placement,
+                        min_text_height_nm: decal.min_text_height_mm.map(|l| l.0),
+                        placement: decal.placement.into(),
                         decals: Vec::new(),
                     });
                 }
                 let spec = MarkingSpec {
                     items: items(input.items, &mut artwork)?,
-                    area: input.area,
+                    area: input.area.into(),
                     finish: input.finish,
-                    min_text_height_mm: input.min_text_height_mm,
-                    placement: input.placement,
+                    min_text_height_nm: input.min_text_height_mm.map(|l| l.0),
+                    placement: input.placement.into(),
                     decals,
                 };
                 if let Some(finding) =

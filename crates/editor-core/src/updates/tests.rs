@@ -1176,8 +1176,8 @@ fn package_details_name_each_physical_change() {
         },
     };
     c.placement = ModelPlacement {
-        translation: [0.0, 0.0, 0.05],
-        rotation_deg: [0.0, 0.0, 90.0],
+        translation_nm: crate::tests::support::nm3([0.0, 0.0, 0.05]),
+        rotation_mdeg: [0, 0, 90_000].map(crate::units::Angle::normalized),
     };
     let lines = package_details(&a, &c);
     assert_eq!(lines.len(), 2, "{lines:?}");

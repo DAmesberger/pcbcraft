@@ -33,7 +33,7 @@ fn file_source() -> PartModelSource {
                 file_name: "nut.solidcraft".into(),
             },
             format: ModelFormat::Solidcraft,
-            bounds_mm: [[-2.5, -2.5, 0.0], [2.5, 2.5, 3.0]],
+            bounds_nm: crate::tests::support::nm_bounds([[-2.5, -2.5, 0.0], [2.5, 2.5, 3.0]]),
             provenance: crate::library::model3d::ModelProvenance {
                 record: crate::library::Provenance {
                     licence: Some("MIT OR Apache-2.0".into()),
@@ -59,7 +59,7 @@ fn nut(height: f64, pads: PadUse) -> PartSpec {
         model: file_source(),
         values: BTreeMap::from([("height".to_owned(), PartValue::Mm(height))]),
         derived: PartDerived {
-            bounds_mm: [[-2.5, -2.5, 0.0], [2.5, 2.5, height]],
+            bounds_nm: crate::tests::support::nm_bounds([[-2.5, -2.5, 0.0], [2.5, 2.5, height]]),
             bodies: 1,
             surfaces: vec![],
         },
@@ -84,7 +84,7 @@ fn heatsink() -> PartSpec {
         source: "finned-heatsink".into(),
         values: BTreeMap::new(),
         derived: PartDerived {
-            bounds_mm: [[-10.0, -10.0, 0.0], [10.0, 10.0, 10.0]],
+            bounds_nm: crate::tests::support::nm_bounds([[-10.0, -10.0, 0.0], [10.0, 10.0, 10.0]]),
             bodies: 7,
             surfaces: vec![],
         },

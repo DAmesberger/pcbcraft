@@ -7,8 +7,9 @@
 use super::package_form::PackageForm;
 use super::{Datum, PackageDefinition};
 use crate::diagnostics::{Error, Result};
-use crate::geometry::{Transform3, finite_within, is_quarter_turn};
+use crate::geometry::{Transform3, finite_within};
 use crate::materials::MaterialId;
+use crate::units::{self, Angle, MILLIDEGREES_PER_TURN, Nm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -100,13 +101,20 @@ impl PartValue {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PartDerived {
-    /// Union of the bodies in the model frame, mm.
-    pub bounds_mm: [[f64; 3]; 2],
+    /// Union of the bodies in the model frame, `[min, max]`.
+    pub bounds_nm: [[Nm; 3]; 2],
     pub bodies: u32,
     /// Marking surfaces from the part's `marking-*` construction planes,
     /// model frame; the first is the default area.
     #[serde(default)]
     pub surfaces: Vec<super::marking::surface::AnchorInfo>,
+}
+
+impl PartDerived {
+    /// The bounds `[min, max]`, mm.
+    pub fn bounds(&self) -> [[f64; 3]; 2] {
+        super::model3d::bounds_mm(self.bounds_nm)
+    }
 }
 
 /// A package's part file: an exact Model revision (format `solidcraft`),
@@ -154,8 +162,8 @@ impl PartFileModel {
             }
         }
         let d = &self.derived;
-        let [lo, hi] = d.bounds_mm;
-        if !(finite_within(&lo) && finite_within(&hi)) || (0..3).any(|i| hi[i] <= lo[i]) {
+        let [lo, hi] = d.bounds_nm;
+        if (0..3).any(|i| hi[i] <= lo[i]) {
             out.push("the derived bounds must be finite with positive size".into());
         }
         if d.bodies == 0 || d.bodies > MAX_PART_BODIES {
@@ -182,12 +190,9 @@ impl PartFileModel {
             }
             let ok = match &s.geometry {
                 SurfaceGeometry::Plane(a) => {
-                    finite_within(&a.origin)
-                        && finite_within(&a.normal)
+                    finite_within(&a.normal)
                         && finite_within(&a.u_axis)
-                        && a.size_mm
-                            .iter()
-                            .all(|v| v.is_finite() && *v > 0.0 && *v <= MAX_PART_LITERAL)
+                        && a.size_nm.iter().all(|v| *v > Nm::ZERO)
                 }
                 SurfaceGeometry::Cylinder(_) => false,
             };
@@ -205,7 +210,7 @@ impl PartFileModel {
     pub fn default_area(&self) -> Option<[f64; 2]> {
         use super::marking::surface::SurfaceGeometry;
         self.derived.surfaces.iter().find_map(|s| match s.geometry {
-            SurfaceGeometry::Plane(a) => Some(a.size_mm),
+            SurfaceGeometry::Plane(a) => Some(a.size()),
             SurfaceGeometry::Cylinder(_) => None,
         })
     }
@@ -351,30 +356,101 @@ pub fn default_material(form: &PackageForm, role: BodyRole) -> MaterialId {
     }
 }
 
-/// The model's rigid placement in the package datum frame: translation in
-/// mm, then rotation in degrees, intrinsic X → Y → Z. Quarter turns are
-/// evaluated exactly.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+/// The model's rigid placement in the package datum frame: a translation,
+/// then a rotation, intrinsic X → Y → Z. Stored in whole nanometres and
+/// millidegrees (each angle reduced to one turn, the same rotation);
+/// computed in millimetres and degrees ([`Self::translation`],
+/// [`Self::rotation_deg`]) and stored again through the one crossing
+/// ([`Self::from_mm`]). Commands and replies carry millimetres and degrees
+/// ([`ModelPlacementParams`]). Quarter turns are evaluated exactly.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ModelPlacement {
-    pub translation: [f64; 3],
-    pub rotation_deg: [f64; 3],
+    pub translation_nm: [Nm; 3],
+    pub rotation_mdeg: [Angle; 3],
 }
 
 impl ModelPlacement {
-    pub fn finite(&self) -> bool {
-        finite_within(&self.translation) && finite_within(&self.rotation_deg)
+    /// A computed placement, through the one crossing into stored lengths
+    /// and angles.
+    pub fn from_mm(translation: [f64; 3], rotation_deg: [f64; 3]) -> Result<Self> {
+        let [x, y, z] = rotation_deg;
+        Ok(Self {
+            translation_nm: super::model3d::triple_nm(translation)?,
+            rotation_mdeg: [
+                Angle::from_degrees_f64_rounded(x)?,
+                Angle::from_degrees_f64_rounded(y)?,
+                Angle::from_degrees_f64_rounded(z)?,
+            ],
+        })
+    }
+
+    /// The translation, mm.
+    pub fn translation(&self) -> [f64; 3] {
+        self.translation_nm.map(Nm::to_mm_f64)
+    }
+
+    /// The rotation about x, y and z, degrees (0–360).
+    pub fn rotation_deg(&self) -> [f64; 3] {
+        self.rotation_mdeg.map(Angle::to_degrees_f64)
     }
 
     /// Every rotation angle a whole quarter turn.
     pub fn quarter_turns(&self) -> bool {
-        self.rotation_deg.iter().all(|d| is_quarter_turn(*d))
+        self.rotation_mdeg
+            .iter()
+            .all(|a| a.millidegrees() % (MILLIDEGREES_PER_TURN / 4) == 0)
     }
 
     /// Model frame → datum frame.
     pub fn transform(&self) -> Transform3 {
-        Transform3::translation(self.translation)
-            .then(&Transform3::intrinsic_xyz(self.rotation_deg))
+        Transform3::translation(self.translation())
+            .then(&Transform3::intrinsic_xyz(self.rotation_deg()))
+    }
+}
+
+/// The wire form of [`ModelPlacement`]: millimetres and degrees. Written by
+/// hand, not derived, because the payloads name the turn `rotation_deg`
+/// (the derive would drop the suffix).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelPlacementParams {
+    /// Translation in mm.
+    pub translation: [units::Length; 3],
+    /// Rotation about x, y and z in degrees, intrinsic X → Y → Z.
+    pub rotation_deg: [units::Degrees; 3],
+}
+
+impl From<ModelPlacement> for ModelPlacementParams {
+    fn from(p: ModelPlacement) -> Self {
+        Self {
+            translation: p.translation_nm.map(units::Length),
+            rotation_deg: p.rotation_mdeg.map(units::Degrees),
+        }
+    }
+}
+
+impl From<ModelPlacementParams> for ModelPlacement {
+    fn from(p: ModelPlacementParams) -> Self {
+        Self {
+            translation_nm: p.translation.map(|l| l.0),
+            rotation_mdeg: p.rotation_deg.map(|d| d.0),
+        }
+    }
+}
+
+/// Serde adapter: a [`ModelPlacement`] in a command payload or reply takes
+/// the millimetre wire form ([`ModelPlacementParams`]).
+pub mod model_placement_mm {
+    use super::{ModelPlacement, ModelPlacementParams};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(p: &ModelPlacement, s: S) -> Result<S::Ok, S::Error> {
+        ModelPlacementParams::from(*p).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<ModelPlacement, D::Error> {
+        ModelPlacementParams::deserialize(d).map(ModelPlacement::from)
     }
 }
 
@@ -424,7 +500,12 @@ pub enum PackageEdit {
         PackageForm,
     ),
     SetModel(PackageModel),
-    SetPlacement(ModelPlacement),
+    /// The placement in millimetres and degrees.
+    SetPlacement(
+        #[serde(with = "model_placement_mm")]
+        #[schemars(with = "ModelPlacementParams")]
+        ModelPlacement,
+    ),
     /// Computed into a [`ModelPlacement`] (`package_fit::apply_quick`).
     ApplyQuick(QuickAction),
 }
@@ -468,15 +549,8 @@ pub fn edit_package(
                 }
             }
             PackageEdit::SetModel(model) => out.model = model.clone(),
-            PackageEdit::SetPlacement(placement) => {
-                if !placement.finite() {
-                    return Err(Error::Invalid(
-                        "package.placement: placement values must be finite and within ±10000"
-                            .into(),
-                    ));
-                }
-                out.placement = *placement;
-            }
+            // Whole nanometres and millidegrees: in range by type.
+            PackageEdit::SetPlacement(placement) => out.placement = *placement,
             // Without a footprint here, the pad-relative actions refuse;
             // `package_fit::edit_package_in` supplies it.
             PackageEdit::ApplyQuick(action) => {
@@ -500,35 +574,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn model_frame_composes_datum_then_placement() {
+    fn model_frame_composes_datum_then_placement() -> Result<()> {
         let datum = Datum {
             offset: [1.0, 2.0],
             rotation_deg: 90.0,
         };
-        let placement = ModelPlacement {
-            translation: [1.0, 0.0, 0.5],
-            rotation_deg: [0.0; 3],
-        };
+        let placement = ModelPlacement::from_mm([1.0, 0.0, 0.5], [0.0; 3])?;
         // The placement's +x lies along the datum's rotated axis (+y).
         let p = model_frame(&datum, &placement).apply([0.0; 3]);
         assert_eq!(p, [1.0, 3.0, 0.5]);
+        Ok(())
     }
 
     #[test]
-    fn edits_apply_in_order_and_refuse_without_change() {
+    fn edits_apply_in_order_and_refuse_without_change() -> Result<()> {
         let package = PackageDefinition::default();
-        let placement = ModelPlacement {
-            translation: [0.0, 0.0, 0.1],
-            rotation_deg: [0.0, 0.0, 90.0],
-        };
+        let placement = ModelPlacement::from_mm([0.0, 0.0, 0.1], [0.0, 0.0, 90.0])?;
         let edited = edit_package(&package, &[PackageEdit::SetPlacement(placement)]);
         assert_eq!(edited.map(|p| p.placement).ok(), Some(placement));
-        let bad = ModelPlacement {
-            translation: [f64::NAN, 0.0, 0.0],
-            rotation_deg: [0.0; 3],
-        };
-        assert!(edit_package(&package, &[PackageEdit::SetPlacement(bad)]).is_err());
+        // A placement that is not finite or beyond the stored range never
+        // reaches the edit: the wire refuses it.
+        assert!(ModelPlacement::from_mm([f64::NAN, 0.0, 0.0], [0.0; 3]).is_err());
+        let bad = serde_json::json!({"edit": "set_placement", "value": {
+            "translation": [1.0e7, 0.0, 0.0], "rotation_deg": [0.0, 0.0, 0.0]}});
+        assert!(serde_json::from_value::<PackageEdit>(bad).is_err());
         assert!(edit_package(&package, &[]).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn a_set_placement_edit_carries_millimetres_and_degrees() -> Result<()> {
+        let edit = serde_json::json!({"edit": "set_placement", "value": {
+            "translation": [0.0, 0.5, -0.1], "rotation_deg": [-90.0, 0.0, 450.0]}});
+        let PackageEdit::SetPlacement(p) = serde_json::from_value::<PackageEdit>(edit.clone())
+            .map_err(|e| Error::Invalid(e.to_string()))?
+        else {
+            return Err(Error::Invalid("not a placement".into()));
+        };
+        assert_eq!(p.translation(), [0.0, 0.5, -0.1]);
+        // Stored reduced to one turn: the same rotation.
+        assert_eq!(p.rotation_deg(), [270.0, 0.0, 90.0]);
+        let back = serde_json::to_value(PackageEdit::SetPlacement(p))
+            .map_err(|e| Error::Invalid(e.to_string()))?;
+        assert_eq!(
+            back["value"]["translation"],
+            serde_json::json!([0.0, 0.5, -0.1])
+        );
+        Ok(())
     }
 }
 
@@ -561,15 +653,12 @@ mod frame_tests {
     }
 
     #[test]
-    fn quarter_turn_frames_are_exact_and_compose() {
+    fn quarter_turn_frames_are_exact_and_compose() -> Result<()> {
         let datum = Datum {
             offset: [0.5, -0.25],
             rotation_deg: -90.0,
         };
-        let placement = ModelPlacement {
-            translation: [0.0, 0.0, 0.1],
-            rotation_deg: [90.0, 180.0, 270.0],
-        };
+        let placement = ModelPlacement::from_mm([0.0, 0.0, 0.1], [90.0, 180.0, 270.0])?;
         assert!(placement.quarter_turns());
         let m = model_frame(&datum, &placement);
         for row in m.rotation {
@@ -588,10 +677,11 @@ mod frame_tests {
             [d[0] + 0.5, d[1] - 0.25, d[2]]
         };
         assert_eq!(m.apply(p), by_hand);
+        Ok(())
     }
 
     #[test]
-    fn the_envelope_outline_follows_the_model_frame() {
+    fn the_envelope_outline_follows_the_model_frame() -> Result<()> {
         let mut package = PackageDefinition {
             envelope_nm: [nm(4.0), nm(2.0), nm(1.0)],
             ..PackageDefinition::default()
@@ -601,18 +691,13 @@ mod frame_tests {
         let o = footprint.envelope_outline(&package);
         assert_eq!((o.min, o.max), ([-1.0, -1.0], [3.0, 1.0]));
         // A quarter turn about z and a placement shift both apply.
-        package.placement = ModelPlacement {
-            translation: [0.0, 0.5, 0.0],
-            rotation_deg: [0.0, 0.0, 90.0],
-        };
+        package.placement = ModelPlacement::from_mm([0.0, 0.5, 0.0], [0.0, 0.0, 90.0])?;
         let o = footprint.envelope_outline(&package);
         assert_eq!((o.min, o.max), ([0.0, -1.5], [2.0, 2.5]));
         // Standing the model up (90° about x) shows its height as width.
-        package.placement = ModelPlacement {
-            translation: [0.0; 3],
-            rotation_deg: [90.0, 0.0, 0.0],
-        };
+        package.placement = ModelPlacement::from_mm([0.0; 3], [90.0, 0.0, 0.0])?;
         let o = footprint.envelope_outline(&package);
         assert_eq!((o.min, o.max), ([-1.0, -1.0], [3.0, 0.0]));
+        Ok(())
     }
 }

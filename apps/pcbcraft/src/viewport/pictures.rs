@@ -1167,7 +1167,7 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
             },
             MarkingItem::Text {
                 template: pcbcraft_core::library::marking::Template("LOW ESR".into()),
-                height_mm: Some(0.9),
+                height_nm: pcbcraft_core::units::Nm::from_mm_f64_rounded(0.9).ok(),
                 align: Default::default(),
             },
         ],
@@ -1178,7 +1178,8 @@ fn write_marking_pictures() -> Result<(), Box<dyn std::error::Error>> {
         decals: vec![MarkingSpec {
             items: vec![MarkingItem::Artwork {
                 svg: vent_hash,
-                size_mm: [2.6, 2.6],
+                size_nm: [pcbcraft_core::units::Nm::from_mm_f64_rounded(2.6).unwrap_or_default();
+                    2],
                 anchor: Default::default(),
                 licence: Some("CC0-1.0".into()),
             }],

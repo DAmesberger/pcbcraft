@@ -11,26 +11,35 @@
 pub mod codes;
 mod layout;
 pub mod matrix;
+mod params;
 pub mod surface;
 mod template;
 #[cfg(test)]
 mod tests;
 
+use super::package_form::const_nm;
 use crate::diagnostics::{Finding, ObjectRef, Result, Stage};
 use crate::ids::{ContentHash, DefinitionId, FieldRef, MAX_LABEL};
 use crate::materials::MaterialId;
+use crate::units::{Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub use codes::CodeScheme;
 pub use matrix::{Ecc, Symbol, Symbology};
+pub use params::{
+    AreaChoiceParams, InstanceMarkingParams, MarkingItemParams, MarkingSpecParams, PlacementParams,
+    WrapParams, instance_mm, placement_mm,
+};
 pub use surface::{BoxFace, Chart, Placement, SurfaceGeometry, SurfaceRef, Wrap};
 
 /// Further decals one marking spec carries, each on its own surface.
 pub const MAX_DECALS: usize = 4;
 /// Largest generated 2D code side, mm.
 pub const MAX_CODE_MM: f64 = 50.0;
+/// [`MAX_CODE_MM`] as stored.
+pub const MAX_CODE_NM: Nm = const_nm(50_000_000);
 
 /// Items one marking spec lists.
 pub const MAX_MARKING_ITEMS: usize = 8;
@@ -56,6 +65,8 @@ pub const AREA_MARGIN: f64 = 0.05;
 pub const MAX_RENDERED_LINE: usize = 128;
 /// Largest marking area side, mm (bounds arithmetic, not a rule).
 pub const MAX_AREA_MM: f64 = 1000.0;
+/// [`MAX_AREA_MM`] as stored.
+pub const MAX_AREA_NM: Nm = const_nm(1_000_000_000);
 /// Media type of packed marking artwork.
 pub const ARTWORK_MEDIA_TYPE: &str = "image/svg+xml";
 /// Bytes of one packed artwork file (the SVG reader's limit).
@@ -102,15 +113,16 @@ pub enum PolarityMark {
     Stripe,
 }
 
-/// One item of a marking.
+/// One item of a marking. Sizes are stored in whole nanometres; commands
+/// carry millimetres ([`MarkingItemParams`]).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "item", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MarkingItem {
-    /// Auto-fit to the area when `height_mm` is `None`.
+    /// Auto-fit to the area when `height_nm` is `None`.
     Text {
         template: Template,
         #[serde(default)]
-        height_mm: Option<f64>,
+        height_nm: Option<Nm>,
         #[serde(default)]
         align: Align,
     },
@@ -122,7 +134,8 @@ pub enum MarkingItem {
     /// (`marking.artwork`). Pcbcraft ships no vendor logos.
     Artwork {
         svg: ContentHash,
-        size_mm: [f64; 2],
+        /// Width and height.
+        size_nm: [Nm; 2],
         #[serde(default)]
         anchor: Anchor,
         /// The artwork's licence (an SPDX id or the owner's terms), at
@@ -143,12 +156,12 @@ pub enum MarkingItem {
     },
     /// A generated 2D code (QR) whose payload is a text template over the
     /// instance's fields (`{designator}`, `{field:<id>}`, `{var:lot}`),
-    /// `size_mm` the symbol's side without its quiet zone.
+    /// `size_nm` the symbol's side without its quiet zone.
     Code2d {
         #[serde(default)]
         symbology: Symbology,
         payload: Template,
-        size_mm: f64,
+        size_nm: Nm,
         #[serde(default)]
         anchor: Anchor,
         #[serde(default)]
@@ -174,14 +187,15 @@ fn default_true() -> bool {
 /// The marking area: the model's (generated family top face or
 /// `ModelDefinition::marking_area`), or an explicit rectangle on the top
 /// face in the package frame.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(tag = "area", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AreaChoice {
     #[default]
     FromModel,
     Explicit {
-        centre: [f64; 2],
-        size_mm: [f64; 2],
+        centre: PointNm,
+        /// Length and width.
+        size_nm: [Nm; 2],
     },
 }
 
@@ -266,10 +280,10 @@ pub struct MarkingSpec {
     pub area: AreaChoice,
     #[serde(default)]
     pub finish: Finish,
-    /// Smallest legible text height, mm; [`DEFAULT_MIN_TEXT_HEIGHT_MM`]
-    /// when `None`.
+    /// Smallest legible text height; [`DEFAULT_MIN_TEXT_HEIGHT_MM`] when
+    /// `None`.
     #[serde(default)]
-    pub min_text_height_mm: Option<f64>,
+    pub min_text_height_nm: Option<Nm>,
     /// The surface the marking maps onto and how it is placed there
     /// ([`surface`]); the model's top marking area when default.
     #[serde(default, skip_serializing_if = "Placement::is_default")]
@@ -282,6 +296,12 @@ pub struct MarkingSpec {
 }
 
 impl MarkingSpec {
+    /// The smallest legible text height, mm.
+    pub fn min_text_height_mm(&self) -> f64 {
+        self.min_text_height_nm
+            .map_or(DEFAULT_MIN_TEXT_HEIGHT_MM, Nm::to_mm_f64)
+    }
+
     /// Persistence bounds.
     pub fn within_bounds(&self) -> bool {
         self.items.len() <= MAX_MARKING_ITEMS
@@ -482,8 +502,14 @@ pub struct MarkingLayout {
     pub finish: Finish,
     /// Advisory findings (`marking.unrepresentable`, `marking.does_not_fit`).
     pub findings: Vec<Finding>,
-    /// Where the layout goes ([`MarkingSpec::placement`]).
-    #[serde(default, skip_serializing_if = "Placement::is_default")]
+    /// Where the layout goes ([`MarkingSpec::placement`]); a reply carries
+    /// it in millimetres ([`PlacementParams`]).
+    #[serde(
+        default,
+        skip_serializing_if = "Placement::is_default",
+        with = "placement_mm"
+    )]
+    #[schemars(with = "PlacementParams")]
     pub placement: Placement,
     /// The layouts of the spec's further decals.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -565,12 +591,14 @@ pub fn layout_with(
                 centre,
                 span,
                 along_u,
-            } if s.placement.rotation_deg.abs() < 1e-9 && !s.placement.mirror => Chart::Wrap {
-                radius_mm: radius_mm / s.placement.scale.max(1e-9),
-                centre,
-                span,
-                along_u,
-            },
+            } if s.placement.rotation_mdeg == crate::units::Angle::ZERO && !s.placement.mirror => {
+                Chart::Wrap {
+                    radius_mm: radius_mm / s.placement.scale.max(1e-9),
+                    centre,
+                    span,
+                    along_u,
+                }
+            }
             _ => Chart::Flat,
         };
         let mut laid = layout::run(s, &inputs)?;
@@ -598,7 +626,7 @@ pub fn surface_region(
 ) -> Option<([f64; 2], Chart)> {
     match &placement.on {
         SurfaceRef::Model => match area {
-            AreaChoice::Explicit { size_mm, .. } => Some((size_mm, Chart::Flat)),
+            AreaChoice::Explicit { size_nm, .. } => Some((size_nm.map(Nm::to_mm_f64), Chart::Flat)),
             AreaChoice::FromModel => package
                 .and_then(|p| package_area(library, p))
                 .map(|a| (a, Chart::Flat)),
@@ -606,7 +634,7 @@ pub fn surface_region(
         SurfaceRef::Face { face } => {
             let package = package?;
             let envelope = package.form.envelope().unwrap_or(package.envelope());
-            let size = face.of_box(envelope).size_mm;
+            let size = face.of_box_size(envelope);
             size.iter()
                 .all(|s| positive(*s))
                 .then_some((size, Chart::Flat))
@@ -620,6 +648,11 @@ pub fn surface_region(
 
 fn positive(value: f64) -> bool {
     value.is_finite() && value > 0.0 && value <= MAX_AREA_MM
+}
+
+/// A stored size above zero and at most [`MAX_AREA_NM`].
+fn positive_nm(value: Nm) -> bool {
+    value > Nm::ZERO && value <= MAX_AREA_NM
 }
 
 /// Publish findings of a marking spec (`marking.template`): bounds,
@@ -667,14 +700,14 @@ fn one_spec_problems(spec: &MarkingSpec) -> Vec<String> {
     if spec.items.len() > MAX_MARKING_ITEMS {
         problems.push(format!("a marking lists at most {MAX_MARKING_ITEMS} items"));
     }
-    if spec.min_text_height_mm.is_some_and(|h| !positive(h)) {
+    if spec.min_text_height_nm.is_some_and(|h| !positive_nm(h)) {
         problems.push("the minimum text height must be a positive size".into());
     }
-    if let AreaChoice::Explicit { centre, size_mm } = spec.area
-        && (!size_mm.iter().all(|s| positive(*s))
-            || !centre
+    if let AreaChoice::Explicit { centre, size_nm } = spec.area
+        && (!size_nm.iter().all(|s| positive_nm(*s))
+            || ![centre.x_nm, centre.y_nm]
                 .iter()
-                .all(|c| c.is_finite() && c.abs() <= MAX_AREA_MM))
+                .all(|c| c.abs() <= MAX_AREA_NM))
     {
         problems.push("the explicit marking area needs a finite centre and positive size".into());
     }
@@ -683,7 +716,7 @@ fn one_spec_problems(spec: &MarkingSpec) -> Vec<String> {
         match item {
             MarkingItem::Text {
                 template,
-                height_mm,
+                height_nm,
                 ..
             } => {
                 if template.0.len() > MAX_TEMPLATE {
@@ -693,7 +726,7 @@ fn one_spec_problems(spec: &MarkingSpec) -> Vec<String> {
                 } else if let Err(problem) = template::parse(&template.0) {
                     problems.push(format!("item {n}: {problem} in \"{}\"", template.0));
                 }
-                if height_mm.is_some_and(|h| !positive(h)) {
+                if height_nm.is_some_and(|h| !positive_nm(h)) {
                     problems.push(format!("item {n}: the text height must be a positive size"));
                 }
             }
@@ -703,9 +736,9 @@ fn one_spec_problems(spec: &MarkingSpec) -> Vec<String> {
                 }
             }
             MarkingItem::Artwork {
-                size_mm, licence, ..
+                size_nm, licence, ..
             } => {
-                if !size_mm.iter().all(|s| positive(*s)) {
+                if !size_nm.iter().all(|s| positive_nm(*s)) {
                     problems.push(format!("item {n}: artwork needs a positive size"));
                 }
                 if licence
@@ -718,7 +751,7 @@ fn one_spec_problems(spec: &MarkingSpec) -> Vec<String> {
                 }
             }
             MarkingItem::Code2d {
-                payload, size_mm, ..
+                payload, size_nm, ..
             } => {
                 if payload.0.len() > MAX_TEMPLATE {
                     problems.push(format!(
@@ -727,7 +760,7 @@ fn one_spec_problems(spec: &MarkingSpec) -> Vec<String> {
                 } else if let Err(problem) = template::parse(&payload.0) {
                     problems.push(format!("item {n}: {problem} in \"{}\"", payload.0));
                 }
-                if !(size_mm.is_finite() && *size_mm > 0.0 && *size_mm <= MAX_CODE_MM) {
+                if !(*size_nm > Nm::ZERO && *size_nm <= MAX_CODE_NM) {
                     problems.push(format!(
                         "item {n}: a 2D code's side is a positive size of at most {MAX_CODE_MM} mm"
                     ));
@@ -755,7 +788,7 @@ pub fn package_area(
         (PackageModel::Library(model), _) => library
             .model(model.model)
             .and_then(|m| m.definition.marking_area)
-            .map(|area| area.size_mm)?,
+            .map(|area| area.size())?,
         (PackageModel::PartFile(part), _) => part.default_area()?,
         (_, PackageForm::Chip(c)) => [c.length() - 2.0 * c.termination(), c.width()],
         (_, PackageForm::GullWing(g)) => [g.body_length(), g.body_width()],

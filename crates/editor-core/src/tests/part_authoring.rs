@@ -200,7 +200,7 @@ fn a_pad_table_makes_the_footprint_and_one_undo_step() -> Result<()> {
     // Everything spans x ±4.82 (slot land 4.32 + 0.5) and y −0.6 (land
     // 1.2 / 2) to 3.0 (slot 2 + land 1), so the middle is (0, 1.2).
     assert_eq!(report.envelope_moved_to, Some([0.0, 1.2, 0.0]));
-    assert_eq!(package_now.placement.translation, [0.0, 1.2, 0.0]);
+    assert_eq!(package_now.placement.translation(), [0.0, 1.2, 0.0]);
     // The 9 × 7 body there is x ±4.5, y −2.3 to 4.7. The courtyard adds
     // 0.25 and rounds out to 0.05: x ±5.10 from the land, y −2.55 to 4.95.
     let yard = courtyard(&built)?;
@@ -383,15 +383,12 @@ fn a_set_placement_stays_and_a_plain_edit_is_stored_as_given() -> Result<()> {
         },
     )?;
     assert_eq!(
-        package(&engine, f.package)?.placement.translation,
+        package(&engine, f.package)?.placement.translation(),
         [11.0, 0.0, 0.0]
     );
 
     // A placement someone set stays when a table rebuilds the pads.
-    let set = ModelPlacement {
-        translation: [1.0, 0.0, 0.0],
-        rotation_deg: [0.0; 3],
-    };
+    let set = ModelPlacement::from_mm([1.0, 0.0, 0.0], [0.0; 3])?;
     library(
         &mut engine,
         LibraryCommand::EditPackage {
@@ -421,7 +418,7 @@ fn a_typed_form_or_another_model_keeps_its_placement() -> Result<()> {
     };
     let generic = PackageDefinition::default();
     let moved = envelope_default(&generic, &footprint)?.ok_or(Error::NotFound("moved".into()))?;
-    assert_eq!(moved.translation, [5.0, 0.0, 0.0]);
+    assert_eq!(moved.translation(), [5.0, 0.0, 0.0]);
     let typed = PackageDefinition {
         form: PackageForm::Chip(Box::new(ChipForm::new(
             ChipKind::Resistor,
@@ -467,7 +464,7 @@ fn a_datum_offset_moves_the_body_to_the_same_place() -> Result<()> {
     let placement =
         envelope_default(&package, &footprint)?.ok_or(Error::NotFound("moved".into()))?;
     // In the datum frame the pad centre is (5 − 1, 2 − 1).
-    assert_eq!(placement.translation, [4.0, 1.0, 0.0]);
+    assert_eq!(placement.translation(), [4.0, 1.0, 0.0]);
     // Through the one frame the outline is centred on the pad again.
     let mut placed = package.clone();
     placed.placement = placement;

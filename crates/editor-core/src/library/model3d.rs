@@ -17,6 +17,7 @@ use super::{MAX_LABEL, printable};
 use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
 use crate::ids::{ContentHash, DefinitionId, ModelRef, PackageTerminalId};
 use crate::materials::MaterialId;
+use crate::units::Nm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -74,8 +75,8 @@ pub struct SourceFrame {
     /// Millimetres per source unit.
     pub unit_mm: f64,
     pub up: UpAxis,
-    /// Added after scaling, mm.
-    pub origin_offset: [f64; 3],
+    /// Added after scaling.
+    pub origin_offset_nm: [Nm; 3],
 }
 
 impl Default for SourceFrame {
@@ -83,9 +84,71 @@ impl Default for SourceFrame {
         Self {
             unit_mm: 1.0,
             up: UpAxis::Z,
-            origin_offset: [0.0; 3],
+            origin_offset_nm: [Nm::ZERO; 3],
         }
     }
+}
+
+impl SourceFrame {
+    /// The offset added after scaling, mm.
+    pub fn origin_offset(&self) -> [f64; 3] {
+        self.origin_offset_nm.map(Nm::to_mm_f64)
+    }
+}
+
+/// The wire form of [`SourceFrame`]: the origin offset in millimetres.
+/// Written by hand, not derived, because the payloads name it
+/// `origin_offset` (the stored name has no unit suffix the derive could
+/// drop).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SourceFrameParams {
+    /// Millimetres per source unit.
+    pub unit_mm: f64,
+    pub up: UpAxis,
+    /// Added after scaling, mm.
+    pub origin_offset: [crate::units::Length; 3],
+}
+
+impl From<SourceFrame> for SourceFrameParams {
+    fn from(f: SourceFrame) -> Self {
+        Self {
+            unit_mm: f.unit_mm,
+            up: f.up,
+            origin_offset: f.origin_offset_nm.map(crate::units::Length),
+        }
+    }
+}
+
+impl From<SourceFrameParams> for SourceFrame {
+    fn from(f: SourceFrameParams) -> Self {
+        Self {
+            unit_mm: f.unit_mm,
+            up: f.up,
+            origin_offset_nm: f.origin_offset.map(|l| l.0),
+        }
+    }
+}
+
+/// A computed point or size, mm, as stored: the one crossing
+/// ([`Nm::from_mm_f64_rounded`]) for each coordinate.
+pub fn triple_nm(mm: [f64; 3]) -> Result<[Nm; 3]> {
+    let [x, y, z] = mm;
+    Ok([
+        Nm::from_mm_f64_rounded(x)?,
+        Nm::from_mm_f64_rounded(y)?,
+        Nm::from_mm_f64_rounded(z)?,
+    ])
+}
+
+/// Computed bounds `[min, max]`, mm, as stored ([`triple_nm`]).
+pub fn bounds_nm(mm: [[f64; 3]; 2]) -> Result<[[Nm; 3]; 2]> {
+    Ok([triple_nm(mm[0])?, triple_nm(mm[1])?])
+}
+
+/// Stored bounds `[min, max]` in millimetres.
+pub fn bounds_mm(nm: [[Nm; 3]; 2]) -> [[f64; 3]; 2] {
+    nm.map(|p| p.map(Nm::to_mm_f64))
 }
 
 /// A body's material: a cited built-in or one of the model's own.
@@ -136,17 +199,57 @@ pub struct LeadTag {
     pub designation: String,
     /// Lowest point of the tagged geometry in the model frame, derived at
     /// import and rechecked on reopen.
-    pub contact: [f64; 3],
+    pub contact_nm: [Nm; 3],
 }
 
-/// The top face area markings use.
+impl LeadTag {
+    /// The contact point, mm.
+    pub fn contact(&self) -> [f64; 3] {
+        self.contact_nm.map(Nm::to_mm_f64)
+    }
+}
+
+/// The top face area markings use: a plane at `origin` with the unit
+/// `normal` and `u_axis`, `size` along u and v. Lengths are stored in
+/// nanometres; [`Self::origin`] and [`Self::size`] give millimetres.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MarkingArea {
-    pub origin: [f64; 3],
+    pub origin_nm: [Nm; 3],
     pub normal: [f64; 3],
     pub u_axis: [f64; 3],
-    pub size_mm: [f64; 2],
+    pub size_nm: [Nm; 2],
+}
+
+impl MarkingArea {
+    /// An area from millimetres, through the one crossing into stored
+    /// lengths ([`Nm::from_mm_f64_rounded`]).
+    pub fn from_mm(
+        origin: [f64; 3],
+        normal: [f64; 3],
+        u_axis: [f64; 3],
+        size: [f64; 2],
+    ) -> Result<Self> {
+        Ok(Self {
+            origin_nm: triple_nm(origin)?,
+            normal,
+            u_axis,
+            size_nm: [
+                Nm::from_mm_f64_rounded(size[0])?,
+                Nm::from_mm_f64_rounded(size[1])?,
+            ],
+        })
+    }
+
+    /// The origin, mm.
+    pub fn origin(&self) -> [f64; 3] {
+        self.origin_nm.map(Nm::to_mm_f64)
+    }
+
+    /// The size along u and v, mm.
+    pub fn size(&self) -> [f64; 2] {
+        self.size_nm.map(Nm::to_mm_f64)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -165,9 +268,16 @@ pub struct ModelHints {
     #[serde(default)]
     pub pins: Option<u32>,
     #[serde(default)]
-    pub pitch_mm: Option<f64>,
+    pub pitch_nm: Option<Nm>,
     #[serde(default)]
     pub family: Option<String>,
+}
+
+impl ModelHints {
+    /// The pitch hint, mm.
+    pub fn pitch_mm(&self) -> Option<f64> {
+        self.pitch_nm.map(Nm::to_mm_f64)
+    }
 }
 
 /// Whether the model's licence allows sharing it.
@@ -207,8 +317,8 @@ pub struct ModelDefinition {
     pub format: ModelFormat,
     pub frame: SourceFrame,
     /// From inspection, rechecked on reopen (a mismatch refuses and names
-    /// the asset).
-    pub bounds_mm: [[f64; 3]; 2],
+    /// the asset): `[min, max]`.
+    pub bounds_nm: [[Nm; 3]; 2],
     pub bodies: Vec<ModelBody>,
     #[serde(default)]
     pub custom_materials: Vec<CustomMaterial>,
@@ -348,25 +458,21 @@ impl ModelDefinition {
                 ])
                 && m.emissive.is_none_or(|e| finite_all(&e))
         });
-        let area = self.marking_area.is_none_or(|a| {
-            finite_all(&a.origin)
-                && finite_all(&a.normal)
-                && finite_all(&a.u_axis)
-                && finite_all(&a.size_mm)
-        });
-        finite_all(&self.bounds_mm[0])
-            && finite_all(&self.bounds_mm[1])
-            && self.frame.unit_mm.is_finite()
-            && finite_all(&self.frame.origin_offset)
-            && self.leads.iter().all(|l| finite_all(&l.contact))
-            && self.hints.pitch_mm.is_none_or(|p| finite_all(&[p]))
-            && materials
-            && area
+        // Stored lengths are whole nanometres within ±2 m, finite by type.
+        let area = self
+            .marking_area
+            .is_none_or(|a| finite_all(&a.normal) && finite_all(&a.u_axis));
+        self.frame.unit_mm.is_finite() && materials && area
+    }
+
+    /// The bounds `[min, max]`, mm.
+    pub fn bounds(&self) -> [[f64; 3]; 2] {
+        bounds_mm(self.bounds_nm)
     }
 
     /// The bounds' length, width and height, mm.
     pub fn size_mm(&self) -> [f64; 3] {
-        let [lo, hi] = self.bounds_mm;
+        let [lo, hi] = self.bounds();
         [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]]
     }
 
@@ -427,8 +533,8 @@ impl ModelDefinition {
                 "The source frame needs a positive unit scale.".into(),
             ));
         }
-        let [lo, hi] = self.bounds_mm;
-        if (0..3).any(|i| hi[i].is_nan() || lo[i].is_nan() || hi[i] <= lo[i]) {
+        let [lo, hi] = self.bounds();
+        if (0..3).any(|i| hi[i] <= lo[i]) {
             out.push(block(
                 "model.bounds",
                 "The model bounds must have positive length, width and height.".into(),
@@ -445,8 +551,8 @@ impl ModelDefinition {
             if !unit(normal)
                 || !unit(u)
                 || dot(area.normal, area.u_axis).abs() > 1e-6
-                || area.size_mm.iter().any(|s| s.is_nan() || *s <= 0.0)
-                || !inside(area.origin)
+                || area.size_nm.iter().any(|s| *s <= Nm::ZERO)
+                || !inside(area.origin())
             {
                 out.push(block(
                     "model.bounds",
@@ -519,7 +625,7 @@ impl ModelDefinition {
                     format!("Lead ‘{}’ needs a printable designation.", lead.key),
                 ));
             }
-            if !inside(lead.contact) {
+            if !inside(lead.contact()) {
                 out.push(block(
                     "model.leads",
                     format!(
@@ -770,7 +876,7 @@ pub fn part_findings(
             Stage::Publish,
         ));
     }
-    let [lo, hi] = part.derived.bounds_mm;
+    let [lo, hi] = part.derived.bounds();
     let excess = (0..3)
         .map(|i| (hi[i] - lo[i]) - package.envelope()[i])
         .fold(f64::NEG_INFINITY, f64::max);

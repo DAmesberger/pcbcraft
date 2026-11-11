@@ -200,6 +200,10 @@ pub fn check() -> Result<()> {
 /// 10 November 2026).
 const SOLIDCRAFT: &str = "Solidcraft parameter: Solidcraft computes in f64 mm; converted only at the pcbcraft-solidcraft boundary";
 
+/// Why a computed reply value stays f64 millimetres.
+const REPLY: &str =
+    "a reply value, computed and never stored: replies carry millimetres (design §2.2)";
+
 /// Serialized f64 fields that are not stored lengths, permanently, with
 /// why: values that are not lengths or rotations, and Solidcraft
 /// parameters.
@@ -309,12 +313,32 @@ const NOT_LENGTHS: &[(&str, &str)] = &[
     ("library/model3d.rs MarkingArea.normal", "a unit direction"),
     ("library/model3d.rs MarkingArea.u_axis", "a unit direction"),
     (
+        "library/model3d.rs SourceFrameParams.unit_mm",
+        "the scale of a foreign file's unit, not a document length",
+    ),
+    (
         "library/model3d.rs SourceFrame.unit_mm",
         "the scale of a foreign file's unit, not a document length",
     ),
     (
         "library/package_model.rs PartValue::Number.0",
         "a dimensionless parameter value",
+    ),
+    ("library/marking.rs LaidElement::Artwork.origin", REPLY),
+    ("library/marking.rs LaidElement::Artwork.size_mm", REPLY),
+    ("library/marking.rs LaidElement::Bands.pitch_mm", REPLY),
+    ("library/marking.rs LaidElement::Matrix.module_mm", REPLY),
+    ("library/marking.rs LaidElement::Matrix.origin", REPLY),
+    ("library/marking.rs LaidElement::Polarity.origin", REPLY),
+    ("library/marking.rs LaidElement::Polarity.size_mm", REPLY),
+    ("library/marking.rs LaidText.height_mm", REPLY),
+    ("library/marking.rs LaidText.origin", REPLY),
+    ("library/package_fit.rs LeadFit.rms_mm", REPLY),
+    ("library/package_fit.rs LeadResidual.error_mm", REPLY),
+    ("library/marking/params.rs PlacementParams.scale", "a ratio"),
+    (
+        "library/marking/params.rs WrapParams.wrap_deg",
+        "the wire form of Wrap.wrap_mdeg: a sweep of up to a full turn in degrees, which units::Degrees cannot carry (it reduces 360° to 0)",
     ),
     ("model/stackup.rs Dielectric.dk", "a relative permittivity"),
 ];
@@ -398,41 +422,6 @@ const ALLOWED: &[(&str, Slice)] = &[
         "library/graphics/edit.rs GraphicEdit::Translate.delta",
         Slice::U2,
     ),
-    ("library/marking.rs AreaChoice::Explicit.centre", Slice::U2),
-    ("library/marking.rs AreaChoice::Explicit.size_mm", Slice::U2),
-    ("library/marking.rs LaidElement::Artwork.origin", Slice::U2),
-    ("library/marking.rs LaidElement::Artwork.size_mm", Slice::U2),
-    ("library/marking.rs LaidElement::Bands.pitch_mm", Slice::U2),
-    (
-        "library/marking.rs LaidElement::Matrix.module_mm",
-        Slice::U2,
-    ),
-    ("library/marking.rs LaidElement::Matrix.origin", Slice::U2),
-    ("library/marking.rs LaidElement::Polarity.origin", Slice::U2),
-    (
-        "library/marking.rs LaidElement::Polarity.size_mm",
-        Slice::U2,
-    ),
-    ("library/marking.rs LaidText.height_mm", Slice::U2),
-    ("library/marking.rs LaidText.origin", Slice::U2),
-    ("library/marking.rs MarkingItem::Artwork.size_mm", Slice::U2),
-    ("library/marking.rs MarkingItem::Code2d.size_mm", Slice::U2),
-    ("library/marking.rs MarkingItem::Text.height_mm", Slice::U2),
-    (
-        "library/marking.rs MarkingSpec.min_text_height_mm",
-        Slice::U2,
-    ),
-    ("library/marking/surface.rs CylinderArea.base", Slice::U2),
-    ("library/marking/surface.rs CylinderArea.length", Slice::U2),
-    ("library/marking/surface.rs CylinderArea.radius", Slice::U2),
-    ("library/marking/surface.rs Placement.offset_mm", Slice::U2),
-    (
-        "library/marking/surface.rs Placement.rotation_deg",
-        Slice::U2,
-    ),
-    ("library/marking/surface.rs Wrap.along_mm", Slice::U2),
-    ("library/marking/surface.rs Wrap.seam_deg", Slice::U2),
-    ("library/marking/surface.rs Wrap.wrap_deg", Slice::U2),
     (
         "library/mechanical.rs LandShape::Circle.diameter",
         Slice::U2,
@@ -445,25 +434,6 @@ const ALLOWED: &[(&str, Slice)] = &[
     ),
     ("library/mechanical.rs LandShape::Rect.size", Slice::U2),
     ("library/mechanical.rs MechanicalLand.at", Slice::U2),
-    ("library/model3d.rs LeadTag.contact", Slice::U2),
-    ("library/model3d.rs MarkingArea.origin", Slice::U2),
-    ("library/model3d.rs MarkingArea.size_mm", Slice::U2),
-    ("library/model3d.rs ModelDefinition.bounds_mm", Slice::U2),
-    ("library/model3d.rs ModelHints.pitch_mm", Slice::U2),
-    ("library/model3d.rs SourceFrame.origin_offset", Slice::U2),
-    ("library/package_fit.rs LeadFit.rms_mm", Slice::U2),
-    ("library/package_fit.rs LeadPair.lead", Slice::U2),
-    ("library/package_fit.rs LeadPair.pad_centre", Slice::U2),
-    ("library/package_fit.rs LeadResidual.error_mm", Slice::U2),
-    (
-        "library/package_model.rs ModelPlacement.rotation_deg",
-        Slice::U2,
-    ),
-    (
-        "library/package_model.rs ModelPlacement.translation",
-        Slice::U2,
-    ),
-    ("library/package_model.rs PartDerived.bounds_mm", Slice::U2),
     ("library/pad_table.rs HoleRow.at", Slice::U2),
     ("library/pad_table.rs HoleRow.diameter", Slice::U2),
     ("library/pad_table.rs PadRow.at", Slice::U2),

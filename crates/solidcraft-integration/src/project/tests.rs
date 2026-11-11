@@ -23,7 +23,7 @@ fn envelope_demo() -> Result<Project> {
         .clone();
     for package in &mut project.library.packages {
         package.definition.model = PackageModel::default();
-        package.definition.placement.translation = [0.0, 0.0, 0.05];
+        package.definition.placement.translation_nm = crate::test_units::nm3([0.0, 0.0, 0.05]);
     }
     Ok(project)
 }
@@ -51,7 +51,10 @@ fn fixture() -> Result<Project> {
     // Asymmetric offsets exercise the rigid bottom flip independently of the
     // symmetric body/pad shapes. This synthetic test replaces a snapshot to
     // exercise the adapter; production changes publish a new immutable revision.
-    project.library.packages[0].definition.placement.translation = [0.25, -0.4, 0.2];
+    project.library.packages[0]
+        .definition
+        .placement
+        .translation_nm = crate::test_units::nm3([0.25, -0.4, 0.2]);
     project.library.footprints[0].definition.datum.offset = [0.3, -0.4];
     for (placement, (position, layer)) in project
         .placements
@@ -377,7 +380,7 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
         .definition
         .clone();
     package.envelope_nm = [nm(4.0), nm(3.0), nm(2.0)];
-    package.placement.translation = [1.5, -2.0, 0.4];
+    package.placement.translation_nm = crate::test_units::nm3([1.5, -2.0, 0.4]);
     set_body(&mut package, None);
     let model = preview(&package)?;
     assert_eq!(model.geometry.len(), 1);
@@ -388,7 +391,7 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
     // A package declaring a chip-resistor body previews as one, with the
     // wrapped terminations and overcoat it shows on the board.
     package.envelope_nm = [nm(2.0), nm(1.25), nm(0.5)];
-    package.placement.translation = [0.0; 3];
+    package.placement.translation_nm = crate::test_units::nm3([0.0; 3]);
     set_body(&mut package, Some(ChipKind::Resistor));
     let chip = preview(&package)?;
     assert_eq!(chip.geometry[0].kind, BodyKind::ChipResistor);
@@ -1492,10 +1495,7 @@ fn an_envelope_follows_its_turned_placement_and_datum_like_its_2d_outline() -> R
     let mut project = envelope_demo()?;
     let package = &mut project.library.packages[0].definition;
     set_body(package, None);
-    package.placement = pcbcraft_core::library::ModelPlacement {
-        translation: [0.25, -0.4, 0.0],
-        rotation_deg: [90.0, 0.0, 90.0],
-    };
+    package.placement = crate::test_units::placement([0.25, -0.4, 0.0], [90.0, 0.0, 90.0]);
     let package = package.clone();
     let datum = pcbcraft_core::library::Datum {
         offset: [0.3, -0.4],
@@ -1918,9 +1918,10 @@ fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> 
     definition.leads = vec![LeadTag {
         key: lead_key(&seen)?,
         designation: "1".into(),
-        contact: [0.0; 3],
+        contact_nm: crate::test_units::nm3([0.0; 3]),
     }];
-    definition.leads[0].contact = models::imported::lead_contacts(&definition, &bytes)?[0];
+    definition.leads[0].contact_nm =
+        crate::test_units::nm3(models::imported::lead_contacts(&definition, &bytes)?[0]);
     definition.provenance.record.licence = Some("CC0-1.0".into());
     let mut project = Engine::demo()
         .map_err(|error| Error::Verification(error.to_string()))?

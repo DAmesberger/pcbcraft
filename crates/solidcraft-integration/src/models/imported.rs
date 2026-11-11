@@ -39,6 +39,7 @@ use pcbcraft_core::library::model3d::{
     BodyRole, CustomMaterial, LibraryModel, ModelDefinition, ModelFormat, ModelMaterial,
     SourceFrame, UpAxis,
 };
+use pcbcraft_core::units::Nm;
 use serde_json::json;
 use solidcraft_engine::doc::FeatureKind;
 use solidcraft_viewport::clear_coat::ClearCoat;
@@ -88,7 +89,7 @@ pub fn default_frame(format: ModelFormat) -> SourceFrame {
             ModelFormat::Gltf => UpAxis::Y,
             ModelFormat::Step | ModelFormat::Solidcraft => UpAxis::Z,
         },
-        origin_offset: [0.0; 3],
+        origin_offset_nm: [Nm::ZERO; 3],
     }
 }
 
@@ -99,7 +100,7 @@ pub fn reader_frame(format: ModelFormat) -> SourceFrame {
     SourceFrame {
         unit_mm: format_unit_mm(format),
         up: UpAxis::Z,
-        origin_offset: [0.0; 3],
+        origin_offset_nm: [Nm::ZERO; 3],
     }
 }
 
@@ -107,7 +108,7 @@ pub fn reader_frame(format: ModelFormat) -> SourceFrame {
 fn frame_scale(frame: &SourceFrame, format: ModelFormat) -> Result<f64> {
     let scale = frame.unit_mm / format_unit_mm(format);
     let offset_ok = frame
-        .origin_offset
+        .origin_offset()
         .iter()
         .all(|v| v.is_finite() && v.abs() <= 10_000.0);
     let scale_ok = scale.is_finite() && (1e-6..=1e6).contains(&scale) && scale > 1e-6;
@@ -127,7 +128,7 @@ pub fn frame_point(frame: &SourceFrame, format: ModelFormat, p: [f64; 3]) -> Res
         UpAxis::Z => [x, y, z],
         UpAxis::Y => [x, -z, y],
     };
-    let o = frame.origin_offset;
+    let o = frame.origin_offset();
     Ok([turned[0] + o[0], turned[1] + o[1], turned[2] + o[2]])
 }
 
@@ -376,10 +377,10 @@ pub(crate) fn add_import(
                     "name": format!("{label} up")}),
             )?;
         }
-        if frame.origin_offset.iter().any(|v| *v != 0.0) {
+        if frame.origin_offset().iter().any(|v| *v != 0.0) {
             native.call(
                 "solid.move",
-                json!({"bodies": names, "translate": frame.origin_offset,
+                json!({"bodies": names, "translate": frame.origin_offset(),
                     "name": format!("{label} origin")}),
             )?;
         }
@@ -900,11 +901,12 @@ pub fn build_library_model_cached(
     )?;
     let file = &model.asset.file_name;
     let built = bounds_of(native, &names)?;
-    if !(close(built[0], model.bounds_mm[0]) && close(built[1], model.bounds_mm[1])) {
+    if !(close(built[0], model.bounds()[0]) && close(built[1], model.bounds()[1])) {
         return Err(Error::Invalid(format!(
             "model.asset: {file} ({}) builds to bounds {built:?} mm, but the model records \
              {:?} mm",
-            model.asset.hash, model.bounds_mm
+            model.asset.hash,
+            model.bounds()
         )));
     }
     for (lead, found) in model
@@ -912,11 +914,12 @@ pub fn build_library_model_cached(
         .iter()
         .zip(contacts(native, model, &keys, &names)?)
     {
-        if !close(found, lead.contact) {
+        if !close(found, lead.contact()) {
             return Err(Error::Invalid(format!(
                 "model.leads: lead `{}` of {file} touches down at {found:?} mm, but the model \
                  records {:?} mm",
-                lead.designation, lead.contact
+                lead.designation,
+                lead.contact()
             )));
         }
     }
@@ -1002,11 +1005,6 @@ pub fn preview(
     bytes: &[u8],
     placement: &ModelPlacement,
 ) -> Result<Vec<Geometry>> {
-    if !placement.finite() {
-        return Err(Error::Invalid(
-            "package.placement: placement values must be finite and within ±10000".into(),
-        ));
-    }
     let mut native = Native::new("Library model")?;
     let built = build_library_model(&mut native, PREVIEW_MODEL, model, use_, bytes)?;
     let created = native

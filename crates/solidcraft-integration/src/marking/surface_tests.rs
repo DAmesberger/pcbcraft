@@ -305,8 +305,8 @@ fn a_generated_electrolytic_marking_wraps_its_sleeve() -> TestResult {
 #[test]
 fn partial_wraps_clip_and_repeats_go_round() -> TestResult {
     let (c, chart) = sleeve(Wrap {
-        wrap_deg: 90.0,
-        along_mm: Some([2.0, 6.0]),
+        wrap_mdeg: 90000,
+        along_nm: Some(crate::test_units::nm2([2.0, 6.0])),
         ..Wrap::default()
     })?;
     let region = Region::wrap(&c, &chart);
@@ -374,7 +374,7 @@ fn placements_move_and_clip_the_layout_on_a_face() -> TestResult {
     let region = Region::plane([4.0, 4.0]);
     let turned = flatten(
         &bar(Placement {
-            rotation_deg: 90.0,
+            rotation_mdeg: crate::test_units::deg(90.0),
             ..Placement::default()
         }),
         &region,
@@ -402,7 +402,7 @@ fn placements_move_and_clip_the_layout_on_a_face() -> TestResult {
     let big = flatten(
         &bar(Placement {
             scale: 2.0,
-            offset_mm: [1.0, 0.0],
+            offset: crate::test_units::pt([1.0, 0.0]),
             ..Placement::default()
         }),
         &region,
@@ -415,7 +415,7 @@ fn placements_move_and_clip_the_layout_on_a_face() -> TestResult {
     let free = flatten(
         &bar(Placement {
             scale: 2.0,
-            offset_mm: [1.0, 0.0],
+            offset: crate::test_units::pt([1.0, 0.0]),
             clip: false,
             ..Placement::default()
         }),
@@ -511,10 +511,10 @@ fn engravings_shade_their_walls_with_tilted_normals() -> TestResult {
     assert!((walls - 4.0 * ENGRAVE_WALL_MM).abs() < 1e-9, "{walls}");
     assert!((flat.ink_area_mm2(Ink::Finish) - 1.0).abs() < 1e-9);
     let area = MarkingArea {
-        origin: [0.0, 0.0, 1.0],
+        origin_nm: crate::test_units::nm3([0.0, 0.0, 1.0]),
         normal: [0.0, 0.0, 1.0],
         u_axis: [1.0, 0.0, 0.0],
-        size_mm: [4.0, 4.0],
+        size_nm: crate::test_units::nm2([4.0, 4.0]),
     };
     let mesh = place(&flat, &area)?;
     let wall = mesh
@@ -741,10 +741,10 @@ fn two_hundred_marked_instances_build_their_decals() -> TestResult {
     let project = pcbcraft_core::Engine::demo()?.project().clone();
     let model = crate::project::build(&project)?;
     let area = MarkingArea {
-        origin: [0.0, 0.0, 1.0],
+        origin_nm: crate::test_units::nm3([0.0, 0.0, 1.0]),
         normal: [0.0, 0.0, 1.0],
         u_axis: [1.0, 0.0, 0.0],
-        size_mm: [6.0, 4.0],
+        size_nm: crate::test_units::nm2([6.0, 4.0]),
     };
     let symbol =
         pcbcraft_core::library::marking::matrix::encode(Symbology::Qr, "U000", Ecc::Medium)?;
@@ -774,7 +774,7 @@ fn two_hundred_marked_instances_build_their_decals() -> TestResult {
     let mut triangles = 0;
     let mut bodies = Vec::new();
     for (k, l) in layouts.iter().enumerate() {
-        let flat = cache.flat_in(l, &Region::plane(area.size_mm), &no_artwork)?;
+        let flat = cache.flat_in(l, &Region::plane(area.size()), &no_artwork)?;
         let mesh = place(&flat, &area)?;
         triangles += mesh.triangle_count();
         bodies.extend(board::decal_geometry(&mesh, Some(k as u64), None)?);
@@ -786,7 +786,7 @@ fn two_hundred_marked_instances_build_their_decals() -> TestResult {
     let mut changed = layouts.clone();
     changed[7] = marking(999);
     for l in &changed {
-        let flat = cache.flat_in(l, &Region::plane(area.size_mm), &no_artwork)?;
+        let flat = cache.flat_in(l, &Region::plane(area.size()), &no_artwork)?;
         place(&flat, &area)?;
     }
     let warm = started.elapsed();
@@ -817,13 +817,13 @@ fn markings_are_absent_from_the_saved_model() -> TestResult {
             items: vec![
                 MarkingItem::Text {
                     template: Template("{designator}".into()),
-                    height_mm: None,
+                    height_nm: None,
                     align: Default::default(),
                 },
                 MarkingItem::Code2d {
                     symbology: Symbology::Qr,
                     payload: Template("{designator}".into()),
-                    size_mm: 0.9,
+                    size_nm: crate::test_units::nm(0.9),
                     anchor: Default::default(),
                     ecc: Ecc::Low,
                 },
@@ -896,11 +896,11 @@ fn box_faces_resolve_in_the_model_frame() -> TestResult {
 #[test]
 fn a_band_round_a_thin_body_never_sinks_into_it() -> TestResult {
     let cylinder = CylinderArea {
-        base: [-3.0, 0.0, 1.25],
+        base_nm: crate::test_units::nm3([-3.0, 0.0, 1.25]),
         axis: [1.0, 0.0, 0.0],
         zero: [0.0, 0.0, -1.0],
-        radius: 1.25,
-        length: 6.0,
+        radius_nm: crate::test_units::nm(1.25),
+        length_nm: crate::test_units::nm(6.0),
         along_u: true,
     };
     let chart = cylinder.chart(&Wrap::default()).ok_or("chart")?;

@@ -43,7 +43,7 @@ pub(crate) fn model(asset: &PackedAsset) -> ModelDefinition {
         pair: None,
         format: ModelFormat::Step,
         frame: SourceFrame::default(),
-        bounds_mm: [[-2.0, -1.5, 0.0], [2.0, 1.5, 1.0]],
+        bounds_nm: crate::tests::support::nm_bounds([[-2.0, -1.5, 0.0], [2.0, 1.5, 1.0]]),
         bodies: vec![
             ModelBody {
                 key: "body".into(),
@@ -61,24 +61,24 @@ pub(crate) fn model(asset: &PackedAsset) -> ModelDefinition {
             LeadTag {
                 key: "lead-1".into(),
                 designation: "1".into(),
-                contact: [-1.5, 0.0, 0.0],
+                contact_nm: crate::tests::support::nm3([-1.5, 0.0, 0.0]),
             },
             LeadTag {
                 key: "lead-2".into(),
                 designation: "2".into(),
-                contact: [1.5, 0.0, 0.0],
+                contact_nm: crate::tests::support::nm3([1.5, 0.0, 0.0]),
             },
         ],
         marking_area: Some(MarkingArea {
-            origin: [0.0, 0.0, 1.0],
+            origin_nm: crate::tests::support::nm3([0.0, 0.0, 1.0]),
             normal: [0.0, 0.0, 1.0],
             u_axis: [1.0, 0.0, 0.0],
-            size_mm: [3.0, 2.0],
+            size_nm: [3.0, 2.0].map(crate::tests::support::nm),
         }),
         hints: ModelHints {
             mount: Some(Mount::Smd),
             pins: Some(2),
-            pitch_mm: Some(3.0),
+            pitch_nm: Some(crate::tests::support::nm(3.0)),
             family: Some("two-lead test body".into()),
         },
         provenance: ModelProvenance {
@@ -99,9 +99,10 @@ pub(crate) fn model(asset: &PackedAsset) -> ModelDefinition {
 fn sized(asset: &PackedAsset, envelope: [f64; 3]) -> ModelDefinition {
     let [l, w, h] = envelope;
     let mut m = model(asset);
-    m.bounds_mm = [[-l / 2.0, -w / 2.0, 0.0], [l / 2.0, w / 2.0, h]];
-    m.leads[0].contact = [-l / 4.0, 0.0, 0.0];
-    m.leads[1].contact = [l / 4.0, 0.0, 0.0];
+    m.bounds_nm =
+        crate::tests::support::nm_bounds([[-l / 2.0, -w / 2.0, 0.0], [l / 2.0, w / 2.0, h]]);
+    m.leads[0].contact_nm = crate::tests::support::nm3([-l / 4.0, 0.0, 0.0]);
+    m.leads[1].contact_nm = crate::tests::support::nm3([l / 4.0, 0.0, 0.0]);
     m.marking_area = None;
     m
 }
@@ -185,7 +186,7 @@ fn a_complete_model_has_no_findings_and_each_rule_names_its_code() {
     assert_eq!(blocking(&m), ["model.asset"], "only STEP takes a pair");
 
     let mut m = good.clone();
-    m.bounds_mm[1][2] = 0.0;
+    m.bounds_nm[1][2] = crate::units::Nm::ZERO;
     assert!(blocking(&m).contains(&"model.bounds".to_owned()));
     let mut m = good.clone();
     m.frame.unit_mm = 0.0;
@@ -232,7 +233,7 @@ fn a_complete_model_has_no_findings_and_each_rule_names_its_code() {
     m.leads[0].designation = " ".into();
     assert_eq!(blocking(&m), ["model.leads"]);
     let mut m = good.clone();
-    m.leads[0].contact = [9.0, 0.0, 0.0];
+    m.leads[0].contact_nm = crate::tests::support::nm3([9.0, 0.0, 0.0]);
     assert_eq!(
         blocking(&m),
         ["model.leads"],
@@ -256,7 +257,11 @@ fn bounds_and_finite_values_are_draft_refusals() {
     let asset = packed(&bytes("bounds"), "model/step");
     let mut m = model(&asset);
     assert!(m.within_bounds() && m.values_finite());
-    m.leads[0].contact[0] = f64::NAN;
+    // Stored lengths are whole nanometres; a non-finite direction is the
+    // value left to refuse.
+    if let Some(area) = &mut m.marking_area {
+        area.normal[0] = f64::NAN;
+    }
     assert!(!m.values_finite());
     let mut m = model(&asset);
     m.asset.file_name = "x".repeat(MAX_FILE_NAME + 1);
@@ -568,7 +573,7 @@ fn a_dangling_or_oversized_library_model_is_refused_or_reported() -> Fallible<()
     // A model larger than the envelope is reported, not refused.
     let asset = packed(&bytes("large"), "model/step");
     let mut large = model(&asset);
-    large.bounds_mm = [[-5.0, -1.5, 0.0], [5.0, 1.5, 1.0]];
+    large.bounds_nm = crate::tests::support::nm_bounds([[-5.0, -1.5, 0.0], [5.0, 1.5, 1.0]]);
     let big = published_model(&mut engine, large, &asset)?;
     let Definition::Package(package) = &engine
         .drafts()
@@ -687,8 +692,9 @@ fn a_new_model_revision_lists_its_physical_changes_in_the_update_plan() -> Falli
         .ok_or("r1")?
         .definition
         .clone();
-    moved.bounds_mm[1][0] += 0.5;
-    moved.leads[1].contact[0] += 0.3;
+    moved.bounds_nm[1][0] = moved.bounds_nm[1][0].checked_add(crate::tests::support::nm(0.5))?;
+    moved.leads[1].contact_nm[0] =
+        moved.leads[1].contact_nm[0].checked_add(crate::tests::support::nm(0.3))?;
     edit(
         &mut engine,
         vec![DraftEdit {

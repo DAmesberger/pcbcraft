@@ -54,10 +54,10 @@ impl PackageDefinition {
         self.envelope_nm.map(Nm::to_mm_f64)
     }
 
-    /// A positive finite envelope with a finite placement: the condition
-    /// for a native envelope model.
+    /// A positive finite envelope (the placement is in range by type): the
+    /// condition for a native envelope model.
     pub fn envelope_valid(&self) -> bool {
-        size_valid(&self.envelope()) && self.placement.finite()
+        size_valid(&self.envelope())
     }
 
     /// The chip construction of a typed chip form.
@@ -132,9 +132,7 @@ impl PackageDefinition {
     }
 
     pub(super) fn geometry_finite(&self) -> bool {
-        finite_within(&self.envelope())
-            && finite_within(&self.form.lengths())
-            && self.placement.finite()
+        finite_within(&self.envelope()) && finite_within(&self.form.lengths())
     }
 
     pub(super) fn local_ids(&self) -> Vec<u32> {
@@ -396,9 +394,11 @@ mod tests {
             ["model.leads", "model.leads", "model.leads"],
             "a repeated lead, a foreign terminal and a repeated terminal"
         );
-        let mut p = chip(ChipKind::Resistor);
-        p.placement.rotation_deg[0] = f64::INFINITY;
-        assert!(!p.geometry_finite());
+        // A placement is whole nanometres and millidegrees: an infinite
+        // turn never becomes one.
+        assert!(
+            crate::library::ModelPlacement::from_mm([0.0; 3], [f64::INFINITY, 0.0, 0.0]).is_err()
+        );
     }
 
     #[test]

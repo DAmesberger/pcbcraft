@@ -138,6 +138,55 @@ pub fn angle(
     Ok(1)
 }
 
+/// Degrees at `from` to whole millidegrees at `to`, NOT reduced to one turn:
+/// a sweep (up to a full turn, which a rotation would reduce to 0); 1 if it
+/// changed.
+pub fn sweep(object: &mut Map<String, Value>, from: &str, to: &str) -> Result<usize> {
+    let Some(value) = object.remove(from) else {
+        return Ok(0);
+    };
+    let degrees = value
+        .as_f64()
+        .ok_or_else(|| format!("{value} is not a number"))?;
+    let mdeg = (degrees * 1_000.0).round();
+    if !mdeg.is_finite() || mdeg.abs() > f64::from(i32::MAX) {
+        return Err(format!("{degrees}° is not a finite sweep").into());
+    }
+    // Integral and within i32: the cast is exact.
+    object.insert(to.into(), Value::from(mdeg as i64));
+    Ok(1)
+}
+
+/// Every angle of the array at `from`, degrees to millidegrees reduced to
+/// one turn, at `to`; 1 if it changed.
+pub fn angles(object: &mut Map<String, Value>, from: &str, to: &str) -> Result<usize> {
+    let Some(Value::Array(items)) = object.remove(from) else {
+        return Ok(0);
+    };
+    let converted = items.iter().map(millidegrees).collect::<Result<Vec<_>>>()?;
+    object.insert(to.into(), Value::from(converted));
+    Ok(1)
+}
+
+/// Bounds `[[x, y, z], [x, y, z]]` in millimetres at `from`, to nanometre
+/// arrays at `to`; 1 if it changed.
+pub fn bounds(object: &mut Map<String, Value>, from: &str, to: &str) -> Result<usize> {
+    let Some(Value::Array(corners)) = object.remove(from) else {
+        return Ok(0);
+    };
+    let converted = corners
+        .iter()
+        .map(|corner| {
+            corner
+                .as_array()
+                .ok_or_else(|| format!("{corner} is not a corner").into())
+                .and_then(|c| c.iter().map(nm).collect::<Result<Vec<_>>>())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    object.insert(to.into(), Value::from(converted));
+    Ok(1)
+}
+
 /// The objects of the array at `key`.
 pub fn items<'a>(
     object: &'a mut Map<String, Value>,

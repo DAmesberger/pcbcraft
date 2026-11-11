@@ -106,7 +106,7 @@ pub trait FamilyForm {
 pub const MAX_FORM_LEADS: u32 = 512;
 
 /// `nm` as a constant (within bounds by construction; else 0).
-const fn const_nm(nm: i64) -> Nm {
+pub(crate) const fn const_nm(nm: i64) -> Nm {
     match Nm::try_new(nm) {
         Some(v) => v,
         None => Nm::ZERO,

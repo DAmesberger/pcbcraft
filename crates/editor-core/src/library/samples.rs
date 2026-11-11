@@ -142,8 +142,8 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
         placement: match kind.chip {
             Some(_) => ModelPlacement::default(),
             None => ModelPlacement {
-                translation: layout.offset,
-                rotation_deg: [0.0; 3],
+                translation_nm: layout.offset.map(typical_nm),
+                rotation_mdeg: [crate::units::Angle::ZERO; 3],
             },
         },
         mechanical: None,

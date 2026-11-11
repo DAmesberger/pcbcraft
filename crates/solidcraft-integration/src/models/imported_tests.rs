@@ -150,7 +150,7 @@ pub(crate) fn model(format: ModelFormat, bytes: &[u8], seen: &ModelInspection) -
         },
         format,
         frame: default_frame(format),
-        bounds_mm: seen.bounds_mm,
+        bounds_nm: crate::test_units::bounds(seen.bounds_mm),
         bodies,
         custom_materials: seen.materials.clone(),
         leads: Vec::new(),
@@ -257,7 +257,7 @@ fn an_explicit_frame_scales_turns_and_offsets() -> Result<()> {
     let frame = SourceFrame {
         unit_mm: 2.0,
         up: UpAxis::Y,
-        origin_offset: [1.0, 0.0, -0.5],
+        origin_offset_nm: crate::test_units::nm3([1.0, 0.0, -0.5]),
     };
     let seen = inspect::inspect_in(&bytes, ModelFormat::Step, &frame)?;
     let expected = frame_bounds(&frame, ModelFormat::Step, BOUNDS)?;
@@ -296,7 +296,7 @@ fn lead_contacts_are_the_lowest_points_of_the_tag() -> Result<()> {
         m.leads = vec![LeadTag {
             key: lead_key(&seen)?,
             designation: "1".into(),
-            contact: [0.0; 3],
+            contact_nm: crate::test_units::nm3([0.0; 3]),
         }];
         let contacts = lead_contacts(&m, &bytes)?;
         assert_eq!(contacts.len(), 1);
@@ -331,13 +331,13 @@ fn the_wizard_path_matches_what_a_build_rechecks() -> Result<()> {
             framed.bounds_mm
         );
         let mut m = model(format, &bytes, &framed);
-        m.bounds_mm = moved;
+        m.bounds_nm = crate::test_units::bounds(moved);
         m.leads = vec![LeadTag {
             key: lead_key(&raw)?,
             designation: "1".into(),
-            contact: [0.0; 3],
+            contact_nm: crate::test_units::nm3([0.0; 3]),
         }];
-        m.leads[0].contact = lead_contacts(&m, &bytes)?[0];
+        m.leads[0].contact_nm = crate::test_units::nm3(lead_contacts(&m, &bytes)?[0]);
         let mut native = Native::new("Board")?;
         build_library_model(&mut native, "pkg5r1", &m, &use_lead(1), &bytes)?;
     }
@@ -356,7 +356,7 @@ fn a_face_tag_touches_down_on_that_face() -> Result<()> {
         m.leads = vec![LeadTag {
             key: format!("{lead}{FACE_KEY}{face}"),
             designation: "1".into(),
-            contact: [0.0; 3],
+            contact_nm: crate::test_units::nm3([0.0; 3]),
         }];
         lows.push(lead_contacts(&m, &bytes)?[0][2]);
     }
@@ -373,7 +373,7 @@ fn build_maps_bodies_terminals_and_looks() -> Result<()> {
     m.leads = vec![LeadTag {
         key: lead_key(&seen)?,
         designation: "1".into(),
-        contact: [2.25, 0.0, 0.0],
+        contact_nm: crate::test_units::nm3([2.25, 0.0, 0.0]),
     }];
     let mut native = Native::new("Board")?;
     let built = build_library_model(&mut native, "pkg7r1", &m, &use_lead(3), &bytes)?;
@@ -471,7 +471,7 @@ fn rechecks_refuse_naming_the_asset() -> Result<()> {
     );
     // Bounds that moved since import.
     let mut moved = base.clone();
-    moved.bounds_mm[1][2] += 0.5;
+    moved.bounds_nm[1][2] = crate::test_units::nm(moved.bounds()[1][2] + 0.5);
     let e = refused(&moved, &bytes);
     assert!(
         e.starts_with("model.asset") && e.contains("fixture.glb"),
@@ -498,7 +498,7 @@ fn rechecks_refuse_naming_the_asset() -> Result<()> {
     lead.leads = vec![LeadTag {
         key: "Lead".into(),
         designation: "1".into(),
-        contact: [2.25, 0.0, 0.2],
+        contact_nm: crate::test_units::nm3([2.25, 0.0, 0.2]),
     }];
     let e = refused(&lead, &bytes);
     assert!(
@@ -528,10 +528,7 @@ fn preview_draws_every_body_at_the_placement() -> Result<()> {
     let bytes = fixture_glb();
     let seen = inspect::inspect(&bytes, ModelFormat::Gltf)?;
     let m = model(ModelFormat::Gltf, &bytes, &seen);
-    let placement = ModelPlacement {
-        translation: [1.0, 2.0, 0.5],
-        rotation_deg: [0.0, 0.0, 0.0],
-    };
+    let placement = crate::test_units::placement([1.0, 2.0, 0.5], [0.0, 0.0, 0.0]);
     let geometry = preview(&m, &LibraryModel::default(), &bytes, &placement)?;
     assert_eq!(geometry.len(), 2);
     let lo = geometry
@@ -569,7 +566,7 @@ fn solidcraft_designs_are_inspected_but_not_built() -> Result<()> {
             ..AssetRef::default()
         },
         format: ModelFormat::Solidcraft,
-        bounds_mm: seen.bounds_mm,
+        bounds_nm: crate::test_units::bounds(seen.bounds_mm),
         ..ModelDefinition::default()
     };
     let mut board = Native::new("Board")?;

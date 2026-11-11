@@ -202,13 +202,13 @@ fn moulded(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
     if let Some(area) = f.band_area() {
         let name = b.name("band");
         let material = b.material(BodyRole::Marking);
-        let [w, across] = area.size_mm;
+        let [w, across] = area.size();
         b.solid(
             &name,
             BodyRole::Marking,
             material,
             [
-                mm(area.origin[0] - w / 2.0),
+                mm(area.origin()[0] - w / 2.0),
                 mm(-across / 2.0),
                 format!("{bh} - {}", mm(BAND_DEPTH_MM)),
             ],
@@ -288,13 +288,13 @@ fn melf(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
     if let Some(area) = f.band_area() {
         let name = b.name("band");
         let ink = material_or(b, BodyRole::Marking, MaterialId::EpoxyMould);
-        let w = area.size_mm[0];
+        let w = area.size()[0];
         let depth = BAND_DEPTH_MM.min(rb / 4.0);
         b.native.plane_body(
             Plane::Yz,
             ProfileBody {
                 name: &name,
-                offset: mm(area.origin[0] - w / 2.0).into(),
+                offset: mm(area.origin()[0] - w / 2.0).into(),
                 contours: &[circle(rb), circle(rb - depth)],
                 height: mm(w).into(),
             },
@@ -468,10 +468,10 @@ mod tests {
                 .find(|b| b.role == BodyRole::Marking)
                 .ok_or_else(|| Error::Verification(format!("{lead:?}: no band body")))?;
             let (lo, hi, _) = measure(&native, &band.name)?;
-            assert!((lo[0] - (area.origin[0] - area.size_mm[0] / 2.0)).abs() < 1e-6);
-            assert!((hi[0] - (area.origin[0] + area.size_mm[0] / 2.0)).abs() < 1e-6);
+            assert!((lo[0] - (area.origin()[0] - area.size()[0] / 2.0)).abs() < 1e-6);
+            assert!((hi[0] - (area.origin()[0] + area.size()[0] / 2.0)).abs() < 1e-6);
             assert!(
-                (hi[2] - area.origin[2]).abs() < 1e-6,
+                (hi[2] - area.origin()[2]).abs() < 1e-6,
                 "{lead:?} band on top"
             );
             assert!(hi[0] < 0.0, "{lead:?}: the band is at terminal 1 (−x)");

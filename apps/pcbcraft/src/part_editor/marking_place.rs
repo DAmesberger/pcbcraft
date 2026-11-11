@@ -11,6 +11,7 @@ use pcbcraft_core::library::marking::surface::{self, SurfaceGeometry};
 use pcbcraft_core::library::marking::{
     BoxFace, Finish, MAX_DECALS, MarkingSpec, Placement, SurfaceRef, Wrap,
 };
+use pcbcraft_core::units::{Angle, PointNm};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
 const OFFSET_MM: std::ops::RangeInclusive<f64> = -100.0..=100.0;
@@ -154,8 +155,22 @@ pub fn placement_rows(ui: &mut Ui, placement: &mut Placement, surfaces: &[Surfac
     if kit::choice_row(ui, "Surface", &mut placement.on, &options) {
         changed = true;
     }
-    changed |= kit::pair_row(ui, "Offset", &mut placement.offset_mm, "mm", OFFSET_MM);
-    changed |= kit::number_row(ui, "Turn", &mut placement.rotation_deg, "°", TURN_DEG);
+    // The rows edit millimetres and degrees; the stored values take them
+    // through the one crossing (a value it refuses leaves them as they are).
+    let mut offset = placement.offset_mm();
+    if kit::pair_row(ui, "Offset", &mut offset, "mm", OFFSET_MM)
+        && let Ok(p) = PointNm::from_mm_f64_rounded(offset)
+    {
+        placement.offset = p;
+        changed = true;
+    }
+    let mut turn = placement.rotation_deg();
+    if kit::number_row(ui, "Turn", &mut turn, "°", TURN_DEG)
+        && let Ok(a) = Angle::from_degrees_f64_rounded(turn)
+    {
+        placement.rotation_mdeg = a;
+        changed = true;
+    }
     changed |= kit::number_row(ui, "Scale", &mut placement.scale, "", SCALE);
     changed |= kit::check_row(ui, "Mirror", &mut placement.mirror);
     changed |= kit::check_row(ui, "Clip to the surface", &mut placement.clip);
@@ -163,8 +178,21 @@ pub fn placement_rows(ui: &mut Ui, placement: &mut Placement, surfaces: &[Surfac
     if cylinder {
         let mut wrap = placement.wrap.unwrap_or_default();
         let mut repeat = f64::from(wrap.repeat);
-        let mut any = kit::number_row(ui, "Seam", &mut wrap.seam_deg, "°", TURN_DEG);
-        any |= kit::number_row(ui, "Wrap", &mut wrap.wrap_deg, "°", WRAP_DEG);
+        let mut any = false;
+        let mut seam = wrap.seam_deg();
+        if kit::number_row(ui, "Seam", &mut seam, "°", TURN_DEG)
+            && let Ok(a) = Angle::from_degrees_f64_rounded(seam)
+        {
+            wrap.seam_mdeg = a;
+            any = true;
+        }
+        let mut reach = wrap.wrap_deg();
+        if kit::number_row(ui, "Wrap", &mut reach, "°", WRAP_DEG) {
+            // Within 1–360° (the row's range): whole millidegrees fit.
+            wrap.wrap_mdeg =
+                (reach.clamp(*WRAP_DEG.start(), *WRAP_DEG.end()) * 1_000.0).round() as i32;
+            any = true;
+        }
         if kit::number_row(ui, "Repeats", &mut repeat, "", REPEAT) {
             wrap.repeat = repeat.round().clamp(1.0, 8.0) as u32;
             any = true;

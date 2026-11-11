@@ -195,7 +195,7 @@ fn anchor_geometry(geometry: &SurfaceGeometry) -> Result<FeatureGeometry> {
     match geometry {
         SurfaceGeometry::Plane(area) => {
             let [nx, ny, nz] = area.normal;
-            let [ox, oy, _] = area.origin;
+            let [ox, oy, _] = area.origin();
             if (nz.abs() - 1.0).abs() <= SQUARE {
                 return Ok(FeatureGeometry::Point { at: [ox, oy] });
             }
@@ -205,9 +205,9 @@ fn anchor_geometry(geometry: &SurfaceGeometry) -> Result<FeatureGeometry> {
             }
             // Its horizontal extent: the chart axis that lies flat.
             let width = if area.u_axis[2].abs() <= SQUARE {
-                area.size_mm[0]
+                area.size()[0]
             } else {
-                area.size_mm[1]
+                area.size()[1]
             };
             let h = [-ny / flat * width / 2.0, nx / flat * width / 2.0];
             Ok(FeatureGeometry::Line {
@@ -221,9 +221,10 @@ fn anchor_geometry(geometry: &SurfaceGeometry) -> Result<FeatureGeometry> {
             if !(len > SQUARE && (az.abs() / len - 1.0).abs() <= SQUARE) {
                 return sloped();
             }
+            let [x, y, _] = c.base();
             Ok(FeatureGeometry::Circle {
-                center: [c.base[0], c.base[1]],
-                radius: c.radius,
+                center: [x, y],
+                radius: c.radius(),
             })
         }
     }

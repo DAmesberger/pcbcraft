@@ -214,16 +214,19 @@ impl TabbedForm {
     }
 
     /// The top face area markings use, origin at its centre, u along +x.
-    pub fn marking_area(&self) -> MarkingArea {
-        MarkingArea {
-            origin: [0.0, 0.0, self.standoff() + self.body_height()],
-            normal: [0.0, 0.0, 1.0],
-            u_axis: [1.0, 0.0, 0.0],
-            size_mm: [
+    /// Computed from the stored form, it is always storable; `None` only if
+    /// it were not.
+    pub fn marking_area(&self) -> Option<MarkingArea> {
+        MarkingArea::from_mm(
+            [0.0, 0.0, self.standoff() + self.body_height()],
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0],
+            [
                 MARKING_SHARE * self.body_length(),
                 MARKING_SHARE * self.body_width(),
             ],
-        }
+        )
+        .ok()
     }
 
     /// Land sizes [along x, along y] per lead in lead order, the tab last:

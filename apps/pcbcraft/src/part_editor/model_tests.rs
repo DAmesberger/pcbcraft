@@ -216,13 +216,13 @@ fn placement_edits_keep_the_preview_build_key() -> TestResult {
     let draft = h.editor.draft.as_ref().ok_or("draft")?.ids.package;
     h.sent.push(model_place::edit(
         draft,
-        vec![PackageEdit::SetPlacement(ModelPlacement {
-            translation: [0.3, 0.0, 0.1],
-            rotation_deg: [0.0, 0.0, 90.0],
-        })],
+        vec![PackageEdit::SetPlacement(ModelPlacement::from_mm(
+            [0.3, 0.0, 0.1],
+            [0.0, 0.0, 90.0],
+        )?)],
     ));
     h.apply_sent()?;
-    assert_eq!(h.placement()?.rotation_deg, [0.0, 0.0, 90.0]);
+    assert_eq!(h.placement()?.rotation_deg(), [0.0, 0.0, 90.0]);
     assert_eq!(
         key,
         h.editor
@@ -264,8 +264,8 @@ fn dragging_the_triad_moves_only_the_display_until_release() -> TestResult {
     h.frame(vec![Harness::button(b, false)]);
     assert_eq!(h.apply_sent()?, 1, "one command on release");
     let placement = h.placement()?;
-    assert!(placement.translation[0] > 0.5);
-    assert_eq!(placement.rotation_deg, [0.0; 3]);
+    assert!(placement.translation()[0] > 0.5);
+    assert_eq!(placement.rotation_deg(), [0.0; 3]);
     assert_eq!(h.viewport.generation(), generation, "never rebuilt");
     h.engine.undo()?;
     h.editor.commit(&h.ctx, &h.engine);
@@ -310,7 +310,7 @@ fn quick_actions_and_fit_are_one_command_each() -> TestResult {
             if edits == &[PackageEdit::ApplyQuick(QuickAction::Rotate { axis: Axis::Z, quarter_turns: 1 })]
     ));
     h.apply_sent()?;
-    assert_eq!(h.placement()?.rotation_deg, [0.0, 0.0, 90.0]);
+    assert_eq!(h.placement()?.rotation_deg(), [0.0, 0.0, 90.0]);
     // Turned a quarter, the terminations miss their lands: a finding in
     // Issues (its one home, never repeated in the card), and a fit that
     // turns it back.
@@ -329,8 +329,8 @@ fn quick_actions_and_fit_are_one_command_each() -> TestResult {
     ));
     h.apply_sent()?;
     let fitted = h.placement()?;
-    assert_eq!(fitted.rotation_deg, [0.0; 3]);
-    assert!(fitted.translation.iter().all(|v| v.abs() < 1e-9));
+    assert_eq!(fitted.rotation_deg(), [0.0; 3]);
+    assert!(fitted.translation().iter().all(|v| v.abs() < 1e-9));
     assert!(
         !h.issue_codes()?
             .iter()
@@ -377,7 +377,7 @@ fn typed_values_commit_once_when_the_field_is_left() -> TestResult {
     }]);
     h.inspector(vec![]);
     assert_eq!(h.apply_sent()?, 1);
-    assert_eq!(h.placement()?.translation, [0.25, 0.0, 0.0]);
+    assert_eq!(h.placement()?.translation(), [0.25, 0.0, 0.0]);
     Ok(())
 }
 
@@ -476,7 +476,7 @@ fn point_to_point_moves_a_model_point_onto_a_pad_point() -> TestResult {
     h.click_view(target);
     assert_eq!(h.editor.model.point_to_point, PointToPoint::Off);
     assert_eq!(h.apply_sent()?, 1);
-    let t = h.placement()?.translation;
+    let t = h.placement()?.translation();
     assert!((t[0] - (pad[0] - lead[0])).abs() < 1e-9, "{t:?}");
     Ok(())
 }
@@ -620,12 +620,12 @@ fn arrow_keys_over_the_view_nudge_the_model_one_command_each() -> TestResult {
     h.frame(vec![key(egui::Key::ArrowRight, egui::Modifiers::NONE)]);
     assert_eq!(h.apply_sent()?, 1);
     assert_eq!(
-        h.placement()?.translation,
+        h.placement()?.translation(),
         [model_place::NUDGE_MM, 0.0, 0.0]
     );
     h.frame(vec![key(egui::Key::PageUp, egui::Modifiers::SHIFT)]);
     assert_eq!(h.apply_sent()?, 1);
-    let lifted = h.placement()?.translation;
+    let lifted = h.placement()?.translation();
     assert!((lifted[2] - 10.0 * model_place::NUDGE_MM).abs() < 1e-12);
     Ok(())
 }
@@ -697,7 +697,7 @@ fn the_preview_shows_marking_decals_and_edits_rebuild_only_them() -> TestResult 
     let text = |t: &str| MarkingSpec {
         items: vec![MarkingItem::Text {
             template: Template(t.into()),
-            height_mm: None,
+            height_nm: None,
             align: Default::default(),
         }],
         finish: Finish::InkWhite,
@@ -766,7 +766,7 @@ fn decals_landing_after_the_renderer_took_the_model_keep_the_model() -> TestResu
     h.set_marking(MarkingSpec {
         items: vec![MarkingItem::Text {
             template: Template("{designator}".into()),
-            height_mm: None,
+            height_nm: None,
             align: Default::default(),
         }],
         finish: Finish::InkWhite,
