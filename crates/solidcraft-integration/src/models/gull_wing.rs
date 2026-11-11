@@ -40,44 +40,44 @@ struct Row {
 
 pub(super) fn check(g: &GullWingForm) -> Result<()> {
     check_positive(&[
-        ("pitch", g.pitch),
-        ("body length", g.body_length),
-        ("body width", g.body_width),
-        ("body height", g.body_height),
-        ("span", g.span[0]),
-        ("lead width", g.lead_width),
-        ("lead thickness", g.lead_thickness),
-        ("foot length", g.foot_length),
+        ("pitch", g.pitch()),
+        ("body length", g.body_length()),
+        ("body width", g.body_width()),
+        ("body height", g.body_height()),
+        ("span", g.span()[0]),
+        ("lead width", g.lead_width()),
+        ("lead thickness", g.lead_thickness()),
+        ("foot length", g.foot_length()),
     ])?;
     require(
-        g.standoff.is_finite() && g.standoff >= 0.0,
+        g.standoff().is_finite() && g.standoff() >= 0.0,
         "the standoff must be zero or more",
     )?;
     let four = g.sides == LeadSides::Four;
     check_count("leads per long side", g.leads_per_side[0])?;
     if four {
         check_count("leads per short side", g.leads_per_side[1])?;
-        check_positive(&[("span across x", g.span[1])])?;
+        check_positive(&[("span across x", g.span()[1])])?;
     }
     require(
-        g.lead_width < g.pitch,
+        g.lead_width() < g.pitch(),
         "the lead width must be below the pitch",
     )?;
-    let row_length = |n: u32| f64::from(n.saturating_sub(1)) * g.pitch + g.lead_width;
+    let row_length = |n: u32| f64::from(n.saturating_sub(1)) * g.pitch() + g.lead_width();
     require(
-        row_length(g.leads_per_side[0]) <= g.body_length,
+        row_length(g.leads_per_side[0]) <= g.body_length(),
         "the long-side leads must fit along the body length",
     )?;
     if four {
         require(
-            row_length(g.leads_per_side[1]) <= g.body_width,
+            row_length(g.leads_per_side[1]) <= g.body_width(),
             "the short-side leads must fit along the body width",
         )?;
     }
-    let t = g.lead_thickness;
+    let t = g.lead_thickness();
     let exit = g.lead_exit();
     require(
-        exit - t / 2.0 > t && exit + t / 2.0 < g.standoff + g.body_height,
+        exit - t / 2.0 > t && exit + t / 2.0 < g.standoff() + g.body_height(),
         "the lead thickness must fit inside the body height above the seating plane",
     )?;
     let room = g.bend_room();
@@ -90,7 +90,7 @@ pub(super) fn check(g: &GullWingForm) -> Result<()> {
 
 pub(super) fn build(b: &mut Build<'_>, g: &GullWingForm) -> Result<()> {
     let four = g.sides == LeadSides::Four;
-    let t = g.lead_thickness;
+    let t = g.lead_thickness();
     let exit = g.lead_exit();
 
     let n = b.count("leads", g.leads_per_side[0])?;
@@ -99,18 +99,18 @@ pub(super) fn build(b: &mut Build<'_>, g: &GullWingForm) -> Result<()> {
     } else {
         None
     };
-    let pitch = b.length("pitch", g.pitch)?;
-    let bl = b.length("body_length", g.body_length)?;
-    let bw = b.length("body_width", g.body_width)?;
-    let bh = b.length("body_height", g.body_height)?;
-    let standoff = b.length("standoff", g.standoff)?;
-    b.length("span", g.span[0])?;
+    let pitch = b.length("pitch", g.pitch())?;
+    let bl = b.length("body_length", g.body_length())?;
+    let bw = b.length("body_width", g.body_width())?;
+    let bh = b.length("body_height", g.body_height())?;
+    let standoff = b.length("standoff", g.standoff())?;
+    b.length("span", g.span()[0])?;
     if four {
-        b.length("span_x", g.span[1])?;
+        b.length("span_x", g.span()[1])?;
     }
-    let lw = b.length("lead_width", g.lead_width)?;
-    b.length("lead_thickness", g.lead_thickness)?;
-    b.length("foot_length", g.foot_length)?;
+    let lw = b.length("lead_width", g.lead_width())?;
+    b.length("lead_thickness", g.lead_thickness())?;
+    b.length("foot_length", g.foot_length())?;
 
     let body = b.name("body");
     let material = b.material(BodyRole::Body);
@@ -129,8 +129,8 @@ pub(super) fn build(b: &mut Build<'_>, g: &GullWingForm) -> Result<()> {
     let y_row = |count_param: &str, plus: bool| Row {
         count: g.leads_per_side[0],
         count_param: count_param.to_owned(),
-        half_body: g.body_width / 2.0,
-        half_span: g.span[0] / 2.0,
+        half_body: g.body_width() / 2.0,
+        half_span: g.span()[0] / 2.0,
         plane: Plane::Yz,
         map: if plus {
             |[s, z]| [s, z]
@@ -146,8 +146,8 @@ pub(super) fn build(b: &mut Build<'_>, g: &GullWingForm) -> Result<()> {
         let x_row = |plus: bool| Row {
             count: g.leads_per_side[1],
             count_param: m.clone(),
-            half_body: g.body_length / 2.0,
-            half_span: g.span[1] / 2.0,
+            half_body: g.body_length() / 2.0,
+            half_span: g.span()[1] / 2.0,
             plane: Plane::Xz,
             map: if plus {
                 |[s, z]| [s, -z]
@@ -169,7 +169,7 @@ pub(super) fn build(b: &mut Build<'_>, g: &GullWingForm) -> Result<()> {
     let mut ordered_rows = Vec::new();
     for (part, row) in &rows {
         let root = ROOT_MM.min(row.half_body / 3.0);
-        let foot = row.half_span - g.foot_length;
+        let foot = row.half_span - g.foot_length();
         let room = foot - row.half_body;
         let shoulder = row.half_body + SHOULDER_SHARE * room;
         let profile = bent_strip(
@@ -224,27 +224,27 @@ pub(super) fn build(b: &mut Build<'_>, g: &GullWingForm) -> Result<()> {
 
     // Rounded upright corners clear of the end leads, then rounded top
     // edges clear of the lead exit, so the moulding catches highlights.
-    let row_length = |n: u32| f64::from(n.saturating_sub(1)) * g.pitch + g.lead_width;
-    let mut corner_room = g.body_length - row_length(g.leads_per_side[0]);
+    let row_length = |n: u32| f64::from(n.saturating_sub(1)) * g.pitch() + g.lead_width();
+    let mut corner_room = g.body_length() - row_length(g.leads_per_side[0]);
     if four {
-        corner_room = corner_room.min(g.body_width - row_length(g.leads_per_side[1]));
+        corner_room = corner_room.min(g.body_width() - row_length(g.leads_per_side[1]));
     }
-    let short = g.body_length.min(g.body_width);
+    let short = g.body_length().min(g.body_width());
     let corner = CORNER_MM.min(0.06 * short).min(corner_room / 4.0);
-    let top = g.standoff + g.body_height;
+    let top = g.standoff() + g.body_height();
     let edge = TOP_EDGE_MM
-        .min(0.1 * g.body_height)
+        .min(0.1 * g.body_height())
         .min((top - exit - t / 2.0) / 2.0)
         // Where the rounds meet, the top one may not outgrow the corner.
         .min(corner);
-    let lo = [-g.body_length / 2.0, -g.body_width / 2.0, g.standoff];
-    let hi = [g.body_length / 2.0, g.body_width / 2.0, top];
+    let lo = [-g.body_length() / 2.0, -g.body_width() / 2.0, g.standoff()];
+    let hi = [g.body_length() / 2.0, g.body_width() / 2.0, top];
     b.round("corner_round", &body, &upright_edges(lo, hi), corner)?;
     b.round("edge_round", &body, &top_edges(lo, hi), edge)?;
 
     // A pin-1 dimple in the top, at the corner of lead 1.
     let radius = (0.12 * short).clamp(0.15, 0.5);
-    if 5.0 * radius < short && DIMPLE_DEPTH_MM < g.body_height / 4.0 {
+    if 5.0 * radius < short && DIMPLE_DEPTH_MM < g.body_height() / 4.0 {
         let at = 2.0 * radius;
         b.native.cylinder_cut(
             &b.name("pin 1 mark"),

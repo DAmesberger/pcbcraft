@@ -265,7 +265,7 @@ fn checking_a_stale_draft_reports_the_draft_not_the_stored_revision() -> Result<
         },
     )?;
     with(&mut engine, f.package, package_body, |p| {
-        p.envelope = [9.0, 9.0, 9.0];
+        p.envelope_nm = [nm(9.0), nm(9.0), nm(9.0)];
     })?;
     let report = check(&engine, CheckTarget::Draft(f.package))?;
     assert_eq!(

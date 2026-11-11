@@ -305,22 +305,22 @@ fn body_box(package: &PackageDefinition) -> (Point3, Point3) {
         |l: f64, w: f64, z0: f64, z1: f64| ([-l / 2.0, -w / 2.0, z0], [l / 2.0, w / 2.0, z1]);
     match &package.form {
         PackageForm::Generic => {
-            let s = package.envelope;
+            let s = package.envelope();
             centred(s[0], s[1], 0.0, s[2])
         }
-        PackageForm::Chip(c) => centred(c.length, c.width, 0.0, c.height),
+        PackageForm::Chip(c) => centred(c.length(), c.width(), 0.0, c.height()),
         PackageForm::GullWing(g) => centred(
-            g.body_length,
-            g.body_width,
-            g.standoff,
-            g.standoff + g.body_height,
+            g.body_length(),
+            g.body_width(),
+            g.standoff(),
+            g.standoff() + g.body_height(),
         ),
-        PackageForm::NoLead(n) => centred(n.body_length, n.body_width, 0.0, n.body_height),
+        PackageForm::NoLead(n) => centred(n.body_length(), n.body_width(), 0.0, n.body_height()),
         PackageForm::Header(h) => centred(
-            h.pitch * f64::from(h.pins_per_row.min(MAX_FORM_LEADS)),
-            h.row_pitch * f64::from(h.rows.min(MAX_FORM_LEADS)),
+            h.pitch() * f64::from(h.pins_per_row.min(MAX_FORM_LEADS)),
+            h.row_pitch() * f64::from(h.rows.min(MAX_FORM_LEADS)),
             0.0,
-            h.body_height,
+            h.body_height(),
         ),
         PackageForm::Tabbed(_)
         | PackageForm::Molded(_)
@@ -328,7 +328,7 @@ fn body_box(package: &PackageDefinition) -> (Point3, Point3) {
         | PackageForm::Tht(_)
         | PackageForm::Module(_)
         | PackageForm::UsbC(_) => {
-            let s = package.form.envelope().unwrap_or(package.envelope);
+            let s = package.form.envelope().unwrap_or(package.envelope());
             centred(s[0], s[1], 0.0, s[2])
         }
     }

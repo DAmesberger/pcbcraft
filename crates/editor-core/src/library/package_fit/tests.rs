@@ -6,20 +6,21 @@ use crate::ids::{DefinitionId, PadId};
 use crate::library::footprint::Pad;
 use crate::library::package_form::{ChipForm, ChipKind, GullWingForm, LeadSides};
 use crate::library::{PackageTerminal, footprint::FootprintDefinition};
+use crate::tests::support::nm;
 
 fn soic_form() -> PackageForm {
     PackageForm::GullWing(Box::new(GullWingForm {
         sides: LeadSides::Two,
         leads_per_side: [4, 0],
-        pitch: 1.27,
-        body_length: 4.9,
-        body_width: 3.9,
-        body_height: 1.5,
-        standoff: 0.1,
-        span: [6.0, 0.0],
-        lead_width: 0.4,
-        lead_thickness: 0.2,
-        foot_length: 0.6,
+        pitch_nm: nm(1.27),
+        body_length_nm: nm(4.9),
+        body_width_nm: nm(3.9),
+        body_height_nm: nm(1.5),
+        standoff_nm: nm(0.1),
+        span_nm: [nm(6.0), nm(0.0)],
+        lead_width_nm: nm(0.4),
+        lead_thickness_nm: nm(0.2),
+        foot_length_nm: nm(0.6),
     }))
 }
 
@@ -84,10 +85,10 @@ fn lead_points_count_counter_clockwise_from_pin_one() {
     assert_eq!(leads[7], [-1.905, 2.7, 0.0]);
     let chip = PackageForm::Chip(Box::new(ChipForm {
         kind: ChipKind::Resistor,
-        length: 1.6,
-        width: 0.8,
-        height: 0.45,
-        termination: 0.3,
+        length_nm: nm(1.6),
+        width_nm: nm(0.8),
+        height_nm: nm(0.45),
+        termination_nm: nm(0.3),
     }));
     assert_eq!(
         chip.lead_points(),

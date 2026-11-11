@@ -257,6 +257,7 @@ pub fn add_standard_graphics_over(
 mod tests {
     use super::*;
     use crate::ids::{PackageTerminalId, PadId};
+    use crate::tests::support::nm;
 
     fn chip() -> (FootprintDefinition, PackageDefinition) {
         let footprint = FootprintDefinition {
@@ -268,7 +269,7 @@ mod tests {
             ..FootprintDefinition::default()
         };
         let package = PackageDefinition {
-            envelope: [2.0, 1.2, 0.6],
+            envelope_nm: [nm(2.0), nm(1.2), nm(0.6)],
             ..PackageDefinition::default()
         };
         (footprint, package)

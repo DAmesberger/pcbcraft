@@ -129,7 +129,7 @@ fn an_svg_lands_on_footprint_silkscreen_not_the_courtyard() -> TestResult {
     let package = new_draft(
         &mut session,
         Definition::Package(PackageDefinition {
-            envelope: [2.0, 1.2, 0.5],
+            envelope_nm: [2.0, 1.2, 0.5].map(pcbcraft_core::library::package_form::typical_nm),
             ..PackageDefinition::default()
         }),
     )?;

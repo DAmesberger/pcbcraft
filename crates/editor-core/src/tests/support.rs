@@ -415,7 +415,7 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
                 designation: (*designation).into(),
             })
             .collect(),
-        envelope: [4.0, 3.0, 1.0],
+        envelope_nm: [nm(4.0), nm(3.0), nm(1.0)],
         ..PackageDefinition::default()
     };
     let footprint = FootprintDefinition {

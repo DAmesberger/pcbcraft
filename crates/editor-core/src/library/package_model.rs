@@ -417,7 +417,12 @@ pub enum Axis {
     deny_unknown_fields
 )]
 pub enum PackageEdit {
-    SetForm(PackageForm),
+    /// The form in millimetres.
+    SetForm(
+        #[serde(with = "super::package_form::form_mm")]
+        #[schemars(with = "super::package_form::PackageFormParams")]
+        PackageForm,
+    ),
     SetModel(PackageModel),
     SetPlacement(ModelPlacement),
     /// Computed into a [`ModelPlacement`] (`package_fit::apply_quick`).
@@ -458,8 +463,8 @@ pub fn edit_package(
                 out.form = form.clone();
                 // A typed form derives the envelope; `Generic` keeps the
                 // authored one.
-                if let Some(envelope) = form.envelope() {
-                    out.envelope = envelope;
+                if let Some(envelope) = form.envelope_nm()? {
+                    out.envelope_nm = envelope;
                 }
             }
             PackageEdit::SetModel(model) => out.model = model.clone(),
@@ -532,22 +537,23 @@ mod frame_tests {
     use super::*;
     use crate::library::package_form::{ChipForm, ChipKind};
     use crate::library::{FootprintDefinition, PackageDefinition};
+    use crate::tests::support::nm;
 
     #[test]
     fn a_typed_form_sets_the_envelope_in_the_same_edit() -> Result<()> {
         let package = PackageDefinition {
-            envelope: [9.0, 9.0, 9.0],
+            envelope_nm: [nm(9.0), nm(9.0), nm(9.0)],
             ..PackageDefinition::default()
         };
         let form = PackageForm::Chip(Box::new(ChipForm::new(
             ChipKind::Capacitor,
-            [1.0, 0.5, 0.5],
+            [nm(1.0), nm(0.5), nm(0.5)],
         )));
         let edited = edit_package(&package, &[PackageEdit::SetForm(form)])?;
-        assert_eq!(edited.envelope, [1.0, 0.5, 0.5]);
+        assert_eq!(edited.envelope(), [1.0, 0.5, 0.5]);
         let generic = edit_package(&edited, &[PackageEdit::SetForm(PackageForm::Generic)])?;
         assert_eq!(
-            generic.envelope,
+            generic.envelope(),
             [1.0, 0.5, 0.5],
             "generic keeps the authored envelope"
         );
@@ -587,7 +593,7 @@ mod frame_tests {
     #[test]
     fn the_envelope_outline_follows_the_model_frame() {
         let mut package = PackageDefinition {
-            envelope: [4.0, 2.0, 1.0],
+            envelope_nm: [nm(4.0), nm(2.0), nm(1.0)],
             ..PackageDefinition::default()
         };
         let mut footprint = FootprintDefinition::default();

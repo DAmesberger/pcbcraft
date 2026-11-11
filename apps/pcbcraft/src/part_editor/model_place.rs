@@ -372,6 +372,7 @@ pub fn overlay(footprint: &FootprintDefinition, package: &PackageDefinition) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pcbcraft_core::library::package_form::typical_nm as nm;
     use pcbcraft_core::library::{GullWingForm, LeadSides, PackageForm, PackageTerminal, Pad};
     use pcbcraft_core::{PackageTerminalId, PadId};
     use pcbcraft_solidcraft::geom::Vec3;
@@ -388,17 +389,17 @@ mod tests {
             form: PackageForm::GullWing(Box::new(GullWingForm {
                 sides: LeadSides::Two,
                 leads_per_side: [4, 0],
-                pitch: 1.27,
-                body_length: 4.9,
-                body_width: 3.9,
-                body_height: 1.5,
-                standoff: 0.1,
-                span: [6.0, 0.0],
-                lead_width: 0.4,
-                lead_thickness: 0.2,
-                foot_length: 0.6,
+                pitch_nm: nm(1.27),
+                body_length_nm: nm(4.9),
+                body_width_nm: nm(3.9),
+                body_height_nm: nm(1.5),
+                standoff_nm: nm(0.1),
+                span_nm: [nm(6.0), nm(0.0)],
+                lead_width_nm: nm(0.4),
+                lead_thickness_nm: nm(0.2),
+                foot_length_nm: nm(0.6),
             })),
-            envelope: [4.9, 6.0, 1.6],
+            envelope_nm: [nm(4.9), nm(6.0), nm(1.6)],
             ..PackageDefinition::default()
         }
     }

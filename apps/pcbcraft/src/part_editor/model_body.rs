@@ -17,6 +17,7 @@ use pcbcraft_core::library::{
     PackageEdit, PackageForm, PackageModel, Pad, PadKind,
 };
 use pcbcraft_core::materials::MaterialId;
+use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{Engine, Operation, PackageTerminalId, PadId};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::ops::RangeInclusive;
@@ -66,7 +67,12 @@ pub fn family(form: &PackageForm) -> Family {
 pub fn starting_form(family: Family, envelope: [f64; 3]) -> PackageForm {
     match family {
         Family::Generic => PackageForm::Generic,
-        Family::Chip => PackageForm::Chip(Box::new(ChipForm::new(ChipKind::Resistor, envelope))),
+        Family::Chip => match envelope.map(Nm::from_mm_f64_rounded) {
+            [Ok(l), Ok(w), Ok(h)] => {
+                PackageForm::Chip(Box::new(ChipForm::new(ChipKind::Resistor, [l, w, h])))
+            }
+            _ => PackageForm::Generic,
+        },
         Family::GullWing => Preset::Soic8.form(),
         Family::NoLead => Preset::Qfn16.form(),
         Family::Header => Preset::Header2x5.form(),
@@ -100,8 +106,8 @@ fn generated() -> PackageModel {
     }
 }
 
-fn length(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
-    kit::number_row(ui, label, value, "mm", LENGTH)
+fn length(ui: &mut Ui, label: &str, value: &mut Nm) -> bool {
+    super::family_rows::nm_row(ui, label, value, LENGTH)
 }
 
 fn count(ui: &mut Ui, label: &str, value: &mut u32, min: u32) -> bool {
@@ -136,10 +142,10 @@ pub fn form_rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
                 (ChipKind::Led, "LED".to_owned()),
             ];
             changed |= kit::choice_row(ui, "Chip", &mut c.kind, &options);
-            changed |= length(ui, "Length", &mut c.length);
-            changed |= length(ui, "Width", &mut c.width);
-            changed |= length(ui, "Height", &mut c.height);
-            changed |= length(ui, "Termination", &mut c.termination);
+            changed |= length(ui, "Length", &mut c.length_nm);
+            changed |= length(ui, "Width", &mut c.width_nm);
+            changed |= length(ui, "Height", &mut c.height_nm);
+            changed |= length(ui, "Termination", &mut c.termination_nm);
         }
         PackageForm::GullWing(g) => {
             let before = g.sides;
@@ -149,12 +155,12 @@ pub fn form_rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
                 match g.sides {
                     LeadSides::Two => {
                         g.leads_per_side[1] = 0;
-                        g.span[1] = 0.0;
+                        g.span_nm[1] = Nm::ZERO;
                     }
                     LeadSides::Four => {
                         g.leads_per_side[1] = g.leads_per_side[0];
-                        g.body_width = g.body_length;
-                        g.span[1] = g.span[0];
+                        g.body_width_nm = g.body_length_nm;
+                        g.span_nm[1] = g.span_nm[0];
                     }
                 }
             }
@@ -163,22 +169,22 @@ pub fn form_rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
             if four {
                 changed |= count(ui, "Leads, short side", &mut g.leads_per_side[1], 1);
             }
-            changed |= length(ui, "Pitch", &mut g.pitch);
-            changed |= length(ui, "Body length", &mut g.body_length);
-            changed |= length(ui, "Body width", &mut g.body_width);
-            changed |= length(ui, "Body height", &mut g.body_height);
-            changed |= kit::number_row(ui, "Standoff", &mut g.standoff, "mm", 0.0..=1000.0);
+            changed |= length(ui, "Pitch", &mut g.pitch_nm);
+            changed |= length(ui, "Body length", &mut g.body_length_nm);
+            changed |= length(ui, "Body width", &mut g.body_width_nm);
+            changed |= length(ui, "Body height", &mut g.body_height_nm);
+            changed |= super::family_rows::nm_row(ui, "Standoff", &mut g.standoff_nm, 0.0..=1000.0);
             changed |= length(
                 ui,
                 if four { "Span across y" } else { "Span" },
-                &mut g.span[0],
+                &mut g.span_nm[0],
             );
             if four {
-                changed |= length(ui, "Span across x", &mut g.span[1]);
+                changed |= length(ui, "Span across x", &mut g.span_nm[1]);
             }
-            changed |= length(ui, "Lead width", &mut g.lead_width);
-            changed |= length(ui, "Lead thickness", &mut g.lead_thickness);
-            changed |= length(ui, "Foot length", &mut g.foot_length);
+            changed |= length(ui, "Lead width", &mut g.lead_width_nm);
+            changed |= length(ui, "Lead thickness", &mut g.lead_thickness_nm);
+            changed |= length(ui, "Foot length", &mut g.foot_length_nm);
         }
         PackageForm::NoLead(n) => {
             let before = n.sides;
@@ -193,34 +199,37 @@ pub fn form_rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
             if n.sides == LeadSides::Four {
                 changed |= count(ui, "Terminals, short side", &mut n.terminals_per_side[1], 1);
             }
-            changed |= length(ui, "Pitch", &mut n.pitch);
-            changed |= length(ui, "Body length", &mut n.body_length);
-            changed |= length(ui, "Body width", &mut n.body_width);
-            changed |= length(ui, "Body height", &mut n.body_height);
-            changed |= length(ui, "Terminal length", &mut n.terminal_length);
-            changed |= length(ui, "Terminal width", &mut n.terminal_width);
+            changed |= length(ui, "Pitch", &mut n.pitch_nm);
+            changed |= length(ui, "Body length", &mut n.body_length_nm);
+            changed |= length(ui, "Body width", &mut n.body_width_nm);
+            changed |= length(ui, "Body height", &mut n.body_height_nm);
+            changed |= length(ui, "Terminal length", &mut n.terminal_length_nm);
+            changed |= length(ui, "Terminal width", &mut n.terminal_width_nm);
             let mut exposed = n.exposed_pad.is_some();
             if kit::check_row(ui, "Exposed pad", &mut exposed) {
-                n.exposed_pad = exposed.then(|| {
-                    let side = (n.body_length.min(n.body_width) - 2.0 * n.terminal_length) * 0.8;
-                    [side.max(0.1); 2]
-                });
+                n.exposed_pad = exposed
+                    .then(|| {
+                        let side =
+                            (n.body_length().min(n.body_width()) - 2.0 * n.terminal_length()) * 0.8;
+                        PointNm::from_mm_f64_rounded([side.max(0.1); 2]).ok()
+                    })
+                    .flatten();
                 changed = true;
             }
             if let Some(pad) = &mut n.exposed_pad {
-                changed |= length(ui, "Pad length", &mut pad[0]);
-                changed |= length(ui, "Pad width", &mut pad[1]);
+                changed |= length(ui, "Pad length", &mut pad.x_nm);
+                changed |= length(ui, "Pad width", &mut pad.y_nm);
             }
         }
         PackageForm::Header(h) => {
             changed |= count(ui, "Rows", &mut h.rows, 1);
             changed |= count(ui, "Pins per row", &mut h.pins_per_row, 1);
-            changed |= length(ui, "Pitch", &mut h.pitch);
-            changed |= length(ui, "Row pitch", &mut h.row_pitch);
-            changed |= length(ui, "Body height", &mut h.body_height);
-            changed |= length(ui, "Pin side", &mut h.pin_side);
-            changed |= length(ui, "Pin above body", &mut h.pin_above);
-            changed |= length(ui, "Pin below board", &mut h.pin_below);
+            changed |= length(ui, "Pitch", &mut h.pitch_nm);
+            changed |= length(ui, "Row pitch", &mut h.row_pitch_nm);
+            changed |= length(ui, "Body height", &mut h.body_height_nm);
+            changed |= length(ui, "Pin side", &mut h.pin_side_nm);
+            changed |= length(ui, "Pin above body", &mut h.pin_above_nm);
+            changed |= length(ui, "Pin below board", &mut h.pin_below_nm);
         }
         PackageForm::Tabbed(_)
         | PackageForm::Molded(_)
@@ -311,7 +320,7 @@ impl PartEditor {
                 .collect();
             if kit::choice_row(ui, "Form", &mut chosen, &options) {
                 tab.form = None;
-                let form = starting_form(chosen, package.envelope);
+                let form = starting_form(chosen, package.envelope());
                 operation = Some(model_place::edit(draft, form_edits(package, form)));
             }
             let presets: Vec<(Option<Preset>, String)> = std::iter::once((None, "—".to_owned()))
@@ -327,7 +336,7 @@ impl PartEditor {
             if package.form == PackageForm::Generic {
                 // A generic envelope is authored: a working-set edit.
                 for (index, label) in ["Length", "Width", "Height"].into_iter().enumerate() {
-                    length(ui, label, &mut package.envelope[index]);
+                    length(ui, label, &mut package.envelope_nm[index]);
                 }
             } else {
                 let mut form = tab.form.clone().unwrap_or_else(|| package.form.clone());
@@ -515,7 +524,7 @@ impl ModelCard {
                 detail: "Approximate".into(),
                 licence: None,
                 leads: None,
-                body_mm: package.envelope,
+                body_mm: package.envelope(),
                 pins: None,
             },
             PackageModel::Generated { .. } => Self {
@@ -528,7 +537,7 @@ impl ModelCard {
                     ),
                 licence: None,
                 leads: None,
-                body_mm: package.envelope,
+                body_mm: package.envelope(),
                 pins,
             },
             PackageModel::Library(model) => {
@@ -570,7 +579,7 @@ impl ModelCard {
                         detail: "This project holds no such model revision".into(),
                         licence: None,
                         leads: None,
-                        body_mm: package.envelope,
+                        body_mm: package.envelope(),
                         pins: None,
                     },
                 }

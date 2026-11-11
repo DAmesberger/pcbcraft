@@ -162,8 +162,11 @@ fn expand(input: &DeriveInput) -> syn::Result<Tokens> {
     })
 }
 
-/// The record's derives, without `Params`, with the serde and schemars ones
-/// the wire form needs.
+/// The record's derives, without `Params`, with the ones the wire form
+/// needs. A derive macro does not see the `#[derive]` attributes of its
+/// item, so `Clone`, `Debug` and `PartialEq` (which every wire type has,
+/// and which a command payload holding the wire form derives) are always
+/// added too.
 fn derives(attrs: &[Attribute]) -> syn::Result<Vec<Path>> {
     let mut out: Vec<Path> = Vec::new();
     for attr in attrs.iter().filter(|a| a.path().is_ident("derive")) {
@@ -175,6 +178,9 @@ fn derives(attrs: &[Attribute]) -> syn::Result<Vec<Path>> {
         );
     }
     for (name, path) in [
+        ("Clone", quote!(::core::clone::Clone)),
+        ("Debug", quote!(::core::fmt::Debug)),
+        ("PartialEq", quote!(::core::cmp::PartialEq)),
         ("Serialize", quote!(::serde::Serialize)),
         ("Deserialize", quote!(::serde::Deserialize)),
         ("JsonSchema", quote!(::schemars::JsonSchema)),

@@ -30,7 +30,7 @@
 use super::super::model3d::MarkingArea;
 use super::super::package_form::PackageForm;
 use super::super::package_form::molded::MoldedLead;
-use super::super::package_form::tht::ThtKind;
+use super::super::package_form::tht::ThtBody;
 use super::MAX_AREA_MM;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -466,11 +466,11 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
     let mut out = Vec::new();
     match form {
         PackageForm::Module(m) => {
-            let top = m.height;
+            let top = m.height();
             // The board stands on its pads; its top is the can's seat.
-            let pcb = MODULE_PAD_MM + m.pcb_thickness;
-            let [cw, cl] = m.can_size;
-            let [cx, cy] = m.can_centre;
+            let pcb = MODULE_PAD_MM + m.pcb_thickness();
+            let [cw, cl] = m.can_size();
+            let [cx, cy] = m.can_centre();
             let inset = 2.0 * CAN_EDGE_MM;
             let can = plane([cx, cy, top], [cw - inset, cl - inset]);
             out.push(anchor(
@@ -520,7 +520,7 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
                 }
             }
             // The board beyond the can towards the antenna end.
-            let (hl, hw) = (m.length / 2.0, m.width / 2.0);
+            let (hl, hw) = (m.length() / 2.0, m.width() / 2.0);
             let from = (cy + cl / 2.0).max(-hl);
             let beyond = plane(
                 [0.0, (from + hl) / 2.0, pcb + MODULE_TRACE_MM],
@@ -533,8 +533,8 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
                     SurfaceGeometry::Plane(beyond),
                 ));
             }
-            if m.antenna_length > 0.0 {
-                let from = hl - m.antenna_length.min(m.length);
+            if m.antenna_length() > 0.0 {
+                let from = hl - m.antenna_length().min(m.length());
                 let antenna = plane(
                     [0.0, (from + hl) / 2.0, pcb + MODULE_TRACE_MM],
                     [2.0 * hw, hl - from],
@@ -548,8 +548,8 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
                 }
             }
         }
-        PackageForm::Tht(t) => match t.kind {
-            ThtKind::Radial {
+        PackageForm::Tht(t) => match t.kind.mm() {
+            ThtBody::Radial {
                 body_diameter,
                 body_height,
             } => {
@@ -586,7 +586,7 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
                     ));
                 }
             }
-            ThtKind::Axial {
+            ThtBody::Axial {
                 body_diameter,
                 body_length,
             } => {
@@ -611,8 +611,8 @@ pub fn anchors(form: &PackageForm) -> Vec<AnchorInfo> {
             _ => {}
         },
         PackageForm::Molded(m) if m.lead == MoldedLead::Melf => {
-            let r = m.body_width / 2.0;
-            let half = (m.span / 2.0 - m.terminal_length).min(m.body_length / 2.0);
+            let r = m.body_width() / 2.0;
+            let half = (m.span() / 2.0 - m.terminal_length()).min(m.body_length() / 2.0);
             if r > 0.0 && half > 0.0 {
                 out.push(anchor(
                     "body",
@@ -685,7 +685,8 @@ pub fn region(geometry: &SurfaceGeometry, placement: &Placement) -> Option<([f64
 mod tests {
     use super::*;
     use crate::library::package_form::module::ModuleForm;
-    use crate::library::package_form::tht::ThtForm;
+    use crate::library::package_form::tht::{ThtForm, ThtKind};
+    use crate::tests::support::nm;
 
     type Fallible = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -753,7 +754,7 @@ mod tests {
         else {
             return Err("can top".into());
         };
-        assert_eq!(can.origin, [0.0, -2.5, m.height]);
+        assert_eq!(can.origin, [0.0, -2.5, m.height()]);
         assert!((can.size_mm[0] - 16.0).abs() < 1e-9 && (can.size_mm[1] - 16.8).abs() < 1e-9);
         let Some(SurfaceGeometry::Plane(pcb)) = anchor_of(&form, "pcb_top").map(|a| a.geometry)
         else {
@@ -762,7 +763,7 @@ mod tests {
         // The can ends at y = −2.5 + 8.7 = 6.2; the board at 12.5.
         assert!((pcb.size_mm[1] - (12.5 - 6.2)).abs() < 1e-9);
         assert!(
-            (pcb.origin[2] - (MODULE_PAD_MM + m.pcb_thickness + MODULE_TRACE_MM)).abs() < 1e-12
+            (pcb.origin[2] - (MODULE_PAD_MM + m.pcb_thickness() + MODULE_TRACE_MM)).abs() < 1e-12
         );
         assert!((pcb.origin[1] - (6.2 + 12.5) / 2.0).abs() < 1e-9);
         Ok(())
@@ -772,8 +773,8 @@ mod tests {
     fn a_radial_sleeve_faces_its_negative_lead_at_angle_zero() -> Fallible {
         let form = PackageForm::Tht(Box::new(ThtForm {
             kind: ThtKind::Radial {
-                body_diameter: 5.0,
-                body_height: 11.0,
+                body_diameter_nm: nm(5.0),
+                body_height_nm: nm(11.0),
             },
             ..ThtForm::typical()
         }));

@@ -319,11 +319,11 @@ fn model_references_read_as_sides_of_the_part() -> Fallible<()> {
         .ok_or("a package")?;
     let package = &physical.package.definition;
     let frame = package.placement.transform();
-    let [l, w, h] = package.envelope;
+    let [l, w, h] = package.envelope();
     assert!(
         l >= 1.5 * w,
         "the demo part is long in x: {:?}",
-        package.envelope
+        package.envelope()
     );
     // The envelope's centre and top in the part frame.
     let c = frame.apply([0.0, 0.0, h / 2.0]);

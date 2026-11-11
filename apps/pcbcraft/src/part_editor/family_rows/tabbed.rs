@@ -5,18 +5,22 @@
 use crate::kit;
 use egui::Ui;
 use pcbcraft_core::library::package_form::tabbed::{MAX_LEAD_STEP, Tab, TabbedForm};
-use pcbcraft_core::library::package_form::{
-    FORM_LENGTH_LIMIT_MM, FORM_LENGTH_MIN_MM, MAX_FORM_LEADS,
-};
+use pcbcraft_core::library::package_form::{FORM_LENGTH_MIN_NM, MAX_FORM_LEADS};
+use pcbcraft_core::units::{Nm, PointNm};
 
-fn length(ui: &mut Ui, label: &str, value: &mut f64) -> bool {
-    kit::number_row(
-        ui,
-        label,
-        value,
-        "mm",
-        FORM_LENGTH_MIN_MM..=FORM_LENGTH_LIMIT_MM,
-    )
+fn length(ui: &mut Ui, label: &str, value: &mut Nm) -> bool {
+    super::nm_row(ui, label, value, super::length_range())
+}
+
+/// `mm` as stored (an estimate from the form's own values, within range;
+/// a miss reads 0, which the range rules report).
+fn stored(mm: f64) -> Nm {
+    Nm::from_mm_f64_rounded(mm).unwrap_or(Nm::ZERO)
+}
+
+/// `[x, y]` mm as stored, as [`stored`].
+fn stored_point(mm: [f64; 2]) -> PointNm {
+    PointNm::new(stored(mm[0]), stored(mm[1]))
 }
 
 fn count(ui: &mut Ui, label: &str, value: &mut u32, min: u32, max: u32) -> bool {
@@ -40,9 +44,11 @@ enum TabKind {
 fn tab_kind(form: &TabbedForm) -> TabKind {
     match form.tab {
         None => TabKind::None,
-        Some(Tab { flange: None, .. }) => TabKind::Lead,
         Some(Tab {
-            flange: Some(_), ..
+            flange_nm: None, ..
+        }) => TabKind::Lead,
+        Some(Tab {
+            flange_nm: Some(_), ..
         }) => TabKind::Flange,
     }
 }
@@ -50,7 +56,7 @@ fn tab_kind(form: &TabbedForm) -> TabKind {
 /// `form` with the tab changed to `kind`: a new tab starts from the body
 /// (estimated), and a tab takes the whole +y side.
 fn set_tab(form: &mut TabbedForm, kind: TabKind) {
-    let width = (0.5 * form.body_length).max(FORM_LENGTH_MIN_MM);
+    let width = stored(0.5 * form.body_length()).max(FORM_LENGTH_MIN_NM);
     form.tab = match kind {
         TabKind::None => {
             if form.leads_per_side[1] == 0 {
@@ -59,14 +65,14 @@ fn set_tab(form: &mut TabbedForm, kind: TabKind) {
             None
         }
         TabKind::Lead => Some(Tab {
-            width,
-            length: form.foot_length,
-            flange: None,
+            width_nm: width,
+            length_nm: form.foot_length_nm,
+            flange_nm: None,
         }),
         TabKind::Flange => Some(Tab {
-            width,
-            length: 0.8 * form.body_width,
-            flange: Some(0.15 * form.body_width),
+            width_nm: width,
+            length_nm: stored(0.8 * form.body_width()),
+            flange_nm: Some(stored(0.15 * form.body_width())),
         }),
     };
     if kind != TabKind::None {
@@ -117,32 +123,25 @@ pub(super) fn rows(ui: &mut Ui, form: &mut TabbedForm) -> bool {
             MAX_LEAD_STEP,
         );
     }
-    changed |= length(ui, "Pitch", &mut form.pitch);
-    changed |= length(ui, "Body length", &mut form.body_length);
-    changed |= length(ui, "Body width", &mut form.body_width);
-    changed |= length(ui, "Body height", &mut form.body_height);
-    changed |= kit::number_row(
+    changed |= length(ui, "Pitch", &mut form.pitch_nm);
+    changed |= length(ui, "Body length", &mut form.body_length_nm);
+    changed |= length(ui, "Body width", &mut form.body_width_nm);
+    changed |= length(ui, "Body height", &mut form.body_height_nm);
+    changed |= super::nm_row(
         ui,
         "Standoff",
-        &mut form.standoff,
-        "mm",
-        0.0..=FORM_LENGTH_LIMIT_MM,
+        &mut form.standoff_nm,
+        0.0..=super::limit_mm(),
     );
-    changed |= length(ui, "Span", &mut form.span);
-    changed |= length(ui, "Lead width", &mut form.lead_width);
-    changed |= length(ui, "Lead thickness", &mut form.lead_thickness);
-    changed |= length(ui, "Foot length", &mut form.foot_length);
+    changed |= length(ui, "Span", &mut form.span_nm);
+    changed |= length(ui, "Lead width", &mut form.lead_width_nm);
+    changed |= length(ui, "Lead thickness", &mut form.lead_thickness_nm);
+    changed |= length(ui, "Foot length", &mut form.foot_length_nm);
     if let Some(tab) = &mut form.tab {
-        changed |= length(ui, "Tab width", &mut tab.width);
-        changed |= length(ui, "Tab length", &mut tab.length);
-        if let Some(p) = &mut tab.flange {
-            changed |= kit::number_row(
-                ui,
-                "Flange beyond body",
-                p,
-                "mm",
-                0.0..=FORM_LENGTH_LIMIT_MM,
-            );
+        changed |= length(ui, "Tab width", &mut tab.width_nm);
+        changed |= length(ui, "Tab length", &mut tab.length_nm);
+        if let Some(p) = &mut tab.flange_nm {
+            changed |= super::nm_row(ui, "Flange beyond body", p, 0.0..=super::limit_mm());
         }
     }
     changed |= land_rows(ui, form);
@@ -155,31 +154,31 @@ pub(super) fn rows(ui: &mut Ui, form: &mut TabbedForm) -> bool {
 fn land_rows(ui: &mut Ui, form: &mut TabbedForm) -> bool {
     let sizes = form.land_sizes();
     let lead = sizes.first().copied().unwrap_or([1.0, 1.0]);
-    let estimated_span = form.span - form.foot_length + 0.2;
+    let estimated_span = form.span() - form.foot_length() + 0.2;
     let mut changed = false;
-    let mut datasheet = form.lands.size.is_some() || form.lands.span.is_some();
+    let mut datasheet = form.lands.size.is_some() || form.lands.span().is_some();
     if kit::check_row(ui, "Datasheet land pattern", &mut datasheet) {
-        form.lands.size = datasheet.then_some(lead);
-        form.lands.span = datasheet.then_some(estimated_span);
+        form.lands.size = datasheet.then_some(stored_point(lead));
+        form.lands.span_nm = datasheet.then_some(stored(estimated_span));
         changed = true;
     }
     if let Some(size) = &mut form.lands.size {
-        changed |= length(ui, "Land width", &mut size[0]);
-        changed |= length(ui, "Land length", &mut size[1]);
+        changed |= length(ui, "Land width", &mut size.x_nm);
+        changed |= length(ui, "Land length", &mut size.y_nm);
     }
-    if let Some(span) = &mut form.lands.span {
+    if let Some(span) = &mut form.lands.span_nm {
         changed |= length(ui, "Land row span", span);
     }
     if form.tab.is_some() {
         let tab = sizes.last().copied().unwrap_or([1.0, 1.0]);
         let mut own = form.lands.tab_size.is_some();
         if kit::check_row(ui, "Datasheet tab land", &mut own) {
-            form.lands.tab_size = own.then_some(tab);
+            form.lands.tab_size = own.then_some(stored_point(tab));
             changed = true;
         }
         if let Some(size) = &mut form.lands.tab_size {
-            changed |= length(ui, "Tab land width", &mut size[0]);
-            changed |= length(ui, "Tab land length", &mut size[1]);
+            changed |= length(ui, "Tab land width", &mut size.x_nm);
+            changed |= length(ui, "Tab land length", &mut size.y_nm);
         }
     }
     if datasheet {
@@ -195,19 +194,20 @@ fn land_rows(ui: &mut Ui, form: &mut TabbedForm) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pcbcraft_core::library::package_form::{typical_nm as nm, typical_point as pt};
 
     fn sot23_5() -> TabbedForm {
         TabbedForm {
             leads_per_side: [3, 2],
-            pitch: 0.95,
-            body_length: 2.9,
-            body_width: 1.6,
-            body_height: 1.1,
-            standoff: 0.05,
-            span: 2.8,
-            lead_width: 0.4,
-            lead_thickness: 0.12,
-            foot_length: 0.45,
+            pitch_nm: stored(0.95),
+            body_length_nm: stored(2.9),
+            body_width_nm: stored(1.6),
+            body_height_nm: stored(1.1),
+            standoff_nm: stored(0.05),
+            span_nm: stored(2.8),
+            lead_width_nm: stored(0.4),
+            lead_thickness_nm: stored(0.12),
+            foot_length_nm: stored(0.45),
             tab: None,
             lead_step: [1, 2],
             lands: Default::default(),
@@ -249,8 +249,8 @@ mod tests {
             !shown.iter().any(|t| t == "Datasheet tab land"),
             "{shown:?}"
         );
-        f.lands.size = Some([0.6, 1.1]);
-        f.lands.span = Some(2.6);
+        f.lands.size = Some(pt([0.6, 1.1]));
+        f.lands.span_nm = Some(nm(2.6));
         let shown = drawn(&mut f);
         for row in ["Land width", "Land length", "Land row span"] {
             assert!(shown.iter().any(|t| t == row), "{row}: {shown:?}");

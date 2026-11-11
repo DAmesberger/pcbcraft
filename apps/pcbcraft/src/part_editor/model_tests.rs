@@ -10,6 +10,7 @@ use super::*;
 use crate::scene::ModelKey;
 use crate::viewport::Viewport;
 use pcbcraft_core::geometry::Transform3;
+use pcbcraft_core::library::package_form::typical_nm as nm;
 use pcbcraft_core::library::{
     Axis, ChipForm, ChipKind, Definition, ModelPlacement, PackageEdit, PackageForm, QuickAction,
 };
@@ -30,10 +31,10 @@ fn chip() -> PackageForm {
     PackageForm::Chip(Box::new(ChipForm {
         kind: ChipKind::Resistor,
         // Terminations centred at ±0.8 mm, on the template's lands.
-        length: 2.0,
-        width: 1.2,
-        height: 0.55,
-        termination: 0.4,
+        length_nm: nm(2.0),
+        width_nm: nm(1.2),
+        height_nm: nm(0.55),
+        termination_nm: nm(0.4),
     }))
 }
 
@@ -577,7 +578,7 @@ fn the_form_chooser_sends_one_typed_form_and_parameters_commit_when_left() -> Te
     h.inspector(vec![]);
     assert_eq!(h.apply_sent()?, 1);
     match package_of(&h)?.form {
-        PackageForm::GullWing(g) => assert!((g.pitch - 1.1).abs() < 1e-12),
+        PackageForm::GullWing(g) => assert!((g.pitch() - 1.1).abs() < 1e-12),
         other => return Err(format!("{other:?}").into()),
     }
     Ok(())
@@ -592,10 +593,10 @@ fn a_residual_from_mismatched_spacing_is_explained() -> TestResult {
         vec![PackageEdit::SetForm(PackageForm::Chip(Box::new(
             ChipForm {
                 kind: ChipKind::Resistor,
-                length: 2.8,
-                width: 1.2,
-                height: 0.55,
-                termination: 0.4,
+                length_nm: nm(2.8),
+                width_nm: nm(1.2),
+                height_nm: nm(0.55),
+                termination_nm: nm(0.4),
             },
         )))],
     ));

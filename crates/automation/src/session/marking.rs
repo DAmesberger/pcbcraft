@@ -257,7 +257,7 @@ fn described(surface: &SurfaceRef, what: &str, geometry: Option<&SurfaceGeometry
 
 /// The surfaces of `package`, model area and box faces first.
 pub fn surfaces(package: &PackageDefinition) -> Vec<Value> {
-    let envelope = package.form.envelope().unwrap_or(package.envelope);
+    let envelope = package.form.envelope().unwrap_or(package.envelope());
     let mut out = vec![described(
         &SurfaceRef::Model,
         "the model's marking area: the top face of its outermost body",

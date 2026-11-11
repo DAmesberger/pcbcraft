@@ -389,7 +389,7 @@ pub fn design_key(model: &TraceModel<'_>) -> Result<ContentHash> {
         TraceModel::Package { package } => serde_json::json!({
             "form": package.form,
             "model": package.model,
-            "envelope": package.envelope,
+            "envelope": package.envelope(),
         }),
         TraceModel::Step { model, bytes } => serde_json::json!({
             "step": asset_hash(bytes),

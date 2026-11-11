@@ -373,7 +373,7 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 next_local: _,
                 terminals: _,
                 form,
-                envelope: _,
+                envelope_nm: _,
                 model,
                 placement,
                 mechanical: _,

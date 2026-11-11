@@ -814,7 +814,7 @@ impl PartEditor {
                 AreaChoice::Explicit { size_mm, .. } => Some(size_mm),
                 AreaChoice::FromModel => None,
             })
-            .unwrap_or([set.package.envelope[0], set.package.envelope[1]]);
+            .unwrap_or([set.package.envelope()[0], set.package.envelope()[1]]);
             let (asset, item) = artwork_item(&read.text, read.size_mm, area);
             let spec = match scope {
                 Scope::Component => Some(&mut set.component.marking),
@@ -843,7 +843,7 @@ impl PartEditor {
             }
         }
         let fields = field_names(&set.component, library);
-        let envelope = set.package.envelope;
+        let envelope = set.package.envelope();
         let surfaces = marking_place::surfaces(&set.package);
         let package = set.package.clone();
         let part_open = self.parts.is_open();

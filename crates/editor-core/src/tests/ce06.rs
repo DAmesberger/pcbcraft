@@ -349,7 +349,7 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
                 designation: i.to_string(),
             })
             .collect(),
-        envelope: [5.0, 5.0, 0.9],
+        envelope_nm: [nm(5.0), nm(5.0), nm(0.9)],
         ..PackageDefinition::default()
     };
     // Perimeter lands 1–20; package terminal 21 (the exposed pad) has three

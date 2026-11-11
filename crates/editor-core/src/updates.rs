@@ -1199,11 +1199,11 @@ pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<Stri
             out.push(format!("chip kind {:?} → {:?}.", x.kind, y.kind));
         }
     }
-    if a.envelope != b.envelope {
+    if a.envelope() != b.envelope() {
         out.push(format!(
             "body {} → {} mm (L×W×H).",
-            size_text(&a.envelope),
-            size_text(&b.envelope)
+            size_text(&a.envelope()),
+            size_text(&b.envelope())
         ));
     }
     match (&a.model, &b.model) {

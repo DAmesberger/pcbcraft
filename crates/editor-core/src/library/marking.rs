@@ -605,7 +605,7 @@ pub fn surface_region(
         },
         SurfaceRef::Face { face } => {
             let package = package?;
-            let envelope = package.form.envelope().unwrap_or(package.envelope);
+            let envelope = package.form.envelope().unwrap_or(package.envelope());
             let size = face.of_box(envelope).size_mm;
             size.iter()
                 .all(|s| positive(*s))
@@ -757,12 +757,12 @@ pub fn package_area(
             .and_then(|m| m.definition.marking_area)
             .map(|area| area.size_mm)?,
         (PackageModel::PartFile(part), _) => part.default_area()?,
-        (_, PackageForm::Chip(c)) => [c.length - 2.0 * c.termination, c.width],
-        (_, PackageForm::GullWing(g)) => [g.body_length, g.body_width],
-        (_, PackageForm::NoLead(n)) => [n.body_length, n.body_width],
-        (_, PackageForm::Module(m)) => m.can_size,
+        (_, PackageForm::Chip(c)) => [c.length() - 2.0 * c.termination(), c.width()],
+        (_, PackageForm::GullWing(g)) => [g.body_length(), g.body_width()],
+        (_, PackageForm::NoLead(n)) => [n.body_length(), n.body_width()],
+        (_, PackageForm::Module(m)) => m.can_size(),
         (_, form) => {
-            let [l, w, _] = form.envelope().unwrap_or(package.envelope);
+            let [l, w, _] = form.envelope().unwrap_or(package.envelope());
             [l, w]
         }
     };

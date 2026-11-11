@@ -18,16 +18,27 @@ use pcbcraft_core::library::{
 };
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 
+/// A test length in mm, as stored.
+fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
+/// A test point or size in mm, as stored.
+#[allow(dead_code)]
+fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
 const EV: SketchEvaluator = SketchEvaluator;
 const TOL: f64 = 1e-6;
 
 /// A package of `form` whose terminals are designated `names` in lead
 /// order.
 fn package(form: PackageForm, names: &[String]) -> PackageDefinition {
-    let envelope = form.envelope().unwrap_or([1.0; 3]);
+    let envelope_nm = form.envelope().unwrap_or([1.0; 3]).map(nm);
     let count = u32::try_from(names.len()).unwrap_or(0);
     PackageDefinition {
-        envelope,
+        envelope_nm,
         terminals: names
             .iter()
             .zip(1..)
@@ -129,7 +140,13 @@ fn bga(rows: u32, cols: u32, depopulated: Vec<[u32; 2]>) -> GridForm {
     let size = |n: u32| f64::from(n) * pitch + 0.6;
     GridForm {
         depopulated,
-        ..GridForm::ball_grid(rows, cols, pitch, [size(cols), size(rows), 0.9], [0.4, 0.3])
+        ..GridForm::ball_grid(
+            rows,
+            cols,
+            nm(pitch),
+            [nm(size(cols)), nm(size(rows)), nm(0.9)],
+            [nm(0.4), nm(0.3)],
+        )
     }
 }
 
@@ -217,7 +234,7 @@ fn depopulated_positions_leave_gaps_and_keep_every_other_name() -> Result<()> {
 fn a_land_grid_uses_the_land_diameter_and_a_depopulated_a1_is_refused() -> Result<()> {
     let mut form = bga(3, 3, Vec::new());
     form.contact = pcbcraft_core::library::package_form::grid::GridContact::Land;
-    form.contact_height = 0.0;
+    form.contact_height_nm = nm(0.0);
     let pkg = grid_package(form.clone());
     let template = FootprintTemplate::defaults(TemplateKind::Grid, &pkg);
     let def = build(&pkg, &template)?;
@@ -250,14 +267,14 @@ fn dip8() -> ThtForm {
     ThtForm::new(
         ThtKind::Dip {
             pins: 8,
-            row_pitch: 7.5,
-            body_length: 9.5,
-            body_width: 6.5,
-            body_height: 3.5,
+            row_pitch_nm: nm(7.5),
+            body_length_nm: nm(9.5),
+            body_width_nm: nm(6.5),
+            body_height_nm: nm(3.5),
         },
-        2.5,
-        0.5,
-        3.0,
+        nm(2.5),
+        nm(0.5),
+        nm(3.0),
     )
 }
 
@@ -307,12 +324,12 @@ fn two_lead_and_to_rows_follow_the_form() -> Result<()> {
     // Axial: two pads a lead pitch apart, unmarked unless asked.
     let axial = ThtForm::new(
         ThtKind::Axial {
-            body_diameter: 2.5,
-            body_length: 6.0,
+            body_diameter_nm: nm(2.5),
+            body_length_nm: nm(6.0),
         },
-        10.0,
-        0.6,
-        3.0,
+        nm(10.0),
+        nm(0.6),
+        nm(3.0),
     );
     let pkg = tht_package(axial);
     let template = FootprintTemplate::defaults(TemplateKind::Tht, &pkg);
@@ -326,12 +343,12 @@ fn two_lead_and_to_rows_follow_the_form() -> Result<()> {
     // A polarised radial part asks for its pin-1 mark.
     let radial = ThtForm::new(
         ThtKind::Radial {
-            body_diameter: 5.0,
-            body_height: 11.0,
+            body_diameter_nm: nm(5.0),
+            body_height_nm: nm(11.0),
         },
-        2.0,
-        0.5,
-        3.0,
+        nm(2.0),
+        nm(0.5),
+        nm(3.0),
     );
     let pkg = tht_package(radial);
     let FootprintTemplate::Tht(mut t) = FootprintTemplate::defaults(TemplateKind::Tht, &pkg) else {
@@ -352,13 +369,13 @@ fn two_lead_and_to_rows_follow_the_form() -> Result<()> {
     let to = ThtForm::new(
         ThtKind::To {
             pins: 3,
-            body_length: 10.0,
-            body_width: 4.5,
-            body_height: 9.0,
+            body_length_nm: nm(10.0),
+            body_width_nm: nm(4.5),
+            body_height_nm: nm(9.0),
         },
-        2.5,
-        0.8,
-        3.0,
+        nm(2.5),
+        nm(0.8),
+        nm(3.0),
     );
     let pkg = tht_package(to);
     let def = build(&pkg, &FootprintTemplate::defaults(TemplateKind::Tht, &pkg))?;

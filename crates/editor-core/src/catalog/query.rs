@@ -927,7 +927,7 @@ fn implements_term(value: &str) -> Option<Term> {
 /// `500um`; `None` otherwise.
 fn length_mm(text: &str) -> Option<f64> {
     let mm = parse_length(text, LengthUnit::Mm).ok()?.to_mm_f64();
-    (mm > 0.0 && mm <= crate::library::package_form::FORM_LENGTH_LIMIT_MM).then_some(mm)
+    (mm > 0.0 && mm <= crate::library::package_form::FORM_LENGTH_LIMIT_NM.to_mm_f64()).then_some(mm)
 }
 
 /// `LxW` or `LxWxH` in mm (`x`, `X`, `×` or `*` between, an optional
@@ -946,8 +946,10 @@ fn body_mm(text: &str) -> Option<Vec<f64>> {
         .into_iter()
         .map(|p| {
             let v = p.trim().parse::<f64>().ok()?;
-            (v.is_finite() && v > 0.0 && v <= crate::library::package_form::FORM_LENGTH_LIMIT_MM)
-                .then_some(v)
+            (v.is_finite()
+                && v > 0.0
+                && v <= crate::library::package_form::FORM_LENGTH_LIMIT_NM.to_mm_f64())
+            .then_some(v)
         })
         .collect()
 }

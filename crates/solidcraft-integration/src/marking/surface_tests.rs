@@ -3,6 +3,8 @@
 use super::board::{self, DECAL_KIND, Marked};
 use super::*;
 use crate::material::BodyKind;
+#[allow(unused_imports)]
+use crate::models::tests::{nm, pt};
 use crate::scene::Geometry;
 use pcbcraft_core::library::marking::surface::{self as core_surface, Wrap};
 use pcbcraft_core::library::marking::{
@@ -47,8 +49,8 @@ fn on(name: &str) -> Placement {
 fn radial_form() -> ThtForm {
     ThtForm {
         kind: ThtKind::Radial {
-            body_diameter: 5.0,
-            body_height: 11.0,
+            body_diameter_nm: nm(5.0),
+            body_height_nm: nm(11.0),
         },
         ..ThtForm::typical()
     }
@@ -61,7 +63,7 @@ fn radial_board() -> std::result::Result<pcbcraft_core::Project, Box<dyn std::er
     let mut project = pcbcraft_core::Engine::demo()?.project().clone();
     let package = &mut project.library.packages[0].definition;
     let form = radial_form();
-    package.envelope = form.envelope().ok_or("envelope")?;
+    package.envelope_nm = (form.envelope().ok_or("envelope")?).map(nm);
     package.form = PackageForm::Tht(Box::new(form));
     package.model = PackageModel::Generated {
         family_rev: 1,
@@ -81,7 +83,7 @@ fn module_package() -> std::result::Result<PackageDefinition, Box<dyn std::error
         .definition
         .clone();
     package.form = PackageForm::Module(Box::new(ModuleForm::typical()));
-    package.envelope = package.form.envelope().ok_or("envelope")?;
+    package.envelope_nm = (package.form.envelope().ok_or("envelope")?).map(nm);
     package.model = PackageModel::Generated {
         family_rev: 1,
         materials: GeneratedMaterials::default(),
@@ -603,9 +605,9 @@ fn module_anchors_place_the_can_and_board_markings() -> TestResult {
         &mut cache,
     );
     assert!(problems.is_empty(), "{problems:?}");
-    let can_top = form.height + Finish::LaserEtchMetal.lift_mm();
+    let can_top = form.height() + Finish::LaserEtchMetal.lift_mm();
     let pcb_top = core_surface::MODULE_PAD_MM
-        + form.pcb_thickness
+        + form.pcb_thickness()
         + core_surface::MODULE_TRACE_MM
         + Finish::InkWhite.lift_mm();
     let can: Vec<&Geometry> = decals

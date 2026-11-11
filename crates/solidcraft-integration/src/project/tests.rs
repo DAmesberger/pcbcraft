@@ -1,4 +1,6 @@
 use super::*;
+#[allow(unused_imports)]
+use crate::models::tests::{nm, pt};
 use pcbcraft_core::geometry::cos_sin;
 use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm, PackageModel};
 
@@ -7,7 +9,7 @@ use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm,
 /// envelope path (generated models are `models::tests`).
 fn set_body(package: &mut PackageDefinition, kind: Option<ChipKind>) {
     package.form = kind.map_or(PackageForm::Generic, |kind| {
-        PackageForm::Chip(Box::new(ChipForm::new(kind, package.envelope)))
+        PackageForm::Chip(Box::new(ChipForm::new(kind, (package.envelope()).map(nm))))
     });
     package.model = PackageModel::default();
 }
@@ -374,7 +376,7 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
         .packages[0]
         .definition
         .clone();
-    package.envelope = [4.0, 3.0, 2.0];
+    package.envelope_nm = [nm(4.0), nm(3.0), nm(2.0)];
     package.placement.translation = [1.5, -2.0, 0.4];
     set_body(&mut package, None);
     let model = preview(&package)?;
@@ -385,7 +387,7 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
     near(model.geometry[0].volume(), 24.0);
     // A package declaring a chip-resistor body previews as one, with the
     // wrapped terminations and overcoat it shows on the board.
-    package.envelope = [2.0, 1.25, 0.5];
+    package.envelope_nm = [nm(2.0), nm(1.25), nm(0.5)];
     package.placement.translation = [0.0; 3];
     set_body(&mut package, Some(ChipKind::Resistor));
     let chip = preview(&package)?;
@@ -410,7 +412,7 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
     assert_eq!(count(&ceramic, BodyKind::Termination), 2);
     assert_eq!(count(&ceramic, BodyKind::Overcoat), 0);
     looks_match_the_native_file(&ceramic)?;
-    package.envelope[0] = 0.0;
+    package.envelope_nm[0] = nm(0.0);
     assert!(matches!(preview(&package), Err(Error::Invalid(_))));
     Ok(())
 }

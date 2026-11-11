@@ -717,7 +717,7 @@ pub fn library_findings(
             ));
         }
     }
-    let excess = bounds_excess(definition, package.envelope);
+    let excess = bounds_excess(definition, package.envelope());
     if excess > BOUNDS_TOLERANCE_MM {
         let size = definition.size_mm();
         out.push(Finding::new(
@@ -772,7 +772,7 @@ pub fn part_findings(
     }
     let [lo, hi] = part.derived.bounds_mm;
     let excess = (0..3)
-        .map(|i| (hi[i] - lo[i]) - package.envelope[i])
+        .map(|i| (hi[i] - lo[i]) - package.envelope()[i])
         .fold(f64::NEG_INFINITY, f64::max);
     if excess > BOUNDS_TOLERANCE_MM {
         out.push(Finding::new(

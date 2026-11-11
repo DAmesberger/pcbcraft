@@ -846,7 +846,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         placement: part.placement,
     };
     let package = part.package;
-    let [length, width, height] = package.envelope;
+    let [length, width, height] = package.envelope();
     let offset = package.placement.translation;
     let lo = [offset[0] - length / 2.0, offset[1] - width / 2.0, offset[2]];
     let hi = [
@@ -876,7 +876,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
     // Chip parts: tinned caps wrapped over both ends of the long axis.
     let axis = usize::from(width > length);
     let across = 1 - axis;
-    let long = package.envelope[axis];
+    let long = package.envelope()[axis];
     let band = (BAND_SHARE * long).min(BAND_MAX_MM);
     // A generated chip's terminations are real bodies flush with its ends.
     let g = if part.generated {
@@ -971,7 +971,7 @@ fn lead_band(
     footprint: &FootprintDefinition,
     pad: &pcbcraft_core::library::Pad,
 ) -> Option<([f64; 2], [f64; 2])> {
-    let [length, width, _] = package.envelope;
+    let [length, width, _] = package.envelope();
     let offset = package.placement.translation;
     let body_min = [offset[0] - length / 2.0, offset[1] - width / 2.0];
     let body_max = [offset[0] + length / 2.0, offset[1] + width / 2.0];

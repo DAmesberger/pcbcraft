@@ -2285,7 +2285,7 @@ fn object_params(
         if !models::is_generated(package) {
             for (axis, value) in ["length", "width", "height"]
                 .into_iter()
-                .zip(package.envelope)
+                .zip(package.envelope())
             {
                 out.push((format!("{prefix}_{axis}"), value, "mm"));
             }
@@ -2519,7 +2519,7 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
     let mut b = Builder::new("Package envelope", &SourceCache::default())?;
     for (name, value) in ["length", "width", "height"]
         .into_iter()
-        .zip(package.envelope)
+        .zip(package.envelope())
     {
         b.param(name, value, "mm")?;
     }

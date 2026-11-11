@@ -533,7 +533,7 @@ fn fit(target: &Target<'_>, model: &ModelDefinition) -> FitScore {
         }
     }
     FitScore::Bounds {
-        excess_mm: bounds_excess(model, target.package.envelope),
+        excess_mm: bounds_excess(model, target.package.envelope()),
     }
 }
 

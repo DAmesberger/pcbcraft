@@ -594,7 +594,7 @@ fn parametric_footprint_through_json_is_atomic_and_undoable() -> TestResult {
                 designation: n.to_string(),
             })
             .collect(),
-        envelope: [2.0, 1.2, 0.5],
+        envelope_nm: [2.0, 1.2, 0.5].map(pcbcraft_core::library::package_form::typical_nm),
         ..PackageDefinition::default()
     });
     let created = |reply: &Value| -> std::result::Result<u64, Box<dyn std::error::Error>> {
@@ -736,7 +736,7 @@ fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult
                 designation: n.to_string(),
             })
             .collect(),
-        envelope: [2.0, 1.2, 0.5],
+        envelope_nm: [2.0, 1.2, 0.5].map(pcbcraft_core::library::package_form::typical_nm),
         ..PackageDefinition::default()
     };
     let mut created = |definition, name: &str| -> std::result::Result<u64, String> {

@@ -4,6 +4,7 @@
 //! ordinary definition data a user then edits.
 use super::footprint::{Hole, HoleShape, PadKind, PadShape};
 use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
+use super::package_form::{typical_nm, typical_point};
 use super::symbol_style::{self, SymbolConventions, SymbolKind};
 use super::templates;
 use super::templates::catalog::{LandValues, SkeletonHint};
@@ -123,9 +124,12 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
             })
             .collect(),
         form: kind.chip.map_or(PackageForm::Generic, |chip| {
-            PackageForm::Chip(Box::new(ChipForm::new(chip, layout.envelope)))
+            PackageForm::Chip(Box::new(ChipForm::new(
+                chip,
+                layout.envelope.map(typical_nm),
+            )))
         }),
-        envelope: layout.envelope,
+        envelope_nm: layout.envelope.map(typical_nm),
         model: match kind.chip {
             Some(_) => PackageModel::Generated {
                 family_rev: SAMPLE_FAMILY_REV,
@@ -406,42 +410,43 @@ impl Preset {
 
     /// The preset's typed form (millimetres, typical values).
     pub fn form(self) -> PackageForm {
+        let mm = typical_nm;
         let gull =
             |sides, leads_per_side, pitch, body: [f64; 3], span: [f64; 2], lead: [f64; 3]| {
                 PackageForm::GullWing(Box::new(GullWingForm {
                     sides,
                     leads_per_side,
-                    pitch,
-                    body_length: body[0],
-                    body_width: body[1],
-                    body_height: body[2],
-                    standoff: 0.1,
-                    span,
-                    lead_width: lead[0],
-                    lead_thickness: lead[1],
-                    foot_length: lead[2],
+                    pitch_nm: mm(pitch),
+                    body_length_nm: mm(body[0]),
+                    body_width_nm: mm(body[1]),
+                    body_height_nm: mm(body[2]),
+                    standoff_nm: mm(0.1),
+                    span_nm: span.map(mm),
+                    lead_width_nm: mm(lead[0]),
+                    lead_thickness_nm: mm(lead[1]),
+                    foot_length_nm: mm(lead[2]),
                 }))
             };
         let header = |rows| {
             PackageForm::Header(Box::new(HeaderForm {
                 rows,
                 pins_per_row: if rows == 2 { 5 } else { 2 },
-                pitch: 2.54,
-                row_pitch: 2.54,
-                body_height: 2.5,
-                pin_side: 0.64,
-                pin_above: 6.0,
-                pin_below: 3.0,
+                pitch_nm: mm(2.54),
+                row_pitch_nm: mm(2.54),
+                body_height_nm: mm(2.5),
+                pin_side_nm: mm(0.64),
+                pin_above_nm: mm(6.0),
+                pin_below_nm: mm(3.0),
             }))
         };
         match self {
             Self::Chip0603 => PackageForm::Chip(Box::new(ChipForm::new(
                 ChipKind::Resistor,
-                [1.6, 0.8, 0.45],
+                [1.6, 0.8, 0.45].map(mm),
             ))),
             Self::Chip0805 => PackageForm::Chip(Box::new(ChipForm::new(
                 ChipKind::Resistor,
-                [2.0, 1.25, 0.5],
+                [2.0, 1.25, 0.5].map(mm),
             ))),
             Self::Soic8 => gull(
                 LeadSides::Two,
@@ -462,23 +467,23 @@ impl Preset {
             Self::Qfn16 => PackageForm::NoLead(Box::new(NoLeadForm {
                 sides: LeadSides::Four,
                 terminals_per_side: [4, 4],
-                pitch: 0.5,
-                body_length: 3.0,
-                body_width: 3.0,
-                body_height: 0.85,
-                terminal_length: 0.4,
-                terminal_width: 0.25,
-                exposed_pad: Some([1.7, 1.7]),
+                pitch_nm: mm(0.5),
+                body_length_nm: mm(3.0),
+                body_width_nm: mm(3.0),
+                body_height_nm: mm(0.85),
+                terminal_length_nm: mm(0.4),
+                terminal_width_nm: mm(0.25),
+                exposed_pad: Some(typical_point([1.7, 1.7])),
             })),
             Self::Dfn8 => PackageForm::NoLead(Box::new(NoLeadForm {
                 sides: LeadSides::Two,
                 terminals_per_side: [4, 0],
-                pitch: 0.5,
-                body_length: 2.0,
-                body_width: 2.0,
-                body_height: 0.75,
-                terminal_length: 0.35,
-                terminal_width: 0.25,
+                pitch_nm: mm(0.5),
+                body_length_nm: mm(2.0),
+                body_width_nm: mm(2.0),
+                body_height_nm: mm(0.75),
+                terminal_length_nm: mm(0.35),
+                terminal_width_nm: mm(0.25),
                 exposed_pad: None,
             })),
             Self::Header2x5 => header(2),
@@ -586,11 +591,11 @@ pub fn form_lands_with(
     // Lead k's land size [along x, along y].
     let size = |k: usize| -> [f64; 2] {
         match form {
-            PackageForm::Chip(c) => [c.termination + 0.6, c.width + 0.2],
+            PackageForm::Chip(c) => [c.termination() + 0.6, c.width() + 0.2],
             PackageForm::GullWing(g) => {
                 let land = [
-                    g.lead_width + rules.land.gull_wing_width_extra,
-                    g.foot_length + 0.6,
+                    g.lead_width() + rules.land.gull_wing_width_extra,
+                    g.foot_length() + 0.6,
                 ];
                 if across_x(g.sides, g.leads_per_side, k) {
                     [land[1], land[0]]
@@ -602,10 +607,10 @@ pub fn form_lands_with(
                 // 0.05 mm wider than the terminal, but never so wide that
                 // neighbours at the pitch lose the mask web; never
                 // narrower than the terminal.
-                let width = (n.terminal_width + 0.05)
-                    .min(n.pitch - no_lead_gap)
-                    .max(n.terminal_width);
-                let land = [width, n.terminal_length + 0.4];
+                let width = (n.terminal_width() + 0.05)
+                    .min(n.pitch() - no_lead_gap)
+                    .max(n.terminal_width());
+                let land = [width, n.terminal_length() + 0.4];
                 if across_x(n.sides, n.terminals_per_side, k) {
                     [land[1], land[0]]
                 } else {
@@ -615,13 +620,13 @@ pub fn form_lands_with(
             PackageForm::Header(h) => {
                 // Within the pitch (as a through-hole land), keeping a
                 // minimal ring round the drill.
-                let drill = h.pin_side * std::f64::consts::SQRT_2 + 0.1;
+                let drill = h.pin_side() * std::f64::consts::SQRT_2 + 0.1;
                 let pitch = if h.rows > 1 {
-                    h.pitch.min(h.row_pitch)
+                    h.pitch().min(h.row_pitch())
                 } else {
-                    h.pitch
+                    h.pitch()
                 };
-                let d = (h.pin_side * std::f64::consts::SQRT_2 + 0.8)
+                let d = (h.pin_side() * std::f64::consts::SQRT_2 + 0.8)
                     .min(pitch - super::package_form::tht::LAND_GAP_MM)
                     .max(drill + super::package_form::tht::MIN_RING_MM);
                 [d, d]
@@ -654,8 +659,8 @@ pub fn form_lands_with(
             // sits on its solderable area, a tab lead like the others.
             PackageForm::Molded(_) => at[0] += at[0].signum() * TOE_HEEL_SHIFT_MM,
             PackageForm::Tabbed(t) => {
-                let flange = t.tab.is_some_and(|tab| tab.flange.is_some());
-                match t.lands.span {
+                let flange = t.tab.is_some_and(|tab| tab.flange().is_some());
+                match t.lands.span() {
                     // The datasheet's rows, centre to centre.
                     Some(span) if Some(k) != tab_index => {
                         at[1] = at[1].signum() * span / 2.0;
@@ -686,7 +691,9 @@ pub fn form_lands_with(
             if let PackageForm::NoLead(n) = form
                 && let Some(ep) = n.exposed_pad
             {
-                pad.shape = PadShape::Rect { size: ep };
+                pad.shape = PadShape::Rect {
+                    size: ep.to_mm_f64(),
+                };
                 pad.number = "EP".into();
             }
         } else if let PackageForm::Header(h) = form {
@@ -698,7 +705,7 @@ pub fn form_lands_with(
             }
             pad.hole = Some(Hole {
                 shape: HoleShape::Round {
-                    diameter: h.pin_side * std::f64::consts::SQRT_2 + 0.1,
+                    diameter: h.pin_side() * std::f64::consts::SQRT_2 + 0.1,
                 },
                 plated: true,
                 offset: [0.0, 0.0],
@@ -1008,15 +1015,15 @@ pub fn heel_trim_with(form: &PackageForm, rules: &DesignRules) -> f64 {
     let PackageForm::NoLead(n) = form else {
         return 0.0;
     };
-    let Some(ep) = n.exposed_pad else {
+    let Some(ep) = n.exposed_pad() else {
         return 0.0;
     };
     // Estimated land length (see `form_lands`) and its centre.
-    let length = n.terminal_length + 0.4;
-    let gap = |body: f64, ep: f64| body / 2.0 - n.terminal_length / 2.0 - length / 2.0 - ep / 2.0;
-    let mut gaps = vec![gap(n.body_width, ep[1])];
+    let length = n.terminal_length() + 0.4;
+    let gap = |body: f64, ep: f64| body / 2.0 - n.terminal_length() / 2.0 - length / 2.0 - ep / 2.0;
+    let mut gaps = vec![gap(n.body_width(), ep[1])];
     if n.sides == LeadSides::Four {
-        gaps.push(gap(n.body_length, ep[0]));
+        gaps.push(gap(n.body_length(), ep[0]));
     }
     let worst = gaps.into_iter().fold(f64::INFINITY, f64::min);
     let trim = rules.land.exposed_pad_clearance - worst;
@@ -1252,7 +1259,11 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
                 designation: designation.clone(),
             })
             .collect(),
-        envelope: form.envelope().unwrap_or([1.0; 3]),
+        envelope_nm: form
+            .envelope_nm()
+            .ok()
+            .flatten()
+            .unwrap_or([typical_nm(1.0); 3]),
         form,
         model: PackageModel::Generated {
             family_rev: SAMPLE_FAMILY_REV,
@@ -1869,7 +1880,7 @@ pub fn showcase_parts() -> Vec<ShowcasePart> {
             name: "Capacitor 0805",
             form: PackageForm::Chip(Box::new(ChipForm::new(
                 ChipKind::Capacitor,
-                [2.0, 1.25, 0.85],
+                [2.0, 1.25, 0.85].map(typical_nm),
             ))),
             prefix: "C",
             symbol: SymbolKind::Capacitor,
@@ -1880,7 +1891,7 @@ pub fn showcase_parts() -> Vec<ShowcasePart> {
             name: "Tantalum capacitor 3216 (polarised)",
             form: PackageForm::Chip(Box::new(ChipForm::new(
                 ChipKind::Capacitor,
-                [3.2, 1.6, 1.6],
+                [3.2, 1.6, 1.6].map(typical_nm),
             ))),
             prefix: "C",
             symbol: SymbolKind::PolarisedCapacitor,

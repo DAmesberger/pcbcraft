@@ -7,6 +7,16 @@ use pcbcraft_core::library::{
 };
 use pcbcraft_core::{Engine, Layer, PackageTerminalId};
 
+/// A test length in mm, as stored.
+pub(crate) fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
+/// A test point or size in mm, as stored.
+pub(crate) fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
 fn near(actual: f64, expected: f64, what: &str) {
     assert!(
         (actual - expected).abs() < 1e-6,
@@ -36,10 +46,10 @@ fn package(form: PackageForm, terminals: u32) -> PackageDefinition {
 fn chip() -> PackageForm {
     PackageForm::Chip(Box::new(ChipForm {
         kind: ChipKind::Resistor,
-        length: 1.6,
-        width: 0.8,
-        height: 0.45,
-        termination: 0.3,
+        length_nm: nm(1.6),
+        width_nm: nm(0.8),
+        height_nm: nm(0.45),
+        termination_nm: nm(0.3),
     }))
 }
 
@@ -47,15 +57,15 @@ fn soic8() -> PackageForm {
     PackageForm::GullWing(Box::new(GullWingForm {
         sides: LeadSides::Two,
         leads_per_side: [4, 0],
-        pitch: 1.27,
-        body_length: 4.9,
-        body_width: 3.9,
-        body_height: 1.45,
-        standoff: 0.1,
-        span: [6.0, 0.0],
-        lead_width: 0.41,
-        lead_thickness: 0.2,
-        foot_length: 0.6,
+        pitch_nm: nm(1.27),
+        body_length_nm: nm(4.9),
+        body_width_nm: nm(3.9),
+        body_height_nm: nm(1.45),
+        standoff_nm: nm(0.1),
+        span_nm: [nm(6.0), nm(0.0)],
+        lead_width_nm: nm(0.41),
+        lead_thickness_nm: nm(0.2),
+        foot_length_nm: nm(0.6),
     }))
 }
 
@@ -63,15 +73,15 @@ fn tqfp32() -> PackageForm {
     PackageForm::GullWing(Box::new(GullWingForm {
         sides: LeadSides::Four,
         leads_per_side: [8, 8],
-        pitch: 0.8,
-        body_length: 7.0,
-        body_width: 7.0,
-        body_height: 1.0,
-        standoff: 0.1,
-        span: [9.0, 9.0],
-        lead_width: 0.37,
-        lead_thickness: 0.15,
-        foot_length: 0.6,
+        pitch_nm: nm(0.8),
+        body_length_nm: nm(7.0),
+        body_width_nm: nm(7.0),
+        body_height_nm: nm(1.0),
+        standoff_nm: nm(0.1),
+        span_nm: [nm(9.0), nm(9.0)],
+        lead_width_nm: nm(0.37),
+        lead_thickness_nm: nm(0.15),
+        foot_length_nm: nm(0.6),
     }))
 }
 
@@ -79,13 +89,13 @@ fn qfn16() -> PackageForm {
     PackageForm::NoLead(Box::new(NoLeadForm {
         sides: LeadSides::Four,
         terminals_per_side: [4, 4],
-        pitch: 0.5,
-        body_length: 3.0,
-        body_width: 3.0,
-        body_height: 0.85,
-        terminal_length: 0.4,
-        terminal_width: 0.25,
-        exposed_pad: Some([1.7, 1.7]),
+        pitch_nm: nm(0.5),
+        body_length_nm: nm(3.0),
+        body_width_nm: nm(3.0),
+        body_height_nm: nm(0.85),
+        terminal_length_nm: nm(0.4),
+        terminal_width_nm: nm(0.25),
+        exposed_pad: Some(pt([1.7, 1.7])),
     }))
 }
 
@@ -93,12 +103,12 @@ fn dfn8() -> PackageForm {
     PackageForm::NoLead(Box::new(NoLeadForm {
         sides: LeadSides::Two,
         terminals_per_side: [4, 0],
-        pitch: 0.5,
-        body_length: 2.0,
-        body_width: 2.0,
-        body_height: 0.75,
-        terminal_length: 0.35,
-        terminal_width: 0.25,
+        pitch_nm: nm(0.5),
+        body_length_nm: nm(2.0),
+        body_width_nm: nm(2.0),
+        body_height_nm: nm(0.75),
+        terminal_length_nm: nm(0.35),
+        terminal_width_nm: nm(0.25),
         exposed_pad: None,
     }))
 }
@@ -107,12 +117,12 @@ fn header2x5() -> PackageForm {
     PackageForm::Header(Box::new(HeaderForm {
         rows: 2,
         pins_per_row: 5,
-        pitch: 2.54,
-        row_pitch: 2.54,
-        body_height: 2.5,
-        pin_side: 0.64,
-        pin_above: 6.0,
-        pin_below: 3.0,
+        pitch_nm: nm(2.54),
+        row_pitch_nm: nm(2.54),
+        body_height_nm: nm(2.5),
+        pin_side_nm: nm(0.64),
+        pin_above_nm: nm(6.0),
+        pin_below_nm: nm(3.0),
     }))
 }
 
@@ -222,10 +232,10 @@ pub(super) fn disjoint_within(
 fn a_chip_led_is_a_substrate_and_terminations_under_a_clear_lens() -> Result<()> {
     let form = PackageForm::Chip(Box::new(ChipForm {
         kind: ChipKind::Led,
-        length: 1.6,
-        width: 0.8,
-        height: 0.75,
-        termination: 0.3,
+        length_nm: nm(1.6),
+        width_nm: nm(0.8),
+        height_nm: nm(0.75),
+        termination_nm: nm(0.3),
     }));
     let (mut native, definition) = built(form, 2)?;
     let material = |name: &str| {
@@ -591,7 +601,7 @@ fn unbuildable_requests_are_refused() -> Result<()> {
     let PackageForm::GullWing(mut g) = soic8() else {
         return Err(Error::Verification("not gull-wing".into()));
     };
-    g.span = [4.0, 0.0];
+    g.span_nm = [nm(4.0), nm(0.0)];
     refused(
         build_definition(&mut native, "pkgt", &package(PackageForm::GullWing(g), 8)),
         "model.form",
@@ -599,7 +609,7 @@ fn unbuildable_requests_are_refused() -> Result<()> {
     let PackageForm::NoLead(mut n) = qfn16() else {
         return Err(Error::Verification("not no-lead".into()));
     };
-    n.exposed_pad = Some([2.5, 2.5]);
+    n.exposed_pad = Some(pt([2.5, 2.5]));
     refused(
         build_definition(&mut native, "pkgt", &package(PackageForm::NoLead(n), 17)),
         "model.form",
@@ -734,10 +744,10 @@ fn generated_demo() -> Result<pcbcraft_core::Project> {
     let package = &mut project.library.packages[0].definition;
     package.form = PackageForm::Chip(Box::new(ChipForm {
         kind: ChipKind::Resistor,
-        length: 2.0,
-        width: 1.2,
-        height: 0.6,
-        termination: 0.4,
+        length_nm: nm(2.0),
+        width_nm: nm(1.2),
+        height_nm: nm(0.6),
+        termination_nm: nm(0.4),
     }));
     package.model = PackageModel::Generated {
         family_rev: 1,
@@ -859,16 +869,16 @@ fn every_form_the_core_accepts_is_built() -> Result<()> {
         (8.0, 0.6, 1.4, 0.1),
     ] {
         let mut g = base.clone();
-        g.span = [span, 0.0];
-        g.foot_length = foot;
-        g.lead_thickness = thickness;
-        g.standoff = standoff;
+        g.span_nm = [nm(span), nm(0.0)];
+        g.foot_length_nm = nm(foot);
+        g.lead_thickness_nm = nm(thickness);
+        g.standoff_nm = nm(standoff);
         cases.push(PackageForm::GullWing(g));
     }
     let PackageForm::Header(mut h) = header2x5() else {
         return Err(Error::Verification("not a header".into()));
     };
-    h.pin_above = 0.0;
+    h.pin_above_nm = nm(0.0);
     cases.push(PackageForm::Header(h));
     let (mut accepted, mut refused) = (0, 0);
     for form in cases {

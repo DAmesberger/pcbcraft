@@ -354,7 +354,7 @@ fn fits_rank_lead_fits_then_bounds_and_never_assign() -> Fallible<()> {
     let (mut m, a) = base("fit-untagged");
     m.leads.clear();
     m.marking_area = None;
-    let [l, w, h] = package.envelope;
+    let [l, w, h] = package.envelope();
     m.bounds_mm = [[-l / 2.0, -w / 2.0, 0.0], [l / 2.0 + 0.3, w / 2.0, h]];
     named(&mut engine, "Untagged body", m, &a)?;
     let before = engine.to_file();

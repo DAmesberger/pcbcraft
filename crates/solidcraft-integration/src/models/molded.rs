@@ -34,15 +34,15 @@ const BAND_DEPTH_MM: f64 = 0.03;
 
 pub(super) fn check(f: &MoldedForm) -> Result<()> {
     check_positive(&[
-        ("body length", f.body_length),
-        ("body width", f.body_width),
-        ("body height", f.body_height),
-        ("overall length", f.span),
-        ("terminal length", f.terminal_length),
-        ("terminal width", f.terminal_width),
+        ("body length", f.body_length()),
+        ("body width", f.body_width()),
+        ("body height", f.body_height()),
+        ("overall length", f.span()),
+        ("terminal length", f.terminal_length()),
+        ("terminal width", f.terminal_width()),
     ])?;
     require(
-        2.0 * f.terminal_length < f.span,
+        2.0 * f.terminal_length() < f.span(),
         "the two terminals must not meet",
     )?;
     if f.lead != MoldedLead::Melf {
@@ -70,12 +70,12 @@ fn material_or(b: &Build<'_>, role: BodyRole, fallback: MaterialId) -> MaterialI
 
 fn moulded(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
     let t = f.lead_thickness();
-    let bl = b.length("body_length", f.body_length)?;
-    let bw = b.length("body_width", f.body_width)?;
-    let bh = b.length("body_height", f.body_height)?;
-    let span = b.length("span", f.span)?;
-    let tl = b.length("terminal_length", f.terminal_length)?;
-    let tw = b.length("terminal_width", f.terminal_width)?;
+    let bl = b.length("body_length", f.body_length())?;
+    let bw = b.length("body_width", f.body_width())?;
+    let bh = b.length("body_height", f.body_height())?;
+    let span = b.length("span", f.span())?;
+    let tl = b.length("terminal_length", f.terminal_length())?;
+    let tw = b.length("terminal_width", f.terminal_width())?;
     let th = b.length("lead_thickness", t)?;
     let bottom = f.body_bottom();
 
@@ -89,9 +89,9 @@ fn moulded(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
         [bl.clone(), bw.clone(), format!("{bh} - {}", mm(bottom))],
     )?;
 
-    let half_body = f.body_length / 2.0;
-    let half_span = f.span / 2.0;
-    let root = ROOT_MM.min(f.body_length / 6.0);
+    let half_body = f.body_length() / 2.0;
+    let half_span = f.span() / 2.0;
+    let root = ROOT_MM.min(f.body_length() / 6.0);
     let exit = f.lead_exit();
     let lead_material = b.material(BodyRole::Lead);
     let mut leads = Vec::new();
@@ -101,7 +101,7 @@ fn moulded(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
             MoldedLead::Flat => {
                 // A flat strip on the seating plane from under the body to
                 // the tip; the contact may reach further under the body.
-                let inner_by_contact = f.terminal_length >= half_span - half_body + root;
+                let inner_by_contact = f.terminal_length() >= half_span - half_body + root;
                 let length = if inner_by_contact {
                     tl.clone()
                 } else {
@@ -122,7 +122,7 @@ fn moulded(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
             }
             MoldedLead::Bent | MoldedLead::JLead => {
                 let points = if f.lead == MoldedLead::Bent {
-                    let foot_in = half_span - f.terminal_length;
+                    let foot_in = half_span - f.terminal_length();
                     let shoulder = half_body + SHOULDER_SHARE * (foot_in - half_body);
                     vec![
                         [half_body - root, exit],
@@ -136,7 +136,7 @@ fn moulded(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
                         [half_body - root, exit],
                         [outer, exit],
                         [outer, t / 2.0],
-                        [half_span - f.terminal_length, t / 2.0],
+                        [half_span - f.terminal_length(), t / 2.0],
                     ]
                 };
                 let profile = bent_strip(&points, t, t)?;
@@ -167,27 +167,28 @@ fn moulded(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
 
     // Rounds: upright corners only where the terminals leave the corner
     // free, picked above the leads; then the top edges.
-    let top = f.body_height;
+    let top = f.body_height();
     let lead_top = match f.lead {
         MoldedLead::Flat => t,
         _ => exit + t / 2.0,
     };
-    let band_inset = pcbcraft_core::library::package_form::molded::BAND_INSET_SHARE * f.body_length;
-    let small = f.body_length.min(f.body_width);
+    let band_inset =
+        pcbcraft_core::library::package_form::molded::BAND_INSET_SHARE * f.body_length();
+    let small = f.body_length().min(f.body_width());
     let cap = (0.08 * small).min(band_inset * 0.8);
-    let corner_room = (f.body_width - f.terminal_width) / 2.0;
+    let corner_room = (f.body_width() - f.terminal_width()) / 2.0;
     let corner = if corner_room > 0.0 {
         CORNER_MM.min(cap).min(corner_room / 2.0)
     } else {
         0.0
     };
     let edge = TOP_EDGE_MM
-        .min(0.12 * f.body_height)
+        .min(0.12 * f.body_height())
         .min(cap)
         .min((top - lead_top) / 2.0);
     let edge = if corner > 0.0 { edge.min(corner) } else { edge };
-    let lo = [-half_body, -f.body_width / 2.0, bottom];
-    let hi = [half_body, f.body_width / 2.0, top];
+    let lo = [-half_body, -f.body_width() / 2.0, bottom];
+    let hi = [half_body, f.body_width() / 2.0, top];
     let z = (lead_top + top) / 2.0;
     let uprights = [
         [lo[0], lo[1], z],
@@ -220,13 +221,13 @@ fn moulded(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
 }
 
 fn melf(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
-    let bl = b.length("body_length", f.body_length)?;
-    b.length("body_diameter", f.body_width)?;
-    let span = b.length("span", f.span)?;
-    let tl = b.length("terminal_length", f.terminal_length)?;
-    b.length("cap_diameter", f.terminal_width)?;
-    let rc = f.terminal_width / 2.0;
-    let rb = f.body_width / 2.0;
+    let bl = b.length("body_length", f.body_length())?;
+    b.length("body_diameter", f.body_width())?;
+    let span = b.length("span", f.span())?;
+    let tl = b.length("terminal_length", f.terminal_length())?;
+    b.length("cap_diameter", f.terminal_width())?;
+    let rc = f.terminal_width() / 2.0;
+    let rb = f.body_width() / 2.0;
     // The axis lies a cap radius above the seating plane.
     let circle = |radius: f64| Contour::Circle {
         center: [0.0, rc],
@@ -265,19 +266,19 @@ fn melf(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
         b.push(name.clone(), BodyRole::Termination, cap_material);
         caps.push(name);
     }
-    if f.body_length > f.span - 2.0 * f.terminal_length + 1e-9 {
+    if f.body_length() > f.span() - 2.0 * f.terminal_length() + 1e-9 {
         let tools: Vec<&str> = caps.iter().map(String::as_str).collect();
         b.native.cut_keeping(&b.name("cap seats"), &body, &tools)?;
     }
     b.number(&caps);
 
     let edge = CAP_EDGE_MM
-        .min(0.15 * f.terminal_length)
+        .min(0.15 * f.terminal_length())
         .min(0.1 * rc)
-        .min((rc - rb).max(0.0) + 0.5 * f.terminal_length);
+        .min((rc - rb).max(0.0) + 0.5 * f.terminal_length());
     if edge > 0.0 {
         let r = b.length("cap_round", edge)?;
-        for (name, x) in caps.iter().zip([-f.span / 2.0, f.span / 2.0]) {
+        for (name, x) in caps.iter().zip([-f.span() / 2.0, f.span() / 2.0]) {
             let feature = format!("{name} round");
             b.native
                 .fillet(&feature, name, &[[x, 0.0, 2.0 * rc]], r.clone().into())?;
@@ -308,6 +309,8 @@ fn melf(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::super::*;
+    #[allow(unused_imports)]
+    use crate::models::tests::{nm, pt};
     use crate::native::Native;
     use pcbcraft_core::PackageTerminalId;
     use pcbcraft_core::library::PackageTerminal;
@@ -339,42 +342,42 @@ mod tests {
         match lead {
             MoldedLead::Flat => MoldedForm {
                 lead,
-                body_length: 1.2,
-                body_width: 0.8,
-                body_height: 0.6,
-                span: 1.6,
-                terminal_length: 0.3,
-                terminal_width: 0.3,
+                body_length_nm: nm(1.2),
+                body_width_nm: nm(0.8),
+                body_height_nm: nm(0.6),
+                span_nm: nm(1.6),
+                terminal_length_nm: nm(0.3),
+                terminal_width_nm: nm(0.3),
                 polarised: true,
             },
             MoldedLead::Bent => MoldedForm {
                 lead,
-                body_length: 2.7,
-                body_width: 1.6,
-                body_height: 1.1,
-                span: 3.7,
-                terminal_length: 0.3,
-                terminal_width: 0.6,
+                body_length_nm: nm(2.7),
+                body_width_nm: nm(1.6),
+                body_height_nm: nm(1.1),
+                span_nm: nm(3.7),
+                terminal_length_nm: nm(0.3),
+                terminal_width_nm: nm(0.6),
                 polarised: true,
             },
             MoldedLead::JLead => MoldedForm {
                 lead,
-                body_length: 4.3,
-                body_width: 2.6,
-                body_height: 2.2,
-                span: 5.2,
-                terminal_length: 1.1,
-                terminal_width: 1.4,
+                body_length_nm: nm(4.3),
+                body_width_nm: nm(2.6),
+                body_height_nm: nm(2.2),
+                span_nm: nm(5.2),
+                terminal_length_nm: nm(1.1),
+                terminal_width_nm: nm(1.4),
                 polarised: true,
             },
             MoldedLead::Melf => MoldedForm {
                 lead,
-                body_length: 3.0,
-                body_width: 1.4,
-                body_height: 1.4,
-                span: 3.5,
-                terminal_length: 0.4,
-                terminal_width: 1.5,
+                body_length_nm: nm(3.0),
+                body_width_nm: nm(1.4),
+                body_height_nm: nm(1.4),
+                span_nm: nm(3.5),
+                terminal_length_nm: nm(0.4),
+                terminal_width_nm: nm(1.5),
                 polarised: true,
             },
         }
@@ -522,7 +525,7 @@ mod tests {
     #[test]
     fn inconsistent_forms_are_refused() -> Result<()> {
         let mut f = form(MoldedLead::Melf);
-        f.body_height = 1.0;
+        f.body_height_nm = nm(1.0);
         let mut native = Native::new("models")?;
         let refused = build_definition(&mut native, "pkgt", &package(f));
         assert!(matches!(&refused, Err(e) if e.to_string().contains("model.form")));

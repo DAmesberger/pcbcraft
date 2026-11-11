@@ -16,8 +16,12 @@ type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 const WROOM3: &str = "esp32-s31-wroom-3";
 
 fn wroom3_package() -> PackageDefinition {
-    let form: PackageForm =
-        serde_json::from_str(include_str!("../../tests/template_spike_wroom3.json")).unwrap();
+    // The fixture is the module datasheet's millimetres: the wire form.
+    let form: PackageForm = serde_json::from_str::<
+        pcbcraft_core::library::package_form::PackageFormParams,
+    >(include_str!("../../tests/template_spike_wroom3.json"))
+    .unwrap()
+    .into();
     PackageDefinition {
         next_local: 100,
         terminals: (1..=99)
@@ -160,7 +164,7 @@ fn the_wroom3_marking_planes_are_the_module_anchors() -> Fallible {
         derived,
         ..Default::default()
     };
-    assert_eq!(file.default_area(), Some(m.can_size));
+    assert_eq!(file.default_area(), Some(m.can_size()));
     Ok(())
 }
 

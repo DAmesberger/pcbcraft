@@ -581,4 +581,4 @@ pub fn recorded(native: &Native) -> Result<BTreeMap<String, GeneratedBody>> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -13,6 +13,7 @@ use crate::library::templates::catalog::{
     Renumber, RowFrom, RowSource, SavePackageRow, TerminalMatch,
 };
 use crate::library::{Definition, DefinitionMeta, DraftEdit, PadShape};
+use crate::tests::support::{nm, pt};
 use crate::{Engine, LibraryCommand, Operation, Outcome, Query, QueryResult};
 use std::sync::Arc;
 
@@ -27,7 +28,7 @@ fn meta(name: &str) -> DefinitionMeta {
 }
 
 fn chip(kind: ChipKind, size: [f64; 3]) -> PackageForm {
-    PackageForm::Chip(Box::new(ChipForm::new(kind, size)))
+    PackageForm::Chip(Box::new(ChipForm::new(kind, size.map(nm))))
 }
 
 fn row(values: PackageForm, aliases: &[&str]) -> PackageRowDefinition {
@@ -54,13 +55,13 @@ fn qfn32() -> PackageForm {
     PackageForm::NoLead(Box::new(NoLeadForm {
         sides: LeadSides::Four,
         terminals_per_side: [8, 8],
-        pitch: 0.5,
-        body_length: 5.0,
-        body_width: 5.0,
-        body_height: 0.9,
-        terminal_length: 0.4,
-        terminal_width: 0.25,
-        exposed_pad: Some([3.45, 3.45]),
+        pitch_nm: nm(0.5),
+        body_length_nm: nm(5.0),
+        body_width_nm: nm(5.0),
+        body_height_nm: nm(0.9),
+        terminal_length_nm: nm(0.4),
+        terminal_width_nm: nm(0.25),
+        exposed_pad: Some(pt([3.45, 3.45])),
     }))
 }
 
@@ -616,7 +617,7 @@ fn edited_values_make_a_custom_package_with_estimated_lands() -> Fallible<()> {
     let PackageForm::NoLead(mut edited) = qfn32() else {
         return Err("no-lead".into());
     };
-    edited.body_height = 0.75;
+    edited.body_height_nm = nm(0.75);
     let ids = new_from(
         &mut engine,
         NewFromTemplate {
@@ -1160,7 +1161,7 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
                     let PadShape::Circle { diameter } = pad.shape else {
                         return Err(format!("{name}: a round grid land").into());
                     };
-                    assert!(diameter < g.pitch[0].min(g.pitch[1]), "{name}");
+                    assert!(diameter < g.pitch()[0].min(g.pitch()[1]), "{name}");
                 }
             }
             PackageForm::Tabbed(t) if t.tab.is_some() => {
@@ -1266,13 +1267,13 @@ fn a_replaced_package_is_designated_from_the_new_form() -> Fallible<()> {
             values: Some(PackageForm::NoLead(Box::new(NoLeadForm {
                 sides: LeadSides::Two,
                 terminals_per_side: [4, 0],
-                pitch: 0.5,
-                body_length: 3.0,
-                body_width: 3.0,
-                body_height: 0.75,
-                terminal_length: 0.4,
-                terminal_width: 0.25,
-                exposed_pad: Some([1.5, 2.0]),
+                pitch_nm: nm(0.5),
+                body_length_nm: nm(3.0),
+                body_width_nm: nm(3.0),
+                body_height_nm: nm(0.75),
+                terminal_length_nm: nm(0.4),
+                terminal_width_nm: nm(0.25),
+                exposed_pad: Some(pt([1.5, 2.0])),
             }))),
             skeleton: SkeletonHint::IcBox,
             name: "U".into(),
@@ -1880,7 +1881,7 @@ fn qfn48_corner_lands_keep_the_mask_web() -> Fallible<()> {
         (one.min[1] - six.min[1]).abs() < 1e-9,
         "toe kept: {one:?} {six:?}"
     );
-    let inner = -form.body_width / 2.0 + form.terminal_length;
+    let inner = -form.body_width() / 2.0 + form.terminal_length();
     assert!(one.max[1] >= inner, "the land covers its terminal: {one:?}");
     // A web of exactly 0.1 mm passes the lint; 1 µm less is reported.
     let mut footprint = crate::library::FootprintDefinition {

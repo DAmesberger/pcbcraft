@@ -405,7 +405,7 @@ fn assigned(lead_map: Vec<LeadMapEntry>) -> Fallible<Assigned> {
         .ok_or("package")?
         .definition
     {
-        Definition::Package(p) => p.envelope,
+        Definition::Package(p) => p.envelope(),
         _ => return Err("a package".into()),
     };
     let model_ref = published_model(&mut engine, sized(&asset, envelope), &asset)?;
@@ -596,7 +596,7 @@ fn a_dangling_or_oversized_library_model_is_refused_or_reported() -> Fallible<()
     assert!(
         bounds_excess(
             &engine.project().library.model(big).ok_or("big")?.definition,
-            package.envelope
+            package.envelope()
         ) > BOUNDS_TOLERANCE_MM
     );
     Ok(())

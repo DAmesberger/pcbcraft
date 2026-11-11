@@ -72,7 +72,7 @@ fn compatible_geometry_preview_is_read_only_preserves_copper_and_survives_offlin
         })?;
         with(e, f.package, package_body, |p| {
             // A refusal would leave the envelope stale, which publishing rejects.
-            let _ = p.resize_envelope([p.envelope[0], p.envelope[1], 2.0]);
+            let _ = p.resize_envelope([p.envelope()[0], p.envelope()[1], 2.0]);
         })
     })?;
     let before = engine.project().clone();
@@ -1117,8 +1117,8 @@ fn package_details_name_each_physical_change() {
     };
     use crate::materials::MaterialId;
     let chip = |kind| PackageDefinition {
-        form: PackageForm::Chip(Box::new(ChipForm::new(kind, [1.6, 0.8, 0.45]))),
-        envelope: [1.6, 0.8, 0.45],
+        form: PackageForm::Chip(Box::new(ChipForm::new(kind, [nm(1.6), nm(0.8), nm(0.45)]))),
+        envelope_nm: [nm(1.6), nm(0.8), nm(0.45)],
         model: PackageModel::Generated {
             family_rev: 1,
             materials: GeneratedMaterials::default(),
@@ -1130,7 +1130,7 @@ fn package_details_name_each_physical_change() {
     // A thicker termination: one changed pkg value, nothing else.
     let mut b = a.clone();
     if let PackageForm::Chip(c) = &mut b.form {
-        c.termination = 0.4;
+        c.termination_nm = nm(0.4);
     }
     let lines = package_details(&a, &b);
     assert_eq!(lines.len(), 1, "{lines:?}");
@@ -1151,7 +1151,7 @@ fn package_details_name_each_physical_change() {
     );
     // A family change, a model source change, a role override, a placement.
     let generic = PackageDefinition {
-        envelope: [1.6, 0.8, 0.45],
+        envelope_nm: [nm(1.6), nm(0.8), nm(0.45)],
         ..PackageDefinition::default()
     };
     let lines = package_details(&a, &generic);
