@@ -1314,7 +1314,11 @@ impl SchematicEditor {
                 };
                 *count = count.saturating_add(1);
             }
-            Some(IssueSlot { counts, label })
+            Some(IssueSlot {
+                counts,
+                label,
+                whole: subject == Subject::Sheet,
+            })
         });
         self.slot = Some((engine.revision(), document, subject, slot.clone()));
         slot
@@ -4663,6 +4667,7 @@ mod tests {
         let slot = sheet.issues.ok_or("the sheet has a slot")?;
         assert_eq!(slot.counts, report.counts);
         assert_eq!(slot.label, "on this sheet");
+        assert!(slot.whole);
         assert!(!slot.is_empty(), "the unwired R3 has issues");
 
         editor.select_instance(Some(r3), engine.project());

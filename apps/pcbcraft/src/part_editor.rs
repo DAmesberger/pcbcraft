@@ -1798,10 +1798,12 @@ impl PartEditor {
                 } else {
                     label.to_owned()
                 },
+                whole: false,
             },
             _ => kit::card::IssueSlot {
                 counts: Default::default(),
                 label: "Issues not counted".to_owned(),
+                whole: false,
             },
         };
         self.issue_slot = Some((key, slot.clone()));

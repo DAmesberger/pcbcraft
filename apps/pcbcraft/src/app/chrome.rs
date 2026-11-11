@@ -364,8 +364,7 @@ impl App {
         );
         if let Some(slot) = slot {
             if slot.show_issues {
-                let selection = self.selection();
-                self.issues.show_selection(&selection);
+                self.issues.show_slot(slot.whole);
             }
             // Editors mark a field or dialog origin themselves; the rest
             // are commands.

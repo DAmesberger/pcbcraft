@@ -444,7 +444,7 @@ fn the_selection_scope_without_a_selection_says_so() -> Fallible<()> {
     )?;
     let first = groups(&board, None).into_iter().next().ok_or("a group")?;
     let mut surface = Surface::default();
-    surface.show_selection(&[]);
+    surface.show_slot(true);
     let mut h = Harness::new();
     let (_, painted) = h.frame(Vec::new(), |ui| {
         surface.card(ui, &engine, Workspace::Pcb, &[])
@@ -468,10 +468,7 @@ fn the_selection_scope_without_a_selection_says_so() -> Fallible<()> {
     };
     assert!(here > 0 && at(&painted, &said).is_some(), "{painted:?}");
 
-    let part = ObjectRef::Instance {
-        id: engine.project().instances.first().ok_or("a part")?.id,
-    };
-    surface.show_selection(&[part]);
+    surface.show_slot(false);
     assert_eq!(surface.scope, Scope::Selection);
     Ok(())
 }

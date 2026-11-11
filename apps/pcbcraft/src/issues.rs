@@ -539,11 +539,11 @@ impl Surface {
         self.expanded = true;
     }
 
-    /// Expand the card on what a card's issue slot counted: the selection,
-    /// or with nothing selected (the Board or sheet card) the workspace.
-    pub fn show_selection(&mut self, selection: &[ObjectRef]) {
+    /// Expand the card on what a card's issue slot counted: the selected
+    /// object, or for the Board or sheet card (`whole`) the workspace.
+    pub fn show_slot(&mut self, whole: bool) {
         self.expanded = true;
-        self.scope = if selection.is_empty() {
+        self.scope = if whole {
             Scope::Workspace
         } else {
             Scope::Selection

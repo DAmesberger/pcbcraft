@@ -36,6 +36,9 @@ pub enum Subject {
 pub struct IssueSlot {
     pub counts: IssueCounts,
     pub label: String,
+    /// The slot counts the whole workspace (the Board or sheet card), not
+    /// the selected object: clicking it lists the workspace's issues.
+    pub whole: bool,
 }
 
 impl IssueSlot {
@@ -76,6 +79,8 @@ pub struct CardResponse<R> {
     pub output: Option<R>,
     /// The issue slot was clicked: show Issues scoped to this object.
     pub show_issues: bool,
+    /// The clicked slot counted the whole workspace ([`IssueSlot::whole`]).
+    pub whole: bool,
 }
 
 impl<R> CardResponse<R> {
@@ -85,6 +90,7 @@ impl<R> CardResponse<R> {
         Self {
             output,
             show_issues: false,
+            whole: false,
         }
     }
 }
@@ -265,6 +271,7 @@ pub fn card<R>(
     CardResponse {
         output,
         show_issues,
+        whole: slot.whole,
     }
 }
 
@@ -449,6 +456,7 @@ mod tests {
                 ..Default::default()
             },
             label: "on R1".into(),
+            whole: false,
         };
         assert!(!slot.is_empty());
     }

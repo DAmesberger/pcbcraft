@@ -2926,7 +2926,11 @@ fn issue_slot_of(engine: &Engine, inspected: Inspected) -> Option<IssueSlot> {
         };
         *slot = slot.saturating_add(1);
     }
-    Some(IssueSlot { counts, label })
+    Some(IssueSlot {
+        counts,
+        label,
+        whole: inspected == Inspected::Board,
+    })
 }
 
 /// Whether the widget with keyboard focus lies inside `rect` (one card
@@ -4873,10 +4877,14 @@ mod tests {
         };
         assert_eq!(board.counts, report.counts);
         assert_eq!(board.label, "on this board");
+        // Night round 3 (R3-2): the Board slot counts the whole board, so
+        // its row lists the board's issues, highlighted net or not.
+        assert!(board.whole);
         // The demo's net between R1 and R2 is unrouted: a To do on R1.
         editor.set_selection(Some(r1), None, None);
         let slot = editor.card(&engine).issues.ok_or("no placement slot")?;
         assert_eq!(slot.label, "on R1");
+        assert!(!slot.whole);
         assert!(slot.counts.to_do >= 1, "{:?}", slot.counts);
         assert!(slot.counts.to_do <= board.counts.to_do);
         Ok(())
