@@ -22,11 +22,20 @@ thiserror.workspace = true
 rmcp = { workspace = true, features = ["server", "transport-io"] }
 tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 
+[features]
+# Solidcraft's span profiler compiled in, for the build profile benchmark
+# (tests/build_profile.rs) only. A feature, not a dev-dependency feature:
+# as a dev-dependency it was unified into every workspace test build, so
+# `cargo test --workspace` and `cargo build -p pcbcraft` each built
+# Solidcraft's engine, document, kernel and UI crates in their own variant.
+profile = ["pcbcraft-solidcraft/profile"]
+
+[[test]]
+name = "build_profile"
+required-features = ["profile"]
+
 [dev-dependencies]
 pcbcraft-core = { workspace = true, features = ["test-fixtures"] }
 tempfile.workspace = true
 rmcp = { workspace = true, features = ["client"] }
 tokio = { workspace = true, features = ["time"] }
-# Solidcraft's span profiler compiled in, for the build profile benchmark
-# (tests/build_profile.rs) only.
-pcbcraft-solidcraft = { workspace = true, features = ["profile"] }

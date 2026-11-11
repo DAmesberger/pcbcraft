@@ -34,7 +34,7 @@ The benchmark is `crates/automation/tests/build_profile.rs`, which is committed 
 - Solidcraft's own span profiler (`solidcraft-profile`, compiled in for this test only through `pcbcraft-solidcraft`'s `profile` feature).
 
 ```
-nix develop -c cargo test --profile ci -p pcbcraft-automation --test build_profile -- --ignored --nocapture
+nix develop -c cargo test --profile ci -p pcbcraft-automation --features profile --test build_profile -- --ignored --nocapture
 ```
 
 Its environment variables pick the edit, the variant (`no-fills`, `parts=N`, `addvias=N`, …) and the synthetic `extrusion_scaling` test. The function-level profile is macOS `/usr/bin/sample` at 1 ms on the test binary, over a 202 s build: 159,931 samples on the build thread. The 18 `solidcraft-kernel` worker threads were idle almost all of that time, so the build runs on one core, as the VM showed.
