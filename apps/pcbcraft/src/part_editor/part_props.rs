@@ -24,7 +24,7 @@ use pcbcraft_core::library::{
 };
 use pcbcraft_core::{
     BindingRef, ComponentRef, DefinitionId, Engine, FieldRef, LibraryCommand, Operation, PartRef,
-    Query, QueryResult, Stage,
+    Query, QueryResult, Revision, Stage,
 };
 use solidcraft_ui_egui::ui_kit::{self, Button};
 use std::collections::BTreeMap;
@@ -199,6 +199,33 @@ pub struct PartProps {
     /// A New Part was requested from the schematic (Resolve parts): draft
     /// one as soon as the component's pins are known, with these values.
     prefill: Option<Vec<(FieldRef, fields::FieldValue)>>,
+    /// Publish leaves the published Parts on the old component revision
+    /// (Also publish N Parts… turned off; on by default).
+    keep_parts: bool,
+}
+
+/// The published Parts a Publish of `set` carries to the component's new
+/// revision (`library.publish_with_parts`), with the revision they move to.
+pub fn republished(engine: &Engine, set: &WorkingSet) -> (Vec<PartRef>, Option<Revision>) {
+    let parts = pcbcraft_core::commands::parts_to_republish(
+        &engine.project().library,
+        engine.drafts(),
+        &set.ids.all(),
+    );
+    let pending = engine
+        .drafts()
+        .get(set.ids.component)
+        .and_then(|d| d.pending());
+    (parts, pending)
+}
+
+/// "Also publish 2 Parts for r3".
+fn republish_label(count: usize, revision: Option<Revision>) -> String {
+    let parts = if count == 1 { "Part" } else { "Parts" };
+    match revision {
+        Some(r) => format!("Also publish {count} {parts} for {r}"),
+        None => format!("Also publish {count} {parts}"),
+    }
 }
 
 /// Part drafts and published Parts of one component lineage, by lineage.
@@ -652,6 +679,15 @@ impl PartProps {
         self.source = Some(current);
     }
 
+    /// The published Parts the component's Publish also publishes for its
+    /// new revision: none while Also publish N Parts… is off.
+    pub fn republish_ids(&self, engine: &Engine, set: &WorkingSet) -> Vec<DefinitionId> {
+        if self.keep_parts {
+            return Vec::new();
+        }
+        republished(engine, set).0.iter().map(|p| p.id).collect()
+    }
+
     /// The Part draft IDs of `component`, for the cascade's publish set.
     pub fn draft_ids(engine: &Engine, component: DefinitionId) -> Vec<DefinitionId> {
         part_drafts(engine.drafts(), component)
@@ -785,6 +821,27 @@ impl PartProps {
             });
             if shown.show_all {
                 self.show_all = true;
+            }
+            // Night finding N4: Publish can carry the published Parts to
+            // the new revision in the same step.
+            let (parts, pending) = republished(engine, set);
+            if set.unpublished(engine) && !parts.is_empty() {
+                let mut on = !self.keep_parts;
+                if kit::check_row(ui, &republish_label(parts.len(), pending), &mut on) {
+                    self.keep_parts = !on;
+                }
+                let library = &engine.project().library;
+                let names: Vec<&str> = parts
+                    .iter()
+                    .filter_map(|r| library.part(*r))
+                    .map(|p| p.definition.mpn.as_str())
+                    .collect();
+                kit::hint(
+                    ui,
+                    &names.join(", "),
+                    "Publish pins these Parts to the new component revision in the same \
+                     step; turned off, they stay on their revision",
+                );
             }
             kit::actions(ui, |ui| {
                 let enabled = pins.is_some();
@@ -1707,6 +1764,87 @@ mod tests {
         assert_eq!(part.definition.mpn, "EX-R0603-10K0-F");
         assert_eq!(part.definition.component, pins.component);
         assert_eq!(part.meta.name, "EX-R0603-10K0-F");
+        Ok(())
+    }
+
+    /// Night finding N4: with a published Part (no draft) and unpublished
+    /// component edits, the Parts list offers "Also publish 1 Part for r2",
+    /// on by default and naming the Part. Publish then sends one
+    /// `library.publish_with_parts` pinning the Part to r2; turned off, it
+    /// sends the plain `library.publish`, which leaves the Part on r1.
+    #[test]
+    fn publish_offers_to_carry_the_published_parts() -> Result<(), Box<dyn std::error::Error>> {
+        let (ctx, mut engine, mut editor) = ready()?;
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let set = editor.draft.clone().ok_or("no working set")?;
+        let published = Pins::of(&set, &engine).ok_or("no pins")?;
+        let mut part = new_part(&set, &published);
+        part.manufacturer = "ExampleCo".into();
+        part.mpn = "EX-R0603-10K0-F".into();
+        let created = engine.apply(
+            engine.revision(),
+            Operation::Library(LibraryCommand::NewDraft {
+                meta: DefinitionMeta {
+                    name: part.mpn.clone(),
+                    ..Default::default()
+                },
+                definition: Definition::Part(Box::new(part)),
+            }),
+        )?;
+        let pcbcraft_core::Outcome::DraftCreated { id } = created else {
+            return Err(format!("expected a draft, got {created:?}").into());
+        };
+        apply(
+            &mut engine,
+            Some(Operation::Library(LibraryCommand::Publish {
+                drafts: vec![id],
+                close: true,
+            })),
+        )?;
+        editor.commit(&ctx, &engine);
+        let label = "Also publish 1 Part for r2";
+        let shown = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(!shown.iter().any(|(t, _)| t == label), "nothing to publish");
+        if let Some(set) = &mut editor.draft {
+            set.footprint.pads[0].position = [-1.5, 0.0];
+        }
+        let operation = editor.commit(&ctx, &engine);
+        apply(&mut engine, operation)?;
+        editor.commit(&ctx, &engine);
+        let shown = frame(&mut editor, &engine, &ctx, vec![]);
+        assert!(shown.iter().any(|(t, _)| t == label), "{shown:?}");
+        assert!(
+            shown.iter().any(|(t, _)| t == "EX-R0603-10K0-F"),
+            "{shown:?}"
+        );
+        editor.parts.keep_parts = true;
+        assert!(
+            matches!(
+                editor.publish_set(&engine),
+                Some(Operation::Library(LibraryCommand::Publish { .. }))
+            ),
+            "turned off: the plain publish"
+        );
+        editor.parts.keep_parts = false;
+        let operation = editor.publish_set(&engine);
+        assert!(
+            matches!(
+                &operation,
+                Some(Operation::Library(LibraryCommand::PublishWithParts { parts, .. })) if *parts == [id]
+            ),
+            "{operation:?}"
+        );
+        let before = engine.revision();
+        apply(&mut engine, operation)?;
+        assert_eq!(engine.revision(), before + 1, "one undo step");
+        let library = &engine.project().library;
+        let parts = library.latest_parts();
+        let [part] = parts.as_slice() else {
+            return Err("one Part lineage".into());
+        };
+        assert_eq!(part.revision.0, 2);
+        assert_eq!(part.definition.component.revision.0, 2);
+        assert!(library.component(part.definition.component).is_some());
         Ok(())
     }
 

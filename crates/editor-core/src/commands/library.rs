@@ -70,6 +70,24 @@ pub enum LibraryCommand {
         #[serde(default = "close_by_default")]
         close: bool,
     },
+    /// Publish drafts and republish their component's listed Parts.
+    /// `library.publish` of `drafts` and, in the same undo step, a new
+    /// revision of each listed published Part lineage for the component
+    /// revision the set publishes (`commands::parts_to_republish` lists
+    /// them). The new revision is the Part's latest one with only its pins moved:
+    /// `component` to the component draft's pending revision and `binding`
+    /// to the revision that draft lists for the Part's binding lineage.
+    /// Nothing is matched by name. Each Part must implement an older
+    /// revision of a component drafted in the set and have no draft of its
+    /// own, and it passes the same publish checks as any Part. Any refusal
+    /// publishes nothing. An empty `parts` publishes as `library.publish`.
+    #[serde(rename = "library.publish_with_parts")]
+    PublishWithParts {
+        drafts: Vec<DefinitionId>,
+        parts: Vec<DefinitionId>,
+        #[serde(default = "close_by_default")]
+        close: bool,
+    },
     /// Regenerate a footprint draft's existing pads with a bounded script.
     /// Pad IDs and package-terminal associations are preserved.
     #[serde(rename = "library.generate_pads")]
@@ -289,6 +307,7 @@ declare_classes!(LibraryCommand {
     Edit "library.edit" Edit "Edit drafts",
     DiscardDraft "library.discard_draft" Edit "Discard a draft",
     Publish "library.publish" Ask "Publish drafts",
+    PublishWithParts "library.publish_with_parts" Ask "Publish drafts and their Parts",
     GeneratePads "library.generate_pads" Edit "Generate pads",
     SetGrid "library.set_grid" Edit "Set the symbol grid",
     SetSymbolConventions "library.set_symbol_conventions" Edit "Set symbol conventions",
@@ -521,6 +540,149 @@ fn footprint_draft(
             current.meta.name
         ))),
     }
+}
+
+/// `library.publish` of `ids`: the pure publish rules, then the freshness of
+/// each parametric footprint, then closing the drafts when asked.
+fn publish_drafts(
+    document: &mut Document,
+    evaluator: Option<&dyn library::FootprintEvaluator>,
+    published: Vec<DefinitionId>,
+    close: bool,
+) -> Result<Outcome> {
+    // The pure publish rules run first, so their findings are reported even
+    // without an evaluator; the candidate document is discarded if the
+    // freshness check below then refuses.
+    let project = Arc::make_mut(&mut document.project);
+    let revisions = library::publish(
+        &mut project.library,
+        Arc::make_mut(&mut document.drafts),
+        &published,
+    )?;
+    for id in &published {
+        if let Some(library::Draft {
+            definition: Definition::Footprint(footprint),
+            ..
+        }) = document.drafts.get(*id)
+            && footprint.source.is_some()
+        {
+            let package = package_of(document, footprint)?;
+            footprint_edit::check_fresh(footprint, package, need(evaluator)?)?;
+        }
+    }
+    if close {
+        drafts::close(Arc::make_mut(&mut document.drafts), &published);
+    }
+    Ok(Outcome::Published { revisions })
+}
+
+/// The published Part lineages a publish of `drafts` can carry to the
+/// component revision it publishes (`library.publish_with_parts`): each
+/// Part whose latest revision implements an older revision of a component
+/// drafted in the set, has no draft of its own, and whose binding lineage
+/// that component draft lists. Their latest revisions, by lineage.
+pub fn parts_to_republish(
+    library: &library::Library,
+    drafts: &library::Drafts,
+    set: &[DefinitionId],
+) -> Vec<PartRef> {
+    library
+        .latest_parts()
+        .into_iter()
+        .filter(|part| republished_pins(drafts, set, part.id, &part.definition).is_ok())
+        .map(|part| PartRef::new(part.id, part.revision))
+        .collect()
+}
+
+/// The component and binding revisions the Part `id` pins when it is
+/// republished with the publish set `set`, or why it cannot be.
+fn republished_pins(
+    drafts: &library::Drafts,
+    set: &[DefinitionId],
+    id: DefinitionId,
+    part: &library::PartDefinition,
+) -> Result<(ComponentRef, crate::ids::BindingRef)> {
+    let name = || format!("Part {}", part.mpn);
+    if drafts.get(id).is_some() {
+        return Err(Error::Conflict(format!(
+            "{} has a draft; publish the draft in the set instead.",
+            name()
+        )));
+    }
+    let component = drafts
+        .get(part.component.id)
+        .filter(|_| set.contains(&part.component.id))
+        .and_then(|d| match &d.definition {
+            Definition::Component(c) => Some((d, c)),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "{} implements a component this set does not publish.",
+                name()
+            ))
+        })?;
+    let pending = component
+        .0
+        .pending()
+        .ok_or_else(|| Error::Limit("The component's revisions are exhausted.".into()))?;
+    if part.component.revision >= pending {
+        return Err(Error::Conflict(format!(
+            "{} already implements {}.",
+            name(),
+            pending
+        )));
+    }
+    let binding = component
+        .1
+        .implementation(part.binding.id)
+        .ok_or_else(|| {
+            Error::Conflict(format!(
+                "{}: the component's {} no longer lists the Part's footprint binding; draft the Part and choose one.",
+                name(),
+                pending
+            ))
+        })?;
+    Ok((ComponentRef::new(part.component.id, pending), binding))
+}
+
+/// Transient drafts of the new revisions of the published Parts `parts`
+/// for the publish set `set`, each the Part's latest revision with only
+/// its component and binding pins moved.
+fn republished_parts(
+    library: &library::Library,
+    drafts: &library::Drafts,
+    set: &[DefinitionId],
+    parts: &[DefinitionId],
+) -> Result<Vec<library::Draft>> {
+    if set.len().saturating_add(parts.len()) > library::MAX_PUBLISH_SET {
+        return Err(Error::Invalid(format!(
+            "publish at most {} drafts and Parts at a time",
+            library::MAX_PUBLISH_SET
+        )));
+    }
+    let mut out: Vec<library::Draft> = Vec::with_capacity(parts.len());
+    for id in parts {
+        if out.iter().any(|d| d.id == *id) || set.contains(id) {
+            return Err(Error::Invalid("A Part is listed twice.".into()));
+        }
+        let (kind, revision) = library
+            .latest(*id)
+            .ok_or_else(|| Error::NotFound("A listed Part is not published.".into()))?;
+        let published = library
+            .part(PartRef::new(*id, revision))
+            .filter(|_| kind == DefinitionKind::Part)
+            .ok_or_else(|| Error::Invalid("A listed definition is not a Part.".into()))?;
+        let mut part = published.definition.clone();
+        (part.component, part.binding) = republished_pins(drafts, set, *id, &part)?;
+        out.push(library::Draft {
+            id: *id,
+            base: Some(revision),
+            meta: published.meta.clone(),
+            definition: Definition::Part(Box::new(part)),
+        });
+    }
+    Ok(out)
 }
 
 fn package_of<'a>(
@@ -798,31 +960,27 @@ pub(crate) fn apply_library(
         LibraryCommand::Publish {
             drafts: published,
             close,
+        } => publish_drafts(document, evaluator, published, close),
+        LibraryCommand::PublishWithParts {
+            drafts: published,
+            parts,
+            close,
         } => {
-            // The pure publish rules run first, so their findings are
-            // reported even without an evaluator; the candidate document
-            // is discarded if the freshness check below then refuses.
-            let project = Arc::make_mut(&mut document.project);
-            let revisions = library::publish(
-                &mut project.library,
-                Arc::make_mut(&mut document.drafts),
-                &published,
-            )?;
-            for id in &published {
-                if let Some(library::Draft {
-                    definition: Definition::Footprint(footprint),
-                    ..
-                }) = document.drafts.get(*id)
-                    && footprint.source.is_some()
-                {
-                    let package = package_of(document, footprint)?;
-                    footprint_edit::check_fresh(footprint, package, need(evaluator)?)?;
-                }
+            // The Parts join the set as transient drafts of their new
+            // revisions, outside the project's draft limit, and are dropped
+            // again once published: none stays open.
+            let mut ids = published;
+            let mut staged = (*document.drafts).clone();
+            for draft in republished_parts(&document.project.library, &staged, &ids, &parts)? {
+                ids.push(draft.id);
+                staged.items.push(draft);
             }
-            if close {
-                drafts::close(Arc::make_mut(&mut document.drafts), &published);
-            }
-            Ok(Outcome::Published { revisions })
+            *Arc::make_mut(&mut document.drafts) = staged;
+            let outcome = publish_drafts(document, evaluator, ids, close)?;
+            Arc::make_mut(&mut document.drafts)
+                .items
+                .retain(|d| !parts.contains(&d.id));
+            Ok(outcome)
         }
         LibraryCommand::GeneratePads { draft, script } => {
             let current = document

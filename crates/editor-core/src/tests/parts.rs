@@ -15,7 +15,8 @@ use crate::quantity::{UnitOfMeasure, UnitSet};
 use crate::updates::{Change, PartAction, PartResolution, Resolutions};
 use crate::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, Engine, Error, FieldRef, Id,
-    InstanceCommand, Operation, PartRef, Query, QueryResult, Result, Revision, format,
+    InstanceCommand, LibraryCommand, Operation, PartRef, Query, QueryResult, Result, Revision,
+    format,
 };
 
 const OHMS: crate::quantity::Dimension = [2, 1, -3, -2, 0, 0, 0];
@@ -905,6 +906,149 @@ fn a_component_update_keeps_or_clears_the_part_and_never_repoints_it() -> Result
         },
     });
     assert!(!plan.blockers.is_empty());
+
+    // Night finding N4, both publish paths. The plain `library.publish`
+    // above left the Part on r1, which is why R1 reports it stale.
+    let latest = |engine: &Engine| {
+        engine
+            .project()
+            .library
+            .latest_parts()
+            .into_iter()
+            .find(|p| p.id == ten.id)
+            .map(|p| (p.revision, p.definition.clone()))
+    };
+    let (revision, before) = latest(&s.engine).ok_or_else(|| Error::NotFound("Part".into()))?;
+    assert_eq!((revision, before.component), (ten.revision, s.fixture.r1()));
+    // `library.publish_with_parts` publishes r3 and a new revision of the
+    // Part pinning it, in one undo step; only the pins change. The Part's
+    // own draft (kept open by `publish_resistor`) is closed first: a Part
+    // with a draft publishes through it.
+    discard(&mut s.engine, ten.id)?;
+    rewrite(&mut s.engine, s.fixture.component, |d| {
+        if let Definition::Component(c) = d {
+            c.designator_prefix = "RN".into();
+        }
+    })?;
+    let set = vec![s.fixture.component];
+    assert_eq!(
+        crate::commands::parts_to_republish(&s.engine.project().library, s.engine.drafts(), &set),
+        vec![ten]
+    );
+    let step = s.engine.revision();
+    let kept = s.engine.document().clone();
+    apply(
+        &mut s.engine,
+        Operation::Library(LibraryCommand::PublishWithParts {
+            drafts: set,
+            parts: vec![ten.id],
+            close: false,
+        }),
+    )?;
+    assert_eq!(s.engine.revision(), step + 1, "one step");
+    let r3 = ComponentRef::new(s.fixture.component, Revision(3));
+    let (revision, after) = latest(&s.engine).ok_or_else(|| Error::NotFound("Part".into()))?;
+    assert_eq!((revision, after.component), (Revision(2), r3));
+    assert_eq!(
+        after.binding,
+        binding(&s.fixture),
+        "r3 lists the same binding"
+    );
+    assert_eq!(
+        PartDefinition {
+            component: before.component,
+            ..after
+        },
+        before,
+        "nothing but the pins changes"
+    );
+    assert!(
+        s.engine.drafts().get(ten.id).is_none(),
+        "no Part draft stays"
+    );
+    s.engine.undo()?;
+    assert_eq!(s.engine.document(), &kept, "undo");
+    Ok(())
+}
+
+fn discard(engine: &mut Engine, id: DefinitionId) -> Result<()> {
+    apply(
+        engine,
+        Operation::Library(LibraryCommand::DiscardDraft { id }),
+    )
+    .map(|_| ())
+}
+
+/// `library.publish_with_parts` refuses whole: a Part that cannot move to
+/// the published revision (its binding is no longer listed, it has a draft,
+/// or its component is not in the set) publishes nothing.
+#[test]
+fn publishing_with_parts_refuses_whole() -> Result<()> {
+    let mut s = setup()?;
+    let ten = publish_resistor(&mut s, "EX-R0603-10K0-F", 10e3)?;
+    discard(&mut s.engine, ten.id)?;
+    let unlisted = binding(&s.fixture);
+    rewrite(&mut s.engine, s.fixture.component, |d| {
+        if let Definition::Component(c) = d {
+            c.implementations.retain(|b| b.id != unlisted.id);
+        }
+    })?;
+    let publish = |parts: Vec<DefinitionId>, drafts: Vec<DefinitionId>| {
+        Operation::Library(LibraryCommand::PublishWithParts {
+            drafts,
+            parts,
+            close: false,
+        })
+    };
+    let component = s.fixture.component;
+    assert!(
+        crate::commands::parts_to_republish(
+            &s.engine.project().library,
+            s.engine.drafts(),
+            &[component]
+        )
+        .is_empty(),
+        "an unlisted binding is not offered"
+    );
+    let kept = Snapshot::of(&s.engine);
+    let error = apply(&mut s.engine, publish(vec![ten.id], vec![component]))
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(error.contains("no longer lists"), "{error}");
+    kept.assert_kept(&s.engine, "unlisted binding");
+    // Listed twice, not a Part, or a component outside the set.
+    for (parts, drafts) in [
+        (vec![ten.id, ten.id], vec![component]),
+        (vec![s.fixture.symbol], vec![component]),
+        (vec![ten.id], vec![s.fixture.symbol]),
+    ] {
+        assert!(apply(&mut s.engine, publish(parts, drafts)).is_err());
+        kept.assert_kept(&s.engine, "refused set");
+    }
+    // A Part with its own draft publishes through that draft instead.
+    rewrite(&mut s.engine, s.fixture.component, |d| {
+        if let Definition::Component(c) = d {
+            c.implementations.push(unlisted);
+        }
+    })?;
+    apply(
+        &mut s.engine,
+        Operation::Library(LibraryCommand::DraftFrom {
+            revision: crate::DefinitionRef {
+                kind: DefinitionKind::Part,
+                id: ten.id,
+                revision: ten.revision,
+            },
+        }),
+    )?;
+    let kept = Snapshot::of(&s.engine);
+    let error = apply(&mut s.engine, publish(vec![ten.id], vec![component]))
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(error.contains("has a draft"), "{error}");
+    kept.assert_kept(&s.engine, "Part draft");
     Ok(())
 }
 
