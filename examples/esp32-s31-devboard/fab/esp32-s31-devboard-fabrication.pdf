@@ -36,7 +36,7 @@ endobj
 
 7 0 obj
 <<
-  /Length 57809
+  /Length 57839
 >>
 stream
 1 J
@@ -2378,7 +2378,7 @@ ET
 BT
 /F1 7.937008 Tf
 1 0 0 1 742.6772 415.2756 Tm
-(Minimum finished drill 0.15, hole to copper 0.2.) Tj
+(Minimum finished drill 0.15, via hole to copper 0.2, plated hole to copper 0.3.) Tj
 ET
 BT
 /F1 7.937008 Tf
@@ -2388,7 +2388,7 @@ ET
 BT
 /F1 7.937008 Tf
 1 0 0 1 742.6772 403.937 Tm
-(Minimum annular ring: vias 0.05, plated holes 0.15.) Tj
+(Minimum annular ring: vias 0.05, plated holes 0.2.) Tj
 ET
 BT
 /F1 7.937008 Tf
@@ -2586,11 +2586,11 @@ endobj
 xref
 0 8
 0000000000 65535 f
-0000058342 00000 n
-0000058278 00000 n
+0000058372 00000 n
+0000058308 00000 n
 0000000016 00000 n
 0000000122 00000 n
-0000058396 00000 n
+0000058426 00000 n
 0000000233 00000 n
 0000000413 00000 n
 trailer
@@ -2600,5 +2600,5 @@ trailer
   /Info 5 0 R
 >>
 startxref
-58491
+58521
 %%EOF

@@ -85,8 +85,8 @@ impl RuleTopic {
             Self::Clearance | Self::BoardEdge | Self::DrillToCopper => None,
             Self::ViaAnnularRing => Some(RuleKey::ViaAnnularRingMin),
             Self::HoleSpacing => Some(RuleKey::Clearance {
-                a: CopperObject::Hole,
-                b: CopperObject::Hole,
+                a: CopperObject::ViaHole,
+                b: CopperObject::ViaHole,
             }),
             Self::Courtyard => Some(RuleKey::CourtyardClearance),
         }
@@ -995,10 +995,14 @@ fn group_table(
     let mut focused = false;
     let mut marked: Option<(egui::Response, String)> = None;
     let mut blurred: Vec<RuleKey> = Vec::new();
-    kit::table(
+    let reveal_row = focus_key
+        .filter(|_| reveal)
+        .and_then(|k| rows.iter().position(|r| r.key.normalized() == k));
+    kit::table_revealing(
         ui,
         &columns,
         rows.len(),
+        reveal_row,
         |ui, index, column| {
             let Some(row) = rows.get(index) else {
                 return;

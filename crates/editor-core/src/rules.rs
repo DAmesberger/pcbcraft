@@ -65,19 +65,40 @@ pub enum CopperObject {
     Fill,
     /// The board outline and every cutout or milled slot edge.
     BoardEdge,
-    /// A drilled or milled hole's wall (any plating).
-    Hole,
+    /// A via's drilled hole wall, and any unplated hole's (an unplated pad
+    /// or mounting hole).
+    ViaHole,
+    /// A plated pad or mounting hole's wall (PTH): fabricators keep more
+    /// copper and drill spacing around these than around via holes.
+    PthHole,
 }
 
 impl CopperObject {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Track,
         Self::Pad,
         Self::Via,
         Self::Fill,
         Self::BoardEdge,
-        Self::Hole,
+        Self::ViaHole,
+        Self::PthHole,
     ];
+
+    /// The hole kind of a drilled hole: plated pad and mounting holes are
+    /// [`Self::PthHole`]; via drills and unplated holes [`Self::ViaHole`].
+    pub fn hole(plated: bool) -> Self {
+        if plated { Self::PthHole } else { Self::ViaHole }
+    }
+
+    /// A hole wall, not copper.
+    pub fn is_hole(self) -> bool {
+        matches!(self, Self::ViaHole | Self::PthHole)
+    }
+
+    /// Copper (track, pad, via or fill): not a hole wall or a board edge.
+    pub fn is_copper(self) -> bool {
+        !self.is_hole() && self != Self::BoardEdge
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -86,7 +107,8 @@ impl CopperObject {
             Self::Via => "via",
             Self::Fill => "fill",
             Self::BoardEdge => "board edge",
-            Self::Hole => "hole",
+            Self::ViaHole => "via hole",
+            Self::PthHole => "plated hole",
         }
     }
 }
@@ -103,7 +125,7 @@ pub struct PairClearance {
 
 /// Least gap between copper of different nets (and holes and edges), by
 /// object pair. Every unordered pair of [`CopperObject`] has exactly one
-/// entry (21 entries), in [`CopperObject::ALL`] order.
+/// entry (28 entries), in [`CopperObject::ALL`] order.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ClearanceMatrix {
@@ -111,15 +133,16 @@ pub struct ClearanceMatrix {
 }
 
 impl ClearanceMatrix {
-    /// Every pair at `copper` mm, with the hole and edge pairs given.
+    /// Every pair at `copper` mm, with the hole and edge pairs given (both
+    /// hole kinds alike).
     pub fn uniform(copper: f64, hole_to_copper: f64, hole_to_hole: f64, edge: f64) -> Self {
         let mut pairs = Vec::new();
         for (i, a) in CopperObject::ALL.iter().enumerate() {
             for b in &CopperObject::ALL[i..] {
                 let mm = match (a, b) {
                     (_, CopperObject::BoardEdge) | (CopperObject::BoardEdge, _) => edge,
-                    (CopperObject::Hole, CopperObject::Hole) => hole_to_hole,
-                    (CopperObject::Hole, _) | (_, CopperObject::Hole) => hole_to_copper,
+                    (a, b) if a.is_hole() && b.is_hole() => hole_to_hole,
+                    (a, b) if a.is_hole() || b.is_hole() => hole_to_copper,
                     _ => copper,
                 };
                 pairs.push(PairClearance { a: *a, b: *b, mm });
@@ -151,7 +174,7 @@ impl ClearanceMatrix {
     }
 
     fn complete(&self) -> bool {
-        self.pairs.len() == 21
+        self.pairs.len() == 28
             && CopperObject::ALL.iter().enumerate().all(|(i, a)| {
                 CopperObject::ALL[i..]
                     .iter()
@@ -198,7 +221,8 @@ pub struct CopperRules {
 }
 
 /// Drill, via and annular-ring limits. Hole-to-copper and hole-to-hole
-/// gaps live in [`CopperRules::clearance`] (`hole` pairs).
+/// gaps live in [`CopperRules::clearance`] (`via_hole` and `pth_hole`
+/// pairs).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct HoleRules {
@@ -691,7 +715,7 @@ impl RuleKey {
             {
                 RuleGroup::BoardEdge
             }
-            Self::Clearance { a, b } if a == CopperObject::Hole || b == CopperObject::Hole => {
+            Self::Clearance { a, b } if a.is_hole() || b.is_hole() => {
                 RuleGroup::HolesAndVias
             }
             Self::BoardOutlineFit => RuleGroup::BoardEdge,
@@ -1253,7 +1277,7 @@ impl ProjectRules {
             value: self.effective().copper.clearance.get(a.object, b.object),
             source: self.source_of(key),
         };
-        let copper = |o: CopperObject| !matches!(o, CopperObject::BoardEdge | CopperObject::Hole);
+        let copper = CopperObject::is_copper;
         let fill = a.object == CopperObject::Fill || b.object == CopperObject::Fill;
         for side in [a, b] {
             if !copper(side.object) {
@@ -1776,7 +1800,8 @@ fn object_name(o: CopperObject) -> &'static str {
         CopperObject::Via => "via",
         CopperObject::Fill => "fill",
         CopperObject::BoardEdge => "board_edge",
-        CopperObject::Hole => "hole",
+        CopperObject::ViaHole => "via_hole",
+        CopperObject::PthHole => "pth_hole",
     }
 }
 

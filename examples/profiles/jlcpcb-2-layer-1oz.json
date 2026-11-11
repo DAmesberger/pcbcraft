@@ -31,7 +31,11 @@
         "value": 0.0,
         "source": "Not a meaningful pair: 0."
       },
-      "clearance_board_edge_hole": {
+      "clearance_board_edge_pth_hole": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit: 0, not checked."
+      },
+      "clearance_board_edge_via_hole": {
         "value": 0.0,
         "source": "JLCPCB does not publish this limit: 0, not checked."
       },
@@ -43,13 +47,13 @@
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
       },
-      "clearance_fill_hole": {
-        "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"), which one hole rule cannot tell apart: check plated holes by hand."
+      "clearance_fill_pth_hole": {
+        "value": 0.28,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the minimum."
       },
-      "clearance_hole_hole": {
+      "clearance_fill_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"), which one hole rule cannot tell apart: check plated holes by hand."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
       },
       "clearance_pad_board_edge": {
         "value": 0.2,
@@ -59,17 +63,25 @@
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
       },
-      "clearance_pad_hole": {
-        "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"), which one hole rule cannot tell apart: check plated holes by hand."
-      },
       "clearance_pad_pad": {
         "value": 0.15,
         "source": "Traces, \"SMD pad to pad clearance (different nets)\": \"0.15mm\"."
       },
+      "clearance_pad_pth_hole": {
+        "value": 0.28,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the minimum."
+      },
       "clearance_pad_via": {
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+      },
+      "clearance_pad_via_hole": {
+        "value": 0.2,
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+      },
+      "clearance_pth_hole_pth_hole": {
+        "value": 0.45,
+        "source": "Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"."
       },
       "clearance_track_board_edge": {
         "value": 0.2,
@@ -79,13 +91,13 @@
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
       },
-      "clearance_track_hole": {
-        "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"), which one hole rule cannot tell apart: check plated holes by hand."
-      },
       "clearance_track_pad": {
         "value": 0.1,
         "source": "Traces, \"Pad to track clearance (1oz)\": \"0.1mm\"; \"Min. 0.1 mm (stay well above if possible)\"."
+      },
+      "clearance_track_pth_hole": {
+        "value": 0.28,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the minimum."
       },
       "clearance_track_track": {
         "value": 0.1,
@@ -95,6 +107,10 @@
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
       },
+      "clearance_track_via_hole": {
+        "value": 0.2,
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+      },
       "clearance_via_board_edge": {
         "value": 0.2,
         "source": "Outline, \"Routed\": \"0.2mm\"; \"① Copper clearance from routed board edges: ≧0.2 mm\"."
@@ -103,13 +119,25 @@
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
       },
-      "clearance_via_hole": {
+      "clearance_via_hole_pth_hole": {
+        "value": 0.45,
+        "source": "Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no via-to-pad-hole row: the larger, the pad hole's."
+      },
+      "clearance_via_hole_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"), which one hole rule cannot tell apart: check plated holes by hand."
+        "source": "Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"."
+      },
+      "clearance_via_pth_hole": {
+        "value": 0.28,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the minimum."
       },
       "clearance_via_via": {
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+      },
+      "clearance_via_via_hole": {
+        "value": 0.2,
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
       },
       "copper_angle_min": {
         "value": 0.0,
@@ -172,8 +200,8 @@
         "source": "Profile author's choice (a default, not a JLCPCB limit)."
       },
       "pth_annular_ring_min": {
-        "value": 0.18,
-        "source": "Traces, \"PTH annular ring\": \"≧0.20mm\"; under \"2-layer:\", \"1 oz: Recommended 0.25 mm or above; absolute minimum 0.18 mm\". The absolute minimum for 1 oz 2-layer boards."
+        "value": 0.25,
+        "source": "Traces, \"PTH annular ring\": \"≧0.20mm\"; under \"2-layer:\", \"1 oz: Recommended 0.25 mm or above; absolute minimum 0.18 mm\". The recommended value, chosen over the absolute minimum (0.18 mm)."
       },
       "silk_edge_clearance": {
         "value": 0.0,

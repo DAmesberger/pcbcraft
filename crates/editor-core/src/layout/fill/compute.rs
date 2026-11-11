@@ -153,7 +153,7 @@ impl<'a> Ctx<'a> {
             )
             .value;
         let own = fill.settings.clearance.unwrap_or(self.rules.fill.clearance);
-        let copper = !matches!(object, CopperObject::BoardEdge | CopperObject::Hole);
+        let copper = object.is_copper();
         if copper { pair.max(own) } else { pair }
     }
 
@@ -391,14 +391,16 @@ impl<'a> Ctx<'a> {
         // 2. Obstacles.
         let mut rings: Vec<Ring> = Vec::new();
         let mut regions: Vec<Region> = Vec::new();
-        let hole_gap = self.clearance(fill, CopperObject::Hole, None) + tol;
+        // Via drills and unplated holes keep the via hole clearance,
+        // plated pad and mounting holes the plated hole clearance.
+        let hole_gap = |plated: bool| self.clearance(fill, CopperObject::hole(plated), None) + tol;
         for cut in &board.cutouts {
             if let Some(ring) = geom::ccw(cut.outline.flatten(tol)) {
                 regions.extend(geom::offset(&[vec![ring]], edge + tol, tol));
             }
         }
         for h in &board.holes {
-            rings.push(geom::circle(h.at, h.drill / 2.0 + hole_gap, tol));
+            rings.push(geom::circle(h.at, h.drill / 2.0 + hole_gap(h.plated), tol));
             if h.plated
                 && let Some(d) = h.pad_diameter
             {
@@ -459,7 +461,7 @@ impl<'a> Ctx<'a> {
                 // A joined plated hole is drilled out of the fill; any
                 // other hole keeps the hole clearance.
                 let joined = hole.plated && on && connection != PadConnection::None;
-                let gap = if joined { 0.0 } else { hole_gap };
+                let gap = if joined { 0.0 } else { hole_gap(hole.plated) };
                 rings.extend(grown_shape(&hole.shape, gap, tol));
             }
         }
@@ -475,7 +477,7 @@ impl<'a> Ctx<'a> {
             match connection {
                 PadConnection::None => {
                     let gap = self.clearance(fill, CopperObject::Via, self.class(Some(v.net)));
-                    let r = (v.diameter / 2.0 + gap).max(v.drill / 2.0 + hole_gap - tol);
+                    let r = (v.diameter / 2.0 + gap).max(v.drill / 2.0 + hole_gap(false) - tol);
                     rings.push(geom::circle(v.position, r + tol, tol));
                 }
                 PadConnection::Solid => {

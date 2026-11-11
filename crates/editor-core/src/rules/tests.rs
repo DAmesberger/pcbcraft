@@ -18,11 +18,11 @@ fn every_key_round_trips_through_get_set_and_its_name() -> Result<()> {
         assert_eq!(rules, base, "{key:?}");
         assert_eq!(RuleKey::from_name(&key.name()), Some(key), "{key:?}");
     }
-    // 2 track widths, 21 clearance pairs, 25 contract scalars, the 5
+    // 2 track widths, 28 clearance pairs, 25 contract scalars, the 5
     // appended silkscreen-edge and land keys, the 2 etch-hazard keys, the
     // board outline fit, the legend stroke share and the pair gap
     // tolerance's minimum and share.
-    assert_eq!(RuleKey::all().len(), 2 + 21 + 25 + 5 + 2 + 1 + 3);
+    assert_eq!(RuleKey::all().len(), 2 + 28 + 25 + 5 + 2 + 1 + 3);
     let names: std::collections::BTreeSet<_> = RuleKey::all().iter().map(|k| k.name()).collect();
     assert_eq!(names.len(), RuleKey::all().len(), "names are unique");
     assert_eq!(
@@ -558,7 +558,7 @@ fn net_class_values_win_over_an_override_and_hole_pairs_ignore_classes() -> Resu
     assert_eq!(via.value, (0.4, 0.6));
     assert_eq!(via.source.precedence(), 2);
     let hole = ClearanceSide {
-        object: CopperObject::Hole,
+        object: CopperObject::ViaHole,
         class: Some(power),
     };
     let track = ClearanceSide {

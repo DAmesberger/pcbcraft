@@ -10,7 +10,8 @@ use crate::library::{Outline, Segment};
 use crate::model::board::{BoardFeatureId, BoardSketch, CutoutKind, SolvedBoard, SolvedCutout};
 use crate::model::{BoardShape, CopperLayer, Project, Track, Via, ViaSpan};
 use crate::rules::{
-    CopperObject, NetClassSpec, RuleKey, RuleProfile, RuleValue, RulesCommand, fixtures,
+    CopperObject, NetClassSpec, ProjectRules, RuleKey, RuleProfile, RuleValue, RulesCommand,
+    fixtures,
 };
 use crate::{Engine, Operation, Outcome, Query, QueryResult};
 
@@ -290,8 +291,8 @@ fn via_checks_take_their_limits_from_the_rules() -> Result<()> {
     override_mm(
         &mut strict,
         RuleKey::Clearance {
-            a: CopperObject::Hole,
-            b: CopperObject::Hole,
+            a: CopperObject::ViaHole,
+            b: CopperObject::ViaHole,
         },
         0.8,
     )?;
@@ -299,7 +300,7 @@ fn via_checks_take_their_limits_from_the_rules() -> Result<()> {
         &mut strict,
         RuleKey::Clearance {
             a: CopperObject::Track,
-            b: CopperObject::Hole,
+            b: CopperObject::ViaHole,
         },
         0.65,
     )?;
@@ -328,14 +329,14 @@ fn via_checks_take_their_limits_from_the_rules() -> Result<()> {
     ));
     assert!(
         message("board.via_hole_spacing").ends_with(
-            "drills are 0.7 mm apart; needs 0.8 mm (project override: hole to hole clearance)"
+            "drills are 0.7 mm apart; needs 0.8 mm (project override: via hole to via hole clearance)"
         ),
         "{findings:#?}"
     );
     let drill = message("board.via_drill_clearance");
     assert!(
         drill.contains("drill is 0.6 mm from a track on ")
-            && drill.ends_with("needs 0.65 mm (project override: track to hole clearance)"),
+            && drill.ends_with("needs 0.65 mm (project override: track to via hole clearance)"),
         "{findings:#?}"
     );
     // 1.6 mm default stackup over a 0.3 mm drill.
@@ -820,7 +821,7 @@ fn a_mounting_hole_measures_its_gap_to_copper_edge_to_edge() -> Result<()> {
         "{message}"
     );
     assert!(
-        message.ends_with("needs 0.25 mm (Test prototype: track to hole clearance)"),
+        message.ends_with("needs 0.25 mm (Test prototype: track to via hole clearance)"),
         "{message}"
     );
     // Copper over the hole overlaps it: no "0 mm".
@@ -867,6 +868,37 @@ fn a_mounting_hole_measures_its_gap_to_copper_edge_to_edge() -> Result<()> {
     assert!(
         message.starts_with("A mounting hole overlaps R1 pad 1 on "),
         "{message}"
+    );
+    Ok(())
+}
+
+/// A plated hole keeps the plated-hole clearance, an unplated one the via
+/// hole clearance. Under the shipped JLCPCB example, a track 0.25 mm from
+/// a mounting hole passes when the hole is unplated ("NPTH to Track":
+/// 0.2 mm) and fails when it is plated ("PTH to Track": 0.28 mm); one hole
+/// rule (0.2 mm) passed both.
+#[test]
+fn a_plated_hole_keeps_the_plated_hole_clearance() -> Result<()> {
+    let (mut project, _) = hole_and_track(20.0 + 1.725 + 0.25)?;
+    project.rules = ProjectRules {
+        profile: Some(fixtures::jlcpcb_example()?),
+        ..ProjectRules::default()
+    };
+    let findings = found(&project, "board.hole_clearance");
+    assert!(findings.is_empty(), "{findings:?}");
+    if let BoardShape::Sketch(sketch) = &mut project.board_shape {
+        for hole in &mut sketch.solved.holes {
+            hole.plated = true;
+        }
+    }
+    let findings = found(&project, "board.hole_clearance");
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(
+        findings[0]
+            .message
+            .ends_with("needs 0.28 mm (JLCPCB 2-layer 1 oz: track to plated hole clearance)"),
+        "{}",
+        findings[0].message
     );
     Ok(())
 }

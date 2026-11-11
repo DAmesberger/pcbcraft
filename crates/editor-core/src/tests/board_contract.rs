@@ -30,12 +30,19 @@ fn the_prototype_fixture_holds_the_former_hardcoded_limits() -> Fallible<()> {
         ] {
             assert_eq!(c.get(a, b), layout::CLEARANCE_MM);
         }
-        assert_eq!(c.get(a, CopperObject::Hole), 0.25);
+        assert_eq!(c.get(a, CopperObject::ViaHole), 0.25);
+        assert_eq!(c.get(a, CopperObject::PthHole), 0.25);
         // The one limit that moved on purpose: 0 let fill copper reach
         // 5 µm from the edge and pass (docs/e2e-esp32-devboard.md, gap 6).
         assert_eq!(c.get(a, CopperObject::BoardEdge), 0.3);
     }
-    assert_eq!(c.get(CopperObject::Hole, CopperObject::Hole), 0.25);
+    for (a, b) in [
+        (CopperObject::ViaHole, CopperObject::ViaHole),
+        (CopperObject::ViaHole, CopperObject::PthHole),
+        (CopperObject::PthHole, CopperObject::PthHole),
+    ] {
+        assert_eq!(c.get(a, b), 0.25);
+    }
     assert_eq!(r.holes.via_annular_ring_min, 0.1);
     assert_eq!(r.holes.via_drill_default, 0.3);
     assert_eq!(r.holes.via_diameter_default, 0.6);

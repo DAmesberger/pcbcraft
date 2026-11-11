@@ -494,6 +494,30 @@ mod tests {
         Ok(())
     }
 
+    /// The JLCPCB examples check plated holes by JLCPCB's plated-hole rows
+    /// and via holes by its via rows (one hole rule held the via values for
+    /// both), and the PTH annular ring at the recommended value rather
+    /// than the absolute minimum (0.18 mm on 2 layers, 0.15 mm on 4).
+    #[test]
+    fn the_jlcpcb_examples_split_holes_and_take_the_recommended_ring() -> Result<()> {
+        use pcbcraft_core::rules::CopperObject::{PthHole, Track, ViaHole};
+        const FOUR: &str = include_str!("../../../examples/profiles/jlcpcb-4-layer-1oz.json");
+        // (file, PTH ring, PTH to track, via hole to track)
+        for (text, ring, pth, via) in [(JLCPCB, 0.25, 0.28, 0.2), (FOUR, 0.2, 0.3, 0.2)] {
+            let p = decode(text.as_bytes())?;
+            assert!(p.entries().all(|(_, e)| !e.source.is_empty()), "{}", p.id);
+            let r = p.rules();
+            let c = &r.copper.clearance;
+            assert_eq!(r.holes.pth_annular_ring_min, ring, "{}", p.id);
+            assert_eq!(c.get(PthHole, Track), pth, "{}", p.id);
+            assert_eq!(c.get(ViaHole, Track), via, "{}", p.id);
+            assert_eq!(c.get(ViaHole, ViaHole), 0.2, "{}", p.id);
+            assert_eq!(c.get(PthHole, PthHole), 0.45, "{}", p.id);
+            assert_eq!(c.get(ViaHole, PthHole), 0.45, "{}", p.id);
+        }
+        Ok(())
+    }
+
     #[test]
     fn save_list_rename_delete_round_trip() -> Result<()> {
         let dir = tempfile::tempdir()?;
