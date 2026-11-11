@@ -906,3 +906,63 @@ fn a_rows_right_click_menu_offers_locate_and_its_fix() -> Fallible<()> {
     assert_eq!(engine.revision(), revision, "nothing was applied");
     Ok(())
 }
+
+/// In a column as narrow as at an 800 × 560 window and at any height, no
+/// two of the card's painted texts overlap: the footer is as tall as its
+/// wrapped coverage note, and a short card gives the list no room before
+/// anything is painted over the toolbar.
+#[test]
+fn the_card_never_paints_over_itself_in_a_small_column() -> Fallible<()> {
+    let engine = Engine::demo()?;
+    let mut surface = Surface::default();
+    surface.open();
+    surface.scope = Scope::Selection;
+    let mut h = Harness::new();
+    for height in (60..=320).step_by(20) {
+        let column = Rect::from_min_size(pos2(100.0, 40.0), vec2(220.0, height as f32));
+        let mut shown = Vec::new();
+        for _ in 0..3 {
+            let mut output = h.ctx.run_ui(
+                RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(420.0, 900.0))),
+                    ..Default::default()
+                },
+                |ui| {
+                    let mut child = ui.new_child(UiBuilder::new().max_rect(column));
+                    child.set_max_width(column.width());
+                    surface.card(&mut child, &engine, Workspace::Pcb, &[]);
+                },
+            );
+            output.textures_delta.clear();
+            shown = output
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Text(t) => {
+                        let rect = t
+                            .galley
+                            .rect
+                            .translate(t.pos.to_vec2())
+                            .intersect(c.clip_rect);
+                        (rect.is_positive() && !t.galley.text().trim().is_empty())
+                            .then(|| (t.galley.text().to_owned(), rect))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+        }
+        assert!(
+            shown.iter().any(|(t, _)| t == "Selection"),
+            "at {height}: {shown:?}"
+        );
+        for (i, (a, ra)) in shown.iter().enumerate() {
+            for (b, rb) in &shown[i + 1..] {
+                assert!(
+                    !ra.shrink(0.5).intersects(rb.shrink(0.5)),
+                    "at {height}: {a:?} {ra:?} overlaps {b:?} {rb:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}

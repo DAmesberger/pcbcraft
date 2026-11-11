@@ -631,16 +631,28 @@ impl Surface {
         });
         let answer = self.listed(engine, workspace, selection);
         let idle = nothing_selected(&summary, workspace);
+        // Below the toolbar: the list, then the footer as tall as its
+        // wrapped coverage note was last frame. Too short a card gives the
+        // list no room first; nothing is painted above the room it has.
         let full = ui.available_rect_before_wrap();
-        let footer_height = t.control_height + 2.0 * t.space_4;
+        let full = Rect::from_min_max(full.min, pos2(full.right(), full.bottom().max(full.top())));
+        let footer_id = ui.id().with("issues-footer-height");
+        let least = t.control_height + 2.0 * t.space_4;
+        let footer_height = ui
+            .data(|d| d.get_temp::<f32>(footer_id))
+            .unwrap_or(least)
+            .max(least);
         let split = (full.bottom() - footer_height).max(full.top());
         let body = Rect::from_min_max(full.min, pos2(full.right(), split));
-        let footer = Rect::from_min_max(pos2(full.left(), split), full.max);
+        let footer =
+            Rect::from_min_size(pos2(full.left(), split), vec2(full.width(), footer_height));
         let mut request = None;
         let report = answer.report().cloned();
         let listed = ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("issues-body")
+                .max_height(body.height())
+                .min_scrolled_height(body.height())
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     egui::Frame::NONE
@@ -658,24 +670,35 @@ impl Surface {
                 .y
         });
         kit::card::remember_issues_wants(ui.ctx(), body.top() - top + listed.inner + footer_height);
-        ui.scope_builder(
-            UiBuilder::new()
-                .max_rect(footer.shrink2(vec2(t.space_8, 0.0)))
-                .layout(Layout::right_to_left(Align::Center)),
-            |ui| {
-                t.secondary_hline(ui.painter(), footer.x_range(), footer.top(), t.dialog_rule);
-                if let Some(report) = &report {
+        let measured = ui
+            .scope_builder(
+                UiBuilder::new()
+                    .max_rect(footer.shrink2(vec2(t.space_8, t.space_4)))
+                    .layout(Layout::right_to_left(Align::Center)),
+                |ui| {
+                    ui.set_clip_rect(ui.clip_rect().intersect(full));
+                    t.secondary_hline(ui.painter(), footer.x_range(), footer.top(), t.dialog_rule);
+                    let Some(report) = &report else {
+                        return least;
+                    };
                     let copy = ui_kit::button(ui, "Copy report", ui_kit::Button::Small)
                         .on_hover_text("Copy every finding with its full text");
                     if copy.clicked() {
                         ui.ctx().copy_text(report_text(report));
                     }
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        kit::hint(ui, &report.coverage, "What these checks cover");
-                    });
-                }
-            },
-        );
+                    let note = ui
+                        .with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            kit::hint(ui, &report.coverage, "What these checks cover")
+                        })
+                        .inner;
+                    copy.rect.height().max(note.rect.height()) + 2.0 * t.space_4
+                },
+            )
+            .inner;
+        if (measured - footer_height).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(footer_id, measured));
+            ui.ctx().request_repaint();
+        }
         request
     }
 
