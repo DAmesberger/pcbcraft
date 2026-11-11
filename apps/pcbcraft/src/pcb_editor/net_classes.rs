@@ -46,6 +46,17 @@ fn mm(value: f64) -> String {
     format!("{} mm", kit::number_text((value * 1000.0).round() / 1000.0))
 }
 
+/// A field's value as shown, with its unit: lengths through the core's one
+/// formatter (`0.5 mm`), other quantities as `50 Ω`. Display only: the
+/// field still reads a bare number in `unit`.
+fn shown(value: f64, unit: &str) -> String {
+    use pcbcraft_core::units::{LengthUnit, Nm, format_length};
+    match Nm::from_mm_f64_rounded(value) {
+        Ok(nm) if unit == "mm" => format_length(nm, LengthUnit::Mm),
+        _ => format!("{} {unit}", kit::number_text(value)),
+    }
+}
+
 /// A class name no other class has: "Class 2", "Class 3", ….
 fn fresh_name(project: &Project) -> String {
     let taken = |name: &str| {
@@ -140,7 +151,7 @@ fn optional_mm(
         label,
         value,
         "mm",
-        &mm(inherited),
+        &shown(inherited, "mm"),
         "Enter a length in mm, or leave it empty for the rules",
     )
 }
@@ -155,7 +166,7 @@ fn optional_value(
     hint: &str,
     error: &'static str,
 ) -> Option<Option<f64>> {
-    let current = value.map(kit::number_text).unwrap_or_default();
+    let current = value.map(|v| shown(v, unit)).unwrap_or_default();
     let id = ui.scope_id().with(("net-class-mm", label));
     let mut text = card
         .staged
@@ -946,6 +957,52 @@ mod tests {
         let row = |label: &str| shown.iter().position(|t| t == label);
         let (clearance, fill) = (row("Clearance"), row("Fill clearance"));
         assert!(clearance.is_some() && fill > clearance, "{shown:?}");
+        Ok(())
+    }
+
+    /// Night round 3 (R3-6): set values show their unit as the inherited
+    /// placeholders do ("0.5 mm" beside "0.152 mm"), through the core's
+    /// one length formatter.
+    #[test]
+    fn set_and_inherited_values_show_their_unit_alike() -> TestResult {
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut engine = Engine::demo()?;
+        let class = power(&mut engine)?;
+        let mut editor = PcbEditor::default();
+        editor.open_net_classes(Some(class));
+        let ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(400.0, 1600.0),
+            )),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            let _ = editor.subject_slot(ui, &engine);
+        });
+        output.textures_delta.clear();
+        let mut painted = Vec::new();
+        for clipped in &output.shapes {
+            texts(&clipped.shape, &mut painted);
+        }
+        let clearance = engine.project().rules.effective().copper.clearance.get(
+            pcbcraft_core::rules::CopperObject::Track,
+            pcbcraft_core::rules::CopperObject::Track,
+        );
+        let inherited = shown(clearance, "mm");
+        assert!(inherited.ends_with(" mm"), "{inherited}");
+        for text in [inherited.as_str(), "0.5 mm", "0.4 mm", "0.8 mm"] {
+            assert!(painted.iter().any(|t| t == text), "{text}: {painted:?}");
+        }
+        assert!(!painted.iter().any(|t| t == "0.5"), "{painted:?}");
         Ok(())
     }
 
