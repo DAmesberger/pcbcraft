@@ -1,0 +1,276 @@
+//! Dragging one half of a differential pair moves both halves (night
+//! finding F7), on the ESP32-S31 dev board's USB pair: `layout.track_drag`
+//! moves the partner's coupled segment by the same shift, its neighbours
+//! stretching and its held ends jogging with mitred corners, so the pair
+//! keeps its gap. When the partner cannot follow, the half moves alone only
+//! if the pair stays within its class limits; otherwise the drag is refused
+//! with a reason naming the pair. After each edit the board has no rule
+//! error and no pair finding, and one undo restores it.
+use pcbcraft_automation::session::{ApplyParams, Request, Session};
+use pcbcraft_core::diagnostics::Error;
+use pcbcraft_core::format::EditorFile;
+use pcbcraft_core::ids::Id;
+use pcbcraft_core::layout::fill::{FillCache, compute_stale};
+use pcbcraft_core::layout::posture::Posture;
+use pcbcraft_core::layout::router::drag::{TrackDragRequest, drag_plan};
+use pcbcraft_core::layout::router::{RouteIndex, RouteMode};
+use pcbcraft_core::layout::{self, LayoutCommand, length};
+use pcbcraft_core::model::Track;
+use pcbcraft_core::{Engine, Operation};
+use std::path::Path;
+
+type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+fn example() -> Fallible<Engine> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
+    Ok(Engine::from_file(pcbcraft_io::read_project(&path)?)?)
+}
+
+/// The USB pair's long coupled runs below U3: USB_DN's at x 19.79 and
+/// USB_DP's at x 20.21, by their start points.
+fn long_runs(engine: &Engine) -> Fallible<(Track, Track)> {
+    let at = |x: f64, y: f64| -> Fallible<Track> {
+        Ok(engine
+            .project()
+            .tracks
+            .iter()
+            .find(|t| (t.start[0] - x).abs() < 0.01 && (t.start[1] - y).abs() < 0.01)
+            .cloned()
+            .ok_or("no such track")?)
+    };
+    Ok((at(19.79, 14.8)?, at(20.21, 14.8)?))
+}
+
+/// The short coupled runs above U1: USB_DN's at x 24.89 and USB_DP's at
+/// x 25.31, from y 32.0–32.2 to 33.
+fn short_runs(engine: &Engine) -> Fallible<(Track, Track)> {
+    let at = |x: f64| -> Fallible<Track> {
+        Ok(engine
+            .project()
+            .tracks
+            .iter()
+            .find(|t| (t.start[0] - x).abs() < 0.01 && (t.end[1] - 33.0).abs() < 1e-6)
+            .cloned()
+            .ok_or("no such track")?)
+    };
+    Ok((at(24.89)?, at(25.31)?))
+}
+
+fn drag(track: Id, offset: f64) -> TrackDragRequest {
+    TrackDragRequest {
+        track,
+        offset,
+        posture: Posture::Diagonal,
+        mode: RouteMode::Shove,
+        move_vias: true,
+    }
+}
+
+fn track_drag(track: Id, offset: f64) -> Operation {
+    Operation::Layout(LayoutCommand::TrackDrag {
+        request: drag(track, offset),
+    })
+}
+
+fn track(engine: &Engine, id: Id) -> Fallible<Track> {
+    Ok(engine
+        .project()
+        .tracks
+        .iter()
+        .find(|t| t.id == id)
+        .cloned()
+        .ok_or("track gone")?)
+}
+
+/// Rule errors on the board (clearance, hole and keepout findings, and any
+/// blocking one) and the USB pair's findings, once the stale fills are
+/// refilled without an undo step.
+fn issues(engine: &mut Engine) -> Fallible<Vec<String>> {
+    let fresh = compute_stale(engine.project(), &mut FillCache::default())?;
+    engine.store_fills(engine.revision(), fresh)?;
+    Ok(layout::checks(engine.project())
+        .into_iter()
+        .filter(|f| {
+            f.blocks.is_some()
+                || f.code.starts_with("pair.")
+                || f.code.starts_with("keepout.")
+                || f.code.contains("clearance")
+        })
+        .map(|f| format!("{}: {}", f.code, f.message))
+        .collect())
+}
+
+fn undo_to(engine: &mut Engine, before: &EditorFile) -> Fallible {
+    engine.undo()?;
+    assert!(&engine.to_file() == before, "one undo restores the board");
+    Ok(())
+}
+
+/// The founder's drag: USB_DN's long run 1 mm sideways (to −x). USB_DP's
+/// run beside it moves by the same shift, both clean and coupled, as one
+/// undo step.
+#[test]
+fn dragging_one_usb_half_moves_both() -> Fallible {
+    let mut engine = example()?;
+    assert_eq!(issues(&mut engine)?, Vec::<String>::new());
+    let (dn, dp) = long_runs(&engine)?;
+    let before = engine.to_file();
+    let revision = engine.revision();
+    engine.apply(engine.revision(), track_drag(dn.id, 1.0))?;
+    assert_eq!(engine.revision(), revision + 1, "one transaction");
+    let (dn_now, dp_now) = (track(&engine, dn.id)?, track(&engine, dp.id)?);
+    assert!(
+        (dn_now.start[0] - (dn.start[0] - 1.0)).abs() < 1e-6,
+        "{dn_now:?}"
+    );
+    assert!(
+        (dp_now.start[0] - (dp.start[0] - 1.0)).abs() < 1e-6,
+        "{dp_now:?}"
+    );
+    assert_eq!(issues(&mut engine)?, Vec::<String>::new());
+    let report = length::report(engine.project());
+    let usb = report.pairs.first().ok_or("no pair row")?;
+    assert!(
+        usb.uncoupled <= usb.max_uncoupled.ok_or("no limit")?,
+        "{usb:?}"
+    );
+    assert!(usb.skew <= usb.max_skew.ok_or("no limit")?, "{usb:?}");
+    undo_to(&mut engine, &before)
+}
+
+/// The preview is the same plan: it lists both halves' moved tracks.
+#[test]
+fn the_preview_moves_both_halves() -> Fallible {
+    let engine = example()?;
+    let (dn, dp) = long_runs(&engine)?;
+    let p = engine.project();
+    let plan = drag_plan(p, &RouteIndex::of(p), &drag(dn.id, 1.0));
+    assert!(plan.reached, "{:?}", plan.blocked);
+    assert!(plan.shoved.contains(&dn.id), "{:?}", plan.shoved);
+    assert!(plan.shoved.contains(&dp.id), "{:?}", plan.shoved);
+    let moved = |id: Id| plan.edits.replace.iter().any(|t| t.id == id);
+    assert!(moved(dn.id) && moved(dp.id), "{:?}", plan.edits);
+    Ok(())
+}
+
+/// Partner locked: the long run cannot move alone (it would leave the
+/// pair past its skew and uncoupled limits), so the drag is refused naming the pair
+/// and the board is unchanged.
+#[test]
+fn a_locked_partner_refuses_a_drag_that_breaks_the_pair() -> Fallible {
+    let mut engine = example()?;
+    let (dn, dp) = long_runs(&engine)?;
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::SetTrackLock {
+            id: dp.id,
+            locked: true,
+        }),
+    )?;
+    let before = engine.to_file();
+    let refused = engine.apply(engine.revision(), track_drag(dn.id, 1.0));
+    let Err(Error::Conflict(why)) = refused else {
+        return Err(format!("not refused: {refused:?}").into());
+    };
+    assert!(
+        why.starts_with(
+            "USB_DP can't follow (the track is locked), and moving USB_DN alone breaks pair USB: "
+        ),
+        "{why}"
+    );
+    assert!(engine.to_file() == before, "unchanged");
+    Ok(())
+}
+
+/// Partner locked: a short run moved a little away from its partner
+/// keeps the pair within its limits, so it moves alone, cleanly.
+#[test]
+fn a_locked_partner_lets_a_half_move_alone_within_the_pair_limits() -> Fallible {
+    let mut engine = example()?;
+    let (dn, dp) = short_runs(&engine)?;
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::SetTrackLock {
+            id: dp.id,
+            locked: true,
+        }),
+    )?;
+    let dp = track(&engine, dp.id)?;
+    let before = engine.to_file();
+    // +0.3 mm along the left normal of a +y run is −x, away from USB_DP.
+    engine.apply(engine.revision(), track_drag(dn.id, 0.3))?;
+    let dn_now = track(&engine, dn.id)?;
+    assert!(
+        (dn_now.end[0] - (dn.end[0] - 0.3)).abs() < 1e-6,
+        "{dn_now:?}"
+    );
+    assert_eq!(track(&engine, dp.id)?, dp, "the locked half stays");
+    assert_eq!(issues(&mut engine)?, Vec::<String>::new());
+    undo_to(&mut engine, &before)
+}
+
+/// The same drag gives the same board.
+#[test]
+fn a_pair_drag_is_deterministic() -> Fallible {
+    let mut boards = Vec::new();
+    for _ in 0..2 {
+        let mut engine = example()?;
+        let (dn, _) = long_runs(&engine)?;
+        engine.apply(engine.revision(), track_drag(dn.id, -0.6))?;
+        boards.push(engine.to_file());
+    }
+    assert!(boards.first() == boards.get(1));
+    Ok(())
+}
+
+/// CLI and MCP callers send `layout.track_drag` as JSON: the same board as
+/// the engine's drag, both halves moved.
+#[test]
+fn layout_track_drag_over_the_session_moves_both_halves() -> Fallible {
+    let mut direct = example()?;
+    let (dn, dp) = long_runs(&direct)?;
+    direct.apply(direct.revision(), track_drag(dn.id, 1.0))?;
+    let mut session = Session::new(example()?);
+    let operation: Operation = serde_json::from_value(serde_json::json!({
+        "editor": "Layout",
+        "operation": {
+            "command": "layout.track_drag",
+            "params": { "request": { "track": dn.id, "offset": 1.0 } }
+        }
+    }))?;
+    session.execute(Request::Apply(ApplyParams {
+        expected_revision: session.engine().revision(),
+        operation,
+    }))?;
+    let moved = track(session.engine(), dp.id)?;
+    assert!(
+        (moved.start[0] - (dp.start[0] - 1.0)).abs() < 1e-6,
+        "{moved:?}"
+    );
+    assert!(session.engine().project().tracks == direct.project().tracks);
+    Ok(())
+}
+
+/// Times one drag plan per pointer move over a sweep of offsets
+/// (`--ignored --nocapture`).
+#[test]
+#[ignore = "timing report"]
+fn pair_drag_preview_timings() -> Fallible {
+    let engine = example()?;
+    let (dn, _) = long_runs(&engine)?;
+    let p = engine.project();
+    let index = RouteIndex::of(p);
+    let mut times = Vec::new();
+    for step in 1..=60 {
+        let offset = f64::from(step) * 0.05 * if step % 2 == 0 { 1.0 } else { -1.0 };
+        let t = std::time::Instant::now();
+        let _ = drag_plan(p, &index, &drag(dn.id, offset));
+        times.push(t.elapsed().as_secs_f64() * 1e3);
+    }
+    times.sort_by(f64::total_cmp);
+    let median = times.get(times.len() / 2).copied().unwrap_or(0.0);
+    let max = times.last().copied().unwrap_or(0.0);
+    println!("pair drag plan per move: median {median:.2} ms, max {max:.2} ms");
+    Ok(())
+}
