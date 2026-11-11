@@ -593,6 +593,15 @@ pub(crate) fn locked(project: &Project, instance: Id, verb: &str) -> Error {
     ))
 }
 
+/// The refusal for a command on a part that is not on the board: names
+/// the part by designator when the instance exists, else by its ID.
+fn unplaced(project: &Project, instance: Id) -> Error {
+    Error::NotFound(match project.instance(instance) {
+        Some(i) => format!("{} is not placed on the board", i.designator),
+        None => format!("No component instance has ID {instance}"),
+    })
+}
+
 /// Why a hand move of the placed part `instance` is refused, in the words
 /// the engine refuses `layout.move` with: it is locked, or its dimensions
 /// hold its position (see [`dimensions::held`]). `None` for a part that can
@@ -658,22 +667,24 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             if project.placement_of(instance).is_some_and(|p| p.locked) {
                 return Err(locked(project, instance, "move"));
             }
+            let missing = unplaced(project, instance);
             let placement = project
                 .placements
                 .iter_mut()
                 .find(|p| p.instance == instance)
-                .ok_or_else(|| Error::NotFound("unknown placement".into()))?;
+                .ok_or(missing)?;
             placement.position = position;
             placement.rotation_deg = rotation_deg;
             placement.layer = layer;
             // The engine carries the attached copper (`dimensions::carry`).
         }
         LayoutCommand::SetPlacementLock { instance, locked } => {
+            let missing = unplaced(project, instance);
             project
                 .placements
                 .iter_mut()
                 .find(|p| p.instance == instance)
-                .ok_or_else(|| Error::NotFound("unknown placement".into()))?
+                .ok_or(missing)?
                 .locked = locked;
         }
         LayoutCommand::Route { request } => {

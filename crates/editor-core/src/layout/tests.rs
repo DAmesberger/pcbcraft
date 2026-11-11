@@ -1397,3 +1397,39 @@ fn a_moved_part_carries_its_tracks_in_one_undo_step() -> Result<()> {
     assert_eq!(engine.revision(), revision);
     Ok(())
 }
+
+#[test]
+fn a_move_of_a_missing_part_names_it() -> Result<()> {
+    let mut project = fixture()?;
+    let (r1, _) = ids()?;
+    let refusal = |project: &mut Project, instance| {
+        let before = project.clone();
+        let error = apply(
+            project,
+            LayoutCommand::Move {
+                instance,
+                position: [20.0, 20.0],
+                rotation_deg: 0.0,
+                layer: Layer::Top,
+            },
+        )
+        .err()
+        .map(|e| e.to_string());
+        assert_eq!(*project, before);
+        error
+    };
+    let unknown = Error::NotFound("No component instance has ID 999999".into()).to_string();
+    assert_eq!(refusal(&mut project, 999_999), Some(unknown));
+    project.placements.retain(|p| p.instance != r1);
+    let unplaced = Error::NotFound("R1 is not placed on the board".into()).to_string();
+    assert_eq!(refusal(&mut project, r1), Some(unplaced.clone()));
+    let lock = apply(
+        &mut project,
+        LayoutCommand::SetPlacementLock {
+            instance: r1,
+            locked: true,
+        },
+    );
+    assert_eq!(lock.err().map(|e| e.to_string()), Some(unplaced));
+    Ok(())
+}
