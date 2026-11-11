@@ -46,6 +46,8 @@ mod fill_paint;
 #[cfg(test)]
 mod fill_tests;
 mod fill_tool;
+mod group;
+pub use group::Group;
 mod hold_mark;
 #[cfg(test)]
 mod hold_tests;
@@ -325,6 +327,8 @@ enum Inspected {
     Track(Id),
     Via(Id),
     Fill(Id),
+    /// Two or more objects (`group`).
+    Group,
     Review,
 }
 
@@ -496,6 +500,15 @@ pub struct PcbEditor {
     /// The Dimension tool and the drawn part dimensions of both views
     /// (`dimensions`).
     dims: dimensions::Dimensions,
+    /// Two or more selected objects; empty for a single selection
+    /// (`group`).
+    group: group::Group,
+    /// The group's parts being dragged.
+    group_drag: Option<group::GroupDrag>,
+    /// Where a selection rectangle was started, on screen.
+    box_from: Option<Pos2>,
+    /// Which kinds a click, the rectangle and ⌘A may select.
+    filter: group::SelectFilter,
 }
 
 impl Default for PcbEditor {
@@ -586,6 +599,10 @@ impl Default for PcbEditor {
             menu_command: None,
             dimension: None,
             dims: Default::default(),
+            group: Default::default(),
+            group_drag: None,
+            box_from: None,
+            filter: Default::default(),
         }
     }
 }
@@ -674,6 +691,7 @@ impl PcbEditor {
         }
         self.instance = instance;
         self.also.clear();
+        self.group = Group::default();
         // A dimension is selected with its part (`select_dimension`).
         self.dimension = None;
         self.track = track;
@@ -725,7 +743,7 @@ impl PcbEditor {
 
     /// Whether `id` is selected: the inspected part or one located with it.
     fn is_selected(&self, id: Id) -> bool {
-        self.instance == Some(id) || self.also.contains(&id)
+        self.instance == Some(id) || self.also.contains(&id) || self.group.parts.contains(&id)
     }
 
     /// Drop uncommitted field edits and their refusals; the next sync
@@ -804,6 +822,7 @@ impl PcbEditor {
             {
                 self.track = None;
             }
+            self.prune_group(engine.project());
             if self
                 .net
                 .is_some_and(|id| engine.project().net(id).is_none())
@@ -904,6 +923,8 @@ impl PcbEditor {
 
     fn cancel_drag(&mut self) {
         self.drag = None;
+        self.group_drag = None;
+        self.box_from = None;
         self.track_drag = None;
         self.drag_position = None;
         self.drag_airwires = None;
@@ -1108,6 +1129,9 @@ impl PcbEditor {
         if self.update.is_open() {
             return Inspected::Review;
         }
+        if !self.group.is_empty() {
+            return Inspected::Group;
+        }
         if let Some(id) = self.instance.filter(|id| project.instance(*id).is_some()) {
             return if project.placements.iter().any(|p| p.instance == id) {
                 Inspected::Placement(id)
@@ -1192,6 +1216,11 @@ impl PcbEditor {
                 Header::new("polygon", title, "Fill")
             }
             Inspected::Board => Header::new("plane", "Board", "Board"),
+            Inspected::Group => Header::new(
+                "select",
+                format!("{} objects", self.group.len()),
+                "Selection",
+            ),
         }
     }
 
@@ -1235,6 +1264,7 @@ impl PcbEditor {
                     | Inspected::Track(_)
                     | Inspected::Via(_)
                     | Inspected::Fill(_)
+                    | Inspected::Group
             ),
             issues: self.issue_slot(engine, inspected),
         }
@@ -1398,6 +1428,7 @@ impl PcbEditor {
                 let fill = project.fill(id)?;
                 self.fill_section(ui, project, engine.revision(), fill)
             }
+            Inspected::Group => self.group_section(ui, project),
             Inspected::Board | Inspected::Review => {
                 let renamed = self.board_section(ui, project);
                 renamed.or(self.board_shape_section(ui, engine))
@@ -1423,6 +1454,7 @@ impl PcbEditor {
                 via_card::via_footer(ui, via)
             }
             Inspected::Fill(id) => fill_card::fill_footer(ui, project.fill(id)?),
+            Inspected::Group => self.group_footer(ui, project),
             _ => None,
         }
     }
@@ -1444,10 +1476,11 @@ impl PcbEditor {
             return true;
         }
         self.tool == Tool::Select
-            && matches!(
-                self.inspected(project),
-                Inspected::Track(_) | Inspected::Via(_) | Inspected::Fill(_)
-            )
+            && match self.inspected(project) {
+                Inspected::Track(_) | Inspected::Via(_) | Inspected::Fill(_) => true,
+                Inspected::Group => self.delete_group().is_some(),
+                _ => false,
+            }
     }
 
     fn delete_key(&mut self, ui: &Ui, project: &Project) -> Option<Operation> {
@@ -1465,6 +1498,7 @@ impl PcbEditor {
             Inspected::Track(id) => Operation::Layout(LayoutCommand::DeleteTrack { id }),
             Inspected::Via(id) => Operation::Layout(LayoutCommand::DeleteVia { id }),
             Inspected::Fill(id) => Operation::Fill(layout::fill::FillCommand::Delete { id }),
+            Inspected::Group => self.delete_group()?,
             _ => return None,
         };
         crate::keys::pressed(ui.ctx(), "pcb.delete").then_some(operation)
@@ -1651,7 +1685,25 @@ impl PcbEditor {
                 let at = world(start);
                 // A track under the press drags with shove (`track_drag`).
                 let hit = self.hit_at(project, at, tolerance, metric);
-                if let menu::Hit::Track(id, _) = hit
+                let part = self.pick_instance(project, at, tolerance, metric);
+                let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+                // ⇧ or ⌘, or a press on nothing a drag moves, draws a
+                // selection rectangle; a press on a part of the group
+                // drags the group's parts.
+                let movable = matches!(hit, menu::Hit::Track(..)) || part.is_some();
+                if add || !movable {
+                    self.box_from = Some(start);
+                } else if let Some(id) = part.filter(|id| self.group.parts.contains(id)) {
+                    if let Err(why) = self.start_group_drag(project, at) {
+                        let name = project.instance(id).map_or("", |i| i.designator.as_str());
+                        crate::kit::toast::post(
+                            ui.ctx(),
+                            kit::severity::Level::Warning,
+                            format!("Can't move the selection with {name}: {why}"),
+                            Vec::new(),
+                        );
+                    }
+                } else if let menu::Hit::Track(id, _) = hit
                     && let Some(drag) = track_drag::TrackDrag::of(project, id, at)
                 {
                     self.select_hit(hit);
@@ -1676,6 +1728,24 @@ impl PcbEditor {
                     }
                 }
             }
+        }
+        if let (Some(drag), Some(at)) = (&mut self.group_drag, cursor) {
+            drag.by = snap([at[0] - drag.grab[0], at[1] - drag.grab[1]]);
+        }
+        if response.drag_stopped_by(PointerButton::Primary) && self.group_drag.is_some() {
+            operation = self.finish_group_drag();
+        }
+        let dragged_box = self
+            .box_from
+            .zip(ui.input(|i| i.pointer.latest_pos()))
+            .map(|(from, to)| solidcraft_ui_egui::selection::BoxSel::from_drag(from, to));
+        if response.drag_stopped_by(PointerButton::Primary)
+            && let Some(bx) = &dragged_box
+        {
+            self.box_from = None;
+            let picked = self.box_pick(project, view, bx);
+            let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+            self.finish_box(project, picked, add);
         }
         if let Some(at) = cursor {
             self.plan_track_drag(project, engine.revision(), at);
@@ -1749,6 +1819,10 @@ impl PcbEditor {
                 // The Dimension tool's pick, or a click on a drawn
                 // dimension: it selects it, a double-click opens its value
                 // (shared with 3D).
+            } else if ui.input(|i| i.modifiers.shift || i.modifiers.command) {
+                // ⇧ or ⌘ adds what is under the pointer, or takes it out.
+                let hit = self.hit_at(project, at, tolerance, metric);
+                self.toggle_hit(hit, project);
             } else if self.fill_handle_at(project, view, screen(at)).is_none() {
                 // A click on a handle of the selected fill keeps it
                 // selected, so a double-click there can remove the vertex.
@@ -1773,6 +1847,9 @@ impl PcbEditor {
             .track_drag_moved(engine.revision())
             .unwrap_or_else(|| self.route_moved(engine.revision()));
         self.paint_board(&painter, view, project);
+        if let Some(bx) = &dragged_box {
+            crate::schematic_editor::paint_box(&painter, bx.clone());
+        }
         self.paint_fill_handles(&painter, view, project);
         self.paint_fill_draw(&painter, view, cursor);
         hold_mark::paint_marks(&painter, &view, project);
@@ -2114,15 +2191,21 @@ impl PcbEditor {
                     .cmp(&(b.layer != self.layer))
                     .then(gap(a).total_cmp(&gap(b)))
             });
-        if let Some(pad) = self.pick_pad(at, |p| layers.pad(p)) {
+        // The selection filter leaves kinds out: a click passes through
+        // them to what lies below.
+        let f = self.filter;
+        if let Some(pad) = self.pick_pad(at, |p| layers.pad(p)).filter(|_| f.parts) {
             Hit::Pad(pad.instance, pad.net)
-        } else if let Some(via) = self.pick_via(project, at) {
+        } else if let Some(via) = self.pick_via(project, at).filter(|_| f.vias) {
             Hit::Via(via.id, via.net)
-        } else if let Some(track) = track {
+        } else if let Some(track) = track.filter(|_| f.tracks) {
             Hit::Track(track.id, track.net)
-        } else if let Some(instance) = self.pick_instance(project, at, tolerance, metric) {
+        } else if let Some(instance) = self
+            .pick_instance(project, at, tolerance, metric)
+            .filter(|_| f.parts)
+        {
             Hit::Part(instance)
-        } else if let Some(fill) = self.pick_fill(project, at, tolerance) {
+        } else if let Some(fill) = self.pick_fill(project, at, tolerance).filter(|_| f.fills) {
             Hit::Fill(fill.id, fill.net)
         } else {
             Hit::Nothing
@@ -2193,6 +2276,11 @@ impl PcbEditor {
 
     /// How far the dragged placement's preview has moved `instance`.
     fn drag_delta(&self, instance: Id) -> Point {
+        if let Some(drag) = &self.group_drag
+            && drag.parts.iter().any(|p| p.instance == instance)
+        {
+            return drag.by;
+        }
         match (&self.drag, self.drag_position) {
             (Some((placement, _)), Some(position)) if placement.instance == instance => [
                 position[0] - placement.position[0],
@@ -2509,7 +2597,9 @@ impl PcbEditor {
             .iter()
             .filter(|t| t.layer == layer && !self.shoved.0.contains(&t.id))
         {
-            let chosen = self.track == Some(track.id) || self.highlighted == Some(track.net);
+            let chosen = self.track == Some(track.id)
+                || self.group.tracks.contains(&track.id)
+                || self.highlighted == Some(track.net);
             if chosen_only && !chosen {
                 continue;
             }
@@ -2539,7 +2629,9 @@ impl PcbEditor {
             if !seen.via(via, &self.stack) || self.shoved.1.contains(&via.id) {
                 continue;
             }
-            let selected = self.via == Some(via.id) || self.highlighted == Some(via.net);
+            let selected = self.via == Some(via.id)
+                || self.group.vias.contains(&via.id)
+                || self.highlighted == Some(via.net);
             let joins = |l: CopperLayer| seen.copper_layer(l) && via.on(l, &self.stack);
             let (ring, share) = if selected {
                 (colors.selected, 1.0)
@@ -2938,6 +3030,8 @@ fn issue_slot_of(engine: &Engine, inspected: Inspected) -> Option<IssueSlot> {
         ),
         // Findings do not name fills yet: the slot stays empty.
         Inspected::Fill(_) => return None,
+        // A group's findings are on its objects' own cards.
+        Inspected::Group => return None,
     };
     let Ok(QueryResult::Issues(report)) = engine.query(Query::Issues { scope }) else {
         return None;
@@ -3109,6 +3203,25 @@ impl crate::issues::Locate for PcbEditor {
             return false;
         }
         self.set_selection(instance, track, net);
+        // A finding on several tracks and vias (a dangling stub) selects
+        // them all, so one Delete removes them in one undo step.
+        let mut copper = Group::default();
+        for o in refs {
+            match o {
+                ObjectRef::Track { id } if project.tracks.iter().any(|t| t.id == *id) => {
+                    copper.tracks.insert(*id);
+                }
+                ObjectRef::Via { id } if project.vias.iter().any(|v| v.id == *id) => {
+                    copper.vias.insert(*id);
+                }
+                _ => {}
+            }
+        }
+        if instance.is_none() && copper.len() > 1 {
+            self.set_group(copper, project);
+            self.net = net;
+            self.highlighted = net;
+        }
         if instance.is_some() {
             let mut seen: BTreeSet<Id> = instance.into_iter().collect();
             self.also = located_parts(refs)
@@ -3120,15 +3233,9 @@ impl crate::issues::Locate for PcbEditor {
     }
 }
 
+/// A part's outline on the board: the one align and distribute line up.
 fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> {
-    let instance = project.instance(placement.instance)?;
-    let physical = instances::resolve(&project.library, instance)
-        .ok()?
-        .physical?;
-    let footprint = &physical.footprint.definition;
-    let envelope = footprint.envelope_outline(&physical.package.definition);
-    let t = layout::placement_transform(placement, &footprint.datum);
-    Some(envelope.corners().map(|p| t.apply(p)))
+    layout::part_envelope(project, placement)
 }
 
 #[cfg(test)]

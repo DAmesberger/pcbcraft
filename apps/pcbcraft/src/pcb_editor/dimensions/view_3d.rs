@@ -321,6 +321,9 @@ impl PcbEditor {
                         .map(|(target, _)| self.pick_target(project, &target));
                     self.take_pick(found);
                 }
+            } else if !on && ui.input(|i| i.modifiers.shift || i.modifiers.command) {
+                // ⇧ or ⌘ adds the object, or takes it out, as in Layout.
+                self.toggle_picked(pick.and_then(|id| scene.source(id)), project);
             } else if !on {
                 self.select_picked(pick.and_then(|id| scene.source(id)));
             }

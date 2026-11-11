@@ -26,6 +26,7 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 /// on every side, and no board size or outline edit can strand a part.
 pub const WORKING_AREA_MM: [f64; 2] = [-1000.0, 2000.0];
 
+pub mod arrange;
 pub mod board_edge;
 pub mod connectivity;
 mod copper;
@@ -47,9 +48,11 @@ mod placed;
 pub mod posture;
 pub mod restack;
 pub mod router;
+pub mod several;
 pub mod showcase;
 pub mod staging;
 pub mod via;
+pub use arrange::part_envelope;
 pub use connectivity::CopperGraph;
 #[cfg(test)]
 pub(crate) use copper::limit_finding as copper_limit_finding;
@@ -231,6 +234,42 @@ pub enum LayoutCommand {
     /// terminal, with its placement, as one undo step.
     #[serde(rename = "layout.remove_part")]
     RemovePart { instance: Id },
+    /// Move several placed parts to new poses as one undo step (a group
+    /// drag or flip). The unlocked copper attached to any of them is
+    /// carried at once, so a track between two parts that move alike moves
+    /// with both. A locked part refuses the whole move.
+    #[serde(rename = "layout.move_parts")]
+    MoveParts { moves: Vec<arrange::PartMove> },
+    /// Line up two or more parts' outlines on one edge (left, right, top,
+    /// bottom) or centre line, as one undo step with their copper carried.
+    /// A part that would move and is locked, or whose dimensions hold it
+    /// along that axis, refuses the command and is named.
+    #[serde(rename = "layout.align")]
+    Align {
+        instances: Vec<Id>,
+        to: arrange::AlignTo,
+    },
+    /// Space three or more parts evenly along an axis: the outermost stay
+    /// and the gaps between neighbouring outlines become equal. One undo
+    /// step, refused like `layout.align`.
+    #[serde(rename = "layout.distribute")]
+    Distribute {
+        instances: Vec<Id>,
+        axis: arrange::Axis,
+    },
+    /// Delete several tracks, vias and fills as one undo step (a
+    /// multi-selection's Delete, or a dangling stub's tracks). A locked
+    /// track or via refuses the whole command. Parts are refused: they
+    /// come from the schematic.
+    #[serde(rename = "layout.delete_objects")]
+    DeleteObjects { objects: several::Objects },
+    /// Lock or unlock several parts, tracks, vias and fills as one undo
+    /// step.
+    #[serde(rename = "layout.lock_objects")]
+    LockObjects {
+        objects: several::Objects,
+        locked: bool,
+    },
 }
 
 // A new command chooses its permission class here.
@@ -261,6 +300,11 @@ declare_classes!(LayoutCommand {
     PlacePart "layout.place_part" Edit "Place a mechanical part",
     SetPart "layout.set_part" Edit "Change a mechanical part",
     RemovePart "layout.remove_part" Edit "Remove a mechanical part",
+    MoveParts "layout.move_parts" Edit "Move several parts together",
+    Align "layout.align" Edit "Align parts",
+    Distribute "layout.distribute" Edit "Distribute parts evenly",
+    DeleteObjects "layout.delete_objects" Edit "Delete several board objects",
+    LockObjects "layout.lock_objects" Edit "Lock or unlock several board objects",
 });
 
 impl LayoutCommand {
@@ -788,6 +832,17 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             return part::set(project, instance, &part).map(Some);
         }
         LayoutCommand::RemovePart { instance } => part::remove(project, instance)?,
+        LayoutCommand::MoveParts { moves } => arrange::move_parts(project, &moves)?,
+        // Without the host's board evaluator a dimensioned part is refused
+        // (the engine passes its evaluator: `Engine::apply_hosted`).
+        LayoutCommand::Align { instances, to } => arrange::align(project, &instances, to, None)?,
+        LayoutCommand::Distribute { instances, axis } => {
+            arrange::distribute(project, &instances, axis, None)?;
+        }
+        LayoutCommand::DeleteObjects { objects } => several::delete(project, &objects)?,
+        LayoutCommand::LockObjects { objects, locked } => {
+            several::lock(project, &objects, locked)?;
+        }
     }
     Ok(None)
 }

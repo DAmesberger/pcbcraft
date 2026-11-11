@@ -279,7 +279,10 @@ fn a_3d_pick_dimensions_j1_to_the_bottom_edge_in_one_undo_step() -> Fallible {
     let mut h = Harness::new(engine)?;
     h.until_shown()?;
     // Look at J1's front from a little above, framed on J1.
-    let items = h.app.scene.selected_items(Some(j1), None, None);
+    let items = h.app.scene.selected_items(&crate::pcb_editor::Group {
+        parts: [j1].into(),
+        ..Default::default()
+    });
     h.app
         .scene
         .viewport
@@ -729,7 +732,10 @@ fn a_3d_click_with_select_selects_the_part() -> Fallible {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     h.until_shown()?;
-    let items = h.app.scene.selected_items(Some(j1), None, None);
+    let items = h.app.scene.selected_items(&crate::pcb_editor::Group {
+        parts: [j1].into(),
+        ..Default::default()
+    });
     h.app
         .scene
         .viewport
@@ -981,7 +987,10 @@ fn j1s_dimensions_are_drawn_and_edited_in_place_in_3d() -> Fallible {
 
     let mut h = Harness::new(engine)?;
     h.until_shown()?;
-    let items = h.app.scene.selected_items(Some(j1), None, None);
+    let items = h.app.scene.selected_items(&crate::pcb_editor::Group {
+        parts: [j1].into(),
+        ..Default::default()
+    });
     h.app
         .scene
         .viewport

@@ -1095,9 +1095,18 @@ impl Engine {
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
         let merge_named = matches!(&operation, Operation::Update(u) if u.merge_named_nets);
-        let moved_part = match &operation {
-            Operation::Layout(layout::LayoutCommand::Move { instance, .. }) => Some(*instance),
-            _ => None,
+        // Parts the operation moves by hand: their attached copper is
+        // carried with them, all at once.
+        let moved_parts: Vec<Id> = match &operation {
+            Operation::Layout(layout::LayoutCommand::Move { instance, .. }) => vec![*instance],
+            Operation::Layout(layout::LayoutCommand::MoveParts { moves }) => {
+                moves.iter().map(|m| m.instance).collect()
+            }
+            Operation::Layout(
+                layout::LayoutCommand::Align { instances, .. }
+                | layout::LayoutCommand::Distribute { instances, .. },
+            ) => instances.clone(),
+            _ => Vec::new(),
         };
         let outcome = match operation {
             Operation::Library(command) => {
@@ -1169,6 +1178,20 @@ impl Engine {
                         .map_or(0.0, |t| layout::router::drag::dragged_by(t, &plan)),
                     reached: plan.reached,
                 }
+            }
+            // Align and distribute ask the host's board evaluator which
+            // parts their dimensions hold.
+            Operation::Layout(layout::LayoutCommand::Align { instances, to }) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                layout::arrange::align(project, &instances, to, evaluators.board)?;
+                layout::validate(project)?;
+                Outcome::None
+            }
+            Operation::Layout(layout::LayoutCommand::Distribute { instances, axis }) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                layout::arrange::distribute(project, &instances, axis, evaluators.board)?;
+                layout::validate(project)?;
+                Outcome::None
             }
             Operation::Layout(command) => {
                 let part = command.places_part();
@@ -1293,10 +1316,10 @@ impl Engine {
             // to its pads.
             let mut placed =
                 layout::dimensions::follow(&self.document.project, project, evaluators.board)?;
-            if let Some(instance) = moved_part
-                && !placed.contains(&instance)
-            {
-                placed.push(instance);
+            for instance in moved_parts {
+                if !placed.contains(&instance) {
+                    placed.push(instance);
+                }
             }
             if !placed.is_empty() {
                 rerouted = layout::dimensions::carry(

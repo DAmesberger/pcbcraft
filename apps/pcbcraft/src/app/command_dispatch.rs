@@ -198,8 +198,11 @@ impl App {
                     self.engine.project(),
                     app,
                 ),
+                AppCommand::SelectAll if self.workspace == Workspace::Pcb => {
+                    self.pcb.can_select_all()
+                }
                 AppCommand::SelectAll if self.workspace != Workspace::Schematic => {
-                    Err("Select All works on the schematic sheet".into())
+                    Err("Select All works on the schematic sheet and the PCB".into())
                 }
                 AppCommand::SelectAll => self.schematic.can_select_all(),
                 AppCommand::New
@@ -237,6 +240,12 @@ impl App {
                     .map_err(str::to_owned)
             }
             Action::PcbDialog(_) => Ok(()),
+            Action::PcbArrange(how) => {
+                if self.workspace != Workspace::Pcb {
+                    return Err("Select parts on the PCB layout".into());
+                }
+                self.pcb.arrange(how).map(|_| ())
+            }
             Action::Ribbon(workspace, event) => ribbons
                 .iter()
                 .find(|r| r.workspace == workspace)
@@ -275,6 +284,10 @@ impl App {
             Action::PcbDialog(dialog) => {
                 self.enter(Workspace::Pcb);
                 self.pcb.open_dialog(dialog, self.engine.project());
+            }
+            Action::PcbArrange(how) => {
+                let operation = self.pcb.arrange(how).ok();
+                self.apply(ctx, crate::refusal::Origin::Command, operation);
             }
             Action::Key => {}
         }
@@ -319,6 +332,9 @@ impl App {
             AppCommand::Paste => {
                 let operation = self.schematic.paste_at_pointer(&self.engine);
                 self.apply(ctx, crate::refusal::Origin::Command, operation);
+            }
+            AppCommand::SelectAll if self.workspace == Workspace::Pcb => {
+                self.pcb.select_all(self.engine.project());
             }
             AppCommand::SelectAll => self.schematic.select_all(&self.engine),
             AppCommand::ToggleBrowser => self.toggle_browser(),
@@ -371,11 +387,7 @@ impl App {
             V::Right => S::Right,
             V::Iso => S::Iso,
             V::Selection => {
-                let items = self.scene.selected_items(
-                    self.pcb.selected_instance(),
-                    self.pcb.selected_track(),
-                    self.pcb.selected_via(),
-                );
+                let items = self.scene.selected_items(&self.pcb.selected());
                 if !self.scene.viewport.fit_items(&items) {
                     self.say(Level::Info, "Select something to frame");
                 }

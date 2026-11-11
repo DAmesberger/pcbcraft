@@ -1,4 +1,4 @@
-//! The catalog behind the tools: the 231 entries of
+//! The catalog behind the tools: the 236 entries of
 //! [`crate::session::metadata`] (requests, operations and queries), looked
 //! up by name. A model reaches an entry only through the verb of its
 //! [`Kind`] (`query` a query, `apply` an operation, `act` an action), and

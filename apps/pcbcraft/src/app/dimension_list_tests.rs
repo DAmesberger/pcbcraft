@@ -75,7 +75,10 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
     ax.app.pcb.set_3d(true);
     until_shown(&mut ax)?;
     ax.app.pcb.set_selection(Some(j1), None, None);
-    let items = ax.app.scene.selected_items(Some(j1), None, None);
+    let items = ax.app.scene.selected_items(&crate::pcb_editor::Group {
+        parts: [j1].into(),
+        ..Default::default()
+    });
     ax.app
         .scene
         .viewport

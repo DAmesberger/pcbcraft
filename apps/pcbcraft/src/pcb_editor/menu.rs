@@ -31,6 +31,8 @@ pub(super) enum Target {
     Track(Id),
     Via(Id),
     Fill(Id),
+    /// The group selection a right-click landed on.
+    Group,
     Board,
 }
 
@@ -50,12 +52,20 @@ pub(super) enum Act {
     SelectNet(Id),
     Refill(Id),
     DeleteFill(Id),
+    /// Delete the group's tracks, vias and fills.
+    DeleteGroup,
+    /// Lock or unlock the whole group.
+    LockGroup(bool),
 }
 
 impl PcbEditor {
     /// Select what a click on `hit` selects, unless it is selected; the
     /// menu's target.
     pub(super) fn menu_select(&mut self, hit: Hit) -> Target {
+        // On an object of the group: the group's menu, the group kept.
+        if super::group::Pick::of(hit).is_some_and(|p| self.group.contains(p)) {
+            return Target::Group;
+        }
         match hit {
             Hit::Pad(instance, _) | Hit::Part(instance) => {
                 if self.instance != Some(instance) {
@@ -214,6 +224,45 @@ impl PcbEditor {
                     ),
                 ]
             }
+            Target::Group => {
+                let parts = self.group.parts.len();
+                let locked = self.group.all_locked(project);
+                let arrange = |id: &'static str, label: &str, fewest: usize| {
+                    Some(Entry::command(
+                        ctx,
+                        id,
+                        label,
+                        parts >= fewest && !reviewing,
+                    ))
+                };
+                vec![
+                    arrange("pcb.align-left", "Align left edges", 2),
+                    arrange("pcb.align-right", "Align right edges", 2),
+                    arrange("pcb.align-top", "Align top edges", 2),
+                    arrange("pcb.align-bottom", "Align bottom edges", 2),
+                    arrange("pcb.align-centres-x", "Align horizontal centres", 2),
+                    arrange("pcb.align-centres-y", "Align vertical centres", 2),
+                    arrange("pcb.distribute-x", "Distribute horizontally", 3),
+                    arrange("pcb.distribute-y", "Distribute vertically", 3),
+                    None,
+                    Some(Entry::act(
+                        if locked { "Unlock" } else { "Lock" },
+                        "ground",
+                        Act::LockGroup(!locked),
+                        !reviewing,
+                    )),
+                    None,
+                    Some(
+                        Entry::act(
+                            "Delete",
+                            "delete",
+                            Act::DeleteGroup,
+                            self.delete_group().is_some() && !reviewing,
+                        )
+                        .key_of(ctx, "pcb.delete"),
+                    ),
+                ]
+            }
             Target::Board => {
                 let ribbon = self.ribbon(engine);
                 let on = |id: &str| {
@@ -295,6 +344,11 @@ impl PcbEditor {
                 target: RefillTarget::One(id),
             })),
             Act::DeleteFill(id) => Some(Operation::Fill(FillCommand::Delete { id })),
+            Act::DeleteGroup => self.delete_group(),
+            Act::LockGroup(locked) => layout(LayoutCommand::LockObjects {
+                objects: self.group.objects(),
+                locked,
+            }),
         }
     }
 
