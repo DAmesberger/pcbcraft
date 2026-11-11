@@ -534,3 +534,32 @@ fn keys_the_menu_hands_back_are_not_dispatched() {
     }
     assert!(handed >= 9, "Undo, Redo, Select All and Delete: {handed}");
 }
+
+/// Night finding N7: the palette lists the recent projects a query names,
+/// newest first, each running Open Recent's open; an empty query lists
+/// none, and a missing file says it is removed when chosen.
+#[test]
+fn the_palette_lists_the_recent_projects_a_query_names() {
+    use std::path::PathBuf;
+    let paths = [
+        PathBuf::from("/w/board.pcbcraft"),
+        PathBuf::from("/w/old.pcbcraft"),
+    ];
+    let missing = std::collections::BTreeSet::from([paths[1].clone()]);
+    let projects = crate::recent_projects::items(&paths, &missing);
+    assert!(recent_rows(&projects, " ").is_empty());
+    let ids = |query: &str| -> Vec<String> {
+        recent_rows(&projects, query)
+            .into_iter()
+            .map(|r| r.id)
+            .collect()
+    };
+    assert_eq!(ids("recent"), ["file.open-recent:0", "file.open-recent:1"]);
+    assert_eq!(ids("open BOARD"), ["file.open-recent:0"]);
+    assert!(ids("schematic").is_empty());
+    let old = recent_rows(&projects, "old");
+    assert_eq!(
+        old.first().map(|r| r.detail.as_str()),
+        Some("Removed when chosen")
+    );
+}

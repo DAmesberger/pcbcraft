@@ -46,9 +46,17 @@ pub enum Entry {
     /// Delete: the key of the active context's delete command, handed to
     /// the canvas that owns it.
     Delete,
+    /// File › Open Recent: a submenu of the recent projects, then
+    /// [`CLEAR_RECENT`]. The menus draw it from the recent list.
+    Recent,
     Separator,
     System(System),
 }
+
+/// The Open Recent submenu's title.
+pub const RECENT_TITLE: &str = "Open Recent";
+/// The last item of Open Recent (macOS's own wording).
+pub const CLEAR_RECENT: Entry = Entry::Command("file.clear-recent", "Clear Menu");
 
 use Entry::{Command as C, Delete, Separator as Sep};
 
@@ -70,6 +78,7 @@ pub const APP: &[Entry] = &[
 pub const FILE: &[Entry] = &[
     C("file.new", "New Project"),
     C("file.open", "Open…"),
+    Entry::Recent,
     Sep,
     C("file.save", "Save"),
     C("file.save-as", "Save As…"),
@@ -146,6 +155,7 @@ pub const BAR: &[(&str, &[Entry])] = &[
 pub const IN_WINDOW_FILE: &[Entry] = &[
     C("file.new", "New project"),
     C("file.open", "Open…"),
+    Entry::Recent,
     Sep,
     C("file.save", "Save"),
     C("file.save-as", "Save as…"),
@@ -202,6 +212,8 @@ pub enum Choice {
     Inject(Vec<egui::Event>),
     /// Paste the clipboard's text into the focused field.
     Paste,
+    /// Open this recent project (File › Open Recent).
+    OpenRecent(std::path::PathBuf),
     Nothing,
 }
 
@@ -336,7 +348,7 @@ pub fn state(now: &Now, entry: Entry) -> Option<State> {
                 shown: target.map(|(_, chord)| chord.shown()),
             })
         }
-        Entry::Separator | Entry::System(_) => None,
+        Entry::Recent | Entry::Separator | Entry::System(_) => None,
     }
 }
 
@@ -361,7 +373,7 @@ pub fn rows(now: &Now, entries: &[Entry]) -> Vec<Option<Row>> {
                     state,
                 })
             }),
-            Entry::Delete | Entry::System(_) => None,
+            Entry::Delete | Entry::Recent | Entry::System(_) => None,
         })
         .collect()
 }
@@ -446,7 +458,7 @@ pub fn choose(now: &Now, entry: Entry) -> Choice {
             Some((_, chord)) => Choice::Inject(vec![press(chord.key, chord.modifiers())]),
             None => Choice::Nothing,
         },
-        Entry::Separator | Entry::System(_) => Choice::Nothing,
+        Entry::Recent | Entry::Separator | Entry::System(_) => Choice::Nothing,
     }
 }
 
@@ -482,7 +494,8 @@ pub fn deliver(
                 raw.events.push(egui::Event::Paste(text));
             }
         }
-        Choice::Nothing => {}
+        // The app opens it (`App::open_recent`) before the frame runs.
+        Choice::OpenRecent(_) | Choice::Nothing => {}
     }
 }
 

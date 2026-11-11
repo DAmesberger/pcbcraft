@@ -430,6 +430,8 @@ pub enum AppCommand {
     Shortcuts,
     New,
     Open,
+    /// Empty File › Open Recent.
+    ClearRecent,
     Save,
     SaveAs,
     Export,
@@ -1203,6 +1205,9 @@ fn defaults() -> Vec<Command> {
         app("file.open", "Open project…", A::Open)
             .chord(Chord::cmd(K::O))
             .icon("open"),
+        app("file.clear-recent", "Clear recent projects", A::ClearRecent)
+            .icon("close")
+            .keywords("open recent history forget list"),
         app("file.save", "Save project", A::Save)
             .chord(Chord::cmd(K::S))
             .icon("save"),

@@ -221,16 +221,42 @@ impl App {
     /// keys, groups apart. Each row runs its registry command, as the menu
     /// bar and the key do.
     fn file_menu(&mut self, ui: &mut egui::Ui) {
+        use crate::menu_bar::{self, CLEAR_RECENT, Entry, IN_WINDOW_FILE, RECENT_TITLE};
         let ctx = ui.ctx().clone();
         let file = bar_text_button(ui, "File");
-        let rows = self.menu_now(&ctx, |now| {
-            crate::menu_bar::rows(now, crate::menu_bar::IN_WINDOW_FILE)
+        // The rows before and after Open Recent, which lists the recent
+        // projects, then Clear Menu.
+        let split = IN_WINDOW_FILE
+            .iter()
+            .position(|e| *e == Entry::Recent)
+            .unwrap_or(IN_WINDOW_FILE.len());
+        let (head, tail) = IN_WINDOW_FILE.split_at(split);
+        let (head, clear, tail) = self.menu_now(&ctx, |now| {
+            (
+                menu_bar::rows(now, head),
+                menu_bar::rows(now, &[CLEAR_RECENT]),
+                menu_bar::rows(now, tail),
+            )
         });
+        let projects = self.recent_items();
         let mut chosen = None;
+        let mut open = None;
         Container::new(&ctx, Surface::Popup)
             .menu(&file)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-            .show(|ui| chosen = crate::menu_bar::show_rows(ui, &rows));
+            .show(|ui| {
+                chosen = menu_bar::show_rows(ui, &head);
+                if split < IN_WINDOW_FILE.len() {
+                    ui.menu_button(RECENT_TITLE, |ui| {
+                        open = recent_menu(ui, &projects);
+                        chosen = chosen.or(menu_bar::show_rows(ui, &clear));
+                    });
+                }
+                chosen = chosen.or(menu_bar::show_rows(ui, &tail));
+            });
+        if let Some(path) = open {
+            self.open_recent(path);
+        }
         if let Some(id) = chosen {
             self.run_command(&ctx, id);
         }
@@ -743,6 +769,29 @@ fn bar_icon(ui: &mut egui::Ui, icon: &str, label: &str, enabled: bool) -> egui::
 }
 
 /// A text button on the application bar (File), in the bar's text token.
+/// Open Recent's project rows, as the File menu's rows; an unavailable
+/// project says so (choosing it removes it). Returns the project clicked.
+pub(super) fn recent_menu(
+    ui: &mut egui::Ui,
+    projects: &[crate::recent_projects::RecentItem],
+) -> Option<std::path::PathBuf> {
+    use solidcraft_ui_egui::ui_kit::Item;
+    use solidcraft_ui_egui::ui_kit::menu::list_row;
+    ui.set_width(crate::menu_bar::MENU_WIDTH);
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let mut chosen = None;
+    for (index, project) in projects.iter().enumerate() {
+        let item = Item::action(&format!("file.open-recent.{index}"), &project.label, "open");
+        if list_row(ui, &item).is_some() {
+            chosen = Some(project.path.clone());
+        }
+    }
+    if !projects.is_empty() {
+        list_row(ui, &Item::sep());
+    }
+    chosen
+}
+
 fn bar_text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let t = Tokens::get();
     let galley = ui.painter().layout_no_wrap(

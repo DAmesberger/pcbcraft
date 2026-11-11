@@ -507,3 +507,38 @@ fn the_in_window_file_menu_is_rows_with_keys() -> TestResult {
     assert_eq!(chosen.get(), None, "a disabled row does nothing");
     Ok(())
 }
+
+/// Night finding N7: File › Open Recent follows Open… in the menu bar and
+/// in the in-window File menu. Its Clear Menu item runs the registry's
+/// `file.clear-recent`, off while there is nothing to clear.
+#[test]
+fn open_recent_follows_open_in_both_file_menus() -> TestResult {
+    for entries in [FILE, IN_WINDOW_FILE] {
+        let open = entries
+            .iter()
+            .position(|e| matches!(e, Entry::Command("file.open", _)))
+            .ok_or("no Open…")?;
+        assert_eq!(entries.get(open + 1), Some(&Entry::Recent));
+    }
+    let registry = Registry::standard();
+    let active = active_contexts(Context::PcbLayout);
+    let clear = state(&now(&registry, &active, false, &all), CLEAR_RECENT).ok_or("clear")?;
+    assert_eq!(clear.label, "Clear Menu");
+    assert!(clear.enabled);
+    assert_eq!(
+        choose(&now(&registry, &active, false, &all), CLEAR_RECENT),
+        Choice::Run("file.clear-recent".into())
+    );
+    let empty = |c: &Command| c.id != "file.clear-recent";
+    assert_eq!(
+        choose(&now(&registry, &active, false, &empty), CLEAR_RECENT),
+        Choice::Nothing,
+        "nothing to clear"
+    );
+    // The submenu itself is drawn from the recent list, never a command.
+    assert_eq!(
+        state(&now(&registry, &active, false, &all), Entry::Recent),
+        None
+    );
+    Ok(())
+}
