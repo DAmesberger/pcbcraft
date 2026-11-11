@@ -155,12 +155,13 @@ fn an_assistant_edits_the_open_project_with_shared_undo() -> Fallible {
         h.app.engine.project().vias.len(),
         before.project.vias.len() + 1
     );
-    assert!(h.said("AI assistant edit: layout.add_via"));
+    // Its title, never its wire name (night round 5).
+    assert!(h.said("AI assistant edit: Add a via"));
 
     // The person undoes it in the window: the same history.
     h.app.history(false);
     assert_eq!(h.app.engine.document(), &before);
-    assert!(h.said("Undid AI assistant edit: layout.add_via"));
+    assert!(h.said("Undid AI assistant edit: Add a via"));
 
     // The assistant redoes at the revision it last saw: refused, stale.
     let stale = h.call(

@@ -20,6 +20,16 @@ use solidcraft_ui_egui::{ui_kit, ui_kit::Button};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
+/// What a person reads for an assistant's request: its catalog title
+/// ("Add a via"), never its wire name (`layout.add_via`).
+fn spoken(subject: &'static str) -> &'static str {
+    pcbcraft_core::Operation::titles()
+        .chain(pcbcraft_core::Query::TITLES)
+        .chain(pcbcraft_automation::Request::TITLES)
+        .find(|(name, _)| *name == subject)
+        .map_or("a change", |(_, title)| *title)
+}
+
 /// Requests answered per frame, so a flood cannot starve drawing.
 const PER_FRAME: usize = 16;
 /// Assistant edits remembered for labelling an undo (the engine's depth).
@@ -255,19 +265,21 @@ impl App {
         let _ = request.reply.send(reply);
         let now = self.engine.revision();
         if now != before {
-            self.live.edits.push_back((now, admitted.subject()));
+            let subject = spoken(admitted.subject());
+            self.live.edits.push_back((now, subject));
             while self.live.edits.len() > REMEMBERED {
                 self.live.edits.pop_front();
             }
             self.say_with(
                 Level::Info,
-                format!("AI assistant edit: {}", admitted.subject()),
+                format!("AI assistant edit: {subject}"),
                 vec![ToastAction::Undo],
             );
         }
     }
 
-    /// The assistant edit an undo at the current revision takes back.
+    /// The assistant edit an undo at the current revision takes back, by
+    /// its title.
     pub(super) fn live_edit_at(&self, revision: u64) -> Option<&'static str> {
         self.live
             .edits
