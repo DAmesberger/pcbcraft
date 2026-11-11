@@ -124,6 +124,13 @@ pub struct App {
     /// Commands chosen in the menu bar, run in the next update.
     #[cfg(target_os = "macos")]
     menu_runs: Vec<String>,
+    /// Recent projects chosen in the menu bar, opened in the next update.
+    #[cfg(target_os = "macos")]
+    menu_recent: Vec<std::path::PathBuf>,
+    /// Which File › Open Recent files are gone.
+    recent: crate::recent_projects::Availability,
+    /// The project file last kept in Open Recent.
+    recent_seen: Option<std::path::PathBuf>,
     /// This frame's "Updating" chip over a 3D view: the view's area and
     /// the error when the newer model failed. It is drawn after the issues
     /// badge, beside it.
@@ -286,6 +293,10 @@ impl App {
             native_menu,
             #[cfg(target_os = "macos")]
             menu_runs: Vec::new(),
+            #[cfg(target_os = "macos")]
+            menu_recent: Vec::new(),
+            recent: Default::default(),
+            recent_seen: None,
             updating: None,
         }
     }
@@ -1234,8 +1245,14 @@ impl App {
                     }
                 }
             }
+            for path in std::mem::take(&mut self.menu_recent) {
+                self.open_recent(path);
+            }
             if let Some(mut menu) = self.native_menu.take() {
                 self.menu_now(ctx, |now| menu.update(now));
+                if let Err(error) = menu.update_recent(&self.recent_items()) {
+                    self.say(Level::Warning, format!("Open Recent not updated: {error}"));
+                }
                 self.native_menu = Some(menu);
             }
         }
@@ -1292,6 +1309,43 @@ impl App {
         })
     }
 
+    /// Keep the project file just opened or saved first in File › Open
+    /// Recent, and check which recent files are gone.
+    fn recent_projects(&mut self, ctx: &egui::Context) {
+        let path = self.files.path();
+        if path != self.recent_seen.as_deref() {
+            if let Some(path) = path {
+                self.sources.remember_project(path);
+            }
+            self.recent_seen = path.map(std::path::Path::to_path_buf);
+        }
+        self.recent
+            .poll(ctx, self.sources.recent_projects(), self.now);
+    }
+
+    /// File › Open Recent's rows now, newest first.
+    fn recent_items(&self) -> Vec<crate::recent_projects::RecentItem> {
+        crate::recent_projects::items(self.sources.recent_projects(), self.recent.missing())
+    }
+
+    /// Open a recent project as File › Open does (asking about unsaved
+    /// work first). One that is gone is removed from the list, with a toast.
+    fn open_recent(&mut self, path: std::path::PathBuf) {
+        if path.try_exists().unwrap_or(false) {
+            self.files.request(file_ui::Action::OpenPath(path));
+            return;
+        }
+        self.sources.forget_projects(Some(&path));
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        self.say(
+            Level::Warning,
+            format!("{name} is no longer there; removed from Open Recent"),
+        );
+    }
+
     /// Keep the production folder chosen for this project file per user,
     /// and hand the kept one to the next Production files dialog. A
     /// project never saved has no file to keep it by.
@@ -1341,6 +1395,7 @@ impl eframe::App for App {
         self.scene.receive();
         self.refill_fills(&ctx);
         self.file_effects(&ctx);
+        self.recent_projects(&ctx);
         // Assistants' requests, between the last frame and this one's
         // editors.
         self.serve_live(&ctx);
@@ -1399,6 +1454,10 @@ impl eframe::App for App {
             let choices = self.menu_now(ctx, |now| menu.take(now));
             self.native_menu = Some(menu);
             for choice in choices {
+                if let crate::menu_bar::Choice::OpenRecent(path) = choice {
+                    self.menu_recent.push(path);
+                    continue;
+                }
                 crate::menu_bar::deliver(choice, &self.registry, raw, &mut self.menu_runs, || {
                     arboard::Clipboard::new()
                         .and_then(|mut clipboard| clipboard.get_text())

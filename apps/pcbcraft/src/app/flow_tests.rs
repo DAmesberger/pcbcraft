@@ -603,3 +603,25 @@ fn a_reroute_after_a_board_edit_is_one_toast() -> Fallible {
     );
     Ok(())
 }
+
+/// Night finding N7: the project file just opened joins File › Open
+/// Recent; a recent file that is gone is removed when chosen, with a toast,
+/// and nothing is opened.
+#[test]
+fn open_recent_keeps_the_project_and_drops_a_missing_file() -> Fallible {
+    let mut h = Harness::new()?;
+    h.frame(vec![]);
+    assert_eq!(h.app.sources.recent_projects(), [h.path()]);
+    let gone = h.dir.path().join("gone.pcbcraft");
+    h.app.sources.remember_project(&gone);
+    assert_eq!(h.app.sources.recent_projects(), [gone.clone(), h.path()]);
+    h.app.open_recent(gone);
+    assert_eq!(h.app.sources.recent_projects(), [h.path()]);
+    assert!(!h.app.files.busy(), "nothing is opened");
+    let said = said(&h.app);
+    assert!(
+        said.contains("gone.pcbcraft is no longer there; removed from Open Recent"),
+        "{said}"
+    );
+    Ok(())
+}

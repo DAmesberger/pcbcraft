@@ -1127,12 +1127,22 @@ impl PartEditor {
         Some(publish)
     }
 
-    /// The working set's five drafts and its Part drafts, as one publish set.
+    /// The working set's five drafts and its Part drafts, as one publish set,
+    /// with the published Parts it carries to the new component revision
+    /// unless Also publish N Parts… is off.
     fn publish_set(&self, engine: &Engine) -> Option<Operation> {
         let set = self.draft.as_ref()?;
         let mut publish = set.publish();
-        if let Operation::Library(LibraryCommand::Publish { drafts, .. }) = &mut publish {
+        if let Operation::Library(LibraryCommand::Publish { drafts, close }) = &mut publish {
             drafts.extend(part_props::PartProps::draft_ids(engine, set.ids.component));
+            let parts = self.parts.republish_ids(engine, set);
+            if !parts.is_empty() {
+                return Some(Operation::Library(LibraryCommand::PublishWithParts {
+                    drafts: std::mem::take(drafts),
+                    parts,
+                    close: *close,
+                }));
+            }
         }
         Some(publish)
     }
