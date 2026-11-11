@@ -125,7 +125,7 @@ impl PcbEditor {
                 at,
                 drill,
                 diameter,
-                tented: self.via_tented,
+                tented: self.via_tented(project),
                 pitch: pair::via_pitch(project, route.nets, diameter, next),
                 layer: self.layer,
                 style: next,

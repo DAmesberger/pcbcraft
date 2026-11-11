@@ -4,14 +4,16 @@
 //! or a damaged file is reported, never rewritten or silently skipped.
 //!
 //! A project never reads this folder to evaluate its rules: it embeds a
-//! snapshot of its profile (`ProjectRules::profile`). The library only
-//! supplies profiles to switch to, and keeps the ones a user saved,
-//! imported or entered from a fabricator's published capabilities.
+//! snapshot of its profile (`ProjectRules::profile`). The library supplies
+//! profiles to choose for a new board or to switch to: the ones a user
+//! imported, saved or wrote from a fabricator's published capabilities.
+//! Pcbcraft ships none; `examples/profiles/` holds sourced profile files to
+//! import.
 use crate::library_folder::{pretty, read_bounded};
 use crate::persistence::{atomic_create, atomic_write};
 use crate::settings::UserDirs;
 use crate::{Error, Result};
-use pcbcraft_core::rules::{PROFILE_FILE_FORMAT, ProfileFile, ProfileOrigin, RuleProfile, builtin};
+use pcbcraft_core::rules::{PROFILE_FILE_FORMAT, ProfileFile, RuleProfile};
 use std::path::{Path, PathBuf};
 
 /// The library folder's name under the user config directory.
@@ -44,12 +46,6 @@ pub struct Listing {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfileLibrary {
     dir: PathBuf,
-}
-
-/// Whether `id` names a built-in profile (reserved: a user profile never
-/// takes one).
-pub fn is_builtin_id(id: &str) -> bool {
-    builtin::all().iter().any(|p| p.id == id)
 }
 
 /// `text` as a library id: lower-case ASCII letters, digits and single
@@ -85,48 +81,14 @@ pub fn valid_id(id: &str) -> bool {
         && !id.ends_with('-')
 }
 
-/// A `YYYY-MM-DD` date, or empty.
-fn valid_date(date: &str) -> bool {
-    if date.is_empty() {
-        return true;
-    }
-    let parts: Vec<&str> = date.split('-').collect();
-    let number = |s: &str, len: usize| s.len() == len && s.bytes().all(|b| b.is_ascii_digit());
-    let [y, m, d] = parts.as_slice() else {
-        return false;
-    };
-    if !(number(y, 4) && number(m, 2) && number(d, 2)) {
-        return false;
-    }
-    let (m, d) = (m.parse::<u32>().unwrap_or(0), d.parse::<u32>().unwrap_or(0));
-    (1..=12).contains(&m) && (1..=31).contains(&d)
-}
-
-/// A profile the library may store: [`RuleProfile::validate`], a library
-/// id that is not a built-in's, a user or imported origin and an ISO date.
+/// A profile the library may store: [`RuleProfile::validate`] (which
+/// needs a publisher and a date) and a library id.
 pub fn check(profile: &RuleProfile) -> Result<()> {
     profile.validate()?;
     if !valid_id(&profile.id) {
         return Err(Error::Invalid(format!(
             "the profile id {:?} must be lower-case letters, digits and dashes, at most {MAX_ID} bytes",
             profile.id
-        )));
-    }
-    if is_builtin_id(&profile.id) {
-        return Err(Error::Invalid(format!(
-            "{} is a built-in profile id; a user profile needs its own",
-            profile.id
-        )));
-    }
-    if profile.provenance.origin == ProfileOrigin::BuiltIn {
-        return Err(Error::Invalid(
-            "a library profile is a user or imported profile, not a built-in one".into(),
-        ));
-    }
-    if !valid_date(&profile.provenance.date) {
-        return Err(Error::Invalid(format!(
-            "the profile date {:?} must be YYYY-MM-DD or empty",
-            profile.provenance.date
         )));
     }
     Ok(())
@@ -321,11 +283,11 @@ impl ProfileLibrary {
         Ok(profile)
     }
 
-    /// Refuse a name another library or built-in profile already shows
-    /// (ignoring case), except the profile `id` itself.
+    /// Refuse a name another library profile already shows (ignoring
+    /// case), except the profile `id` itself.
     fn check_name(&self, listing: &Listing, name: &str, id: &str) -> Result<()> {
         let taken = |p: &RuleProfile| p.id != id && p.name.trim().eq_ignore_ascii_case(name.trim());
-        if builtin::all().iter().any(taken) || listing.profiles.iter().any(taken) {
+        if listing.profiles.iter().any(taken) {
             return Err(Error::Document(pcbcraft_core::Error::Conflict(format!(
                 "a rule profile named {} exists; choose another name",
                 name.trim()
@@ -384,14 +346,12 @@ impl ProfileLibrary {
         }
     }
 
-    /// An id for `name` that neither the library nor the built-ins use.
+    /// An id for `name` the library does not use.
     pub fn free_id(&self, name: &str) -> Result<String> {
         let listing = self.list()?;
         let base = slug(name);
         let taken = |id: &str| {
-            is_builtin_id(id)
-                || listing.profiles.iter().any(|p| p.id == id)
-                || self.path(id).is_ok_and(|p| p.exists())
+            listing.profiles.iter().any(|p| p.id == id) || self.path(id).is_ok_and(|p| p.exists())
         };
         if !taken(&base) {
             return Ok(base);
@@ -414,9 +374,9 @@ impl ProfileLibrary {
     fn free_name(&self, name: &str) -> Result<String> {
         let listing = self.list()?;
         let taken = |n: &str| {
-            builtin::all()
+            listing
+                .profiles
                 .iter()
-                .chain(&listing.profiles)
                 .any(|p| p.name.trim().eq_ignore_ascii_case(n.trim()))
         };
         if !taken(name) {
@@ -433,26 +393,21 @@ impl ProfileLibrary {
         ))
     }
 
-    /// Save `profile` (from a project or the panel) as a new user profile
-    /// named `name`: a fresh id, origin `User`. Provenance (basis, source,
-    /// URL, date, notes) is kept as given.
+    /// Save `profile` (from a project or the panel) as a new library
+    /// profile named `name` with a fresh id; its sources are kept.
     pub fn save_as(&self, profile: &RuleProfile, name: &str) -> Result<RuleProfile> {
         let mut stored = profile.clone();
         stored.name = name.trim().to_owned();
         stored.id = self.free_id(name)?;
-        stored.provenance.origin = ProfileOrigin::User;
         self.create(&stored)
     }
 
-    /// Import a profile file: decoded and checked, stored with origin
-    /// `Imported`, under its own id when free (else a fresh one) and a free
-    /// name. The source file is not changed.
+    /// Import a profile file: decoded and checked, stored under its own id
+    /// when free (else a fresh one) and a free name. The source file is not
+    /// changed.
     pub fn import(&self, path: &Path) -> Result<RuleProfile> {
         let mut profile = read_profile_file(path)?;
-        profile.provenance.origin = ProfileOrigin::Imported;
-        let id_free = valid_id(&profile.id)
-            && !is_builtin_id(&profile.id)
-            && !self.path(&profile.id).is_ok_and(|p| p.exists());
+        let id_free = valid_id(&profile.id) && !self.path(&profile.id).is_ok_and(|p| p.exists());
         if !id_free {
             profile.id = self.free_id(&profile.name)?;
         }
@@ -461,22 +416,82 @@ impl ProfileLibrary {
     }
 }
 
+/// The profile a new board starts with: `choice` (a library id), else the
+/// user's default (`UserSettings::default_rule_profile`). With neither,
+/// `rules.no_profile` says how to choose one: a board is never created
+/// without rules.
+pub fn for_new_board(
+    library: &ProfileLibrary,
+    choice: Option<&str>,
+    default: Option<&str>,
+) -> Result<RuleProfile> {
+    match choice.or(default) {
+        Some(id) => library.get(id),
+        None => Err(Error::Invalid(
+            "rules.no_profile: a new board needs a rule profile: pass one from the profile \
+             library (rules-profile list), or set a default rule profile in Settings; import a \
+             fabricator's profile file first (examples/profiles/ has sourced ones)"
+                .into(),
+        )),
+    }
+}
+
+/// [`for_new_board`] with the user's library and settings.
+pub fn for_new_board_from_env(choice: Option<&str>) -> Result<RuleProfile> {
+    let dirs = UserDirs::from_env()?;
+    let path = dirs.settings_path();
+    let settings = if path.is_file() {
+        crate::settings::read_settings(&path)?
+    } else {
+        crate::settings::UserSettings::default()
+    };
+    for_new_board(
+        &ProfileLibrary::from_dirs(&dirs),
+        choice,
+        settings.default_rule_profile.as_deref(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::rules::{ProfileBasis, RuleKey, RuleValue};
 
-    fn user(name: &str) -> RuleProfile {
-        let mut p = builtin::standard();
+    /// The sourced JLCPCB profile shipped in `examples/profiles/`.
+    const JLCPCB: &str = include_str!("../../../examples/profiles/jlcpcb-2-layer-1oz.json");
+
+    fn jlcpcb() -> Result<RuleProfile> {
+        decode(JLCPCB.as_bytes())
+    }
+
+    fn user(name: &str) -> Result<RuleProfile> {
+        let mut p = jlcpcb()?;
         p.id = slug(name);
         p.name = name.into();
-        p.provenance.origin = ProfileOrigin::User;
-        p.provenance.basis = ProfileBasis::FabricatorEntered;
-        p.provenance.source = "Example Fab capabilities page".into();
-        p.provenance.url = "https://example.invalid/capabilities".into();
-        p.provenance.date = "2026-10-30".into();
-        p.provenance.notes = "Entered by hand from the published table.".into();
-        p
+        Ok(p)
+    }
+
+    #[test]
+    fn the_shipped_example_profile_is_sourced_and_complete() -> Result<()> {
+        let p = jlcpcb()?;
+        assert_eq!(p.source.publisher, "JLCPCB");
+        assert_eq!(
+            p.source.url,
+            "https://jlcpcb.com/capabilities/pcb-capabilities"
+        );
+        assert_eq!(p.source.date, "2026-11-11");
+        assert!(matches!(
+            p.drill_files,
+            pcbcraft_core::rules::DrillFiles::NotPublished { .. }
+        ));
+        // Formulas resolve: the preferred via pad and the stroke share.
+        assert!((p.rules().holes.via_diameter_default - 0.45).abs() < 1e-12);
+        assert!((p.rules().holes.via_annular_ring_min - 0.05).abs() < 1e-12);
+        assert!((p.rules().silkscreen.text_stroke_share - 0.15).abs() < 1e-12);
+        // Every rule names where it comes from.
+        assert!(p.entries().all(|(_, e)| !e.source.is_empty()));
+        // It round-trips byte for byte through encode.
+        assert_eq!(decode(&encode(&p)?)?, p);
+        Ok(())
     }
 
     #[test]
@@ -484,12 +499,9 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let library = ProfileLibrary::new(dir.path().join(PROFILES_DIR));
         assert_eq!(library.list()?, Listing::default(), "missing folder");
-        let mut fab = user("Example Fab 5 mil");
-        RuleKey::MaskWebMin.set(&mut fab.rules, RuleValue::Length(0.08))?;
+        let fab = user("Example Fab 5 mil")?;
         let stored = library.save_as(&fab, "Example Fab 5 mil")?;
         assert_eq!(stored.id, "example-fab-5-mil");
-        assert_eq!(stored.provenance.origin, ProfileOrigin::User);
-        assert_eq!(stored.provenance.basis, ProfileBasis::FabricatorEntered);
         assert_eq!(library.get(&stored.id)?, stored);
         // A second save of the same name is refused: names stay distinct.
         assert!(library.save_as(&fab, "example fab 5 MIL").is_err());
@@ -506,10 +518,6 @@ mod tests {
         let renamed = library.rename(&other.id, "Alpha house")?;
         assert_eq!(renamed.id, other.id, "a rename keeps the id");
         assert_eq!(library.list()?.profiles[0].name, "Alpha house");
-        assert!(
-            library.rename(&other.id, "Standard 6/6").is_err(),
-            "built-in name"
-        );
         library.delete(&other.id)?;
         assert_eq!(
             library.delete(&other.id).map_err(|e| e.code()),
@@ -520,33 +528,44 @@ mod tests {
     }
 
     #[test]
-    fn builtin_ids_bad_ids_and_bad_dates_are_refused() -> Result<()> {
+    fn bad_ids_are_refused() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let library = ProfileLibrary::new(dir.path().to_path_buf());
-        let mut p = user("x");
-        p.id = builtin::DEFAULT_PROFILE_ID.into();
-        assert!(library.create(&p).is_err(), "built-in id");
+        let mut p = user("x")?;
         p.id = "../escape".into();
         assert!(library.create(&p).is_err(), "path in id");
         assert!(library.get("../escape").is_err());
-        p.id = "ok".into();
-        p.provenance.date = "30.10.2026".into();
-        assert!(library.create(&p).is_err(), "date");
-        p.provenance.date = String::new();
-        p.provenance.origin = ProfileOrigin::BuiltIn;
-        assert!(library.create(&p).is_err(), "built-in origin");
-        p.provenance.origin = ProfileOrigin::User;
-        p.rules.copper.track_width_min = f64::NAN;
-        assert!(library.create(&p).is_err(), "rule bounds");
         assert_eq!(std::fs::read_dir(dir.path())?.count(), 0, "nothing written");
         Ok(())
     }
 
     #[test]
-    fn export_then_import_keeps_rules_and_provenance() -> Result<()> {
+    fn a_profile_without_a_source_or_rule_is_refused() -> Result<()> {
+        let mut value: serde_json::Value = serde_json::from_str(JLCPCB)?;
+        value["profile"]["source"]["date"] = "11.11.2026".into();
+        assert!(decode(&serde_json::to_vec(&value)?).is_err(), "date");
+        let mut value: serde_json::Value = serde_json::from_str(JLCPCB)?;
+        value["profile"]["source"]["publisher"] = "".into();
+        assert!(decode(&serde_json::to_vec(&value)?).is_err(), "publisher");
+        let mut value: serde_json::Value = serde_json::from_str(JLCPCB)?;
+        if let Some(rules) = value["profile"]["rules"].as_object_mut() {
+            rules.remove("drill_min");
+        }
+        let missing = decode(&serde_json::to_vec(&value)?).map_err(|e| e.to_string());
+        assert!(
+            missing
+                .as_ref()
+                .is_err_and(|e| e.contains("does not set drill_min")),
+            "{missing:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn export_then_import_keeps_rules_and_sources() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let library = ProfileLibrary::new(dir.path().join(PROFILES_DIR));
-        let fab = library.save_as(&user("Fab"), "Fab")?;
+        let fab = library.save_as(&user("Fab")?, "Fab")?;
         let file = dir.path().join("fab.json");
         export(&fab, &file)?;
         assert!(export(&fab, &file).is_err(), "never overwrites");
@@ -554,24 +573,12 @@ mod tests {
             export(&fab, &dir.path().join("fab.txt")).is_err(),
             "extension"
         );
-        export_replacing(&builtin::hdi(), &file)?;
-        assert_eq!(read_profile_file(&file)?, builtin::hdi());
-        export_replacing(&fab, &file)?;
         // Importing it next to itself gets a fresh id and a free name.
         let imported = library.import(&file)?;
-        assert_eq!(imported.provenance.origin, ProfileOrigin::Imported);
-        assert_eq!(imported.rules, fab.rules);
-        assert_eq!(imported.provenance.url, fab.provenance.url);
+        assert_eq!(imported.rules(), fab.rules());
+        assert_eq!(imported.source, fab.source);
         assert_eq!(imported.id, "fab-2");
         assert_eq!(imported.name, "Fab (2)");
-        // A built-in exported and imported becomes a user copy.
-        let builtin_file = dir.path().join("fine.json");
-        export(&builtin::fine(), &builtin_file)?;
-        let copy = library.import(&builtin_file)?;
-        assert_eq!(copy.id, "fine-4-4-2");
-        assert_eq!(copy.name, "Fine 4/4 (2)");
-        assert_eq!(copy.provenance.basis, ProfileBasis::Estimated);
-        assert_eq!(library.list()?.profiles.len(), 3);
         Ok(())
     }
 
@@ -579,13 +586,13 @@ mod tests {
     fn damaged_unsupported_and_misnamed_files_are_reported_not_dropped() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let library = ProfileLibrary::new(dir.path().to_path_buf());
-        let good = library.save_as(&user("Good"), "Good")?;
+        let good = library.save_as(&user("Good")?, "Good")?;
         std::fs::write(dir.path().join("broken.json"), "{\"format\":1")?;
         let mut newer =
-            String::from_utf8(encode(&user("New"))?).map_err(|e| Error::Invalid(e.to_string()))?;
+            String::from_utf8(encode(&user("New")?)?).map_err(|e| Error::Invalid(e.to_string()))?;
         newer = newer.replacen("\"format\": 1", "\"format\": 2", 1);
         std::fs::write(dir.path().join("new.json"), &newer)?;
-        std::fs::write(dir.path().join("other.json"), encode(&user("Elsewhere"))?)?;
+        std::fs::write(dir.path().join("other.json"), encode(&user("Elsewhere")?)?)?;
         std::fs::write(dir.path().join("notes.txt"), "not a profile")?;
         let listing = library.list()?;
         assert_eq!(listing.profiles, vec![good]);
@@ -612,6 +619,25 @@ mod tests {
     }
 
     #[test]
+    fn a_new_board_takes_the_choice_else_the_default_else_is_refused() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let library = ProfileLibrary::new(dir.path().to_path_buf());
+        let a = library.save_as(&jlcpcb()?, "Fab A")?;
+        let b = library.save_as(&jlcpcb()?, "Fab B")?;
+        assert_eq!(for_new_board(&library, Some(&a.id), Some(&b.id))?, a);
+        assert_eq!(for_new_board(&library, None, Some(&b.id))?, b);
+        let refused = for_new_board(&library, None, None).map_err(|e| e.to_string());
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|e| e.contains("rules.no_profile")),
+            "{refused:?}"
+        );
+        assert!(for_new_board(&library, Some("no-such"), None).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn slugs_and_ids() {
         assert_eq!(slug("Fine 4/4 — Fab X"), "fine-4-4-fab-x");
         assert_eq!(slug("///"), "profile");
@@ -620,8 +646,5 @@ mod tests {
         assert!(!valid_id("Std"));
         assert!(!valid_id("-a"));
         assert!(!valid_id(""));
-        assert!(valid_date("2026-02-28"));
-        assert!(!valid_date("2026-13-01"));
-        assert!(!valid_date("26-01-01"));
     }
 }

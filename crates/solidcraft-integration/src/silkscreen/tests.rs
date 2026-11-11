@@ -2,6 +2,15 @@ use super::*;
 use pcbcraft_core::library::graphics::{HAlign, Justify, TextMetric, VAlign};
 use pcbcraft_core::{Engine, Track};
 
+/// The test prototype profile's silkscreen rules (1/7 of the height, at
+/// least 0.1 mm).
+fn silk() -> SilkscreenRules {
+    pcbcraft_core::rules::fixtures::prototype().map_or_else(
+        |_| pcbcraft_core::rules::DesignRules::unset().silkscreen,
+        |p| p.rules().silkscreen,
+    )
+}
+
 fn text(s: &str, mirrored: bool, rotation_deg: f64) -> PlacedText {
     PlacedText {
         graphic: None,
@@ -35,11 +44,11 @@ fn extent(loops: &[Vec<Point>]) -> [f64; 4] {
 #[test]
 fn legend_text_fills_the_core_metric_box_and_mirrors_within_it() {
     let mut upright = Vec::new();
-    text_loops(&mut upright, &text("R10", false, 0.0));
+    text_loops(&mut upright, &text("R10", false, 0.0), &silk());
     assert!(!upright.is_empty());
     let box_ = text("R10", false, 0.0).bounds(TextMetric::default());
     let [x0, y0, x1, y1] = extent(&upright);
-    let half = (layout::legend::TEXT_STROKE_SHARE * 1.0).max(layout::legend::MIN_STROKE_MM) / 2.0;
+    let half = silk().text_stroke(1.0) / 2.0;
     // Inside the core's box, grown by half a stroke, and filling most of it.
     assert!(x0 >= box_.min[0] - half - 1e-9 && x1 <= box_.max[0] + half + 1e-9);
     assert!(y0 >= box_.min[1] - half - 1e-9 && y1 <= box_.max[1] + half + 1e-9);
@@ -51,7 +60,7 @@ fn legend_text_fills_the_core_metric_box_and_mirrors_within_it() {
     // Mirrored: the same box, the glyphs reflected (R's bowl now faces
     // left, so the left half holds more ink than before).
     let mut mirrored = Vec::new();
-    text_loops(&mut mirrored, &text("R10", true, 0.0));
+    text_loops(&mut mirrored, &text("R10", true, 0.0), &silk());
     let [m0, _, m1, _] = extent(&mirrored);
     assert!((m0 - x0).abs() < 1e-9 && (m1 - x1).abs() < 1e-9);
     let reflected: Vec<Vec<Point>> = upright
@@ -70,7 +79,7 @@ fn legend_text_fills_the_core_metric_box_and_mirrors_within_it() {
     assert_eq!(key(&reflected), key(&mirrored));
     // Turned a quarter: the box turns with it.
     let mut turned = Vec::new();
-    text_loops(&mut turned, &text("R10", false, 90.0));
+    text_loops(&mut turned, &text("R10", false, 90.0), &silk());
     let [t0, t1, t2, t3] = extent(&turned);
     assert!(((t2 - t0) - (y1 - y0)).abs() < 1e-9 && ((t3 - t1) - (x1 - x0)).abs() < 1e-9);
 }
@@ -78,9 +87,9 @@ fn legend_text_fills_the_core_metric_box_and_mirrors_within_it() {
 #[test]
 fn unknown_characters_print_nothing_but_keep_their_place() {
     let mut known = Vec::new();
-    text_loops(&mut known, &text("R\u{2126}1", false, 0.0));
+    text_loops(&mut known, &text("R\u{2126}1", false, 0.0), &silk());
     let mut spaced = Vec::new();
-    text_loops(&mut spaced, &text("R 1", false, 0.0));
+    text_loops(&mut spaced, &text("R 1", false, 0.0), &silk());
     assert_eq!(extent(&known), extent(&spaced));
 }
 

@@ -604,7 +604,7 @@ mod tests {
         apply(
             p,
             LayoutCommand::AddVia {
-                via: ViaRequest::through(NET, at),
+                via: ViaRequest::fixture(NET, at),
             },
         )?;
         Ok(p.vias.last().map(|v| v.id).ok_or("no via")?)

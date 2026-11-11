@@ -4,9 +4,10 @@
 //!
 //! Hand-derived from the board's tracks. Along x = 20.75 and x = 19.25 the
 //! halves reach the ESD pads, then run coupled to the module:
-//! B6/B7 to U3 is 4.645 + 1.563 mm; U3 to U1 is 23.657 mm on each half (the
+//! B6/B7 to U3 is 4.645 + 1.563 mm; U3 to U1 is 23.707 mm on each half at the
+//! pair width and gap the board's JLCPCB profile gives (the
 //! positive half's corners fall 0.174 mm apart from the negative's and
-//! cancel), so 29.865 mm each.
+//! cancel), so 29.915 mm each.
 //! - The positive jumper, A6 to the T on B6's track, is 1.245 + 1.0 =
 //!   2.245 mm.
 //! - The negative jumper, A7 through a via, the bottom jumper and a via to
@@ -68,8 +69,8 @@ fn the_receptacle_jumpers_are_off_the_path_and_not_skew() -> Fallible {
     let report = length::report(&p);
     let usb = row(&report)?;
     assert_eq!(usb.measured, PairMeasured::Derived);
-    assert!(close(usb.positive, 29.865, 0.002), "{usb:?}");
-    assert!(close(usb.negative, 29.865, 0.002), "{usb:?}");
+    assert!(close(usb.positive, 29.915, 0.002), "{usb:?}");
+    assert!(close(usb.negative, 29.915, 0.002), "{usb:?}");
     assert!(usb.skew < 1e-3, "{usb:?}");
     let paths = usb.paths.as_ref().ok_or("no paths")?;
     assert_eq!(
@@ -205,9 +206,9 @@ fn set_endpoints_are_measured_and_validated() -> Fallible {
     let usb = row(&report)?;
     assert_eq!(usb.measured, PairMeasured::Set);
     // A6 joins 1.245 mm up B6's track after 2.245 mm: 1 mm longer than B6.
-    assert!(close(usb.positive, 30.865, 0.002), "{usb:?}");
+    assert!(close(usb.positive, 30.915, 0.002), "{usb:?}");
     // A7 through the jumper to B7: the whole 6.98 mm jumper joins the path.
-    assert!(close(usb.negative, 29.865 + 6.98, 0.01), "{usb:?}");
+    assert!(close(usb.negative, 29.915 + 6.98, 0.01), "{usb:?}");
     assert!(close(usb.skew, 5.98, 0.01), "{usb:?}");
     assert!(
         layout::checks(engine.project())

@@ -158,7 +158,7 @@ fn iso_utc(seconds: i64) -> String {
 mod tests {
     use super::{MAX_LISTED, Value, blocking_titles, iso_utc, json, run};
 
-    /// The shipped showcase under Standard 6/6: its fills were computed
+    /// The showcase switched to a finer profile: its fills were computed
     /// under other rules, so they are stale errors and the export is
     /// refused, naming each one.
     #[test]
@@ -167,22 +167,29 @@ mod tests {
         let project = dir.path().join("board.pcbcraft");
         let out = dir.path().join("out");
         let arg = |p: &std::path::Path| p.display().to_string();
-        let mut session =
-            pcbcraft_automation::session::Session::new(pcbcraft_automation::session::showcase()?);
+        use pcbcraft_core::rules::fixtures;
+        let mut session = pcbcraft_automation::session::Session::new(
+            pcbcraft_automation::session::showcase(fixtures::prototype()?)?,
+        );
+        let revision = session.engine().revision();
+        super::execute(
+            &mut session,
+            json!({"command": "project.apply", "params": {
+                "expected_revision": revision,
+                "operation": {"editor": "Rules", "operation": {
+                    "command": "rules.set_profile",
+                    "params": {"profile": fixtures::fine()?}}},
+            }}),
+        )?;
         super::execute(
             &mut session,
             json!({"command": "project.save", "params": {"path": arg(&project)}}),
         )?;
-        let report = super::blocking_report(&mut session, Some("std-6-6"))?;
-        let error = run(&[
-            arg(&project),
-            arg(&out),
-            "--profile".into(),
-            "std-6-6".into(),
-        ])
-        .err()
-        .ok_or("the export should be refused")?
-        .to_string();
+        let report = super::blocking_report(&mut session, None)?;
+        let error = run(&[arg(&project), arg(&out)])
+            .err()
+            .ok_or("the export should be refused")?
+            .to_string();
         assert!(error.contains("fabrication.blocked"), "{error}");
         let blocking: Vec<&Value> = report["result"]["items"]
             .as_array()

@@ -838,6 +838,19 @@ impl LibrarySources {
         }
     }
 
+    /// The profile library id a new board starts with (Settings).
+    pub fn default_rule_profile(&self) -> Option<String> {
+        self.settings.default_rule_profile.clone()
+    }
+
+    /// Keep the default rule profile per user.
+    pub fn set_default_rule_profile(&mut self, id: Option<String>) {
+        if id != self.settings.default_rule_profile {
+            self.settings.default_rule_profile = id;
+            self.persist();
+        }
+    }
+
     /// Whether the app's waivers need a reason (Settings).
     pub fn require_waiver_reason(&self) -> bool {
         self.settings.require_waiver_reason

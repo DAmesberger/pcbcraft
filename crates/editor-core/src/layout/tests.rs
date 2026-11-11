@@ -1021,10 +1021,7 @@ fn track_set_refusals_change_nothing() -> Result<()> {
     };
     assert!(text.starts_with("Too close to "), "{text}");
     // The refusal names the limit and where it comes from.
-    assert!(
-        text.ends_with(": needs 0.2 mm (Pcbcraft default)"),
-        "{text}"
-    );
+    assert!(text.ends_with(": needs 0.2 mm (Test prototype)"), "{text}");
     assert_eq!(crate::issues::style::check(&text), vec![], "{text}");
     // On the bottom it would overlap the other net's track.
     assert!(matches!(
@@ -1114,7 +1111,7 @@ fn a_route_step_with_a_via_applies_and_unwinds_atomically() -> Result<()> {
         head: [9.2, 8.0],
         layer: CopperLayer::Top,
         via: Some((
-            ViaRequest::through(SHARED, [12.0, 11.0]),
+            ViaRequest::fixture(SHARED, [12.0, 11.0]),
             CopperLayer::Bottom,
         )),
         to: [16.0, 13.0],
@@ -1176,7 +1173,7 @@ fn a_route_step_with_a_via_applies_and_unwinds_atomically() -> Result<()> {
         flipped: false,
         head: [9.2, 8.0],
         layer: CopperLayer::Top,
-        via: Some((ViaRequest::through(SHARED, [6.8, 8.0]), CopperLayer::Bottom)),
+        via: Some((ViaRequest::fixture(SHARED, [6.8, 8.0]), CopperLayer::Bottom)),
         to: [6.8, 12.0],
     });
     let before = engine.project().clone();

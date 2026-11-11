@@ -113,7 +113,10 @@ impl PcbEditor {
             self.change_layer_to(layer, None);
         }
         self.via_rows(ui, project);
-        kit::check_row(ui, "Tent vias", &mut self.via_tented);
+        let mut tented = self.via_tented(project);
+        if kit::check_row(ui, "Tent vias", &mut tented) {
+            self.via_tented = Some(tented);
+        }
         let mut nets = vec![(None, "From the first pad".to_owned())];
         nets.extend(
             schematic::nets(project)

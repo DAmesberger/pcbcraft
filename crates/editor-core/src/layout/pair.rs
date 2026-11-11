@@ -410,7 +410,9 @@ pub fn step(request: &PairStepRequest) -> PairStep {
             drill: vias.drill,
             diameter: vias.diameter,
             tented: vias.tented,
-            ..ViaRequest::through(*net, at)
+            net: *net,
+            position: at,
+            span: crate::model::ViaSpan::Through,
         });
     }
     let head = run(

@@ -34,7 +34,7 @@ use pcbcraft_core::fabrication::{
 };
 use pcbcraft_core::issues::Severity;
 use pcbcraft_core::model::Document;
-use pcbcraft_core::rules::{RuleProfile, builtin};
+use pcbcraft_core::rules::RuleProfile;
 use pcbcraft_core::{Engine, Operation};
 use pcbcraft_io::fabrication::{ExportReport, ExportRequest, Progress};
 use pcbcraft_io::rule_profiles::ProfileLibrary;
@@ -55,7 +55,6 @@ pub(super) fn dialog_id() -> egui::Id {
 pub(super) enum Pick {
     /// The board's own rules (its profile snapshot, overrides and classes).
     Board,
-    BuiltIn(String),
     User(String),
 }
 
@@ -127,7 +126,6 @@ impl ProductionDialog {
     fn profile(&self) -> Option<RuleProfile> {
         match &self.pick {
             Pick::Board => None,
-            Pick::BuiltIn(id) => builtin::all().into_iter().find(|p| p.id == *id),
             Pick::User(id) => self.user_profiles.iter().find(|p| p.id == *id).cloned(),
         }
     }
@@ -135,14 +133,8 @@ impl ProductionDialog {
     fn options_list(&self, engine: &Engine) -> Vec<(Pick, String)> {
         let mut out = vec![(
             Pick::Board,
-            format!("{} · this board", engine.project().rules.profile.name),
+            format!("{} · this board", engine.project().rules.profile_name()),
         )];
-        out.extend(builtin::all().into_iter().map(|p| {
-            (
-                Pick::BuiltIn(p.id.clone()),
-                format!("{} · built-in", p.name),
-            )
-        }));
         out.extend(
             self.user_profiles
                 .iter()

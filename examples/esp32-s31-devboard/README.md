@@ -27,7 +27,7 @@ sh examples/esp32-s31-devboard/regenerate.sh
 
 - **Size:** 40 × 64 mm, 1.5 mm corner radius, four M2.5 mounting holes (2.7 mm NPTH, board-level holes), each `inset` (3.5 mm) from its two nearest edges, so the sketch is fully defined and the holes follow a width or height change.
 - **Stackup:** 4 layers, 1.74 mm. From the top: signal, prepreg 0.2 mm (2116), GND plane, core 1.2 mm (7628), 3V3 plane, prepreg 0.2 mm, signal. Both inner foils are marked as reference planes. The Dk values are Pcbcraft's generic estimates.
-- **Rules:** built-in profile *Standard 6/6* (a generic estimate, not a fabricator's data). Overrides: copper (track, pad, via, fill) to board edge 0.3 mm, which restates the profile, and legend to edge 0.2 mm.
+- **Rules:** the profile file [`examples/profiles/jlcpcb-4-layer-1oz.json`](../profiles/jlcpcb-4-layer-1oz.json), written from JLCPCB's [PCB capabilities page](https://jlcpcb.com/capabilities/pcb-capabilities) (read 2026-11-11; every rule cites its row). Overrides: copper (track, pad, via, fill) to board edge 0.3 mm and legend to edge 0.2 mm (JLCPCB publishes no legend-to-edge limit).
 - **Net classes:**
   - Power (GND, +3V3, VBUS): 0.5 mm tracks, 0.3 mm minimum.
   - USB: 90 Ω differential. On top this derives a 0.266 mm width and a 0.152 mm gap, as microstrip over the GND plane.

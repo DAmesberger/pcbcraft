@@ -265,8 +265,11 @@ fn inspect_summarizes_and_reads_one_part() -> TestResult {
 #[test]
 fn replacing_the_document_answers_with_a_summary() -> TestResult {
     let mut session = demo()?;
-    let reply = ok(session.respond(Caller::Operator, json!({"command": "project.new", "params": {"expected_revision": session.engine().revision()}})))?;
+    let profile = pcbcraft_core::rules::fixtures::prototype()?;
+    let reply = ok(session.respond(Caller::Operator, json!({"command": "project.new", "params": {"expected_revision": session.engine().revision(), "profile": profile}})))?;
     assert_eq!(reply["summary"]["counts"]["tracks"], 0);
+    // The new board pins the profile it was given.
+    assert_eq!(session.engine().project().rules.profile, Some(profile));
     assert!(reply.get("changes").is_none(), "{reply}");
     Ok(())
 }

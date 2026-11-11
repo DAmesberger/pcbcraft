@@ -153,6 +153,8 @@ pub fn apply(project: &mut Project, command: FillCommand) -> Result<Option<Id>> 
             Ok(None)
         }
         FillCommand::Refill { target } => {
+            // Fill copper keeps the profile's clearances; none to keep.
+            project.rules.require()?;
             if let RefillTarget::One(id) = target
                 && project.fill(id).is_none()
             {

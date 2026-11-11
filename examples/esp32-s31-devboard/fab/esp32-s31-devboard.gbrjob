@@ -2,12 +2,12 @@
   "DesignRules": [
     {
       "Layers": "Outer",
-      "MinLineWidth": 0.1524,
-      "PadToPad": 0.1524,
-      "PadToTrack": 0.1524,
-      "RegionToRegion": 0.1524,
-      "TrackToRegion": 0.1524,
-      "TrackToTrack": 0.1524
+      "MinLineWidth": 0.09,
+      "PadToPad": 0.15,
+      "PadToTrack": 0.1,
+      "RegionToRegion": 0.09,
+      "TrackToRegion": 0.09,
+      "TrackToTrack": 0.09
     }
   ],
   "FilesAttributes": [
@@ -102,6 +102,7 @@
     {
       "Color": "Green",
       "Name": "Top solder mask",
+      "Thickness": 0.012,
       "Type": "SolderMask"
     },
     {
@@ -148,6 +149,7 @@
     {
       "Color": "Green",
       "Name": "Bottom solder mask",
+      "Thickness": 0.012,
       "Type": "SolderMask"
     },
     {

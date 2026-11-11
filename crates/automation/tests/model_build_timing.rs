@@ -27,7 +27,7 @@ fn esp32() -> Project {
 }
 
 fn showcase() -> Project {
-    let engine = Engine::showcase_hosted(Evaluators {
+    let engine = Engine::showcase_hosted_fixture(Evaluators {
         footprint: Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
         board: Some(&pcbcraft_solidcraft::board::SketchBoardEvaluator),
     })

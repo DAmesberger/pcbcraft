@@ -15,7 +15,7 @@ fn a_via_is_added_moved_tented_and_deleted_as_a_document_object() -> Result<()> 
     let Outcome::ViaAdded { via } = layout(
         &mut engine,
         LayoutCommand::AddVia {
-            via: ViaRequest::through(net, [20.0, 20.0]),
+            via: ViaRequest::fixture(net, [20.0, 20.0]),
         },
     )?
     else {
@@ -51,10 +51,10 @@ fn invalid_vias_leave_the_document_unchanged() -> Result<()> {
     let mut engine = Engine::demo()?;
     let net = engine.project().nets[0].id;
     let before = engine.project().clone();
-    let outside = ViaRequest::through(net, [0.1, 0.1]);
-    let mut drill = ViaRequest::through(net, [20.0, 20.0]);
+    let outside = ViaRequest::fixture(net, [0.1, 0.1]);
+    let mut drill = ViaRequest::fixture(net, [20.0, 20.0]);
     drill.drill = drill.diameter;
-    let mut blind = ViaRequest::through(net, [20.0, 20.0]);
+    let mut blind = ViaRequest::fixture(net, [20.0, 20.0]);
     blind.span = ViaSpan::Between {
         from: CopperLayer::Top,
         to: CopperLayer::Inner(1),
@@ -63,7 +63,7 @@ fn invalid_vias_leave_the_document_unchanged() -> Result<()> {
         outside,
         drill,
         blind,
-        ViaRequest::through(9_999, [20.0, 20.0]),
+        ViaRequest::fixture(9_999, [20.0, 20.0]),
     ] {
         assert!(layout(&mut engine, LayoutCommand::AddVia { via }).is_err());
     }
@@ -135,7 +135,7 @@ fn change(
                 width: 0.3,
                 layer,
             },
-            via: ViaRequest::through(net, at),
+            via: ViaRequest::fixture(net, at),
             to_layer,
             end,
         },
@@ -256,7 +256,7 @@ fn vias_and_routes_keep_clear_of_other_nets() -> Result<()> {
     let other = other_net(&engine, net)?;
     let before = engine.project().clone();
     // R2.2 is at (16.8, 8) with its pad's top edge at y = 8.7.
-    let close = ViaRequest::through(net, [16.8, 9.1]);
+    let close = ViaRequest::fixture(net, [16.8, 9.1]);
     assert!(matches!(
         layout(&mut engine, LayoutCommand::AddVia { via: close }),
         Err(Error::Conflict(_))
@@ -265,7 +265,7 @@ fn vias_and_routes_keep_clear_of_other_nets() -> Result<()> {
     layout(
         &mut engine,
         LayoutCommand::AddVia {
-            via: ViaRequest::through(other, [30.0, 20.0]),
+            via: ViaRequest::fixture(other, [30.0, 20.0]),
         },
     )?;
     let with_via = engine.project().clone();
@@ -290,7 +290,7 @@ fn via_checks_report_ring_drill_and_hole_spacing() -> Result<()> {
     let net = shared(&engine)?;
     let other = other_net(&engine, net)?;
     let mut add = |net, position: Point, drill, diameter| {
-        let mut via = ViaRequest::through(net, position);
+        let mut via = ViaRequest::fixture(net, position);
         via.drill = drill;
         via.diameter = diameter;
         layout(&mut engine, LayoutCommand::AddVia { via })
@@ -358,7 +358,7 @@ fn the_board_cannot_shrink_past_a_via() -> Result<()> {
     layout(
         &mut engine,
         LayoutCommand::AddVia {
-            via: ViaRequest::through(net, [50.0, 30.0]),
+            via: ViaRequest::fixture(net, [50.0, 30.0]),
         },
     )?;
     let before = engine.project().clone();
@@ -414,7 +414,7 @@ fn electrical_changes_to_a_net_with_vias_are_reviewed_updates() -> Result<()> {
     let Outcome::ViaAdded { via: lone } = layout(
         &mut engine,
         LayoutCommand::AddVia {
-            via: ViaRequest::through(net, [12.0, 20.0]),
+            via: ViaRequest::fixture(net, [12.0, 20.0]),
         },
     )?
     else {
@@ -503,8 +503,8 @@ pub(crate) fn via_board(count: usize, tracks: usize) -> Result<Project> {
             id,
             net,
             position,
-            drill: DEFAULT_VIA_DRILL_MM,
-            diameter: DEFAULT_VIA_DIAMETER_MM,
+            drill: 0.3,
+            diameter: 0.6,
             span: ViaSpan::Through,
             tented: k % 2 == 0,
             locked: false,

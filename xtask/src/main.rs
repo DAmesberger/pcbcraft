@@ -1,5 +1,6 @@
 mod clean_room;
 mod connectivity;
+mod convert_rules;
 mod convert_v1;
 mod core_modules;
 mod f64_lengths;
@@ -112,7 +113,7 @@ fn run() -> Result<()> {
         "raw-keys" => raw_keys::check(),
         _ => Err(
             "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
-             | licences --check | clean-room | ui-containers | ui-forms | raw-keys | convert-v1 FILE…"
+             | licences --check | clean-room | ui-containers | ui-forms | raw-keys | convert-v1 [--profile PROFILE.json] FILE…"
                 .into(),
         ),
     }

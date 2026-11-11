@@ -91,6 +91,10 @@ pub struct UserSettings {
     /// first: absolute paths, at most [`MAX_RECENT_PROJECTS`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub projects: Vec<PathBuf>,
+    /// The rule profile library id a new board starts with when none is
+    /// chosen (Settings); `None`: every new board asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_rule_profile: Option<String>,
 }
 
 /// Where one project's production files go.
@@ -116,6 +120,7 @@ impl Default for UserSettings {
             require_waiver_reason: false,
             production_folders: Vec::new(),
             projects: Vec::new(),
+            default_rule_profile: None,
         }
     }
 }
@@ -513,6 +518,15 @@ impl UserSettings {
         }
         if self.projects.iter().collect::<BTreeSet<_>>().len() != self.projects.len() {
             return Err(Error::Invalid("a recent project is listed twice".into()));
+        }
+        if self
+            .default_rule_profile
+            .as_deref()
+            .is_some_and(|id| !crate::rule_profiles::valid_id(id))
+        {
+            return Err(Error::Invalid(
+                "the default rule profile must be a profile library id".into(),
+            ));
         }
         if self.production_folders.len() > MAX_PRODUCTION_FOLDERS {
             return Err(Error::TooLarge(format!(

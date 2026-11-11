@@ -24,6 +24,7 @@ mod orientation;
 mod part_authoring;
 mod parts;
 mod paste;
+mod profile_rules;
 mod publish_sets;
 mod rubber_band;
 mod sheets;

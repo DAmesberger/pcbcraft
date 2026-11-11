@@ -34,7 +34,10 @@ fn model_and_empty_row_drafts_cannot_publish() -> Fallible<()> {
 
 #[test]
 fn existing_documents_do_not_mention_the_new_fields() -> Fallible<()> {
-    let text = serde_json::to_string(&Engine::showcase()?.to_file())?;
+    let mut file = Engine::showcase()?.to_file();
+    // The board's rule profile has `notes` of its own.
+    file.project.rules = crate::rules::ProjectRules::default();
+    let text = serde_json::to_string(&file)?;
     for key in [
         "\"models\"",
         "\"package_rows\"",

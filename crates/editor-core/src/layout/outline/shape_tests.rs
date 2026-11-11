@@ -6,14 +6,18 @@ use crate::rules::{ProjectRules, RuleGroup, RuleKey, RuleValue};
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// `board.outline_fit` is a board-edge rule (key `board_outline_fit`)
-/// whose default is the 0.01 mm chord tolerance the board solve used
-/// before; a project override replaces it in the effective rules.
+/// the profile sets (the test prototype: the 0.01 mm chord tolerance the
+/// board solve used before); without a profile it is unset.
 #[test]
-fn the_outline_fit_rule_defaults_to_ten_microns() -> Fallible<()> {
+fn the_outline_fit_rule_comes_from_the_profile() -> Fallible<()> {
     let key: RuleKey = serde_json::from_value(serde_json::json!({"rule": "board_outline_fit"}))?;
     assert_eq!(key.group(), RuleGroup::BoardEdge);
-    let rules = ProjectRules::default();
+    let rules = crate::rules::fixtures::rules()?;
     assert_eq!(rules.resolve(key).value, RuleValue::Length(0.01));
+    assert_eq!(
+        ProjectRules::default().resolve(key).value,
+        RuleValue::Length(0.0)
+    );
     assert!(RuleKey::all().contains(&key));
     Ok(())
 }

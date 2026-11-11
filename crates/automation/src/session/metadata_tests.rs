@@ -178,8 +178,10 @@ fn the_tools_carry_the_catalog_titles_and_annotations() -> Fallible<()> {
 /// showcase over MCP, and one marked linked can pass it there.
 #[test]
 fn inline_and_linked_results_hold_on_the_showcase() -> Fallible<()> {
-    let mut server =
-        crate::mcp::Server::new(Session::new(showcase()?), crate::gate::Policy::default());
+    let mut server = crate::mcp::Server::new(
+        Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?),
+        crate::gate::Policy::default(),
+    );
     let mut size = |tool: &str, arguments: Value| -> usize {
         let reply = server
             .handle(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -190,7 +192,7 @@ fn inline_and_linked_results_hold_on_the_showcase() -> Fallible<()> {
             .as_str()
             .map_or(0, str::len)
     };
-    let revision = showcase()?.revision();
+    let revision = showcase(pcbcraft_core::rules::fixtures::prototype()?)?.revision();
     let result = |name: &str| {
         metadata::entries()
             .iter()

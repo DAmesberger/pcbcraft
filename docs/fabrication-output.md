@@ -18,7 +18,7 @@ The Gerber writer follows Ucamco's public Gerber Layer Format Specification. The
 
 ## Production check (`fabrication.preflight`)
 
-The check reports every project issue under the chosen fabrication profile. Overrides and net classes are kept; a profile that conflicts with an override is itself an error. It adds production findings to those issues. The query's `profile` is an id such as `"std-6-6"` (a built-in profile or one of the user's library, as for an export) or a whole profile; omitted, the project's own rules apply.
+The check reports every project issue under the chosen fabrication profile. Overrides and net classes are kept; a profile that conflicts with an override is itself an error. It adds production findings to those issues. The query's `profile` is an id of the user's profile library (as for an export) or a whole profile; omitted, the project's own rules apply. A board without a rule profile is blocked (`rules.no_profile`, not waivable).
 
 **Errors** (they block export):
 - unrouted connections and unplaced parts;
@@ -135,7 +135,7 @@ The shipped showcase's whole CLI export, with the check, drawings and atomic wri
 
 The comparison window is offset by a non-round margin. Two holes of one fill can share an edge exactly on a grid-aligned pixel centre. An even-odd fill and clear-polarity regions then sample that edge differently: a measurement artefact of 0.1 mm² on the aligned grid, and 0 when offset.
 
-Format tests check attributes, polarities, D-code reuse, macro text, escapes, determinism (same bytes twice; a date only when asked) and the job file's layer order and thickness. Automation tests export the shipped (sketched) showcase as a folder and as a ZIP. They also cover a refused used folder, and an export blocked under the std-6-6 profile (stale fills) with nothing written, then unblocked by waivers that survive save and reopen and undo one step each.
+Format tests check attributes, polarities, D-code reuse, macro text, escapes, determinism (same bytes twice; a date only when asked) and the job file's layer order and thickness. Automation tests export the shipped (sketched) showcase as a folder and as a ZIP. They also cover a refused used folder, and an export blocked under another profile (stale fills) with nothing written, then unblocked by waivers that survive save and reopen and undo one step each.
 
 ## Limits and follow-ups
 

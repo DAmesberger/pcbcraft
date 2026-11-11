@@ -3,10 +3,13 @@
 //! provenance-carrying set of [`DesignRules`]), per-project overrides and
 //! net classes ([`netclass`]).
 //!
-//! The project embeds a snapshot of the profile it uses
-//! ([`ProjectRules::profile`]), so a file opens with the same rules on any
-//! machine; a user profile library (JSON files in the user config folder,
-//! read by `pcbcraft-io`) only supplies profiles to switch to.
+//! A profile is a file with a stated source ([`profile`]); the project
+//! embeds a snapshot of the one it uses ([`ProjectRules::profile`]), so a
+//! file opens with the same rules on any machine. A user profile library
+//! (JSON files in the user config folder, read by `pcbcraft-io`) supplies
+//! profiles to choose. A project without a profile has no rules: nothing
+//! is checked, the production check blocks and tools that need a default
+//! refuse ([`ProjectRules::require`]).
 //!
 //! Resolution order, lowest to highest precedence ([`RuleSource`]):
 //! profile value, project override, then (for copper rules that name nets)
@@ -15,15 +18,20 @@
 //! every applicable value; widths take the net class value over the
 //! effective rule.
 //!
-//! Every value here is pure data: no files, no fabricator data. Built-in
-//! profiles ([`builtin`]) are generic and labelled estimated.
+//! Every value here is pure data: no files and no fabricator data;
+//! Pcbcraft ships no built-in profile.
 use crate::diagnostics::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub mod builtin;
+pub mod formula;
 pub mod netclass;
+pub mod profile;
 pub mod signal;
+
+pub use profile::{
+    DrillFiles, PROFILE_FILE_FORMAT, ProfileFile, ProfileSource, RuleEntry, RuleProfile, Setting,
+};
 
 pub use netclass::{
     ClassClearance, MAX_NET_CLASSES, NetClass, NetClassAssignment, NetClassId, NetClassPattern,
@@ -44,8 +52,6 @@ pub const MAX_OVERRIDES: usize = 256;
 pub const MAX_PROFILE_TEXT: usize = 256;
 /// Bytes of a profile's notes.
 pub const MAX_PROFILE_NOTES: usize = 4096;
-/// The user profile library file's format; any other version is refused.
-pub const PROFILE_FILE_FORMAT: u32 = 1;
 
 /// The kinds of copper-related object a clearance rule pairs.
 #[derive(
@@ -225,6 +231,27 @@ pub struct SilkscreenRules {
     /// Least gap from silkscreen to the board edge and cutouts, mm (0: not
     /// checked).
     pub edge_clearance: f64,
+    /// Legend text stroke width as a share of its height; the stroke is
+    /// never thinner than `line_width_min`.
+    pub text_stroke_share: f64,
+}
+
+impl SilkscreenRules {
+    /// The pen width legend text of `height` mm prints with.
+    pub fn text_stroke(&self, height: f64) -> f64 {
+        (self.text_stroke_share * height).max(self.line_width_min)
+    }
+}
+
+/// Differential-pair defaults a pair's class may override.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PairRules {
+    /// How far a coupled stretch's edge gap may stray from the pair gap
+    /// and still count as coupled, as a share of the gap…
+    pub gap_tolerance_share: f64,
+    /// …and at least this, mm.
+    pub gap_tolerance: f64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -316,6 +343,7 @@ pub struct DesignRules {
     pub courtyard: CourtyardRules,
     pub fill: FillRules,
     pub land: LandRules,
+    pub pair: PairRules,
     #[serde(default, skip_serializing_if = "EtchRules::is_unset")]
     pub etch: EtchRules,
     #[serde(default, skip_serializing_if = "BoardRules::is_default")]
@@ -347,7 +375,76 @@ impl BoardRules {
     }
 }
 
+impl DesignRules {
+    /// No rules: every limit 0 (not checked), every default 0 and no via
+    /// tenting. A project without a profile has these; nothing that needs
+    /// a default may use them ([`ProjectRules::require`]).
+    pub fn unset() -> Self {
+        Self {
+            copper: CopperRules {
+                track_width_min: 0.0,
+                track_width_default: 0.0,
+                clearance: ClearanceMatrix::uniform(0.0, 0.0, 0.0, 0.0),
+            },
+            holes: HoleRules {
+                drill_min: 0.0,
+                via_annular_ring_min: 0.0,
+                pth_annular_ring_min: 0.0,
+                aspect_ratio_max: None,
+                via_drill_default: 0.0,
+                via_diameter_default: 0.0,
+            },
+            mask: MaskRules {
+                expansion: 0.0,
+                web_min: 0.0,
+                tent_vias: false,
+            },
+            silkscreen: SilkscreenRules {
+                line_width_min: 0.0,
+                text_height_min: 0.0,
+                pad_clearance: 0.0,
+                edge_clearance: 0.0,
+                text_stroke_share: 0.0,
+            },
+            paste: PasteRules { reduction: 0.0 },
+            courtyard: CourtyardRules { clearance: 0.0 },
+            fill: FillRules {
+                clearance: 0.0,
+                width_min: 0.0,
+                thermal: ThermalRelief {
+                    spoke_width: 0.0,
+                    spoke_count: 0,
+                    gap: 0.0,
+                    angle_deg: 0.0,
+                },
+                connection: PadConnection::Thermal,
+                island_area_min: 0.0,
+            },
+            land: LandRules {
+                gull_wing_width_extra: 0.0,
+                chip_gap_min: 0.0,
+                exposed_pad_clearance: 0.0,
+                gull_wing_toe_shift: 0.0,
+                tht_drill_clearance: 0.0,
+                tht_land_extra: 0.0,
+                tht_land_gap: 0.0,
+            },
+            pair: PairRules {
+                gap_tolerance_share: 0.0,
+                gap_tolerance: 0.0,
+            },
+            etch: EtchRules::default(),
+            board: BoardRules { outline_fit: 0.0 },
+        }
+    }
+}
+
 impl Default for DesignRules {
+    /// TODO(profile-files): only the library's land estimators
+    /// (`library::samples`, `package_form`, `templates`) still read these,
+    /// for parts made outside a project; they move to the board's profile
+    /// once units U2 lands. No project, profile or check reads them.
+    ///
     /// The prototype values (estimated, not a fabricator qualification),
     /// which equal the limits from before rules were configurable except
     /// where a change was chosen: 0.2 mm copper clearance, copper at least
@@ -383,6 +480,7 @@ impl Default for DesignRules {
                 text_height_min: 0.6,
                 pad_clearance: 0.0,
                 edge_clearance: 0.0,
+                text_stroke_share: 1.0 / 7.0,
             },
             paste: PasteRules { reduction: 0.0 },
             courtyard: CourtyardRules { clearance: 0.0 },
@@ -406,6 +504,10 @@ impl Default for DesignRules {
                 tht_drill_clearance: 0.3,
                 tht_land_extra: 0.6,
                 tht_land_gap: 0.25,
+            },
+            pair: PairRules {
+                gap_tolerance_share: 0.1,
+                gap_tolerance: 0.02,
             },
             etch: EtchRules::default(),
             board: BoardRules::default(),
@@ -476,6 +578,9 @@ pub enum RuleKey {
     CopperAngleMin,
     SliverWidthMin,
     BoardOutlineFit,
+    SilkTextStrokeShare,
+    PairGapTolerance,
+    PairGapToleranceShare,
 }
 
 /// A rule's value.
@@ -488,6 +593,8 @@ pub enum RuleValue {
     Area(f64),
     /// Degrees.
     Angle(f64),
+    /// A share, 0–1.
+    Fraction(f64),
     /// A dimensionless ratio; `None` is not checked.
     Ratio(Option<f64>),
     Count(u32),
@@ -538,8 +645,35 @@ impl RuleKey {
             Self::CopperAngleMin,
             Self::SliverWidthMin,
             Self::BoardOutlineFit,
+            Self::SilkTextStrokeShare,
+            Self::PairGapTolerance,
+            Self::PairGapToleranceShare,
         ]);
         keys
+    }
+
+    /// The key's name in profile files and formulas: snake case, a
+    /// clearance pair `clearance_<a>_<b>` (`clearance_track_board_edge`).
+    pub fn name(self) -> String {
+        match self.normalized() {
+            Self::Clearance { a, b } => {
+                format!("clearance_{}_{}", object_name(a), object_name(b))
+            }
+            other => serde_json::to_value(other)
+                .ok()
+                .and_then(|v| v.get("rule").and_then(|r| r.as_str()).map(str::to_owned))
+                .unwrap_or_default(),
+        }
+    }
+
+    /// The key [`Self::name`] gives `name`.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::all().into_iter().find(|k| k.name() == name)
+    }
+
+    /// The kind of value this key takes (its value in [`DesignRules::unset`]).
+    pub fn kind(self) -> RuleValue {
+        self.get(&DesignRules::unset())
     }
 
     /// The key with an unordered clearance pair stored `a <= b`.
@@ -575,7 +709,9 @@ impl RuleKey {
             Self::SilkLineWidthMin
             | Self::SilkTextHeightMin
             | Self::SilkPadClearance
-            | Self::SilkEdgeClearance => RuleGroup::Silkscreen,
+            | Self::SilkEdgeClearance
+            | Self::SilkTextStrokeShare => RuleGroup::Silkscreen,
+            Self::PairGapTolerance | Self::PairGapToleranceShare => RuleGroup::Copper,
             Self::PasteReduction => RuleGroup::Paste,
             Self::CourtyardClearance => RuleGroup::Placement,
             Self::FillClearance
@@ -637,6 +773,9 @@ impl RuleKey {
                 Self::CopperAngleMin => "min copper angle",
                 Self::SliverWidthMin => "min sliver width",
                 Self::BoardOutlineFit => "board outline fit",
+                Self::SilkTextStrokeShare => "silkscreen text stroke share",
+                Self::PairGapTolerance => "min pair gap tolerance",
+                Self::PairGapToleranceShare => "pair gap tolerance share",
                 Self::Clearance { .. } => "clearance",
             }
             .to_string(),
@@ -683,6 +822,9 @@ impl RuleKey {
             Self::CopperAngleMin => Angle(rules.etch.copper_angle_min),
             Self::SliverWidthMin => Length(rules.etch.sliver_width_min),
             Self::BoardOutlineFit => Length(rules.board.outline_fit),
+            Self::SilkTextStrokeShare => Fraction(rules.silkscreen.text_stroke_share),
+            Self::PairGapTolerance => Length(rules.pair.gap_tolerance),
+            Self::PairGapToleranceShare => Fraction(rules.pair.gap_tolerance_share),
         }
     }
 
@@ -770,6 +912,17 @@ impl RuleKey {
             }
             Self::SliverWidthMin => &mut rules.etch.sliver_width_min,
             Self::BoardOutlineFit => &mut rules.board.outline_fit,
+            Self::SilkTextStrokeShare => {
+                let Fraction(f) = value else { return wrong() };
+                rules.silkscreen.text_stroke_share = f;
+                return Ok(());
+            }
+            Self::PairGapTolerance => &mut rules.pair.gap_tolerance,
+            Self::PairGapToleranceShare => {
+                let Fraction(f) = value else { return wrong() };
+                rules.pair.gap_tolerance_share = f;
+                return Ok(());
+            }
         };
         let Some(mm) = length(value) else {
             return wrong();
@@ -806,6 +959,7 @@ impl DesignRules {
                 }
                 RuleValue::Length(mm) => length_ok(mm),
                 RuleValue::Area(a) => a.is_finite() && (0.0..=1.0e6).contains(&a),
+                RuleValue::Fraction(f) => f.is_finite() && (0.0..=1.0).contains(&f),
                 RuleValue::Angle(d) if key == RuleKey::CopperAngleMin => {
                     d.is_finite() && (0.0..=180.0).contains(&d)
                 }
@@ -848,97 +1002,6 @@ impl DesignRules {
     }
 }
 
-/// Where a profile came from.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ProfileOrigin {
-    /// Shipped with Pcbcraft ([`builtin`]).
-    #[default]
-    BuiltIn,
-    /// Made by the user (saved from a project or edited).
-    User,
-    /// Imported from a profile file.
-    Imported,
-}
-
-/// What a profile's numbers rest on.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ProfileBasis {
-    /// Generic estimates, not any fabricator's qualification.
-    #[default]
-    Estimated,
-    /// Entered by the user from a fabricator's published capabilities.
-    FabricatorEntered,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct ProfileProvenance {
-    pub origin: ProfileOrigin,
-    pub basis: ProfileBasis,
-    /// The fabricator or document the numbers come from ("" when none).
-    #[serde(default)]
-    pub source: String,
-    #[serde(default)]
-    pub url: String,
-    /// ISO date (YYYY-MM-DD) the numbers were taken, or "".
-    #[serde(default)]
-    pub date: String,
-    #[serde(default)]
-    pub notes: String,
-}
-
-/// A named, versionable set of design rules.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct RuleProfile {
-    /// Stable identity in the profile library (`std-6-6`, a user slug).
-    pub id: String,
-    /// Shown name ("Standard 6/6").
-    pub name: String,
-    pub provenance: ProfileProvenance,
-    pub rules: DesignRules,
-}
-
-impl Default for RuleProfile {
-    fn default() -> Self {
-        builtin::default_profile()
-    }
-}
-
-impl RuleProfile {
-    /// Text bounds, then [`DesignRules::validate`].
-    pub fn validate(&self) -> Result<()> {
-        let p = &self.provenance;
-        let short = [&self.id, &self.name, &p.source, &p.url, &p.date];
-        if self.id.trim().is_empty()
-            || self.name.trim().is_empty()
-            || short.iter().any(|t| t.len() > MAX_PROFILE_TEXT)
-            || p.notes.len() > MAX_PROFILE_NOTES
-            || short
-                .iter()
-                .chain([&&p.notes])
-                .any(|t| t.chars().any(|c| c.is_control() && c != '\n'))
-        {
-            return Err(Error::Invalid(
-                "rules.profile_text: a profile needs an id and a name; texts are bounded and printable"
-                    .into(),
-            ));
-        }
-        self.rules.validate()
-    }
-}
-
-/// One profile in the user profile library file (`pcbcraft-io` writes it).
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ProfileFile {
-    /// [`PROFILE_FILE_FORMAT`]; any other version is refused.
-    pub format: u32,
-    pub profile: RuleProfile,
-}
-
 /// A project's departure from its profile for one rule.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -951,7 +1014,7 @@ pub struct RuleOverride {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", tag = "source")]
 pub enum RuleSource {
-    /// The project's profile snapshot.
+    /// The project's profile snapshot (none: the project has no profile).
     Profile { name: String },
     /// A project override.
     Override,
@@ -1010,8 +1073,10 @@ pub struct ClearanceSide {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectRules {
-    /// The profile snapshot the project uses (switching replaces it).
-    pub profile: RuleProfile,
+    /// The profile snapshot the project uses (switching replaces it);
+    /// none until one is chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<RuleProfile>,
     /// At most one per key, in [`RuleKey::all`] order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<RuleOverride>,
@@ -1052,15 +1117,48 @@ impl ProjectRules {
         *self == Self::default()
     }
 
-    /// The profile with every override applied.
+    /// The project's profile, or `rules.no_profile` for a tool or output
+    /// that needs a default or a limit the profile sets.
+    pub fn require(&self) -> Result<&RuleProfile> {
+        self.profile.as_ref().ok_or_else(|| {
+            Error::Invalid(
+                "rules.no_profile: this board has no rule profile; choose one (Board › Rules) \
+                 before routing, filling or making production files"
+                    .into(),
+            )
+        })
+    }
+
+    /// The effective rules: the profile with every override in place of
+    /// its entry and its formulas evaluated after, the one resolution every
+    /// check, tool default and output reads. With no profile,
+    /// [`DesignRules::unset`].
     pub fn effective(&self) -> DesignRules {
-        let mut rules = self.profile.rules.clone();
-        for o in &self.overrides {
-            // Overrides are validated on entry; a mismatched kind cannot
-            // be stored, so a failure here leaves the profile value.
-            let _ = o.key.set(&mut rules, o.value);
+        let Some(profile) = &self.profile else {
+            return DesignRules::unset();
+        };
+        if self.overrides.is_empty() {
+            return profile.rules().clone();
         }
-        rules
+        // Overrides are validated on entry, so the resolution succeeds; a
+        // failure leaves the profile's own values.
+        profile
+            .resolve_with(&self.overrides)
+            .unwrap_or_else(|_| profile.rules().clone())
+    }
+
+    /// The rules the land estimators read: [`Self::effective`] with a
+    /// profile, else the library's interim values.
+    ///
+    /// TODO(profile-files): once units U2 lands, the estimators
+    /// (`library::samples`, `package_form`, the footprint templates) take
+    /// their margins only from a profile and refuse without one.
+    pub fn land_estimators(&self) -> DesignRules {
+        if self.profile.is_some() {
+            self.effective()
+        } else {
+            DesignRules::default()
+        }
     }
 
     /// These rules less the etch-hazard checks ([`EtchRules`]), which only
@@ -1068,12 +1166,26 @@ impl ProjectRules {
     /// leaves fills fresh. Borrowed when no etch rule is set.
     pub fn without_checks(&self) -> std::borrow::Cow<'_, ProjectRules> {
         let etch = |k: RuleKey| matches!(k, RuleKey::CopperAngleMin | RuleKey::SliverWidthMin);
-        if self.profile.rules.etch.is_unset() && !self.overrides.iter().any(|o| etch(o.key)) {
+        let Some(profile) = &self.profile else {
+            return std::borrow::Cow::Borrowed(self);
+        };
+        if profile.rules().etch.is_unset() && !self.overrides.iter().any(|o| etch(o.key)) {
             return std::borrow::Cow::Borrowed(self);
         }
         let mut rules = self.clone();
-        rules.profile.rules.etch = EtchRules::default();
         rules.overrides.retain(|o| !etch(o.key));
+        if let Some(p) = &mut rules.profile {
+            // Zero (not checked) is in bounds for both, so neither fails;
+            // each keeps its source, so the result is the same whatever the
+            // checks were set to.
+            for (key, zero) in [
+                (RuleKey::CopperAngleMin, RuleValue::Angle(0.0)),
+                (RuleKey::SliverWidthMin, RuleValue::Length(0.0)),
+            ] {
+                let source = p.entry(key).map(|e| e.source.clone()).unwrap_or_default();
+                let _ = p.set(key, RuleEntry::value(zero, &source));
+            }
+        }
         std::borrow::Cow::Owned(rules)
     }
 
@@ -1088,9 +1200,16 @@ impl ProjectRules {
             RuleSource::Override
         } else {
             RuleSource::Profile {
-                name: self.profile.name.clone(),
+                name: self.profile_name(),
             }
         }
+    }
+
+    /// The profile's name, or "no rule profile".
+    pub fn profile_name(&self) -> String {
+        self.profile
+            .as_ref()
+            .map_or_else(|| "no rule profile".into(), |p| p.name.clone())
     }
 
     /// One effective rule with its source.
@@ -1213,7 +1332,16 @@ impl ProjectRules {
     /// Profile, overrides, effective rules, classes and pairs are within
     /// bounds and consistent (unique keys, existing class references).
     pub fn validate(&self) -> Result<()> {
-        self.profile.validate()?;
+        let Some(profile) = &self.profile else {
+            if !self.overrides.is_empty() {
+                return Err(Error::Invalid(
+                    "rules.no_profile: overrides need a rule profile to depart from".into(),
+                ));
+            }
+            netclass::validate(self)?;
+            return signal::validate(self);
+        };
+        profile.validate()?;
         if self.overrides.len() > MAX_OVERRIDES {
             return Err(Error::Limit(format!(
                 "rules.overrides: at most {MAX_OVERRIDES} overrides"
@@ -1226,10 +1354,10 @@ impl ProjectRules {
                     "rules.duplicate_override: one override per rule".into(),
                 ));
             }
-            let mut probe = self.profile.rules.clone();
+            let mut probe = profile.rules().clone();
             o.key.set(&mut probe, o.value)?;
         }
-        self.effective().validate()?;
+        profile.resolve_with(&self.overrides)?.validate()?;
         netclass::validate(self)?;
         signal::validate(self)
     }
@@ -1248,12 +1376,12 @@ impl ProjectRules {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum RulesCommand {
-    /// Replace the project's profile snapshot. `keep_overrides` keeps the
-    /// project overrides, which must still give valid rules on the new
-    /// profile (`rules.override_conflict` otherwise); without it they are
-    /// dropped. A built-in profile must carry its shipped values
-    /// (`rules.builtin_modified`); changed values go in a user profile.
-    /// Preview with `rules.preview_profile`.
+    /// Replace the project's profile snapshot (or choose the first). The
+    /// profile is a whole profile file's `profile` object with its source.
+    /// `keep_overrides` keeps the project overrides, which must still give
+    /// valid rules on the new profile (`rules.override_conflict`
+    /// otherwise); without it they are dropped. Preview with
+    /// `rules.preview_profile`.
     #[serde(rename = "rules.set_profile")]
     SetProfile {
         profile: Box<RuleProfile>,
@@ -1263,7 +1391,9 @@ pub enum RulesCommand {
     /// Set (or replace) the project override of one rule. The value's kind
     /// must match the rule (`rules.value_kind`) and the effective rules
     /// must stay valid (`rules.bounds`). An override equal to the profile
-    /// value is kept: it pins the value across profile switches.
+    /// value is kept: it pins the value across profile switches. An
+    /// override of a formula's rule replaces the formula; formulas that
+    /// name the rule follow the override.
     #[serde(rename = "rules.set_override")]
     SetOverride { key: RuleKey, value: RuleValue },
     /// Drop the project override of one rule (back to the profile value).
@@ -1403,30 +1533,23 @@ fn apply_to(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<si
     Ok(added)
 }
 
-/// `rules.set_profile`: the profile itself must be valid, a built-in
-/// profile must carry its shipped values, and kept overrides must leave
-/// valid effective rules (the error names the overrides to clear first).
+/// `rules.set_profile`: the profile itself must be valid and kept
+/// overrides must leave valid effective rules (the error names the
+/// overrides to clear first).
 fn set_profile(rules: &mut ProjectRules, profile: RuleProfile, keep_overrides: bool) -> Result<()> {
     profile.validate()?;
-    if profile.provenance.origin == ProfileOrigin::BuiltIn
-        && builtin::by_id(&profile.id).is_none_or(|b| b.rules != profile.rules)
-    {
-        return Err(Error::Invalid(format!(
-            "rules.builtin_modified: {} is not a shipped built-in profile; save changed values as a user profile",
-            profile.name
-        )));
-    }
     let mut next = rules.clone();
-    next.profile = profile;
+    let name = profile.name.clone();
+    let checked = profile.resolve_with(if keep_overrides { &next.overrides } else { &[] });
+    next.profile = Some(profile);
     if !keep_overrides {
         next.overrides.clear();
     }
-    if let Err(error) = next.effective().validate() {
+    if let Err(error) = checked.and_then(|r| r.validate()) {
         let keys: Vec<String> = next.overrides.iter().map(|o| o.key.label()).collect();
         return Err(Error::Invalid(format!(
-            "rules.override_conflict: keeping the overrides ({}) on {} gives invalid rules: {error}",
+            "rules.override_conflict: keeping the overrides ({}) on {name} gives invalid rules: {error}",
             keys.join(", "),
-            next.profile.name
         )));
     }
     next.validate()?;
@@ -1442,6 +1565,12 @@ pub struct RuleRow {
     pub label: String,
     /// The profile snapshot's value.
     pub profile: RuleValue,
+    /// The profile's formula for this rule, if it has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
+    /// Where the profile's value comes from ("" for the profile's source).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub value_source: String,
     /// The effective value (override or profile).
     pub value: RuleValue,
     pub source: RuleSource,
@@ -1450,9 +1579,10 @@ pub struct RuleRow {
 /// `rules.effective`: the profile, every rule row and the net classes.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct RulesReport {
-    pub profile_id: String,
-    pub profile_name: String,
-    pub provenance: ProfileProvenance,
+    /// The profile's id, name, source and drill-file reading; none when
+    /// the project has no profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileSummary>,
     pub effective: DesignRules,
     pub rows: Vec<RuleRow>,
     pub net_classes: Vec<NetClass>,
@@ -1461,23 +1591,50 @@ pub struct RulesReport {
     pub class_clearances: Vec<ClassClearance>,
 }
 
+/// A profile's identity and source, without its rules.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct ProfileSummary {
+    pub id: String,
+    pub name: String,
+    pub source: ProfileSource,
+    pub drill_files: DrillFiles,
+}
+
+impl ProfileSummary {
+    pub fn of(profile: &RuleProfile) -> Self {
+        Self {
+            id: profile.id.clone(),
+            name: profile.name.clone(),
+            source: profile.source.clone(),
+            drill_files: profile.drill_files.clone(),
+        }
+    }
+}
+
 pub fn report(rules: &ProjectRules) -> RulesReport {
     let effective = rules.effective();
+    let unset = DesignRules::unset();
     let rows = RuleKey::all()
         .into_iter()
-        .map(|key| RuleRow {
-            key,
-            group: key.group(),
-            label: key.label(),
-            profile: key.get(&rules.profile.rules),
-            value: key.get(&effective),
-            source: rules.source_of(key),
+        .map(|key| {
+            let entry = rules.profile.as_ref().and_then(|p| p.entry(key));
+            RuleRow {
+                key,
+                group: key.group(),
+                label: key.label(),
+                profile: key.get(rules.profile.as_ref().map_or(&unset, |p| p.rules())),
+                formula: entry.and_then(|e| match &e.setting {
+                    Setting::Formula(f) => Some(f.clone()),
+                    Setting::Value(_) => None,
+                }),
+                value_source: entry.map(|e| e.source.clone()).unwrap_or_default(),
+                value: key.get(&effective),
+                source: rules.source_of(key),
+            }
         })
         .collect();
     RulesReport {
-        profile_id: rules.profile.id.clone(),
-        profile_name: rules.profile.name.clone(),
-        provenance: rules.profile.provenance.clone(),
+        profile: rules.profile.as_ref().map(ProfileSummary::of),
         effective,
         rows,
         net_classes: rules.net_classes.clone(),
@@ -1528,7 +1685,7 @@ pub fn preview_candidate(
     match set_profile(&mut candidate, profile.clone(), keep_overrides) {
         Ok(()) => (candidate, None),
         Err(error) => {
-            candidate.profile = profile.clone();
+            candidate.profile = Some(profile.clone());
             if !keep_overrides {
                 candidate.overrides.clear();
             }
@@ -1591,5 +1748,45 @@ pub fn rule_changes(rules: &ProjectRules, candidate: &ProjectRules) -> ProfileIm
     }
 }
 
+/// A pad connection's name in profile files and formulas.
+pub fn connection_name(c: PadConnection) -> &'static str {
+    match c {
+        PadConnection::Solid => "solid",
+        PadConnection::Thermal => "thermal",
+        PadConnection::None => "none",
+    }
+}
+
+/// The pad connection [`connection_name`] gives `name`.
+pub fn connection_from_name(name: &str) -> Option<PadConnection> {
+    [
+        PadConnection::Solid,
+        PadConnection::Thermal,
+        PadConnection::None,
+    ]
+    .into_iter()
+    .find(|c| connection_name(*c) == name)
+}
+
+/// A clearance object's name in rule names.
+fn object_name(o: CopperObject) -> &'static str {
+    match o {
+        CopperObject::Track => "track",
+        CopperObject::Pad => "pad",
+        CopperObject::Via => "via",
+        CopperObject::Fill => "fill",
+        CopperObject::BoardEdge => "board_edge",
+        CopperObject::Hole => "hole",
+    }
+}
+
+/// `mm` without trailing zeros (`0.1`, `0.15`).
+fn trim(mm: f64) -> String {
+    let text = format!("{mm:.4}");
+    text.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
+#[cfg(any(test, feature = "test-fixtures"))]
+pub mod fixtures;
 #[cfg(test)]
 mod tests;

@@ -256,13 +256,9 @@ fn write_zip(output: &Path, files: &[FabFile]) -> Result<()> {
     })
 }
 
-/// A fabrication profile by id: a built-in profile (`std-6-6`, `fine-4-4`,
-/// `hdi-3-3`, `pcbcraft-default`) or one of the user's library
-/// (`UserDirs::config/rule-profiles/`).
+/// A fabrication profile by id from the user's library
+/// (`UserDirs::config/rule-profiles/`); Pcbcraft ships none.
 pub fn resolve_profile(id: &str) -> Result<RuleProfile> {
-    if let Some(profile) = pcbcraft_core::rules::builtin::by_id(id) {
-        return Ok(profile);
-    }
     let dirs = crate::settings::UserDirs::from_env()?;
     crate::rule_profiles::ProfileLibrary::from_dirs(&dirs).get(id)
 }

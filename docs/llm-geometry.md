@@ -37,7 +37,7 @@ So the design has to deliver four things:
 ### 1. Overview: what's left to do
 
 ```
-board 40x64mm 4L top/GND/PWR/bot rules std-6-6
+board 40x64mm 4L top/GND/PWR/bot rules jlcpcb-4-layer-1oz
 unrouted 12: USB_DP U1.42~J1.A6 23.5mm | VBUS J1.A4~U2.1 18.2mm | ...
 congestion(top) 8x13 cells, 0-9:
   0013100

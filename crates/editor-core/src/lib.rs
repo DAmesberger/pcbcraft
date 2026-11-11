@@ -320,7 +320,8 @@ pub enum Query {
     /// and the net classes.
     #[serde(rename = "rules.effective")]
     RulesEffective {},
-    /// The built-in rule profiles (hosts append the user library).
+    /// The project's own profile snapshot, if any; hosts with a profile
+    /// library (desktop, CLI, MCP) append its profiles. Pcbcraft ships none.
     #[serde(rename = "rules.profiles")]
     RuleProfiles {},
     /// What `rules.set_profile` with these arguments would change: rules
@@ -617,10 +618,17 @@ impl Engine {
     /// and bottom through tented and open vias, built through the public
     /// commands. The sample parts live in `library::samples`.
     ///
-    /// Unconnected terminals are marked no-connect. The undo history is
-    /// cleared.
+    /// Unconnected terminals are marked no-connect. The board's rules are
+    /// `profile`. The undo history is cleared.
+    pub fn showcase_with(profile: rules::RuleProfile) -> Result<Self> {
+        Self::showcase_in(None, profile)
+    }
+
+    /// A test fixture, never in the product: [`Engine::showcase_with`] the
+    /// test prototype profile, whose values the showcase was drawn for.
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub fn showcase() -> Result<Self> {
-        Self::showcase_in(None)
+        Self::showcase_in(None, rules::fixtures::prototype()?)
     }
 
     /// The showcase as the shipped file shows it: [`Engine::showcase`]
@@ -629,12 +637,29 @@ impl Engine {
     /// round cutout, a milled slot and J1 held to the left edge by board
     /// parameters (`layout::showcase::board_edits`). The pours are filled
     /// last, over the final shape. The undo history is cleared.
-    pub fn showcase_hosted(evaluators: Evaluators<'_>) -> Result<Self> {
-        Self::showcase_in(Some(evaluators))
+    pub fn showcase_hosted(
+        evaluators: Evaluators<'_>,
+        profile: rules::RuleProfile,
+    ) -> Result<Self> {
+        Self::showcase_in(Some(evaluators), profile)
     }
 
-    fn showcase_in(hosted: Option<Evaluators<'_>>) -> Result<Self> {
+    /// A test fixture, never in the product: [`Engine::showcase_hosted`]
+    /// on the test prototype profile.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn showcase_hosted_fixture(evaluators: Evaluators<'_>) -> Result<Self> {
+        Self::showcase_in(Some(evaluators), rules::fixtures::prototype()?)
+    }
+
+    fn showcase_in(hosted: Option<Evaluators<'_>>, profile: rules::RuleProfile) -> Result<Self> {
         let mut engine = Self::default();
+        engine.apply(
+            engine.revision,
+            Operation::Rules(rules::RulesCommand::SetProfile {
+                profile: Box::new(profile),
+                keep_overrides: false,
+            }),
+        )?;
         engine.apply(
             engine.revision,
             Operation::Schematic(schematic::SchematicCommand::RenameProject {
@@ -851,15 +876,26 @@ impl Engine {
         Ok(())
     }
 
+    /// A test fixture, never in the product: an empty project on the test
+    /// prototype profile.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn profiled() -> Result<Self> {
+        let mut engine = Self::default();
+        std::sync::Arc::make_mut(&mut engine.document.project).rules = rules::fixtures::rules()?;
+        Ok(engine)
+    }
+
     /// A test fixture, never in the product: two connected two-terminal
     /// components, placed on the board, with a typed resistance field
-    /// shown on the symbol. The sample library is built through the public
-    /// commands and its drafts stay open for editing. Other crates' tests
-    /// reach it through the `test-fixtures` feature of their
-    /// dev-dependency; a launch and File › New open an empty project.
+    /// shown on the symbol, on the test prototype profile. The sample
+    /// library is built through the public commands and its drafts stay
+    /// open for editing. Other crates' tests reach it through the
+    /// `test-fixtures` feature of their dev-dependency; a launch and File ›
+    /// New open an empty project.
     #[cfg(any(test, feature = "test-fixtures"))]
     pub fn demo() -> Result<Self> {
         let mut engine = Self::default();
+        std::sync::Arc::make_mut(&mut engine.document.project).rules = rules::fixtures::rules()?;
         let refs = engine.reserve_lineages()?;
         let kind = engine.reserve(DefinitionKind::QuantityKind)?;
         let field = engine.reserve(DefinitionKind::Field)?;
@@ -1529,7 +1565,15 @@ impl Engine {
             Query::RulesEffective {} => Ok(QueryResult::Rules(Box::new(rules::report(
                 &self.document.project.rules,
             )))),
-            Query::RuleProfiles {} => Ok(QueryResult::RuleProfiles(rules::builtin::all())),
+            Query::RuleProfiles {} => Ok(QueryResult::RuleProfiles(
+                self.document
+                    .project
+                    .rules
+                    .profile
+                    .iter()
+                    .cloned()
+                    .collect(),
+            )),
             Query::PreviewProfile {
                 profile,
                 keep_overrides,

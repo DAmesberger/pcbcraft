@@ -1232,9 +1232,22 @@ fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {
     }
 }
 /// The project a launch without a file and File › New open: empty, with
-/// no parts, library or drafts, so it has no issues.
+/// no parts, library or drafts, on the user's default rule profile
+/// (Settings). Without one the board has no profile: the Design rules
+/// panel asks for one, and routing, fills and production files refuse
+/// until it is chosen.
 pub(crate) fn new_project() -> Engine {
-    Engine::default()
+    let Ok(profile) = pcbcraft_io::rule_profiles::for_new_board_from_env(None) else {
+        return Engine::default();
+    };
+    let mut project = pcbcraft_core::Project::default();
+    project.rules.profile = Some(profile);
+    Engine::from_file(pcbcraft_core::format::EditorFile {
+        version: pcbcraft_core::format::FILE_VERSION,
+        project,
+        drafts: Default::default(),
+    })
+    .unwrap_or_default()
 }
 
 fn home_directory() -> PathBuf {
