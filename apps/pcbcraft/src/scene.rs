@@ -130,9 +130,29 @@ type BuiltGeometry = Result<
 >;
 
 /// Earlier board models the worker keeps for an undo or redo back to them.
-const EARLIER_BOARDS: usize = 3;
+/// Each holds the evaluated bodies the boards after it replaced: on the
+/// ESP32 example about 0.9 GB per board after a board-size edit (live heap,
+/// `memory_tests`). One keeps the last edit's undo and its redo at once,
+/// as three did when every other slot held a board before its refill.
+const EARLIER_BOARDS: usize = 1;
 
 type BoardModel = pcbcraft_solidcraft::project::NativeModel;
+
+/// Whether `next` is `board` with its fills refilled and nothing else
+/// changed: the fill worker's copper, stored on `board`'s revision without
+/// a history step. No undo or redo comes back to `board` then, so its model
+/// is not kept for one: it would hold hundreds of MB of bodies for nothing,
+/// and push out a model an undo can use.
+fn refilled(board: &Project, next: &Project) -> bool {
+    let bare = |p: &Project| {
+        let mut p = p.clone();
+        for fill in &mut p.fills {
+            fill.computed = None;
+        }
+        p
+    };
+    board.fills != next.fills && bare(board) == bare(next)
+}
 
 /// What the worker keeps between builds.
 #[derive(Default)]
@@ -195,7 +215,9 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                 } else {
                     match kept.board.take() {
                         Some((board, previous)) => {
-                            kept.earlier.push((board, previous.snapshot()));
+                            if !refilled(&board, &project) {
+                                kept.earlier.push((board, previous.snapshot()));
+                            }
                             match pcbcraft_solidcraft::project::update(
                                 previous,
                                 &project,
@@ -863,6 +885,57 @@ mod tests {
         Ok(())
     }
 
+    /// R7-2: an edit's board with stale fills, which the fill worker's
+    /// refill replaces on the same revision, is not kept for an undo: no
+    /// history step comes back to it. Keeping it held a whole board model
+    /// (about 400 MB of the ESP32 example, measured) in one of the earlier
+    /// slots, so only one undo in three found its model. The board before
+    /// the edit is kept, and an undo to it is shown at once.
+    #[test]
+    fn an_edits_board_before_its_refill_is_not_kept_for_undo()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_core::layout::fill::{RefillTarget, is_stale, refill};
+        let before = Arc::new(Engine::showcase()?.project().clone());
+        let mut edited = (*before).clone();
+        for track in &mut edited.tracks {
+            track.width += 0.05;
+        }
+        assert!(edited.fills.iter().any(|f| is_stale(&edited, f)));
+        let mut filled = edited.clone();
+        for (id, copper) in refill(&edited, RefillTarget::All)? {
+            if let Some(fill) = filled.fills.iter_mut().find(|f| f.id == id) {
+                fill.computed = Some(copper);
+            }
+        }
+        let (edited, filled) = (Arc::new(edited), Arc::new(filled));
+        let flag = || Arc::new(AtomicBool::new(false));
+        let mut kept = Kept::default();
+        let made = |board: &Arc<Project>, kept: &mut Kept| {
+            build(Job::Project(0, Arc::clone(board), flag()), kept)
+                .1
+                .map(|(geometry, _, _)| geometry)
+        };
+        let first = made(&before, &mut kept)?;
+        made(&edited, &mut kept)?;
+        made(&filled, &mut kept)?;
+        let kept_before: Vec<bool> = kept
+            .earlier
+            .iter()
+            .map(|(board, _)| Arc::ptr_eq(board, &before))
+            .collect();
+        assert_eq!(kept_before, [true], "only the board before the edit");
+        // The undo shows the very meshes it was shown with.
+        let again = made(&before, &mut kept)?;
+        let meshes = |g: &[pcbcraft_solidcraft::scene::Geometry]| -> Vec<usize> {
+            g.iter()
+                .filter(|g| !g.kind.is_appearance())
+                .map(|g| Arc::as_ptr(&g.mesh) as usize)
+                .collect()
+        };
+        assert_eq!(meshes(&again), meshes(&first));
+        Ok(())
+    }
+
     /// Demo run 3, item 1: an edit's model, updated in place, is shown as
     /// soon as it is made, although the board changed again meanwhile (its
     /// stale fills refilled and stored) and that board's model is still
@@ -948,6 +1021,36 @@ mod tests {
         let built = worker.receiver.recv_timeout(wait)?;
         assert_eq!(built.ticket, 2);
         assert!(built.result.is_ok());
+        Ok(())
+    }
+
+    /// R7-3: boards requested while one is made are not made one by one:
+    /// only the newest of them is, and the ones it replaced never answer.
+    #[test]
+    fn boards_queued_behind_a_build_are_skipped_but_the_newest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let worker = Worker::start(egui::Context::default());
+        let mut board = Engine::demo()?.project().clone();
+        let flag = || Arc::new(AtomicBool::new(false));
+        for ticket in 1..=4u64 {
+            board.placements[0].position[0] += 1.0;
+            worker
+                .sender
+                .send(Job::Project(ticket, Arc::new(board.clone()), flag()))?;
+        }
+        let mut answered = Vec::new();
+        while let Ok(built) = worker
+            .receiver
+            .recv_timeout(std::time::Duration::from_secs(60))
+        {
+            built.result?;
+            answered.push(built.ticket);
+            if built.ticket == 4 {
+                break;
+            }
+        }
+        // The first may have started before the others came.
+        assert!(answered == [4] || answered == [1, 4], "{answered:?}");
         Ok(())
     }
 
@@ -1207,3 +1310,6 @@ mod coplanar_tests;
 
 #[cfg(test)]
 mod edit_timing_tests;
+
+#[cfg(test)]
+mod memory_tests;

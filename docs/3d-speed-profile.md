@@ -246,7 +246,7 @@ Build bdc78b4 (`component-model`), Solidcraft fork 04d3c2ffc (solidcore c0d3cc01
 **What an edit and its undo cost, and why.** The width edit moves every fill (they follow the board), so every fill is refilled and its sketch redrawn. A redrawn region's extrusion picked its profile by curves the redraw replaces, so the update redefines it (`timeline.redefine`). Two Pcbcraft-side costs were measured and are fixed:
 
 1. Each redefinition ran with the history rolled forward, so it evaluated every feature after it again: the refill update ran 2,878 SMLib extrusions where the build runs 1,028. The redefinitions now run while the history is still rolled back, and the update keeps every result it evaluates (`Model::keep`) until the history is rolled forward once: 948 extrusions, and 3 s of meshing instead of 8 s.
-2. An undo back to a board the app's model worker made updated the last model back to it, as long as the edit. The worker now keeps its last three earlier board models (copies sharing the evaluated design and meshes, `NativeModel::snapshot`), and an undo or redo back to one shows it again without building or updating.
+2. An undo back to a board the app's model worker made updated the last model back to it, as long as the edit. The worker now keeps its last three earlier board models (copies sharing the evaluated design and meshes, `NativeModel::snapshot`), and an undo or redo back to one shows it again without building or updating. (Since 11 November it keeps one, and never the board an edit had before the fill worker refilled it: no history step returns to that board, and each kept model holds about 0.9 GB of evaluated bodies on this board; see `apps/pcbcraft/src/scene/memory_tests.rs`.)
 
 | ESP32 board | Before | After |
 | --- | --- | --- |
