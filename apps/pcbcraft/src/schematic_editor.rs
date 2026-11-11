@@ -1256,7 +1256,7 @@ impl SchematicEditor {
     }
 
     /// The issue slot of `subject`: what `project.issues` counts on it in
-    /// the Schematic area ("on R1", "on N3", "on this sheet"), once per
+    /// the Schematic area ("on R1", "on N3", "in the schematic"), once per
     /// document revision. Subjects that are commands have no slot.
     fn issue_slot(&mut self, engine: &Engine, subject: Subject) -> Option<IssueSlot> {
         let document = Arc::as_ptr(engine.project_arc()) as usize;
@@ -1291,7 +1291,8 @@ impl SchematicEditor {
                 IssueScope::Area {
                     area: IssueArea::Schematic,
                 },
-                Some("on this sheet".to_owned()),
+                // Every sheet's: the Schematic area, which Schematic only lists.
+                Some("in the schematic".to_owned()),
             ),
             _ => (IssueScope::All, None),
         };
@@ -4666,7 +4667,9 @@ mod tests {
         };
         let slot = sheet.issues.ok_or("the sheet has a slot")?;
         assert_eq!(slot.counts, report.counts);
-        assert_eq!(slot.label, "on this sheet");
+        // Night round 4: it counts every sheet, so it does not say "on this
+        // sheet" for issues on another page.
+        assert_eq!(slot.label, "in the schematic");
         assert!(slot.whole);
         assert!(!slot.is_empty(), "the unwired R3 has issues");
 
