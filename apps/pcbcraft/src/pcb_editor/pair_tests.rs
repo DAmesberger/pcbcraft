@@ -288,6 +288,36 @@ fn a_pad_of_a_pair_routes_both_halves_coupled_to_the_far_pads() -> TestResult {
     Ok(())
 }
 
+/// The canvas pill of a pair route names the pair and the width both
+/// halves are routed at (the pair's impedance width), not one net and
+/// the single-track width W steps.
+#[test]
+fn the_pill_of_a_pair_route_names_the_pair_and_its_width() -> TestResult {
+    let Usb {
+        engine,
+        nets,
+        start,
+        ..
+    } = usb()?;
+    let (width, _) = layout::impedance::pair_width_gap(engine.project(), nets[0], CopperLayer::Top);
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    assert!(canvas.click(&mut editor, &engine, start[0]).is_none());
+    assert!(editor.route.pair.is_some());
+    assert!((editor.width - width).abs() > 1e-6, "the widths differ");
+    let pill = editor
+        .pill_text(canvas.ctx(), engine.project())
+        .ok_or("no pill")?;
+    let expected = format!(
+        "Routing pair USB_D · {} · ",
+        super::impedance_view::mm(width)
+    );
+    assert!(pill.starts_with(&expected), "{pill}");
+    Ok(())
+}
+
 #[test]
 fn p_routes_one_net_of_a_pair() -> TestResult {
     let Usb {

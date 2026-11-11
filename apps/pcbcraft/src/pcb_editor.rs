@@ -1858,27 +1858,53 @@ impl PcbEditor {
         operation
     }
 
+    /// The text of the canvas pill: the route in progress (its net, width,
+    /// layer, posture and router mode, each with the key that steps it),
+    /// else the highlighted net; `None` without either. A pair route names
+    /// the pair and the width both halves are routed at, which W does not
+    /// step.
+    fn pill_text(&self, ctx: &egui::Context, project: &Project) -> Option<String> {
+        match (self.route_start, self.net, self.highlighted) {
+            (Some(_), Some(net), _) => {
+                let pair = self
+                    .route
+                    .pair
+                    .as_ref()
+                    .and_then(|p| project.rules.diff_pair(p.pair))
+                    .zip(self.pair_width_gap(project));
+                let (name, width) = match pair {
+                    Some((pair, (width, _))) => {
+                        (format!("pair {}", pair.name), impedance_view::mm(width))
+                    }
+                    None => (
+                        project.net_name(net).to_owned(),
+                        crate::keys::labelled(
+                            ctx,
+                            &format!("{} mm", kit::number_text(self.width)),
+                            "route.width-next",
+                        ),
+                    ),
+                };
+                Some(format!(
+                    "Routing {name} · {width} · {} · {} · {}",
+                    self.layer_label(ctx),
+                    crate::keys::labelled(ctx, self.route.posture.label(), "route.posture"),
+                    crate::keys::labelled(ctx, self.route.mode.label(), "route.router-mode-next"),
+                ))
+            }
+            (None, _, Some(net)) if project.net(net).is_some() => {
+                Some(format!("{} highlighted", project.net_name(net)))
+            }
+            _ => None,
+        }
+    }
+
     /// Pills for the persistent modes, top-centre of the canvas: the route
     /// in progress, else the highlighted net. × ends the mode.
     fn pills(&mut self, ui: &mut Ui, rect: Rect, project: &Project) {
         let t = Tokens::get();
-        let text = match (self.route_start, self.net, self.highlighted) {
-            (Some(_), Some(net), _) => {
-                let ctx = ui.ctx();
-                let width = format!("{} mm", kit::number_text(self.width));
-                format!(
-                    "Routing {} · {} · {} · {} · {}",
-                    project.net_name(net),
-                    crate::keys::labelled(ctx, &width, "route.width-next"),
-                    self.layer_label(ctx),
-                    crate::keys::labelled(ctx, self.route.posture.label(), "route.posture"),
-                    crate::keys::labelled(ctx, self.route.mode.label(), "route.router-mode-next"),
-                )
-            }
-            (None, _, Some(net)) if project.net(net).is_some() => {
-                format!("{} highlighted", project.net_name(net))
-            }
-            _ => return,
+        let Some(text) = self.pill_text(ui.ctx(), project) else {
+            return;
         };
         // The pill hugs its text: its frame fills the rect it is given.
         let text_width = ui
