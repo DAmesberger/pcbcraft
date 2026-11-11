@@ -320,6 +320,37 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
     Ok(())
 }
 
+/// An open via's mask opening is its ring grown by the rules' mask
+/// expansion, as the Gerber mask draws it (`Via::mask_opening`).
+#[test]
+fn an_open_via_s_mask_opening_follows_the_mask_expansion_rule() -> Result<()> {
+    use pcbcraft_core::rules::{RuleKey, RuleOverride, RuleValue};
+    let (mut project, _, _) = four_layer()?;
+    project.rules = pcbcraft_core::rules::fixtures::rules().map_err(invalid)?;
+    project.rules.overrides.push(RuleOverride {
+        key: RuleKey::MaskExpansion,
+        value: RuleValue::Length(0.2),
+    });
+    let model = build(&project)?;
+    let top = |at: [f64; 2]| -> Option<BodyKind> {
+        model
+            .geometry
+            .iter()
+            .filter(|g| !matches!(g.kind, BodyKind::Silkscreen))
+            .filter_map(|g| {
+                g.raycast(Vec3::new(at[0], at[1], 10.0), Vec3::new(0.0, 0.0, -1.0))
+                    .map(|(d, _)| (d, g.kind))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, k)| k)
+    };
+    // The open via's 0.6 mm ring at (40, 20): bare laminate shows out to
+    // 0.3 + 0.2 mm, the mask beyond.
+    assert_eq!(top([40.0, 20.45]), Some(BodyKind::OpenLaminate));
+    assert_eq!(top([40.0, 20.55]), Some(BodyKind::MaskTop));
+    Ok(())
+}
+
 #[test]
 fn every_display_layer_names_its_copper_layer_or_side() -> Result<()> {
     let (project, _, _) = four_layer()?;

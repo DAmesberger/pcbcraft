@@ -2218,6 +2218,7 @@ fn vias(
         }
     }
     let mut marks = Vec::with_capacity(project.vias.len());
+    let expansion = project.rules.effective().mask.expansion;
     for ((via, component), occurrence) in project.vias.iter().zip(style_of).zip(occurrences) {
         let occurrence =
             occurrence.ok_or_else(|| Error::Verification(format!("via {} is unplaced", via.id)))?;
@@ -2241,6 +2242,7 @@ fn vias(
             drill: via.drill,
             diameter: via.diameter,
             tented: via.tented,
+            mask_opening: via.mask_opening(expansion),
         });
     }
     Ok(marks)

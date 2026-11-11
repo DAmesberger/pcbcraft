@@ -65,9 +65,6 @@ const FILLET_ACROSS_STEPS: usize = 24;
 /// Adjacent prism walls turning less than this share a smoothed normal.
 const SMOOTH_TURN: f64 = 0.55;
 
-/// Soldermask pull-back around an open via's ring (est.; fabricators open
-/// the mask 0.05 mm beyond a pad by default).
-pub const VIA_MASK_EXPANSION_MM: f64 = 0.05;
 /// A tented via's mask sags this far into the drill it bridges (est.; LPI
 /// tents over a 0.3 mm hole dip into it as a visible dimple). 8 µm read as
 /// no dimple in the look review. The dimple stays [`PROUD_MM`] above the
@@ -247,6 +244,9 @@ pub struct ViaMark {
     pub drill: f64,
     pub diameter: f64,
     pub tented: bool,
+    /// The mask opening's diameter where the via is open
+    /// ([`pcbcraft_core::Via::mask_opening`], as the Gerber draws it).
+    pub mask_opening: f64,
 }
 
 impl ViaMark {
@@ -271,7 +271,7 @@ impl ViaMark {
                 layer,
                 copper: Some(circle(self.at, self.diameter / 2.0)),
                 bore: Some(circle(self.at, self.bore())),
-                openings: vec![circle(self.at, self.diameter / 2.0 + VIA_MASK_EXPANSION_MM)],
+                openings: vec![circle(self.at, self.mask_opening / 2.0)],
             })
             .collect()
     }
@@ -498,6 +498,7 @@ pub fn board_with(
             via.drill.to_bits(),
             via.diameter.to_bits(),
             u64::from(via.tented),
+            via.mask_opening.to_bits(),
         ];
         let local = ViaMark {
             at: [0.0, 0.0],

@@ -260,6 +260,7 @@ mod tests {
             drill: 0.3,
             diameter: 0.6,
             tented,
+            mask_opening: 0.7,
         }
     }
 
