@@ -382,6 +382,9 @@ pub struct FileUi {
     now: f64,
     /// Quitting was asked for while a file operation ran: ask once it ends.
     close_pending: bool,
+    /// The save request whose file is being written (not while its save
+    /// panel is open), for [`FileUi::saving`].
+    writing: Option<u64>,
     /// The window is closing with the user's answer (or nothing unsaved):
     /// the exit keeps no recovery copy.
     closed: bool,
@@ -435,6 +438,7 @@ impl FileUi {
             recovery_retry_at: 0.0,
             now: 0.0,
             close_pending: false,
+            writing: None,
             closed: false,
         }
     }
@@ -461,6 +465,14 @@ impl FileUi {
     }
     pub fn busy(&self) -> bool {
         self.controller.flight.is_some() || self.recovery_choice_pending
+    }
+    /// A save is writing its file: from the request (or the save panel's
+    /// answer) until the write ends, however long the system holds it.
+    pub fn saving(&self) -> bool {
+        self.controller
+            .flight
+            .as_ref()
+            .is_some_and(|f| f.kind == Kind::Save && Some(f.ticket.id) == self.writing)
     }
     pub fn prompting(&self) -> bool {
         self.controller.prompt.is_some() || !self.recoveries.is_empty()
@@ -519,6 +531,9 @@ impl FileUi {
         self.controller.recovered.as_ref() == Some(&self.controller.current)
     }
     fn send(&mut self, job: Job) {
+        if let Job::Write(ticket, ..) = &job {
+            self.writing = Some(ticket.id);
+        }
         if let Err(error) = self.sender.send(job) {
             self.controller.flight = None;
             self.controller.recovery_flight = None;
@@ -584,7 +599,7 @@ impl FileUi {
     fn proceed(&mut self, transition: Transition) {
         match transition {
             Transition::New => self.effects.push(Effect::Replace {
-                document: Box::new(Engine::default().to_file()),
+                document: Box::new(new_project().to_file()),
                 path: None,
                 recovered: false,
             }),
@@ -1216,6 +1231,25 @@ fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {
             .map_err(|e| e.to_string())
     }
 }
+/// The project a launch without a file and File › New open: empty, with
+/// no parts, library or drafts, on the user's default rule profile
+/// (Settings). Without one the board has no profile: the Design rules
+/// panel asks for one, and routing, fills and production files refuse
+/// until it is chosen.
+pub(crate) fn new_project() -> Engine {
+    let Ok(profile) = pcbcraft_io::rule_profiles::for_new_board_from_env(None) else {
+        return Engine::default();
+    };
+    let mut project = pcbcraft_core::Project::default();
+    project.rules.profile = Some(profile);
+    Engine::from_file(pcbcraft_core::format::EditorFile {
+        version: pcbcraft_core::format::FILE_VERSION,
+        project,
+        drafts: Default::default(),
+    })
+    .unwrap_or_default()
+}
+
 fn home_directory() -> PathBuf {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))

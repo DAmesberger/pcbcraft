@@ -103,6 +103,20 @@ pub fn contrast(a: egui::Color32, b: egui::Color32) -> f32 {
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
+/// The height of the canvas's floating navigation bar (fit view and view
+/// options) and of the gap under it: the band at the canvas's bottom that
+/// a fitted view keeps clear.
+pub fn navigation_band() -> f32 {
+    let t = Tokens::get();
+    navigation_bar_height() + t.space_16
+}
+
+/// The navigation bar's own height: a button and its padding.
+pub fn navigation_bar_height() -> f32 {
+    let t = Tokens::get();
+    t.control_height + 2.0 * t.space_4
+}
+
 /// The canvas's one dim hint line at its bottom-left corner, `inset` from
 /// the edges. It ends before the centred canvas buttons (fit view and view
 /// options, at most two), with an ellipsis when cut; the full text stays in
@@ -121,5 +135,10 @@ pub fn canvas_hint(painter: &Painter, rect: Rect, inset: f32, text: &str) {
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     let galley = painter.layout_job(job);
     let at = egui::pos2(left, rect.bottom() - inset - galley.size().y);
+    // On the panel colour, as the canvas's hover tags are, so the line
+    // stays readable over copper or anything else drawn under it.
+    let back =
+        egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(t.space_4, t.space_2));
+    painter.rect_filled(back, t.radius_sm, t.panel);
     painter.galley(at, galley, t.text_dim);
 }

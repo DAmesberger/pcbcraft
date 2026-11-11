@@ -198,10 +198,16 @@ impl App {
                     self.engine.project(),
                     app,
                 ),
+                AppCommand::SelectAll if self.workspace == Workspace::Pcb => {
+                    self.pcb.can_select_all()
+                }
                 AppCommand::SelectAll if self.workspace != Workspace::Schematic => {
-                    Err("Select All works on the schematic sheet".into())
+                    Err("Select All works on the schematic sheet and the PCB".into())
                 }
                 AppCommand::SelectAll => self.schematic.can_select_all(),
+                AppCommand::ClearRecent if self.sources.recent_projects().is_empty() => {
+                    Err("No recent projects".into())
+                }
                 AppCommand::New
                 | AppCommand::Open
                 | AppCommand::Save
@@ -235,6 +241,13 @@ impl App {
                     .view_toggle_state(toggle)
                     .map(|_| ())
                     .map_err(str::to_owned)
+            }
+            Action::PcbDialog(_) => Ok(()),
+            Action::PcbArrange(how) => {
+                if self.workspace != Workspace::Pcb {
+                    return Err("Select parts on the PCB layout".into());
+                }
+                self.pcb.arrange(how).map(|_| ())
             }
             Action::Ribbon(workspace, event) => ribbons
                 .iter()
@@ -271,6 +284,14 @@ impl App {
                 self.enter(Workspace::Pcb);
                 self.pcb.select_layer(index);
             }
+            Action::PcbDialog(dialog) => {
+                self.enter(Workspace::Pcb);
+                self.pcb.open_dialog(dialog, self.engine.project());
+            }
+            Action::PcbArrange(how) => {
+                let operation = self.pcb.arrange(how).ok();
+                self.apply(ctx, crate::refusal::Origin::Command, operation);
+            }
             Action::Key => {}
         }
     }
@@ -304,16 +325,19 @@ impl App {
             AppCommand::Redo => self.history(true),
             AppCommand::Copy => {
                 if let Err(error) = self.schematic.copy_selection(ctx, &self.engine) {
-                    self.command_refused(error, true);
+                    self.command_refused(error, true, None);
                 }
             }
             AppCommand::Cut => match self.schematic.cut_selection(ctx, &self.engine) {
                 Ok(operation) => self.apply(ctx, crate::refusal::Origin::Command, operation),
-                Err(error) => self.command_refused(error, true),
+                Err(error) => self.command_refused(error, true, None),
             },
             AppCommand::Paste => {
                 let operation = self.schematic.paste_at_pointer(&self.engine);
                 self.apply(ctx, crate::refusal::Origin::Command, operation);
+            }
+            AppCommand::SelectAll if self.workspace == Workspace::Pcb => {
+                self.pcb.select_all(self.engine.project());
             }
             AppCommand::SelectAll => self.schematic.select_all(&self.engine),
             AppCommand::ToggleBrowser => self.toggle_browser(),
@@ -322,6 +346,7 @@ impl App {
             AppCommand::Settings => self.settings_window.toggle(),
             AppCommand::ConnectAssistants => self.live.toggle_window(),
             AppCommand::LibrarySources => self.sources.open_card(),
+            AppCommand::ClearRecent => self.sources.forget_projects(None),
             AppCommand::Workspace(workspace) => self.enter(workspace),
             AppCommand::FitView => self.fit_view(),
             AppCommand::TogglePcb3d => {
@@ -366,11 +391,7 @@ impl App {
             V::Right => S::Right,
             V::Iso => S::Iso,
             V::Selection => {
-                let items = self.scene.selected_items(
-                    self.pcb.selected_instance(),
-                    self.pcb.selected_track(),
-                    self.pcb.selected_via(),
-                );
+                let items = self.scene.selected_items(&self.pcb.selected());
                 if !self.scene.viewport.fit_items(&items) {
                     self.say(Level::Info, "Select something to frame");
                 }
@@ -430,7 +451,8 @@ impl App {
         }
     }
 
-    /// The command palette, while open. Runs before the workspace so its
+    /// The command palette, while open. Besides the registry's commands it
+    /// lists the recent projects a query names (File › Open Recent). Runs before the workspace so its
     /// keys (arrows, Enter, Esc) never reach a canvas.
     pub(super) fn command_palette(&mut self, ctx: &egui::Context) {
         if !self.palette.is_open() {
@@ -445,8 +467,10 @@ impl App {
         let recent = palette.recent().to_vec();
         // Commands about a copper layer list only the board's own layers.
         let stack = self.engine.project().stackup.layers();
+        let projects = self.recent_items();
         let event = palette.show(ctx, |query| {
-            self.registry
+            let mut rows: Vec<PaletteRow> = self
+                .registry
                 .search(query, &recent, &active)
                 .into_iter()
                 .filter(|command| command.stackup_layer().is_none_or(|l| l.on(&stack)))
@@ -465,9 +489,23 @@ impl App {
                         recent: recent.contains(&command.id),
                     }
                 })
-                .collect()
+                .collect();
+            rows.extend(recent_rows(&projects, query));
+            rows
         });
-        if let Some(PaletteEvent::Run(id)) = event {
+        if let Some(PaletteEvent::Run(id)) = &event
+            && let Some(index) = id.strip_prefix(OPEN_RECENT)
+        {
+            self.palette = palette;
+            let path = index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| projects.get(i))
+                .map(|p| p.path.clone());
+            if let Some(path) = path {
+                self.open_recent(path);
+            }
+        } else if let Some(PaletteEvent::Run(id)) = event {
             palette.used(&id);
             self.palette = palette;
             self.run_command(ctx, &id);
@@ -553,3 +591,40 @@ pub(super) fn annotate(registry: &Registry, workspace: Workspace, ribbon: &mut R
 #[cfg(test)]
 #[path = "command_dispatch_tests.rs"]
 mod tests;
+
+/// The id prefix of a palette row that opens the recent project at the
+/// index after it.
+const OPEN_RECENT: &str = "file.open-recent:";
+
+/// The palette rows of the recent projects whose row matches every word of
+/// `query` (an empty query lists none: they are not commands).
+pub(super) fn recent_rows(
+    projects: &[crate::recent_projects::RecentItem],
+    query: &str,
+) -> Vec<PaletteRow> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    projects
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| {
+            let text = format!("open recent project {}", p.label).to_lowercase();
+            words.iter().all(|w| text.contains(w.as_str()))
+        })
+        .map(|(index, p)| PaletteRow {
+            id: format!("{OPEN_RECENT}{index}"),
+            title: format!("Open recent: {}", p.label),
+            icon: "open",
+            detail: if p.available {
+                "File".to_owned()
+            } else {
+                "Removed when chosen".to_owned()
+            },
+            shortcut: None,
+            enabled: true,
+            recent: false,
+        })
+        .collect()
+}

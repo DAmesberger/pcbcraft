@@ -24,6 +24,7 @@ mod part_editor;
 mod pcb_editor;
 mod pin_mux;
 mod place_palette;
+mod recent_projects;
 mod refusal;
 mod resolve_parts;
 mod reveal;

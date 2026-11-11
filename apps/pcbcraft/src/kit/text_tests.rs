@@ -905,3 +905,27 @@ fn the_route_status_line_is_not_cut() {
     });
     assert!(shows_in_full(&output, line), "{:?}", cuts(&output));
 }
+
+/// F2: the canvas hint sits on the panel colour, a little wider than its
+/// text, so it stays readable over copper or any other drawing under it.
+#[test]
+fn the_canvas_hint_sits_on_a_panel_backdrop() -> Result<(), Box<dyn std::error::Error>> {
+    let t = Tokens::get();
+    let screen = Screen::new(egui::vec2(830.0, 200.0));
+    let line = "Select / move · Top copper";
+    let output = screen.run(vec![], |ui| {
+        canvas_hint(ui.painter(), ui.ctx().content_rect(), 16.0, line);
+    });
+    let text = painted(&output)
+        .into_iter()
+        .find(|(text, ..)| text == line)
+        .map(|(_, rect, ..)| rect)
+        .ok_or("the hint's text")?;
+    let backdrop = output.shapes.iter().find_map(|s| match &s.shape {
+        Shape::Rect(r) if r.fill == t.panel && r.rect.contains_rect(text) => Some(r.rect),
+        _ => None,
+    });
+    let backdrop = backdrop.ok_or("no panel backdrop behind the hint")?;
+    assert!(backdrop.width() > text.width(), "{backdrop:?} {text:?}");
+    Ok(())
+}

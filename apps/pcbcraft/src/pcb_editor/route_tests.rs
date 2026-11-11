@@ -25,6 +25,10 @@ impl Canvas {
         Self { ctx, time: 0.0 }
     }
 
+    pub(super) fn ctx(&self) -> &egui::Context {
+        &self.ctx
+    }
+
     pub(super) fn frame(
         &mut self,
         editor: &mut PcbEditor,
@@ -960,5 +964,85 @@ fn a_new_route_starts_on_the_clicked_copper_net() -> TestResult {
     let head = editor.route_start.ok_or("started")?;
     assert!((head[0] - 12.25).abs() < 1e-9, "{head:?} is on the track");
     assert!((head[1] - 4.0).abs() < 0.2, "{head:?} is at the click");
+    Ok(())
+}
+
+/// A route click beside the end of a track of the net on another layer
+/// does not end there: the step would stop on copper it cannot join
+/// without a via and leave its end joining nothing. It lands on the grid
+/// of the routing layer, as anywhere else.
+#[test]
+fn a_click_at_another_layers_track_end_lands_on_the_grid() -> TestResult {
+    let mut engine = Engine::demo()?;
+    let net = shared_net(&engine)?;
+    let bottom_end = [12.2, 11.2];
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route {
+            request: layout::RouteRequest {
+                net,
+                start: bottom_end,
+                end: [12.2, 14.0],
+                width: 0.25,
+                layer: CopperLayer::Bottom,
+            },
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    start(&mut canvas, &mut editor, &engine)?;
+    assert_eq!(editor.layer, CopperLayer::Top);
+    let step = canvas.click(&mut editor, &engine, [12.3, 11.3]);
+    let end = edits(&step)?.add.last().map(|r| r.end).ok_or("no legs")?;
+    assert!(!close(end, bottom_end), "ended on the Bottom track's end");
+    assert!(close(end, [12.5, 11.5]), "{end:?}");
+    Ok(())
+}
+
+/// The Track card's Ends read what each end joins in the copper graph: a
+/// pad by name, another track, or nothing ("open"). An end that joins the
+/// next segment of a route is not open.
+#[test]
+fn the_track_card_ends_name_what_each_end_joins() -> TestResult {
+    let mut engine = Engine::demo()?;
+    let net = shared_net(&engine)?;
+    let r1 = engine
+        .project()
+        .instance_by_designator("R1")
+        .map(|i| i.id)
+        .ok_or("R1")?;
+    let pad = layout::pads(engine.project())
+        .into_iter()
+        .find(|p| p.terminal.instance == r1 && p.terminal.terminal.0 == 2)
+        .map(|p| p.position)
+        .ok_or("R1 pad 2")?;
+    let corner = [pad[0], pad[1] + 4.0];
+    for (start, end) in [(pad, corner), (corner, [pad[0] + 3.0, pad[1] + 4.0])] {
+        engine.apply(
+            engine.revision(),
+            Operation::Layout(LayoutCommand::Route {
+                request: layout::RouteRequest {
+                    net,
+                    start,
+                    end,
+                    width: 0.25,
+                    layer: CopperLayer::Top,
+                },
+            }),
+        )?;
+    }
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    let project = engine.project();
+    let ends = |from: Point| {
+        project
+            .tracks
+            .iter()
+            .find(|t| close(t.start, from))
+            .map(|t| editor.track_ends(project, t))
+    };
+    assert_eq!(ends(pad).as_deref(), Some("R1 pad 2 → track"));
+    assert_eq!(ends(corner).as_deref(), Some("track → open"));
     Ok(())
 }

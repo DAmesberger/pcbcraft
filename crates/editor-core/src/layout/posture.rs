@@ -205,7 +205,7 @@ mod tests {
     /// on from it on the second.
     #[test]
     fn a_layer_change_step_routes_both_layers_through_the_via() {
-        let via = ViaRequest::through(7, [4.0, 0.0]);
+        let via = ViaRequest::fixture(7, [4.0, 0.0]);
         let edits = step(&StepRequest {
             net: 7,
             width: 0.25,

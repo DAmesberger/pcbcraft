@@ -28,6 +28,7 @@ mod clean;
 mod corner;
 pub mod drag;
 mod hull;
+pub mod reroute;
 mod shove;
 mod walk;
 mod world;
@@ -40,7 +41,7 @@ use self::world::{Ctx, Hit, Piece, State};
 use super::pair::{self, PairStep, PairStepRequest};
 use super::posture::{self, Posture, StepRequest};
 use super::{RouteEditSet, RouteRequest, ViaMove, ViaRequest};
-use crate::diagnostics::{Error, Result};
+use crate::diagnostics::{Error, ObjectRef, Result};
 use crate::geometry::{Point, distance};
 use crate::ids::Id;
 use crate::model::{CopperLayer, Project, Track, Via};
@@ -197,6 +198,10 @@ pub struct RoutePlan {
     pub undo: RouteEditSet,
     /// Why the head stopped short, when it did.
     pub blocked: Option<String>,
+    /// The track, via or pad `blocked` names, for the preview to point
+    /// at. Not part of the wire format.
+    #[serde(skip)]
+    pub blocker: Option<ObjectRef>,
     /// The head's path length over the straight line to where it ends
     /// (through the via, when the step places one): 1 for a straight
     /// step. Shoved copper does not count.
@@ -348,6 +353,7 @@ fn too_long(request: &RouteStepRequest, factor: f64, max: f64) -> RoutePlan {
             "route.detour: the path is {factor:.2} times the straight line; \
              the limit is {max:.2}"
         )),
+        blocker: None,
         detour_factor: factor,
         note: None,
     }
@@ -369,6 +375,7 @@ fn proposal(ctx: &Ctx<'_>, request: &RouteStepRequest) -> RoutePlan {
                 moved_vias: Vec::new(),
                 undo: RouteEditSet::default(),
                 blocked: None,
+                blocker: None,
                 detour_factor: Head::straight(request).detour_factor(request),
                 note: None,
             }
@@ -675,6 +682,7 @@ fn finish(
         } else {
             Some(stopped_by(ctx, state, blocker))
         },
+        blocker: blocking_object(ctx, state, reached, blocker),
         detour_factor: head.detour_factor(request),
         note: ctx.held_note(state),
     }
@@ -685,6 +693,20 @@ fn stopped_by(ctx: &Ctx<'_>, state: &State, blocker: Option<Hit>) -> String {
     ctx.held_note(state).unwrap_or_else(|| {
         blocker.map_or_else(|| "No room to route".to_owned(), |h| ctx.describe(&h))
     })
+}
+
+/// The object [`stopped_by`] names, when it names a board object rather
+/// than a held pair, an edge or a keepout.
+fn blocking_object(
+    ctx: &Ctx<'_>,
+    state: &State,
+    reached: bool,
+    blocker: Option<Hit>,
+) -> Option<ObjectRef> {
+    if reached || ctx.held_note(state).is_some() {
+        return None;
+    }
+    ctx.object(&blocker?)
 }
 
 /// A pair step with its shove: the step (head and edits, the shoved
@@ -698,6 +720,8 @@ pub struct PairPlan {
     pub moved_vias: Vec<Id>,
     pub undo: RouteEditSet,
     pub blocked: Option<String>,
+    /// The track, via or pad `blocked` names.
+    pub blocker: Option<ObjectRef>,
     /// Another pair in the way could not be shoved as one unit.
     pub note: Option<String>,
 }
@@ -769,6 +793,7 @@ pub fn pair_plan(
             } else {
                 Some(stopped_by(&ctx, state, blocker))
             },
+            blocker: blocking_object(&ctx, state, reached, blocker),
             note: ctx.held_note(state),
         }
     };

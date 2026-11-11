@@ -9,6 +9,7 @@
 use super::grid::BoundsGrid;
 use super::limits::BoardRules;
 use super::{CopperRing, copper};
+use crate::diagnostics::ObjectRef;
 use crate::geometry::Point;
 use crate::ids::Id;
 use crate::model::{CopperLayer, Project, Track};
@@ -51,6 +52,8 @@ pub struct Obstacles {
     reach: f64,
     /// Pad labels for messages, by index into `items`.
     labels: Vec<String>,
+    /// What each item is in the document, by index into `items`.
+    objects: Vec<ObjectRef>,
 }
 
 impl Obstacles {
@@ -59,6 +62,7 @@ impl Obstacles {
         let layers = project.stackup.layers();
         let mut items = Vec::new();
         let mut labels = Vec::new();
+        let mut objects = Vec::new();
         for track in &project.tracks {
             items.push(Obstacle {
                 net: track.net,
@@ -67,6 +71,7 @@ impl Obstacles {
                 ring: CopperRing::of_track(track),
             });
             labels.push(format!("a track on {}", project.net_name(track.net)));
+            objects.push(ObjectRef::Track { id: track.id });
         }
         for via in &project.vias {
             items.push(Obstacle {
@@ -80,6 +85,7 @@ impl Obstacles {
                 ring: CopperRing::of_via(via),
             });
             labels.push(format!("a via on {}", project.net_name(via.net)));
+            objects.push(ObjectRef::Via { id: via.id });
         }
         let names = super::pad_labels(project);
         for (index, pad) in super::pads(project).into_iter().enumerate() {
@@ -94,6 +100,10 @@ impl Obstacles {
                 "{designator} pad {label} ({})",
                 project.net_name(pad.net)
             ));
+            objects.push(ObjectRef::Pad {
+                instance: pad.instance,
+                pad: pad.pad,
+            });
             items.push(Obstacle {
                 net: pad.net,
                 kind: ObstacleKind::Pad(pad.instance, index),
@@ -108,6 +118,7 @@ impl Obstacles {
             grid,
             reach,
             labels,
+            objects,
         }
     }
 
@@ -124,6 +135,11 @@ impl Obstacles {
     /// The message label of obstacle `k` ("a via on GND", "R1 pad 2 (VCC)").
     pub(crate) fn label(&self, k: usize) -> &str {
         self.labels.get(k).map_or("copper", String::as_str)
+    }
+
+    /// The document object obstacle `k` is (a track, via or pad).
+    pub(crate) fn object(&self, k: usize) -> Option<ObjectRef> {
+        self.objects.get(k).copied()
     }
 
     /// Every other-net obstacle on `layer` closer to a track of `net`

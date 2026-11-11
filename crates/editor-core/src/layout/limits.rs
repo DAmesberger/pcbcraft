@@ -285,7 +285,10 @@ mod tests {
     /// every object pair and class combination.
     #[test]
     fn clearance_lookup_matches_the_rules_resolution() {
-        let mut project = Project::default();
+        let mut project = Project {
+            rules: crate::rules::fixtures::rules().unwrap_or_default(),
+            ..Project::default()
+        };
         for (id, name) in [(1, "GND"), (2, "VBUS"), (3, "SDA")] {
             project.nets.push(crate::model::Net {
                 id,
@@ -359,7 +362,7 @@ mod tests {
         let need = limits.clearance_need(CopperObject::Track, Some(1), CopperObject::Pad, Some(3));
         assert_eq!(
             need.text(),
-            "needs 0.2 mm (Pcbcraft default: track to pad clearance)"
+            "needs 0.2 mm (Test prototype: track to pad clearance)"
         );
     }
 }

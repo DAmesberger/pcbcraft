@@ -179,6 +179,11 @@ impl App {
                     }
                     ui.add_space(t.space_8);
                     self.document_tab(ui);
+                    // A save the system holds (a permission prompt, a slow
+                    // disk) shows that it runs, as the 3D view's update does.
+                    if self.files.saving() {
+                        kit::status_chip(ui, None, "Saving\u{2026}");
+                    }
                     self.live_indicator(ui);
                     let (_, drag) = ui.allocate_exact_size(
                         vec2(ui.available_width().max(0.0), APP_BAR_HEIGHT - t.space_8),
@@ -216,16 +221,42 @@ impl App {
     /// keys, groups apart. Each row runs its registry command, as the menu
     /// bar and the key do.
     fn file_menu(&mut self, ui: &mut egui::Ui) {
+        use crate::menu_bar::{self, CLEAR_RECENT, Entry, IN_WINDOW_FILE, RECENT_TITLE};
         let ctx = ui.ctx().clone();
         let file = bar_text_button(ui, "File");
-        let rows = self.menu_now(&ctx, |now| {
-            crate::menu_bar::rows(now, crate::menu_bar::IN_WINDOW_FILE)
+        // The rows before and after Open Recent, which lists the recent
+        // projects, then Clear Menu.
+        let split = IN_WINDOW_FILE
+            .iter()
+            .position(|e| *e == Entry::Recent)
+            .unwrap_or(IN_WINDOW_FILE.len());
+        let (head, tail) = IN_WINDOW_FILE.split_at(split);
+        let (head, clear, tail) = self.menu_now(&ctx, |now| {
+            (
+                menu_bar::rows(now, head),
+                menu_bar::rows(now, &[CLEAR_RECENT]),
+                menu_bar::rows(now, tail),
+            )
         });
+        let projects = self.recent_items();
         let mut chosen = None;
+        let mut open = None;
         Container::new(&ctx, Surface::Popup)
             .menu(&file)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-            .show(|ui| chosen = crate::menu_bar::show_rows(ui, &rows));
+            .show(|ui| {
+                chosen = menu_bar::show_rows(ui, &head);
+                if split < IN_WINDOW_FILE.len() {
+                    ui.menu_button(RECENT_TITLE, |ui| {
+                        open = recent_menu(ui, &projects);
+                        chosen = chosen.or(menu_bar::show_rows(ui, &clear));
+                    });
+                }
+                chosen = chosen.or(menu_bar::show_rows(ui, &tail));
+            });
+        if let Some(path) = open {
+            self.open_recent(path);
+        }
         if let Some(id) = chosen {
             self.run_command(&ctx, id);
         }
@@ -261,8 +292,12 @@ impl App {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(layout.canvas), |ui| {
                     ui.set_clip_rect(layout.canvas);
                     self.canvas(ui);
-                    self.issues
+                    let badge = self
+                        .issues
                         .badge(ui, layout.canvas, &self.engine, self.workspace);
+                    if let Some((area, failed)) = self.updating.take() {
+                        super::updating_chip(ui, area, badge, failed.as_deref());
+                    }
                     let selection = self.selection();
                     let shown = self.issues.pill(
                         ui,
@@ -360,7 +395,7 @@ impl App {
         );
         if let Some(slot) = slot {
             if slot.show_issues {
-                self.issues.show_selection();
+                self.issues.show_slot(slot.whole);
             }
             // Editors mark a field or dialog origin themselves; the rest
             // are commands.
@@ -390,22 +425,32 @@ impl App {
     /// scope.
     fn selection(&self) -> Vec<pcbcraft_core::ObjectRef> {
         match self.workspace {
-            Workspace::Part => {
-                issues::selection(self.workspace, self.part.lineage(), None, None, None)
-            }
+            Workspace::Part => issues::selection(
+                self.workspace,
+                self.part.lineage(),
+                None,
+                None,
+                None,
+                None,
+                vec![],
+            ),
             Workspace::Schematic => issues::selection(
                 self.workspace,
                 None,
                 self.schematic.selected_instance(),
                 None,
+                None,
                 self.schematic.selected_net(&self.engine),
+                self.schematic.selected_item_refs(self.engine.project()),
             ),
             Workspace::Pcb => issues::selection(
                 self.workspace,
                 None,
                 self.pcb.selected_instance(),
                 self.pcb.selected_track(),
+                self.pcb.selected_via(),
                 self.pcb.highlighted_net(),
+                vec![],
             ),
         }
     }
@@ -589,15 +634,15 @@ impl App {
         let three_d = self.model_key().is_some();
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
         let pcb_view = self.workspace == Workspace::Pcb && self.pcb.has_view_menu();
-        let buttons = 1.0 + f32::from(u8::from(pcb_view)) + 2.0 * f32::from(u8::from(pcb_3d));
+        let buttons = 1.0 + 2.0 * f32::from(u8::from(pcb_view)) + 2.0 * f32::from(u8::from(pcb_3d));
         let size = vec2(
             buttons * t.control_height + (buttons + 1.0) * t.space_4,
-            t.control_height + 2.0 * t.space_4,
+            crate::kit::navigation_bar_height(),
         );
         let rect = Rect::from_center_size(
             pos2(
                 canvas.center().x,
-                canvas.bottom() - t.space_16 - size.y / 2.0,
+                canvas.bottom() - crate::kit::navigation_band() + size.y / 2.0,
             ),
             size,
         );
@@ -638,6 +683,22 @@ impl App {
                 .align(egui::RectAlign::TOP_START)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| self.pcb.view_menu(ui));
+            // The selection filter beside it, outlined while it leaves a
+            // kind out, as a set layer filter is.
+            let filter = shell::icon_button(&mut child, "select", "Selection filter", true);
+            if self.pcb.filter_narrows() {
+                ui.painter().rect_stroke(
+                    filter.rect,
+                    t.radius_sm,
+                    egui::Stroke::new(1.0, t.accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            Container::new(ui.ctx(), Surface::Popup)
+                .menu(&filter)
+                .align(egui::RectAlign::TOP_START)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| self.pcb.filter_menu(ui));
         }
         if pcb_3d {
             // Solidcraft's Realistic look toggle (its navigation bar's
@@ -708,6 +769,29 @@ fn bar_icon(ui: &mut egui::Ui, icon: &str, label: &str, enabled: bool) -> egui::
 }
 
 /// A text button on the application bar (File), in the bar's text token.
+/// Open Recent's project rows, as the File menu's rows; an unavailable
+/// project says so (choosing it removes it). Returns the project clicked.
+pub(super) fn recent_menu(
+    ui: &mut egui::Ui,
+    projects: &[crate::recent_projects::RecentItem],
+) -> Option<std::path::PathBuf> {
+    use solidcraft_ui_egui::ui_kit::Item;
+    use solidcraft_ui_egui::ui_kit::menu::list_row;
+    ui.set_width(crate::menu_bar::MENU_WIDTH);
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let mut chosen = None;
+    for (index, project) in projects.iter().enumerate() {
+        let item = Item::action(&format!("file.open-recent.{index}"), &project.label, "open");
+        if list_row(ui, &item).is_some() {
+            chosen = Some(project.path.clone());
+        }
+    }
+    if !projects.is_empty() {
+        list_row(ui, &Item::sep());
+    }
+    chosen
+}
+
 fn bar_text_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let t = Tokens::get();
     let galley = ui.painter().layout_no_wrap(

@@ -39,6 +39,10 @@ impl PartEditor {
         let binding = &mut set.binding;
         let terminals = &mut set.package.terminals;
         let mut remapped = Vec::new();
+        let show_all_id = ui.scope_id().with("mapping-terminals-all");
+        let show_all = ui
+            .data(|d| d.get_temp::<bool>(show_all_id))
+            .unwrap_or(false);
         kit::section(
             ui,
             "mapping",
@@ -46,10 +50,16 @@ impl PartEditor {
             true,
             Some(count),
             |ui| {
-                kit::table(
+                let max = if show_all {
+                    terminals.len()
+                } else {
+                    kit::LIST_MAX_ROWS
+                };
+                let table = kit::table_bounded(
                     ui,
                     &COLUMNS,
                     terminals.len(),
+                    max,
                     |ui, row, column| {
                         let Some(physical) = terminals.get_mut(row) else {
                             return;
@@ -78,6 +88,9 @@ impl PartEditor {
                     },
                     None,
                 );
+                if table.show_all {
+                    ui.data_mut(|d| d.insert_temp(show_all_id, true));
+                }
                 kit::hint(
                     ui,
                     "Mapped explicitly, never by name",

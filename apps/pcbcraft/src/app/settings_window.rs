@@ -4,7 +4,10 @@
 //! reveal overlays all read, and the key-reveal options. Changes apply at
 //! once and are kept per user (`pcbcraft_io::settings::KeyboardSettings`).
 //! The Production section's "Require a reason to waive errors" sets the
-//! engine's `require_waiver_reason` (kept in `UserSettings`).
+//! engine's `require_waiver_reason` (kept in `UserSettings`). The Rules
+//! section's "Default rule profile" is the profile library entry a new
+//! board starts with (`UserSettings::default_rule_profile`); with none, a
+//! new board has no profile until one is chosen.
 //!
 //! A key is recorded by clicking its cap and pressing the new chord (Esc
 //! cancels). A chord another command already takes where both apply (the
@@ -49,6 +52,9 @@ pub(crate) struct SettingsWindow {
     show_all: std::collections::BTreeSet<Context>,
     /// The last refusal, shown once at the top.
     refusal: Option<String>,
+    /// The Default rule profile choices, read from the profile library
+    /// when the window opens.
+    profiles: Option<Vec<(Option<String>, String)>>,
 }
 
 impl SettingsWindow {
@@ -58,6 +64,7 @@ impl SettingsWindow {
     }
     pub fn toggle(&mut self) {
         self.open = !self.open;
+        self.profiles = None;
         if !self.open {
             self.recording = None;
             self.pending = None;
@@ -180,24 +187,37 @@ impl SettingsWindow {
     }
 
     /// Draw the window while open. Returns what to do with the keymap,
-    /// whether the reveal settings changed and whether the waiver-reason
-    /// setting changed.
+    /// whether the reveal settings changed, whether the waiver-reason
+    /// setting changed and whether the default rule profile changed.
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         registry: &Registry,
         reveal: &mut RevealSettings,
         require_waiver_reason: &mut bool,
+        default_profile: &mut Option<String>,
         unapplied: &[Unapplied],
-    ) -> (Option<KeyAction>, bool, bool) {
+    ) -> (Option<KeyAction>, bool, bool, bool) {
         if !self.open {
-            return (None, false, false);
+            return (None, false, false, false);
         }
         let mut action = None;
         let mut reveal_changed = false;
         let mut waiver_changed = false;
+        let mut profile_changed = false;
+        let profiles = self.profiles.get_or_insert_with(profile_choices).clone();
         let closed = ui_kit::Window::new(egui::Id::unique("app-settings"), "settings", "Settings")
             .show_body(ctx, |ui| {
+                kit::section(ui, "settings-rules", "Rules", true, None, |ui| {
+                    profile_changed =
+                        kit::choice_row(ui, "Default rule profile", default_profile, &profiles);
+                    kit::hint(
+                        ui,
+                        "A new board starts with this profile",
+                        "Profiles are files with a stated source; import one in a board's \
+                         Design rules (Your profiles › Import…).",
+                    );
+                });
                 kit::section(ui, "settings-production", "Production", true, None, |ui| {
                     waiver_changed = kit::check_row(
                         ui,
@@ -217,7 +237,7 @@ impl SettingsWindow {
             self.recording = None;
             self.pending = None;
         }
-        (action, reveal_changed, waiver_changed)
+        (action, reveal_changed, waiver_changed, profile_changed)
     }
 
     fn keyboard(
@@ -485,13 +505,18 @@ impl super::App {
     pub(super) fn settings(&mut self, ctx: &egui::Context) {
         let mut keyboard = self.sources.keyboard().clone();
         let mut require_reason = self.sources.require_waiver_reason();
-        let (action, reveal_changed, waiver_changed) = self.settings_window.show(
+        let mut default_profile = self.sources.default_rule_profile();
+        let (action, reveal_changed, waiver_changed, profile_changed) = self.settings_window.show(
             ctx,
             &self.registry,
             &mut keyboard.reveal,
             &mut require_reason,
+            &mut default_profile,
             &self.keymap_problems,
         );
+        if profile_changed {
+            self.sources.set_default_rule_profile(default_profile);
+        }
         if reveal_changed && let Err(reason) = self.sources.set_keyboard(keyboard) {
             self.say(crate::kit::severity::Level::Warning, reason);
         }
@@ -523,6 +548,18 @@ impl super::App {
             self.say(crate::kit::severity::Level::Warning, reason);
         }
     }
+}
+
+/// The Default rule profile choices: none, then every readable profile of
+/// the user's library by name.
+fn profile_choices() -> Vec<(Option<String>, String)> {
+    let mut out = vec![(None, "None: choose for each board".to_owned())];
+    if let Ok(dirs) = pcbcraft_io::settings::UserDirs::from_env()
+        && let Ok(listing) = pcbcraft_io::rule_profiles::ProfileLibrary::from_dirs(&dirs).list()
+    {
+        out.extend(listing.profiles.into_iter().map(|p| (Some(p.id), p.name)));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -586,7 +623,14 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    window.show(ui.ctx(), &registry, &mut reveal, &mut reason, &[]);
+                    window.show(
+                        ui.ctx(),
+                        &registry,
+                        &mut reveal,
+                        &mut reason,
+                        &mut None,
+                        &[],
+                    );
                 },
             );
             out.textures_delta.clear();

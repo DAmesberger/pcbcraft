@@ -20,6 +20,7 @@ use crate::keys;
 use egui::{Shape, Stroke};
 use pcbcraft_core::{
     CopperLayer, Id, Layer, Operation, Point, Project,
+    diagnostics::ObjectRef,
     layout::{
         self, LayoutCommand, RouteEditSet, ViaRequest,
         pair::PairStepRequest,
@@ -175,6 +176,14 @@ impl Planned {
         match self {
             Planned::Single(plan) => plan.note.as_deref(),
             Planned::Pair(plan) => plan.note.as_deref(),
+        }
+    }
+
+    /// The track, via or pad the head stopped at, when it stopped short.
+    pub(super) fn blocker(&self) -> Option<ObjectRef> {
+        match self {
+            Planned::Single(plan) => plan.blocker,
+            Planned::Pair(plan) => plan.blocker,
         }
     }
 
@@ -607,6 +616,47 @@ impl PcbEditor {
                 note: plan.note(),
             },
         );
+        if let Some(outline) = plan
+            .blocker()
+            .and_then(|blocker| self.blocker_outline(project, blocker))
+        {
+            let t = solidcraft_theme::Tokens::get();
+            let points = outline.into_iter().map(|p| view.screen(p)).collect();
+            painter.add(Shape::closed_line(points, Stroke::new(2.0, t.warning)));
+        }
+    }
+
+    /// The board outline of the track, via or pad a route step stopped at,
+    /// ringed in the warning colour with the "Blocked by" refusal so the
+    /// blocker shows even on a dim layer.
+    pub(super) fn blocker_outline(
+        &self,
+        project: &Project,
+        blocker: ObjectRef,
+    ) -> Option<Vec<Point>> {
+        let outline = match blocker {
+            ObjectRef::Track { id } => {
+                layout::track_outline(project.tracks.iter().find(|t| t.id == id)?)
+            }
+            ObjectRef::Via { id } => {
+                let via = project.via(id)?;
+                let r = via.diameter / 2.0;
+                (0..32)
+                    .map(|i| {
+                        let a = f64::from(i) * std::f64::consts::TAU / 32.0;
+                        [via.position[0] + r * a.cos(), via.position[1] + r * a.sin()]
+                    })
+                    .collect()
+            }
+            ObjectRef::Pad { instance, pad } => self
+                .board_pads
+                .iter()
+                .find(|b| b.placed.instance == instance && b.placed.pad.id == pad)?
+                .outline
+                .flatten(0.05),
+            _ => return None,
+        };
+        (outline.len() > 2).then_some(outline)
     }
 
     /// A plan's copper over the board: what it adds in `preview_add`, the
@@ -737,6 +787,13 @@ impl PcbEditor {
         }
     }
 
+    /// Whether the vias the tools place are tented: the tool's own choice,
+    /// else the rules' `tent vias`.
+    pub(super) fn via_tented(&self, project: &Project) -> bool {
+        self.via_tented
+            .unwrap_or_else(|| project.rules.effective().mask.tent_vias)
+    }
+
     /// The via size a layer change places on the routed net: the size
     /// chosen while routing it, else its class's.
     pub(super) fn route_via_size(&self, project: &Project) -> (f64, f64) {
@@ -764,8 +821,10 @@ impl PcbEditor {
                     ViaRequest {
                         drill,
                         diameter,
-                        tented: self.via_tented,
-                        ..ViaRequest::through(net, at)
+                        tented: self.via_tented(project),
+                        net,
+                        position: at,
+                        span: pcbcraft_core::model::ViaSpan::Through,
                     },
                     self.layer,
                 )
@@ -825,7 +884,7 @@ impl PcbEditor {
             .map(|p| (p.center(), p.net));
         let destination = snapped
             .map(|(c, _)| c)
-            .unwrap_or_else(|| self.route_point(project, at, scale));
+            .unwrap_or_else(|| self.route_destination(project, at, scale));
         let net = self.net?;
         self.follow_class_width(project);
         let finish = snapped.is_some_and(|(_, n)| n == Some(net))
@@ -1126,6 +1185,7 @@ mod tests {
             moved_vias: vec![],
             undo: RouteEditSet::default(),
             blocked: None,
+            blocker: None,
             detour_factor: 1.0,
             note: None,
         };
@@ -1206,6 +1266,7 @@ mod tests {
             moved_vias: vec![],
             undo: RouteEditSet::default(),
             blocked: None,
+            blocker: None,
             detour_factor: 1.0,
             note: None,
         };

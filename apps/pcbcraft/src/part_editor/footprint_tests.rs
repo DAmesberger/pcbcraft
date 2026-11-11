@@ -1042,6 +1042,47 @@ fn the_mapping_card_is_one_table() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// R6-8: a long Mapping table shows eight rows, "8 of n" and "Show all ›"
+/// (the Footprint card's terminal list), not a scroll box without a count;
+/// Show all lists every row.
+#[test]
+fn a_long_mapping_table_is_bounded_with_show_all() -> Result<(), Box<dyn std::error::Error>> {
+    let ctx = egui::Context::default();
+    let engine = Engine::demo()?;
+    let mut editor = footprint_editor(&ctx, &engine)?;
+    let set = editor.draft.as_mut().ok_or("draft")?;
+    let first = set
+        .package
+        .terminals
+        .iter()
+        .map(|t| t.id.0)
+        .max()
+        .unwrap_or(0);
+    for n in 1..=12u32 {
+        set.package
+            .terminals
+            .push(pcbcraft_core::library::PackageTerminal {
+                id: pcbcraft_core::PackageTerminalId(first + n),
+                designation: format!("X{n}"),
+            });
+    }
+    let total = set.package.terminals.len();
+    editor.on_tab("mapping");
+    let (_, shown) = inspector_op(&mut editor, &engine, &ctx, vec![]);
+    let texts = texts_of(&shown);
+    let count = format!("8 of {total}");
+    for text in [count.as_str(), "Show all \u{203a}"] {
+        assert!(texts.contains(&text), "{text} in {texts:?}");
+    }
+    assert!(!texts.contains(&"X12"), "{texts:?}");
+    press(&mut editor, &engine, &ctx, "Show all \u{203a}")?;
+    let (_, shown) = inspector_op(&mut editor, &engine, &ctx, vec![]);
+    let texts = texts_of(&shown);
+    assert!(texts.contains(&"X12"), "{texts:?}");
+    assert!(!texts.contains(&count.as_str()), "{texts:?}");
+    Ok(())
+}
+
 /// Locate on the component's tabs: a pad shows the Footprint tab with it
 /// selected, a package terminal shows the Mapping tab with its terminal,
 /// the package itself the 3D tab; others are not this editor's.

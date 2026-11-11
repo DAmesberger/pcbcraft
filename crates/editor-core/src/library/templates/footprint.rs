@@ -324,8 +324,9 @@ mod tests {
     fn lint_flags_pads_outside_the_courtyard_and_silk_over_copper() -> Result<()> {
         let (mut footprint, package) = chip();
         add_standard_graphics(&mut footprint, &package)?;
+        let rules = crate::rules::fixtures::rules()?;
         let codes = |f: &FootprintDefinition| -> Vec<String> {
-            f.lint(crate::ids::DefinitionId(1))
+            f.lint_with(crate::ids::DefinitionId(1), &rules)
                 .into_iter()
                 .map(|f| f.code)
                 .collect()
@@ -384,8 +385,9 @@ mod tests {
         use crate::library::graphics::{Fill, Item};
         let (mut footprint, package) = chip();
         add_standard_graphics(&mut footprint, &package)?;
+        let rules = crate::rules::fixtures::rules()?;
         let codes = |f: &FootprintDefinition| -> Vec<String> {
-            f.lint(crate::ids::DefinitionId(1))
+            f.lint_with(crate::ids::DefinitionId(1), &rules)
                 .into_iter()
                 .map(|f| f.code)
                 .collect()

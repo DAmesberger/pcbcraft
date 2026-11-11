@@ -1892,8 +1892,9 @@ fn qfn48_corner_lands_keep_the_mask_web() -> Fallible<()> {
         next_local: 50,
         ..Default::default()
     };
+    let rules = crate::rules::fixtures::rules()?;
     let webs = |f: &crate::library::FootprintDefinition| {
-        f.lint(DefinitionId(1))
+        f.lint_with(DefinitionId(1), &rules)
             .iter()
             .filter(|f| f.code == "footprint.mask_web")
             .count()

@@ -20,6 +20,16 @@ use solidcraft_ui_egui::{ui_kit, ui_kit::Button};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
+/// What a person reads for an assistant's request: its catalog title
+/// ("Add a via"), never its wire name (`layout.add_via`).
+fn spoken(subject: &'static str) -> &'static str {
+    pcbcraft_core::Operation::titles()
+        .chain(pcbcraft_core::Query::TITLES)
+        .chain(pcbcraft_automation::Request::TITLES)
+        .find(|(name, _)| *name == subject)
+        .map_or("a change", |(_, title)| *title)
+}
+
 /// Requests answered per frame, so a flood cannot starve drawing.
 const PER_FRAME: usize = 16;
 /// Assistant edits remembered for labelling an undo (the engine's depth).
@@ -53,8 +63,8 @@ pub(super) struct LiveMcp {
     open: bool,
     /// Why turning on failed, shown in the window.
     failure: Option<String>,
-    /// Revisions assistant edits made, with what they ran, newest last.
-    edits: VecDeque<(u64, &'static str)>,
+    /// Revisions assistant edits made, newest last.
+    edits: VecDeque<u64>,
     place: Place,
 }
 
@@ -245,6 +255,12 @@ impl App {
     /// change is the assistant's: a toast with Undo, and a Messages line.
     fn run_live(&mut self, request: ControlRequest, admitted: &Admitted) {
         let before = self.engine.revision();
+        // An undo or redo says the step it took, as the person's own does.
+        let history = match admitted.subject() {
+            "project.undo" => Some(("AI assistant undid", self.engine.undo_step())),
+            "project.redo" => Some(("AI assistant redid", self.engine.redo_step())),
+            _ => None,
+        };
         let path = self.files.path().map(std::path::Path::to_path_buf);
         let reply = self
             .live
@@ -254,27 +270,29 @@ impl App {
             });
         let _ = request.reply.send(reply);
         let now = self.engine.revision();
-        if now != before {
-            self.live.edits.push_back((now, admitted.subject()));
+        if now != before
+            && let Some((done, step)) = history
+        {
+            if let Some(step) = step {
+                self.say_step(done, step);
+            }
+        } else if now != before {
+            let subject = spoken(admitted.subject());
+            self.live.edits.push_back(now);
             while self.live.edits.len() > REMEMBERED {
                 self.live.edits.pop_front();
             }
             self.say_with(
                 Level::Info,
-                format!("AI assistant edit: {}", admitted.subject()),
+                format!("AI assistant edit: {subject}"),
                 vec![ToastAction::Undo],
             );
         }
     }
 
-    /// The assistant edit an undo at the current revision takes back.
-    pub(super) fn live_edit_at(&self, revision: u64) -> Option<&'static str> {
-        self.live
-            .edits
-            .iter()
-            .rev()
-            .find(|(at, _)| *at == revision)
-            .map(|(_, subject)| *subject)
+    /// Whether an undo at `revision` takes back an assistant edit.
+    pub(super) fn live_edit_at(&self, revision: u64) -> bool {
+        self.live.edits.contains(&revision)
     }
 
     /// The Connect AI assistants window and a held request's question.
@@ -302,7 +320,7 @@ impl App {
         )
         .show_body(ctx, |ui| {
             kit::section(ui, "live-access", "Access", true, None, |ui| {
-                kit::check_row(ui, "Let AI assistants edit this project", &mut on);
+                kit::check(ui, "Let AI assistants edit this project", &mut on);
                 if let Some(failure) = &failure {
                     kit::refusal(ui, failure);
                 }

@@ -73,11 +73,11 @@ struct Coupled {
 }
 
 impl Coupled {
-    fn of(width_a: f64, width_b: f64, gap: f64) -> Self {
+    fn of(width_a: f64, width_b: f64, gap: f64, tolerance: f64) -> Self {
         Self {
             width: 0.5 * (width_a + width_b),
             gap,
-            tolerance: gap_tolerance(gap),
+            tolerance,
         }
     }
 
@@ -226,8 +226,9 @@ fn partner_line(
     line: &Line,
     here: [Point; 2],
     gap: f64,
+    tolerance: f64,
 ) -> Option<usize> {
-    let coupled = |width: f64| Coupled::of(line.width, width, gap);
+    let coupled = |width: f64| Coupled::of(line.width, width, gap, tolerance);
     if let Some(m) = state.lines.iter().position(|l| {
         l.net == partner
             && l.layer == line.layer
@@ -287,12 +288,13 @@ pub(super) fn push(
         return None;
     }
     let (_, gap) = impedance::pair_width_gap(ctx.project, pair.positive, line.layer);
+    let tolerance = gap_tolerance(ctx.project, pair.positive, gap);
     let a = simplify(&line.points);
     let seg = nearest_segment(&a, pusher)?;
     let here = segment(&a, seg)?;
-    let m = partner_line(ctx, state, partner, &line, here, gap)?;
+    let m = partner_line(ctx, state, partner, &line, here, gap, tolerance)?;
     let other = state.lines.get(m)?.clone();
-    let coupled = Coupled::of(line.width, other.width, gap);
+    let coupled = Coupled::of(line.width, other.width, gap, tolerance);
     let mut b = simplify(&other.points);
     let reversed = !(0..b.len().saturating_sub(1)).any(|t| {
         segment(&b, t).is_some_and(|there| {

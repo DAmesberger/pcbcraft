@@ -260,9 +260,10 @@ fn no_internal_command_names_reach_a_person() -> Fallible {
     for file in files {
         let name = file.to_string_lossy();
         // The style checker's own list and its test name them on purpose.
-        if name.ends_with("issues/style.rs")
-            || name.ends_with("issues/tests.rs")
-            || name.ends_with("flow_tests.rs")
+        // Matched by path components, which Windows separates with `\`.
+        if file.ends_with("issues/style.rs")
+            || file.ends_with("issues/tests.rs")
+            || file.ends_with("flow_tests.rs")
         {
             continue;
         }
@@ -276,6 +277,104 @@ fn no_internal_command_names_reach_a_person() -> Fallible {
         }
     }
     assert_eq!(found, Vec::<String>::new());
+    Ok(())
+}
+
+/// `key` let go, so its next press is a new press.
+fn release(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers,
+    }
+}
+
+/// The toasts shown now, oldest first.
+fn toasts(app: &App) -> Vec<String> {
+    app.toasts.items().map(|t| t.text.clone()).collect()
+}
+
+/// ⌘Z in PCB 3D that undoes a schematic step says so, by the step's
+/// title and workspace: it no longer looks as if nothing happened.
+#[test]
+fn undo_in_pcb_names_the_schematic_step_it_took_back() -> Fallible {
+    let mut h = Harness::new()?;
+    h.app.workspace = Workspace::Pcb;
+    h.app.pcb.set_3d(true);
+    h.frame(vec![]);
+    h.frame(vec![press(egui::Key::Z, egui::Modifiers::COMMAND)]);
+    assert!(
+        h.app.engine.project().label(h.label).is_none(),
+        "not undone"
+    );
+    let text = "Undid: Place a label · Schematic";
+    assert_eq!(toasts(&h.app), [text]);
+    assert!(said(&h.app).contains(text), "{}", said(&h.app));
+    Ok(())
+}
+
+/// ⇧⌘Z says what it applied again.
+#[test]
+fn redo_names_the_step_it_applied_again() -> Fallible {
+    let mut h = Harness::new()?;
+    h.app.workspace = Workspace::Pcb;
+    h.frame(vec![]);
+    h.frame(vec![
+        press(egui::Key::Z, egui::Modifiers::COMMAND),
+        release(egui::Key::Z, egui::Modifiers::COMMAND),
+    ]);
+    let shift_cmd = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+    h.frame(vec![press(egui::Key::Z, shift_cmd)]);
+    assert!(
+        h.app.engine.project().label(h.label).is_some(),
+        "not redone"
+    );
+    assert_eq!(toasts(&h.app), ["Redid: Place a label · Schematic"]);
+    Ok(())
+}
+
+/// ⌘Z after ⌘Z undoes step after step with one toast, which names the
+/// latest step; Messages keeps each. (The app acts on presses, not key
+/// repeats, so a key held down undoes once.)
+#[test]
+fn repeated_undo_replaces_its_toast() -> Fallible {
+    let mut h = Harness::new()?;
+    h.app.engine.apply(
+        h.app.engine.revision(),
+        Operation::Schematic(SchematicCommand::MoveLabel {
+            label: h.label,
+            position: crate::schematic_editor::pt([110.0, -100.0]),
+        }),
+    )?;
+    h.frame(vec![]);
+    let cmd = egui::Modifiers::COMMAND;
+    h.frame(vec![press(egui::Key::Z, cmd), release(egui::Key::Z, cmd)]);
+    assert_eq!(toasts(&h.app), ["Undid: Move a label · Schematic"]);
+    h.frame(vec![press(egui::Key::Z, cmd)]);
+    assert_eq!(toasts(&h.app), ["Undid: Place a label · Schematic"]);
+    let said = said(&h.app);
+    assert!(said.contains("Undid: Move a label · Schematic"), "{said}");
+    Ok(())
+}
+
+/// The toast reads the history's own name for the step, so the two never
+/// differ: a step's title and area come from the engine's history.
+#[test]
+fn the_undo_toast_is_the_history_title() -> Fallible {
+    let mut h = Harness::new()?;
+    let step = h.app.engine.undo_step().ok_or("no step to undo")?;
+    assert_eq!(step.title, "Place a label");
+    assert_eq!(step.area, pcbcraft_core::Area::Schematic);
+    h.app.history(false);
+    let toast = format!(
+        "Undid: {} · {}",
+        step.title,
+        Workspace::from(step.area).label()
+    );
+    assert_eq!(toasts(&h.app), [toast]);
+    assert_eq!(h.app.engine.redo_step(), Some(step));
     Ok(())
 }
 
@@ -374,5 +473,156 @@ fn opening_another_project_closes_the_production_dialog() -> Fallible {
         .replace(other, Some(h.dir.path().join("other.pcbcraft")), false);
     h.frame(vec![]);
     assert!(!h.app.pcb.production_open(), "{}", said(&h.app));
+    Ok(())
+}
+
+/// Night round 3 (R3-3): ⌘P finds the Board card's setup dialogs by name
+/// and by the words a designer types ("drc", "stackup", "net class",
+/// "diff pair"), and running one opens that dialog on the PCB, from
+/// another workspace and over an open Production dialog.
+#[test]
+fn the_palette_opens_the_board_setup_dialogs() -> Fallible {
+    use crate::commands::PcbDialog as D;
+    let mut h = Harness::new()?;
+    for (query, id, dialog) in [
+        ("drc", "pcb.rules", D::Rules),
+        ("design rules", "pcb.rules", D::Rules),
+        ("stackup", "pcb.stackup", D::Stackup),
+        ("net class", "pcb.net-classes", D::NetClasses),
+        ("diff pair", "pcb.high-speed", D::HighSpeed),
+        ("high speed", "pcb.high-speed", D::HighSpeed),
+    ] {
+        h.app.workspace = Workspace::Pcb;
+        let active = h.app.active_contexts();
+        let hits = h.app.registry.search(query, &[], &active);
+        // Letters in order ("drc" in "Draw arc") do not bury it.
+        assert!(
+            hits.iter().all(|c| !c.id.starts_with("symbol.draw")),
+            "{query}: {:?}",
+            hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>()
+        );
+        let first = hits.first().map(|c| c.id.clone());
+        assert_eq!(first.as_deref(), Some(id), "{query}");
+        h.app.workspace = Workspace::Schematic;
+        h.app.pcb.on_tool("production", &h.app.engine);
+        let ctx = h.ctx.clone();
+        h.app.run_command(&ctx, id);
+        h.frame(vec![]);
+        assert_eq!(h.app.workspace, Workspace::Pcb, "{query}");
+        assert_eq!(h.app.pcb.open_dialog_now(), Some(dialog), "{query}");
+        assert!(!h.app.pcb.production_open(), "{query}");
+    }
+    Ok(())
+}
+
+/// Night round 4 Q2: a refused card action names what was refused and on
+/// what ("Can't rotate J1: …"), not only the engine's reason; an operation
+/// whose editor named nothing is named by its title. Refused, the document
+/// is unchanged.
+#[test]
+fn a_refusal_toast_names_the_action_and_the_part() -> Fallible {
+    let mut h = Harness::new()?;
+    let r1 = h
+        .app
+        .engine
+        .project()
+        .instance_by_designator("R1")
+        .ok_or("R1")?
+        .id;
+    let placement = h
+        .app
+        .engine
+        .project()
+        .placements
+        .iter()
+        .find(|p| p.instance == r1)
+        .ok_or("R1 is not placed")?
+        .clone();
+    let far = || {
+        Some(Operation::Layout(
+            pcbcraft_core::layout::LayoutCommand::Move {
+                instance: r1,
+                position: [5000.0, 9.0],
+                rotation_deg: placement.rotation_deg,
+                layer: placement.layer,
+            },
+        ))
+    };
+    let before = h.app.engine.document().clone();
+    crate::refusal::name_action(&h.ctx, "rotate R1");
+    h.app.apply(&h.ctx, Origin::Command, far());
+    assert_eq!(h.app.engine.document(), &before);
+    let shown: Vec<_> = h.app.toasts.items().map(|t| t.text.clone()).collect();
+    assert_eq!(
+        shown,
+        ["Can't rotate R1: R1 must stay within -1000 to 2000 mm on each axis"]
+    );
+    h.app.toasts.dismiss_errors();
+    h.app.apply(&h.ctx, Origin::Canvas, far());
+    let shown: Vec<_> = h.app.toasts.items().map(|t| t.text.clone()).collect();
+    assert_eq!(
+        shown,
+        ["Can't move a placed part: R1 must stay within -1000 to 2000 mm on each axis"]
+    );
+    Ok(())
+}
+
+/// A board edit whose moved parts drag copper that the engine re-routes
+/// says so in one toast, with Undo: on the ESP32 board, 40 → 41 mm moves
+/// J1 and U3 and re-routes the USB pair as a pair.
+#[test]
+fn a_reroute_after_a_board_edit_is_one_toast() -> Fallible {
+    use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
+    use pcbcraft_core::library::footprint_source::{Expr, FootprintParam, ParamName, ParamUnit};
+    let mut h = Harness::new()?;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
+    h.app.engine = Engine::from_file(pcbcraft_io::read_project(&path)?)?;
+    let width = Operation::Board(BoardCommand::Edit {
+        edits: vec![BoardEdit::SetParameter {
+            param: FootprintParam {
+                name: ParamName("width".into()),
+                expr: Expr("41 mm".into()),
+                unit: ParamUnit::Mm,
+                comment: String::new(),
+            },
+        }],
+    });
+    h.app.apply(&h.ctx, Origin::Command, Some(width));
+    let shown: Vec<_> = h
+        .app
+        .toasts
+        .items()
+        .map(|t| (t.text.clone(), t.actions.clone()))
+        .collect();
+    assert_eq!(
+        shown,
+        [(
+            "Re-routed 2 connections".to_owned(),
+            vec![ToastAction::Undo]
+        )]
+    );
+    Ok(())
+}
+
+/// Night finding N7: the project file just opened joins File › Open
+/// Recent; a recent file that is gone is removed when chosen, with a toast,
+/// and nothing is opened.
+#[test]
+fn open_recent_keeps_the_project_and_drops_a_missing_file() -> Fallible {
+    let mut h = Harness::new()?;
+    h.frame(vec![]);
+    assert_eq!(h.app.sources.recent_projects(), [h.path()]);
+    let gone = h.dir.path().join("gone.pcbcraft");
+    h.app.sources.remember_project(&gone);
+    assert_eq!(h.app.sources.recent_projects(), [gone.clone(), h.path()]);
+    h.app.open_recent(gone);
+    assert_eq!(h.app.sources.recent_projects(), [h.path()]);
+    assert!(!h.app.files.busy(), "nothing is opened");
+    let said = said(&h.app);
+    assert!(
+        said.contains("gone.pcbcraft is no longer there; removed from Open Recent"),
+        "{said}"
+    );
     Ok(())
 }

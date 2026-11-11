@@ -127,10 +127,28 @@ pub fn signal_length_with(project: &Project, graph: &CopperGraph, net: Id) -> f6
     }
 }
 
-/// How far a coupled stretch's gap may stray from the pair gap, mm.
-pub fn gap_tolerance(gap: f64) -> f64 {
-    (0.1 * gap).max(0.02)
+/// How far a coupled stretch's gap may stray from the pair gap, mm: the
+/// pair class's (its positive net's class) `pair_gap_tolerance`, else the
+/// rules' share of `gap` and at least their minimum.
+pub fn gap_tolerance(project: &Project, positive: Id, gap: f64) -> f64 {
+    super::net_class(project, positive)
+        .and_then(|c| project.rules.class(c))
+        .and_then(|c| c.signal.pair_gap_tolerance)
+        .unwrap_or_else(|| {
+            let pair = project.rules.effective().pair;
+            (pair.gap_tolerance_share * gap).max(pair.gap_tolerance)
+        })
 }
+
+/// How many pair gaps apart two parallel stretches of a pair's halves may
+/// run and still count as one pair spaced too close (`pair.gap`); farther
+/// apart they are separate traces. The factor is the widely quoted "3W"
+/// spacing rule of thumb, beyond which neighbouring traces are commonly
+/// treated as uncoupled (Altium, "Differential Crosstalk and Differential
+/// Pair Spacing in PCB Design",
+/// <https://resources.altium.com/p/differential-crosstalk-and-spacing-between-differential-pairs>,
+/// read 2026-11-11).
+pub const TOO_CLOSE_GAPS: f64 = 3.0;
 
 /// A pair's coupling on the board.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -266,13 +284,13 @@ fn pair_coupling(project: &Project, pair: &DiffPair) -> PairCoupling {
             let centre = cross(dp, sub(n.start, p.start)).abs();
             let edge = centre - (p.width + n.width) / 2.0;
             let gap = gap_on(p.layer);
-            let tol = gap_tolerance(gap);
+            let tol = gap_tolerance(project, pair.positive, gap);
             if (edge - gap).abs() <= tol {
                 intervals[0].entry(p.id).or_default().push(on_p);
                 intervals[1].entry(n.id).or_default().push(on_n);
                 out.coupled_runs
                     .push((p.id, n.id, p.layer, (p.width + n.width) / 2.0, edge));
-            } else if edge < gap - tol && edge < 3.0 * gap {
+            } else if edge < gap - tol && edge < TOO_CLOSE_GAPS * gap {
                 out.too_close
                     .push((p.id, n.id, p.layer, edge.max(0.0), gap));
             }

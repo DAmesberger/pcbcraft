@@ -351,7 +351,7 @@ fn dimension_commands_are_undo_steps_and_delete_keeps_the_pose() -> Fallible<()>
 /// height changes.
 #[test]
 fn the_showcase_header_is_held_by_part_dimensions() -> Fallible<()> {
-    let mut engine = Engine::showcase_hosted(hosted())?;
+    let mut engine = Engine::showcase_hosted_fixture(hosted())?;
     let project = engine.project();
     let j1 = project
         .instance_by_designator("J1")
@@ -908,7 +908,7 @@ fn parts_solve_timing() -> Fallible<()> {
 /// fillets, replaced by a spline through (22, 29.5) between those ends, as
 /// in the second VM test drive.
 fn showcase_with_a_spline_top() -> Fallible<Engine> {
-    let mut engine = Engine::showcase_hosted(hosted())?;
+    let mut engine = Engine::showcase_hosted_fixture(hosted())?;
     let top = curve(&engine, "top")?;
     edit(
         &mut engine,
@@ -938,7 +938,7 @@ fn showcase_with_a_spline_top() -> Fallible<Engine> {
 /// it lands on the untouched showcase. It does not jump elsewhere.
 #[test]
 fn a_spline_top_edge_keeps_the_header_on_its_own_edges() -> Fallible<()> {
-    let mut plain = Engine::showcase_hosted(hosted())?;
+    let mut plain = Engine::showcase_hosted_fixture(hosted())?;
     let mut engine = showcase_with_a_spline_top()?;
     let names: Vec<String> = sketch(&engine)?
         .edges
@@ -978,7 +978,7 @@ fn a_parameter_that_drives_no_outline_edge_is_reported() -> Fallible<()> {
             .map(|f| f.message)
             .collect()
     };
-    assert!(idle(&Engine::showcase_hosted(hosted())?).is_empty());
+    assert!(idle(&Engine::showcase_hosted_fixture(hosted())?).is_empty());
     let engine = showcase_with_a_spline_top()?;
     assert_eq!(
         idle(&engine),
@@ -1048,7 +1048,7 @@ fn a_curve_over_a_filleted_edge_keeps_the_board_parameters_driving_it() -> Falli
             .collect()
     };
     for curve in curves {
-        let mut engine = Engine::showcase_hosted(hosted())?;
+        let mut engine = Engine::showcase_hosted_fixture(hosted())?;
         let top = super::super::tests::created_curves_of(apply(
             &mut engine,
             Operation::Board(pcbcraft_core::layout::outline::BoardCommand::Edit {
@@ -1097,8 +1097,8 @@ fn a_curve_over_a_filleted_edge_keeps_the_board_parameters_driving_it() -> Falli
 #[test]
 fn a_construction_line_leaves_the_fabrication_output_unchanged() -> Fallible<()> {
     use pcbcraft_core::fabrication::{FabricationOptions, generate};
-    let plain = Engine::showcase_hosted(hosted())?;
-    let mut engine = Engine::showcase_hosted(hosted())?;
+    let plain = Engine::showcase_hosted_fixture(hosted())?;
+    let mut engine = Engine::showcase_hosted_fixture(hosted())?;
     edit(
         &mut engine,
         vec![BoardEdit::Sketch {

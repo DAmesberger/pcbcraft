@@ -567,6 +567,19 @@ pub fn peripherals(ui: &mut Ui, component: &ComponentDefinition, lit: Lit) -> Op
     let t = Tokens::get();
     let offers = offers(component);
     let mut event = None;
+    // Every role caption in one column as wide as the widest (the row caps
+    // it), so the captions are not cut at the Properties label width.
+    let font = egui::FontId::proportional(t.font_label);
+    let label_width = component
+        .resources
+        .iter()
+        .flat_map(|r| &r.roles)
+        .map(|role| {
+            let caption = role_caption(role);
+            ui.fonts_mut(|f| f.layout_no_wrap(caption, font.clone(), t.text).size().x)
+        })
+        .fold(t.form_label_width, f32::max)
+        + t.space_4;
     egui::ScrollArea::vertical()
         .id_salt("pins-peripherals")
         .auto_shrink([false, false])
@@ -598,7 +611,9 @@ pub fn peripherals(ui: &mut Ui, component: &ComponentDefinition, lit: Lit) -> Op
                         for role in &resource.roles {
                             let key = (resource.id, role.id);
                             let offered = offers.get(&key).map(Vec::as_slice).unwrap_or(&[]);
-                            if let Some(e) = role_line(ui, component, resource, role, offered) {
+                            if let Some(e) =
+                                role_line(ui, component, resource, role, offered, label_width)
+                            {
                                 event = Some(e);
                             }
                         }
@@ -618,14 +633,9 @@ pub fn peripherals(ui: &mut Ui, component: &ComponentDefinition, lit: Lit) -> Op
     event
 }
 
-fn role_line(
-    ui: &mut Ui,
-    component: &ComponentDefinition,
-    resource: &pcbcraft_core::functions::Resource,
-    role: &pcbcraft_core::functions::Role,
-    offered: &[(TerminalId, FunctionId)],
-) -> Option<TableEvent> {
-    let mut event = None;
+/// A role's caption: its label, signal, capacity and whether it is required
+/// ("ch0_n (ADC1_CH0) · required").
+fn role_caption(role: &pcbcraft_core::functions::Role) -> String {
     let mut caption = role.label.clone();
     if let Some(signal) = &role.signal {
         caption.push_str(&format!(" ({signal})"));
@@ -636,7 +646,20 @@ fn role_line(
     if role.required_when_used {
         caption.push_str(" · required");
     }
-    kit::row(ui, &caption, |ui| {
+    caption
+}
+
+fn role_line(
+    ui: &mut Ui,
+    component: &ComponentDefinition,
+    resource: &pcbcraft_core::functions::Resource,
+    role: &pcbcraft_core::functions::Role,
+    offered: &[(TerminalId, FunctionId)],
+    label_width: f32,
+) -> Option<TableEvent> {
+    let mut event = None;
+    let caption = role_caption(role);
+    kit::row_with_label_width(ui, &caption, label_width, |ui| {
         if offered.is_empty() {
             kit::note(ui, "No function offers this role");
             return;

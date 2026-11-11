@@ -5,9 +5,9 @@ use super::*;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const SCREEN: [f32; 2] = [900.0, 700.0];
+pub(super) const SCREEN: [f32; 2] = [900.0, 700.0];
 
-fn frame(
+pub(super) fn frame(
     editor: &mut PcbEditor,
     engine: &Engine,
     ctx: &egui::Context,
@@ -30,7 +30,7 @@ fn frame(
 }
 
 /// Where board point `p` is on the test canvas.
-fn screen(editor: &PcbEditor, engine: &Engine, p: Point) -> Pos2 {
+pub(super) fn screen(editor: &PcbEditor, engine: &Engine, p: Point) -> Pos2 {
     let rect = Rect::from_min_size(Pos2::ZERO, egui::vec2(SCREEN[0], SCREEN[1]));
     board_view(
         rect,
@@ -42,7 +42,7 @@ fn screen(editor: &PcbEditor, engine: &Engine, p: Point) -> Pos2 {
     .screen(p)
 }
 
-fn click(at: Pos2) -> Vec<egui::Event> {
+pub(super) fn click(at: Pos2) -> Vec<egui::Event> {
     let button = |pressed| egui::Event::PointerButton {
         pos: at,
         button: PointerButton::Primary,
@@ -52,7 +52,7 @@ fn click(at: Pos2) -> Vec<egui::Event> {
     vec![egui::Event::PointerMoved(at), button(true), button(false)]
 }
 
-fn key(at: Pos2, key: egui::Key) -> Vec<egui::Event> {
+pub(super) fn key(at: Pos2, key: egui::Key) -> Vec<egui::Event> {
     vec![
         egui::Event::PointerMoved(at),
         egui::Event::Key {

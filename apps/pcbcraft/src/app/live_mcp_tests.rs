@@ -74,6 +74,10 @@ impl Harness {
     }
 
     fn frame(&mut self, events: Vec<egui::Event>) {
+        self.frame_output(events).textures_delta.clear();
+    }
+
+    fn frame_output(&mut self, events: Vec<egui::Event>) -> egui::FullOutput {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -86,8 +90,6 @@ impl Harness {
             app, ctx, frame, ..
         } = self;
         ctx.run_ui(input, |ui| eframe::App::ui(app, ui, frame))
-            .textures_delta
-            .clear();
     }
 
     fn client(&self) -> Fallible<Client> {
@@ -155,12 +157,13 @@ fn an_assistant_edits_the_open_project_with_shared_undo() -> Fallible {
         h.app.engine.project().vias.len(),
         before.project.vias.len() + 1
     );
-    assert!(h.said("AI assistant edit: layout.add_via"));
+    // Its title, never its wire name (night round 5).
+    assert!(h.said("AI assistant edit: Add a via"));
 
     // The person undoes it in the window: the same history.
     h.app.history(false);
     assert_eq!(h.app.engine.document(), &before);
-    assert!(h.said("Undid AI assistant edit: layout.add_via"));
+    assert!(h.said("Undid AI assistant edit: Add a via"));
 
     // The assistant redoes at the revision it last saw: refused, stale.
     let stale = h.call(
@@ -180,6 +183,9 @@ fn an_assistant_edits_the_open_project_with_shared_undo() -> Fallible {
         h.app.engine.project().vias.len(),
         before.project.vias.len() + 1
     );
+    // The window says what the assistant's redo applied, by its title.
+    assert!(h.said("AI assistant redid: Add a via · PCB"));
+    assert_eq!(redone["result"]["step"]["title"], "Add a via", "{redone}");
     Ok(())
 }
 
@@ -353,5 +359,29 @@ fn live_mcp_runs_a_path_read_on_allow() -> Fallible {
     let reply = asked.join().map_err(|_| "client thread")??;
     assert_eq!(reply["ok"], true, "{reply}");
     assert_eq!(reply["result"]["report"]["ok"], true, "{reply}");
+    Ok(())
+}
+
+/// The access checkbox starts at the window's left edge, under the state
+/// note, not after an empty label column.
+#[test]
+fn the_access_checkbox_starts_at_the_left() -> Fallible {
+    let mut h = Harness::new()?;
+    h.app.live.open = true;
+    h.frame(Vec::new());
+    let output = h.frame_output(Vec::new());
+    let left = |pick: &dyn Fn(&str) -> bool| {
+        output.shapes.iter().find_map(|s| match &s.shape {
+            egui::Shape::Text(t) if pick(&t.galley.job.text) => Some(t.pos.x),
+            _ => None,
+        })
+    };
+    let check = left(&|t| t == "Let AI assistants edit this project").ok_or("no checkbox")?;
+    let note = left(&|t| t.starts_with("On, on this computer only")).ok_or("no state note")?;
+    let t = solidcraft_theme::Tokens::get();
+    assert!(
+        check - note < t.form_label_width / 2.0,
+        "checkbox text at {check}, note at {note}"
+    );
     Ok(())
 }

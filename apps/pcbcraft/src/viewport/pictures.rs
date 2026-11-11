@@ -26,14 +26,25 @@ const BACKGROUND: wgpu::Color = wgpu::Color {
 };
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+/// One offscreen device at a time. Windows' software adapter (WARP, what a
+/// hosted Windows runner has) crashes the test process with an access
+/// violation when several tests drive devices at once; one at a time, every
+/// picture test draws and passes there.
+static ONE_DEVICE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
     resources: egui_wgpu::CallbackResources,
+    /// Declared last, so it is released after the device is dropped.
+    _one: std::sync::MutexGuard<'static, ()>,
 }
 
 impl Gpu {
     fn new() -> Option<Gpu> {
+        let one = ONE_DEVICE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
         desc.backends = wgpu::Backends::PRIMARY;
         let instance = wgpu::Instance::new(desc);
@@ -64,6 +75,7 @@ impl Gpu {
             device,
             queue,
             resources,
+            _one: one,
         })
     }
 

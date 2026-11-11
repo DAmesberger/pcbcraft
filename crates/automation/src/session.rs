@@ -47,13 +47,27 @@ pub struct ApplyAllParams {
 pub struct NoParams {}
 
 /// A document change that names nothing but the revision it expects
-/// (`project.undo`, `project.redo`, `project.new`).
+/// (`project.undo`, `project.redo`).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RevisionParams {
     /// The revision of the last reply; refused as stale when the document
     /// has moved since.
     pub expected_revision: u64,
+}
+
+/// Start a new project (`project.new`) with its board's rule profile.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NewParams {
+    /// The revision of the last reply; refused as stale when the document
+    /// has moved since.
+    pub expected_revision: u64,
+    /// The board's rule profile: a profile library id or a whole profile
+    /// file's `profile`. Omitted: the user's default rule profile
+    /// (Settings); with neither, `rules.no_profile` refuses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<pcbcraft_core::fabrication::ProfileChoice>,
 }
 
 /// Open a project file in place of the current document.
@@ -255,9 +269,9 @@ pub struct FabricationParams {
     pub output: String,
     #[serde(default)]
     pub zip: bool,
-    /// The fabrication rule profile to check against, by id: a built-in
-    /// (`std-6-6`, `fine-4-4`, `hdi-3-3`, `pcbcraft-default`) or a user library profile. The
-    /// project's own rules when omitted.
+    /// The fabrication rule profile to check against, by its id in the
+    /// user's profile library (Pcbcraft ships none). The project's own
+    /// rules when omitted.
     #[serde(default)]
     pub profile: Option<String>,
     #[serde(default)]
@@ -302,7 +316,7 @@ pub enum Request {
     Redo(RevisionParams),
     /// Start a new, empty project. History is cleared.
     #[serde(rename = "project.new")]
-    New(RevisionParams),
+    New(NewParams),
     /// Open a `.pcbcraft` file; a failure leaves the session unchanged.
     #[serde(rename = "project.open")]
     Open(OpenParams),
@@ -584,9 +598,8 @@ impl Request {
         match self {
             Self::Apply(params) => Some(params.expected_revision),
             Self::ApplyAll(params) => Some(params.expected_revision),
-            Self::Undo(params) | Self::Redo(params) | Self::New(params) => {
-                Some(params.expected_revision)
-            }
+            Self::Undo(params) | Self::Redo(params) => Some(params.expected_revision),
+            Self::New(params) => Some(params.expected_revision),
             Self::Open(params) => Some(params.expected_revision),
             Self::ApplyUpdate(params) => Some(params.expected_revision),
             Self::ImportFrom(params) => Some(params.expected_revision),
@@ -692,10 +705,10 @@ impl Request {
                 "Redo the last undone document change at expected_revision.",
                 "Redo the last undone document change at expected_revision. Refused without changes on a stale revision.",
             ),
-            info::<RevisionParams>(
+            info::<NewParams>(
                 "project.new",
-                "Start a new empty project at expected_revision, clearing history.",
-                "Start a new empty project at expected_revision; clears history. Refused without changes on a stale revision.",
+                "Start a new empty project at expected_revision with its board's rule profile, clearing history.",
+                "Start a new empty project at expected_revision; clears history. profile is the board's rule profile: a profile library id (project.query rules.profiles lists them) or a whole profile file's profile; omitted, the user's default rule profile; with neither, rules.no_profile refuses. Refused without changes on a stale revision.",
             ),
             info::<OpenParams>(
                 "project.open",
@@ -981,6 +994,7 @@ impl Session {
                 )?;
                 let mut reply = self.document_reply();
                 reply["outcome"] = serde_json::to_value(outcome)?;
+                self.add_rerouted(&mut reply)?;
                 return Ok(reply);
             }
             Request::ApplyAll(params) => {
@@ -991,13 +1005,35 @@ impl Session {
                 )?;
                 let mut reply = self.document_reply();
                 reply["outcomes"] = serde_json::to_value(outcomes)?;
+                self.add_rerouted(&mut reply)?;
                 return Ok(reply);
             }
             Request::Inspect(params) => return self.inspect(params),
             Request::Schema(params) => return discovery::schema_reply(params),
             Request::Query(query) => {
-                // A profile id reads as it does for an export: a built-in
-                // profile or one of the user's library.
+                // A profile id reads as it does for an export: one of the
+                // user's library.
+                if let Query::RuleProfiles {} = query {
+                    let mut profiles: Vec<_> = self
+                        .engine
+                        .project()
+                        .rules
+                        .profile
+                        .iter()
+                        .cloned()
+                        .collect();
+                    let dirs = pcbcraft_io::settings::UserDirs::from_env()?;
+                    let listing =
+                        pcbcraft_io::rule_profiles::ProfileLibrary::from_dirs(&dirs).list()?;
+                    for p in listing.profiles {
+                        if !profiles.iter().any(|q| q.id == p.id) {
+                            profiles.push(p);
+                        }
+                    }
+                    return Ok(serde_json::to_value(
+                        pcbcraft_core::QueryResult::RuleProfiles(profiles),
+                    )?);
+                }
                 let query = match query {
                     Query::Preflight {
                         profile: Some(ProfileChoice::Id(id)),
@@ -1014,12 +1050,35 @@ impl Session {
                     Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
                 )?)?);
             }
-            Request::Undo(params) => self.engine.undo_at(params.expected_revision)?,
-            Request::Redo(params) => self.engine.redo_at(params.expected_revision)?,
-            Request::New(_) => {
+            Request::Undo(params) => {
+                let step = self.engine.undo_step();
+                self.engine.undo_at(params.expected_revision)?;
+                return self.stepped(step);
+            }
+            Request::Redo(params) => {
+                let step = self.engine.redo_step();
+                self.engine.redo_at(params.expected_revision)?;
+                return self.stepped(step);
+            }
+            Request::New(params) => {
+                let profile = match params.profile {
+                    Some(ProfileChoice::Profile(profile)) => *profile,
+                    Some(ProfileChoice::Id(id)) => {
+                        pcbcraft_io::rule_profiles::for_new_board_from_env(Some(&id))?
+                    }
+                    None => pcbcraft_io::rule_profiles::for_new_board_from_env(None)?,
+                };
+                let mut project = Project::default();
+                pcbcraft_core::rules::apply(
+                    &mut project.rules,
+                    pcbcraft_core::rules::RulesCommand::SetProfile {
+                        profile: Box::new(profile),
+                        keep_overrides: false,
+                    },
+                )?;
                 self.engine.replace_document(EditorFile {
                     version: pcbcraft_core::format::FILE_VERSION,
-                    project: Project::default(),
+                    project,
                     drafts: Drafts::default(),
                 })?;
                 self.path = None;
@@ -1196,7 +1255,29 @@ impl Session {
             .apply_hosted(expected_revision, operation, hosted())?;
         let mut reply = self.document_reply();
         reply["outcome"] = serde_json::to_value(outcome)?;
+        self.add_rerouted(&mut reply)?;
         Ok(reply)
+    }
+
+    /// The document state after an undo or redo, with the `step` it took
+    /// back or applied again: its title and area, as the desktop says them.
+    fn stepped(&self, step: Option<pcbcraft_core::Step>) -> Result<Value> {
+        let mut reply = self.document_reply();
+        reply["step"] = serde_json::to_value(step)?;
+        Ok(reply)
+    }
+
+    /// When the operation just applied moved parts whose dragged copper
+    /// was re-routed or left unrouted: `rerouted` with the connections'
+    /// nets and the one-line `summary` the desktop toasts.
+    fn add_rerouted(&self, reply: &mut Value) -> Result<()> {
+        let rerouted = self.engine.rerouted();
+        if let Some(summary) = rerouted.line() {
+            let mut value = serde_json::to_value(rerouted)?;
+            value["summary"] = Value::String(summary);
+            reply["rerouted"] = value;
+        }
+        Ok(())
     }
 
     /// `library.import_from_project`: read the file, take the exact closure
@@ -1507,9 +1588,11 @@ mod tests;
 
 /// The shipped showcase ([`pcbcraft_core::Engine::showcase_hosted`]) on
 /// SolidCraft's sketch engine: its sketched board, cutout, slot and
-/// edge-held header included.
-pub fn showcase() -> pcbcraft_core::Result<pcbcraft_core::Engine> {
-    pcbcraft_core::Engine::showcase_hosted(hosted())
+/// edge-held header included, on `profile`.
+pub fn showcase(
+    profile: pcbcraft_core::rules::RuleProfile,
+) -> pcbcraft_core::Result<pcbcraft_core::Engine> {
+    pcbcraft_core::Engine::showcase_hosted(hosted(), profile)
 }
 
 /// The host evaluators every applied operation gets: SolidCraft's sketch

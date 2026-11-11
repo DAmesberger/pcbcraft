@@ -26,6 +26,7 @@ pub const MAX_PLACED_PADS: usize = 4_096;
 /// on every side, and no board size or outline edit can strand a part.
 pub const WORKING_AREA_MM: [f64; 2] = [-1000.0, 2000.0];
 
+pub mod arrange;
 pub mod board_edge;
 pub mod connectivity;
 mod copper;
@@ -47,9 +48,11 @@ mod placed;
 pub mod posture;
 pub mod restack;
 pub mod router;
+pub mod several;
 pub mod showcase;
 pub mod staging;
 pub mod via;
+pub use arrange::part_envelope;
 pub use connectivity::CopperGraph;
 #[cfg(test)]
 pub(crate) use copper::limit_finding as copper_limit_finding;
@@ -62,10 +65,7 @@ pub use placed::{
     PlacedKeepout, PlacedPad, pick_graphic, pick_pad, placed_graphics, placed_keepouts,
     placed_pads, placement_transform,
 };
-pub use via::{
-    DEFAULT_VIA_DIAMETER_MM, DEFAULT_VIA_DRILL_MM, DRILL_TO_COPPER_MM, HOLE_TO_HOLE_MM,
-    LayerChangeRequest, MIN_ANNULAR_RING_MM, ViaRequest, via_pad_clearance_conflict,
-};
+pub use via::{LayerChangeRequest, ViaRequest, via_pad_clearance_conflict};
 /// Most nearby copper pairs one check compares (shapes whose bounds come
 /// within [`copper::check_reach`]; farther pairs are never compared, so
 /// a board of the most vias, pads and tracks is checked whole). Only
@@ -231,6 +231,42 @@ pub enum LayoutCommand {
     /// terminal, with its placement, as one undo step.
     #[serde(rename = "layout.remove_part")]
     RemovePart { instance: Id },
+    /// Move several placed parts to new poses as one undo step (a group
+    /// drag or flip). The unlocked copper attached to any of them is
+    /// carried at once, so a track between two parts that move alike moves
+    /// with both. A locked part refuses the whole move.
+    #[serde(rename = "layout.move_parts")]
+    MoveParts { moves: Vec<arrange::PartMove> },
+    /// Line up two or more parts' outlines on one edge (left, right, top,
+    /// bottom) or centre line, as one undo step with their copper carried.
+    /// A part that would move and is locked, or whose dimensions hold it
+    /// along that axis, refuses the command and is named.
+    #[serde(rename = "layout.align")]
+    Align {
+        instances: Vec<Id>,
+        to: arrange::AlignTo,
+    },
+    /// Space three or more parts evenly along an axis: the outermost stay
+    /// and the gaps between neighbouring outlines become equal. One undo
+    /// step, refused like `layout.align`.
+    #[serde(rename = "layout.distribute")]
+    Distribute {
+        instances: Vec<Id>,
+        axis: arrange::Axis,
+    },
+    /// Delete several tracks, vias and fills as one undo step (a
+    /// multi-selection's Delete, or a dangling stub's tracks). A locked
+    /// track or via refuses the whole command. Parts are refused: they
+    /// come from the schematic.
+    #[serde(rename = "layout.delete_objects")]
+    DeleteObjects { objects: several::Objects },
+    /// Lock or unlock several parts, tracks, vias and fills as one undo
+    /// step.
+    #[serde(rename = "layout.lock_objects")]
+    LockObjects {
+        objects: several::Objects,
+        locked: bool,
+    },
 }
 
 // A new command chooses its permission class here.
@@ -261,6 +297,11 @@ declare_classes!(LayoutCommand {
     PlacePart "layout.place_part" Edit "Place a mechanical part",
     SetPart "layout.set_part" Edit "Change a mechanical part",
     RemovePart "layout.remove_part" Edit "Remove a mechanical part",
+    MoveParts "layout.move_parts" Edit "Move several parts together",
+    Align "layout.align" Edit "Align parts",
+    Distribute "layout.distribute" Edit "Distribute parts evenly",
+    DeleteObjects "layout.delete_objects" Edit "Delete several board objects",
+    LockObjects "layout.lock_objects" Edit "Lock or unlock several board objects",
 });
 
 impl LayoutCommand {
@@ -593,6 +634,15 @@ pub(crate) fn locked(project: &Project, instance: Id, verb: &str) -> Error {
     ))
 }
 
+/// The refusal for a command on a part that is not on the board: names
+/// the part by designator when the instance exists, else by its ID.
+fn unplaced(project: &Project, instance: Id) -> Error {
+    Error::NotFound(match project.instance(instance) {
+        Some(i) => format!("{} is not placed on the board", i.designator),
+        None => format!("No component instance has ID {instance}"),
+    })
+}
+
 /// Why a hand move of the placed part `instance` is refused, in the words
 /// the engine refuses `layout.move` with: it is locked, or its dimensions
 /// hold its position (see [`dimensions::held`]). `None` for a part that can
@@ -658,22 +708,24 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             if project.placement_of(instance).is_some_and(|p| p.locked) {
                 return Err(locked(project, instance, "move"));
             }
+            let missing = unplaced(project, instance);
             let placement = project
                 .placements
                 .iter_mut()
                 .find(|p| p.instance == instance)
-                .ok_or_else(|| Error::NotFound("unknown placement".into()))?;
+                .ok_or(missing)?;
             placement.position = position;
             placement.rotation_deg = rotation_deg;
             placement.layer = layer;
             // The engine carries the attached copper (`dimensions::carry`).
         }
         LayoutCommand::SetPlacementLock { instance, locked } => {
+            let missing = unplaced(project, instance);
             project
                 .placements
                 .iter_mut()
                 .find(|p| p.instance == instance)
-                .ok_or_else(|| Error::NotFound("unknown placement".into()))?
+                .ok_or(missing)?
                 .locked = locked;
         }
         LayoutCommand::Route { request } => {
@@ -777,6 +829,17 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             return part::set(project, instance, &part).map(Some);
         }
         LayoutCommand::RemovePart { instance } => part::remove(project, instance)?,
+        LayoutCommand::MoveParts { moves } => arrange::move_parts(project, &moves)?,
+        // Without the host's board evaluator a dimensioned part is refused
+        // (the engine passes its evaluator: `Engine::apply_hosted`).
+        LayoutCommand::Align { instances, to } => arrange::align(project, &instances, to, None)?,
+        LayoutCommand::Distribute { instances, axis } => {
+            arrange::distribute(project, &instances, axis, None)?;
+        }
+        LayoutCommand::DeleteObjects { objects } => several::delete(project, &objects)?,
+        LayoutCommand::LockObjects { objects, locked } => {
+            several::lock(project, &objects, locked)?;
+        }
     }
     Ok(None)
 }
@@ -1124,14 +1187,14 @@ pub fn route_width(project: &Project, net: Id) -> crate::rules::Resolved<f64> {
     project.rules.track_width(net_class(project, net))
 }
 
-/// A tented through via on `net` at `position` with its class's drill and
-/// pad (else the effective defaults).
+/// A through via on `net` at `position` with its class's drill and pad
+/// (else the effective defaults), tented as the rules' `tent vias` says.
 pub fn class_via(project: &Project, net: Id, position: Point) -> ViaRequest {
     let (drill, diameter) = project.rules.via_size(net_class(project, net)).value;
     ViaRequest {
         drill,
         diameter,
-        ..ViaRequest::through(net, position)
+        ..ViaRequest::through(&project.rules.effective(), net, position)
     }
 }
 

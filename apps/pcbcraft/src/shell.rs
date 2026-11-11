@@ -40,6 +40,17 @@ pub enum Workspace {
     Pcb,
 }
 
+/// The workspace that edits an area of the design.
+impl From<pcbcraft_core::Area> for Workspace {
+    fn from(area: pcbcraft_core::Area) -> Self {
+        match area {
+            pcbcraft_core::Area::Component => Self::Part,
+            pcbcraft_core::Area::Schematic => Self::Schematic,
+            pcbcraft_core::Area::Pcb => Self::Pcb,
+        }
+    }
+}
+
 impl Workspace {
     pub const ALL: [Self; 3] = [Self::Part, Self::Schematic, Self::Pcb];
     pub fn label(self) -> &'static str {

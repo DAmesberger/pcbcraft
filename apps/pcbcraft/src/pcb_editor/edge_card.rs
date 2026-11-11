@@ -314,6 +314,17 @@ pub(super) fn name_parts(
             c.to_uppercase().chain(chars).collect::<String>()
         });
     }
+    // A horizontal and a vertical dimension between the same references
+    // would read alike: the last part names the axis.
+    let axis = match d.kind {
+        PartRelation::Dim(DimKind::HorizontalDistance) => Some("x"),
+        PartRelation::Dim(DimKind::VerticalDistance) => Some("y"),
+        _ => None,
+    };
+    if let (Some(axis), Some(last)) = (axis, parts.last_mut()) {
+        last.push_str(" · ");
+        last.push_str(axis);
+    }
     parts
 }
 

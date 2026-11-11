@@ -637,9 +637,11 @@ impl SchematicEditor {
     }
 
     /// The sheet-symbol tool's card: the name of the sheet it creates.
-    pub(super) fn sheet_tool_section(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn sheet_tool_section(&mut self, ui: &mut egui::Ui, project: &Project) {
         kit::section(ui, "sheet-tool", "Sheet symbol", true, None, |ui| {
-            kit::text_row(ui, "New sheet", &mut self.drafts.sheet_name);
+            // Empty, the sheet gets the name the placeholder shows.
+            let name = pcbcraft_core::schematic::sheets::default_sheet_name(project);
+            kit::checked_text_row(ui, "New sheet", &mut self.drafts.sheet_name, &name, false);
             kit::hint(
                 ui,
                 "A new child sheet",
@@ -779,14 +781,18 @@ impl SchematicEditor {
                 });
             }
             if count > 1
-                && kit::summary_row(ui, "Removes what is drawn on it", Some("Delete sheet"))
+                && kit::action_row(
+                    ui,
+                    "Delete sheet",
+                    "Removes the sheet and what is drawn on it",
+                )
             {
                 output = op(SchematicCommand::DeleteSheet { sheet: sheet.id });
             }
         });
         kit::section(ui, "design", "Design", true, None, |ui| {
             let connected = self.nets.iter().filter(|n| n.terminals.len() >= 2).count();
-            ui.scope(|ui| kit::value_row(ui, "Connected nets", &connected.to_string()))
+            ui.scope(|ui| kit::value_row(ui, "Nets", &format!("{connected} connected")))
                 .response
                 .on_hover_text("Nets of the whole design that join two or more terminals");
         });

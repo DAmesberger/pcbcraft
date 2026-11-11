@@ -38,6 +38,7 @@ use std::sync::Arc;
 
 mod clipboard;
 mod group;
+pub(crate) use group::paint_box;
 mod instance_card;
 mod items_card;
 mod marking_row;
@@ -1256,7 +1257,7 @@ impl SchematicEditor {
     }
 
     /// The issue slot of `subject`: what `project.issues` counts on it in
-    /// the Schematic area ("on R1", "on N3", "on this sheet"), once per
+    /// the Schematic area ("on R1", "on N3", "in the schematic"), once per
     /// document revision. Subjects that are commands have no slot.
     fn issue_slot(&mut self, engine: &Engine, subject: Subject) -> Option<IssueSlot> {
         let document = Arc::as_ptr(engine.project_arc()) as usize;
@@ -1287,11 +1288,18 @@ impl SchematicEditor {
                     net.map(|n| format!("on {}", n.name)),
                 )
             }
+            Subject::Item(item) => {
+                let objects = self.selected_item_refs(project);
+                let label = (!objects.is_empty())
+                    .then(|| format!("on {}", items_card::header(project, item).title));
+                (IssueScope::Selection { objects }, label)
+            }
             Subject::Sheet => (
                 IssueScope::Area {
                     area: IssueArea::Schematic,
                 },
-                Some("on this sheet".to_owned()),
+                // Every sheet's: the Schematic area, which Schematic only lists.
+                Some("in the schematic".to_owned()),
             ),
             _ => (IssueScope::All, None),
         };
@@ -1314,7 +1322,11 @@ impl SchematicEditor {
                 };
                 *count = count.saturating_add(1);
             }
-            Some(IssueSlot { counts, label })
+            Some(IssueSlot {
+                counts,
+                label,
+                whole: subject == Subject::Sheet,
+            })
         });
         self.slot = Some((engine.revision(), document, subject, slot.clone()));
         slot
@@ -1347,6 +1359,26 @@ impl SchematicEditor {
 
     pub fn selected_instance(&self) -> Option<Id> {
         self.selected
+    }
+
+    /// The selected label, sheet symbol (with its pins) or sheet pin, as
+    /// the objects issues name, for the Selection scope and the item's
+    /// issue slot. A drawing is never electrical: nothing.
+    pub fn selected_item_refs(&self, project: &Project) -> Vec<ObjectRef> {
+        match self.selected_item(project) {
+            Some(Item::Label(id)) => vec![ObjectRef::Label { id }],
+            Some(Item::SheetSymbol(id)) => std::iter::once(ObjectRef::SheetSymbol { id })
+                .chain(
+                    project
+                        .sheet_symbol(id)
+                        .into_iter()
+                        .flat_map(|s| &s.pins)
+                        .map(|p| ObjectRef::SheetPin { id: p.id }),
+                )
+                .collect(),
+            Some(Item::SheetPin(id)) => vec![ObjectRef::SheetPin { id }],
+            Some(Item::Drawing(_)) | None => Vec::new(),
+        }
     }
 
     /// The net of the selected wire, label or sheet pin.
@@ -1528,7 +1560,7 @@ impl SchematicEditor {
                 None
             }
             Subject::SheetTool => {
-                self.sheet_tool_section(ui);
+                self.sheet_tool_section(ui, project);
                 None
             }
             Subject::NoConnectTool => {
@@ -3437,7 +3469,7 @@ mod tests {
         Ok((engine, r3))
     }
 
-    /// B-e: the Sheet card's "Connected nets" leaves out single-terminal
+    /// B-e: the Sheet card's connected nets leave out single-terminal
     /// nets, and sits in the Design section, not under "On this sheet",
     /// because it counts the whole design (run 3, finding 20).
     #[test]
@@ -3459,18 +3491,147 @@ mod tests {
                 .map(|(_, p)| *p)
                 .ok_or(format!("no {text}"))
         };
-        let label = at("Connected nets")?;
-        assert!(!shown.iter().any(|(t, _)| t == "Nets"), "one name only");
+        // "Nets", its value "N connected": the row fits the Properties
+        // column (night round 4 Q5), and it still says which nets count.
+        let label = at("Nets")?;
+        assert!(
+            !shown.iter().any(|(t, _)| t == "Connected nets"),
+            "one name only"
+        );
         // The value is the text on the row's line.
         let value = shown
             .iter()
-            .find(|(t, p)| t != "Connected nets" && (p.y - label.y).abs() < 2.0 && p.x > label.x)
-            .ok_or("no Connected nets value")?;
-        assert_eq!(value.0, connected.to_string());
+            .find(|(t, p)| t != "Nets" && (p.y - label.y).abs() < 2.0 && p.x > label.x)
+            .ok_or("no Nets value")?;
+        assert_eq!(value.0, format!("{connected} connected"));
         let (sheet, design, pages) = (at("ON THIS SHEET")?, at("DESIGN")?, at("PAGES")?);
         assert!(
             sheet.y < pages.y && pages.y < design.y && design.y < label.y,
             "the row is in the Design section, after the sheet's own"
+        );
+        Ok(())
+    }
+
+    /// In the Properties column's width the Sheet card cuts none of its
+    /// texts: no "Removes what is drawn…" or "Connected…" (night round 4
+    /// Q5). The Delete sheet hint is on the button's hover.
+    #[test]
+    fn the_sheet_card_fits_the_properties_column() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut engine, _) = with_unwired()?;
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::AddSheet {
+                name: None,
+                paper: None,
+                orientation: None,
+            }),
+        )?;
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(230.0, 1400.0))),
+                ..Default::default()
+            },
+            |ui| {
+                kit::form(ui, |ui| editor.inspector(ui, &engine));
+            },
+        );
+        output.textures_delta.clear();
+        let shown = shown(&output);
+        assert!(shown.iter().any(|(t, _)| t == "Delete sheet"), "{shown:?}");
+        fn elided(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) if text.galley.elided => {
+                    out.push(text.galley.job.text.clone());
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| elided(s, out)),
+                _ => {}
+            }
+        }
+        let mut cut = Vec::new();
+        for shape in &output.shapes {
+            elided(&shape.shape, &mut cut);
+        }
+        assert!(cut.is_empty(), "cut: {cut:?}");
+        Ok(())
+    }
+
+    /// A selected sheet symbol is in the Issues Selection scope with its
+    /// pins, and its card has an issue row counting the unmatched pin's
+    /// finding; a selected drawing names nothing (night round 4 Q3).
+    #[test]
+    fn a_selected_sheet_symbol_reports_its_issues() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut engine, _) = with_unwired()?;
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::PlaceSheetSymbol {
+                sheet: None,
+                child: None,
+                name: Some("Power".into()),
+                position: pt([150.0, -40.0]),
+                size: pt([30.0, 20.0]),
+            }),
+        )?;
+        let symbol = engine
+            .project()
+            .sheet_symbols
+            .last()
+            .map(|s| s.id)
+            .ok_or("no sheet symbol")?;
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::AddSheetPin {
+                symbol,
+                name: "PIN1".into(),
+                shape: Default::default(),
+                side: pcbcraft_core::SheetSide::Left,
+                offset: pcbcraft_core::units::Nm::from_mm_f64_rounded(5.0)?,
+            }),
+        )?;
+        let pin = engine
+            .project()
+            .sheet_symbol(symbol)
+            .and_then(|s| s.pins.first())
+            .map(|p| p.id)
+            .ok_or("no pin")?;
+        let mut editor = SchematicEditor::default();
+        editor.select_item(Some(Item::SheetSymbol(symbol)), engine.project());
+        let refs = editor.selected_item_refs(engine.project());
+        assert_eq!(
+            refs,
+            [
+                ObjectRef::SheetSymbol { id: symbol },
+                ObjectRef::SheetPin { id: pin }
+            ]
+        );
+        let card = editor.inspector_card(&engine);
+        let slot = card.issues.ok_or("a sheet symbol has an issue row")?;
+        assert_eq!(slot.label, "on Power");
+        assert!(!slot.is_empty(), "the unmatched pin's finding: {slot:?}");
+        Ok(())
+    }
+
+    /// The Sheet tool's "New sheet" field shows the name an empty field
+    /// gives: the next free "Sheet n" after the sheets there are (night
+    /// round 4 Q6).
+    #[test]
+    fn the_new_sheet_field_shows_the_name_it_will_get() -> Result<(), Box<dyn std::error::Error>> {
+        let (engine, _) = with_unwired()?;
+        let count = engine.project().sheets.list.len();
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor {
+            tool: Tool::SheetSymbol,
+            ..Default::default()
+        };
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        let next = format!("Sheet {}", count + 1);
+        let shown = shown(&output);
+        assert!(
+            shown.iter().any(|(t, _)| *t == next),
+            "no placeholder {next}: {shown:?}"
         );
         Ok(())
     }
@@ -4674,7 +4835,10 @@ mod tests {
         };
         let slot = sheet.issues.ok_or("the sheet has a slot")?;
         assert_eq!(slot.counts, report.counts);
-        assert_eq!(slot.label, "on this sheet");
+        // Night round 4: it counts every sheet, so it does not say "on this
+        // sheet" for issues on another page.
+        assert_eq!(slot.label, "in the schematic");
+        assert!(slot.whole);
         assert!(!slot.is_empty(), "the unwired R3 has issues");
 
         editor.select_instance(Some(r3), engine.project());

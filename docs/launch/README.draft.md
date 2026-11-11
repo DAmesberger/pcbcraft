@@ -116,7 +116,6 @@ Things to try on the showcase:
 Other starting points:
 
 ```sh
-cargo run --locked --profile ci -p pcbcraft-cli -- demo demo.pcbcraft     # two connected resistors
 cargo run --locked --profile ci -p pcbcraft-cli -- parts parts.pcbcraft   # 24 invented EX- parts for the Place palette
 cargo run --locked --profile ci -p pcbcraft -- examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft
 cargo run --locked --profile ci -p pcbcraft-cli -- fab showcase.pcbcraft out/   # production files from the CLI

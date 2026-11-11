@@ -1,5 +1,6 @@
 mod clean_room;
 mod connectivity;
+mod convert_rules;
 mod convert_v1;
 mod core_modules;
 mod f64_lengths;
@@ -78,7 +79,21 @@ fn run() -> Result<()> {
                 "-D",
                 "warnings",
             ])?;
-            cargo(&["test", "--locked", "--workspace", "--profile", "ci"])?;
+            // The shipped binaries alone, without dev-dependencies: test
+            // fixtures (`pcbcraft-core/test-fixtures`) never build into them.
+            cargo(&[
+                "check", "--locked", "-p", "pcbcraft", "-p", "pcbcraft-cli", "--bins", "--profile",
+                "ci",
+            ])?;
+            // Every test binary runs, so one CI run reports all failures.
+            cargo(&[
+                "test",
+                "--locked",
+                "--workspace",
+                "--profile",
+                "ci",
+                "--no-fail-fast",
+            ])?;
             if command == "ci" {
                 wasm()?;
             }
@@ -98,7 +113,7 @@ fn run() -> Result<()> {
         "raw-keys" => raw_keys::check(),
         _ => Err(
             "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
-             | licences --check | clean-room | ui-containers | ui-forms | raw-keys | convert-v1 FILE…"
+             | licences --check | clean-room | ui-containers | ui-forms | raw-keys | convert-v1 [--profile PROFILE.json] PATH…"
                 .into(),
         ),
     }

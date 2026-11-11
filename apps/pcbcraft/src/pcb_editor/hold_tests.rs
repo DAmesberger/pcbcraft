@@ -1021,3 +1021,76 @@ fn hold_pictures() -> Fallible {
     }
     Ok(())
 }
+
+/// Align with the host's evaluator: a part its dimensions hold on the axis
+/// it would move along, or a locked one, refuses the command in words that
+/// name it, and nothing changes; a part held on the other axis only lines
+/// up on this one.
+#[test]
+fn aligning_a_held_or_locked_part_is_refused_and_names_it() -> Fallible {
+    use pcbcraft_core::layout::arrange::AlignTo;
+    let (mut engine, r1, r2) = held_board()?;
+    let align = |to| {
+        Operation::Layout(LayoutCommand::Align {
+            instances: vec![r1, r2],
+            to,
+        })
+    };
+    let refused = |engine: &mut Engine, op: Operation| -> Fallible<String> {
+        let (before, revision) = (engine.project().clone(), engine.revision());
+        let error = hosted(engine, op).err().ok_or("not refused")?;
+        assert_eq!(engine.project(), &before);
+        assert_eq!(engine.revision(), revision);
+        Ok(refusal::shown_error(&error))
+    };
+    // R1 is right of R2 and held 5 mm from the right edge: aligning left
+    // edges would move R1 along x.
+    let x_of = |engine: &Engine, id| engine.project().placement_of(id).map(|p| p.position[0]);
+    let (r1_x, r2_x) = (
+        x_of(&engine, r1).ok_or("R1")?,
+        x_of(&engine, r2).ok_or("R2")?,
+    );
+    assert!(r1_x > r2_x, "{r1_x} {r2_x}");
+    let lock = |locked| {
+        Operation::Layout(LayoutCommand::SetPlacementLock {
+            instance: r2,
+            locked,
+        })
+    };
+    hosted(&mut engine, lock(false))?;
+    let why = refused(&mut engine, align(AlignTo::Left))?;
+    assert!(
+        why.starts_with("R1 is held") && why.contains("align it"),
+        "{why}"
+    );
+    // Aligning right edges moves R2, locked again.
+    hosted(&mut engine, lock(true))?;
+    let why = refused(&mut engine, align(AlignTo::Right))?;
+    assert_eq!(why, "R2 is locked; unlock it to align it");
+
+    // Held only on x (to the right edge), R1 lines up along y.
+    let mut engine = Engine::demo()?;
+    let right = to_edge(&engine, r1, "right", 5.0)?;
+    dimension(&mut engine, right)?;
+    hosted(
+        &mut engine,
+        Operation::Layout(LayoutCommand::Move {
+            instance: r2,
+            position: [16.0, 14.0],
+            rotation_deg: 0.0,
+            layer: Layer::Top,
+        }),
+    )?;
+    let x = x_of(&engine, r1).ok_or("R1")?;
+    hosted(&mut engine, align(AlignTo::Top))?;
+    let [a, b] = [r1, r2].map(|id| engine.project().placement_of(id).map(|p| p.position));
+    let (a, b) = (a.ok_or("R1")?, b.ok_or("R2")?);
+    assert!(
+        (a[1] - b[1]).abs() < 1e-9 && (a[1] - 14.0).abs() < 1e-9,
+        "{a:?} {b:?}"
+    );
+    assert!((a[0] - x).abs() < 1e-9, "x stays where it is held");
+    let why = refused(&mut engine, align(AlignTo::Left))?;
+    assert!(why.starts_with("R1 is held"), "{why}");
+    Ok(())
+}

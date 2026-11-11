@@ -411,7 +411,7 @@ fn vias_added_and_removed_update_the_board_in_place() -> Result<()> {
 #[test]
 fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
     use pcbcraft_core::layout::fill::{RefillTarget, refill};
-    let mut project = Engine::showcase_hosted(pcbcraft_core::Evaluators {
+    let mut project = Engine::showcase_hosted_fixture(pcbcraft_core::Evaluators {
         footprint: Some(&crate::footprint::SketchEvaluator),
         board: Some(&crate::board::SketchBoardEvaluator),
     })
@@ -481,7 +481,7 @@ fn fill_edits_update_the_filled_board_in_place() -> Result<()> {
 /// update runs a few commands per changed tile, not the pour's.
 #[test]
 fn a_refill_of_another_number_of_regions_updates_in_place() -> Result<()> {
-    let mut project = Engine::showcase_hosted(pcbcraft_core::Evaluators {
+    let mut project = Engine::showcase_hosted_fixture(pcbcraft_core::Evaluators {
         footprint: Some(&crate::footprint::SketchEvaluator),
         board: Some(&crate::board::SketchBoardEvaluator),
     })
@@ -556,7 +556,7 @@ fn a_part_turn_and_its_undo_update_in_place() -> Result<()> {
 /// extrusions are not evaluated again (the same bodies, not equal ones).
 #[test]
 fn a_track_edit_does_not_extrude_the_fills_again() -> Result<()> {
-    let mut project = Engine::showcase_hosted(pcbcraft_core::Evaluators {
+    let mut project = Engine::showcase_hosted_fixture(pcbcraft_core::Evaluators {
         footprint: Some(&crate::footprint::SketchEvaluator),
         board: Some(&crate::board::SketchBoardEvaluator),
     })

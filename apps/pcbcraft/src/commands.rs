@@ -16,6 +16,7 @@
 //! Solidcraft does ([`Registry::rebind`]).
 use crate::shell::{RibbonEvent, Workspace};
 use pcbcraft_core::CopperLayer;
+use pcbcraft_core::layout::arrange::{AlignTo, Axis};
 use std::collections::BTreeMap;
 
 /// Where a command applies. Contexts nest: a command of a parent context
@@ -429,6 +430,8 @@ pub enum AppCommand {
     Shortcuts,
     New,
     Open,
+    /// Empty File › Open Recent.
+    ClearRecent,
     Save,
     SaveAs,
     Export,
@@ -509,8 +512,34 @@ pub enum Action {
     /// Make layer `n` of the stackup (0: the top) the active copper layer;
     /// while routing, change to it through a via.
     PcbLayer(usize),
+    /// Open one of the PCB's docked setup dialogs, as the Board card's
+    /// button does.
+    PcbDialog(PcbDialog),
+    /// Align or distribute the selected parts (`layout.align`,
+    /// `layout.distribute`).
+    PcbArrange(PcbArrange),
     /// A key of a gesture: shown, never run from the palette.
     Key,
+}
+
+/// The PCB's docked setup dialogs the Board card opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PcbDialog {
+    /// Board card › Rules…
+    Rules,
+    /// Board card › Copper › Stackup…
+    Stackup,
+    /// Board card › Net classes › Edit…
+    NetClasses,
+    /// Board card › High speed › Edit…
+    HighSpeed,
+}
+
+/// How the selected parts are lined up or spaced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PcbArrange {
+    Align(pcbcraft_core::layout::arrange::AlignTo),
+    Distribute(pcbcraft_core::layout::arrange::Axis),
 }
 
 /// A copper layer a command names: by its name, or by its place in the
@@ -933,6 +962,12 @@ impl Registry {
                 (score > 0).then_some((score, c))
             })
             .collect();
+        // Letters in order are a fallback: once a command matches by a
+        // word or a substring, scattered-letter hits ("drc" in "Draw
+        // arc") would only bury it.
+        if hits.iter().any(|(score, _)| *score >= WORD_MATCH) {
+            hits.retain(|(score, _)| *score >= WORD_MATCH);
+        }
         hits.sort_by(|(sa, a), (sb, b)| {
             let rank = |s: &u32, c: &Command| {
                 // Recent and in-context commands rank first among equals;
@@ -952,6 +987,10 @@ impl Registry {
         hits.into_iter().map(|(_, c)| c).collect()
     }
 }
+
+/// The least [`match_score`] of a match by a word or a substring of the
+/// title, keywords or id; lower scores are letters found in order.
+const WORD_MATCH: u32 = 300;
 
 /// How well `q` (lower case) finds `command`: its title first, then its
 /// keywords, context and id. 0: no match.
@@ -976,7 +1015,21 @@ pub fn match_score(q: &str, command: &Command) -> u32 {
     });
     let other = if all_words { 700 } else { 0 };
     let id = score(q, &command.id) / 2;
-    title.max(other).max(id)
+    title.max(other).max(id).max(whole_words(q, command))
+}
+
+/// Every word of `q` is a whole word of the title: above a word that only
+/// starts with it. A workspace is where its name leads ("schematic": Go to
+/// Schematic before Export schematic PDF…). 0 otherwise.
+fn whole_words(q: &str, command: &Command) -> u32 {
+    let title = command.title.to_lowercase();
+    let words = title.split(|c: char| !c.is_alphanumeric());
+    let whole = q.split_whitespace().all(|w| words.clone().any(|t| t == w));
+    match (whole, &command.action) {
+        (false, _) => 0,
+        (true, Action::App(AppCommand::Workspace(_))) => 900,
+        (true, _) => 850,
+    }
 }
 
 /// Whether `a` and `b` sharing `chord` is a conflict: both could see the
@@ -1111,6 +1164,14 @@ fn defaults() -> Vec<Command> {
             .chord(chord)
             .in_place()
     };
+    let dialog = |id: &str, title: &str, dialog: PcbDialog| {
+        Command::new(id, title, C::Pcb, Action::PcbDialog(dialog))
+    };
+    let arrange = |id: &str, title: &str, how: PcbArrange| {
+        Command::new(id, title, C::PcbLayout, Action::PcbArrange(how))
+            .icon("move")
+            .keywords("arrange line up selection parts align distribute space evenly")
+    };
     let view = |id: &str, title: &str, context: Context, toggle: PcbView| {
         Command::new(id, title, context, Action::Pcb(toggle))
             .icon("display")
@@ -1144,6 +1205,9 @@ fn defaults() -> Vec<Command> {
         app("file.open", "Open project…", A::Open)
             .chord(Chord::cmd(K::O))
             .icon("open"),
+        app("file.clear-recent", "Clear recent projects", A::ClearRecent)
+            .icon("close")
+            .keywords("open recent history forget list"),
         app("file.save", "Save project", A::Save)
             .chord(Chord::cmd(K::S))
             .icon("save"),
@@ -1694,6 +1758,58 @@ fn defaults() -> Vec<Command> {
         )
         .icon("export")
         .keywords("gerber drill excellon fabrication manufacturing bom pick place zip"),
+        arrange(
+            "pcb.align-left",
+            "Align left edges",
+            PcbArrange::Align(AlignTo::Left),
+        ),
+        arrange(
+            "pcb.align-right",
+            "Align right edges",
+            PcbArrange::Align(AlignTo::Right),
+        ),
+        arrange(
+            "pcb.align-top",
+            "Align top edges",
+            PcbArrange::Align(AlignTo::Top),
+        ),
+        arrange(
+            "pcb.align-bottom",
+            "Align bottom edges",
+            PcbArrange::Align(AlignTo::Bottom),
+        ),
+        arrange(
+            "pcb.align-centres-x",
+            "Align horizontal centres",
+            PcbArrange::Align(AlignTo::CentreX),
+        ),
+        arrange(
+            "pcb.align-centres-y",
+            "Align vertical centres",
+            PcbArrange::Align(AlignTo::CentreY),
+        ),
+        arrange(
+            "pcb.distribute-x",
+            "Distribute horizontally",
+            PcbArrange::Distribute(Axis::Horizontal),
+        ),
+        arrange(
+            "pcb.distribute-y",
+            "Distribute vertically",
+            PcbArrange::Distribute(Axis::Vertical),
+        ),
+        dialog("pcb.rules", "Design rules…", PcbDialog::Rules)
+            .icon("params")
+            .keywords("drc clearance checks track width annular ring profile"),
+        dialog("pcb.stackup", "Stackup…", PcbDialog::Stackup)
+            .icon("plane")
+            .keywords("copper layers dielectric prepreg core thickness impedance"),
+        dialog("pcb.net-classes", "Net classes…", PcbDialog::NetClasses)
+            .icon("plane")
+            .keywords("netclass track width clearance via drill"),
+        dialog("pcb.high-speed", "High speed…", PcbDialog::HighSpeed)
+            .icon("trace")
+            .keywords("differential diff pair length group matching skew impedance"),
         tool(
             "pcb.board-shape",
             "Board shape",
@@ -1706,13 +1822,13 @@ fn defaults() -> Vec<Command> {
         .keywords("outline edge cutout sketch"),
         key(
             "pcb.cancel",
-            "Cancel the tool or gesture",
+            "Cancel the tool or gesture, else deselect",
             C::PcbLayout,
             Chord::key(K::Escape),
         ),
         key(
             "pcb.delete",
-            "Delete the selected track, via, fill or dimension",
+            "Delete the selection's tracks, vias and fills, or a dimension",
             C::PcbLayout,
             Chord::key(K::Delete),
         )

@@ -318,6 +318,7 @@ fn tracks(net: Id, layer: CopperLayer, width: f64, points: &[Point]) -> Vec<Rout
 /// The layout commands that build the showcase board over `project`,
 /// whose instances and nets carry the showcase designators and net names.
 pub fn commands(project: &Project) -> Result<Vec<LayoutCommand>> {
+    let rules = project.rules.require()?.rules().clone();
     let instance = |designator: &str| {
         project
             .instance_by_designator(designator)
@@ -345,7 +346,7 @@ pub fn commands(project: &Project) -> Result<Vec<LayoutCommand>> {
         });
     }
     for (name, position, tented) in VIAS {
-        let mut via = ViaRequest::through(net(name)?, *position);
+        let mut via = ViaRequest::through(&rules, net(name)?, *position);
         via.tented = *tented;
         commands.push(LayoutCommand::AddVia { via });
     }
@@ -356,7 +357,7 @@ pub fn commands(project: &Project) -> Result<Vec<LayoutCommand>> {
     }
     for (name, layer, start, at, tented, to_layer, end, width) in LAYER_CHANGES {
         let net = net(name)?;
-        let mut via = ViaRequest::through(net, *at);
+        let mut via = ViaRequest::through(&rules, net, *at);
         via.tented = *tented;
         commands.push(LayoutCommand::RouteLayerChange {
             request: LayerChangeRequest {

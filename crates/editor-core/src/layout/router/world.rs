@@ -4,6 +4,7 @@
 //! and the same rules (`limits::BoardRules`) as `layout.route_apply`, so a
 //! proposal the router finds clear is one the engine accepts.
 use super::hull::{Facets, Hull};
+use crate::diagnostics::ObjectRef;
 use crate::geometry::{Bounds, Point};
 use crate::ids::Id;
 use crate::layout::CopperGraph;
@@ -564,6 +565,15 @@ impl<'a> Ctx<'a> {
         self.index
             .graph
             .get_or_init(|| Arc::new(CopperGraph::of(self.project)))
+    }
+
+    /// The document object `hit` is, when it is a track, via or pad of
+    /// the board as it stands (not shoved copper, a keepout or an edge).
+    pub fn object(&self, hit: &Hit) -> Option<ObjectRef> {
+        match hit.target {
+            Target::Base(k) => self.index.obstacles.object(k),
+            _ => None,
+        }
     }
 
     /// A refusal naming what `hit` is ("Too close to a via on GND").

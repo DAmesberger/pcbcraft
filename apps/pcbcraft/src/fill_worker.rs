@@ -277,6 +277,38 @@ mod tests {
         Ok(())
     }
 
+    /// R7-3: revisions that queue while the worker computes are not
+    /// computed one by one: only the newest is, and the ones it replaced
+    /// never answer.
+    #[test]
+    fn revisions_queued_behind_a_refill_are_skipped_but_the_newest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::showcase()?;
+        let mut worker = FillWorker::start(egui::Context::default());
+        let jobs = worker.jobs.take().ok_or("no worker")?;
+        let results = worker.results.take().ok_or("no worker")?;
+        for revision in 1..=4u64 {
+            let mut project = engine.project().clone();
+            for track in &mut project.tracks {
+                track.width += 0.01 * revision as f64;
+            }
+            jobs.send(Job::Stale(revision, Arc::new(project)))?;
+        }
+        let mut answered = Vec::new();
+        while let Ok(done) = results.recv_timeout(std::time::Duration::from_secs(60)) {
+            if let Done::Stale(revision, computed) = done {
+                computed?;
+                answered.push(revision);
+                if revision == 4 {
+                    break;
+                }
+            }
+        }
+        // The first may have started before the others came.
+        assert!(answered == [4] || answered == [1, 4], "{answered:?}");
+        Ok(())
+    }
+
     /// An explicit refill runs on the worker: the UI thread gets the
     /// copper back and commits it as one undoable `fill.store_all`, the
     /// same copper `fill.refill` stores.

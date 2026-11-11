@@ -16,6 +16,7 @@ use pcbcraft_core::geometry::Shape;
 use pcbcraft_core::layout::{self, BoardDrawing, PlacedItem};
 use pcbcraft_core::library::graphics::PlacedText;
 use pcbcraft_core::library::offset_polygon;
+use pcbcraft_core::rules::SilkscreenRules;
 use pcbcraft_core::{CopperLayer, Id, Layer, Point, Project};
 use std::collections::BTreeMap;
 
@@ -48,6 +49,7 @@ pub struct Legend<'a> {
 pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
     let stackup = &project.stackup;
     let mut strokes: BTreeMap<(Id, Layer), Vec<Vec<Point>>> = BTreeMap::new();
+    let silk = project.rules.effective().silkscreen;
     for graphic in layout::placed_graphics(project) {
         let BoardDrawing::Silkscreen(side) = graphic.layer else {
             continue;
@@ -66,7 +68,7 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
                 width,
                 filled,
             } => shape_loops(out, shape, *width, *filled),
-            PlacedItem::Text(text) => text_loops(out, text),
+            PlacedItem::Text(text) => text_loops(out, text, &silk),
         }
     }
     let board = legend.board;
@@ -207,8 +209,8 @@ fn stroke(out: &mut Vec<Vec<Point>>, points: &[Point], closed: bool, width: f64)
 /// The loops of placed legend text: the core's legend strokes
 /// (`layout::legend`, Pcbcraft's stroke font laid out by the text metric),
 /// each stroked with its round pen.
-fn text_loops(out: &mut Vec<Vec<Point>>, text: &PlacedText) {
-    let strokes = layout::legend::text_strokes(text);
+fn text_loops(out: &mut Vec<Vec<Point>>, text: &PlacedText, silk: &SilkscreenRules) {
+    let strokes = layout::legend::text_strokes(text, silk);
     for points in &strokes.strokes {
         stroke(out, points, false, strokes.width);
     }

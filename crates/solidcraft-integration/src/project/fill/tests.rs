@@ -394,7 +394,7 @@ fn a_pour_with_many_clearances_is_built_in_tiles() -> Result<()> {
 #[test]
 #[ignore = "speed bar not met on the SMLib kernel (fork 21ac01f4a, solidcore a445bdaa): showcase unfilled 2.0 s, filled 25.4 s; the founder accepted slower builds on 2026-11-06 and holds speed work"]
 fn the_showcase_fills_cost_little_of_the_build() -> Result<()> {
-    let filled = Engine::showcase_hosted(pcbcraft_core::Evaluators {
+    let filled = Engine::showcase_hosted_fixture(pcbcraft_core::Evaluators {
         footprint: Some(&crate::footprint::SketchEvaluator),
         board: Some(&crate::board::SketchBoardEvaluator),
     })

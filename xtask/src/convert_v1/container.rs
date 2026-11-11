@@ -23,7 +23,9 @@ pub struct Converted {
 }
 
 /// The document's stored values converted as JSON; the number changed.
-pub fn convert_document(file: &mut Value) -> Result<usize> {
+/// `pinned` is the rule profile `--profile` names, for the rules
+/// conversion ([`crate::convert_rules`]).
+pub fn convert_document(file: &mut Value, pinned: Option<&Value>) -> Result<usize> {
     if file.get("version") != Some(&Value::from(1)) {
         return Err("not a version 1 Pcbcraft document".into());
     }
@@ -33,6 +35,7 @@ pub fn convert_document(file: &mut Value) -> Result<usize> {
         .and_then(Value::as_object_mut)
         .ok_or("the document has no project")?;
     n += schematic::convert_project(project)?;
+    n += crate::convert_rules::convert_project_rules(project, pinned)?;
     n += library::project(project)?;
     if let Some(library) = project.get_mut("library").and_then(Value::as_object_mut) {
         n += library::library(library)?;
@@ -45,7 +48,7 @@ pub fn convert_document(file: &mut Value) -> Result<usize> {
 
 /// Converts one container in place, keeping the original as
 /// `FILE.pre-nm` (never overwritten).
-pub fn convert(path: &Path, backup: &Path) -> Result<Converted> {
+pub fn convert(path: &Path, backup: &Path, pinned: Option<&Value>) -> Result<Converted> {
     let original = fs::read(path)?;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&original[..]))?;
     let mut document = Vec::new();
@@ -57,7 +60,7 @@ pub fn convert(path: &Path, backup: &Path) -> Result<Converted> {
         return Err(format!("{DOCUMENT} exceeds {MAX_DOCUMENT_BYTES} bytes").into());
     }
     let mut file: Value = serde_json::from_slice(&document)?;
-    let values = convert_document(&mut file)?;
+    let values = convert_document(&mut file, pinned)?;
 
     // The converted JSON in a container beside the file, read as the app
     // reads it.

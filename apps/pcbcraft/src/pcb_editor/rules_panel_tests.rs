@@ -4,6 +4,7 @@
 use super::*;
 use egui::{Pos2, Shape};
 use pcbcraft_core::Engine;
+use pcbcraft_core::rules::fixtures;
 use solidcraft_ui_egui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -125,7 +126,7 @@ fn library() -> Result<(tempfile::TempDir, ProfileLibrary), Box<dyn std::error::
 
 #[test]
 fn commits_set_clear_or_skip_an_override() -> TestResult {
-    let mut rules = ProjectRules::default();
+    let mut rules = fixtures::rules()?;
     let key = RuleKey::MaskWebMin;
     assert!(
         commit_for(&rules, key, RuleValue::Length(0.1)).is_none(),
@@ -145,12 +146,18 @@ fn commits_set_clear_or_skip_an_override() -> TestResult {
         Some(RulesCommand::ClearOverride { .. })
     ));
     assert!(commit_for(&rules, key, RuleValue::Length(0.15)).is_none());
-    assert_eq!(rules_summary(&rules), "Pcbcraft default · 1 override");
+    assert_eq!(rules_summary(&rules), "Test prototype · 1 override");
+    assert_eq!(rules_summary(&ProjectRules::default()), "No rule profile");
+    assert!(
+        commit_for(&ProjectRules::default(), key, RuleValue::Length(0.15)).is_none(),
+        "no override without a profile"
+    );
     Ok(())
 }
 
 #[test]
-fn values_and_provenance_read_as_text() {
+fn values_and_sources_read_as_text() -> TestResult {
+    assert_eq!(value_text(RuleValue::Fraction(0.15)), "0.15");
     assert_eq!(value_text(RuleValue::Length(0.2)), "0.2 mm");
     assert_eq!(value_text(RuleValue::Angle(45.0)), "45°");
     assert_eq!(value_text(RuleValue::Ratio(None)), "Not checked");
@@ -177,20 +184,8 @@ fn values_and_provenance_read_as_text() {
         "Thermal relief"
     );
     assert_eq!(
-        provenance_line(&builtin::fine().provenance),
-        "Built-in · estimated"
-    );
-    let entered = ProfileProvenance {
-        origin: ProfileOrigin::User,
-        basis: ProfileBasis::FabricatorEntered,
-        source: "Example Fab".into(),
-        url: String::new(),
-        date: "2026-10-30".into(),
-        notes: String::new(),
-    };
-    assert_eq!(
-        provenance_line(&entered),
-        "Your profile · from fabricator data · Example Fab · 2026-10-30"
+        source_line(&fixtures::jlcpcb_example()?.source),
+        "JLCPCB · PCB Manufacturing & Assembly Capabilities · read 2026-11-11"
     );
     // Every label the panel shows passes the message style check.
     for key in RuleKey::all() {
@@ -200,6 +195,40 @@ fn values_and_provenance_read_as_text() {
             "{label}"
         );
     }
+    Ok(())
+}
+
+/// A board without a profile says so, and choosing one from the library
+/// previews it and sets it as one undo step.
+#[test]
+fn a_board_without_a_profile_asks_for_one() -> TestResult {
+    let mut engine = Engine::default();
+    let ctx = context();
+    let mut editor = PcbEditor::default();
+    let (_dir, library) = library()?;
+    library.create(&fixtures::jlcpcb_example()?)?;
+    editor.open_rules_in(Some(library), None);
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let shown = texts(&output);
+    assert!(
+        shown
+            .iter()
+            .any(|t| t == "This board has no rule profile, so nothing is checked"),
+        "{shown:?}"
+    );
+    assert!(click(&mut editor, &engine, &ctx, "Choose a profile…")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "JLCPCB 2-layer 1 oz")?.is_none());
+    assert_eq!(editor.subject(), Subject::Review);
+    let switch = click(&mut editor, &engine, &ctx, "Switch to JLCPCB 2-layer 1 oz")?
+        .ok_or("Switch did nothing")?;
+    engine.apply(engine.revision(), switch)?;
+    assert_eq!(
+        engine.project().rules.profile,
+        Some(fixtures::jlcpcb_example()?)
+    );
+    engine.undo()?;
+    assert!(engine.project().rules.profile.is_none(), "one undo step");
+    Ok(())
 }
 
 /// Board card › Rules… docks the panel; a value typed into a field
@@ -211,7 +240,7 @@ fn a_field_commits_one_override_and_reset_clears_it() -> TestResult {
     let ctx = context();
     let mut editor = PcbEditor::default();
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
-    assert!(texts(&output).iter().any(|t| t == "Pcbcraft default"));
+    assert!(texts(&output).iter().any(|t| t == "Test prototype"));
     assert!(click(&mut editor, &engine, &ctx, "Rules…")?.is_none());
     assert_eq!(editor.subject(), Subject::Dialog);
     let (dir, library) = library()?;
@@ -221,7 +250,7 @@ fn a_field_commits_one_override_and_reset_clears_it() -> TestResult {
     for expected in [
         "Design rules",
         "Min track width",
-        "Pcbcraft default · built-in",
+        "Test prototype · this board",
     ] {
         assert!(shown.iter().any(|t| t == expected), "{expected}: {shown:?}");
     }
@@ -282,7 +311,7 @@ fn a_field_commits_one_override_and_reset_clears_it() -> TestResult {
     engine.undo()?;
     assert_eq!(engine.project().rules.overrides.len(), 1);
     engine.undo()?;
-    assert!(engine.project().rules.is_default());
+    assert_eq!(engine.project().rules, fixtures::rules()?);
     // Done closes the panel; the Board card is back.
     assert!(click(&mut editor, &engine, &ctx, "Done")?.is_none());
     assert!(editor.rules.is_none());
@@ -300,12 +329,14 @@ fn a_profile_switch_is_previewed_then_one_undo_step() -> TestResult {
     let ctx = context();
     let mut editor = PcbEditor::default();
     let (_dir, library) = library()?;
+    library.create(&fixtures::fine()?)?;
     editor.open_rules_in(Some(library), None);
-    assert!(click(&mut editor, &engine, &ctx, "Pcbcraft default · built-in")?.is_none());
-    assert!(click(&mut editor, &engine, &ctx, "Fine 4/4 · built-in")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "Test prototype · this board")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "Test fine")?.is_none());
     assert_eq!(editor.subject(), Subject::Review);
-    assert!(
-        engine.project().rules.is_default(),
+    assert_eq!(
+        engine.project().rules,
+        fixtures::rules()?,
         "previewing changes nothing"
     );
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
@@ -313,24 +344,24 @@ fn a_profile_switch_is_previewed_then_one_undo_step() -> TestResult {
     assert!(
         shown
             .iter()
-            .any(|t| t.starts_with("Fine 4/4 · ") && t.contains("rules change")),
+            .any(|t| t.starts_with("Test fine · ") && t.contains("rules change")),
         "{shown:?}"
     );
     let switch =
-        click(&mut editor, &engine, &ctx, "Switch to Fine 4/4")?.ok_or("Switch did nothing")?;
+        click(&mut editor, &engine, &ctx, "Switch to Test fine")?.ok_or("Switch did nothing")?;
     let Operation::Rules(RulesCommand::SetProfile { profile, .. }) = &switch else {
         return Err("Switch issued another command".into());
     };
-    assert_eq!(**profile, builtin::fine());
+    assert_eq!(**profile, fixtures::fine()?);
     assert_eq!(marked(&ctx), Some(Origin::Dialog(preview_id())));
     let before = engine.revision();
     engine.apply(before, switch)?;
-    assert_eq!(engine.project().rules.profile, builtin::fine());
+    assert_eq!(engine.project().rules.profile, Some(fixtures::fine()?));
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
     assert_eq!(editor.subject(), Subject::Dialog, "back to the table");
-    assert!(texts(&output).iter().any(|t| t == "Fine 4/4 · built-in"));
+    assert!(texts(&output).iter().any(|t| t == "Test fine"));
     engine.undo()?;
-    assert!(engine.project().rules.is_default(), "one undo step");
+    assert_eq!(engine.project().rules, fixtures::rules()?, "one undo step");
     Ok(())
 }
 
@@ -342,7 +373,7 @@ fn a_stale_preview_must_be_recomputed() -> TestResult {
     let mut editor = PcbEditor::default();
     editor.open_rules_in(None, None);
     if let Some(panel) = &mut editor.rules {
-        panel.preview(&engine, builtin::hdi(), false);
+        panel.preview(&engine, fixtures::fine()?, false);
     }
     engine.apply(
         engine.revision(),
@@ -353,13 +384,13 @@ fn a_stale_preview_must_be_recomputed() -> TestResult {
     )?;
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
     assert!(texts(&output).iter().any(|t| t == "The project changed"));
-    assert!(click(&mut editor, &engine, &ctx, "Switch to HDI 3/3")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "Switch to Test fine")?.is_none());
     assert!(click(&mut editor, &engine, &ctx, "Recompute")?.is_none());
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
     let shown = texts(&output);
     assert!(!shown.iter().any(|t| t == "The project changed"));
     assert!(shown.iter().any(|t| t == "Keep project overrides"));
-    let switch = click(&mut editor, &engine, &ctx, "Switch to HDI 3/3")?.ok_or("no switch")?;
+    let switch = click(&mut editor, &engine, &ctx, "Switch to Test fine")?.ok_or("no switch")?;
     engine.apply(engine.revision(), switch)?;
     assert!(
         engine.project().rules.overrides.is_empty(),
@@ -368,9 +399,9 @@ fn a_stale_preview_must_be_recomputed() -> TestResult {
     Ok(())
 }
 
-/// Save as profile writes the effective rules (profile plus overrides)
-/// with the entered provenance to the library, and switches the board to
-/// it without changing any effective rule.
+/// Save as profile writes the profile with its overrides as values, under
+/// the entered source, to the library, and switches the board to it
+/// without changing any effective rule.
 #[test]
 fn save_as_profile_writes_the_library_and_switches_the_board() -> TestResult {
     let mut engine = Engine::demo()?;
@@ -392,8 +423,7 @@ fn save_as_profile_writes_the_library_and_switches_the_board() -> TestResult {
         ..
     }) = &mut editor.rules
     {
-        form.basis = ProfileBasis::FabricatorEntered;
-        form.source = "Example Fab".into();
+        form.publisher = "Example Fab".into();
         form.date = "2026-10-30".into();
     } else {
         return Err("the save form is not open".into());
@@ -402,14 +432,17 @@ fn save_as_profile_writes_the_library_and_switches_the_board() -> TestResult {
     let stored = library.list()?.profiles;
     assert_eq!(stored.len(), 1);
     let saved = &stored[0];
-    assert_eq!(saved.name, "Pcbcraft default copy");
-    assert_eq!(saved.id, "pcbcraft-default-copy");
-    assert_eq!(saved.rules, effective);
-    assert_eq!(saved.provenance.basis, ProfileBasis::FabricatorEntered);
-    assert_eq!(saved.provenance.origin, ProfileOrigin::User);
+    assert_eq!(saved.name, "Test prototype copy");
+    assert_eq!(saved.id, "test-prototype-copy");
+    assert_eq!(saved.rules(), &effective);
+    assert_eq!(saved.source.publisher, "Example Fab");
+    assert_eq!(
+        saved.entry(RuleKey::MaskWebMin).map(|e| e.source.as_str()),
+        Some("Project override")
+    );
     engine.apply(engine.revision(), op)?;
     let rules = &engine.project().rules;
-    assert_eq!(rules.profile, *saved);
+    assert_eq!(rules.profile.as_ref(), Some(saved));
     assert!(rules.overrides.is_empty());
     assert_eq!(rules.effective(), effective, "nothing else changed");
     // The library row is listed, and the picker names the board's profile.
@@ -418,10 +451,10 @@ fn save_as_profile_writes_the_library_and_switches_the_board() -> TestResult {
     assert!(
         shown
             .iter()
-            .any(|t| t == "Pcbcraft default copy · fabricator data"),
+            .any(|t| t == "Test prototype copy · Example Fab"),
         "{shown:?}"
     );
-    assert!(shown.iter().any(|t| t == "Pcbcraft default copy"));
+    assert!(shown.iter().any(|t| t == "Test prototype copy"));
     // A second save under the same name is refused on the dialog.
     assert!(click(&mut editor, &engine, &ctx, "Save as profile…")?.is_none());
     if let Some(RulesPanel {
@@ -429,7 +462,7 @@ fn save_as_profile_writes_the_library_and_switches_the_board() -> TestResult {
         ..
     }) = &mut editor.rules
     {
-        form.name = "Pcbcraft default copy".into();
+        form.name = "Test prototype copy".into();
     }
     assert!(click(&mut editor, &engine, &ctx, "Save")?.is_none());
     assert!(matches!(
@@ -472,12 +505,12 @@ fn show_rule_opens_the_folded_group_at_its_rule() -> TestResult {
 }
 
 #[test]
-fn impact_text_counts_changes_and_issues() {
+fn impact_text_counts_changes_and_issues() -> TestResult {
     let impact = ProfileImpact {
         changes: rules::rule_changes(
-            &ProjectRules::default(),
+            &fixtures::rules()?,
             &ProjectRules {
-                profile: builtin::fine(),
+                profile: Some(fixtures::fine()?),
                 ..ProjectRules::default()
             },
         )
@@ -504,6 +537,7 @@ fn impact_text_counts_changes_and_issues() {
         "{:?}",
         groups[0].lines
     );
+    Ok(())
 }
 
 /// An Issues row of a rule-based board finding offers "Show rule", which
@@ -541,4 +575,63 @@ fn board_rule_findings_offer_show_rule() {
 /// Fail the test without the denied `panic!` family.
 fn panic_free_fail(what: &str) {
     assert!(what.is_empty(), "unexpected fix {what}");
+}
+
+/// At the Properties column's width (the app's is about 260 points) the
+/// rule rows stand one under the other at full height, as at any width:
+/// they never overlap.
+#[test]
+fn the_rule_rows_do_not_overlap_in_the_properties_column() -> TestResult {
+    let engine = Engine::demo()?;
+    let ctx = context();
+    solidcraft_theme::apply(&ctx);
+    let mut editor = PcbEditor::default();
+    click(&mut editor, &engine, &ctx, "Rules…")?;
+    assert_eq!(editor.subject(), Subject::Dialog);
+    let mut output = None;
+    for _ in 0..3 {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(262.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                editor.subject_slot(ui, &engine);
+            },
+        );
+        out.textures_delta.clear();
+        output = Some(out);
+    }
+    let output = output.ok_or("no frame")?;
+    let first = positions(&output, "Min track width");
+    let second = positions(&output, "Default track width");
+    let (Some(a), Some(b)) = (first.first(), second.first()) else {
+        return Err(format!("rows not drawn: {:?}", texts(&output)).into());
+    };
+    let t = solidcraft_theme::Tokens::get();
+    assert!(b.y - a.y >= t.control_height, "rows {} apart", b.y - a.y);
+    Ok(())
+}
+
+/// The Via, Route and Pair tools start tented as the profile's `tent vias`
+/// says, until the tool's own Tented box is changed.
+#[test]
+fn the_via_tools_start_tented_as_the_profile_says() -> TestResult {
+    let mut engine = Engine::demo()?;
+    let mut editor = PcbEditor::default();
+    assert!(editor.via_tented(engine.project()));
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(RulesCommand::SetOverride {
+            key: RuleKey::TentVias,
+            value: RuleValue::Flag(false),
+        }),
+    )?;
+    assert!(!editor.via_tented(engine.project()));
+    editor.via_tented = Some(true);
+    assert!(editor.via_tented(engine.project()), "the tool's own choice");
+    Ok(())
 }

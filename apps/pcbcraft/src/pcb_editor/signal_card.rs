@@ -88,14 +88,14 @@ impl PcbEditor {
                 kit::actions(ui, |ui| {
                     close = kit::primary(ui, "Done", true).clicked();
                     if let Some(pair) = card.pair
-                        && ui_kit::button(ui, "Delete pair", Button::Small).clicked()
+                        && ui_kit::button(ui, "Delete pair", Button::Enabled(true)).clicked()
                     {
                         refusal::mark(ui.ctx(), Origin::Command);
                         operation = Some(Operation::Rules(RulesCommand::DeleteDiffPair { pair }));
                         card.pair = None;
                     }
                     if let Some(group) = card.group
-                        && ui_kit::button(ui, "Delete group", Button::Small).clicked()
+                        && ui_kit::button(ui, "Delete group", Button::Enabled(true)).clicked()
                     {
                         refusal::mark(ui.ctx(), Origin::Command);
                         operation =

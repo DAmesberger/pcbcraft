@@ -1,6 +1,7 @@
 //! Dragging a track with Select through the Layout canvas: the other net's
 //! track is shoved live during the drag and springs back, release sends one
-//! `layout.route_apply` that one undo takes back, and Esc cancels.
+//! `layout.route_apply` that one undo takes back, Esc cancels, and a drag
+//! that cannot move says why on release.
 use super::route_tests::{Canvas, TestResult, edits, screen};
 use super::*;
 use pcbcraft_core::layout::RouteRequest;
@@ -150,5 +151,88 @@ fn esc_cancels_a_track_drag() -> TestResult {
     let event = button(&editor, &engine, [30.0, 27.0], false);
     let release = send(&mut canvas, &mut editor, &engine, event);
     assert!(release.is_none(), "release after Esc sends nothing");
+    Ok(())
+}
+
+/// A drag of a track that cannot move (here a locked one) sends nothing
+/// on release and says why in a toast, not silently.
+#[test]
+fn a_track_drag_that_cannot_move_says_why() -> TestResult {
+    let (mut engine, middle, _) = setup()?;
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::SetTrackLock {
+            id: middle,
+            locked: true,
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    let _ = crate::kit::toast::take_posted(canvas.ctx());
+    press_and_move(
+        &mut canvas,
+        &mut editor,
+        &engine,
+        &[[30.0, 26.0], [30.0, 27.0]],
+    );
+    assert!(editor.track_drag.is_some(), "the press grips the track");
+    let event = button(&editor, &engine, [30.0, 27.0], false);
+    let release = send(&mut canvas, &mut editor, &engine, event);
+    assert!(release.is_none(), "{release:?}");
+    let posted = crate::kit::toast::take_posted(canvas.ctx());
+    let texts: Vec<&str> = posted.iter().map(|p| p.text.as_str()).collect();
+    assert_eq!(texts, ["Can't drag the track: The track is locked"]);
+    Ok(())
+}
+
+/// Night finding F7: on the ESP32 board, dragging USB_DN's long run moves
+/// USB_DP's run beside it too, live in the preview (both drawn moved) and
+/// in the one `layout.route_apply` release sends.
+#[test]
+fn dragging_one_half_of_the_usb_pair_previews_and_moves_both() -> TestResult {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    );
+    let mut engine = Engine::demo()?;
+    engine.replace_document(pcbcraft_io::read_project(std::path::Path::new(path))?)?;
+    // Each half's long run below U3: the longest track on its net.
+    let run = |name: &str| {
+        let p = engine.project();
+        let net = p.nets.iter().find(|n| n.name == name).ok_or("no net")?;
+        let length =
+            |t: &&pcbcraft_core::model::Track| (t.end[0] - t.start[0]).hypot(t.end[1] - t.start[1]);
+        p.tracks
+            .iter()
+            .filter(|t| t.net == net.id)
+            .max_by(|a, b| length(a).total_cmp(&length(b)))
+            .cloned()
+            .ok_or("no run")
+    };
+    let (dn_run, dp) = (run("USB_DN")?, run("USB_DP")?.id);
+    let (dn, x, y) = (dn_run.id, dn_run.start[0], 21.0);
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    let none = egui::Modifiers::NONE;
+    canvas.frame(&mut editor, &engine, vec![], none);
+    let start = [x, y];
+    let hover = moved(&editor, &engine, start);
+    canvas.frame(&mut editor, &engine, vec![hover], none);
+    let press = button(&editor, &engine, start, true);
+    canvas.frame(&mut editor, &engine, vec![press], none);
+    for dx in [0.29, 0.79, 1.0] {
+        let event = moved(&editor, &engine, [x - dx, y]);
+        send(&mut canvas, &mut editor, &engine, event);
+    }
+    assert_eq!(editor.track_drag.as_ref().map(|d| d.track), Some(dn));
+    assert!(editor.shoved.0.contains(&dn), "{:?}", editor.shoved.0);
+    assert!(editor.shoved.0.contains(&dp), "{:?}", editor.shoved.0);
+    let event = button(&editor, &engine, [x - 1.0, y], false);
+    let release = send(&mut canvas, &mut editor, &engine, event);
+    let sent = edits(&release)?;
+    for id in [dn, dp] {
+        assert!(sent.replace.iter().any(|t| t.id == id), "{sent:?}");
+    }
     Ok(())
 }

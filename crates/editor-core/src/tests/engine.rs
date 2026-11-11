@@ -403,6 +403,81 @@ fn a_batch_applies_as_one_step_or_not_at_all() -> Result<()> {
     Ok(())
 }
 
+/// Every undo step keeps its operation's title and area through undo and
+/// redo: a batch of one kind takes that kind's title, a mixed batch is
+/// several changes, and a joined step is named by its latest part.
+#[test]
+fn undo_steps_carry_their_title_and_area() -> Result<()> {
+    use crate::{Area, Step};
+    let mut engine = Engine::demo()?;
+    assert_eq!(engine.undo_step(), None);
+    let occurrence = engine.project().occurrences[0].id;
+    let r1 = by_designator(&engine, "R1")?;
+    let placed = engine
+        .project()
+        .placements
+        .iter()
+        .find(|p| p.instance == r1)
+        .cloned()
+        .ok_or_else(|| Error::NotFound("R1's placement".into()))?;
+    let moved = |x: f64| {
+        Operation::Schematic(SchematicCommand::MoveUnit {
+            occurrence,
+            position: pt([x, 0.0]),
+        })
+    };
+    let unit = Step {
+        title: "Move a symbol unit",
+        area: Area::Schematic,
+    };
+    apply(&mut engine, moved(1.0))?;
+    assert_eq!(engine.undo_step(), Some(unit));
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::Move {
+            instance: r1,
+            position: [placed.position[0] + 0.5, placed.position[1]],
+            rotation_deg: placed.rotation_deg,
+            layer: placed.layer,
+        }),
+    )?;
+    let part = Step {
+        title: "Move a placed part",
+        area: Area::Pcb,
+    };
+    assert_eq!(engine.undo_step(), Some(part));
+    engine.undo()?;
+    assert_eq!(
+        (engine.undo_step(), engine.redo_step()),
+        (Some(unit), Some(part))
+    );
+    engine.redo()?;
+    assert_eq!((engine.undo_step(), engine.redo_step()), (Some(part), None));
+
+    let same = vec![moved(2.0), moved(3.0)];
+    engine.apply_all_hosted(engine.revision(), same, Default::default())?;
+    assert_eq!(engine.undo_step(), Some(unit), "one kind");
+    let mixed = vec![moved(4.0), designator_edit(r1, "R9")];
+    engine.apply_all_hosted(engine.revision(), mixed, Default::default())?;
+    let several = Step {
+        title: Step::MIXED,
+        area: Area::Schematic,
+    };
+    assert_eq!(engine.undo_step(), Some(several), "a mix");
+
+    let at = engine.revision();
+    apply(&mut engine, designator_edit(r1, "R8"))?;
+    engine.join_last_step(at)?;
+    let designator = Step {
+        title: "Set a designator",
+        area: Area::Schematic,
+    };
+    assert_eq!(engine.undo_step(), Some(designator), "joined");
+    engine.undo()?;
+    assert_eq!(engine.redo_step(), Some(designator));
+    Ok(())
+}
+
 #[test]
 fn topology_uses_ids_and_survives_moving_and_reannotation() -> Result<()> {
     let mut engine = Engine::default();

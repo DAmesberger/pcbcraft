@@ -779,6 +779,33 @@ impl LibrarySources {
         }
     }
 
+    /// The project files last opened or saved, most recent first (File ›
+    /// Open Recent).
+    pub fn recent_projects(&self) -> &[std::path::PathBuf] {
+        &self.settings.projects
+    }
+
+    /// Put the project file `path` first among the recent projects, per
+    /// user (bounded and checked by [`UserSettings::remember_project`]).
+    pub fn remember_project(&mut self, path: &std::path::Path) {
+        if self.settings.projects.first().map(|p| p.as_path()) != Some(path) {
+            self.settings.remember_project(path.to_path_buf());
+            self.persist();
+        }
+    }
+
+    /// Drop `path` from the recent projects (a file that is gone), or every
+    /// one with `None` (Clear Menu).
+    pub fn forget_projects(&mut self, path: Option<&std::path::Path>) {
+        let before = self.settings.projects.len();
+        self.settings
+            .projects
+            .retain(|p| path.is_some_and(|path| p != path));
+        if self.settings.projects.len() != before {
+            self.persist();
+        }
+    }
+
     /// The user's keymap and key-reveal settings.
     pub fn keyboard(&self) -> &settings::KeyboardSettings {
         &self.settings.keyboard
@@ -807,6 +834,19 @@ impl LibrarySources {
         if self.settings.production_folder(project) != Some(folder.as_path()) {
             self.settings
                 .remember_production_folder(project.to_path_buf(), folder);
+            self.persist();
+        }
+    }
+
+    /// The profile library id a new board starts with (Settings).
+    pub fn default_rule_profile(&self) -> Option<String> {
+        self.settings.default_rule_profile.clone()
+    }
+
+    /// Keep the default rule profile per user.
+    pub fn set_default_rule_profile(&mut self, id: Option<String>) {
+        if id != self.settings.default_rule_profile {
+            self.settings.default_rule_profile = id;
             self.persist();
         }
     }

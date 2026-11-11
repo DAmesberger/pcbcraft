@@ -1,7 +1,8 @@
 //! Dragging a track with Select: the segment under the press moves along
 //! its normal with the pointer, its neighbours on the net follow, and
 //! other nets' copper is shoved live ([`router::drag::drag_plan`], in the
-//! router mode the Route tool's M chooses). The preview is drawn as the
+//! router mode the Route tool's M chooses); a pair half's partner beside
+//! it moves too, drawn as dragged copper. The preview is drawn as the
 //! route preview is, from the committed board on every move, so shoved
 //! copper springs back; a drag that stops short shows the warning ring.
 //! Release sends the plan's edits as one `layout.route_apply` (one undo
@@ -95,11 +96,27 @@ impl PcbEditor {
     }
 
     /// Release: the planned edits as one `layout.route_apply`, or nothing
-    /// when the drag moved nothing.
-    pub(super) fn finish_track_drag(&mut self, revision: u64) -> Option<Operation> {
+    /// when the drag moved nothing; then a toast says why, as the Route
+    /// tool's refused click does.
+    pub(super) fn finish_track_drag(
+        &mut self,
+        ctx: &egui::Context,
+        revision: u64,
+    ) -> Option<Operation> {
         let drag = self.track_drag.take()?;
         let (at, _, plan) = drag.planned?;
-        if at != revision || plan.edits.replace.is_empty() {
+        if at != revision {
+            return None;
+        }
+        if plan.edits.replace.is_empty() {
+            if let Some(why) = &plan.blocked {
+                crate::kit::toast::post(
+                    ctx,
+                    crate::kit::severity::Level::Warning,
+                    format!("Can't drag the track: {why}"),
+                    Vec::new(),
+                );
+            }
             return None;
         }
         Some(Operation::Layout(LayoutCommand::ApplyRoute {
@@ -123,13 +140,15 @@ impl PcbEditor {
             .iter()
             .find(|t| Some(t.id) == self.track_drag.as_ref().map(|d| d.track))
             .map(|t| t.net);
+        // A pair's halves move together: both are drawn as the dragged copper.
+        let partner = own.and_then(|net| project.rules.pair_of(net)?.partner(net));
         self.paint_plan(
             painter,
             view,
             project,
             super::route_tool::PlanLook {
                 edits: &plan.edits,
-                own: &|net| Some(net) == own,
+                own: &|net| Some(net) == own || Some(net) == partner,
                 own_as_new: true,
                 layer: plan.end_layer,
                 reached: plan.reached,

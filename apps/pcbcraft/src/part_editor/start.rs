@@ -322,19 +322,25 @@ impl PartEditor {
                 if templates.more > 0 {
                     if self.start.all {
                         kit::note(ui, &format!("{} more: narrow the search", templates.more));
-                    } else if ui_kit::button(
+                    } else if kit::summary_row(
                         ui,
-                        format!("Show all {}", templates.hits.len() + templates.more),
-                        Button::Ghost,
-                    )
-                    .clicked()
-                    {
+                        &format!(
+                            "{} of {}",
+                            templates.hits.len(),
+                            templates.hits.len() + templates.more
+                        ),
+                        Some("Show all \u{203a}"),
+                    ) {
                         show_all = true;
                     }
                 }
                 others.iter().for_each(|entry| entry_row(ui, entry));
                 if *total > entries.len()
-                    && ui_kit::button(ui, format!("Show all {total}"), Button::Ghost).clicked()
+                    && kit::summary_row(
+                        ui,
+                        &format!("{} of {total}", entries.len()),
+                        Some("Show all \u{203a}"),
+                    )
                 {
                     show_all = true;
                 }

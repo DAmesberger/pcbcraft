@@ -5,13 +5,15 @@
 //! pour still has (pours are refilled after the edit); the island's mask
 //! cap, the island less that opening, must still be a closed solid.
 //!
-//! Every edit changes values only: J1's cluster (its ESD array and CC
-//! pull-downs, held at fixed offsets from it) moves with its routes, and
-//! the routes leaving it keep their directions (`layout::dimensions::
-//! carry`), so no track is added and the model is updated in place. For a
-//! move of 0.5, 1 or 2 mm it is as a fresh build of the edited board would
-//! be, though the inner foil's laminate falls into another number of
-//! pieces (J1's drills move through it).
+//! J1's cluster (its ESD array and CC pull-downs, held at fixed offsets
+//! from it) moves with its routes, and the routes leaving it keep their
+//! directions (`layout::dimensions::carry`). At 0.5 and 1 mm that changes
+//! values only: no track is added, and the model is updated in place as a
+//! fresh build of the edited board would be, though the inner foil's
+//! laminate falls into another number of pieces (J1's drills move through
+//! it). At 2 mm the carried VBUS and GND tracks would come too close to
+//! J1's pads, so they are re-routed (`layout::router::reroute`): the model
+//! is still updated in place, and holds the same bodies as a fresh build.
 use pcbcraft_automation::session::hosted;
 use pcbcraft_core::layout::dimensions::DimensionCommand;
 use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
@@ -244,7 +246,7 @@ fn the_model_follows_j1_moved_by_its_dimension_or_the_board_width() -> Fallible 
         match k {
             // Values only: in place, as a fresh build. The first starts from
             // a fresh build, each next from the previous one's update.
-            0..=2 => {
+            0 | 1 => {
                 assert!(
                     matches!(how, Rebuilt::InPlace(n) if n > 0),
                     "{what}: {how:?}"
@@ -254,9 +256,13 @@ fn the_model_follows_j1_moved_by_its_dimension_or_the_board_width() -> Fallible 
                     &project::build_with(engine.project(), &sources, None)?,
                 )?;
             }
-            // The board widened, from the 2 mm board's update: in place, as
-            // a fresh build would be.
+            // Re-routed copper at 2 mm, and the board widened from the 2 mm
+            // board's update: in place, as a fresh build would be.
             _ => {
+                assert!(
+                    k != 2 || !engine.rerouted().rerouted.is_empty(),
+                    "{what}: re-routed"
+                );
                 assert!(
                     matches!(how, Rebuilt::InPlace(n) if n > 0),
                     "{what}: {how:?}"

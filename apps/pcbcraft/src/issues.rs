@@ -288,6 +288,24 @@ impl Summary {
     }
 }
 
+/// The Selection scope's empty list when the selection names nothing it
+/// lists (nothing selected, or a sheet symbol or drawing, which it does not
+/// cover): which scope lists the issues the bar counts here.
+fn nothing_selected(summary: &Summary, workspace: Workspace) -> String {
+    let here = match summary {
+        Summary::Counted { counts, .. } => {
+            counts.error + counts.warning + counts.to_do + counts.info
+        }
+        Summary::NotCounted(_) => 0,
+    };
+    let only = format!("{} only", workspace.label());
+    match here {
+        0 => "Select an object to list its issues".to_owned(),
+        1 => format!("None on the selection; {only} lists the 1 issue here"),
+        n => format!("None on the selection; {only} lists the {n} issues here"),
+    }
+}
+
 /// Shown on the bar while the issues cannot be counted, in place of counts.
 const NOT_COUNTED: &str = "Not counted";
 
@@ -522,10 +540,15 @@ impl Surface {
         self.expanded = true;
     }
 
-    /// Expand the card scoped to the selection (a card's issue slot).
-    pub fn show_selection(&mut self) {
+    /// Expand the card on what a card's issue slot counted: the selected
+    /// object, or for the Board or sheet card (`whole`) the workspace.
+    pub fn show_slot(&mut self, whole: bool) {
         self.expanded = true;
-        self.scope = Scope::Selection;
+        self.scope = if whole {
+            Scope::Workspace
+        } else {
+            Scope::Selection
+        };
     }
 
     /// The bar's counts: always the active workspace, whatever the card
@@ -607,16 +630,29 @@ impl Surface {
             self.toolbar(ui, workspace);
         });
         let answer = self.listed(engine, workspace, selection);
+        let idle = nothing_selected(&summary, workspace);
+        // Below the toolbar: the list, then the footer as tall as its
+        // wrapped coverage note was last frame. Too short a card gives the
+        // list no room first; nothing is painted above the room it has.
         let full = ui.available_rect_before_wrap();
-        let footer_height = t.control_height + 2.0 * t.space_4;
+        let full = Rect::from_min_max(full.min, pos2(full.right(), full.bottom().max(full.top())));
+        let footer_id = ui.scope_id().with("issues-footer-height");
+        let least = t.control_height + 2.0 * t.space_4;
+        let footer_height = ui
+            .data(|d| d.get_temp::<f32>(footer_id))
+            .unwrap_or(least)
+            .max(least);
         let split = (full.bottom() - footer_height).max(full.top());
         let body = Rect::from_min_max(full.min, pos2(full.right(), split));
-        let footer = Rect::from_min_max(pos2(full.left(), split), full.max);
+        let footer =
+            Rect::from_min_size(pos2(full.left(), split), vec2(full.width(), footer_height));
         let mut request = None;
         let report = answer.report().cloned();
         let listed = ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("issues-body")
+                .max_height(body.height())
+                .min_scrolled_height(body.height())
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     egui::Frame::NONE
@@ -626,7 +662,7 @@ impl Surface {
                                 kit::hint(ui, "The issues could not be counted", why);
                             }
                             Answer::Report(report) => {
-                                request = self.list(ui, engine, report, selection);
+                                request = self.list(ui, engine, report, selection, &idle);
                             }
                         });
                 })
@@ -634,24 +670,35 @@ impl Surface {
                 .y
         });
         kit::card::remember_issues_wants(ui.ctx(), body.top() - top + listed.inner + footer_height);
-        ui.scope_builder(
-            UiBuilder::new()
-                .max_rect(footer.shrink2(vec2(t.space_8, 0.0)))
-                .layout(Layout::right_to_left(Align::Center)),
-            |ui| {
-                t.secondary_hline(ui.painter(), footer.x_range(), footer.top(), t.dialog_rule);
-                if let Some(report) = &report {
+        let measured = ui
+            .scope_builder(
+                UiBuilder::new()
+                    .max_rect(footer.shrink2(vec2(t.space_8, t.space_4)))
+                    .layout(Layout::right_to_left(Align::Center)),
+                |ui| {
+                    ui.set_clip_rect(ui.clip_rect().intersect(full));
+                    t.secondary_hline(ui.painter(), footer.x_range(), footer.top(), t.dialog_rule);
+                    let Some(report) = &report else {
+                        return least;
+                    };
                     let copy = ui_kit::button(ui, "Copy report", ui_kit::Button::Small)
                         .on_hover_text("Copy every finding with its full text");
                     if copy.clicked() {
                         ui.ctx().copy_text(report_text(report));
                     }
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        kit::hint(ui, &report.coverage, "What these checks cover");
-                    });
-                }
-            },
-        );
+                    let note = ui
+                        .with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            kit::hint(ui, &report.coverage, "What these checks cover")
+                        })
+                        .inner;
+                    copy.rect.height().max(note.rect.height()) + 2.0 * t.space_4
+                },
+            )
+            .inner;
+        if (measured - footer_height).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(footer_id, measured));
+            ui.ctx().request_repaint();
+        }
         request
     }
 
@@ -692,17 +739,18 @@ impl Surface {
         engine: &Engine,
         report: &Arc<IssueReport>,
         selection: &[ObjectRef],
+        idle: &str,
     ) -> Option<Request> {
         let groups = groups(report, self.filter);
         if groups.is_empty() {
             let empty = match (self.scope, self.filter, report.rows.is_empty()) {
-                (Scope::Selection, _, _) if selection.is_empty() => {
-                    "Select an object to list its issues"
+                (Scope::Selection, _, _) if selection.is_empty() => idle.to_owned(),
+                (_, Some(_), false) => {
+                    "None of this kind; choose Every kind to see the rest".to_owned()
                 }
-                (_, Some(_), false) => "None of this kind; choose Every kind to see the rest",
-                _ => "No issues",
+                _ => "No issues".to_owned(),
             };
-            kit::hint(ui, empty, &report.coverage);
+            kit::hint(ui, &empty, &report.coverage);
             return None;
         }
         let views: Vec<IssueGroupView> = groups
@@ -904,13 +952,18 @@ impl Surface {
 
     /// The canvas count badge, top right: the workspace's counts, To do
     /// hidden while errors exist. A click expands or collapses Issues. It
-    /// is left out while nothing is counted or nothing is open.
-    pub fn badge(&mut self, ui: &mut Ui, canvas: Rect, engine: &Engine, workspace: Workspace) {
-        let Some(counts) = self.summary(engine, workspace).counts() else {
-            return;
-        };
+    /// is left out while nothing is counted or nothing is open. Returns
+    /// where it is drawn.
+    pub fn badge(
+        &mut self,
+        ui: &mut Ui,
+        canvas: Rect,
+        engine: &Engine,
+        workspace: Workspace,
+    ) -> Option<Rect> {
+        let counts = self.summary(engine, workspace).counts()?;
         if counts.error + counts.warning + counts.to_do == 0 {
-            return;
+            return None;
         }
         let t = Tokens::get();
         let rect = Rect::from_min_max(
@@ -925,9 +978,11 @@ impl Surface {
                 .max_rect(rect)
                 .layout(Layout::right_to_left(Align::Min)),
         );
-        if kit::count_badge(&mut child, &counts, true).clicked() {
+        let badge = kit::count_badge(&mut child, &counts, true);
+        if badge.clicked() {
             self.toggle();
         }
+        Some(badge.rect)
     }
 
     /// The ribbon's Issues toggle: the workspace's counts, lit while the
@@ -966,7 +1021,9 @@ pub fn selection(
     part: Option<DefinitionId>,
     instance: Option<Id>,
     track: Option<Id>,
+    via: Option<Id>,
     net: Option<Id>,
+    items: Vec<ObjectRef>,
 ) -> Vec<ObjectRef> {
     let mut out = Vec::new();
     match workspace {
@@ -974,7 +1031,10 @@ pub fn selection(
         Workspace::Schematic | Workspace::Pcb => {
             out.extend(instance.map(|id| ObjectRef::Instance { id }));
             out.extend(track.map(|id| ObjectRef::Track { id }));
+            out.extend(via.map(|id| ObjectRef::Via { id }));
             out.extend(net.map(|id| ObjectRef::Net { id }));
+            // The schematic's labels, sheet symbols and sheet pins.
+            out.extend(items);
         }
     }
     out

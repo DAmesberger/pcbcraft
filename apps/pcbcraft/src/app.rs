@@ -83,6 +83,9 @@ pub struct App {
     /// The engine revision a toast's Undo would undo; Undo is withdrawn
     /// once another step follows.
     undo_revision: Option<u64>,
+    /// The last undo or redo toast's text: the next one replaces it, so a
+    /// held ⌘Z shows one toast.
+    history_toast: Option<String>,
     /// Browser shown by width, or as the user toggled it (⌘B).
     browser: chrome::BrowserMode,
     /// Whether the last layout showed the Browser.
@@ -121,6 +124,17 @@ pub struct App {
     /// Commands chosen in the menu bar, run in the next update.
     #[cfg(target_os = "macos")]
     menu_runs: Vec<String>,
+    /// Recent projects chosen in the menu bar, opened in the next update.
+    #[cfg(target_os = "macos")]
+    menu_recent: Vec<std::path::PathBuf>,
+    /// Which File › Open Recent files are gone.
+    recent: crate::recent_projects::Availability,
+    /// The project file last kept in Open Recent.
+    recent_seen: Option<std::path::PathBuf>,
+    /// This frame's "Updating" chip over a 3D view: the view's area and
+    /// the error when the newer model failed. It is drawn after the issues
+    /// badge, beside it.
+    updating: Option<(egui::Rect, Option<String>)>,
 }
 
 impl App {
@@ -134,7 +148,7 @@ impl App {
         fonts::setup_bundled_fonts(&cc.egui_ctx);
         fonts::load_system_fonts_in_background(&cc.egui_ctx);
         let render_state = cc.wgpu_render_state.as_ref().ok_or("wgpu is required")?;
-        let mut engine = Engine::demo()?;
+        let mut engine = file_ui::new_project();
         let mut files = FileUi::new(cc, &engine);
         // `pcbcraft FILE.pcbcraft` opens that project through the file workflow.
         if let Some(path) = std::env::args_os()
@@ -258,6 +272,7 @@ impl App {
             system_fonts: false,
             issues: Default::default(),
             undo_revision: None,
+            history_toast: None,
             browser: chrome::BrowserMode::Auto,
             browser_visible: false,
             browser_component: None,
@@ -278,6 +293,11 @@ impl App {
             native_menu,
             #[cfg(target_os = "macos")]
             menu_runs: Vec::new(),
+            #[cfg(target_os = "macos")]
+            menu_recent: Vec::new(),
+            recent: Default::default(),
+            recent_seen: None,
+            updating: None,
         }
     }
 
@@ -290,6 +310,7 @@ impl App {
             return;
         };
         let origin = refusal::take_mark(ctx).unwrap_or(default);
+        let action = refusal::take_action(ctx).or_else(|| refusal::titled_action(&operation));
         if self.files.busy() {
             self.say(Level::Info, "Wait for the file operation to finish");
             return;
@@ -328,12 +349,23 @@ impl App {
                     self.schematic.select_pasted(self.engine.project(), report);
                 }
                 self.clear_error();
+                // Moved parts' dragged copper the engine re-routed, or
+                // left unrouted, in the same undo step.
+                let rerouted = self.engine.rerouted();
+                if let Some(line) = rerouted.line() {
+                    let level = if rerouted.unrouted.is_empty() {
+                        Level::Info
+                    } else {
+                        Level::Warning
+                    };
+                    self.say_with(level, line, vec![ToastAction::Undo]);
+                }
             }
             Err(_)
                 if schematic.as_ref().is_some_and(|command| {
                     self.schematic.review_named_merge(&self.engine, command)
                 }) => {}
-            Err(error) => self.refuse(ctx, origin, error),
+            Err(error) => self.refuse(ctx, origin, error, action.as_deref()),
         }
     }
 
@@ -341,7 +373,14 @@ impl App {
     /// dialog gets it back on the next frame and shows it itself; a canvas
     /// gesture or a command shows a toast (the gesture's editor may still
     /// claim it, to keep its gesture going).
-    fn refuse(&mut self, ctx: &egui::Context, origin: Origin, error: pcbcraft_core::Error) {
+    /// A toast names the refused `action` ("Can't rotate J1: …").
+    fn refuse(
+        &mut self,
+        ctx: &egui::Context,
+        origin: Origin,
+        error: pcbcraft_core::Error,
+        action: Option<&str>,
+    ) {
         let level = refusal::level(&error);
         self.messages.push(level, &error.to_string(), self.now);
         match origin {
@@ -351,25 +390,25 @@ impl App {
             Origin::Canvas => {
                 self.toast(
                     level,
-                    refusal::shown_error(&error),
+                    refusal::refused(action, &error),
                     vec![ToastAction::Details],
                 );
                 refusal::hand_back(ctx, Refused { origin, error }, true);
             }
-            Origin::Command => self.command_refused(error, false),
+            Origin::Command => self.command_refused(error, false, action),
         }
     }
 
     /// A ribbon, menu or keyboard command was refused: a toast, and the
     /// full engine text in Messages unless `refuse` already put it there.
-    fn command_refused(&mut self, error: pcbcraft_core::Error, record: bool) {
+    fn command_refused(&mut self, error: pcbcraft_core::Error, record: bool, action: Option<&str>) {
         let level = refusal::level(&error);
         if record {
             self.messages.push(level, &error.to_string(), self.now);
         }
         self.toast(
             level,
-            refusal::shown_error(&error),
+            refusal::refused(action, &error),
             vec![ToastAction::Details],
         );
     }
@@ -463,6 +502,24 @@ impl App {
         self.toast(level, shown, actions);
     }
 
+    /// What an undo or redo did (`done`, "Undid"), by the step's title and
+    /// workspace, as a Messages line and a toast that replaces the last
+    /// one of its kind.
+    fn say_step(&mut self, done: &str, step: pcbcraft_core::Step) {
+        let text = format!(
+            "{done}: {} · {}",
+            step.title,
+            Workspace::from(step.area).label()
+        );
+        self.messages.push(Level::Info, &text, self.now);
+        let shown = refusal::clip(&text, refusal::MAX_SHOWN);
+        if let Some(last) = self.history_toast.take() {
+            self.toasts.remove_newest(&last);
+        }
+        self.toast(Level::Info, shown.clone(), Vec::new());
+        self.history_toast = Some(shown);
+    }
+
     /// A toast only: its full text is in Messages already.
     fn toast(&mut self, level: Level, text: String, actions: Vec<ToastAction>) {
         self.toasts.push(level, text, actions, self.now);
@@ -545,7 +602,7 @@ impl App {
         match result {
             Ok(None) => self.clear_error(),
             Ok(Some(created)) => self.say(Level::Ok, created),
-            Err(error) => self.command_refused(error, true),
+            Err(error) => self.command_refused(error, true, None),
         }
     }
 
@@ -788,25 +845,28 @@ impl App {
         self.browser = self.browser.toggled(self.browser_visible);
     }
 
-    /// Undo or redo one engine step. Undoing an AI assistant's edit says
-    /// so.
+    /// Undo or redo one engine step and say which, by its history title.
+    /// Undoing an AI assistant's edit says so.
     fn history(&mut self, redo: bool) {
-        let assistant = (!redo)
-            .then(|| self.live_edit_at(self.engine.revision()))
-            .flatten();
-        let result = if redo {
-            self.engine.redo()
+        let assistant = !redo && self.live_edit_at(self.engine.revision());
+        let (step, result) = if redo {
+            (self.engine.redo_step(), self.engine.redo())
         } else {
-            self.engine.undo()
+            (self.engine.undo_step(), self.engine.undo())
         };
         match result {
             Ok(()) => {
                 self.clear_error();
-                if let Some(subject) = assistant {
-                    self.say(Level::Info, format!("Undid AI assistant edit: {subject}"));
+                let done = match (redo, assistant) {
+                    (true, _) => "Redid",
+                    (false, true) => "Undid AI assistant edit",
+                    (false, false) => "Undid",
+                };
+                if let Some(step) = step {
+                    self.say_step(done, step);
                 }
             }
-            Err(error) => self.command_refused(error, true),
+            Err(error) => self.command_refused(error, true, None),
         }
     }
 
@@ -1094,7 +1154,7 @@ impl App {
         let pick = if self.workspace == Workspace::Part {
             // Component 3D shows every layer of its package.
             self.scene.viewport.set_layers(Default::default());
-            self.scene.highlight(None, None, None, None);
+            self.scene.highlight(&Default::default(), None);
             // A read-only library item builds from its scratch engine and
             // never sends an operation to the project.
             let preview = self.part.lend_preview();
@@ -1114,12 +1174,8 @@ impl App {
         } else {
             crate::part_editor::reset_model_view(&mut self.scene.viewport);
             self.scene.viewport.set_layers(self.pcb.layer_view());
-            self.scene.highlight(
-                self.pcb.selected_instance(),
-                self.pcb.selected_track(),
-                self.pcb.selected_via(),
-                self.pcb.highlighted_net(),
-            );
+            self.scene
+                .highlight(&self.pcb.selected(), self.pcb.highlighted_net());
             let pick = self.scene.viewport.show(ui, viewport::NavCaps::BOARD);
             // How to move the view; the Fit view button's hover help lists
             // every binding.
@@ -1143,7 +1199,7 @@ impl App {
                 // value shows at its new place while the model updates.
                 self.pcb.board_3d_updating(ui, &self.scene, &self.engine);
             }
-            updating_chip(ui, area, failed.as_deref());
+            self.updating = Some((area, failed));
             return;
         }
         if self.workspace == Workspace::Pcb {
@@ -1189,8 +1245,14 @@ impl App {
                     }
                 }
             }
+            for path in std::mem::take(&mut self.menu_recent) {
+                self.open_recent(path);
+            }
             if let Some(mut menu) = self.native_menu.take() {
                 self.menu_now(ctx, |now| menu.update(now));
+                if let Err(error) = menu.update_recent(&self.recent_items()) {
+                    self.say(Level::Warning, format!("Open Recent not updated: {error}"));
+                }
                 self.native_menu = Some(menu);
             }
         }
@@ -1247,6 +1309,43 @@ impl App {
         })
     }
 
+    /// Keep the project file just opened or saved first in File › Open
+    /// Recent, and check which recent files are gone.
+    fn recent_projects(&mut self, ctx: &egui::Context) {
+        let path = self.files.path();
+        if path != self.recent_seen.as_deref() {
+            if let Some(path) = path {
+                self.sources.remember_project(path);
+            }
+            self.recent_seen = path.map(std::path::Path::to_path_buf);
+        }
+        self.recent
+            .poll(ctx, self.sources.recent_projects(), self.now);
+    }
+
+    /// File › Open Recent's rows now, newest first.
+    fn recent_items(&self) -> Vec<crate::recent_projects::RecentItem> {
+        crate::recent_projects::items(self.sources.recent_projects(), self.recent.missing())
+    }
+
+    /// Open a recent project as File › Open does (asking about unsaved
+    /// work first). One that is gone is removed from the list, with a toast.
+    fn open_recent(&mut self, path: std::path::PathBuf) {
+        if path.try_exists().unwrap_or(false) {
+            self.files.request(file_ui::Action::OpenPath(path));
+            return;
+        }
+        self.sources.forget_projects(Some(&path));
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        self.say(
+            Level::Warning,
+            format!("{name} is no longer there; removed from Open Recent"),
+        );
+    }
+
     /// Keep the production folder chosen for this project file per user,
     /// and hand the kept one to the next Production files dialog. A
     /// project never saved has no file to keep it by.
@@ -1296,6 +1395,7 @@ impl eframe::App for App {
         self.scene.receive();
         self.refill_fills(&ctx);
         self.file_effects(&ctx);
+        self.recent_projects(&ctx);
         // Assistants' requests, between the last frame and this one's
         // editors.
         self.serve_live(&ctx);
@@ -1354,6 +1454,10 @@ impl eframe::App for App {
             let choices = self.menu_now(ctx, |now| menu.take(now));
             self.native_menu = Some(menu);
             for choice in choices {
+                if let crate::menu_bar::Choice::OpenRecent(path) = choice {
+                    self.menu_recent.push(path);
+                    continue;
+                }
                 crate::menu_bar::deliver(choice, &self.registry, raw, &mut self.menu_runs, || {
                     arboard::Clipboard::new()
                         .and_then(|mut clipboard| clipboard.get_text())
@@ -1375,12 +1479,19 @@ impl eframe::App for App {
 }
 
 /// The chip over a 3D view showing its last model while a newer one is
-/// prepared (or failed: the error, the last model still shown).
-fn updating_chip(ui: &mut egui::Ui, area: egui::Rect, failed: Option<&str>) {
+/// prepared (or failed: the error, the last model still shown), at the
+/// top right of `area`, left of the issues badge (`badge`) when one shows.
+fn updating_chip(
+    ui: &mut egui::Ui,
+    area: egui::Rect,
+    badge: Option<egui::Rect>,
+    failed: Option<&str>,
+) {
     let t = solidcraft_theme::Tokens::get();
     let text = failed.unwrap_or("Updating");
+    let right = badge.map_or(area.right(), |b| b.left());
     let width = if failed.is_some() {
-        (area.width() - 2.0 * t.space_8).min(480.0)
+        (right - area.left() - 2.0 * t.space_8).clamp(0.0, 480.0)
     } else {
         ui.painter()
             .layout_no_wrap(
@@ -1394,7 +1505,7 @@ fn updating_chip(ui: &mut egui::Ui, area: egui::Rect, failed: Option<&str>) {
             + 3.0 * t.space_8
     };
     let rect = egui::Rect::from_min_size(
-        area.right_top() + egui::vec2(-width - t.space_8, t.space_8),
+        egui::pos2(right - width - t.space_8, area.top() + t.space_8),
         egui::vec2(width, t.control_height),
     );
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
@@ -1403,8 +1514,16 @@ fn updating_chip(ui: &mut egui::Ui, area: egui::Rect, failed: Option<&str>) {
 }
 
 /// Follow the operating system's light or dark appearance, like Solidcraft's
-/// default "system" theme.
+/// default "system" theme. `theme::apply` sets egui's theme to light or
+/// dark, and egui would pass that on to the native window; a macOS window
+/// given an appearance no longer reports the system's changes, so the app
+/// would keep its launch theme. The window is left to follow the system,
+/// as Solidcraft's `prefs::sync_window_theme` does (MIT option; see
+/// ATTRIBUTION.md).
 fn follow_system_theme(ctx: &egui::Context, force: bool) {
+    if force {
+        ctx.options_mut(|o| o.sync_window_theme = false);
+    }
     let dark = ctx.system_theme().is_none_or(|t| t == egui::Theme::Dark);
     if force || dark != theme::is_dark() {
         theme::set_dark(dark);
@@ -1659,5 +1778,35 @@ mod quit_tests {
         output.textures_delta.clear();
         assert!(!commands(&output).contains(&egui::ViewportCommand::Close));
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    /// The app follows the system's appearance, so it never tells the
+    /// native window to be light or dark: a macOS window given an
+    /// appearance stops reporting the system's changes, and the app would
+    /// keep its launch theme.
+    #[test]
+    fn following_the_system_theme_leaves_the_window_appearance_alone() {
+        let ctx = egui::Context::default();
+        super::follow_system_theme(&ctx, true);
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    system_theme: Some(egui::Theme::Dark),
+                    ..Default::default()
+                },
+                |ui| super::follow_system_theme(ui.ctx(), false),
+            );
+            output.textures_delta.clear();
+            let told: Vec<_> = output
+                .viewport_output
+                .values()
+                .flat_map(|v| v.commands.iter())
+                .filter(|c| matches!(c, egui::ViewportCommand::SetTheme(_)))
+                .collect();
+            assert!(told.is_empty(), "{told:?}");
+        }
     }
 }

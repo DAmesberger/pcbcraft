@@ -162,7 +162,7 @@ fn drawn(project: &Project, wire: &Wire) -> bool {
 }
 
 /// Paint the rectangle as Solidcraft does outside a sketch.
-pub(super) fn paint_box(painter: &egui::Painter, bx: BoxSel) {
+pub(crate) fn paint_box(painter: &egui::Painter, bx: BoxSel) {
     let t = Tokens::get();
     let col = if bx.crossing {
         t.box_crossing

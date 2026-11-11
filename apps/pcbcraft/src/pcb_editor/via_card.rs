@@ -106,7 +106,10 @@ impl PcbEditor {
                     if kit::choice_row(ui, "Net", &mut self.net, &nets) {
                         self.route_highlight(self.net);
                     }
-                    kit::check_row(ui, "Tented", &mut self.via_tented);
+                    let mut tented = self.via_tented(project);
+                    if kit::check_row(ui, "Tented", &mut tented) {
+                        self.via_tented = Some(tented);
+                    }
                 })
             })
             .inner;

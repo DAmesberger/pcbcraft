@@ -15,7 +15,7 @@ use std::time::Instant;
 
 type Fallible<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-fn esp32() -> Fallible<Engine> {
+pub(super) fn esp32() -> Fallible<Engine> {
     let file = pcbcraft_io::read_project(std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
@@ -50,7 +50,7 @@ fn j1_at(engine: &Engine, mm: f64) -> Fallible<Operation> {
 /// One app frame for the 3D view: store finished fill copper, ask for the
 /// current board's model, take finished models. Returns whether the
 /// current board is shown.
-fn frame(
+pub(super) fn frame(
     scene: &mut SceneController,
     fills: &mut FillWorker,
     engine: &mut Engine,
@@ -68,7 +68,7 @@ fn frame(
 /// Run frames until the current board is shown and the fills are settled
 /// (nothing stored for a while): each model shown since `since`, as the
 /// seconds it came at, its request, and whether it was the current board.
-fn settle(
+pub(super) fn settle(
     scene: &mut SceneController,
     fills: &mut FillWorker,
     engine: &mut Engine,

@@ -11,6 +11,7 @@
 //! once, through the menu, also while a text field has the keyboard.
 use crate::commands::Chord;
 use crate::menu_bar::{self, BAR, Choice, Entry, Now, System};
+use crate::recent_projects::RecentItem;
 use muda::{
     AboutMetadata, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
     accelerator::{Accelerator, Code, Modifiers},
@@ -31,6 +32,17 @@ pub struct NativeMenu {
     menu: Menu,
     items: Vec<Item>,
     events: Receiver<MenuEvent>,
+    /// File › Open Recent, rebuilt when the recent list changes.
+    recent: Option<Recent>,
+}
+
+/// The Open Recent submenu and what it shows.
+struct Recent {
+    submenu: Submenu,
+    /// Each project's item, in order.
+    projects: Vec<(MenuId, std::path::PathBuf)>,
+    clear: Item,
+    shown: Option<Vec<RecentItem>>,
 }
 
 impl NativeMenu {
@@ -38,12 +50,30 @@ impl NativeMenu {
         let menu = Menu::new();
         let mut items = Vec::new();
         let mut submenus = Vec::new();
+        let mut recent = None;
         for (title, entries) in BAR {
             let submenu = Submenu::new(*title, true);
             for entry in *entries {
                 match entry {
                     Entry::Separator => submenu.append(&PredefinedMenuItem::separator())?,
                     Entry::System(system) => submenu.append(&predefined(*system))?,
+                    Entry::Recent => {
+                        let Some(state) = menu_bar::state(now, menu_bar::CLEAR_RECENT) else {
+                            continue;
+                        };
+                        let open = Submenu::new(menu_bar::RECENT_TITLE, true);
+                        submenu.append(&open)?;
+                        recent = Some(Recent {
+                            submenu: open,
+                            projects: Vec::new(),
+                            clear: Item {
+                                item: MenuItem::new(&state.label, false, None),
+                                entry: menu_bar::CLEAR_RECENT,
+                                shown: state,
+                            },
+                            shown: None,
+                        });
+                    }
                     Entry::Command(..) | Entry::Delete => {
                         let Some(state) = menu_bar::state(now, *entry) else {
                             continue;
@@ -83,7 +113,35 @@ impl NativeMenu {
             menu,
             items,
             events,
+            recent,
         })
+    }
+
+    /// Rebuild Open Recent when the recent projects changed: one item per
+    /// project (an unavailable one says so and is removed when chosen),
+    /// then Clear Menu, enabled when there is something to clear.
+    pub fn update_recent(&mut self, recent: &[RecentItem]) -> muda::Result<()> {
+        let Some(open) = &mut self.recent else {
+            return Ok(());
+        };
+        if open.shown.as_deref() == Some(recent) {
+            return Ok(());
+        }
+        // Tried once per change: a failure is reported once, not per frame.
+        open.shown = Some(recent.to_vec());
+        while open.submenu.remove_at(0).is_some() {}
+        open.projects.clear();
+        for project in recent {
+            let item = MenuItem::new(&project.label, true, None);
+            open.submenu.append(&item)?;
+            open.projects
+                .push((item.id().clone(), project.path.clone()));
+        }
+        if !recent.is_empty() {
+            open.submenu.append(&PredefinedMenuItem::separator())?;
+        }
+        open.clear.item.set_enabled(!recent.is_empty());
+        open.submenu.append(&open.clear.item)
     }
 
     /// The items chosen since the last frame, as what each does now.
@@ -94,10 +152,21 @@ impl NativeMenu {
             .take(MAX_EVENTS)
             .map(|event| event.id)
             .collect();
+        let recent = self.recent.as_ref();
         chosen
             .iter()
-            .filter_map(|id| self.items.iter().find(|i| i.item.id() == id))
-            .map(|i| menu_bar::choose(now, i.entry))
+            .filter_map(|id| {
+                if let Some((_, path)) = recent.and_then(|r| r.projects.iter().find(|p| p.0 == *id))
+                {
+                    return Some(Choice::OpenRecent(path.clone()));
+                }
+                let clear = recent
+                    .map(|r| &r.clear)
+                    .filter(|clear| clear.item.id() == id);
+                clear
+                    .or_else(|| self.items.iter().find(|i| i.item.id() == id))
+                    .map(|i| menu_bar::choose(now, i.entry))
+            })
             .collect()
     }
 

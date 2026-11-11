@@ -810,14 +810,19 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
     Ok(())
 }
 
-/// Under each built-in profile, unchanged, a whole-board fill stays that
-/// profile's edge clearance inside the rectangle. Under the first default
+/// Under each test profile and the shipped example, a whole-board fill
+/// stays that profile's edge clearance inside the rectangle. Under the first default
 /// (0) the same fill reached the edge and the production check passed.
 #[test]
 fn the_fill_keeps_the_profile_edge() -> Fallible<()> {
-    for profile in crate::rules::builtin::all() {
+    use crate::rules::fixtures;
+    for profile in [
+        fixtures::prototype()?,
+        fixtures::fine()?,
+        fixtures::jlcpcb_example()?,
+    ] {
         let edge = profile
-            .rules
+            .rules()
             .copper
             .clearance
             .get(CopperObject::Fill, CopperObject::BoardEdge);
@@ -971,7 +976,7 @@ fn via_at(engine: &mut Engine, net: Id, at: Point) -> Fallible<Id> {
     match engine.apply(
         engine.revision(),
         Operation::Layout(layout::LayoutCommand::AddVia {
-            via: layout::ViaRequest::through(net, at),
+            via: layout::ViaRequest::fixture(net, at),
         }),
     )? {
         Outcome::ViaAdded { via } => Ok(via),

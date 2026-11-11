@@ -148,6 +148,36 @@ impl PcbEditor {
         }))
     }
 
+    /// Open a setup dialog by name (the command palette), as its Board
+    /// card button does; an open Production dialog gives way to it.
+    pub fn open_dialog(&mut self, dialog: crate::commands::PcbDialog, project: &Project) {
+        use crate::commands::PcbDialog as D;
+        self.production = None;
+        match dialog {
+            D::Rules => self.open_rules(None),
+            D::Stackup => self.open_stackup(project),
+            D::NetClasses => self.open_net_classes(None),
+            D::HighSpeed => self.open_signals(),
+        }
+    }
+
+    /// The setup dialog open now, if any (tests).
+    #[cfg(test)]
+    pub(crate) fn open_dialog_now(&self) -> Option<crate::commands::PcbDialog> {
+        use crate::commands::PcbDialog as D;
+        if self.rules.is_some() {
+            Some(D::Rules)
+        } else if self.stackup.is_some() {
+            Some(D::Stackup)
+        } else if self.net_classes.is_some() {
+            Some(D::NetClasses)
+        } else if self.signals.is_some() {
+            Some(D::HighSpeed)
+        } else {
+            None
+        }
+    }
+
     pub(super) fn open_board_setup(&mut self, project: &Project) {
         self.net_classes = None;
         self.signals = None;

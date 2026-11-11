@@ -288,6 +288,36 @@ fn a_pad_of_a_pair_routes_both_halves_coupled_to_the_far_pads() -> TestResult {
     Ok(())
 }
 
+/// The canvas pill of a pair route names the pair and the width both
+/// halves are routed at (the pair's impedance width), not one net and
+/// the single-track width W steps.
+#[test]
+fn the_pill_of_a_pair_route_names_the_pair_and_its_width() -> TestResult {
+    let Usb {
+        engine,
+        nets,
+        start,
+        ..
+    } = usb()?;
+    let (width, _) = layout::impedance::pair_width_gap(engine.project(), nets[0], CopperLayer::Top);
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    assert!(canvas.click(&mut editor, &engine, start[0]).is_none());
+    assert!(editor.route.pair.is_some());
+    assert!((editor.width - width).abs() > 1e-6, "the widths differ");
+    let pill = editor
+        .pill_text(canvas.ctx(), engine.project())
+        .ok_or("no pill")?;
+    let expected = format!(
+        "Routing pair USB_D · {} · ",
+        super::impedance_view::mm(width)
+    );
+    assert!(pill.starts_with(&expected), "{pill}");
+    Ok(())
+}
+
 #[test]
 fn p_routes_one_net_of_a_pair() -> TestResult {
     let Usb {
@@ -305,6 +335,51 @@ fn p_routes_one_net_of_a_pair() -> TestResult {
     assert!(canvas.click(&mut editor, &engine, start[0]).is_none());
     assert!(editor.route.pair.is_none());
     assert_eq!(editor.net, Some(nets[0]));
+    Ok(())
+}
+
+/// A pair click beside the end of a track of the pair on another layer
+/// does not end there: the step would stop on copper it cannot join
+/// without a via. It lands on the grid of the routing layer, as a single
+/// route's click does.
+#[test]
+fn a_pair_click_at_another_layers_track_end_lands_on_the_grid() -> TestResult {
+    let Usb {
+        mut engine,
+        nets,
+        start,
+        ..
+    } = usb()?;
+    let bottom_end = [18.2, 25.2];
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::Route {
+            request: layout::RouteRequest {
+                net: nets[0],
+                start: bottom_end,
+                end: [18.2, 32.0],
+                width: 0.2,
+                layer: CopperLayer::Bottom,
+            },
+        }),
+    )?;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    assert!(canvas.click(&mut editor, &engine, start[0]).is_none());
+    assert_eq!(editor.layer, CopperLayer::Top);
+    let step = canvas.click(&mut editor, &engine, [18.3, 25.3]);
+    canvas.apply(&mut editor, &mut engine, step)?;
+    let head = editor
+        .route
+        .pair
+        .as_ref()
+        .ok_or("no pair route")?
+        .head
+        .center;
+    assert!(!close(head, bottom_end), "ended on the Bottom track's end");
+    assert!(close(head, [18.5, 25.5]), "{head:?}");
     Ok(())
 }
 
@@ -564,5 +639,50 @@ fn the_high_speed_card_lists_the_paths_and_not_the_copper_off_them() -> TestResu
             "{unwanted}: {texts:?}"
         );
     }
+    Ok(())
+}
+
+/// The High speed card's footer buttons share one height: Delete pair is
+/// a secondary button as tall as Done, as in every other card footer,
+/// not a small one.
+#[test]
+fn the_high_speed_footer_buttons_share_one_height() -> TestResult {
+    let Usb { engine, .. } = usb()?;
+    let pair = engine.project().rules.diff_pairs.first().ok_or("pair")?.id;
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut editor = PcbEditor::default();
+    editor.open_signals();
+    if let Some(card) = &mut editor.signals {
+        card.select_pair(pair);
+    }
+    let mut heights = Vec::new();
+    for _ in 0..2 {
+        ctx.enable_accesskit();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(700.0, 2400.0))),
+                ..Default::default()
+            },
+            |ui| {
+                editor.subject_slot(ui, &engine);
+            },
+        );
+        output.textures_delta.clear();
+        let update = output
+            .platform_output
+            .accesskit_update
+            .take()
+            .ok_or("no accessibility tree")?;
+        heights = update
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+            .filter_map(|(_, n)| Some((n.label()?.to_owned(), n.bounds()?.height() as f32)))
+            .collect();
+    }
+    let height = |label: &str| heights.iter().find(|(t, _)| t == label).map(|(_, h)| *h);
+    let done = height("Done").ok_or("no Done")?;
+    assert_eq!(height("Delete pair"), Some(done), "{heights:?}");
     Ok(())
 }

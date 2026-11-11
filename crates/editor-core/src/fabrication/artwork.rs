@@ -415,6 +415,7 @@ fn legend(
 ) -> Result<Option<Vec<u8>>> {
     let mut w = Writer::new(attributes);
     let mut any = false;
+    let silk = board.project.rules.effective().silkscreen;
     for graphic in layout::placed_graphics(board.project) {
         if graphic.layer != BoardDrawing::Silkscreen(side) {
             continue;
@@ -439,7 +440,7 @@ fn legend(
                 }
             }
             PlacedItem::Text(text) => {
-                let strokes = layout::legend::text_strokes(text);
+                let strokes = layout::legend::text_strokes(text, &silk);
                 if strokes.strokes.is_empty() {
                     continue;
                 }

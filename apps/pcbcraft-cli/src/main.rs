@@ -38,8 +38,9 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
                                    window's undo history, its permission choice
                                    and its Allow/Deny; the token comes from the
                                    window's token file or PCBCRAFT_CONTROL_TOKEN
-  demo NEW_FILE.pcbcraft           write the two-component demo project
-  showcase NEW_FILE.pcbcraft       write the 4-layer PCB showcase project
+  showcase NEW_FILE.pcbcraft [--profile ID]
+                                   write the 4-layer PCB showcase project on a profile
+                                   from the rule profile library (else the default)
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
   sample-library NEW_DIR [NAME]    write the synthetic catalog as a library folder
   export FILE.pcbcraft NEW_FILE.solidcraft
@@ -222,14 +223,17 @@ fn run() -> Result<()> {
             let mut server = mcp::Server::new(session, options.policy()?);
             Ok(server.serve(io::stdin().lock(), io::stdout().lock())?)
         }
-        [command, path] if ["demo", "showcase", "parts"].contains(&command.as_str()) => {
+        [command, path, rest @ ..]
+            if ["showcase", "parts"].contains(&command.as_str())
+                && (rest.is_empty()
+                    || (command == "showcase" && rest.len() == 2 && rest[0] == "--profile")) =>
+        {
             if std::path::Path::new(path).try_exists()? {
                 return Err("output exists; choose a new .pcbcraft filename".into());
             }
-            let engine = if command == "demo" {
-                Engine::demo()?
-            } else if command == "showcase" {
-                session::showcase()?
+            let engine = if command == "showcase" {
+                let choice = rest.get(1).map(String::as_str);
+                session::showcase(pcbcraft_io::rule_profiles::for_new_board_from_env(choice)?)?
             } else {
                 Engine::from_file(pcbcraft_core::format::EditorFile {
                     version: pcbcraft_core::format::FILE_VERSION,
@@ -343,6 +347,16 @@ fn failure(code: &str, message: &str) -> Value {
 mod mcp_option_tests {
     use super::*;
 
+    /// `path` made absolute on this platform: Windows needs a drive, so
+    /// `/work` becomes `C:/work` there.
+    fn abs(path: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{path}")
+        } else {
+            path.to_owned()
+        }
+    }
+
     fn parse(args: &[&str]) -> Result<McpOptions> {
         let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
         McpOptions::parse(&args)
@@ -356,14 +370,15 @@ mod mcp_option_tests {
         let policy = parse(&[])?.policy()?;
         assert_eq!(policy.mode, Mode::AutoAllowEdits);
         assert!(policy.folders.is_empty());
-        let policy = parse(&["/work/board/x.pcbcraft"])?.policy()?;
+        let (project, board) = (abs("/work/board/x.pcbcraft"), abs("/work/board"));
+        let policy = parse(&[&project])?.policy()?;
         assert_eq!(policy.mode, Mode::AutoAllowEdits);
-        assert_eq!(policy.folders, [std::path::PathBuf::from("/work/board")]);
-        let gated = parse(&["/work/board/x.pcbcraft"])?.stdio_policy()?;
+        assert_eq!(policy.folders, [std::path::PathBuf::from(&board)]);
+        let gated = parse(&[&project])?.stdio_policy()?;
         assert_eq!(gated.as_ref().map(|p| p.mode), Some(Mode::AutoAllowEdits));
         assert_eq!(
             gated.map(|p| p.folders),
-            Some(vec![std::path::PathBuf::from("/work/board")])
+            Some(vec![std::path::PathBuf::from(&board)])
         );
         assert!(
             parse(&["--operator", "board.pcbcraft"])?
@@ -381,16 +396,16 @@ mod mcp_option_tests {
             "--permission-mode",
             "allow-all",
             "--allow-folder",
-            "/work/out",
-            "/work/board/x.pcbcraft",
+            &abs("/work/out"),
+            &abs("/work/board/x.pcbcraft"),
         ])?;
         let policy = options.policy()?;
         assert_eq!(policy.mode, Mode::AllowAll);
         assert_eq!(
             policy.folders,
             [
-                std::path::PathBuf::from("/work/out"),
-                std::path::PathBuf::from("/work/board")
+                std::path::PathBuf::from(abs("/work/out")),
+                std::path::PathBuf::from(abs("/work/board"))
             ]
         );
         Ok(())

@@ -193,27 +193,11 @@ fn rows(project: &Project) -> Result<Vec<Row<'_>>> {
         });
     }
     out.sort_by(|a, b| {
-        designator_key(&a.instance.designator)
-            .cmp(&designator_key(&b.instance.designator))
+        crate::instances::designator_key(&a.instance.designator)
+            .cmp(&crate::instances::designator_key(&b.instance.designator))
             .then_with(|| a.instance.id.cmp(&b.instance.id))
     });
     Ok(out)
-}
-
-/// `R10` after `R9`: the letter prefix, then the number, then the text.
-fn designator_key(designator: &str) -> (String, u64, String) {
-    let digits = designator
-        .char_indices()
-        .rev()
-        .take_while(|(_, c)| c.is_ascii_digit())
-        .last()
-        .map_or(designator.len(), |(i, _)| i);
-    let (prefix, number) = designator.split_at(digits);
-    (
-        prefix.to_owned(),
-        number.parse().unwrap_or(u64::MAX),
-        designator.to_owned(),
-    )
 }
 
 fn group<'a, 'b>(

@@ -246,6 +246,7 @@ pub fn list_frame(
                 &format!("{shown} of {len}"),
                 t.form_dim,
                 Some("Show all \u{203a}"),
+                None,
             );
         }
     });
@@ -288,6 +289,8 @@ pub struct TableColumn<'a> {
 pub struct TableResponse {
     /// The dashed add row was clicked.
     pub add: bool,
+    /// "Show all ›" of a [`table_bounded`] table was clicked.
+    pub show_all: bool,
 }
 
 /// Column widths for `width`: shares of the positive weights (equal shares
@@ -323,6 +326,31 @@ pub fn table(
     ui: &mut Ui,
     columns: &[TableColumn<'_>],
     rows: usize,
+    cell: impl FnMut(&mut Ui, usize, usize),
+    add_row: Option<&str>,
+) -> TableResponse {
+    table_with(ui, columns, rows, None, cell, add_row)
+}
+
+/// A [`table`] in a card that shows at most `max_rows` rows, then "n of
+/// rows" and "Show all ›" as [`list_frame`] does, instead of scrolling
+/// inside the card. Raise `max_rows` to `rows` once Show all was clicked.
+pub fn table_bounded(
+    ui: &mut Ui,
+    columns: &[TableColumn<'_>],
+    rows: usize,
+    max_rows: usize,
+    cell: impl FnMut(&mut Ui, usize, usize),
+    add_row: Option<&str>,
+) -> TableResponse {
+    table_with(ui, columns, rows, Some(max_rows), cell, add_row)
+}
+
+fn table_with(
+    ui: &mut Ui,
+    columns: &[TableColumn<'_>],
+    rows: usize,
+    bound: Option<usize>,
     mut cell: impl FnMut(&mut Ui, usize, usize),
     add_row: Option<&str>,
 ) -> TableResponse {
@@ -373,9 +401,25 @@ pub fn table(
                     );
                     x += w + t.space_4;
                 }
+                // A cell that draws nothing leaves the cursor at its
+                // centre; the next row starts under this one.
+                ui.advance_cursor_after_rect(rect);
             }
         };
-        if rows > LIST_MAX_ROWS {
+        if let Some(max_rows) = bound {
+            let shown = shown_rows(rows, max_rows);
+            body(ui, 0..shown);
+            if rows > shown {
+                divider(ui);
+                out.show_all = summary_line(
+                    ui,
+                    &format!("{shown} of {rows}"),
+                    t.form_dim,
+                    Some("Show all \u{203a}"),
+                    None,
+                );
+            }
+        } else if rows > LIST_MAX_ROWS {
             egui::ScrollArea::vertical()
                 .id_salt(id)
                 .max_height(row_height * LIST_MAX_ROWS as f32)
@@ -432,10 +476,23 @@ fn dashed_button(ui: &mut Ui, label: &str) -> Response {
 /// the right ("Edit sketch ›", "Choose…"). Returns whether the action was
 /// clicked.
 pub fn summary_row(ui: &mut Ui, summary: &str, action: Option<&str>) -> bool {
-    summary_line(ui, summary, Tokens::get().form_ink, action)
+    summary_line(ui, summary, Tokens::get().form_ink, action, None)
 }
 
-fn summary_line(ui: &mut Ui, summary: &str, ink: Color32, action: Option<&str>) -> bool {
+/// One action at the right of a row with no summary, saying what it does
+/// on hover ("Delete sheet": what goes with it). Returns whether it was
+/// clicked.
+pub fn action_row(ui: &mut Ui, action: &str, hover: &str) -> bool {
+    summary_line(ui, "", Tokens::get().form_ink, Some(action), Some(hover))
+}
+
+fn summary_line(
+    ui: &mut Ui,
+    summary: &str,
+    ink: Color32,
+    action: Option<&str>,
+    hover: Option<&str>,
+) -> bool {
     let t = Tokens::get();
     let (rect, response) = ui.allocate_exact_size(
         vec2(ui.available_width().max(0.0), t.control_height),
@@ -450,7 +507,10 @@ fn summary_line(ui: &mut Ui, summary: &str, ink: Color32, action: Option<&str>) 
                 .max_rect(rect)
                 .layout(Layout::right_to_left(Align::Center)),
             |ui| {
-                let button = ui_kit::button(ui, action, ui_kit::Button::Enabled(true));
+                let mut button = ui_kit::button(ui, action, ui_kit::Button::Enabled(true));
+                if let Some(hover) = hover {
+                    button = button.on_hover_text(hover);
+                }
                 clicked = button.clicked();
                 right = button.rect.left() - t.space_8;
             },

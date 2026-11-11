@@ -27,11 +27,22 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// Each laid-out row of the texts in `shape`.
+fn lines(shape: &egui::Shape, out: &mut Vec<String>) {
+    match shape {
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| lines(s, out)),
+        egui::Shape::Text(t) => out.extend(t.galley.rows.iter().map(|r| r.text())),
+        _ => {}
+    }
+}
+
 struct Harness {
     app: App,
     ctx: egui::Context,
     frame: eframe::Frame,
     _dir: tempfile::TempDir,
+    /// The lines of text the last frame painted, one per laid-out row.
+    lines: Vec<String>,
 }
 
 impl Harness {
@@ -69,6 +80,7 @@ impl Harness {
             ctx,
             frame: eframe::Frame::_new_kittest(),
             _dir: dir,
+            lines: Vec::new(),
         };
         h.frame(vec![]);
         h.frame(vec![]);
@@ -87,9 +99,11 @@ impl Harness {
         let Self {
             app, ctx, frame, ..
         } = self;
-        ctx.run_ui(input, |ui| eframe::App::ui(app, ui, frame))
-            .textures_delta
-            .clear();
+        let out = ctx.run_ui(input, |ui| eframe::App::ui(app, ui, frame));
+        self.lines.clear();
+        for shape in &out.shapes {
+            lines(&shape.shape, &mut self.lines);
+        }
     }
 
     /// Frames until the board's 3D model is shown.
@@ -505,6 +519,16 @@ fn stacked_traces_on_j1_open_the_chooser() -> Fallible {
         "{names:?}"
     );
     assert_eq!(h.app.pcb.dimension_draft().0, 0, "nothing picked yet");
+    // Each row reads its face on one line and how high it reaches whole
+    // on the next, not wrapped mid-phrase in the menu's width.
+    let heights: Vec<&String> = h.lines.iter().filter(|l| l.contains("mm high")).collect();
+    assert!(
+        heights.len() >= 2
+            && heights
+                .iter()
+                .all(|l| l.ends_with(" mm high") && !l.contains("J1") && l.contains('–')),
+        "{heights:?}"
+    );
     // Esc closes the chooser and keeps the tool.
     h.key(egui::Key::Escape, egui::Modifiers::NONE);
     assert!(h.app.pcb.dimension_chooser().is_none());
@@ -560,7 +584,10 @@ fn a_dimension_made_in_either_view_shows_in_the_other() -> Fallible {
     let mut h = Harness::new(engine)?;
     h.app.pcb.set_3d(true);
     h.until_shown()?;
-    let items = h.app.scene.selected_items(Some(j1), None, None);
+    let items = h.app.scene.selected_items(&crate::pcb_editor::Group {
+        parts: [j1].into(),
+        ..Default::default()
+    });
     h.app
         .scene
         .viewport

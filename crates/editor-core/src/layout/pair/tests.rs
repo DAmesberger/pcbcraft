@@ -160,7 +160,10 @@ fn a_finishing_step_fans_into_the_destination_pads() {
 
 #[test]
 fn close_pads_neck_the_fan_out_down() {
-    let project = Project::default();
+    let project = Project {
+        rules: crate::rules::fixtures::rules().unwrap_or_default(),
+        ..Project::default()
+    };
     // 0.35 mm apart: 0.2 mm legs would leave 0.15 mm, under the 0.2 mm
     // clearance, so they narrow to 0.15 mm.
     let w = fan_width(&project, 1, [[0.0, 0.0], [0.0, 0.35]], 0.2);

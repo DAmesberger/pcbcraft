@@ -25,6 +25,9 @@ pub const MAX_FAVOURITES: usize = 256;
 pub const MAX_RECENT: usize = 32;
 /// Recent part files kept (the part-file chooser), most recent first.
 pub const MAX_RECENT_PART_FILES: usize = 8;
+/// Recent project files kept (File › Open Recent), most recent first: 10,
+/// the default length of macOS's own Recent Items list.
+pub const MAX_RECENT_PROJECTS: usize = 10;
 /// Projects whose production folder is kept, most recent first.
 pub const MAX_PRODUCTION_FOLDERS: usize = 32;
 /// Bytes of the settings file.
@@ -84,6 +87,14 @@ pub struct UserSettings {
     /// per user and never in the (portable) project.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub production_folders: Vec<ProductionFolder>,
+    /// Project files last opened or saved (File › Open Recent), most recent
+    /// first: absolute paths, at most [`MAX_RECENT_PROJECTS`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<PathBuf>,
+    /// The rule profile library id a new board starts with when none is
+    /// chosen (Settings); `None`: every new board asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_rule_profile: Option<String>,
 }
 
 /// Where one project's production files go.
@@ -108,6 +119,8 @@ impl Default for UserSettings {
             part_files: Vec::new(),
             require_waiver_reason: false,
             production_folders: Vec::new(),
+            projects: Vec::new(),
+            default_rule_profile: None,
         }
     }
 }
@@ -397,6 +410,19 @@ impl UserSettings {
         self.part_files.truncate(MAX_RECENT_PART_FILES);
     }
 
+    /// Put the project file `path` first among the recent projects,
+    /// dropping an older mention and the oldest beyond
+    /// [`MAX_RECENT_PROJECTS`]. A path the settings would refuse (relative or
+    /// overlong) is not kept.
+    pub fn remember_project(&mut self, path: PathBuf) {
+        if !path.is_absolute() || path.as_os_str().len() > MAX_PATH {
+            return;
+        }
+        self.projects.retain(|p| *p != path);
+        self.projects.insert(0, path);
+        self.projects.truncate(MAX_RECENT_PROJECTS);
+    }
+
     /// The production folder last chosen for the project file `project`.
     pub fn production_folder(&self, project: &Path) -> Option<&Path> {
         self.production_folders
@@ -476,6 +502,31 @@ impl UserSettings {
         }
         if self.part_files.iter().collect::<BTreeSet<_>>().len() != self.part_files.len() {
             return Err(Error::Invalid("a recent part file is listed twice".into()));
+        }
+        if self.projects.len() > MAX_RECENT_PROJECTS {
+            return Err(Error::TooLarge(format!(
+                "at most {MAX_RECENT_PROJECTS} recent projects"
+            )));
+        }
+        for path in &self.projects {
+            if !path.is_absolute() || path.as_os_str().len() > MAX_PATH {
+                return Err(Error::Invalid(format!(
+                    "recent project {} must be an absolute path of at most {MAX_PATH} bytes",
+                    path.display()
+                )));
+            }
+        }
+        if self.projects.iter().collect::<BTreeSet<_>>().len() != self.projects.len() {
+            return Err(Error::Invalid("a recent project is listed twice".into()));
+        }
+        if self
+            .default_rule_profile
+            .as_deref()
+            .is_some_and(|id| !crate::rule_profiles::valid_id(id))
+        {
+            return Err(Error::Invalid(
+                "the default rule profile must be a profile library id".into(),
+            ));
         }
         if self.production_folders.len() > MAX_PRODUCTION_FOLDERS {
             return Err(Error::TooLarge(format!(
@@ -570,6 +621,16 @@ mod tests {
     use super::*;
     use pcbcraft_core::ids::{DefinitionId, LibraryId, SourceLineageId};
 
+    /// `path` made absolute on this platform: Windows needs a drive, so
+    /// `/work` becomes `C:/work` there.
+    fn abs(path: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{path}")
+        } else {
+            path.to_owned()
+        }
+    }
+
     #[test]
     fn settings_round_trip() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -577,7 +638,7 @@ mod tests {
         assert_eq!(read_settings(&path)?, UserSettings::default());
         let settings = UserSettings {
             sources: vec![SourceSetting {
-                path: "/libs/team".into(),
+                path: abs("/libs/team").into(),
                 enabled: true,
                 writable: false,
                 name: Some("Team".into()),
@@ -591,7 +652,7 @@ mod tests {
                 lineage: SourceLineageId(3),
             }],
             browser_width: Some(312.5),
-            part_files: vec!["/parts/nut.solidcraft".into()],
+            part_files: vec![abs("/parts/nut.solidcraft").into()],
             require_waiver_reason: true,
             ..UserSettings::default()
         };
@@ -600,12 +661,15 @@ mod tests {
         // Recent part files: absolute, unique, at most eight.
         let mut parts = settings.clone();
         for i in 0..12 {
-            parts.remember_part_file(format!("/parts/p{i}.solidcraft").into());
+            parts.remember_part_file(abs(&format!("/parts/p{i}.solidcraft")).into());
         }
         parts.remember_part_file("relative.solidcraft".into());
-        parts.remember_part_file("/parts/p5.solidcraft".into());
+        parts.remember_part_file(abs("/parts/p5.solidcraft").into());
         assert_eq!(parts.part_files.len(), MAX_RECENT_PART_FILES);
-        assert_eq!(parts.part_files[0], PathBuf::from("/parts/p5.solidcraft"));
+        assert_eq!(
+            parts.part_files[0],
+            PathBuf::from(abs("/parts/p5.solidcraft"))
+        );
         parts.check()?;
         let mut twice = parts.clone();
         twice.part_files[1] = twice.part_files[0].clone();
@@ -705,23 +769,25 @@ mod tests {
 
     #[test]
     fn user_dirs_honour_overrides_and_refuse_relative_paths() -> Result<()> {
+        let (config, cache, c) = (abs("/sandbox/config"), abs("/sandbox/cache"), abs("/c"));
+        let (appdata, local) = (abs("/appdata"), abs("/local"));
         let dirs = UserDirs::from_vars(vars(&[
-            (CONFIG_VAR, "/sandbox/config"),
-            (CACHE_VAR, "/sandbox/cache"),
+            (CONFIG_VAR, &config),
+            (CACHE_VAR, &cache),
             ("HOME", "/home/someone"),
         ]))?;
-        assert_eq!(dirs.config, PathBuf::from("/sandbox/config"));
-        assert_eq!(dirs.cache, PathBuf::from("/sandbox/cache"));
+        assert_eq!(dirs.config, PathBuf::from(&config));
+        assert_eq!(dirs.cache, PathBuf::from(&cache));
         assert_eq!(
             dirs.settings_path(),
-            PathBuf::from("/sandbox/config/settings.json")
+            PathBuf::from(&config).join("settings.json")
         );
-        assert!(UserDirs::from_vars(vars(&[(CONFIG_VAR, "relative"), (CACHE_VAR, "/c")])).is_err());
+        assert!(UserDirs::from_vars(vars(&[(CONFIG_VAR, "relative"), (CACHE_VAR, &c)])).is_err());
 
         let platform = UserDirs::from_vars(vars(&[
             ("HOME", "/home/someone"),
-            ("APPDATA", "/appdata"),
-            ("LOCALAPPDATA", "/local"),
+            ("APPDATA", &appdata),
+            ("LOCALAPPDATA", &local),
         ]))?;
         if cfg!(target_os = "macos") {
             assert_eq!(
@@ -740,6 +806,12 @@ mod tests {
             assert_eq!(
                 platform.cache,
                 PathBuf::from("/home/someone/.cache/pcbcraft")
+            );
+        } else if cfg!(windows) {
+            assert_eq!(platform.config, PathBuf::from(&appdata).join("pcbcraft"));
+            assert_eq!(
+                platform.cache,
+                PathBuf::from(&local).join("pcbcraft").join("cache")
             );
         }
         if !cfg!(windows) {
@@ -783,21 +855,27 @@ mod tests {
     fn production_folders_are_kept_per_project_file() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join(SETTINGS_FILE);
-        let board = PathBuf::from("/work/board.pcbcraft");
+        let board = PathBuf::from(abs("/work/board.pcbcraft"));
         let mut settings = UserSettings::default();
-        settings.remember_production_folder(board.clone(), "/work/out".into());
-        settings.remember_production_folder(board.clone(), "/work/fab".into());
-        settings.remember_production_folder("relative.pcbcraft".into(), "/x".into());
-        settings.remember_production_folder("/work/other.pcbcraft".into(), "x".into());
+        settings.remember_production_folder(board.clone(), abs("/work/out").into());
+        settings.remember_production_folder(board.clone(), abs("/work/fab").into());
+        settings.remember_production_folder("relative.pcbcraft".into(), abs("/x").into());
+        settings.remember_production_folder(abs("/work/other.pcbcraft").into(), "x".into());
         assert_eq!(settings.production_folders.len(), 1, "one per project");
         write_settings(&path, &settings)?;
         let read = read_settings(&path)?;
-        assert_eq!(read.production_folder(&board), Some(Path::new("/work/fab")));
-        assert_eq!(read.production_folder(Path::new("/work/x.pcbcraft")), None);
+        assert_eq!(
+            read.production_folder(&board),
+            Some(Path::new(&abs("/work/fab")))
+        );
+        assert_eq!(
+            read.production_folder(Path::new(&abs("/work/x.pcbcraft"))),
+            None
+        );
         for n in 0..40 {
             settings.remember_production_folder(
-                PathBuf::from(format!("/p/{n}.pcbcraft")),
-                PathBuf::from("/out"),
+                PathBuf::from(abs(&format!("/p/{n}.pcbcraft"))),
+                PathBuf::from(abs("/out")),
             );
         }
         assert_eq!(settings.production_folders.len(), MAX_PRODUCTION_FOLDERS);
@@ -806,9 +884,43 @@ mod tests {
         settings.production_folders.pop();
         settings.production_folders.push(ProductionFolder {
             project: "relative".into(),
-            folder: "/out".into(),
+            folder: abs("/out").into(),
         });
         assert!(settings.check().is_err());
+        Ok(())
+    }
+
+    /// Night finding N7: recent projects are newest first, each once,
+    /// bounded, absolute, and survive a write and read.
+    #[test]
+    fn recent_projects_are_ordered_unique_and_persist() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(SETTINGS_FILE);
+        let mut settings = UserSettings::default();
+        for i in 0..12 {
+            settings.remember_project(format!("/work/p{i}.pcbcraft").into());
+        }
+        settings.remember_project("relative.pcbcraft".into());
+        settings.remember_project("/work/p5.pcbcraft".into());
+        assert_eq!(settings.projects.len(), MAX_RECENT_PROJECTS);
+        assert_eq!(settings.projects[0], PathBuf::from("/work/p5.pcbcraft"));
+        assert_eq!(settings.projects[1], PathBuf::from("/work/p11.pcbcraft"));
+        let p5 = PathBuf::from("/work/p5.pcbcraft");
+        assert_eq!(settings.projects.iter().filter(|p| **p == p5).count(), 1);
+        assert!(
+            !settings
+                .projects
+                .contains(&PathBuf::from("/work/p0.pcbcraft"))
+        );
+        write_settings(&path, &settings)?;
+        assert_eq!(read_settings(&path)?, settings);
+        let mut twice = settings.clone();
+        twice.projects[1] = twice.projects[0].clone();
+        assert!(write_settings(&path, &twice).is_err(), "duplicate");
+        let mut relative = settings.clone();
+        relative.projects[0] = "relative.pcbcraft".into();
+        assert!(write_settings(&path, &relative).is_err(), "relative");
+        assert_eq!(read_settings(&path)?, settings, "refusals changed nothing");
         Ok(())
     }
 
@@ -835,7 +947,7 @@ mod tests {
             name: None,
         };
         let mut settings = UserSettings {
-            sources: vec![source("/libs/a"), source("/libs/a")],
+            sources: vec![source(&abs("/libs/a")), source(&abs("/libs/a"))],
             ..UserSettings::default()
         };
         assert!(
@@ -844,7 +956,7 @@ mod tests {
         );
         settings.sources = vec![source("libs/relative")];
         assert!(write_settings(&path, &settings).is_err(), "relative source");
-        settings.sources = vec![source("/libs/a")];
+        settings.sources = vec![source(&abs("/libs/a"))];
         settings.recent = vec![
             EntryKey::Library {
                 library: LibraryId(1),
@@ -897,17 +1009,10 @@ mod tests {
     /// folder; without one it is an error the app reports.
     #[test]
     fn the_recovery_directory_is_explicit_or_an_error() -> Result<()> {
-        let vars = |pairs: &'static [(&'static str, &'static str)]| {
-            move |name: &str| {
-                pairs
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .map(|(_, v)| OsString::from(v))
-            }
-        };
+        let (r, local) = (abs("/r"), abs("/local"));
         assert_eq!(
-            UserDirs::recovery_from_vars(vars(&[(RECOVERY_VAR, "/r"), ("HOME", "/h")]))?,
-            PathBuf::from("/r")
+            UserDirs::recovery_from_vars(vars(&[(RECOVERY_VAR, &r), ("HOME", "/h")]))?,
+            PathBuf::from(&r)
         );
         assert!(UserDirs::recovery_from_vars(vars(&[(RECOVERY_VAR, "rel")])).is_err());
         assert!(UserDirs::recovery_from_vars(vars(&[])).is_err());
@@ -917,7 +1022,13 @@ mod tests {
                 UserDirs::recovery_from_vars(vars(&[("HOME", "/h")]))?,
                 PathBuf::from("/h/Library/Application Support/Pcbcraft/Recovery")
             );
-        } else if !cfg!(windows) {
+        } else if cfg!(windows) {
+            assert_eq!(
+                UserDirs::recovery_from_vars(vars(&[("LOCALAPPDATA", &local)]))?,
+                PathBuf::from(&local).join("Pcbcraft").join("Recovery")
+            );
+            assert!(UserDirs::recovery_from_vars(vars(&[("LOCALAPPDATA", "rel")])).is_err());
+        } else {
             assert_eq!(
                 UserDirs::recovery_from_vars(vars(&[("HOME", "/h")]))?,
                 PathBuf::from("/h/.local/state/pcbcraft/recovery")

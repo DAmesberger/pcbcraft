@@ -13,6 +13,11 @@
 //! anything is written, and a project's remembered revision and design
 //! hashes are recomputed ([`identity`]).
 //!
+//! Rule profiles as files ([`crate::convert_rules`]): the old profile
+//! snapshot becomes `--profile FILE.json`'s profile, or, for one the user
+//! entered from a fabricator, the same values in the new form. An old
+//! profile library file (`FILE.json`) converts in place too.
+//!
 //! A value already converted is left alone, so running it twice changes
 //! nothing. A file is replaced atomically after the original is copied to
 //! `FILE.pre-nm` (a folder to `DIR.pre-nm`), never overwritten.
@@ -32,11 +37,15 @@ mod replay;
 mod schematic;
 mod symbols;
 
-pub fn run(paths: &[String]) -> Result<()> {
+pub fn run(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: cargo xtask convert-v1 [--profile PROFILE.json] \
+                         FILE.pcbcraft|LIBRARY_FOLDER|REPLAY.jsonl|OLD_PROFILE.json…";
+    let (pinned, paths) = match args {
+        [flag, profile, rest @ ..] if flag == "--profile" => (Some(read_profile(profile)?), rest),
+        _ => (None, args),
+    };
     if paths.is_empty() {
-        return Err(
-            "usage: cargo xtask convert-v1 FILE.pcbcraft|LIBRARY_FOLDER|REPLAY.jsonl…".into(),
-        );
+        return Err(USAGE.into());
     }
     for path in paths {
         let path = Path::new(path);
@@ -56,6 +65,18 @@ pub fn run(paths: &[String]) -> Result<()> {
             }
             continue;
         }
+        if path.extension().is_some_and(|e| e == "json") {
+            let done = convert_profile(path, &backup).map_err(|e| format!("{shown}: {e}"))?;
+            if done == 0 {
+                println!("{shown}: already current");
+            } else {
+                println!(
+                    "{shown}: converted {done} values (original kept as {})",
+                    backup.display()
+                );
+            }
+            continue;
+        }
         if path.extension().is_some_and(|e| e == "jsonl") {
             let done = replay::convert(path, &backup).map_err(|e| format!("{shown}: {e}"))?;
             if done == 0 {
@@ -68,7 +89,8 @@ pub fn run(paths: &[String]) -> Result<()> {
             }
             continue;
         }
-        let done = container::convert(path, &backup).map_err(|e| format!("{shown}: {e}"))?;
+        let done = container::convert(path, &backup, pinned.as_ref())
+            .map_err(|e| format!("{shown}: {e}"))?;
         if done.values + done.identity.changed() == 0 {
             println!("{shown}: already current");
         } else {
@@ -87,4 +109,31 @@ pub fn run(paths: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The `profile` of a new-format profile file.
+fn read_profile(path: &str) -> Result<serde_json::Value> {
+    let file: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    let profile = file
+        .get("profile")
+        .filter(|p| file["format"] == 1 && p.get("source").is_some() && p.get("rules").is_some())
+        .ok_or_else(|| format!("{path} is not a format 1 rule profile file with a source"))?;
+    Ok(profile.clone())
+}
+
+/// Converts an old profile library file in place, keeping the original at
+/// `backup`.
+fn convert_profile(path: &Path, backup: &Path) -> Result<usize> {
+    let original = std::fs::read(path)?;
+    let mut file: serde_json::Value = serde_json::from_slice(&original)?;
+    let changed = crate::convert_rules::convert_profile_file(&mut file)?;
+    if changed > 0 {
+        let mut bytes = serde_json::to_vec_pretty(&file)?;
+        bytes.push(b'\n');
+        if !backup.exists() {
+            std::fs::write(backup, &original)?;
+        }
+        pcbcraft_io::persistence::atomic_write(path, &bytes)?;
+    }
+    Ok(changed)
 }

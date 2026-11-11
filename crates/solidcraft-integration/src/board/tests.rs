@@ -134,6 +134,25 @@ fn board_parameters_drive_the_shape_and_board_size() -> Fallible<()> {
     Ok(())
 }
 
+/// A parameter that names itself is refused in words, not as a cycle of
+/// one ("circular reference: height → height").
+#[test]
+fn a_parameter_that_refers_to_itself_is_refused_in_words() -> Fallible<()> {
+    let mut engine = sketched()?;
+    let rev = engine.revision();
+    let error = edit(&mut engine, vec![set("height", "height + 2 mm")])
+        .err()
+        .ok_or("accepted")?
+        .to_string();
+    assert!(error.contains("height can't refer to itself"), "{error}");
+    assert!(
+        !error.contains("circular") && !error.contains('`'),
+        "{error}"
+    );
+    assert_eq!(engine.revision(), rev);
+    Ok(())
+}
+
 #[test]
 fn rounded_corners_follow_a_corner_radius_parameter() -> Fallible<()> {
     let mut engine = sketched()?;
@@ -535,7 +554,7 @@ fn thermal_relief(
 #[test]
 fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible<()> {
     use pcbcraft_core::layout::showcase::{CORNER_MM, CUTOUT, SLOT};
-    let mut engine = Engine::showcase_hosted(hosted())?;
+    let mut engine = Engine::showcase_hosted_fixture(hosted())?;
     let s = sketch(&engine)?;
     // The outline is driven by its parameters; the cutout and slot stand
     // where they were drawn, undimensioned.

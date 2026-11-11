@@ -133,7 +133,7 @@ impl UpdatePreview {
     /// [`Self::begin`] for a component-revision change, listing each of its
     /// instances with a checkbox (all on), and `note` above the changes.
     pub fn begin_choosing(&mut self, engine: &Engine, change: Change, note: Option<String>) {
-        let choices = match &change {
+        let mut choices: Vec<(Id, String, bool)> = match &change {
             Change::ComponentRevision { instances, .. } => instances
                 .iter()
                 .map(|id| {
@@ -146,6 +146,10 @@ impl UpdatePreview {
                 .collect(),
             _ => Vec::new(),
         };
+        // R2 before R10, as every designator list.
+        choices.sort_by_cached_key(|(_, designator, _)| {
+            pcbcraft_core::instances::designator_key(designator)
+        });
         self.begin(engine, change);
         self.choices = choices;
         self.note = note;
@@ -312,7 +316,7 @@ impl UpdatePreview {
                 Some(count),
                 |ui| {
                     for (_, designator, on) in choices.iter_mut() {
-                        chose |= crate::kit::check_row(ui, designator, on);
+                        chose |= crate::kit::check(ui, designator, on);
                     }
                     crate::kit::hint(
                         ui,
@@ -1052,6 +1056,59 @@ mod tests {
         Ok(())
     }
 
+    /// Night round 3 (R3-7): the review lists its instances in natural
+    /// designator order, whatever order the change names them in.
+    #[test]
+    fn the_instances_are_listed_by_designator() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let mut instances: Vec<_> = engine.project().instances.iter().map(|i| i.id).collect();
+        assert!(instances.len() >= 2, "the demo places several instances");
+        instances.reverse();
+        let first = engine.project().instances.first().ok_or("an instance")?;
+        let change = Change::ComponentRevision {
+            instances,
+            target: first.component,
+            resolutions: Default::default(),
+        };
+        let mut review = UpdatePreview::default();
+        review.begin_choosing(&engine, change, None);
+        let listed: Vec<&str> = review.choices.iter().map(|(_, d, _)| d.as_str()).collect();
+        let mut sorted = listed.clone();
+        sorted.sort_by_key(|d| pcbcraft_core::instances::designator_key(d));
+        assert_eq!(listed, sorted);
+        Ok(())
+    }
+
+    /// The instance checkboxes start under the "Instances" caption, not
+    /// after an empty label column.
+    #[test]
+    fn the_instance_checkboxes_start_under_the_caption() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let instances: Vec<_> = engine.project().instances.iter().map(|i| i.id).collect();
+        let first = engine.project().instances.first().ok_or("an instance")?;
+        let designator = first.designator.clone();
+        let change = Change::ComponentRevision {
+            instances,
+            target: first.component,
+            resolutions: Default::default(),
+        };
+        let ctx = egui::Context::default();
+        let mut review = UpdatePreview::default();
+        review.begin_choosing(&engine, change, None);
+        let (output, _) = frame(&mut review, &engine, &ctx, vec![]);
+        let caption =
+            text_where(&output, |t| t.eq_ignore_ascii_case("Instances")).ok_or("no caption")?;
+        let row = text_at(&output, &designator).ok_or("no row")?;
+        let t = solidcraft_theme::Tokens::get();
+        assert!(
+            row.x - caption.x < t.form_label_width / 2.0,
+            "row text at {}, caption at {}",
+            row.x,
+            caption.x
+        );
+        Ok(())
+    }
+
     /// The demo plus R3 on the schematic but not yet on the board, and a
     /// track that joins R1 pad 1 to R2 pad 1 under N-names the update
     /// keeps, so Update PCB has something to add.
@@ -1591,7 +1648,7 @@ mod tests {
         engine.apply(
             engine.revision(),
             Operation::Layout(LayoutCommand::AddVia {
-                via: ViaRequest::through(net, [15.2, 8.0]),
+                via: ViaRequest::fixture(net, [15.2, 8.0]),
             }),
         )?;
         let change = Change::Schematic {

@@ -153,8 +153,8 @@ fn scan() -> Result<BTreeSet<String>> {
             let rel = file
                 .strip_prefix(&src)
                 .map_err(|e| format!("{}: {e}", file.display()))?
-                .display()
-                .to_string();
+                .to_string_lossy()
+                .replace('\\', "/");
             all.extend(fields.found.into_iter().map(|f| format!("{rel} {f}")));
         }
     }

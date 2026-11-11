@@ -107,6 +107,29 @@ impl Operation {
         }
     }
 
+    /// This operation's title for people, from [`Self::titles`].
+    pub fn title(&self) -> &'static str {
+        let name = self.command();
+        Self::titles()
+            .find(|(wire, _)| *wire == name)
+            .map_or("Change", |(_, title)| *title)
+    }
+
+    /// The area of the design this operation changes.
+    pub const fn area(&self) -> Area {
+        match self {
+            Self::Library(_) => Area::Component,
+            Self::Instance(InstanceCommand::SetTextPlacement { .. })
+            | Self::Layout(_)
+            | Self::Rules(_)
+            | Self::Fill(_)
+            | Self::Board(_)
+            | Self::Dimension(_)
+            | Self::Fabrication(_) => Area::Pcb,
+            Self::Instance(_) | Self::Schematic(_) | Self::Update(_) => Area::Schematic,
+        }
+    }
+
     /// Every operation by wire name with its class, for discovery.
     pub fn classes() -> impl Iterator<Item = &'static (&'static str, Class)> {
         const UPDATE: &[(&str, Class)] = &[("update", Class::Edit)];
@@ -297,7 +320,8 @@ pub enum Query {
     /// and the net classes.
     #[serde(rename = "rules.effective")]
     RulesEffective {},
-    /// The built-in rule profiles (hosts append the user library).
+    /// The project's own profile snapshot, if any; hosts with a profile
+    /// library (desktop, CLI, MCP) append its profiles. Pcbcraft ships none.
     #[serde(rename = "rules.profiles")]
     RuleProfiles {},
     /// What `rules.set_profile` with these arguments would change: rules
@@ -506,6 +530,36 @@ pub const MAX_UNDO: usize = 100;
 /// Operations [`Engine::apply_all_hosted`] takes in one step.
 pub const MAX_BATCH: usize = 256;
 
+/// The area of the design an undo step changed, as the workspaces name it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Area {
+    Component,
+    Schematic,
+    Pcb,
+}
+
+/// What one undo step did, for people: its operation's title and the area
+/// it changed. A batch of one kind of operation takes that operation's
+/// title; a mixed batch is [`Step::MIXED`], in its first operation's area.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Step {
+    pub title: &'static str,
+    pub area: Area,
+}
+
+impl Step {
+    /// The title of a batch of different operations.
+    pub const MIXED: &'static str = "Several changes";
+
+    fn of(operation: &Operation) -> Self {
+        Self {
+            title: operation.title(),
+            area: operation.area(),
+        }
+    }
+}
+
 /// The document, its revision and one shared undo history.
 ///
 /// Every mutation is staged on a candidate and validated before it replaces
@@ -515,8 +569,10 @@ pub const MAX_BATCH: usize = 256;
 pub struct Engine {
     document: Document,
     revision: u64,
-    undo: VecDeque<Document>,
-    redo: Vec<Document>,
+    /// The documents before each step, with what the step did.
+    undo: VecDeque<(Document, Step)>,
+    /// The documents after each undone step, with what it did.
+    redo: Vec<(Document, Step)>,
     /// The revision the latest undo step was applied at, until an undo,
     /// redo or new document ([`Engine::join_last_step`]).
     last_step: Option<u64>,
@@ -526,9 +582,19 @@ pub struct Engine {
     /// The copper graph of this revision, built on first use and dropped
     /// with every new revision ([`Engine::copper_graph`]).
     copper: std::sync::OnceLock<Arc<layout::CopperGraph>>,
+    /// What the last applied operation re-routed of the copper its moved
+    /// parts dragged ([`Engine::rerouted`]).
+    rerouted: layout::router::reroute::Rerouted,
 }
 
 impl Engine {
+    /// What the last operation applied re-routed of the copper its moved
+    /// parts dragged along, and what it left unrouted: empty when it moved
+    /// no part, or the carried copper stayed clean.
+    pub fn rerouted(&self) -> &layout::router::reroute::Rerouted {
+        &self.rerouted
+    }
+
     /// Whether `fabrication.waive` needs a reason in this engine. The app
     /// sets it from its settings; headless hosts keep the default (off).
     pub fn require_waiver_reason(&mut self, required: bool) {
@@ -552,10 +618,17 @@ impl Engine {
     /// and bottom through tented and open vias, built through the public
     /// commands. The sample parts live in `library::samples`.
     ///
-    /// Unconnected terminals are marked no-connect. The undo history is
-    /// cleared, as for [`Engine::demo`].
+    /// Unconnected terminals are marked no-connect. The board's rules are
+    /// `profile`. The undo history is cleared.
+    pub fn showcase_with(profile: rules::RuleProfile) -> Result<Self> {
+        Self::showcase_in(None, profile)
+    }
+
+    /// A test fixture, never in the product: [`Engine::showcase_with`] the
+    /// test prototype profile, whose values the showcase was drawn for.
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub fn showcase() -> Result<Self> {
-        Self::showcase_in(None)
+        Self::showcase_in(None, rules::fixtures::prototype()?)
     }
 
     /// The showcase as the shipped file shows it: [`Engine::showcase`]
@@ -564,12 +637,29 @@ impl Engine {
     /// round cutout, a milled slot and J1 held to the left edge by board
     /// parameters (`layout::showcase::board_edits`). The pours are filled
     /// last, over the final shape. The undo history is cleared.
-    pub fn showcase_hosted(evaluators: Evaluators<'_>) -> Result<Self> {
-        Self::showcase_in(Some(evaluators))
+    pub fn showcase_hosted(
+        evaluators: Evaluators<'_>,
+        profile: rules::RuleProfile,
+    ) -> Result<Self> {
+        Self::showcase_in(Some(evaluators), profile)
     }
 
-    fn showcase_in(hosted: Option<Evaluators<'_>>) -> Result<Self> {
+    /// A test fixture, never in the product: [`Engine::showcase_hosted`]
+    /// on the test prototype profile.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn showcase_hosted_fixture(evaluators: Evaluators<'_>) -> Result<Self> {
+        Self::showcase_in(Some(evaluators), rules::fixtures::prototype()?)
+    }
+
+    fn showcase_in(hosted: Option<Evaluators<'_>>, profile: rules::RuleProfile) -> Result<Self> {
         let mut engine = Self::default();
+        engine.apply(
+            engine.revision,
+            Operation::Rules(rules::RulesCommand::SetProfile {
+                profile: Box::new(profile),
+                keep_overrides: false,
+            }),
+        )?;
         engine.apply(
             engine.revision,
             Operation::Schematic(schematic::SchematicCommand::RenameProject {
@@ -786,12 +876,26 @@ impl Engine {
         Ok(())
     }
 
-    /// Two connected two-terminal components, placed on the board, with a
-    /// typed resistance field shown on the symbol. The sample library is
-    /// built through the public commands and its drafts stay open for
-    /// editing.
+    /// A test fixture, never in the product: an empty project on the test
+    /// prototype profile.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn profiled() -> Result<Self> {
+        let mut engine = Self::default();
+        std::sync::Arc::make_mut(&mut engine.document.project).rules = rules::fixtures::rules()?;
+        Ok(engine)
+    }
+
+    /// A test fixture, never in the product: two connected two-terminal
+    /// components, placed on the board, with a typed resistance field
+    /// shown on the symbol, on the test prototype profile. The sample
+    /// library is built through the public commands and its drafts stay
+    /// open for editing. Other crates' tests reach it through the
+    /// `test-fixtures` feature of their dev-dependency; a launch and File ›
+    /// New open an empty project.
+    #[cfg(any(test, feature = "test-fixtures"))]
     pub fn demo() -> Result<Self> {
         let mut engine = Self::default();
+        std::sync::Arc::make_mut(&mut engine.document.project).rules = rules::fixtures::rules()?;
         let refs = engine.reserve_lineages()?;
         let kind = engine.reserve(DefinitionKind::QuantityKind)?;
         let field = engine.reserve(DefinitionKind::Field)?;
@@ -954,6 +1058,14 @@ impl Engine {
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
     }
+    /// What [`Engine::undo`] would take back, if anything.
+    pub fn undo_step(&self) -> Option<Step> {
+        self.undo.back().map(|(_, step)| *step)
+    }
+    /// What [`Engine::redo`] would apply again, if anything.
+    pub fn redo_step(&self) -> Option<Step> {
+        self.redo.last().map(|(_, step)| *step)
+    }
 
     /// Replace the whole document (open, new, recover). History is cleared;
     /// an invalid file leaves everything unchanged.
@@ -1016,6 +1128,7 @@ impl Engine {
         evaluators: Evaluators<'_>,
     ) -> Result<Vec<Outcome>> {
         self.check_revision(expected_revision)?;
+        self.rerouted = Default::default();
         let count = operations.len();
         if count == 0 {
             return Err(Error::Invalid(
@@ -1027,6 +1140,14 @@ impl Engine {
                 "a batch takes at most {MAX_BATCH} operations, not {count}"
             )));
         }
+        // One kind of operation names the step; a mix is several changes.
+        let mut step = operations.first().map(Step::of).unwrap_or(Step {
+            title: Step::MIXED,
+            area: Area::Schematic,
+        });
+        if operations.iter().any(|o| o.title() != step.title) {
+            step.title = Step::MIXED;
+        }
         // The steps run on a copy without history; only the end commits.
         let mut scratch = Engine {
             document: self.document.clone(),
@@ -1036,16 +1157,19 @@ impl Engine {
             ..Engine::default()
         };
         let mut outcomes = Vec::with_capacity(count);
+        let mut rerouted = layout::router::reroute::Rerouted::default();
         for (index, operation) in operations.into_iter().enumerate() {
             let at = scratch.revision;
             let outcome = scratch
                 .apply_inner(at, operation, evaluators)
                 .map_err(|error| error.in_batch(index, count))?;
+            rerouted.extend(std::mem::take(&mut scratch.rerouted));
             outcomes.push(outcome);
         }
         if scratch.revision != self.revision {
-            self.commit(scratch.document)?;
+            self.commit(scratch.document, step)?;
         }
+        self.rerouted = rerouted;
         Ok(outcomes)
     }
 
@@ -1061,6 +1185,7 @@ impl Engine {
             last_step: self.last_step,
             waiver_reason_required: self.waiver_reason_required,
             copper: self.copper.clone(),
+            rerouted: self.rerouted.clone(),
         }
     }
 
@@ -1072,12 +1197,24 @@ impl Engine {
     ) -> Result<Outcome> {
         let evaluator = evaluators.footprint;
         self.check_revision(expected_revision)?;
+        self.rerouted = Default::default();
+        let step = Step::of(&operation);
+        let mut rerouted = layout::router::reroute::Rerouted::default();
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
         let merge_named = matches!(&operation, Operation::Update(u) if u.merge_named_nets);
-        let moved_part = match &operation {
-            Operation::Layout(layout::LayoutCommand::Move { instance, .. }) => Some(*instance),
-            _ => None,
+        // Parts the operation moves by hand: their attached copper is
+        // carried with them, all at once.
+        let moved_parts: Vec<Id> = match &operation {
+            Operation::Layout(layout::LayoutCommand::Move { instance, .. }) => vec![*instance],
+            Operation::Layout(layout::LayoutCommand::MoveParts { moves }) => {
+                moves.iter().map(|m| m.instance).collect()
+            }
+            Operation::Layout(
+                layout::LayoutCommand::Align { instances, .. }
+                | layout::LayoutCommand::Distribute { instances, .. },
+            ) => instances.clone(),
+            _ => Vec::new(),
         };
         let outcome = match operation {
             Operation::Library(command) => {
@@ -1149,6 +1286,20 @@ impl Engine {
                         .map_or(0.0, |t| layout::router::drag::dragged_by(t, &plan)),
                     reached: plan.reached,
                 }
+            }
+            // Align and distribute ask the host's board evaluator which
+            // parts their dimensions hold.
+            Operation::Layout(layout::LayoutCommand::Align { instances, to }) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                layout::arrange::align(project, &instances, to, evaluators.board)?;
+                layout::validate(project)?;
+                Outcome::None
+            }
+            Operation::Layout(layout::LayoutCommand::Distribute { instances, axis }) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                layout::arrange::distribute(project, &instances, axis, evaluators.board)?;
+                layout::validate(project)?;
+                Outcome::None
             }
             Operation::Layout(command) => {
                 let part = command.places_part();
@@ -1273,13 +1424,13 @@ impl Engine {
             // to its pads.
             let mut placed =
                 layout::dimensions::follow(&self.document.project, project, evaluators.board)?;
-            if let Some(instance) = moved_part
-                && !placed.contains(&instance)
-            {
-                placed.push(instance);
+            for instance in moved_parts {
+                if !placed.contains(&instance) {
+                    placed.push(instance);
+                }
             }
             if !placed.is_empty() {
-                layout::dimensions::carry(
+                rerouted = layout::dimensions::carry(
                     &self.document.project,
                     project,
                     &self.copper_graph(),
@@ -1306,7 +1457,8 @@ impl Engine {
         } else {
             validate::drafts_only(&candidate.project, &candidate.drafts)?;
         }
-        self.commit(candidate)?;
+        self.commit(candidate, step)?;
+        self.rerouted = rerouted;
         Ok(outcome)
     }
 
@@ -1413,7 +1565,15 @@ impl Engine {
             Query::RulesEffective {} => Ok(QueryResult::Rules(Box::new(rules::report(
                 &self.document.project.rules,
             )))),
-            Query::RuleProfiles {} => Ok(QueryResult::RuleProfiles(rules::builtin::all())),
+            Query::RuleProfiles {} => Ok(QueryResult::RuleProfiles(
+                self.document
+                    .project
+                    .rules
+                    .profile
+                    .iter()
+                    .cloned()
+                    .collect(),
+            )),
             Query::PreviewProfile {
                 profile,
                 keep_overrides,
@@ -1703,12 +1863,12 @@ impl Engine {
     pub fn undo_at(&mut self, expected_revision: u64) -> Result<()> {
         self.check_revision(expected_revision)?;
         let revision = self.next_revision()?;
-        let previous = self
+        let (previous, step) = self
             .undo
             .pop_back()
             .ok_or_else(|| Error::History("nothing to undo".into()))?;
         self.redo
-            .push(std::mem::replace(&mut self.document, previous));
+            .push((std::mem::replace(&mut self.document, previous), step));
         self.set_revision(revision);
         self.last_step = None;
         Ok(())
@@ -1719,12 +1879,12 @@ impl Engine {
     pub fn redo_at(&mut self, expected_revision: u64) -> Result<()> {
         self.check_revision(expected_revision)?;
         let revision = self.next_revision()?;
-        let next = self
+        let (next, step) = self
             .redo
             .pop()
             .ok_or_else(|| Error::History("nothing to redo".into()))?;
         self.undo
-            .push_back(std::mem::replace(&mut self.document, next));
+            .push_back((std::mem::replace(&mut self.document, next), step));
         self.set_revision(revision);
         self.last_step = None;
         Ok(())
@@ -1743,8 +1903,12 @@ impl Engine {
             ));
         }
         // The document between the two steps goes; the one before both
-        // stays the undo target.
-        self.undo.pop_back();
+        // stays the undo target, named by the latest step.
+        if let Some((_, step)) = self.undo.pop_back()
+            && let Some(earlier) = self.undo.back_mut()
+        {
+            earlier.1 = step;
+        }
         self.last_step = None;
         Ok(())
     }
@@ -1769,13 +1933,13 @@ impl Engine {
             .ok_or_else(|| Error::Limit("revision exhausted".into()))
     }
 
-    fn commit(&mut self, candidate: Document) -> Result<()> {
+    fn commit(&mut self, candidate: Document, step: Step) -> Result<()> {
         let revision = self.next_revision()?;
         if self.undo.len() >= MAX_UNDO {
             self.undo.pop_front();
         }
         self.undo
-            .push_back(std::mem::replace(&mut self.document, candidate));
+            .push_back((std::mem::replace(&mut self.document, candidate), step));
         self.redo.clear();
         self.last_step = Some(self.revision);
         self.set_revision(revision);

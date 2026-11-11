@@ -264,17 +264,20 @@ fn row_key(row: DraftRow) -> (bool, usize) {
 /// clicked, which the editor below the table then edits.
 fn table(ui: &mut Ui, draft: &StackupDraft, selected: Option<DraftRow>) -> Option<DraftRow> {
     let columns = [
+        // Room for the indented "Prepreg" and for "THICKNESS", what a
+        // stackup is read for; uses are short words. A cut caption shows
+        // whole on hover.
         kit::TableColumn {
             title: "Layer",
-            weight: 1.4,
+            weight: 1.1,
         },
         kit::TableColumn {
             title: "Thickness",
-            weight: 1.0,
+            weight: 1.05,
         },
         kit::TableColumn {
             title: "Use · glass",
-            weight: 1.0,
+            weight: 0.85,
         },
     ];
     let stackup = &draft.stackup;
@@ -452,4 +455,50 @@ fn carried_layers(project: &Project) -> Vec<CopperLayer> {
     out.sort();
     out.dedup();
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solidcraft_ui_egui::fonts;
+
+    /// At the Properties column's width (about 230 points, as measured in
+    /// the app), in the dialog's form, the table shows every value and
+    /// the Thickness caption whole: the 4-layer preset's "0.2 mm" is not
+    /// cut to "0.2 m…", nor "Prepreg" to "Prep…". Only the last caption
+    /// may be cut (it shows whole on hover).
+    #[test]
+    fn the_layer_table_fits_the_properties_column() -> Result<(), Box<dyn std::error::Error>> {
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        solidcraft_theme::apply(&ctx);
+        let draft = StackupDraft::of(&Stackup::preset(4)?);
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(230.0, 600.0),
+            )),
+            ..Default::default()
+        };
+        let mut cut = Vec::new();
+        // The second frame lays out with the fonts the first loaded.
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(input(), |ui| {
+                // In the dialog's form, with its label font.
+                kit::form(ui, |ui| table(ui, &draft, None));
+            });
+            output.textures_delta.clear();
+            cut = output
+                .shapes
+                .iter()
+                .filter_map(|c| match &c.shape {
+                    egui::Shape::Text(t) if t.galley.elided => Some(t.galley.job.text.clone()),
+                    _ => None,
+                })
+                .collect();
+        }
+        cut.retain(|text| text != "USE · GLASS");
+        assert_eq!(cut, Vec::<String>::new());
+        Ok(())
+    }
 }

@@ -14,6 +14,7 @@ mod drag;
 mod joints;
 mod pair_shove;
 mod perf;
+mod reroute;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -48,7 +49,7 @@ fn via(p: &mut Project, net: Id, at: Point) -> Fallible<Id> {
     apply(
         p,
         LayoutCommand::AddVia {
-            via: ViaRequest::through(net, at),
+            via: ViaRequest::fixture(net, at),
         },
     )?;
     Ok(p.vias.last().map(|v| v.id).ok_or("no via")?)
@@ -694,7 +695,7 @@ fn a_route_step_is_one_atomic_undoable_transaction() -> Fallible {
     engine.apply(
         engine.revision(),
         layout(LayoutCommand::AddVia {
-            via: ViaRequest::through(C, [33.0, 19.0]),
+            via: ViaRequest::fixture(C, [33.0, 19.0]),
         }),
     )?;
     let before = engine.project().clone();
@@ -820,7 +821,7 @@ fn the_detour_factor_is_the_path_over_the_straight_line() -> Fallible {
 
     // Through a via at the corner of an L: 5 + 5 mm, against 5 + 5 mm.
     let through = RouteStepRequest {
-        via: Some(ViaRequest::through(A, [30.0, 20.0])),
+        via: Some(ViaRequest::fixture(A, [30.0, 20.0])),
         via_layer: Some(CopperLayer::Bottom),
         ..request(A, [25.0, 20.0], [30.0, 25.0], RouteMode::Ignore)
     };
@@ -838,7 +839,7 @@ fn a_walkaround_reports_its_detour_and_the_request_can_bound_it() -> Fallible {
         engine.apply(
             engine.revision(),
             layout(LayoutCommand::AddVia {
-                via: ViaRequest::through(C, [30.0, y]),
+                via: ViaRequest::fixture(C, [30.0, y]),
             }),
         )?;
     }

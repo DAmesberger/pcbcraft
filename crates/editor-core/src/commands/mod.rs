@@ -11,7 +11,7 @@ pub(crate) mod templates;
 
 pub use instance::InstanceCommand;
 pub(crate) use instance::apply_instance;
-pub use library::LibraryCommand;
+pub use library::{LibraryCommand, parts_to_republish};
 pub(crate) use library::{apply_library, preview_footprint};
 /// `instance.marking` as a pure function of a valid project, for hosts that
 /// lay out many instances at once (the model worker's decals) without an

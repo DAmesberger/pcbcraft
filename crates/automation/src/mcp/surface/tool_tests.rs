@@ -574,13 +574,15 @@ fn projects_are_kept_apart_by_handle() -> Fallible<()> {
         .join("pcbcraft-p2-outside.pcbcraft")
         .display()
         .to_string();
+    let new = json!({"name": "project.new", "params": {
+        "profile": pcbcraft_core::rules::fixtures::prototype()?}});
     block_on(async move {
         let c = Connection::open(Mode::AllowAll, dir.path()).await?;
         let first = c.ok(QUERY, json!({"name": "project.inspect"})).await?;
         let one = first["project"].as_str().ok_or("handle")?.to_owned();
         let one_rev = revision(&first)?;
 
-        let opened = c.ok(ACT, json!({"name": "project.new"})).await?;
+        let opened = c.ok(ACT, new.clone()).await?;
         let two = opened["project"].as_str().ok_or("handle")?.to_owned();
         assert_ne!(one, two);
         assert_eq!(
@@ -654,12 +656,9 @@ fn projects_are_kept_apart_by_handle() -> Fallible<()> {
         );
         // As many projects as the server holds, and no more.
         for _ in 3..desk::MAX_PROJECTS {
-            c.ok(ACT, json!({"name": "project.new"})).await?;
+            c.ok(ACT, new.clone()).await?;
         }
-        assert_eq!(
-            c.refused(ACT, json!({"name": "project.new"})).await?,
-            "project.limit"
-        );
+        assert_eq!(c.refused(ACT, new.clone()).await?, "project.limit");
         c.close().await
     })?
 }

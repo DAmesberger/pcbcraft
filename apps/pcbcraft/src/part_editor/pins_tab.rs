@@ -805,6 +805,14 @@ impl PartEditor {
             else {
                 return;
             };
+            if !has_gpio(functions) {
+                kit::hint(
+                    ui,
+                    &function_count(functions.functions.len()),
+                    "GPIO port and pin options show for a digital input, output or bidirectional function",
+                );
+                return;
+            }
             let port = functions
                 .gpio
                 .as_ref()
@@ -833,15 +841,7 @@ impl PartEditor {
             }
             kit::hint(
                 ui,
-                &format!(
-                    "{} {}: click a chip to edit one",
-                    functions.functions.len(),
-                    if functions.functions.len() == 1 {
-                        "function"
-                    } else {
-                        "functions"
-                    }
-                ),
+                &function_count(functions.functions.len()),
                 "The GPIO identity is stated here, never read from the name",
             );
         });
@@ -853,6 +853,7 @@ impl PartEditor {
                 pcbcraft_core::library::TerminalClass::Electrical(f) => Some(f),
                 _ => None,
             })
+            .filter(|f| has_gpio(f))
         {
             kit::section(ui, "pins-options", "Options", true, None, |ui| {
                 options_rows(ui, &mut functions.options);
@@ -1238,6 +1239,29 @@ fn options_rows(ui: &mut Ui, options: &mut Vec<PinOption>) {
             }
         }
     }
+}
+
+/// The terminal is a GPIO: it states a GPIO identity or options, or one of
+/// its functions is a digital input, output or bidirectional line. Only
+/// then does its card offer the GPIO port and the pin options (a passive or
+/// power pin has neither).
+fn has_gpio(functions: &pcbcraft_core::functions::TerminalFunctions) -> bool {
+    use pcbcraft_core::functions::{Direction, SignalKind};
+    functions.gpio.is_some()
+        || !functions.options.is_empty()
+        || functions.functions.iter().any(|f| {
+            f.signal == SignalKind::Digital
+                && matches!(
+                    f.direction,
+                    Direction::Input | Direction::Output | Direction::Bidirectional
+                )
+        })
+}
+
+/// "3 functions: click a chip to edit one".
+fn function_count(n: usize) -> String {
+    let noun = if n == 1 { "function" } else { "functions" };
+    format!("{n} {noun}: click a chip to edit one")
 }
 
 /// Speed grades from comma-separated text, as data.

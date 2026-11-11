@@ -219,7 +219,7 @@ fn groups(project: &Project, new: &[Id]) -> Vec<Vec<Id>> {
                 .instance(id)
                 .map(|i| i.designator.clone())
                 .unwrap_or_default();
-            let (prefix, number) = designator_key(&designator);
+            let (prefix, number, _) = crate::instances::designator_key(&designator);
             ((page(id), prefix), (number, designator), id)
         })
         .collect();
@@ -236,18 +236,6 @@ fn groups(project: &Project, new: &[Id]) -> Vec<Vec<Id>> {
         }
     }
     out
-}
-
-/// `R10` after `R9`: the letter prefix, then the number.
-fn designator_key(designator: &str) -> (String, u64) {
-    let digits = designator
-        .char_indices()
-        .rev()
-        .take_while(|(_, c)| c.is_ascii_digit())
-        .last()
-        .map_or(designator.len(), |(i, _)| i);
-    let (prefix, number) = designator.split_at(digits);
-    (prefix.to_owned(), number.parse().unwrap_or(u64::MAX))
 }
 
 #[cfg(test)]

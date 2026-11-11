@@ -254,7 +254,7 @@ fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
     let mut changed = false;
     let mut toggle = |ui: &mut Ui, layer: ViewLayer| {
         let mut shown = view.visible(layer);
-        if crate::kit::check_row(ui, &layer.label(), &mut shown) {
+        if crate::kit::check(ui, &layer.label(), &mut shown) {
             view.set(layer, shown);
             changed = true;
         }
@@ -389,6 +389,36 @@ mod tests {
                 }
                 _ => None,
             })
+    }
+
+    /// The popover's checkboxes start at its left, under the "Layers"
+    /// caption, not after an empty label column.
+    #[test]
+    fn the_popover_checkboxes_start_under_the_caption() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut view = LayerView::default();
+        let stack = Stack::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            popover(ui, &mut view, &stack);
+        });
+        output.textures_delta.clear();
+        let left = |label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) if text.galley.text() == label => Some(text.pos.x),
+                    _ => None,
+                })
+        };
+        let caption = left("Layers").ok_or("no caption")?;
+        let row = left("Top solder mask").ok_or("no row")?;
+        let t = Tokens::get();
+        assert!(
+            row - caption < t.form_label_width / 2.0,
+            "row text at {row}, caption at {caption}"
+        );
+        Ok(())
     }
 
     /// Hover, press and release on `label`; whether the view changed.

@@ -362,6 +362,53 @@ fn peripherals_view_lists_offers_and_removal_clears_claims() -> TestResult {
     Ok(())
 }
 
+/// R6-7: a role caption ("ch0_n (ADC1_CH0_N)") gets the room the canvas
+/// has, not the Properties label column: nothing is cut in an 800 pt view.
+#[test]
+fn peripheral_role_captions_use_the_room_they_have() -> TestResult {
+    let mut h = Harness::new()?;
+    let component = h.component_mut()?;
+    let resource = add_peripheral(component)?;
+    let role = component
+        .resources
+        .iter_mut()
+        .find(|r| r.id == resource)
+        .and_then(|r| r.roles.first_mut())
+        .ok_or("no role")?;
+    role.label = "ch0_n".into();
+    role.signal = Some("ADC1_CH0_N".into());
+    let component = h.component()?.clone();
+    let ctx = egui::Context::default();
+    fonts::setup_bundled_fonts(&ctx);
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 900.0))),
+            ..Default::default()
+        },
+        |ui| {
+            let _ = pins_table::peripherals(ui, &component, pins_table::Lit::default());
+        },
+    );
+    output.textures_delta.clear();
+    fn texts(shape: &egui::Shape, out: &mut Vec<(String, bool)>) {
+        match shape {
+            egui::Shape::Text(text) => out.push((text.galley.job.text.clone(), text.galley.elided)),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+    let mut shown = Vec::new();
+    for shape in &output.shapes {
+        texts(&shape.shape, &mut shown);
+    }
+    let caption = shown
+        .iter()
+        .find(|(t, _)| t.starts_with("ch0_n"))
+        .ok_or("no caption")?;
+    assert_eq!(caption, &("ch0_n (ADC1_CH0_N)".to_owned(), false));
+    Ok(())
+}
+
 /// Add rule gives each rule a fresh component-local ID and a unique label
 /// with the starter script; the Rules view edits it in the canvas.
 #[test]
@@ -1005,5 +1052,39 @@ fn power_and_ground_pins_read_sensibly() -> TestResult {
         pins_table::kind_text(ground.direction, ground.signal),
         "Power input"
     );
+    Ok(())
+}
+
+/// A passive pin's card offers no GPIO port or pin options; a digital
+/// bidirectional function brings them back.
+#[test]
+fn gpio_options_show_only_for_a_gpio_pin() -> TestResult {
+    use pcbcraft_core::functions::{Direction, SignalKind};
+    let mut h = Harness::new()?;
+    let first = *h.terminals()?.first().ok_or("no terminal")?;
+    h.editor.pins.subject = Some(Subject::Terminal(first));
+    let gpio_rows = ["GPIO port", "Pull-up", "Speeds", "Schmitt trigger"];
+    let shown = h.texts();
+    assert!(shown.iter().any(|t| t == "Class"), "terminal card shown");
+    for row in gpio_rows {
+        assert!(!shown.iter().any(|t| t == row), "{row} on a passive pin");
+    }
+    let function = h
+        .component_mut()?
+        .terminals
+        .iter_mut()
+        .find(|t| t.id == first)
+        .and_then(|t| match &mut t.class {
+            pcbcraft_core::library::TerminalClass::Electrical(f) => f.functions.first_mut(),
+            _ => None,
+        })
+        .ok_or("no function")?;
+    assert_eq!(function.direction, Direction::Passive);
+    function.direction = Direction::Bidirectional;
+    function.signal = SignalKind::Digital;
+    let shown = h.texts();
+    for row in gpio_rows {
+        assert!(shown.iter().any(|t| t == row), "{row} on a GPIO pin");
+    }
     Ok(())
 }

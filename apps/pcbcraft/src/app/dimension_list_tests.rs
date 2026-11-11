@@ -75,7 +75,10 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
     ax.app.pcb.set_3d(true);
     until_shown(&mut ax)?;
     ax.app.pcb.set_selection(Some(j1), None, None);
-    let items = ax.app.scene.selected_items(Some(j1), None, None);
+    let items = ax.app.scene.selected_items(&crate::pcb_editor::Group {
+        parts: [j1].into(),
+        ..Default::default()
+    });
     ax.app
         .scene
         .viewport
@@ -219,5 +222,60 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
             .any(|d| d.id == face)
     );
     ax.find(Role::Button, FACE)?;
+    Ok(())
+}
+
+/// While the board's model updates after an edit that raises a finding,
+/// the "Updating" chip at the top right of the 3D view sits left of the
+/// issues badge, not under it.
+#[test]
+fn the_updating_chip_sits_beside_the_issues_badge() -> Fallible {
+    let engine = esp32()?;
+    let project = engine.project();
+    let u1 = project
+        .instances
+        .iter()
+        .find(|i| i.designator == "U1")
+        .map(|i| i.id)
+        .ok_or("no U1")?;
+    let placement = project.placement_of(u1).ok_or("U1 placed")?.clone();
+    let mut ax = Ax::with_engine(engine, Workspace::Pcb)?;
+    ax.app.pcb.set_3d(true);
+    until_shown(&mut ax)?;
+    // U1 a millimetre right (its courtyard meets SW2's, a finding): the
+    // model updates.
+    let revision = ax.app.engine.revision();
+    ax.app.engine.apply(
+        revision,
+        Operation::Layout(pcbcraft_core::layout::LayoutCommand::Move {
+            instance: u1,
+            position: [placement.position[0] + 1.0, placement.position[1]],
+            rotation_deg: placement.rotation_deg,
+            layer: placement.layer,
+        }),
+    )?;
+    ax.frame(vec![]);
+    ax.frame(vec![]);
+    let now = crate::scene::ModelKey::Project(Arc::clone(ax.app.engine.project_arc()));
+    assert_eq!(
+        ax.app.scene.display(&now),
+        crate::scene::Display::Stale,
+        "the model is updating"
+    );
+    let chip = ax.find(Role::Label, "Updating")?;
+    // The canvas badge: the "Issues: …" button in the chip's band (the
+    // ribbon's toggle and the Issues card's bar are the others).
+    let badge = ax
+        .all_prefix(Role::Button, "Issues: ")
+        .into_iter()
+        .find(|b| b.rect.top() <= chip.rect.bottom() && b.rect.bottom() >= chip.rect.top())
+        .cloned()
+        .ok_or_else(|| format!("no canvas badge:\n{}", ax.dump()))?;
+    assert!(
+        chip.rect.right() <= badge.rect.left() && chip.rect.top() < badge.rect.bottom(),
+        "chip {:?} badge {:?}",
+        chip.rect,
+        badge.rect
+    );
     Ok(())
 }

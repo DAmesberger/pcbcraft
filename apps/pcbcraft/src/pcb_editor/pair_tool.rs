@@ -125,7 +125,7 @@ impl PcbEditor {
                 at,
                 drill,
                 diameter,
-                tented: self.via_tented,
+                tented: self.via_tented(project),
                 pitch: pair::via_pitch(project, route.nets, diameter, next),
                 layer: self.layer,
                 style: next,
@@ -184,7 +184,7 @@ impl PcbEditor {
         let end = self
             .route_pad(project, at, scale)
             .map(PlacedPad::center)
-            .unwrap_or_else(|| self.route_point(project, at, scale));
+            .unwrap_or_else(|| self.route_destination(project, at, scale));
         let (to, finish) = self.pair_target(end);
         let request = self.pair_request(project, to, finish)?;
         let planned = self.route_plan(project, revision, end)?;

@@ -394,10 +394,15 @@ impl PcbEditor {
     pub(super) fn placement_footer(
         &mut self,
         ui: &mut Ui,
+        project: &Project,
         placement: &Placement,
     ) -> Option<Operation> {
         let locked = placement.locked;
         let mut action = None;
+        // A refusal toast names the action and the part ("Can't rotate J1: …").
+        let designator = project
+            .instance(placement.instance)
+            .map_or("the part", |i| i.designator.as_str());
         if ui_kit::button(ui, "Schematic ›", Button::Normal)
             .on_hover_text("Select this part on the schematic")
             .clicked()
@@ -412,6 +417,7 @@ impl PcbEditor {
                 .clicked()
                 && !locked
             {
+                refusal::name_action(ui.ctx(), format!("rotate {designator}"));
                 action = Some(LayoutCommand::Move {
                     instance: placement.instance,
                     position: placement.position,
@@ -425,6 +431,7 @@ impl PcbEditor {
                 .clicked()
                 && !locked
             {
+                refusal::name_action(ui.ctx(), format!("flip {designator}"));
                 action = Some(LayoutCommand::Move {
                     instance: placement.instance,
                     position: placement.position,

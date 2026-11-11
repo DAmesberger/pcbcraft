@@ -7,6 +7,16 @@ use std::collections::BTreeSet;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// `path` made absolute on this platform: Windows needs a drive, so
+/// `/work` becomes `C:/work` there.
+fn abs(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{path}")
+    } else {
+        path.to_owned()
+    }
+}
+
 fn request(command: &str, params: Value) -> Fallible<Request> {
     Ok(serde_json::from_value(
         json!({"command": command, "params": params}),
@@ -115,36 +125,36 @@ fn a_path_outside_the_folders_is_refused_in_every_mode() -> Fallible {
         )
     };
     for mode in MODES {
-        let policy = Policy::new(mode, [PathBuf::from("/work/board")]);
+        let policy = Policy::new(mode, [PathBuf::from(abs("/work/board"))]);
         for outside in [
-            "/work/other/x.pcbcraft",
+            abs("/work/other/x.pcbcraft"),
             // A sibling that shares the folder's text is not inside it.
-            "/work/board-evil/x.pcbcraft",
+            abs("/work/board-evil/x.pcbcraft"),
             // `..` is refused even where it would land inside.
-            "/work/board/../other/x.pcbcraft",
-            "/work/board/../board/x.pcbcraft",
+            abs("/work/board/../other/x.pcbcraft"),
+            abs("/work/board/../board/x.pcbcraft"),
             // Relative paths depend on the process's folder.
-            "x.pcbcraft",
-            "../x.pcbcraft",
-            "",
+            "x.pcbcraft".into(),
+            "../x.pcbcraft".into(),
+            String::new(),
         ] {
             assert_eq!(
-                verdict(&policy, &open(outside)?),
+                verdict(&policy, &open(&outside)?),
                 "gate.path_outside",
                 "{outside}"
             );
         }
-        let inside = verdict(&policy, &open("/work/board/sub/x.pcbcraft")?);
+        let inside = verdict(&policy, &open(&abs("/work/board/sub/x.pcbcraft"))?);
         let expected = if mode == Mode::AllowAll { "run" } else { "ask" };
         assert_eq!(inside, expected);
     }
     // No folders: every path is refused, and the refusal says what to do.
-    let Decision::Refuse(refusal) = decide(&Policy::default(), &open("/work/board/x.pcbcraft")?)
-    else {
+    let file = abs("/work/board/x.pcbcraft");
+    let Decision::Refuse(refusal) = decide(&Policy::default(), &open(&file)?) else {
         return Err("no folders allow no path".into());
     };
     let message = refusal.message();
-    for part in ["project.open", "/work/board/x.pcbcraft", "Instead:"] {
+    for part in ["project.open", &file, "Instead:"] {
         assert!(message.contains(part), "{message}");
     }
     Ok(())
@@ -152,7 +162,7 @@ fn a_path_outside_the_folders_is_refused_in_every_mode() -> Fallible {
 
 #[test]
 fn naming_a_path_makes_a_request_at_least_ask() -> Fallible {
-    let policy = Policy::new(Mode::AutoAllowEdits, [PathBuf::from("/work")]);
+    let policy = Policy::new(Mode::AutoAllowEdits, [PathBuf::from(abs("/work"))]);
     let builtin = request(
         "library.check_part_file",
         json!({"builtin": "esp32-s31-wroom-3"}),
@@ -161,13 +171,13 @@ fn naming_a_path_makes_a_request_at_least_ask() -> Fallible {
     assert_eq!(verdict(&policy, &builtin), "run");
     let file = request(
         "library.check_part_file",
-        json!({"path": "/work/part.solidcraft"}),
+        json!({"path": abs("/work/part.solidcraft")}),
     )?;
     assert_eq!(file.effective_class(), Class::Ask);
     assert_eq!(verdict(&policy, &file), "ask");
     let template = request(
         "firmware.export_preview",
-        json!({"instance": 1, "emitter": {"emitter": "json"}, "template_file": "/elsewhere/t.rhai"}),
+        json!({"instance": 1, "emitter": {"emitter": "json"}, "template_file": abs("/elsewhere/t.rhai")}),
     )?;
     assert_eq!(verdict(&policy, &template), "gate.path_outside");
     let no_template = request(

@@ -195,23 +195,6 @@ fn package_name(project: &Project, instance: &crate::model::ComponentInstance) -
     })
 }
 
-/// `R10` after `R9`: the letter prefix, then the number, then the text (as
-/// `project.bom` orders designators).
-fn designator_key(designator: &str) -> (String, u64, String) {
-    let digits = designator
-        .char_indices()
-        .rev()
-        .take_while(|(_, c)| c.is_ascii_digit())
-        .last()
-        .map_or(designator.len(), |(i, _)| i);
-    let (prefix, number) = designator.split_at(digits);
-    (
-        prefix.to_owned(),
-        number.parse().unwrap_or(u64::MAX),
-        designator.to_owned(),
-    )
-}
-
 /// An angle in [0, 360), rounded to 0.001°.
 fn normal_angle(deg: f64) -> f64 {
     let r = (deg.rem_euclid(360.0) * 1000.0).round() / 1000.0;
@@ -271,8 +254,8 @@ pub fn rows(project: &Project, convention: &PlacementConvention) -> Result<Vec<P
         });
     }
     out.sort_by(|a, b| {
-        designator_key(&a.designator)
-            .cmp(&designator_key(&b.designator))
+        crate::instances::designator_key(&a.designator)
+            .cmp(&crate::instances::designator_key(&b.designator))
             .then_with(|| a.instance.cmp(&b.instance))
     });
     Ok(out)
@@ -416,8 +399,8 @@ pub fn bom_parts_csv(project: &Project) -> Result<String> {
         .filter(|i| crate::library::mechanical::in_bom(&project.library, i.component))
         .collect();
     instances.sort_by(|a, b| {
-        designator_key(&a.designator)
-            .cmp(&designator_key(&b.designator))
+        crate::instances::designator_key(&a.designator)
+            .cmp(&crate::instances::designator_key(&b.designator))
             .then_with(|| a.id.cmp(&b.id))
     });
     let mut out = String::new();
