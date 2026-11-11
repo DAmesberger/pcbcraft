@@ -31,13 +31,15 @@
 //!   new segment like it joins its old end to the carried one instead.
 //!
 //! Locked tracks and vias stay, and so does copper the operation itself
-//! changed. The carried copper is then handed to the router
+//! changed. Selected copper a group drag names (`loose`) that no moved part
+//! carries slides with the drag. The carried copper is then handed to the router
 //! (`router::reroute::dragged`): what now lands too close to other copper,
 //! or no longer reaches its pads, is re-routed with push-and-shove, and
 //! what cannot be is removed and left unrouted, in the same operation.
 use crate::diagnostics::Result;
 use crate::geometry::{Point, distance};
 use crate::ids::Id;
+use crate::layout::arrange::CopperMove;
 use crate::layout::connectivity::{CopperGraph, Meets, TrackEnd, keeps_joint};
 use crate::layout::posture::MIN_SEGMENT_MM;
 use crate::layout::router::reroute::{self, Rerouted};
@@ -99,13 +101,15 @@ impl Motion {
 
 /// Carry the copper attached to `moved` (instances whose pose the parts
 /// solve set) from their poses in `before` to those in `project`. `graph`
-/// is the copper graph of `before`. Returns what the router re-routed
-/// and what it left unrouted.
+/// is the copper graph of `before`. `loose` names tracks and vias that
+/// slide by its offset unless a moved part carries them. Returns what the
+/// router re-routed and what it left unrouted.
 pub fn carry(
     before: &Project,
     project: &mut Project,
     graph: &CopperGraph,
     moved: &[Id],
+    loose: Option<&CopperMove>,
 ) -> Result<Rerouted> {
     let mut motions = BTreeMap::new();
     for &instance in moved {
@@ -118,7 +122,8 @@ pub fn carry(
             motions.insert(instance, m);
         }
     }
-    if motions.is_empty() {
+    let loose = loose.filter(|c| c.by != [0.0, 0.0]);
+    if motions.is_empty() && loose.is_none() {
         return Ok(Rerouted::default());
     }
     let pad_motion = |index: usize| {
@@ -147,11 +152,15 @@ pub fn carry(
     let mut tracks: BTreeMap<usize, (Point, Point)> = BTreeMap::new();
     let mut vias: BTreeMap<usize, Point> = BTreeMap::new();
     let mut stretched = Islands::default();
+    // Copper a moved part carries; the rest of `loose` slides by itself.
+    let mut carried = Islands::default();
     for island in islands(before, graph) {
         let pads: Vec<Option<Motion>> = island.pads.iter().map(|&p| pad_motion(p)).collect();
         let Some(m) = pads.iter().flatten().next().copied() else {
             continue;
         };
+        carried.tracks.extend(&island.tracks);
+        carried.vias.extend(&island.vias);
         let alike = pads.iter().flatten().all(|n| n.same(&m))
             && island.tracks.iter().all(|&k| free_track(k))
             && island.vias.iter().all(|&v| free_via(v));
@@ -178,6 +187,19 @@ pub fn carry(
     for (index, m) in via_motion {
         if let Some(old) = before.vias.get(index) {
             vias.insert(index, m.apply(old.position));
+        }
+    }
+    if let Some(loose) = loose {
+        let slide = |p: Point| add(p, loose.by);
+        for (k, t) in before.tracks.iter().enumerate() {
+            if loose.tracks.contains(&t.id) && !carried.tracks.contains(&k) {
+                tracks.insert(k, (slide(t.start), slide(t.end)));
+            }
+        }
+        for (v, via) in before.vias.iter().enumerate() {
+            if loose.vias.contains(&via.id) && !carried.vias.contains(&v) {
+                vias.insert(v, slide(via.position));
+            }
         }
     }
     let dragged_vias = move_vias(before, project, &vias, &free_via);

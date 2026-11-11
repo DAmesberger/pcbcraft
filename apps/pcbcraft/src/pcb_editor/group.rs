@@ -2,13 +2,14 @@
 //! selection rectangle, ⌘A and a Locate of several tracks, and what the
 //! group does together. One object selected stays the single selection the
 //! rest of the editor reads, so [`Group`] only ever holds two or more.
-//! A group drag is one `layout.move_parts`, Delete one
+//! A group drag is one `layout.move_parts` (its selected tracks and vias
+//! slide with the parts), Delete one
 //! `layout.delete_objects`, Lock one `layout.lock_objects`, and align and
 //! distribute one `layout.align` or `layout.distribute` (the registry's
 //! `pcb.align-*` and `pcb.distribute-*` commands).
 //!
 //! The selection filter decides which kinds a click, the rectangle and ⌘A
-//! may take. It is view state for the session, as the layer toggles are.
+//! may take. It is kept per user in the settings, so it outlasts the session.
 //!
 //! The rectangle follows Solidcraft's (`selection::BoxSel`), as the
 //! schematic's does: left to right takes what is wholly inside, right to
@@ -18,7 +19,7 @@ use super::{BoardView, PcbEditor, Placement, body_polygon, fill_paint, opposite}
 use crate::commands::PcbArrange;
 use crate::kit;
 use egui::{Pos2, Ui};
-use pcbcraft_core::layout::arrange::PartMove;
+use pcbcraft_core::layout::arrange::{CopperMove, PartMove};
 use pcbcraft_core::layout::several::Objects;
 use pcbcraft_core::layout::{self, LayoutCommand};
 use pcbcraft_core::{Id, Operation, Point, Project};
@@ -163,40 +164,16 @@ impl Group {
 }
 
 /// Which kinds a click, the selection rectangle and ⌘A may select. Pads
-/// select their part, so they go with Parts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SelectFilter {
-    pub parts: bool,
-    pub tracks: bool,
-    pub vias: bool,
-    pub fills: bool,
-}
+/// select their part, so they go with Parts. Kept per user in the settings.
+pub use pcbcraft_io::settings::SelectionFilter as SelectFilter;
 
-impl Default for SelectFilter {
-    fn default() -> Self {
-        Self {
-            parts: true,
-            tracks: true,
-            vias: true,
-            fills: true,
-        }
-    }
-}
-
-impl SelectFilter {
-    /// Whether a click may select what `hit` names.
-    pub(super) fn allows(&self, pick: Pick) -> bool {
-        match pick {
-            Pick::Part(_) => self.parts,
-            Pick::Track(_) => self.tracks,
-            Pick::Via(_) => self.vias,
-            Pick::Fill(_) => self.fills,
-        }
-    }
-
-    /// Whether some kind is filtered out.
-    pub fn narrows(&self) -> bool {
-        *self != Self::default()
+/// Whether `filter` lets a click select `pick`.
+pub(super) fn allows(filter: &SelectFilter, pick: Pick) -> bool {
+    match pick {
+        Pick::Part(_) => filter.parts,
+        Pick::Track(_) => filter.tracks,
+        Pick::Via(_) => filter.vias,
+        Pick::Fill(_) => filter.fills,
     }
 }
 
@@ -283,7 +260,7 @@ impl PcbEditor {
             },
             None => Hit::Nothing,
         };
-        if Pick::of(hit).is_some_and(|p| self.filter.allows(p)) {
+        if Pick::of(hit).is_some_and(|p| allows(&self.filter, p)) {
             self.toggle_hit(hit, project);
         }
     }
@@ -455,7 +432,18 @@ impl PcbEditor {
                 layer: p.layer,
             })
             .collect();
-        Some(Operation::Layout(LayoutCommand::MoveParts { moves }))
+        // The selected tracks and vias come along; the engine carries those
+        // attached to a moved part with it and slides the rest.
+        let copper =
+            (!self.group.tracks.is_empty() || !self.group.vias.is_empty()).then(|| CopperMove {
+                tracks: self.group.tracks.iter().copied().collect(),
+                vias: self.group.vias.iter().copied().collect(),
+                by: drag.by,
+            });
+        Some(Operation::Layout(LayoutCommand::MoveParts {
+            moves,
+            copper,
+        }))
     }
 
     /// Flip every part of the group to the other side, in place: one
@@ -473,16 +461,17 @@ impl PcbEditor {
                 layer: opposite(p.layer),
             })
             .collect();
-        (!moves.is_empty()).then_some(Operation::Layout(LayoutCommand::MoveParts { moves }))
+        (!moves.is_empty()).then_some(Operation::Layout(LayoutCommand::MoveParts {
+            moves,
+            copper: None,
+        }))
     }
 
     /// The group's Delete: its tracks, vias and fills in one undo step.
-    /// Parts stay: they come from the schematic.
+    /// Parts stay, as they come from the schematic; the engine names them
+    /// in its outcome, so the app says which were kept.
     pub(super) fn delete_group(&self) -> Option<Operation> {
-        let objects = Objects {
-            parts: Vec::new(),
-            ..self.group.objects()
-        };
+        let objects = self.group.objects();
         let any =
             !(objects.tracks.is_empty() && objects.vias.is_empty() && objects.fills.is_empty());
         any.then_some(Operation::Layout(LayoutCommand::DeleteObjects { objects }))
@@ -570,11 +559,15 @@ impl PcbEditor {
     /// Whether the selection filter leaves some kind out (its button is
     /// outlined).
     pub fn filter_narrows(&self) -> bool {
-        self.filter.narrows()
+        !self.filter.is_default()
+    }
+
+    /// The selection filter, which the app keeps in the user settings.
+    pub fn filter(&self) -> SelectFilter {
+        self.filter
     }
 
     /// The selection filter, for tests and the app.
-    #[cfg(test)]
     pub(crate) fn filter_mut(&mut self) -> &mut SelectFilter {
         &mut self.filter
     }

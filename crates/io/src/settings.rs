@@ -95,6 +95,39 @@ pub struct UserSettings {
     /// chosen (Settings); `None`: every new board asks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_rule_profile: Option<String>,
+    /// Which kinds the Layout and 3D selection may take (the selection
+    /// filter), as last set; every kind by default.
+    #[serde(default, skip_serializing_if = "SelectionFilter::is_default")]
+    pub selection_filter: SelectionFilter,
+}
+
+/// The board selection filter: whether a click, the rectangle and ⌘A may
+/// take parts (with their pads), tracks, vias and fills. A file naming
+/// any other kind is refused.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionFilter {
+    pub parts: bool,
+    pub tracks: bool,
+    pub vias: bool,
+    pub fills: bool,
+}
+
+impl Default for SelectionFilter {
+    fn default() -> Self {
+        Self {
+            parts: true,
+            tracks: true,
+            vias: true,
+            fills: true,
+        }
+    }
+}
+
+impl SelectionFilter {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Where one project's production files go.
@@ -121,6 +154,7 @@ impl Default for UserSettings {
             production_folders: Vec::new(),
             projects: Vec::new(),
             default_rule_profile: None,
+            selection_filter: SelectionFilter::default(),
         }
     }
 }
@@ -691,6 +725,33 @@ mod tests {
             settings,
             "the refused write changed nothing"
         );
+        Ok(())
+    }
+
+    /// The selection filter round-trips, a default one is not written, and
+    /// a file naming a kind the filter does not have is refused.
+    #[test]
+    fn the_selection_filter_round_trips_and_refuses_unknown_kinds() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(SETTINGS_FILE);
+        let settings = UserSettings {
+            selection_filter: SelectionFilter {
+                tracks: false,
+                fills: false,
+                ..SelectionFilter::default()
+            },
+            ..UserSettings::default()
+        };
+        write_settings(&path, &settings)?;
+        assert_eq!(read_settings(&path)?, settings);
+        write_settings(&path, &UserSettings::default())?;
+        assert!(!std::fs::read_to_string(&path)?.contains("selection_filter"));
+        std::fs::write(
+            &path,
+            r#"{"format":1,"sources":[],"favourites":[],"recent":[],
+            "selection_filter":{"parts":true,"tracks":true,"vias":true,"fills":true,"pads":false}}"#,
+        )?;
+        assert!(read_settings(&path).is_err(), "an unknown kind");
         Ok(())
     }
 

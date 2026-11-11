@@ -51,13 +51,62 @@ impl Objects {
     }
 }
 
-/// `layout.delete_objects`: remove the tracks, vias and fills.
-pub fn delete(project: &mut Project, objects: &Objects) -> Result<()> {
+/// A part `layout.delete_objects` was named and kept: parts come from the
+/// schematic.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct KeptPart {
+    pub instance: Id,
+    pub designator: String,
+}
+
+/// Designators a kept-parts line names before it shortens to "…".
+const NAMED_KEPT: usize = 5;
+
+/// What a person reads about kept parts: "Kept 2 parts (R1, R2): delete
+/// them in the schematic".
+pub fn kept_line(kept: &[KeptPart]) -> String {
+    let mut names: Vec<&str> = kept
+        .iter()
+        .take(NAMED_KEPT)
+        .map(|k| k.designator.as_str())
+        .collect();
+    if kept.len() > NAMED_KEPT {
+        names.push("…");
+    }
+    let (count, them) = match kept.len() {
+        1 => ("1 part".to_owned(), "it"),
+        n => (format!("{n} parts"), "them"),
+    };
+    format!(
+        "Kept {count} ({}): delete {them} in the schematic",
+        names.join(", ")
+    )
+}
+
+/// `layout.delete_objects`: remove the tracks, vias and fills. Named parts
+/// stay, as they come from the schematic, and are returned; naming only
+/// parts is refused.
+pub fn delete(project: &mut Project, objects: &Objects) -> Result<Vec<KeptPart>> {
     objects.check()?;
-    if !objects.parts.is_empty() {
+    if objects.tracks.is_empty() && objects.vias.is_empty() && objects.fills.is_empty() {
         return Err(Error::Invalid(
             "parts come from the schematic; remove them there".into(),
         ));
+    }
+    let mut kept = Vec::with_capacity(objects.parts.len());
+    for &instance in &objects.parts {
+        if project.placement_of(instance).is_none() {
+            return Err(Error::NotFound(format!("unknown placed part {instance}")));
+        }
+        let designator = project
+            .instance(instance)
+            .map(|i| i.designator.clone())
+            .unwrap_or_default();
+        kept.push(KeptPart {
+            instance,
+            designator,
+        });
     }
     if !objects.tracks.is_empty() {
         apply_routes(
@@ -74,7 +123,7 @@ pub fn delete(project: &mut Project, objects: &Objects) -> Result<()> {
     for &id in &objects.fills {
         fill::apply(project, FillCommand::Delete { id })?;
     }
-    Ok(())
+    Ok(kept)
 }
 
 /// `layout.lock_objects`: lock or unlock every named object.

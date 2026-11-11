@@ -359,7 +359,7 @@ fn dragging_the_group_moves_its_parts_and_their_copper() -> Fallible {
     let view = view_of(&editor, &engine);
     let to = view.screen([12.0, 13.0]);
     let op = drag(&mut editor, &engine, &ctx, from, to, egui::Modifiers::NONE).ok_or("no move")?;
-    let Operation::Layout(LayoutCommand::MoveParts { moves }) = &op else {
+    let Operation::Layout(LayoutCommand::MoveParts { moves, .. }) = &op else {
         return Err(format!("{op:?}").into());
     };
     assert_eq!(moves.len(), 2);
@@ -376,6 +376,50 @@ fn dragging_the_group_moves_its_parts_and_their_copper() -> Fallible {
         (t.start[1] - 13.0).abs() < 1e-9 && (t.end[1] - 13.0).abs() < 1e-9,
         "{t:?}"
     );
+    Ok(())
+}
+
+/// A group drag also slides the selected loose tracks and vias (attached
+/// to no moved part) with the parts, in the same undo step, while the
+/// track between the parts is carried as before.
+#[test]
+fn a_group_drag_slides_the_selected_loose_copper() -> Fallible {
+    use pcbcraft_core::layout::via::ViaRequest;
+    let mut engine = board(&[ROUTED[0], ([14.0, 16.0], [20.0, 16.0])])?;
+    let r1 = by(&engine, "R1")?;
+    let net = engine.project().tracks.first().ok_or("no track")?.net;
+    let via = ViaRequest::through(&engine.project().rules.effective(), net, [17.0, 19.0]);
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::AddVia { via }),
+    )?;
+    let before = engine.project().clone();
+    let (mut editor, ctx) = setup(&engine);
+    editor.select_all(engine.project());
+    assert_eq!(editor.selected().summary(), "2 parts, 2 tracks, 1 via");
+    let from = part_at(&editor, &engine, r1)?;
+    let to = view_of(&editor, &engine).screen([12.0, 13.0]);
+    let op = drag(&mut editor, &engine, &ctx, from, to, egui::Modifiers::NONE).ok_or("no move")?;
+    engine.apply(engine.revision(), op)?;
+    let near = |a: Point, b: Point| (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9;
+    let tracks = &engine.project().tracks;
+    assert_eq!(tracks.len(), 2, "{tracks:?}");
+    assert!(
+        tracks
+            .iter()
+            .any(|t| near(t.start, [13.2, 13.0]) && near(t.end, [25.8, 13.0])),
+        "the routed track carried: {tracks:?}"
+    );
+    assert!(
+        tracks
+            .iter()
+            .any(|t| near(t.start, [16.0, 19.0]) && near(t.end, [22.0, 19.0])),
+        "the loose track slid: {tracks:?}"
+    );
+    let via = engine.project().vias.first().ok_or("no via")?;
+    assert!(near(via.position, [19.0, 22.0]), "the via slid: {via:?}");
+    engine.undo()?;
+    assert_eq!(engine.project(), &before, "one undo step");
     Ok(())
 }
 

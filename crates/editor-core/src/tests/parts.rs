@@ -1052,6 +1052,64 @@ fn publishing_with_parts_refuses_whole() -> Result<()> {
     Ok(())
 }
 
+/// After `library.publish_with_parts`, an update of the placed instances
+/// to the new component revision takes each one's Part to the revision
+/// republished for it (same lineage), so the update leaves no stale Part.
+/// An explicit `keep` still keeps the old revision.
+#[test]
+fn an_update_defaults_to_the_republished_part_revision() -> Result<()> {
+    let mut s = setup()?;
+    let ten = publish_resistor(&mut s, "EX-R0603-10K0-F", 10e3)?;
+    let r1 = placed(&mut s, "R1", "10k")?;
+    let r2 = placed(&mut s, "R2", "10k")?;
+    assign(&mut s.engine, vec![r1, r2], Some(ten))?;
+    discard(&mut s.engine, ten.id)?;
+    rewrite(&mut s.engine, s.fixture.component, |d| {
+        if let Definition::Component(c) = d {
+            c.designator_prefix = "RN".into();
+        }
+    })?;
+    apply(
+        &mut s.engine,
+        Operation::Library(LibraryCommand::PublishWithParts {
+            drafts: vec![s.fixture.component],
+            parts: vec![ten.id],
+            close: true,
+        }),
+    )?;
+    let target = ComponentRef::new(s.fixture.component, Revision(2));
+    let republished = PartRef::new(ten.id, Revision(2));
+    let change = Change::ComponentRevision {
+        instances: vec![r1, r2],
+        target,
+        resolutions: Resolutions {
+            parts: vec![PartResolution {
+                instance: r2,
+                action: PartAction::Keep,
+            }],
+            ..Resolutions::default()
+        },
+    };
+    let plan = s.engine.preview_update(change.clone());
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    let stale: Vec<&String> = plan
+        .warnings
+        .iter()
+        .filter(|w| w.contains("part.stale_component"))
+        .collect();
+    assert_eq!(stale.len(), 1, "{:?}", plan.warnings);
+    assert!(stale[0].contains("R2"), "only the kept one: {stale:?}");
+    s.engine.apply_update(s.engine.revision(), change, false)?;
+    let part = |id| s.engine.project().instance(id).and_then(|i| i.part);
+    assert_eq!(part(r1), Some(republished));
+    assert_eq!(part(r2), Some(ten), "kept explicitly");
+    assert_eq!(
+        purchasing_codes(&s.engine, r1)?,
+        (PurchasingState::Resolved, vec![])
+    );
+    Ok(())
+}
+
 #[test]
 fn a_part_for_a_newer_revision_is_assigned_with_the_update_in_one_step() -> Result<()> {
     let mut s = setup()?;

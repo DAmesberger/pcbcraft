@@ -234,9 +234,16 @@ pub enum LayoutCommand {
     /// Move several placed parts to new poses as one undo step (a group
     /// drag or flip). The unlocked copper attached to any of them is
     /// carried at once, so a track between two parts that move alike moves
-    /// with both. A locked part refuses the whole move.
+    /// with both. A locked part refuses the whole move. `copper` names
+    /// selected tracks and vias that slide with the parts (those attached
+    /// to a moved part are carried with it); they are re-routed with the
+    /// carried copper, and a locked one refuses the whole move.
     #[serde(rename = "layout.move_parts")]
-    MoveParts { moves: Vec<arrange::PartMove> },
+    MoveParts {
+        moves: Vec<arrange::PartMove>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        copper: Option<arrange::CopperMove>,
+    },
     /// Line up two or more parts' outlines on one edge (left, right, top,
     /// bottom) or centre line, as one undo step with their copper carried.
     /// A part that would move and is locked, or whose dimensions hold it
@@ -256,8 +263,9 @@ pub enum LayoutCommand {
     },
     /// Delete several tracks, vias and fills as one undo step (a
     /// multi-selection's Delete, or a dangling stub's tracks). A locked
-    /// track or via refuses the whole command. Parts are refused: they
-    /// come from the schematic.
+    /// track or via refuses the whole command. Named parts are kept, as
+    /// they come from the schematic: the outcome (`parts_kept`) names
+    /// them. Naming only parts is refused.
     #[serde(rename = "layout.delete_objects")]
     DeleteObjects { objects: several::Objects },
     /// Lock or unlock several parts, tracks, vias and fills as one undo
@@ -829,14 +837,18 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
             return part::set(project, instance, &part).map(Some);
         }
         LayoutCommand::RemovePart { instance } => part::remove(project, instance)?,
-        LayoutCommand::MoveParts { moves } => arrange::move_parts(project, &moves)?,
+        LayoutCommand::MoveParts { moves, copper } => {
+            arrange::move_parts(project, &moves, copper.as_ref())?;
+        }
         // Without the host's board evaluator a dimensioned part is refused
         // (the engine passes its evaluator: `Engine::apply_hosted`).
         LayoutCommand::Align { instances, to } => arrange::align(project, &instances, to, None)?,
         LayoutCommand::Distribute { instances, axis } => {
             arrange::distribute(project, &instances, axis, None)?;
         }
-        LayoutCommand::DeleteObjects { objects } => several::delete(project, &objects)?,
+        LayoutCommand::DeleteObjects { objects } => {
+            several::delete(project, &objects)?;
+        }
         LayoutCommand::LockObjects { objects, locked } => {
             several::lock(project, &objects, locked)?;
         }

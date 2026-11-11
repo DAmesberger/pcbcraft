@@ -5,8 +5,10 @@
 //! it moves too, drawn as dragged copper. The preview is drawn as the
 //! route preview is, from the committed board on every move, so shoved
 //! copper springs back; a drag that stops short shows the warning ring.
-//! Release sends the plan's edits as one `layout.route_apply` (one undo
-//! step with every shoved item); Esc cancels.
+//! With ⌥ held, a pair half moves alone (`PairDrag::Alone`): its partner
+//! stays and is not shoved. Release sends the plan's edits as one
+//! `layout.route_apply` (one undo step with every shoved item); Esc
+//! cancels.
 use super::{BoardView, PcbEditor};
 use pcbcraft_core::{
     Id, Operation, Point, Project,
@@ -15,7 +17,7 @@ use pcbcraft_core::{
         LayoutCommand,
         router::{
             RoutePlan,
-            drag::{MAX_DRAG_MM, TrackDragRequest, drag_plan},
+            drag::{MAX_DRAG_MM, PairDrag, TrackDragRequest, drag_plan},
         },
     },
 };
@@ -62,8 +64,15 @@ impl TrackDrag {
 }
 
 impl PcbEditor {
-    /// Plan the drag to the pointer `at` (once per revision and offset).
-    pub(super) fn plan_track_drag(&mut self, project: &Project, revision: u64, at: Point) {
+    /// Plan the drag to the pointer `at` (once per revision and offset);
+    /// `alone` (⌥ held) moves a pair half without its partner.
+    pub(super) fn plan_track_drag(
+        &mut self,
+        project: &Project,
+        revision: u64,
+        at: Point,
+        alone: bool,
+    ) {
         let Some(drag) = &self.track_drag else {
             return;
         };
@@ -73,6 +82,11 @@ impl PcbEditor {
             posture: self.route.posture,
             mode: self.route.mode,
             move_vias: !self.route.vias_stay,
+            pair: if alone {
+                PairDrag::Alone
+            } else {
+                PairDrag::Together
+            },
         };
         if drag
             .planned
@@ -124,6 +138,17 @@ impl PcbEditor {
         }))
     }
 
+    /// Whether a pair half is being dragged: the canvas hint names ⌥.
+    pub(super) fn dragging_pair_half(&self, project: &Project) -> bool {
+        self.track_drag.as_ref().is_some_and(|d| {
+            project
+                .tracks
+                .iter()
+                .find(|t| t.id == d.track)
+                .is_some_and(|t| project.rules.pair_of(t.net).is_some())
+        })
+    }
+
     /// The planned drag's copper, drawn as the route preview draws a step.
     pub(super) fn paint_track_drag(
         &self,
@@ -132,7 +157,8 @@ impl PcbEditor {
         project: &Project,
         pointer: Point,
     ) {
-        let Some((_, _, plan)) = self.track_drag.as_ref().and_then(|d| d.planned.as_ref()) else {
+        let Some((_, request, plan)) = self.track_drag.as_ref().and_then(|d| d.planned.as_ref())
+        else {
             return;
         };
         let own = project
@@ -140,8 +166,11 @@ impl PcbEditor {
             .iter()
             .find(|t| Some(t.id) == self.track_drag.as_ref().map(|d| d.track))
             .map(|t| t.net);
-        // A pair's halves move together: both are drawn as the dragged copper.
-        let partner = own.and_then(|net| project.rules.pair_of(net)?.partner(net));
+        // A pair's halves move together: both are drawn as the dragged
+        // copper, unless this half moves alone.
+        let partner = own
+            .filter(|_| request.pair == PairDrag::Together)
+            .and_then(|net| project.rules.pair_of(net)?.partner(net));
         self.paint_plan(
             painter,
             view,

@@ -343,3 +343,32 @@ fn file_new_opens_the_same_empty_project() -> Fallible {
     assert_eq!(ax.app.engine.to_file(), file_ui::new_project().to_file());
     Ok(())
 }
+
+/// The board selection filter is kept per user: a kind turned off in its
+/// popover stays off in the next session.
+#[test]
+fn the_selection_filter_persists_per_user() -> Fallible {
+    let config = tempfile::tempdir()?;
+    let dirs = pcbcraft_io::settings::UserDirs {
+        config: config.path().join("config"),
+        cache: config.path().join("cache"),
+    };
+    let sources = LibrarySources::new(Some(dirs.clone()));
+    let mut ax = Ax::with_sources(Engine::demo()?, Workspace::Pcb, sources)?;
+    ax.button("Selection filter")?;
+    ax.click(Role::CheckBox, "Tracks")?;
+    ax.settle();
+    assert!(!ax.app.pcb.filter().tracks, "{}", ax.dump());
+    ax.app.sources.wait()?;
+    let again = Ax::with_sources(
+        Engine::demo()?,
+        Workspace::Pcb,
+        LibrarySources::new(Some(dirs)),
+    )?;
+    let kept = again.app.pcb.filter();
+    assert!(
+        !kept.tracks && kept.parts && kept.vias && kept.fills,
+        "{kept:?}"
+    );
+    Ok(())
+}
