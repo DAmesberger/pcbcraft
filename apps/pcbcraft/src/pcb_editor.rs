@@ -1412,7 +1412,7 @@ impl PcbEditor {
         match self.inspected(project) {
             Inspected::Placement(id) => {
                 let placement = project.placements.iter().find(|p| p.instance == id)?;
-                self.placement_footer(ui, placement)
+                self.placement_footer(ui, project, placement)
             }
             Inspected::Track(id) => {
                 let track = project.tracks.iter().find(|t| t.id == id)?;
@@ -3304,8 +3304,11 @@ mod tests {
                 command = editor.subject_slot(ui, engine).output;
                 // The app reads the origin in the same frame (`App::apply`).
                 let mark = refusal::take_mark(ui.ctx());
-                ui.ctx()
-                    .data_mut(|d| d.insert_temp(egui::Id::unique("test-mark"), mark));
+                let action = refusal::take_action(ui.ctx());
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(egui::Id::unique("test-mark"), mark);
+                    d.insert_temp(egui::Id::unique("test-action"), action);
+                });
             },
         );
         // No renderer in tests: drop font-atlas uploads instead of applying them.
@@ -4488,12 +4491,19 @@ mod tests {
             return Err("Rotate 90° issued no move".into());
         };
         assert_eq!(rotation_deg, (before.rotation_deg + 90.0).rem_euclid(360.0));
+        // A refusal toast names the action and the part (round 4 Q2).
+        let action = || {
+            ctx.data(|d| d.get_temp::<Option<String>>(egui::Id::unique("test-action")))
+                .flatten()
+        };
+        assert_eq!(action().as_deref(), Some("rotate R1"));
         let Some(Operation::Layout(LayoutCommand::Move { layer, .. })) =
             click(&mut editor, &engine, &ctx, "Flip")?
         else {
             return Err("Flip issued no move".into());
         };
         assert_eq!(layer, opposite(before.layer));
+        assert_eq!(action().as_deref(), Some("flip R1"));
         assert!(click(&mut editor, &engine, &ctx, "Schematic ›")?.is_none());
         assert_eq!(editor.take_show_in_schematic(), Some(r1));
         assert_eq!(editor.take_show_in_schematic(), None);

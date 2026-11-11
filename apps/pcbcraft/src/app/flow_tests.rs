@@ -415,3 +415,55 @@ fn the_palette_opens_the_board_setup_dialogs() -> Fallible {
     }
     Ok(())
 }
+
+/// Night round 4 Q2: a refused card action names what was refused and on
+/// what ("Can't rotate J1: …"), not only the engine's reason; an operation
+/// whose editor named nothing is named by its title. Refused, the document
+/// is unchanged.
+#[test]
+fn a_refusal_toast_names_the_action_and_the_part() -> Fallible {
+    let mut h = Harness::new()?;
+    let r1 = h
+        .app
+        .engine
+        .project()
+        .instance_by_designator("R1")
+        .ok_or("R1")?
+        .id;
+    let placement = h
+        .app
+        .engine
+        .project()
+        .placements
+        .iter()
+        .find(|p| p.instance == r1)
+        .ok_or("R1 is not placed")?
+        .clone();
+    let far = || {
+        Some(Operation::Layout(
+            pcbcraft_core::layout::LayoutCommand::Move {
+                instance: r1,
+                position: [5000.0, 9.0],
+                rotation_deg: placement.rotation_deg,
+                layer: placement.layer,
+            },
+        ))
+    };
+    let before = h.app.engine.document().clone();
+    crate::refusal::name_action(&h.ctx, "rotate R1");
+    h.app.apply(&h.ctx, Origin::Command, far());
+    assert_eq!(h.app.engine.document(), &before);
+    let shown: Vec<_> = h.app.toasts.items().map(|t| t.text.clone()).collect();
+    assert_eq!(
+        shown,
+        ["Can't rotate R1: R1 must stay within -1000 to 2000 mm on each axis"]
+    );
+    h.app.toasts.dismiss_errors();
+    h.app.apply(&h.ctx, Origin::Canvas, far());
+    let shown: Vec<_> = h.app.toasts.items().map(|t| t.text.clone()).collect();
+    assert_eq!(
+        shown,
+        ["Can't move a placed part: R1 must stay within -1000 to 2000 mm on each axis"]
+    );
+    Ok(())
+}

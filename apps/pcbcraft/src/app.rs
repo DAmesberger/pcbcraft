@@ -295,6 +295,7 @@ impl App {
             return;
         };
         let origin = refusal::take_mark(ctx).unwrap_or(default);
+        let action = refusal::take_action(ctx).or_else(|| refusal::titled_action(&operation));
         if self.files.busy() {
             self.say(Level::Info, "Wait for the file operation to finish");
             return;
@@ -338,7 +339,7 @@ impl App {
                 if schematic.as_ref().is_some_and(|command| {
                     self.schematic.review_named_merge(&self.engine, command)
                 }) => {}
-            Err(error) => self.refuse(ctx, origin, error),
+            Err(error) => self.refuse(ctx, origin, error, action.as_deref()),
         }
     }
 
@@ -346,7 +347,14 @@ impl App {
     /// dialog gets it back on the next frame and shows it itself; a canvas
     /// gesture or a command shows a toast (the gesture's editor may still
     /// claim it, to keep its gesture going).
-    fn refuse(&mut self, ctx: &egui::Context, origin: Origin, error: pcbcraft_core::Error) {
+    /// A toast names the refused `action` ("Can't rotate J1: …").
+    fn refuse(
+        &mut self,
+        ctx: &egui::Context,
+        origin: Origin,
+        error: pcbcraft_core::Error,
+        action: Option<&str>,
+    ) {
         let level = refusal::level(&error);
         self.messages.push(level, &error.to_string(), self.now);
         match origin {
@@ -356,25 +364,25 @@ impl App {
             Origin::Canvas => {
                 self.toast(
                     level,
-                    refusal::shown_error(&error),
+                    refusal::refused(action, &error),
                     vec![ToastAction::Details],
                 );
                 refusal::hand_back(ctx, Refused { origin, error }, true);
             }
-            Origin::Command => self.command_refused(error, false),
+            Origin::Command => self.command_refused(error, false, action),
         }
     }
 
     /// A ribbon, menu or keyboard command was refused: a toast, and the
     /// full engine text in Messages unless `refuse` already put it there.
-    fn command_refused(&mut self, error: pcbcraft_core::Error, record: bool) {
+    fn command_refused(&mut self, error: pcbcraft_core::Error, record: bool, action: Option<&str>) {
         let level = refusal::level(&error);
         if record {
             self.messages.push(level, &error.to_string(), self.now);
         }
         self.toast(
             level,
-            refusal::shown_error(&error),
+            refusal::refused(action, &error),
             vec![ToastAction::Details],
         );
     }
@@ -550,7 +558,7 @@ impl App {
         match result {
             Ok(None) => self.clear_error(),
             Ok(Some(created)) => self.say(Level::Ok, created),
-            Err(error) => self.command_refused(error, true),
+            Err(error) => self.command_refused(error, true, None),
         }
     }
 
@@ -811,7 +819,7 @@ impl App {
                     self.say(Level::Info, format!("Undid AI assistant edit: {subject}"));
                 }
             }
-            Err(error) => self.command_refused(error, true),
+            Err(error) => self.command_refused(error, true, None),
         }
     }
 

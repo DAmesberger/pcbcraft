@@ -309,12 +309,12 @@ impl App {
             AppCommand::Redo => self.history(true),
             AppCommand::Copy => {
                 if let Err(error) = self.schematic.copy_selection(ctx, &self.engine) {
-                    self.command_refused(error, true);
+                    self.command_refused(error, true, None);
                 }
             }
             AppCommand::Cut => match self.schematic.cut_selection(ctx, &self.engine) {
                 Ok(operation) => self.apply(ctx, crate::refusal::Origin::Command, operation),
-                Err(error) => self.command_refused(error, true),
+                Err(error) => self.command_refused(error, true, None),
             },
             AppCommand::Paste => {
                 let operation = self.schematic.paste_at_pointer(&self.engine);

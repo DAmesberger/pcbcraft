@@ -13,8 +13,8 @@
 //! (`reveal_refusal`, `shown_error`), MIT option; see ATTRIBUTION.md.
 
 use crate::kit::severity::Level;
-use pcbcraft_core::Error;
 use pcbcraft_core::issues::{MAX_TITLE, style};
+use pcbcraft_core::{Error, Operation};
 use std::sync::Arc;
 
 /// The longest text shown for one message, in characters: a bound for a
@@ -178,6 +178,9 @@ struct Inbox {
     /// The origin an editor declared for the operation it returns this
     /// frame, with that frame's number.
     mark: Option<(u64, Origin)>,
+    /// What that operation does, as it follows "Can't", with that frame's
+    /// number.
+    action: Option<(u64, String)>,
 }
 
 #[derive(Clone)]
@@ -214,6 +217,55 @@ pub(crate) fn take_mark(ctx: &egui::Context) -> Option<Origin> {
             .take()
             .and_then(|(at, origin)| (at == frame).then_some(origin))
     })
+}
+
+/// Name what the operation an editor returns this frame does, as it
+/// follows "Can't" ("rotate J1"), so a toast for its refusal says which
+/// action failed on what. Without a name, the operation's title stands in
+/// ([`titled_action`]).
+pub fn name_action(ctx: &egui::Context, action: impl Into<String>) {
+    let frame = ctx.cumulative_frame_nr();
+    let action = action.into();
+    with_inbox(ctx, |inbox| inbox.action = Some((frame, action)));
+}
+
+/// The action named this frame, if any, cleared once read.
+pub(crate) fn take_action(ctx: &egui::Context) -> Option<String> {
+    let frame = ctx.cumulative_frame_nr();
+    with_inbox(ctx, |inbox| {
+        inbox
+            .action
+            .take()
+            .and_then(|(at, action)| (at == frame).then_some(action))
+    })
+}
+
+/// What `operation` does, from its title, as it follows "Can't" ("move a
+/// placed part"): the action a refusal toast names when its editor named
+/// none.
+pub fn titled_action(operation: &Operation) -> Option<String> {
+    let name = operation.command();
+    let (_, title) = Operation::titles().find(|(wire, _)| *wire == name)?;
+    let mut chars = title.chars();
+    let first = chars.next()?;
+    // An initialism ("ERC …") keeps its capitals.
+    let rest = chars.as_str();
+    Some(if rest.starts_with(|c: char| c.is_uppercase()) {
+        (*title).to_owned()
+    } else {
+        first.to_lowercase().chain(rest.chars()).collect()
+    })
+}
+
+/// A toast's text for a refusal: the action and what it acted on, then why
+/// ("Can't rotate J1: via copper must lie inside the board outline"), so
+/// it reads on its own wherever the action was started.
+pub fn refused(action: Option<&str>, error: &Error) -> String {
+    let why = shown_error(error);
+    match action {
+        Some(action) if !action.is_empty() => format!("Can't {action}: {why}"),
+        _ => why,
+    }
 }
 
 /// Hand `refused` back to its origin on the next frame. `toasted` says a
