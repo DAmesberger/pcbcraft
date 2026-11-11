@@ -350,6 +350,12 @@ impl App {
                 if let pcbcraft_core::Outcome::Pasted { report } = &outcome {
                     self.schematic.select_pasted(self.engine.project(), report);
                 }
+                if let pcbcraft_core::Outcome::PartsKept { parts } = &outcome {
+                    self.say(
+                        Level::Info,
+                        pcbcraft_core::layout::several::kept_line(parts),
+                    );
+                }
                 self.clear_error();
                 // Moved parts' dragged copper the engine re-routed, or
                 // left unrouted, in the same undo step.

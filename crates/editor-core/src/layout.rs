@@ -263,8 +263,9 @@ pub enum LayoutCommand {
     },
     /// Delete several tracks, vias and fills as one undo step (a
     /// multi-selection's Delete, or a dangling stub's tracks). A locked
-    /// track or via refuses the whole command. Parts are refused: they
-    /// come from the schematic.
+    /// track or via refuses the whole command. Named parts are kept, as
+    /// they come from the schematic: the outcome (`parts_kept`) names
+    /// them. Naming only parts is refused.
     #[serde(rename = "layout.delete_objects")]
     DeleteObjects { objects: several::Objects },
     /// Lock or unlock several parts, tracks, vias and fills as one undo
@@ -845,7 +846,9 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
         LayoutCommand::Distribute { instances, axis } => {
             arrange::distribute(project, &instances, axis, None)?;
         }
-        LayoutCommand::DeleteObjects { objects } => several::delete(project, &objects)?,
+        LayoutCommand::DeleteObjects { objects } => {
+            several::delete(project, &objects)?;
+        }
         LayoutCommand::LockObjects { objects, locked } => {
             several::lock(project, &objects, locked)?;
         }

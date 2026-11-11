@@ -466,12 +466,10 @@ impl PcbEditor {
     }
 
     /// The group's Delete: its tracks, vias and fills in one undo step.
-    /// Parts stay: they come from the schematic.
+    /// Parts stay, as they come from the schematic; the engine names them
+    /// in its outcome, so the app says which were kept.
     pub(super) fn delete_group(&self) -> Option<Operation> {
-        let objects = Objects {
-            parts: Vec::new(),
-            ..self.group.objects()
-        };
+        let objects = self.group.objects();
         let any =
             !(objects.tracks.is_empty() && objects.vias.is_empty() && objects.fills.is_empty());
         any.then_some(Operation::Layout(LayoutCommand::DeleteObjects { objects }))

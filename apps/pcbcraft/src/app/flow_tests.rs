@@ -335,6 +335,62 @@ fn redo_names_the_step_it_applied_again() -> Fallible {
     Ok(())
 }
 
+/// Delete on a selection of parts and copper deletes the copper and says
+/// which parts it kept, with an info toast.
+#[test]
+fn delete_on_a_mixed_selection_names_the_kept_parts() -> Fallible {
+    use pcbcraft_core::layout::{LayoutCommand, RouteRequest};
+    let mut h = Harness::new()?;
+    let engine = &mut h.app.engine;
+    let r1 = engine.project().instance_by_designator("R1").ok_or("R1")?.id;
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Move {
+            instance: r1,
+            position: [10.0, 10.0],
+            rotation_deg: 0.0,
+            layer: pcbcraft_core::Layer::Top,
+        }),
+    )?;
+    let net = engine
+        .project()
+        .net_of(pcbcraft_core::Endpoint {
+            instance: r1,
+            terminal: pcbcraft_core::TerminalId(2),
+        })
+        .ok_or("no net")?
+        .id;
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Route {
+            request: RouteRequest {
+                net,
+                start: [11.2, 10.0],
+                end: [14.0, 10.0],
+                width: 0.3,
+                layer: pcbcraft_core::Layer::Top.into(),
+            },
+        }),
+    )?;
+    h.app.workspace = Workspace::Pcb;
+    h.frame(vec![]);
+    let project = h.app.engine.project().clone();
+    h.app.pcb.select_all(&project);
+    let parts = h.app.pcb.selected().parts.len();
+    assert!(parts >= 2 && !h.app.pcb.selected().tracks.is_empty());
+    h.frame(vec![press(egui::Key::Delete, egui::Modifiers::NONE)]);
+    h.frame(vec![]);
+    assert!(h.app.engine.project().tracks.is_empty(), "the copper went");
+    assert_eq!(h.app.engine.project().placements.len(), project.placements.len());
+    let shown = toasts(&h.app);
+    assert!(
+        shown.iter().any(|t| t.starts_with(&format!("Kept {parts} parts (")) && t.contains("R1")
+            && t.ends_with(": delete them in the schematic")),
+        "{shown:?}"
+    );
+    Ok(())
+}
+
 /// ⌘Z after ⌘Z undoes step after step with one toast, which names the
 /// latest step; Messages keeps each. (The app acts on presses, not key
 /// repeats, so a key held down undoes once.)

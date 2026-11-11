@@ -1310,6 +1310,17 @@ impl Engine {
                 layout::validate(project)?;
                 Outcome::None
             }
+            // Parts named with the copper stay; the outcome names them.
+            Operation::Layout(layout::LayoutCommand::DeleteObjects { objects }) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                let parts = layout::several::delete(project, &objects)?;
+                layout::validate(project)?;
+                if parts.is_empty() {
+                    Outcome::None
+                } else {
+                    Outcome::PartsKept { parts }
+                }
+            }
             Operation::Layout(command) => {
                 let part = command.places_part();
                 let before = candidate.project.library.components.len();

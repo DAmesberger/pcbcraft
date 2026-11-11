@@ -31,6 +31,11 @@ use serde::{Deserialize, Serialize};
 pub enum Outcome {
     #[default]
     None,
+    /// The parts `layout.delete_objects` was named and kept: parts come
+    /// from the schematic, so they are deleted there.
+    PartsKept {
+        parts: Vec<crate::layout::several::KeptPart>,
+    },
     /// The via `layout.add_via` created.
     ViaAdded {
         via: Id,
