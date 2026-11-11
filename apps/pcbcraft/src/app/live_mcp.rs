@@ -314,7 +314,7 @@ impl App {
         )
         .show_body(ctx, |ui| {
             kit::section(ui, "live-access", "Access", true, None, |ui| {
-                kit::check_row(ui, "Let AI assistants edit this project", &mut on);
+                kit::check(ui, "Let AI assistants edit this project", &mut on);
                 if let Some(failure) = &failure {
                     kit::refusal(ui, failure);
                 }
