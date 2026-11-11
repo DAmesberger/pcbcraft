@@ -256,6 +256,38 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
     Ok(())
 }
 
+/// Geometry handed on (to the screen, or to the next model of an update)
+/// holds none of the model's evaluated bodies: its unmeasured volumes reach
+/// them through the model, so they read NaN once the model is gone, and an
+/// updated model measures what it took from the last one on its own bodies.
+/// (On the ESP32 board the bodies earlier models' geometry held were 375 MB
+/// of live heap after one width edit: `memory_tests`.)
+#[test]
+fn geometry_holds_no_evaluated_body_once_its_model_is_gone() -> Result<()> {
+    let mut project = fixture()?;
+    let model = build(&project)?;
+    let world = std::sync::Arc::downgrade(&model.world);
+    let substrate = |geometry: &[Geometry]| {
+        geometry
+            .iter()
+            .find(|g| g.kind == BodyKind::Substrate)
+            .cloned()
+            .ok_or_else(|| Error::Verification("missing substrate".into()))
+    };
+    let shown = substrate(&model.geometry)?;
+    // Updated in place: the substrate is taken from the last model.
+    if let Some(track) = project.tracks.first_mut() {
+        track.width += 0.05;
+    }
+    let (model, how) = update(model, &project, &SourceCache::default(), None)?;
+    assert!(matches!(how, Rebuilt::InPlace(n) if n > 0), "{how:?}");
+    assert!(world.upgrade().is_none(), "the last model's bodies are kept");
+    near(substrate(&model.geometry)?.volume(), 60.0 * 40.0 * 1.6);
+    drop(model);
+    assert!(shown.volume().is_nan(), "the shown geometry kept its body");
+    Ok(())
+}
+
 #[test]
 fn diagonal_traces_have_round_caps_on_both_copper_layers() -> Result<()> {
     let mut project = fixture()?;

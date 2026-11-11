@@ -87,6 +87,9 @@ pub struct NativeModel {
     updated: Option<usize>,
     /// The display layers made for this model, for an update to reuse.
     display: appearance::Memo,
+    /// The evaluated bodies [`Geometry::volume`] measures: geometry
+    /// reaches them only while this model (or a snapshot of it) lives.
+    world: std::sync::Arc<solidcraft_engine::doc::ModelState>,
 }
 
 /// How [`update`] made its model.
@@ -135,6 +138,7 @@ impl NativeModel {
             reuse: self.reuse.clone(),
             updated: self.updated,
             display: self.display.clone(),
+            world: self.world.clone(),
         }
     }
 }
@@ -783,7 +787,17 @@ fn finish_with(
         body.mesh_in_place();
     });
     let mut reuse = Reused::default();
-    for (index, body) in native.world_state()?.bodies.iter().enumerate() {
+    // A body's lazy volume reaches it through the model, never holding it.
+    let reach = std::sync::Arc::downgrade(&world);
+    let lazy_volume = |index: usize| {
+        let world = reach.clone();
+        Volume::lazy(move || {
+            let world = world.upgrade()?;
+            let body = world.bodies.get(index)?;
+            Some(body.measure().map_or(f64::NAN, |m| m.volume))
+        })
+    };
+    for (index, body) in world.bodies.iter().enumerate() {
         let name = body.definition_name();
         let kind = *kinds
             .get(name)
@@ -822,6 +836,7 @@ fn finish_with(
             geometry.push(Geometry {
                 item,
                 layer: layer(kind),
+                volume: same.volume.or_measured_by(|| lazy_volume(index)),
                 ..same.clone()
             });
             continue;
@@ -880,9 +895,8 @@ fn finish_with(
                 let (volume, min, max) = if kind == BodyKind::Substrate
                     || (near(b.min, outline.min) && near(b.max, outline.max))
                 {
-                    let body = body.clone();
                     (
-                        Volume::lazy(move || body.measure().map_or(f64::NAN, |m| m.volume)),
+                        lazy_volume(index),
                         [b.min.x, b.min.y, b.min.z],
                         [b.max.x, b.max.y, b.max.z],
                     )
@@ -941,6 +955,7 @@ fn finish_with(
         reuse,
         updated: None,
         display: appearance::Memo::default(),
+        world,
     })
 }
 
