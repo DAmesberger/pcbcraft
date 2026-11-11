@@ -1287,6 +1287,12 @@ impl SchematicEditor {
                     net.map(|n| format!("on {}", n.name)),
                 )
             }
+            Subject::Item(item) => {
+                let objects = self.selected_item_refs(project);
+                let label = (!objects.is_empty())
+                    .then(|| format!("on {}", items_card::header(project, item).title));
+                (IssueScope::Selection { objects }, label)
+            }
             Subject::Sheet => (
                 IssueScope::Area {
                     area: IssueArea::Schematic,
@@ -1352,6 +1358,26 @@ impl SchematicEditor {
 
     pub fn selected_instance(&self) -> Option<Id> {
         self.selected
+    }
+
+    /// The selected label, sheet symbol (with its pins) or sheet pin, as
+    /// the objects issues name, for the Selection scope and the item's
+    /// issue slot. A drawing is never electrical: nothing.
+    pub fn selected_item_refs(&self, project: &Project) -> Vec<ObjectRef> {
+        match self.selected_item(project) {
+            Some(Item::Label(id)) => vec![ObjectRef::Label { id }],
+            Some(Item::SheetSymbol(id)) => std::iter::once(ObjectRef::SheetSymbol { id })
+                .chain(
+                    project
+                        .sheet_symbol(id)
+                        .into_iter()
+                        .flat_map(|s| &s.pins)
+                        .map(|p| ObjectRef::SheetPin { id: p.id }),
+                )
+                .collect(),
+            Some(Item::SheetPin(id)) => vec![ObjectRef::SheetPin { id }],
+            Some(Item::Drawing(_)) | None => Vec::new(),
+        }
     }
 
     /// The net of the selected wire, label or sheet pin.
@@ -3516,6 +3542,61 @@ mod tests {
             elided(&shape.shape, &mut cut);
         }
         assert!(cut.is_empty(), "cut: {cut:?}");
+        Ok(())
+    }
+
+    /// A selected sheet symbol is in the Issues Selection scope with its
+    /// pins, and its card has an issue row counting the unmatched pin's
+    /// finding; a selected drawing names nothing (night round 4 Q3).
+    #[test]
+    fn a_selected_sheet_symbol_reports_its_issues() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut engine, _) = with_unwired()?;
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::PlaceSheetSymbol {
+                sheet: None,
+                child: None,
+                name: Some("Power".into()),
+                position: pt([150.0, -40.0]),
+                size: pt([30.0, 20.0]),
+            }),
+        )?;
+        let symbol = engine
+            .project()
+            .sheet_symbols
+            .last()
+            .map(|s| s.id)
+            .ok_or("no sheet symbol")?;
+        engine.apply(
+            engine.revision(),
+            Operation::Schematic(SchematicCommand::AddSheetPin {
+                symbol,
+                name: "PIN1".into(),
+                shape: Default::default(),
+                side: pcbcraft_core::SheetSide::Left,
+                offset: pcbcraft_core::units::Nm::from_mm_f64_rounded(5.0)?,
+            }),
+        )?;
+        let pin = engine
+            .project()
+            .sheet_symbol(symbol)
+            .and_then(|s| s.pins.first())
+            .map(|p| p.id)
+            .ok_or("no pin")?;
+        let mut editor = SchematicEditor::default();
+        editor.select_item(Some(Item::SheetSymbol(symbol)), engine.project());
+        let refs = editor.selected_item_refs(engine.project());
+        assert_eq!(
+            refs,
+            [
+                ObjectRef::SheetSymbol { id: symbol },
+                ObjectRef::SheetPin { id: pin }
+            ]
+        );
+        let card = editor.inspector_card(&engine);
+        let slot = card.issues.ok_or("a sheet symbol has an issue row")?;
+        assert_eq!(slot.label, "on Power");
+        assert!(!slot.is_empty(), "the unmatched pin's finding: {slot:?}");
         Ok(())
     }
 

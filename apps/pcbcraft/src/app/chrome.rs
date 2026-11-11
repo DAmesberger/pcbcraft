@@ -394,9 +394,15 @@ impl App {
     /// scope.
     fn selection(&self) -> Vec<pcbcraft_core::ObjectRef> {
         match self.workspace {
-            Workspace::Part => {
-                issues::selection(self.workspace, self.part.lineage(), None, None, None, None)
-            }
+            Workspace::Part => issues::selection(
+                self.workspace,
+                self.part.lineage(),
+                None,
+                None,
+                None,
+                None,
+                vec![],
+            ),
             Workspace::Schematic => issues::selection(
                 self.workspace,
                 None,
@@ -404,6 +410,7 @@ impl App {
                 None,
                 None,
                 self.schematic.selected_net(&self.engine),
+                self.schematic.selected_item_refs(self.engine.project()),
             ),
             Workspace::Pcb => issues::selection(
                 self.workspace,
@@ -412,6 +419,7 @@ impl App {
                 self.pcb.selected_track(),
                 self.pcb.selected_via(),
                 self.pcb.highlighted_net(),
+                vec![],
             ),
         }
     }

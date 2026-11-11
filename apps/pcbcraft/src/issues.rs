@@ -1000,6 +1000,7 @@ pub fn selection(
     track: Option<Id>,
     via: Option<Id>,
     net: Option<Id>,
+    items: Vec<ObjectRef>,
 ) -> Vec<ObjectRef> {
     let mut out = Vec::new();
     match workspace {
@@ -1009,6 +1010,8 @@ pub fn selection(
             out.extend(track.map(|id| ObjectRef::Track { id }));
             out.extend(via.map(|id| ObjectRef::Via { id }));
             out.extend(net.map(|id| ObjectRef::Net { id }));
+            // The schematic's labels, sheet symbols and sheet pins.
+            out.extend(items);
         }
     }
     out
