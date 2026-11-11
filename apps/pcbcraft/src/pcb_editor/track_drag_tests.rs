@@ -185,3 +185,49 @@ fn a_track_drag_that_cannot_move_says_why() -> TestResult {
     assert_eq!(texts, ["Can't drag the track: The track is locked"]);
     Ok(())
 }
+
+/// Night finding F7: on the ESP32 board, dragging USB_DN's long run moves
+/// USB_DP's run beside it too, live in the preview (both drawn moved) and
+/// in the one `layout.route_apply` release sends.
+#[test]
+fn dragging_one_half_of_the_usb_pair_previews_and_moves_both() -> TestResult {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    );
+    let mut engine = Engine::demo()?;
+    engine.replace_document(pcbcraft_io::read_project(std::path::Path::new(path))?)?;
+    let run = |x: f64| {
+        engine
+            .project()
+            .tracks
+            .iter()
+            .find(|t| (t.start[0] - x).abs() < 0.01 && (t.start[1] - 14.8).abs() < 1e-6)
+            .map(|t| t.id)
+            .ok_or("no run")
+    };
+    let (dn, dp) = (run(19.79)?, run(20.21)?);
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    let none = egui::Modifiers::NONE;
+    canvas.frame(&mut editor, &engine, vec![], none);
+    let start = [19.79, 21.0];
+    let hover = moved(&editor, &engine, start);
+    canvas.frame(&mut editor, &engine, vec![hover], none);
+    let press = button(&editor, &engine, start, true);
+    canvas.frame(&mut editor, &engine, vec![press], none);
+    for x in [19.5, 19.0, 18.79] {
+        let event = moved(&editor, &engine, [x, 21.0]);
+        send(&mut canvas, &mut editor, &engine, event);
+    }
+    assert_eq!(editor.track_drag.as_ref().map(|d| d.track), Some(dn));
+    assert!(editor.shoved.0.contains(&dn), "{:?}", editor.shoved.0);
+    assert!(editor.shoved.0.contains(&dp), "{:?}", editor.shoved.0);
+    let event = button(&editor, &engine, [18.79, 21.0], false);
+    let release = send(&mut canvas, &mut editor, &engine, event);
+    let sent = edits(&release)?;
+    for id in [dn, dp] {
+        assert!(sent.replace.iter().any(|t| t.id == id), "{sent:?}");
+    }
+    Ok(())
+}
