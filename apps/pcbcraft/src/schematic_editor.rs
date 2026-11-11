@@ -38,6 +38,7 @@ use std::sync::Arc;
 
 mod clipboard;
 mod group;
+pub(crate) use group::paint_box;
 mod instance_card;
 mod items_card;
 mod marking_row;

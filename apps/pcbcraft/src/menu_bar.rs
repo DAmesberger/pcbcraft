@@ -91,6 +91,15 @@ pub const EDIT: &[Entry] = &[
     C("edit.paste", "Paste"),
     Delete,
     C("edit.select-all", "Select All"),
+    Sep,
+    C("pcb.align-left", "Align Left Edges"),
+    C("pcb.align-right", "Align Right Edges"),
+    C("pcb.align-top", "Align Top Edges"),
+    C("pcb.align-bottom", "Align Bottom Edges"),
+    C("pcb.align-centres-x", "Align Horizontal Centres"),
+    C("pcb.align-centres-y", "Align Vertical Centres"),
+    C("pcb.distribute-x", "Distribute Horizontally"),
+    C("pcb.distribute-y", "Distribute Vertically"),
 ];
 
 pub const VIEW: &[Entry] = &[

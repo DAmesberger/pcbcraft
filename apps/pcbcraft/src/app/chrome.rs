@@ -608,7 +608,7 @@ impl App {
         let three_d = self.model_key().is_some();
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
         let pcb_view = self.workspace == Workspace::Pcb && self.pcb.has_view_menu();
-        let buttons = 1.0 + f32::from(u8::from(pcb_view)) + 2.0 * f32::from(u8::from(pcb_3d));
+        let buttons = 1.0 + 2.0 * f32::from(u8::from(pcb_view)) + 2.0 * f32::from(u8::from(pcb_3d));
         let size = vec2(
             buttons * t.control_height + (buttons + 1.0) * t.space_4,
             crate::kit::navigation_bar_height(),
@@ -657,6 +657,22 @@ impl App {
                 .align(egui::RectAlign::TOP_START)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| self.pcb.view_menu(ui));
+            // The selection filter beside it, outlined while it leaves a
+            // kind out, as a set layer filter is.
+            let filter = shell::icon_button(&mut child, "select", "Selection filter", true);
+            if self.pcb.filter_narrows() {
+                ui.painter().rect_stroke(
+                    filter.rect,
+                    t.radius_sm,
+                    egui::Stroke::new(1.0, t.accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            Container::new(ui.ctx(), Surface::Popup)
+                .menu(&filter)
+                .align(egui::RectAlign::TOP_START)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| self.pcb.filter_menu(ui));
         }
         if pcb_3d {
             // Solidcraft's Realistic look toggle (its navigation bar's

@@ -459,8 +459,9 @@ impl PcbEditor {
         let ink = BoardInk::get();
         let scale = view.view.scale;
         for fill in self.fills_on(project, layer) {
-            let chosen =
-                self.fill == Some(fill.id) || (fill.net.is_some() && self.highlighted == fill.net);
+            let chosen = self.fill == Some(fill.id)
+                || self.group.fills.contains(&fill.id)
+                || (fill.net.is_some() && self.highlighted == fill.net);
             let base = colors.copper_layer(layer);
             let color = ink.on_board(base, look.shade);
             let edge = if chosen {

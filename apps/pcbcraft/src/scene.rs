@@ -637,19 +637,11 @@ impl SceneController {
 
     /// Highlight every body of the selected instance, track, via or net;
     /// the selected object's in a stronger tint than its net's.
-    pub fn highlight(
-        &mut self,
-        instance: Option<Id>,
-        track: Option<Id>,
-        via: Option<Id>,
-        net: Option<Id>,
-    ) {
+    pub fn highlight(&mut self, chosen: &crate::pcb_editor::Group, net: Option<Id>) {
         let mut ids = Vec::new();
         let mut selected = Vec::new();
         for s in &self.sources {
-            let picked = s.instance.is_some() && s.instance == instance
-                || s.track.is_some() && s.track == track
-                || s.via.is_some() && s.via == via;
+            let picked = picks(s, chosen);
             if picked {
                 selected.push(s.pick_id);
             }
@@ -660,21 +652,12 @@ impl SceneController {
         self.viewport.highlight_selected(ids, selected);
     }
 
-    /// The pick identities of every body of the selected instance, track
-    /// or via (without its net).
-    pub fn selected_items(
-        &self,
-        instance: Option<Id>,
-        track: Option<Id>,
-        via: Option<Id>,
-    ) -> Vec<u64> {
+    /// The pick identities of every body of the selected parts, tracks,
+    /// vias and fills (without their nets).
+    pub fn selected_items(&self, chosen: &crate::pcb_editor::Group) -> Vec<u64> {
         self.sources
             .iter()
-            .filter(|s| {
-                s.instance.is_some() && s.instance == instance
-                    || s.track.is_some() && s.track == track
-                    || s.via.is_some() && s.via == via
-            })
+            .filter(|s| picks(s, chosen))
             .map(|s| s.pick_id)
             .collect()
     }
@@ -689,6 +672,14 @@ impl SceneController {
     pub fn source(&self, pick: u64) -> Option<&Source> {
         self.sources.iter().find(|s| s.pick_id == pick)
     }
+}
+
+/// Whether the body `s` belongs to a chosen part, track, via or fill.
+pub(crate) fn picks(s: &Source, chosen: &crate::pcb_editor::Group) -> bool {
+    s.instance.is_some_and(|id| chosen.parts.contains(&id))
+        || s.track.is_some_and(|id| chosen.tracks.contains(&id))
+        || s.via.is_some_and(|id| chosen.vias.contains(&id))
+        || s.fill.is_some_and(|id| chosen.fills.contains(&id))
 }
 
 #[cfg(test)]

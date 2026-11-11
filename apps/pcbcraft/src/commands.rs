@@ -16,6 +16,7 @@
 //! Solidcraft does ([`Registry::rebind`]).
 use crate::shell::{RibbonEvent, Workspace};
 use pcbcraft_core::CopperLayer;
+use pcbcraft_core::layout::arrange::{AlignTo, Axis};
 use std::collections::BTreeMap;
 
 /// Where a command applies. Contexts nest: a command of a parent context
@@ -512,6 +513,9 @@ pub enum Action {
     /// Open one of the PCB's docked setup dialogs, as the Board card's
     /// button does.
     PcbDialog(PcbDialog),
+    /// Align or distribute the selected parts (`layout.align`,
+    /// `layout.distribute`).
+    PcbArrange(PcbArrange),
     /// A key of a gesture: shown, never run from the palette.
     Key,
 }
@@ -527,6 +531,13 @@ pub enum PcbDialog {
     NetClasses,
     /// Board card › High speed › Edit…
     HighSpeed,
+}
+
+/// How the selected parts are lined up or spaced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PcbArrange {
+    Align(pcbcraft_core::layout::arrange::AlignTo),
+    Distribute(pcbcraft_core::layout::arrange::Axis),
 }
 
 /// A copper layer a command names: by its name, or by its place in the
@@ -1154,6 +1165,11 @@ fn defaults() -> Vec<Command> {
     let dialog = |id: &str, title: &str, dialog: PcbDialog| {
         Command::new(id, title, C::Pcb, Action::PcbDialog(dialog))
     };
+    let arrange = |id: &str, title: &str, how: PcbArrange| {
+        Command::new(id, title, C::PcbLayout, Action::PcbArrange(how))
+            .icon("move")
+            .keywords("arrange line up selection parts align distribute space evenly")
+    };
     let view = |id: &str, title: &str, context: Context, toggle: PcbView| {
         Command::new(id, title, context, Action::Pcb(toggle))
             .icon("display")
@@ -1737,6 +1753,46 @@ fn defaults() -> Vec<Command> {
         )
         .icon("export")
         .keywords("gerber drill excellon fabrication manufacturing bom pick place zip"),
+        arrange(
+            "pcb.align-left",
+            "Align left edges",
+            PcbArrange::Align(AlignTo::Left),
+        ),
+        arrange(
+            "pcb.align-right",
+            "Align right edges",
+            PcbArrange::Align(AlignTo::Right),
+        ),
+        arrange(
+            "pcb.align-top",
+            "Align top edges",
+            PcbArrange::Align(AlignTo::Top),
+        ),
+        arrange(
+            "pcb.align-bottom",
+            "Align bottom edges",
+            PcbArrange::Align(AlignTo::Bottom),
+        ),
+        arrange(
+            "pcb.align-centres-x",
+            "Align horizontal centres",
+            PcbArrange::Align(AlignTo::CentreX),
+        ),
+        arrange(
+            "pcb.align-centres-y",
+            "Align vertical centres",
+            PcbArrange::Align(AlignTo::CentreY),
+        ),
+        arrange(
+            "pcb.distribute-x",
+            "Distribute horizontally",
+            PcbArrange::Distribute(Axis::Horizontal),
+        ),
+        arrange(
+            "pcb.distribute-y",
+            "Distribute vertically",
+            PcbArrange::Distribute(Axis::Vertical),
+        ),
         dialog("pcb.rules", "Design rules…", PcbDialog::Rules)
             .icon("params")
             .keywords("drc clearance checks track width annular ring profile"),
@@ -1767,7 +1823,7 @@ fn defaults() -> Vec<Command> {
         ),
         key(
             "pcb.delete",
-            "Delete the selected track, via, fill or dimension",
+            "Delete the selection's tracks, vias and fills, or a dimension",
             C::PcbLayout,
             Chord::key(K::Delete),
         )

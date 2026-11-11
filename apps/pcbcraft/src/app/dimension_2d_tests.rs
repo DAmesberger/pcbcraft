@@ -584,7 +584,10 @@ fn a_dimension_made_in_either_view_shows_in_the_other() -> Fallible {
     let mut h = Harness::new(engine)?;
     h.app.pcb.set_3d(true);
     h.until_shown()?;
-    let items = h.app.scene.selected_items(Some(j1), None, None);
+    let items = h.app.scene.selected_items(&crate::pcb_editor::Group {
+        parts: [j1].into(),
+        ..Default::default()
+    });
     h.app
         .scene
         .viewport

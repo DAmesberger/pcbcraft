@@ -10,17 +10,15 @@ type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 fn stub() -> Fallible<(Engine, Vec<Id>)> {
     let mut engine = Engine::demo()?;
     let r1 = by_designator(&engine, "R1")?;
-    for (instance, position) in [(r1, [10.0, 10.0])] {
-        engine.apply(
-            engine.revision(),
-            Operation::Layout(LayoutCommand::Move {
-                instance,
-                position,
-                rotation_deg: 0.0,
-                layer: Layer::Top,
-            }),
-        )?;
-    }
+    engine.apply(
+        engine.revision(),
+        Operation::Layout(LayoutCommand::Move {
+            instance: r1,
+            position: [10.0, 10.0],
+            rotation_deg: 0.0,
+            layer: Layer::Top,
+        }),
+    )?;
     let net = engine
         .project()
         .net_of(crate::Endpoint {
