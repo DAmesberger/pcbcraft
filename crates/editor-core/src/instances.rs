@@ -245,6 +245,24 @@ pub fn unwireable(designator: &str, pin: &str) -> String {
     format!("{designator} pin ‘{pin}’ must stay unconnected, so it cannot be wired")
 }
 
+/// Designators in natural order, `R10` after `R9`: sort by this key (the
+/// letter prefix, then the number, then the text). Every designator list
+/// (BOM, placement, purchasing, staging, the update review) orders by it.
+pub fn designator_key(designator: &str) -> (String, u64, String) {
+    let digits = designator
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_ascii_digit())
+        .last()
+        .map_or(designator.len(), |(i, _)| i);
+    let (prefix, number) = designator.split_at(digits);
+    (
+        prefix.to_owned(),
+        number.parse().unwrap_or(u64::MAX),
+        designator.to_owned(),
+    )
+}
+
 /// 1–64 bytes without whitespace or control characters.
 pub fn designator_valid(designator: &str) -> bool {
     !designator.is_empty()

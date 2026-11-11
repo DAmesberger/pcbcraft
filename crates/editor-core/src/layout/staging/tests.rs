@@ -92,7 +92,8 @@ fn each_kind_starts_a_row_in_designator_order() -> Result<()> {
     let mut rows: Vec<(String, u64, Bounds)> = missing
         .iter()
         .filter_map(|id| {
-            let (prefix, number) = designator_key(&project.instance(*id)?.designator);
+            let (prefix, number, _) =
+                crate::instances::designator_key(&project.instance(*id)?.designator);
             Some((prefix, number, *boxes.get(id)?))
         })
         .collect();

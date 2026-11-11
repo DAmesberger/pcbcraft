@@ -133,7 +133,7 @@ impl UpdatePreview {
     /// [`Self::begin`] for a component-revision change, listing each of its
     /// instances with a checkbox (all on), and `note` above the changes.
     pub fn begin_choosing(&mut self, engine: &Engine, change: Change, note: Option<String>) {
-        let choices = match &change {
+        let mut choices: Vec<(Id, String, bool)> = match &change {
             Change::ComponentRevision { instances, .. } => instances
                 .iter()
                 .map(|id| {
@@ -146,6 +146,10 @@ impl UpdatePreview {
                 .collect(),
             _ => Vec::new(),
         };
+        // R2 before R10, as every designator list.
+        choices.sort_by_cached_key(|(_, designator, _)| {
+            pcbcraft_core::instances::designator_key(designator)
+        });
         self.begin(engine, change);
         self.choices = choices;
         self.note = note;
@@ -1049,6 +1053,29 @@ mod tests {
             other => return Err(format!("unexpected {other:?}").into()),
         }
         assert_eq!(review.take_closed(), None);
+        Ok(())
+    }
+
+    /// Night round 3 (R3-7): the review lists its instances in natural
+    /// designator order, whatever order the change names them in.
+    #[test]
+    fn the_instances_are_listed_by_designator() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::demo()?;
+        let mut instances: Vec<_> = engine.project().instances.iter().map(|i| i.id).collect();
+        assert!(instances.len() >= 2, "the demo places several instances");
+        instances.reverse();
+        let first = engine.project().instances.first().ok_or("an instance")?;
+        let change = Change::ComponentRevision {
+            instances,
+            target: first.component,
+            resolutions: Default::default(),
+        };
+        let mut review = UpdatePreview::default();
+        review.begin_choosing(&engine, change, None);
+        let listed: Vec<&str> = review.choices.iter().map(|(_, d, _)| d.as_str()).collect();
+        let mut sorted = listed.clone();
+        sorted.sort_by_key(|d| pcbcraft_core::instances::designator_key(d));
+        assert_eq!(listed, sorted);
         Ok(())
     }
 
