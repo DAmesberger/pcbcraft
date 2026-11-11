@@ -1002,7 +1002,21 @@ pub fn match_score(q: &str, command: &Command) -> u32 {
     });
     let other = if all_words { 700 } else { 0 };
     let id = score(q, &command.id) / 2;
-    title.max(other).max(id)
+    title.max(other).max(id).max(whole_words(q, command))
+}
+
+/// Every word of `q` is a whole word of the title: above a word that only
+/// starts with it. A workspace is where its name leads ("schematic": Go to
+/// Schematic before Export schematic PDF…). 0 otherwise.
+fn whole_words(q: &str, command: &Command) -> u32 {
+    let title = command.title.to_lowercase();
+    let words = title.split(|c: char| !c.is_alphanumeric());
+    let whole = q.split_whitespace().all(|w| words.clone().any(|t| t == w));
+    match (whole, &command.action) {
+        (false, _) => 0,
+        (true, Action::App(AppCommand::Workspace(_))) => 900,
+        (true, _) => 850,
+    }
 }
 
 /// Whether `a` and `b` sharing `chord` is a conflict: both could see the

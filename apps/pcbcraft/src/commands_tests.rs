@@ -468,6 +468,11 @@ fn search_ranks_titles_then_words_then_scattered_letters() {
     let select = ids(registry.search("select", &[], &active_contexts(Context::Schematic)));
     assert_eq!(select.first().copied(), Some("schematic.select"));
     assert!(registry.search("zzzzqq", &[], &active).is_empty());
+    // A workspace's name leads to it, and a whole word beats a word that
+    // only starts with the query (night round 4 Q4).
+    assert_eq!(first("schematic").as_deref(), Some("workspace.schematic"));
+    assert_eq!(first("component").as_deref(), Some("workspace.component"));
+    assert_eq!(first("pcb").as_deref(), Some("workspace.pcb"));
 }
 
 #[test]
