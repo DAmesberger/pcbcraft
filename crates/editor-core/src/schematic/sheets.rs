@@ -47,9 +47,12 @@ fn check_sheet_name(project: &Project, name: &str, except: Option<SheetId>) -> R
     Ok(())
 }
 
-/// The first free "Sheet n" name.
-fn default_sheet_name(project: &Project) -> String {
-    (1..=MAX_SHEETS + 1)
+/// The name a new sheet gets when none is given: the first free "Sheet n"
+/// from one past the sheet count, so a third sheet is "Sheet 3" whatever
+/// the first two are called.
+pub fn default_sheet_name(project: &Project) -> String {
+    let next = project.sheets.list.len().saturating_add(1);
+    (next..=next.saturating_add(MAX_SHEETS))
         .map(|n| format!("Sheet {n}"))
         .find(|name| {
             !project

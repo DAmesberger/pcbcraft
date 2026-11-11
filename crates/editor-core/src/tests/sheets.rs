@@ -663,6 +663,45 @@ fn sheets_rename_reorder_and_page_settings() -> Result<()> {
     Ok(())
 }
 
+/// A sheet added without a name is numbered after the sheets there are:
+/// the third is "Sheet 3", even when the first two have other names
+/// (night round 4 Q6), and a taken number moves on to the next.
+#[test]
+fn an_unnamed_sheet_is_numbered_after_the_existing_ones() -> Result<()> {
+    let mut engine = Engine::default();
+    let first = engine.project().sheets.first();
+    run(
+        &mut engine,
+        C::RenameSheet {
+            sheet: first,
+            name: "Main".into(),
+        },
+    )?;
+    add_sheet(&mut engine, "Power")?;
+    let unnamed = |engine: &mut Engine| -> Result<String> {
+        let Outcome::SheetAdded { sheet } = run(
+            engine,
+            C::AddSheet {
+                name: None,
+                paper: None,
+                orientation: None,
+            },
+        )?
+        else {
+            return Err(Error::Invalid("no sheet added".into()));
+        };
+        Ok(engine
+            .project()
+            .sheet(sheet)
+            .map(|s| s.name.clone())
+            .unwrap_or_default())
+    };
+    assert_eq!(unnamed(&mut engine)?, "Sheet 3");
+    add_sheet(&mut engine, "Sheet 5")?;
+    assert_eq!(unnamed(&mut engine)?, "Sheet 6");
+    Ok(())
+}
+
 #[test]
 fn annotation_numbers_across_sheets_and_keeps_existing_designators() -> Result<()> {
     let mut engine = Engine::default();

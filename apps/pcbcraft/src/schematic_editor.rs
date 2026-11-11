@@ -1533,7 +1533,7 @@ impl SchematicEditor {
                 None
             }
             Subject::SheetTool => {
-                self.sheet_tool_section(ui);
+                self.sheet_tool_section(ui, project);
                 None
             }
             Subject::NoConnectTool => {
@@ -3516,6 +3516,27 @@ mod tests {
             elided(&shape.shape, &mut cut);
         }
         assert!(cut.is_empty(), "cut: {cut:?}");
+        Ok(())
+    }
+
+    /// The Sheet tool's "New sheet" field shows the name an empty field
+    /// gives: the next free "Sheet n" after the sheets there are (night
+    /// round 4 Q6).
+    #[test]
+    fn the_new_sheet_field_shows_the_name_it_will_get() -> Result<(), Box<dyn std::error::Error>> {
+        let (engine, _) = with_unwired()?;
+        let count = engine.project().sheets.list.len();
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let mut editor = SchematicEditor::default();
+        editor.tool = Tool::SheetSymbol;
+        let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+        let next = format!("Sheet {}", count + 1);
+        let shown = shown(&output);
+        assert!(
+            shown.iter().any(|(t, _)| *t == next),
+            "no placeholder {next}: {shown:?}"
+        );
         Ok(())
     }
 

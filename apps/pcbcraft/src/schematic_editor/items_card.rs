@@ -637,9 +637,11 @@ impl SchematicEditor {
     }
 
     /// The sheet-symbol tool's card: the name of the sheet it creates.
-    pub(super) fn sheet_tool_section(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn sheet_tool_section(&mut self, ui: &mut egui::Ui, project: &Project) {
         kit::section(ui, "sheet-tool", "Sheet symbol", true, None, |ui| {
-            kit::text_row(ui, "New sheet", &mut self.drafts.sheet_name);
+            // Empty, the sheet gets the name the placeholder shows.
+            let name = pcbcraft_core::schematic::sheets::default_sheet_name(project);
+            kit::checked_text_row(ui, "New sheet", &mut self.drafts.sheet_name, &name, false);
             kit::hint(
                 ui,
                 "A new child sheet",
