@@ -167,7 +167,7 @@ A run profile (`profile.rs`, `<config>/assist-profiles/NAME.json`) says what a m
 
 **For ACP agents,** a profile carries only the system text and adapter options, because the agent runs its own loop.
 
-**Editing.** Settings › AI › Profiles lists the built-in and user profiles. **Copy** writes the built-in to the config folder, and then the file is edited in a text field. The file is checked when it is saved, with the same refusals `llm-profile` gives today. A profile that fails the check is never used. The built-in `claude`, `default` and `qwen3.8-flash-next` profiles carry over, and the tuned Flash Next additions move with the datasheet prompt.
+**Editing.** Settings › AI › Profiles lists the built-in and user profiles. **Copy** writes the built-in to the config folder, and then the file is edited in a text field. The file is checked when it is saved, with the same refusals `llm-profile` gives today. A profile that fails the check is never used. The built-in `claude` and `default` profiles carry over. The tuned Flash Next profile is a user file (`examples/qwen3.8-flash-next/assist-profiles/`), not built in.
 
 ### Local models, small context and no vision
 

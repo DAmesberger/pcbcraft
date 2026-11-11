@@ -1,4 +1,5 @@
-//! The tuned `qwen3.8-flash-next` profile's runs on Qwen3.8 Flash Next
+//! The tuned `qwen3.8-flash-next` profile's runs (a user profile, in
+//! `examples/qwen3.8-flash-next/assist-profiles/`) on Qwen3.8 Flash Next
 //! (`examples/qwen3.8-flash-next`), replayed offline and graded against TI's
 //! land patterns: the pinout, the tabbed package form, every pad's size, the
 //! rows' land span and pitch, and the report accepted on the first try. The
@@ -19,12 +20,16 @@ struct Reference {
 
 fn replay(reference: &Reference) -> Fallible {
     let dir = tempfile::tempdir()?;
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/qwen3.8-flash-next")
-        .join(reference.recording);
+    let example =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/qwen3.8-flash-next");
+    let path = example.join(reference.recording);
     let mut backend = Replay::from_file(&path)?;
     let mut config = local_config(262_144);
-    config.run_profile = crate::profile::select(None, "RadixArk/Qwen3.8-Flash-Next-NVFP4", None)?;
+    config.run_profile = crate::profile::select(
+        None,
+        "RadixArk/Qwen3.8-Flash-Next-NVFP4",
+        Some(&example.join("assist-profiles")),
+    )?;
     assert_eq!(config.run_profile.name, "qwen3.8-flash-next");
     let mut session = Session::default();
     let (outcome, log) = run_with(&config, &mut backend, text_datasheet(&dir)?, &mut session)?;

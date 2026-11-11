@@ -10,7 +10,7 @@ use crate::geom::prelude::*;
 use crate::geom::{Mesh, Vec3};
 use crate::material::{self, BodyKind};
 use crate::scene::{Geometry, Place};
-use crate::stack::{FINISH_MM, MASK_OVER_LAMINATE_MM, PROUD_MM, Stack};
+use crate::stack::{PROUD_MM, Stack};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{cos_sin, is_quarter_turn};
 use pcbcraft_core::library::offset_polygon;
@@ -25,9 +25,6 @@ pub use outline::union;
 pub use region::{Region, slab};
 use via::via_layers;
 
-/// Soldermask pull-back from the board outline (est.; fabricators pull mask
-/// and copper back from a routed edge).
-pub const MASK_EDGE_INSET_MM: f64 = 0.03;
 /// Soldermask tiles: the slab's faces are triangulated per square of this
 /// size, so a dense board stays local.
 const MASK_TILE_MM: f64 = 4.0;
@@ -65,9 +62,6 @@ const FILLET_ACROSS_STEPS: usize = 24;
 /// Adjacent prism walls turning less than this share a smoothed normal.
 const SMOOTH_TURN: f64 = 0.55;
 
-/// Soldermask pull-back around an open via's ring (est.; fabricators open
-/// the mask 0.05 mm beyond a pad by default).
-pub const VIA_MASK_EXPANSION_MM: f64 = 0.05;
 /// A tented via's mask sags this far into the drill it bridges (est.; LPI
 /// tents over a 0.3 mm hole dip into it as a visible dimple). 8 µm read as
 /// no dimple in the look review. The dimple stays [`PROUD_MM`] above the
@@ -157,7 +151,7 @@ impl Board {
             width: project.board_size[0],
             depth: project.board_size[1],
             shape: Outline::of(project).map(std::sync::Arc::new),
-            stack: Stack::of(&project.stackup),
+            stack: Stack::of(&project.stackup, project.fabrication.pad_finish),
             fabrication: project.fabrication,
         }
     }
@@ -247,12 +241,15 @@ pub struct ViaMark {
     pub drill: f64,
     pub diameter: f64,
     pub tented: bool,
+    /// The mask opening's diameter where the via is open
+    /// ([`pcbcraft_core::Via::mask_opening`], as the Gerber draws it).
+    pub mask_opening: f64,
 }
 
 impl ViaMark {
-    /// The finished bore radius: the drill less its plating.
+    /// The finished bore radius: the via's stated (finished) drill.
     pub fn bore(&self) -> f64 {
-        self.drill / 2.0 - crate::pad_outline::PLATING_MM
+        self.drill / 2.0
     }
 
     /// Whether the mask covers the via on `side` of `board`.
@@ -271,7 +268,7 @@ impl ViaMark {
                 layer,
                 copper: Some(circle(self.at, self.diameter / 2.0)),
                 bore: Some(circle(self.at, self.bore())),
-                openings: vec![circle(self.at, self.diameter / 2.0 + VIA_MASK_EXPANSION_MM)],
+                openings: vec![circle(self.at, self.mask_opening / 2.0)],
             })
             .collect()
     }
@@ -414,7 +411,7 @@ pub fn board_with(
         if !board.mask(layer) {
             continue;
         }
-        let (z0, z1) = board.span(layer, 0.0, MASK_OVER_LAMINATE_MM);
+        let (z0, z1) = board.span(layer, 0.0, board.stack.mask_laminate_mm());
         let region = Region {
             fills: fills.clone(),
             cuts: lands
@@ -446,13 +443,14 @@ pub fn board_with(
         // not its underside: it starts a finish thickness off the laminate,
         // so its bottom never shares the copper's bottom face (the two
         // flickered in streaks seen from below with the laminate hidden).
-        let (z0, z1) = board.span(land.layer, FINISH_MM, board.copper(land.layer) + FINISH_MM);
+        let finish = board.stack.finish_mm();
+        let (z0, z1) = board.span(land.layer, finish, board.copper(land.layer) + finish);
         let region = Region {
-            fills: offset_polygon(copper, FINISH_MM).into_iter().collect(),
+            fills: offset_polygon(copper, finish).into_iter().collect(),
             cuts: land
                 .bore
                 .iter()
-                .filter_map(|bore| offset_polygon(bore, -FINISH_MM))
+                .filter_map(|bore| offset_polygon(bore, -finish))
                 .collect(),
         };
         // A via's finished ring belongs to the via, not to its side's
@@ -498,6 +496,7 @@ pub fn board_with(
             via.drill.to_bits(),
             via.diameter.to_bits(),
             u64::from(via.tented),
+            via.mask_opening.to_bits(),
         ];
         let local = ViaMark {
             at: [0.0, 0.0],
@@ -516,7 +515,7 @@ pub fn board_with(
 
 /// The laminate the mask leaves bare on each side with mask: inside the
 /// lands' and open vias' mask openings (a fiducial's clearance, a land's
-/// expansion) and the pull-back from every routed edge, less the outer
+/// expansion), less the outer
 /// copper there (lands, tracks and the outlines of the `fills` on that
 /// side, all plated) and the drills. The laminate's own face lies under the mask, so
 /// the 3D view shades it only where this film lies; the film stands
@@ -528,19 +527,7 @@ pub fn open_laminate(
     fills: &[(Layer, Vec<Point>)],
 ) -> Result<Vec<Geometry>> {
     let mut out = Vec::new();
-    let (inset, edge_cuts) = mask_outline(board);
-    let outer = match &board.shape {
-        Some(shape) => vec![shape.outer.clone()],
-        None => vec![vec![
-            [0.0, 0.0],
-            [board.width, 0.0],
-            [board.width, board.depth],
-            [0.0, board.depth],
-        ]],
-    };
-    let drills: Vec<Vec<Point>> = board.shape.as_ref().map_or_else(Vec::new, |shape| {
-        shape.cutouts.iter().chain(&shape.holes).cloned().collect()
-    });
+    let (_, edge_cuts) = mask_outline(board);
     for side in [Layer::Top, Layer::Bottom] {
         if !board.mask(side) {
             continue;
@@ -572,58 +559,39 @@ pub fn open_laminate(
             .collect();
         let (z0, z1) = board.span(side, 0.0, PROUD_MM);
         let layer = Some(CopperLayer::from(side));
-        for region in [
-            Region {
-                fills: on.flat_map(|land| land.openings.iter().cloned()).collect(),
-                cuts: copper,
-            },
-            Region {
-                fills: outer.clone(),
-                cuts: inset.clone(),
-            },
-            Region {
-                fills: edge_cuts.clone(),
-                cuts: drills.clone(),
-            },
-        ] {
-            if region.fills.is_empty() {
-                continue;
-            }
-            push(
-                &mut out,
-                Some(board),
-                BodyKind::OpenLaminate,
-                None,
-                layer,
-                slab(&region, z0, z1, MASK_TILE_MM),
-            )?;
+        let region = Region {
+            fills: on.flat_map(|land| land.openings.iter().cloned()).collect(),
+            cuts: copper,
+        };
+        if region.fills.is_empty() {
+            continue;
         }
+        push(
+            &mut out,
+            Some(board),
+            BodyKind::OpenLaminate,
+            None,
+            layer,
+            slab(&region, z0, z1, MASK_TILE_MM),
+        )?;
     }
     Ok(out)
 }
 
-/// Where the board mask lies: its fill loops and the board's own cuts.
-/// The mask stops [`MASK_EDGE_INSET_MM`] short of every routed edge, the
-/// outer outline and each cutout, slot and mounting hole, so its walls
-/// never meet the laminate's at the silhouette and it never spans an
-/// opening through the board.
+/// Where the board mask lies: its fill loops (the board outline) and the
+/// board's own cuts (each cutout, slot and mounting hole), so it never
+/// spans an opening through the board. The mask reaches the routed edge,
+/// as the Gerber mask does: no rule pulls it back.
 pub(crate) fn mask_outline(board: &Board) -> (Vec<Vec<Point>>, Vec<Vec<Point>>) {
-    let i = MASK_EDGE_INSET_MM;
     let Some(shape) = &board.shape else {
         let (w, d) = (board.width, board.depth);
         return (
-            vec![vec![[i, i], [w - i, i], [w - i, d - i], [i, d - i]]],
+            vec![vec![[0.0, 0.0], [w, 0.0], [w, d], [0.0, d]]],
             Vec::new(),
         );
     };
-    let fills = offset_polygon(&shape.outer, -i).into_iter().collect();
-    let cuts = shape
-        .cutouts
-        .iter()
-        .chain(&shape.holes)
-        .map(|c| offset_polygon(c, i).unwrap_or_else(|| c.clone()))
-        .collect();
-    (fills, cuts)
+    let cuts = shape.cutouts.iter().chain(&shape.holes).cloned().collect();
+    (vec![shape.outer.clone()], cuts)
 }
 
 /// The authoring preview's layers: terminations and overcoat of an unplaced
@@ -737,12 +705,13 @@ fn track(
     }
     // Off the laminate like a land's finish, and lower than it, so the
     // strip's underside meets neither copper's nor the land finish's.
+    let finish = board.stack.finish_mm();
     let (f0, f1) = board.span(
         path.layer,
-        (1.0 - STRIP_SHARE) * FINISH_MM,
-        copper + STRIP_SHARE * FINISH_MM,
+        (1.0 - STRIP_SHARE) * finish,
+        copper + STRIP_SHARE * finish,
     );
-    let half = path.width / 2.0 + STRIP_SHARE * FINISH_MM;
+    let half = path.width / 2.0 + STRIP_SHARE * finish;
     for &(a, b) in &openings {
         let (a, b) = (a.max(0.0), b.min(length));
         if b - a < CAP_MIN_MM {
@@ -1047,7 +1016,7 @@ fn fillet(
 ) -> Mesh {
     // The foot stands off the land's finish: the meniscus thins to nothing
     // at the toe, and lying on the finish there it flickered against it.
-    let base = FINISH_MM + PROUD_MM;
+    let base = frame.board.map_or(0.0, |b| b.stack.finish_mm()) + PROUD_MM;
     let mid = (span[0] + span[1]) / 2.0;
     let half = (span[1] - span[0]) / 2.0;
     let local = |s: f64, c: f64, z: f64| {
@@ -1344,8 +1313,9 @@ mod tests {
     }
 
     /// Laminate a mask opening leaves bare (a fiducial's clearance) is its
-    /// own film on the laminate: the opening less the copper, and the
-    /// pull-back from the routed edge, on each side with mask only.
+    /// own film on the laminate: the opening less the copper, on each side
+    /// with mask only. The mask reaches the routed edge (no pull-back, as
+    /// in the Gerber), so no laminate shows there.
     #[test]
     fn a_mask_opening_shows_the_laminate_around_its_copper() -> Result<()> {
         let stackup = pcbcraft_core::Stackup {
@@ -1356,7 +1326,7 @@ mod tests {
             width: 10.0,
             depth: 10.0,
             shape: None,
-            stack: Stack::of(&stackup),
+            stack: Stack::of(&stackup, Fabrication::default().pad_finish),
             fabrication: Fabrication::default(),
         };
         let land = Land {
@@ -1367,20 +1337,20 @@ mod tests {
             openings: vec![circle([5.0, 5.0], 1.0)],
         };
         let films = open_laminate(&board, &[land], &[], &[])?;
+        assert_eq!(films.len(), 1, "the opening, top only");
         assert_eq!(
-            films.len(),
-            2,
-            "the opening and the edge pull-back, top only"
+            mask_outline(&board),
+            (
+                vec![vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]],
+                vec![]
+            ),
+            "the mask reaches the board edge"
         );
         let disc = |r: f64| {
             let n = VIA_SEGMENTS as f64;
             0.5 * n * r * r * (std::f64::consts::TAU / n).sin()
         };
-        let inset = 10.0 - 2.0 * MASK_EDGE_INSET_MM;
-        for (film, area) in films
-            .iter()
-            .zip([disc(1.0) - disc(0.5), 100.0 - inset * inset])
-        {
+        for (film, area) in films.iter().zip([disc(1.0) - disc(0.5)]) {
             assert_eq!(film.kind, BodyKind::OpenLaminate);
             assert_eq!(film.layer, Some(CopperLayer::Top));
             near(film.min[2], 1.6);

@@ -29,10 +29,6 @@ const MAX_MODELS: usize = 32;
 const BUILT_IN: &[(&str, &str)] = &[
     ("default", include_str!("../profiles/default.json")),
     ("claude", include_str!("../profiles/claude.json")),
-    (
-        "qwen3.8-flash-next",
-        include_str!("../profiles/qwen3.8-flash-next.json"),
-    ),
 ];
 
 /// The system prompt of a profile, as paragraphs (joined by blank lines).
@@ -320,6 +316,10 @@ mod tests {
         assert!(claude.omit_tools.is_empty());
         // A model without a profile gets the default.
         assert_eq!(select(None, "some-local-model", None)?.name, "default");
+        // Tuning for one third-party model is the user's file, not built in.
+        assert_eq!(built_in_names(), ["default", "claude"]);
+        let qwen = "RadixArk/Qwen3.8-Flash-Next-NVFP4";
+        assert_eq!(select(None, qwen, None)?.name, "default");
         Ok(())
     }
 

@@ -466,14 +466,31 @@ fn the_mask_and_edge_bands_follow_the_sketched_shape() -> Fallible<()> {
             })
             .collect()
     };
+    // The mask reaches the routed edge (no pull-back), so its wall
+    // triangles lie on the outline as the display flattens it: inside it
+    // grown by a micrometre.
+    let outer = pcbcraft_core::model::board::flatten(
+        &board.outer,
+        crate::pad_outline::FLATTEN_TOLERANCE_MM,
+    );
+    let grown = pcbcraft_core::library::offset_polygon(&outer, 0.001).ok_or("outline")?;
     for kind in [BodyKind::MaskTop, BodyKind::MaskBottom] {
         let mask = centroids(kind);
         assert!(!mask.is_empty(), "{kind:?}");
         for c in &mask {
-            assert!(board.contains(*c, 0.001), "{kind:?} mask at {c:?}");
+            assert!(
+                pcbcraft_core::geometry::polygon_contains(&grown, *c),
+                "{kind:?} mask at {c:?}"
+            );
         }
         // Nothing over the cutout, and the rounded corner is bare.
-        assert!(mask.iter().all(|c| (c[0] - 30.0).hypot(c[1] - 20.0) > 4.0));
+        // The mask's wall lines the cutout (flattened: its chords lie
+        // within the display tolerance inside the 4 mm circle).
+        let reach = 4.0 - crate::pad_outline::FLATTEN_TOLERANCE_MM;
+        assert!(
+            mask.iter()
+                .all(|c| (c[0] - 30.0).hypot(c[1] - 20.0) > reach)
+        );
         assert!(mask.iter().all(|c| c[0] + c[1] > 1.0));
     }
     // An edge band lines the cutout's wall, just proud of it.

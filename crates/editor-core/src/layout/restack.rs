@@ -243,6 +243,7 @@ impl StackupDraft {
             mask_top: self.stackup.mask_top,
             mask_bottom: self.stackup.mask_bottom,
             mask_um: self.stackup.mask_um,
+            mask_laminate_nm: self.stackup.mask_laminate_nm,
             silkscreen_top: self.stackup.silkscreen_top,
             silkscreen_bottom: self.stackup.silkscreen_bottom,
             ..preset

@@ -723,7 +723,11 @@ impl App {
                 self.toggle_realistic();
             }
             let mut view = self.pcb.layer_view();
-            let stack = pcbcraft_solidcraft::stack::Stack::of(&self.engine.project().stackup);
+            let project = self.engine.project();
+            let stack = pcbcraft_solidcraft::stack::Stack::of(
+                &project.stackup,
+                project.fabrication.pad_finish,
+            );
             if crate::layer_view::button(&mut child, &mut view, &stack) {
                 self.scene.viewport.set_layers(view.clone());
                 self.pcb.set_layer_view(view);

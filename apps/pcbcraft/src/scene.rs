@@ -254,7 +254,11 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                 }
                 let sources = model.sources.clone();
                 kept.board = Some((Arc::clone(&project), model));
-                (geometry, sources, Stack::of(&project.stackup))
+                (
+                    geometry,
+                    sources,
+                    Stack::of(&project.stackup, project.fabrication.pad_finish),
+                )
             });
             (ticket, built.map_err(|e| e.to_string()))
         }

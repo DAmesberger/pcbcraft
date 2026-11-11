@@ -46,6 +46,11 @@ fn near(actual: f64, expected: f64) {
     assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
 }
 
+/// The default pad finish's (ENIG's) thickness, mm.
+fn enig() -> f64 {
+    crate::stack::finish_um(pcbcraft_core::PadFinish::Enig) / 1000.0
+}
+
 fn fixture() -> Result<Project> {
     let mut project = envelope_demo()?;
     // Asymmetric offsets exercise the rigid bottom flip independently of the
@@ -725,17 +730,17 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
         assert_eq!(pad.surface.metallic(), copper.metallic());
         near(pad.volume(), 1.0 * 1.4 * 0.035);
         for axis in 0..2 {
-            near(finish.min[axis], pad.min[axis] - 0.005);
-            near(finish.max[axis], pad.max[axis] + 0.005);
+            near(finish.min[axis], pad.min[axis] - enig());
+            near(finish.max[axis], pad.max[axis] + enig());
         }
         // The finish plates the land's top and sides, from a finish
         // thickness off the laminate: never on the copper's bottom face.
         if source.layer == Some(CopperLayer::Top) {
-            near(finish.min[2], pad.min[2] + 0.005);
-            near(finish.max[2], pad.max[2] + 0.005);
+            near(finish.min[2], pad.min[2] + enig());
+            near(finish.max[2], pad.max[2] + enig());
         } else {
-            near(finish.min[2], pad.min[2] - 0.005);
-            near(finish.max[2], pad.max[2] - 0.005);
+            near(finish.min[2], pad.min[2] - enig());
+            near(finish.max[2], pad.max[2] - enig());
         }
     }
     for source in model.sources.iter().filter(|s| s.track.is_some()) {
@@ -895,7 +900,8 @@ fn mask_caps_stop_at_mask_openings_and_exposed_track_copper_is_plated() -> Resul
     assert_eq!(strip.len(), 1);
     near(strip[0].min[1], c[1]);
     near(strip[0].max[1], c[1] + 0.55);
-    near(strip[0].max[2], 1.6 + 0.035 + 0.004);
+    // The strip stands 0.8 of the finish's thickness on the copper.
+    near(strip[0].max[2], 1.6 + 0.035 + 0.8 * enig());
     // A track passing through the land: capped on both sides, plated across.
     let caps = pieces(&model, through, BodyKind::MaskCap);
     assert_eq!(caps.len(), 2, "pass-through cap is split at the opening");
@@ -910,7 +916,7 @@ fn mask_caps_stop_at_mask_openings_and_exposed_track_copper_is_plated() -> Resul
     near(strip[0].max[0], c[0] + 0.75);
     // Every finish stands above the mask and below any cap top.
     for f in pad_finishes(&model) {
-        near(f.max[2], 1.6 + 0.035 + 0.005);
+        near(f.max[2], 1.6 + 0.035 + enig());
     }
     Ok(())
 }
@@ -1129,9 +1135,9 @@ fn check_chip_parts(model: &NativeModel) -> Result<()> {
             );
             if top {
                 // On the finish, its toe lifted 2 µm off it.
-                near(solder.min[2], 1.6 + 0.035 + 0.005 + 0.002);
+                near(solder.min[2], 1.6 + 0.035 + enig() + 0.002);
             } else {
-                near(solder.max[2], -0.035 - 0.005 - 0.002);
+                near(solder.max[2], -0.035 - enig() - 0.002);
             }
             assert!(solder.volume() > 0.0);
         }
@@ -1157,16 +1163,27 @@ fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Re
     looks_match_the_native_file(&styled)?;
     assert_eq!(plain.geometry.len(), styled.geometry.len());
     let mut restyled = 0;
+    let silver = crate::stack::finish_um(PadFinish::ImmersionSilver) / 1000.0;
     for (a, b) in plain.geometry.iter().zip(&styled.geometry) {
         assert_eq!((a.kind, a.item), (b.kind, b.item));
-        assert_eq!((a.min, a.max), (b.min, b.max), "{:?}", a.kind);
+        // The finish is as thick as the pad finish is (ENIG to immersion
+        // silver here), and the solder and bore discs stand on it; every
+        // other body keeps its place.
+        if b.kind == BodyKind::PadFinish && b.max[2] > 1.6 + 0.035 {
+            near(a.max[2] - b.max[2], enig() - silver);
+        } else if !matches!(
+            b.kind,
+            BodyKind::PadFinish | BodyKind::Solder | BodyKind::ViaBore
+        ) {
+            assert_eq!((a.min, a.max), (b.min, b.max), "{:?}", a.kind);
+        }
         if b.kind.is_appearance() {
             // Drawn directly from the table; native bodies go through the
             // file's 8-bit colour, which looks_match_the_native_file checks.
             let expected = material::material(
                 b.kind,
                 &project.fabrication,
-                &crate::stack::Stack::of(&project.stackup),
+                &crate::stack::Stack::of(&project.stackup, project.fabrication.pad_finish),
             )
             .surface()?;
             assert_eq!(b.surface, expected, "{:?}", b.kind);
@@ -1341,8 +1358,15 @@ fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
                     );
                     assert!(!inside(&bodies, on_board(pad, [0.2, 0.0]), z), "bore");
                 }
-                let wall = on_board(pad, [0.2 + 0.3 - PLATING_MM / 2.0, 0.0]);
+                // The hole's 0.6 mm is its finished size: open to it, with
+                // the barrel outside it in a hole drilled wider.
+                let wall = on_board(pad, [0.2 + 0.3 + pad_outline::PLATING_MM / 2.0, 0.0]);
                 assert!(inside(&bodies, wall, 0.8), "barrel");
+                let finished = on_board(pad, [0.2 + 0.3 - 0.005, 0.0]);
+                assert!(
+                    !inside(&bodies, finished, 0.8),
+                    "the bore is the finished size"
+                );
                 assert!(!inside(&substrate, wall, 0.8), "barrel inside the laminate");
                 assert!(!inside(&bodies, on_board(pad, [0.2, 0.0]), 0.8));
                 assert!(!inside(&substrate, on_board(pad, [0.2, 0.0]), 0.8));
@@ -1387,7 +1411,10 @@ fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
     }
     // The laminate lost two drills per placement.
     let full = 60.0 * 40.0 * 1.6;
-    let drilled = 2.0 * std::f64::consts::PI * (0.3f64.powi(2) + 0.5f64.powi(2)) * 1.6;
+    // The plated hole is drilled wider than its finished 0.6 mm by the
+    // barrel's wall; the bare hole at its size.
+    let plated = 0.3 + pad_outline::PLATING_MM;
+    let drilled = 2.0 * std::f64::consts::PI * (plated.powi(2) + 0.5f64.powi(2)) * 1.6;
     let volume: f64 = substrate.iter().map(|g| g.volume()).sum();
     assert!((volume - (full - drilled)).abs() < 2e-3, "{volume}");
     Ok(())
