@@ -340,6 +340,16 @@ fn failure(code: &str, message: &str) -> Value {
 mod mcp_option_tests {
     use super::*;
 
+    /// `path` made absolute on this platform: Windows needs a drive, so
+    /// `/work` becomes `C:/work` there.
+    fn abs(path: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{path}")
+        } else {
+            path.to_owned()
+        }
+    }
+
     fn parse(args: &[&str]) -> Result<McpOptions> {
         let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
         McpOptions::parse(&args)
@@ -353,14 +363,15 @@ mod mcp_option_tests {
         let policy = parse(&[])?.policy()?;
         assert_eq!(policy.mode, Mode::AutoAllowEdits);
         assert!(policy.folders.is_empty());
-        let policy = parse(&["/work/board/x.pcbcraft"])?.policy()?;
+        let (project, board) = (abs("/work/board/x.pcbcraft"), abs("/work/board"));
+        let policy = parse(&[&project])?.policy()?;
         assert_eq!(policy.mode, Mode::AutoAllowEdits);
-        assert_eq!(policy.folders, [std::path::PathBuf::from("/work/board")]);
-        let gated = parse(&["/work/board/x.pcbcraft"])?.stdio_policy()?;
+        assert_eq!(policy.folders, [std::path::PathBuf::from(&board)]);
+        let gated = parse(&[&project])?.stdio_policy()?;
         assert_eq!(gated.as_ref().map(|p| p.mode), Some(Mode::AutoAllowEdits));
         assert_eq!(
             gated.map(|p| p.folders),
-            Some(vec![std::path::PathBuf::from("/work/board")])
+            Some(vec![std::path::PathBuf::from(&board)])
         );
         assert!(
             parse(&["--operator", "board.pcbcraft"])?
@@ -378,16 +389,16 @@ mod mcp_option_tests {
             "--permission-mode",
             "allow-all",
             "--allow-folder",
-            "/work/out",
-            "/work/board/x.pcbcraft",
+            &abs("/work/out"),
+            &abs("/work/board/x.pcbcraft"),
         ])?;
         let policy = options.policy()?;
         assert_eq!(policy.mode, Mode::AllowAll);
         assert_eq!(
             policy.folders,
             [
-                std::path::PathBuf::from("/work/out"),
-                std::path::PathBuf::from("/work/board")
+                std::path::PathBuf::from(abs("/work/out")),
+                std::path::PathBuf::from(abs("/work/board"))
             ]
         );
         Ok(())

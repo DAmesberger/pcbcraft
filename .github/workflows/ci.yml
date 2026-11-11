@@ -2,10 +2,25 @@ name: CI
 on: [push, pull_request, workflow_dispatch]
 jobs:
   native-and-wasm:
-    runs-on: ubuntu-latest
+    name: native-and-wasm (${{ matrix.os }})
+    strategy:
+      # Each OS reports on its own: a failure on one does not cancel the other.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
+      - name: Cache Cargo registry, git dependencies and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          # The wasm checks build into their own target directories.
+          workspaces: |
+            . -> target
+          cache-all-crates: true
+          # Keep the build when tests fail, so the next run reuses it.
+          cache-on-failure: true
       - name: Verify native code and wasm library
         run: cargo xtask ci

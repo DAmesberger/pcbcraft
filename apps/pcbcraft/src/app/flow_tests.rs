@@ -260,9 +260,10 @@ fn no_internal_command_names_reach_a_person() -> Fallible {
     for file in files {
         let name = file.to_string_lossy();
         // The style checker's own list and its test name them on purpose.
-        if name.ends_with("issues/style.rs")
-            || name.ends_with("issues/tests.rs")
-            || name.ends_with("flow_tests.rs")
+        // Matched by path components, which Windows separates with `\`.
+        if file.ends_with("issues/style.rs")
+            || file.ends_with("issues/tests.rs")
+            || file.ends_with("flow_tests.rs")
         {
             continue;
         }

@@ -84,7 +84,15 @@ fn run() -> Result<()> {
                 "check", "--locked", "-p", "pcbcraft", "-p", "pcbcraft-cli", "--bins", "--profile",
                 "ci",
             ])?;
-            cargo(&["test", "--locked", "--workspace", "--profile", "ci"])?;
+            // Every test binary runs, so one CI run reports all failures.
+            cargo(&[
+                "test",
+                "--locked",
+                "--workspace",
+                "--profile",
+                "ci",
+                "--no-fail-fast",
+            ])?;
             if command == "ci" {
                 wasm()?;
             }
