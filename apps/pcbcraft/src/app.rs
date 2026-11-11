@@ -83,6 +83,9 @@ pub struct App {
     /// The engine revision a toast's Undo would undo; Undo is withdrawn
     /// once another step follows.
     undo_revision: Option<u64>,
+    /// The last undo or redo toast's text: the next one replaces it, so a
+    /// held ⌘Z shows one toast.
+    history_toast: Option<String>,
     /// Browser shown by width, or as the user toggled it (⌘B).
     browser: chrome::BrowserMode,
     /// Whether the last layout showed the Browser.
@@ -262,6 +265,7 @@ impl App {
             system_fonts: false,
             issues: Default::default(),
             undo_revision: None,
+            history_toast: None,
             browser: chrome::BrowserMode::Auto,
             browser_visible: false,
             browser_component: None,
@@ -485,6 +489,24 @@ impl App {
             self.undo_revision = Some(self.engine.revision());
         }
         self.toast(level, shown, actions);
+    }
+
+    /// What an undo or redo did (`done`, "Undid"), by the step's title and
+    /// workspace, as a Messages line and a toast that replaces the last
+    /// one of its kind.
+    fn say_step(&mut self, done: &str, step: pcbcraft_core::Step) {
+        let text = format!(
+            "{done}: {} · {}",
+            step.title,
+            Workspace::from(step.area).label()
+        );
+        self.messages.push(Level::Info, &text, self.now);
+        let shown = refusal::clip(&text, refusal::MAX_SHOWN);
+        if let Some(last) = self.history_toast.take() {
+            self.toasts.remove_newest(&last);
+        }
+        self.toast(Level::Info, shown.clone(), Vec::new());
+        self.history_toast = Some(shown);
     }
 
     /// A toast only: its full text is in Messages already.
@@ -812,22 +834,25 @@ impl App {
         self.browser = self.browser.toggled(self.browser_visible);
     }
 
-    /// Undo or redo one engine step. Undoing an AI assistant's edit says
-    /// so.
+    /// Undo or redo one engine step and say which, by its history title.
+    /// Undoing an AI assistant's edit says so.
     fn history(&mut self, redo: bool) {
-        let assistant = (!redo)
-            .then(|| self.live_edit_at(self.engine.revision()))
-            .flatten();
-        let result = if redo {
-            self.engine.redo()
+        let assistant = !redo && self.live_edit_at(self.engine.revision());
+        let (step, result) = if redo {
+            (self.engine.redo_step(), self.engine.redo())
         } else {
-            self.engine.undo()
+            (self.engine.undo_step(), self.engine.undo())
         };
         match result {
             Ok(()) => {
                 self.clear_error();
-                if let Some(subject) = assistant {
-                    self.say(Level::Info, format!("Undid AI assistant edit: {subject}"));
+                let done = match (redo, assistant) {
+                    (true, _) => "Redid",
+                    (false, true) => "Undid AI assistant edit",
+                    (false, false) => "Undid",
+                };
+                if let Some(step) = step {
+                    self.say_step(done, step);
                 }
             }
             Err(error) => self.command_refused(error, true, None),

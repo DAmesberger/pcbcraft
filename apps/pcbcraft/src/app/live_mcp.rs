@@ -63,8 +63,8 @@ pub(super) struct LiveMcp {
     open: bool,
     /// Why turning on failed, shown in the window.
     failure: Option<String>,
-    /// Revisions assistant edits made, with what they ran, newest last.
-    edits: VecDeque<(u64, &'static str)>,
+    /// Revisions assistant edits made, newest last.
+    edits: VecDeque<u64>,
     place: Place,
 }
 
@@ -255,6 +255,12 @@ impl App {
     /// change is the assistant's: a toast with Undo, and a Messages line.
     fn run_live(&mut self, request: ControlRequest, admitted: &Admitted) {
         let before = self.engine.revision();
+        // An undo or redo says the step it took, as the person's own does.
+        let history = match admitted.subject() {
+            "project.undo" => Some(("AI assistant undid", self.engine.undo_step())),
+            "project.redo" => Some(("AI assistant redid", self.engine.redo_step())),
+            _ => None,
+        };
         let path = self.files.path().map(std::path::Path::to_path_buf);
         let reply = self
             .live
@@ -264,9 +270,15 @@ impl App {
             });
         let _ = request.reply.send(reply);
         let now = self.engine.revision();
-        if now != before {
+        if now != before
+            && let Some((done, step)) = history
+        {
+            if let Some(step) = step {
+                self.say_step(done, step);
+            }
+        } else if now != before {
             let subject = spoken(admitted.subject());
-            self.live.edits.push_back((now, subject));
+            self.live.edits.push_back(now);
             while self.live.edits.len() > REMEMBERED {
                 self.live.edits.pop_front();
             }
@@ -278,15 +290,9 @@ impl App {
         }
     }
 
-    /// The assistant edit an undo at the current revision takes back, by
-    /// its title.
-    pub(super) fn live_edit_at(&self, revision: u64) -> Option<&'static str> {
-        self.live
-            .edits
-            .iter()
-            .rev()
-            .find(|(at, _)| *at == revision)
-            .map(|(_, subject)| *subject)
+    /// Whether an undo at `revision` takes back an assistant edit.
+    pub(super) fn live_edit_at(&self, revision: u64) -> bool {
+        self.live.edits.contains(&revision)
     }
 
     /// The Connect AI assistants window and a held request's question.

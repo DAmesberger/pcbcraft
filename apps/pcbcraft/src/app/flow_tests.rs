@@ -279,6 +279,104 @@ fn no_internal_command_names_reach_a_person() -> Fallible {
     Ok(())
 }
 
+/// `key` let go, so its next press is a new press.
+fn release(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers,
+    }
+}
+
+/// The toasts shown now, oldest first.
+fn toasts(app: &App) -> Vec<String> {
+    app.toasts.items().map(|t| t.text.clone()).collect()
+}
+
+/// ⌘Z in PCB 3D that undoes a schematic step says so, by the step's
+/// title and workspace: it no longer looks as if nothing happened.
+#[test]
+fn undo_in_pcb_names_the_schematic_step_it_took_back() -> Fallible {
+    let mut h = Harness::new()?;
+    h.app.workspace = Workspace::Pcb;
+    h.app.pcb.set_3d(true);
+    h.frame(vec![]);
+    h.frame(vec![press(egui::Key::Z, egui::Modifiers::COMMAND)]);
+    assert!(
+        h.app.engine.project().label(h.label).is_none(),
+        "not undone"
+    );
+    let text = "Undid: Place a label · Schematic";
+    assert_eq!(toasts(&h.app), [text]);
+    assert!(said(&h.app).contains(text), "{}", said(&h.app));
+    Ok(())
+}
+
+/// ⇧⌘Z says what it applied again.
+#[test]
+fn redo_names_the_step_it_applied_again() -> Fallible {
+    let mut h = Harness::new()?;
+    h.app.workspace = Workspace::Pcb;
+    h.frame(vec![]);
+    h.frame(vec![
+        press(egui::Key::Z, egui::Modifiers::COMMAND),
+        release(egui::Key::Z, egui::Modifiers::COMMAND),
+    ]);
+    let shift_cmd = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+    h.frame(vec![press(egui::Key::Z, shift_cmd)]);
+    assert!(
+        h.app.engine.project().label(h.label).is_some(),
+        "not redone"
+    );
+    assert_eq!(toasts(&h.app), ["Redid: Place a label · Schematic"]);
+    Ok(())
+}
+
+/// ⌘Z after ⌘Z undoes step after step with one toast, which names the
+/// latest step; Messages keeps each. (The app acts on presses, not key
+/// repeats, so a key held down undoes once.)
+#[test]
+fn repeated_undo_replaces_its_toast() -> Fallible {
+    let mut h = Harness::new()?;
+    h.app.engine.apply(
+        h.app.engine.revision(),
+        Operation::Schematic(SchematicCommand::MoveLabel {
+            label: h.label,
+            position: crate::schematic_editor::pt([110.0, -100.0]),
+        }),
+    )?;
+    h.frame(vec![]);
+    let cmd = egui::Modifiers::COMMAND;
+    h.frame(vec![press(egui::Key::Z, cmd), release(egui::Key::Z, cmd)]);
+    assert_eq!(toasts(&h.app), ["Undid: Move a label · Schematic"]);
+    h.frame(vec![press(egui::Key::Z, cmd)]);
+    assert_eq!(toasts(&h.app), ["Undid: Place a label · Schematic"]);
+    let said = said(&h.app);
+    assert!(said.contains("Undid: Move a label · Schematic"), "{said}");
+    Ok(())
+}
+
+/// The toast reads the history's own name for the step, so the two never
+/// differ: a step's title and area come from the engine's history.
+#[test]
+fn the_undo_toast_is_the_history_title() -> Fallible {
+    let mut h = Harness::new()?;
+    let step = h.app.engine.undo_step().ok_or("no step to undo")?;
+    assert_eq!(step.title, "Place a label");
+    assert_eq!(step.area, pcbcraft_core::Area::Schematic);
+    h.app.history(false);
+    let toast = format!(
+        "Undid: {} · {}",
+        step.title,
+        Workspace::from(step.area).label()
+    );
+    assert_eq!(toasts(&h.app), [toast]);
+    assert_eq!(h.app.engine.redo_step(), Some(step));
+    Ok(())
+}
+
 /// The demo with a VBUS port on R1's pin 2, whose wire runs to R2's pin 1,
 /// and a GND port on R2's pin 2: the VBUS wire and its middle.
 fn vbus_and_gnd(

@@ -1016,8 +1016,16 @@ impl Session {
                     Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
                 )?)?);
             }
-            Request::Undo(params) => self.engine.undo_at(params.expected_revision)?,
-            Request::Redo(params) => self.engine.redo_at(params.expected_revision)?,
+            Request::Undo(params) => {
+                let step = self.engine.undo_step();
+                self.engine.undo_at(params.expected_revision)?;
+                return self.stepped(step);
+            }
+            Request::Redo(params) => {
+                let step = self.engine.redo_step();
+                self.engine.redo_at(params.expected_revision)?;
+                return self.stepped(step);
+            }
             Request::New(_) => {
                 self.engine.replace_document(EditorFile {
                     version: pcbcraft_core::format::FILE_VERSION,
@@ -1199,6 +1207,14 @@ impl Session {
         let mut reply = self.document_reply();
         reply["outcome"] = serde_json::to_value(outcome)?;
         self.add_rerouted(&mut reply)?;
+        Ok(reply)
+    }
+
+    /// The document state after an undo or redo, with the `step` it took
+    /// back or applied again: its title and area, as the desktop says them.
+    fn stepped(&self, step: Option<pcbcraft_core::Step>) -> Result<Value> {
+        let mut reply = self.document_reply();
+        reply["step"] = serde_json::to_value(step)?;
         Ok(reply)
     }
 

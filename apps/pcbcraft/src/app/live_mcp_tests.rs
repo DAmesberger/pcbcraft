@@ -183,6 +183,9 @@ fn an_assistant_edits_the_open_project_with_shared_undo() -> Fallible {
         h.app.engine.project().vias.len(),
         before.project.vias.len() + 1
     );
+    // The window says what the assistant's redo applied, by its title.
+    assert!(h.said("AI assistant redid: Add a via · PCB"));
+    assert_eq!(redone["result"]["step"]["title"], "Add a via", "{redone}");
     Ok(())
 }
 
