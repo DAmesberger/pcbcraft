@@ -146,7 +146,10 @@ impl Dielectric {
     /// The relative permittivity the impedance model uses: the entered
     /// [`Dielectric::dk`], else a generic FR-4 estimate by glass style
     /// (resin-rich thin styles lower, glass-heavy 7628 higher; typical
-    /// published values near 1 GHz, not a fabricator's data).
+    /// values near 1 GHz, not a fabricator's data). Checked against Isola's
+    /// published 370HR core table (`docs/materials.md`, "Sources"): 106,
+    /// 1080 and 2116 agree within 0.05 (3.81, 4.04, 4.26); 7628 does not
+    /// (Isola 4.36 at 42 % resin), and stays uncited until decided.
     pub fn permittivity(&self) -> f64 {
         self.dk.unwrap_or(match self.glass {
             GlassStyle::Style106 => 3.8,

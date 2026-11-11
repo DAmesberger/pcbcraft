@@ -293,6 +293,10 @@ The core table's source keys are `johnson-christy-1972`, `rakic-1998`, `hoffman`
 - E. D. Palik, *Handbook of Optical Constants of Solids*, and the CRC Handbook of Chemistry and Physics. Refractive indices of epoxy, E-glass and silica; Sn, to confirm the tin estimate.
 - B. Burley, "Physically-Based Shading at Disney" (2012). Perceptual roughness.
 - IPC-4552, ENIG: Ni 3–6 µm, Au 0.04–0.10 µm. IPC-4553, immersion silver.
+- IPC-6012, plated-hole wall copper: 20 µm average for class 2, 25 µm for class 3 (`PLATING_MM`).
+- JLCPCB, [Surface finish](https://jlcpcb.com/help/article/jlcpcb-surface-finish) help page, read 2026-11-11: ENIG and HASL thicknesses.
+- LC-PCB, [Process capability parameter table](https://lc-pcb.com/capabilities), read 2026-11-11: rows 63 (HASL), 64 (OSP) and 66 (immersion silver).
+- Isola, [370HR](https://www.isola-group.com/pcb-laminates-prepreg/370hr/) product page, core data table, read 2026-11-11: Dk at 1 GHz of the standard single-ply cores 1x106 (71 % resin) 3.81, 1x1080 (58 %) 4.04, 1x2116 (47 %) 4.26, 1x7628 (42 %) 4.36. `Dielectric::permittivity`'s estimates when the stackup gives no Dk (106: 3.8, 1080: 4.0, 2116: 4.3) agree with the first three within 0.05; its 7628 value, 4.6, does not and is uncited.
 - Soldermask colour and gloss: NPL MAT 5 (glossmeter readings and thickness), Taiyo PSR-4000 BN DI colour datasheet (exposure energy), Peters Elpemer 2467 report, NCAB, Andy Brown, JLCPCB and circuitstate articles; links in [mask colours](#mask-colours). Public articles and datasheets only.
 - Isola, *Glass Fabric* data sheet (04/2022): style 7628 counts and thickness.
 - Clear-coat layering after the OpenPBR coat model (Academy Software Foundation specification); the shader is Solidcraft's.
