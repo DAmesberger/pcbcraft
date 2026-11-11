@@ -2485,7 +2485,7 @@ pub(crate) fn preview(
         // solved, and a solved part carries its copper.
         let placed = layout::dimensions::follow(project, &mut next, evaluator)?;
         if !placed.is_empty() {
-            layout::dimensions::carry(project, &mut next, graph, &placed)?;
+            layout::dimensions::carry(project, &mut next, graph, &placed, None)?;
         }
         Ok(next)
     });

@@ -1205,9 +1205,18 @@ impl Engine {
         let merge_named = matches!(&operation, Operation::Update(u) if u.merge_named_nets);
         // Parts the operation moves by hand: their attached copper is
         // carried with them, all at once.
+        // Selected loose copper a group drag slides with its parts; the
+        // carry moves it and re-routes it with the rest.
+        let loose = match &operation {
+            Operation::Layout(layout::LayoutCommand::MoveParts {
+                copper: Some(copper),
+                ..
+            }) => Some(copper.clone()),
+            _ => None,
+        };
         let moved_parts: Vec<Id> = match &operation {
             Operation::Layout(layout::LayoutCommand::Move { instance, .. }) => vec![*instance],
-            Operation::Layout(layout::LayoutCommand::MoveParts { moves }) => {
+            Operation::Layout(layout::LayoutCommand::MoveParts { moves, .. }) => {
                 moves.iter().map(|m| m.instance).collect()
             }
             Operation::Layout(
@@ -1435,6 +1444,7 @@ impl Engine {
                     project,
                     &self.copper_graph(),
                     &placed,
+                    loose.as_ref(),
                 )?;
             }
             // Board-following fills take the (possibly changed) outline.

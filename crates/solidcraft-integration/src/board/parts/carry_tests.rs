@@ -166,7 +166,7 @@ fn a_turned_part_carries_its_via_and_track_ends_rigidly() -> Fallible<()> {
     let origin = p.position;
     p.position = [origin[0] + 3.0, origin[1] + 1.0];
     p.rotation_deg += 90.0;
-    carry(&with_via, &mut after, &CopperGraph::of(&with_via), &[r2])?;
+    carry(&with_via, &mut after, &CopperGraph::of(&with_via), &[r2], None)?;
     let landed = pad(&after, r2, 0)?.position;
     let via = after.via(id).ok_or("via")?;
     assert!(close(via.position, landed), "{:?} {landed:?}", via.position);
@@ -183,7 +183,7 @@ fn a_turned_part_carries_its_via_and_track_ends_rigidly() -> Fallible<()> {
     if let Some(p) = after.placements.iter_mut().find(|p| p.instance == r2) {
         p.position = [origin[0] + 3.0, origin[1] + 1.0];
     }
-    carry(&locked, &mut after, &CopperGraph::of(&locked), &[r2])?;
+    carry(&locked, &mut after, &CopperGraph::of(&locked), &[r2], None)?;
     assert_eq!(after.tracks.get(1), locked.tracks.get(1));
     assert!(close(
         after.via(id).ok_or("via")?.position,

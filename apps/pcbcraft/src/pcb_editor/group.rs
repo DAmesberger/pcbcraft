@@ -2,7 +2,8 @@
 //! selection rectangle, ⌘A and a Locate of several tracks, and what the
 //! group does together. One object selected stays the single selection the
 //! rest of the editor reads, so [`Group`] only ever holds two or more.
-//! A group drag is one `layout.move_parts`, Delete one
+//! A group drag is one `layout.move_parts` (its selected tracks and vias
+//! slide with the parts), Delete one
 //! `layout.delete_objects`, Lock one `layout.lock_objects`, and align and
 //! distribute one `layout.align` or `layout.distribute` (the registry's
 //! `pcb.align-*` and `pcb.distribute-*` commands).
@@ -18,7 +19,7 @@ use super::{BoardView, PcbEditor, Placement, body_polygon, fill_paint, opposite}
 use crate::commands::PcbArrange;
 use crate::kit;
 use egui::{Pos2, Ui};
-use pcbcraft_core::layout::arrange::PartMove;
+use pcbcraft_core::layout::arrange::{CopperMove, PartMove};
 use pcbcraft_core::layout::several::Objects;
 use pcbcraft_core::layout::{self, LayoutCommand};
 use pcbcraft_core::{Id, Operation, Point, Project};
@@ -431,7 +432,16 @@ impl PcbEditor {
                 layer: p.layer,
             })
             .collect();
-        Some(Operation::Layout(LayoutCommand::MoveParts { moves }))
+        // The selected tracks and vias come along; the engine carries those
+        // attached to a moved part with it and slides the rest.
+        let copper = (!self.group.tracks.is_empty() || !self.group.vias.is_empty()).then(|| {
+            CopperMove {
+                tracks: self.group.tracks.iter().copied().collect(),
+                vias: self.group.vias.iter().copied().collect(),
+                by: drag.by,
+            }
+        });
+        Some(Operation::Layout(LayoutCommand::MoveParts { moves, copper }))
     }
 
     /// Flip every part of the group to the other side, in place: one
@@ -449,7 +459,10 @@ impl PcbEditor {
                 layer: opposite(p.layer),
             })
             .collect();
-        (!moves.is_empty()).then_some(Operation::Layout(LayoutCommand::MoveParts { moves }))
+        (!moves.is_empty()).then_some(Operation::Layout(LayoutCommand::MoveParts {
+            moves,
+            copper: None,
+        }))
     }
 
     /// The group's Delete: its tracks, vias and fills in one undo step.

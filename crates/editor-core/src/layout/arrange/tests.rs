@@ -256,6 +256,7 @@ fn move_parts_carries_the_copper_between_them() -> Fallible {
                     layer: Layer::Top,
                 })
                 .to_vec(),
+            copper: None,
         })
     };
     engine.apply(engine.revision(), moves([2.0, 3.0]))?;
