@@ -8,6 +8,11 @@
 //! `height` become `radius_nm`, `offset_nm` and `height_nm`. Rounding is
 //! the app's own, half away from zero (`units::Nm::from_mm_f64_rounded`).
 //!
+//! Rule profiles as files ([`crate::convert_rules`]): the old profile
+//! snapshot becomes `--profile FILE.json`'s profile, or, for one the user
+//! entered from a fabricator, the same values in the new form. An old
+//! profile library file (`FILE.json`) converts in place too.
+//!
 //! A value already converted is left alone, so running it twice changes
 //! nothing. The file is replaced atomically, after the original is copied
 //! to `FILE.pre-nm` (never overwritten). Other entries are copied raw.
@@ -23,13 +28,24 @@ const MAX_DOCUMENT_BYTES: u64 = 16 * 1024 * 1024;
 /// `units::MAX_COORD_NM`.
 const MAX_COORD_NM: f64 = 2_000_000_000.0;
 
-pub fn run(paths: &[String]) -> Result<()> {
+pub fn run(args: &[String]) -> Result<()> {
+    const USAGE: &str =
+        "usage: cargo xtask convert-v1 [--profile PROFILE.json] FILE.pcbcraft|OLD_PROFILE.json…";
+    let (pinned, paths) = match args {
+        [flag, profile, rest @ ..] if flag == "--profile" => (Some(read_profile(profile)?), rest),
+        _ => (None, args),
+    };
     if paths.is_empty() {
-        return Err("usage: cargo xtask convert-v1 FILE.pcbcraft…".into());
+        return Err(USAGE.into());
     }
     for path in paths {
         let path = Path::new(path);
-        let changed = convert_file(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let changed = if path.extension().is_some_and(|e| e == "json") {
+            convert_json(path)
+        } else {
+            convert_file(path, pinned.as_ref())
+        }
+        .map_err(|e| format!("{}: {e}", path.display()))?;
         if changed == 0 {
             println!("{}: already current", path.display());
         } else {
@@ -49,8 +65,31 @@ fn backup(path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// The `profile` of a new-format profile file.
+fn read_profile(path: &str) -> Result<Value> {
+    let file: Value = serde_json::from_slice(&fs::read(path)?)?;
+    let profile = file
+        .get("profile")
+        .filter(|p| file["format"] == 1 && p.get("source").is_some() && p.get("rules").is_some())
+        .ok_or_else(|| format!("{path} is not a format 1 rule profile file with a source"))?;
+    Ok(profile.clone())
+}
+
+/// Converts an old profile library file in place.
+fn convert_json(path: &Path) -> Result<usize> {
+    let original = fs::read(path)?;
+    let mut file: Value = serde_json::from_slice(&original)?;
+    let changed = crate::convert_rules::convert_profile_file(&mut file)?;
+    if changed > 0 {
+        let mut bytes = serde_json::to_vec_pretty(&file)?;
+        bytes.push(b'\n');
+        replace(path, &original, &bytes)?;
+    }
+    Ok(changed)
+}
+
 /// Converts one container in place; the number of values changed.
-fn convert_file(path: &Path) -> Result<usize> {
+fn convert_file(path: &Path, pinned: Option<&Value>) -> Result<usize> {
     let original = fs::read(path)?;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&original[..]))?;
     let mut document = Vec::new();
@@ -69,7 +108,8 @@ fn convert_file(path: &Path) -> Result<usize> {
         .get_mut("project")
         .and_then(Value::as_object_mut)
         .ok_or("the document has no project")?;
-    let changed = convert_project(project)?;
+    let changed =
+        convert_project(project)? + crate::convert_rules::convert_project_rules(project, pinned)?;
     if changed == 0 {
         return Ok(0);
     }
@@ -91,21 +131,27 @@ fn convert_file(path: &Path) -> Result<usize> {
         }
     }
     let bytes = out.finish()?.into_inner();
+    replace(path, &original, &bytes)?;
+    Ok(changed)
+}
 
+/// Replace `path` with `bytes` atomically, after keeping `original` as
+/// its backup (never overwritten).
+fn replace(path: &Path, original: &[u8], bytes: &[u8]) -> Result<()> {
     let backup = backup(path);
     if !backup.exists() {
-        fs::write(&backup, &original)?;
+        fs::write(&backup, original)?;
     }
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(".convert-tmp");
     let temporary = PathBuf::from(temporary);
     {
         let mut f = fs::File::create(&temporary)?;
-        f.write_all(&bytes)?;
+        f.write_all(bytes)?;
         f.sync_all()?;
     }
     fs::rename(&temporary, path)?;
-    Ok(changed)
+    Ok(())
 }
 
 /// Rewrites the schematic's stored lengths; the number of values changed.
