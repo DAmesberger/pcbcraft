@@ -25,7 +25,7 @@ pub(crate) mod geom;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use checks::{Fresh, fresh};
+pub(crate) use checks::{Fresh, fresh, fresh_on};
 pub use checks::{fill_label, findings};
 pub(crate) use geom::RegionIndex;
 
