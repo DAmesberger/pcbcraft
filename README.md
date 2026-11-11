@@ -28,7 +28,7 @@ Parts, schematic, board layout and 3D in one app, on [Solidcraft](https://github
   </tr>
   <tr>
     <td><img src="docs/media/realistic.webp" alt="The board in the realistic studio view, orbiting"><br><b>Realistic 3D.</b> The same model in a studio look, one key away.</td>
-    <td><img src="docs/media/3d-layers.webp" alt="The 3D board peeled layer by layer"><br><b>Real copper.</b> Peel the stackup layer by layer; copper, holes and fills are solids.</td>
+    <td><img src="docs/media/3d-layers.webp" alt="The 3D board in the realistic view, peeled layer by layer down to the laminate"><br><b>Real copper.</b> Peel the stackup layer by layer, in the realistic view too; copper, holes and fills are solids.</td>
   </tr>
   <tr>
     <td><img src="docs/media/timelapse.webp" alt="A new design from schematic to a placed, routed board in 3D, sped up"><br><b>End to end.</b> Schematic, placement, routing, fills and 3D in one app (sped up).</td>
