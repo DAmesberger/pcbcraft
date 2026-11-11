@@ -25,6 +25,9 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         | "board.edge_clearance"
         | "board.hole_clearance"
         | "board.outside_outline"
+        | "board.pad_hole_clearance"
+        | "board.pad_hole_spacing"
+        | "board.pth_annular_ring"
         | "board.via_annular_ring"
         | "board.via_aspect_ratio"
         | "board.via_drill_clearance"
@@ -74,6 +77,9 @@ pub fn group_title(code: &str) -> String {
         "board.via_aspect_ratio" => "Via aspect ratio too high",
         "board.edge_clearance" => "Too close to the board edge",
         "board.hole_clearance" => "Too close to a mounting hole",
+        "board.pad_hole_clearance" => "Pad holes too close to copper",
+        "board.pad_hole_spacing" => "Pad holes too close to other holes",
+        "board.pth_annular_ring" => "Thin plated-hole annular rings",
         "board.courtyard_clearance" => "Courtyards too close",
         "fill.clearance" => "Fill clearance",
         "fill.empty" => "Empty fills",
@@ -198,7 +204,9 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "board.track_dangling" => "Route the end to copper of its net or delete the track",
         "board.via_drill_size" | "board.via_aspect_ratio" => "Enlarge the via drill",
         "board.edge_clearance" => "Move it away from the edge",
-        "board.hole_clearance" => "Move the copper away from the hole",
+        "board.hole_clearance" | "board.pad_hole_clearance" => "Move the copper away from the hole",
+        "board.pad_hole_spacing" => "Move the part or the other hole",
+        "board.pth_annular_ring" => "Enlarge the pad or shrink its hole",
         "board.courtyard_clearance" => "Move the parts apart",
         "fill.clearance" | "fill.stale" => "Refill the fill",
         "fill.empty" => "Enlarge the fill outline or lower its priority",
@@ -457,7 +465,10 @@ pub const KNOWN_CODES: &[&str] = &[
     "board.edge_clearance",
     "board.hole_clearance",
     "board.outside_outline",
+    "board.pad_hole_clearance",
+    "board.pad_hole_spacing",
     "board.param_idle",
+    "board.pth_annular_ring",
     "board.reference_inexact",
     "board.reference_lost",
     "board.shape_invalid",

@@ -42,6 +42,7 @@ pub mod limits;
 pub mod meander;
 pub mod obstacles;
 pub mod outline;
+mod pad_hole;
 pub mod pair;
 mod part;
 mod placed;

@@ -143,6 +143,21 @@ fn clearance(ctx: &mut Ctx<'_>, fill: &Fill, label: &str, out: &mut Vec<Finding>
     // (object, outline ring, required gap)
     let mut objects: Vec<(ObjectRef, Vec<Point>, f64)> = Vec::new();
     for pad in &ctx.pads {
+        // Holes pass through every layer: any but a plated hole of the
+        // fill's own net (drilled out of the copper it joins) is a short
+        // or a drill through copper.
+        for hole in pad.holes() {
+            if !hole.plated || other(pad.net) {
+                objects.push((
+                    ObjectRef::Pad {
+                        instance: pad.instance,
+                        pad: pad.pad.id,
+                    },
+                    hole.shape.flatten(FILL_CHORD_MM),
+                    0.0,
+                ));
+            }
+        }
         if pad.on_copper(fill.layer) && other(pad.net) {
             let gap = ctx.required(fill, CopperObject::Pad, pad.net);
             objects.push((

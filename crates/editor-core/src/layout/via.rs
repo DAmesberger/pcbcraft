@@ -272,6 +272,41 @@ pub(super) fn check_clearance(project: &Project, id: Id) -> Result<()> {
     Ok(())
 }
 
+/// Every copper shape a drilled hole is checked against, with its object,
+/// kind and net, in the order findings name them (pads, vias, tracks).
+/// `track_rings` are `project`'s tracks' outlines, in document order.
+pub(super) fn drilled_copper<'a>(
+    copper: &'a BoardCopper,
+    project: &Project,
+    track_rings: &'a [CopperRing],
+) -> Vec<(&'a CopperRing, ObjectRef, CopperObject, Id)> {
+    let mut shapes = Vec::new();
+    for (k, pad) in copper.pads().iter().enumerate() {
+        if let Some(ring) = copper.ring(k) {
+            let object = ObjectRef::Pad {
+                instance: pad.instance,
+                pad: pad.pad,
+            };
+            shapes.push((ring, object, CopperObject::Pad, pad.net));
+        }
+    }
+    for (k, via) in copper.vias().iter().enumerate() {
+        if let Some(ring) = copper.via_ring(k) {
+            shapes.push((
+                ring,
+                ObjectRef::Via { id: via.id },
+                CopperObject::Via,
+                via.net,
+            ));
+        }
+    }
+    for (track, ring) in project.tracks.iter().zip(track_rings) {
+        let object = ObjectRef::Track { id: track.id };
+        shapes.push((ring, object, CopperObject::Track, track.net));
+    }
+    shapes
+}
+
 /// The via manufacturing checks over `copper`'s vias: drill size, annular
 /// ring, aspect ratio, drilled hole to another net's copper on any layer,
 /// hole to hole and drill to board edge; then each mounting hole of the
@@ -305,32 +340,7 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
         }
         over
     };
-    // Every copper shape a drill is checked against, in the order findings
-    // name them (pads, vias, tracks), filed by its bounds.
-    let mut copper_shapes: Vec<(&CopperRing, ObjectRef, CopperObject, Id)> = Vec::new();
-    for (k, pad) in copper.pads().iter().enumerate() {
-        if let Some(ring) = copper.ring(k) {
-            let object = ObjectRef::Pad {
-                instance: pad.instance,
-                pad: pad.pad,
-            };
-            copper_shapes.push((ring, object, CopperObject::Pad, pad.net));
-        }
-    }
-    for (k, via) in vias.iter().enumerate() {
-        if let Some(ring) = copper.via_ring(k) {
-            copper_shapes.push((
-                ring,
-                ObjectRef::Via { id: via.id },
-                CopperObject::Via,
-                via.net,
-            ));
-        }
-    }
-    for (track, ring) in tracks.iter().zip(&track_rings) {
-        let object = ObjectRef::Track { id: track.id };
-        copper_shapes.push((ring, object, CopperObject::Track, track.net));
-    }
+    let copper_shapes = drilled_copper(copper, project, &track_rings);
     let reach = check_reach(&limits);
     let shapes = BoundsGrid::new(copper_shapes.iter().map(|s| s.0.bounds), reach);
     let holes = BoundsGrid::new(drills.iter().map(|d| d.bounds), reach);
@@ -523,7 +533,12 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
 
 /// A copper object in a mounting-hole message, named by its part or net:
 /// "U1 pad 1 on GND", "a track on GND", "a via on VCC".
-fn copper_words(project: &Project, object: &ObjectRef, kind: CopperObject, net: Id) -> String {
+pub(super) fn copper_words(
+    project: &Project,
+    object: &ObjectRef,
+    kind: CopperObject,
+    net: Id,
+) -> String {
     let net = project.net_name(net);
     match *object {
         ObjectRef::Pad { instance, pad } => {
