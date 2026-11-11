@@ -509,8 +509,24 @@ pub enum Action {
     /// Make layer `n` of the stackup (0: the top) the active copper layer;
     /// while routing, change to it through a via.
     PcbLayer(usize),
+    /// Open one of the PCB's docked setup dialogs, as the Board card's
+    /// button does.
+    PcbDialog(PcbDialog),
     /// A key of a gesture: shown, never run from the palette.
     Key,
+}
+
+/// The PCB's docked setup dialogs the Board card opens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PcbDialog {
+    /// Board card › Rules…
+    Rules,
+    /// Board card › Copper › Stackup…
+    Stackup,
+    /// Board card › Net classes › Edit…
+    NetClasses,
+    /// Board card › High speed › Edit…
+    HighSpeed,
 }
 
 /// A copper layer a command names: by its name, or by its place in the
@@ -933,6 +949,12 @@ impl Registry {
                 (score > 0).then_some((score, c))
             })
             .collect();
+        // Letters in order are a fallback: once a command matches by a
+        // word or a substring, scattered-letter hits ("drc" in "Draw
+        // arc") would only bury it.
+        if hits.iter().any(|(score, _)| *score >= WORD_MATCH) {
+            hits.retain(|(score, _)| *score >= WORD_MATCH);
+        }
         hits.sort_by(|(sa, a), (sb, b)| {
             let rank = |s: &u32, c: &Command| {
                 // Recent and in-context commands rank first among equals;
@@ -952,6 +974,10 @@ impl Registry {
         hits.into_iter().map(|(_, c)| c).collect()
     }
 }
+
+/// The least [`match_score`] of a match by a word or a substring of the
+/// title, keywords or id; lower scores are letters found in order.
+const WORD_MATCH: u32 = 300;
 
 /// How well `q` (lower case) finds `command`: its title first, then its
 /// keywords, context and id. 0: no match.
@@ -1110,6 +1136,9 @@ fn defaults() -> Vec<Command> {
         Command::new(id, title, context, Action::Key)
             .chord(chord)
             .in_place()
+    };
+    let dialog = |id: &str, title: &str, dialog: PcbDialog| {
+        Command::new(id, title, C::Pcb, Action::PcbDialog(dialog))
     };
     let view = |id: &str, title: &str, context: Context, toggle: PcbView| {
         Command::new(id, title, context, Action::Pcb(toggle))
@@ -1694,6 +1723,18 @@ fn defaults() -> Vec<Command> {
         )
         .icon("export")
         .keywords("gerber drill excellon fabrication manufacturing bom pick place zip"),
+        dialog("pcb.rules", "Design rules…", PcbDialog::Rules)
+            .icon("params")
+            .keywords("drc clearance checks track width annular ring profile"),
+        dialog("pcb.stackup", "Stackup…", PcbDialog::Stackup)
+            .icon("plane")
+            .keywords("copper layers dielectric prepreg core thickness impedance"),
+        dialog("pcb.net-classes", "Net classes…", PcbDialog::NetClasses)
+            .icon("plane")
+            .keywords("netclass track width clearance via drill"),
+        dialog("pcb.high-speed", "High speed…", PcbDialog::HighSpeed)
+            .icon("trace")
+            .keywords("differential diff pair length group matching skew impedance"),
         tool(
             "pcb.board-shape",
             "Board shape",

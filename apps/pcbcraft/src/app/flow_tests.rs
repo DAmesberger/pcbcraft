@@ -376,3 +376,42 @@ fn opening_another_project_closes_the_production_dialog() -> Fallible {
     assert!(!h.app.pcb.production_open(), "{}", said(&h.app));
     Ok(())
 }
+
+/// Night round 3 (R3-3): ⌘P finds the Board card's setup dialogs by name
+/// and by the words a designer types ("drc", "stackup", "net class",
+/// "diff pair"), and running one opens that dialog on the PCB, from
+/// another workspace and over an open Production dialog.
+#[test]
+fn the_palette_opens_the_board_setup_dialogs() -> Fallible {
+    use crate::commands::PcbDialog as D;
+    let mut h = Harness::new()?;
+    for (query, id, dialog) in [
+        ("drc", "pcb.rules", D::Rules),
+        ("design rules", "pcb.rules", D::Rules),
+        ("stackup", "pcb.stackup", D::Stackup),
+        ("net class", "pcb.net-classes", D::NetClasses),
+        ("diff pair", "pcb.high-speed", D::HighSpeed),
+        ("high speed", "pcb.high-speed", D::HighSpeed),
+    ] {
+        h.app.workspace = Workspace::Pcb;
+        let active = h.app.active_contexts();
+        let hits = h.app.registry.search(query, &[], &active);
+        // Letters in order ("drc" in "Draw arc") do not bury it.
+        assert!(
+            hits.iter().all(|c| !c.id.starts_with("symbol.draw")),
+            "{query}: {:?}",
+            hits.iter().map(|c| c.id.as_str()).collect::<Vec<_>>()
+        );
+        let first = hits.first().map(|c| c.id.clone());
+        assert_eq!(first.as_deref(), Some(id), "{query}");
+        h.app.workspace = Workspace::Schematic;
+        h.app.pcb.on_tool("production", &h.app.engine);
+        let ctx = h.ctx.clone();
+        h.app.run_command(&ctx, id);
+        h.frame(vec![]);
+        assert_eq!(h.app.workspace, Workspace::Pcb, "{query}");
+        assert_eq!(h.app.pcb.open_dialog_now(), Some(dialog), "{query}");
+        assert!(!h.app.pcb.production_open(), "{query}");
+    }
+    Ok(())
+}

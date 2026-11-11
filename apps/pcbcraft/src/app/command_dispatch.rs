@@ -236,6 +236,7 @@ impl App {
                     .map(|_| ())
                     .map_err(str::to_owned)
             }
+            Action::PcbDialog(_) => Ok(()),
             Action::Ribbon(workspace, event) => ribbons
                 .iter()
                 .find(|r| r.workspace == workspace)
@@ -270,6 +271,10 @@ impl App {
             Action::PcbLayer(index) => {
                 self.enter(Workspace::Pcb);
                 self.pcb.select_layer(index);
+            }
+            Action::PcbDialog(dialog) => {
+                self.enter(Workspace::Pcb);
+                self.pcb.open_dialog(dialog, self.engine.project());
             }
             Action::Key => {}
         }
