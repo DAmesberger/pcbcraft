@@ -1336,8 +1336,15 @@ fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
                     );
                     assert!(!inside(&bodies, on_board(pad, [0.2, 0.0]), z), "bore");
                 }
-                let wall = on_board(pad, [0.2 + 0.3 - PLATING_MM / 2.0, 0.0]);
+                // The hole's 0.6 mm is its finished size: open to it, with
+                // the barrel outside it in a hole drilled wider.
+                let wall = on_board(pad, [0.2 + 0.3 + pad_outline::PLATING_MM / 2.0, 0.0]);
                 assert!(inside(&bodies, wall, 0.8), "barrel");
+                let finished = on_board(pad, [0.2 + 0.3 - 0.005, 0.0]);
+                assert!(
+                    !inside(&bodies, finished, 0.8),
+                    "the bore is the finished size"
+                );
                 assert!(!inside(&substrate, wall, 0.8), "barrel inside the laminate");
                 assert!(!inside(&bodies, on_board(pad, [0.2, 0.0]), 0.8));
                 assert!(!inside(&substrate, on_board(pad, [0.2, 0.0]), 0.8));
@@ -1382,7 +1389,10 @@ fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
     }
     // The laminate lost two drills per placement.
     let full = 60.0 * 40.0 * 1.6;
-    let drilled = 2.0 * std::f64::consts::PI * (0.3f64.powi(2) + 0.5f64.powi(2)) * 1.6;
+    // The plated hole is drilled wider than its finished 0.6 mm by the
+    // barrel's wall; the bare hole at its size.
+    let plated = 0.3 + pad_outline::PLATING_MM;
+    let drilled = 2.0 * std::f64::consts::PI * (plated.powi(2) + 0.5f64.powi(2)) * 1.6;
     let volume: f64 = substrate.iter().map(|g| g.volume()).sum();
     assert!((volume - (full - drilled)).abs() < 2e-3, "{volume}");
     Ok(())

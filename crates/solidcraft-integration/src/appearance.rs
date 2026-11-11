@@ -250,9 +250,9 @@ pub struct ViaMark {
 }
 
 impl ViaMark {
-    /// The finished bore radius: the drill less its plating.
+    /// The finished bore radius: the via's stated (finished) drill.
     pub fn bore(&self) -> f64 {
-        self.drill / 2.0 - crate::pad_outline::PLATING_MM
+        self.drill / 2.0
     }
 
     /// Whether the mask covers the via on `side` of `board`.

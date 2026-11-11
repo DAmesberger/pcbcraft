@@ -131,7 +131,9 @@ fn inner_copper_and_via_barrels_are_saved_copper_at_their_stackup_heights() -> R
         let high = copper.iter().map(|g| g.max[2]).fold(f64::MIN, f64::max);
         near(low, -0.035);
         near(high, stackup.dielectric_mm() + 0.035);
-        let (r, d, b) = (0.3, 0.15, 0.15 - pad_outline::PLATING_MM);
+        // The 0.3 mm drill is the finished bore; the barrel lines a hole
+        // drilled wider by its wall.
+        let (r, d, b) = (0.3, 0.15 + pad_outline::PLATING_MM, 0.15);
         let pi = std::f64::consts::PI;
         let barrel = pi * (d * d - b * b) * stackup.dielectric_mm();
         let outer = 2.0 * pi * (r * r - b * b) * 0.035;
@@ -172,7 +174,8 @@ fn the_laminate_is_physical_around_inner_copper_and_drills() -> Result<()> {
     // the track's 10 × 0.3 rectangle and the two ring discs less what of
     // each the track already covers; the drills go through everything.
     let disc = pi * 0.3 * 0.3;
-    let drill = pi * 0.15 * 0.15;
+    let drilled = 0.15 + crate::pad_outline::PLATING_MM;
+    let drill = pi * drilled * drilled;
     let removed = baseline_removed(&project)?;
     let expected =
         laminate(&baseline) - 2.0 * drill * t - 2.0 * removed * foil + 2.0 * 2.0 * drill * foil;
@@ -308,6 +311,8 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
     assert_eq!(hit([30.0, 20.0]), Some(BodyKind::MaskCap));
     assert_eq!(hit([40.25, 20.0]), Some(BodyKind::PadFinish));
     assert_eq!(hit([40.0 + 0.117, 20.0]), Some(BodyKind::ViaBore));
+    // The bore is open to the finished drill (0.15 mm radius).
+    assert_eq!(hit([40.0 + 0.14, 20.0]), Some(BodyKind::ViaBore));
     // Straight into the drill, the hole is dark, though the inner tracks
     // end at its centre.
     assert_eq!(hit([40.0, 20.0]), Some(BodyKind::ViaBore));
