@@ -583,7 +583,7 @@ impl SchematicEditor {
             }
             Grab::Segment(_) if double => {
                 let path = schematic::wire_path(project, project.wire(wire)?)?;
-                let on_grid = on_wire_snapped(project, wire, at, engine.drafts().grid.symbol_mm)?;
+                let on_grid = on_wire_snapped(project, wire, at, engine.drafts().grid.symbol_mm())?;
                 let on = schematic::nearest_on_wire(project, wire, at)?;
                 let (at, new) = wire_edit::insert_corner(&path, on_grid)
                     .map(|(_, new)| (on_grid, new))

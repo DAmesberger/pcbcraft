@@ -225,9 +225,9 @@ fn a_shrunk_array_retires_its_keys_and_still_passes_the_key_rule() -> Result<()>
 }
 
 #[test]
-fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() {
+fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() -> Result<()> {
     use crate::geometry::{Shape, Transform2};
-    use crate::library::{ApertureId, Hole, HoleShape, PadVia, PasteRule, PasteWindow};
+    use crate::library::{ApertureId, Hole, HoleShape, PadVia, PasteRule, PasteWindow, ShapeNm};
     let mut pad = Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", [1.0, 2.0], [2.0, 1.0]);
     pad.rotation_deg = 180.0;
     pad.hole = Some(Hole {
@@ -246,10 +246,10 @@ fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() {
     }];
     pad.paste = PasteRule::Windows(vec![PasteWindow {
         id: ApertureId(2),
-        shape: Shape::Circle {
+        shape: crate::tests::support::shape_nm(Shape::Circle {
             center: [0.6, 0.0],
             radius: 0.1,
-        },
+        }),
     }]);
     let world = |p: &Pad, v: [f64; 2]| {
         Transform2 {
@@ -260,7 +260,7 @@ fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() {
         .apply(v)
     };
     let before = pad.clone();
-    pad.fold_rotation();
+    pad.fold_rotation()?;
     assert_eq!(pad.rotation_deg, 0.0);
     let hole = |p: &Pad| p.hole.map(|h| h.offset).unwrap_or_default();
     assert_eq!(world(&pad, hole(&pad)), world(&before, hole(&before)));
@@ -274,7 +274,7 @@ fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() {
     ));
     let centre = |p: &Pad| match &p.paste {
         PasteRule::Windows(w) => match w[0].shape {
-            Shape::Circle { center, .. } => center,
+            ShapeNm::Circle { center, .. } => center.to_mm_f64(),
             _ => [f64::NAN; 2],
         },
         _ => [f64::NAN; 2],
@@ -294,6 +294,7 @@ fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() {
         },
     };
     let unfolded = d.clone();
-    d.fold_rotation();
+    d.fold_rotation()?;
     assert_eq!(d, unfolded);
+    Ok(())
 }

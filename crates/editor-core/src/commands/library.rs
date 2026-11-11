@@ -9,6 +9,7 @@ use crate::library::Bundle;
 use crate::library::footprint_edit::{self, AssignRule};
 use crate::library::footprint_source::FootprintEdit;
 use crate::library::graphics::GraphicEdit;
+use crate::library::graphics::GridParams;
 use crate::library::import::{self, OtherRevision, PlaceSource};
 use crate::library::model3d::ImportModel;
 use crate::library::package_fit::{self, FitRotation, LeadPair};
@@ -79,9 +80,10 @@ pub enum LibraryCommand {
     },
     /// Replace the authoring grid (an undoable editor setting saved with the
     /// drafts). Geometry never moves; the outcome lists draft pins that are
-    /// now off the symbol grid.
+    /// now off the symbol grid. Pitches are millimetres on the wire (a
+    /// number, or text with a unit).
     #[serde(rename = "library.set_grid")]
-    SetGrid { grid: Grid },
+    SetGrid { grid: GridParams },
     /// Replace the project's symbol drawing conventions, such as the resistor
     /// style new generated symbols use. An undoable authoring setting saved
     /// with the drafts. Existing symbols never change.
@@ -850,6 +852,7 @@ pub(crate) fn apply_library(
             Ok(Outcome::None)
         }
         LibraryCommand::SetGrid { grid } => {
+            let grid = Grid::from(grid);
             let drafts = Arc::make_mut(&mut document.drafts);
             drafts::set_grid(drafts, grid)?;
             let off_grid = drafts
@@ -864,7 +867,7 @@ pub(crate) fn apply_library(
                         .units
                         .iter()
                         .flat_map(|u| u.pins.iter())
-                        .filter(|p| !library::graphics::on_grid(p.position, grid.symbol_mm))
+                        .filter(|p| !library::graphics::on_grid(p.position_mm(), grid.symbol_mm()))
                         .map(move |p| OffGridPin {
                             draft,
                             terminal: p.terminal,

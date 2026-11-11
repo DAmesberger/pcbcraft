@@ -802,7 +802,7 @@ fn packaged_engine(
             footprint: FootprintRef::new(footprint, first),
             binding: BindingRef::new(binding, first),
         },
-    );
+    )?;
     engine.apply(
         engine.revision(),
         Operation::Library(LibraryCommand::Edit { edits }),

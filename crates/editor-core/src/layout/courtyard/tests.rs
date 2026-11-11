@@ -3,7 +3,7 @@ use crate::diagnostics::Result;
 use crate::ids::GraphicId;
 use crate::layout::{LayoutCommand, apply};
 use crate::library::graphics::{DrawingLayer, Fill, FootprintGraphic, Item, Side};
-use crate::tests::support::by_designator;
+use crate::tests::support::{by_designator, nm, shape_nm};
 use crate::{Engine, Error};
 
 /// The demo board with every footprint given a 4 × 2 mm courtyard around
@@ -25,8 +25,8 @@ fn board(gap: f64, layers: [Layer; 2]) -> Result<(Project, Id, Id)> {
             layer: DrawingLayer::Courtyard,
             side: Side::Component,
             item: Item::Shape {
-                shape: Shape::rect([x - 2.0, y - 1.0], [x + 2.0, y + 1.0]),
-                width: 0.05,
+                shape: shape_nm(Shape::rect([x - 2.0, y - 1.0], [x + 2.0, y + 1.0])),
+                width_nm: nm(0.05),
                 fill: Fill::None,
             },
         });

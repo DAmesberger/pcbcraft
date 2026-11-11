@@ -221,7 +221,7 @@ fn row_pad(id: PadId, row: &PadRow, package: &PackageDefinition) -> Result<Pad> 
         paste: PasteRule::Inherit,
         vias: Vec::new(),
     };
-    pad.fold_rotation();
+    pad.fold_rotation()?;
     Ok(pad)
 }
 

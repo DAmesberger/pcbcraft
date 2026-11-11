@@ -145,7 +145,7 @@ fn extent(project: &Project, placement: Id) -> Result<Bounds> {
         .filter(|g| g.layer == DrawingLayer::Courtyard)
         .filter_map(|g| match &g.item {
             Item::Shape { shape, .. } if shape.is_closed() => {
-                Some(shape.transformed(&to_part).flatten(CHORD_MM))
+                Some(shape.to_mm().transformed(&to_part).flatten(CHORD_MM))
             }
             _ => None,
         })

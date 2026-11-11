@@ -1754,7 +1754,7 @@ impl SchematicEditor {
                         project,
                         unit,
                         rect,
-                        engine.drafts().grid.symbol_mm,
+                        engine.drafts().grid.symbol_mm(),
                     ))
                 {
                     output = Some(Operation::Instance(InstanceCommand::Place(NewInstance {
@@ -1848,7 +1848,7 @@ impl SchematicEditor {
         let screen = |p: Point| view.screen(p);
         // Occurrence origins snap to the symbol grid, so on-grid pins land
         // on it too.
-        let grid = engine.drafts().grid.symbol_mm;
+        let grid = engine.drafts().grid.symbol_mm();
         let world = |p: Pos2| snap(view.world(p), grid);
         self.pointer = response.hover_pos().map(world);
         let painter = ui.painter_at(rect);
@@ -3184,6 +3184,18 @@ pub(crate) fn nm(mm: f64) -> pcbcraft_core::units::Nm {
     pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
 
+/// A shape a test writes in mm, as a library stores it; test shapes lie
+/// within the range.
+#[cfg(test)]
+pub(crate) fn shape_nm(shape: pcbcraft_core::geometry::Shape) -> pcbcraft_core::library::ShapeNm {
+    pcbcraft_core::library::ShapeNm::from_mm_rounded(&shape).unwrap_or(
+        pcbcraft_core::library::ShapeNm::Line {
+            a: PointNm::default(),
+            b: PointNm::default(),
+        },
+    )
+}
+
 /// Where a Wire tool target sits on the sheet.
 fn target_position(project: &Project, target: WireTarget) -> Option<Point> {
     match target {
@@ -4427,7 +4439,7 @@ mod tests {
             return Err(format!("expected one move, got {operations:?}").into());
         };
         assert_eq!(*position, pt([-10.0, 0.0]));
-        let grid = engine.drafts().grid.symbol_mm;
+        let grid = engine.drafts().grid.symbol_mm();
         assert!(
             position
                 .to_mm_f64()

@@ -1105,7 +1105,10 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
         if let Some(Definition::Symbol(symbol)) = draft(1) {
             for pin in symbol.units.iter().flat_map(|u| &u.pins) {
                 assert!(
-                    crate::library::graphics::on_grid(pin.position, engine.drafts().grid.symbol_mm),
+                    crate::library::graphics::on_grid(
+                        pin.position_mm(),
+                        engine.drafts().grid.symbol_mm()
+                    ),
                     "{name}: a symbol pin off the authoring grid"
                 );
             }

@@ -200,10 +200,47 @@ pub fn check() -> Result<()> {
 /// 10 November 2026).
 const SOLIDCRAFT: &str = "Solidcraft parameter: Solidcraft computes in f64 mm; converted only at the pcbcraft-solidcraft boundary";
 
+/// Why a computed value may stay f64 millimetres.
+const COMPUTED: &str =
+    "a reply value, computed and never stored: replies carry millimetres (design §2.2)";
+
+/// Why the computing shape stays f64 millimetres.
+const COMPUTING_SHAPE: &str = "the computing shape (flattening, fillets, bounds, hit tests, transforms) and reply value; libraries store library::ShapeNm (design §2.1, §2.2)";
+
 /// Serialized f64 fields that are not stored lengths, permanently, with
 /// why: values that are not lengths or rotations, and Solidcraft
 /// parameters.
 const NOT_LENGTHS: &[(&str, &str)] = &[
+    ("geometry.rs Bounds.max", COMPUTED),
+    ("geometry.rs Bounds.min", COMPUTED),
+    ("geometry.rs Shape::Arc.center", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Arc.radius", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Arc.start_deg", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Arc.sweep_deg", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Circle.center", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Circle.radius", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Line.a", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Line.b", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Polygon.points", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Polygon.radii", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Polyline.points", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Polyline.radii", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Rect.a", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Rect.b", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Rect.radius", COMPUTING_SHAPE),
+    ("geometry.rs Transform2.rotation_deg", COMPUTED),
+    ("geometry.rs Transform2.translate", COMPUTED),
+    ("library/graphics.rs PlacedText.at", COMPUTED),
+    ("library/graphics.rs PlacedText.height", COMPUTED),
+    (
+        "library/graphics.rs PlacedText.line_spacing",
+        "a ratio (cap heights)",
+    ),
+    ("library/graphics.rs PlacedText.rotation_deg", COMPUTED),
+    (
+        "library/graphics.rs Text.line_spacing",
+        "a ratio (cap heights)",
+    ),
     ("library/footprint_source.rs DimValue::Fixed.0", SOLIDCRAFT),
     (
         "library/footprint_source.rs FootprintEdit::AddPad.at",
@@ -323,25 +360,6 @@ const NOT_LENGTHS: &[(&str, &str)] = &[
 /// migration, by the slice that converts them (to `Nm`, `PointNm`, `Angle`
 /// or, for values that feed expressions, an exact decimal). Only shrinks.
 const ALLOWED: &[(&str, Slice)] = &[
-    ("geometry.rs Bounds.max", Slice::U2),
-    ("geometry.rs Bounds.min", Slice::U2),
-    ("geometry.rs Shape::Arc.center", Slice::U2),
-    ("geometry.rs Shape::Arc.radius", Slice::U2),
-    ("geometry.rs Shape::Arc.start_deg", Slice::U2),
-    ("geometry.rs Shape::Arc.sweep_deg", Slice::U2),
-    ("geometry.rs Shape::Circle.center", Slice::U2),
-    ("geometry.rs Shape::Circle.radius", Slice::U2),
-    ("geometry.rs Shape::Line.a", Slice::U2),
-    ("geometry.rs Shape::Line.b", Slice::U2),
-    ("geometry.rs Shape::Polygon.points", Slice::U2),
-    ("geometry.rs Shape::Polygon.radii", Slice::U2),
-    ("geometry.rs Shape::Polyline.points", Slice::U2),
-    ("geometry.rs Shape::Polyline.radii", Slice::U2),
-    ("geometry.rs Shape::Rect.a", Slice::U2),
-    ("geometry.rs Shape::Rect.b", Slice::U2),
-    ("geometry.rs Shape::Rect.radius", Slice::U2),
-    ("geometry.rs Transform2.rotation_deg", Slice::U2),
-    ("geometry.rs Transform2.translate", Slice::U2),
     ("library/footprint.rs Datum.offset", Slice::U2),
     ("library/footprint.rs Datum.rotation_deg", Slice::U2),
     ("library/footprint.rs Hole.offset", Slice::U2),
@@ -377,27 +395,6 @@ const ALLOWED: &[(&str, Slice)] = &[
     ("library/footprint.rs Segment::Arc.bulge", Slice::U3),
     ("library/footprint.rs Segment::Arc.to", Slice::U3),
     ("library/footprint.rs Segment::Line.to", Slice::U3),
-    ("library/graphics.rs Grid.footprint_mm", Slice::U2),
-    ("library/graphics.rs Grid.symbol_mm", Slice::U2),
-    ("library/graphics.rs Item::Shape.width", Slice::U2),
-    ("library/graphics.rs Pin.length", Slice::U2),
-    ("library/graphics.rs Pin.position", Slice::U2),
-    ("library/graphics.rs PinText.offset", Slice::U2),
-    ("library/graphics.rs PlacedText.at", Slice::U2),
-    ("library/graphics.rs PlacedText.height", Slice::U2),
-    ("library/graphics.rs PlacedText.line_spacing", Slice::U2),
-    ("library/graphics.rs PlacedText.rotation_deg", Slice::U2),
-    ("library/graphics.rs Text.at", Slice::U2),
-    ("library/graphics.rs Text.height", Slice::U2),
-    ("library/graphics.rs Text.line_spacing", Slice::U2),
-    (
-        "library/graphics/edit.rs GraphicEdit::SetPinTextHeight.height",
-        Slice::U2,
-    ),
-    (
-        "library/graphics/edit.rs GraphicEdit::Translate.delta",
-        Slice::U2,
-    ),
     ("library/marking.rs AreaChoice::Explicit.centre", Slice::U2),
     ("library/marking.rs AreaChoice::Explicit.size_mm", Slice::U2),
     ("library/marking.rs LaidElement::Artwork.origin", Slice::U2),
@@ -758,10 +755,6 @@ const ALLOWED: &[(&str, Slice)] = &[
     ("library/pad_table.rs SlotRow.at", Slice::U2),
     ("library/pad_table.rs SlotRow.land", Slice::U2),
     ("library/pad_table.rs SlotRow.slot", Slice::U2),
-    (
-        "library/symbol.rs SymbolDefinition.pin_text_height",
-        Slice::U2,
-    ),
     (
         "library/templates/catalog.rs LandValues.exposed_pad",
         Slice::U2,

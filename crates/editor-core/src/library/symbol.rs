@@ -2,14 +2,15 @@
 //! pins. A symbol belongs to one component lineage, whose terminal IDs its
 //! pins use; unit and graphic IDs share the symbol's local namespace.
 use super::graphics::{
-    self, Graphic, Item, MAX_GRAPHICS, MAX_GRAPHICS_PER_UNIT, MAX_VERTICES, PIN_TEXT_HEIGHT_MM,
-    Pin, TEXT_HEIGHT_MM, TextMetric,
+    self, Graphic, Item, MAX_GRAPHICS, MAX_GRAPHICS_PER_UNIT, MAX_VERTICES, PIN_TEXT_HEIGHT, Pin,
+    TEXT_HEIGHT, TextMetric,
 };
 use super::publish::{issue, object};
 use super::{Library, MAX_LABEL, MAX_TERMINALS, MAX_UNITS, printable};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::Bounds;
 use crate::ids::{DefinitionId, GraphicId, TerminalId, UnitId};
+use crate::units::Nm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -21,7 +22,7 @@ pub struct SymbolDefinition {
     pub component: DefinitionId,
     pub next_local: u32,
     /// Height of pin names and numbers, 0.1–50 mm.
-    pub pin_text_height: f64,
+    pub pin_text_height_nm: Nm,
     pub units: Vec<Unit>,
 }
 
@@ -30,7 +31,7 @@ impl Default for SymbolDefinition {
         Self {
             component: DefinitionId::default(),
             next_local: 0,
-            pin_text_height: PIN_TEXT_HEIGHT_MM,
+            pin_text_height_nm: PIN_TEXT_HEIGHT,
             units: vec![],
         }
     }
@@ -66,7 +67,7 @@ impl Unit {
         let pins = self
             .pins
             .iter()
-            .map(|p| Bounds::point(p.position).including(p.body_end()));
+            .map(|p| Bounds::point(p.position_mm()).including(p.body_end()));
         graphics.chain(pins).reduce(Bounds::union)
     }
 }
@@ -111,8 +112,7 @@ impl SymbolDefinition {
     }
 
     pub(super) fn geometry_finite(&self) -> bool {
-        self.pin_text_height.is_finite()
-            && TEXT_HEIGHT_MM.contains(&self.pin_text_height)
+        TEXT_HEIGHT.contains(&self.pin_text_height_nm.get())
             && self.units.iter().all(|u| {
                 u.pins.iter().all(Pin::finite) && u.graphics.iter().all(|g| g.item.finite())
             })

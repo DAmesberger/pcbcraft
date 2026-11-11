@@ -138,7 +138,7 @@ impl SchematicEditor {
     /// same spot, so a copy never lands exactly on what it was copied from.
     pub fn paste_at(&mut self, engine: &Engine, at: Option<Point>) -> Option<Operation> {
         let sheet = self.sheet;
-        let step = engine.drafts().grid.symbol_mm * NUDGE_STEPS;
+        let step = engine.drafts().grid.symbol_mm() * NUDGE_STEPS;
         let buffer = self.clipboard.as_mut()?;
         let anchor = buffer.clip.anchor()?;
         let from = buffer.last;

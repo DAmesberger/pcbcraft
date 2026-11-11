@@ -352,7 +352,7 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
             let SymbolDefinition {
                 component,
                 next_local: _,
-                pin_text_height: _,
+                pin_text_height_nm: _,
                 units,
             } = symbol;
             *component = map.lineage(DefinitionKind::Component, *component)?;

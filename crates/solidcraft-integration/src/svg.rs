@@ -35,8 +35,9 @@ use pcbcraft_core::geometry::{
 };
 use pcbcraft_core::library::graphics::{
     DrawingLayer, Fill, GraphicEdit, GraphicTarget, Item, MAX_GRAPHIC_EDITS, MAX_SHAPE_POINTS,
-    MAX_STROKE_MM, MAX_VERTICES,
+    MAX_STROKE_MM, MAX_VERTICES, ShapeNm,
 };
+use pcbcraft_core::units::{Nm, PointNm};
 use quick_xml::events::{BytesStart, Event};
 use solidcraft_engine::io::Geom2;
 use std::collections::BTreeMap;
@@ -85,8 +86,8 @@ impl Options {
 /// Converted artwork, centred on the origin.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Artwork {
-    /// Graphics in drawing order, millimetres, the bounding-box centre at
-    /// the origin.
+    /// Graphics in drawing order, as a library stores them (whole
+    /// nanometres), the bounding-box centre at the origin.
     pub items: Vec<Item>,
     /// Width and height of the bounding box, in millimetres.
     pub size: Point,
@@ -106,16 +107,20 @@ impl Artwork {
                 "SVG artwork goes on the silkscreen or assembly drawing, not the courtyard",
             ));
         }
+        let beyond = || {
+            invalid(
+                "the placed artwork reaches beyond ±2 m; place it nearer the origin or scale it down",
+            )
+        };
+        let at = PointNm::from_mm_f64_rounded(at).map_err(|_| beyond())?;
         self.items
             .iter()
             .map(|item| {
-                let item = item.translated(at);
-                match &item {
-                    Item::Shape { shape, .. } if !shape.finite() => Err(invalid(
-                        "the placed artwork reaches beyond ±10000 mm; place it nearer the origin or scale it down",
-                    )),
-                    _ => Ok(GraphicEdit::Add { target, item }),
-                }
+                let item = item.translated(at).map_err(|_| beyond())?;
+                Ok(GraphicEdit::Add {
+                    target,
+                    item: item.into(),
+                })
             })
             .collect()
     }
@@ -218,10 +223,17 @@ struct Walk<'a> {
     affines: BTreeMap<String, Option<Affine>>,
     elements: usize,
     segments: usize,
-    items: Vec<Item>,
+    items: Vec<Drawn>,
     skipped: BTreeMap<&'static str, usize>,
     outlined_holes: usize,
     flattened: usize,
+}
+
+/// One converted graphic in millimetres, before it is centred and stored.
+struct Drawn {
+    shape: Shape,
+    width: f64,
+    fill: Fill,
 }
 
 const NOT_RENDERED: [&str; 14] = [
@@ -441,7 +453,7 @@ impl<'a> Walk<'a> {
                 };
                 if let Some(shape) = rect.exact(&affine, scale) {
                     let fill = if style.fill { Fill::Solid } else { Fill::None };
-                    self.items.push(Item::Shape {
+                    self.items.push(Drawn {
                         shape,
                         width: width.unwrap_or(0.0),
                         fill,
@@ -502,7 +514,7 @@ impl<'a> Walk<'a> {
                 None
             };
             if let Some(shape) = shape {
-                self.items.push(Item::Shape {
+                self.items.push(Drawn {
                     shape,
                     width: width.unwrap_or(0.0),
                     fill: Fill::Solid,
@@ -560,12 +572,11 @@ impl<'a> Walk<'a> {
         if flattened {
             self.flattened += 1;
         }
-        self.items
-            .extend(pieces.into_iter().map(|shape| Item::Shape {
-                shape,
-                width,
-                fill: Fill::None,
-            }));
+        self.items.extend(pieces.into_iter().map(|shape| Drawn {
+            shape,
+            width,
+            fill: Fill::None,
+        }));
     }
 
     fn finish(self) -> Result<Artwork> {
@@ -578,31 +589,36 @@ impl<'a> Walk<'a> {
                 self.items.len()
             )));
         }
-        let vertices: usize = self.items.iter().map(Item::vertices).sum();
+        let too_large = || invalid("the artwork is larger than ±2 m at this scale");
+        let mut bounds: Option<Bounds> = None;
+        for d in &self.items {
+            if !d.shape.finite() {
+                return Err(too_large());
+            }
+            let b = d.shape.bounds(d.width);
+            bounds = Some(bounds.map_or(b, |a| a.union(b)));
+        }
+        let bounds = bounds.ok_or_else(|| invalid("the SVG has no drawable shapes"))?;
+        let centre = bounds.center();
+        // Centred in millimetres, then stored rounded to nanometres.
+        let items: Vec<Item> = self
+            .items
+            .iter()
+            .map(|d| {
+                let shape = d.shape.translated([-centre[0], -centre[1]]);
+                Ok(Item::Shape {
+                    shape: ShapeNm::from_mm_rounded(&shape).map_err(|_| too_large())?,
+                    width_nm: Nm::from_mm_f64_rounded(d.width).map_err(|_| too_large())?,
+                    fill: d.fill,
+                })
+            })
+            .collect::<Result<_>>()?;
+        let vertices: usize = items.iter().map(Item::vertices).sum();
         if vertices > MAX_VERTICES {
             return Err(invalid(format!(
                 "the SVG makes {vertices} points; a drawing holds at most {MAX_VERTICES} (raise the curve tolerance or simplify the artwork)"
             )));
         }
-        let mut bounds: Option<Bounds> = None;
-        for item in &self.items {
-            if let Item::Shape { shape, width, .. } = item {
-                if !shape.finite() {
-                    return Err(invalid(
-                        "the artwork is larger than ±10000 mm at this scale",
-                    ));
-                }
-                let b = shape.bounds(*width);
-                bounds = Some(bounds.map_or(b, |a| a.union(b)));
-            }
-        }
-        let bounds = bounds.ok_or_else(|| invalid("the SVG has no drawable shapes"))?;
-        let centre = bounds.center();
-        let items = self
-            .items
-            .iter()
-            .map(|item| item.translated([-centre[0], -centre[1]]))
-            .collect();
         let mut notes = Vec::new();
         for (what, n) in &self.skipped {
             notes.push(format!("{n} element(s) skipped: {what}."));

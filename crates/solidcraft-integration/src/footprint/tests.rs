@@ -1032,7 +1032,7 @@ fn graphics_datum_and_derived_courtyard() -> Result<()> {
             .iter()
             .find(|g| g.id == id)
             .and_then(|g| match &g.item {
-                Item::Shape { shape, .. } => Some(shape.clone()),
+                Item::Shape { shape, .. } => Some(shape.to_mm()),
                 Item::Text(_) => None,
             })
     };

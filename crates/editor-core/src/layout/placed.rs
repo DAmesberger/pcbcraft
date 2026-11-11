@@ -166,9 +166,13 @@ pub fn placed_graphics(project: &Project) -> Vec<PlacedGraphic> {
                 DrawingLayer::Assembly => BoardDrawing::Assembly(side),
             };
             let item = match &graphic.item {
-                Item::Shape { shape, width, fill } => PlacedItem::Shape {
-                    shape: shape.transformed(&t),
-                    width: *width,
+                Item::Shape {
+                    shape,
+                    width_nm,
+                    fill,
+                } => PlacedItem::Shape {
+                    shape: shape.to_mm().transformed(&t),
+                    width: width_nm.to_mm_f64(),
                     filled: *fill != Fill::None,
                 },
                 Item::Text(text) => {
@@ -186,13 +190,14 @@ pub fn placed_graphics(project: &Project) -> Vec<PlacedGraphic> {
                         .get(&graphic.id)
                         .copied()
                         .unwrap_or_default();
-                    let at = [text.at[0] + moved.offset[0], text.at[1] + moved.offset[1]];
+                    let a = text.at.to_mm_f64();
+                    let at = [a[0] + moved.offset[0], a[1] + moved.offset[1]];
                     let rotation = text.rotation.degrees() + moved.turn.degrees();
                     PlacedItem::Text(PlacedText {
                         graphic: Some(graphic.id),
                         text: content,
                         at: t.apply(at),
-                        height: text.height,
+                        height: text.height_nm.to_mm_f64(),
                         rotation_deg: t.apply_angle(rotation).rem_euclid(360.0),
                         justify: text.justify,
                         mirrored: t.mirror,

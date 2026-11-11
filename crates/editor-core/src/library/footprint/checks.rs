@@ -263,7 +263,7 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
                     pad_object(id, pad),
                 ));
             }
-            let ring = window.shape.flatten(CHECK_CHORD_MM);
+            let ring = window.shape.to_mm().flatten(CHECK_CHORD_MM);
             if !window.shape.is_closed() || ring.len() < 3 || signed_area2(&ring).abs() <= 1e-9 {
                 out.push(issue(
                     "footprint.paste_window_shape",
@@ -558,9 +558,10 @@ impl FootprintDefinition {
                 return;
             }
             let finding = match &graphic.item {
-                Item::Shape { width, fill, .. }
-                    if *fill == Fill::None && width.is_finite() && *width < min_width =>
+                Item::Shape { width_nm, fill, .. }
+                    if *fill == Fill::None && width_nm.to_mm_f64() < min_width =>
                 {
+                    let width = width_nm.to_mm_f64();
                     Finding::new(
                         "footprint.silk_width",
                         format!(
@@ -570,14 +571,12 @@ impl FootprintDefinition {
                         vec![object(id, graphic.id.0)],
                     )
                 }
-                Item::Text(text)
-                    if text.visible && text.height.is_finite() && text.height < min_height =>
-                {
+                Item::Text(text) if text.visible && text.height_nm.to_mm_f64() < min_height => {
                     Finding::new(
                         "footprint.text_height",
                         format!(
                             "A silkscreen text is {:.3} mm high and may not be legible; {}.",
-                            text.height,
+                            text.height_nm.to_mm_f64(),
                             needs(&limits.text_height)
                         ),
                         vec![object(id, graphic.id.0)],
@@ -594,12 +593,12 @@ impl FootprintDefinition {
     /// (`footprint.pad_outside_courtyard`). Open courtyard strokes decide
     /// nothing, so a footprint without a closed courtyard is not checked.
     fn courtyard_lint(&self, id: DefinitionId, out: &mut Vec<Finding>) {
-        let yards: Vec<&crate::geometry::Shape> = self
+        let yards: Vec<crate::geometry::Shape> = self
             .graphics
             .iter()
             .filter(|g| g.layer == DrawingLayer::Courtyard)
             .filter_map(|g| match &g.item {
-                Item::Shape { shape, .. } if shape.is_closed() => Some(shape),
+                Item::Shape { shape, .. } if shape.is_closed() => Some(shape.to_mm()),
                 _ => None,
             })
             .collect();
@@ -650,10 +649,14 @@ impl FootprintDefinition {
             .iter()
             .filter(|g| g.layer == DrawingLayer::Silkscreen)
         {
-            let Item::Shape { shape, width, .. } = &graphic.item else {
+            let Item::Shape {
+                shape, width_nm, ..
+            } = &graphic.item
+            else {
                 continue;
             };
-            let half = width.max(0.0) / 2.0;
+            let shape = &shape.to_mm();
+            let half = width_nm.to_mm_f64().max(0.0) / 2.0;
             let mut points = shape.flatten(CHECK_CHORD_MM * 10.0);
             if shape.is_closed()
                 && let Some(first) = points.first().copied()
@@ -766,6 +769,7 @@ mod rules_tests {
     use crate::ids::{GraphicId, PackageTerminalId, PadId};
     use crate::library::graphics::{FootprintGraphic, Side};
     use crate::rules::{RuleValue, RulesCommand, builtin};
+    use crate::tests::support::{nm, shape_nm};
 
     /// Two 0.5 mm square lands 0.3 mm apart (copper), each opening grown
     /// by the default 0.05 mm: a 0.2 mm mask web; and a 0.12 mm silk line.
@@ -780,8 +784,11 @@ mod rules_tests {
                 layer: DrawingLayer::Silkscreen,
                 side: Side::Component,
                 item: Item::Shape {
-                    shape: crate::geometry::Shape::polyline(vec![[-1.0, 1.0], [2.0, 1.0]]),
-                    width: 0.12,
+                    shape: shape_nm(crate::geometry::Shape::polyline(vec![
+                        [-1.0, 1.0],
+                        [2.0, 1.0],
+                    ])),
+                    width_nm: nm(0.12),
                     fill: Fill::None,
                 },
             }],
@@ -860,7 +867,10 @@ mod rules_tests {
             ..
         }) = closer.graphics.first_mut()
         {
-            *shape = crate::geometry::Shape::polyline(vec![[-1.0, 0.7], [2.0, 0.7]]);
+            *shape = shape_nm(crate::geometry::Shape::polyline(vec![
+                [-1.0, 0.7],
+                [2.0, 0.7],
+            ]));
         }
         // At y 0.7 the edge is 0.39 mm from the copper: under 0.6 mm.
         let near = messages(&closer, &strict, "footprint.silk_over_pad");

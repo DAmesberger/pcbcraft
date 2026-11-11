@@ -147,7 +147,7 @@ fn courtyard(footprint: &FootprintDefinition) -> Result<Bounds> {
         .iter()
         .find(|g| g.layer == DrawingLayer::Courtyard)
         .and_then(|g| match &g.item {
-            Item::Shape { shape, .. } => Some(shape.bounds(0.0)),
+            Item::Shape { shape, .. } => Some(shape.to_mm().bounds(0.0)),
             Item::Text(_) => None,
         })
         .ok_or_else(|| Error::NotFound("no courtyard".into()))
@@ -623,7 +623,7 @@ fn a_symbol_is_redrawn_as_another_kind_keeping_its_unit() -> Result<()> {
     assert_eq!(unit.label, "A");
     assert!(!unit.graphics.is_empty());
     // A two-terminal symbol ends at x = ±5; terminal 1 (the cathode) first.
-    let at = |t: u32| unit.pin(TerminalId(t)).map(|p| p.position);
+    let at = |t: u32| unit.pin(TerminalId(t)).map(|p| p.position_mm());
     let (one, two) = (at(1).unwrap_or_default(), at(2).unwrap_or_default());
     assert_eq!([one[0].abs(), two[0].abs()], [5.0, 5.0]);
     assert!(one[0] != two[0]);
@@ -644,8 +644,8 @@ fn a_symbol_is_redrawn_as_another_kind_keeping_its_unit() -> Result<()> {
         .units
         .first()
         .ok_or(Error::NotFound("unit".into()))?;
-    assert_eq!(unit2.pin(TerminalId(2)).map(|p| p.position), Some(one));
-    assert_eq!(unit2.pin(TerminalId(1)).map(|p| p.position), Some(two));
+    assert_eq!(unit2.pin(TerminalId(2)).map(|p| p.position_mm()), Some(one));
+    assert_eq!(unit2.pin(TerminalId(1)).map(|p| p.position_mm()), Some(two));
 
     // Back to a box, any count.
     restyle(&mut engine, f.symbol, SymbolKind::IcBox, None)?;

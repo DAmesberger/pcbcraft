@@ -158,7 +158,7 @@ pub(crate) fn paste(project: &Project, side: Layer, bitmap: &mut Bitmap) -> Fall
             },
             PasteRule::None => Vec::new(),
             PasteRule::Reduction(r) => shrink(*r).into_iter().collect(),
-            PasteRule::Windows(windows) => windows.iter().map(|w| w.shape.clone()).collect(),
+            PasteRule::Windows(windows) => windows.iter().map(|w| w.shape.to_mm()).collect(),
         };
         for shape in shapes {
             bitmap.render(&raster_shape(&shape.transformed(&t)), true);

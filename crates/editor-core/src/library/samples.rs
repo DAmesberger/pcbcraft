@@ -3,7 +3,7 @@
 //! including the designator prefix and body style the caller passes, is
 //! ordinary definition data a user then edits.
 use super::footprint::{Hole, HoleShape, PadKind, PadShape};
-use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
+use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT, ShapeNm, TextContent, VAlign};
 use super::symbol_style::{self, SymbolConventions, SymbolKind};
 use super::templates;
 use super::templates::catalog::{LandValues, SkeletonHint};
@@ -23,6 +23,7 @@ use crate::ids::{
 };
 use crate::quantity::{UnitOfMeasure, UnitSet};
 use crate::rules::DesignRules;
+use crate::units::{Nm, PointNm};
 
 /// The five lineages of one sample and the revisions they pin of each other
 /// (normally the drafts' pending revisions).
@@ -110,7 +111,7 @@ struct Layout {
     drawn: Option<SymbolKind>,
 }
 
-fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<DraftEdit> {
+fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Result<Vec<DraftEdit>> {
     let terminals = [TerminalId(1), TerminalId(2)];
     let package_terminals = [PackageTerminalId(1), PackageTerminalId(2)];
     let package = PackageDefinition {
@@ -144,7 +145,7 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
         },
         mechanical: None,
     };
-    vec![
+    Ok(vec![
         DraftEdit {
             id: refs.component,
             meta: meta(name),
@@ -190,7 +191,7 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
                         )
                         .ok()
                     })
-                    .unwrap_or_else(|| symbol(refs.component, &terminals, &layout)),
+                    .map_or_else(|| symbol(refs.component, &terminals, &layout), Ok)?,
             ),
         },
         DraftEdit {
@@ -221,7 +222,7 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Vec<D
                 unavailable: vec![],
             }),
         },
-    ]
+    ])
 }
 
 /// Two rectangular top-side lands, pads 1–2 landing package terminals 1–2,
@@ -266,18 +267,22 @@ pub fn redraw(footprint: &mut FootprintDefinition, package: &PackageDefinition) 
 /// graphics 2–4 use the symbol's local IDs. The samples are passives and
 /// connectors whose terminal names are their pin numbers, so pins show
 /// numbers only.
-fn symbol(component: DefinitionId, terminals: &[TerminalId], layout: &Layout) -> SymbolDefinition {
+fn symbol(
+    component: DefinitionId,
+    terminals: &[TerminalId],
+    layout: &Layout,
+) -> Result<SymbolDefinition> {
     let body = layout.body;
     let gap = 0.5;
-    SymbolDefinition {
+    Ok(SymbolDefinition {
         component,
         next_local: 5,
-        pin_text_height: PIN_TEXT_HEIGHT_MM,
+        pin_text_height_nm: PIN_TEXT_HEIGHT,
         units: vec![Unit {
             id: UnitId(1),
             label: "A".into(),
             graphics: vec![
-                graphics::body_rect(GraphicId(2), body),
+                graphics::body_rect(GraphicId(2), body)?,
                 graphics::text(
                     GraphicId(3),
                     TextContent::Designator,
@@ -286,7 +291,7 @@ fn symbol(component: DefinitionId, terminals: &[TerminalId], layout: &Layout) ->
                         h: HAlign::Center,
                         v: VAlign::Bottom,
                     },
-                ),
+                )?,
                 graphics::text(
                     GraphicId(4),
                     TextContent::ComponentName,
@@ -295,25 +300,25 @@ fn symbol(component: DefinitionId, terminals: &[TerminalId], layout: &Layout) ->
                         h: HAlign::Center,
                         v: VAlign::Top,
                     },
-                ),
+                )?,
             ],
             pins: terminals
                 .iter()
                 .zip(layout.pins)
                 .map(|(terminal, position)| {
-                    let mut pin = graphics::pin_toward(*terminal, position, body);
+                    let mut pin = graphics::pin_toward(*terminal, position, body)?;
                     pin.name.visible = false;
-                    pin
+                    Ok(pin)
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
         }],
-    }
+    })
 }
 
 /// A two-terminal component with an axial symbol (the kind-specific drawing
 /// of [`Kind::symbol`], else a body rectangle), a small two-land footprint
 /// and a straight terminal mapping.
-pub fn two_terminal(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
+pub fn two_terminal(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit>> {
     sample(
         name,
         kind,
@@ -337,7 +342,7 @@ pub fn two_terminal(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEd
 
 /// The same two terminals with both pins on one side and a 2.54 mm land
 /// pitch.
-pub fn two_terminal_header(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
+pub fn two_terminal_header(name: &str, kind: Kind<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit>> {
     sample(
         name,
         kind,
@@ -749,7 +754,7 @@ fn across_x(sides: LeadSides, per: [u32; 2], k: usize) -> bool {
 /// the exposed pad), a rectangular symbol with pins down both sides,
 /// form-derived lands and a straight terminal mapping. The package model
 /// is generated.
-pub fn packaged(name: &str, preset: Preset, refs: SampleRefs) -> Vec<DraftEdit> {
+pub fn packaged(name: &str, preset: Preset, refs: SampleRefs) -> Result<Vec<DraftEdit>> {
     packaged_form(name, preset.form(), preset.prefix(), refs)
 }
 
@@ -759,7 +764,7 @@ pub fn packaged_form(
     form: PackageForm,
     prefix: &str,
     refs: SampleRefs,
-) -> Vec<DraftEdit> {
+) -> Result<Vec<DraftEdit>> {
     build_packaged(
         &Packaged {
             name,
@@ -785,7 +790,7 @@ pub fn packaged_symbol(
     prefix: &str,
     kind: SymbolKind,
     refs: SampleRefs,
-) -> Vec<DraftEdit> {
+) -> Result<Vec<DraftEdit>> {
     build_packaged(
         &Packaged {
             name,
@@ -931,7 +936,7 @@ pub fn from_template_with(
             rules,
         },
         refs,
-    );
+    )?;
     if matches!(spec.form, PackageForm::UsbC(_)) {
         mark_row_end(&mut edits);
     } else if polarised || count > 2 {
@@ -1223,7 +1228,7 @@ fn rect_gap(a: &Bounds, b: &Bounds) -> f64 {
     dx.hypot(dy)
 }
 
-fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
+fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit>> {
     let Packaged {
         name,
         prefix,
@@ -1296,19 +1301,21 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
             .map(|(_, name)| (*name).to_owned())
     };
     let symbol = match spec.symbol {
-        SymbolStyle::Block => named_block_symbol(refs.component, &named),
+        SymbolStyle::Block => named_block_symbol(refs.component, &named)?,
         SymbolStyle::Drawn(kind) => {
-            symbol_style::generate(kind, spec.conventions, refs.component, &terminals)
-                .unwrap_or_else(|_| block_symbol(refs.component, &terminals))
+            match symbol_style::generate(kind, spec.conventions, refs.component, &terminals) {
+                Ok(symbol) => symbol,
+                Err(_) => block_symbol(refs.component, &terminals)?,
+            }
         }
         SymbolStyle::Column => {
-            let mut symbol = column_symbol(refs.component, &terminals);
+            let mut symbol = column_symbol(refs.component, &terminals)?;
             fit_pin_names(&mut symbol, name_of);
             symbol
         }
-        SymbolStyle::Empty => block_symbol(refs.component, &[]),
+        SymbolStyle::Empty => block_symbol(refs.component, &[])?,
     };
-    vec![
+    Ok(vec![
         DraftEdit {
             id: refs.component,
             meta: meta(name),
@@ -1374,7 +1381,7 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Vec<DraftEdit> {
                 unavailable: vec![],
             }),
         },
-    ]
+    ])
 }
 
 /// One electrical terminal of a generated component: its name, pin type
@@ -1429,6 +1436,11 @@ fn electrical_plan(
 
 /// Silkscreen pin-1 dot radius, in mm.
 pub const PIN_ONE_DOT_RADIUS_MM: f64 = 0.2;
+/// [`PIN_ONE_DOT_RADIUS_MM`] in nanometres.
+const PIN_ONE_DOT_RADIUS: Nm = match Nm::try_new(200_000) {
+    Some(nm) => nm,
+    None => Nm::ZERO,
+};
 
 /// Mark pad 1 of the footprint among `edits` as the polarity pad, with a
 /// filled silkscreen dot just beyond it on the footprint's −x side (where
@@ -1488,6 +1500,9 @@ pub fn mark_polarity(footprint: &mut FootprintDefinition, pad_id: PadId) {
 /// Mark `pad_id` as the polarity pad with a filled silkscreen dot at
 /// `center`.
 fn mark_polarity_at(footprint: &mut FootprintDefinition, pad_id: PadId, center: Point) {
+    let Ok(center) = PointNm::from_mm_f64_rounded(center) else {
+        return;
+    };
     let id = GraphicId(footprint.next_local);
     let Some(next) = footprint.next_local.checked_add(1) else {
         return;
@@ -1498,11 +1513,11 @@ fn mark_polarity_at(footprint: &mut FootprintDefinition, pad_id: PadId, center: 
         layer: graphics::DrawingLayer::Silkscreen,
         side: graphics::Side::Component,
         item: graphics::Item::Shape {
-            shape: crate::geometry::Shape::Circle {
+            shape: ShapeNm::Circle {
                 center,
-                radius: PIN_ONE_DOT_RADIUS_MM,
+                radius_nm: PIN_ONE_DOT_RADIUS,
             },
-            width: 0.0,
+            width_nm: Nm::ZERO,
             fill: graphics::Fill::Solid,
         },
     });
@@ -1549,7 +1564,10 @@ fn trim_pads(pads: &mut [Pad], mm: f64) {
 /// the rest up its right side, on the default symbol grid
 /// ([`graphics::SYMBOL_MODULE_MM`]), with the designator above and the
 /// name below.
-pub(crate) fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
+pub(crate) fn block_symbol(
+    component: DefinitionId,
+    terminals: &[TerminalId],
+) -> Result<SymbolDefinition> {
     const STEP: f64 = graphics::SYMBOL_MODULE_MM;
     let left = terminals.len().div_ceil(2);
     let rows = left.max(1) as f64;
@@ -1571,16 +1589,16 @@ pub(crate) fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) ->
             };
             graphics::pin_toward(*terminal, position, body)
         })
-        .collect();
-    SymbolDefinition {
+        .collect::<Result<_>>()?;
+    Ok(SymbolDefinition {
         component,
         next_local: 5,
-        pin_text_height: PIN_TEXT_HEIGHT_MM,
+        pin_text_height_nm: PIN_TEXT_HEIGHT,
         units: vec![Unit {
             id: UnitId(1),
             label: "A".into(),
             graphics: vec![
-                graphics::body_rect(GraphicId(2), body),
+                graphics::body_rect(GraphicId(2), body)?,
                 graphics::text(
                     GraphicId(3),
                     TextContent::Designator,
@@ -1589,7 +1607,7 @@ pub(crate) fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) ->
                         h: HAlign::Center,
                         v: VAlign::Bottom,
                     },
-                ),
+                )?,
                 graphics::text(
                     GraphicId(4),
                     TextContent::ComponentName,
@@ -1598,11 +1616,11 @@ pub(crate) fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) ->
                         h: HAlign::Center,
                         v: VAlign::Top,
                     },
-                ),
+                )?,
             ],
             pins,
         }],
-    }
+    })
 }
 
 /// [`block_symbol`] wide enough for `terminals`' names (see
@@ -1610,16 +1628,16 @@ pub(crate) fn block_symbol(component: DefinitionId, terminals: &[TerminalId]) ->
 pub(crate) fn named_block_symbol(
     component: DefinitionId,
     terminals: &[(TerminalId, &str)],
-) -> SymbolDefinition {
+) -> Result<SymbolDefinition> {
     let ids: Vec<TerminalId> = terminals.iter().map(|(id, _)| *id).collect();
-    let mut symbol = block_symbol(component, &ids);
+    let mut symbol = block_symbol(component, &ids)?;
     fit_pin_names(&mut symbol, |id| {
         terminals
             .iter()
             .find(|(t, _)| *t == id)
             .map(|(_, name)| (*name).to_owned())
     });
-    symbol
+    Ok(symbol)
 }
 
 /// Width of one pin-name character in pin text heights: printed capitals,
@@ -1643,7 +1661,7 @@ pub(crate) fn fit_pin_names(
     name: impl Fn(TerminalId) -> Option<String>,
 ) -> bool {
     const STEP: f64 = graphics::SYMBOL_MODULE_MM;
-    let em = PIN_NAME_EM * symbol.pin_text_height;
+    let em = PIN_NAME_EM * symbol.pin_text_height_nm.to_mm_f64();
     let mut changed = false;
     for unit in &mut symbol.units {
         let Some((index, body)) =
@@ -1652,9 +1670,9 @@ pub(crate) fn fit_pin_names(
                 .enumerate()
                 .find_map(|(i, g)| match &g.item {
                     super::Item::Shape {
-                        shape: crate::geometry::Shape::Rect { a, b, .. },
+                        shape: ShapeNm::Rect { a, b, .. },
                         ..
-                    } => Some((i, Bounds::of([*a, *b])?)),
+                    } => Some((i, Bounds::of([a.to_mm_f64(), b.to_mm_f64()])?)),
                     _ => None,
                 })
         else {
@@ -1663,18 +1681,19 @@ pub(crate) fn fit_pin_names(
         // Name width plus its offset from the edge, per side, per row.
         let mut rows: Vec<(f64, f64, f64)> = Vec::new();
         for pin in &unit.pins {
-            let left = pin.direction == graphics::PinDirection::Right
-                && pin.position[0] <= body.min[0] + 1e-9;
-            let right = pin.direction == graphics::PinDirection::Left
-                && pin.position[0] >= body.max[0] - 1e-9;
+            let position = pin.position_mm();
+            let left =
+                pin.direction == graphics::PinDirection::Right && position[0] <= body.min[0] + 1e-9;
+            let right =
+                pin.direction == graphics::PinDirection::Left && position[0] >= body.max[0] - 1e-9;
             if !(left || right) || !pin.name.visible {
                 continue;
             }
             let Some(text) = name(pin.terminal) else {
                 continue;
             };
-            let width = text.chars().count() as f64 * em + pin.name.offset.max(0.0);
-            let y = pin.position[1];
+            let width = text.chars().count() as f64 * em + pin.name.offset_nm.to_mm_f64().max(0.0);
+            let y = position[1];
             let row = match rows.iter_mut().find(|r| (r.0 - y).abs() < 1e-9) {
                 Some(row) => row,
                 None => {
@@ -1704,26 +1723,51 @@ pub(crate) fn fit_pin_names(
             continue;
         }
         let (min_x, max_x) = (body.min[0], body.max[0]);
+        // Whole modules, exact in nanometres; a unit that would leave the
+        // coordinate bound is left as it is.
+        let Ok(grow) = Nm::from_mm_f64_rounded(grow) else {
+            continue;
+        };
+        let moved = |x: Nm, keep_inner: bool| -> Result<Nm> {
+            let mm = x.to_mm_f64();
+            if mm <= min_x + 1e-9 {
+                x.checked_sub(grow)
+            } else if !keep_inner || mm >= max_x - 1e-9 {
+                x.checked_add(grow)
+            } else {
+                Ok(x)
+            }
+        };
+        let corners = match unit.graphics.get(index).map(|g| &g.item) {
+            Some(super::Item::Shape {
+                shape: ShapeNm::Rect { a, b, .. },
+                ..
+            }) => [*a, *b]
+                .into_iter()
+                .map(|c| Ok(PointNm::new(moved(c.x_nm, false)?, c.y_nm)))
+                .collect::<Result<Vec<_>>>(),
+            _ => Ok(Vec::new()),
+        };
+        let pins = unit
+            .pins
+            .iter()
+            .map(|p| moved(p.position.x_nm, true))
+            .collect::<Result<Vec<_>>>();
+        let (Ok(corners), Ok(pins)) = (corners, pins) else {
+            continue;
+        };
         if let Some(graphic) = unit.graphics.get_mut(index)
             && let super::Item::Shape {
-                shape: crate::geometry::Shape::Rect { a, b, .. },
+                shape: ShapeNm::Rect { a, b, .. },
                 ..
             } = &mut graphic.item
+            && let [new_a, new_b] = corners[..]
         {
-            for corner in [a, b] {
-                corner[0] += if corner[0] <= min_x + 1e-9 {
-                    -grow
-                } else {
-                    grow
-                };
-            }
+            *a = new_a;
+            *b = new_b;
         }
-        for pin in &mut unit.pins {
-            if pin.position[0] <= min_x + 1e-9 {
-                pin.position[0] -= grow;
-            } else if pin.position[0] >= max_x - 1e-9 {
-                pin.position[0] += grow;
-            }
+        for (pin, x) in unit.pins.iter_mut().zip(pins) {
+            pin.position.x_nm = x;
         }
         changed = true;
     }
@@ -1732,9 +1776,12 @@ pub(crate) fn fit_pin_names(
 
 /// A narrow body with every terminal down its left side in package order,
 /// on the default symbol grid (a connector's starting point).
-pub(super) fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
+pub(super) fn column_symbol(
+    component: DefinitionId,
+    terminals: &[TerminalId],
+) -> Result<SymbolDefinition> {
     const STEP: f64 = graphics::SYMBOL_MODULE_MM;
-    let mut symbol = block_symbol(component, &[]);
+    let mut symbol = block_symbol(component, &[])?;
     let rows = terminals.len().max(1) as f64;
     let body = Bounds {
         min: [-STEP, -rows * STEP],
@@ -1743,7 +1790,7 @@ pub(super) fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -
     let gap = 0.5;
     if let Some(unit) = symbol.units.first_mut() {
         unit.graphics = vec![
-            graphics::body_rect(GraphicId(2), body),
+            graphics::body_rect(GraphicId(2), body)?,
             graphics::text(
                 GraphicId(3),
                 TextContent::Designator,
@@ -1752,7 +1799,7 @@ pub(super) fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -
                     h: HAlign::Center,
                     v: VAlign::Bottom,
                 },
-            ),
+            )?,
             graphics::text(
                 GraphicId(4),
                 TextContent::ComponentName,
@@ -1761,7 +1808,7 @@ pub(super) fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -
                     h: HAlign::Center,
                     v: VAlign::Top,
                 },
-            ),
+            )?,
         ];
         unit.pins = terminals
             .iter()
@@ -1769,9 +1816,9 @@ pub(super) fn column_symbol(component: DefinitionId, terminals: &[TerminalId]) -
             .map(|(k, terminal)| {
                 graphics::pin_toward(*terminal, [-2.0 * STEP, -(k as f64) * STEP], body)
             })
-            .collect();
+            .collect::<Result<_>>()?;
     }
-    symbol
+    Ok(symbol)
 }
 
 /// A resistance quantity kind (ohm, SI prefixes) and a non-negative
@@ -2007,7 +2054,7 @@ mod tests {
                 matches!(
                     body,
                     Some(graphics::Item::Shape {
-                        shape: crate::geometry::Shape::Rect { .. },
+                        shape: crate::library::ShapeNm::Rect { .. },
                         ..
                     })
                 ),
@@ -2022,7 +2069,7 @@ mod tests {
         for preset in Preset::ALL {
             let mut engine = Engine::default();
             let refs = engine.reserve_lineages()?;
-            let edits = packaged(preset.label(), preset, refs);
+            let edits = packaged(preset.label(), preset, refs)?;
             let Some(Definition::Package(package)) = edits
                 .iter()
                 .find(|e| e.id == refs.package.id)
@@ -2085,7 +2132,7 @@ mod tests {
     fn the_resistor_sample_fits_its_own_footprint() -> Result<()> {
         let mut engine = Engine::default();
         let refs = engine.reserve_lineages()?;
-        let edits = two_terminal("R", Kind::RESISTOR, refs);
+        let edits = two_terminal("R", Kind::RESISTOR, refs)?;
         let (mut package, mut footprint) = (None, None);
         for edit in &edits {
             match &edit.definition {

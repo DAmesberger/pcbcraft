@@ -249,7 +249,7 @@ fn text_stays_upright_and_covers_its_image_in_every_orientation() -> Result<()> 
         .clone();
     let unit = symbol.units[0].clone();
     // Pin names and numbers are drawn at the symbol's pin text height.
-    let height = symbol.pin_text_height;
+    let height = symbol.pin_text_height_nm.to_mm_f64();
     for rotation in ROTATIONS {
         for mirror in [false, true] {
             apply(&mut engine, orient(o.id, (rotation, mirror)))?;
@@ -292,7 +292,7 @@ fn text_stays_upright_and_covers_its_image_in_every_orientation() -> Result<()> 
                 }
                 let expected = image(
                     &t,
-                    local.at,
+                    local.at.to_mm_f64(),
                     text.height,
                     local.rotation.degrees(),
                     local.justify,

@@ -9,7 +9,7 @@
 use super::ApertureId;
 use super::bundle::{AssetBytes, asset_hash, validate_assets};
 use super::drafts::{self, Drafts};
-use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
+use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT, ShapeNm, TextContent, VAlign};
 use super::model3d::{ModelDefinition, ModelFormat};
 use super::package_model::{PartDerived, PartFileModel, PartValue, part_parameter_name_ok};
 use super::{
@@ -513,7 +513,7 @@ pub fn make_variant(
         (
             symbol.id,
             format!("{name} symbol"),
-            Definition::Symbol(symbol_definition(component.id, &terminals)),
+            Definition::Symbol(symbol_definition(component.id, &terminals)?),
         ),
         (
             component.id,
@@ -612,7 +612,7 @@ fn package_definition(
 }
 
 /// Four ring segments of an annular land, in the pad frame.
-fn ring_paste(outer: f64, inner: f64, next: &mut u32) -> Vec<PasteWindow> {
+fn ring_paste(outer: f64, inner: f64, next: &mut u32) -> Result<Vec<PasteWindow>> {
     let (ro, ri) = (outer / 2.0, inner / 2.0);
     let arc = |r: f64, from: f64, to: f64| -> Vec<Point> {
         (0..=PASTE_ARC_STEPS)
@@ -633,10 +633,10 @@ fn ring_paste(outer: f64, inner: f64, next: &mut u32) -> Vec<PasteWindow> {
             points.extend(arc(ri + inset, b, a));
             let id = ApertureId(*next);
             *next += 1;
-            PasteWindow {
+            Ok(PasteWindow {
                 id,
-                shape: Shape::polygon(points),
-            }
+                shape: ShapeNm::from_mm_rounded(&Shape::polygon(points))?,
+            })
         })
         .collect()
 }
@@ -684,7 +684,7 @@ fn footprint_definition(
                 },
                 hole: hole.map(round),
                 paste: match hole {
-                    Some(h) => PasteRule::Windows(ring_paste(*diameter, *h, &mut next_aperture)),
+                    Some(h) => PasteRule::Windows(ring_paste(*diameter, *h, &mut next_aperture)?),
                     None => PasteRule::Inherit,
                 },
                 ..base
@@ -722,7 +722,10 @@ fn footprint_definition(
 
 /// The mechanical symbol: one unit, a body with the designator above and
 /// the component name below, one pin per terminal on the left.
-fn symbol_definition(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
+fn symbol_definition(
+    component: DefinitionId,
+    terminals: &[TerminalId],
+) -> Result<SymbolDefinition> {
     let rows = terminals.len().max(1) as f64;
     let half = (GRID * ((rows + 1.0) / 2.0).ceil()).max(GRID);
     let body = Bounds {
@@ -731,15 +734,15 @@ fn symbol_definition(component: DefinitionId, terminals: &[TerminalId]) -> Symbo
     };
     let gap = 0.5;
     let top = GRID * ((rows - 1.0) / 2.0).floor();
-    SymbolDefinition {
+    Ok(SymbolDefinition {
         component,
         next_local: 5,
-        pin_text_height: PIN_TEXT_HEIGHT_MM,
+        pin_text_height_nm: PIN_TEXT_HEIGHT,
         units: vec![Unit {
             id: UnitId(1),
             label: "A".into(),
             graphics: vec![
-                graphics::body_rect(GraphicId(2), body),
+                graphics::body_rect(GraphicId(2), body)?,
                 graphics::text(
                     GraphicId(3),
                     TextContent::Designator,
@@ -748,7 +751,7 @@ fn symbol_definition(component: DefinitionId, terminals: &[TerminalId]) -> Symbo
                         h: HAlign::Center,
                         v: VAlign::Bottom,
                     },
-                ),
+                )?,
                 graphics::text(
                     GraphicId(4),
                     TextContent::ComponentName,
@@ -757,20 +760,20 @@ fn symbol_definition(component: DefinitionId, terminals: &[TerminalId]) -> Symbo
                         h: HAlign::Center,
                         v: VAlign::Top,
                     },
-                ),
+                )?,
             ],
             pins: terminals
                 .iter()
                 .enumerate()
                 .map(|(k, terminal)| {
                     let y = top - GRID * k as f64;
-                    let mut pin = graphics::pin_toward(*terminal, [body.min[0] - GRID, y], body);
+                    let mut pin = graphics::pin_toward(*terminal, [body.min[0] - GRID, y], body)?;
                     pin.name.visible = false;
-                    pin
+                    Ok(pin)
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
         }],
-    }
+    })
 }
 
 fn component_definition(

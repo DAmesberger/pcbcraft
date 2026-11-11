@@ -384,7 +384,7 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
     let symbol = SymbolDefinition {
         component: f.component,
         next_local: next_local(spec.units.iter().map(|u| u.0)),
-        pin_text_height: crate::library::graphics::PIN_TEXT_HEIGHT_MM,
+        pin_text_height_nm: crate::library::graphics::PIN_TEXT_HEIGHT,
         units: spec
             .units
             .iter()
@@ -394,13 +394,7 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
                 graphics: vec![],
                 pins: unit_pins
                     .iter()
-                    .map(|(terminal, position)| {
-                        crate::library::graphics::pin_toward(
-                            TerminalId(*terminal),
-                            *position,
-                            FIXTURE_BODY,
-                        )
-                    })
+                    .map(|(terminal, position)| fixture_pin(TerminalId(*terminal), *position))
                     .collect(),
             })
             .collect(),
@@ -901,4 +895,28 @@ pub fn pt(p: Point) -> crate::units::PointNm {
 /// A length a test writes in mm, as the document stores it.
 pub fn nm(mm: f64) -> crate::units::Nm {
     crate::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
+/// A fixture pin at a test point in mm, pointing into the fixture body.
+#[allow(clippy::expect_used)]
+fn fixture_pin(terminal: TerminalId, position: Point) -> crate::library::Pin {
+    crate::library::graphics::pin_toward(terminal, position, FIXTURE_BODY)
+        .expect("a test point within bounds")
+}
+
+/// A shape a test writes in mm, as a library stores it.
+#[allow(clippy::expect_used)]
+pub fn shape_nm(shape: crate::geometry::Shape) -> crate::library::ShapeNm {
+    crate::library::ShapeNm::from_mm_rounded(&shape).expect("a test shape within bounds")
+}
+
+/// [`crate::library::graphics::text`] at a test point in mm.
+#[allow(clippy::expect_used)]
+pub fn text_graphic(
+    id: crate::GraphicId,
+    content: crate::library::TextContent,
+    at: Point,
+    justify: crate::library::Justify,
+) -> crate::library::Graphic {
+    crate::library::graphics::text(id, content, at, justify).expect("a test point within bounds")
 }

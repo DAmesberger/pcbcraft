@@ -324,9 +324,9 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
             .map(|(row, t)| {
                 Pin::new(
                     TerminalId(*t),
-                    [-7.5, 10.0 - 2.5 * row as f64],
+                    pt([-7.5, 10.0 - 2.5 * row as f64]),
                     PinDirection::Right,
-                    2.5,
+                    nm(2.5),
                 )
             })
             .collect(),
@@ -334,7 +334,7 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
     let symbol = SymbolDefinition {
         component: m.component,
         next_local: 4,
-        pin_text_height: 1.25,
+        pin_text_height_nm: nm(1.25),
         units: vec![
             unit(1, "D", &DIGITAL),
             unit(2, "A", &ANALOG),

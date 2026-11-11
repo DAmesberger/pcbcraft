@@ -645,7 +645,7 @@ pub fn courtyard_centre(footprint: &FootprintDefinition) -> Option<Point> {
         .iter()
         .filter(|g| g.layer == DrawingLayer::Courtyard)
         .filter_map(|g| match &g.item {
-            Item::Shape { shape, .. } => Some(shape.bounds(0.0)),
+            Item::Shape { shape, .. } => Some(shape.to_mm().bounds(0.0)),
             Item::Text(_) => None,
         })
         .reduce(Bounds::union)

@@ -493,7 +493,7 @@ impl SchematicEditor {
             return None;
         }
         let objects = self.group.objects();
-        let grid = engine.drafts().grid.symbol_mm;
+        let grid = engine.drafts().grid.symbol_mm();
         let about = snap(centre(project, self.sheet, &objects)?, grid);
         let action = match action {
             // Turned, the group stays inside the sheet's frame.

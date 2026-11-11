@@ -10,10 +10,11 @@ use crate::diagnostics::{Error, Result};
 use crate::geometry::{Bounds, Point, Shape};
 use crate::ids::GraphicId;
 use crate::library::graphics::{
-    DrawingLayer, FOOTPRINT_TEXT_HEIGHT_MM, Fill, FootprintGraphic, Item, SILK_STROKE_MM, Side,
-    designator_placeholder,
+    DrawingLayer, FOOTPRINT_TEXT_HEIGHT_MM, Fill, FootprintGraphic, Item, SILK_STROKE_MM, ShapeNm,
+    Side, designator_placeholder,
 };
 use crate::library::{FootprintDefinition, PackageDefinition, Pad, PadDefaults};
+use crate::units::{Nm, PointNm};
 
 /// Courtyard margin around pads and envelope, in mm (estimated default).
 pub const COURTYARD_EXCESS_MM: f64 = 0.25;
@@ -134,15 +135,16 @@ pub fn silk_outline(footprint: &FootprintDefinition, envelope: Bounds) -> Vec<Sh
         .collect()
 }
 
-fn shape(layer: DrawingLayer, shape: Shape, width: f64) -> (DrawingLayer, Item) {
-    (
+/// A computed outline stored on `layer`, rounded to nanometres.
+fn shape(layer: DrawingLayer, shape: Shape, width: f64) -> Result<(DrawingLayer, Item)> {
+    Ok((
         layer,
         Item::Shape {
-            shape,
-            width,
+            shape: ShapeNm::from_mm_rounded(&shape)?,
+            width_nm: Nm::from_mm_f64_rounded(width)?,
             fill: Fill::None,
         },
-    )
+    ))
 }
 
 /// The copper keep-outs a typed form asks of the host board: a module's
@@ -188,12 +190,10 @@ pub fn add_standard_graphics_over(
         DrawingLayer::Assembly,
         Shape::rect(envelope.min, envelope.max),
         ASSEMBLY_STROKE_MM,
-    )];
-    items.extend(
-        silk_outline(footprint, envelope)
-            .into_iter()
-            .map(|s| shape(DrawingLayer::Silkscreen, s, SILK_STROKE_MM)),
-    );
+    )?];
+    for s in silk_outline(footprint, envelope) {
+        items.push(shape(DrawingLayer::Silkscreen, s, SILK_STROKE_MM)?);
+    }
     let courtyard = courtyard_from(
         &footprint.pads,
         Some(envelope),
@@ -208,7 +208,7 @@ pub fn add_standard_graphics_over(
             DrawingLayer::Courtyard,
             courtyard,
             COURTYARD_STROKE_MM,
-        ));
+        )?);
     }
     let mut next = footprint.clone();
     next.keepouts = form_keepouts(&package.form);
@@ -239,14 +239,19 @@ pub fn add_standard_graphics_over(
     let id = allocate(&mut next)?;
     next.graphics.push(designator_placeholder(
         id,
-        silk_at,
+        PointNm::from_mm_f64_rounded(silk_at)?,
         DrawingLayer::Silkscreen,
     ));
     let id = allocate(&mut next)?;
-    let mut assembly = designator_placeholder(id, centre, DrawingLayer::Assembly);
+    let mut assembly = designator_placeholder(
+        id,
+        PointNm::from_mm_f64_rounded(centre)?,
+        DrawingLayer::Assembly,
+    );
     if let Item::Text(text) = &mut assembly.item {
         let [w, h] = envelope.size();
-        text.height = (0.5 * w.min(h)).clamp(0.1, FOOTPRINT_TEXT_HEIGHT_MM);
+        text.height_nm =
+            Nm::from_mm_f64_rounded((0.5 * w.min(h)).clamp(0.1, FOOTPRINT_TEXT_HEIGHT_MM))?;
     }
     next.graphics.push(assembly);
     *footprint = next;
@@ -257,6 +262,7 @@ pub fn add_standard_graphics_over(
 mod tests {
     use super::*;
     use crate::ids::{PackageTerminalId, PadId};
+    use crate::tests::support::{nm, shape_nm};
 
     fn chip() -> (FootprintDefinition, PackageDefinition) {
         let footprint = FootprintDefinition {
@@ -338,11 +344,11 @@ mod tests {
             layer: crate::library::DrawingLayer::Silkscreen,
             side: crate::library::graphics::Side::Component,
             item: crate::library::graphics::Item::Shape {
-                shape: crate::geometry::Shape::Line {
+                shape: shape_nm(crate::geometry::Shape::Line {
                     a: [centre[0] - 5.0, centre[1]],
                     b: [centre[0] + 5.0, centre[1]],
-                },
-                width: 0.15,
+                }),
+                width_nm: nm(0.15),
                 fill: crate::library::graphics::Fill::None,
             },
         });
@@ -388,8 +394,8 @@ mod tests {
         let mut thin = footprint.clone();
         for g in &mut thin.graphics {
             match &mut g.item {
-                Item::Shape { width, .. } => *width = 0.05,
-                Item::Text(text) => text.height = 0.5,
+                Item::Shape { width_nm, .. } => *width_nm = nm(0.05),
+                Item::Text(text) => text.height_nm = nm(0.5),
             }
         }
         let found = codes(&thin);
@@ -421,12 +427,12 @@ mod tests {
         let mut edge = footprint.clone();
         for g in &mut edge.graphics {
             match &mut g.item {
-                Item::Shape { width, fill, .. } if g.layer == DrawingLayer::Silkscreen => {
-                    *width = 0.0;
+                Item::Shape { width_nm, fill, .. } if g.layer == DrawingLayer::Silkscreen => {
+                    *width_nm = nm(0.0);
                     *fill = Fill::Solid;
                 }
-                Item::Shape { width, .. } => *width = 0.01,
-                Item::Text(text) => text.height = crate::library::MIN_SILK_TEXT_HEIGHT_MM,
+                Item::Shape { width_nm, .. } => *width_nm = nm(0.01),
+                Item::Text(text) => text.height_nm = nm(crate::library::MIN_SILK_TEXT_HEIGHT_MM),
             }
         }
         let found = codes(&edge);

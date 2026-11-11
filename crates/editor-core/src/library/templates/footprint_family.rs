@@ -549,13 +549,17 @@ fn keep_designator_off_copper(def: &mut FootprintDefinition) {
         if graphic.layer != DrawingLayer::Silkscreen || text.content != TextContent::Designator {
             continue;
         }
-        let half = text.height.max(0.0) / 2.0;
-        let extent = crate::geometry::Bounds::point(text.at).inflated(half);
+        let half = text.height_nm.to_mm_f64().max(0.0) / 2.0;
+        let extent = crate::geometry::Bounds::point(text.at.to_mm_f64()).inflated(half);
         if extent.intersects(&pads) {
-            text.at = [
+            // Pads are within the coordinate bound, so the point above them
+            // is too; one that is not stays where it was.
+            if let Ok(at) = crate::units::PointNm::from_mm_f64_rounded([
                 pads.center()[0],
                 pads.max[1] + half + crate::library::graphics::SILK_STROKE_MM * 2.0,
-            ];
+            ]) {
+                text.at = at;
+            }
         }
     }
 }

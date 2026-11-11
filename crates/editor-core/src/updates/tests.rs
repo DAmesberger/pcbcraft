@@ -813,16 +813,16 @@ fn symbol_drawing_changes_are_reported_as_presentation_only() -> Result<()> {
             // Move the designator, add a line and decorate pin 1 without
             // moving its connection end.
             if let crate::library::Item::Text(t) = &mut s.units[0].graphics[1].item {
-                t.at[1] += 1.0;
+                t.at.y_nm = nm(t.at.to_mm_f64()[1] + 1.0);
             }
             s.units[0].graphics.push(crate::library::Graphic {
                 id: crate::GraphicId(5),
                 item: crate::library::Item::Shape {
-                    shape: crate::geometry::Shape::Line {
+                    shape: shape_nm(crate::geometry::Shape::Line {
                         a: [-2.5, 0.0],
                         b: [2.5, 0.0],
-                    },
-                    width: 0.25,
+                    }),
+                    width_nm: nm(0.25),
                     fill: crate::library::Fill::None,
                 },
             });
@@ -871,7 +871,7 @@ fn a_pin_that_moves_and_changes_drawing_is_not_called_presentation_only() -> Res
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.symbol, symbol_body, |s| {
             let pin = &mut s.units[0].pins[0];
-            pin.position[1] += 2.5;
+            pin.position.y_nm = nm(pin.position_mm()[1] + 2.5);
             pin.decorations.inverted = true;
         })
     })?;
@@ -936,25 +936,25 @@ fn footprint_pad_diffs_name_each_aspect_by_pad_id() -> Result<()> {
             tab.position = [0.0, 3.0];
             // One assembly graphic changes, one silkscreen line is added.
             if let Some(FootprintGraphic {
-                item: Item::Shape { width, .. },
+                item: Item::Shape { width_nm, .. },
                 ..
             }) = fp
                 .graphics
                 .iter_mut()
                 .find(|g| g.layer == DrawingLayer::Assembly)
             {
-                *width = 0.12;
+                *width_nm = nm(0.12);
             }
             fp.graphics.push(FootprintGraphic {
                 id: crate::GraphicId(fp.next_local + 1),
                 layer: DrawingLayer::Silkscreen,
                 side: Side::Component,
                 item: Item::Shape {
-                    shape: crate::geometry::Shape::Line {
+                    shape: shape_nm(crate::geometry::Shape::Line {
                         a: [-1.0, 2.0],
                         b: [1.0, 2.0],
-                    },
-                    width: 0.15,
+                    }),
+                    width_nm: nm(0.15),
                     fill: Fill::None,
                 },
             });
