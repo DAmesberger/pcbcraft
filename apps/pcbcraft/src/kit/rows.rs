@@ -289,6 +289,8 @@ pub struct TableColumn<'a> {
 pub struct TableResponse {
     /// The dashed add row was clicked.
     pub add: bool,
+    /// "Show all ›" of a [`table_bounded`] table was clicked.
+    pub show_all: bool,
 }
 
 /// Column widths for `width`: shares of the positive weights (equal shares
@@ -324,6 +326,31 @@ pub fn table(
     ui: &mut Ui,
     columns: &[TableColumn<'_>],
     rows: usize,
+    cell: impl FnMut(&mut Ui, usize, usize),
+    add_row: Option<&str>,
+) -> TableResponse {
+    table_with(ui, columns, rows, None, cell, add_row)
+}
+
+/// A [`table`] in a card that shows at most `max_rows` rows, then "n of
+/// rows" and "Show all ›" as [`list_frame`] does, instead of scrolling
+/// inside the card. Raise `max_rows` to `rows` once Show all was clicked.
+pub fn table_bounded(
+    ui: &mut Ui,
+    columns: &[TableColumn<'_>],
+    rows: usize,
+    max_rows: usize,
+    cell: impl FnMut(&mut Ui, usize, usize),
+    add_row: Option<&str>,
+) -> TableResponse {
+    table_with(ui, columns, rows, Some(max_rows), cell, add_row)
+}
+
+fn table_with(
+    ui: &mut Ui,
+    columns: &[TableColumn<'_>],
+    rows: usize,
+    bound: Option<usize>,
     mut cell: impl FnMut(&mut Ui, usize, usize),
     add_row: Option<&str>,
 ) -> TableResponse {
@@ -379,7 +406,20 @@ pub fn table(
                 ui.advance_cursor_after_rect(rect);
             }
         };
-        if rows > LIST_MAX_ROWS {
+        if let Some(max_rows) = bound {
+            let shown = shown_rows(rows, max_rows);
+            body(ui, 0..shown);
+            if rows > shown {
+                divider(ui);
+                out.show_all = summary_line(
+                    ui,
+                    &format!("{shown} of {rows}"),
+                    t.form_dim,
+                    Some("Show all \u{203a}"),
+                    None,
+                );
+            }
+        } else if rows > LIST_MAX_ROWS {
             egui::ScrollArea::vertical()
                 .id_salt(id)
                 .max_height(row_height * LIST_MAX_ROWS as f32)
