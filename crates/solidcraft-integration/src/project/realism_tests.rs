@@ -417,7 +417,7 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
         .filter(|g| g.kind == BodyKind::Silkscreen)
         .collect();
     assert!(!films.is_empty());
-    let mask_top = 1.6 + crate::stack::MASK_OVER_LAMINATE_MM;
+    let mask_top = 1.6 + project.stackup.mask_laminate_nm.to_mm_f64();
     for film in &films {
         // Each part's legend shares the part's pick identity.
         let source = model
@@ -436,7 +436,7 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
     let pads = layout::placed_pads(&project);
     for pad in &pads {
         let c = pad.center();
-        let z = 1.6 + crate::stack::MASK_OVER_LAMINATE_MM;
+        let z = 1.6 + project.stackup.mask_laminate_nm.to_mm_f64();
         for film in &films {
             assert!(
                 !film.world_mesh().contains(Vec3::new(c[0], c[1], z)),
@@ -557,7 +557,7 @@ fn native_heights_agree_with_the_stack() -> Result<()> {
     stackup.mask_um = 22.0;
     project.stackup = stackup.clone();
     let model = build(&project)?;
-    let stack = Stack::of(&stackup);
+    let stack = Stack::of(&stackup, project.fabrication.pad_finish);
     assert_eq!(model.stack, stack);
     let mut seen = std::collections::BTreeSet::new();
     for g in model

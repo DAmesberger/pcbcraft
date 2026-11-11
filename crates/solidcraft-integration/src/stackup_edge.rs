@@ -196,7 +196,7 @@ mod tests {
             width: 20.0,
             depth: 10.0,
             shape: None,
-            stack: crate::stack::Stack::of(stackup),
+            stack: crate::stack::Stack::of(stackup, Fabrication::default().pad_finish),
             fabrication: Fabrication::default(),
         }
     }

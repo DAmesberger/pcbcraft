@@ -2004,7 +2004,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     let mut model = model?;
     model.geometry.extend(layers?);
     model.display = memo;
-    model.stack = crate::stack::Stack::of(stackup);
+    model.stack = crate::stack::Stack::of(stackup, project.fabrication.pad_finish);
     Ok(model)
 }
 

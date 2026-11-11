@@ -22,7 +22,7 @@ The PCB 3D view and the saved `.solidcraft` model use the same physical looks. T
 | `chip_capacitor` | MLCC ceramic | (0.32, 0.25, 0.15) | 0 | 0.55 | 2.4 | **est.** Sintered barium titanate, tan; n ≈ 2.4 (handbook). |
 | `overcoat` | Resistor overcoat | (0.025, 0.025, 0.027) | 0 | 0.30 | 1.55 | **est.** Glass or epoxy overcoat with a black marking layer over the resistive film. |
 | `substrate` | FR-4 laminate (board edge) | (0.36, 0.32, 0.17) | 0 | 0.60 | 1.55 | **est.** E-glass (n ≈ 1.55) in epoxy (n ≈ 1.55–1.6), CRC/Palik indices. The colour is the natural laminate's pale tan. |
-| `mask_top`, `mask_bottom` | Soldermask over laminate | `mask_over(pigment, FR-4, 20 µm)`; green ≈ (0.0118, 0.116, 0.032) | 0 | per finish | 1.52 | Layer model and [mask colours](#mask-colours) below. Thickness and gloss come from LPI datasheets. |
+| `mask_top`, `mask_bottom` | Soldermask over laminate | `mask_over(pigment, FR-4, d)`, d the stackup's mask over laminate (20 µm by default); green ≈ (0.0118, 0.116, 0.032) | 0 | per finish | 1.52 | Layer model and [mask colours](#mask-colours) below. Thickness and gloss come from LPI datasheets. |
 | `mask_cap` | Soldermask over copper | `mask_over(pigment, Cu, d)`, d the stackup's mask over copper (12 µm by default); green ≈ (0.064, 0.237, 0.069) | 0 | per finish | 1.52 | Lighter in every channel than over laminate, so traces read as lighter lines. |
 | `package_body`, `part_body` | Black epoxy mould compound | (0.022, 0.022, 0.024) | 0 | 0.45 | 1.55 | **est.** Silica-filled epoxy (filler n ≈ 1.46, resin ≈ 1.57) with carbon black. EDM-textured top. |
 
@@ -38,7 +38,8 @@ T = exp(−σ d),  σ = −ln(T₂₀) / 20 µm
 ```
 
 - `R`: diffuse reflectance under the mask (FR-4 albedo, or copper F0, which overestimates the micro-etched copper slightly).
-- `d`: mask thickness, 20 µm over laminate (the display slab, below) and the stackup's mask over copper on a track's crown (`Stackup::mask_um`, 12 µm by default: LPI thins over copper crowns and edges; 10–20 µm over copper in the LPI datasheets). The geometry and the colour use the same value; the cap geometry was 15 µm while the colour used 12 µm until the stack slice (S1) made the stackup's value the only one.
+- `d`: mask thickness, the stackup's: over laminate `Stackup::mask_laminate_nm` (20 µm by default, **uncited**, see below), and on a track's crown `Stackup::mask_um` (12 µm by default: LPI thins over copper crowns and edges; 10–20 µm over copper in the LPI datasheets). The geometry and the colour use the same values, and the fabrication drawing states both.
+- **The 20 µm over laminate is uncited.** LPI flows into the gaps between copper, so it is thicker over laminate than over copper. No source consulted gives a value over laminate that Pcbcraft could cite: Eurocircuits' soldermask page (more than 7 µm on conductor tops and edges, at most 40 µm for 35 µm copper) and Bittele's specification (at least 10 µm on conductors, 5 µm at corners, at most 40 µm) state only over copper; South-Electronic's article says over bare laminate "it might be thicker, closer to 50 micrometers", an approximation, not a specification. The earlier display value stays until a fabricator or datasheet figure is found.
 - `T₂₀`: **est.** per-pass transmittance through 20 µm of the pigmented resin. For green, (0.10, 0.45, 0.18): phthalocyanine green plus a yellow pigment pass 500–570 nm and absorb red and blue. Other colours are in [mask colours](#mask-colours).
 - `ρ_scatter`: **est.** pigment back-scatter over a black base; green (0.010, 0.085, 0.030).
 - `F0 = 0.043`: from n = 1.52.
@@ -58,15 +59,15 @@ Everything else is a display-only layer built on the model worker as meshes in S
 
 | Layer | Size | Why |
 |---|---|---|
-| Soldermask slabs | 0.020 mm over each board face, 0.03 mm in from the board outline | Thinner than real LPI over laminate (25–35 µm), so exposed pads stand clear of the depth bias at grazing angles. The pull-back (**est.**; fabricators pull mask back from a routed edge) keeps the mask's walls off the laminate's, which drew a dashed line along the far edge at the silhouette. |
+| Soldermask slabs | The stackup's mask over laminate (`Stackup::mask_laminate_nm`, 20 µm by default, uncited) over each board face, out to the board outline | The mask reaches the routed edge, as the Gerber mask does: no rule pulls it back. (Until 11 November 2026 the 3D mask stopped an estimated 0.03 mm short of the edge, which the Gerber never did.) |
 | Mask cap over a track | The stackup's mask over copper (`Stackup::mask_um`, 12 µm by default) above the copper, 0.01 mm wider each side, round free ends | Round ends follow routed copper; the cap is interrupted wherever the track crosses a same-layer mask opening, including tracks passing through a land. |
 | Laminate in a mask opening | A film 0.002 mm thick on the laminate inside each land's and open via's mask opening, less the copper there (`open_laminate`) | The laminate's own face lies under the mask and is left out of the material stream; this film shades the laminate where the mask is open (a fiducial's clearance, a land's expansion). |
 | Mask opening | Land + its mask expansion; an open via's ring + the rules' mask expansion (`Via::mask_opening`) | The board's effective rules (`rules.mask.expansion`), the same function the Gerber mask uses. |
 | Tented via | A dome of revolution over the ring: as high as a mask cap (copper + the stackup's mask), sagging 0.012 mm over the drill but staying 0.002 mm above the copper (0.010 mm at the default 12 µm mask), sloping into the flat mask 0.08 mm beyond the ring | **est.** Dry-film and LPI tents dip a little into the hole they bridge; the slope keeps the bump from reading as a stamped disc. |
 | Open via | Finished ring (as a land) and a dark sleeve 0.01 mm thick lining the bore, through the board and both foils (`via_bore`) | The view computes no occlusion, so a bore five or more diameters deep would light up like an open copper face; real ones read as dark holes. Reflectance 0.01 (**est.**). |
-| Silkscreen | Legend ink 0.015 mm thick, half sunk into the mask; on a track's mask cap or a tent's crown it stands on the crown instead; clipped 0.05 mm clear of mask openings | Screen-printed and inkjet legend is 10–25 µm (**est.**); quoted silkscreen-to-pad clearances are 0.05–0.15 mm. Text uses Pcbcraft's own stroke font (`silkscreen/font.rs`) laid out by the core's text metric; bottom-side text is reflected in its box so it reads from below. |
+| Silkscreen | Legend ink 0.015 mm thick, half sunk into the mask; on a track's mask cap or a tent's crown it stands on the crown instead; clipped clear of mask openings by the rules' silkscreen-to-pad clearance (`rules.silkscreen.pad_clearance`) | Screen-printed and inkjet legend is 10–25 µm (**est.**). Text uses Pcbcraft's own stroke font (`silkscreen/font.rs`) laid out by the core's text metric; bottom-side text is reflected in its box so it reads from below. |
 | Edge stackup bands | Thin frames 0.002 mm proud of the routed faces (copper lines 0.003 mm): a band per dielectric (split around inner foils), a line per foil, a mask lip over each outer foil | Display only, so the board reads as a sectioned real board; the native laminate stays one body. Weave strength per glass style (**est.**): 7628 1.0, 2116 0.8, 1080 0.6, 106 0.45; prepreg 0.75 × its style. |
-| Plated finish | 0.005 mm around each land; over track copper inside an opening, 0.004 mm | ENIG nickel is 3–6 µm (IPC-4552). Fabrication plates all copper a mask opening exposes, so no bare copper shows where a track enters a land. |
+| Plated finish | The board's pad finish's thickness ([pad finishes](#pad-finishes)) around each land; over track copper inside an opening, 0.8 of it | Fabrication plates all copper a mask opening exposes, so no bare copper shows where a track enters a land. |
 | Chip terminations | Both ends of the long axis, a band of a fifth of the length (at most 0.5 mm), 0.01 mm proud of the top, sides, end and underside | Chip parts are packages with a chip form (publication requires exactly two package terminals for these). On an envelope chip these are display-only, and an inductor shows the ceramic chip's terminations; a generated chip has real tin termination bodies and a ferrite inductor body. The bands follow EIA chip-resistor bands (0.3–0.5 mm from 0603 to 1206). The rule uses only the package, so the Component preview and the board agree. |
 | Lead bands | Land ∩ body, 15 % of the body height | Moulded packages with at most two lands. |
 | Resistor overcoat | Body top between the bands, 0.04 mm in from the long edges, 0.005 mm proud | Leaves the white alumina rim and sides visible. Only chip resistors get it; chip capacitors are MLCC ceramic without an overcoat. |
@@ -168,6 +169,15 @@ The weave is a plain weave of continuous warp and weft bundles that rise over on
 Show-through is **est.** No measured print-through value was found in public sources; the mask levels the surface and the weave changes the colour beneath. It follows the opacity order: clear resin shows the weave plainly (as clear-mask boards do), the translucent pigments faintly, the most opaque ones (black, white, yellow: ≥ 800 mJ/cm² exposure, Taiyo) not at all. Legend ink shows the silkscreen grain; the edge bands show the weave per glass style.
 
 ### Pad finishes
+
+Each finish's 3D thickness is the middle of the range a fabricator publishes (`stack::finish_um`):
+
+| Pad finish | Published range | 3D thickness | Source |
+|---|---|---|---|
+| ENIG | Ni 3–6 µm, Au 0.025–0.05 µm | 4.54 µm | JLCPCB, *Surface finish* help page (read 2026-11-11): "Nickel thickness: approximately 3-6 micrometers", gold "approximately 0.025-0.05 micrometers thick". IPC-4552 gives Ni 3–6 µm too. |
+| HASL (tin-lead), lead-free HASL | 2–40 µm | 21 µm | LC-PCB, *Process capability parameter table*, row 63 (read 2026-11-11): "2-40um" for leaded and lead-free. JLCPCB gives "approximately 1-40 micrometers" for leaded and "comparable" for lead-free. |
+| OSP | 0.2–0.3 µm | 0.25 µm | LC-PCB table, row 64: "Film thickness: 0.2-0.3um". |
+| Immersion silver | 0.2–0.4 µm | 0.3 µm | LC-PCB table, row 66: "Silver thickness: 0.2-0.4um". |
 
 | Pad finish | Base colour (linear F0) | Rough | Source |
 |---|---|---|---|

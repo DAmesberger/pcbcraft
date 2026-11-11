@@ -3550,7 +3550,10 @@ mod tests {
         let blue = pcbcraft_solidcraft::material::material(
             pcbcraft_solidcraft::material::BodyKind::MaskTop,
             &expected,
-            &pcbcraft_solidcraft::stack::Stack::of(&engine.project().stackup),
+            &pcbcraft_solidcraft::stack::Stack::of(
+                &engine.project().stackup,
+                engine.project().fabrication.pad_finish,
+            ),
         )
         .surface()?;
         assert!(model.geometry.iter().any(|g| g.kind
