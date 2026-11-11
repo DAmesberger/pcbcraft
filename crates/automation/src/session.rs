@@ -981,6 +981,7 @@ impl Session {
                 )?;
                 let mut reply = self.document_reply();
                 reply["outcome"] = serde_json::to_value(outcome)?;
+                self.add_rerouted(&mut reply)?;
                 return Ok(reply);
             }
             Request::ApplyAll(params) => {
@@ -991,6 +992,7 @@ impl Session {
                 )?;
                 let mut reply = self.document_reply();
                 reply["outcomes"] = serde_json::to_value(outcomes)?;
+                self.add_rerouted(&mut reply)?;
                 return Ok(reply);
             }
             Request::Inspect(params) => return self.inspect(params),
@@ -1196,7 +1198,21 @@ impl Session {
             .apply_hosted(expected_revision, operation, hosted())?;
         let mut reply = self.document_reply();
         reply["outcome"] = serde_json::to_value(outcome)?;
+        self.add_rerouted(&mut reply)?;
         Ok(reply)
+    }
+
+    /// When the operation just applied moved parts whose dragged copper
+    /// was re-routed or left unrouted: `rerouted` with the connections'
+    /// nets and the one-line `summary` the desktop toasts.
+    fn add_rerouted(&self, reply: &mut Value) -> Result<()> {
+        let rerouted = self.engine.rerouted();
+        if let Some(summary) = rerouted.line() {
+            let mut value = serde_json::to_value(rerouted)?;
+            value["summary"] = Value::String(summary);
+            reply["rerouted"] = value;
+        }
+        Ok(())
     }
 
     /// `library.import_from_project`: read the file, take the exact closure

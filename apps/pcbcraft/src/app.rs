@@ -334,6 +334,17 @@ impl App {
                     self.schematic.select_pasted(self.engine.project(), report);
                 }
                 self.clear_error();
+                // Moved parts' dragged copper the engine re-routed, or
+                // left unrouted, in the same undo step.
+                let rerouted = self.engine.rerouted();
+                if let Some(line) = rerouted.line() {
+                    let level = if rerouted.unrouted.is_empty() {
+                        Level::Info
+                    } else {
+                        Level::Warning
+                    };
+                    self.say_with(level, line, vec![ToastAction::Undo]);
+                }
             }
             Err(_)
                 if schematic.as_ref().is_some_and(|command| {

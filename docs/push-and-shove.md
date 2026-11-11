@@ -153,6 +153,31 @@ The plan's `end` is the moved segment's midpoint, and `shoved` lists the dragged
 
 Dragging a corner (one vertex of a chain) is not built.
 
+## Re-routing dragged copper
+
+When parts move, by `layout.move` (a drag or a turn) or because a board parameter or a dimension moved them, `dimensions::carry` carries the copper on their pads ([board sketch references](board-sketch-references.md#52-dimensioned-parts)). It then hands the carried tracks and vias to `layout::router::reroute::dragged`, inside the same operation, so the re-route is part of the one undo step and every surface (desktop, CLI, MCP, the update preview) shares it.
+
+1. **What is re-routed.** Carried copper that is too close to other copper or a keepout (the router's `hits`, which the engine's checks agree with) or no longer reaches a pad it joined; unlocked copper the operation left in place that the moved parts' pads now come too close to (clear before); and, when the pair now breaks its class's uncoupled-length or skew limit, a pair half's carried track that ran coupled with its partner before and no longer does, with the partner's tracks it ran beside. Everything else stays as carried.
+2. **Connections.** One net's carried copper joined into one piece (by the copper graph) is a connection. A pair's two connections are one job. Jobs run in order of their smallest identity, each on the board the previous left.
+3. **Keep what is fine.** First only the offending tracks and vias are removed. The places the removed copper met (pads, vias, kept track ends) are joined nearest first where the remaining copper does not join them already, one route step each: Shove on the 45° posture, from either end with either elbow. A pair's two gaps are one pair step (`pair_plan`) at the pair's width and gap, fanning out of one end and into the other. When that fails, all of the job's carried copper is removed and routed the same way.
+4. **No route.** A job whose copper offends a rule and that cannot be routed has its carried copper removed: the connection is left unrouted (an airwire). A pair re-routed only for its coupling keeps the new route only when it runs less uncoupled, with no more skew than it had or its class allows; otherwise it stays as carried.
+5. **The report.** `Engine::rerouted` names each re-routed and unrouted connection by net. The desktop toasts its line ("Re-routed 2 connections", "Re-routed 6 connections; 1 left unrouted (USB_DP)"), with Undo; `project_apply` and `project_apply_all` replies (CLI and MCP) carry it as `rerouted` (`rerouted`, `unrouted` and `summary`) when there is one.
+
+Every attempt is a pure function of the board, so the same edit gives the same board.
+
+Tests: `crates/automation/tests/esp32_reroute.rs` on the ESP32 board: 40 → 41 mm keeps the USB pair coupled (before: 21.03 mm uncoupled); a pair re-routed by hand stays clear at 40 → 42 mm (before: 6 clearance errors, pair gap, skew and uncoupled findings, the R7-1 case); U2 turned 37° re-routes VBUS and GND (before: 4 clearance errors); the same edits twice give the same board; the reply carries the report. Each checks the refilled board for rule errors and the pair's class limits, and that one undo restores the file exactly. `layout/router/tests/reroute.rs`: a track whose part moves into a closed box of keepouts is left unrouted with no finding, and undo restores it. The desktop toast is `app::flow_tests::a_reroute_after_a_board_edit_is_one_toast`. J1 held 2 mm from the edge now re-routes VBUS and GND, which the carry alone left with 3 clearance errors, so `esp32_dimension_model` compares that update with a fresh build as a set of bodies, as it does for the widened board.
+
+Measured with `cargo test --release -p pcbcraft-automation --test esp32_reroute reroute_timings -- --ignored --nocapture` (Apple silicon, the whole edit through the engine, 15 runs):
+
+| Edit | Re-routed | Edit with re-route (median / max) | Carry only, before this change (median / max) |
+| --- | --- | --- | --- |
+| Width 40 → 41 mm | USB pair | 8.9 / 13.3 ms | 3.4 / 7.8 ms |
+| Width 40 → 42 mm (nothing offends) | none | 4.9 / 5.1 ms | 3.3 / 3.4 ms |
+| Width 40 → 42 mm, pair routed by hand | USB pair | 8.0 / 8.4 ms | 3.4 / 3.8 ms |
+| U2 turned 37° | VBUS, GND | 10.1 / 10.4 ms | 2.6 / 2.7 ms |
+
+The re-route costs 4–8 ms on this board; checking a move that needs none costs about 1.6 ms. An extreme case, the module U1 turned 37° (nearly every connection offends), took about 0.3 s in the optimised test profile. The edit runs once per commit, not per pointer move: a part drag previews its airwires (`carried_airwires`) and re-routes on release.
+
 ## Limits and follow-ups
 
 - **Convex hulls.** Merged obstacles become one convex hull, so walkaround does not thread between close obstacles whose merged hull swallows the gap. On the dense via grid, walking across the track-filled channels mostly stops short: 6 of 400 positions arrive, against 90 for Shove. A visibility search over hull corners would route through such gaps.
@@ -162,4 +187,5 @@ Dragging a corner (one vertex of a chain) is not built.
 - **Shove scope.** A chain's ends and pins never move, so a pusher reaching a chain's end at a pad or via, or a mid-span joint, fails rather than dragging the joint. A via moves only when it is the obstacle hit, not to make room for a chain. Shoves stay on the pushed copper's layer.
 - **Stateless preview.** Each move plans from the committed board. A head swept along a long track re-decides the push side each frame from geometry; the shorter clear side wins, which is stable in practice but not hysteretic.
 - **Pairs.** The pair router commits through `layout.route_apply` with the plan's edits. There is no serialisable `layout.route_pair_step` for CLI and MCP yet; `layout.route_pair` routes a whole pair without shove. The fan-out limits of [high-speed routing](high-speed-routing.md#limits-and-follow-ups) remain.
-- **Track drag.** A dragged segment does not walk round what it cannot push; it stops at the last legal offset. Corner drags are not built.
+- **Track drag.** A dragged segment does not walk round what it cannot push; it stops at the last legal offset. Corner drags are not built. Dragging one half of a pair moves it alone (night finding F7).
+- **Re-routing dragged copper.** Gaps are routed on their own layer only: a gap whose ends are on different layers, or a removed via that joins other copper, is not routed (so a carried via too close to another net is removed, and its connection left unrouted). A pair is routed as a pair only when each half leaves one gap; otherwise its halves are routed one by one. A turned part's fan-out is re-routed by the same steps, not re-planned as a fan-out.

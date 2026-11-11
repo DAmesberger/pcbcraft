@@ -526,9 +526,19 @@ pub struct Engine {
     /// The copper graph of this revision, built on first use and dropped
     /// with every new revision ([`Engine::copper_graph`]).
     copper: std::sync::OnceLock<Arc<layout::CopperGraph>>,
+    /// What the last applied operation re-routed of the copper its moved
+    /// parts dragged ([`Engine::rerouted`]).
+    rerouted: layout::router::reroute::Rerouted,
 }
 
 impl Engine {
+    /// What the last operation applied re-routed of the copper its moved
+    /// parts dragged along, and what it left unrouted: empty when it moved
+    /// no part, or the carried copper stayed clean.
+    pub fn rerouted(&self) -> &layout::router::reroute::Rerouted {
+        &self.rerouted
+    }
+
     /// Whether `fabrication.waive` needs a reason in this engine. The app
     /// sets it from its settings; headless hosts keep the default (off).
     pub fn require_waiver_reason(&mut self, required: bool) {
@@ -1016,6 +1026,7 @@ impl Engine {
         evaluators: Evaluators<'_>,
     ) -> Result<Vec<Outcome>> {
         self.check_revision(expected_revision)?;
+        self.rerouted = Default::default();
         let count = operations.len();
         if count == 0 {
             return Err(Error::Invalid(
@@ -1036,16 +1047,19 @@ impl Engine {
             ..Engine::default()
         };
         let mut outcomes = Vec::with_capacity(count);
+        let mut rerouted = layout::router::reroute::Rerouted::default();
         for (index, operation) in operations.into_iter().enumerate() {
             let at = scratch.revision;
             let outcome = scratch
                 .apply_inner(at, operation, evaluators)
                 .map_err(|error| error.in_batch(index, count))?;
+            rerouted.extend(std::mem::take(&mut scratch.rerouted));
             outcomes.push(outcome);
         }
         if scratch.revision != self.revision {
             self.commit(scratch.document)?;
         }
+        self.rerouted = rerouted;
         Ok(outcomes)
     }
 
@@ -1061,6 +1075,7 @@ impl Engine {
             last_step: self.last_step,
             waiver_reason_required: self.waiver_reason_required,
             copper: self.copper.clone(),
+            rerouted: self.rerouted.clone(),
         }
     }
 
@@ -1072,6 +1087,8 @@ impl Engine {
     ) -> Result<Outcome> {
         let evaluator = evaluators.footprint;
         self.check_revision(expected_revision)?;
+        self.rerouted = Default::default();
+        let mut rerouted = layout::router::reroute::Rerouted::default();
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
         let merge_named = matches!(&operation, Operation::Update(u) if u.merge_named_nets);
@@ -1279,7 +1296,7 @@ impl Engine {
                 placed.push(instance);
             }
             if !placed.is_empty() {
-                layout::dimensions::carry(
+                rerouted = layout::dimensions::carry(
                     &self.document.project,
                     project,
                     &self.copper_graph(),
@@ -1307,6 +1324,7 @@ impl Engine {
             validate::drafts_only(&candidate.project, &candidate.drafts)?;
         }
         self.commit(candidate)?;
+        self.rerouted = rerouted;
         Ok(outcome)
     }
 

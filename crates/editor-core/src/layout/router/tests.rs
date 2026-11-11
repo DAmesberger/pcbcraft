@@ -14,6 +14,7 @@ mod drag;
 mod joints;
 mod pair_shove;
 mod perf;
+mod reroute;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
