@@ -55,9 +55,22 @@ pub fn form<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 /// shared label column, the control fills the rest.
 pub fn row<R>(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
     let t = Tokens::get();
+    row_with_label_width(ui, label, t.form_label_width, control)
+}
+
+/// A [`row`] whose label column is `label_width` wide (at most 45% of the
+/// row), for a view wider than the Properties column whose labels are
+/// longer than a field name (the Pins tab's peripheral roles).
+pub fn row_with_label_width<R>(
+    ui: &mut Ui,
+    label: &str,
+    label_width: f32,
+    control: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let t = Tokens::get();
     let width = ui.available_width().max(0.0);
     let (rect, _) = ui.allocate_exact_size(vec2(width, t.control_height), egui::Sense::hover());
-    let label_width = t.form_label_width.min(width * 0.45);
+    let label_width = label_width.min(width * 0.45);
     let label_rect = egui::Rect::from_min_size(rect.min, vec2(label_width, rect.height()));
     let label_id = ui
         .scope_builder(
