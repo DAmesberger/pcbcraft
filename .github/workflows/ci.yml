@@ -20,5 +20,7 @@ jobs:
           workspaces: |
             . -> target
           cache-all-crates: true
+          # Keep the build when tests fail, so the next run reuses it.
+          cache-on-failure: true
       - name: Verify native code and wasm library
         run: cargo xtask ci

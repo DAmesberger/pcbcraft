@@ -78,7 +78,15 @@ fn run() -> Result<()> {
                 "-D",
                 "warnings",
             ])?;
-            cargo(&["test", "--locked", "--workspace", "--profile", "ci"])?;
+            // Every test binary runs, so one CI run reports all failures.
+            cargo(&[
+                "test",
+                "--locked",
+                "--workspace",
+                "--profile",
+                "ci",
+                "--no-fail-fast",
+            ])?;
             if command == "ci" {
                 wasm()?;
             }
