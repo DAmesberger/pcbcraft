@@ -12,7 +12,7 @@
     },
     "drill_files": {
       "kind": "not_published",
-      "source": "The capabilities page (read 2026-11-11) gives hole tolerances (\"Through-holes: +0.13 / -0.08 mm\") but does not say whether drill-file sizes are finished or drilled sizes."
+      "source": "The capabilities page (read 2026-11-11) gives hole tolerances (Drilling, \"Hole size Tolerance\": \"Through-holes: +0.13 / -0.08 mm\") and finished sizes (\"e.g. for the 0.6mm hole size, the finished hole size between 0.52mm to 0.73mm is acceptable.\") but does not say whether drill files list finished or drilled sizes."
     },
     "rules": {
       "aspect_ratio_max": {
@@ -37,79 +37,79 @@
       },
       "clearance_fill_board_edge": {
         "value": 0.2,
-        "source": "Outline: Copper clearance from routed board edges: ≧0.2 mm."
+        "source": "Outline, \"Routed\": \"0.2mm\"; \"① Copper clearance from routed board edges: ≧0.2 mm\"."
       },
       "clearance_fill_fill": {
         "value": 0.09,
-        "source": "Traces: Min. track width and spacing (1 oz), Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil)."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
       "clearance_fill_hole": {
         "value": 0.2,
-        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm; Inner layer via hole to copper clearance 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm; Inner layer PTH pad hole to copper clearance 0.3mm), which one hole rule cannot tell apart: check plated holes by hand."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\"), which one hole rule cannot tell apart: check plated holes by hand."
       },
       "clearance_hole_hole": {
         "value": 0.2,
-        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm; Inner layer via hole to copper clearance 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm; Inner layer PTH pad hole to copper clearance 0.3mm), which one hole rule cannot tell apart: check plated holes by hand."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\"), which one hole rule cannot tell apart: check plated holes by hand."
       },
       "clearance_pad_board_edge": {
         "value": 0.2,
-        "source": "Outline: Copper clearance from routed board edges: ≧0.2 mm."
+        "source": "Outline, \"Routed\": \"0.2mm\"; \"① Copper clearance from routed board edges: ≧0.2 mm\"."
       },
       "clearance_pad_fill": {
         "value": 0.09,
-        "source": "Traces: Min. track width and spacing (1 oz), Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil)."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
       "clearance_pad_hole": {
         "value": 0.2,
-        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm; Inner layer via hole to copper clearance 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm; Inner layer PTH pad hole to copper clearance 0.3mm), which one hole rule cannot tell apart: check plated holes by hand."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\"), which one hole rule cannot tell apart: check plated holes by hand."
       },
       "clearance_pad_pad": {
         "value": 0.15,
-        "source": "Traces: SMD pad to pad clearance (different nets) 0.15mm."
+        "source": "Traces, \"SMD pad to pad clearance (different nets)\": \"0.15mm\"."
       },
       "clearance_pad_via": {
         "value": 0.09,
-        "source": "Traces: Min. track width and spacing (1 oz), Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil)."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
       "clearance_track_board_edge": {
         "value": 0.2,
-        "source": "Outline: Copper clearance from routed board edges: ≧0.2 mm."
+        "source": "Outline, \"Routed\": \"0.2mm\"; \"① Copper clearance from routed board edges: ≧0.2 mm\"."
       },
       "clearance_track_fill": {
         "value": 0.09,
-        "source": "Traces: Min. track width and spacing (1 oz), Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil)."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
       "clearance_track_hole": {
         "value": 0.2,
-        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm; Inner layer via hole to copper clearance 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm; Inner layer PTH pad hole to copper clearance 0.3mm), which one hole rule cannot tell apart: check plated holes by hand."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\"), which one hole rule cannot tell apart: check plated holes by hand."
       },
       "clearance_track_pad": {
         "value": 0.1,
-        "source": "Traces: Pad to track clearance (1oz) 0.1mm."
+        "source": "Traces, \"Pad to track clearance (1oz)\": \"0.1mm\"; \"Min. 0.1 mm (stay well above if possible)\"."
       },
       "clearance_track_track": {
         "value": 0.09,
-        "source": "Traces: Min. track width and spacing (1 oz), Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil)."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
       "clearance_track_via": {
         "value": 0.09,
-        "source": "Traces: Min. track width and spacing (1 oz), Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil)."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
       "clearance_via_board_edge": {
         "value": 0.2,
-        "source": "Outline: Copper clearance from routed board edges: ≧0.2 mm."
+        "source": "Outline, \"Routed\": \"0.2mm\"; \"① Copper clearance from routed board edges: ≧0.2 mm\"."
       },
       "clearance_via_fill": {
         "value": 0.09,
-        "source": "Traces: Min. track width and spacing (1 oz), Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil)."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
       "clearance_via_hole": {
         "value": 0.2,
-        "source": "Drilling: Via hole to Track 0.2mm; Via Hole-to-Hole Spacing 0.2mm; Inner layer via hole to copper clearance 0.2mm. Pad (PTH) holes need more (PTH to track 0.28 mm minimum; Pad Hole-to-Hole Spacing 0.45mm; Inner layer PTH pad hole to copper clearance 0.3mm), which one hole rule cannot tell apart: check plated holes by hand."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; Traces, \"Inner layer via hole to copper clearance\": \"0.2mm\". Plated pad holes need more (Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\"; Traces, \"Inner layer PTH pad hole to copper clearance\": \"0.3mm\"), which one hole rule cannot tell apart: check plated holes by hand."
       },
       "clearance_via_via": {
         "value": 0.09,
-        "source": "Traces: Min. track width and spacing (1 oz), Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil)."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
       "copper_angle_min": {
         "value": 0.0,
@@ -121,7 +121,7 @@
       },
       "drill_min": {
         "value": 0.15,
-        "source": "Drilling: Drill Diameter, Multilayer: 0.15 – 6.3 mm."
+        "source": "Drilling, \"Drill Diameter\": \"Multilayer: 0.15 – 6.3 mm\"."
       },
       "exposed_pad_clearance": {
         "value": 0.2,
@@ -153,11 +153,11 @@
       },
       "mask_expansion": {
         "value": 0.0,
-        "source": "Soldermask: Soldermask Expansion 1:1."
+        "source": "Soldermask, \"Soldermask Expansion\": \"1:1\"; \"Pad size:soldermask opening can be 1:1\"."
       },
       "mask_web_min": {
         "value": 0.1,
-        "source": "Soldermask: Soldermask bridge 0.10 mm (green, red, yellow, blue, purple); 0.13 mm for black and white."
+        "source": "Soldermask, \"Soldermask bridge\": \"0.10mm\"; \"1oz: Min. pad spacing: 0.10 mm (green, red, yellow, blue, purple)\", \"Min. pad spacing: 0.13 mm (black, white)\"."
       },
       "pair_gap_tolerance": {
         "value": 0.02,
@@ -173,7 +173,7 @@
       },
       "pth_annular_ring_min": {
         "value": 0.15,
-        "source": "Traces: PTH annular ring, Multilayer 1 oz: Recommended 0.20 mm or above; absolute minimum 0.15 mm."
+        "source": "Traces, \"PTH annular ring\": \"≧0.20mm\"; under \"Multilayer:\", \"1 oz: Recommended 0.20 mm or above; absolute minimum 0.15 mm\". The absolute minimum for 1 oz multilayer boards."
       },
       "silk_edge_clearance": {
         "value": 0.0,
@@ -181,15 +181,15 @@
       },
       "silk_line_width_min": {
         "value": 0.15,
-        "source": "Legend: Minimum Line Width ≥0.15mm."
+        "source": "Legend, \"Minimum Line Width\": \"≥0.15mm\"."
       },
       "silk_pad_clearance": {
         "value": 0.15,
-        "source": "Legend: Pad To Silkscreen 0.15mm."
+        "source": "Legend, \"Pad To Silkscreen\": \"0.15mm\"."
       },
       "silk_text_height_min": {
         "value": 1.0,
-        "source": "Legend: Minimum text height 40 mil (1.0mm)."
+        "source": "Legend, \"Minimum text height\": \"40 mil (1.0mm)\"."
       },
       "silk_text_stroke_share": {
         "formula": "silk_line_width_min / silk_text_height_min",
@@ -237,15 +237,15 @@
       },
       "track_width_min": {
         "value": 0.09,
-        "source": "Traces: Min. track width and spacing (1 oz), Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil)."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"Multilayer: 0.09 / 0.09 mm (3.5 / 3.5 mil). 3 mil is acceptable in BGA fan-outs.\"."
       },
       "via_annular_ring_min": {
         "formula": "(0.25 - 0.15) / 2.0",
-        "source": "Drilling: Min. Via hole size/diameter, Multilayer: 0.15 mm hole size / 0.25 mm via diameter."
+        "source": "Drilling, \"Min. Via hole size/diameter\": \"0.15/0.25mm\"; \"Multilayer: 0.15 mm hole size / 0.25 mm via diameter\"."
       },
       "via_diameter_default": {
         "formula": "via_drill_default + 0.15",
-        "source": "Drilling: \"Via diameter should be 0.1mm(0.15mm preferred) larger than Via hole size\"; the preferred margin."
+        "source": "Drilling, \"Min. Via hole size/diameter\": \"① Via diameter should be 0.1mm(0.15mm preferred) larger than Via hole size.\"; the preferred margin."
       },
       "via_drill_default": {
         "value": 0.3,
