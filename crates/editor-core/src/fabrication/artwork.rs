@@ -46,7 +46,11 @@ pub(super) fn common_attributes(
 ) -> Vec<(&'static str, String)> {
     let mut out = vec![(
         "GenerationSoftware",
-        format!("Pcbcraft,Pcbcraft,{}", env!("CARGO_PKG_VERSION")),
+        format!(
+            "{0},{0},{1}",
+            crate::product::NAME,
+            env!("CARGO_PKG_VERSION")
+        ),
     )];
     if let Some(date) = &options.creation_date {
         out.push(("CreationDate", escape(date)));

@@ -848,9 +848,13 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
                 kit::hint(
                     ui,
                     "This board has no fab profile, so nothing is checked",
-                    "Choose your fabricator's profile. Pcbcraft ships none: import a profile \
-                     file (Your profiles › Import…; examples/profiles/ has sourced ones) or \
-                     write one from the fabricator's capability page.",
+                    concat!(
+                        "Choose your fabricator's profile. ",
+                        pcbcraft_core::product_name!(),
+                        " ships none: import a profile \
+                         file (Your profiles › Import…; examples/profiles/ has sourced ones) or \
+                         write one from the fabricator's capability page."
+                    ),
                 );
             }
         }

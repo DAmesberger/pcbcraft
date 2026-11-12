@@ -16,7 +16,7 @@ macOS only (ScreenCaptureKit, macOS 15 or later).
 
 ```sh
 nix develop -c cargo build --locked --profile ci -p pcbcraft -p pcbcraft-cli
-target/nix/ci/pcbcraft-cli showcase target/launch/showcase.pcbcraft
+target/nix/ci/sparksmith showcase target/launch/showcase.pcbcraft
 
 cp examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft target/launch/wroom3.pcbcraft
 

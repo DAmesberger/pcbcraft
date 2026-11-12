@@ -12,7 +12,7 @@ What that means in practice:
 - **It works where you're working:** in the app, with your selection and your open issues, not in a separate tool you copy things into.
 - **You stay in control:** you can see what it read and what it changed, and undo it in one step.
 - **The model is your choice:** hosted or local, or an agent you already use. No feature is tied to one vendor.
-- **Pcbcraft stays a complete editor without any LLM.** Nothing requires one, and the app works offline.
+- **Sparksmith stays a complete editor without any LLM.** Nothing requires one, and the app works offline.
 
 ## What exists today
 
@@ -22,7 +22,7 @@ What that means in practice:
 | MCP server | Built; compact replies | `crates/automation/src/mcp.rs` |
 | Live MCP into the open window | Built: Help › Connect AI assistants…, off at start; requests run on the UI thread on the window's engine and undo history, with the gate and an in-app Allow for Ask ([development notes](development.md#live-mcp)) | `crates/automation/src/live.rs`, `apps/pcbcraft/src/app/live_mcp.rs` |
 | Datasheet assistant | Built as an MCP workflow (9 November 2026): the `datasheet_to_component` prompt, served from the skill file `skills/pcbcraft-datasheet-part/SKILL.md`, and `library.review_check` on the agent's cited report. The in-app runner (Anthropic and OpenAI-compatible model layer, request, token and time limits, recording, review report) stays while the in-app assistant is decided ([datasheet assistant](datasheet-assistant.md#mcp-workflow)) | `crates/automation/src/mcp/prompts.rs`, `crates/automation/src/review.rs`, `crates/assist` |
-| Review of a proposed change | `pcbcraft-cli review-diff` compares two projects | CLI |
+| Review of a proposed change | `sparksmith review-diff` compares two projects | CLI |
 | In-app chat | **None** | |
 
 **Solidcraft already has an agent chat** (`crates/ui-egui/src/agent_chat`, about 20,000 lines with tests, in both our pins). It's worth learning from closely:
@@ -148,7 +148,7 @@ That's one sample, and the prompt was simple. It shows the path works, not that 
 
 **Decision (founder, 5 November 2026): we don't use it; we build our own.** "if it is not exposed, we should not use it and do it ourselves. we might have different requirements anyways". Solidcraft's chat isn't exposed for other apps, so there's no fork change and no dependency on it. Its documented design is useful as a reference for what such a system needs, such as the gate, one undo step per message and keychain handling.
 
-The Pcbcraft `Transport` and `Settings` types get replaced, with no compatibility layer needed before the first release.
+The Sparksmith `Transport` and `Settings` types get replaced, with no compatibility layer needed before the first release.
 
 ## Build order
 

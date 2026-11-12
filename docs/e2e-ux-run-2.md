@@ -1,6 +1,6 @@
 # Second end-to-end UX run: USB sensor board, one hour
 
-On 6 November 2026 an agent designed the same small USB-powered sensor board as the [first UX run](e2e-ux-run.md) in Pcbcraft's desktop app, the way a designer would: through the ribbon, the cards, the canvas and the shortcuts. The aim was again to judge the UX against the founder's bar: text that is readable, distinguishable and expands on hover when shortened; screens that are not crowded; and a next step that is obvious. This run also checked which of the first run's findings are fixed.
+On 6 November 2026 an agent designed the same small USB-powered sensor board as the [first UX run](e2e-ux-run.md) in Sparksmith's desktop app, the way a designer would: through the ribbon, the cards, the canvas and the shortcuts. The aim was again to judge the UX against the founder's bar: text that is readable, distinguishable and expands on hover when shortened; screens that are not crowded; and a next step that is obvious. This run also checked which of the first run's findings are fixed.
 
 The app ran in the Herdr macOS VM (1920 × 1200 display at 1×, app window 1380 × 900). The build was 6e2c238 (`component-model` branch), installed as `~/Applications/Pcbcraft.app`. The budget was **one hour of design time**. The clock started at the first action in the app, 06:40:35, and the run stopped at 07:25:13, after **44 min 38 s**. The agent read no product source, changed no product code and did not use `pcbcraft-cli`. It made no paid API calls.
 

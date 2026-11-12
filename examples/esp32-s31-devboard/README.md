@@ -1,20 +1,20 @@
 # ESP32-S31 dev board (end-to-end acceptance board)
 
-Release plan step 5: a real ESP32-S31-WROOM-3 development board designed from components to Gerbers through Pcbcraft's own command engine, as a CLI/MCP client would. The run, its friction and its gaps are in [docs/e2e-esp32-devboard.md](../../docs/e2e-esp32-devboard.md).
+Release plan step 5: a real ESP32-S31-WROOM-3 development board designed from components to Gerbers through Sparksmith's own command engine, as a CLI/MCP client would. The run, its friction and its gaps are in [docs/e2e-esp32-devboard.md](../../docs/e2e-esp32-devboard.md).
 
-**Status: an unreviewed design.** It passes Pcbcraft's ERC, DRC and production check, and the outputs were cross-checked by an independent Gerber parser. No person has reviewed it, and no board has been built. Several limits are listed below. Do not order it unreviewed.
+**Status: an unreviewed design.** It passes Sparksmith's ERC, DRC and production check, and the outputs were cross-checked by an independent Gerber parser. No person has reviewed it, and no board has been built. Several limits are listed below. Do not order it unreviewed.
 
 ## Files
 
 | File | What |
 |---|---|
 | `esp32-s31-devboard.pcbcraft` | The project. Open it in the desktop app. It holds the parts library, two schematic sheets, the 4-layer board, the fills and the waiver-free production state. |
-| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 582 JSON-lines requests through `pcbcraft-cli stdio --operator`. It replays to a byte-identical `project.json`. |
+| `esp32-s31-devboard.replay.jsonl` | The full command sequence: 582 JSON-lines requests through `sparksmith stdio --operator`. It replays to a byte-identical `project.json`. |
 | `regenerate.sh` | Replays the board and writes `fab/` and the schematic PDF. With `NATIVE=1` it also writes the `.solidcraft` model (about 10 s of CPU). |
 | `fab/` | Gerber X2 for 4 copper layers, masks, top paste, top legend and profile; plated and non-plated Excellon; drill map and table; job file; top pick-and-place; both BOMs; fabrication and assembly PDFs. |
 | `esp32-s31-devboard-schematic.pdf` | The schematic, two sheets. |
 | `authoring/` | The Python client that wrote the replay: placement coordinates, routes and part data with their datasheet sources. It is not application code. `python3 -B examples/esp32-s31-devboard/authoring/build.py route` from the repository root re-records the replay. |
-| `parts/b3u-1000p.solidcraft` | The switches' 3D model: original work (MIT OR Apache-2.0), authored through Solidcraft's commands by `cargo test -p pcbcraft-solidcraft --test author_parts -- --ignored`. `pcbcraft-cli part check` checks it. |
+| `parts/b3u-1000p.solidcraft` | The switches' 3D model: original work (MIT OR Apache-2.0), authored through Solidcraft's commands by `cargo test -p pcbcraft-solidcraft --test author_parts -- --ignored`. `sparksmith part check` checks it. |
 | `parts/usb4105.solidcraft` | J1's 3D model, authored the same way: a nickel shell with a stadium (racetrack) cross-section, sketched and extruded, open at the mating face, with its four stakes; the LCP insulator closing its rear and the round-cornered tongue centred in the opening; the twelve gold solder tails of the rear row. The board holds J1 by its shell's front face (`F2:start`, the extrusion's start face): two part dimensions keep that face on the bottom edge and J1's origin at `width / 2` from the left edge, so J1 follows a change of the board's width. |
 | `images/` | Schematic pages; copper layers rendered by PyGerber (MIT) from the Gerber files; desktop screenshots of PCB 2D and 3D. |
 
@@ -26,7 +26,7 @@ sh examples/esp32-s31-devboard/regenerate.sh
 ## Board
 
 - **Size:** 40 × 64 mm, 1.5 mm corner radius, four M2.5 mounting holes (2.7 mm NPTH, board-level holes), each `inset` (3.5 mm) from its two nearest edges, so the sketch is fully defined and the holes follow a width or height change.
-- **Stackup:** 4 layers, 1.74 mm. From the top: signal, prepreg 0.2 mm (2116), GND plane, core 1.2 mm (7628), 3V3 plane, prepreg 0.2 mm, signal. Both inner foils are marked as reference planes. The Dk values are Pcbcraft's generic estimates.
+- **Stackup:** 4 layers, 1.74 mm. From the top: signal, prepreg 0.2 mm (2116), GND plane, core 1.2 mm (7628), 3V3 plane, prepreg 0.2 mm, signal. Both inner foils are marked as reference planes. The Dk values are Sparksmith's generic estimates.
 - **Rules:** the profile file [`examples/profiles/jlcpcb-4-layer-1oz.json`](../profiles/jlcpcb-4-layer-1oz.json), written from JLCPCB's [PCB capabilities page](https://jlcpcb.com/capabilities/pcb-capabilities) (read 2026-11-11; every rule cites its row). Overrides: copper (track, pad, via, fill) to board edge 0.3 mm and legend to edge 0.2 mm (JLCPCB publishes no legend-to-edge limit).
 - **Net classes:**
   - Power (GND, +3V3, VBUS): 0.5 mm tracks, 0.3 mm minimum.
@@ -72,8 +72,8 @@ The values come from manufacturers' public datasheets, used as datasheets. None 
 - GCT: USB4105 drawing (rev B4, <https://gct.co/files/drawings/usb4105.pdf>), Recommended PCB Layout, and these values for the receptacle's part file: the outline (8.94 × 7.35 × 3.31 mm) and the 8.34 × 2.56 mm opening 1.73 mm up, from which the 0.30 mm shell and its stadium section follow; the stakes 2.60 mm and 2.60 + 4.18 mm from the mating face, the front ones 1.10 mm long; the tails' x positions (0.5 mm pitch, VBUS at ±2.40 mm, GND at ±3.20 mm) and widths (0.20 mm signal, 0.45 mm shared). Illustrative: the cavity depth, the tongue (6.7 × 0.7 mm, 0.6 mm behind the face, 0.3 mm corners), the rear stakes' length (the front ones'), and the tails' thickness, reach and run under the shell. The stakes are drawn above the seating plane only. GCT's STEP model for the USB4105-GF-A was not used: gct.co serves its model downloads behind a browser check that refused a scripted download, so the shape follows the drawing alone.
 - Omron: B3U catalog, PCB pad and the B3U-1000P(M) dimensions (p.2) for the switch's part file: housing 3 × 2.5 mm, 1.2 mm to the cover, 1.6 mm over the 1.5 mm plunger, 4 mm over the 1.4 mm wide terminals. The drawing gives no cover or terminal thickness; the part file's 0.1 and 0.15 mm are illustrative.
 - Kingbright: APT1608SGC, recommended soldering pattern; pad 1 is the cathode.
-- Murata and Yageo: MPNs and ratings from the product series pages. The capacitor and resistor lands are Pcbcraft's starter-table estimates.
-- Samtec: TSW. The header footprint is Pcbcraft's 2.54 mm header template.
+- Murata and Yageo: MPNs and ratings from the product series pages. The capacitor and resistor lands are Sparksmith's starter-table estimates.
+- Samtec: TSW. The header footprint is Sparksmith's 2.54 mm header template.
 
 No EDA tool's library or code was used, and no vendor CAD file was used. The module's own Espressif CAD cross-check is described in its example.
 

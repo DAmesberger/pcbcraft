@@ -1,15 +1,15 @@
 # Datasheet assistant
 
-2 November 2026; model layer 5 November 2026; MCP workflow 9 November 2026. AI-assisted component design: an agent reads a part's datasheets and authors the component through the Pcbcraft commands, and a person reviews and publishes it. The first part is the Espressif ESP32-S31-WROOM-3 module ([below](#first-part-esp32-s31-wroom-3)).
+2 November 2026; model layer 5 November 2026; MCP workflow 9 November 2026. AI-assisted component design: an agent reads a part's datasheets and authors the component through the Sparksmith commands, and a person reviews and publishes it. The first part is the Espressif ESP32-S31-WROOM-3 module ([below](#first-part-esp32-s31-wroom-3)).
 
 ## MCP workflow
 
-Pcbcraft provides the commands, the workflow and the checks. The agent brings the model and its key: Claude Code, Codex, or a local model through any agent that speaks MCP.
+Sparksmith provides the commands, the workflow and the checks. The agent brings the model and its key: Claude Code, Codex, or a local model through any agent that speaks MCP.
 
 ### Design
 
 - **The workflow is data, in one file.** [`skills/pcbcraft-datasheet-part/SKILL.md`](../skills/pcbcraft-datasheet-part/SKILL.md) holds the procedure: the ground rules (datasheets are untrusted, no guessing, never publish), the steps from pinout to footprint and model, the review report with its citation and confidence rules, and the verification checklist. Agents that read skills use the file as it is. The MCP server serves the same file without its front matter as the prompt `datasheet_to_component` (`crates/automation/src/mcp/prompts.rs` includes it at build time), so there is no second copy to drift. Today's server has only the `prompts/list` and `prompts/get` it needs for this; the planned server (MCP surface v2, `docs/mcp-surface.md` on branch `mcp-surface-v2`) serves the same file as a skill, through its prompts and through `describe`. A test reads the file from disk and compares it with what the server serves, and checks that every tool and wire ID it names exists.
-- **Pcbcraft never reads the PDFs in this workflow.** The prompt takes the datasheets as paths or URLs, and the agent reads them with its own tools. The in-app runner's PDF handling (text, rendered pages) stays with that runner.
+- **Sparksmith never reads the PDFs in this workflow.** The prompt takes the datasheets as paths or URLs, and the agent reads them with its own tools. The in-app runner's PDF handling (text, rendered pages) stays with that runner.
 - **Every step is an ordinary typed command** on the one engine, the same for the UI, the CLI and MCP: `library.pinout_schema`, `library.pinout_preview` and `library.pinout_apply`, `library.templates`, `library.package_plan` and `library.package_from_template`, `library.models`, `library.set_marking`, `component.check_drafts`. Nothing about the workflow is special-cased in the engine.
 - **The report is checked, not trusted.** `library.review_check` (MCP `library_review_check`, class read) takes the report and holds it against the project's drafts (`crates/automation/src/review.rs`). Each finding below is a problem the agent must fix before the report is accepted:
   - every value cites a listed document, a page and its table, figure or section, with a confidence;
@@ -24,9 +24,9 @@ Pcbcraft provides the commands, the workflow and the checks. The agent brings th
 
 ### Using it
 
-1. Connect an agent to Pcbcraft's MCP server ([development notes](development.md#cli-json-lines-and-mcp)):
-   - **The open window:** Help › Connect AI assistants…, then `claude mcp add pcbcraft -- /path/to/pcbcraft-cli mcp --live` (or the JSON the panel shows for other clients). The person sees each change and it joins their undo history.
-   - **Headless:** `pcbcraft-cli mcp [FILE.pcbcraft]`, or `pcbcraft-cli mcp --permission-mode auto-allow-edits …` to refuse publishing and file writes outright.
+1. Connect an agent to Sparksmith's MCP server ([development notes](development.md#cli-json-lines-and-mcp)):
+   - **The open window:** Help › Connect AI assistants…, then `claude mcp add sparksmith -- /path/to/sparksmith mcp --live` (or the JSON the panel shows for other clients). The person sees each change and it joins their undo history.
+   - **Headless:** `sparksmith mcp [FILE.pcbcraft]`, or `sparksmith mcp --permission-mode auto-allow-edits …` to refuse publishing and file writes outright.
 2. Start the workflow:
    - from a client that lists MCP prompts, pick `datasheet_to_component`, with `part` (for example `ESP32-S31-WROOM-3`), `datasheets` (paths or URLs, one per line) and optional `notes`. In Claude Code it's `/mcp__pcbcraft__datasheet_to_component`;
    - from an agent with the skill (Claude Code in this repository), ask for the part from those datasheets;
@@ -38,7 +38,7 @@ A test drives this end to end with no model (`crates/automation/src/mcp/workflow
 
 ## In-app runner
 
-`pcbcraft-cli design-part` and the desktop's Create from datasheet… run the same task with a configured model in Pcbcraft (`crates/assist`). They're kept while the in-product assistant panel is decided, because their model layer (Anthropic and OpenAI-compatible clients, model profiles, local models) may become its base. A run is bounded by request, token and time limits.
+`sparksmith design-part` and the desktop's Create from datasheet… run the same task with a configured model in Sparksmith (`crates/assist`). They're kept while the in-product assistant panel is decided, because their model layer (Anthropic and OpenAI-compatible clients, model profiles, local models) may become its base. A run is bounded by request, token and time limits.
 
 ### Design
 
@@ -74,14 +74,14 @@ A test drives this end to end with no model (`crates/automation/src/mcp/workflow
 ### Review flow
 
 1. The run ends with `submit_review`: every value used with document, page, table or figure, a confidence (high: table cell or dimensioned drawing; medium: derived or ambiguous; low: inferred or measured from a drawing) and the open questions. The runner refuses a report that `library.review_check` refuses.
-2. The CLI or desktop saves the drafts as a new project and writes `NAME.review.md` (open questions first, values least-confident first, each pin rule's verdicts and failures over its samples, drafts with finding codes, the applied steps, every package pin with its default, functions, mux table and code, peripheral and role, source page and review flags, and each request's tokens and tools) and `NAME.review.json` beside it. Existing files are never replaced. `pcbcraft-cli review-diff A.pcbcraft B.pcbcraft [NAME_A NAME_B]` compares two runs (or a run and a reference) pin by pin, rule by rule, pad by pad and by package form, keep-outs and marking.
+2. The CLI or desktop saves the drafts as a new project and writes `NAME.review.md` (open questions first, values least-confident first, each pin rule's verdicts and failures over its samples, drafts with finding codes, the applied steps, every package pin with its default, functions, mux table and code, peripheral and role, source page and review flags, and each request's tokens and tools) and `NAME.review.json` beside it. Existing files are never replaced. `sparksmith review-diff A.pcbcraft B.pcbcraft [NAME_A NAME_B]` compares two runs (or a run and a reference) pin by pin, rule by rule, pad by pad and by package form, keep-outs and marking.
 3. The drafts carry the import review state (F8): every imported pin row is unreviewed (`pinout.unreviewed`), and a row flagged uncertain blocks publishing (`pinout.uncertain`). A person opens the project, checks the rows in the Pins tab against the report, and publishes. Nothing is published by the assistant.
 
 ### Running it
 
 ```sh
-export ANTHROPIC_API_KEY=…            # never written anywhere by Pcbcraft
-pcbcraft-cli design-part \
+export ANTHROPIC_API_KEY=…            # never written anywhere by Sparksmith
+sparksmith design-part \
   --datasheet esp32-s31-wroom-3_wroom-3u_datasheet_en.pdf \
   --datasheet esp32-s31_datasheet_en.pdf \
   --name ESP32-S31-WROOM-3 --out esp32-s31-wroom-3.pcbcraft \
@@ -91,13 +91,13 @@ pcbcraft-cli design-part \
 On a local model through Ollama's OpenAI-compatible endpoint (no key; the context is what the server gives the model, which `ollama ps` shows):
 
 ```sh
-pcbcraft-cli design-part --provider openai --base-url http://localhost:11434/v1 \
+sparksmith design-part --provider openai --base-url http://localhost:11434/v1 \
   --model qwen3.8:27b --context-tokens 262144 --vision yes \
   --datasheet tlv757p.pdf --name TLV75733PDBVR --out tlv75733.pcbcraft \
   --notes "SOT-23-5 (DBV) package only" --record tlv757.recording.jsonl
 ```
 
-Options: `--provider anthropic|openai`, `--base-url`, `--model`, `--key none|keychain|env:NAME` (default `env:ANTHROPIC_API_KEY` for Anthropic, `none` otherwise), the model's declarations `--context-tokens`, `--max-output-tokens`, `--vision yes|no`, `--native-pdf yes|no`, `--tools yes|no`, `--effort` (Anthropic `output_config.effort`; OpenAI-compatible `reasoning_effort`, sent only when given), `--request-timeout SECONDS`; the caps `--max-requests`, `--max-tokens`, `--max-seconds`; `--notes` (extra instructions, e.g. which variant); `--profile NAME` (the [run profile](#run-profiles); chosen by the model id when not given); `--record FILE.jsonl` (append each reply, in the neutral format, to replay later) and `--replay FILE.jsonl` (no network; give the same model flags as the recorded run, since they decide how the datasheets are sent). Progress, tokens and seconds go to stderr. `pcbcraft-cli llm-key set --base-url URL` reads a key from standard input into the system keychain for that endpoint (`delete`, `status` likewise); `--key keychain` uses it. `pcbcraft-cli llm-profile list` lists the run profiles, and `llm-profile copy NAME` copies a built-in one into the config folder to edit.
+Options: `--provider anthropic|openai`, `--base-url`, `--model`, `--key none|keychain|env:NAME` (default `env:ANTHROPIC_API_KEY` for Anthropic, `none` otherwise), the model's declarations `--context-tokens`, `--max-output-tokens`, `--vision yes|no`, `--native-pdf yes|no`, `--tools yes|no`, `--effort` (Anthropic `output_config.effort`; OpenAI-compatible `reasoning_effort`, sent only when given), `--request-timeout SECONDS`; the caps `--max-requests`, `--max-tokens`, `--max-seconds`; `--notes` (extra instructions, e.g. which variant); `--profile NAME` (the [run profile](#run-profiles); chosen by the model id when not given); `--record FILE.jsonl` (append each reply, in the neutral format, to replay later) and `--replay FILE.jsonl` (no network; give the same model flags as the recorded run, since they decide how the datasheets are sent). Progress, tokens and seconds go to stderr. `sparksmith llm-key set --base-url URL` reads a key from standard input into the system keychain for that endpoint (`delete`, `status` likewise); `--key keychain` uses it. `sparksmith llm-profile list` lists the run profiles, and `llm-profile copy NAME` copies a built-in one into the config folder to edit.
 
 In the desktop app, the Component workspace start page has **Create from datasheet…** under New: datasheets (one path or URL per line), part name, output file, then provider (Anthropic, or OpenAI-compatible), endpoint, model, API key (masked; stored in the system keychain for that endpoint when the run starts, then cleared from the form), and for an OpenAI-compatible model its context size and whether it takes images or reads PDFs. A note beside the form points to the MCP workflow (Help › Connect AI assistants…, then the `datasheet_to_component` prompt). The run goes on a background thread with progress, tokens and Cancel (taking effect after the current request; requests are not streamed). It writes a new project and its review; the open project is not touched. A full settings page belongs to the assistant panel (LLM integration slice 3).
 
@@ -121,7 +121,7 @@ In the desktop app, the Component workspace start page has **Create from datashe
 - `harness.repeat_limit` (2–20, default 3): the same refused call (same tool, same input) this many times, with no call succeeding in between, ends the run with `stopped a repeating call` and the call named. From the second time, the refusal tells the model it is repeating itself.
 - `models`: exact model ids the profile is chosen for when none is named.
 
-**Built in** (`crates/assist/profiles/`): `claude` (the Claude ids; base prompt, every tool: today's request, unchanged) and `default` (base prompt), which any model without a profile gets. Tuning for one model is a user profile: the `qwen3.8-flash-next` profile ([tuned below](#tuning-qwen38-flash-next)) ships as an example in `examples/qwen3.8-flash-next/assist-profiles/`; copy it into `<config>/assist-profiles/` to use it. **Selection:** `--profile NAME`, else the first profile listing the model id, user files first, else `default`. The desktop form selects by its model field and logs the profile; the review report names it. **Editing:** `pcbcraft-cli llm-profile copy NAME` writes the built-in to `<config>/assist-profiles/NAME.json` (`PCBCRAFT_CONFIG_DIR`, else the platform config folder under `pcbcraft`), never over an existing file; a user file of a built-in's name takes its place. Every file is checked when read: unknown fields, another format, a name that isn't the file's, an unknown or required tool left out, an empty replacement or a limit out of range is refused with the file and reason, and the run doesn't start. There is no editor in the app yet.
+**Built in** (`crates/assist/profiles/`): `claude` (the Claude ids; base prompt, every tool: today's request, unchanged) and `default` (base prompt), which any model without a profile gets. Tuning for one model is a user profile: the `qwen3.8-flash-next` profile ([tuned below](#tuning-qwen38-flash-next)) ships as an example in `examples/qwen3.8-flash-next/assist-profiles/`; copy it into `<config>/assist-profiles/` to use it. **Selection:** `--profile NAME`, else the first profile listing the model id, user files first, else `default`. The desktop form selects by its model field and logs the profile; the review report names it. **Editing:** `sparksmith llm-profile copy NAME` writes the built-in to `<config>/assist-profiles/NAME.json` (`PCBCRAFT_CONFIG_DIR`, else the platform config folder under `pcbcraft`), never over an existing file; a user file of a built-in's name takes its place. Every file is checked when read: unknown fields, another format, a name that isn't the file's, an unknown or required tool left out, an empty replacement or a limit out of range is refused with the file and reason, and the run doesn't start. There is no editor in the app yet.
 
 **Harness fixes for every model** (found in the `qwen3.8:27b` run, measured below): repeated refused calls (above); every integer beyond 2^53 in a tool result goes to the model as text, so a 19-digit preview `base` can't be rounded (`library_pinout_apply` takes it as text or a number; in every recording in the repository and the tuning runs the base is the only such number a model copied back, and the conversion covers any other that appears); an array or object argument that arrives as JSON text is read as meant, and text that isn't valid JSON is refused with where it broke instead of serde's "expected a sequence". The report's shape fixes of the earlier run stay.
 

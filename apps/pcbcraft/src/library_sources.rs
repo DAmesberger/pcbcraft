@@ -609,8 +609,9 @@ impl LibrarySources {
             Err(error) => {
                 let mut sources = Self::new(None);
                 let problem = format!(
-                    "Settings unavailable: {error}. Pcbcraft runs on default settings; \
-                     changes made now are lost when it quits."
+                    "Settings unavailable: {error}. {product} runs on default settings; \
+                     changes made now are lost when it quits.",
+                    product = pcbcraft_core::product::NAME
                 );
                 sources.say(problem.clone(), true);
                 sources.problem = Some(problem);
@@ -629,10 +630,11 @@ impl LibrarySources {
         let settings = match &dirs {
             Some(dirs) => settings::read_settings(&dirs.settings_path()).unwrap_or_else(|error| {
                 problem = Some(format!(
-                    "Settings in {} could not be read: {error}. Pcbcraft runs on default \
+                    "Settings in {} could not be read: {error}. {product} runs on default \
                      settings and does not save over that file; changes made now are lost \
                      when it quits.",
-                    dirs.settings_path().display()
+                    dirs.settings_path().display(),
+                    product = pcbcraft_core::product::NAME
                 ));
                 UserSettings::default()
             }),

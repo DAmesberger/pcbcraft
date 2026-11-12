@@ -1,4 +1,4 @@
-//! Command-line access to Pcbcraft's command engine. Every subcommand is a
+//! Command-line access to Sparksmith's command engine (`sparksmith`). Every subcommand is a
 //! thin transport over `pcbcraft_automation::Session`.
 mod design_part;
 mod fab;
@@ -18,11 +18,16 @@ use std::process::ExitCode;
 /// Large enough for one batch of draft definition edits.
 const MAX_REQUEST: usize = 4 * 1024 * 1024;
 
-const USAGE: &str = "usage: pcbcraft-cli <command>
+const USAGE: &str = concat!(
+    "usage: ",
+    pcbcraft_core::product_short_name!(),
+    " <command>
   commands                         print request, document and diagnostic schemas
   stdio [--permission-mode MODE] [--allow-folder DIR]... [FILE.pcbcraft]
                                    JSON-lines requests on stdin, replies on stdout,
-                                   gated exactly as mcp is, because Pcbcraft cannot
+                                   gated exactly as mcp is, because ",
+    pcbcraft_core::product_name!(),
+    " cannot
                                    tell a script from a model
   stdio --operator [FILE.pcbcraft] the same, ungated: you are running this yourself,
                                    not a model; every class runs (settings, library
@@ -33,7 +38,9 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
                                    by default, allow-all) decides what runs, paths are
                                    limited to the given folders and FILE's, what would
                                    need asking is refused, and settings never change
-  mcp --live [--port PORT]         MCP server for the project open in the Pcbcraft
+  mcp --live [--port PORT]         MCP server for the project open in the ",
+    pcbcraft_core::product_name!(),
+    "
                                    window (Help › Connect AI assistants…): the
                                    window's undo history, its permission choice
                                    and its Allow/Deny; the token comes from the
@@ -47,7 +54,8 @@ const USAGE: &str = "usage: pcbcraft-cli <command>
                                    export a project as a native Solidcraft model
   export-schematic-pdf FILE.pcbcraft OUT.pdf [--sheet ID]...
                                    print the schematic (all sheets, or the given
-                                   sheets in page order) as a vector PDF";
+                                   sheets in page order) as a vector PDF"
+);
 
 fn main() -> ExitCode {
     match run() {
@@ -190,6 +198,8 @@ impl McpOptions {
 }
 
 fn run() -> Result<()> {
+    // Before anything reads or creates the per-user folders.
+    pcbcraft_io::settings::adopt_former_folders();
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command] if command == "commands" => print(&session::schemas()),

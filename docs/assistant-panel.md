@@ -19,7 +19,7 @@
 
 ## 1. One request path
 
-Every request the panel sends is an MCP `tools/call`. The server code that answers it, `mcp::Server` in live mode, is the same code that answers Claude Code connected through `pcbcraft-cli mcp --live`. Each call reaches the window's pump (`serve_live`) and then:
+Every request the panel sends is an MCP `tools/call`. The server code that answers it, `mcp::Server` in live mode, is the same code that answers Claude Code connected through `sparksmith mcp --live`. Each call reaches the window's pump (`serve_live`) and then:
 
 1. `live::admit` applies the window-only list, the busy refusal, the revision check and the gate.
 2. `live::run` runs it with `Session::lend` and then `Session::respond` on the window's engine.
@@ -30,7 +30,7 @@ The panel never calls the engine directly.
 ```
            ACP agent (own process)                      Panel, endpoint backend (worker thread)
                    │ MCP over stdio                                  │ MCP JSON-RPC values, in process
-       pcbcraft-cli mcp --live --port P --token-file F               │
+       sparksmith mcp --live --port P --token-file F               │
                    │ mcp::Server (live)                     mcp::Server (live)
                    │ live::Client ── TCP, loopback, token          live::Client ── in-process channel
                    ▼                                                 ▼
@@ -86,17 +86,17 @@ Field names follow the [ACP specification](https://agentclientprotocol.com): pro
 
 ### Launching and configuring
 
-- **Adding an agent.** You add an agent in Settings › AI › Agents with a name, a command, its arguments and its environment variables. It runs without a shell. Presets fill these fields with known command lines (`claude-agent-acp`, `codex-acp`, `gemini --acp`, `opencode acp`). They are templates you edit: Pcbcraft doesn't probe PATH or detect anything (Q5).
+- **Adding an agent.** You add an agent in Settings › AI › Agents with a name, a command, its arguments and its environment variables. It runs without a shell. Presets fill these fields with known command lines (`claude-agent-acp`, `codex-acp`, `gemini --acp`, `opencode acp`). They are templates you edit: Sparksmith doesn't probe PATH or detect anything (Q5).
 - **Test.** **Test** starts the agent, sends `initialize` and shows `agentInfo`, `authMethods` and `agentCapabilities`.
 - **The process.** The agent runs in its own process group. Stop, closing the panel, closing the window and quitting all end it the same way: close its stdin, then after a grace period send TERM, then KILL. This is Solidcraft's `process.rs` design, written again for us.
-- **`initialize`.** We send `{protocolVersion: 1, clientCapabilities: {fs: {readTextFile: false, writeTextFile: false}, terminal: false}, clientInfo: {name: "pcbcraft", title: "Pcbcraft", version}}`. We offer no file system and no terminal, because the agent works through our tools. We read `agentCapabilities.promptCapabilities` (`image`, `audio`, `embeddedContext`), `agentCapabilities.mcpCapabilities`, `agentCapabilities.loadSession` and `authMethods`.
-- **Sign-in.** Login is the agent's own, and Pcbcraft never holds an ACP agent's key. When the agent answers `-32000` "Authentication required" (on `session/new` or on the first `session/prompt`), the panel shows the agent's `authMethods`:
+- **`initialize`.** We send `{protocolVersion: 1, clientCapabilities: {fs: {readTextFile: false, writeTextFile: false}, terminal: false}, clientInfo: {name: "sparksmith", title: "Sparksmith", version}}`. We offer no file system and no terminal, because the agent works through our tools. We read `agentCapabilities.promptCapabilities` (`image`, `audio`, `embeddedContext`), `agentCapabilities.mcpCapabilities`, `agentCapabilities.loadSession` and `authMethods`.
+- **Sign-in.** Login is the agent's own, and Sparksmith never holds an ACP agent's key. When the agent answers `-32000` "Authentication required" (on `session/new` or on the first `session/prompt`), the panel shows the agent's `authMethods`:
   - a terminal method appears as its command with Copy;
   - an agent method gets a button that calls `authenticate {methodId}`;
   - an environment method names the variable to set.
 - **`session/new`.** We send `{cwd, mcpServers}`:
-  - `cwd` is an empty working folder of Pcbcraft's own (`<data>/assistant/work/<conversation>`), not the project's folder.
-  - `mcpServers` has one stdio entry: `{name: "pcbcraft-<random>", command: "<absolute path of pcbcraft-cli beside the app>", args: ["mcp", "--live", "--port", "P", "--token-file", "F"], env: []}`. Stdio is the transport every ACP agent must support, so we don't depend on `mcpCapabilities.http`. The server name is random per conversation, so a permission answer can't apply to some other server.
+  - `cwd` is an empty working folder of Sparksmith's own (`<data>/assistant/work/<conversation>`), not the project's folder.
+  - `mcpServers` has one stdio entry: `{name: "sparksmith-<random>", command: "<absolute path of sparksmith beside the app>", args: ["mcp", "--live", "--port", "P", "--token-file", "F"], env: []}`. Stdio is the transport every ACP agent must support, so we don't depend on `mcpCapabilities.http`. The server name is random per conversation, so a permission answer can't apply to some other server.
 - **Model and options.** We read the agent's `configOptions` (model, reasoning effort, mode) from the session reply and change them with `session/set_config_option {sessionId, configId, value}`. The chosen value is remembered per agent.
 - **System text, the ACP harness.** It goes in `systemPrompt: {mode: "append", content: [text]}` when the agent advertises `sessionCapabilities.systemPrompt`. Otherwise it is the first text block of the first `session/prompt`.
 - **The agent's own tools.** Where an adapter offers a way to turn off its own shell, file and web tools, the agent's profile sets it. Claude's adapter takes `_meta.claudeCode.options.disallowedTools`. That is an adapter extension, not part of the spec, so it is per profile and checked per adapter version.
@@ -224,7 +224,7 @@ The datasheet runner relies on things a plain MCP client doesn't have yet, and t
 - **`submit_review`** becomes a `review.submit` query that checks the report: it refuses a report citing an unlisted document or no page. The panel draws the report as a card, and **Save review…** is an Ask (Q3).
 - **Repeat stop.** The repeat limit stays in the endpoint loop, because an ACP agent runs its own loop.
 
-**After this,** `pcbcraft-cli design-part` is the same prompt run by the same endpoint loop on a headless session. The 16 Flash Next tuning recordings, run 1 and the TLV replays must still grade the same (S9).
+**After this,** `sparksmith design-part` is the same prompt run by the same endpoint loop on a headless session. The 16 Flash Next tuning recordings, run 1 and the TLV replays must still grade the same (S9).
 
 **Coordination:** the `assist-to-mcp` agent is working in this area now. This section is the target shape, to agree with that work, not a second implementation.
 
@@ -363,7 +363,7 @@ At most five agents at once. Each slice has its own tests and ships on its own.
 - **ACP adapters change fast.** Package names have moved before (`@zed-industries/*` to `@agentclientprotocol/*`), and some options are adapter extensions (`_meta.claudeCode…`). Mitigation: options live in editable profiles, and a fake ACP agent in the tests pins the protocol we speak.
 - **Agents' MCP tool timeouts** may be shorter than our 600 s `ASK_WAIT`, so a slow Allow could reach the agent as a failed call. Measure per agent, and decline before its timeout.
 - **Folding tool calls into channel rows** by name and `rawInput` is a heuristic. An unmatched call shows twice (once as narration) and is never lost.
-- **`pcbcraft-cli` must ship beside the app** in every package (the macOS bundle included). Otherwise an ACP agent has no MCP server, and the panel says so.
+- **`sparksmith` must ship beside the app** in every package (the macOS bundle included). Otherwise an ACP agent has no MCP server, and the panel says so.
 - **Streaming cancel with ureq.** A blocking read only ends at a chunk boundary or a timeout. Use a short read timeout and check the flag. A local model at about 17 tokens a second produces chunks often enough.
 - **Small models and tool-list size.** If even compact tools don't fit 32 k, a model gets a profile-chosen subset (`omit_tools`). Measure before promising support for small contexts.
 - **UI-thread execution.** Tool requests run between frames, so a long command, such as a fill, stalls frames for an assistant just as it does for a person. This is existing behaviour, not new risk, but turns make it more frequent.

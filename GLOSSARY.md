@@ -1,4 +1,4 @@
-# Pcbcraft
+# Sparksmith
 
 Proposed vocabulary for the first-edition design. These terms distinguish reusable library definitions from their use in a circuit.
 
@@ -222,7 +222,7 @@ How a rated spec meets a requirement of the same field: exact nominal (the value
 An instance's effective value of one selected field, compared with the rated spec of the same field lineage when a Part is chosen.
 
 **Distributor offer**:
-A distributor's listing for an exact manufacturer part, identified by the distributor and its own SKU or product link, with optional packaging text. It is part of the Part revision and holds only identity the user chose. Price and availability are observations about that offer, not properties of the electrical component definition, and Pcbcraft does not store them.
+A distributor's listing for an exact manufacturer part, identified by the distributor and its own SKU or product link, with optional packaging text. It is part of the Part revision and holds only identity the user chose. Price and availability are observations about that offer, not properties of the electrical component definition, and Sparksmith does not store them.
 
 **Reference link** (reference):
 A labeled reference associated with a component, package or manufacturer part, such as a datasheet, application note or product page. A Part's reference is a record with a stable local ID, kind, title, optional URL, document revision, licence, provenance and an optional attached copy named by its SHA-256. A link identifies an external resource; it does not imply that a copy is available offline, and a missing URL removes neither the record nor its attached copy.
@@ -347,7 +347,7 @@ A plated hole that joins its net's copper on every copper layer it spans, placed
 The limits a board is checked and routed against: clearances between copper objects, board edges and holes, hole and via sizes, mask, silkscreen, paste, courtyard, fill and land-estimator values. A project's effective rules are its fab profile, then its rule overrides, then net classes and class-to-class clearances. Every finding names the rule, its value and where it came from.
 
 **Fab profile**:
-The file that holds a fabricator's design rules: a named, complete set of every rule, each citing its source (the fabricator's capability page and the date it was read). Pcbcraft ships none; one is imported or saved by the user. A project keeps a snapshot of its fab profile, so a changed library profile does not change the project until it is switched. The rules themselves stay "design rules".
+The file that holds a fabricator's design rules: a named, complete set of every rule, each citing its source (the fabricator's capability page and the date it was read). Sparksmith ships none; one is imported or saved by the user. A project keeps a snapshot of its fab profile, so a changed library profile does not change the project until it is switched. The rules themselves stay "design rules".
 _Avoid_: Rule profile, fab preset
 
 **Rule override**:
@@ -397,7 +397,7 @@ Which layers PCB 3D shows, toggled from the navigation bar's Layers popover. It 
 A geometric representation of the board and its components for enclosure and assembly work. It does not contain the complete electrical design.
 
 **Native Solidcraft model**:
-A Solidcraft design containing the board and component models, with editable parameters, features and placement relationships. It is the 3D model used by Pcbcraft and saved for direct use in Solidcraft.
+A Solidcraft design containing the board and component models, with editable parameters, features and placement relationships. It is the 3D model used by Sparksmith and saved for direct use in Solidcraft.
 
 **Board model update**:
 How the model worker makes the native model of an edited board from the last one it built: when the edit changes only values (a parameter, a sketch's drawing, where a via placement stands) they are changed in the kept design and only what they reach is evaluated and meshed again; any other edit builds the board anew. The result is the model a fresh build makes. See [PCB realism](docs/pcb-realism.md#edits-update-the-model-in-place).

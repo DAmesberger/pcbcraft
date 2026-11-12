@@ -1,9 +1,9 @@
-"""A small JSON-lines client for `pcbcraft-cli stdio` that records every
+"""A small JSON-lines client for `sparksmith stdio` that records every
 request it sends, so the session can be replayed exactly."""
 import json, subprocess, sys
 
 import os as _os
-CLI = _os.environ.get("PCBCRAFT_CLI", "target/nix/ci/pcbcraft-cli")
+CLI = _os.environ.get("PCBCRAFT_CLI", "target/nix/ci/sparksmith")
 
 
 class Refused(Exception):

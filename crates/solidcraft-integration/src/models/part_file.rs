@@ -542,8 +542,9 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
             "part_file.material",
             true,
             format!(
-                "{} body(ies) have no appearance named after a Pcbcraft material: {}",
+                "{} body(ies) have no appearance named after a {} material: {}",
                 unmapped.len(),
+                pcbcraft_core::product::NAME,
                 unmapped
                     .iter()
                     .take(8)

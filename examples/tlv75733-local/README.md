@@ -8,7 +8,7 @@ The first datasheet-assistant run on a local model, 5 November 2026: `qwen3.8:27
 Replay it without the model (any PDF stands in, since only the replies are replayed; the page views then answer with errors, which the recorded run never saw):
 
 ```sh
-pcbcraft-cli design-part --replay examples/tlv75733-local/tlv757.recording.jsonl \
+sparksmith design-part --replay examples/tlv75733-local/tlv757.recording.jsonl \
   --provider openai --base-url http://localhost:11434/v1 --model qwen3.8:27b \
   --context-tokens 262144 --vision yes --datasheet tlv757p.pdf \
   --name TLV75733PDBVR --out new.pcbcraft

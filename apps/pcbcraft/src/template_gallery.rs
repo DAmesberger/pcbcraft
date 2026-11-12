@@ -2486,7 +2486,7 @@ mod tests {
         assert!(gallery.take_reads().is_empty(), "read once");
         let bundle = Bundle {
             library,
-            name: "Pcbcraft Packages".into(),
+            name: concat!(pcbcraft_core::product_name!(), " Packages").into(),
             root: SourceRevision {
                 lineage,
                 revision: Revision(1),

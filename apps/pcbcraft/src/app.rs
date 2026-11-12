@@ -1022,7 +1022,7 @@ impl App {
             let why = if crate::open_documents::is_project(&path) {
                 "another project opened at the same time"
             } else {
-                "Pcbcraft opens .pcbcraft projects"
+                concat!(pcbcraft_core::product_name!(), " opens .pcbcraft projects")
             };
             self.say(
                 Level::Warning,

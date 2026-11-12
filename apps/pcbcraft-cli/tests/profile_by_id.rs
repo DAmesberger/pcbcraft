@@ -15,7 +15,7 @@ const FIXTURES: &str = concat!(
 );
 
 fn cli(config: &Path, cache: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_pcbcraft-cli"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sparksmith"));
     command
         .env("PCBCRAFT_CONFIG_DIR", config)
         .env("PCBCRAFT_CACHE_DIR", cache);

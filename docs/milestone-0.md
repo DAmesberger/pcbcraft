@@ -1,6 +1,6 @@
 # Milestone 0 — prove the shared foundation
 
-The first executable result is a small Pcbcraft window showing one board in 2D and 3D, with selectable volumetric copper and native parametric Solidcraft save/reopen. It proves the expensive and difficult boundaries before building complete editors.
+The first executable result is a small Sparksmith window showing one board in 2D and 3D, with selectable volumetric copper and native parametric Solidcraft save/reopen. It proves the expensive and difficult boundaries before building complete editors.
 
 The product requirements remain in [the general plan](pcbcraft-plan.md). This milestone deliberately uses a small programmatically constructed fixture; it does not replace the first release's component, schematic and PCB editors.
 
@@ -8,7 +8,7 @@ The product requirements remain in [the general plan](pcbcraft-plan.md). This mi
 
 Bootstrap the minimum Rust workspace needed for a document/command fixture, Solidcraft integration, desktop shell and checks. Use Solidcraft's Rust/egui/wgpu base and pin a tested upstream revision. Start from the inspected `4f3ac07aec69489183185071f07d7fbcf4f51e64` unless newer source resolves a demonstrated gap; record why the baseline changes.
 
-Test dependency integration immediately. The Solidcraft workspace has patched dependencies, so confirm required patches and feature flags in a clean Pcbcraft build rather than assuming a git dependency inherits them. A neighboring checkout can support development, but reproducible builds must not depend on an undocumented absolute path.
+Test dependency integration immediately. The Solidcraft workspace has patched dependencies, so confirm required patches and feature flags in a clean Sparksmith build rather than assuming a git dependency inherits them. A neighboring checkout can support development, but reproducible builds must not depend on an undocumented absolute path.
 
 Implement a small `cargo xtask ci` entry point and connect it to CI once a repository host is configured. Initially cover formatting, strict Clippy, meaningful native tests and wasm checks for applicable libraries. Add executable dependency-layer, command-schema, asset/license and UI-container checks as those surfaces appear. Keep `AGENTS.md` and command documentation accurate about implemented gates.
 
@@ -24,7 +24,7 @@ Save `fixture.solidcraft` through its native writer. Reopen in the matching stan
 
 The current move/link APIs do not by themselves prove persistent dependencies or preserved history. Identify suitable existing features or implement the smallest required shared-engine extension in an isolated Solidcraft checkout, following its local instructions. Keep the baseline checkout unchanged. Record required commits/capabilities for both applications. Local source work does not imply upstream publication.
 
-**Done:** the native file recomputes correctly without Pcbcraft and without inaccessible model assets. A frozen model saved with a different extension is a failed probe. Record any upstream gap rather than substituting STEP.
+**Done:** the native file recomputes correctly without Sparksmith and without inaccessible model assets. A frozen model saved with a different extension is a failed probe. Record any upstream gap rather than substituting STEP.
 
 ## 0C — real copper and shared selection
 

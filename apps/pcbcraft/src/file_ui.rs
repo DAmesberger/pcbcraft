@@ -249,10 +249,12 @@ fn worker(ctx: egui::Context, directory: Outcome<PathBuf>, events: Sender<Event>
         });
         let startup = match (&directory, &store) {
             (Err(error), _) => Err(format!(
-                "Recovery unavailable: {error}. Unsaved work is not kept if Pcbcraft stops."
+                "Recovery unavailable: {error}. Unsaved work is not kept if {product} stops.",
+                product = pcbcraft_core::product::NAME
             )),
             (_, Err(error)) => Err(format!(
-                "{error}. Unsaved work is not kept if Pcbcraft stops."
+                "{error}. Unsaved work is not kept if {product} stops.",
+                product = pcbcraft_core::product::NAME
             )),
             (Ok(directory), Ok(_)) => recovery::list(directory).map_err(|e| e.to_string()),
         };
@@ -662,12 +664,15 @@ impl FileUi {
         } else {
             dialog
                 .set_title(if kind == Kind::Open {
-                    "Open Pcbcraft project"
+                    concat!("Open ", pcbcraft_core::product_name!(), " project")
                 } else {
-                    "Save Pcbcraft project"
+                    concat!("Save ", pcbcraft_core::product_name!(), " project")
                 })
                 .set_file_name(&filename)
-                .add_filter("Pcbcraft project", &["pcbcraft", "PCBCRAFT"])
+                .add_filter(
+                    concat!(pcbcraft_core::product_name!(), " project"),
+                    &["pcbcraft", "PCBCRAFT"],
+                )
         };
         // Construct the parented native future on the event thread, just as
         // Solidcraft services do. Awaiting it does not block egui or file I/O.

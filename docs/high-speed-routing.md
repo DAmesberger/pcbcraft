@@ -37,7 +37,7 @@ The formulas are our own implementation of published equations (`layout::impedan
 
 **Reference values** (`layout/impedance/tests.rs`):
 
-| Case | Reference | Pcbcraft |
+| Case | Reference | Sparksmith |
 | --- | --- | --- |
 | Microstrip, d = 1.27 mm, εr = 2.20, W/d = 3.081, t = 0 | 50 Ω, εe = 1.87 (Pozar, *Microwave Engineering*, Example 3.7) | 50.02 Ω, εe = 1.881 (test tolerance 1 %) |
 | Microstrip in air, u = 1, t = 0 | 126.4 Ω (hand evaluation: 59.96 Ω · ln(6 + √5)), εe = 1 exactly | 126.4 Ω, εe = 1 |

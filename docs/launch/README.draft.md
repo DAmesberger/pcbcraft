@@ -5,7 +5,7 @@
   against docs/editor-evidence.md and the as-built notes it links; re-check before publishing.
 -->
 
-<h1 align="center">Pcbcraft</h1>
+<h1 align="center">Sparksmith</h1>
 
 <p align="center">
   <b>PCB design where the board in 3D <i>is</i> the board.</b><br>
@@ -26,14 +26,14 @@
 
 ---
 
-> **Early and honest.** Pcbcraft is a working editor foundation, not yet a manufacturing-ready
+> **Early and honest.** Sparksmith is a working editor foundation, not yet a manufacturing-ready
 > release. The features below exist and are tested; the [status](#status) section says what is
 > still missing. Numbers are measurements from the linked notes, never targets.
 
 ## What makes it different
 
 **One engine, three front doors.** Every design change — a wire, a via, a published component —
-is a typed operation on one transactional engine. The desktop app, the `pcbcraft-cli` JSON-lines
+is a typed operation on one transactional engine. The desktop app, the `sparksmith` JSON-lines
 protocol and the MCP server send the *same* operations, share one undo history, and a refused
 operation leaves the document untouched. An agent cannot do anything a person could not undo.
 
@@ -92,7 +92,7 @@ The whole board exports as a native, parametric `.solidcraft` model that plain S
 
 ## Quick start
 
-Pcbcraft builds with the Rust toolchain pinned in `rust-toolchain.toml` (1.96.0 with Clippy,
+Sparksmith builds with the Rust toolchain pinned in `rust-toolchain.toml` (1.96.0 with Clippy,
 rustfmt and the wasm target). Use rustup, or the Nix dev shell, which provides exactly that toolchain:
 
 ```sh
@@ -127,22 +127,22 @@ but Linux and Windows have not been checked as products yet.
 
 ## Drive it from an agent (MCP)
 
-`pcbcraft-cli mcp` serves the engine as a Model Context Protocol server on stdio: the same typed
+`sparksmith mcp` serves the engine as a Model Context Protocol server on stdio: the same typed
 operations as the UI (`project_apply` with an expected revision), queries (`project_query`: library
 search, component checks, BOM, pin reports, the production pre-flight), undo and redo, save and the
 exports. Replies are compact (the outcome, the ids that changed, new findings) and `verbose: true`
 returns the whole document; `project_schema` serves each operation's exact schema on demand, and
-`pcbcraft-cli commands` prints every schema, generated from the Rust types.
+`sparksmith commands` prints every schema, generated from the Rust types.
 
 Build the CLI once, then register it with your MCP client. For Claude Code:
 
 ```sh
 cargo build --locked --profile ci -p pcbcraft-cli
-claude mcp add pcbcraft -- "$PWD/target/ci/pcbcraft-cli" mcp "$PWD/showcase.pcbcraft"
+claude mcp add sparksmith -- "$PWD/target/ci/sparksmith" mcp "$PWD/showcase.pcbcraft"
 ```
 
-(Inside `nix develop` the binary is at `target/nix/ci/pcbcraft-cli`.) Any MCP client works the
-same way: the command is `pcbcraft-cli mcp [FILE.pcbcraft]`. Then ask, for example: *"Find the
+(Inside `nix develop` the binary is at `target/nix/ci/sparksmith`.) Any MCP client works the
+same way: the command is `sparksmith mcp [FILE.pcbcraft]`. Then ask, for example: *"Find the
 unrouted connections on the showcase and route GND with a via to the inner plane."* The agent
 works on a headless session of that file and saves it through `project_save`; open the file in the
 desktop app to see the result. The desktop window does not yet follow an agent's edits live.
@@ -173,7 +173,7 @@ The desktop has the same as **Create from datasheet…** on the Component start 
 | `pcbcraft-firmware` | Pin-configuration exports: JSON IR, C header, Zephyr overlay skeleton, Rust constants. |
 | `pcbcraft-automation` | Headless `Session` shared by the JSON-lines transport and the MCP server. |
 | `pcbcraft-assist` | The in-app datasheet runner: a model tool-use loop over the automation session, with request, token and time limits. |
-| `pcbcraft`, `pcbcraft-cli` | The egui/wgpu desktop editor and the command line. |
+| `pcbcraft`, `pcbcraft-cli` | The egui/wgpu desktop editor and the command line (its binary is `sparksmith`). |
 
 `cargo xtask ci` enforces the layer direction, the core module map, Solidcraft's UI containers,
 dependency licences, the clean-room rule and strict Clippy, runs the test suite (over 1,300 tests at
@@ -192,7 +192,7 @@ integrated 3D view; production output with a pre-flight check; MCP, CLI and the 
 
 Not there yet, so you know before you try:
 
-- **Not a manufacturing-ready release.** No first board has been fabricated from Pcbcraft's
+- **Not a manufacturing-ready release.** No first board has been fabricated from Sparksmith's
   output yet; the built-in fab profiles are estimates, and zero findings is not a DRC sign-off.
 - **Routing:** dragging existing tracks with shove is planned; differential pairs and tuning do not
   shove; no autorouter; through vias only (no blind or buried vias).
@@ -204,22 +204,22 @@ Not there yet, so you know before you try:
 - **Desktop:** the window does not follow MCP edits live; on macOS ⌘Q quits without the
   unsaved-work prompt (the work survives in recovery).
 
-What comes next, in order: the first real board (an ESP32-S31 dev board, designed in Pcbcraft now),
+What comes next, in order: the first real board (an ESP32-S31 dev board, designed in Sparksmith now),
 then track drag with shove, the realistic view mode, and the remaining first-release editors.
 The [roadmap](ROADMAP.md) tracks execution; [editor evidence](docs/editor-evidence.md) records
 what was verified and how.
 
 ## Licence and attribution
 
-Pcbcraft is licensed under the [MIT License](LICENSE-MIT) or the [Apache License, Version
+Sparksmith is licensed under the [MIT License](LICENSE-MIT) or the [Apache License, Version
 2.0](LICENSE-APACHE), at your option, like Solidcraft.
 
-Pcbcraft builds on [Solidcraft](https://github.com/tangency-labs/solidcraft) (MIT OR Apache-2.0)
+Sparksmith builds on [Solidcraft](https://github.com/tangency-labs/solidcraft) (MIT OR Apache-2.0)
 for its UI kit, renderer and parametric CAD engine, pinned to a fork with a product look and via
 scaling. The UI fonts are IBM Plex Sans and Mono (SIL Open Font License). Third-party notices are
 in [NOTICE](NOTICE) and [ATTRIBUTION.md](ATTRIBUTION.md).
 
-Pcbcraft is an independent clean-room implementation. It uses public specifications (Ucamco's
+Sparksmith is an independent clean-room implementation. It uses public specifications (Ucamco's
 Gerber and job file formats, the Excellon description) and permissively licensed dependencies; it
 contains no code or library data from GPL-family or commercial EDA tools, and `cargo xtask
 clean-room` rejects EDA library files. Manufacturer CAD data is used only like a datasheet, with

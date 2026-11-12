@@ -1,4 +1,4 @@
-# Pcbcraft part library design
+# Sparksmith part library design
 
 Specification baseline, updated 30 October 2026. The component-editor workflows and seven acceptance scenarios below record the user-approved direction, including basic multi-unit symbols and structured multi-function IOs. Proposed command names and synthetic fixture dimensions are implementation/test-design choices. Specified behavior is not evidence of implementation; the Rhai proof and [editor evidence](editor-evidence.md) describe the current subset.
 
@@ -12,7 +12,7 @@ Altium documents a unified component model with schematic and footprint models, 
 
 LibrePCB explicitly separates symbols, components, packages and devices, uses stable references and allows different footprints for a package. That is a useful public design reference. [Library concept](https://librepcb.org/features/library-concept/), [library elements](https://docs.librepcb.org/_branches/master/librepcb/quickstart/create-library-elements/).
 
-Pcbcraft should combine these useful ideas with Solidcraft's UI, explicit revision handling and geometry-aware update previews. This proposal is based on public documentation; it does not reuse the implementations of those EDA products.
+Sparksmith should combine these useful ideas with Solidcraft's UI, explicit revision handling and geometry-aware update previews. This proposal is based on public documentation; it does not reuse the implementations of those EDA products.
 
 ## Domain model
 
@@ -40,7 +40,7 @@ The entry point is **New Component**, opening an empty recoverable draft without
 1. **Symbol:** draw the representation and its units; edit a terminal table with structured function alternatives, directions and visible pin anchors. Reuse an existing symbol where suitable.
 2. **Footprint:** draw or generate pads and outlines; set drills, courtyard and mechanical origin. Reuse a package or footprint where suitable.
 3. **Mapping:** show symbol and footprint together, cross-highlight selections and edit the terminal mapping table. List missing, duplicate or prohibited mappings immediately.
-4. **3D:** reuse or author a native Solidcraft parametric model through the Solidcraft engine, align it to the mechanical datum, and preview both board sides. Simple dimensioned envelopes use the same engine. Vendor STEP models can be imported through Solidcraft as an additional option; Pcbcraft does not own a separate 3D modelling system.
+4. **3D:** reuse or author a native Solidcraft parametric model through the Solidcraft engine, align it to the mechanical datum, and preview both board sides. Simple dimensioned envelopes use the same engine. Vendor STEP models can be imported through Solidcraft as an additional option; Sparksmith does not own a separate 3D modelling system.
 5. **Details:** author/select reusable property fields and defaults; add optional manufacturer/MPN, typed specifications, datasheet and distributor records, source/license information and descriptive search metadata.
 
 The workflow supports staged completion: a component can be published for schematic use before its footprint is chosen. Board placement requires a resolved physical implementation. Advanced reuse is available within the same workspace. Search results show available symbol, footprint and 3D previews, specifications and separate completeness states; absence of a physical choice is visible.
@@ -126,7 +126,7 @@ Basic multi-unit authoring and terminal-preserving alternate-symbol switching ar
 
 Component import should consume public format specifications, retain source identifiers/provenance, and report unsupported constructs. Never silently flatten a complex symbol or footprint into a plausible but electrically different one. A small supported import subset is acceptable after native authoring works.
 
-Code licensing and library-data licensing are distinct. KiCad publishes its libraries under CC-BY-SA 4.0 with a design-output exception and separate conditions for redistributing library collections. Treat imported assets according to their actual provenance; do not assume they inherit Pcbcraft's code license. [KiCad library license](https://www.kicad.org/libraries/license/).
+Code licensing and library-data licensing are distinct. KiCad publishes its libraries under CC-BY-SA 4.0 with a design-output exception and separate conditions for redistributing library collections. Treat imported assets according to their actual provenance; do not assume they inherit Sparksmith's code license. [KiCad library license](https://www.kicad.org/libraries/license/).
 
 ## Accepted authoring contract
 
@@ -261,7 +261,7 @@ All seven scenarios follow the common lifecycle below. Each must pass through th
 | CE-C3 | Hand-derived positions, dimensions, mapping tables, intended nets and deliberate violations. Export/import agreement alone is not the oracle. |
 | CE-C4 | Preview is read-only; cancellation, malformed input, stale plans, conflicts and failed scripts preserve document/revision/history. A successful logical change is one undo step; redo restores the complete result. |
 | CE-C5 | Atomic save/recovery and offline reopen preserve definitions, selected functions, field meanings, recipes/overrides, source provenance and required asset bytes. Missing required bytes fail explicitly. |
-| CE-C6 | Native save/reopen in compatible Solidcraft preserves geometry/placement dependencies. Analytic top/bottom bounds agree; changing exposed dimensions recomputes without Pcbcraft. Selection/camera actions do not rebuild geometry. |
+| CE-C6 | Native save/reopen in compatible Solidcraft preserves geometry/placement dependencies. Analytic top/bottom bounds agree; changing exposed dimensions recomputes without Sparksmith. Selection/camera actions do not rebuild geometry. |
 
 ### CE-01 — generic resistor
 

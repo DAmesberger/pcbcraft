@@ -3,6 +3,7 @@
 //! and by package form and marking, as Markdown on stdout
 //! (`pcbcraft_assist::pins::diff`). Read-only.
 use super::{Result, open};
+use pcbcraft_core::product::SHORT_NAME as CLI;
 use std::io::Write;
 
 pub const USAGE: &str = "review-diff A.pcbcraft B.pcbcraft [NAME_A NAME_B]
@@ -12,7 +13,7 @@ pub fn run(args: &[String]) -> Result<()> {
     let (a, b, names) = match args {
         [a, b] => (a, b, ("A", "B")),
         [a, b, na, nb] => (a, b, (na.as_str(), nb.as_str())),
-        _ => return Err(format!("usage: pcbcraft-cli {USAGE}").into()),
+        _ => return Err(format!("usage: {CLI} {USAGE}").into()),
     };
     let first = open(Some(a))?.snapshot();
     let second = open(Some(b))?.snapshot();

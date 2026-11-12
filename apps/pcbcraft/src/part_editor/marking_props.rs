@@ -792,9 +792,11 @@ pub fn spec_rows(
                 }
                 if ui
                     .selectable_label(false, "SVG artwork…")
-                    .on_hover_text(
-                        "Your own SVG drawn on the part, such as a logo; Pcbcraft ships none",
-                    )
+                    .on_hover_text(concat!(
+                        "Your own SVG drawn on the part, such as a logo; ",
+                        pcbcraft_core::product_name!(),
+                        " ships none"
+                    ))
                     .clicked()
                 {
                     *pick_artwork = true;

@@ -621,7 +621,7 @@ pub fn fabrication_pdf(data: &DrawingData) -> Result<Vec<u8>> {
             ),
             ("Finish", data.finish.clone()),
             ("Mask / legend", format!("{} / {}", data.mask, data.legend)),
-            ("Generator", "Pcbcraft".into()),
+            ("Generator", pcbcraft_core::product::NAME.into()),
         ],
     );
     let mut doc = Document::new();
@@ -748,7 +748,7 @@ fn assembly_page(data: &DrawingData, side: &AssemblySide) -> Page {
             ),
             ("View", heading.into()),
             ("Parts", side.parts.len().to_string()),
-            ("Generator", "Pcbcraft".into()),
+            ("Generator", pcbcraft_core::product::NAME.into()),
         ],
     );
     page

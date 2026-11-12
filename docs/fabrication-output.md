@@ -7,7 +7,7 @@ The Gerber writer follows Ucamco's public Gerber Layer Format Specification. The
 ## One command
 
 - **Automation:** the `project.export_fabrication` request takes `{output, zip, profile, options}`. It runs the production check and then writes a new or empty folder, or one new `.zip`. It returns the pre-flight report, every file with its size, and the time each step took. It is a file effect: it adds no revision and no undo step.
-- **CLI:** `pcbcraft-cli fab FILE.pcbcraft OUT_DIR|OUT.zip [--zip] [--profile ID] [--date ISO|none]`. Files are named after the project file. A blocked export prints the title of each unwaived error, up to 100 and then how many remain.
+- **CLI:** `sparksmith fab FILE.pcbcraft OUT_DIR|OUT.zip [--zip] [--profile ID] [--date ISO|none]`. Files are named after the project file. A blocked export prints the title of each unwaived error, up to 100 and then how many remain.
 - **MCP:** the same request reaches MCP through the generic catalog.
 - **Desktop:** PCB workspace → ribbon Output → Production, or "Production files…" in the command palette.
   - The dialog shows a profile picker, Folder or ZIP output, an output toggle for each group and the placement convention.
@@ -84,7 +84,7 @@ The check reports every project issue under the chosen fabrication profile. Over
 - **Paste:** `Inherit` shrinks by the rules' paste reduction, for surface pads without a hole; explicit reductions and windows are kept as authored.
 - **Legend:**
   - Footprint silkscreen strokes are drawn with a round pen, with exact arcs; filled shapes are regions.
-  - Text uses Pcbcraft's stroke font (`layout::legend`, now shared with the 3D silkscreen films).
+  - Text uses Sparksmith's stroke font (`layout::legend`, now shared with the 3D silkscreen films).
   - The legend is not clipped at mask openings; the check warns instead.
   - Text an instance moved (`instance.set_text_placement`) prints where it was moved. The offset is in the footprint's own axes, so it turns and flips with the part; the turn is added in quarter turns. An offset is at most 1000 mm. The placement stays with the instance through new revisions of the same footprint, and goes when its footprint or text does.
 

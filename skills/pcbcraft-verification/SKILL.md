@@ -1,6 +1,6 @@
 ---
 name: pcbcraft-verification
-description: Add or run Pcbcraft tests, benchmarks and CI; verify crash fixes, geometry changes or milestone completion.
+description: Add or run Sparksmith tests, benchmarks and CI; verify crash fixes, geometry changes or milestone completion.
 ---
 
 # Verification and evidence
@@ -14,7 +14,7 @@ Choose evidence by the changed behavior:
 | Commands and transactions | Observable result; rejection leaves state unchanged; undo/redo; malformed input |
 | Library changes | Mapping/identity invariants; affected routing; offline snapshot reopening |
 | Electrical/geometry checks | Hand-derived expected nets, gaps, dimensions and known deliberate violations |
-| Native Solidcraft integration | Save/reopen in compatible Solidcraft; change parameters and measure regeneration without Pcbcraft |
+| Native Solidcraft integration | Save/reopen in compatible Solidcraft; change parameters and measure regeneration without Sparksmith |
 | UI | Real interaction and inspected screenshots/recording; scenario coverage for the affected behavior |
 | Performance | Reproducible workload and machine/settings; latency distributions and invalidation/upload counters |
 | Crash/data-loss fix | Reproducer and regression; file/transaction state remains recoverable |

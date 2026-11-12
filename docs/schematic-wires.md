@@ -2,7 +2,7 @@
 
 **Status:** slice 1 (1a path model, 1b Wire tool), slice 2 (rubber-band on move) and slice 3 (path editing) built on 6 November 2026, and slice 4 (arc corners) on 8 November 2026; slice 5 is not. See "Slice 1 as built" to "Slice 4 as built" at the end for where the build differs from this plan. The founder decided that a wire is one connected line made of straight and arc segments, like an SVG path, and that it must be easy to edit. This document plans that change. Items marked **Open question** need the founder's decision before the slice that depends on them starts. Estimates are agent hours.
 
-Related: [schematic capture](schematic-capture.md) (today's wiring rules), [keyboard shortcuts](keyboard-shortcuts.md) (Route and Fill tool keys), [push-and-shove](push-and-shove.md) (the planned track drag). It follows the same independent-implementation policy as the rest of Pcbcraft: no other EDA tool's source was read.
+Related: [schematic capture](schematic-capture.md) (today's wiring rules), [keyboard shortcuts](keyboard-shortcuts.md) (Route and Fill tool keys), [push-and-shove](push-and-shove.md) (the planned track drag). It follows the same independent-implementation policy as the rest of Sparksmith: no other EDA tool's source was read.
 
 ## Today
 

@@ -25,11 +25,11 @@ The component definition starts at local (0.25, âˆ’0.5, 0.3) mm and measures 4 Ã
 
 ## Independent Solidcraft executable
 
-Built the standalone `solidcraft-cli` from the unchanged pinned checkout with its own lockfile, `--locked --profile ci --no-default-features`. Its build artifacts are in Pcbcraft's `target/solidcraft-check`; the Pcbcraft dependency build remains independent of that checkout.
+Built the standalone `solidcraft-cli` from the unchanged pinned checkout with its own lockfile, `--locked --profile ci --no-default-features`. Its build artifacts are in Sparksmith's `target/solidcraft-check`; the Sparksmith dependency build remains independent of that checkout.
 
-Both standalone commands documented in the README passed. Reports are in `artifacts/upstream-original.json` and `artifacts/upstream-regenerated.json`. Separate analytic checks against both reports confirmed three closed bodies, no failed features, expected substrate volume/centroid and expected top/bottom package volumes and rotated world bounds. The second process regenerated the saved native history without Pcbcraft code.
+Both standalone commands documented in the README passed. Reports are in `artifacts/upstream-original.json` and `artifacts/upstream-regenerated.json`. Separate analytic checks against both reports confirmed three closed bodies, no failed features, expected substrate volume/centroid and expected top/bottom package volumes and rotated world bounds. The second process regenerated the saved native history without Sparksmith code.
 
-Solidcraft's standalone GPU snapshot command also succeeded, and the resulting `artifacts/fixture.png` was visually inspected: board thickness, open mounting hole, top package and bottom package are visible. The substrate is temporarily translucent for this diagnostic view. This is a model rendering, not evidence of a Pcbcraft UI or interactive performance.
+Solidcraft's standalone GPU snapshot command also succeeded, and the resulting `artifacts/fixture.png` was visually inspected: board thickness, open mounting hole, top package and bottom package are visible. The substrate is temporarily translucent for this diagnostic view. This is a model rendering, not evidence of a Sparksmith UI or interactive performance.
 
 ```sh
 solidcraft-cli snapshot fixture.solidcraft --out fixture.png \
