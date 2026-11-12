@@ -16,7 +16,7 @@ use crate::library::package_model::{PackageEdit, edit_package};
 use crate::model::interface::Tier;
 use crate::{Engine, InstanceCommand, Operation};
 
-const SOURCE: InterfaceSourceId = InterfaceSourceId(0x5eed_b3);
+const SOURCE: InterfaceSourceId = InterfaceSourceId(0x005e_edb3);
 
 /// The demo with an authored external opening on its package, opened as
 /// a file so its interface starts empty: each placement exports one

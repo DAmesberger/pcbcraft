@@ -66,7 +66,7 @@ pub struct Exported {
 }
 
 enum Design {
-    Slots(Native),
+    Slots(Box<Native>),
     Board(Box<NativeModel>),
 }
 
@@ -278,7 +278,7 @@ fn slab(native: &mut Native, project: &Project, datum: &SidecarDatum) -> Result<
 /// A frame whose z is `direction`, through `point`.
 fn frame_along(point: [f64; 3], direction: [f64; 3]) -> Result<[[f64; 3]; 3]> {
     let len = direction.iter().map(|v| v * v).sum::<f64>().sqrt();
-    if !(len > 1e-12) {
+    if len.is_nan() || len <= 1e-12 {
         return Err(Error::Invalid("an axis datum has no direction".into()));
     }
     let z = direction.map(|v| v / len);
@@ -598,7 +598,7 @@ pub fn build(project: &Project, mut sidecar: Sidecar) -> Result<Exported> {
         native.set_metadata(&key, value)?;
     }
     let design = match section_two(project, sidecar.tier) {
-        None => Design::Slots(native),
+        None => Design::Slots(Box::new(native)),
         Some(board) => Design::Board(Box::new(project::build_onto(native, &board)?)),
     };
     Ok(Exported { design, sidecar })
