@@ -68,6 +68,7 @@ mod pair_tests;
 mod pair_tool;
 mod part_place;
 mod parts_table;
+#[cfg(test)]
 pub use parts_table::Tab as TableTab;
 #[cfg(test)]
 mod pick_tests;
