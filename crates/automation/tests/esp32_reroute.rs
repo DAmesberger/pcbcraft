@@ -14,6 +14,7 @@ use pcbcraft_core::layout::pair::{PairLeg, PairRouteRequest};
 use pcbcraft_core::layout::{self, LayoutCommand, RouteEditSet, length};
 use pcbcraft_core::library::footprint_source::{Expr, FootprintParam, ParamName, ParamUnit};
 use pcbcraft_core::model::CopperLayer;
+use pcbcraft_core::model::production::waiver_key;
 use pcbcraft_core::{Engine, Operation};
 use std::path::Path;
 
@@ -62,8 +63,16 @@ fn turn(engine: &Engine, designator: &str, by: f64) -> Fallible<Operation> {
 fn issues(engine: &mut Engine) -> Fallible<Vec<String>> {
     let fresh = compute_stale(engine.project(), &mut FillCache::default())?;
     engine.store_fills(engine.revision(), fresh)?;
+    // Findings the board waives for production (the J1 locating pegs)
+    // are accepted, not issues.
+    let production = &engine.project().production;
     Ok(layout::checks(engine.project())
         .into_iter()
+        .filter(|f| {
+            production
+                .waiver(&waiver_key(&f.code, &f.objects))
+                .is_none()
+        })
         .filter(|f| {
             f.blocks.is_some()
                 || f.code.starts_with("pair.")

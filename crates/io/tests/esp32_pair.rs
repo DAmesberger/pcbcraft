@@ -319,7 +319,8 @@ fn a_track_across_the_pair_never_tears_it() -> Fallible {
 /// was in both counts, so gap 2 takes one from each. The difference was
 /// the findings only production makes: the two switches' envelope models.
 /// The switches now use the example's B3U-1000P part file, so both counts
-/// are 0.
+/// are 0 but for the production check's two waived J1 locating-peg
+/// findings (the GCT USB4105 recommended layout), which Issues leaves out.
 #[test]
 fn issues_and_the_production_check_count_alike_but_for_production_findings() -> Fallible {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -350,7 +351,14 @@ fn issues_and_the_production_check_count_alike_but_for_production_findings() -> 
         preflight.items.len()
     );
     assert_eq!(issues.rows.len(), 0, "{:?}", issues.counts);
-    assert_eq!(preflight.items.len(), 0);
+    assert_eq!(preflight.blocking, 0);
+    assert_eq!(preflight.items.len(), 2, "{:?}", preflight.items);
+    assert!(
+        preflight
+            .items
+            .iter()
+            .all(|i| i.code == "board.pad_hole_clearance" && i.waiver.is_some())
+    );
     assert_eq!(only_production.len(), 0);
     Ok(())
 }
