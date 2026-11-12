@@ -396,6 +396,30 @@ Which layers PCB 3D shows, toggled from the navigation bar's Layers popover. It 
 **Mechanical export**:
 A geometric representation of the board and its components for enclosure and assembly work. It does not contain the complete electrical design.
 
+**Board interface**:
+The datums a board publishes for an enclosure to reference, and nothing else: an enclosure may depend only on them. Published as a `.solidcraft` design whose datum bodies come first, in slot order, with a sidecar file. See [board interface](docs/architecture/board-interface.md).
+
+**Interface datum** (datum):
+One exported reference of the board interface: a frame, plane, axis, profile, volume or parameter, such as the board top, a mounting hole's axis or a connector's opening. Its identity is its owner, role and name, never a designator or display name; its geometry is derived from the board each time, never stored. Not the footprint datum, which is a footprint's origin.
+
+**Slot** (interface slot):
+A datum's position in the board's append-only slot table. The exported design builds slots first and in order, so a slot's face names follow from its number alone. A slot is never reused: removing its datum retires it.
+
+**Datum token**:
+The name an interface datum is written under in the exported design and sidecar, built from ids only (`i80.opening`, `h12`, `board.top`), so renaming a part changes nothing an enclosure references.
+
+**Package datum**:
+A datum a package revision declares as explicit geometry in its model frame, such as a connector's opening from the datasheet's panel cutout. One marked external is exported for every placement of the package. Never inferred from a part's name or category.
+
+**Interface tier**:
+How much of the board the published design carries after the slots: the interface only, the mechanical board (laminate, pads and parts; the default) or the full board with copper.
+
+**Interface sidecar**:
+The `<name>.interface.json` file beside a published board interface, also stored in the design's metadata: the format version, the board's permanent interface identity, the revision, a hash, and every datum's token, slot, geometry, status and face names.
+
+**Enclosure** (housing):
+A SolidCraft design that links the published board interface, and whose walls, bosses and openings the board may in turn follow through housing references. Updates in either direction go through a preview bound to both files' revisions.
+
 **Native Solidcraft model**:
 A Solidcraft design containing the board and component models, with editable parameters, features and placement relationships. It is the 3D model used by Sparksmith and saved for direct use in Solidcraft.
 
