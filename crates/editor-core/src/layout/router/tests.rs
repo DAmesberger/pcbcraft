@@ -12,6 +12,7 @@ use crate::{Engine, Operation, Query, QueryResult};
 
 mod drag;
 mod joints;
+mod pair_drag;
 mod pair_shove;
 mod perf;
 mod reroute;
