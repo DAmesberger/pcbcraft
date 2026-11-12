@@ -362,9 +362,13 @@ fn esc_cancels_and_invalid_text_is_refused_in_place() -> Fallible {
     let row = ax.find(Role::ListBoxOption, FACE)?;
     ax.click_at(egui::pos2(row.rect.left() + 30.0, row.rect.center().y));
     let revision = ax.app.engine.revision();
+    const NOTE: &str = "Follows the board when it changes";
+    let note = ax.find(Role::Label, NOTE)?.rect;
     ax.key(egui::Key::F2);
     ax.settle();
     ax.find(Role::TextInput, FACE)?;
+    // The field opens in its row: nothing under the list moves.
+    assert_eq!(ax.find(Role::Label, NOTE)?.rect, note);
     ax.type_text("7 mm");
     ax.key(egui::Key::Escape);
     ax.settle();

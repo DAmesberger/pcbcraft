@@ -37,7 +37,9 @@ pub fn field(
     let l = ListTokens::get(ui.ctx());
     let id = id.with("inline-edit");
     let r = rect.shrink2(egui::vec2(0.0, 3.0));
-    let response = ui.put(
+    // A child Ui over the row: the field takes no room in the card's
+    // layout, so nothing under the list moves while it is open.
+    let response = ui.new_child(egui::UiBuilder::new().max_rect(r)).put(
         r,
         egui::TextEdit::singleline(text)
             .id(id)

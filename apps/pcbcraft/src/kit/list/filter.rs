@@ -133,7 +133,7 @@ impl FilterBar<'_> {
             pos2(icon.right() + 6.0, field.top() + 1.0),
             pos2(field.right() - star_w - 4.0, field.bottom() - 1.0),
         );
-        let edit = ui.put(
+        let edit = ui.new_child(egui::UiBuilder::new().max_rect(edit_rect)).put(
             edit_rect,
             egui::TextEdit::singleline(text)
                 .id(self.field_id())
