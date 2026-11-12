@@ -1,0 +1,52 @@
+[package]
+name = "pcbcraft-ui"
+description = "Pcbcraft's UI toolkit: seeded from SolidCraft's MIT/Apache UI kit, theme tokens, icons and fonts as of a34756830"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# SolidCraft's own lint policy for this code (its workspace lints), not Pcbcraft's: vendored
+# code keeps its upstream policy.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
+neg_cmp_op_on_partial_ord = "allow"
+
+# SolidCraft's rendering fixtures (`cfg(feature = "test-support")` in the vendored blur and history
+# code); never enabled in Pcbcraft.
+[features]
+test-support = []
+
+[dependencies]
+# SolidCraft's MIT/Apache crates the vendored code draws with: the widget registry, interface
+# text, colour rules, vector geometry, the camera and the viewport's GPU pipelines (the blurred
+# panel backing).
+solidcraft-ui-registry.workspace = true
+solidcraft-ui-text.workspace = true
+solidcraft-color.workspace = true
+solidcraft-geom.workspace = true
+solidcraft-viewport.workspace = true
+solidcraft-viewport-gpu.workspace = true
+solidcraft-viewport-egui.workspace = true
+solidcore-record.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log = "0.4"
+web-time = "1"
+tiny-skia = "0.12"
+ttf-parser = "0.25"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Text fields' context menu reads the system clipboard.
+arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+
+[build-dependencies]
+toml = "1"

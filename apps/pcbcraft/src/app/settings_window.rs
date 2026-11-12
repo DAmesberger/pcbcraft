@@ -17,8 +17,8 @@ use crate::commands::{Chord, Command, Context, Registry};
 use crate::keymap::Unapplied;
 use crate::kit;
 use pcbcraft_io::settings::{HOLD_MS_RANGE, RevealSettings};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{ui_kit, ui_kit::Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::{ui_kit, ui_kit::Button};
 
 const MAX_FILTER: usize = 128;
 
@@ -609,7 +609,7 @@ mod tests {
             }
         }
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let registry = Registry::standard();
         let mut window = SettingsWindow::default();
         window.open();

@@ -6,7 +6,7 @@ use crate::kit::{self, ToolCard};
 use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::{Operation, Project, Via, ViaSpan, layout::LayoutCommand, schematic};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 /// Why a locked via's toggles and Delete are disabled.
 const LOCKED: &str = "Unlock the via to change it";
@@ -91,7 +91,7 @@ impl PcbEditor {
                   is not added.",
             finish: None,
         };
-        let t = solidcraft_theme::Tokens::get();
+        let t = pcbcraft_ui::theme::Tokens::get();
         let margin = egui::Margin::symmetric(t.space_8 as i8, 0);
         let response = egui::Frame::NONE
             .inner_margin(margin)

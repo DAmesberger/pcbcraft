@@ -10,6 +10,8 @@
 //!   the live channel into the open window over `solidcraft-control`.
 //! - 4 `pcbcraft-assist`: AI-assisted part design over the automation session
 //!   (the only crate with an HTTP client).
+//! - 4 `pcbcraft-ui`: the UI toolkit, seeded from SolidCraft's MIT/Apache interface code (kit, tokens, icons,
+//!   fonts) as of `a34756830`, vendored for the desktop app only.
 //! - 5 apps: `pcbcraft` (desktop UI) and `pcbcraft-cli`.
 //!
 //! Generator plugins sit beside the layers:
@@ -33,6 +35,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("pcbcraft-generators-probe", 3),
     ("pcbcraft-automation", 3),
     ("pcbcraft-assist", 4),
+    ("pcbcraft-ui", 4),
     ("pcbcraft-cli", 5),
     ("pcbcraft", 5),
 ];
@@ -46,9 +49,14 @@ const UI_CRATES: &[&str] = &[
     "winit",
     "rfd",
     "pollster",
-    "solidcraft-ui-egui",
-    "solidcraft-theme",
+    "solidcraft-viewport-gpu",
+    "solidcraft-viewport-egui",
+    "solidcraft-ui-registry",
+    "solidcraft-ui-text",
 ];
+
+/// The crates that may depend on UI crates: the desktop app and its UI toolkit (pcbcraft-ui).
+const UI_USERS: &[&str] = &["pcbcraft", "pcbcraft-ui"];
 
 /// The core stays pure so it compiles and runs unchanged on wasm.
 const CORE_FORBIDDEN: &[&str] = &["tempfile"];
@@ -150,9 +158,9 @@ pub fn check() -> Result<()> {
                     "{name} (layer {own}) depends on {dep} (layer {other}); depend only on lower layers"
                 ));
             }
-            if UI_CRATES.contains(&dep) && name != "pcbcraft" {
+            if UI_CRATES.contains(&dep) && !UI_USERS.contains(&name) {
                 violations.push(format!(
-                    "{name} depends on UI crate {dep}; only the desktop app may"
+                    "{name} depends on UI crate {dep}; only the desktop app and its UI toolkit (pcbcraft-ui) may"
                 ));
             }
             // The firmware emitters are pure text over the core IR, like
@@ -171,12 +179,21 @@ pub fn check() -> Result<()> {
                     "solidcraft-engine" | "solidcraft-color" | "solidcraft-viewport"
                 ) | (
                     "pcbcraft",
-                    "solidcraft-ui-egui" | "solidcraft-theme" | "solidcraft-viewport-egui"
+                    "solidcraft-viewport-gpu" | "solidcraft-viewport-egui"
+                ) | (
+                    "pcbcraft-ui",
+                    "solidcraft-ui-registry"
+                        | "solidcraft-ui-text"
+                        | "solidcraft-color"
+                        | "solidcraft-geom"
+                        | "solidcraft-viewport"
+                        | "solidcraft-viewport-gpu"
+                        | "solidcraft-viewport-egui"
                 ) | ("pcbcraft-automation", "solidcraft-control")
             );
             if solidcraft && !allowed {
                 violations.push(format!(
-                    "{name} depends on {dep}; Solidcraft is reached through pcbcraft-solidcraft (engine, colour, viewport shading models), pcbcraft-automation (control channel) or the app (UI kit, tokens, viewport paint callbacks) only"
+                    "{name} depends on {dep}; Solidcraft is reached through pcbcraft-solidcraft (engine, colour, viewport shading models), pcbcraft-automation (control channel), the app (viewport pipelines and paint callbacks) or pcbcraft-ui (widget registry, interface text, geometry, viewport) only"
                 ));
             }
         }

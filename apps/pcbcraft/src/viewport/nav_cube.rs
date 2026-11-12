@@ -19,7 +19,7 @@ use pcbcraft_solidcraft::{
     geom::{Vec3, prelude::*},
     viewport::Camera,
 };
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// The cube's square on screen (points), and its half size in it.
 pub const SIZE: f32 = 96.0;

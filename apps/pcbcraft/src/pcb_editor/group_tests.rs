@@ -8,7 +8,7 @@ use crate::pcb_editor::Inspected;
 use egui::{PointerButton, Rect};
 use pcbcraft_core::layout::RouteRequest;
 use pcbcraft_core::{Endpoint, Engine, Layer, TerminalId};
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 

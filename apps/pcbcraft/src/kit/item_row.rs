@@ -39,8 +39,8 @@
 use super::severity::{self, Level};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align, FontId, Layout, Rect, Response, Sense, Ui, UiBuilder, pos2, vec2};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{icons, ui_kit};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::{icons, ui_kit};
 
 /// Rows a name wraps to before it is cut.
 const NAME_MAX_ROWS: usize = 2;

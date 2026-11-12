@@ -5,7 +5,7 @@ use super::*;
 use crate::template_gallery::TemplateGallery;
 use egui::vec2;
 use pcbcraft_core::Evaluators;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

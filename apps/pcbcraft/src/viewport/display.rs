@@ -9,8 +9,8 @@ use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
     scene::{Geometry, Place},
 };
-use solidcraft_ui_egui::gpu::GpuScene;
-use solidcraft_ui_egui::viewport::Proj;
+use pcbcraft_ui::viewport::Proj;
+use solidcraft_viewport_gpu::view::GpuScene;
 use std::sync::Arc;
 
 /// Most model triangles the display transform repacks on the UI thread in
@@ -122,7 +122,7 @@ impl Viewport {
     /// published since its last frame (Solidcraft's `Batches::take` empties
     /// the slot), if any.
     #[cfg(test)]
-    pub(crate) fn take_published(&mut self) -> Option<solidcraft_ui_egui::gpu::GpuScene> {
+    pub(crate) fn take_published(&mut self) -> Option<solidcraft_viewport_gpu::view::GpuScene> {
         self.slot.lock().ok().and_then(|mut s| s.take())
     }
 

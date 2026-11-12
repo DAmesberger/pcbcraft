@@ -22,8 +22,8 @@ use pcbcraft_core::{
     ComponentRef, Engine, FieldRef, Id, InstanceCommand, Operation, PartRef, Project, Query,
     QueryResult,
 };
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 
 /// Designators a group title lists before summarising the rest.
 const TITLE_DESIGNATORS: usize = 6;
@@ -834,7 +834,7 @@ mod tests {
     #[test]
     fn the_window_tables_unresolved_groups_and_choose_returns_the_group() -> TestResult {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let Ok(QueryResult::ResolveGroups(report)) = engine.query(Query::ResolveGroups {}) else {
             return Err(Box::new(Error::Invalid("library.resolve_groups".into())));
@@ -965,7 +965,7 @@ mod tests {
     #[test]
     fn close_closes_the_window() -> TestResult {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let mut card = ResolveParts::default();
         card.open();

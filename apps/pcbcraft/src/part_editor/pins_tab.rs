@@ -32,8 +32,8 @@ use pcbcraft_core::{
     Engine, FunctionId, LibraryCommand, Operation, Query, QueryResult, ResourceId, RoleId, RuleId,
     TerminalId,
 };
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 
 /// The tab's three sub-views.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

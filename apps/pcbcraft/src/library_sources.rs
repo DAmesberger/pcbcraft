@@ -32,7 +32,7 @@ use pcbcraft_io::settings::{
     self, MAX_FAVOURITES, MAX_PANEL_WIDTH, MAX_RECENT, MAX_SOURCES, SourceSetting,
 };
 use pcbcraft_io::settings::{UserDirs, UserSettings};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -1355,7 +1355,7 @@ pub(crate) fn reveal(path: &Path) {
 /// A dim layer under a card that blocks the canvas and cards beneath it;
 /// a click on it closes the card. The card is kept above it.
 fn scrim(ctx: &egui::Context, card: egui::Id) -> bool {
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     let id = card.with("scrim");
     let rect = ctx.content_rect();
     let clicked = ui_kit::Container::new(ctx, ui_kit::Surface::InputShield)
@@ -1747,7 +1747,7 @@ fn kind_label(kind: pcbcraft_core::DefinitionKind) -> &'static str {
 
 /// A dialog body inset like the file workflow's.
 fn body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(t.space_12 as i8, t.space_8 as i8))
         .show(ui, |ui| {
@@ -2239,10 +2239,7 @@ mod tests {
             "star",
             "update",
         ] {
-            assert!(
-                !solidcraft_ui_egui::icon_svg::resolve(name).placeholder,
-                "{name}"
-            );
+            assert!(!pcbcraft_ui::icon_svg::resolve(name).placeholder, "{name}");
         }
     }
 

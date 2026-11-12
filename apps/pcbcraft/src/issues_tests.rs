@@ -280,7 +280,7 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         Self { ctx, time: 0.0 }
     }
 

@@ -10,7 +10,7 @@ use pcbcraft_core::library::{
     ComponentDefinition, FieldView, Library, Published, designator_prefix_valid, standard_fields,
 };
 use pcbcraft_core::{DefinitionId, Engine, FieldRef, Id, LibraryCommand, Operation};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 impl PartEditor {
     /// The Details card body. Every edit commits live through the working

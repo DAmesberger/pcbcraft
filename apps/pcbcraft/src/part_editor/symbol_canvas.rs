@@ -20,8 +20,8 @@ use pcbcraft_core::library::{Graphic, Item, Pin, PinDirection, SymbolHit, TextMe
 use pcbcraft_core::schematic;
 use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{Engine, GraphicId, Point, TerminalId, UnitId};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::type_face;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::type_face;
 use std::sync::Arc;
 
 /// The unit being drawn as core resolves it, and its snap targets, for one

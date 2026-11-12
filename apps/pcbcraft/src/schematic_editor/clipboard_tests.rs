@@ -28,7 +28,7 @@ fn editor_on_demo()
 -> std::result::Result<(SchematicEditor, Engine, egui::Context), Box<dyn std::error::Error>> {
     let engine = Engine::demo()?;
     let ctx = egui::Context::default();
-    solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+    pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
     let mut editor = SchematicEditor::default();
     frame(&mut editor, &engine, &ctx, vec![]);
     Ok((editor, engine, ctx))

@@ -14,6 +14,7 @@ members = [
     "crates/generators-probe",
     "generators/chip",
     "apps/pcbcraft-cli",
+    "crates/ui",
     "apps/pcbcraft",
     "xtask",
 ]
@@ -35,6 +36,7 @@ pcbcraft-assist = { path = "crates/assist" }
 pcbcraft-generator-abi = { path = "crates/generator-abi" }
 pcbcraft-generator-sdk = { path = "crates/generator-sdk" }
 pcbcraft-generators = { path = "crates/generators" }
+pcbcraft-ui = { path = "crates/ui" }
 tempfile = "3"
 sha2 = "0.10"
 getrandom = "0.3"
@@ -53,12 +55,10 @@ rhai = { version = "=1.27.0", default-features = false, features = ["std", "sync
 egui = "0.37"
 egui-wgpu = "0.37"
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland", "accesskit"] }
-solidcraft-ui-egui = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
 solidcraft-engine = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
-# Solidcraft's colour rules (the sRGB transfer function), reached through pcbcraft-solidcraft, and
-# its UI token contract, which the UI kit uses; the same revision.
+# Solidcraft's colour rules (the sRGB transfer function), reached through pcbcraft-solidcraft and
+# the vendored UI kit; the same revision.
 solidcraft-color = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
-solidcraft-theme = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
 # The vector types of Solidcraft's public API live in solidcore's record crate, which Solidcraft
 # vendors at solidcore/: the same fork revision, so it is the copy Solidcraft builds with.
 solidcore-record = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
@@ -67,9 +67,15 @@ solidcore-record = { git = "https://github.com/DAmesberger/solidcraft.git", rev 
 # pcbcraft-automation only.
 solidcraft-control = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
 # Solidcraft's shared viewport renderer: its shading models (surface, clear coat, material
-# graph) and, in the desktop app, its egui paint callbacks; the same revision.
+# graph) and, in the desktop app, its GPU pipelines and egui paint callbacks; the same revision.
 solidcraft-viewport = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
+solidcraft-viewport-gpu = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
 solidcraft-viewport-egui = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
+# Solidcraft's vector geometry, widget registry and interface text, which the vendored UI kit
+# (crates/ui) draws with; the same revision.
+solidcraft-geom = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
+solidcraft-ui-registry = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
+solidcraft-ui-text = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

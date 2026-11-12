@@ -237,7 +237,7 @@ impl PcbEditor {
         revision: u64,
         pointer: Option<egui::Pos2>,
     ) {
-        let t = solidcraft_theme::Tokens::get();
+        let t = pcbcraft_ui::theme::Tokens::get();
         let Some(track) = project
             .tracks
             .iter()
@@ -321,7 +321,7 @@ impl PcbEditor {
                   are at least the track clearance apart. One click is one undo step.",
             finish: None,
         };
-        let t = solidcraft_theme::Tokens::get();
+        let t = pcbcraft_ui::theme::Tokens::get();
         let margin = egui::Margin::symmetric(t.space_8 as i8, 0);
         let response = egui::Frame::NONE
             .inner_margin(margin)

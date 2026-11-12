@@ -20,8 +20,8 @@ use pcbcraft_core::layout::dimensions::{board_sketch, held_at};
 use pcbcraft_core::layout::outline::BoardShapeEvaluator;
 use pcbcraft_core::model::board::ConstraintTarget;
 use pcbcraft_core::{Placement, Project};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::icons;
+use pcbcraft_ui::icons;
+use pcbcraft_ui::theme::Tokens;
 
 /// The glyph's side, in points (Solidcraft's `GLYPH`).
 pub(super) const GLYPH: f32 = 15.0;

@@ -8,7 +8,7 @@ use egui::vec2;
 use pcbcraft_core::geometry::Shape;
 use pcbcraft_core::model::{LabelKind, PowerStyle};
 use pcbcraft_core::schematic::scene;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

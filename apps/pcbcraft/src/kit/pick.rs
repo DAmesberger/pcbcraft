@@ -14,9 +14,9 @@ use egui::{
     Align, CursorIcon, FontId, Layout, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo, pos2,
     vec2,
 };
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit;
-use solidcraft_ui_egui::ui_kit::type_face;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit;
+use pcbcraft_ui::ui_kit::type_face;
 
 /// How far a group's rows sit right of its header.
 pub const PICK_INDENT: f32 = 14.0;

@@ -13,7 +13,7 @@
 //! and equal to a command's single-key shortcut where it has one.
 use crate::commands::AppCommand;
 use egui::{Rect, pos2, vec2};
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// A control that runs a command, as it registers its rect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

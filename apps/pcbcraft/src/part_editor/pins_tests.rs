@@ -14,7 +14,7 @@ use egui::{Pos2, Rect};
 use pcbcraft_core::FunctionKey;
 use pcbcraft_core::functions::{FunctionConstraint, FunctionSelections};
 use pcbcraft_core::library::pinout::ImportReview;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 type Texts = Vec<(String, Pos2)>;

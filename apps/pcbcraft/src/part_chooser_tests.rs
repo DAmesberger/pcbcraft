@@ -3,7 +3,7 @@
 //! field, and the recent files it hands back to keep.
 use super::*;
 use pcbcraft_solidcraft::models::part_file::{PartBody, PartFinding};
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

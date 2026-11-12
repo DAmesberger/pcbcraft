@@ -8,7 +8,7 @@ use crate::schematic_editor::menu::{Act, Target};
 use egui::{Event, Modifiers, PointerButton, Pos2, Rect, pos2, vec2};
 use pcbcraft_core::library::Rotation;
 use pcbcraft_core::{Endpoint, Outcome, PowerStyle, TerminalId};
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

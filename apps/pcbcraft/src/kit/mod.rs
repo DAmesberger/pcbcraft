@@ -41,8 +41,8 @@ pub use tree::*;
 pub use {dialog::DialogPanel, issues::issue_line, severity::severity_glyph};
 
 use egui::{Color32, Painter, Pos2, Rect, vec2};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::icons;
+use pcbcraft_ui::icons;
+use pcbcraft_ui::theme::Tokens;
 
 /// The kit chevron: down when open, right when folded.
 pub fn disclosure(painter: &Painter, center: Pos2, open: bool, ink: Color32) {

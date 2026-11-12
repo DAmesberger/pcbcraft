@@ -12,8 +12,8 @@ use pcbcraft_core::library::{
 };
 use pcbcraft_core::{DefinitionId, LibraryCommand, Operation};
 use pcbcraft_solidcraft::geom::{Aabb3, Vec3};
-use solidcraft_ui_egui::gizmo::Change;
-use solidcraft_ui_egui::gpu::GpuScene;
+use pcbcraft_ui::gizmo::Change;
+use solidcraft_viewport_gpu::view::GpuScene;
 
 /// Copper thickness the overlay lands are drawn with (display only; the
 /// board model uses the stack-up).

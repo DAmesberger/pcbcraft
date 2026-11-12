@@ -30,11 +30,11 @@ use pcbcraft_solidcraft::{
     scene::{Geometry, Place},
     viewport::Camera,
 };
-use solidcraft_theme as theme;
-use solidcraft_ui_egui::gpu::{
-    self, Frame, GpuScene, GpuTarget, Palette, Renderer, SceneSlot, StudioEnvironment,
-};
+use pcbcraft_ui::theme;
 use solidcraft_viewport_egui::ViewportCallback;
+use solidcraft_viewport_gpu::view::{
+    self as gpu, Frame, GpuScene, GpuTarget, Palette, Renderer, SceneSlot, StudioEnvironment,
+};
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
@@ -1699,7 +1699,7 @@ mod tests {
                         .iter()
                         .flat_map(|m| {
                             m.instances
-                                .chunks_exact(solidcraft_ui_egui::gpu::INSTANCE_SIZE)
+                                .chunks_exact(solidcraft_viewport_gpu::view::INSTANCE_SIZE)
                                 .filter_map(|c| c.get(48..52)?.try_into().ok())
                                 .map(u32::from_le_bytes)
                                 .collect::<Vec<_>>()

@@ -26,7 +26,7 @@ use pcbcraft_core::{
     BindingRef, ComponentRef, DefinitionId, Engine, FieldRef, LibraryCommand, Operation, PartRef,
     Query, QueryResult, Revision, Stage,
 };
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -1775,7 +1775,7 @@ mod tests {
     #[test]
     fn publish_offers_to_carry_the_published_parts() -> Result<(), Box<dyn std::error::Error>> {
         let (ctx, mut engine, mut editor) = ready()?;
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let set = editor.draft.clone().ok_or("no working set")?;
         let published = Pins::of(&set, &engine).ok_or("no pins")?;
         let mut part = new_part(&set, &published);
@@ -1966,7 +1966,7 @@ mod tests {
     fn publish_with_component_is_disabled_while_the_component_is_invalid()
     -> Result<(), Box<dyn std::error::Error>> {
         let (ctx, mut engine, mut editor) = ready()?;
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let set = editor.draft.clone().ok_or("no working set")?;
         let pins = Pins::of(&set, &engine).ok_or("no pins")?;
         let mut part = new_part(&set, &pins);
@@ -2106,7 +2106,7 @@ mod tests {
     fn the_part_dialog_gates_publish_and_returns_to_the_instance()
     -> Result<(), Box<dyn std::error::Error>> {
         let (ctx, mut engine, mut editor) = ready()?;
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let new = click_at(&mut editor, &engine, &ctx, "New Part\u{2026}", TALL)?;
         assert!(
             matches!(
@@ -2198,7 +2198,7 @@ mod tests {
     fn a_requested_part_opens_in_the_dialog_and_cancel_keeps_the_draft()
     -> Result<(), Box<dyn std::error::Error>> {
         let (ctx, mut engine, mut editor) = ready()?;
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let set = editor.draft.clone().ok_or("no working set")?;
         let field = set.component.fields.first().ok_or("no field")?.field;
         editor.parts.request_new(vec![(
@@ -2240,7 +2240,7 @@ mod tests {
     #[test]
     fn a_refusal_shows_in_the_dialog_row() -> Result<(), Box<dyn std::error::Error>> {
         let (ctx, mut engine, mut editor) = ready()?;
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let new = click_at(&mut editor, &engine, &ctx, "New Part\u{2026}", TALL)?;
         apply(&mut engine, new)?;
         editor.commit(&ctx, &engine);
@@ -2270,7 +2270,7 @@ mod tests {
     #[test]
     fn a_published_part_opens_read_only_with_edit() -> Result<(), Box<dyn std::error::Error>> {
         let (ctx, mut engine, mut editor) = ready()?;
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let set = editor.draft.clone().ok_or("no working set")?;
         let pins = Pins::of(&set, &engine).ok_or("no pins")?;
         let mut part = new_part(&set, &pins);
@@ -2439,7 +2439,7 @@ mod tests {
     #[test]
     fn rated_values_are_typed_through_the_field() -> Result<(), Box<dyn std::error::Error>> {
         let (ctx, mut engine, mut editor) = ready()?;
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let set = editor.draft.clone().ok_or("no working set")?;
         let pins = Pins::of(&set, &engine).ok_or("no pins")?;
         let field = set.component.fields.first().ok_or("no field")?.field;

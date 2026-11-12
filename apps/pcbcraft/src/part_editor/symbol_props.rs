@@ -16,7 +16,7 @@ use pcbcraft_core::library::symbol_style::{ResistorStyle, SymbolConventions};
 use pcbcraft_core::library::{Grid, Item, PinDirection, Rotation, ShapeNm};
 use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{Engine, GraphicId, LibraryCommand, Operation, TerminalId, UnitId};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 const COORD: std::ops::RangeInclusive<f64> = -10000.0..=10000.0;
 const RADIUS: std::ops::RangeInclusive<f64> = 0.0..=10000.0;
@@ -266,7 +266,7 @@ impl PartEditor {
         canvas: egui::Rect,
         engine: &Engine,
     ) -> Option<Operation> {
-        let t = solidcraft_theme::Tokens::get();
+        let t = pcbcraft_ui::theme::Tokens::get();
         // The navigation bar is one button wide, centred at the canvas
         // bottom (app/chrome.rs `navigation_bar`); this bar sits right of it.
         let size = egui::vec2(
@@ -304,18 +304,15 @@ impl PartEditor {
             &format!("Grid and snap · {step} mm"),
             true,
         );
-        solidcraft_ui_egui::ui_kit::Container::new(
-            ui.ctx(),
-            solidcraft_ui_egui::ui_kit::Surface::Popup,
-        )
-        .menu(&button)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            kit::form(ui, |ui| {
-                ui.set_width(GRID_POPOVER_WIDTH);
-                operation = self.grid_rows(ui, engine);
+        pcbcraft_ui::ui_kit::Container::new(ui.ctx(), pcbcraft_ui::ui_kit::Surface::Popup)
+            .menu(&button)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                kit::form(ui, |ui| {
+                    ui.set_width(GRID_POPOVER_WIDTH);
+                    operation = self.grid_rows(ui, engine);
+                });
             });
-        });
         operation
     }
 

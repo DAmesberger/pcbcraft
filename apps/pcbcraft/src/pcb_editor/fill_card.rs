@@ -13,7 +13,7 @@ use pcbcraft_core::layout::fill::{FillCommand, RefillTarget};
 use pcbcraft_core::model::fill::{FillRegion, Hatch, IslandRemoval};
 use pcbcraft_core::rules::{PadConnection, ThermalRelief};
 use pcbcraft_core::{Fill, Id, Operation, Project, schematic};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 /// Why a locked fill's fields, Refill and Delete are disabled.
 const LOCKED: &str = "Unlock the fill to change it";

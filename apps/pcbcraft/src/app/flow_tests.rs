@@ -5,7 +5,7 @@ use super::*;
 use crate::commands::Registry;
 use pcbcraft_core::model::LabelKind;
 use pcbcraft_core::schematic::SchematicCommand;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type Fallible<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

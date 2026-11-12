@@ -15,8 +15,8 @@ use egui::Ui;
 use pcbcraft_core::layout::LayoutCommand;
 use pcbcraft_core::layout::dimensions::{self, DimensionCommand};
 use pcbcraft_core::{Engine, Id, Operation, Placement, Point, Project};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 
 /// Bound on typed placement coordinates (mm). The engine bounds a part's
 /// datum to its working area, a smaller square, and says so when refusing.

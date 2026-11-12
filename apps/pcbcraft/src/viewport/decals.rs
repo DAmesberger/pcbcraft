@@ -184,7 +184,7 @@ impl Viewport {
             self.start_repack();
             return;
         }
-        let mut scene = solidcraft_ui_egui::gpu::GpuScene::default();
+        let mut scene = solidcraft_viewport_gpu::view::GpuScene::default();
         scene.instanced = self.instanced(&mut scene);
         if let Ok(mut slot) = self.slot.lock() {
             *slot = Some(scene);

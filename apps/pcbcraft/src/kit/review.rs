@@ -15,8 +15,8 @@
 use super::dialog::{DialogAction, DialogPanel};
 use super::severity::{Level, severity_glyph};
 use egui::{Align, FontId, Layout, Rect, Sense, Ui, UiBuilder, pos2, vec2};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit;
 
 /// One blocker or acknowledgement row.
 #[derive(Clone, Debug, PartialEq)]

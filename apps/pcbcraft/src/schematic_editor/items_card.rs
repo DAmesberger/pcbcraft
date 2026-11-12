@@ -14,7 +14,7 @@ use pcbcraft_core::{
     Engine, LabelKind, Operation, Paper, PaperOrientation, PortShape, PowerStyle, Project,
     ProjectProperties, SheetItem, SheetSide,
 };
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 fn op(command: SchematicCommand) -> Option<Operation> {
     Some(Operation::Schematic(command))

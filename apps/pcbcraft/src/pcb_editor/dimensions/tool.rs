@@ -17,7 +17,7 @@ use pcbcraft_core::layout::dimensions::view::{self, Shown};
 use pcbcraft_core::library::footprint_source::DimKind;
 use pcbcraft_core::model::dimension::{BoardRef, PartDimensionSpec, PartRelation};
 use pcbcraft_core::{Engine, Operation, Project};
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 impl PcbEditor {
     /// Arm or end the Dimension tool (Layout and 3D alike).

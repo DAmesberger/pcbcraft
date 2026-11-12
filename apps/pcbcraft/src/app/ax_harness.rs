@@ -9,7 +9,7 @@
 use super::*;
 use crate::commands::Registry;
 use egui::accesskit::{NodeId, Role, Toggled, TreeUpdate};
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 use std::collections::HashMap;
 
 pub(crate) type Fallible<T = ()> = Result<T, Box<dyn std::error::Error>>;

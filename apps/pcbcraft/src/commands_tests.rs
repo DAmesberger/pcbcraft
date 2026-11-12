@@ -21,7 +21,7 @@ fn ids_are_unique_and_titles_and_icons_are_set() {
         assert!(seen.insert(command.id.clone()), "{} twice", command.id);
         assert!(!command.title.is_empty(), "{}", command.id);
         assert!(
-            !solidcraft_ui_egui::icon_svg::resolve(command.icon).placeholder,
+            !pcbcraft_ui::icon_svg::resolve(command.icon).placeholder,
             "{}: icon {}",
             command.id,
             command.icon

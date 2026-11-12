@@ -43,7 +43,7 @@ use pcbcraft_solidcraft::{
     stack::{Slot, Stack},
     viewport::surface::{OpaqueSurface, unit_direction},
 };
-use solidcraft_ui_egui::gpu::{
+use solidcraft_viewport_gpu::view::{
     BlockBuilder, GpuScene, InstanceLook, InstancedMesh, LOD_PX, PaletteIndex, SceneBlock,
     SharedTris, TRI_SIZE, TriClass,
 };
@@ -344,7 +344,7 @@ fn instance(geometry: &[Geometry], stack: &Stack) -> Result<Vec<Instanced>, Stri
         if let Some(group) = out.get_mut(at) {
             group.mesh.place(place.rows_f32(), palette.color(colour));
             group.bodies.push(index);
-            bytes = bytes.saturating_add(solidcraft_ui_egui::gpu::INSTANCE_SIZE);
+            bytes = bytes.saturating_add(solidcraft_viewport_gpu::view::INSTANCE_SIZE);
         }
         if bytes > MAX_INSTANCED_BYTES {
             return Err("model too large for the 3D view".into());
@@ -392,8 +392,9 @@ fn indexed(mesh: &pcbcraft_solidcraft::geom::Mesh, keep: impl Fn(Vec3) -> bool) 
         };
         for (p, n) in [a, b, c] {
             let bits = [p[0], p[1], p[2], n[0], n[1], n[2]].map(|x| (x + 0.0).to_bits());
-            let next = u32::try_from(out.vertices.len() / solidcraft_ui_egui::gpu::SHARED_SIZE)
-                .unwrap_or(u32::MAX);
+            let next =
+                u32::try_from(out.vertices.len() / solidcraft_viewport_gpu::view::SHARED_SIZE)
+                    .unwrap_or(u32::MAX);
             let index = *seen.entry(bits).or_insert_with(|| {
                 for x in p.iter().chain(&n) {
                     out.vertices.extend_from_slice(&x.to_le_bytes());
@@ -500,8 +501,9 @@ fn smooth(level: &pcbcraft_solidcraft::geom::simplify::Level) -> SharedTris {
             }
             let n = unit_direction(sum).unwrap_or(own).to_f32();
             let position = p.get(*i as usize).map_or([0.0; 3], |v| v.to_f32());
-            let next = u32::try_from(out.vertices.len() / solidcraft_ui_egui::gpu::SHARED_SIZE)
-                .unwrap_or(u32::MAX);
+            let next =
+                u32::try_from(out.vertices.len() / solidcraft_viewport_gpu::view::SHARED_SIZE)
+                    .unwrap_or(u32::MAX);
             let index = *seen.entry((*i, n.map(f32::to_bits))).or_insert_with(|| {
                 for x in position.iter().chain(&n) {
                     out.vertices.extend_from_slice(&x.to_le_bytes());
@@ -1101,7 +1103,7 @@ pub(crate) mod tests {
                     .flatten()
                     .flat_map(|x| x.to_le_bytes())
                     .collect();
-                let at = k * solidcraft_ui_egui::gpu::INSTANCE_SIZE;
+                let at = k * solidcraft_viewport_gpu::view::INSTANCE_SIZE;
                 assert_eq!(group.mesh.instances.get(at..at + 48), Some(&bytes[..]));
             }
         }
@@ -1226,7 +1228,7 @@ pub(crate) mod tests {
         let placements: usize = scene.instanced.iter().map(|i| i.mesh.instances.len()).sum();
         assert_eq!(
             placements,
-            (placed + others) * solidcraft_ui_egui::gpu::INSTANCE_SIZE
+            (placed + others) * solidcraft_viewport_gpu::view::INSTANCE_SIZE
         );
         let meshes = held - placements;
         eprintln!(

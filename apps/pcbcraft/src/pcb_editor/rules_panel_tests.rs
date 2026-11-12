@@ -5,7 +5,7 @@ use super::*;
 use egui::{Pos2, Shape};
 use pcbcraft_core::Engine;
 use pcbcraft_core::rules::fixtures;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -584,7 +584,7 @@ fn panic_free_fail(what: &str) {
 fn the_rule_rows_do_not_overlap_in_the_properties_column() -> TestResult {
     let engine = Engine::demo()?;
     let ctx = context();
-    solidcraft_theme::apply(&ctx);
+    pcbcraft_ui::theme::apply(&ctx);
     let mut editor = PcbEditor::default();
     click(&mut editor, &engine, &ctx, "Rules…")?;
     assert_eq!(editor.subject(), Subject::Dialog);
@@ -611,7 +611,7 @@ fn the_rule_rows_do_not_overlap_in_the_properties_column() -> TestResult {
     let (Some(a), Some(b)) = (first.first(), second.first()) else {
         return Err(format!("rows not drawn: {:?}", texts(&output)).into());
     };
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     assert!(b.y - a.y >= t.control_height, "rows {} apart", b.y - a.y);
     Ok(())
 }

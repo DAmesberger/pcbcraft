@@ -11,7 +11,7 @@ use crate::kit::severity::Level;
 use crate::kit::*;
 use egui::epaint::{ClippedPrimitive, Primitive};
 use egui::{Event, FullOutput, Pos2, Shape};
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 use std::collections::HashMap;
 
 /// A text painted cut short: its full text and where it shows.
@@ -558,9 +558,9 @@ pub(crate) struct Screen {
 impl Screen {
     pub(crate) fn new(size: egui::Vec2) -> Self {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         // The icons the app installs at startup (`App::new`).
-        solidcraft_ui_egui::icon_svg::install();
+        pcbcraft_ui::icon_svg::install();
         Self {
             ctx,
             size,
@@ -729,7 +729,7 @@ fn strongest_ink(rgba: &[u8], width: usize, rect: Rect, page: Color32) -> f32 {
 #[test]
 fn an_unavailable_command_row_is_dimmed_to_the_key() {
     for dark in [false, true] {
-        solidcraft_theme::set_dark(dark);
+        pcbcraft_ui::theme::set_dark(dark);
         let screen = Screen::new(egui::vec2(420.0, 90.0));
         let row = |ui: &mut Ui, name: &str, enabled: bool| {
             let row = CommandRow {
