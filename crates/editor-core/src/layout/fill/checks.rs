@@ -55,6 +55,11 @@ pub(crate) struct Fresh<'a> {
 /// board copper (in the copper graph): stale copper joins nothing until it
 /// is refilled.
 pub(crate) fn fresh(project: &Project) -> Vec<Fresh<'_>> {
+    fresh_on(project, None)
+}
+
+/// [`fresh`] for the fills of `nets` alone (every net: `None`).
+pub(crate) fn fresh_on<'a>(project: &'a Project, nets: Option<&[Id]>) -> Vec<Fresh<'a>> {
     let mut out = Vec::new();
     if project.fills.iter().all(|f| f.computed.is_none()) {
         return out;
@@ -64,6 +69,9 @@ pub(crate) fn fresh(project: &Project) -> Vec<Fresh<'_>> {
         let (Some(net), Some(copper)) = (fill.net, &fill.computed) else {
             continue;
         };
+        if nets.is_some_and(|n| !n.contains(&net)) {
+            continue;
+        }
         if ctx.key(fill.id).ok().as_ref() == Some(&copper.key) {
             out.push(Fresh {
                 id: fill.id,

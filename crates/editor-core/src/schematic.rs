@@ -1189,7 +1189,7 @@ pub fn pin_position(project: &Project, endpoint: Endpoint) -> Option<Point> {
     let occurrence = project
         .occurrences_of(instance.id)
         .find(|o| o.unit == unit.id)?;
-    Some(occurrence_transform(occurrence).apply(pin.position))
+    Some(occurrence_transform(occurrence).apply(pin.position_mm()))
 }
 
 /// One drawn shape of a placed unit.
@@ -1491,7 +1491,9 @@ fn draw(
         .graphics
         .iter()
         .filter_map(|g| match &g.item {
-            Item::Shape { shape, width, .. } => Some(shape.bounds(*width)),
+            Item::Shape {
+                shape, width_nm, ..
+            } => Some(shape.to_mm().bounds(width_nm.to_mm_f64())),
             Item::Text(_) => None,
         })
         .reduce(Bounds::union)
@@ -1502,10 +1504,14 @@ fn draw(
     let mut drawn_fields = BTreeSet::new();
     for graphic in &unit.graphics {
         match &graphic.item {
-            Item::Shape { shape, width, fill } => shapes.push(PlacedShape {
+            Item::Shape {
+                shape,
+                width_nm,
+                fill,
+            } => shapes.push(PlacedShape {
                 graphic: graphic.id,
-                shape: shape.transformed(&t),
-                width: *width,
+                shape: shape.to_mm().transformed(&t),
+                width: width_nm.to_mm_f64(),
                 fill: *fill,
             }),
             Item::Text(text) => {
@@ -1515,7 +1521,7 @@ fn draw(
                 if !text.visible {
                     continue;
                 }
-                let mut height = text.height;
+                let mut height = text.height_nm.to_mm_f64();
                 let content = match &text.content {
                     TextContent::Literal(s) => s.clone(),
                     TextContent::Designator => r.designator.clone(),
@@ -1556,7 +1562,7 @@ fn draw(
                     ..place(
                         Some(graphic.id),
                         content,
-                        text.at,
+                        text.at.to_mm_f64(),
                         height,
                         text.rotation.degrees(),
                         text.justify,
@@ -1587,7 +1593,7 @@ fn draw(
             }
         }
     }
-    let height = symbol.pin_text_height;
+    let height = symbol.pin_text_height_nm.to_mm_f64();
     let pins = unit
         .pins
         .iter()
@@ -1605,7 +1611,7 @@ fn draw(
                 .and_then(|(binding, package)| pin_numbers(binding, package, pin.terminal))
                 .filter(|_| pin.number.visible)
                 .map(|text| {
-                    let (text, height) = fitted_number(text, pin.length, height);
+                    let (text, height) = fitted_number(text, pin.length_mm(), height);
                     let width =
                         text.chars().count() as f64 * TextMetric::default().advance * height;
                     let (at, rotation, justify) = pin.number_anchor(width);
@@ -1616,7 +1622,7 @@ fn draw(
             let name = name.filter(|n| number.as_ref().is_none_or(|m| m.text != n.text));
             PlacedPin {
                 terminal: pin.terminal,
-                end: t.apply(pin.position),
+                end: t.apply(pin.position_mm()),
                 body_end: t.apply(pin.body_end()),
                 line_end: t.apply(line_end),
                 decorations: pin

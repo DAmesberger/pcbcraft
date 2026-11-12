@@ -123,20 +123,20 @@ pub fn with_custom_text(
         .or(inherited)
         .cloned()
         .unwrap_or_default();
-    let (height_mm, align) = match marking.replace.as_ref().map(|s| s.items.as_slice()) {
+    let (height_nm, align) = match marking.replace.as_ref().map(|s| s.items.as_slice()) {
         Some(
             [
                 MarkingItem::Text {
-                    height_mm, align, ..
+                    height_nm, align, ..
                 },
             ],
-        ) => (*height_mm, *align),
+        ) => (*height_nm, *align),
         _ => (None, Align::Centre),
     };
     out.replace = Some(MarkingSpec {
         items: vec![MarkingItem::Text {
             template: Template(text.to_owned()),
-            height_mm,
+            height_nm,
             align,
         }],
         ..base
@@ -372,19 +372,23 @@ mod tests {
     use super::*;
     use pcbcraft_core::library::marking::{AreaChoice, Finish};
 
+    fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+        pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+    }
+
     fn spec(text: &str) -> MarkingSpec {
         MarkingSpec {
             items: vec![MarkingItem::Text {
                 template: Template(text.into()),
-                height_mm: Some(0.4),
+                height_nm: Some(nm(0.4)),
                 align: Align::Start,
             }],
             area: AreaChoice::Explicit {
-                centre: [0.0, 0.0],
-                size_mm: [1.0, 0.5],
+                centre: pcbcraft_core::units::PointNm::ORIGIN,
+                size_nm: [nm(1.0), nm(0.5)],
             },
             finish: Finish::InkWhite,
-            min_text_height_mm: None,
+            min_text_height_nm: None,
             ..MarkingSpec::default()
         }
     }
@@ -427,17 +431,17 @@ mod tests {
         assert!(!custom.hide && custom.vars.is_empty());
         // Editing the text again keeps the line's own height and alignment.
         let mut edited = custom.clone();
-        if let Some(MarkingItem::Text { height_mm, .. }) =
+        if let Some(MarkingItem::Text { height_nm, .. }) =
             edited.replace.as_mut().and_then(|s| s.items.first_mut())
         {
-            *height_mm = Some(0.6);
+            *height_nm = Some(nm(0.6));
         }
         let again = with_custom_text(&edited, "XYZ", Some(&inherited));
         assert_eq!(
             again.replace.as_ref().map(|s| s.items.clone()),
             Some(vec![MarkingItem::Text {
                 template: Template("XYZ".into()),
-                height_mm: Some(0.6),
+                height_nm: Some(nm(0.6)),
                 align: Align::Centre,
             }])
         );

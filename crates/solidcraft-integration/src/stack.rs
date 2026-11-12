@@ -12,16 +12,25 @@
 //! The display films' own thicknesses are in this one table; their sources
 //! are in `docs/materials.md`.
 use crate::material::BodyKind;
-use pcbcraft_core::{CopperLayer, Layer, Stackup};
+use pcbcraft_core::{CopperLayer, Layer, PadFinish, Stackup};
 
-/// Soldermask over bare laminate, display thickness: thinner than real LPI
-/// over laminate (25–35 µm), so exposed pads stand clear of the depth bias
-/// at grazing angles. Over copper the mask is the stackup's
-/// [`Stackup::mask_um`].
-pub const MASK_OVER_LAMINATE_MM: f64 = 0.020;
-/// Plated finish over exposed copper: ENIG nickel is 3–6 µm (IPC-4552); the
-/// immersion gold is negligible.
-pub const FINISH_MM: f64 = 0.005;
+/// Plated finish over exposed copper, µm: the middle of the thickness
+/// range a fabricator publishes for `finish` (sources in
+/// `docs/materials.md`, "Pad finishes").
+pub fn finish_um(finish: PadFinish) -> f64 {
+    let [low, high] = match finish {
+        // JLCPCB's surface-finish page: nickel 3–6 µm, gold 0.025–0.05 µm.
+        PadFinish::Enig => [3.0 + 0.025, 6.0 + 0.05],
+        // LC-PCB's capability table, row 63: HASL, leaded and lead-free,
+        // 2–40 µm.
+        PadFinish::Hasl | PadFinish::LeadFreeHasl => [2.0, 40.0],
+        // LC-PCB's capability table, row 64: film 0.2–0.3 µm.
+        PadFinish::Osp => [0.2, 0.3],
+        // LC-PCB's capability table, row 66: silver 0.2–0.4 µm.
+        PadFinish::ImmersionSilver => [0.2, 0.4],
+    };
+    (low + high) / 2.0
+}
 /// Legend ink thickness (est.; screen-printed and inkjet legend is
 /// 10–25 µm).
 pub const INK_MM: f64 = 0.015;
@@ -135,12 +144,16 @@ pub struct Stack {
     copper: [f64; 2],
     /// Soldermask over copper, mm.
     mask: f64,
+    /// Soldermask over bare laminate, mm.
+    mask_laminate: f64,
+    /// Plated finish over exposed copper, mm.
+    finish: f64,
 }
 
 impl Default for Stack {
-    /// The stack of [`Stackup::default`].
+    /// The stack of [`Stackup::default`] with the default pad finish.
     fn default() -> Self {
-        Self::of(&Stackup::default())
+        Self::of(&Stackup::default(), PadFinish::default())
     }
 }
 
@@ -153,15 +166,19 @@ fn index(side: Layer) -> usize {
 
 impl Stack {
     /// The stack of `stackup`: only the films it has (mask and legend per
-    /// side), the finish on both outer foils, every copper layer at
-    /// [`Stackup::copper_span`] and the laminate.
-    pub fn of(stackup: &Stackup) -> Self {
+    /// side), the `finish` on both outer foils, every copper layer at
+    /// [`Stackup::copper_span`] and the laminate. The mask is the
+    /// stackup's: [`Stackup::mask_laminate_nm`] over the laminate and
+    /// [`Stackup::mask_um`] over copper.
+    pub fn of(stackup: &Stackup, finish: PadFinish) -> Self {
         let foil = |layer: CopperLayer| stackup.copper_span(layer).map_or(0.0, |(a, b)| b - a);
         let mut stack = Self {
             slots: Vec::new(),
             top: stackup.dielectric_mm(),
             copper: [foil(CopperLayer::Top), foil(CopperLayer::Bottom)],
             mask: stackup.mask_um / 1000.0,
+            mask_laminate: stackup.mask_laminate_nm.to_mm_f64(),
+            finish: finish_um(finish) / 1000.0,
         };
         let films = |stack: &Stack, side: Layer| -> Vec<(Slot, Span)> {
             let (mask, silk) = match side {
@@ -169,7 +186,7 @@ impl Stack {
                 Layer::Bottom => (stackup.mask_bottom, stackup.silkscreen_bottom),
             };
             let copper = stack.copper(side);
-            let ground = if mask { MASK_OVER_LAMINATE_MM } else { 0.0 };
+            let ground = if mask { stack.mask_laminate_mm() } else { 0.0 };
             let mut out = Vec::new();
             if silk {
                 out.push((
@@ -183,13 +200,13 @@ impl Stack {
                     stack.span(
                         side,
                         0.0,
-                        MASK_OVER_LAMINATE_MM.max(copper + stack.mask_mm()),
+                        stack.mask_laminate_mm().max(copper + stack.mask_mm()),
                     ),
                 ));
             }
             out.push((
                 Slot::Finish(side),
-                stack.span(side, FINISH_MM, copper + FINISH_MM),
+                stack.span(side, stack.finish, copper + stack.finish),
             ));
             out
         };
@@ -227,6 +244,8 @@ impl Stack {
             top: 0.0,
             copper: [0.0; 2],
             mask: pcbcraft_core::MASK_UM / 1000.0,
+            mask_laminate: pcbcraft_core::MASK_LAMINATE.to_mm_f64(),
+            finish: finish_um(PadFinish::default()) / 1000.0,
         }
     }
 
@@ -261,6 +280,17 @@ impl Stack {
         self.mask
     }
 
+    /// Soldermask over bare laminate, mm (the stackup's
+    /// [`Stackup::mask_laminate_nm`]).
+    pub fn mask_laminate_mm(&self) -> f64 {
+        self.mask_laminate
+    }
+
+    /// Plated finish over exposed copper, mm ([`finish_um`]).
+    pub fn finish_mm(&self) -> f64 {
+        self.finish
+    }
+
     /// The outer copper foil's thickness on a side.
     pub fn copper(&self, side: Layer) -> f64 {
         self.copper[index(side)]
@@ -290,7 +320,7 @@ impl Stack {
     /// on a side without mask.
     pub fn surface(&self, side: Layer) -> f64 {
         let height = if self.mask(side) {
-            MASK_OVER_LAMINATE_MM
+            self.mask_laminate
         } else {
             0.0
         };
@@ -382,7 +412,8 @@ mod tests {
         stackup.copper[2].thickness_um = 18.0;
         stackup.dielectrics[1].thickness_mm = 0.3;
         stackup.mask_um = 25.0;
-        let stack = Stack::of(&stackup);
+        stackup.mask_laminate_nm = pcbcraft_core::units::Nm::try_new(30_000).ok_or("nm")?;
+        let stack = Stack::of(&stackup, PadFinish::Enig);
         let order: Vec<Slot> = stack.slots().iter().map(|(s, _)| *s).collect();
         let mut expected = vec![
             Slot::Silk(Layer::Top),
@@ -414,6 +445,9 @@ mod tests {
         near(stack.span_of(Slot::Substrate).ok_or("no laminate")?[1], top);
         let mask = stack.span_of(Slot::Mask(Layer::Top)).ok_or("no mask")?;
         near(mask[1], top + 0.070 + 0.025);
+        // Over the laminate the mask is the stackup's own thickness there.
+        near(stack.surface(Layer::Top), top + 0.030);
+        near(stack.mask_laminate_mm(), 0.030);
         let mask = stack.span_of(Slot::Mask(Layer::Bottom)).ok_or("no mask")?;
         near(mask[0], -(0.035 + 0.025));
         // Each film starts at or beyond the one under it (the legend sinks
@@ -422,7 +456,11 @@ mod tests {
         let silk = stack.span_of(Slot::Silk(Layer::Top)).ok_or("no legend")?;
         // The default stackup's mask over copper is the core's seed.
         near(Stack::default().mask_mm(), pcbcraft_core::MASK_UM / 1000.0);
-        assert!(finish[1] > top + 0.070 && silk[1] > top + MASK_OVER_LAMINATE_MM);
+        assert!(finish[1] > top + 0.070 && silk[1] > top + 0.030);
+        near(finish[1], top + 0.070 + finish_um(PadFinish::Enig) / 1000.0);
+        // Each finish has its own thickness.
+        let hasl = Stack::of(&stackup, PadFinish::Hasl);
+        near(hasl.finish_mm(), 0.021);
         Ok(())
     }
 
@@ -436,7 +474,7 @@ mod tests {
             silkscreen_top: false,
             ..Stackup::default()
         };
-        let stack = Stack::of(&stackup);
+        let stack = Stack::of(&stackup, PadFinish::default());
         assert!(stack.has(Slot::Mask(Layer::Top)));
         assert!(!stack.has(Slot::Mask(Layer::Bottom)));
         assert!(!stack.has(Slot::Silk(Layer::Top)));
@@ -469,7 +507,7 @@ mod tests {
         near(stack.surface(Layer::Bottom), 0.0);
         near(
             stack.surface(Layer::Top),
-            stackup.dielectric_mm() + MASK_OVER_LAMINATE_MM,
+            stackup.dielectric_mm() + stackup.mask_laminate_nm.to_mm_f64(),
         );
     }
 }

@@ -69,7 +69,7 @@ The keys follow the Route and Fill tools, and handle editing follows the Fill ou
 
 ### Snapping (every wire gesture)
 
-- The pointer snaps to the symbol grid (`drafts.grid.symbol_mm`, 2.5 mm).
+- The pointer snaps to the symbol grid (`drafts.grid.symbol_nm`, 2.5 mm).
 - Within 12 px it snaps instead to a connection point (pin end, junction, label, sheet pin), to a free end, or to a point on a path (the nearest grid point on it when there is one). A pin end wins a tie. The landing gets today's accent ring and dot.
 - A point on a path's corner counts as on the path.
 

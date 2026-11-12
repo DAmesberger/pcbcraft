@@ -9,7 +9,7 @@
 use super::ApertureId;
 use super::bundle::{AssetBytes, asset_hash, validate_assets};
 use super::drafts::{self, Drafts};
-use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT_MM, TextContent, VAlign};
+use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT, ShapeNm, TextContent, VAlign};
 use super::model3d::{ModelDefinition, ModelFormat};
 use super::package_model::{PartDerived, PartFileModel, PartValue, part_parameter_name_ok};
 use super::{
@@ -211,7 +211,7 @@ impl PartSpec {
                 "values are at most 256 finite literals named by part parameters".into(),
             ));
         }
-        let [lo, hi] = self.derived.bounds_mm;
+        let [lo, hi] = self.derived.bounds();
         if !finite_within(&lo) || !finite_within(&hi) || (0..3).any(|i| hi[i] < lo[i]) {
             return Err(invalid("the part's bounds are not a finite box".into()));
         }
@@ -480,7 +480,7 @@ pub fn make_variant(
     };
     let count =
         u32::try_from(terminal_lands.len()).map_err(|_| invalid("too many terminals".into()))?;
-    let package_body = package_definition(spec, model, count, key);
+    let package_body = package_definition(spec, model, count, key)?;
     let footprint_body = footprint_definition(spec, package, &package_body)?;
     let terminals: Vec<TerminalId> = (1..=count).map(TerminalId).collect();
     let set = [
@@ -513,7 +513,7 @@ pub fn make_variant(
         (
             symbol.id,
             format!("{name} symbol"),
-            Definition::Symbol(symbol_definition(component.id, &terminals)),
+            Definition::Symbol(symbol_definition(component.id, &terminals)?),
         ),
         (
             component.id,
@@ -582,9 +582,13 @@ fn package_definition(
     model: ModelRef,
     terminals: u32,
     key: ContentHash,
-) -> PackageDefinition {
-    let [lo, hi] = spec.derived.bounds_mm;
-    PackageDefinition {
+) -> Result<PackageDefinition> {
+    let [lo, hi] = spec.derived.bounds();
+    let mut envelope_nm = [crate::units::Nm::ZERO; 3];
+    for (i, size) in envelope_nm.iter_mut().enumerate() {
+        *size = crate::units::Nm::from_mm_f64_rounded((hi[i] - lo[i]).max(0.01))?;
+    }
+    Ok(PackageDefinition {
         next_local: terminals + 1,
         terminals: (1..=terminals)
             .map(|n| PackageTerminal {
@@ -593,7 +597,7 @@ fn package_definition(
             })
             .collect(),
         form: PackageForm::Generic,
-        envelope: [0, 1, 2].map(|i| (hi[i] - lo[i]).max(0.01)),
+        envelope_nm,
         model: PackageModel::PartFile(Box::new(PartFileModel {
             model,
             values: spec.values.clone(),
@@ -608,11 +612,11 @@ fn package_definition(
             pick_and_place: spec.in_pick_and_place(),
         })),
         ..PackageDefinition::default()
-    }
+    })
 }
 
 /// Four ring segments of an annular land, in the pad frame.
-fn ring_paste(outer: f64, inner: f64, next: &mut u32) -> Vec<PasteWindow> {
+fn ring_paste(outer: f64, inner: f64, next: &mut u32) -> Result<Vec<PasteWindow>> {
     let (ro, ri) = (outer / 2.0, inner / 2.0);
     let arc = |r: f64, from: f64, to: f64| -> Vec<Point> {
         (0..=PASTE_ARC_STEPS)
@@ -633,10 +637,10 @@ fn ring_paste(outer: f64, inner: f64, next: &mut u32) -> Vec<PasteWindow> {
             points.extend(arc(ri + inset, b, a));
             let id = ApertureId(*next);
             *next += 1;
-            PasteWindow {
+            Ok(PasteWindow {
                 id,
-                shape: Shape::polygon(points),
-            }
+                shape: ShapeNm::from_mm_rounded(&Shape::polygon(points))?,
+            })
         })
         .collect()
 }
@@ -684,7 +688,7 @@ fn footprint_definition(
                 },
                 hole: hole.map(round),
                 paste: match hole {
-                    Some(h) => PasteRule::Windows(ring_paste(*diameter, *h, &mut next_aperture)),
+                    Some(h) => PasteRule::Windows(ring_paste(*diameter, *h, &mut next_aperture)?),
                     None => PasteRule::Inherit,
                 },
                 ..base
@@ -711,7 +715,7 @@ fn footprint_definition(
         pads,
         ..FootprintDefinition::default()
     };
-    let [lo, hi] = spec.derived.bounds_mm;
+    let [lo, hi] = spec.derived.bounds();
     let body = Bounds {
         min: [lo[0], lo[1]],
         max: [hi[0], hi[1]],
@@ -722,7 +726,10 @@ fn footprint_definition(
 
 /// The mechanical symbol: one unit, a body with the designator above and
 /// the component name below, one pin per terminal on the left.
-fn symbol_definition(component: DefinitionId, terminals: &[TerminalId]) -> SymbolDefinition {
+fn symbol_definition(
+    component: DefinitionId,
+    terminals: &[TerminalId],
+) -> Result<SymbolDefinition> {
     let rows = terminals.len().max(1) as f64;
     let half = (GRID * ((rows + 1.0) / 2.0).ceil()).max(GRID);
     let body = Bounds {
@@ -731,15 +738,15 @@ fn symbol_definition(component: DefinitionId, terminals: &[TerminalId]) -> Symbo
     };
     let gap = 0.5;
     let top = GRID * ((rows - 1.0) / 2.0).floor();
-    SymbolDefinition {
+    Ok(SymbolDefinition {
         component,
         next_local: 5,
-        pin_text_height: PIN_TEXT_HEIGHT_MM,
+        pin_text_height_nm: PIN_TEXT_HEIGHT,
         units: vec![Unit {
             id: UnitId(1),
             label: "A".into(),
             graphics: vec![
-                graphics::body_rect(GraphicId(2), body),
+                graphics::body_rect(GraphicId(2), body)?,
                 graphics::text(
                     GraphicId(3),
                     TextContent::Designator,
@@ -748,7 +755,7 @@ fn symbol_definition(component: DefinitionId, terminals: &[TerminalId]) -> Symbo
                         h: HAlign::Center,
                         v: VAlign::Bottom,
                     },
-                ),
+                )?,
                 graphics::text(
                     GraphicId(4),
                     TextContent::ComponentName,
@@ -757,20 +764,20 @@ fn symbol_definition(component: DefinitionId, terminals: &[TerminalId]) -> Symbo
                         h: HAlign::Center,
                         v: VAlign::Top,
                     },
-                ),
+                )?,
             ],
             pins: terminals
                 .iter()
                 .enumerate()
                 .map(|(k, terminal)| {
                     let y = top - GRID * k as f64;
-                    let mut pin = graphics::pin_toward(*terminal, [body.min[0] - GRID, y], body);
+                    let mut pin = graphics::pin_toward(*terminal, [body.min[0] - GRID, y], body)?;
                     pin.name.visible = false;
-                    pin
+                    Ok(pin)
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
         }],
-    }
+    })
 }
 
 fn component_definition(

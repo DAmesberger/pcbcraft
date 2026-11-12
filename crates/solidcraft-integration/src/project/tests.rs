@@ -1,4 +1,6 @@
 use super::*;
+#[allow(unused_imports)]
+use crate::models::tests::{nm, pt};
 use pcbcraft_core::geometry::cos_sin;
 use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm, PackageModel};
 
@@ -7,7 +9,7 @@ use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm,
 /// envelope path (generated models are `models::tests`).
 fn set_body(package: &mut PackageDefinition, kind: Option<ChipKind>) {
     package.form = kind.map_or(PackageForm::Generic, |kind| {
-        PackageForm::Chip(Box::new(ChipForm::new(kind, package.envelope)))
+        PackageForm::Chip(Box::new(ChipForm::new(kind, (package.envelope()).map(nm))))
     });
     package.model = PackageModel::default();
 }
@@ -21,7 +23,7 @@ fn envelope_demo() -> Result<Project> {
         .clone();
     for package in &mut project.library.packages {
         package.definition.model = PackageModel::default();
-        package.definition.placement.translation = [0.0, 0.0, 0.05];
+        package.definition.placement.translation_nm = crate::test_units::nm3([0.0, 0.0, 0.05]);
     }
     Ok(project)
 }
@@ -44,12 +46,20 @@ fn near(actual: f64, expected: f64) {
     assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
 }
 
+/// The default pad finish's (ENIG's) thickness, mm.
+fn enig() -> f64 {
+    crate::stack::finish_um(pcbcraft_core::PadFinish::Enig) / 1000.0
+}
+
 fn fixture() -> Result<Project> {
     let mut project = envelope_demo()?;
     // Asymmetric offsets exercise the rigid bottom flip independently of the
     // symmetric body/pad shapes. This synthetic test replaces a snapshot to
     // exercise the adapter; production changes publish a new immutable revision.
-    project.library.packages[0].definition.placement.translation = [0.25, -0.4, 0.2];
+    project.library.packages[0]
+        .definition
+        .placement
+        .translation_nm = crate::test_units::nm3([0.25, -0.4, 0.2]);
     project.library.footprints[0].definition.datum.offset = [0.3, -0.4];
     for (placement, (position, layer)) in project
         .placements
@@ -251,6 +261,41 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
     Ok(())
 }
 
+/// Geometry handed on (to the screen, or to the next model of an update)
+/// holds none of the model's evaluated bodies: its unmeasured volumes reach
+/// them through the model, so they read NaN once the model is gone, and an
+/// updated model measures what it took from the last one on its own bodies.
+/// (On the ESP32 board the bodies earlier models' geometry held were 375 MB
+/// of live heap after one width edit: `memory_tests`.)
+#[test]
+fn geometry_holds_no_evaluated_body_once_its_model_is_gone() -> Result<()> {
+    let mut project = fixture()?;
+    let model = build(&project)?;
+    let world = std::sync::Arc::downgrade(&model.world);
+    let substrate = |geometry: &[Geometry]| {
+        geometry
+            .iter()
+            .find(|g| g.kind == BodyKind::Substrate)
+            .cloned()
+            .ok_or_else(|| Error::Verification("missing substrate".into()))
+    };
+    let shown = substrate(&model.geometry)?;
+    // Updated in place: the substrate is taken from the last model.
+    if let Some(track) = project.tracks.first_mut() {
+        track.width += 0.05;
+    }
+    let (model, how) = update(model, &project, &SourceCache::default(), None)?;
+    assert!(matches!(how, Rebuilt::InPlace(n) if n > 0), "{how:?}");
+    assert!(
+        world.upgrade().is_none(),
+        "the last model's bodies are kept"
+    );
+    near(substrate(&model.geometry)?.volume(), 60.0 * 40.0 * 1.6);
+    drop(model);
+    assert!(shown.volume().is_nan(), "the shown geometry kept its body");
+    Ok(())
+}
+
 #[test]
 fn diagonal_traces_have_round_caps_on_both_copper_layers() -> Result<()> {
     let mut project = fixture()?;
@@ -374,8 +419,8 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
         .packages[0]
         .definition
         .clone();
-    package.envelope = [4.0, 3.0, 2.0];
-    package.placement.translation = [1.5, -2.0, 0.4];
+    package.envelope_nm = [nm(4.0), nm(3.0), nm(2.0)];
+    package.placement.translation_nm = crate::test_units::nm3([1.5, -2.0, 0.4]);
     set_body(&mut package, None);
     let model = preview(&package)?;
     assert_eq!(model.geometry.len(), 1);
@@ -385,8 +430,8 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
     near(model.geometry[0].volume(), 24.0);
     // A package declaring a chip-resistor body previews as one, with the
     // wrapped terminations and overcoat it shows on the board.
-    package.envelope = [2.0, 1.25, 0.5];
-    package.placement.translation = [0.0; 3];
+    package.envelope_nm = [nm(2.0), nm(1.25), nm(0.5)];
+    package.placement.translation_nm = crate::test_units::nm3([0.0; 3]);
     set_body(&mut package, Some(ChipKind::Resistor));
     let chip = preview(&package)?;
     assert_eq!(chip.geometry[0].kind, BodyKind::ChipResistor);
@@ -410,7 +455,7 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
     assert_eq!(count(&ceramic, BodyKind::Termination), 2);
     assert_eq!(count(&ceramic, BodyKind::Overcoat), 0);
     looks_match_the_native_file(&ceramic)?;
-    package.envelope[0] = 0.0;
+    package.envelope_nm[0] = nm(0.0);
     assert!(matches!(preview(&package), Err(Error::Invalid(_))));
     Ok(())
 }
@@ -720,17 +765,17 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
         assert_eq!(pad.surface.metallic(), copper.metallic());
         near(pad.volume(), 1.0 * 1.4 * 0.035);
         for axis in 0..2 {
-            near(finish.min[axis], pad.min[axis] - 0.005);
-            near(finish.max[axis], pad.max[axis] + 0.005);
+            near(finish.min[axis], pad.min[axis] - enig());
+            near(finish.max[axis], pad.max[axis] + enig());
         }
         // The finish plates the land's top and sides, from a finish
         // thickness off the laminate: never on the copper's bottom face.
         if source.layer == Some(CopperLayer::Top) {
-            near(finish.min[2], pad.min[2] + 0.005);
-            near(finish.max[2], pad.max[2] + 0.005);
+            near(finish.min[2], pad.min[2] + enig());
+            near(finish.max[2], pad.max[2] + enig());
         } else {
-            near(finish.min[2], pad.min[2] - 0.005);
-            near(finish.max[2], pad.max[2] - 0.005);
+            near(finish.min[2], pad.min[2] - enig());
+            near(finish.max[2], pad.max[2] - enig());
         }
     }
     for source in model.sources.iter().filter(|s| s.track.is_some()) {
@@ -890,7 +935,8 @@ fn mask_caps_stop_at_mask_openings_and_exposed_track_copper_is_plated() -> Resul
     assert_eq!(strip.len(), 1);
     near(strip[0].min[1], c[1]);
     near(strip[0].max[1], c[1] + 0.55);
-    near(strip[0].max[2], 1.6 + 0.035 + 0.004);
+    // The strip stands 0.8 of the finish's thickness on the copper.
+    near(strip[0].max[2], 1.6 + 0.035 + 0.8 * enig());
     // A track passing through the land: capped on both sides, plated across.
     let caps = pieces(&model, through, BodyKind::MaskCap);
     assert_eq!(caps.len(), 2, "pass-through cap is split at the opening");
@@ -905,7 +951,7 @@ fn mask_caps_stop_at_mask_openings_and_exposed_track_copper_is_plated() -> Resul
     near(strip[0].max[0], c[0] + 0.75);
     // Every finish stands above the mask and below any cap top.
     for f in pad_finishes(&model) {
-        near(f.max[2], 1.6 + 0.035 + 0.005);
+        near(f.max[2], 1.6 + 0.035 + enig());
     }
     Ok(())
 }
@@ -1124,9 +1170,9 @@ fn check_chip_parts(model: &NativeModel) -> Result<()> {
             );
             if top {
                 // On the finish, its toe lifted 2 µm off it.
-                near(solder.min[2], 1.6 + 0.035 + 0.005 + 0.002);
+                near(solder.min[2], 1.6 + 0.035 + enig() + 0.002);
             } else {
-                near(solder.max[2], -0.035 - 0.005 - 0.002);
+                near(solder.max[2], -0.035 - enig() - 0.002);
             }
             assert!(solder.volume() > 0.0);
         }
@@ -1152,16 +1198,27 @@ fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Re
     looks_match_the_native_file(&styled)?;
     assert_eq!(plain.geometry.len(), styled.geometry.len());
     let mut restyled = 0;
+    let silver = crate::stack::finish_um(PadFinish::ImmersionSilver) / 1000.0;
     for (a, b) in plain.geometry.iter().zip(&styled.geometry) {
         assert_eq!((a.kind, a.item), (b.kind, b.item));
-        assert_eq!((a.min, a.max), (b.min, b.max), "{:?}", a.kind);
+        // The finish is as thick as the pad finish is (ENIG to immersion
+        // silver here), and the solder and bore discs stand on it; every
+        // other body keeps its place.
+        if b.kind == BodyKind::PadFinish && b.max[2] > 1.6 + 0.035 {
+            near(a.max[2] - b.max[2], enig() - silver);
+        } else if !matches!(
+            b.kind,
+            BodyKind::PadFinish | BodyKind::Solder | BodyKind::ViaBore
+        ) {
+            assert_eq!((a.min, a.max), (b.min, b.max), "{:?}", a.kind);
+        }
         if b.kind.is_appearance() {
             // Drawn directly from the table; native bodies go through the
             // file's 8-bit colour, which looks_match_the_native_file checks.
             let expected = material::material(
                 b.kind,
                 &project.fabrication,
-                &crate::stack::Stack::of(&project.stackup),
+                &crate::stack::Stack::of(&project.stackup, project.fabrication.pad_finish),
             )
             .surface()?;
             assert_eq!(b.surface, expected, "{:?}", b.kind);
@@ -1336,8 +1393,15 @@ fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
                     );
                     assert!(!inside(&bodies, on_board(pad, [0.2, 0.0]), z), "bore");
                 }
-                let wall = on_board(pad, [0.2 + 0.3 - PLATING_MM / 2.0, 0.0]);
+                // The hole's 0.6 mm is its finished size: open to it, with
+                // the barrel outside it in a hole drilled wider.
+                let wall = on_board(pad, [0.2 + 0.3 + pad_outline::PLATING_MM / 2.0, 0.0]);
                 assert!(inside(&bodies, wall, 0.8), "barrel");
+                let finished = on_board(pad, [0.2 + 0.3 - 0.005, 0.0]);
+                assert!(
+                    !inside(&bodies, finished, 0.8),
+                    "the bore is the finished size"
+                );
                 assert!(!inside(&substrate, wall, 0.8), "barrel inside the laminate");
                 assert!(!inside(&bodies, on_board(pad, [0.2, 0.0]), 0.8));
                 assert!(!inside(&substrate, on_board(pad, [0.2, 0.0]), 0.8));
@@ -1382,7 +1446,10 @@ fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
     }
     // The laminate lost two drills per placement.
     let full = 60.0 * 40.0 * 1.6;
-    let drilled = 2.0 * std::f64::consts::PI * (0.3f64.powi(2) + 0.5f64.powi(2)) * 1.6;
+    // The plated hole is drilled wider than its finished 0.6 mm by the
+    // barrel's wall; the bare hole at its size.
+    let plated = 0.3 + pad_outline::PLATING_MM;
+    let drilled = 2.0 * std::f64::consts::PI * (plated.powi(2) + 0.5f64.powi(2)) * 1.6;
     let volume: f64 = substrate.iter().map(|g| g.volume()).sum();
     assert!((volume - (full - drilled)).abs() < 2e-3, "{volume}");
     Ok(())
@@ -1490,10 +1557,7 @@ fn an_envelope_follows_its_turned_placement_and_datum_like_its_2d_outline() -> R
     let mut project = envelope_demo()?;
     let package = &mut project.library.packages[0].definition;
     set_body(package, None);
-    package.placement = pcbcraft_core::library::ModelPlacement {
-        translation: [0.25, -0.4, 0.0],
-        rotation_deg: [90.0, 0.0, 90.0],
-    };
+    package.placement = crate::test_units::placement([0.25, -0.4, 0.0], [90.0, 0.0, 90.0]);
     let package = package.clone();
     let datum = pcbcraft_core::library::Datum {
         offset: [0.3, -0.4],
@@ -1916,9 +1980,10 @@ fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> 
     definition.leads = vec![LeadTag {
         key: lead_key(&seen)?,
         designation: "1".into(),
-        contact: [0.0; 3],
+        contact_nm: crate::test_units::nm3([0.0; 3]),
     }];
-    definition.leads[0].contact = models::imported::lead_contacts(&definition, &bytes)?[0];
+    definition.leads[0].contact_nm =
+        crate::test_units::nm3(models::imported::lead_contacts(&definition, &bytes)?[0]);
     definition.provenance.record.licence = Some("CC0-1.0".into());
     let mut project = Engine::demo()
         .map_err(|error| Error::Verification(error.to_string()))?

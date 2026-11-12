@@ -43,19 +43,19 @@ const PEG_BELOW_MM: f64 = 0.5;
 
 pub(super) fn check(f: &UsbCForm) -> Result<()> {
     check_positive(&[
-        ("receptacle width", f.width),
-        ("receptacle depth", f.depth),
-        ("shell thickness", f.shell_thickness),
-        ("stake length", f.stake_length),
+        ("receptacle width", f.width()),
+        ("receptacle depth", f.depth()),
+        ("shell thickness", f.shell_thickness()),
+        ("stake length", f.stake_length()),
     ])?;
     require(
-        INSULATOR_DEPTH_MM + TONGUE_RECESS_MM < f.depth,
+        INSULATOR_DEPTH_MM + TONGUE_RECESS_MM < f.depth(),
         "the depth must leave room for the insulator and the tongue",
     )?;
     require(
         f.tabs
             .iter()
-            .all(|t| t.slot[1] > STAKE_SLOT_CLEARANCE_MM && f.shell_thickness < t.slot[0]),
+            .all(|t| t.slot()[1] > STAKE_SLOT_CLEARANCE_MM && f.shell_thickness() < t.slot()[0]),
         "each stake must fit its slot",
     )
 }
@@ -86,16 +86,16 @@ fn obround(u: f64, v: f64, half: [f64; 2]) -> Contour {
 }
 
 pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
-    let depth = b.length("depth", f.depth)?;
-    let stake_length = b.length("stake_length", f.stake_length)?;
-    let [ow, oh] = f.opening;
-    let t = f.shell_thickness;
+    let depth = b.length("depth", f.depth())?;
+    let stake_length = b.length("stake_length", f.stake_length())?;
+    let [ow, oh] = f.opening();
+    let t = f.shell_thickness();
     let half_inner = [ow / 2.0, oh / 2.0];
     let half_outer = [ow / 2.0 + t, oh / 2.0 + t];
-    let front = -f.depth / 2.0;
-    let rear = f.depth / 2.0;
+    let front = -f.depth() / 2.0;
+    let rear = f.depth() / 2.0;
     // The XZ plane maps (u, v) to (u, offset, −v) and extrudes along +y.
-    let centre_v = -f.opening_z;
+    let centre_v = -f.opening_z();
 
     let shell_material = b.material(BodyRole::Other);
     let shell = b.name("shell");
@@ -140,7 +140,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
         [
             mm(-tongue_width / 2.0),
             mm(tip),
-            mm(f.opening_z - tongue_thickness / 2.0),
+            mm(f.opening_z() - tongue_thickness / 2.0),
         ],
         [mm(tongue_width), mm(tongue_end - tip), mm(tongue_thickness)],
     )?;
@@ -149,10 +149,10 @@ pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
     // short of its land's outer end.
     let tail_material = b.material(BodyRole::Lead);
     let tail_start = rear - TAIL_UNDER_MM;
-    let tail_end = f.land_y + f.land_length / 2.0 - f.land_length / 10.0;
+    let tail_end = f.land_y() + f.land_length() / 2.0 - f.land_length() / 10.0;
     let mut tails = Vec::with_capacity(12);
     for (k, (x, land)) in f.contact_lands().into_iter().enumerate() {
-        let share = if (land - f.power_land_width).abs() < 1e-9 {
+        let share = if (land - f.power_land_width()).abs() < 1e-9 {
             POWER_TAIL_SHARE
         } else {
             SIGNAL_TAIL_SHARE
@@ -172,16 +172,16 @@ pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
 
     // The stakes: at the outline, one sheet thick, from below the board up
     // to where the shell's rounded underside reaches their inner face.
-    let inner_x = f.width / 2.0 - t;
+    let inner_x = f.width() / 2.0 - t;
     let radius = half_outer[1];
     let beyond = (inner_x - (half_outer[0] - radius)).max(0.0).min(radius);
-    let stake_top = f.opening_z - (radius * radius - beyond * beyond).sqrt();
+    let stake_top = f.opening_z() - (radius * radius - beyond * beyond).sqrt();
     let shell_terminal = u32::try_from(tails.len() + 1).ok();
     let tabs = [f.tabs[0], f.tabs[0], f.tabs[1], f.tabs[1]];
     for (k, (centre, tab)) in f.stake_centres().into_iter().zip(tabs).enumerate() {
-        let along = tab.slot[1] - STAKE_SLOT_CLEARANCE_MM;
+        let along = tab.slot()[1] - STAKE_SLOT_CLEARANCE_MM;
         let x = if centre[0] < 0.0 {
-            -f.width / 2.0
+            -f.width() / 2.0
         } else {
             inner_x
         };
@@ -207,15 +207,15 @@ pub(super) fn build(b: &mut Build<'_>, f: &UsbCForm) -> Result<()> {
     }
 
     // The locating pegs, up to the shell's underside.
-    let shell_bottom = f.opening_z - half_outer[1];
-    for (k, x) in [-f.peg_x, f.peg_x].into_iter().enumerate() {
+    let shell_bottom = f.opening_z() - half_outer[1];
+    for (k, x) in [-f.peg_x(), f.peg_x()].into_iter().enumerate() {
         let peg = b.name(&format!("peg {}", k + 1));
         b.native.profile_body(ProfileBody {
             name: &peg,
             offset: mm(-PEG_BELOW_MM).into(),
             contours: &[Contour::Circle {
-                center: [x, f.peg_y],
-                radius: f.peg_diameter / 2.0,
+                center: [x, f.peg_y()],
+                radius: f.peg_diameter() / 2.0,
             }],
             height: mm(PEG_BELOW_MM + shell_bottom).into(),
         })?;

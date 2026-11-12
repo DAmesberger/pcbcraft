@@ -153,6 +153,35 @@ fn legend_over_a_track_stands_on_its_mask_cap() -> Result<()> {
     Ok(())
 }
 
+/// The legend is clipped clear of mask openings by the rules'
+/// silkscreen-to-pad clearance: a wider clearance prints less ink.
+#[test]
+fn the_legend_clears_mask_openings_by_the_rule() -> Result<()> {
+    use pcbcraft_core::rules::{RuleKey, RuleOverride, RuleValue};
+    let mut project = Engine::demo()
+        .map_err(|e| crate::Error::Verification(e.to_string()))?
+        .project()
+        .clone();
+    project.rules = pcbcraft_core::rules::fixtures::rules()
+        .map_err(|e| crate::Error::Verification(e.to_string()))?;
+    let ink = |project: &Project| -> Result<f64> {
+        Ok(crate::project::build(project)?
+            .geometry
+            .iter()
+            .filter(|g| g.kind == BodyKind::Silkscreen)
+            .map(|g| g.volume())
+            .sum())
+    };
+    let close = ink(&project)?;
+    project.rules.overrides.push(RuleOverride {
+        key: RuleKey::SilkPadClearance,
+        value: RuleValue::Length(0.3),
+    });
+    let clear = ink(&project)?;
+    assert!(clear < close - 1e-6, "{clear} vs {close}");
+    Ok(())
+}
+
 #[test]
 fn a_side_without_silkscreen_prints_nothing() -> Result<()> {
     let mut project = Engine::demo()

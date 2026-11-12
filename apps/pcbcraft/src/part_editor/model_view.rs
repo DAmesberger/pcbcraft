@@ -54,11 +54,7 @@ impl PartEditor {
         let tab = &mut self.model;
         tab.settle(&set.package, engine.revision(), synced);
         let shown = tab.shown(&set.package);
-        viewport.set_model_transform(if shown.finite() {
-            shown.transform()
-        } else {
-            Transform3::IDENTITY
-        });
+        viewport.set_model_transform(shown.transform());
         if tab.hide_lands {
             viewport.set_overlay(None);
             tab.overlay_key = None;

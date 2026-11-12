@@ -163,8 +163,10 @@ fn drawn_bounds(set: &super::WorkingSet) -> Bounds {
         .iter()
         .map(|p| p.bounds())
         .chain(set.footprint.graphics.iter().map(|g| match &g.item {
-            Item::Shape { shape, width, .. } => shape.bounds(*width),
-            Item::Text(text) => Bounds::point(text.at),
+            Item::Shape {
+                shape, width_nm, ..
+            } => shape.to_mm().bounds(width_nm.to_mm_f64()),
+            Item::Text(text) => Bounds::point(text.at.to_mm_f64()),
         }))
         .fold(envelope, Bounds::union)
 }
@@ -363,11 +365,11 @@ impl PartEditor {
             let ring = Stroke::new(2.0, colors.selected);
             match &graphic.item {
                 Item::Shape { shape, .. } => {
-                    symbol_view::paint_shape(&painter, view, shape, None, Some(ring));
+                    symbol_view::paint_shape(&painter, view, &shape.to_mm(), None, Some(ring));
                 }
                 Item::Text(text) => {
-                    let at = view.screen(text.at);
-                    let r = (text.height as f32 * view.scale).max(6.0);
+                    let at = view.screen(text.at.to_mm_f64());
+                    let r = (text.height_nm.to_mm_f64() as f32 * view.scale).max(6.0);
                     painter.rect_stroke(
                         Rect::from_center_size(at, vec2(r * 3.0, r * 1.6)),
                         2.0,
@@ -486,9 +488,15 @@ impl PartEditor {
         };
         for graphic in set.footprint.graphics.iter().filter(|g| g.layer == layer) {
             match &graphic.item {
-                Item::Shape { shape, width, fill } => {
-                    let stroke = (*width > 0.0)
-                        .then(|| Stroke::new((*width as f32 * view.scale).max(1.0), color));
+                Item::Shape {
+                    shape,
+                    width_nm,
+                    fill,
+                } => {
+                    let shape = &shape.to_mm();
+                    let width = width_nm.to_mm_f64();
+                    let stroke = (width > 0.0)
+                        .then(|| Stroke::new((width as f32 * view.scale).max(1.0), color));
                     let fill = (*fill != Fill::None).then_some(color);
                     match stroke {
                         // Courtyards are dashed (graphics spec §6).
@@ -510,8 +518,8 @@ impl PartEditor {
                     let placed = PlacedText {
                         graphic: Some(graphic.id),
                         text: content,
-                        at: text.at,
-                        height: text.height,
+                        at: text.at.to_mm_f64(),
+                        height: text.height_nm.to_mm_f64(),
                         rotation_deg: text.rotation.degrees(),
                         justify: text.justify,
                         mirrored: false,

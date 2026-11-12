@@ -360,7 +360,7 @@ fn each_tool_commits_one_graphic_as_one_undo_step() -> TestResult {
         if tool == Tool::RoundedRect {
             assert!(after.graphics.iter().any(|g| matches!(
                 &g.item,
-                Item::Shape { shape: Shape::Rect { radius, .. }, .. } if *radius > 0.0
+                Item::Shape { shape: pcbcraft_core::library::ShapeNm::Rect { radius_nm, .. }, .. } if radius_nm.get() > 0
             )));
         }
         h.key(egui::Key::Escape, egui::Modifiers::NONE);
@@ -434,7 +434,7 @@ fn a_refused_edit_leaves_the_document_unchanged() -> TestResult {
         })
         .map(|g| &mut g.item)
     {
-        text.height = 500.0;
+        text.height_nm = crate::schematic_editor::nm(500.0);
     }
     let operation = h
         .editor
@@ -451,7 +451,7 @@ fn a_refused_edit_leaves_the_document_unchanged() -> TestResult {
             .as_ref()
             .is_some_and(
                 |s| s.symbol.units[0].graphics.iter().all(|g| match &g.item {
-                    Item::Text(t) => t.height < 50.0,
+                    Item::Text(t) => t.height_nm.to_mm_f64() < 50.0,
                     _ => true,
                 })
             )
@@ -496,7 +496,7 @@ fn selection_moves_and_arranges_in_one_commit_each() -> TestResult {
     let moved = h.unit()?;
     let shape = moved.graphic(rect).map(|g| g.item.clone());
     assert!(
-        matches!(&shape, Some(Item::Shape { shape: Shape::Rect { a, b, .. }, .. }) if *a == [12.5, 7.5] && *b == [17.5, 10.0]),
+        matches!(&shape, Some(Item::Shape { shape: pcbcraft_core::library::ShapeNm::Rect { a, b, .. }, .. }) if a.to_mm_f64() == [12.5, 7.5] && b.to_mm_f64() == [17.5, 10.0]),
         "{shape:?}"
     );
     for action in Arrange::ALL {
@@ -596,7 +596,7 @@ fn pins_end_on_the_outline_with_grid_lengths() -> TestResult {
     let unit = h.unit()?;
     let pin = unit.pins.last().ok_or("pin")?;
     assert_eq!(pin.direction, PinDirection::Down);
-    assert_eq!(pin.length, 4.0);
+    assert_eq!(pin.length_mm(), 4.0);
     Ok(())
 }
 

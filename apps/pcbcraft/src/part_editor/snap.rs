@@ -73,6 +73,7 @@ impl Targets {
             }
             match &graphic.item {
                 Item::Shape { shape, .. } => {
+                    let shape = &shape.to_mm();
                     t.vertices.extend(shape.vertices());
                     match shape {
                         Shape::Circle { center, .. } | Shape::Arc { center, .. } => {
@@ -96,13 +97,13 @@ impl Targets {
                     t.curves.push((shape.coarse_bounds(0.0), shape.clone()));
                 }
                 // Hidden text is not drawn, so it offers no snap.
-                Item::Text(text) if text.visible => t.vertices.push(text.at),
+                Item::Text(text) if text.visible => t.vertices.push(text.at.to_mm_f64()),
                 Item::Text(_) => {}
             }
         }
         for pin in &unit.pins {
             if !skip(&super::Selected::Pin(pin.terminal)) {
-                t.pin_ends.push(pin.position);
+                t.pin_ends.push(pin.position_mm());
             }
         }
         t.vertices.extend_from_slice(pending);

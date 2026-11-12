@@ -393,12 +393,10 @@ pub fn material(kind: BodyKind, fabrication: &Fabrication, stack: &Stack) -> Mat
     look
 }
 
-/// Soldermask over bare laminate and over copper, in µm.
+/// Soldermask over bare laminate and over copper, in µm: the stackup's
+/// two thicknesses, as the 3D films draw them.
 pub fn mask_um(stack: &Stack) -> [f64; 2] {
-    [
-        crate::stack::MASK_OVER_LAMINATE_MM * 1000.0,
-        stack.mask_mm() * 1000.0,
-    ]
+    [stack.mask_laminate_mm() * 1000.0, stack.mask_mm() * 1000.0]
 }
 
 fn base_material(kind: BodyKind, fabrication: &Fabrication, stack: &Stack) -> Material {

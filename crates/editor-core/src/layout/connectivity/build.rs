@@ -333,9 +333,41 @@ impl CopperGraph {
     /// every pad on the net its copper had, to ask which pads that copper
     /// would join after the update.
     pub fn with_pads(project: &Project, pads: Vec<WorldPad>) -> Self {
+        Self::build(project, pads, None)
+    }
+
+    /// The graph of the copper of `nets` alone: their tracks, vias, pads
+    /// and fresh fills, joined by the one rule. Different nets never join,
+    /// so its joints, islands, lengths and paths are those of the whole
+    /// board's graph on these nets, as long as neither stopped at a limit
+    /// ([`Self::complete`]); its element indices are its own. A drag that
+    /// checks a differential pair per pointer move builds this instead of
+    /// the whole board's graph.
+    pub fn of_nets(project: &Project, nets: &[Id]) -> Self {
+        let pads = crate::layout::pads(project)
+            .into_iter()
+            .filter(|p| nets.contains(&p.net))
+            .collect();
+        Self::build(project, pads, Some(nets))
+    }
+
+    /// The graph of `project`'s copper on `nets` (every net: `None`), with
+    /// `pads` as its connected pads.
+    fn build(project: &Project, pads: Vec<WorldPad>, nets: Option<&[Id]>) -> Self {
+        let wanted = |net: &Id| nets.is_none_or(|n| n.contains(net));
         let layers = project.stackup.layers();
-        let tracks = project.tracks.to_vec();
-        let vias = project.vias.to_vec();
+        let tracks: Vec<Track> = project
+            .tracks
+            .iter()
+            .filter(|t| wanted(&t.net))
+            .cloned()
+            .collect();
+        let vias: Vec<Via> = project
+            .vias
+            .iter()
+            .filter(|v| wanted(&v.net))
+            .cloned()
+            .collect();
         let mut elements = Vec::new();
         let mut shapes = Vec::new();
         let element = |kind, net, layer| Element {
@@ -377,7 +409,7 @@ impl CopperGraph {
         }
         // One element per island of each fresh fill; stale copper joins
         // nothing until it is refilled.
-        let fills = fill::fresh(project);
+        let fills = fill::fresh_on(project, nets);
         let first_fill = elements.len();
         for f in &fills {
             for region in 0..f.copper.regions.len() {

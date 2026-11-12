@@ -332,7 +332,8 @@ fn pad_rows(
     }
     kit::pair_row(ui, "Position", &mut pad.position, "mm", COORD);
     if kit::number_row(ui, "Rotation", &mut pad.rotation_deg, "°", ANGLE) {
-        pad.fold_rotation();
+        // Out of range, the pad keeps the rotation as typed.
+        let _unfolded = pad.fold_rotation();
     }
     shape_rows(ui, pad);
 }
@@ -404,7 +405,7 @@ fn shape_rows(ui: &mut Ui, pad: &mut Pad) {
                 // than store a rectangle in rounded form.
                 *corners = before;
             }
-            pad.fold_rotation();
+            let _unfolded = pad.fold_rotation();
         }
         PadShape::Circle { diameter } => {
             kit::number_row(ui, "Diameter", diameter, "mm", SIZE);

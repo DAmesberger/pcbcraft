@@ -3550,7 +3550,10 @@ mod tests {
         let blue = pcbcraft_solidcraft::material::material(
             pcbcraft_solidcraft::material::BodyKind::MaskTop,
             &expected,
-            &pcbcraft_solidcraft::stack::Stack::of(&engine.project().stackup),
+            &pcbcraft_solidcraft::stack::Stack::of(
+                &engine.project().stackup,
+                engine.project().fabrication.pad_finish,
+            ),
         )
         .surface()?;
         assert!(model.geometry.iter().any(|g| g.kind
@@ -3929,8 +3932,8 @@ mod tests {
                 layer,
                 side: Side::Component,
                 item: Item::Shape {
-                    shape,
-                    width: 0.15,
+                    shape: crate::schematic_editor::shape_nm(shape),
+                    width_nm: crate::schematic_editor::nm(0.15),
                     fill: Fill::None,
                 },
             };
@@ -3955,7 +3958,7 @@ mod tests {
                 ),
                 designator_placeholder(
                     pcbcraft_core::GraphicId(13),
-                    [0.0, 3.2],
+                    crate::schematic_editor::pt([0.0, 3.2]),
                     DrawingLayer::Silkscreen,
                 ),
             ];

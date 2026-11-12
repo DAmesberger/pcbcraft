@@ -10,9 +10,10 @@
 //! −x to +x, then row B, and so on, leaving out depopulated positions. A
 //! depopulated position keeps its name, so the remaining balls keep theirs
 //! (A1, A3, … when A2 is empty).
-use super::{FORM_LENGTH_LIMIT_MM, FORM_LENGTH_MIN_MM, FamilyForm};
+use super::{FamilyForm, length_problem, typical_nm};
 use crate::geometry::Point3;
 use crate::library::footprint_source::{PACKAGE_PREFIX, PackageValue, ParamName, ParamValue};
+use crate::units::{self, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -42,48 +43,64 @@ pub const MAX_GRID_SIDE: u32 = 64;
 /// other). Rows beyond Y continue AA, AB, …
 pub const JEDEC_ROW_LETTERS: &str = "ABCDEFGHJKLMNPRTUVWY";
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(deny_unknown_fields)]
 pub struct GridForm {
     pub contact: GridContact,
     pub rows: u32,
     pub cols: u32,
-    /// Pitch along a row and between rows.
-    pub pitch: [f64; 2],
-    pub body_length: f64,
-    pub body_width: f64,
-    pub body_height: f64,
+    /// Pitch along a row (x) and between rows (y).
+    pub pitch: PointNm,
+    pub body_length_nm: Nm,
+    pub body_width_nm: Nm,
+    pub body_height_nm: Nm,
     /// Ball or land diameter.
-    pub contact_diameter: f64,
+    pub contact_diameter_nm: Nm,
     /// Ball height (standoff); 0 for lands.
-    pub contact_height: f64,
+    pub contact_height_nm: Nm,
     /// Empty (row, column) positions, 0-based.
     pub depopulated: Vec<[u32; 2]>,
     /// The row-letter alphabet as data (JEDEC skips I, O, Q, S, X, Z).
     pub row_letters: String,
 }
 
+mm_accessors!(GridForm {
+    pitch: pitch => point,
+    body_length: body_length_nm => len,
+    body_width: body_width_nm => len,
+    body_height: body_height_nm => len,
+    contact_diameter: contact_diameter_nm => len,
+    contact_height: contact_height_nm => len,
+});
+
 impl GridForm {
     /// Original typical values (a synthetic 4 × 5 ball grid in round
     /// numbers): the family's custom entry in the template gallery.
     pub fn typical() -> Self {
-        Self::ball_grid(4, 5, 0.8, [5.0, 4.0, 0.8], [0.4, 0.3])
+        let mm = |v: [f64; 3]| v.map(typical_nm);
+        Self::ball_grid(
+            4,
+            5,
+            typical_nm(0.8),
+            mm([5.0, 4.0, 0.8]),
+            [0.4, 0.3].map(typical_nm),
+        )
     }
 
     /// A fully populated `rows` × `cols` ball grid at `pitch` on a body of
     /// `body` (length, width, height above the balls), with JEDEC row
     /// letters.
-    pub fn ball_grid(rows: u32, cols: u32, pitch: f64, body: [f64; 3], ball: [f64; 2]) -> Self {
+    pub fn ball_grid(rows: u32, cols: u32, pitch: Nm, body: [Nm; 3], ball: [Nm; 2]) -> Self {
         Self {
             contact: GridContact::Ball,
             rows,
             cols,
-            pitch: [pitch, pitch],
-            body_length: body[0],
-            body_width: body[1],
-            body_height: body[2],
-            contact_diameter: ball[0],
-            contact_height: ball[1],
+            pitch: PointNm::new(pitch, pitch),
+            body_length_nm: body[0],
+            body_width_nm: body[1],
+            body_height_nm: body[2],
+            contact_diameter_nm: ball[0],
+            contact_height_nm: ball[1],
             depopulated: Vec::new(),
             row_letters: JEDEC_ROW_LETTERS.to_owned(),
         }
@@ -95,8 +112,8 @@ impl GridForm {
     /// both use it.
     pub fn estimated_land_diameter(&self) -> f64 {
         match self.contact {
-            GridContact::Ball => NSMD_LAND_SHARE * self.contact_diameter,
-            GridContact::Land => self.contact_diameter,
+            GridContact::Ball => NSMD_LAND_SHARE * self.contact_diameter(),
+            GridContact::Land => self.contact_diameter(),
         }
     }
 
@@ -212,8 +229,8 @@ impl GridForm {
             (f64::from(i) - f64::from(n.saturating_sub(1)) / 2.0) * pitch
         };
         [
-            along(col, self.cols, self.pitch[0]),
-            -along(row, self.rows, self.pitch[1]),
+            along(col, self.cols, self.pitch()[0]),
+            -along(row, self.rows, self.pitch()[1]),
         ]
     }
 }
@@ -224,21 +241,21 @@ impl FamilyForm for GridForm {
     }
     fn lengths(&self) -> Vec<f64> {
         vec![
-            self.pitch[0],
-            self.pitch[1],
-            self.body_length,
-            self.body_width,
-            self.body_height,
-            self.contact_diameter,
-            self.contact_height,
+            self.pitch()[0],
+            self.pitch()[1],
+            self.body_length(),
+            self.body_width(),
+            self.body_height(),
+            self.contact_diameter(),
+            self.contact_height(),
         ]
     }
     /// The body on its balls: length, width, ball height + body height.
     fn envelope(&self) -> Option<[f64; 3]> {
         Some([
-            self.body_length,
-            self.body_width,
-            self.contact_height + self.body_height,
+            self.body_length(),
+            self.body_width(),
+            self.contact_height() + self.body_height(),
         ])
     }
     /// Populated positions: rows × columns less the depopulated ones
@@ -269,39 +286,33 @@ impl FamilyForm for GridForm {
             value: ParamValue::Count(v),
         };
         vec![
-            length("e", self.pitch[0]),
-            length("eE", self.pitch[1]),
+            length("e", self.pitch()[0]),
+            length("eE", self.pitch()[1]),
             count("MD", self.cols),
             count("ME", self.rows),
-            length("D", self.body_length),
-            length("E", self.body_width),
-            length("A", self.contact_height + self.body_height),
-            length("A1", self.contact_height),
-            length("b", self.contact_diameter),
+            length("D", self.body_length()),
+            length("E", self.body_width()),
+            length("A", self.contact_height() + self.body_height()),
+            length("A1", self.contact_height()),
+            length("b", self.contact_diameter()),
         ]
     }
     fn range_problems(&self) -> Vec<String> {
         let mut out = Vec::new();
-        let mut positive = |name: &str, v: f64| {
-            if !(v.is_finite() && (FORM_LENGTH_MIN_MM..=FORM_LENGTH_LIMIT_MM).contains(&v)) {
-                out.push(format!(
-                    "{name} must be {FORM_LENGTH_MIN_MM}–{FORM_LENGTH_LIMIT_MM} mm (is {v})."
-                ));
-            }
-        };
-        positive("Pitch along a row", self.pitch[0]);
-        positive("Pitch between rows", self.pitch[1]);
-        positive("Body length", self.body_length);
-        positive("Body height", self.body_height);
-        positive("Body width", self.body_width);
-        positive("Contact diameter", self.contact_diameter);
+        let mut positive = |name: &str, v: Nm| out.extend(length_problem(name, v));
+        positive("Pitch along a row", self.pitch.x_nm);
+        positive("Pitch between rows", self.pitch.y_nm);
+        positive("Body length", self.body_length_nm);
+        positive("Body height", self.body_height_nm);
+        positive("Body width", self.body_width_nm);
+        positive("Contact diameter", self.contact_diameter_nm);
         match self.contact {
-            GridContact::Ball => positive("Ball height", self.contact_height),
+            GridContact::Ball => positive("Ball height", self.contact_height_nm),
             GridContact::Land => {
-                if self.contact_height != 0.0 {
+                if self.contact_height_nm != Nm::ZERO {
                     out.push(format!(
                         "A land grid has no ball height (0, is {}).",
-                        self.contact_height
+                        self.contact_height()
                     ));
                 }
             }
@@ -319,25 +330,25 @@ impl FamilyForm for GridForm {
             self.positions() <= MAX_GRID_POSITIONS,
             &format!("A grid has at most {MAX_GRID_POSITIONS} positions."),
         );
-        let d = self.contact_diameter;
+        let d = self.contact_diameter();
         rule(
-            (self.cols < 2 || d < self.pitch[0]) && (self.rows < 2 || d < self.pitch[1]),
+            (self.cols < 2 || d < self.pitch()[0]) && (self.rows < 2 || d < self.pitch()[1]),
             "Contacts must not touch (diameter < pitch).",
         );
         let fits = |n: u32, pitch: f64, edge: f64| {
             f64::from(n.saturating_sub(1)) * pitch + d <= edge + 1e-9
         };
         rule(
-            fits(self.cols, self.pitch[0], self.body_length),
+            fits(self.cols, self.pitch()[0], self.body_length()),
             "The columns must fit along the body length ((columns − 1) × pitch + diameter ≤ length).",
         );
         rule(
-            fits(self.rows, self.pitch[1], self.body_width),
+            fits(self.rows, self.pitch()[1], self.body_width()),
             "The rows must fit across the body width ((rows − 1) × row pitch + diameter ≤ width).",
         );
         if self.contact == GridContact::Ball {
             rule(
-                self.contact_height < d,
+                self.contact_height() < d,
                 "A ball is lower than it is wide (ball height < diameter).",
             );
         }
@@ -371,10 +382,15 @@ impl FamilyForm for GridForm {
 mod tests {
     use super::*;
     use crate::library::PackageForm;
+    use crate::tests::support::nm;
+
+    fn ball_grid(rows: u32, cols: u32, pitch: f64, body: [f64; 3], ball: [f64; 2]) -> GridForm {
+        GridForm::ball_grid(rows, cols, nm(pitch), body.map(nm), ball.map(nm))
+    }
 
     /// An original synthetic 4 × 5 ball grid (round numbers).
     fn bga() -> GridForm {
-        GridForm::ball_grid(4, 5, 0.8, [5.0, 4.0, 0.8], [0.4, 0.3])
+        ball_grid(4, 5, 0.8, [5.0, 4.0, 0.8], [0.4, 0.3])
     }
 
     fn names(form: &GridForm) -> Vec<String> {
@@ -400,7 +416,7 @@ mod tests {
 
     #[test]
     fn depopulation_keeps_names_and_skips_jedec_letters() {
-        let mut g = GridForm::ball_grid(10, 10, 0.5, [5.5, 5.5, 0.6], [0.3, 0.2]);
+        let mut g = ball_grid(10, 10, 0.5, [5.5, 5.5, 0.6], [0.3, 0.2]);
         // A centre void of 2 × 2 and a missing corner beside A1.
         g.depopulated = vec![[4, 4], [4, 5], [5, 4], [5, 5], [0, 1]];
         assert!(g.range_problems().is_empty(), "{:?}", g.range_problems());
@@ -417,7 +433,7 @@ mod tests {
         assert_eq!(g.position_of("A11"), None);
         assert_eq!(g.skip_letters(), "IOQSXZ");
         // Beyond Y the rows run AA, AB, …
-        let wide = GridForm::ball_grid(22, 2, 1.0, [3.0, 23.0, 1.0], [0.5, 0.4]);
+        let wide = ball_grid(22, 2, 1.0, [3.0, 23.0, 1.0], [0.5, 0.4]);
         assert_eq!(wide.row_name(19).as_deref(), Some("Y"));
         assert_eq!(wide.row_name(20).as_deref(), Some("AA"));
         assert_eq!(wide.position_of("AB2"), Some([21, 1]));
@@ -442,7 +458,7 @@ mod tests {
         let mut lga = bga();
         lga.contact = GridContact::Land;
         assert!(!lga.range_problems().is_empty());
-        lga.contact_height = 0.0;
+        lga.contact_height_nm = Nm::ZERO;
         assert!(
             lga.range_problems().is_empty(),
             "{:?}",
@@ -458,10 +474,10 @@ mod tests {
             assert!(p.iter().any(|m| m.contains(needle)), "{needle}: {p:?}");
         };
         let mut g = bga();
-        g.contact_diameter = 0.9;
+        g.contact_diameter_nm = nm(0.9);
         problem(g, "touch");
         let mut g = bga();
-        g.body_length = 3.0;
+        g.body_length_nm = nm(3.0);
         problem(g, "along the body length");
         let mut g = bga();
         g.depopulated = vec![[0, 0], [0, 0]];
@@ -479,10 +495,11 @@ mod tests {
         g.depopulated = (0..4).flat_map(|r| (0..5).map(move |c| [r, c])).collect();
         problem(g, "at least one contact");
         let mut g = bga();
-        g.contact_height = 0.5;
+        g.contact_height_nm = nm(0.5);
         problem(g, "lower than");
         let mut g = bga();
-        g.pitch[1] = f64::NAN;
+        // Out of range (a stored length cannot be NaN).
+        g.pitch.y_nm = nm(0.0);
         problem(g, "Pitch between rows");
     }
 
@@ -498,7 +515,7 @@ mod tests {
         assert!(!form.within_bounds());
         // A 22 × 22 grid fits the matrix bound but not the form's lead
         // bound: refused by `within_bounds`, its points withheld.
-        let big = PackageForm::Grid(Box::new(GridForm::ball_grid(
+        let big = PackageForm::Grid(Box::new(ball_grid(
             23,
             23,
             1.0,

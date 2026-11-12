@@ -1140,10 +1140,18 @@ fn unit_label(symbol: &SymbolDefinition, unit: UnitId) -> String {
 }
 
 /// What a pin shows besides its connection point.
-fn pin_presentation(pin: &Pin) -> (PinDirection, f64, Decorations, PinText, PinText) {
+fn pin_presentation(
+    pin: &Pin,
+) -> (
+    PinDirection,
+    crate::units::Nm,
+    Decorations,
+    PinText,
+    PinText,
+) {
     (
         pin.direction,
-        pin.length,
+        pin.length_nm,
         pin.decorations,
         pin.name,
         pin.number,
@@ -1213,11 +1221,11 @@ pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<Stri
             out.push(format!("chip kind {:?} → {:?}.", x.kind, y.kind));
         }
     }
-    if a.envelope != b.envelope {
+    if a.envelope() != b.envelope() {
         out.push(format!(
             "body {} → {} mm (L×W×H).",
-            size_text(&a.envelope),
-            size_text(&b.envelope)
+            size_text(&a.envelope()),
+            size_text(&b.envelope())
         ));
     }
     match (&a.model, &b.model) {
@@ -1247,10 +1255,10 @@ pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<Stri
     if a.placement != b.placement {
         out.push(format!(
             "model placement {:?} mm, {:?}° → {:?} mm, {:?}°.",
-            a.placement.translation,
-            a.placement.rotation_deg,
-            b.placement.translation,
-            b.placement.rotation_deg
+            a.placement.translation(),
+            a.placement.rotation_deg(),
+            b.placement.translation(),
+            b.placement.rotation_deg()
         ));
     }
     out
@@ -1366,8 +1374,8 @@ fn definition_details(
                     terminal.id,
                     unit_label(a.symbol, ua.id),
                     unit_label(b.symbol, ub.id),
-                    pa.position,
-                    pb.position
+                    pa.position_mm(),
+                    pb.position_mm()
                 ),
             ),
             (Some((_, pa)), Some((ub, pb))) if pa.position != pb.position => plan.detail(
@@ -1386,8 +1394,8 @@ fn definition_details(
                     "{designator} terminal {} pin in unit {} {:?} → {:?} mm.",
                     terminal.id,
                     unit_label(b.symbol, ub.id),
-                    pa.position,
-                    pb.position
+                    pa.position_mm(),
+                    pb.position_mm()
                 ),
             ),
             _ => {}
@@ -1428,7 +1436,7 @@ fn definition_details(
             ));
         }
     }
-    if a.symbol.pin_text_height != b.symbol.pin_text_height {
+    if a.symbol.pin_text_height_nm != b.symbol.pin_text_height_nm {
         plan.detail(
             head(
                 A::Schematic,
@@ -1439,7 +1447,8 @@ fn definition_details(
             ),
             format!(
                 "{designator}: pin text height {} → {} mm (presentation only).",
-                a.symbol.pin_text_height, b.symbol.pin_text_height
+                a.symbol.pin_text_height_nm.to_mm_f64(),
+                b.symbol.pin_text_height_nm.to_mm_f64()
             ),
         );
     }

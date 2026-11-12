@@ -72,7 +72,7 @@ fn compatible_geometry_preview_is_read_only_preserves_copper_and_survives_offlin
         })?;
         with(e, f.package, package_body, |p| {
             // A refusal would leave the envelope stale, which publishing rejects.
-            let _ = p.resize_envelope([p.envelope[0], p.envelope[1], 2.0]);
+            let _ = p.resize_envelope([p.envelope()[0], p.envelope()[1], 2.0]);
         })
     })?;
     let before = engine.project().clone();
@@ -813,16 +813,16 @@ fn symbol_drawing_changes_are_reported_as_presentation_only() -> Result<()> {
             // Move the designator, add a line and decorate pin 1 without
             // moving its connection end.
             if let crate::library::Item::Text(t) = &mut s.units[0].graphics[1].item {
-                t.at[1] += 1.0;
+                t.at.y_nm = nm(t.at.to_mm_f64()[1] + 1.0);
             }
             s.units[0].graphics.push(crate::library::Graphic {
                 id: crate::GraphicId(5),
                 item: crate::library::Item::Shape {
-                    shape: crate::geometry::Shape::Line {
+                    shape: shape_nm(crate::geometry::Shape::Line {
                         a: [-2.5, 0.0],
                         b: [2.5, 0.0],
-                    },
-                    width: 0.25,
+                    }),
+                    width_nm: nm(0.25),
                     fill: crate::library::Fill::None,
                 },
             });
@@ -871,7 +871,7 @@ fn a_pin_that_moves_and_changes_drawing_is_not_called_presentation_only() -> Res
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.symbol, symbol_body, |s| {
             let pin = &mut s.units[0].pins[0];
-            pin.position[1] += 2.5;
+            pin.position.y_nm = nm(pin.position_mm()[1] + 2.5);
             pin.decorations.inverted = true;
         })
     })?;
@@ -936,25 +936,25 @@ fn footprint_pad_diffs_name_each_aspect_by_pad_id() -> Result<()> {
             tab.position = [0.0, 3.0];
             // One assembly graphic changes, one silkscreen line is added.
             if let Some(FootprintGraphic {
-                item: Item::Shape { width, .. },
+                item: Item::Shape { width_nm, .. },
                 ..
             }) = fp
                 .graphics
                 .iter_mut()
                 .find(|g| g.layer == DrawingLayer::Assembly)
             {
-                *width = 0.12;
+                *width_nm = nm(0.12);
             }
             fp.graphics.push(FootprintGraphic {
                 id: crate::GraphicId(fp.next_local + 1),
                 layer: DrawingLayer::Silkscreen,
                 side: Side::Component,
                 item: Item::Shape {
-                    shape: crate::geometry::Shape::Line {
+                    shape: shape_nm(crate::geometry::Shape::Line {
                         a: [-1.0, 2.0],
                         b: [1.0, 2.0],
-                    },
-                    width: 0.15,
+                    }),
+                    width_nm: nm(0.15),
                     fill: Fill::None,
                 },
             });
@@ -1117,8 +1117,8 @@ fn package_details_name_each_physical_change() {
     };
     use crate::materials::MaterialId;
     let chip = |kind| PackageDefinition {
-        form: PackageForm::Chip(Box::new(ChipForm::new(kind, [1.6, 0.8, 0.45]))),
-        envelope: [1.6, 0.8, 0.45],
+        form: PackageForm::Chip(Box::new(ChipForm::new(kind, [nm(1.6), nm(0.8), nm(0.45)]))),
+        envelope_nm: [nm(1.6), nm(0.8), nm(0.45)],
         model: PackageModel::Generated {
             family_rev: 1,
             materials: GeneratedMaterials::default(),
@@ -1130,7 +1130,7 @@ fn package_details_name_each_physical_change() {
     // A thicker termination: one changed pkg value, nothing else.
     let mut b = a.clone();
     if let PackageForm::Chip(c) = &mut b.form {
-        c.termination = 0.4;
+        c.termination_nm = nm(0.4);
     }
     let lines = package_details(&a, &b);
     assert_eq!(lines.len(), 1, "{lines:?}");
@@ -1151,7 +1151,7 @@ fn package_details_name_each_physical_change() {
     );
     // A family change, a model source change, a role override, a placement.
     let generic = PackageDefinition {
-        envelope: [1.6, 0.8, 0.45],
+        envelope_nm: [nm(1.6), nm(0.8), nm(0.45)],
         ..PackageDefinition::default()
     };
     let lines = package_details(&a, &generic);
@@ -1176,8 +1176,8 @@ fn package_details_name_each_physical_change() {
         },
     };
     c.placement = ModelPlacement {
-        translation: [0.0, 0.0, 0.05],
-        rotation_deg: [0.0, 0.0, 90.0],
+        translation_nm: crate::tests::support::nm3([0.0, 0.0, 0.05]),
+        rotation_mdeg: [0, 0, 90_000].map(crate::units::Angle::normalized),
     };
     let lines = package_details(&a, &c);
     assert_eq!(lines.len(), 2, "{lines:?}");

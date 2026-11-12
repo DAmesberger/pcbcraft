@@ -39,8 +39,8 @@ fn edit_graphics(
 
 fn stroke(shape: Shape) -> Item {
     Item::Shape {
-        shape,
-        width: 0.25,
+        shape: shape_nm(shape),
+        width_nm: nm(0.25),
         fill: Fill::None,
     }
 }
@@ -48,8 +48,8 @@ fn stroke(shape: Shape) -> Item {
 fn literal(text: &str, justify: Justify, line_spacing: f64) -> Item {
     Item::Text(Text {
         content: TextContent::Literal(text.into()),
-        at: [0.0, 0.0],
-        height: 1.0,
+        at: pt([0.0, 0.0]),
+        height_nm: nm(1.0),
         rotation: Rotation::R0,
         justify,
         visible: true,
@@ -77,7 +77,7 @@ fn edit_graphics_applies_in_order_as_one_undo_step() -> Result<()> {
         vec![
             GraphicEdit::Add {
                 target: unit,
-                item: stroke(Shape::polygon(vec![[-2.5, -2.5], [-2.5, 2.5], [2.5, 0.0]])),
+                item: stroke(Shape::polygon(vec![[-2.5, -2.5], [-2.5, 2.5], [2.5, 0.0]])).into(),
             },
             GraphicEdit::Add {
                 target: unit,
@@ -85,20 +85,21 @@ fn edit_graphics_applies_in_order_as_one_undo_step() -> Result<()> {
                     a: [-1.0, -1.0],
                     b: [1.0, 1.0],
                     radius: 0.5,
-                }),
+                })
+                .into(),
             },
             GraphicEdit::Translate {
                 ids: vec![GraphicId(before.next_local)],
-                delta: [2.5, 0.0],
+                delta: pt([2.5, 0.0]),
             },
             GraphicEdit::Remove {
                 id: GraphicId(before.next_local + 1),
             },
             GraphicEdit::SetPin {
                 unit: UnitId(1),
-                pin: Pin::new(TerminalId(2), [7.5, 0.0], PinDirection::Left, 2.5),
+                pin: Pin::new(TerminalId(2), pt([7.5, 0.0]), PinDirection::Left, nm(2.5)).into(),
             },
-            GraphicEdit::SetPinTextHeight { height: 1.0 },
+            GraphicEdit::SetPinTextHeight { height: nm(1.0) },
         ],
     )?;
     let first = GraphicId(before.next_local);
@@ -122,11 +123,11 @@ fn edit_graphics_applies_in_order_as_one_undo_step() -> Result<()> {
             item: stroke(Shape::polygon(vec![[0.0, -2.5], [0.0, 2.5], [5.0, 0.0]])),
         }
     );
-    assert_eq!(after.pin_text_height, 1.0);
+    assert_eq!(after.pin_text_height_nm, nm(1.0));
     let pin = after.units[0].pin(TerminalId(2)).cloned();
     assert_eq!(
         pin.map(|p| (p.position, p.direction)),
-        Some(([7.5, 0.0], PinDirection::Left))
+        Some((pt([7.5, 0.0]), PinDirection::Left))
     );
     engine.undo()?;
     assert_eq!(symbol(&engine, f.symbol)?, before, "one undo step");
@@ -145,7 +146,8 @@ fn failed_graphic_edits_leave_the_draft_unchanged() -> Result<()> {
         item: stroke(Shape::Line {
             a: [0.0, 0.0],
             b: [1.0, 0.0],
-        }),
+        })
+        .into(),
     };
     let failing: Vec<(&str, Vec<GraphicEdit>)> = vec![
         ("no edits", vec![]),
@@ -160,7 +162,8 @@ fn failed_graphic_edits_leave_the_draft_unchanged() -> Result<()> {
                 item: stroke(Shape::Line {
                     a: [0.0, 0.0],
                     b: [1.0, 0.0],
-                }),
+                })
+                .into(),
             }],
         ),
         (
@@ -169,7 +172,8 @@ fn failed_graphic_edits_leave_the_draft_unchanged() -> Result<()> {
                 add.clone(),
                 GraphicEdit::SetPin {
                     unit: UnitId(1),
-                    pin: Pin::new(TerminalId(9), [0.0, 0.0], PinDirection::Right, 2.5),
+                    pin: Pin::new(TerminalId(9), pt([0.0, 0.0]), PinDirection::Right, nm(2.5))
+                        .into(),
                 },
             ],
         ),
@@ -177,7 +181,7 @@ fn failed_graphic_edits_leave_the_draft_unchanged() -> Result<()> {
             "translated twice",
             vec![GraphicEdit::Translate {
                 ids: vec![],
-                delta: [1.0, 0.0],
+                delta: pt([1.0, 0.0]),
             }],
         ),
         (
@@ -187,7 +191,8 @@ fn failed_graphic_edits_leave_the_draft_unchanged() -> Result<()> {
                 item: stroke(Shape::Polyline {
                     points: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
                     radii: vec![0.5],
-                }),
+                })
+                .into(),
             }],
         ),
         (
@@ -198,19 +203,23 @@ fn failed_graphic_edits_leave_the_draft_unchanged() -> Result<()> {
                     a: [0.0, 0.0],
                     b: [1.0, 1.0],
                     radius: -0.1,
-                }),
+                })
+                .into(),
             }],
         ),
         (
             "line spacing out of range",
             vec![GraphicEdit::Add {
                 target: unit,
-                item: literal("a\nb", Justify::default(), 9.0),
+                item: literal("a\nb", Justify::default(), 9.0).into(),
             }],
         ),
         (
             "pin text too small",
-            vec![add.clone(), GraphicEdit::SetPinTextHeight { height: 0.0 }],
+            vec![
+                add.clone(),
+                GraphicEdit::SetPinTextHeight { height: nm(0.0) },
+            ],
         ),
         (
             "pin of a terminal without one",
@@ -266,7 +275,7 @@ fn oversized_corner_radii_block_publishing() -> Result<()> {
             f.symbol,
             vec![GraphicEdit::Add {
                 target: unit,
-                item: stroke(shape.clone()),
+                item: stroke(shape.clone()).into(),
             }],
         )?;
         let Outcome::GraphicsEdited { added } = outcome else {
@@ -295,7 +304,8 @@ fn oversized_corner_radii_block_publishing() -> Result<()> {
                 a: [-2.5, -2.5],
                 b: [2.5, 2.5],
                 radius: 2.5,
-            }),
+            })
+            .into(),
         }],
     )?;
     publish(&mut engine, f.all())?;
@@ -371,7 +381,7 @@ fn multi_line_text_publishes_places_and_picks_as_one_block() -> Result<()> {
         f.symbol,
         vec![GraphicEdit::Add {
             target: unit,
-            item: literal("GAIN\nx10", left_top, 2.0),
+            item: literal("GAIN\nx10", left_top, 2.0).into(),
         }],
     )?;
     let Outcome::GraphicsEdited { added } = outcome else {
@@ -415,7 +425,7 @@ fn a_changed_corner_radius_is_a_presentation_diff() -> Result<()> {
         f.symbol,
         vec![GraphicEdit::Add {
             target: unit,
-            item: rect(0.0),
+            item: rect(0.0).into(),
         }],
     )?
     else {
@@ -433,7 +443,7 @@ fn a_changed_corner_radius_is_a_presentation_diff() -> Result<()> {
         f.symbol,
         vec![GraphicEdit::Replace {
             id: added[0],
-            item: rect(1.0),
+            item: rect(1.0).into(),
         }],
     )?;
     let (Definition::Symbol(old), Definition::Symbol(new)) =

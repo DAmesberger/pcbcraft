@@ -254,7 +254,11 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                 }
                 let sources = model.sources.clone();
                 kept.board = Some((Arc::clone(&project), model));
-                (geometry, sources, Stack::of(&project.stackup))
+                (
+                    geometry,
+                    sources,
+                    Stack::of(&project.stackup, project.fabrication.pad_finish),
+                )
             });
             (ticket, built.map_err(|e| e.to_string()))
         }
@@ -707,7 +711,8 @@ mod tests {
             .cloned()
             .ok_or("demo package draft")?;
         if let Definition::Package(package) = &mut draft.definition {
-            package.envelope[0] += 1.0;
+            package.envelope_nm[0] =
+                package.envelope_nm[0].checked_add(pcbcraft_core::units::Nm::new(1_000_000)?)?;
         }
         engine.apply(
             engine.revision(),
@@ -789,7 +794,8 @@ mod tests {
     fn edited_package_previews_get_new_keys() -> Result<(), Box<dyn std::error::Error>> {
         let mut package = demo_package()?;
         let key = ModelKey::package(&package);
-        package.envelope[0] += 1.0;
+        package.envelope_nm[0] =
+            package.envelope_nm[0].checked_add(pcbcraft_core::units::Nm::new(1_000_000)?)?;
         assert_ne!(key, ModelKey::package(&package));
         Ok(())
     }

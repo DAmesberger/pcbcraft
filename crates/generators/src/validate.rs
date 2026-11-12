@@ -1,0 +1,391 @@
+//! Structural checks of a module's output before anyone uses it: every key
+//! unique, every reference resolving, every value in range, the parts the
+//! scope requires present and the others absent. The library's publish
+//! rules then apply as to any authored part (slice GP1).
+use pcbcraft_generator_abi::Failure;
+use pcbcraft_generator_abi::v1::{
+    Description, Footprint, Generation, Graphic, HoleShape, PadShape, ParamType, Point, Primitive,
+    Scope, Symbol, limits,
+};
+use std::collections::BTreeSet;
+
+fn invalid(message: String) -> Failure {
+    Failure::one(
+        "generator.invalid_output",
+        format!("{message} Nothing was changed."),
+    )
+}
+
+fn text(what: &str, s: &str) -> Result<(), Failure> {
+    if s.chars().count() > limits::TEXT_CHARS {
+        return Err(invalid(format!(
+            "The generator returned a {what} longer than {} characters.",
+            limits::TEXT_CHARS
+        )));
+    }
+    Ok(())
+}
+
+fn key(what: &str, s: &str) -> Result<(), Failure> {
+    if s.is_empty() {
+        return Err(invalid(format!(
+            "The generator returned an empty {what} key."
+        )));
+    }
+    text(what, s)
+}
+
+fn unique<'a>(
+    what: &str,
+    keys: impl IntoIterator<Item = &'a str>,
+) -> Result<BTreeSet<&'a str>, Failure> {
+    let mut seen = BTreeSet::new();
+    for k in keys {
+        key(what, k)?;
+        if !seen.insert(k) {
+            return Err(invalid(format!(
+                "The generator returned {what} \"{k}\" twice."
+            )));
+        }
+    }
+    Ok(seen)
+}
+
+fn count(what: &str, n: usize, max: usize) -> Result<(), Failure> {
+    if n > max {
+        return Err(invalid(format!(
+            "The generator returned {n} {what}, more than the {max} allowed."
+        )));
+    }
+    Ok(())
+}
+
+fn coordinate(v: i64) -> Result<(), Failure> {
+    if v.checked_abs().is_none_or(|a| a > limits::COORDINATE_NM) {
+        return Err(invalid(format!(
+            "The generator returned a coordinate of {v} nm, beyond the 1 m bound."
+        )));
+    }
+    Ok(())
+}
+
+fn point(p: &Point) -> Result<(), Failure> {
+    coordinate(p[0])?;
+    coordinate(p[1])
+}
+
+fn positive(what: &str, v: i64) -> Result<(), Failure> {
+    if v <= 0 || v > limits::COORDINATE_NM {
+        return Err(invalid(format!(
+            "The generator returned a {what} of {v} nm; it must be positive and at most 1 m."
+        )));
+    }
+    Ok(())
+}
+
+fn graphic(g: &Graphic) -> Result<(), Failure> {
+    if g.stroke_nm < 0 || g.stroke_nm > limits::COORDINATE_NM {
+        return Err(invalid(format!(
+            "The generator returned a stroke of {} nm.",
+            g.stroke_nm
+        )));
+    }
+    match &g.shape {
+        Primitive::Line { a, b } | Primitive::Rect { min: a, max: b } => {
+            point(a)?;
+            point(b)
+        }
+        Primitive::Polyline { points } | Primitive::Polygon { points } => {
+            count("points in one shape", points.len(), limits::POINTS)?;
+            points.iter().try_for_each(point)
+        }
+        Primitive::Circle { center, radius_nm } => {
+            point(center)?;
+            positive("circle radius", *radius_nm)
+        }
+        Primitive::Arc {
+            center,
+            radius_nm,
+            start_mdeg,
+            sweep_mdeg,
+        } => {
+            point(center)?;
+            positive("arc radius", *radius_nm)?;
+            if start_mdeg.unsigned_abs() > 360_000 || sweep_mdeg.unsigned_abs() > 360_000 {
+                return Err(invalid(
+                    "The generator returned an arc angle beyond one turn.".into(),
+                ));
+            }
+            Ok(())
+        }
+        Primitive::Text {
+            at,
+            height_nm,
+            content,
+            ..
+        } => {
+            point(at)?;
+            positive("text height", *height_nm)?;
+            if let pcbcraft_generator_abi::v1::TextContent::Literal(s) = content {
+                text("text", s)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn graphics(what: &str, list: &[Graphic]) -> Result<(), Failure> {
+    count(what, list.len(), limits::GRAPHICS)?;
+    list.iter().try_for_each(graphic)
+}
+
+fn symbol(symbol: &Symbol, terminals: &BTreeSet<&str>) -> Result<(), Failure> {
+    count("symbol units", symbol.units.len(), limits::UNITS)?;
+    if symbol.units.is_empty() {
+        return Err(invalid(
+            "The generator returned a symbol with no units.".into(),
+        ));
+    }
+    unique("symbol unit", symbol.units.iter().map(|u| u.key.as_str()))?;
+    let mut drawn = BTreeSet::new();
+    for unit in &symbol.units {
+        count("symbol pins", unit.pins.len(), limits::TERMINALS)?;
+        graphics("symbol graphics", &unit.graphics)?;
+        for pin in &unit.pins {
+            if !terminals.contains(pin.terminal.as_str()) {
+                return Err(invalid(format!(
+                    "The generator drew a pin for terminal \"{}\", which the component does not have.",
+                    pin.terminal
+                )));
+            }
+            point(&pin.at)?;
+            if pin.length_nm < 0 || pin.length_nm > limits::COORDINATE_NM {
+                return Err(invalid(format!(
+                    "The generator returned a pin length of {} nm.",
+                    pin.length_nm
+                )));
+            }
+            drawn.insert(pin.terminal.as_str());
+        }
+    }
+    if let Some(missing) = terminals.iter().find(|t| !drawn.contains(**t)) {
+        return Err(invalid(format!(
+            "The generator's symbol has no pin for terminal \"{missing}\"."
+        )));
+    }
+    Ok(())
+}
+
+fn footprint(footprint: &Footprint, package_terminals: &BTreeSet<&str>) -> Result<(), Failure> {
+    count("pads", footprint.pads.len(), limits::PADS)?;
+    unique("pad", footprint.pads.iter().map(|p| p.key.as_str()))?;
+    for pad in &footprint.pads {
+        if !package_terminals.contains(pad.terminal.as_str()) {
+            return Err(invalid(format!(
+                "The generator's pad {} lands terminal \"{}\", which the package does not have.",
+                pad.key, pad.terminal
+            )));
+        }
+        point(&pad.at)?;
+        match &pad.shape {
+            PadShape::Rect { size } | PadShape::Oval { size } => {
+                positive("pad size", size[0])?;
+                positive("pad size", size[1])?;
+            }
+            PadShape::RoundRect { size, radius_nm } => {
+                positive("pad size", size[0])?;
+                positive("pad size", size[1])?;
+                if *radius_nm < 0 || 2 * *radius_nm > size[0].min(size[1]) {
+                    return Err(invalid(format!(
+                        "The generator's pad {} has a corner radius larger than half its side.",
+                        pad.key
+                    )));
+                }
+            }
+            PadShape::Circle { diameter_nm } => positive("pad diameter", *diameter_nm)?,
+            PadShape::Polygon { points } => {
+                if points.len() < 3 {
+                    return Err(invalid(format!(
+                        "The generator's pad {} is a polygon of fewer than three points.",
+                        pad.key
+                    )));
+                }
+                count("points in one pad", points.len(), limits::POINTS)?;
+                points.iter().try_for_each(point)?;
+            }
+        }
+        if let Some(hole) = &pad.hole {
+            match hole.shape {
+                HoleShape::Round { diameter_nm } => positive("hole diameter", diameter_nm)?,
+                HoleShape::Slot { size } => {
+                    positive("slot size", size[0])?;
+                    positive("slot size", size[1])?;
+                }
+            }
+        }
+    }
+    let terminals_with_pads: BTreeSet<&str> =
+        footprint.pads.iter().map(|p| p.terminal.as_str()).collect();
+    if let Some(missing) = package_terminals
+        .iter()
+        .find(|t| !terminals_with_pads.contains(**t))
+    {
+        return Err(invalid(format!(
+            "The generator's footprint has no pad for package terminal \"{missing}\"."
+        )));
+    }
+    if footprint.courtyard.len() < 3 {
+        return Err(invalid(
+            "The generator returned no courtyard outline.".into(),
+        ));
+    }
+    count(
+        "courtyard points",
+        footprint.courtyard.len(),
+        limits::POINTS,
+    )?;
+    footprint.courtyard.iter().try_for_each(point)?;
+    graphics("silkscreen graphics", &footprint.silk)?;
+    graphics("assembly graphics", &footprint.assembly)
+}
+
+/// Check a generation for `scope`.
+pub fn generation(g: &Generation, scope: Scope) -> Result<(), Failure> {
+    count(
+        "package terminals",
+        g.package.terminals.len(),
+        limits::TERMINALS,
+    )?;
+    let package_terminals = unique(
+        "package terminal",
+        g.package.terminals.iter().map(String::as_str),
+    )?;
+    let geometry = &g.package.geometry;
+    for v in geometry.envelope_nm {
+        positive("package size", v)?;
+    }
+    coordinate(geometry.seating_nm)?;
+    if !package_terminals.contains(geometry.pin1.as_str()) {
+        return Err(invalid(format!(
+            "The generator names pin 1 \"{}\", which the package does not have.",
+            geometry.pin1
+        )));
+    }
+    unique("lead", geometry.leads.iter().map(|l| l.key.as_str()))?;
+    for lead in &geometry.leads {
+        if !package_terminals.contains(lead.key.as_str()) {
+            return Err(invalid(format!(
+                "The generator places a lead for \"{}\", which the package does not have.",
+                lead.key
+            )));
+        }
+        lead.contact.iter().try_for_each(|v| coordinate(*v))?;
+    }
+    footprint(&g.footprint, &package_terminals)?;
+    for note in &g.notes {
+        text("note", note)?;
+    }
+    for field in &g.fields {
+        key("field", &field.field)?;
+        text("field value", &field.value)?;
+    }
+    match scope {
+        Scope::Package => {
+            if g.component.is_some() || g.symbol.is_some() || !g.binding.is_empty() {
+                return Err(invalid(
+                    "The generator returned a component, symbol or binding for a package-only request."
+                        .into(),
+                ));
+            }
+        }
+        Scope::Component => {
+            let (Some(component), Some(sym)) = (&g.component, &g.symbol) else {
+                return Err(invalid(
+                    "The generator returned no component or no symbol for a complete part.".into(),
+                ));
+            };
+            count("terminals", component.terminals.len(), limits::TERMINALS)?;
+            let terminals = unique(
+                "terminal",
+                component.terminals.iter().map(|t| t.key.as_str()),
+            )?;
+            for t in &component.terminals {
+                text("terminal name", &t.name)?;
+            }
+            key("designator prefix", &component.prefix)?;
+            text("component name", &component.name)?;
+            symbol(sym, &terminals)?;
+            let mut bound = BTreeSet::new();
+            for entry in &g.binding {
+                if !package_terminals.contains(entry.package_terminal.as_str()) {
+                    return Err(invalid(format!(
+                        "The generator binds package terminal \"{}\", which the package does not have.",
+                        entry.package_terminal
+                    )));
+                }
+                if !terminals.contains(entry.terminal.as_str()) {
+                    return Err(invalid(format!(
+                        "The generator binds to terminal \"{}\", which the component does not have.",
+                        entry.terminal
+                    )));
+                }
+                if !bound.insert(entry.package_terminal.as_str()) {
+                    return Err(invalid(format!(
+                        "The generator binds package terminal \"{}\" twice.",
+                        entry.package_terminal
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check a description: ABI 1, at least one scope, unique parameter keys,
+/// every default of its parameter's type, presets naming known parameters.
+pub fn description(d: &Description) -> Result<(), Failure> {
+    let bad = |message: String| {
+        Failure::one(
+            "generator.invalid_description",
+            format!("{message} The generator was not used."),
+        )
+    };
+    if d.abi != pcbcraft_generator_abi::v1::ABI {
+        return Err(bad(format!(
+            "The generator describes itself as ABI {}.",
+            d.abi
+        )));
+    }
+    if d.scopes.is_empty() {
+        return Err(bad("The generator offers no scope.".into()));
+    }
+    key("generator id", &d.id_hint).map_err(|f| bad(f.to_string()))?;
+    let keys = unique("parameter", d.params.iter().map(|p| p.key.as_str()))
+        .map_err(|f| bad(f.to_string()))?;
+    for param in &d.params {
+        if !crate::params::fits(&param.ty, &param.default) {
+            return Err(bad(format!(
+                "The default of parameter \"{}\" does not fit its type.",
+                param.key
+            )));
+        }
+        if let ParamType::Length { min_nm, max_nm, .. } = param.ty
+            && min_nm > max_nm
+        {
+            return Err(bad(format!(
+                "Parameter \"{}\" has an empty range.",
+                param.key
+            )));
+        }
+    }
+    unique("preset", d.presets.iter().map(|p| p.key.as_str())).map_err(|f| bad(f.to_string()))?;
+    for preset in &d.presets {
+        if let Some(unknown) = preset.params.keys().find(|k| !keys.contains(k.as_str())) {
+            return Err(bad(format!(
+                "Preset \"{}\" sets \"{unknown}\", which is not a parameter.",
+                preset.key
+            )));
+        }
+    }
+    Ok(())
+}

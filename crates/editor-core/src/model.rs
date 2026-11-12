@@ -28,8 +28,8 @@ pub use sheet::{
 };
 pub use stackup::{
     COPPER_UM_RANGE, CopperFoil, CopperLayer, DIELECTRIC_MM_RANGE, DK_RANGE, Dielectric,
-    DielectricKind, GlassStyle, MASK_UM, MASK_UM_RANGE, MAX_COPPER_LAYERS, MIN_COPPER_LAYERS,
-    OUNCE_UM, Stackup,
+    DielectricKind, GlassStyle, MASK_LAMINATE, MASK_UM, MASK_UM_RANGE, MAX_COPPER_LAYERS,
+    MIN_COPPER_LAYERS, OUNCE_UM, Stackup,
 };
 pub use via::{Via, ViaSpan};
 
@@ -509,10 +509,14 @@ pub struct Project {
     pub production: production::Production,
 }
 
+/// The name of a new project, and the stem of the file name proposed for
+/// a project without one.
+pub const UNTITLED: &str = "Untitled";
+
 impl Default for Project {
     fn default() -> Self {
         Self {
-            name: "Untitled".into(),
+            name: UNTITLED.into(),
             next_id: 1,
             library: Library::default(),
             instances: Shared::default(),

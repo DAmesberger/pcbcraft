@@ -47,20 +47,20 @@ fn degenerate() -> Error {
 impl SurfaceMap {
     /// A plane's map; its u axis is made square to the normal.
     pub fn plane(area: &MarkingArea) -> Result<Self> {
-        let all = area
-            .origin
+        let (origin, size) = (area.origin(), area.size());
+        let all = origin
             .iter()
             .chain(&area.normal)
             .chain(&area.u_axis)
-            .chain(&area.size_mm);
-        if !all.clone().all(|v| v.is_finite()) || area.origin.iter().any(|v| v.abs() > 1e5) {
+            .chain(&size);
+        if !all.clone().all(|v| v.is_finite()) || origin.iter().any(|v| v.abs() > 1e5) {
             return Err(degenerate());
         }
         let n = unit(vec(area.normal)).ok_or_else(degenerate)?;
         let u = vec(area.u_axis);
         let u = unit(u - n * u.dot(n)).ok_or_else(degenerate)?;
         Ok(Self::Plane {
-            origin: vec(area.origin),
+            origin: vec(area.origin()),
             u,
             v: n.cross(u),
             n,
@@ -70,16 +70,16 @@ impl SurfaceMap {
     /// A cylinder's map under `chart`.
     pub fn cylinder(cylinder: CylinderArea, chart: WrapChart) -> Result<Self> {
         let finite = cylinder
-            .base
+            .base()
             .iter()
             .chain(&cylinder.axis)
             .chain(&cylinder.zero)
-            .chain([&cylinder.radius, &cylinder.length])
+            .chain([&cylinder.radius(), &cylinder.length()])
             .all(|v| v.is_finite());
         let axis = unit(vec(cylinder.axis)).ok_or_else(degenerate)?;
         let zero = vec(cylinder.zero);
         let zero = unit(zero - axis * zero.dot(axis)).ok_or_else(degenerate)?;
-        if !finite || cylinder.radius <= 0.0 || cylinder.base.iter().any(|v| v.abs() > 1e5) {
+        if !finite || cylinder.radius() <= 0.0 || cylinder.base().iter().any(|v| v.abs() > 1e5) {
             return Err(degenerate());
         }
         Ok(Self::Cylinder {
@@ -137,7 +137,7 @@ impl SurfaceMap {
             });
         let extent = hi - lo;
         // A chord of arc s sags r(1 − cos(s / 2r)) ≈ s² / 8r.
-        let step = (8.0 * cylinder.radius * WRAP_CHORD_MM).sqrt();
+        let step = (8.0 * cylinder.radius() * WRAP_CHORD_MM).sqrt();
         if !(extent.is_finite() && step > 0.0) {
             return 1;
         }
@@ -218,11 +218,11 @@ mod tests {
     #[test]
     fn a_cylinder_frame_is_outward_and_right_handed() -> Result<()> {
         let cylinder = CylinderArea {
-            base: [0.0, 0.0, 0.0],
+            base_nm: crate::test_units::nm3([0.0, 0.0, 0.0]),
             axis: [0.0, 0.0, 1.0],
             zero: [1.0, 0.0, 0.0],
-            radius: 2.0,
-            length: 4.0,
+            radius_nm: crate::test_units::nm(2.0),
+            length_nm: crate::test_units::nm(4.0),
             along_u: false,
         };
         let chart = cylinder.chart(&Default::default()).ok_or_else(degenerate)?;

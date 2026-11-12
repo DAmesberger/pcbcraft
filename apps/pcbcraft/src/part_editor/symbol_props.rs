@@ -13,7 +13,8 @@ use pcbcraft_core::library::graphics::{
     VAlign, printable_text, upright,
 };
 use pcbcraft_core::library::symbol_style::{ResistorStyle, SymbolConventions};
-use pcbcraft_core::library::{Grid, Item, PinDirection, Rotation};
+use pcbcraft_core::library::{Grid, Item, PinDirection, Rotation, ShapeNm};
+use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{Engine, GraphicId, LibraryCommand, Operation, TerminalId, UnitId};
 use solidcraft_ui_egui::ui_kit::{self, Button};
 
@@ -220,7 +221,7 @@ impl PartEditor {
     /// setting), snapping and grid display.
     pub(super) fn grid_rows(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         let grid = engine.drafts().grid;
-        let mut step = grid.symbol_mm;
+        let mut step = grid.symbol_mm();
         let mut options: Vec<(f64, String)> = GRID_STEPS
             .iter()
             .map(|s| (*s, format!("{} mm", kit::number_text(*s))))
@@ -229,12 +230,11 @@ impl PartEditor {
             options.push((step, format!("{} mm", kit::number_text(step))));
         }
         let mut operation = None;
-        if kit::choice_row(ui, "Symbol grid", &mut step, &options) {
+        if kit::choice_row(ui, "Symbol grid", &mut step, &options)
+            && let Ok(symbol_nm) = Nm::from_mm_f64_rounded(step)
+        {
             operation = Some(Operation::Library(LibraryCommand::SetGrid {
-                grid: Grid {
-                    symbol_mm: step,
-                    ..grid
-                },
+                grid: Grid { symbol_nm, ..grid }.into(),
             }));
         }
         let conventions = engine.drafts().symbols;
@@ -297,7 +297,7 @@ impl PartEditor {
                 .max_rect(rect.shrink(t.space_4))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        let step = kit::number_text(engine.drafts().grid.symbol_mm);
+        let step = kit::number_text(engine.drafts().grid.symbol_mm());
         let button = crate::shell::icon_button(
             &mut child,
             "grid",
@@ -335,7 +335,16 @@ impl PartEditor {
             return;
         };
         match &mut graphic.item {
-            Item::Shape { shape, width, fill } => {
+            Item::Shape {
+                shape: stored,
+                width_nm,
+                fill,
+            } => {
+                // Edited in millimetres; stored back rounded to nanometres.
+                let mut mm = stored.to_mm();
+                let mut width = width_nm.to_mm_f64();
+                let shape = &mut mm;
+                let width = &mut width;
                 kit::section(ui, "symbol-shape", "Graphic", true, None, |ui| {
                     let radius = shape_rows(ui, shape);
                     if !shape.corners_fit() {
@@ -358,6 +367,14 @@ impl PartEditor {
                         kit::choice_row(ui, "Fill", fill, &fill_options());
                     }
                 });
+                if *shape != stored.to_mm()
+                    && let Ok(s) = ShapeNm::from_mm_rounded(shape)
+                {
+                    *stored = s;
+                }
+                if let Ok(w) = Nm::from_mm_f64_rounded(*width) {
+                    *width_nm = w;
+                }
             }
             Item::Text(text) => {
                 kit::section(ui, "symbol-text", "Text", true, None, |ui| {
@@ -378,8 +395,18 @@ impl PartEditor {
                             response.request_focus();
                         }
                     }
-                    kit::pair_row(ui, "Anchor", &mut text.at, "mm", COORD);
-                    kit::number_row(ui, "Height", &mut text.height, "mm", TEXT_HEIGHT_MM);
+                    let mut at = text.at.to_mm_f64();
+                    if kit::pair_row(ui, "Anchor", &mut at, "mm", COORD)
+                        && let Ok(at) = PointNm::from_mm_f64_rounded(at)
+                    {
+                        text.at = at;
+                    }
+                    let mut height = text.height_nm.to_mm_f64();
+                    if kit::number_row(ui, "Height", &mut height, "mm", TEXT_HEIGHT_MM)
+                        && let Ok(height) = Nm::from_mm_f64_rounded(height)
+                    {
+                        text.height_nm = height;
+                    }
                     kit::number_row(ui, "Line spacing", &mut text.line_spacing, "", LINE_SPACING);
                     let rotations = [
                         (Rotation::R0, "0°".to_owned()),
@@ -441,7 +468,12 @@ impl PartEditor {
                 .find(|p| p.terminal == terminal)
         }) {
             kit::section(ui, "symbol-pin", "Pin · Graphic", true, None, |ui| {
-                kit::pair_row(ui, "Pin end", &mut pin.position, "mm", COORD);
+                let mut end = pin.position_mm();
+                if kit::pair_row(ui, "Pin end", &mut end, "mm", COORD)
+                    && let Ok(end) = PointNm::from_mm_f64_rounded(end)
+                {
+                    pin.position = end;
+                }
                 let directions = [
                     (PinDirection::Right, "Right (body to the right)".to_owned()),
                     (PinDirection::Left, "Left".into()),
@@ -449,7 +481,12 @@ impl PartEditor {
                     (PinDirection::Down, "Down".into()),
                 ];
                 kit::choice_row(ui, "Direction", &mut pin.direction, &directions);
-                kit::number_row(ui, "Length", &mut pin.length, "mm", 0.0..=MAX_PIN_LENGTH_MM);
+                let mut length = pin.length_mm();
+                if kit::number_row(ui, "Length", &mut length, "mm", 0.0..=MAX_PIN_LENGTH_MM)
+                    && let Ok(length) = Nm::from_mm_f64_rounded(length)
+                {
+                    pin.length_nm = length;
+                }
                 kit::check_row(ui, "Inverted (bubble)", &mut pin.decorations.inverted);
                 kit::check_row(ui, "Clock (wedge)", &mut pin.decorations.clock);
                 kit::check_row(ui, "Show name", &mut pin.name.visible);

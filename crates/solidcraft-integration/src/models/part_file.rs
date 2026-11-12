@@ -181,13 +181,15 @@ impl EvaluatedPart {
     }
 }
 
-/// What a package stores of an evaluation (rechecked by every build).
-pub fn derived(part: &EvaluatedPart) -> PartDerived {
-    PartDerived {
-        bounds_mm: part.bounds_mm,
+/// What a package stores of an evaluation (rechecked by every build): the
+/// bounds through the one crossing into stored nanometres.
+pub fn derived(part: &EvaluatedPart) -> Result<PartDerived> {
+    Ok(PartDerived {
+        bounds_nm: pcbcraft_core::library::model3d::bounds_nm(part.bounds_mm)
+            .map_err(|e| Error::Invalid(format!("part_file.bounds: {e}")))?,
         bodies: u32::try_from(part.bodies.len()).unwrap_or(u32::MAX),
         surfaces: part.surfaces.clone(),
-    }
+    })
 }
 
 /// Whether a build's evaluation still matches what a package stored:
@@ -200,16 +202,16 @@ pub fn matches(stored: &PartDerived, now: &PartDerived) -> bool {
         SurfaceGeometry::Cylinder(_) => None,
     };
     stored.bodies == now.bodies
-        && close(&stored.bounds_mm.concat(), &now.bounds_mm.concat())
+        && close(&stored.bounds().concat(), &now.bounds().concat())
         && stored.surfaces.len() == now.surfaces.len()
         && stored.surfaces.iter().zip(&now.surfaces).all(|(a, b)| {
             a.name == b.name
                 && match (area(a), area(b)) {
                     (Some(x), Some(y)) => {
-                        close(&x.origin, &y.origin)
+                        close(&x.origin(), &y.origin())
                             && close(&x.normal, &y.normal)
                             && close(&x.u_axis, &y.u_axis)
-                            && close(&x.size_mm, &y.size_mm)
+                            && close(&x.size(), &y.size())
                     }
                     _ => false,
                 }
@@ -588,15 +590,15 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
                     marking_problems.push(format!("{} has no direction", c.name));
                     continue;
                 };
+                let Ok(area) = MarkingArea::from_mm(arr(plane.origin), arr(n), arr(ux), [su, sv])
+                else {
+                    marking_problems.push(format!("{} lies beyond ±2 m", c.name));
+                    continue;
+                };
                 surfaces.push(AnchorInfo {
                     name: stem.clone(),
                     description: format!("the part file's marking plane {}", c.name),
-                    geometry: SurfaceGeometry::Plane(MarkingArea {
-                        origin: arr(plane.origin),
-                        normal: arr(n),
-                        u_axis: arr(ux),
-                        size_mm: [su, sv],
-                    }),
+                    geometry: SurfaceGeometry::Plane(area),
                 });
             }
             ConstructGeom::Point(p) if c.name == PIN1_POINT => pin1 = Some(arr(*p)),

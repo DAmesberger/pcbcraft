@@ -214,7 +214,7 @@ pub struct PackageValue {
 /// envelope as `pkg_L`, `pkg_W`, `pkg_H` (lengths) and the terminal count
 /// as `pkg_n`. Package parameters extend this list.
 pub fn package_values(package: &PackageDefinition) -> Vec<PackageValue> {
-    let [l, w, h] = package.envelope;
+    let [l, w, h] = package.envelope();
     let length = |name: &str, v: f64| PackageValue {
         name: ParamName(format!("{PACKAGE_PREFIX}{name}")),
         value: ParamValue::Length(v),

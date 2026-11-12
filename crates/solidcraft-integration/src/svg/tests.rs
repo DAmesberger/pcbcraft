@@ -1,7 +1,7 @@
 use super::*;
 use pcbcraft_core::geometry::segment_distance;
 use pcbcraft_core::ids::UnitId;
-use pcbcraft_core::library::graphics::Side;
+use pcbcraft_core::library::graphics::{ItemParams, ShapeNmParams, Side};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -12,14 +12,24 @@ fn options() -> Options {
     Options::new(0.25)
 }
 
-fn shapes(art: &Artwork) -> Vec<(&Shape, f64, Fill)> {
+/// The artwork's shapes in millimetres, as stored (rounded to whole
+/// nanometres).
+fn mm(art: &Artwork) -> Vec<(Shape, f64, Fill)> {
     art.items
         .iter()
         .filter_map(|item| match item {
-            Item::Shape { shape, width, fill } => Some((shape, *width, *fill)),
+            Item::Shape {
+                shape,
+                width_nm,
+                fill,
+            } => Some((shape.to_mm(), width_nm.to_mm_f64(), *fill)),
             Item::Text(_) => None,
         })
         .collect()
+}
+
+fn shapes(owned: &[(Shape, f64, Fill)]) -> Vec<(&Shape, f64, Fill)> {
+    owned.iter().map(|(s, w, f)| (s, *w, *f)).collect()
 }
 
 fn near(a: f64, b: f64) -> bool {
@@ -29,7 +39,8 @@ fn near(a: f64, b: f64) -> bool {
 #[test]
 fn the_fixture_becomes_editable_primitives() -> TestResult {
     let art = convert(MARK, &options())?;
-    let shapes = shapes(&art);
+    let owned = mm(&art);
+    let shapes = shapes(&owned);
     assert_eq!(shapes.len(), 7, "{shapes:#?}");
     // The badge: an exact rounded rectangle, 0.4 mm stroke, unfilled.
     let (Shape::Rect { a, b, radius }, width, Fill::None) = shapes[0] else {
@@ -97,7 +108,8 @@ fn beziers_flatten_within_the_tolerance() -> TestResult {
                 ..options()
             },
         )?;
-        let [(Shape::Polyline { points, .. }, _, _)] = shapes(&art)[..] else {
+        let owned = mm(&art);
+        let [(Shape::Polyline { points, .. }, _, _)] = shapes(&owned)[..] else {
             return Err("one polyline".into());
         };
         // The artwork is centred; undo that with the curve's start.
@@ -130,6 +142,7 @@ fn circular_arcs_stay_arcs_and_units_set_the_scale() -> TestResult {
     let svg = r#"<svg width="40mm" height="20mm" viewBox="0 0 40 20">
         <path d="M0 10 A 10 10 0 0 1 20 10" fill="none" stroke="black"/></svg>"#;
     let art = convert(svg, &options())?;
+    let owned = mm(&art);
     let [
         (
             Shape::Arc {
@@ -138,7 +151,7 @@ fn circular_arcs_stay_arcs_and_units_set_the_scale() -> TestResult {
             width,
             Fill::None,
         ),
-    ] = shapes(&art)[..]
+    ] = shapes(&owned)[..]
     else {
         return Err(format!("one arc: {:?}", art.items).into());
     };
@@ -151,14 +164,16 @@ fn circular_arcs_stay_arcs_and_units_set_the_scale() -> TestResult {
             ..options()
         },
     )?;
-    let [(Shape::Arc { radius, .. }, width, _)] = shapes(&art)[..] else {
+    let owned = mm(&art);
+    let [(Shape::Arc { radius, .. }, width, _)] = shapes(&owned)[..] else {
         return Err("one arc".into());
     };
     assert!(near(*radius, 5.0) && near(width, 0.5));
     // Without units, user units are CSS pixels: 96 per inch.
     let px = r#"<svg><circle cx="0" cy="0" r="96" fill="none" stroke="black"/></svg>"#;
     let art = convert(px, &options())?;
-    let [(Shape::Circle { radius, .. }, _, _)] = shapes(&art)[..] else {
+    let owned = mm(&art);
+    let [(Shape::Circle { radius, .. }, _, _)] = shapes(&owned)[..] else {
         return Err("one circle".into());
     };
     assert!(near(*radius, 25.4));
@@ -198,7 +213,7 @@ fn malformed_and_oversized_input_is_refused() -> TestResult {
         "tolerance",
     )?;
     let huge = r#"<svg width="1000mm" height="1000mm" viewBox="0 0 1 1"><circle cx="0.5" cy="0.5" r="0.5"/></svg>"#;
-    refused(huge, &Options { scale: 1000.0, ..o }, "10000 mm")?;
+    refused(huge, &Options { scale: 1000.0, ..o }, "±2 m")?;
     Ok(())
 }
 
@@ -210,8 +225,8 @@ fn edits_place_the_artwork_on_its_target() -> TestResult {
     assert_eq!(edits.len(), art.items.len());
     let Some(GraphicEdit::Add {
         item:
-            Item::Shape {
-                shape: Shape::Circle { center, .. },
+            ItemParams::Shape {
+                shape: ShapeNmParams::Circle { center, .. },
                 ..
             },
         ..
@@ -220,7 +235,10 @@ fn edits_place_the_artwork_on_its_target() -> TestResult {
         return Err("the dot is added second".into());
     };
     // The artwork spans x 0.8–29.2 mm (centre 15); the dot is at 7 mm.
-    assert!(near(center[0], 5.0 + 7.0 - 15.0), "{center:?}");
+    assert!(
+        near(center.0.to_mm_f64()[0], 5.0 + 7.0 - 15.0),
+        "{center:?}"
+    );
     let courtyard = GraphicTarget::Footprint {
         layer: DrawingLayer::Courtyard,
         side: Side::Component,
@@ -241,7 +259,8 @@ fn presentation_inherits_and_hidden_content_is_skipped() -> TestResult {
         <use href="#c"/>
     </svg>"##;
     let art = convert(svg, &options())?;
-    let [(Shape::Circle { radius, .. }, width, Fill::None)] = shapes(&art)[..] else {
+    let owned = mm(&art);
+    let [(Shape::Circle { radius, .. }, width, Fill::None)] = shapes(&owned)[..] else {
         return Err(format!("one circle: {:?}", art.items).into());
     };
     assert!(near(*radius, 2.0) && near(width, 0.5));

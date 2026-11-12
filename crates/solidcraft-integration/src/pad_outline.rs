@@ -10,9 +10,12 @@ use pcbcraft_core::library::{
     Hole, HoleShape, Outline, Pad, PadDefaults, PadShape, Segment, offset_polygon,
 };
 
-/// Plated barrel wall: copper plated onto a drilled hole's wall (an
-/// estimated 25 µm prototype default; IPC-6012 class 2 asks for 20 µm
-/// average). A hole's diameter is the drill; the barrel fills it inward.
+/// Plated barrel wall: copper plated onto a drilled hole's wall, 25 µm,
+/// IPC-6012's least average hole-wall copper for class 3 (class 2 asks
+/// for 20 µm). Neither the stackup nor the fab profile records a plating
+/// thickness, so the 3D view draws this one. A hole's size is its finished
+/// size (the open bore); the barrel grows outward from it, so the hole
+/// is drilled larger by the wall on every side.
 pub const PLATING_MM: f64 = 0.025;
 /// Chord tolerance of flattened display outlines (the core's display
 /// tolerance for pad arcs).
@@ -324,10 +327,20 @@ pub fn hole_contour(hole: &Hole, grow: f64) -> Option<Contour> {
     Some(contour.translated(hole.offset))
 }
 
-/// The finished (plated) bore of a hole: the drill less the barrel wall on
-/// a plated hole.
+/// The finished bore of a hole: its stated (finished) size.
 pub fn bore(hole: &Hole) -> Option<Contour> {
-    hole_contour(hole, if hole.plated { -PLATING_MM } else { 0.0 })
+    hole_contour(hole, 0.0)
+}
+
+/// The drilled wall of a hole: a plated hole is drilled larger than its
+/// finished size by the barrel wall, an unplated one at its size.
+pub fn drilled(hole: &Hole) -> Option<Contour> {
+    hole_contour(hole, if hole.plated { PLATING_MM } else { 0.0 })
+}
+
+/// The drilled radius of a plated hole of `finished` diameter (a via's).
+pub fn plated_drill_radius(finished: f64) -> f64 {
+    finished / 2.0 + PLATING_MM
 }
 
 /// The solder-mask opening of a pad in the pad frame, or `None` when the
@@ -575,7 +588,11 @@ mod tests {
         };
         assert!(matches!(
             bore(&round),
-            Some(Contour::Circle { radius, .. }) if (radius - (0.5 - PLATING_MM)).abs() < 1e-12
+            Some(Contour::Circle { radius, .. }) if (radius - 0.5).abs() < 1e-12
+        ));
+        assert!(matches!(
+            drilled(&round),
+            Some(Contour::Circle { radius, .. }) if (radius - (0.5 + PLATING_MM)).abs() < 1e-12
         ));
         Ok(())
     }

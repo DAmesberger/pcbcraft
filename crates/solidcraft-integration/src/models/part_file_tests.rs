@@ -16,8 +16,12 @@ type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 const WROOM3: &str = "esp32-s31-wroom-3";
 
 fn wroom3_package() -> PackageDefinition {
-    let form: PackageForm =
-        serde_json::from_str(include_str!("../../tests/template_spike_wroom3.json")).unwrap();
+    // The fixture is the module datasheet's millimetres: the wire form.
+    let form: PackageForm = serde_json::from_str::<
+        pcbcraft_core::library::package_form::PackageFormParams,
+    >(include_str!("../../tests/template_spike_wroom3.json"))
+    .unwrap()
+    .into();
     PackageDefinition {
         next_local: 100,
         terminals: (1..=99)
@@ -143,10 +147,10 @@ fn the_wroom3_marking_planes_are_the_module_anchors() -> Fallible {
         };
         let close = |p: &[f64], q: &[f64]| p.iter().zip(q).all(|(u, v)| (u - v).abs() < 1e-9);
         assert!(
-            close(&x.origin, &y.origin)
+            close(&x.origin(), &y.origin())
                 && close(&x.normal, &y.normal)
                 && close(&x.u_axis, &y.u_axis)
-                && close(&x.size_mm, &y.size_mm),
+                && close(&x.size(), &y.size()),
             "{}: form {x:?}, part {y:?}",
             a.name
         );
@@ -155,12 +159,12 @@ fn the_wroom3_marking_planes_are_the_module_anchors() -> Fallible {
     let PackageForm::Module(m) = &package.form else {
         panic!("a module");
     };
-    let derived = derived(&part);
+    let derived = derived(&part)?;
     let file = pcbcraft_core::library::package_model::PartFileModel {
         derived,
         ..Default::default()
     };
-    assert_eq!(file.default_area(), Some(m.can_size));
+    assert_eq!(file.default_area(), Some(m.can_size()));
     Ok(())
 }
 
@@ -492,10 +496,10 @@ fn the_mechanical_built_ins_pass_their_check_and_follow_their_values() -> Fallib
         panic!("a planar marking-top");
     };
     assert!(
-        close(area.origin[2], 4.0),
+        close(area.origin()[2], 4.0),
         "marking-top on the top: {area:?}"
     );
-    assert!(close(area.size_mm[0], 3.0), "0.6 × outer_d: {area:?}");
+    assert!(close(area.size()[0], 3.0), "0.6 × outer_d: {area:?}");
     // The spacer's diameter. A round body's outline bounds hold the
     // circle but are not tight (they come from its edges' outline), so the
     // check is that the box holds 8 mm and scales with the diameter.

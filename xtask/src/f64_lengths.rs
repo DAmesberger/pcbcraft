@@ -184,7 +184,7 @@ pub fn check() -> Result<()> {
     if violations.is_empty() {
         let count = |slice| ALLOWED.iter().filter(|(_, s)| *s == slice).count();
         println!(
-            "f64-lengths: {} f64 length fields left (U1 {}, U2 {}, U3 {}); {} f64 fields are not lengths",
+            "f64-lengths: {} f64 length fields left (U1 {}, U2 {}, U3 {}); {} f64 fields are exempt (not lengths, or Solidcraft parameters)",
             ALLOWED.len(),
             count(Slice::U1),
             count(Slice::U2),
@@ -196,11 +196,133 @@ pub fn check() -> Result<()> {
     Err(format!("f64 length fields:\n  {}", violations.join("\n  ")).into())
 }
 
-/// Serialized f64 fields that are not lengths or rotations, with why.
+/// Why a Solidcraft parameter stays f64 millimetres (founder decision,
+/// 10 November 2026).
+const SOLIDCRAFT: &str = "Solidcraft parameter: Solidcraft computes in f64 mm; converted only at the pcbcraft-solidcraft boundary";
+
+/// Why a computed value may stay f64 millimetres.
+const COMPUTED: &str =
+    "a reply value, computed and never stored: replies carry millimetres (design §2.2)";
+
+/// Why the computing shape stays f64 millimetres.
+const COMPUTING_SHAPE: &str = "the computing shape (flattening, fillets, bounds, hit tests, transforms) and reply value; libraries store library::ShapeNm (design §2.1, §2.2)";
+
+/// Serialized f64 fields that are not stored lengths, permanently, with
+/// why: values that are not lengths or rotations, and Solidcraft
+/// parameters.
 const NOT_LENGTHS: &[(&str, &str)] = &[
+    ("geometry.rs Bounds.max", COMPUTED),
+    ("geometry.rs Bounds.min", COMPUTED),
+    ("geometry.rs Shape::Arc.center", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Arc.radius", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Arc.start_deg", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Arc.sweep_deg", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Circle.center", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Circle.radius", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Line.a", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Line.b", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Polygon.points", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Polygon.radii", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Polyline.points", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Polyline.radii", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Rect.a", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Rect.b", COMPUTING_SHAPE),
+    ("geometry.rs Shape::Rect.radius", COMPUTING_SHAPE),
+    ("geometry.rs Transform2.rotation_deg", COMPUTED),
+    ("geometry.rs Transform2.translate", COMPUTED),
     (
         "library/footprint.rs PadShape::RoundRect.radius_ratio",
         "a ratio",
+    ),
+    ("library/footprint_source.rs DimValue::Fixed.0", SOLIDCRAFT),
+    (
+        "library/footprint_source.rs FootprintEdit::AddPad.at",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs ParamValue::Angle.0",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs ParamValue::Length.0",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddArc.center",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddArc.end",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddArc.start",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddCircle.center",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddCircle.radius",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddLine.a",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddLine.b",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddPoint.at",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddPolyline.points",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddRect.a",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::AddRect.b",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::Drag.to",
+        SOLIDCRAFT,
+    ),
+    (
+        "library/footprint_source.rs SketchEdit::Move.delta",
+        SOLIDCRAFT,
+    ),
+    ("library/graphics.rs PlacedText.at", COMPUTED),
+    ("library/graphics.rs PlacedText.height", COMPUTED),
+    (
+        "library/graphics.rs PlacedText.line_spacing",
+        "a ratio (cap heights)",
+    ),
+    ("library/graphics.rs PlacedText.rotation_deg", COMPUTED),
+    (
+        "library/graphics.rs Text.line_spacing",
+        "a ratio (cap heights)",
+    ),
+    ("library/marking.rs LaidElement::Artwork.origin", COMPUTED),
+    ("library/marking.rs LaidElement::Artwork.size_mm", COMPUTED),
+    ("library/marking.rs LaidElement::Bands.pitch_mm", COMPUTED),
+    ("library/marking.rs LaidElement::Matrix.module_mm", COMPUTED),
+    ("library/marking.rs LaidElement::Matrix.origin", COMPUTED),
+    ("library/marking.rs LaidElement::Polarity.origin", COMPUTED),
+    ("library/marking.rs LaidElement::Polarity.size_mm", COMPUTED),
+    ("library/marking.rs LaidText.height_mm", COMPUTED),
+    ("library/marking.rs LaidText.origin", COMPUTED),
+    ("library/marking/params.rs PlacementParams.scale", "a ratio"),
+    (
+        "library/marking/params.rs WrapParams.wrap_deg",
+        "the wire form of Wrap.wrap_mdeg: a sweep of up to a full turn in degrees, which units::Degrees cannot carry (it reduces 360° to 0)",
     ),
     (
         "library/marking/surface.rs CylinderArea.axis",
@@ -240,6 +362,14 @@ const NOT_LENGTHS: &[(&str, &str)] = &[
         "the scale of a foreign file's unit, not a document length",
     ),
     (
+        "library/model3d.rs SourceFrameParams.unit_mm",
+        "the scale of a foreign file's unit, not a document length",
+    ),
+    ("library/package_fit.rs LeadFit.rms_mm", COMPUTED),
+    ("library/package_fit.rs LeadResidual.error_mm", COMPUTED),
+    ("library/package_model.rs PartValue::Deg.0", SOLIDCRAFT),
+    ("library/package_model.rs PartValue::Mm.0", SOLIDCRAFT),
+    (
         "library/package_model.rs PartValue::Number.0",
         "a dimensionless parameter value",
     ),
@@ -250,25 +380,6 @@ const NOT_LENGTHS: &[(&str, &str)] = &[
 /// migration, by the slice that converts them (to `Nm`, `PointNm`, `Angle`
 /// or, for values that feed expressions, an exact decimal). Only shrinks.
 const ALLOWED: &[(&str, Slice)] = &[
-    ("geometry.rs Bounds.max", Slice::U2),
-    ("geometry.rs Bounds.min", Slice::U2),
-    ("geometry.rs Shape::Arc.center", Slice::U2),
-    ("geometry.rs Shape::Arc.radius", Slice::U2),
-    ("geometry.rs Shape::Arc.start_deg", Slice::U2),
-    ("geometry.rs Shape::Arc.sweep_deg", Slice::U2),
-    ("geometry.rs Shape::Circle.center", Slice::U2),
-    ("geometry.rs Shape::Circle.radius", Slice::U2),
-    ("geometry.rs Shape::Line.a", Slice::U2),
-    ("geometry.rs Shape::Line.b", Slice::U2),
-    ("geometry.rs Shape::Polygon.points", Slice::U2),
-    ("geometry.rs Shape::Polygon.radii", Slice::U2),
-    ("geometry.rs Shape::Polyline.points", Slice::U2),
-    ("geometry.rs Shape::Polyline.radii", Slice::U2),
-    ("geometry.rs Shape::Rect.a", Slice::U2),
-    ("geometry.rs Shape::Rect.b", Slice::U2),
-    ("geometry.rs Shape::Rect.radius", Slice::U2),
-    ("geometry.rs Transform2.rotation_deg", Slice::U2),
-    ("geometry.rs Transform2.translate", Slice::U2),
     ("library/footprint.rs Datum.offset", Slice::U2),
     ("library/footprint.rs Datum.rotation_deg", Slice::U2),
     ("library/footprint.rs Hole.offset", Slice::U2),
@@ -277,7 +388,7 @@ const ALLOWED: &[(&str, Slice)] = &[
     ("library/footprint.rs HoleShape::Slot.length", Slice::U2),
     ("library/footprint.rs HoleShape::Slot.width", Slice::U2),
     ("library/footprint.rs MaskRule::Expansion.0", Slice::U2),
-    ("library/footprint.rs Outline.start", Slice::U2),
+    ("library/footprint.rs Outline.start", Slice::U3),
     ("library/footprint.rs Pad.position", Slice::U2),
     ("library/footprint.rs Pad.rotation_deg", Slice::U2),
     (
@@ -299,124 +410,9 @@ const ALLOWED: &[(&str, Slice)] = &[
     ("library/footprint.rs PadVia.at", Slice::U2),
     ("library/footprint.rs PadVia.drill", Slice::U2),
     ("library/footprint.rs PasteRule::Reduction.0", Slice::U2),
-    ("library/footprint.rs Segment::Arc.bulge", Slice::U2),
-    ("library/footprint.rs Segment::Arc.to", Slice::U2),
-    ("library/footprint.rs Segment::Line.to", Slice::U2),
-    ("library/footprint_source.rs DimValue::Fixed.0", Slice::U2),
-    (
-        "library/footprint_source.rs FootprintEdit::AddPad.at",
-        Slice::U2,
-    ),
-    ("library/footprint_source.rs ParamValue::Angle.0", Slice::U2),
-    (
-        "library/footprint_source.rs ParamValue::Length.0",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddArc.center",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddArc.end",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddArc.start",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddCircle.center",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddCircle.radius",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddLine.a",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddLine.b",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddPoint.at",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddPolyline.points",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddRect.a",
-        Slice::U2,
-    ),
-    (
-        "library/footprint_source.rs SketchEdit::AddRect.b",
-        Slice::U2,
-    ),
-    ("library/footprint_source.rs SketchEdit::Drag.to", Slice::U2),
-    (
-        "library/footprint_source.rs SketchEdit::Move.delta",
-        Slice::U2,
-    ),
-    ("library/graphics.rs Grid.footprint_mm", Slice::U2),
-    ("library/graphics.rs Grid.symbol_mm", Slice::U2),
-    ("library/graphics.rs Item::Shape.width", Slice::U2),
-    ("library/graphics.rs Pin.length", Slice::U2),
-    ("library/graphics.rs Pin.position", Slice::U2),
-    ("library/graphics.rs PinText.offset", Slice::U2),
-    ("library/graphics.rs PlacedText.at", Slice::U2),
-    ("library/graphics.rs PlacedText.height", Slice::U2),
-    ("library/graphics.rs PlacedText.line_spacing", Slice::U2),
-    ("library/graphics.rs PlacedText.rotation_deg", Slice::U2),
-    ("library/graphics.rs Text.at", Slice::U2),
-    ("library/graphics.rs Text.height", Slice::U2),
-    ("library/graphics.rs Text.line_spacing", Slice::U2),
-    (
-        "library/graphics/edit.rs GraphicEdit::SetPinTextHeight.height",
-        Slice::U2,
-    ),
-    (
-        "library/graphics/edit.rs GraphicEdit::Translate.delta",
-        Slice::U2,
-    ),
-    ("library/marking.rs AreaChoice::Explicit.centre", Slice::U2),
-    ("library/marking.rs AreaChoice::Explicit.size_mm", Slice::U2),
-    ("library/marking.rs LaidElement::Artwork.origin", Slice::U2),
-    ("library/marking.rs LaidElement::Artwork.size_mm", Slice::U2),
-    ("library/marking.rs LaidElement::Bands.pitch_mm", Slice::U2),
-    (
-        "library/marking.rs LaidElement::Matrix.module_mm",
-        Slice::U2,
-    ),
-    ("library/marking.rs LaidElement::Matrix.origin", Slice::U2),
-    ("library/marking.rs LaidElement::Polarity.origin", Slice::U2),
-    (
-        "library/marking.rs LaidElement::Polarity.size_mm",
-        Slice::U2,
-    ),
-    ("library/marking.rs LaidText.height_mm", Slice::U2),
-    ("library/marking.rs LaidText.origin", Slice::U2),
-    ("library/marking.rs MarkingItem::Artwork.size_mm", Slice::U2),
-    ("library/marking.rs MarkingItem::Code2d.size_mm", Slice::U2),
-    ("library/marking.rs MarkingItem::Text.height_mm", Slice::U2),
-    (
-        "library/marking.rs MarkingSpec.min_text_height_mm",
-        Slice::U2,
-    ),
-    ("library/marking/surface.rs CylinderArea.base", Slice::U2),
-    ("library/marking/surface.rs CylinderArea.length", Slice::U2),
-    ("library/marking/surface.rs CylinderArea.radius", Slice::U2),
-    ("library/marking/surface.rs Placement.offset_mm", Slice::U2),
-    (
-        "library/marking/surface.rs Placement.rotation_deg",
-        Slice::U2,
-    ),
-    ("library/marking/surface.rs Wrap.along_mm", Slice::U2),
-    ("library/marking/surface.rs Wrap.seam_deg", Slice::U2),
-    ("library/marking/surface.rs Wrap.wrap_deg", Slice::U2),
+    ("library/footprint.rs Segment::Arc.bulge", Slice::U3),
+    ("library/footprint.rs Segment::Arc.to", Slice::U3),
+    ("library/footprint.rs Segment::Line.to", Slice::U3),
     (
         "library/mechanical.rs LandShape::Circle.diameter",
         Slice::U2,
@@ -429,308 +425,6 @@ const ALLOWED: &[(&str, Slice)] = &[
     ),
     ("library/mechanical.rs LandShape::Rect.size", Slice::U2),
     ("library/mechanical.rs MechanicalLand.at", Slice::U2),
-    ("library/model3d.rs LeadTag.contact", Slice::U2),
-    ("library/model3d.rs MarkingArea.origin", Slice::U2),
-    ("library/model3d.rs MarkingArea.size_mm", Slice::U2),
-    ("library/model3d.rs ModelDefinition.bounds_mm", Slice::U2),
-    ("library/model3d.rs ModelHints.pitch_mm", Slice::U2),
-    ("library/model3d.rs SourceFrame.origin_offset", Slice::U2),
-    ("library/package.rs PackageDefinition.envelope", Slice::U2),
-    ("library/package_fit.rs LeadFit.rms_mm", Slice::U2),
-    ("library/package_fit.rs LeadPair.lead", Slice::U2),
-    ("library/package_fit.rs LeadPair.pad_centre", Slice::U2),
-    ("library/package_fit.rs LeadResidual.error_mm", Slice::U2),
-    ("library/package_form.rs ChipForm.height", Slice::U2),
-    ("library/package_form.rs ChipForm.length", Slice::U2),
-    ("library/package_form.rs ChipForm.termination", Slice::U2),
-    ("library/package_form.rs ChipForm.width", Slice::U2),
-    (
-        "library/package_form.rs GullWingForm.body_height",
-        Slice::U2,
-    ),
-    (
-        "library/package_form.rs GullWingForm.body_length",
-        Slice::U2,
-    ),
-    ("library/package_form.rs GullWingForm.body_width", Slice::U2),
-    (
-        "library/package_form.rs GullWingForm.foot_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form.rs GullWingForm.lead_thickness",
-        Slice::U2,
-    ),
-    ("library/package_form.rs GullWingForm.lead_width", Slice::U2),
-    ("library/package_form.rs GullWingForm.pitch", Slice::U2),
-    ("library/package_form.rs GullWingForm.span", Slice::U2),
-    ("library/package_form.rs GullWingForm.standoff", Slice::U2),
-    ("library/package_form.rs HeaderForm.body_height", Slice::U2),
-    ("library/package_form.rs HeaderForm.pin_above", Slice::U2),
-    ("library/package_form.rs HeaderForm.pin_below", Slice::U2),
-    ("library/package_form.rs HeaderForm.pin_side", Slice::U2),
-    ("library/package_form.rs HeaderForm.pitch", Slice::U2),
-    ("library/package_form.rs HeaderForm.row_pitch", Slice::U2),
-    ("library/package_form.rs NoLeadForm.body_height", Slice::U2),
-    ("library/package_form.rs NoLeadForm.body_length", Slice::U2),
-    ("library/package_form.rs NoLeadForm.body_width", Slice::U2),
-    ("library/package_form.rs NoLeadForm.exposed_pad", Slice::U2),
-    ("library/package_form.rs NoLeadForm.pitch", Slice::U2),
-    (
-        "library/package_form.rs NoLeadForm.terminal_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form.rs NoLeadForm.terminal_width",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/grid.rs GridForm.body_height",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/grid.rs GridForm.body_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/grid.rs GridForm.body_width",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/grid.rs GridForm.contact_diameter",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/grid.rs GridForm.contact_height",
-        Slice::U2,
-    ),
-    ("library/package_form/grid.rs GridForm.pitch", Slice::U2),
-    (
-        "library/package_form/module.rs AntennaKeepout.beyond",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs GroundPads.centre",
-        Slice::U2,
-    ),
-    ("library/package_form/module.rs GroundPads.pitch", Slice::U2),
-    (
-        "library/package_form/module.rs GroundPads.rotation_deg",
-        Slice::U2,
-    ),
-    ("library/package_form/module.rs GroundPads.size", Slice::U2),
-    (
-        "library/package_form/module.rs ModuleForm.antenna_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs ModuleForm.can_centre",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs ModuleForm.can_size",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs ModuleForm.castellation",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs ModuleForm.height",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs ModuleForm.land_extend",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs ModuleForm.land_width",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs ModuleForm.length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs ModuleForm.pad_size",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/module.rs ModuleForm.pcb_thickness",
-        Slice::U2,
-    ),
-    ("library/package_form/module.rs ModuleForm.pitch", Slice::U2),
-    ("library/package_form/module.rs ModuleForm.width", Slice::U2),
-    ("library/package_form/module.rs PadRow.first", Slice::U2),
-    ("library/package_form/module.rs SinglePad.centre", Slice::U2),
-    ("library/package_form/module.rs SinglePad.size", Slice::U2),
-    (
-        "library/package_form/molded.rs MoldedForm.body_height",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/molded.rs MoldedForm.body_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/molded.rs MoldedForm.body_width",
-        Slice::U2,
-    ),
-    ("library/package_form/molded.rs MoldedForm.span", Slice::U2),
-    (
-        "library/package_form/molded.rs MoldedForm.terminal_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/molded.rs MoldedForm.terminal_width",
-        Slice::U2,
-    ),
-    ("library/package_form/tabbed.rs Tab.flange", Slice::U2),
-    ("library/package_form/tabbed.rs Tab.length", Slice::U2),
-    ("library/package_form/tabbed.rs Tab.width", Slice::U2),
-    (
-        "library/package_form/tabbed.rs TabbedForm.body_height",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tabbed.rs TabbedForm.body_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tabbed.rs TabbedForm.body_width",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tabbed.rs TabbedForm.foot_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tabbed.rs TabbedForm.lead_thickness",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tabbed.rs TabbedForm.lead_width",
-        Slice::U2,
-    ),
-    ("library/package_form/tabbed.rs TabbedForm.pitch", Slice::U2),
-    ("library/package_form/tabbed.rs TabbedForm.span", Slice::U2),
-    (
-        "library/package_form/tabbed.rs TabbedForm.standoff",
-        Slice::U2,
-    ),
-    ("library/package_form/tabbed.rs TabbedLands.size", Slice::U2),
-    ("library/package_form/tabbed.rs TabbedLands.span", Slice::U2),
-    (
-        "library/package_form/tabbed.rs TabbedLands.tab_size",
-        Slice::U2,
-    ),
-    ("library/package_form/tht.rs ThtForm.bend_radius", Slice::U2),
-    ("library/package_form/tht.rs ThtForm.body_pitch", Slice::U2),
-    ("library/package_form/tht.rs ThtForm.lead_below", Slice::U2),
-    (
-        "library/package_form/tht.rs ThtForm.lead_diameter",
-        Slice::U2,
-    ),
-    ("library/package_form/tht.rs ThtForm.lead_pitch", Slice::U2),
-    ("library/package_form/tht.rs ThtForm.standoff", Slice::U2),
-    (
-        "library/package_form/tht.rs ThtKind::Axial.body_diameter",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::Axial.body_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::Dip.body_height",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::Dip.body_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::Dip.body_width",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::Dip.row_pitch",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::Radial.body_diameter",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::Radial.body_height",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::To.body_height",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::To.body_length",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/tht.rs ThtKind::To.body_width",
-        Slice::U2,
-    ),
-    ("library/package_form/usb_c.rs ShellTab.land", Slice::U2),
-    ("library/package_form/usb_c.rs ShellTab.slot", Slice::U2),
-    ("library/package_form/usb_c.rs ShellTab.y", Slice::U2),
-    ("library/package_form/usb_c.rs UsbCForm.depth", Slice::U2),
-    ("library/package_form/usb_c.rs UsbCForm.gnd_x", Slice::U2),
-    ("library/package_form/usb_c.rs UsbCForm.height", Slice::U2),
-    (
-        "library/package_form/usb_c.rs UsbCForm.land_length",
-        Slice::U2,
-    ),
-    ("library/package_form/usb_c.rs UsbCForm.land_y", Slice::U2),
-    ("library/package_form/usb_c.rs UsbCForm.opening", Slice::U2),
-    (
-        "library/package_form/usb_c.rs UsbCForm.opening_z",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/usb_c.rs UsbCForm.peg_diameter",
-        Slice::U2,
-    ),
-    ("library/package_form/usb_c.rs UsbCForm.peg_hole", Slice::U2),
-    ("library/package_form/usb_c.rs UsbCForm.peg_x", Slice::U2),
-    ("library/package_form/usb_c.rs UsbCForm.peg_y", Slice::U2),
-    ("library/package_form/usb_c.rs UsbCForm.pitch", Slice::U2),
-    (
-        "library/package_form/usb_c.rs UsbCForm.power_land_width",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/usb_c.rs UsbCForm.shell_thickness",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/usb_c.rs UsbCForm.signal_land_width",
-        Slice::U2,
-    ),
-    (
-        "library/package_form/usb_c.rs UsbCForm.stake_length",
-        Slice::U2,
-    ),
-    ("library/package_form/usb_c.rs UsbCForm.tab_x", Slice::U2),
-    ("library/package_form/usb_c.rs UsbCForm.vbus_x", Slice::U2),
-    ("library/package_form/usb_c.rs UsbCForm.width", Slice::U2),
-    (
-        "library/package_model.rs ModelPlacement.rotation_deg",
-        Slice::U2,
-    ),
-    (
-        "library/package_model.rs ModelPlacement.translation",
-        Slice::U2,
-    ),
-    ("library/package_model.rs PartDerived.bounds_mm", Slice::U2),
-    ("library/package_model.rs PartValue::Deg.0", Slice::U2),
-    ("library/package_model.rs PartValue::Mm.0", Slice::U2),
     ("library/pad_table.rs HoleRow.at", Slice::U2),
     ("library/pad_table.rs HoleRow.diameter", Slice::U2),
     ("library/pad_table.rs PadRow.at", Slice::U2),
@@ -744,10 +438,6 @@ const ALLOWED: &[(&str, Slice)] = &[
     ("library/pad_table.rs SlotRow.at", Slice::U2),
     ("library/pad_table.rs SlotRow.land", Slice::U2),
     ("library/pad_table.rs SlotRow.slot", Slice::U2),
-    (
-        "library/symbol.rs SymbolDefinition.pin_text_height",
-        Slice::U2,
-    ),
     (
         "library/templates/catalog.rs LandValues.exposed_pad",
         Slice::U2,

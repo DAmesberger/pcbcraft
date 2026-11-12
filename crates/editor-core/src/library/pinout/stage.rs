@@ -904,7 +904,7 @@ fn provenance(document: &PinoutDocument) -> String {
 }
 
 /// The generated block symbol, wide enough for the pin names.
-fn block_symbol(component: DefinitionId, terminals: &[Terminal]) -> SymbolDefinition {
+fn block_symbol(component: DefinitionId, terminals: &[Terminal]) -> Result<SymbolDefinition> {
     let named: Vec<(TerminalId, &str)> =
         terminals.iter().map(|t| (t.id, t.name.as_str())).collect();
     crate::library::samples::named_block_symbol(component, &named)
@@ -1035,7 +1035,7 @@ pub fn stage(
                     id: symbol_id,
                     create: true,
                     meta: meta(format!("{name} symbol")),
-                    definition: Definition::Symbol(block_symbol(id, &component.terminals)),
+                    definition: Definition::Symbol(block_symbol(id, &component.terminals)?),
                 },
             ];
             // Rows map to terminals in document order; an excluded row has
@@ -1077,7 +1077,7 @@ pub fn stage(
                 }
                 let next_local = u32::try_from(terminals.len() + 1)
                     .map_err(|_| Error::Limit("too many package terminals".into()))?;
-                let envelope = form.envelope().unwrap_or_default();
+                let envelope_nm = form.envelope_nm()?.unwrap_or_default();
                 staged.push(StagedDraft {
                     id: *package_id,
                     create: true,
@@ -1086,7 +1086,7 @@ pub fn stage(
                         next_local,
                         terminals,
                         form,
-                        envelope,
+                        envelope_nm,
                         ..PackageDefinition::default()
                     }),
                 });

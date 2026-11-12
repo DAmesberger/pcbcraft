@@ -46,11 +46,13 @@ fn four_sides(engine: &mut Engine) -> Result<Fixture> {
         physical: true,
     };
     let f = draft(engine, &spec)?;
+    let body = body_rect(GraphicId(0), BODY)?;
     with(engine, f.symbol, symbol_body, |s| {
         let id = GraphicId(s.next_local);
         s.next_local += 1;
         if let Some(unit) = s.units.first_mut() {
-            unit.graphics.push(body_rect(id, BODY));
+            unit.graphics
+                .push(crate::library::Graphic { id, ..body.clone() });
         }
     })?;
     publish(engine, f.all())?;
@@ -475,11 +477,13 @@ fn two_sides(engine: &mut Engine) -> Result<Fixture> {
         physical: true,
     };
     let f = draft(engine, &spec)?;
+    let body = body_rect(GraphicId(0), BODY)?;
     with(engine, f.symbol, symbol_body, |s| {
         let id = GraphicId(s.next_local);
         s.next_local += 1;
         if let Some(unit) = s.units.first_mut() {
-            unit.graphics.push(body_rect(id, BODY));
+            unit.graphics
+                .push(crate::library::Graphic { id, ..body.clone() });
         }
     })?;
     publish(engine, f.all())?;

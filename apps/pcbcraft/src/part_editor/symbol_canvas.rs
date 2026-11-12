@@ -18,6 +18,7 @@ use pcbcraft_core::library::graphics::{
 };
 use pcbcraft_core::library::{Graphic, Item, Pin, PinDirection, SymbolHit, TextMetric, Unit};
 use pcbcraft_core::schematic;
+use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{Engine, GraphicId, Point, TerminalId, UnitId};
 use solidcraft_theme::Tokens;
 use solidcraft_ui_egui::ui_kit::type_face;
@@ -233,6 +234,9 @@ impl PartEditor {
         }
     }
 
+    /// Why a gesture beyond the ±2 m a drawing stores adds nothing.
+    const BEYOND_RANGE: &str = "That is beyond the ±2 m a drawing holds";
+
     /// Add what a finished tool gesture produced to the current unit.
     fn place(&mut self, placed: Placed, engine: &Engine) {
         let Some(index) = self.unit_index() else {
@@ -257,10 +261,21 @@ impl PartEditor {
                 } else {
                     Fill::None
                 };
-                Item::Shape { shape, width, fill }
+                let (Ok(shape), Ok(width_nm)) = (
+                    graphics::ShapeNm::from_mm_rounded(&shape),
+                    Nm::from_mm_f64_rounded(width),
+                ) else {
+                    self.tell(Level::Error, Self::BEYOND_RANGE);
+                    return;
+                };
+                Item::Shape {
+                    shape,
+                    width_nm,
+                    fill,
+                }
             }
             Placed::Text(at) => {
-                graphics::text(
+                let Ok(text) = graphics::text(
                     GraphicId(0),
                     TextContent::Literal("Text".into()),
                     at,
@@ -268,11 +283,14 @@ impl PartEditor {
                         h: HAlign::Left,
                         v: VAlign::Middle,
                     },
-                )
-                .item
+                ) else {
+                    self.tell(Level::Error, Self::BEYOND_RANGE);
+                    return;
+                };
+                text.item
             }
             Placed::Field(at) => {
-                graphics::text(
+                let Ok(text) = graphics::text(
                     GraphicId(0),
                     field,
                     at,
@@ -280,8 +298,11 @@ impl PartEditor {
                         h: HAlign::Left,
                         v: VAlign::Middle,
                     },
-                )
-                .item
+                ) else {
+                    self.tell(Level::Error, Self::BEYOND_RANGE);
+                    return;
+                };
+                text.item
             }
             Placed::Pin(at) => {
                 self.place_pin(index, at);
@@ -337,18 +358,18 @@ impl PartEditor {
             .graphics
             .iter()
             .filter_map(|g| match &g.item {
-                Item::Shape { shape, .. } => Some(shape.bounds(0.0)),
+                Item::Shape { shape, .. } => Some(shape.to_mm().bounds(0.0)),
                 Item::Text(_) => None,
             })
             .reduce(Bounds::union);
         let pin = match body {
             Some(body) if !body.contains(at) => graphics::pin_toward(terminal, at, body),
-            _ => Pin::new(
-                terminal,
-                at,
-                PinDirection::Right,
-                graphics::SYMBOL_MODULE_MM,
-            ),
+            _ => PointNm::from_mm_f64_rounded(at)
+                .map(|at| Pin::new(terminal, at, PinDirection::Right, graphics::SYMBOL_MODULE)),
+        };
+        let Ok(pin) = pin else {
+            self.tell(Level::Error, Self::BEYOND_RANGE);
+            return;
         };
         unit.pins.push(pin);
         self.selected = Some(terminal);
@@ -530,7 +551,7 @@ impl PartEditor {
         engine: &Engine,
     ) {
         let t = Tokens::get();
-        let grid = engine.drafts().grid.symbol_mm;
+        let grid = engine.drafts().grid.symbol_mm();
         let m = TextMetric::default();
         self.symbol_canvas_size = Some(rect.size());
         self.prune_selection();
@@ -998,15 +1019,18 @@ impl PartEditor {
         set.symbol.units.push(Unit {
             id: UnitId(id),
             label,
-            graphics: vec![graphics::text(
-                GraphicId(designator),
-                TextContent::Designator,
-                [0.0, graphics::SYMBOL_MODULE_MM],
-                Justify {
-                    h: HAlign::Center,
-                    v: VAlign::Bottom,
-                },
-            )],
+            graphics: vec![
+                graphics::text(
+                    GraphicId(designator),
+                    TextContent::Designator,
+                    [0.0, graphics::SYMBOL_MODULE_MM],
+                    Justify {
+                        h: HAlign::Center,
+                        v: VAlign::Bottom,
+                    },
+                )
+                .ok()?,
+            ],
             pins: vec![],
         });
         self.unit = Some(UnitId(id));

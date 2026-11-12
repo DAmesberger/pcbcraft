@@ -23,6 +23,17 @@ use solidcraft_engine::doc::Document;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+/// A test length in mm, as stored.
+fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
+/// A test point or size in mm, as stored.
+#[allow(dead_code)]
+fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
 const STEM: &str = "pkgT";
 
 fn package(form: PackageForm, terminals: u32) -> PackageDefinition {
@@ -44,8 +55,12 @@ fn package(form: PackageForm, terminals: u32) -> PackageDefinition {
 }
 
 fn wroom3() -> PackageDefinition {
-    let form: PackageForm =
-        serde_json::from_str(include_str!("template_spike_wroom3.json")).unwrap();
+    // The fixture is the module datasheet's millimetres: the wire form.
+    let form: PackageForm = serde_json::from_str::<
+        pcbcraft_core::library::package_form::PackageFormParams,
+    >(include_str!("template_spike_wroom3.json"))
+    .unwrap()
+    .into();
     package(form, 99)
 }
 
@@ -54,13 +69,13 @@ fn qfn48() -> PackageDefinition {
         PackageForm::NoLead(Box::new(NoLeadForm {
             sides: LeadSides::Four,
             terminals_per_side: [12, 12],
-            pitch: 0.5,
-            body_length: 7.0,
-            body_width: 7.0,
-            body_height: 0.85,
-            terminal_length: 0.4,
-            terminal_width: 0.25,
-            exposed_pad: Some([5.6, 5.6]),
+            pitch_nm: nm(0.5),
+            body_length_nm: nm(7.0),
+            body_width_nm: nm(7.0),
+            body_height_nm: nm(0.85),
+            terminal_length_nm: nm(0.4),
+            terminal_width_nm: nm(0.25),
+            exposed_pad: Some(pt([5.6, 5.6])),
         })),
         49,
     )

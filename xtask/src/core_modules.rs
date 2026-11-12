@@ -36,6 +36,7 @@ const MAP: &[(&str, &[&str])] = &[
             "quantity",
             "fields",
             "functions",
+            "units",
         ],
     ),
     (

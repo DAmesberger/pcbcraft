@@ -355,7 +355,7 @@ impl Pad {
             PasteRule::Reduction(r) => shrink(*r),
             PasteRule::Windows(windows) => windows
                 .iter()
-                .map(|w| w.shape.transformed(&frame))
+                .map(|w| w.shape.to_mm().transformed(&frame))
                 .collect(),
         }
     }

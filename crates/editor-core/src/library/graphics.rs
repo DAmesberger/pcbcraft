@@ -7,16 +7,26 @@
 use super::drafts::{Draft, Drafts};
 use super::publish::{issue, object};
 use super::{Definition, Library, MAX_LABEL};
+use crate::diagnostics::Result;
 use crate::diagnostics::{Finding, ObjectRef};
-use crate::geometry::{
-    Bounds, Point, Shape, cos_sin, finite_within, point_valid, polygon_self_intersects,
-};
+use crate::geometry::{Bounds, Point, Shape, cos_sin, polygon_self_intersects};
 use crate::ids::{DefinitionId, GraphicId, TerminalId};
+use crate::units::{self, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 mod edit;
+mod shape;
 pub use edit::{GraphicEdit, GraphicTarget, MAX_GRAPHIC_EDITS, apply};
+pub use shape::{ShapeNm, ShapeNmParams};
+
+/// `nm` as a constant; every caller here passes a value within bounds.
+const fn const_nm(nm: i64) -> Nm {
+    match Nm::try_new(nm) {
+        Some(n) => n,
+        None => Nm::ZERO,
+    }
+}
 
 /// Graphics in one symbol unit.
 pub const MAX_GRAPHICS_PER_UNIT: usize = 256;
@@ -51,6 +61,22 @@ pub const SYMBOL_TEXT_HEIGHT_MM: f64 = 1.25;
 /// the pin text height, smaller than the designator, so a value reads as
 /// secondary and stays clear of neighbours.
 pub const VALUE_TEXT_HEIGHT_MM: f64 = 1.0;
+/// [`MAX_STROKE_MM`] in nanometres.
+pub const MAX_STROKE: Nm = const_nm(5_000_000);
+/// [`TEXT_HEIGHT_MM`] in nanometres.
+pub const TEXT_HEIGHT: std::ops::RangeInclusive<i64> = 100_000..=50_000_000;
+/// [`MAX_PIN_LENGTH_MM`] in nanometres.
+pub const MAX_PIN_LENGTH: Nm = const_nm(50_000_000);
+/// [`MAX_PIN_TEXT_OFFSET_MM`] in nanometres.
+pub const MAX_PIN_TEXT_OFFSET: Nm = const_nm(10_000_000);
+/// [`SYMBOL_MODULE_MM`] in nanometres.
+pub const SYMBOL_MODULE: Nm = const_nm(2_500_000);
+/// [`SYMBOL_STROKE_MM`] in nanometres.
+pub const SYMBOL_STROKE: Nm = const_nm(250_000);
+/// [`PIN_TEXT_HEIGHT_MM`] in nanometres.
+pub const PIN_TEXT_HEIGHT: Nm = const_nm(1_000_000);
+/// [`SYMBOL_TEXT_HEIGHT_MM`] in nanometres.
+pub const SYMBOL_TEXT_HEIGHT: Nm = const_nm(1_250_000);
 /// How far a point may sit from a grid line and still be on it.
 pub const GRID_TOLERANCE_MM: f64 = 1e-6;
 /// The schematic sheet grid symbols are placed on.
@@ -76,6 +102,8 @@ pub const MAX_POLARITY_MARKERS: usize = 8;
 pub const FOOTPRINT_TEXT_HEIGHT_MM: f64 = 1.0;
 /// Default silkscreen stroke width, in millimetres.
 pub const SILK_STROKE_MM: f64 = 0.15;
+/// [`FOOTPRINT_TEXT_HEIGHT_MM`] in nanometres.
+pub const FOOTPRINT_TEXT_HEIGHT: Nm = const_nm(1_000_000);
 
 /// A footprint drawing on one non-copper layer, footprint-local. With a
 /// footprint source, shape graphics are derived from `GraphicRole`s and
@@ -126,7 +154,7 @@ pub struct Polarity {
 /// The designator placeholder: `Text { Designator }`, centred at `at` on
 /// the component-side silkscreen. Placed, it shows the instance designator;
 /// in the editor, the component's designator prefix and `?`.
-pub fn designator_placeholder(id: GraphicId, at: Point, layer: DrawingLayer) -> FootprintGraphic {
+pub fn designator_placeholder(id: GraphicId, at: PointNm, layer: DrawingLayer) -> FootprintGraphic {
     FootprintGraphic {
         id,
         layer,
@@ -134,7 +162,7 @@ pub fn designator_placeholder(id: GraphicId, at: Point, layer: DrawingLayer) -> 
         item: Item::Text(Text {
             content: TextContent::Designator,
             at,
-            height: FOOTPRINT_TEXT_HEIGHT_MM,
+            height_nm: FOOTPRINT_TEXT_HEIGHT,
             rotation: Rotation::default(),
             justify: Justify {
                 h: HAlign::Center,
@@ -146,16 +174,17 @@ pub fn designator_placeholder(id: GraphicId, at: Point, layer: DrawingLayer) -> 
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Item {
-    /// A shape stroked with `width` millimetres (0 draws no outline).
+    /// A shape stroked with a pen `width_nm` wide (0 draws no outline).
     Shape {
-        shape: Shape,
-        width: f64,
+        #[params]
+        shape: ShapeNm,
+        width_nm: Nm,
         fill: Fill,
     },
-    Text(Text),
+    Text(#[params] Text),
 }
 
 /// How a closed shape's interior is drawn.
@@ -170,14 +199,14 @@ pub enum Fill {
     Solid,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(deny_unknown_fields)]
 pub struct Text {
     pub content: TextContent,
     /// The justification anchor.
-    pub at: Point,
-    /// Cap height in millimetres.
-    pub height: f64,
+    pub at: PointNm,
+    /// Cap height.
+    pub height_nm: Nm,
     pub rotation: Rotation,
     pub justify: Justify,
     pub visible: bool,
@@ -346,20 +375,22 @@ pub fn upright(rotation_deg: f64, justify: Justify) -> (f64, Justify) {
 /// is identified by its terminal; it stores no electrical type (direction
 /// lives on the terminal's functions) and no number (that comes from the
 /// instance's binding).
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(deny_unknown_fields)]
 pub struct Pin {
     pub terminal: TerminalId,
     /// The connection end, relative to the unit origin; wires attach here.
-    pub position: Point,
+    pub position: PointNm,
     /// From the connection end into the body.
     pub direction: PinDirection,
     /// 0–50 mm.
-    pub length: f64,
+    pub length_nm: Nm,
     pub decorations: Decorations,
     /// Shows the terminal's name.
+    #[params]
     pub name: PinText,
     /// Shows the designations the instance's binding maps to the terminal.
+    #[params]
     pub number: PinText,
 }
 
@@ -396,49 +427,61 @@ pub struct Decorations {
     pub clock: bool,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, units::Params)]
 #[serde(deny_unknown_fields)]
+#[params(default)]
 pub struct PinText {
     pub visible: bool,
-    /// Distance from the pin, in millimetres (|offset| ≤ 10).
-    pub offset: f64,
+    /// Distance from the pin (|offset| ≤ 10 mm).
+    pub offset_nm: Nm,
 }
 
 impl Default for PinText {
     fn default() -> Self {
         Self {
             visible: true,
-            offset: 0.5,
+            offset_nm: const_nm(500_000),
         }
     }
 }
 
 /// The authoring grid: an editor setting saved with the drafts, never part
 /// of revision data and never a blocking rule.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, units::Params)]
 #[serde(deny_unknown_fields)]
+#[params(default)]
 pub struct Grid {
     /// 0.01–10 mm; 2.5 mm by default.
-    pub symbol_mm: f64,
+    pub symbol_nm: Nm,
     /// 0.01–10 mm; 0.05 mm by default.
-    pub footprint_mm: f64,
+    pub footprint_nm: Nm,
 }
 
 impl Default for Grid {
     fn default() -> Self {
         Self {
-            symbol_mm: SYMBOL_MODULE_MM,
-            footprint_mm: 0.05,
+            symbol_nm: SYMBOL_MODULE,
+            footprint_nm: const_nm(50_000),
         }
     }
 }
 
 impl Grid {
     pub const RANGE_MM: std::ops::RangeInclusive<f64> = 0.01..=10.0;
+    /// [`Self::RANGE_MM`] in nanometres.
+    pub const RANGE: std::ops::RangeInclusive<i64> = 10_000..=10_000_000;
     pub fn valid(&self) -> bool {
-        [self.symbol_mm, self.footprint_mm]
+        [self.symbol_nm, self.footprint_nm]
             .iter()
-            .all(|v| v.is_finite() && Self::RANGE_MM.contains(v))
+            .all(|v| Self::RANGE.contains(&v.get()))
+    }
+    /// The symbol grid pitch in millimetres, for computing.
+    pub fn symbol_mm(&self) -> f64 {
+        self.symbol_nm.to_mm_f64()
+    }
+    /// The footprint grid pitch in millimetres, for computing.
+    pub fn footprint_mm(&self) -> f64 {
+        self.footprint_nm.to_mm_f64()
     }
 }
 
@@ -604,8 +647,8 @@ impl Text {
     }
     pub fn bounds(&self, m: TextMetric) -> Bounds {
         m.bounds(
-            self.at,
-            self.height,
+            self.at.to_mm_f64(),
+            self.height_nm.to_mm_f64(),
             self.rotation.degrees(),
             self.justify,
             self.size(),
@@ -614,19 +657,27 @@ impl Text {
 }
 
 impl Item {
-    /// The item moved by `delta` millimetres.
-    pub fn translated(&self, delta: Point) -> Item {
-        match self {
-            Self::Shape { shape, width, fill } => Self::Shape {
-                shape: shape.translated(delta),
-                width: *width,
+    /// The item moved by `delta`, exactly; an error when it would leave
+    /// the coordinate bound.
+    pub fn translated(&self, delta: PointNm) -> Result<Item> {
+        Ok(match self {
+            Self::Shape {
+                shape,
+                width_nm,
+                fill,
+            } => Self::Shape {
+                shape: shape.translated(delta)?,
+                width_nm: *width_nm,
                 fill: *fill,
             },
             Self::Text(text) => Self::Text(Text {
-                at: [text.at[0] + delta[0], text.at[1] + delta[1]],
+                at: PointNm::new(
+                    text.at.x_nm.checked_add(delta.x_nm)?,
+                    text.at.y_nm.checked_add(delta.y_nm)?,
+                ),
                 ..text.clone()
             }),
-        }
+        })
     }
 
     /// Points the item stores.
@@ -645,16 +696,14 @@ impl Item {
             },
         }
     }
-    /// Finite geometry within the supported ranges.
+    /// Geometry within the supported ranges.
     pub(super) fn finite(&self) -> bool {
         match self {
-            Self::Shape { shape, width, .. } => {
-                shape.finite() && width.is_finite() && (0.0..=MAX_STROKE_MM).contains(width)
-            }
+            Self::Shape {
+                shape, width_nm, ..
+            } => shape.valid() && (Nm::ZERO..=MAX_STROKE).contains(width_nm),
             Self::Text(text) => {
-                point_valid(text.at)
-                    && text.height.is_finite()
-                    && TEXT_HEIGHT_MM.contains(&text.height)
+                TEXT_HEIGHT.contains(&text.height_nm.get())
                     && text.line_spacing.is_finite()
                     && LINE_SPACING.contains(&text.line_spacing)
             }
@@ -663,7 +712,9 @@ impl Item {
     /// Approximate extent; text uses `m`.
     pub fn bounds(&self, m: TextMetric) -> Bounds {
         match self {
-            Self::Shape { shape, width, .. } => shape.bounds(*width),
+            Self::Shape {
+                shape, width_nm, ..
+            } => shape.to_mm().bounds(width_nm.to_mm_f64()),
             Self::Text(text) => text.bounds(m),
         }
     }
@@ -688,7 +739,12 @@ pub(super) fn item_findings(
 ) {
     let this = vec![object(definition, id.0)];
     match item {
-        Item::Shape { shape, width, fill } => {
+        Item::Shape {
+            shape,
+            width_nm,
+            fill,
+        } => {
+            let shape = &shape.to_mm();
             if degenerate(shape) {
                 out.push(issue(
                     "graphic.degenerate",
@@ -714,7 +770,7 @@ pub(super) fn item_findings(
                     this.clone(),
                 ));
             }
-            if *width <= 0.0 && *fill == Fill::None {
+            if *width_nm <= Nm::ZERO && *fill == Fill::None {
                 out.push(issue(
                     "graphic.invisible",
                     "A graphic has no stroke and no fill.".into(),
@@ -775,28 +831,37 @@ impl Pin {
     /// A pin with visible name and number and no decorations.
     pub fn new(
         terminal: TerminalId,
-        position: Point,
+        position: PointNm,
         direction: PinDirection,
-        length: f64,
+        length_nm: Nm,
     ) -> Self {
         Self {
             terminal,
             position,
             direction,
-            length,
+            length_nm,
             decorations: Decorations::default(),
             name: PinText::default(),
             number: PinText::default(),
         }
     }
 
+    /// The connection end in millimetres, for computing.
+    pub fn position_mm(&self) -> Point {
+        self.position.to_mm_f64()
+    }
+
+    /// The length in millimetres, for computing.
+    pub fn length_mm(&self) -> f64 {
+        self.length_nm.to_mm_f64()
+    }
+
     /// Where the pin meets the body.
     pub fn body_end(&self) -> Point {
         let d = self.direction.vector();
-        [
-            self.position[0] + d[0] * self.length,
-            self.position[1] + d[1] * self.length,
-        ]
+        let p = self.position_mm();
+        let length = self.length_mm();
+        [p[0] + d[0] * length, p[1] + d[1] * length]
     }
 
     /// Diameter of the inversion bubble and size of the clock wedge.
@@ -809,12 +874,15 @@ impl Pin {
     pub fn line(&self) -> [Point; 2] {
         let d = self.direction.vector();
         let cut = if self.decorations.inverted {
-            Self::decoration_size().min(self.length)
+            Self::decoration_size().min(self.length_mm())
         } else {
             0.0
         };
         let body = self.body_end();
-        [self.position, [body[0] - d[0] * cut, body[1] - d[1] * cut]]
+        [
+            self.position_mm(),
+            [body[0] - d[0] * cut, body[1] - d[1] * cut],
+        ]
     }
 
     /// The decorations every view draws the same way: the bubble replaces
@@ -826,7 +894,7 @@ impl Pin {
         let body = self.body_end();
         let mut out = Vec::new();
         if self.decorations.inverted {
-            let r = size.min(self.length) / 2.0;
+            let r = size.min(self.length_mm()) / 2.0;
             if r >= MIN_RADIUS_MM {
                 out.push(Shape::Circle {
                     center: [body[0] - d[0] * r, body[1] - d[1] * r],
@@ -846,22 +914,18 @@ impl Pin {
     }
 
     pub(super) fn finite(&self) -> bool {
-        point_valid(self.position)
-            && self.length.is_finite()
-            && (0.0..=MAX_PIN_LENGTH_MM).contains(&self.length)
-            && [self.name.offset, self.number.offset]
+        (Nm::ZERO..=MAX_PIN_LENGTH).contains(&self.length_nm)
+            && [self.name.offset_nm, self.number.offset_nm]
                 .iter()
-                .all(|o| finite_within(&[*o]) && o.abs() <= MAX_PIN_TEXT_OFFSET_MM)
+                .all(|o| o.abs() <= MAX_PIN_TEXT_OFFSET)
     }
 
     /// Where a pin name sits: just inside the body, reading along the pin.
     pub fn name_anchor(&self) -> (Point, f64, Justify) {
         let d = self.direction.vector();
         let body = self.body_end();
-        let at = [
-            body[0] + d[0] * self.name.offset,
-            body[1] + d[1] * self.name.offset,
-        ];
+        let offset = self.name.offset_nm.to_mm_f64();
+        let at = [body[0] + d[0] * offset, body[1] + d[1] * offset];
         let (rotation, h) = match self.direction {
             PinDirection::Right => (0.0, HAlign::Left),
             PinDirection::Left => (0.0, HAlign::Right),
@@ -884,8 +948,8 @@ impl Pin {
     /// pin's end, clear of the name inside the body.
     pub fn number_anchor(&self, width: f64) -> (Point, f64, Justify) {
         let body = self.body_end();
-        if width > self.length {
-            let o = self.number.offset;
+        let o = self.number.offset_nm.to_mm_f64();
+        if width > self.length_mm() {
             let (at, rotation) = if self.direction.is_horizontal() {
                 ([body[0], body[1] + o], 0.0)
             } else {
@@ -904,11 +968,8 @@ impl Pin {
                 },
             );
         }
-        let mid = [
-            (self.position[0] + body[0]) / 2.0,
-            (self.position[1] + body[1]) / 2.0,
-        ];
-        let o = self.number.offset;
+        let position = self.position_mm();
+        let mid = [(position[0] + body[0]) / 2.0, (position[1] + body[1]) / 2.0];
         let (at, rotation) = if self.direction.is_horizontal() {
             ([mid[0], mid[1] + o], 0.0)
         } else {
@@ -927,8 +988,9 @@ impl Pin {
 
 /// A pin for `terminal` at `position` pointing into `body`: its direction
 /// comes from the side of the body it sits on, its length is the distance
-/// to the body edge, or one module when that distance is 0.
-pub fn pin_toward(terminal: TerminalId, position: Point, body: Bounds) -> Pin {
+/// to the body edge, or one module when that distance is 0. Computed in
+/// millimetres and stored rounded to nanometres.
+pub fn pin_toward(terminal: TerminalId, position: Point, body: Bounds) -> Result<Pin> {
     let outside = [
         (body.min[0] - position[0], PinDirection::Right),
         (position[0] - body.max[0], PinDirection::Left),
@@ -947,35 +1009,45 @@ pub fn pin_toward(terminal: TerminalId, position: Point, body: Bounds) -> Pin {
     } else {
         SYMBOL_MODULE_MM
     };
-    Pin::new(terminal, position, direction, length)
+    Ok(Pin::new(
+        terminal,
+        PointNm::from_mm_f64_rounded(position)?,
+        direction,
+        Nm::from_mm_f64_rounded(length)?,
+    ))
 }
 
-/// A rectangle body graphic with the default symbol stroke and body fill.
-pub fn body_rect(id: GraphicId, body: Bounds) -> Graphic {
-    Graphic {
+/// A rectangle body graphic with the default symbol stroke and body fill,
+/// its corners rounded to nanometres.
+pub fn body_rect(id: GraphicId, body: Bounds) -> Result<Graphic> {
+    Ok(Graphic {
         id,
         item: Item::Shape {
-            shape: Shape::rect(body.min, body.max),
-            width: SYMBOL_STROKE_MM,
+            shape: ShapeNm::rect(
+                PointNm::from_mm_f64_rounded(body.min)?,
+                PointNm::from_mm_f64_rounded(body.max)?,
+            ),
+            width_nm: SYMBOL_STROKE,
             fill: Fill::Body,
         },
-    }
+    })
 }
 
-/// A visible text graphic at the default symbol text height.
-pub fn text(id: GraphicId, content: TextContent, at: Point, justify: Justify) -> Graphic {
-    Graphic {
+/// A visible text graphic at the default symbol text height, its anchor
+/// rounded to nanometres.
+pub fn text(id: GraphicId, content: TextContent, at: Point, justify: Justify) -> Result<Graphic> {
+    Ok(Graphic {
         id,
         item: Item::Text(Text {
             content,
-            at,
-            height: SYMBOL_TEXT_HEIGHT_MM,
+            at: PointNm::from_mm_f64_rounded(at)?,
+            height_nm: SYMBOL_TEXT_HEIGHT,
             rotation: Rotation::R0,
             justify,
             visible: true,
             line_spacing: TEXT_LINE_SPACING,
         }),
-    }
+    })
 }
 
 /// What a point on a symbol unit hits. Pin name and number text belong to
@@ -1011,20 +1083,20 @@ pub fn lint_with(
         out.extend(footprint.lint_with(draft.id, rules));
     }
     if let Definition::Symbol(symbol) = &draft.definition {
-        let ratio = SHEET_GRID_MM / grid.symbol_mm;
+        let ratio = SHEET_GRID_MM / grid.symbol_mm();
         if (ratio - ratio.round()).abs() > 1e-6 {
             out.push(Finding::new(
                 "symbol.grid_sheet",
                 format!(
                     "The {} mm symbol grid does not divide the {SHEET_GRID_MM} mm sheet grid, so pins land off the sheet grid.",
-                    grid.symbol_mm
+                    grid.symbol_mm()
                 ),
                 vec![this],
             ));
         }
         for unit in &symbol.units {
             for pin in &unit.pins {
-                if !on_grid(pin.position, grid.symbol_mm) {
+                if !on_grid(pin.position_mm(), grid.symbol_mm()) {
                     let name = library
                         .latest_components()
                         .into_iter()
@@ -1035,7 +1107,8 @@ pub fn lint_with(
                         "symbol.pin_off_grid",
                         format!(
                             "The pin of terminal {name} in unit ‘{}’ is off the {} mm grid.",
-                            unit.label, grid.symbol_mm
+                            unit.label,
+                            grid.symbol_mm()
                         ),
                         vec![
                             object(draft.id, unit.id.0),

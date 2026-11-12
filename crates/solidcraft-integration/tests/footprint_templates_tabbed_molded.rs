@@ -16,13 +16,24 @@ use pcbcraft_core::library::{
 };
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 
+/// A test length in mm, as stored.
+fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
+/// A test point or size in mm, as stored.
+#[allow(dead_code)]
+fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
+
 const EV: SketchEvaluator = SketchEvaluator;
 const TOL: f64 = 1e-6;
 
 fn package(form: PackageForm) -> PackageDefinition {
     let n = u32::try_from(form.lead_count()).unwrap_or(0);
     PackageDefinition {
-        envelope: form.envelope().unwrap_or([1.0; 3]),
+        envelope_nm: (form.envelope().unwrap_or([1.0; 3])).map(nm),
         terminals: (1..=n)
             .map(|k| PackageTerminal {
                 id: PackageTerminalId(k + 100),
@@ -81,15 +92,15 @@ fn lint(def: &FootprintDefinition) -> Vec<String> {
 fn sot23_3() -> TabbedForm {
     TabbedForm {
         leads_per_side: [2, 1],
-        pitch: 0.95,
-        body_length: 2.9,
-        body_width: 1.3,
-        body_height: 1.0,
-        standoff: 0.05,
-        span: 2.4,
-        lead_width: 0.4,
-        lead_thickness: 0.12,
-        foot_length: 0.4,
+        pitch_nm: nm(0.95),
+        body_length_nm: nm(2.9),
+        body_width_nm: nm(1.3),
+        body_height_nm: nm(1.0),
+        standoff_nm: nm(0.05),
+        span_nm: nm(2.4),
+        lead_width_nm: nm(0.4),
+        lead_thickness_nm: nm(0.12),
+        foot_length_nm: nm(0.4),
         tab: None,
         lead_step: [2, 1],
         lands: Default::default(),
@@ -99,19 +110,19 @@ fn sot23_3() -> TabbedForm {
 fn sot223() -> TabbedForm {
     TabbedForm {
         leads_per_side: [3, 0],
-        pitch: 2.3,
-        body_length: 6.5,
-        body_width: 3.5,
-        body_height: 1.6,
-        standoff: 0.05,
-        span: 7.0,
-        lead_width: 0.7,
-        lead_thickness: 0.25,
-        foot_length: 0.9,
+        pitch_nm: nm(2.3),
+        body_length_nm: nm(6.5),
+        body_width_nm: nm(3.5),
+        body_height_nm: nm(1.6),
+        standoff_nm: nm(0.05),
+        span_nm: nm(7.0),
+        lead_width_nm: nm(0.7),
+        lead_thickness_nm: nm(0.25),
+        foot_length_nm: nm(0.9),
         tab: Some(Tab {
-            width: 3.0,
-            length: 0.9,
-            flange: None,
+            width_nm: nm(3.0),
+            length_nm: nm(0.9),
+            flange_nm: None,
         }),
         lead_step: [1, 1],
         lands: Default::default(),
@@ -121,19 +132,19 @@ fn sot223() -> TabbedForm {
 fn dpak() -> TabbedForm {
     TabbedForm {
         leads_per_side: [2, 0],
-        pitch: 2.3,
-        body_length: 6.5,
-        body_width: 6.0,
-        body_height: 2.3,
-        standoff: 0.0,
-        span: 11.0,
-        lead_width: 0.8,
-        lead_thickness: 0.5,
-        foot_length: 1.5,
+        pitch_nm: nm(2.3),
+        body_length_nm: nm(6.5),
+        body_width_nm: nm(6.0),
+        body_height_nm: nm(2.3),
+        standoff_nm: nm(0.0),
+        span_nm: nm(11.0),
+        lead_width_nm: nm(0.8),
+        lead_thickness_nm: nm(0.5),
+        foot_length_nm: nm(1.5),
         tab: Some(Tab {
-            width: 5.3,
-            length: 5.5,
-            flange: Some(1.0),
+            width_nm: nm(5.3),
+            length_nm: nm(5.5),
+            flange_nm: Some(nm(1.0)),
         }),
         lead_step: [2, 1],
         lands: Default::default(),
@@ -165,8 +176,8 @@ fn sot23_5_lands_skip_the_middle_of_the_top_row_and_follow_the_pitch() -> Result
     let mut f = sot23_3();
     f.leads_per_side = [3, 2];
     f.lead_step = [1, 2];
-    f.body_width = 1.6;
-    f.span = 2.8;
+    f.body_width_nm = nm(1.6);
+    f.span_nm = nm(2.8);
     let pkg = tabbed(f);
     let def = built(&pkg, TemplateKind::Tabbed)?;
     assert_eq!(def.pads.len(), 5);
@@ -195,8 +206,8 @@ fn sot23_5_lands_skip_the_middle_of_the_top_row_and_follow_the_pitch() -> Result
 #[test]
 fn a_datasheet_land_pattern_drives_the_template() -> Result<()> {
     let mut f = sot23_3();
-    f.lands.size = Some([0.6, 1.3]);
-    f.lands.span = Some(2.1);
+    f.lands.size = Some(pt([0.6, 1.3]));
+    f.lands.span_nm = Some(nm(2.1));
     let pkg = tabbed(f);
     let def = built(&pkg, TemplateKind::Tabbed)?;
     check(&def, "1", [-0.95, -1.05], [0.6, 1.3])?;
@@ -204,7 +215,7 @@ fn a_datasheet_land_pattern_drives_the_template() -> Result<()> {
     check(&def, "3", [0.0, 1.05], [0.6, 1.3])?;
 
     let mut s = sot223();
-    s.lands.tab_size = Some([3.5, 2.0]);
+    s.lands.tab_size = Some(pt([3.5, 2.0]));
     let def = built(&tabbed(s), TemplateKind::Tabbed)?;
     // The rows keep their estimates; the tab land takes the datasheet's.
     check(&def, "1", [-2.3, -(7.0 - 0.9 + 0.2) / 2.0], [0.9, 1.5])?;
@@ -236,12 +247,12 @@ fn sot223_and_dpak_tab_lands_come_last() -> Result<()> {
 fn sma() -> MoldedForm {
     MoldedForm {
         lead: MoldedLead::JLead,
-        body_length: 4.3,
-        body_width: 2.6,
-        body_height: 2.2,
-        span: 5.2,
-        terminal_length: 1.1,
-        terminal_width: 1.4,
+        body_length_nm: nm(4.3),
+        body_width_nm: nm(2.6),
+        body_height_nm: nm(2.2),
+        span_nm: nm(5.2),
+        terminal_length_nm: nm(1.1),
+        terminal_width_nm: nm(1.4),
         polarised: true,
     }
 }
@@ -273,7 +284,7 @@ fn molded_lands_straddle_the_terminals_with_pin_one_marked() -> Result<()> {
 fn literal_defaults_build_without_a_family_form() -> Result<()> {
     for (kind, n) in [(TemplateKind::Tabbed, 3), (TemplateKind::Molded, 2)] {
         let pkg = PackageDefinition {
-            envelope: [3.0, 2.5, 1.1],
+            envelope_nm: [nm(3.0), nm(2.5), nm(1.1)],
             terminals: (1..=n)
                 .map(|k| PackageTerminal {
                     id: PackageTerminalId(k + 100),

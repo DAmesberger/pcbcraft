@@ -19,13 +19,14 @@
 //!   2 = source, 3 = drain (the common SOT-23 assignment);
 //! - every other two-terminal kind: 1 left, 2 right.
 use super::graphics::{
-    self, Fill, Graphic, HAlign, Item, Justify, PIN_TEXT_HEIGHT_MM, Pin, PinDirection, Rotation,
-    SYMBOL_STROKE_MM, SYMBOL_TEXT_HEIGHT_MM, Text, TextContent, VAlign,
+    self, Fill, Graphic, HAlign, Item, Justify, PIN_TEXT_HEIGHT, Pin, PinDirection, Rotation,
+    SYMBOL_STROKE_MM, SYMBOL_TEXT_HEIGHT, ShapeNm, Text, TextContent, VAlign,
 };
 use super::{SymbolDefinition, Unit};
 use crate::diagnostics::{Error, Result};
 use crate::geometry::{Point, Shape};
 use crate::ids::{DefinitionId, GraphicId, TerminalId, UnitId};
+use crate::units::{Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -239,8 +240,8 @@ pub fn restyle(
         )));
     };
     let mut drawn = match kind {
-        SymbolKind::IcBox => super::samples::block_symbol(symbol.component, terminals),
-        SymbolKind::Connector => super::samples::column_symbol(symbol.component, terminals),
+        SymbolKind::IcBox => super::samples::block_symbol(symbol.component, terminals)?,
+        SymbolKind::Connector => super::samples::column_symbol(symbol.component, terminals)?,
         _ => generate(kind, conventions, symbol.component, terminals)?,
     };
     let exhausted = || Error::Limit("the symbol's local identities are exhausted".into());
@@ -265,7 +266,7 @@ pub fn restyle(
     Ok(SymbolDefinition {
         component: symbol.component,
         next_local,
-        pin_text_height: symbol.pin_text_height,
+        pin_text_height_nm: symbol.pin_text_height_nm,
         units: vec![Unit {
             id: unit.id,
             label: unit.label.clone(),
@@ -540,10 +541,12 @@ pub fn generate(
         }
         SymbolKind::IcBox | SymbolKind::Connector => {}
     }
-    Ok(d.finish(component))
+    d.finish(component)
 }
 
-/// Collects one unit's graphics and pins with sequential local IDs.
+/// Collects one unit's graphics and pins with sequential local IDs. It
+/// draws in millimetres and stores each item rounded to nanometres; the
+/// first value that cannot be stored fails [`Drawing::finish`].
 struct Drawing {
     graphics: Vec<Graphic>,
     pins: Vec<Pin>,
@@ -551,6 +554,7 @@ struct Drawing {
     /// Pins show their numbers (transistors); two-terminal parts and rails
     /// hide them.
     numbered: bool,
+    error: Option<Error>,
 }
 
 impl Default for Drawing {
@@ -561,6 +565,7 @@ impl Default for Drawing {
             // Local ID 1 is the unit.
             next: 2,
             numbered: false,
+            error: None,
         }
     }
 }
@@ -579,8 +584,27 @@ impl Drawing {
         self.next += 1;
     }
 
+    /// `value` stored, or the first error kept for [`Drawing::finish`].
+    fn stored<T>(&mut self, value: Result<T>) -> Option<T> {
+        match value {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.error.get_or_insert(e);
+                None
+            }
+        }
+    }
+
     fn shape(&mut self, shape: Shape, width: f64, fill: Fill) {
-        self.push(Item::Shape { shape, width, fill });
+        let stored = ShapeNm::from_mm_rounded(&shape)
+            .and_then(|shape| Ok((shape, Nm::from_mm_f64_rounded(width)?)));
+        if let Some((shape, width_nm)) = self.stored(stored) {
+            self.push(Item::Shape {
+                shape,
+                width_nm,
+                fill,
+            });
+        }
     }
 
     fn open(&mut self, shape: Shape) {
@@ -641,10 +665,14 @@ impl Drawing {
     }
 
     fn pin(&mut self, terminal: TerminalId, position: Point, direction: PinDirection, length: f64) {
-        let mut pin = Pin::new(terminal, position, direction, length);
-        pin.name.visible = false;
-        pin.number.visible = self.numbered;
-        self.pins.push(pin);
+        let stored = PointNm::from_mm_f64_rounded(position)
+            .and_then(|p| Ok((p, Nm::from_mm_f64_rounded(length)?)));
+        if let Some((position, length_nm)) = self.stored(stored) {
+            let mut pin = Pin::new(terminal, position, direction, length_nm);
+            pin.name.visible = false;
+            pin.number.visible = self.numbered;
+            self.pins.push(pin);
+        }
     }
 
     /// Terminal `a` at x = −5 and `b` at x = +5 on y = 0, their stubs
@@ -656,10 +684,13 @@ impl Drawing {
     }
 
     fn text(&mut self, content: TextContent, at: Point, h: HAlign, v: VAlign, visible: bool) {
+        let Some(at) = self.stored(PointNm::from_mm_f64_rounded(at)) else {
+            return;
+        };
         self.push(Item::Text(Text {
             content,
             at,
-            height: SYMBOL_TEXT_HEIGHT_MM,
+            height_nm: SYMBOL_TEXT_HEIGHT,
             rotation: Rotation::R0,
             justify: Justify { h, v },
             visible,
@@ -725,18 +756,21 @@ impl Drawing {
         );
     }
 
-    fn finish(self, component: DefinitionId) -> SymbolDefinition {
-        SymbolDefinition {
+    fn finish(self, component: DefinitionId) -> Result<SymbolDefinition> {
+        if let Some(error) = self.error {
+            return Err(error);
+        }
+        Ok(SymbolDefinition {
             component,
             next_local: self.next,
-            pin_text_height: PIN_TEXT_HEIGHT_MM,
+            pin_text_height_nm: PIN_TEXT_HEIGHT,
             units: vec![Unit {
                 id: UnitId(1),
                 label: "A".into(),
                 graphics: self.graphics,
                 pins: self.pins,
             }],
-        }
+        })
     }
 }
 

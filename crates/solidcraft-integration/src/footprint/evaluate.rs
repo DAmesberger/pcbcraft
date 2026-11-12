@@ -16,12 +16,13 @@ use pcbcraft_core::library::footprint_source::{
     GraphicSource, MaskRuleExpr, PadGeometry, PadOverride, PadRole, PadShapeExpr, PadTemplate,
     PasteRuleExpr, SketchBlob, SolveStatus, SolveSummary,
 };
-use pcbcraft_core::library::graphics::{FootprintGraphic, Item};
+use pcbcraft_core::library::graphics::{FootprintGraphic, Item, ShapeNm};
 use pcbcraft_core::library::{
     ApertureId, CornerMask, Datum, FootprintDefinition, Hole, HoleShape, MAX_PADS, MaskRule, Pad,
     PadShape, PadVia, PasteRule, PasteWindow, Segment,
 };
 use pcbcraft_core::library::{MAX_PAD_VIAS, MAX_PASTE_WINDOWS};
+use pcbcraft_core::units::Nm;
 use serde::Serialize;
 use solidcraft_engine::sketch::{
     Analysis, CurveKind, Sketch, find_profiles, flips_from_stored, profile_at_point,
@@ -367,7 +368,7 @@ fn paste_windows(
             first,
             PasteWindow {
                 id: ApertureId(id),
-                shape,
+                shape: stored_shape(&shape)?,
             },
         ));
     }
@@ -620,7 +621,7 @@ fn expand(
                 apply_override(&mut pad, o, values, sketch)?;
                 used_overrides.insert(key);
             }
-            pad.fold_rotation();
+            fold(&mut pad)?;
             let keyed = if inst.i == 0 && inst.j == 0 {
                 None
             } else {
@@ -863,8 +864,9 @@ fn graphics(
             layer: *layer,
             side: *side,
             item: Item::Shape {
-                shape,
-                width: values.length(&width.0)?,
+                shape: stored_shape(&shape)?,
+                width_nm: Nm::from_mm_f64_rounded(values.length(&width.0)?)
+                    .map_err(|e| problem("footprint.too_large", e.to_string()))?,
                 fill: *fill,
             },
         });
@@ -905,51 +907,25 @@ fn qp(p: Point) -> Outcome<Point> {
     Ok([q(p[0])?, q(p[1])?])
 }
 
-fn q_shape(shape: &mut Shape) -> Outcome<()> {
-    match shape {
-        Shape::Line { a, b } => {
-            *a = qp(*a)?;
-            *b = qp(*b)?;
-        }
-        Shape::Polyline { points, radii } | Shape::Polygon { points, radii } => {
-            for p in points.iter_mut() {
-                *p = qp(*p)?;
-            }
-            for r in radii.iter_mut() {
-                *r = q(*r)?;
-            }
-        }
-        Shape::Rect { a, b, radius } => {
-            *a = qp(*a)?;
-            *b = qp(*b)?;
-            *radius = q(*radius)?;
-        }
-        Shape::Circle { center, radius } => {
-            *center = qp(*center)?;
-            *radius = q(*radius)?;
-        }
-        Shape::Arc {
-            center,
-            radius,
-            start_deg,
-            sweep_deg,
-        } => {
-            *center = qp(*center)?;
-            *radius = q(*radius)?;
-            *start_deg = q(*start_deg)?;
-            *sweep_deg = q(*sweep_deg)?;
-        }
-    }
-    Ok(())
+/// A solved shape stored: rounded to whole nanometres, the 1e-6 mm
+/// quantum ([`ShapeNm::from_mm_rounded`]).
+fn stored_shape(shape: &Shape) -> Outcome<ShapeNm> {
+    ShapeNm::from_mm_rounded(shape).map_err(|e| problem("footprint.too_large", e.to_string()))
+}
+
+/// [`Pad::fold_rotation`], whose turned paste windows are stored rounded.
+fn fold(pad: &mut Pad) -> Outcome<()> {
+    pad.fold_rotation()
+        .map_err(|e| problem("footprint.too_large", e.to_string()))
 }
 
 fn q_pad(pad: &mut Pad) -> Outcome<()> {
     pad.position = qp(pad.position)?;
     // Rounding can land exactly on the period (180° or 360°); fold it back.
     // Fold before quantising the pad-frame features the fold may turn.
-    pad.fold_rotation();
+    fold(pad)?;
     pad.rotation_deg = q(pad.rotation_deg)?;
-    pad.fold_rotation();
+    fold(pad)?;
     pad.rotation_deg = q(pad.rotation_deg)?;
     match &mut pad.shape {
         PadShape::Rect { size } | PadShape::Oblong { size } => *size = qp(*size)?,
@@ -997,14 +973,9 @@ fn q_pad(pad: &mut Pad) -> Outcome<()> {
     if let MaskRule::Expansion(v) = &mut pad.mask {
         *v = q(*v)?;
     }
-    match &mut pad.paste {
-        PasteRule::Reduction(v) => *v = q(*v)?,
-        PasteRule::Windows(w) => {
-            for w in w.iter_mut() {
-                q_shape(&mut w.shape)?;
-            }
-        }
-        _ => {}
+    // Paste windows are stored in nanometres already.
+    if let PasteRule::Reduction(v) = &mut pad.paste {
+        *v = q(*v)?;
     }
     for v in &mut pad.vias {
         v.at = qp(v.at)?;
@@ -1079,13 +1050,8 @@ fn pipeline(request: EvaluationRequest<'_>) -> Outcome<Evaluation> {
     let mut datum = datum(&request, &sketch)?;
     datum.offset = qp(datum.offset)?;
     datum.rotation_deg = q(datum.rotation_deg)?;
-    let mut graphics = graphics(&request, &sketch, &values, &pads, datum)?;
-    for g in &mut graphics {
-        if let Item::Shape { shape, width, .. } = &mut g.item {
-            q_shape(shape)?;
-            *width = q(*width)?;
-        }
-    }
+    let graphics = graphics(&request, &sketch, &values, &pads, datum)?;
+    // Derived graphics are stored in nanometres already.
     let result_hash = result_hash(&pads, &graphics, &datum)?;
     let dof = u32::try_from(dof).unwrap_or(u32::MAX);
     let mut findings = Vec::new();

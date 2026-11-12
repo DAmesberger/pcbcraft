@@ -130,7 +130,7 @@ impl ModelTab {
         placement: ModelPlacement,
         revision: u64,
     ) -> Option<Operation> {
-        if placement == *current || !placement.finite() {
+        if placement == *current {
             return None;
         }
         self.pending = Some((placement, revision));
@@ -372,6 +372,7 @@ pub fn overlay(footprint: &FootprintDefinition, package: &PackageDefinition) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pcbcraft_core::library::package_form::typical_nm as nm;
     use pcbcraft_core::library::{GullWingForm, LeadSides, PackageForm, PackageTerminal, Pad};
     use pcbcraft_core::{PackageTerminalId, PadId};
     use pcbcraft_solidcraft::geom::Vec3;
@@ -388,17 +389,17 @@ mod tests {
             form: PackageForm::GullWing(Box::new(GullWingForm {
                 sides: LeadSides::Two,
                 leads_per_side: [4, 0],
-                pitch: 1.27,
-                body_length: 4.9,
-                body_width: 3.9,
-                body_height: 1.5,
-                standoff: 0.1,
-                span: [6.0, 0.0],
-                lead_width: 0.4,
-                lead_thickness: 0.2,
-                foot_length: 0.6,
+                pitch_nm: nm(1.27),
+                body_length_nm: nm(4.9),
+                body_width_nm: nm(3.9),
+                body_height_nm: nm(1.5),
+                standoff_nm: nm(0.1),
+                span_nm: [nm(6.0), nm(0.0)],
+                lead_width_nm: nm(0.4),
+                lead_thickness_nm: nm(0.2),
+                foot_length_nm: nm(0.6),
             })),
-            envelope: [4.9, 6.0, 1.6],
+            envelope_nm: [nm(4.9), nm(6.0), nm(1.6)],
             ..PackageDefinition::default()
         }
     }
@@ -430,10 +431,7 @@ mod tests {
     #[test]
     fn a_triad_turn_keeps_the_body_centre_and_a_shift_adds() {
         let package = soic();
-        let start = ModelPlacement {
-            translation: [1.0, 0.0, 0.0],
-            rotation_deg: [0.0; 3],
-        };
+        let start = ModelPlacement::from_mm([1.0, 0.0, 0.0], [0.0; 3]).unwrap_or_default();
         let turned = dragged(
             &package,
             &start,
@@ -442,24 +440,22 @@ mod tests {
                 angle: -std::f64::consts::FRAC_PI_2,
             },
         );
-        assert_eq!(turned.map(|p| p.rotation_deg), Some([0.0, 0.0, -90.0]));
-        assert_eq!(turned.map(|p| p.translation), Some([1.0, 0.0, 0.0]));
+        // −90°, stored reduced to one turn.
+        assert_eq!(turned.map(|p| p.rotation_deg()), Some([0.0, 0.0, 270.0]));
+        assert_eq!(turned.map(|p| p.translation()), Some([1.0, 0.0, 0.0]));
         let shifted = dragged(
             &package,
             &start,
             Change::Translate(Vec3::new(0.5, -1.0, 0.25)),
         );
-        assert_eq!(shifted.map(|p| p.translation), Some([1.5, -1.0, 0.25]));
+        assert_eq!(shifted.map(|p| p.translation()), Some([1.5, -1.0, 0.25]));
     }
 
     #[test]
     fn point_to_point_moves_a_lead_onto_a_pad_centre() {
         let package = soic();
         let fp = soic_lands();
-        let placement = ModelPlacement {
-            translation: [0.0; 3],
-            rotation_deg: [0.0, 0.0, -90.0],
-        };
+        let placement = ModelPlacement::from_mm([0.0; 3], [0.0, 0.0, -90.0]).unwrap_or_default();
         let lead = model_points(&package, &placement)
             .into_iter()
             .last()
@@ -479,10 +475,7 @@ mod tests {
         let package = soic();
         let mut tab = ModelTab::default();
         assert_eq!(tab.shown(&package), package.placement);
-        let sent = ModelPlacement {
-            translation: [0.0, 0.0, 1.0],
-            rotation_deg: [0.0; 3],
-        };
+        let sent = ModelPlacement::from_mm([0.0, 0.0, 1.0], [0.0; 3]).unwrap_or_default();
         assert!(
             tab.set(DefinitionId(3), &package.placement, sent, 5)
                 .is_some()

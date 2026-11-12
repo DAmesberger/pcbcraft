@@ -1,0 +1,29 @@
+[package]
+name = "pcbcraft-generators-probe"
+description = "Test module: the generator host built for wasm32, run under the native host to prove both agree"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The workspace lints, except unsafe_code: denied, not forbidden, so the
+# four exports can allow it for `#[unsafe(no_mangle)]`, which has no safe
+# spelling. No other unsafe code.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+
+[dependencies]
+pcbcraft-generators.workspace = true
+pcbcraft-generator-abi.workspace = true

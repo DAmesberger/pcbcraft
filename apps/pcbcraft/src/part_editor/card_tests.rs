@@ -350,7 +350,7 @@ fn the_issue_slot_counts_the_pin_and_locating_selects_it() -> TestResult {
             .iter_mut()
             .find(|p| p.terminal == a)
     {
-        pin.position[0] += 0.3;
+        pin.position.x_nm = crate::schematic_editor::nm(pin.position_mm()[0] + 0.3);
     }
     assert!(h.commit()?);
     h.editor.show_terminal(a);

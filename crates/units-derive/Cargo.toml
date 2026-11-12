@@ -1,0 +1,19 @@
+[package]
+name = "pcbcraft-units-derive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Derives the millimetre wire form of Pcbcraft's nanometre records"
+
+[lints]
+workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# Already in the tree through serde_derive and schemars (MIT OR Apache-2.0).
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"

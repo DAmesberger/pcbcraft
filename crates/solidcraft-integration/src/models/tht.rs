@@ -25,7 +25,7 @@ use crate::pad_outline::Contour;
 use pcbcraft_core::library::BodyRole;
 use pcbcraft_core::library::package_form::ThtForm;
 use pcbcraft_core::library::package_form::tht::{
-    DIP_LEAD_EXIT_SHARE, DIP_LEAD_THICKNESS_MM, ThtKind,
+    DIP_LEAD_EXIT_SHARE, DIP_LEAD_THICKNESS_MM, ThtBody,
 };
 
 /// The builder revision (`PackageModel::Generated { family_rev }`).
@@ -42,9 +42,9 @@ const TOP_EDGE_MM: f64 = 0.2;
 
 pub(super) fn check(f: &ThtForm) -> Result<()> {
     check_positive(&[
-        ("lead pitch", f.lead_pitch),
-        ("lead diameter", f.lead_diameter),
-        ("lead length below the board", f.lead_below),
+        ("lead pitch", f.lead_pitch()),
+        ("lead diameter", f.lead_diameter()),
+        ("lead length below the board", f.lead_below()),
         ("bend radius", f.bend_radius()),
         ("lead pitch at the body", f.pitch_at_body()),
     ])?;
@@ -53,22 +53,22 @@ pub(super) fn check(f: &ThtForm) -> Result<()> {
         s.is_finite() && s >= 0.0,
         "the standoff must be zero or more",
     )?;
-    match f.kind {
-        ThtKind::Axial {
+    match f.kind.mm() {
+        ThtBody::Axial {
             body_diameter,
             body_length,
         } => check_positive(&[
             ("body diameter", body_diameter),
             ("body length", body_length),
         ]),
-        ThtKind::Radial {
+        ThtBody::Radial {
             body_diameter,
             body_height,
         } => check_positive(&[
             ("body diameter", body_diameter),
             ("body height", body_height),
         ]),
-        ThtKind::Dip {
+        ThtBody::Dip {
             pins,
             row_pitch,
             body_length,
@@ -83,7 +83,7 @@ pub(super) fn check(f: &ThtForm) -> Result<()> {
                 ("body height", body_height),
             ])
         }
-        ThtKind::To {
+        ThtBody::To {
             pins,
             body_length,
             body_width,
@@ -109,21 +109,21 @@ struct Leads {
 
 pub(super) fn build(b: &mut Build<'_>, f: &ThtForm) -> Result<()> {
     let leads = Leads {
-        pitch: b.length("lead_pitch", f.lead_pitch)?,
-        d: b.length("lead_diameter", f.lead_diameter)?,
-        below: b.length("lead_below", f.lead_below)?,
+        pitch: b.length("lead_pitch", f.lead_pitch())?,
+        d: b.length("lead_diameter", f.lead_diameter())?,
+        below: b.length("lead_below", f.lead_below())?,
         standoff: b.length("standoff", f.standoff())?,
     };
-    match f.kind {
-        ThtKind::Axial {
+    match f.kind.mm() {
+        ThtBody::Axial {
             body_diameter,
             body_length,
         } => axial(b, f, body_diameter, body_length),
-        ThtKind::Radial {
+        ThtBody::Radial {
             body_diameter,
             body_height,
         } => radial(b, f, &leads, body_diameter, body_height),
-        ThtKind::Dip {
+        ThtBody::Dip {
             pins,
             row_pitch,
             body_length,
@@ -137,7 +137,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &ThtForm) -> Result<()> {
             row_pitch,
             [body_length, body_width, body_height],
         ),
-        ThtKind::To {
+        ThtBody::To {
             pins,
             body_length,
             body_width,
@@ -149,7 +149,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &ThtForm) -> Result<()> {
 /// A lead of the given centreline in the x–z plane (x, z), square in
 /// section (`d` across y, centred), as one bent strip.
 fn xz_lead(b: &mut Build<'_>, name: &str, points: &[[f64; 2]], f: &ThtForm) -> Result<()> {
-    let d = f.lead_diameter;
+    let d = f.lead_diameter();
     let strip = bent_strip(points, d, f.bend_radius())?;
     // The XZ plane draws (x, z) at sketch (x, −z): a reflection.
     let strip = strip.mapped(|[x, z]| [x, -z], true);
@@ -175,15 +175,15 @@ fn row_leads(b: &mut Build<'_>, f: &ThtForm, n: u32, top: f64) -> Result<Vec<Str
     let mut out = Vec::new();
     for i in 0..n {
         let xb = ThtForm::along(i, n, f.pitch_at_body());
-        let xp = ThtForm::along(i, n, f.lead_pitch);
+        let xp = ThtForm::along(i, n, f.lead_pitch());
         let points = if (xb - xp).abs() < 1e-9 {
-            vec![[xp, top], [xp, -f.lead_below]]
+            vec![[xp, top], [xp, -f.lead_below()]]
         } else {
             vec![
                 [xb, top],
                 [xb, 0.75 * s],
                 [xp, 0.25 * s],
-                [xp, -f.lead_below],
+                [xp, -f.lead_below()],
             ]
         };
         let name = b.name(&format!("lead {}", i + 1));
@@ -222,14 +222,14 @@ fn axial(b: &mut Build<'_>, f: &ThtForm, dia: f64, length: f64) -> Result<()> {
     )?;
     b.push(body.clone(), BodyRole::Body, material);
     let root = ROOT_MM.min(length / 4.0);
-    let half = f.lead_pitch / 2.0;
+    let half = f.lead_pitch() / 2.0;
     let mut ordered = Vec::new();
     for (k, sign) in [(1, -1.0), (2, 1.0)] {
         let name = b.name(&format!("lead {k}"));
         let points = [
             [sign * (length / 2.0 - root), zc],
             [sign * half, zc],
-            [sign * half, -f.lead_below],
+            [sign * half, -f.lead_below()],
         ];
         xz_lead(b, &name, &points, f)?;
         ordered.push(name);
@@ -273,8 +273,8 @@ fn radial(b: &mut Build<'_>, f: &ThtForm, p: &Leads, dia: f64, height: f64) -> R
                 name: &name,
                 offset: Expr::from(format!("- {}", p.below)),
                 contours: &[Contour::Circle {
-                    center: [sign * f.lead_pitch / 2.0, 0.0],
-                    radius: f.lead_diameter / 2.0,
+                    center: [sign * f.lead_pitch() / 2.0, 0.0],
+                    radius: f.lead_diameter() / 2.0,
                 }],
                 height: Expr::from(format!(
                     "{} + {} + {}",
@@ -341,7 +341,7 @@ fn dip(
     row_pitch: f64,
     size: [f64; 3],
 ) -> Result<()> {
-    let row_length = f64::from(n.saturating_sub(1)) * f.lead_pitch + f.lead_diameter;
+    let row_length = f64::from(n.saturating_sub(1)) * f.lead_pitch() + f.lead_diameter();
     let clear = (size[0] - row_length) / 2.0;
     let body = block(b, p, size)?;
     let n_param = b.count("per_row", n)?;
@@ -359,7 +359,7 @@ fn dip(
             &[
                 [half_body - root, exit],
                 [half_row, exit],
-                [half_row, -f.lead_below],
+                [half_row, -f.lead_below()],
             ],
             t,
             f.bend_radius(),
@@ -404,8 +404,8 @@ fn dip(
 }
 
 fn to(b: &mut Build<'_>, f: &ThtForm, p: &Leads, n: u32, size: [f64; 3]) -> Result<()> {
-    let row_length = f64::from(n.saturating_sub(1)) * f.pitch_at_body() + f.lead_diameter;
-    let clear = ((size[0] - row_length) / 2.0).min((size[1] - f.lead_diameter) / 2.0);
+    let row_length = f64::from(n.saturating_sub(1)) * f.pitch_at_body() + f.lead_diameter();
+    let clear = ((size[0] - row_length) / 2.0).min((size[1] - f.lead_diameter()) / 2.0);
     let body = block(b, p, size)?;
     let n_param = b.count("pins", n)?;
     let s = f.standoff();
@@ -457,6 +457,8 @@ fn to(b: &mut Build<'_>, f: &ThtForm, p: &Leads, n: u32, size: [f64; 3]) -> Resu
 mod tests {
     use super::super::*;
     use crate::Error;
+    #[allow(unused_imports)]
+    use crate::models::tests::{nm, pt};
     use pcbcraft_core::PackageTerminalId;
     use pcbcraft_core::library::PackageTerminal;
     use pcbcraft_core::library::package_form::ThtForm;
@@ -520,7 +522,7 @@ mod tests {
                 .ok_or_else(|| Error::Verification(format!("no lead {}", t.designation)))?;
             assert_eq!(lead.role, BodyRole::Lead);
             let b = bounds(&native, &lead.name)?;
-            near(b.0[2], -form.lead_below, "lead into the board");
+            near(b.0[2], -form.lead_below(), "lead into the board");
             leads.push(b);
         }
         let body = def
@@ -535,12 +537,12 @@ mod tests {
     fn axial_leads_bend_down_at_the_lead_pitch() -> Result<()> {
         let form = ThtForm::new(
             ThtKind::Axial {
-                body_diameter: 2.5,
-                body_length: 6.0,
+                body_diameter_nm: nm(2.5),
+                body_length_nm: nm(6.0),
             },
-            10.0,
-            0.6,
-            3.0,
+            nm(10.0),
+            nm(0.6),
+            nm(3.0),
         );
         let (leads, body) = built(form)?;
         near(body.0[0], -3.0, "body from −x");
@@ -558,21 +560,21 @@ mod tests {
     fn radial_leads_go_straight_down_or_formed_out() -> Result<()> {
         let mut form = ThtForm::new(
             ThtKind::Radial {
-                body_diameter: 5.0,
-                body_height: 11.0,
+                body_diameter_nm: nm(5.0),
+                body_height_nm: nm(11.0),
             },
-            2.0,
-            0.5,
-            3.0,
+            nm(2.0),
+            nm(0.5),
+            nm(3.0),
         );
         let (leads, body) = built(form)?;
         near(body.1[2], 11.0, "body height");
         near((leads[0].0[0] + leads[0].1[0]) / 2.0, -1.0, "lead 1 at −x");
         near((leads[1].0[0] + leads[1].1[0]) / 2.0, 1.0, "lead 2 at +x");
         // Formed out from 2 mm at the body to 5 mm on the board.
-        form.lead_pitch = 5.0;
-        form.body_pitch = Some(2.0);
-        form.standoff = Some(1.5);
+        form.lead_pitch_nm = nm(5.0);
+        form.body_pitch_nm = Some(nm(2.0));
+        form.standoff_nm = Some(nm(1.5));
         let (leads, body) = built(form)?;
         near(body.0[2], 1.5, "standoff");
         near(leads[1].1[0], 2.75, "formed lead's foot outer face");
@@ -585,14 +587,14 @@ mod tests {
         let form = ThtForm::new(
             ThtKind::Dip {
                 pins: 8,
-                row_pitch: 7.5,
-                body_length: 9.5,
-                body_width: 6.5,
-                body_height: 3.5,
+                row_pitch_nm: nm(7.5),
+                body_length_nm: nm(9.5),
+                body_width_nm: nm(6.5),
+                body_height_nm: nm(3.5),
             },
-            2.5,
-            0.5,
-            3.0,
+            nm(2.5),
+            nm(0.5),
+            nm(3.0),
         );
         let (leads, body) = built(form)?;
         near(body.0[2], 0.5, "standoff");
@@ -612,13 +614,13 @@ mod tests {
         let mut form = ThtForm::new(
             ThtKind::To {
                 pins: 3,
-                body_length: 4.5,
-                body_width: 3.5,
-                body_height: 4.5,
+                body_length_nm: nm(4.5),
+                body_width_nm: nm(3.5),
+                body_height_nm: nm(4.5),
             },
-            1.25,
-            0.45,
-            3.0,
+            nm(1.25),
+            nm(0.45),
+            nm(3.0),
         );
         let (leads, body) = built(form)?;
         near(body.0[2], 1.0, "estimated standoff");
@@ -627,8 +629,8 @@ mod tests {
             near(centre(lead), x, "straight lead");
         }
         // Formed: 1.25 mm at the body out to 2.5 mm on the board.
-        form.lead_pitch = 2.5;
-        form.body_pitch = Some(1.25);
+        form.lead_pitch_nm = nm(2.5);
+        form.body_pitch_nm = Some(nm(1.25));
         let (leads, _) = built(form)?;
         near(leads[0].0[0], -2.5 - 0.225, "outer lead's foot");
         near(centre(&leads[1]), 0.0, "middle lead straight");

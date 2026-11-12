@@ -265,7 +265,7 @@ fn checking_a_stale_draft_reports_the_draft_not_the_stored_revision() -> Result<
         },
     )?;
     with(&mut engine, f.package, package_body, |p| {
-        p.envelope = [9.0, 9.0, 9.0];
+        p.envelope_nm = [nm(9.0), nm(9.0), nm(9.0)];
     })?;
     let report = check(&engine, CheckTarget::Draft(f.package))?;
     assert_eq!(
@@ -345,9 +345,9 @@ fn a_retired_local_id_is_never_reused() -> Result<()> {
     with(&mut engine, f.symbol, symbol_body, |s| {
         s.units[0].pins.push(crate::library::Pin::new(
             TerminalId(3),
-            [0.0, -5.0],
+            pt([0.0, -5.0]),
             crate::library::PinDirection::Up,
-            2.5,
+            nm(2.5),
         ))
     })?;
     with(&mut engine, f.binding, binding_body, |b| {
@@ -658,8 +658,8 @@ fn shape_graphic(id: u32, layer: DrawingLayer, shape: Shape, fill: Fill) -> Foot
         layer,
         side: Side::Component,
         item: Item::Shape {
-            shape,
-            width: 0.1,
+            shape: shape_nm(shape),
+            width_nm: nm(0.1),
             fill,
         },
     }
@@ -725,22 +725,22 @@ fn each_footprint_rule_blocks_publication() -> Result<()> {
         ("footprint.paste_window_outside_pad", |fp| {
             fp.pads[0].paste = PasteRule::Windows(vec![PasteWindow {
                 id: ApertureId(1),
-                shape: Shape::rect([-0.2, -0.2], [0.4, 0.2]),
+                shape: shape_nm(Shape::rect([-0.2, -0.2], [0.4, 0.2])),
             }])
         }),
         ("footprint.paste_window_shape", |fp| {
             fp.pads[0].paste = PasteRule::Windows(vec![PasteWindow {
                 id: ApertureId(1),
-                shape: Shape::Line {
+                shape: shape_nm(Shape::Line {
                     a: [0.0, 0.0],
                     b: [0.1, 0.0],
-                },
+                }),
             }])
         }),
         ("footprint.aperture_duplicate", |fp| {
             let window = PasteWindow {
                 id: ApertureId(1),
-                shape: Shape::rect([-0.1, -0.1], [0.1, 0.1]),
+                shape: shape_nm(Shape::rect([-0.1, -0.1], [0.1, 0.1])),
             };
             fp.pads[0].paste = PasteRule::Windows(vec![window.clone(), window]);
         }),
@@ -819,7 +819,7 @@ fn each_footprint_rule_blocks_publication() -> Result<()> {
             fp.next_local = 10;
             let mut text = crate::library::designator_placeholder(
                 GraphicId(9),
-                [0.0, 0.0],
+                pt([0.0, 0.0]),
                 DrawingLayer::Silkscreen,
             );
             if let Item::Text(t) = &mut text.item {
@@ -974,11 +974,11 @@ fn consistent_pads_of_every_kind_and_shape_publish() -> Result<()> {
         fp.pads[1].paste = PasteRule::Windows(vec![
             PasteWindow {
                 id: ApertureId(1),
-                shape: Shape::rect([-0.5, -0.5], [-0.05, 0.5]),
+                shape: shape_nm(Shape::rect([-0.5, -0.5], [-0.05, 0.5])),
             },
             PasteWindow {
                 id: ApertureId(2),
-                shape: Shape::rect([0.05, -0.5], [0.5, 0.5]),
+                shape: shape_nm(Shape::rect([0.05, -0.5], [0.5, 0.5])),
             },
         ]);
         fp.pads[1].vias.push(crate::library::PadVia {
@@ -1077,10 +1077,11 @@ fn footprint_lint_is_advisory_and_follows_drawings() -> Result<()> {
                         side: Side::Component,
                     },
                     item: Item::Shape {
-                        shape: Shape::rect([-2.0, -1.0], [4.0, 1.0]),
-                        width: 0.05,
+                        shape: shape_nm(Shape::rect([-2.0, -1.0], [4.0, 1.0])),
+                        width_nm: nm(0.05),
                         fill: Fill::None,
-                    },
+                    }
+                    .into(),
                 },
                 GraphicEdit::SetPolarity {
                     polarity: Some(Polarity {
@@ -1114,11 +1115,11 @@ fn footprint_graphic_edits_are_atomic_and_keep_polarity_consistent() -> Result<(
         side: Side::Component,
     };
     let line = Item::Shape {
-        shape: Shape::Line {
+        shape: shape_nm(Shape::Line {
             a: [-1.0, 1.0],
             b: [1.0, 1.0],
-        },
-        width: 0.15,
+        }),
+        width_nm: nm(0.15),
         fill: Fill::None,
     };
     let edit = |edits| {
@@ -1132,7 +1133,7 @@ fn footprint_graphic_edits_are_atomic_and_keep_polarity_consistent() -> Result<(
         edit(vec![
             GraphicEdit::Add {
                 target: silk,
-                item: line.clone(),
+                item: line.clone().into(),
             },
             GraphicEdit::SetPolarity {
                 polarity: Some(Polarity {
@@ -1171,12 +1172,12 @@ fn footprint_graphic_edits_are_atomic_and_keep_polarity_consistent() -> Result<(
             "unit target",
             vec![GraphicEdit::Add {
                 target: GraphicTarget::Unit(crate::UnitId(1)),
-                item: line.clone(),
+                item: line.clone().into(),
             }],
         ),
         (
             "symbol pin edit",
-            vec![GraphicEdit::SetPinTextHeight { height: 1.0 }],
+            vec![GraphicEdit::SetPinTextHeight { height: nm(1.0) }],
         ),
         (
             "courtyard marker after a good add",
@@ -1186,7 +1187,7 @@ fn footprint_graphic_edits_are_atomic_and_keep_polarity_consistent() -> Result<(
                         layer: DrawingLayer::Courtyard,
                         side: Side::Component,
                     },
-                    item: line.clone(),
+                    item: line.clone().into(),
                 },
                 GraphicEdit::SetPolarity {
                     polarity: Some(Polarity {
@@ -1216,7 +1217,7 @@ fn footprint_graphic_edits_are_atomic_and_keep_polarity_consistent() -> Result<(
                     draft: f.symbol,
                     edits: vec![GraphicEdit::Add {
                         target: silk,
-                        item: line.clone(),
+                        item: line.clone().into(),
                     }],
                 }),
             )
@@ -1274,7 +1275,7 @@ fn derived_footprint_graphics_are_edited_through_their_role() -> Result<()> {
             draft: f.footprint,
             edits: vec![GraphicEdit::Translate {
                 ids: vec![GraphicId(3)],
-                delta: [1.0, 0.0],
+                delta: pt([1.0, 0.0]),
             }],
         }),
     );

@@ -9,6 +9,7 @@ use super::*;
 use pcbcraft_core::ids::PackageTerminalId;
 use pcbcraft_core::library::footprint_edit;
 use pcbcraft_core::library::footprint_source::{FootprintEdit, PadTemplate};
+use pcbcraft_core::library::package_form::typical_nm as nm;
 use pcbcraft_core::library::{
     DrawingLayer, FootprintDefinition, HoleShape, PackageDefinition, PackageTerminal, Pad, PadKind,
     PadShape,
@@ -20,7 +21,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn package(terminals: u32) -> PackageDefinition {
     PackageDefinition {
-        envelope: [4.9, 3.9, 1.5],
+        envelope_nm: [nm(4.9), nm(3.9), nm(1.5)],
         terminals: (1..=terminals)
             .map(|n| PackageTerminal {
                 id: PackageTerminalId(n + 100),

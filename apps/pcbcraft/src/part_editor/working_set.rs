@@ -80,7 +80,7 @@ impl Template {
             Self::Package(preset) => preset.label(),
         }
     }
-    fn edits(self, refs: SampleRefs) -> Vec<DraftEdit> {
+    fn edits(self, refs: SampleRefs) -> pcbcraft_core::Result<Vec<DraftEdit>> {
         match self {
             Self::TwoTerminal => samples::two_terminal(self.name(), samples::Kind::RESISTOR, refs),
             Self::Header => {
@@ -310,7 +310,7 @@ impl WorkingSet {
             footprint: FootprintRef::new(self.ids.footprint, first),
             binding: BindingRef::new(self.ids.binding, first),
         };
-        let Some(mut sample) = Self::from_edits(template.edits(refs)) else {
+        let Some(mut sample) = template.edits(refs).ok().and_then(Self::from_edits) else {
             return;
         };
         sample.component.next_local = sample.component.next_local.max(self.component.next_local);
@@ -362,7 +362,7 @@ pub fn create(engine: &mut Engine, template: Template) -> Result<DefinitionId> {
         package: PackageRef::new(package, first),
         footprint: FootprintRef::new(footprint, first),
         binding: BindingRef::new(binding, first),
-    });
+    })?;
     engine
         .apply(
             engine.revision(),

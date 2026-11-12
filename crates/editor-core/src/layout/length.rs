@@ -76,12 +76,17 @@ struct Measured {
 
 impl Measured {
     fn of(project: &Project, graph: &CopperGraph) -> Self {
+        Self::of_pairs(project, graph, &project.rules.diff_pairs)
+    }
+
+    /// [`Measured::of`] with the signal paths of `pairs` alone.
+    fn of_pairs(project: &Project, graph: &CopperGraph, pairs: &[DiffPair]) -> Self {
         let mut out = Self {
             copper: graph.net_lengths(),
             pairs: BTreeMap::new(),
             paths: BTreeMap::new(),
         };
-        for pair in &project.rules.diff_pairs {
+        for pair in pairs {
             let measure = path::measure(project, graph, pair);
             if let Some([p, n]) = &measure.halves {
                 out.paths.insert(pair.positive, p.total());
@@ -566,87 +571,11 @@ pub fn checks(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
         return findings;
     }
     let lengths = Measured::of(project, graph);
+    for pair in &rules.diff_pairs {
+        check_pair(project, pair, &lengths, &mut findings);
+    }
     let len = |n: Id| lengths.length(n);
     let net = |id: Id| ObjectRef::Net { id };
-    for pair in &rules.diff_pairs {
-        let class = super::net_class(project, pair.positive);
-        let class_name = class
-            .and_then(|c| rules.class(c))
-            .map_or_else(String::new, |c| c.name.clone());
-        let signal = rules.signal(class);
-        let (a, b) = (len(pair.positive), len(pair.negative));
-        let objects = vec![net(pair.positive), net(pair.negative)];
-        // Skew is checked only against a limit the net class sets.
-        if let Some(max_skew) = signal.pair_max_skew
-            && a > 0.0
-            && b > 0.0
-            && (a - b).abs() > max_skew + 1e-6
-        {
-            findings.push(Finding::new(
-                "pair.skew",
-                format!(
-                    "{}: halves differ by {} mm; needs at most {} mm (net class {class_name}: max skew)",
-                    pair.name,
-                    mm((a - b).abs()),
-                    mm(max_skew)
-                ),
-                objects.clone(),
-            ));
-        }
-        let coupled = pair_coupling(project, pair);
-        let uncoupled = lengths.uncoupled(pair.id, &coupled);
-        let c = coupled.coupling;
-        if let Some(max) = signal.pair_max_uncoupled {
-            let worst = uncoupled[0].max(uncoupled[1]);
-            if worst > max + 1e-6 && (a > 0.0 || b > 0.0) {
-                findings.push(Finding::new(
-                    "pair.uncoupled",
-                    format!(
-                        "{}: {} mm runs uncoupled; needs at most {} mm (net class {class_name}: max uncoupled)",
-                        pair.name,
-                        mm(worst),
-                        mm(max)
-                    ),
-                    objects.clone(),
-                ));
-            }
-        }
-        let mut worst: BTreeMap<CopperLayer, (f64, f64, Id, Id)> = BTreeMap::new();
-        for (p, n, layer, edge, gap) in &c.too_close {
-            let entry = worst.entry(*layer).or_insert((*edge, *gap, *p, *n));
-            if *edge < entry.0 {
-                *entry = (*edge, *gap, *p, *n);
-            }
-        }
-        for (layer, (edge, gap, p, n)) in worst {
-            findings.push(Finding::new(
-                "pair.gap",
-                format!(
-                    "{}: halves {} mm apart on {}; needs a {} mm pair gap",
-                    pair.name,
-                    mm(edge),
-                    layer.name(),
-                    mm(gap)
-                ),
-                vec![
-                    net(pair.positive),
-                    net(pair.negative),
-                    ObjectRef::Track { id: p },
-                    ObjectRef::Track { id: n },
-                ],
-            ));
-        }
-        if let Some(target) = signal.diff_impedance {
-            impedance_of_runs(
-                project,
-                pair,
-                target,
-                signal.tolerance_pct(),
-                &c,
-                &mut findings,
-            );
-        }
-    }
     for g in group_rows(project, &lengths) {
         let (lo, hi) = window(g.target, g.explicit, g.tolerance);
         for member in &g.members {
@@ -684,6 +613,94 @@ pub fn checks(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
     }
     single_ended_impedance(project, &mut findings);
     findings
+}
+
+/// The skew, uncoupled-length, gap and impedance findings of `pair` alone,
+/// as [`checks`] reports them, on `graph`: the copper graph of `project`,
+/// or the graph of the pair's own nets ([`CopperGraph::of_nets`]), which
+/// measures the pair the same.
+pub fn pair_checks(project: &Project, graph: &CopperGraph, pair: &DiffPair) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let lengths = Measured::of_pairs(project, graph, std::slice::from_ref(pair));
+    check_pair(project, pair, &lengths, &mut findings);
+    findings
+}
+
+/// [`pair_checks`] with the lengths `lengths`, into `findings`.
+fn check_pair(project: &Project, pair: &DiffPair, lengths: &Measured, findings: &mut Vec<Finding>) {
+    let rules = &project.rules;
+    let len = |n: Id| lengths.length(n);
+    let net = |id: Id| ObjectRef::Net { id };
+    let class = super::net_class(project, pair.positive);
+    let class_name = class
+        .and_then(|c| rules.class(c))
+        .map_or_else(String::new, |c| c.name.clone());
+    let signal = rules.signal(class);
+    let (a, b) = (len(pair.positive), len(pair.negative));
+    let objects = vec![net(pair.positive), net(pair.negative)];
+    // Skew is checked only against a limit the net class sets.
+    if let Some(max_skew) = signal.pair_max_skew
+        && a > 0.0
+        && b > 0.0
+        && (a - b).abs() > max_skew + 1e-6
+    {
+        findings.push(Finding::new(
+            "pair.skew",
+            format!(
+                "{}: halves differ by {} mm; needs at most {} mm (net class {class_name}: max skew)",
+                pair.name,
+                mm((a - b).abs()),
+                mm(max_skew)
+            ),
+            objects.clone(),
+        ));
+    }
+    let coupled = pair_coupling(project, pair);
+    let uncoupled = lengths.uncoupled(pair.id, &coupled);
+    let c = coupled.coupling;
+    if let Some(max) = signal.pair_max_uncoupled {
+        let worst = uncoupled[0].max(uncoupled[1]);
+        if worst > max + 1e-6 && (a > 0.0 || b > 0.0) {
+            findings.push(Finding::new(
+                "pair.uncoupled",
+                format!(
+                    "{}: {} mm runs uncoupled; needs at most {} mm (net class {class_name}: max uncoupled)",
+                    pair.name,
+                    mm(worst),
+                    mm(max)
+                ),
+                objects.clone(),
+            ));
+        }
+    }
+    let mut worst: BTreeMap<CopperLayer, (f64, f64, Id, Id)> = BTreeMap::new();
+    for (p, n, layer, edge, gap) in &c.too_close {
+        let entry = worst.entry(*layer).or_insert((*edge, *gap, *p, *n));
+        if *edge < entry.0 {
+            *entry = (*edge, *gap, *p, *n);
+        }
+    }
+    for (layer, (edge, gap, p, n)) in worst {
+        findings.push(Finding::new(
+            "pair.gap",
+            format!(
+                "{}: halves {} mm apart on {}; needs a {} mm pair gap",
+                pair.name,
+                mm(edge),
+                layer.name(),
+                mm(gap)
+            ),
+            vec![
+                net(pair.positive),
+                net(pair.negative),
+                ObjectRef::Track { id: p },
+                ObjectRef::Track { id: n },
+            ],
+        ));
+    }
+    if let Some(target) = signal.diff_impedance {
+        impedance_of_runs(project, pair, target, signal.tolerance_pct(), &c, findings);
+    }
 }
 
 /// Each routed net whose class has a single-ended target: its worst

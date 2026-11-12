@@ -492,13 +492,15 @@ impl LandValues {
     /// Range problems of the overrides: every given size is positive and
     /// at most the typed-form limit.
     pub fn problems(&self) -> Vec<String> {
-        use crate::library::package_form::{FORM_LENGTH_LIMIT_MM, FORM_LENGTH_MIN_MM};
+        use crate::library::package_form::{FORM_LENGTH_LIMIT_NM, FORM_LENGTH_MIN_NM};
+        let (min, max) = (
+            FORM_LENGTH_MIN_NM.to_mm_f64(),
+            FORM_LENGTH_LIMIT_NM.to_mm_f64(),
+        );
         let mut out = Vec::new();
         let mut check = |name: &str, v: f64| {
-            if !(v.is_finite() && (FORM_LENGTH_MIN_MM..=FORM_LENGTH_LIMIT_MM).contains(&v)) {
-                out.push(format!(
-                    "{name} must be {FORM_LENGTH_MIN_MM}–{FORM_LENGTH_LIMIT_MM} mm (is {v})."
-                ));
+            if !(v.is_finite() && (min..=max).contains(&v)) {
+                out.push(format!("{name} must be {min}–{max} mm (is {v})."));
             }
         };
         if let Some(v) = self.pad_length {
@@ -538,8 +540,10 @@ pub enum RowSource {
 #[serde(deny_unknown_fields)]
 pub struct NewFromTemplate {
     pub row: RowSource,
-    /// Edited values; the row's when `None` (required for `Custom`).
-    #[serde(default)]
+    /// Edited values in millimetres; the row's when `None` (required for
+    /// `Custom`).
+    #[serde(default, with = "crate::library::package_form::option_form_mm")]
+    #[schemars(with = "Option<crate::library::package_form::PackageFormParams>")]
     pub values: Option<PackageForm>,
     pub skeleton: SkeletonHint,
     pub name: String,
@@ -563,7 +567,8 @@ pub struct PackageFromTemplate {
     /// The package draft of the open working set.
     pub draft: DefinitionId,
     pub row: RowSource,
-    #[serde(default)]
+    #[serde(default, with = "crate::library::package_form::option_form_mm")]
+    #[schemars(with = "Option<crate::library::package_form::PackageFormParams>")]
     pub values: Option<PackageForm>,
     /// Replace a non-empty footprint instead of refusing it.
     #[serde(default)]
@@ -666,8 +671,14 @@ pub struct PackagePlan {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "from", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RowFrom {
-    Package { draft: DefinitionId },
-    Values { values: PackageForm },
+    Package {
+        draft: DefinitionId,
+    },
+    Values {
+        #[serde(with = "crate::library::package_form::form_mm")]
+        #[schemars(with = "crate::library::package_form::PackageFormParams")]
+        values: PackageForm,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]

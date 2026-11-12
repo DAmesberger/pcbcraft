@@ -142,12 +142,7 @@ pub fn face_towards(
     }
     let centre = uu * ((u0 + u1) / 2.0) + vv * ((v0 + v1) / 2.0) + n * height;
     Some((
-        MarkingArea {
-            origin: arr(centre),
-            normal: arr(n),
-            u_axis: arr(uu),
-            size_mm: size,
-        },
+        MarkingArea::from_mm(arr(centre), arr(n), arr(uu), size).ok()?,
         outer.surface,
     ))
 }
@@ -218,7 +213,7 @@ impl Marked<'_> {
                     face_towards(&self.bodies, [0.0, 0.0, s], [self.u[0], self.u[1], 0.0])?;
                 Some((
                     SurfaceMap::plane(&area).ok()?,
-                    Region::plane(area.size_mm),
+                    Region::plane(area.size()),
                     Some(look),
                 ))
             }
@@ -228,7 +223,7 @@ impl Marked<'_> {
                     face_towards(&self.bodies, arr(self.to_world(n)), arr(self.to_world(u)))?;
                 Some((
                     SurfaceMap::plane(&area).ok()?,
-                    Region::plane(area.size_mm),
+                    Region::plane(area.size()),
                     Some(look),
                 ))
             }
@@ -246,23 +241,27 @@ impl Marked<'_> {
                 };
                 match found.geometry {
                     SurfaceGeometry::Plane(a) => {
-                        let origin = world(a.origin)?;
-                        let area = MarkingArea {
-                            origin: arr(origin),
-                            normal: arr(dir(a.normal)),
-                            u_axis: arr(dir(a.u_axis)),
-                            size_mm: a.size_mm,
-                        };
+                        let origin = world(a.origin())?;
+                        let area = MarkingArea::from_mm(
+                            arr(origin),
+                            arr(dir(a.normal)),
+                            arr(dir(a.u_axis)),
+                            a.size(),
+                        )
+                        .ok()?;
                         let look = self.base_near(origin);
                         Some((
                             SurfaceMap::plane(&area).ok()?,
-                            Region::plane(a.size_mm),
+                            Region::plane(a.size()),
                             look,
                         ))
                     }
                     SurfaceGeometry::Cylinder(c) => {
                         let cylinder = CylinderArea {
-                            base: arr(world(c.base)?),
+                            base_nm: pcbcraft_core::library::model3d::triple_nm(arr(world(
+                                c.base(),
+                            )?))
+                            .ok()?,
                             axis: arr(dir(c.axis)),
                             zero: arr(dir(c.zero)),
                             ..c
@@ -270,7 +269,7 @@ impl Marked<'_> {
                         let wrap = placement.wrap.unwrap_or_default();
                         let chart = cylinder.chart(&wrap)?;
                         let region = Region::wrap(&cylinder, &chart);
-                        let mid = vec3(cylinder.base) + vec3(cylinder.axis) * chart.mid;
+                        let mid = vec3(cylinder.base()) + vec3(cylinder.axis) * chart.mid;
                         let look = self.base_near(mid);
                         Some((SurfaceMap::cylinder(cylinder, chart).ok()?, region, look))
                     }

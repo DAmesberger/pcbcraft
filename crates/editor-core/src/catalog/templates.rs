@@ -38,6 +38,9 @@ pub struct TemplateHit {
     pub source: Source,
     pub name: String,
     pub aliases: Vec<String>,
+    /// The row's values in millimetres.
+    #[serde(with = "crate::library::package_form::form_mm")]
+    #[schemars(with = "crate::library::package_form::PackageFormParams")]
     pub values: PackageForm,
     #[serde(default)]
     pub size_code: Option<SizeCode>,
@@ -122,16 +125,20 @@ impl PackageShape {
         let pins = u32::try_from(form.lead_count()).ok().filter(|n| *n > 0)?;
         let (pitch, body) = match form {
             PackageForm::Generic => return None,
-            PackageForm::Chip(c) => (None, Some([c.length, c.width, c.height])),
+            PackageForm::Chip(c) => (None, Some([c.length(), c.width(), c.height()])),
             PackageForm::GullWing(g) => (
-                Some(g.pitch),
-                Some([g.body_length, g.body_width, g.standoff + g.body_height]),
+                Some(g.pitch()),
+                Some([
+                    g.body_length(),
+                    g.body_width(),
+                    g.standoff() + g.body_height(),
+                ]),
             ),
             PackageForm::NoLead(n) => (
-                Some(n.pitch),
-                Some([n.body_length, n.body_width, n.body_height]),
+                Some(n.pitch()),
+                Some([n.body_length(), n.body_width(), n.body_height()]),
             ),
-            PackageForm::Header(h) => (Some(h.pitch), form.envelope()),
+            PackageForm::Header(h) => (Some(h.pitch()), form.envelope()),
             PackageForm::Tabbed(_)
             | PackageForm::Molded(_)
             | PackageForm::Grid(_)

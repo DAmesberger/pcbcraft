@@ -44,13 +44,13 @@ const ANTENNA_TURNS_PER_10_MM: f64 = 4.0;
 
 pub(super) fn check(f: &ModuleForm) -> Result<()> {
     check_positive(&[
-        ("module width", f.width),
-        ("module length", f.length),
-        ("board thickness", f.pcb_thickness),
-        ("pitch", f.pitch),
+        ("module width", f.width()),
+        ("module length", f.length()),
+        ("board thickness", f.pcb_thickness()),
+        ("pitch", f.pitch()),
     ])?;
     require(
-        f.height > f.pcb_thickness + PAD_MM,
+        f.height() > f.pcb_thickness() + PAD_MM,
         "the height must leave room for the can above the board and its pads",
     )?;
     require(!f.row_centres().is_empty(), "a module needs pad rows")
@@ -76,7 +76,7 @@ fn polygon(points: &[[f64; 2]]) -> Option<Contour> {
 /// The board outline with a half-hole notch of `r` at every castellated
 /// pad, counter-clockwise from the −x, −y corner.
 fn board_outline(f: &ModuleForm, r: f64) -> Contour {
-    let (hw, hl) = (f.width / 2.0, f.length / 2.0);
+    let (hw, hl) = (f.width() / 2.0, f.length() / 2.0);
     let notches = |side: ModuleSide| -> Vec<f64> {
         let mut at: Vec<f64> = f
             .row_centres()
@@ -149,11 +149,11 @@ fn plating(side: ModuleSide, c: [f64; 2], r: f64) -> Contour {
 /// The meander's centreline across the antenna region: up and down turns
 /// stepping along x, a feed leg down to the region's lower edge.
 fn meander(f: &ModuleForm) -> Option<Vec<[f64; 2]>> {
-    if f.antenna_length <= 2.0 * ANTENNA_MARGIN_MM + TRACE_WIDTH_MM {
+    if f.antenna_length() <= 2.0 * ANTENNA_MARGIN_MM + TRACE_WIDTH_MM {
         return None;
     }
-    let (hw, hl) = (f.width / 2.0, f.length / 2.0);
-    let y0 = hl - f.antenna_length + ANTENNA_MARGIN_MM;
+    let (hw, hl) = (f.width() / 2.0, f.length() / 2.0);
+    let y0 = hl - f.antenna_length() + ANTENNA_MARGIN_MM;
     let y1 = hl - ANTENNA_MARGIN_MM;
     let x0 = -hw + ANTENNA_MARGIN_MM;
     let x1 = hw - ANTENNA_MARGIN_MM;
@@ -182,19 +182,19 @@ fn meander(f: &ModuleForm) -> Option<Vec<[f64; 2]>> {
 }
 
 pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
-    let w = b.length("width", f.width)?;
-    let l = b.length("length", f.length)?;
-    let t = b.length("board_thickness", f.pcb_thickness)?;
+    let w = b.length("width", f.width())?;
+    let l = b.length("length", f.length())?;
+    let t = b.length("board_thickness", f.pcb_thickness())?;
     let pad = b.length("pad_thickness", PAD_MM)?;
-    let can_h = b.length("can_height", f.height - f.pcb_thickness - PAD_MM)?;
-    let [cw, cl] = f.can_size;
+    let can_h = b.length("can_height", f.height() - f.pcb_thickness() - PAD_MM)?;
+    let [cw, cl] = f.can_size();
     let cw_p = b.length("can_width", cw)?;
     let cl_p = b.length("can_length", cl)?;
 
     // The board, notched at castellations.
     let board = b.name("board");
     let body_material = b.material(BodyRole::Body);
-    let r = f.castellation / 2.0;
+    let r = f.castellation() / 2.0;
     let castellated = r > 0.0 && f.row_centres().iter().any(|(s, c)| f.at_edge(*s, *c));
     if castellated {
         b.native.profile_body(ProfileBody {
@@ -222,7 +222,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
     let mut offset = 0usize;
     for (k, row) in f.rows.iter().enumerate() {
         let size = f.row_pad_size(row.side);
-        let first = row.first;
+        let first = row.first();
         let name = b.name(&format!("row {} pad", k + 1));
         b.solid(
             &name,
@@ -242,7 +242,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
                 Pattern {
                     dir1: step3(row.side),
                     count1: Expr::from(i32::try_from(row.count).unwrap_or(1)),
-                    spacing1: Expr::from(mm(f.pitch)),
+                    spacing1: Expr::from(mm(f.pitch())),
                     second: None,
                 },
             )?;
@@ -270,7 +270,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
         offset += row.count as usize;
         if castellated && row_centres.iter().all(|(s, c)| f.at_edge(*s, *c)) {
             let n = row.side.outward();
-            let (hw, hl) = (f.width / 2.0, f.length / 2.0);
+            let (hw, hl) = (f.width() / 2.0, f.length() / 2.0);
             let edge = |c: [f64; 2]| match row.side {
                 ModuleSide::Left | ModuleSide::Right => [n[0] * hw, c[1]],
                 ModuleSide::Bottom | ModuleSide::Top => [c[0], n[1] * hl],
@@ -290,7 +290,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
                     Pattern {
                         dir1: step3(row.side),
                         count1: Expr::from(i32::try_from(row.count).unwrap_or(1)),
-                        spacing1: Expr::from(mm(f.pitch)),
+                        spacing1: Expr::from(mm(f.pitch())),
                         second: None,
                     },
                 )?;
@@ -313,8 +313,8 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
         let pad_material = b.material(BodyRole::ExposedPad);
         let centres = f.ground_centres();
         if let Some(first) = centres.first() {
-            let (c, s) = pcbcraft_core::geometry::cos_sin(g.rotation_deg);
-            let [hx, hy] = [g.size[0] / 2.0, g.size[1] / 2.0];
+            let (c, s) = pcbcraft_core::geometry::cos_sin(g.rotation_deg());
+            let [hx, hy] = [g.size()[0] / 2.0, g.size()[1] / 2.0];
             let corner = |u: f64, v: f64| [first[0] + c * u - s * v, first[1] + s * u + c * v];
             let seed = b.name("ground pad");
             if let Some(square) = polygon(&[
@@ -338,12 +338,12 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
                     Pattern {
                         dir1: [c, s, 0.0],
                         count1: Expr::from(i32::try_from(g.cols).unwrap_or(1)),
-                        spacing1: Expr::from(mm(g.pitch[0])),
+                        spacing1: Expr::from(mm(g.pitch()[0])),
                         second: (g.rows > 1).then(|| {
                             (
                                 [s, -c, 0.0],
                                 Expr::from(i32::try_from(g.rows).unwrap_or(1)),
-                                Expr::from(mm(g.pitch[1])),
+                                Expr::from(mm(g.pitch()[1])),
                             )
                         }),
                     },
@@ -371,11 +371,11 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
             BodyRole::Termination,
             lead_material,
             [
-                mm(p.centre[0] - p.size[0] / 2.0),
-                mm(p.centre[1] - p.size[1] / 2.0),
+                mm(p.centre()[0] - p.size()[0] / 2.0),
+                mm(p.centre()[1] - p.size()[1] / 2.0),
                 "0 mm".into(),
             ],
-            [mm(p.size[0]), mm(p.size[1]), pad.clone()],
+            [mm(p.size()[0]), mm(p.size()[1]), pad.clone()],
         )?;
         numbered.push((name, lead));
     }
@@ -388,8 +388,8 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
     // The shield can on the board, its top edges rounded.
     let can = b.name("shield can");
     let can_material = b.material(BodyRole::Other);
-    let [cx, cy] = f.can_centre;
-    let z_top = PAD_MM + f.pcb_thickness;
+    let [cx, cy] = f.can_centre();
+    let z_top = PAD_MM + f.pcb_thickness();
     b.solid(
         &can,
         BodyRole::Other,
@@ -402,9 +402,9 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
         [cw_p.clone(), cl_p.clone(), can_h.clone()],
     )?;
     let lo = [cx - cw / 2.0, cy - cl / 2.0, z_top];
-    let hi = [cx + cw / 2.0, cy + cl / 2.0, f.height];
+    let hi = [cx + cw / 2.0, cy + cl / 2.0, f.height()];
     let edge = CAN_EDGE_MM
-        .min(0.25 * (f.height - z_top))
+        .min(0.25 * (f.height() - z_top))
         .min(0.1 * cw.min(cl));
     b.round("can_round", &can, &top_edges(lo, hi), edge)?;
 
@@ -427,6 +427,8 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::models::tests::{nm, pt};
 
     #[test]
     fn the_board_outline_closes_with_a_notch_per_castellated_pad() -> Result<()> {
@@ -468,59 +470,59 @@ mod tests {
     /// sides at 1.0 mm, a 2 × 2 ground array turned 45°, two corner pads.
     pub(crate) fn lga() -> ModuleForm {
         ModuleForm {
-            width: 16.0,
-            length: 20.0,
-            height: 3.0,
-            pcb_thickness: 0.8,
-            antenna_length: 5.0,
-            can_size: [15.0, 14.0],
-            can_centre: [0.0, -2.5],
-            pitch: 1.0,
-            pad_size: [0.8, 0.5],
+            width_nm: nm(16.0),
+            length_nm: nm(20.0),
+            height_nm: nm(3.0),
+            pcb_thickness_nm: nm(0.8),
+            antenna_length_nm: nm(5.0),
+            can_size: pt([15.0, 14.0]),
+            can_centre: pt([0.0, -2.5]),
+            pitch_nm: nm(1.0),
+            pad_size_nm: [nm(0.8), nm(0.5)],
             rows: vec![
                 PadRow {
                     side: ModuleSide::Left,
                     count: 10,
-                    first: [-7.4, 3.5],
+                    first: pt([-7.4, 3.5]),
                 },
                 PadRow {
                     side: ModuleSide::Bottom,
                     count: 8,
-                    first: [-3.5, -9.4],
+                    first: pt([-3.5, -9.4]),
                 },
                 PadRow {
                     side: ModuleSide::Right,
                     count: 10,
-                    first: [7.4, -5.5],
+                    first: pt([7.4, -5.5]),
                 },
                 PadRow {
                     side: ModuleSide::Top,
                     count: 8,
-                    first: [3.5, 4.4],
+                    first: pt([3.5, 4.4]),
                 },
             ],
-            castellation: 0.0,
-            land_width: 0.5,
-            land_extend: [0.0, 0.0],
+            castellation_nm: nm(0.0),
+            land_width_nm: nm(0.5),
+            land_extend_nm: [nm(0.0), nm(0.0)],
             ground: Some(GroundPads {
                 rows: 2,
                 cols: 2,
-                pitch: [2.0, 2.0],
-                size: [1.2, 1.2],
-                centre: [0.0, -2.5],
-                rotation_deg: 45.0,
+                pitch: pt([2.0, 2.0]),
+                size: pt([1.2, 1.2]),
+                centre: pt([0.0, -2.5]),
+                rotation_mdeg: pcbcraft_core::units::Angle::new(45_000).unwrap_or_default(),
                 number: "37".into(),
             }),
             singles: vec![
                 SinglePad {
                     number: "38".into(),
-                    centre: [-7.4, -9.4],
-                    size: [0.8, 0.8],
+                    centre: pt([-7.4, -9.4]),
+                    size: pt([0.8, 0.8]),
                 },
                 SinglePad {
                     number: "39".into(),
-                    centre: [7.4, -9.4],
-                    size: [0.8, 0.8],
+                    centre: pt([7.4, -9.4]),
+                    size: pt([0.8, 0.8]),
                 },
             ],
             keepout: Some(crate::models::module::tests::keepout()),
@@ -529,7 +531,7 @@ mod tests {
 
     fn keepout() -> pcbcraft_core::library::package_form::module::AntennaKeepout {
         pcbcraft_core::library::package_form::module::AntennaKeepout {
-            beyond: [0.0, 0.0, 0.0],
+            beyond_nm: [nm(0.0), nm(0.0), nm(0.0)],
         }
     }
 

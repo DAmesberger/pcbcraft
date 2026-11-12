@@ -17,7 +17,20 @@ use pcbcraft_core::library::templates::footprint_family::{
 use pcbcraft_core::library::{
     FootprintDefinition, PackageDefinition, PackageTerminal, Pad, PadKind, PadShape, PasteRule,
 };
+use pcbcraft_core::units::PointNm;
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
+
+/// A test length in mm, as stored.
+#[allow(dead_code)]
+fn nm(mm: f64) -> pcbcraft_core::units::Nm {
+    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
+/// A test point or size in mm, as stored.
+#[allow(dead_code)]
+fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+}
 
 const EV: SketchEvaluator = SketchEvaluator;
 const TOL: f64 = 1e-6;
@@ -89,7 +102,7 @@ fn an_edited_footprint_carries_its_envelope_over_the_pads() -> Result<()> {
         &EV,
     )?;
     assert_eq!(engine.revision(), revision + 1, "one undo step");
-    assert_eq!(placement(&engine).translation, [10.0, 0.0, 0.0]);
+    assert_eq!(placement(&engine).translation(), [10.0, 0.0, 0.0]);
     engine.undo()?;
     assert_eq!(placement(&engine), ModelPlacement::default());
     Ok(())
@@ -97,7 +110,7 @@ fn an_edited_footprint_carries_its_envelope_over_the_pads() -> Result<()> {
 
 fn package(terminals: usize, body: [f64; 3]) -> PackageDefinition {
     PackageDefinition {
-        envelope: body,
+        envelope_nm: body.map(nm),
         terminals: (1..=terminals)
             .map(|n| PackageTerminal {
                 id: PackageTerminalId(u32::try_from(n).unwrap_or(0) + 100),
@@ -146,12 +159,12 @@ fn close(a: f64, b: f64) -> bool {
 
 /// The single rectangle on `layer`.
 fn rect_on(def: &FootprintDefinition, layer: DrawingLayer) -> Result<([f64; 2], [f64; 2])> {
-    let shapes: Vec<&Shape> = def
+    let shapes: Vec<Shape> = def
         .graphics
         .iter()
         .filter(|g| g.layer == layer)
         .filter_map(|g| match &g.item {
-            Item::Shape { shape, .. } => Some(shape),
+            Item::Shape { shape, .. } => Some(shape.to_mm()),
             Item::Text(_) => None,
         })
         .collect();
@@ -285,16 +298,14 @@ fn polarised_chip_marks_pin_one_with_a_silkscreen_dot_clear_of_copper() -> Resul
         .find(|g| g.id == *marker)
         .ok_or_else(|| Error::NotFound("dot".into()))?;
     assert_eq!(dot.layer, DrawingLayer::Silkscreen);
-    let Item::Shape {
-        shape: Shape::Circle { center, radius },
-        fill,
-        ..
-    } = &dot.item
-    else {
+    let Item::Shape { shape, fill, .. } = &dot.item else {
         return Err(Error::Invalid(format!("{:?}", dot.item)));
     };
+    let Shape::Circle { center, radius } = shape.to_mm() else {
+        return Err(Error::Invalid(format!("{shape:?}")));
+    };
     assert_eq!(*fill, Fill::Solid);
-    assert!(close(*radius, 0.15));
+    assert!(close(radius, 0.15));
     // pin1_dot = pad_l / 2 + 0.4 left of pad 1, on its axis.
     assert!(
         close(center[0], one.position[0] - 0.7) && close(center[1], 0.0),
@@ -376,7 +387,7 @@ fn qfn16_has_an_exposed_pad_with_paste_windows_and_vias() -> Result<()> {
         return Err(Error::Invalid(format!("{:?}", ep.paste)));
     };
     assert_eq!(windows.len(), 4);
-    let area: f64 = windows.iter().map(|w| area_of(&w.shape)).sum();
+    let area: f64 = windows.iter().map(|w| area_of(&w.shape.to_mm())).sum();
     assert!((area - 0.6 * 2.3 * 2.3).abs() < 1e-5, "coverage {area}");
     assert_eq!(ep.vias.len(), 9);
     let found = lint(&def);
@@ -387,7 +398,7 @@ fn qfn16_has_an_exposed_pad_with_paste_windows_and_vias() -> Result<()> {
     let PasteRule::Windows(windows) = &ep.paste else {
         return Err(Error::Invalid(format!("{:?}", ep.paste)));
     };
-    let area: f64 = windows.iter().map(|w| area_of(&w.shape)).sum();
+    let area: f64 = windows.iter().map(|w| area_of(&w.shape.to_mm())).sum();
     assert!((area - 0.6 * 2.6 * 2.3).abs() < 1e-5, "coverage {area}");
     // Terminals: the perimeter by designation, then the EP explicitly.
     let assigned = publishable(&def, &pkg)?;
@@ -736,7 +747,7 @@ fn footprint_from_template_replace_is_one_atomic_undo_step() -> Result<()> {
     start.defaults.mask_expansion_mm = 0.07;
     start.graphics.push(designator_placeholder(
         GraphicId(1),
-        [0.0, 3.0],
+        PointNm::from_mm_f64_rounded([0.0, 3.0])?,
         DrawingLayer::Silkscreen,
     ));
     let footprint = new_draft(&mut engine, Definition::Footprint(start.clone()), "soic-fp")?;
@@ -843,7 +854,7 @@ fn a_template_keeps_the_designator_off_its_pads() -> Result<()> {
     let mut draft = empty();
     draft.graphics.push(designator_placeholder(
         GraphicId(1),
-        [-1.0, 1.9],
+        PointNm::from_mm_f64_rounded([-1.0, 1.9])?,
         DrawingLayer::Silkscreen,
     ));
     draft.next_local = 2;
@@ -858,7 +869,7 @@ fn a_template_keeps_the_designator_off_its_pads() -> Result<()> {
         return Err(Error::NotFound("the designator".into()));
     };
     assert!(
-        text.at[1] - text.height / 2.0 > top,
+        text.at.to_mm_f64()[1] - text.height_nm.to_mm_f64() / 2.0 > top,
         "{:?} over {top}",
         text.at
     );

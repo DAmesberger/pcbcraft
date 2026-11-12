@@ -5,6 +5,8 @@
 use super::*;
 use crate::models::family_rev;
 use crate::models::imported::tests::{fixture_step, model};
+#[allow(unused_imports)]
+use crate::models::tests::{nm, pt};
 use pcbcraft_core::PackageTerminalId;
 use pcbcraft_core::library::{
     ChipForm, ChipKind, GeneratedMaterials, PackageForm, PackageModel, PackageTerminal,
@@ -17,10 +19,10 @@ type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub(crate) fn resistor() -> PackageDefinition {
     let form = PackageForm::Chip(Box::new(ChipForm {
         kind: ChipKind::Resistor,
-        length: 1.6,
-        width: 0.8,
-        height: 0.45,
-        termination: 0.3,
+        length_nm: nm(1.6),
+        width_nm: nm(0.8),
+        height_nm: nm(0.45),
+        termination_nm: nm(0.3),
     }));
     PackageDefinition {
         next_local: 3,
@@ -34,7 +36,7 @@ pub(crate) fn resistor() -> PackageDefinition {
             family_rev: family_rev(&form).unwrap_or(0),
             materials: GeneratedMaterials::default(),
         },
-        envelope: [1.6, 0.8, 0.45],
+        envelope_nm: [nm(1.6), nm(0.8), nm(0.45)],
         form,
         ..PackageDefinition::default()
     }

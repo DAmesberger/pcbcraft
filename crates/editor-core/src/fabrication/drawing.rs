@@ -242,8 +242,10 @@ fn notes(project: &Project) -> Vec<String> {
         ),
         if masked {
             format!(
-                "Solder mask {} µm thick over copper on each masked side.",
-                trim_um(s.mask_um)
+                "Solder mask {} µm thick over copper and {} µm over laminate on each \
+                 masked side.",
+                trim_um(s.mask_um),
+                trim_um(s.mask_laminate_nm.to_mm_f64() * 1000.0)
             )
         } else {
             "No solder mask.".into()
@@ -528,8 +530,10 @@ mod tests {
         assert!(
             d.notes.iter().any(|n| n
                 == &format!(
-                    "Solder mask {} µm thick over copper on each masked side.",
-                    project.stackup.mask_um
+                    "Solder mask {} µm thick over copper and {} µm over laminate on each \
+                     masked side.",
+                    project.stackup.mask_um,
+                    project.stackup.mask_laminate_nm.to_mm_f64() * 1000.0
                 )),
             "{:?}",
             d.notes
