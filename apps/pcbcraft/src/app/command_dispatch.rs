@@ -342,6 +342,7 @@ impl App {
             AppCommand::SelectAll => self.schematic.select_all(&self.engine),
             AppCommand::ToggleBrowser => self.toggle_browser(),
             AppCommand::ToggleIssues => self.issues.toggle(),
+            AppCommand::ToggleParts => self.parts_band = !self.parts_band,
             AppCommand::Messages => self.messages_open = true,
             AppCommand::Settings => self.settings_window.toggle(),
             AppCommand::ConnectAssistants => self.live.toggle_window(),

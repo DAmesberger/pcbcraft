@@ -67,6 +67,8 @@ pub(crate) mod net_classes;
 mod pair_tests;
 mod pair_tool;
 mod part_place;
+mod parts_table;
+pub use parts_table::Tab as TableTab;
 #[cfg(test)]
 mod pick_tests;
 mod placement_card;
@@ -94,6 +96,10 @@ mod track_card;
 mod via_card;
 #[cfg(test)]
 mod via_tests;
+
+/// How close to the canvas edge a located object may sit before the view
+/// pans to it, in points.
+const REVEAL_MARGIN: f32 = 24.0;
 
 /// Scroll and pinch zoom limits, relative to the board fitting the canvas.
 const ZOOM_RANGE: std::ops::RangeInclusive<f32> = 0.2..=12.0;
@@ -510,6 +516,12 @@ pub struct PcbEditor {
     box_from: Option<Pos2>,
     /// Which kinds a click, the rectangle and ⌘A may select.
     filter: group::SelectFilter,
+    /// The Parts and Vias band under the canvas.
+    table: parts_table::PartsTable,
+    /// The one cross-highlight slot the table, Layout and 3D share.
+    hover: parts_table::Hover,
+    /// PCB 3D's last hover ray: the pointer and what it hit.
+    hover_3d_at: Option<(Pos2, Option<group::Pick>)>,
 }
 
 impl Default for PcbEditor {
@@ -604,6 +616,9 @@ impl Default for PcbEditor {
             group_drag: None,
             box_from: None,
             filter: Default::default(),
+            table: Default::default(),
+            hover: Default::default(),
+            hover_3d_at: None,
         }
     }
 }
@@ -1558,6 +1573,20 @@ impl PcbEditor {
         if let Some(bounds) = self.overview_request.take() {
             (self.zoom, self.pan) = overview(rect, project.board_size, bounds, self.from_bottom);
         }
+        // A table row's Locate: bring the object into view at this zoom.
+        if let Some(at) = self.table.reveal.take() {
+            let seen = board_view(
+                rect,
+                project.board_size,
+                self.zoom,
+                self.pan,
+                self.from_bottom,
+            );
+            let shown = seen.screen(at);
+            if !rect.shrink(REVEAL_MARGIN).contains(shown) {
+                self.pan += rect.center() - shown;
+            }
+        }
         let view = board_view(
             rect,
             project.board_size,
@@ -1863,6 +1892,8 @@ impl PcbEditor {
             }
             _ => None,
         };
+        self.hover_board(hovered_part.map(group::Pick::Part));
+        self.paint_cross_highlight(ui, &painter, view, project);
         let shown_pointer = pointer.filter(|_| response.hovered());
         if let Some(dimensioned) =
             self.layout_dimensions(ui, &painter, &view, engine, shown_pointer, hovered_part)
