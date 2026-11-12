@@ -6,6 +6,7 @@
 mod binding;
 pub mod bundle;
 mod component;
+pub mod datum;
 pub mod drafts;
 mod footprint;
 pub mod footprint_edit;

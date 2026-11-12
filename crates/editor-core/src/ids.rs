@@ -396,6 +396,14 @@ random_id!(
     /// copies get fresh project `DefinitionId`s on import.
     SourceLineageId
 );
+random_id!(
+    /// A board's permanent identity in its published interface
+    /// (docs/architecture/board-interface.md): random, drawn once and kept
+    /// across every publish, so an enclosure can tell an older revision of
+    /// the same board from a different board. A deliberate slot
+    /// compaction draws a new one (a new epoch).
+    InterfaceSourceId
+);
 
 /// A SHA-256 digest, written as 64 lower-case hex digits. Names a revision
 /// record's canonical content (`library::bundle::content_hash`) or an

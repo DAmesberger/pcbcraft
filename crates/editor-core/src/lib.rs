@@ -20,6 +20,7 @@ pub mod functions;
 pub mod geometry;
 pub mod ids;
 pub mod instances;
+pub mod interface;
 pub mod issues;
 pub mod layout;
 pub mod library;
