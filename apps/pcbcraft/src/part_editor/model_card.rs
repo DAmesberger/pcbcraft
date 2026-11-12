@@ -2,8 +2,9 @@
 //! with Choose model… and Import model file…), Model offset with its quick
 //! actions and lead fit (bodies in `model_body.rs` and `model_props.rs`).
 //! While a model import runs its steps fill the card
-//! (`model_import.rs`). Package findings (range, lead count, leads off
-//! their lands) show in Issues, never here.
+//! (`model_import.rs`), and the package's datums (`model_datums.rs`).
+//! Package findings (range, lead count, leads off their lands) show in
+//! Issues, never here.
 use super::PartEditor;
 use egui::Ui;
 use pcbcraft_core::{Engine, ObjectRef, Operation};
@@ -23,7 +24,9 @@ impl PartEditor {
         let placement = self.placement_inspector(ui, engine);
         // D6: the Marking section.
         let marking = self.marking_section(ui, engine);
-        operation.or(placement).or(marking)
+        // B2: the datums an enclosure may reference.
+        let datums = self.datum_section(ui, engine);
+        operation.or(placement).or(marking).or(datums)
     }
 
     /// `Locate` target of the 3D tab: a reference to the package draft

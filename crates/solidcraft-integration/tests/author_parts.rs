@@ -800,15 +800,6 @@ pub fn author_usb4105() -> Vec<u8> {
         ],
         ["width * 0.6", "depth * 0.6"],
     );
-    // The opening plane on the mating face at the opening's centre: x
-    // across, y up, so its normal (x × y) is −y, out along the plug's way
-    // in.
-    run(
-        &mut s,
-        "construct.plane.offset",
-        json!({"base": {"origin": ["0 mm", "-depth / 2", "opening_z"], "x_dir": [1, 0, 0],
-            "y_dir": [0, 0, 1]}, "offset": "0 mm", "name": "opening"}),
-    );
     let (w, h, ow, oh, oz) = (8.94, 3.31, 8.34, 2.56, 1.73);
     let opening = ["opening_w", "opening_h", "-opening_z"];
     // The XZ plane maps sketch (u, v) to (u, offset, −v), normal +y: the
@@ -915,6 +906,16 @@ pub fn author_usb4105() -> Vec<u8> {
     let tails: Vec<&str> = tails.iter().map(String::as_str).collect();
     assign_look(&mut s, &["Shell"], MaterialId::Nickel);
     assign_look(&mut s, &["Insulator", "Tongue"], MaterialId::Lcp);
+    // The opening plane on the mating face at the opening's centre: x
+    // across, y up, so its normal (x × y) is −y, out along the plug's way
+    // in. Made last, so the bodies keep their feature ids: the example
+    // board holds J1 by the Shell's front face, `F2:start`.
+    run(
+        &mut s,
+        "construct.plane.offset",
+        json!({"base": {"origin": ["0 mm", "-depth / 2", "opening_z"], "x_dir": [1, 0, 0],
+            "y_dir": [0, 0, 1]}, "offset": "0 mm", "name": "opening"}),
+    );
     assign_look(&mut s, &tails, MaterialId::Gold);
     finish_part(s, "height")
 }

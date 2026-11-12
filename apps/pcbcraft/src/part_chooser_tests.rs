@@ -148,6 +148,7 @@ fn a_check_result_renders_its_findings_bodies_and_timing() {
             },
         ],
         surfaces: Vec::new(),
+        datums: Vec::new(),
         pin1: None,
         points: Vec::new(),
         bounds_mm: [[-1.0, -2.0, 0.0], [1.0, 2.0, 3.0]],

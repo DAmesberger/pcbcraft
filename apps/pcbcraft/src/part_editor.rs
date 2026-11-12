@@ -38,6 +38,7 @@ mod marking_place;
 mod marking_props;
 mod model_body;
 mod model_card;
+mod model_datums;
 mod model_import;
 mod model_part;
 mod model_place;
