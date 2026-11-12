@@ -8,8 +8,10 @@
 //!
 //! After each edit the stale fills are refilled as the desktop's fill
 //! worker does (`compute_stale`, stored without an undo step); then the
-//! production check (`fabrication.preflight`) has no error and no warning,
-//! and one undo restores the board exactly.
+//! production check (`fabrication.preflight`) has no unwaived error, no
+//! warning and only the board's two waivers (the J1 locating-peg holes by
+//! the GCT USB4105 recommended layout), and one undo restores the board
+//! exactly.
 use pcbcraft_automation::session::hosted;
 use pcbcraft_core::format::EditorFile;
 use pcbcraft_core::layout::dimensions::DimensionCommand;
@@ -31,17 +33,24 @@ fn example() -> Fallible<Engine> {
     Ok(Engine::from_file(pcbcraft_io::read_project(&path)?)?)
 }
 
-/// The production check's errors and warnings, listed when there are any.
-fn issues(engine: &Engine) -> Fallible<(usize, usize, Vec<String>)> {
+/// No unwaived error, no warning, and the two J1 locating-peg waivers.
+const CLEAN: (usize, usize, usize) = (0, 0, 2);
+
+/// The production check's unwaived errors, warnings and waived findings,
+/// listed.
+fn issues(engine: &Engine) -> Fallible<((usize, usize, usize), Vec<String>)> {
     let QueryResult::Preflight(report) = engine.query(Query::Preflight { profile: None })? else {
         return Err("not a preflight report".into());
     };
     let items = report
         .items
         .iter()
-        .map(|i| format!("{:?} {}: {}", i.severity, i.code, i.title))
+        .map(|i| {
+            let waived = if i.waiver.is_some() { " (waived)" } else { "" };
+            format!("{:?} {}: {}{waived}", i.severity, i.code, i.title)
+        })
         .collect();
-    Ok((report.errors, report.warnings, items))
+    Ok(((report.blocking, report.warnings, report.waived), items))
 }
 
 /// The USB pair's skew and its class limit.
@@ -58,10 +67,10 @@ fn clean_edit(engine: &mut Engine, what: &str, operation: Operation) -> Fallible
     engine.apply_hosted(engine.revision(), operation, hosted())?;
     let fresh = compute_stale(engine.project(), &mut FillCache::default())?;
     engine.store_fills(engine.revision(), fresh)?;
-    let (errors, warnings, items) = issues(engine)?;
+    let (counts, items) = issues(engine)?;
     let (skew, limit) = skew(engine.project())?;
-    println!("{what}: {errors} errors, {warnings} warnings, skew {skew:.4} mm");
-    assert_eq!((errors, warnings), (0, 0), "{what}: {items:#?}");
+    println!("{what}: {counts:?} (blocking, warnings, waived), skew {skew:.4} mm");
+    assert_eq!(counts, CLEAN, "{what}: {items:#?}");
     assert!(skew <= limit, "{what}: skew {skew} > {limit}");
     Ok(before)
 }
@@ -115,8 +124,8 @@ fn set_j1(held: &PartDimension, mm: f64) -> Operation {
 #[test]
 fn the_board_starts_clean() -> Fallible {
     let engine = example()?;
-    let (errors, warnings, items) = issues(&engine)?;
-    assert_eq!((errors, warnings), (0, 0), "{items:#?}");
+    let (counts, items) = issues(&engine)?;
+    assert_eq!(counts, CLEAN, "{items:#?}");
     Ok(())
 }
 

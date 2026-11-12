@@ -18,11 +18,11 @@ fn every_key_round_trips_through_get_set_and_its_name() -> Result<()> {
         assert_eq!(rules, base, "{key:?}");
         assert_eq!(RuleKey::from_name(&key.name()), Some(key), "{key:?}");
     }
-    // 2 track widths, 28 clearance pairs, 25 contract scalars, the 5
+    // 2 track widths, 36 clearance pairs, 25 contract scalars, the 5
     // appended silkscreen-edge and land keys, the 2 etch-hazard keys, the
     // board outline fit, the legend stroke share and the pair gap
-    // tolerance's minimum and share.
-    assert_eq!(RuleKey::all().len(), 2 + 28 + 25 + 5 + 2 + 1 + 3);
+    // tolerance's minimum and share, and the NPTH pad annular ring.
+    assert_eq!(RuleKey::all().len(), 2 + 36 + 25 + 5 + 2 + 1 + 3 + 1);
     let names: std::collections::BTreeSet<_> = RuleKey::all().iter().map(|k| k.name()).collect();
     assert_eq!(names.len(), RuleKey::all().len(), "names are unique");
     assert_eq!(

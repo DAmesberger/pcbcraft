@@ -16,6 +16,7 @@ use pcbcraft_core::layout::router::drag::{PairDrag, TrackDragRequest, drag_plan}
 use pcbcraft_core::layout::router::{RouteIndex, RouteMode};
 use pcbcraft_core::layout::{self, LayoutCommand, length};
 use pcbcraft_core::model::Track;
+use pcbcraft_core::model::production::waiver_key;
 use pcbcraft_core::{Engine, Operation};
 use std::path::Path;
 
@@ -117,8 +118,16 @@ fn track(engine: &Engine, id: Id) -> Fallible<Track> {
 fn issues(engine: &mut Engine) -> Fallible<Vec<String>> {
     let fresh = compute_stale(engine.project(), &mut FillCache::default())?;
     engine.store_fills(engine.revision(), fresh)?;
+    // Findings the board waives for production (the J1 locating pegs)
+    // are accepted, not issues.
+    let production = &engine.project().production;
     Ok(layout::checks(engine.project())
         .into_iter()
+        .filter(|f| {
+            production
+                .waiver(&waiver_key(&f.code, &f.objects))
+                .is_none()
+        })
         .filter(|f| {
             f.blocks.is_some()
                 || f.code.starts_with("pair.")

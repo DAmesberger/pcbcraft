@@ -704,6 +704,56 @@ fn stale_copper_is_checked_for_clearance() -> Fallible<()> {
     Ok(())
 }
 
+/// A hole drilled through stale fill copper is reported: the header's
+/// ground pin, joined to the GND fill, made a 3 mm unplated hole (wider
+/// than its land and relief) without a refill. Its copper is gone, so only
+/// the hole can say so.
+#[test]
+fn a_hole_through_stale_copper_is_reported() -> Fallible<()> {
+    let (engine, id, gnd) = showcase_with(CopperLayer::Bottom)?;
+    let mut p = engine.project().clone();
+    let header = placed_pads(&p)
+        .into_iter()
+        .find(|pad| pad.net == Some(gnd) && pad.pad.kind == crate::library::PadKind::PlatedThrough)
+        .ok_or("no through-hole ground pin")?;
+    let object = ObjectRef::Pad {
+        instance: header.instance,
+        pad: header.pad.id,
+    };
+    let hits = |p: &Project| {
+        layout::checks(p)
+            .iter()
+            .filter(|f| f.code == "fill.clearance" && f.objects.contains(&object))
+            .count()
+    };
+    // Stale for an unrelated reason, the plated pin is still joined.
+    let t = p.allocate()?;
+    p.tracks.push(crate::model::Track {
+        id: t,
+        net: gnd,
+        start: [1.0, 1.0],
+        end: [2.0, 1.0],
+        width: 0.3,
+        layer: CopperLayer::Bottom,
+        locked: false,
+    });
+    assert!(super::is_stale(&p, fill(&p, id)?));
+    assert_eq!(hits(&p), 0);
+    for footprint in &mut p.library.footprints {
+        for pad in &mut footprint.definition.pads {
+            if pad.id == header.pad.id && pad.kind == crate::library::PadKind::PlatedThrough {
+                pad.kind = crate::library::PadKind::NonPlatedHole;
+                if let Some(hole) = &mut pad.hole {
+                    hole.plated = false;
+                    hole.shape = crate::library::HoleShape::Round { diameter: 3.0 };
+                }
+            }
+        }
+    }
+    assert_eq!(hits(&p), 1);
+    Ok(())
+}
+
 #[test]
 fn hatched_fills_keep_a_border_and_grid() -> Fallible<()> {
     let mut engine = showcase()?;
@@ -815,16 +865,24 @@ fn cutouts_mounting_holes_and_edge_clearance_shape_the_fill() -> Fallible<()> {
     Ok(())
 }
 
-/// A plated hole keeps the plated-hole clearance, an unplated one the via
-/// hole clearance. Under the shipped JLCPCB example a fill clears an
-/// unplated mounting hole by 0.2 mm ("NPTH to Track") and the same hole
-/// plated by 0.28 mm ("PTH to Track"); one hole rule cleared both by 0.2.
+/// A plated hole keeps the plated-hole clearance, an unplated one the
+/// unplated-hole clearance (never the via hole's). Under the shipped JLCPCB
+/// example a fill clears an unplated mounting hole by 0.2 mm ("NPTH to
+/// Track") and the same hole plated by 0.35 mm ("PTH to Track", the
+/// recommended value). A fill-to-via-hole override leaves the unplated
+/// hole's gap alone; a fill-to-unplated-hole override moves it.
 #[test]
 fn a_fill_keeps_the_plated_hole_clearance_from_a_plated_hole() -> Fallible<()> {
     use crate::model::board::{BoardFeatureId, SolvedBoard, SolvedMountingHole};
     let (engine, id, _) = showcase_with(CopperLayer::Bottom)?;
     let mut gaps = Vec::new();
-    for plated in [false, true] {
+    let cases = [
+        (false, None),
+        (true, None),
+        (false, Some(CopperObject::ViaHole)),
+        (false, Some(CopperObject::NpthHole)),
+    ];
+    for (plated, set) in cases {
         let mut p = engine.project().clone();
         crate::rules::apply(
             &mut p.rules,
@@ -833,6 +891,15 @@ fn a_fill_keeps_the_plated_hole_clearance_from_a_plated_hole() -> Fallible<()> {
                 keep_overrides: false,
             },
         )?;
+        if let Some(b) = set {
+            p.rules.overrides.push(crate::rules::RuleOverride {
+                key: RuleKey::Clearance {
+                    a: CopperObject::Fill,
+                    b,
+                },
+                value: RuleValue::Length(0.5),
+            });
+        }
         let mut solved = SolvedBoard::rectangle(p.board_size);
         solved.holes.push(SolvedMountingHole {
             id: BoardFeatureId(2),
@@ -847,14 +914,16 @@ fn a_fill_keeps_the_plated_hole_clearance_from_a_plated_hole() -> Fallible<()> {
         gaps.push(gap_to_segment(&f, [3.0, 25.0], [3.0, 25.0]) - 1.6);
     }
     let tolerance = FILL_CHORD_MM + 1e-6;
-    let [unplated, plated] = gaps[..] else {
-        return Err("two fills".into());
+    let [unplated, plated, via_override, npth_override] = gaps[..] else {
+        return Err("four fills".into());
     };
     assert!(
         unplated >= 0.2 - 1e-6 && unplated < 0.28 - tolerance,
         "{unplated}"
     );
-    assert!(plated >= 0.28 - 1e-6, "{plated}");
+    assert!(plated >= 0.35 - 1e-6, "{plated}");
+    assert!((via_override - unplated).abs() < 1e-9, "{via_override}");
+    assert!(npth_override >= 0.5 - 1e-6, "{npth_override}");
     Ok(())
 }
 
