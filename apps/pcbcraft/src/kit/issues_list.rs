@@ -149,7 +149,10 @@ pub enum IssueListEvent {
 pub struct IssueListOutput {
     pub events: Vec<IssueListEvent>,
     /// Lines built this frame (virtualisation evidence).
-    #[cfg_attr(not(test), allow(dead_code, reason = "read by the virtualisation tests"))]
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "read by the virtualisation tests")
+    )]
     pub built: usize,
     /// The list's whole height, for the card's wanted height.
     pub height: f32,
