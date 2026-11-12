@@ -1,5 +1,6 @@
 //! Package definitions: physical terminals, the typed form, the envelope,
 //! the 3D model source and its placement.
+use super::datum::{PackageDatum, PackageDatumOrigin};
 use super::package_form::{ChipForm, ChipKind, PackageForm};
 use super::package_model::{MAX_ROLE_MATERIALS, ModelPlacement, PackageModel};
 use super::publish::{issue, object};
@@ -34,6 +35,11 @@ pub struct PackageDefinition {
     /// read it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mechanical: Option<Box<super::mechanical::MechanicalPart>>,
+    /// Datums the package declares in its model frame, such as a
+    /// connector's opening (slice B2, `library::datum`): authored, copied
+    /// from the part file, or emitted by the typed form.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datums: Vec<PackageDatum>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -47,6 +53,27 @@ pub struct PackageTerminal {
 impl PackageDefinition {
     pub fn terminal(&self, id: PackageTerminalId) -> Option<&PackageTerminal> {
         self.terminals.iter().find(|t| t.id == id)
+    }
+
+    /// The datum named `name`.
+    pub fn datum(&self, name: &str) -> Option<&PackageDatum> {
+        self.datums.iter().find(|d| d.name.0 == name)
+    }
+
+    /// Replace the datums that came from `origin` (a part file or the
+    /// typed form) by `datums`, each marked with that origin. A datum of
+    /// another origin keeps its name: the source's datum of that name is
+    /// left out, so what a person authored or edited is never overwritten.
+    pub fn replace_datums(&mut self, origin: PackageDatumOrigin, datums: &[PackageDatum]) {
+        self.datums.retain(|d| d.origin != origin);
+        for datum in datums {
+            if self.datum(&datum.name.0).is_none() {
+                self.datums.push(PackageDatum {
+                    origin,
+                    ..datum.clone()
+                });
+            }
+        }
     }
 
     /// The envelope's length, width and height in millimetres.
@@ -119,6 +146,7 @@ impl PackageDefinition {
                 .iter()
                 .all(|t| t.designation.len() <= MAX_LABEL)
             && self.form.within_bounds()
+            && self.datums.len() <= super::datum::MAX_PACKAGE_DATUMS
             && match &self.model {
                 PackageModel::Generated { materials, .. } => {
                     materials.roles.len() <= MAX_ROLE_MATERIALS
@@ -230,6 +258,13 @@ impl PackageDefinition {
             }
             PackageModel::Envelope { .. } => {}
         }
+        for problem in super::datum::datum_problems(&self.datums) {
+            out.push(issue(
+                "package.datum",
+                format!("Package datum: {problem}."),
+                vec![this],
+            ));
+        }
         if !self.envelope_valid() {
             out.push(issue(
                 "package.envelope",
@@ -280,6 +315,7 @@ mod tests {
             },
             placement: ModelPlacement::default(),
             mechanical: None,
+            datums: Vec::new(),
         }
     }
 

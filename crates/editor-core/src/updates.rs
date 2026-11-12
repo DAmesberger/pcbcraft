@@ -1282,6 +1282,17 @@ pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<Stri
             b.placement.rotation_deg()
         ));
     }
+    // Package datums by name: an enclosure references them (slice B2).
+    for datum in &b.datums {
+        match a.datum(&datum.name.0) {
+            None => out.push(format!("datum {} added.", datum.name.0)),
+            Some(old) if old != datum => out.push(format!("datum {} changed.", datum.name.0)),
+            Some(_) => {}
+        }
+    }
+    for old in a.datums.iter().filter(|d| b.datum(&d.name.0).is_none()) {
+        out.push(format!("datum {} removed.", old.name.0));
+    }
     out
 }
 

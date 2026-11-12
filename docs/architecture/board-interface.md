@@ -11,6 +11,8 @@ Implementation contract, slice B0, 12 November 2026. This document says how a bo
 
 **Status.** Contract only. The types, rules that are complete without the engine, findings, schemas and test placeholders exist (`crates/editor-core/src/interface.rs`, `crates/editor-core/src/model/interface.rs`, `crates/editor-core/src/library/datum.rs`). No transport offers an `interface.*` command yet, and `Project` does not yet hold the table. Slice B1 adds both.
 
+**Slice B2 (package datums) is built**: the stored form, the part-file convention, the datum edits, the USB-C form's opening, the Datums section of the Component 3D tab, and the placement of a package's datums in the board frame (`interface::package`), which B1's `external_datums` rule and B3's builder read. Its gate test runs the example's USB4105 part file through `layout.place_part` on both sides at every quarter turn and at 33°, against the board Solidcraft builds (`pcbcraft-solidcraft` `board::package_datum_tests`).
+
 ## Principles
 
 1. An enclosure references the board only through exported datums. Anything else in the published file is there to look at.
@@ -71,7 +73,13 @@ A datum's **key** is its owner, its role and, for some roles, a name (`model::in
 Three sources, in order of preference (slice B2):
 
 1. **A datum authored on the package**, the stored form. A package revision holds its datums as explicit geometry in the model frame: name, kind, frame, profile, direction, an optional clearance and `external`. It is revisioned with the package and works for every model kind, STEP and glTF included. For a connector the opening is the aperture the mating plug needs, from the datasheet's panel-cutout drawing, not the shell's outline. `external: true` means "meant for the enclosure": the `external_datums` rule exports it for every placement. The stored geometry uses the document's integer lengths (the units migration).
+
+   As built (`library::datum::PackageDatum`, in `PackageDefinition.datums`, at most 32): a `name`, a `geometry` that is a frame, plane, axis (optional diameter), profile or volume, an optional `clearance_nm`, `external`, and an `origin` saying where it came from (`authored`, `part_file` or `form`). Lengths are whole nanometres and directions unit vectors; a frame's axes are perpendicular (within 1e-6). A profile is a rectangle centred on its frame's origin with rounded corners (`rect`, `size`, `corner_radius` up to half the smaller side, so a stadium is one); free loops can be added as another shape. A volume rises along its frame's z (`x × y`): for an opening, out of the part along the plug's way in. Bad datums are the publish finding `package.datum`; the edits refuse them.
 2. **A datum declared in the part file**, an authoring convenience that produces form 1. A construction plane named `opening` or `opening-<suffix>` with two size parameters (or a sketch of that name, for a free profile) gives the package datum `opening` or `opening_<suffix>`; `axis` or `axis-<suffix>` gives `axis` or `axis_<suffix>` (`PART_FILE_OPENING`, `PART_FILE_AXIS`). This follows the `marking-<name>` and `pin1` convention of [part templates](../part-templates.md); the check that reads marking surfaces reads these.
+
+   As built (`part_file::evaluate`, the table in [part templates §11](../part-templates.md)): the plane's x is the profile's x, its normal points out of the part; the lengths `<datum>_u` and `<datum>_v` size the rectangle, `<datum>_r` rounds its corners, `<datum>_depth` makes it a volume and `<datum>_clearance` records a clearance, each optional but the size. An axis takes its diameter from `<datum>_d`. Declared datums are external, and copied into the package when the part file is used (`origin: part_file`); using another model removes them, and a datum the user authored or edited of the same name is kept. A free profile from a sketch is not built yet. The example's USB4105 part file declares `opening`: the plug's shell, which fills the 8.34 × 2.56 mm opening with round ends, 1.85 mm deep, the drawing's mating view's distance before the plug's overmold begins.
+
+   A **typed form** may emit datums too (`PackageForm::datums`, `origin: form`), from the same drawing values as its lands. The USB-C receptacle form emits that same opening (decision 5); it follows the form's values when the form is edited.
 3. **A face of the part model**, ad hoc: the user exports a face reference as a `feature` datum, traced by the existing model-reference trace with its resolved, inexact and lost states. The weakest form: STEP faces are found by geometry.
 
 An opening is never inferred from a part's name or category.
@@ -107,7 +115,7 @@ Document changes are `interface::InterfaceCommand`s: typed, through the one engi
 | `interface.record_publish {source_id, record}` | operation | edit | Records a publish the host wrote: revision, hash, tier, per-datum hashes, and the board's interface identity on the first publish |
 | `interface.publish_preview {tier?}` | host request | read | The diff against the last published revision and, with a linked enclosure, the dry run (`PublishPreview`) |
 | `interface.publish {path, tier, expected_revision}` | host request | ask | Writes the design and sidecar atomically, then records the publish; refused, writing nothing, at a stale revision |
-| `package.datum.add`, `edit`, `remove` | operation | edit | On a package draft (slice B2) |
+| `package.datum.add`, `edit`, `remove` | operation | edit | On a package draft (slice B2): the `add_datum`, `set_datum` and `remove_datum` edits of `library.edit_package`, in millimetres on the wire, any number of them with other package edits in one undo step. `set_datum` replaces the datum of its name and makes it authored. A repeated or unknown name, or bad geometry, refuses the batch unchanged |
 | `housing.link`, `housing.preview`, `housing.update {expect_hash}`, `housing.relink`, `housing.unlink` | — | — | The enclosure side, as designed in [board sketch references](../board-sketch-references.md#7-the-housing-round-trip) (slice B4) |
 
 `interface.publish` takes `expected_revision`, the name every revision-bound request uses, for the design note's `expect_revision`. Its tier defaults to `mechanical`.
@@ -219,7 +227,7 @@ Lost and inexact references are never waived, as for part dimensions (`board.ref
 | Slice | Content | Placeholder tests |
 | --- | --- | --- |
 | B1 | the table in `Project`, automatic rules, `interface.*` commands and `interface.list` in the engine, persistence | `b1_automatic_rules_export_the_board`, `b1_switching_a_rule_retires_and_never_reuses`, `b1_export_allocates_one_slot_per_datum`, `b1_refused_exports_change_nothing`, `b1_unexport_retires_the_slot`, `b1_renames_change_the_display_name_only`, `b1_slots_survive_undo_redo_save_and_reopen`, `b1_a_deleted_owner_makes_the_datum_lost`, `b1_selection_never_changes_the_interface` |
-| B2 | package datums, the part-file convention, authoring, connector templates that emit openings | `b2_a_part_file_opening_reaches_the_board_frame`, `b2_external_datums_are_exported_per_placement`, `b2_no_opening_is_inferred_from_a_name` |
+| B2 | package datums, the part-file convention, authoring, connector templates that emit openings | `b2_a_part_file_opening_reaches_the_board_frame`, `b2_no_opening_is_inferred_from_a_name` (built); `b2_external_datums_are_exported_per_placement` waits for B1's rule, whose input `interface::package::external_datums` is tested in `package_datums` |
 | B3 | the exported design with slots and tiers, the sidecar and metadata, `publish_preview` (diff only) and `publish` | `b3_the_preview_lists_the_one_moved_datum`, `b3_the_enclosure_cutout_follows_by_two_millimetres`, `b3_the_sidecar_is_byte_identical_after_reopen`, `b3_unrelated_edits_change_nothing_in_the_enclosure`, `b3_publish_records_a_revision_only_when_the_hash_changes`, `b3_publishing_the_interface_tier_is_under_100_ms` (a target until measured) |
 
 B4 (the enclosure link and dry run), B5 (the two-way check, a test per conflict row), B6 (UI), B7 (live channel) and B9 (VM run) follow the design note.

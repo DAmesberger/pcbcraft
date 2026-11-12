@@ -63,6 +63,7 @@ fn nut(height: f64, pads: PadUse) -> PartSpec {
             bounds_nm: crate::tests::support::nm_bounds([[-2.5, -2.5, 0.0], [2.5, 2.5, height]]),
             bodies: 1,
             surfaces: vec![],
+            datums: vec![],
         },
         lands: vec![MechanicalLand {
             name: "1".into(),
@@ -88,6 +89,7 @@ fn heatsink() -> PartSpec {
             bounds_nm: crate::tests::support::nm_bounds([[-10.0, -10.0, 0.0], [10.0, 10.0, 10.0]]),
             bodies: 7,
             surfaces: vec![],
+            datums: vec![],
         },
         lands: vec![],
         ..nut(3.0, PadUse::Mechanical)

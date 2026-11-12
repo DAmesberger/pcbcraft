@@ -28,6 +28,7 @@ use std::collections::BTreeSet;
 
 pub mod command;
 pub mod findings;
+pub mod package;
 pub mod report;
 pub mod sidecar;
 #[cfg(test)]

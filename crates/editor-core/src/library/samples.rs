@@ -2,6 +2,7 @@
 //! two-terminal arrangements, not component categories; every value,
 //! including the designator prefix and body style the caller passes, is
 //! ordinary definition data a user then edits.
+use super::datum::PackageDatumOrigin;
 use super::footprint::{Hole, PadKind, PadShape};
 use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT, ShapeNm, TextContent, VAlign};
 use super::package_form::{typical_nm, typical_point};
@@ -148,6 +149,7 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Resul
             },
         },
         mechanical: None,
+        datums: Vec::new(),
     };
     Ok(vec![
         DraftEdit {
@@ -1260,7 +1262,7 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit
     let plan = electrical_plan(&form, &designations, spec.symbol);
     let electrical = u32::try_from(plan.len()).unwrap_or(0);
     let terminals: Vec<TerminalId> = (1..=electrical).map(TerminalId).collect();
-    let package = PackageDefinition {
+    let mut package = PackageDefinition {
         next_local: count + 1,
         terminals: package_terminals
             .iter()
@@ -1282,7 +1284,11 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit
         },
         placement: ModelPlacement::default(),
         mechanical: None,
+        datums: Vec::new(),
     };
+    // A connector form emits its openings from its drawing's values
+    // (decision 5), stored with the package like every datum.
+    package.replace_datums(PackageDatumOrigin::Form, &package.form.datums());
     let pads = if spec.template {
         template_lands_with(&package.form, &package_terminals, spec.lands, spec.rules)
     } else {

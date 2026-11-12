@@ -355,6 +355,16 @@ const NOT_LENGTHS: &[(&str, &str)] = &[
         "library/model3d.rs CustomMaterial.transmission",
         "an appearance factor",
     ),
+    ("library/datum.rs DatumFrame.x", "a unit direction"),
+    ("library/datum.rs DatumFrame.y", "a unit direction"),
+    (
+        "library/datum.rs PackageDatumGeometry::Axis.direction",
+        "a unit direction",
+    ),
+    (
+        "library/datum.rs PackageDatumGeometry::Plane.normal",
+        "a unit direction",
+    ),
     ("library/model3d.rs MarkingArea.normal", "a unit direction"),
     ("library/model3d.rs MarkingArea.u_axis", "a unit direction"),
     (

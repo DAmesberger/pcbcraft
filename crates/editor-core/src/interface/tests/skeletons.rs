@@ -84,31 +84,33 @@ fn b1_selection_never_changes_the_interface() -> Fallible {
     not_built("B1")
 }
 
-// B2: package datums.
+// B2: package datums. The bodies are in `super::package_datums`; the
+// part-file reader's half of the first also runs against the real USB4105
+// part file in `pcbcraft-solidcraft` (`board::package_datum_tests`).
 
 /// A USB-C part file's `opening` plane becomes the package datum
 /// `opening`, and reaches a placed instance in the board frame on both
 /// sides and at every rotation.
 #[test]
-#[ignore = "B2: package datums"]
 fn b2_a_part_file_opening_reaches_the_board_frame() -> Fallible {
-    not_built("B2")
+    super::package_datums::a_part_file_opening_reaches_the_board_frame()
 }
 
 /// A package datum marked `external` is exported for every placement by
-/// the automatic rule; one not marked needs `interface.export`.
+/// the automatic rule; one not marked needs `interface.export`. B2 gives
+/// the rule its input (`interface::package::external_datums`, tested in
+/// `package_datums`); the rule and `interface.export` are B1's.
 #[test]
-#[ignore = "B2: external package datums"]
+#[ignore = "B1: the external_datums rule and interface.export"]
 fn b2_external_datums_are_exported_per_placement() -> Fallible {
-    not_built("B2")
+    not_built("B1")
 }
 
 /// No opening is inferred from a part's name or category: a part named
 /// "USB-C" without a declared datum exports none.
 #[test]
-#[ignore = "B2: no inference from names"]
 fn b2_no_opening_is_inferred_from_a_name() -> Fallible {
-    not_built("B2")
+    super::package_datums::no_opening_is_inferred_from_a_name()
 }
 
 // B3: the exported design, the sidecar, publish and its preview

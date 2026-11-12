@@ -2094,6 +2094,63 @@ fn draft_findings(engine: &Engine) -> Fallible<Vec<String>> {
 
 const USB_C: &str = "USB-C receptacle, USB 2.0, 16 contacts, top mount (GCT USB4105)";
 
+/// Decision 5 (12 November 2026): the USB-C template emits its opening as
+/// package data from the drawing, external, on the mating face (−y), the
+/// plug's shell (the 8.34 × 2.56 mm opening with round ends) out to the
+/// mating view's 1.85 mm, where the plug's overmold begins.
+#[test]
+fn the_usb_c_template_emits_its_opening() -> Fallible<()> {
+    use crate::library::datum::{DatumProfile, PackageDatumGeometry, PackageDatumOrigin};
+    let mut engine = Engine::default();
+    let row = crate::library::templates::starter::row(USB_C)?;
+    let ids = new_from(
+        &mut engine,
+        NewFromTemplate {
+            row: RowSource::Starter { name: USB_C.into() },
+            values: None,
+            skeleton: row.definition.skeleton,
+            name: "USB-C".into(),
+            designator_prefix: None,
+            symbol: None,
+            without_fields: false,
+        },
+    )?;
+    let package = ids
+        .iter()
+        .filter_map(|id| engine.drafts().get(*id))
+        .find_map(|d| match &d.definition {
+            Definition::Package(p) => Some(p.clone()),
+            _ => None,
+        })
+        .ok_or("the package")?;
+    let [opening] = package.datums.as_slice() else {
+        return Err(format!("{:?}", package.datums).into());
+    };
+    assert_eq!(opening.name.0, "opening");
+    assert!(opening.external);
+    assert_eq!(opening.origin, PackageDatumOrigin::Form);
+    let PackageDatumGeometry::Volume {
+        frame,
+        profile,
+        height_nm,
+    } = opening.geometry
+    else {
+        return Err("a volume".into());
+    };
+    assert_eq!(frame.origin(), [0.0, -3.675, 1.73]);
+    assert_eq!(frame.z().map(|v| v + 0.0), [0.0, -1.0, 0.0]);
+    assert_eq!(
+        profile,
+        DatumProfile::Rect {
+            size_nm: [nm(8.34), nm(2.56)],
+            corner_radius_nm: nm(1.28)
+        }
+    );
+    assert_eq!(height_nm, nm(1.85));
+    assert_eq!(draft_findings(&engine)?, Vec::<String>::new());
+    Ok(())
+}
+
 /// The designer's path: search finds the receptacle, Create builds it with
 /// USB-named pins, the A and B rows' duplicates carried by one terminal,
 /// the drawing's lands and its provenance, and it publishes.
