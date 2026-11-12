@@ -156,17 +156,22 @@ pub struct Columns {
 
 impl Columns {
     /// The column that fits every one of `values` as shown at rest
-    /// ([`Value`]), without its expressions (which give way).
-    pub fn measure<'v>(ui: &Ui, l: &ListTokens, values: impl IntoIterator<Item = Value<'v>>) -> Self {
+    /// ([`Value`]), expressions included; the row caps it at its value
+    /// share, and then an expression gives way before its value.
+    pub fn measure<'v>(
+        ui: &Ui,
+        l: &ListTokens,
+        values: impl IntoIterator<Item = Value<'v>>,
+    ) -> Self {
         let mut numbers = Vec::new();
         let mut texts = Vec::new();
-        let mut fx = false;
+        let mut exprs = Vec::new();
         for v in values {
             match v {
                 Value::None => {}
                 Value::Number(n) => numbers.push(n),
-                Value::Expr { value, .. } => {
-                    fx = true;
+                Value::Expr { expr, value } => {
+                    exprs.push(expr);
                     numbers.push(value);
                 }
                 Value::Text(t) => texts.push(t),
@@ -178,8 +183,11 @@ impl Columns {
         } else {
             slots.width(l.gap * 0.5)
         };
-        if fx {
-            value += fx_width(ui, l) + l.gap;
+        if !exprs.is_empty() {
+            let small = FontId::monospace(l.fs_s);
+            let widest = measure::widest(ui, &small, exprs.iter().copied());
+            let eq = measure::widest(ui, &small, [" = "]);
+            value += fx_width(ui, l) + l.gap * 0.5 + widest + eq;
         }
         let text = measure::widest(ui, &FontId::proportional(l.fs_s), texts);
         Self {
@@ -332,7 +340,16 @@ pub fn paint(ui: &mut Ui, id: egui::Id, rect: Rect, row: &Row<'_>, cols: &Column
     let response = ui.interact(rect, id, Sense::click());
     let hovered = ui.is_enabled() && ui.rect_contains_pointer(rect);
     let painter = ui.painter_at(rect);
-    band(ui, &l, rect, id, row.selected, row.highlighted, row.cursor, row.flash);
+    band(
+        ui,
+        &l,
+        rect,
+        id,
+        row.selected,
+        row.highlighted,
+        row.cursor,
+        row.flash,
+    );
     let cy = rect.center().y;
     let mut x = rect.left() + l.pad_x;
     // Indent guides.
@@ -348,11 +365,9 @@ pub fn paint(ui: &mut Ui, id: egui::Id, rect: Rect, row: &Row<'_>, cols: &Column
     if row.fold_slot || row.fold.folds() {
         let at = Rect::from_center_size(pos2(x + l.fold_w / 2.0, cy), vec2(l.fold_w, l.fold_w));
         if row.fold.folds() {
-            let open = ui.ctx().animate_bool_with_time(
-                id.with("fold"),
-                row.fold == Fold::Open,
-                l.motion,
-            );
+            let open =
+                ui.ctx()
+                    .animate_bool_with_time(id.with("fold"), row.fold == Fold::Open, l.motion);
             chevron(&painter, at, open, l.fg_faint);
             fold = ui
                 .interact(at, id.with("chevron"), Sense::click())
@@ -365,7 +380,7 @@ pub fn paint(ui: &mut Ui, id: egui::Id, rect: Rect, row: &Row<'_>, cols: &Column
     if row.grip {
         let at = Rect::from_min_size(pos2(x, rect.top()), vec2(l.grip_w, rect.height()));
         let r = ui
-            .interact(at, id.with("grip"), Sense::drag())
+            .interact(at, id.with("grip"), Sense::click_and_drag())
             .on_hover_cursor(egui::CursorIcon::Grab);
         if hovered || row.selected || r.dragged() {
             grip_dots(&painter, at.center(), l.fg_faint);
@@ -473,9 +488,12 @@ pub fn paint(ui: &mut Ui, id: egui::Id, rect: Rect, row: &Row<'_>, cols: &Column
     }
     let action = actions(ui, &l, rect, id, row, hovered);
     let actions_hovered = action.1;
+    // A click on the grip is a click on the row; only its drag reorders.
+    let grip_clicked = grip.as_ref().is_some_and(Response::clicked);
+    let grip_double = grip.as_ref().is_some_and(Response::double_clicked);
     RowResponse {
-        clicked: response.clicked(),
-        double_clicked: response.double_clicked(),
+        clicked: response.clicked() || grip_clicked,
+        double_clicked: response.double_clicked() || grip_double,
         hovered: hovered || actions_hovered,
         fold,
         action: action.0,
@@ -527,7 +545,13 @@ fn paint_value(
             number(text, rect.right());
         }
         Value::Text(text) => {
-            let g = line_galley(ui, text, FontId::proportional(l.fs_s), l.fg_dim, rect.width());
+            let g = line_galley(
+                ui,
+                text,
+                FontId::proportional(l.fs_s),
+                l.fg_dim,
+                rect.width(),
+            );
             let at = pos2(rect.right() - g.size().x, cy - g.size().y / 2.0);
             let cut = g.elided;
             painter.galley(at, g, l.fg_dim);
@@ -539,7 +563,8 @@ fn paint_value(
         Value::Expr { expr, value } => {
             let left = number(value, rect.right());
             let fx = painter.layout_no_wrap("fx".to_owned(), fx_font(l), l.focus);
-            let eq = painter.layout_no_wrap(" = ".to_owned(), FontId::monospace(l.fs_s), l.fg_faint);
+            let eq =
+                painter.layout_no_wrap(" = ".to_owned(), FontId::monospace(l.fs_s), l.fg_faint);
             let room = left - rect.left() - fx.size().x - eq.size().x - l.gap;
             let mut at = left;
             if room > l.fs * 2.0 {
@@ -608,7 +633,12 @@ fn actions(
     if alpha > 0.0 {
         let back = fill(l, row.selected, row.highlighted, true).unwrap_or(l.hover);
         let left = rects.first().map_or(rect.right(), |r| r.left()) - 16.0;
-        backdrop(ui, Rect::from_min_max(pos2(left, rect.top()), rect.max), back, alpha);
+        backdrop(
+            ui,
+            Rect::from_min_max(pos2(left, rect.top()), rect.max),
+            back,
+            alpha,
+        );
     }
     for (i, (a, response)) in row.actions.iter().zip(&responses).enumerate() {
         let r = response.rect;
@@ -629,7 +659,9 @@ fn actions(
                     Stroke::new(1.0, l.line_strong.gamma_multiply(alpha)),
                     egui::StrokeKind::Inside,
                 );
-                let g = ui.painter().layout_no_wrap(a.text.to_owned(), font.clone(), l.fg);
+                let g = ui
+                    .painter()
+                    .layout_no_wrap(a.text.to_owned(), font.clone(), l.fg);
                 ui.painter()
                     .galley(r.center() - g.size() / 2.0, g, l.fg.gamma_multiply(alpha));
             } else {
@@ -643,15 +675,13 @@ fn actions(
             }
         }
         if response.has_focus() {
-            ui.painter().rect_stroke(
-                r,
-                4.0,
-                Stroke::new(1.0, l.focus),
-                egui::StrokeKind::Inside,
-            );
+            ui.painter()
+                .rect_stroke(r, 4.0, Stroke::new(1.0, l.focus), egui::StrokeKind::Inside);
         }
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, a.label));
-        let response = response.clone().on_hover_cursor(egui::CursorIcon::PointingHand);
+        let response = response
+            .clone()
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
         let response = if a.tip.is_empty() {
             response.on_hover_text(a.label)
         } else {
@@ -838,8 +868,21 @@ pub fn add_row(ui: &mut Ui, text: &str) -> bool {
     } else {
         l.fg_dim
     };
-    let stroke = Stroke::new(1.0, if response.hovered() { l.fg_faint } else { l.line_strong });
-    let corners = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+    let stroke = Stroke::new(
+        1.0,
+        if response.hovered() {
+            l.fg_faint
+        } else {
+            l.line_strong
+        },
+    );
+    let corners = [
+        r.left_top(),
+        r.right_top(),
+        r.right_bottom(),
+        r.left_bottom(),
+        r.left_top(),
+    ];
     for w in corners.windows(2) {
         if let [a, b] = w {
             ui.painter()

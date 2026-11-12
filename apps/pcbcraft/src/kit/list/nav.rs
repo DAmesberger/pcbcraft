@@ -14,12 +14,26 @@ use super::state::{ListState, TYPEAHEAD_MAX, TYPEAHEAD_SECONDS};
 pub enum Input {
     /// ↑ / ↓; with `extend` (⇧) the range grows from the anchor; with
     /// `cursor_only` (⌘) only the cursor moves.
-    Up { extend: bool, cursor_only: bool },
-    Down { extend: bool, cursor_only: bool },
-    Home { extend: bool },
-    End { extend: bool },
-    PageUp { extend: bool },
-    PageDown { extend: bool },
+    Up {
+        extend: bool,
+        cursor_only: bool,
+    },
+    Down {
+        extend: bool,
+        cursor_only: bool,
+    },
+    Home {
+        extend: bool,
+    },
+    End {
+        extend: bool,
+    },
+    PageUp {
+        extend: bool,
+    },
+    PageDown {
+        extend: bool,
+    },
     /// ← folds, or goes to the parent.
     Left,
     /// → unfolds, or goes to the first child.
@@ -38,7 +52,10 @@ pub enum Input {
     /// `/` or ⌘F.
     FocusFilter,
     /// Letters and digits typed at time `now` (seconds).
-    Type { text: String, now: f64 },
+    Type {
+        text: String,
+        now: f64,
+    },
     /// A click on the row `key`: plain selects it, `extend` (⇧) the range
     /// to it, `toggle` (⌘) adds or removes it.
     Click {
@@ -46,7 +63,9 @@ pub enum Input {
         extend: bool,
         toggle: bool,
     },
-    DoubleClick { key: RowKey },
+    DoubleClick {
+        key: RowKey,
+    },
 }
 
 /// What the list allows and what is going on around it.
@@ -321,12 +340,7 @@ fn go(
 /// Letters jump to the first row, from the cursor on, whose name starts
 /// with what was typed within [`TYPEAHEAD_SECONDS`]. A repeated single
 /// letter steps through the rows that start with it.
-fn type_ahead(
-    state: &mut ListState,
-    lines: &[Line<'_>],
-    text: &str,
-    now: f64,
-) -> Effect {
+fn type_ahead(state: &mut ListState, lines: &[Line<'_>], text: &str, now: f64) -> Effect {
     if text.chars().all(char::is_whitespace) {
         return Effect::None;
     }
@@ -350,13 +364,11 @@ fn type_ahead(
         .and_then(|c| lines.iter().position(|l| l.key == c))
         .map_or(0, |i| if skip_current { i + 1 } else { i });
     let n = lines.len();
-    let found = (0..n)
-        .map(|k| (start + k) % n.max(1))
-        .find(|&i| {
-            lines
-                .get(i)
-                .is_some_and(|l| !l.header && l.name.to_lowercase().starts_with(&needle))
-        });
+    let found = (0..n).map(|k| (start + k) % n.max(1)).find(|&i| {
+        lines
+            .get(i)
+            .is_some_and(|l| !l.header && l.name.to_lowercase().starts_with(&needle))
+    });
     match found {
         Some(i) => go(state, lines, i, false, false),
         None => Effect::None,
@@ -517,7 +529,10 @@ mod tests {
             filtered: true,
             ..cx()
         };
-        assert_eq!(reduce(&mut s, &l, Input::Escape, editing), Effect::CancelEdit);
+        assert_eq!(
+            reduce(&mut s, &l, Input::Escape, editing),
+            Effect::CancelEdit
+        );
         let filtered = Context {
             filtered: true,
             ..cx()
@@ -537,7 +552,15 @@ mod tests {
         let mut l = vec![Line::header(g, "Resistors", false)];
         l.extend(lines().into_iter().map(|x| x.under(g)));
         let mut s = ListState::default();
-        reduce(&mut s, &l, Input::Down { extend: false, cursor_only: false }, cx());
+        reduce(
+            &mut s,
+            &l,
+            Input::Down {
+                extend: false,
+                cursor_only: false,
+            },
+            cx(),
+        );
         assert_eq!(s.cursor, Some(g), "a header takes the cursor");
         assert!(s.selection.is_empty(), "but not the selection");
         assert_eq!(reduce(&mut s, &l, Input::Right, cx()), Effect::Selected);

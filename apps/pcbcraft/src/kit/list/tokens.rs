@@ -39,7 +39,8 @@ pub fn publish(ctx: &egui::Context, prefs: Prefs) {
 
 /// The published list settings (the defaults when none were published).
 pub fn prefs(ctx: &egui::Context) -> Prefs {
-    ctx.data(|d| d.get_temp::<Prefs>(slot())).unwrap_or_default()
+    ctx.data(|d| d.get_temp::<Prefs>(slot()))
+        .unwrap_or_default()
 }
 
 /// Every list size, colour and duration.
@@ -118,9 +119,15 @@ impl ListTokens {
         };
         let time = |s: f32| if prefs.reduced_motion { 0.0 } else { s };
         let (xh, xh_line) = if dark {
-            (Color32::from_rgb(58, 49, 19), Color32::from_rgb(240, 192, 64))
+            (
+                Color32::from_rgb(58, 49, 19),
+                Color32::from_rgb(240, 192, 64),
+            )
         } else {
-            (Color32::from_rgb(255, 241, 191), Color32::from_rgb(212, 154, 0))
+            (
+                Color32::from_rgb(255, 241, 191),
+                Color32::from_rgb(212, 154, 0),
+            )
         };
         Self {
             row_h: 26.0 + comfortable,

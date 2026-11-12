@@ -301,7 +301,10 @@ impl Filter {
         let mut terms = Vec::new();
         for (term, span) in query.terms.into_iter().zip(kept) {
             if let Some(key) = unsupported(&term) {
-                errors.push((span, format!("{key} is a library filter, not one of this list")));
+                errors.push((
+                    span,
+                    format!("{key} is a library filter, not one of this list"),
+                ));
                 continue;
             }
             chips.push(Chip {
@@ -358,9 +361,9 @@ impl Filter {
             Term::Text { text } => folded.contains(text.as_str()),
             Term::Value { text, readings } => {
                 folded.contains(text.as_str())
-                    || readings.iter().any(|r| {
-                        field_value(r.field).is_some_and(|v| r.test.accepts(&v))
-                    })
+                    || readings
+                        .iter()
+                        .any(|r| field_value(r.field).is_some_and(|v| r.test.accepts(&v)))
             }
             Term::Field { tests, .. } => tests.iter().any(|t| {
                 field_value(t.field).is_some_and(|v| match (&t.test, &v) {
@@ -488,15 +491,27 @@ mod tests {
             .collect();
         assert_eq!(
             labels,
-            vec![("x ≥ 12 mm", false), ("side:left", true), ("pkg: 0603", false)]
+            vec![
+                ("x ≥ 12 mm", false),
+                ("side:left", true),
+                ("pkg: 0603", false)
+            ]
         );
-        let error = filter.chips.get(1).and_then(|c| c.error.clone()).unwrap_or_default();
+        let error = filter
+            .chips
+            .get(1)
+            .and_then(|c| c.error.clone())
+            .unwrap_or_default();
         assert!(error.contains("left"), "{error}");
         assert!(error.contains("try"), "an example: {error}");
         // The other terms still apply.
         assert_eq!(shown("x>=12 side:left pkg:0603"), vec!["R1 10k", "C1 100n"]);
         // Removing a chip removes its term.
-        let bad = filter.chips.get(1).map(|c| c.span.clone()).unwrap_or_default();
+        let bad = filter
+            .chips
+            .get(1)
+            .map(|c| c.span.clone())
+            .unwrap_or_default();
         assert_eq!(filter.without(&bad), "x>=12 pkg:0603");
     }
 

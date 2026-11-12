@@ -875,8 +875,12 @@ mod tests {
         let mut settings = UserSettings::default();
         settings.lists.density = ListDensity::Comfortable;
         settings.lists.reduced_motion = Some(true);
-        settings.lists.save_filter("pcb.parts", "side:bottom pkg:0603")?;
-        settings.lists.save_filter("pcb.parts", "side:bottom pkg:0603")?;
+        settings
+            .lists
+            .save_filter("pcb.parts", "side:bottom pkg:0603")?;
+        settings
+            .lists
+            .save_filter("pcb.parts", "side:bottom pkg:0603")?;
         settings.lists.save_filter("issues", "clearance")?;
         assert_eq!(settings.lists.saved_filters.len(), 2);
         write_settings(&path, &settings)?;
@@ -889,7 +893,13 @@ mod tests {
             assert_eq!(bad, settings.lists, "a refused save changes nothing");
         }
         let long = "x".repeat(MAX_FILTER_QUERY + 1);
-        assert!(settings.lists.clone().save_filter("pcb.parts", &long).is_err());
+        assert!(
+            settings
+                .lists
+                .clone()
+                .save_filter("pcb.parts", &long)
+                .is_err()
+        );
         let mut full = ListSettings::default();
         for i in 0..MAX_SAVED_FILTERS {
             full.save_filter("pcb.parts", &format!("x>{i}"))?;

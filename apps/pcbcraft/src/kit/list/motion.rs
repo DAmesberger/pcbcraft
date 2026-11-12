@@ -24,8 +24,10 @@ pub fn flash(ctx: &egui::Context, id: egui::Id, key: RowKey) -> f32 {
     let l = ListTokens::get(ctx);
     let now = ctx.input(|i| i.time);
     let slot = id.with("flashes");
-    let Some(start) = ctx.data(|d| d.get_temp::<Flashes>(slot).and_then(|f| f.0.get(&key).copied()))
-    else {
+    let Some(start) = ctx.data(|d| {
+        d.get_temp::<Flashes>(slot)
+            .and_then(|f| f.0.get(&key).copied())
+    }) else {
         return 0.0;
     };
     let t = (now - start) as f32;

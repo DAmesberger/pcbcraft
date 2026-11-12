@@ -42,7 +42,13 @@ pub fn registry(ctx: &egui::Context) -> Arc<Registry> {
 /// a text field has the keyboard. Key repeats count (a held Backspace
 /// keeps unwinding).
 fn take(ctx: &egui::Context, registry: &Registry, command: &Command, repeats: bool) -> bool {
-    take_while(ctx, registry, command, repeats, ctx.egui_wants_keyboard_input())
+    take_while(
+        ctx,
+        registry,
+        command,
+        repeats,
+        ctx.egui_wants_keyboard_input(),
+    )
 }
 
 /// [`take`], with `typing` saying whether plain keys belong to a focused

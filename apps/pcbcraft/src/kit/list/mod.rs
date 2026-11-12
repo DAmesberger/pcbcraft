@@ -17,7 +17,10 @@
 //! through typed commands; a list never changes the document itself.
 // Wave 1 migrates the first lists onto the kit; the parts of its API the
 // remaining lists will use (spec §7) are not all called yet.
-#![allow(dead_code, reason = "the list kit's API, used as lists migrate (spec §7)")]
+#![allow(
+    dead_code,
+    reason = "the list kit's API, used as lists migrate (spec §7)"
+)]
 pub mod columns;
 pub mod edit;
 pub mod filter;
@@ -35,7 +38,10 @@ pub mod view;
 pub mod virt;
 
 pub use keys::LIST_KEYS;
-#[allow(unused_imports, reason = "the list kit's API; lists use it as they migrate")]
+#[allow(
+    unused_imports,
+    reason = "the list kit's API; lists use it as they migrate"
+)]
 pub use {
     model::{Fold, Line, RowKey, natural_cmp},
     nav::Effect,

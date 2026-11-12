@@ -61,7 +61,13 @@ pub struct Slots {
 
 impl Slots {
     pub fn width(&self, gap: f32) -> f32 {
-        self.int + self.frac + if self.unit > 0.0 { gap + self.unit } else { 0.0 }
+        self.int
+            + self.frac
+            + if self.unit > 0.0 {
+                gap + self.unit
+            } else {
+                0.0
+            }
     }
 }
 

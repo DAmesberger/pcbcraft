@@ -7,10 +7,7 @@ use egui::{Event, Key, Modifiers, Pos2};
 const NAMES: [&str; 6] = ["C1", "C2", "R1", "R2", "R10", "U1"];
 
 fn lines() -> Vec<Line<'static>> {
-    NAMES
-        .iter()
-        .map(|n| Line::item(RowKey::of(n), n))
-        .collect()
+    NAMES.iter().map(|n| Line::item(RowKey::of(n), n)).collect()
 }
 
 fn key(k: Key, modifiers: Modifiers) -> Event {
@@ -31,7 +28,11 @@ fn show(ui: &mut egui::Ui, lines: &[Line<'_>], layout: Layout) -> ListOutput {
         ..ListView::new(egui::Id::unique("test-list"), "Parts", layout)
     };
     let values = ["12.700 mm", "3 mm", "-1.25 mm", "40 mm", "Held", "0.5 mm"];
-    let cols = Columns::measure(ui, &ListTokens::get(ui.ctx()), values.iter().map(|v| Value::Number(v)));
+    let cols = Columns::measure(
+        ui,
+        &ListTokens::get(ui.ctx()),
+        values.iter().map(|v| Value::Number(v)),
+    );
     view.show(ui, lines, |ui, rect, line, cx| {
         let index = NAMES.iter().position(|n| *n == line.name).unwrap_or(0);
         let name = [line.name];
@@ -58,11 +59,19 @@ fn rows_fit_230pt_and_numbers_align_on_the_point() {
     });
     for name in NAMES {
         let p = painted.iter().find(|p| p.text == name);
-        assert!(p.is_some_and(|p| p.rect.right() <= 230.0), "{name} shown in the column");
+        assert!(
+            p.is_some_and(|p| p.rect.right() <= 230.0),
+            "{name} shown in the column"
+        );
     }
     let ys: Vec<f32> = NAMES
         .iter()
-        .filter_map(|n| painted.iter().find(|p| p.text == *n).map(|p| p.rect.center().y))
+        .filter_map(|n| {
+            painted
+                .iter()
+                .find(|p| p.text == *n)
+                .map(|p| p.rect.center().y)
+        })
         .collect();
     for w in ys.windows(2) {
         if let [a, b] = w {
@@ -75,7 +84,10 @@ fn rows_fit_230pt_and_numbers_align_on_the_point() {
         .filter_map(|f| painted.iter().find(|p| p.text == *f).map(|p| p.rect.left()))
         .collect();
     assert_eq!(fracs.len(), 3, "{painted:#?}");
-    assert!(fracs.windows(2).all(|w| (w[0] - w[1]).abs() < 0.5), "{fracs:?}");
+    assert!(
+        fracs.windows(2).all(|w| (w[0] - w[1]).abs() < 0.5),
+        "{fracs:?}"
+    );
     // Units in their own faint slot.
     assert!(painted.iter().any(|p| p.text == "mm"));
 }
@@ -118,7 +130,9 @@ fn keys_drive_a_focused_list() {
         key(Key::Backspace, Modifiers::NONE),
     ]);
     assert!(
-        o.effects.iter().any(|e| matches!(e, Effect::Delete(k) if k.len() == 1)),
+        o.effects
+            .iter()
+            .any(|e| matches!(e, Effect::Delete(k) if k.len() == 1)),
         "{:?}",
         o.effects
     );
@@ -160,7 +174,10 @@ fn ten_thousand_rows_build_a_screenful() {
 fn the_filter_bar_shows_chips_and_removes_a_term() {
     let fields = query::Fields::new(vec![
         query::Field::new("x", query::Kind::Length),
-        query::Field::new("side", query::Kind::Choice(vec!["Top".into(), "Bottom".into()])),
+        query::Field::new(
+            "side",
+            query::Kind::Choice(vec!["Top".into(), "Bottom".into()]),
+        ),
     ]);
     let bar = filter::FilterBar {
         id: egui::Id::unique("bar"),
@@ -173,7 +190,10 @@ fn the_filter_bar_shows_chips_and_removes_a_term() {
     let painted = h.frame(vec![], |ui| {
         bar.show(ui, &mut text, &fields);
     });
-    assert!(painted.iter().any(|p| p.text == "x ≥ 12 mm"), "{painted:#?}");
+    assert!(
+        painted.iter().any(|p| p.text == "x ≥ 12 mm"),
+        "{painted:#?}"
+    );
     assert!(painted.iter().any(|p| p.text == "side:left"));
     // The star at the field's right end saves the query for the app to
     // persist, and the saved chip shows at once.
@@ -200,5 +220,8 @@ fn the_filter_bar_shows_chips_and_removes_a_term() {
     let painted = h.frame(vec![], |ui| {
         bar.show(ui, &mut text, &fields);
     });
-    assert!(painted.iter().any(|p| p.text == "side:bottom"), "saved chip");
+    assert!(
+        painted.iter().any(|p| p.text == "side:bottom"),
+        "saved chip"
+    );
 }

@@ -45,7 +45,11 @@ pub fn field(
             .char_limit(512)
             .desired_width(r.width()),
     );
-    response.widget_info(|| egui::WidgetInfo::text_edit(true, "", text.as_str(), label));
+    response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, label);
+        info.current_text_value = Some(text.clone());
+        info
+    });
     let ink = if invalid {
         super::super::severity::ink(super::super::severity::Level::Error)
     } else {
@@ -53,8 +57,12 @@ pub fn field(
     };
     ui.painter()
         .rect_stroke(r, 5.0, Stroke::new(1.0, ink), egui::StrokeKind::Outside);
-    ui.painter()
-        .rect_stroke(r.expand(1.0), 6.0, Stroke::new(2.0, ink.gamma_multiply(0.22)), egui::StrokeKind::Outside);
+    ui.painter().rect_stroke(
+        r.expand(1.0),
+        6.0,
+        Stroke::new(2.0, ink.gamma_multiply(0.22)),
+        egui::StrokeKind::Outside,
+    );
     if start {
         response.request_focus();
         if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {

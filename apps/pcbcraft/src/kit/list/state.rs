@@ -51,6 +51,9 @@ pub struct ListState {
     pub show_all: bool,
     /// The keyboard moved the cursor last (the focus ring shows only then).
     pub keyboard: bool,
+    /// The list holds the keyboard (a click on it, until a click elsewhere
+    /// or another widget takes the focus).
+    pub keyboard_owner: bool,
 }
 
 impl ListState {

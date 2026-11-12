@@ -159,8 +159,7 @@ pub fn header(
     sort: Option<Sort>,
 ) -> Option<usize> {
     let l = ListTokens::get(ui.ctx());
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), l.header_h), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), l.header_h), Sense::hover());
     let painter = ui.painter_at(rect);
     painter.line_segment(
         [
@@ -185,8 +184,16 @@ pub fn header(
         let mut job = LayoutJob::default();
         job.append(spec.caption, 0.0, TextFormat::simple(font.clone(), ink));
         if let Some(s) = sorted {
-            let arrow = if s.ascending { " \u{25b2}" } else { " \u{25bc}" };
-            job.append(arrow, 0.0, TextFormat::simple(FontId::proportional(8.0), l.focus));
+            let arrow = if s.ascending {
+                " \u{25b2}"
+            } else {
+                " \u{25bc}"
+            };
+            job.append(
+                arrow,
+                0.0,
+                TextFormat::simple(FontId::proportional(8.0), l.focus),
+            );
         }
         job.wrap.max_width = cell.width();
         job.wrap.max_rows = 1;
@@ -360,7 +367,11 @@ fn number(painter: &egui::Painter, l: &ListTokens, at: Rect, text: &str, slots: 
     let mono = measure::mono(l);
     let Some(n) = measure::split(text) else {
         let g = painter.layout_no_wrap(text.to_owned(), mono, l.fg_faint);
-        painter.galley(pos2(at.right() - g.size().x, cy - g.size().y / 2.0), g, l.fg_faint);
+        painter.galley(
+            pos2(at.right() - g.size().x, cy - g.size().y / 2.0),
+            g,
+            l.fg_faint,
+        );
         return;
     };
     let unit_left = at.right() - slots.unit;

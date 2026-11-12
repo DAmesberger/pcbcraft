@@ -70,7 +70,11 @@ fn saved_of(ctx: &egui::Context, list: &str) -> Vec<String> {
 }
 
 fn send(ctx: &egui::Context, change: SavedChange) {
-    ctx.data_mut(|d| d.get_temp_mut_or_default::<Outbox>(outbox_slot()).0.push(change));
+    ctx.data_mut(|d| {
+        d.get_temp_mut_or_default::<Outbox>(outbox_slot())
+            .0
+            .push(change)
+    });
 }
 
 /// One list's filter bar.
@@ -119,7 +123,10 @@ impl FilterBar<'_> {
             Stroke::new(1.0, if focused { l.focus } else { l.line }),
             egui::StrokeKind::Inside,
         );
-        let icon = Rect::from_center_size(pos2(field.left() + 12.0, field.center().y), vec2(13.0, 13.0));
+        let icon = Rect::from_center_size(
+            pos2(field.left() + 12.0, field.center().y),
+            vec2(13.0, 13.0),
+        );
         super::super::icon(ui.painter(), icon.center(), 13.0, "zoom", 0.6);
         let star_w = if self.saving { field.height() } else { 0.0 };
         let edit_rect = Rect::from_min_max(
@@ -155,7 +162,9 @@ impl FilterBar<'_> {
                 "star",
                 if r.hovered() && can { 1.0 } else { 0.5 },
             );
-            r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can, "Save this filter"));
+            r.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::Role::Button, can, "Save this filter")
+            });
             if r.on_hover_text("Save this filter").clicked() && can {
                 send(
                     ui.ctx(),
@@ -171,8 +180,13 @@ impl FilterBar<'_> {
         if !filter.chips.is_empty() {
             chip_rows(ui, &l, |ui| {
                 for (i, chip) in filter.chips.iter().enumerate() {
-                    if chip_ui(ui, &l, self.id.with(("chip", i)), &chip.label, chip.error.as_deref())
-                    {
+                    if chip_ui(
+                        ui,
+                        &l,
+                        self.id.with(("chip", i)),
+                        &chip.label,
+                        chip.error.as_deref(),
+                    ) {
                         remove = Some(chip.span.clone());
                     }
                 }
@@ -239,16 +253,27 @@ fn chip_ui(ui: &mut Ui, l: &ListTokens, id: egui::Id, label: &str, error: Option
             let (ink, soft) = l.severity(super::super::severity::Level::Error);
             (ink, soft, ink.gamma_multiply(0.35))
         }
-        None => (l.fg, l.focus.gamma_multiply(0.12), l.focus.gamma_multiply(0.3)),
+        None => (
+            l.fg,
+            l.focus.gamma_multiply(0.12),
+            l.focus.gamma_multiply(0.3),
+        ),
     };
     let g = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
     let size = vec2(g.size().x + 8.0 + 18.0, 20.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     ui.painter().rect_filled(rect, 5.0, fill);
-    ui.painter()
-        .rect_stroke(rect, 5.0, Stroke::new(1.0, border), egui::StrokeKind::Inside);
-    ui.painter()
-        .galley(pos2(rect.left() + 8.0, rect.center().y - g.size().y / 2.0), g, ink);
+    ui.painter().rect_stroke(
+        rect,
+        5.0,
+        Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(
+        pos2(rect.left() + 8.0, rect.center().y - g.size().y / 2.0),
+        g,
+        ink,
+    );
     let x = Rect::from_center_size(pos2(rect.right() - 10.0, rect.center().y), vec2(16.0, 16.0));
     let close = ui.interact(x, id.with("remove"), Sense::click());
     if close.hovered() {
@@ -283,8 +308,11 @@ fn saved_chip(ui: &mut Ui, l: &ListTokens, id: egui::Id, query: &str, on: bool) 
         Stroke::new(1.0, if on { l.focus } else { l.line }),
         egui::StrokeKind::Inside,
     );
-    ui.painter()
-        .galley(pos2(rect.left() + 7.0, rect.center().y - g.size().y / 2.0), g, ink);
+    ui.painter().galley(
+        pos2(rect.left() + 7.0, rect.center().y - g.size().y / 2.0),
+        g,
+        ink,
+    );
     let x = Rect::from_center_size(pos2(rect.right() - 9.0, rect.center().y), vec2(14.0, 14.0));
     let close = ui.interact(x, id.with("forget"), Sense::click());
     if response.hovered() || close.hovered() || close.has_focus() {

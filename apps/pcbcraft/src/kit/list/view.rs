@@ -115,6 +115,9 @@ impl ListView<'_> {
 
     /// Give this list the keyboard.
     pub fn request_focus(&self, ctx: &egui::Context) {
+        let mut state = ListState::load(ctx, self.id);
+        state.keyboard_owner = true;
+        state.store(ctx, self.id);
         ctx.memory_mut(|m| m.request_focus(self.focus_id()));
     }
 
@@ -130,7 +133,15 @@ impl ListView<'_> {
         let mut state = ListState::load(ui.ctx(), self.id);
         let mut out = ListOutput::default();
         let focus_id = self.focus_id();
-        let focused = ui.memory(|m| m.has_focus(focus_id));
+        // The list holds the keyboard from a click on it until a click
+        // elsewhere or another widget takes the focus. egui's own focus is
+        // requested too, so other key readers treat it as typing; the
+        // list's own flag keeps it when a card widget drops egui's.
+        let owner = ui.memory(|m| m.focused());
+        if owner.is_some_and(|o| o != focus_id) {
+            state.keyboard_owner = false;
+        }
+        let focused = ui.memory(|m| m.has_focus(focus_id)) || state.keyboard_owner;
         out.focused = focused;
         let now = ui.input(|i| i.time);
         let page = match self.layout {
@@ -182,72 +193,70 @@ impl ListView<'_> {
         let row_h = l.row_h;
         let selection = state.selection.clone();
         let cursor = state.cursor;
-        let draw = |ui: &mut Ui,
-                    index: usize,
-                    top: f32,
-                    out: &mut ListOutput,
-                    pass: &mut Pass,
-                    paint: &mut dyn FnMut(&mut Ui, Rect, &Line<'_>, LineCtx) -> RowResponse| {
-            let Some(line) = lines.get(index) else {
-                return;
-            };
-            let target = top + index as f32 * row_h;
-            let y = ui.ctx().animate_value_with_time(
-                self.id.with(("y", line.key)),
-                target,
-                l.motion_flip,
-            );
-            let mut y = y;
-            if let Some(d) = drag
-                && d.key == line.key
-                && let Some(p) = ui.ctx().pointer_latest_pos()
-            {
-                y = p.y - d.grab;
-            }
-            let rect = Rect::from_min_size(pos2(ui.max_rect().left(), y), vec2(width, row_h));
-            let lc = LineCtx {
-                id: self.id,
-                selected: selection.contains(&line.key),
-                cursor: shown_cursor && cursor == Some(line.key),
-                sticky: false,
-            };
-            let r = paint(ui, rect, line, lc);
-            out.built += 1;
-            out.value_rects.push((line.key, r.value_rect));
-            if r.hovered {
-                out.hovered = Some(line.key);
-            }
-            if let Some(a) = r.action {
-                out.actions.push((line.key, a));
-            }
-            if r.fold {
-                pass.folds.push(line.key);
-            } else if r.double_clicked {
-                pass.clicks.push(Input::DoubleClick { key: line.key });
-            } else if r.clicked {
-                let m = ui.input(|i| i.modifiers);
-                pass.clicks.push(Input::Click {
-                    key: line.key,
-                    extend: m.shift,
-                    toggle: m.command,
-                });
-            }
-            if let Some(grip) = &r.grip {
-                if grip.drag_started() {
-                    let grab = ui
-                        .ctx()
-                        .pointer_interact_pos()
-                        .map_or(row_h / 2.0, |p| p.y - y);
-                    pass.grips.push((line.key, index, true, grab));
-                } else if grip.drag_stopped() {
-                    let at = ui
-                        .ctx()
-                        .pointer_latest_pos()
-                        .map_or(target, |p| p.y - top);
-                    pass.grips.push((line.key, index, false, at));
+        let draw =
+            |ui: &mut Ui,
+             index: usize,
+             top: f32,
+             out: &mut ListOutput,
+             pass: &mut Pass,
+             paint: &mut dyn FnMut(&mut Ui, Rect, &Line<'_>, LineCtx) -> RowResponse| {
+                let Some(line) = lines.get(index) else {
+                    return;
+                };
+                let target = top + index as f32 * row_h;
+                let y = ui.ctx().animate_value_with_time(
+                    self.id.with(("y", line.key)),
+                    target,
+                    l.motion_flip,
+                );
+                let mut y = y;
+                if let Some(d) = drag
+                    && d.key == line.key
+                    && let Some(p) = ui.ctx().pointer_latest_pos()
+                {
+                    y = p.y - d.grab;
                 }
-            }
-        };
+                let rect = Rect::from_min_size(pos2(ui.max_rect().left(), y), vec2(width, row_h));
+                let lc = LineCtx {
+                    id: self.id,
+                    selected: selection.contains(&line.key),
+                    cursor: shown_cursor && cursor == Some(line.key),
+                    sticky: false,
+                };
+                let r = paint(ui, rect, line, lc);
+                out.built += 1;
+                out.value_rects.push((line.key, r.value_rect));
+                if r.hovered {
+                    out.hovered = Some(line.key);
+                }
+                if let Some(a) = r.action {
+                    out.actions.push((line.key, a));
+                }
+                if r.fold {
+                    pass.folds.push(line.key);
+                } else if r.double_clicked {
+                    pass.clicks.push(Input::DoubleClick { key: line.key });
+                } else if r.clicked {
+                    let m = ui.input(|i| i.modifiers);
+                    pass.clicks.push(Input::Click {
+                        key: line.key,
+                        extend: m.shift,
+                        toggle: m.command,
+                    });
+                }
+                if let Some(grip) = &r.grip {
+                    if grip.drag_started() {
+                        let grab = ui
+                            .ctx()
+                            .pointer_interact_pos()
+                            .map_or(row_h / 2.0, |p| p.y - y);
+                        pass.grips.push((line.key, index, true, grab));
+                    } else if grip.drag_stopped() {
+                        let at = ui.ctx().pointer_latest_pos().map_or(target, |p| p.y - top);
+                        pass.grips.push((line.key, index, false, at));
+                    }
+                }
+            };
         let list_rect;
         let mut top_seen = 0.0;
         let mut viewport_h = 0.0;
@@ -260,6 +269,7 @@ impl ListView<'_> {
                 container_info(&bg, self, total);
                 if bg.clicked() {
                     bg.request_focus();
+                    state.keyboard_owner = true;
                 }
                 for index in 0..count {
                     draw(ui, index, rect.top(), &mut out, &mut pass, &mut paint);
@@ -279,8 +289,13 @@ impl ListView<'_> {
                     .min_scrolled_height(height.min(virt::content(total, row_h)))
                     .auto_shrink([false, true]);
                 // Keep the keyboard's cursor in view.
-                if out.effects.iter().any(|e| matches!(e, Effect::Selected | Effect::Moved))
-                    && let Some(at) = state.cursor.and_then(|c| lines.iter().position(|x| x.key == c))
+                if out
+                    .effects
+                    .iter()
+                    .any(|e| matches!(e, Effect::Selected | Effect::Moved))
+                    && let Some(at) = state
+                        .cursor
+                        .and_then(|c| lines.iter().position(|x| x.key == c))
                 {
                     let to = virt::reveal(at, row_h, last_top, last_h);
                     if (to - last_top).abs() > 0.5 {
@@ -299,6 +314,7 @@ impl ListView<'_> {
                     container_info(&bg, self, total);
                     if bg.clicked() {
                         bg.request_focus();
+                        state.keyboard_owner = true;
                     }
                     for index in virt::visible(total, row_h, viewport.top(), viewport.height()) {
                         draw(ui, index, origin, &mut out, &mut pass, &mut paint);
@@ -322,14 +338,13 @@ impl ListView<'_> {
                             cursor: false,
                             sticky: true,
                         };
-                        let mut layer = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(rect)
-                                .layer_id(egui::LayerId::new(
+                        let mut layer =
+                            ui.new_child(egui::UiBuilder::new().max_rect(rect).layer_id(
+                                egui::LayerId::new(
                                     egui::Order::Middle,
                                     self.id.with("sticky-layer"),
-                                )),
-                        );
+                                ),
+                            ));
                         layer.set_clip_rect(ui.clip_rect());
                         let r = paint(&mut layer, rect, line, lc);
                         if r.fold || r.clicked {
@@ -349,7 +364,17 @@ impl ListView<'_> {
             let effect = nav::reduce(&mut state, lines, Input::Space, cx);
             push(&mut out.effects, effect);
         }
+        // A press elsewhere ends the list's hold on the keyboard.
+        if ui.input(|i| i.pointer.any_pressed())
+            && ui
+                .ctx()
+                .pointer_interact_pos()
+                .is_some_and(|p| !list_rect.contains(p))
+        {
+            state.keyboard_owner = false;
+        }
         for input in pass.clicks {
+            state.keyboard_owner = true;
             ui.memory_mut(|m| m.request_focus(focus_id));
             let effect = nav::reduce(&mut state, lines, input, cx);
             push(&mut out.effects, effect);
@@ -434,7 +459,11 @@ fn edge_pill(ui: &mut Ui, l: &ListTokens, rect: Rect, name: &str, place: virt::P
         rect.bottom() - size.y - 4.0
     };
     let pill = Rect::from_min_size(pos2(rect.right() - size.x - 14.0, y), size);
-    let response = ui.interact(pill, ui.scope_id().with(("edge-pill", name)), Sense::click());
+    let response = ui.interact(
+        pill,
+        ui.scope_id().with(("edge-pill", name)),
+        Sense::click(),
+    );
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
         ui.scope_id().with("edge-pill-layer"),
@@ -518,7 +547,9 @@ pub fn no_match(ui: &mut Ui, query: &str) -> bool {
                 .size(l.fs_s)
                 .color(l.fg_dim),
         );
-        clear = ui.link(egui::RichText::new("Clear filter").size(l.fs_s)).clicked();
+        clear = ui
+            .link(egui::RichText::new("Clear filter").size(l.fs_s))
+            .clicked();
     });
     ui.add_space(6.0);
     clear

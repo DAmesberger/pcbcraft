@@ -395,6 +395,8 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
         Chord::key(egui::Key::Backspace),
         "pcb.delete",
     ),
+    // A focused list: ⌘A selects its shown rows, not the canvas's objects.
+    (Context::List, Chord::cmd(egui::Key::A), "edit.select-all"),
 ];
 
 /// The Fill tool's keys, handled by the PCB canvas (`fill_tool`).

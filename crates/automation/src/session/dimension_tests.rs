@@ -69,6 +69,48 @@ fn the_usb_c_receptacle_follows_the_board_width() -> TestResult {
     Ok(())
 }
 
+/// `layout.dimension_order` puts J1's two dimensions in the listed order
+/// as one undo step, moving nothing on the board; a missing or repeated id
+/// is refused and changes nothing.
+#[test]
+fn dimension_order_is_document_data_and_one_undo_step() -> TestResult {
+    let mut session = open()?;
+    let ids = |s: &Session| -> Vec<u64> {
+        s.engine()
+            .project()
+            .part_dimensions
+            .iter()
+            .map(|d| d.id)
+            .collect()
+    };
+    let before = ids(&session);
+    assert!(before.len() >= 2, "{before:?}");
+    let (_, at) = j1(&session)?;
+    let mut flipped = before.clone();
+    flipped.swap(0, 1);
+    let order = |ids: &[u64]| {
+        json!({"editor": "Dimension", "operation": {"command": "layout.dimension_order",
+            "params": {"ids": ids}}})
+    };
+    let done = apply(&mut session, order(&flipped[..2]));
+    assert_eq!(done["ok"], true, "{done}");
+    assert_eq!(ids(&session), flipped);
+    let (_, now) = j1(&session)?;
+    assert!(close(at, now), "order moves nothing: {at:?} → {now:?}");
+    let revision = session.engine().revision();
+    for bad in [vec![before[0], 999_999], vec![before[0], before[0]]] {
+        let refused = apply(&mut session, order(&bad));
+        assert_eq!(refused["ok"], false, "{bad:?}: {refused}");
+        assert_eq!(ids(&session), flipped, "refused: unchanged");
+        assert_eq!(session.engine().revision(), revision);
+    }
+    let undone = session.dispatch(json!({"command": "project.undo", "params": {
+        "expected_revision": revision}}));
+    assert_eq!(undone["ok"], true, "{undone}");
+    assert_eq!(ids(&session), before, "one undo step");
+    Ok(())
+}
+
 /// An agent naming a face J1's part file does not have is refused, and the
 /// refusal lists the faces square to the board, with a point on each; the
 /// document is unchanged.

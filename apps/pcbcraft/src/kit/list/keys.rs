@@ -9,7 +9,11 @@ pub const LIST_KEYS: &[KeyDecl] = &[
     KeyDecl::new("list.up", "Up", "Previous row"),
     KeyDecl::new("list.down", "Down", "Next row"),
     KeyDecl::new("list.extend-up", "Shift+Up", "Extend the selection up"),
-    KeyDecl::new("list.extend-down", "Shift+Down", "Extend the selection down"),
+    KeyDecl::new(
+        "list.extend-down",
+        "Shift+Down",
+        "Extend the selection down",
+    ),
     KeyDecl::new("list.cursor-up", "Cmd+Up", "Move the cursor up only"),
     KeyDecl::new("list.cursor-down", "Cmd+Down", "Move the cursor down only"),
     KeyDecl::new("list.home", "Home", "First row"),
