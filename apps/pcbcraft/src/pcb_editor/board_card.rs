@@ -12,7 +12,7 @@ use pcbcraft_core::{
     Engine, Fabrication, MaskColour, MaskFinish, Operation, PadFinish, Project, SilkscreenColour,
     layout::LayoutCommand, schematic::SchematicCommand,
 };
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// The Board setup dialog's state: the fabrication choices being edited,
 /// and the revision its OK was sent at.

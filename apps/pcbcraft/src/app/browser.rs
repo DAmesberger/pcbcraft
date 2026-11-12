@@ -980,7 +980,7 @@ mod tests {
             drafts: Default::default(),
         })?;
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let all = frame(&ctx, &engine, vec![]);
         assert_eq!(all.iter().filter(|t| t.starts_with("EX-")).count(), 24);
 
@@ -1041,7 +1041,7 @@ mod tests {
             ),
         ];
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut pick = None;
         let mut output = ctx.run_ui(Default::default(), |ui| {
             kit::form(ui, |ui| pick = show_sources(ui, &sources));
@@ -1074,7 +1074,7 @@ mod tests {
             drafts: Default::default(),
         })?;
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let text = || ctx.data(|d| d.get_temp::<String>(egui::Id::unique(FILTER)));
         let field = egui::Id::unique((FILTER, "field"));
         frame(&ctx, &engine, vec![]);
@@ -1104,7 +1104,7 @@ mod tests {
     fn a_rows_right_click_menu_picks() -> Result<(), Box<dyn std::error::Error>> {
         use crate::context_menu::{Run, State};
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let r1 = engine.project().instances[0].clone();
         let mut menu = State::default();
@@ -1264,7 +1264,7 @@ mod tests {
             .collect();
         assert!(!single.is_empty() && !connected.is_empty(), "{nets:?}");
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         ctx.data_mut(|d| d.insert_persisted(egui::Id::unique(("browser-open", "nets")), true));
         let shown = frame(&ctx, &engine, vec![]);
         let count = format!("{} · {} single-pin", nets.len(), single.len());
@@ -1285,7 +1285,7 @@ mod tests {
     #[test]
     fn a_click_selects_a_component_and_a_double_click_edits_it() {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let id = DefinitionId(7);
         let at = egui::pos2(60.0, 12.0);
         let mut picks = Vec::new();

@@ -12,7 +12,7 @@ use pcbcraft_core::layout::fill::FillCommand;
 use pcbcraft_core::library::{Outline, Segment};
 use pcbcraft_core::model::fill::{FillSettings, FillSpec};
 use pcbcraft_core::{Fill, Id, Operation, Point, Project, schematic};
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// Screen reach of a handle and of the first point when closing, points.
 const REACH_PX: f32 = 8.0;

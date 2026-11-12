@@ -6,7 +6,7 @@ use crate::context_menu::Run;
 use egui::{Event, PointerButton, Pos2, Rect, pos2, vec2};
 use pcbcraft_core::library::Rotation;
 use pcbcraft_core::{Endpoint, LabelKind, Outcome, TerminalId};
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 /// Operations compare by their Debug text (`Operation` has no `PartialEq`).
 macro_rules! assert_op {
@@ -76,7 +76,7 @@ fn context() -> egui::Context {
 fn check_icons(rows: &Rows<Act>) {
     for entry in rows.iter().flatten() {
         assert!(
-            !solidcraft_ui_egui::icon_svg::resolve(entry.icon).placeholder,
+            !pcbcraft_ui::icon_svg::resolve(entry.icon).placeholder,
             "{} has no icon {}",
             entry.label,
             entry.icon

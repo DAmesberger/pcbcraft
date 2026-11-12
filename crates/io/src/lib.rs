@@ -4,6 +4,7 @@
 pub mod artwork;
 pub mod fab_drawings;
 pub mod fabrication;
+mod former_name;
 pub mod library_folder;
 pub mod library_folder_index;
 pub mod pdf;

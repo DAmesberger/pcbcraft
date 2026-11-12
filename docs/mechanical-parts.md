@@ -5,7 +5,7 @@ Contract, 3 November 2026. Base: `component-model` at 5e0922b, after [lean parts
 1. **A part-file chooser in the desktop.** The Component workspace's 3D Body section chooses a Solidcraft part file, checks it, edits its parameters and previews it, and can switch back to the generated model.
 2. **Parametric 3D parts placed directly on the PCB.** Solderable SMD nuts and standoffs, press-fits and shield clips have pads. Heatsinks, spacers, brackets and light pipes are purely mechanical. Both are placed from a part file in Layout and appear in the 3D view, the BOM, pick-and-place, the assembly drawing, export and the board checks.
 
-It follows the founder's rules: Solidcraft stays generic, footprints stay Pcbcraft's, one command engine serves UI, CLI and MCP, and release 1 varies geometry per package.
+It follows the founder's rules: Solidcraft stays generic, footprints stay Sparksmith's, one command engine serves UI, CLI and MCP, and release 1 varies geometry per package.
 
 ## M1. Decisions
 
@@ -14,7 +14,7 @@ It follows the founder's rules: Solidcraft stays generic, footprints stay Pcbcra
 | M1.1 | A directly placed part is an ordinary **component instance**. Its component, symbol, package, footprint and binding (the **mechanical part set**) are generated library definitions, published into the project snapshot. The package's model is the part file (`PackageModel::PartFile`). | It needs no new instance kind. Library identity, exact snapshots, explicit pin mapping, undo, selection, the 3D build, export, BOM, pick-and-place and DRC already handle instances. The component model's rules hold unchanged. |
 | M1.2 | Each **variant** (a part file revision, its values, its lands and its assembly flags) is its own set. A variant is identified by `MechanicalPart.key`. Editing a placed part's parameters selects the existing variant with the new key, or creates it, and re-points the instance. | Instances stay package-bound (release 1: geometry per package, not per instance). Equal values share one set, one native definition (`PartKey`, L1) and one BOM line. |
 | M1.3 | **Schematic: the mechanical symbol convention.** Every set has a one-unit symbol: a rounded body with the designator and the part name, and one pin per terminal (none for a purely mechanical part). An instance placed on the board starts with that unit **unused** (off-sheet). | The model requires a representation, and "unused" already means "deliberately left off the sheet". The schematic and ERC need nothing. A part whose pads land terminals can still be placed on a sheet and wired, for example to GND. Connectivity keeps a single source, the schematic. |
-| M1.4 | **Footprints stay Pcbcraft's.** The set's footprint is a Pcbcraft footprint definition built from **lands**, which are Pcbcraft data (M3). They come from one of three sources: a built-in part's land rules, the pads of a footprint the user picks, or explicit lands in the request. The part file supplies only the 3D body and never the land pattern. | This is the founder's 3 November revision. The lightest approach adds no new convention to part files and no land UI beyond a choice. |
+| M1.4 | **Footprints stay Sparksmith's.** The set's footprint is a Sparksmith footprint definition built from **lands**, which are Sparksmith data (M3). They come from one of three sources: a built-in part's land rules, the pads of a footprint the user picks, or explicit lands in the request. The part file supplies only the 3D body and never the land pattern. | This is the founder's 3 November revision. The lightest approach adds no new convention to part files and no land UI beyond a choice. |
 | M1.5 | Pads are `PadKind::Mechanical` copper. With `pads: mechanical` (the default) they land no terminal. With `pads: terminals`, each pad lands its own terminal (`1`, `2`, …) and can join a net. | A mechanical pad may land a terminal (glossary, *Pad kind*), so one kind covers both. Unconnected pads need no decision and raise no ERC finding. |
 | M1.6 | **Assembly flags** on the set: `bom` (default true) and `pick_and_place` (default true when the part has pads, else false). | The founder: parts with pads go into BOM and pick-and-place; purely mechanical parts go into the BOM (configurable). The flags are part of the variant, so changing one in Properties selects or creates that variant (M1.2). |
 | M1.7 | The set gets a **courtyard**, assembly outline and silkscreen outline from the body's xy bounds and its lands. They are the standard footprint drawings, made explicitly when the set is generated (glossary, *Derived courtyard*). | Courtyard overlap, clearance and the assembly drawing then treat mechanical parts like any part. |
@@ -123,7 +123,7 @@ pub enum PartModelSource {
   - A rectangle is `PadShape::Rect`.
 - A **hole** is a `Pad { kind: NonPlatedHole, terminal: None }` whose `shape` is a circle of the hole's diameter.
 - **Sources of lands**, chosen by the host:
-  1. **Built-in land rules.** A built-in part ships with Pcbcraft data rules over its own parameter values. Each rule is `diameter = scale × value(param) + add_mm`. They are evaluated at the chosen values.
+  1. **Built-in land rules.** A built-in part ships with Sparksmith data rules over its own parameter values. Each rule is `diameter = scale × value(param) + add_mm`. They are evaluated at the chosen values.
      - SMD nut: an annulus of `outer_d + 0.6` around a hole of `thread_d + 0.2`.
      - Spacer: a hole of `inner_d`.
      - Heatsink: none.
@@ -150,7 +150,7 @@ pub enum PartModelSource {
 | `layout.place_part_file` | `{ path \| builtin \| model, values?, position, rotation_deg?, layer?, pads?, bom?, pick_and_place?, lands?, lands_from?, name?, prefix?, designator?, licence?, redistribution?, expected_revision }` | `{ revision, outcome, part: report }`. Reads and checks the file (blocking findings refuse), evaluates the land source (M3), builds the `PartSpec` and applies `layout.place_part`. |
 | `layout.set_part_file_values` | `{ instance, values, pads?, bom?, pick_and_place?, expected_revision }` | The same reply. It evaluates at the new values with the instance's file and land source and applies `layout.set_part`. Omitted flags keep the instance's. |
 | MCP tools | `library_part_files`, `layout_place_part_file`, `layout_set_part_file_values` | The requests above. |
-| CLI | `pcbcraft-cli part list` | Built-ins with their parameters. `part check` also prints built-in lands. |
+| CLI | `sparksmith part list` | Built-ins with their parameters. `part check` also prints built-in lands. |
 
 **One builder.** `pcbcraft_automation::part_files` exposes the functions that build the core `Operation` for each request: `use_part_file_operation`, `set_part_values_operation`, `place_part_operation` and `set_part_operation`. They take the engine read-only and return the operation and the check report. The desktop calls them and applies the operation through its own engine, so UI, CLI and MCP issue the same typed command.
 
@@ -204,7 +204,7 @@ pub enum PartModelSource {
 
 ## M7. Built-in starter set
 
-The parts are original parametric designs, authored through Solidcraft's commands by `tests/author_parts.rs`, under MIT OR Apache-2.0. Their dimensions are generic round numbers chosen for illustration and copy no vendor's drawing (verify against the chosen part's datasheet). They follow L2: a single component, the origin at the footprint origin, z = 0 as the seating plane, appearances named after Pcbcraft materials and a `marking-top` plane.
+The parts are original parametric designs, authored through Solidcraft's commands by `tests/author_parts.rs`, under MIT OR Apache-2.0. Their dimensions are generic round numbers chosen for illustration and copy no vendor's drawing (verify against the chosen part's datasheet). They follow L2: a single component, the origin at the footprint origin, z = 0 as the seating plane, appearances named after Sparksmith materials and a `marking-top` plane.
 
 | Built-in | Title | Parameters (default) | Material | Prefix | Lands |
 |---|---|---|---|---|---|
@@ -225,7 +225,7 @@ The parts are original parametric designs, authored through Solidcraft's command
 ## M9. Open for the founder
 
 1. **Stacked parts.** Release 1 reports a heatsink on a chip as a courtyard overlap, which the user waives. Should a mechanical part be able to declare "stacks on" another instance?
-2. **Lands from part files.** The rule chosen here is that footprints stay Pcbcraft's. If the founder later prefers a part-file land hint (for example named construction points `pad-<n>`), it would be an additional land source (M3) with no format change.
+2. **Lands from part files.** The rule chosen here is that footprints stay Sparksmith's. If the founder later prefers a part-file land hint (for example named construction points `pad-<n>`), it would be an additional land source (M3) with no format change.
 3. **Assembly flags beyond mechanical parts.** `bom` and `pick_and_place` live on mechanical sets only. A general do-not-populate flag, or assembly variants, would replace them.
 
 ## M10. As built (3 November 2026)
@@ -235,7 +235,7 @@ The parts are original parametric designs, authored through Solidcraft's command
   - The commands are in `layout/part.rs` (`layout.place_part`, `layout.set_part`, `layout.remove_part`), with `Outcome::PartPlaced`.
   - `instances::place_off_sheet` creates the instance with its unit unused.
   - Automation: `session/mechanical_parts.rs`: `BUILTIN_PARTS` and their land rules, `place_part_operation`, `set_part_operation`, `placed_part`, and the three requests. MCP exposes them as `library_part_files`, `layout_place_part_file` and `layout_set_part_file_values` (generated from the catalog).
-  - CLI: `pcbcraft-cli part list`.
+  - CLI: `sparksmith part list`.
   - Desktop:
     - `part_chooser.rs`: one sheet for Use and Place, with its worker-thread `Evaluator`;
     - `part_editor/model_part.rs`: the Body section's Part file…, the parameters form and Use generated model;

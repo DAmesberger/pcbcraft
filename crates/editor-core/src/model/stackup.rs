@@ -4,6 +4,7 @@
 //! (`Stackup::check`) are pure data validation.
 use super::Layer;
 use crate::diagnostics::{Error, Result};
+use crate::units::Nm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +29,17 @@ pub const DIELECTRIC_MM_RANGE: std::ops::RangeInclusive<f64> = 0.025..=3.2;
 /// crown and edges. The 3D view's mask over copper, its geometry and its
 /// colour, is this thickness.
 pub const MASK_UM: f64 = 12.0;
-/// Soldermask thicknesses over copper a stackup accepts, in µm. An input
+/// Soldermask over bare laminate of a new stackup, in µm. **Uncited**:
+/// Pcbcraft's earlier 3D display value. LPI flows into the gaps between
+/// copper, so it is thicker over laminate than over copper, but no
+/// fabricator capability page or mask datasheet consulted states a value
+/// over laminate (`docs/materials.md`, "Sources").
+pub const MASK_LAMINATE: Nm = match Nm::try_new(20 * crate::units::NM_PER_UM) {
+    Some(nm) => nm,
+    None => Nm::ZERO,
+};
+/// Soldermask thicknesses (over copper or laminate) a stackup accepts, in
+/// µm. An input
 /// bound, not a fabrication limit: from below the thinnest LPI coat to
 /// above dry-film masks.
 pub const MASK_UM_RANGE: std::ops::RangeInclusive<f64> = 5.0..=100.0;
@@ -146,7 +157,10 @@ impl Dielectric {
     /// The relative permittivity the impedance model uses: the entered
     /// [`Dielectric::dk`], else a generic FR-4 estimate by glass style
     /// (resin-rich thin styles lower, glass-heavy 7628 higher; typical
-    /// published values near 1 GHz, not a fabricator's data).
+    /// values near 1 GHz, not a fabricator's data). Checked against Isola's
+    /// published 370HR core table (`docs/materials.md`, "Sources"): 106,
+    /// 1080 and 2116 agree within 0.05 (3.81, 4.04, 4.26); 7628 does not
+    /// (Isola 4.36 at 42 % resin), and stays uncited until decided.
     pub fn permittivity(&self) -> f64 {
         self.dk.unwrap_or(match self.glass {
             GlassStyle::Style106 => 3.8,
@@ -175,12 +189,20 @@ pub struct Stackup {
     /// ([`MASK_UM`] unless the fabricator quotes another).
     #[serde(default = "default_mask_um")]
     pub mask_um: f64,
+    /// Soldermask thickness over bare laminate in µm, on every side with
+    /// mask ([`MASK_LAMINATE`] unless the fabricator quotes another).
+    #[serde(default = "default_mask_laminate")]
+    pub mask_laminate_nm: Nm,
     pub silkscreen_top: bool,
     pub silkscreen_bottom: bool,
 }
 
 fn default_mask_um() -> f64 {
     MASK_UM
+}
+
+fn default_mask_laminate() -> Nm {
+    MASK_LAMINATE
 }
 
 impl Default for Stackup {
@@ -198,6 +220,7 @@ impl Default for Stackup {
             mask_top: true,
             mask_bottom: true,
             mask_um: MASK_UM,
+            mask_laminate_nm: MASK_LAMINATE,
             silkscreen_top: true,
             silkscreen_bottom: true,
         }
@@ -383,7 +406,10 @@ impl Stackup {
         {
             return Err(Error::Invalid("dielectric Dk must be 1–20".into()));
         }
-        if !(self.mask_um.is_finite() && MASK_UM_RANGE.contains(&self.mask_um)) {
+        if ![self.mask_um, self.mask_laminate_nm.to_mm_f64() * 1000.0]
+            .iter()
+            .all(|um| um.is_finite() && MASK_UM_RANGE.contains(um))
+        {
             return Err(Error::Invalid(
                 "soldermask thickness must be 5–100 µm".into(),
             ));

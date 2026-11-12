@@ -16,7 +16,7 @@ use crate::models::{self, ModelDefinition, look};
 use crate::native::{
     self, BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody,
 };
-use crate::pad_outline::{self, Contour, FLATTEN_TOLERANCE_MM, PLATING_MM};
+use crate::pad_outline::{self, Contour, FLATTEN_TOLERANCE_MM};
 use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::{Transform3, cos_sin};
@@ -87,6 +87,9 @@ pub struct NativeModel {
     updated: Option<usize>,
     /// The display layers made for this model, for an update to reuse.
     display: appearance::Memo,
+    /// The evaluated bodies [`Geometry::volume`] measures: geometry
+    /// reaches them only while this model (or a snapshot of it) lives.
+    world: std::sync::Arc<solidcraft_engine::doc::ModelState>,
 }
 
 /// How [`update`] made its model.
@@ -135,6 +138,7 @@ impl NativeModel {
             reuse: self.reuse.clone(),
             updated: self.updated,
             display: self.display.clone(),
+            world: self.world.clone(),
         }
     }
 }
@@ -783,7 +787,17 @@ fn finish_with(
         body.mesh_in_place();
     });
     let mut reuse = Reused::default();
-    for (index, body) in native.world_state()?.bodies.iter().enumerate() {
+    // A body's lazy volume reaches it through the model, never holding it.
+    let reach = std::sync::Arc::downgrade(&world);
+    let lazy_volume = |index: usize| {
+        let world = reach.clone();
+        Volume::lazy(move || {
+            let world = world.upgrade()?;
+            let body = world.bodies.get(index)?;
+            Some(body.measure().map_or(f64::NAN, |m| m.volume))
+        })
+    };
+    for (index, body) in world.bodies.iter().enumerate() {
         let name = body.definition_name();
         let kind = *kinds
             .get(name)
@@ -822,6 +836,7 @@ fn finish_with(
             geometry.push(Geometry {
                 item,
                 layer: layer(kind),
+                volume: same.volume.or_measured_by(|| lazy_volume(index)),
                 ..same.clone()
             });
             continue;
@@ -880,9 +895,8 @@ fn finish_with(
                 let (volume, min, max) = if kind == BodyKind::Substrate
                     || (near(b.min, outline.min) && near(b.max, outline.max))
                 {
-                    let body = body.clone();
                     (
-                        Volume::lazy(move || body.measure().map_or(f64::NAN, |m| m.volume)),
+                        lazy_volume(index),
                         [b.min.x, b.min.y, b.min.z],
                         [b.max.x, b.max.y, b.max.z],
                     )
@@ -941,6 +955,7 @@ fn finish_with(
         reuse,
         updated: None,
         display: appearance::Memo::default(),
+        world,
     })
 }
 
@@ -1082,24 +1097,20 @@ impl PlacedPad<'_> {
     /// Drilled holes, pad frame: the pad's hole and its vias.
     fn drills(&self) -> Vec<Contour> {
         let pad = self.pad();
-        let mut out: Vec<Contour> = pad
-            .hole
-            .iter()
-            .filter_map(|h| pad_outline::hole_contour(h, 0.0))
-            .collect();
+        let mut out: Vec<Contour> = pad.hole.iter().filter_map(pad_outline::drilled).collect();
         out.extend(pad.vias.iter().map(|v| Contour::Circle {
             center: v.at(),
-            radius: v.drill() / 2.0,
+            radius: pad_outline::plated_drill_radius(v.drill()),
         }));
         out
     }
 
-    /// Finished bores, pad frame: drills less their plating.
+    /// Finished bores, pad frame: each hole's stated size.
     fn bores(&self) -> Vec<Contour> {
         let pad = self.pad();
         let mut out: Vec<Contour> = pad.hole.iter().filter_map(pad_outline::bore).collect();
         out.extend(pad.vias.iter().filter_map(|v| {
-            let radius = v.drill() / 2.0 - PLATING_MM;
+            let radius = v.drill() / 2.0;
             (radius > 0.0).then_some(Contour::Circle {
                 center: v.at(),
                 radius,
@@ -1113,24 +1124,22 @@ impl PlacedPad<'_> {
         let pad = self.pad();
         let mut out = Vec::new();
         if let Some(hole) = pad.hole.filter(|h| h.plated)
-            && let (Some(drill), Some(bore)) = (
-                pad_outline::hole_contour(&hole, 0.0),
-                pad_outline::bore(&hole),
-            )
+            && let (Some(drill), Some(bore)) =
+                (pad_outline::drilled(&hole), pad_outline::bore(&hole))
         {
             out.push([drill, bore]);
         }
         for via in &pad.vias {
             let radius = via.drill() / 2.0;
-            if radius - PLATING_MM > 0.0 {
+            if radius > 0.0 {
                 out.push([
                     Contour::Circle {
                         center: via.at(),
-                        radius,
+                        radius: pad_outline::plated_drill_radius(via.drill()),
                     },
                     Contour::Circle {
                         center: via.at(),
-                        radius: radius - PLATING_MM,
+                        radius,
                     },
                 ]);
             }
@@ -2010,7 +2019,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     let mut model = model?;
     model.geometry.extend(layers?);
     model.display = memo;
-    model.stack = crate::stack::Stack::of(stackup);
+    model.stack = crate::stack::Stack::of(stackup, project.fabrication.pad_finish);
     Ok(model)
 }
 
@@ -2033,8 +2042,8 @@ fn via_style(b: &mut Builder, project: &Project, via: &pcbcraft_core::Via) -> Re
     let layers = stackup.layers();
     let name = format!("via_{}_{}", mm_slug(via.drill), mm_slug(via.diameter));
     let created = b.native.component(&name, false)?;
-    let drill = via.drill / 2.0;
-    let bore = drill - PLATING_MM;
+    let drill = pad_outline::plated_drill_radius(via.drill);
+    let bore = via.drill / 2.0;
     let ring = via.diameter / 2.0;
     let circle = |radius| Contour::Circle {
         center: [0.0, 0.0],
@@ -2218,6 +2227,7 @@ fn vias(
         }
     }
     let mut marks = Vec::with_capacity(project.vias.len());
+    let expansion = project.rules.effective().mask.expansion;
     for ((via, component), occurrence) in project.vias.iter().zip(style_of).zip(occurrences) {
         let occurrence =
             occurrence.ok_or_else(|| Error::Verification(format!("via {} is unplaced", via.id)))?;
@@ -2241,6 +2251,7 @@ fn vias(
             drill: via.drill,
             diameter: via.diameter,
             tented: via.tented,
+            mask_opening: via.mask_opening(expansion),
         });
     }
     Ok(marks)
@@ -2368,7 +2379,7 @@ fn laminate(
     }
     let via_drills = project.vias.iter().map(|via| Contour::Circle {
         center: via.position,
-        radius: via.drill / 2.0,
+        radius: pad_outline::plated_drill_radius(via.drill),
     });
     // A rectangular board's outline is the board size parameters'
     // rectangle ([`Native::board_slab`]); a sketched board's is its solved

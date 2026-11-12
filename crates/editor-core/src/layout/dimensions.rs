@@ -69,6 +69,14 @@ pub enum DimensionCommand {
     /// Delete a part dimension; the parts it named keep their poses.
     #[serde(rename = "layout.dimension_delete")]
     Delete { id: Id },
+    /// Put part dimensions in the order `ids` lists them (the Dimensions
+    /// list's order: a drag or ⌥↑/⌥↓). The listed dimensions keep the
+    /// places they hold among all part dimensions and fill them in this
+    /// order; the others stay where they are. Order is document data and
+    /// changes no geometry. Refused, changing nothing, when an id is
+    /// missing or listed twice.
+    #[serde(rename = "layout.dimension_order")]
+    Order { ids: Vec<Id> },
 }
 
 // A new command chooses its permission class here.
@@ -76,6 +84,7 @@ declare_classes!(DimensionCommand {
     Add "layout.dimension_add" Edit "Dimension a part",
     Edit "layout.dimension_edit" Edit "Edit a part dimension",
     Delete "layout.dimension_delete" Edit "Delete a part dimension",
+    Order "layout.dimension_order" Edit "Reorder part dimensions",
 });
 
 /// What a dimension command produced for its caller.
@@ -147,7 +156,56 @@ pub fn apply(
             model::refresh(project, evaluator, &[])?;
             Ok(DimensionApplied::Nothing)
         }
+        DimensionCommand::Order { ids } => {
+            reorder(project, &ids)?;
+            Ok(DimensionApplied::Nothing)
+        }
     }
+}
+
+/// `layout.dimension_order`: the listed dimensions refill their own places
+/// in the listed order.
+fn reorder(project: &mut Project, ids: &[Id]) -> Result<()> {
+    if ids.len() > MAX_PART_DIMENSIONS {
+        return Err(Error::Limit(format!(
+            "layout.dimension_limit: at most {MAX_PART_DIMENSIONS} part dimensions"
+        )));
+    }
+    let listed: BTreeSet<Id> = ids.iter().copied().collect();
+    if listed.len() != ids.len() {
+        return Err(Error::Invalid(
+            "layout.dimension_order: a dimension is listed twice".into(),
+        ));
+    }
+    let slots: Vec<usize> = project
+        .part_dimensions
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| listed.contains(&d.id))
+        .map(|(i, _)| i)
+        .collect();
+    if let Some(gone) = ids
+        .iter()
+        .find(|id| !project.part_dimensions.iter().any(|d| d.id == **id))
+    {
+        return Err(missing(*gone));
+    }
+    let mut ordered = Vec::with_capacity(ids.len());
+    for id in ids {
+        let d = project
+            .part_dimensions
+            .iter()
+            .find(|d| d.id == *id)
+            .cloned()
+            .ok_or_else(|| missing(*id))?;
+        ordered.push(d);
+    }
+    for (slot, d) in slots.into_iter().zip(ordered) {
+        if let Some(place) = project.part_dimensions.get_mut(slot) {
+            *place = d;
+        }
+    }
+    Ok(())
 }
 
 /// A new or edited dimension is well formed, names at least one part, and

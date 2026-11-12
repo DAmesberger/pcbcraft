@@ -39,8 +39,8 @@
 use super::severity::{self, Level};
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align, FontId, Layout, Rect, Response, Sense, Ui, UiBuilder, pos2, vec2};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{icons, ui_kit};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::{icons, ui_kit};
 
 /// Rows a name wraps to before it is cut.
 const NAME_MAX_ROWS: usize = 2;
@@ -75,6 +75,10 @@ pub struct RowAction<'a> {
 
 impl<'a> RowAction<'a> {
     /// A delete or remove action named `label` ("Delete dimension …").
+    #[allow(
+        dead_code,
+        reason = "Dimensions and Board parameters moved to kit::list; the remaining item_row lists move in wave 2"
+    )]
     pub fn delete(label: &'a str) -> Self {
         Self {
             icon: "delete",
@@ -98,6 +102,7 @@ impl<'a> ItemRow<'a> {
 }
 
 /// What a row did this frame.
+#[allow(dead_code, reason = "the lists still on item_row read only some of it")]
 pub struct ItemRowResponse {
     /// The row itself (not its value or action) was clicked.
     pub clicked: bool,
@@ -339,6 +344,10 @@ pub fn item_row<R>(
 /// `driven` its result), or `fx 20 mm` where that does not fit, with the
 /// whole on hover; plain text that does not fit ends in "…". `invalid`
 /// marks text that is not stored.
+#[allow(
+    dead_code,
+    reason = "Dimensions and Board parameters moved to kit::list; the remaining item_row lists move in wave 2"
+)]
 pub fn value_field(
     ui: &mut Ui,
     id: &str,

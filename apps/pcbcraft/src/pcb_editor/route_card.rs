@@ -46,7 +46,7 @@ impl PcbEditor {
                   not added and the route stays where it was.",
             finish: None,
         };
-        let t = solidcraft_theme::Tokens::get();
+        let t = pcbcraft_ui::theme::Tokens::get();
         // The same side inset as the Properties card's body.
         let margin = egui::Margin::symmetric(t.space_8 as i8, 0);
         let response = egui::Frame::NONE

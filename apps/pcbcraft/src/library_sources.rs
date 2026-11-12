@@ -32,7 +32,7 @@ use pcbcraft_io::settings::{
     self, MAX_FAVOURITES, MAX_PANEL_WIDTH, MAX_RECENT, MAX_SOURCES, SourceSetting,
 };
 use pcbcraft_io::settings::{UserDirs, UserSettings};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -609,8 +609,9 @@ impl LibrarySources {
             Err(error) => {
                 let mut sources = Self::new(None);
                 let problem = format!(
-                    "Settings unavailable: {error}. Pcbcraft runs on default settings; \
-                     changes made now are lost when it quits."
+                    "Settings unavailable: {error}. {product} runs on default settings; \
+                     changes made now are lost when it quits.",
+                    product = pcbcraft_core::product::NAME
                 );
                 sources.say(problem.clone(), true);
                 sources.problem = Some(problem);
@@ -629,10 +630,11 @@ impl LibrarySources {
         let settings = match &dirs {
             Some(dirs) => settings::read_settings(&dirs.settings_path()).unwrap_or_else(|error| {
                 problem = Some(format!(
-                    "Settings in {} could not be read: {error}. Pcbcraft runs on default \
+                    "Settings in {} could not be read: {error}. {product} runs on default \
                      settings and does not save over that file; changes made now are lost \
                      when it quits.",
-                    dirs.settings_path().display()
+                    dirs.settings_path().display(),
+                    product = pcbcraft_core::product::NAME
                 ));
                 UserSettings::default()
             }),
@@ -860,6 +862,20 @@ impl LibrarySources {
     pub fn set_selection_filter(&mut self, filter: settings::SelectionFilter) {
         if filter != self.settings.selection_filter {
             self.settings.selection_filter = filter;
+            self.persist();
+        }
+    }
+
+    /// Row density, reduced motion and saved filters (Settings › Lists).
+    pub fn list_settings(&self) -> &settings::ListSettings {
+        &self.settings.lists
+    }
+
+    /// Keep the lists' settings per user; a change the settings refuse
+    /// (past the saved-filter bound) is not kept.
+    pub fn set_list_settings(&mut self, lists: settings::ListSettings) {
+        if lists != self.settings.lists && lists.check().is_ok() {
+            self.settings.lists = lists;
             self.persist();
         }
     }
@@ -1355,7 +1371,7 @@ pub(crate) fn reveal(path: &Path) {
 /// A dim layer under a card that blocks the canvas and cards beneath it;
 /// a click on it closes the card. The card is kept above it.
 fn scrim(ctx: &egui::Context, card: egui::Id) -> bool {
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     let id = card.with("scrim");
     let rect = ctx.content_rect();
     let clicked = ui_kit::Container::new(ctx, ui_kit::Surface::InputShield)
@@ -1747,7 +1763,7 @@ fn kind_label(kind: pcbcraft_core::DefinitionKind) -> &'static str {
 
 /// A dialog body inset like the file workflow's.
 fn body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(t.space_12 as i8, t.space_8 as i8))
         .show(ui, |ui| {
@@ -2239,10 +2255,7 @@ mod tests {
             "star",
             "update",
         ] {
-            assert!(
-                !solidcraft_ui_egui::icon_svg::resolve(name).placeholder,
-                "{name}"
-            );
+            assert!(!pcbcraft_ui::icon_svg::resolve(name).placeholder, "{name}");
         }
     }
 

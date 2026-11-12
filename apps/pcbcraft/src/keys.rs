@@ -42,10 +42,27 @@ pub fn registry(ctx: &egui::Context) -> Arc<Registry> {
 /// a text field has the keyboard. Key repeats count (a held Backspace
 /// keeps unwinding).
 fn take(ctx: &egui::Context, registry: &Registry, command: &Command, repeats: bool) -> bool {
+    take_while(
+        ctx,
+        registry,
+        command,
+        repeats,
+        ctx.egui_wants_keyboard_input(),
+    )
+}
+
+/// [`take`], with `typing` saying whether plain keys belong to a focused
+/// field.
+fn take_while(
+    ctx: &egui::Context,
+    registry: &Registry,
+    command: &Command,
+    repeats: bool,
+    typing: bool,
+) -> bool {
     if !ctx.input(|i| i.events.iter().any(is_press)) {
         return false;
     }
-    let typing = ctx.egui_wants_keyboard_input();
     ctx.input_mut(|i| {
         let at = i.events.iter().position(|event| match event {
             egui::Event::Key {
@@ -82,6 +99,16 @@ pub fn pressed(ctx: &egui::Context, id: &str) -> bool {
     registry
         .get(id)
         .is_some_and(|command| take(ctx, &registry, command, true))
+}
+
+/// [`pressed`] for a widget that holds the keyboard focus itself (a
+/// focused list): plain keys count unless a text field has the keyboard.
+pub fn pressed_focused(ctx: &egui::Context, id: &str) -> bool {
+    let registry = registry(ctx);
+    let typing = ctx.text_edit_focused();
+    registry
+        .get(id)
+        .is_some_and(|command| take_while(ctx, &registry, command, true, typing))
 }
 
 /// [`pressed`] without key repeats: a held key acts once (Space turns

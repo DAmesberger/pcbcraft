@@ -10,14 +10,22 @@
 //! dimension's value commits live as one `layout.dimension_edit`: a length
 //! (`5 mm`) or an expression over the board parameters (`width / 2 - 3
 //! mm`), so editing a parameter moves the part when the board re-solves.
-//! Each dimension is one `kit::item_row` ("Front face → bottom edge", its
-//! value, a Lost or Inexact badge); the row's delete icon removes it
-//! (`layout.dimension_delete`) and leaves the part where it is. Hovering a
+//! The dimensions are a `kit::list` (list-system spec): each row reads
+//! "Front face → bottom edge" with its decimal-aligned value (`fx expr =
+//! value` when driven) and a Lost or Inexact badge. Double-click, Enter or
+//! F2 edits the value in its row (one `layout.dimension_edit`); the row's
+//! delete action or ⌫ removes it (`layout.dimension_delete`) and leaves
+//! the part where it is; the grip or ⌥↑/⌥↓ reorders the part's dimensions
+//! (`layout.dimension_order`, document data, one undo step). Hovering a
 //! row lights its dimension on the canvas and in 3D; clicking it selects
 //! the dimension there, and a dimension selected there selects its row.
 use super::PcbEditor;
 use super::board_shape_ui::sketch_of;
 use crate::kit;
+use crate::kit::list::{
+    self, Action, Columns, Effect, Layout, Line, ListState, ListTokens, ListView, Row, RowKey,
+    Value,
+};
 use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::layout::dimensions::{self, DimensionCommand, PartFreedom, view};
@@ -38,18 +46,44 @@ use pcbcraft_solidcraft::footprint::view as sketch_view;
 #[derive(Clone, Debug, Default)]
 pub(super) struct EdgeEdit {
     key: Option<(u64, Id)>,
-    values: Vec<(Id, String)>,
+    /// The dimension whose value is being edited in its row, the text, and
+    /// whether the field takes the keyboard this frame.
+    editing: Option<(Id, String, bool)>,
     /// The dimension a refusal or invalid text belongs to, and why.
     error: Option<(Id, String)>,
     sent: Option<Id>,
-    show_all: bool,
     /// The selected part's hold: (revision, instance) → why a move is
     /// refused, and what its dimensions leave free.
     hold: Option<((u64, Id), Hold)>,
     /// The dimension whose row is under the pointer, and the frame.
     hover: Option<(Id, u64)>,
-    /// The selected dimension whose row was last scrolled into view.
-    revealed: Option<Id>,
+}
+
+/// The Dimensions list's id: its selection, cursor and fold state.
+fn list_id() -> egui::Id {
+    egui::Id::unique("pcb-dimensions-list")
+}
+
+/// A dimension's row.
+fn row_key(dimension: Id) -> RowKey {
+    RowKey::of(("dimension", dimension))
+}
+
+fn delete(_ctx: &egui::Context, id: Id) -> Operation {
+    Operation::Dimension(DimensionCommand::Delete { id })
+}
+
+/// `layout.dimension_order` moving the dimension at `from` by `by` places
+/// among the part's dimensions; `None` when it stays where it is.
+fn reorder(dims: &[PartDimension], from: usize, by: i32) -> Option<Operation> {
+    let to = (from as i64 + i64::from(by)).clamp(0, dims.len() as i64 - 1) as usize;
+    if to == from {
+        return None;
+    }
+    let mut ids: Vec<Id> = dims.iter().map(|d| d.id).collect();
+    let moved = ids.remove(from);
+    ids.insert(to, moved);
+    Some(Operation::Dimension(DimensionCommand::Order { ids }))
 }
 
 /// Why a hand move is refused, and what the dimensions leave free.
@@ -397,46 +431,72 @@ impl PcbEditor {
             return None;
         }
         let key = (revision, placement.instance);
+        // Another part: its list starts bounded and not editing.
+        let fresh = self.edge.key.map(|k| k.1) != Some(placement.instance);
+        if fresh {
+            self.edge.editing = None;
+        }
         if self.edge.key != Some(key) {
-            if self.edge.key.map(|k| k.1) != Some(placement.instance) {
-                self.edge.show_all = false;
-            }
             self.edge.key = Some(key);
-            // The document changed (an edit applied, an undo): the fields
-            // show its values, so no earlier text's error stands. A refused
-            // edit leaves the revision as it was, so its error is kept.
-            self.edge.values = dims.iter().map(|d| (d.id, value_text(d))).collect();
+            // The document changed (an edit applied, an undo): no earlier
+            // text's error stands. A refused edit leaves the revision as it
+            // was, so its error is kept.
             self.edge.error = None;
             self.edge.sent = None;
+            self.edge.editing = None;
         }
         let board = self
             .shape
             .evaluator
             .and_then(|ev: &dyn BoardShapeEvaluator| dimensions::board_sketch(project, ev).ok());
-        let mut operation = None;
-        let mut sent = None;
-        let mut select = None;
-        let mut hover = None;
-        let selected = self.dimension;
-        // A dimension selected in 2D or 3D past the first rows opens the
-        // whole list, so its row shows.
-        if let Some(at) = selected.and_then(|id| dims.iter().position(|d| d.id == id))
-            && at >= kit::LIST_MAX_ROWS
-        {
-            self.edge.show_all = true;
-        }
-        let max = if self.edge.show_all {
-            dims.len()
-        } else {
-            kit::LIST_MAX_ROWS
-        };
         let names: Vec<Vec<String>> = dims
             .iter()
             .map(|d| name_parts(project, board.as_deref(), placement.instance, d))
             .collect();
+        let joined: Vec<String> = names.iter().map(|n| n.join(list::row::ARROW)).collect();
+        let texts: Vec<String> = dims.iter().map(value_text).collect();
         let results: Vec<Option<String>> = dims.iter().map(|d| driven(project, d)).collect();
+        let keys: Vec<RowKey> = dims.iter().map(|d| row_key(d.id)).collect();
         let evaluator = self.shape.evaluator;
-        let reveal = selected.filter(|id| self.edge.revealed != Some(*id));
+        let badges: Vec<Option<(kit::severity::Level, &str)>> = dims
+            .iter()
+            .map(|d| match reference_status(project, evaluator, d) {
+                ReferenceStatus::Lost => Some((kit::severity::Level::Error, "Lost")),
+                ReferenceStatus::Inexact => Some((kit::severity::Level::Warning, "Inexact")),
+                ReferenceStatus::Resolved => None,
+            })
+            .collect();
+        let deletes: Vec<String> = joined
+            .iter()
+            .map(|n| format!("Delete dimension {n}"))
+            .collect();
+        let id = list_id();
+        let ctx = ui.ctx().clone();
+        // The one selection, shared with 2D and 3D: the list shows it.
+        let selected = self.dimension;
+        let mut state = ListState::load(&ctx, id);
+        let selected_key = selected
+            .filter(|s| dims.iter().any(|d| d.id == *s))
+            .map(row_key);
+        if state.selection.iter().next().copied() != selected_key {
+            state.selection = selected_key.into_iter().collect();
+            if let Some(k) = selected_key {
+                state.cursor = Some(k);
+                state.anchor = Some(k);
+                // Selected in 2D or 3D past the first rows: the whole list.
+                if keys.iter().position(|x| *x == k) >= Some(kit::LIST_MAX_ROWS) {
+                    state.show_all = true;
+                }
+            }
+        }
+        if fresh {
+            state.show_all = false;
+        }
+        state.store(&ctx, id);
+        let editing = self.edge.editing.as_ref().map(|(d, _, _)| *d);
+        let mut operation = None;
+        let mut sent = None;
+        let mut select = None;
         kit::section(
             ui,
             "pcb-dimensions",
@@ -444,94 +504,185 @@ impl PcbEditor {
             true,
             Some(dims.len()),
             |ui| {
-                let shown: Vec<String> = dims
+                let l = ListTokens::get(ui.ctx());
+                let values: Vec<Value<'_>> = dims
                     .iter()
                     .zip(&results)
-                    .map(|(d, r)| match r {
-                        Some(r) => format!("fx {} = {r}", value_text(d)),
-                        None if d.reference => "Reference".into(),
-                        None if d.value.is_none() => "Held".into(),
-                        None => value_text(d),
+                    .zip(&texts)
+                    .map(|((d, r), text)| match r {
+                        Some(r) => Value::Expr {
+                            expr: text,
+                            value: r,
+                        },
+                        None if d.reference => Value::Text("Reference"),
+                        None if d.value.is_none() => Value::Text("Held"),
+                        None => Value::Number(text),
                     })
                     .collect();
-                let column = kit::value_column(ui, &shown);
-                let list = kit::list_frame(ui, dims.len(), max, |ui, index| {
-                    let (Some(d), Some(name)) = (dims.get(index), names.get(index)) else {
-                        return;
+                let cols = Columns::measure(ui, &l, values.iter().copied());
+                let lines: Vec<Line<'_>> = keys
+                    .iter()
+                    .zip(&joined)
+                    .map(|(k, n)| Line::item(*k, n))
+                    .collect();
+                let view = ListView {
+                    multiple: false,
+                    reorder: true,
+                    delete: true,
+                    editing: editing.is_some(),
+                    ..ListView::new(
+                        id,
+                        "Dimensions",
+                        Layout::Bounded {
+                            rows: kit::LIST_MAX_ROWS,
+                        },
+                    )
+                };
+                let out = view.show(ui, &lines, |ui, rect, line, cx| {
+                    let i = keys.iter().position(|k| *k == line.key).unwrap_or(0);
+                    let parts: Vec<&str> = names
+                        .get(i)
+                        .map(|n| n.iter().map(String::as_str).collect())
+                        .unwrap_or_default();
+                    let actions = [Action::delete(deletes.get(i).map_or("", String::as_str))];
+                    let mut row = Row::new(line.key, &parts);
+                    row.grip = true;
+                    row.selected = cx.selected;
+                    row.cursor = cx.cursor;
+                    row.badge = badges.get(i).copied().flatten();
+                    row.value = if dims.get(i).map(|d| d.id) == editing {
+                        Value::None
+                    } else {
+                        values.get(i).copied().unwrap_or_default()
                     };
-                    let parts: Vec<&str> = name.iter().map(String::as_str).collect();
-                    let delete = format!("Delete dimension {}", kit::name_text(&parts));
-                    let mut row = kit::ItemRow::new(&parts, column);
-                    row.selectable = true;
-                    row.selected = selected == Some(d.id);
-                    row.action = Some(kit::RowAction::delete(&delete));
-                    row.badge = match reference_status(project, evaluator, d) {
-                        ReferenceStatus::Lost => Some((kit::severity::Level::Error, "Lost")),
-                        ReferenceStatus::Inexact => {
-                            Some((kit::severity::Level::Warning, "Inexact"))
-                        }
-                        ReferenceStatus::Resolved => None,
-                    };
-                    let text = self
-                        .edge
-                        .values
-                        .iter_mut()
-                        .find(|(id, _)| *id == d.id)
-                        .map(|(_, text)| text);
-                    let invalid = self.edge.error.as_ref().is_some_and(|(id, _)| *id == d.id);
-                    let result = results.get(index).cloned().flatten();
-                    let (response, field) = kit::item_row(ui, &row, |ui| match text {
-                        Some(text) if !(d.reference || d.value.is_none()) => {
-                            let field =
-                                kit::value_field(ui, "dimension", text, invalid, result.as_deref());
-                            Some((field, text.clone()))
-                        }
-                        _ => {
-                            kit::value_text(ui, if d.reference { "Reference" } else { "Held" });
-                            None
-                        }
-                    });
-                    if response.hovered {
-                        hover = Some(d.id);
-                    }
-                    if response.clicked {
-                        select = Some(d.id);
-                    }
-                    if reveal == Some(d.id) {
-                        response.response.scroll_to_me(None);
-                    }
-                    if response.action {
-                        operation =
-                            Some(Operation::Dimension(DimensionCommand::Delete { id: d.id }));
-                    }
-                    let Some((field, text)) = field else {
-                        return;
-                    };
-                    if field.gained_focus() {
-                        select = Some(d.id);
-                    }
-                    if field.lost_focus() && text.trim() != value_text(d) {
-                        match typed_value(project, d, &text) {
-                            Ok(value) => {
-                                let mut next = d.clone();
-                                next.value = Some(value);
-                                operation = Some(Operation::Dimension(DimensionCommand::Edit {
-                                    dimension: next,
-                                }));
-                                self.edge.error = None;
-                                sent = Some(d.id);
-                            }
-                            Err(why) => self.edge.error = Some((d.id, why)),
-                        }
-                    }
-                    if let Some((id, why)) = &self.edge.error
-                        && *id == d.id
-                    {
-                        kit::field_error(ui, &field, why, true);
-                    }
+                    row.actions = &actions;
+                    row.role = egui::Role::ListBoxOption;
+                    row.flash = list::motion::flash(ui.ctx(), id, line.key);
+                    list::row::paint(ui, cx.id, rect, &row, &cols)
                 });
-                if list.show_all {
-                    self.edge.show_all = true;
+                let at = |k: &RowKey| keys.iter().position(|x| x == k);
+                for effect in &out.effects {
+                    match effect {
+                        Effect::Selected => {
+                            select = Some(
+                                out.state
+                                    .selection
+                                    .iter()
+                                    .next()
+                                    .and_then(&at)
+                                    .and_then(|i| dims.get(i))
+                                    .map(|d| d.id),
+                            );
+                        }
+                        Effect::Activate(k) => {
+                            if let Some(d) = at(k).and_then(|i| dims.get(i))
+                                && !(d.reference || d.value.is_none())
+                            {
+                                select = Some(Some(d.id));
+                                self.edge.editing = Some((d.id, value_text(d), true));
+                            }
+                        }
+                        Effect::CancelEdit => {
+                            self.edge.editing = None;
+                            self.edge.error = None;
+                        }
+                        Effect::Delete(gone) => {
+                            if let Some(d) = gone.first().and_then(at).and_then(|i| dims.get(i)) {
+                                operation = Some(delete(ui.ctx(), d.id));
+                            }
+                        }
+                        Effect::Reorder(k, by) => {
+                            if let Some(from) = at(k) {
+                                operation = reorder(&dims, from, *by);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                for (k, _) in &out.actions {
+                    if let Some(d) = at(k).and_then(|i| dims.get(i)) {
+                        operation = Some(delete(ui.ctx(), d.id));
+                    }
+                }
+                self.edge.hover = out
+                    .hovered
+                    .and_then(|k| at(&k))
+                    .and_then(|i| dims.get(i))
+                    .map(|d| (d.id, ui.ctx().cumulative_frame_nr()));
+                // The value being edited, in its row.
+                if let Some((dim, text, start)) = &mut self.edge.editing
+                    && let Some((_, rect)) =
+                        out.value_rects.iter().find(|(k, _)| *k == row_key(*dim))
+                {
+                    let invalid = self.edge.error.as_ref().is_some_and(|(e, _)| e == dim);
+                    let label = dims
+                        .iter()
+                        .position(|d| d.id == *dim)
+                        .and_then(|i| joined.get(i))
+                        .cloned()
+                        .unwrap_or_default();
+                    let edit =
+                        list::edit::field(ui, id.with(*dim), *rect, text, invalid, start, &label);
+                    if edit != list::edit::Edit::Open {
+                        // The rows take the keyboard back.
+                        view.request_focus(ui.ctx());
+                    }
+                    let d = dims.iter().find(|d| d.id == *dim);
+                    match (edit, d) {
+                        (list::edit::Edit::Cancel, _) | (_, None) => {
+                            self.edge.editing = None;
+                            self.edge.error = None;
+                        }
+                        (list::edit::Edit::Open, _) => {}
+                        (commit, Some(d)) => {
+                            let text = text.clone();
+                            if text.trim() == value_text(d) {
+                                self.edge.editing = None;
+                                self.edge.error = None;
+                            } else {
+                                match typed_value(project, d, &text) {
+                                    Ok(value) => {
+                                        let mut next = d.clone();
+                                        next.value = Some(value);
+                                        operation =
+                                            Some(Operation::Dimension(DimensionCommand::Edit {
+                                                dimension: next,
+                                            }));
+                                        list::motion::start_flash(ui.ctx(), id, row_key(d.id));
+                                        self.edge.error = None;
+                                        self.edge.editing = None;
+                                        sent = Some(d.id);
+                                    }
+                                    Err(why) => {
+                                        self.edge.error = Some((d.id, why));
+                                        // Keep the text, back in the field.
+                                        if let Some(e) = &mut self.edge.editing {
+                                            e.2 = true;
+                                        }
+                                    }
+                                }
+                            }
+                            // Tab: the next editable row.
+                            if commit == list::edit::Edit::CommitNext
+                                && let Some(next) = dims
+                                    .iter()
+                                    .skip_while(|x| x.id != d.id)
+                                    .skip(1)
+                                    .find(|x| !(x.reference || x.value.is_none()))
+                                && self.edge.error.is_none()
+                            {
+                                select = Some(Some(next.id));
+                                self.edge.editing = Some((next.id, value_text(next), true));
+                            }
+                        }
+                    }
+                }
+                // Why the value was refused, under the list, naming the row.
+                if let Some((dim, why)) = &self.edge.error
+                    && let Some(i) = dims.iter().position(|d| d.id == *dim)
+                {
+                    let name = joined.get(i).map_or("", String::as_str);
+                    list::row::field_error(ui, &format!("{name}: {why}"), 0.0);
                 }
                 kit::note(ui, "Follows the board when it changes");
             },
@@ -540,11 +691,9 @@ impl PcbEditor {
             refusal::mark(ui.ctx(), Origin::Field(field_id(id)));
             self.edge.sent = Some(id);
         }
-        if select.is_some() {
+        if let Some(select) = select {
             self.dimension = select;
         }
-        self.edge.revealed = select.or(selected);
-        self.edge.hover = hover.map(|id| (id, ui.ctx().cumulative_frame_nr()));
         operation
     }
 

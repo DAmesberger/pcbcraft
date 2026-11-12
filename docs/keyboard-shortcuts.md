@@ -37,7 +37,7 @@ While the Route tool is armed, its keys shadow these:
 
 While the schematic's Wire tool is armed, F flips the elbow instead of fitting the view, A switches arc corners instead of rounding a picked wire corner, and Esc ends the wire in progress before it cancels the tool. R, Route's own key, has no meaning inside Route mode and arms Route again. While the Tune tool is armed, F flips the meander's side instead of fitting the view. The Fill tool's Esc drops its outline first. The board shape's F is Fillet.
 
-**Quit** (`app.quit`, ⌘Q) is a registry command like the others, so it can be rebound. It makes the same request as the window's close button: unsaved work asks Save, Don't Save or Cancel first. Close Window (`window.close`, ⌘W) makes the same request, since Pcbcraft has one window. egui's built-in quit key, which closed the window without asking, is turned off. Dock › Quit and logout still end the app without a prompt, keeping unsaved work for recovery.
+**Quit** (`app.quit`, ⌘Q) is a registry command like the others, so it can be rebound. It makes the same request as the window's close button: unsaved work asks Save, Don't Save or Cancel first. Close Window (`window.close`, ⌘W) makes the same request, since Sparksmith has one window. egui's built-in quit key, which closed the window without asking, is turned off. Dock › Quit and logout still end the app without a prompt, keeping unsaved work for recovery.
 
 ## Menus
 
@@ -45,7 +45,7 @@ On macOS the menu bar (`native_menu.rs`, built with muda as in Solidcraft) repla
 
 | Menu | Items |
 |---|---|
-| Pcbcraft | About · Settings… ⌘, · Services · Hide, Hide Others, Show All · Quit ⌘Q |
+| Sparksmith | About · Settings… ⌘, · Services · Hide, Hide Others, Show All · Quit ⌘Q |
 | File | New Project ⌘N · Open… ⌘O · Save ⌘S · Save As… ⇧⌘S · Export to Solidcraft… ⇧⌘E · Export Schematic PDF… · Library Sources… · Close Window ⌘W |
 | Edit | Undo ⌘Z · Redo ⇧⌘Z · Cut ⌘X · Copy ⌘C · Paste ⌘V · Delete · Select All ⌘A |
 | View | Component ⌘1 · Schematic ⌘2 · PCB ⌘3 · Switch Layout and 3D · Fit View · Show/Hide Browser ⌘B · Show/Hide Issues ⇧⌘I · Command Palette… ⌘P |
@@ -118,7 +118,7 @@ The keymap is original. Letters are mnemonic where they can be: R route, V via, 
 | Symbol tab | L line · ⇧L polyline · R rectangle · C circle · A arc · ⇧P polygon · ⇧T text · ⇧F field · N pin · ⌘R rotate · ⇧X mirror · ⌘D duplicate · Delete or Backspace · ⇧R repeat tool · Enter finish · Esc cancel |
 | Footprint tab | N pad · ⇧N pad row · H drill · ⇧H slot · L / A / C / R draw · D dimension · X construction ↔ silkscreen · Space turn pad · ⇧R repeat · Delete or Backspace · Esc |
 | Schematic | P place · W wire · N no connect · L net label · ⇧L global label · H hierarchical label · ⇧P power port · ⇧S sheet symbol · T note · ⌘R rotate (symbol or label) · ⇧X mirror · Delete removes the selected label, sheet symbol, drawing or wire (a picked wire corner goes first) · ⇧Delete or ⇧Backspace split the selected wire at the segment under the pointer · A round the picked wire corner by the Wire tool's radius, or make it sharp · Esc cancel |
-| PCB (both views) | D Layout ↔ 3D · ⇧D dimension a part (one tool in both views; in 3D Esc and Delete are its own `pcb.dimension-cancel` and `pcb.dimension-delete`, in Layout Esc cancel and Delete) · ⇧P refill all fills |
+| PCB (both views) | D Layout ↔ 3D · ⇧⌘L show or hide the Parts and vias band under the canvas · ⇧D dimension a part (one tool in both views; in 3D Esc and Delete are its own `pcb.dimension-cancel` and `pcb.dimension-delete`, in Layout Esc cancel and Delete) · ⇧P refill all fills |
 | PCB Layout | R route · V via · T tune length · P fill · B board shape · M place 3D part ([mechanical parts](mechanical-parts.md)) · 1–9, 0 stackup layer 1–10 (the active layer; through a via while routing) · ⇧L layer focus (all layers, dim others, active only) · ⇧F view from bottom · H highlight complete net · ⌥-drag a differential pair's track to move that half alone (its partner stays; the canvas hint names ⌥ during a pair drag) · Esc cancel |
 | PCB 3D | 1 front · 2 back · 3 left · 4 right · 5 top · 6 bottom · 7 home (isometric, fitted) · ⇧F fit and orbit around the selection · arrows turn the view 15° (⇧: 90°) · ⌘ arrows pan (arrows are navigation, read by the view, not rebindable) |
 | Wire tool (`WIRE_KEYS`) | Click corner; a pin, label, junction, free end or wire ends the wire · double-click or Enter end here with a free end · Esc end here (with no corner: cancel; again: Select) · Backspace remove the last corner · F flip the elbow · A arc corners on or off (sticky) |
@@ -126,6 +126,7 @@ The keymap is original. Letters are mnemonic where they can be: R route, V via, 
 | Tune tool (`TUNE_KEYS`) | Click tune the segment · / trombone ↔ accordion · A / ⇧A amplitude up / down · S / ⇧S spacing wider / narrower · F flip the side |
 | Fill tool (`FILL_KEYS`) | A lines ↔ arcs · Enter close · Backspace take back a point · Esc drop the outline |
 | Board shape | L line · A arc · C circle · R rectangle · F fillet · D dimension · U cutout · H hole · ⇧H slot · E name edge · X construction · Delete or Backspace · Esc |
+| Lists (`LIST_KEYS`, while a list has the keyboard) | ↑ / ↓ move and select · ⇧↑ / ⇧↓, ⇧Home / ⇧End extend from the anchor · ⌘↑ / ⌘↓ move the cursor only · Home / End, PgUp / PgDn jump · Space add or remove the row (on a group: fold) · ← / → fold, unfold, or go to the parent · Enter or F2 edit or locate · Esc cancel the edit, then clear the filter, then the selection · ⌘A select every shown row · / or ⌘F filter · ⌥↑ / ⌥↓ reorder (Dimensions) · Delete or Backspace delete the selected rows · letters and digits type ahead (700 ms) |
 
 The layer focus (`pcb.layer-focus`, PCB › Layout) is a registry command run by the app's dispatcher, so it works in every Layout tool and shows in the palette, Settings › Keyboard and the key reveal. It cycles how the copper layers besides the active one show: all dimmed under it, strongly dimmed, or hidden ([PCB realism](pcb-realism.md#pcb-2d-appspcbcraft)). The view popover's Focus row sets it too, and the status line names it. It is view state and is not saved. Its default key is ⇧L (layer): ⇧S, the first choice, is the Tune tool's narrower spacing, and taking it would make the focus key do nothing while Tune is armed.
 
@@ -158,4 +159,4 @@ The PCB 3D view has a navigation cube in its top-right corner. It follows Solidc
 | Zoom toward the pointer | Pinch | Wheel |
 | Fit | F | Middle double-click |
 
-A plain left-drag on empty space does not orbit. In Solidcraft's Fusion preset, which Pcbcraft follows, a left-drag on empty space is box selection. In PCB 3D the left button also selects and drives the move gizmo, so a bare drag that sometimes orbits and sometimes selects or moves would be ambiguous. ⌘-drag on empty space and the cube give a left-button orbit that cannot be confused with either.
+A plain left-drag on empty space does not orbit. In Solidcraft's Fusion preset, which Sparksmith follows, a left-drag on empty space is box selection. In PCB 3D the left button also selects and drives the move gizmo, so a bare drag that sometimes orbits and sometimes selects or moves would be ambiguous. ⌘-drag on empty space and the cube give a left-button orbit that cannot be confused with either.

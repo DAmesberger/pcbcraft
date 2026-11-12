@@ -20,6 +20,7 @@ use pcbcraft_assist::model::{
 use pcbcraft_assist::profile as run_profile;
 use pcbcraft_assist::{Datasheet, Event, Goal, RunConfig};
 use pcbcraft_core::Engine;
+use pcbcraft_core::product::SHORT_NAME as CLI;
 use std::io::Read as _;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -179,7 +180,7 @@ fn parse(args: &[String]) -> Result<Args> {
     while let Some(flag) = it.next() {
         let value = it
             .next()
-            .ok_or_else(|| format!("{flag} needs a value\nusage: pcbcraft-cli {USAGE}"))?
+            .ok_or_else(|| format!("{flag} needs a value\nusage: {CLI} {USAGE}"))?
             .clone();
         let f = flag.as_str();
         match f {
@@ -207,12 +208,12 @@ fn parse(args: &[String]) -> Result<Args> {
             "--record" => record = Some(PathBuf::from(value)),
             "--replay" => replay = Some(PathBuf::from(value)),
             other => {
-                return Err(format!("unknown option {other}\nusage: pcbcraft-cli {USAGE}").into());
+                return Err(format!("unknown option {other}\nusage: {CLI} {USAGE}").into());
             }
         }
     }
     if datasheets.is_empty() || name.trim().is_empty() || out.as_os_str().is_empty() {
-        return Err(format!("usage: pcbcraft-cli {USAGE}").into());
+        return Err(format!("usage: {CLI} {USAGE}").into());
     }
     if record.is_some() && replay.is_some() {
         return Err("--record and --replay exclude each other".into());
@@ -343,7 +344,7 @@ pub fn profile(args: &[String]) -> Result<()> {
                 path.display()
             );
         }
-        _ => return Err(format!("usage: pcbcraft-cli {USAGE}").into()),
+        _ => return Err(format!("usage: {CLI} {USAGE}").into()),
     }
     Ok(())
 }
@@ -351,10 +352,10 @@ pub fn profile(args: &[String]) -> Result<()> {
 /// `llm-key set|delete|status --base-url URL`.
 pub fn key(args: &[String]) -> Result<()> {
     let [action, flag, url] = args else {
-        return Err(format!("usage: pcbcraft-cli {USAGE}").into());
+        return Err(format!("usage: {CLI} {USAGE}").into());
     };
     if flag != "--base-url" {
-        return Err(format!("usage: pcbcraft-cli {USAGE}").into());
+        return Err(format!("usage: {CLI} {USAGE}").into());
     }
     let endpoint = Endpoint::parse(url)?;
     match action.as_str() {
@@ -390,7 +391,7 @@ pub fn key(args: &[String]) -> Result<()> {
                 endpoint.location()
             );
         }
-        _ => return Err(format!("usage: pcbcraft-cli {USAGE}").into()),
+        _ => return Err(format!("usage: {CLI} {USAGE}").into()),
     }
     Ok(())
 }

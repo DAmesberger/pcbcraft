@@ -35,8 +35,8 @@ use pcbcraft_core::ids::{ResourceId, RoleId, TerminalId};
 use pcbcraft_core::{ComponentInstance, Engine, Id, InstanceCommand, Operation};
 #[cfg(test)]
 use pcbcraft_core::{Query, QueryResult};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};

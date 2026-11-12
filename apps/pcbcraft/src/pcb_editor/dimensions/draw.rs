@@ -15,7 +15,7 @@ use pcbcraft_core::library::footprint_source::DimKind;
 use pcbcraft_core::model::dimension::{BoardRef, PartRelation, ReferenceStatus};
 use pcbcraft_solidcraft::dims::{DimFrame, default_text, default_text_offset, dim_layout_reaching};
 use pcbcraft_solidcraft::geom::Vec2;
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// A view's mapping of a board point (board mm, z up) to the screen.
 pub(super) trait Surface {

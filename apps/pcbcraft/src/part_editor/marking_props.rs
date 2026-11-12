@@ -34,7 +34,7 @@ use pcbcraft_core::library::marking::{
 use pcbcraft_core::library::{ComponentDefinition, Definition, DraftEdit, Library, PackedAsset};
 use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{DefinitionId, Engine, FieldRef, LibraryCommand, Operation};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -792,9 +792,11 @@ pub fn spec_rows(
                 }
                 if ui
                     .selectable_label(false, "SVG artwork…")
-                    .on_hover_text(
-                        "Your own SVG drawn on the part, such as a logo; Pcbcraft ships none",
-                    )
+                    .on_hover_text(concat!(
+                        "Your own SVG drawn on the part, such as a logo; ",
+                        pcbcraft_core::product_name!(),
+                        " ships none"
+                    ))
                     .clicked()
                 {
                     *pick_artwork = true;
@@ -1121,7 +1123,7 @@ impl MarkingProps {
 mod tests {
     use super::*;
     use egui::{Pos2, Rect};
-    use solidcraft_ui_egui::fonts;
+    use pcbcraft_ui::fonts;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 

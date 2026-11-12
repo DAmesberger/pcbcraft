@@ -3,6 +3,7 @@
 //! A blocked export lists the findings that block it.
 use super::{Result, execute, open, print};
 use pcbcraft_automation::session::Session;
+use pcbcraft_core::product::SHORT_NAME as CLI;
 use serde_json::{Value, json};
 
 /// The usage line(s).
@@ -19,7 +20,7 @@ const MAX_LISTED: usize = 100;
 /// Run the subcommand with the arguments after its name.
 pub fn run(args: &[String]) -> Result<()> {
     let [project, output, rest @ ..] = args else {
-        return Err(format!("usage: pcbcraft-cli {USAGE}").into());
+        return Err(format!("usage: {CLI} {USAGE}").into());
     };
     let mut zip = output.ends_with(".zip");
     let mut profile = None;
@@ -37,7 +38,7 @@ pub fn run(args: &[String]) -> Result<()> {
                 }
             }
             other => {
-                return Err(format!("unknown option {other}; usage: pcbcraft-cli {USAGE}").into());
+                return Err(format!("unknown option {other}; usage: {CLI} {USAGE}").into());
             }
         }
     }

@@ -103,6 +103,11 @@ These limits are estimated prototype defaults, not a fabricator's rules:
   layer.
 - `board.via_hole_spacing`: two drills are closer than 0.25 mm.
 
+Footprint pad holes have their own checks (`layout/pad_hole.rs`: `board.pth_annular_ring`,
+`board.npth_annular_ring`, `board.pad_hole_clearance`,
+`board.pad_hole_spacing`); see
+[design rules](board-rules-and-shape.md).
+
 Issues classifies the three manufacturing checks as errors and a dangling via as a
 warning. Each has a group title and a fix. Findings name a via through `ObjectRef::Via`,
 as "via on GND".
@@ -118,7 +123,7 @@ as "via on GND".
 
 ### The showcase
 
-`Engine::showcase()`, and the CLI command `pcbcraft-cli showcase FILE`, build a
+`Engine::showcase()`, and the CLI command `sparksmith showcase FILE`, build a
 44 × 28 mm 4-layer board. The app has no menu entry for it yet: write it with
 `cargo run --locked --profile ci -p pcbcraft-cli -- showcase showcase.pcbcraft` and open
 the file. It has:
@@ -439,7 +444,7 @@ copied meshes, `appearance.assign` frames); before them the generated package mo
 ### The 3D view at scale (measured)
 
 Vias are drawn instanced. A body that places a shared definition (every via of a size: its
-barrel, rings and finish; Pcbcraft's display-only tent domes and bore shadows, now made once
+barrel, rings and finish; Sparksmith's display-only tent domes and bore shadows, now made once
 per via shape and placed) keeps its definition's mesh, `Geometry::mesh` with a `place`,
 instead of a moved copy. The 3D view draws each definition mesh once per placement through
 Solidcraft's PBR product-look path (`InstanceLook::Pbr` in the fork: the same material,
@@ -567,7 +572,7 @@ Integrated branch, load average about 5, 1600 × 1000, best of five openings (ea
 viewport; the frame is read back, which the window does not do).
 
 In the running app (`PCBCRAFT_TIMINGS=1`, the integrated branch, a 10,000-via 4-layer
-board added over `pcbcraft-cli stdio`, PCB 3D opened on its finished background build),
+board added over `sparksmith stdio`, PCB 3D opened on its finished background build),
 eight openings drew their first frame in 8.2–37.4 ms (median about 23 ms).
 
 Board checks and saved identity scale with the vias too. The copper, via and routing checks
@@ -609,7 +614,7 @@ purpose:
   slabs, is not done (a via moved on the 10,000-via board takes 2.0 s).
 - Automation builds a large board slowly: every `project.apply` reply carries the whole
   document and every board check, so 10,000 single `layout.add_via` requests over
-  `pcbcraft-cli stdio` took 230 s and wrote 14.9 GB; there is no batched via add.
+  `sparksmith stdio` took 230 s and wrote 14.9 GB; there is no batched via add.
 - Look: THT and gull-wing solder joints are not modelled. Copper foils run along the
   whole edge (no pull-back); prepreg and core look alike at the edge; the weave's scale and
   its moiré at overview distance are in Solidcraft's shader. Seen from below, the key

@@ -7,14 +7,14 @@ use super::Place;
 use crate::commands::Registry;
 use pcbcraft_automation::Mode;
 use pcbcraft_automation::live::{self, Client, ClientToken};
+use pcbcraft_ui::fonts;
 use serde_json::{Value, json};
-use solidcraft_ui_egui::fonts;
 
 type Fallible<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// No token or discovery files: the test never touches the user's folders.
 const TEST_APP: live::App = live::App {
-    name: "Pcbcraft",
+    name: pcbcraft_core::product::NAME,
     data_dir: || None,
     env: |_| None,
     utc: |secs| format!("{secs}"),
@@ -378,7 +378,7 @@ fn the_access_checkbox_starts_at_the_left() -> Fallible {
     };
     let check = left(&|t| t == "Let AI assistants edit this project").ok_or("no checkbox")?;
     let note = left(&|t| t.starts_with("On, on this computer only")).ok_or("no state note")?;
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     assert!(
         check - note < t.form_label_width / 2.0,
         "checkbox text at {check}, note at {note}"

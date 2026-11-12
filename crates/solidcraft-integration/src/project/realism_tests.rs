@@ -131,7 +131,9 @@ fn inner_copper_and_via_barrels_are_saved_copper_at_their_stackup_heights() -> R
         let high = copper.iter().map(|g| g.max[2]).fold(f64::MIN, f64::max);
         near(low, -0.035);
         near(high, stackup.dielectric_mm() + 0.035);
-        let (r, d, b) = (0.3, 0.15, 0.15 - pad_outline::PLATING_MM);
+        // The 0.3 mm drill is the finished bore; the barrel lines a hole
+        // drilled wider by its wall.
+        let (r, d, b) = (0.3, 0.15 + pad_outline::PLATING_MM, 0.15);
         let pi = std::f64::consts::PI;
         let barrel = pi * (d * d - b * b) * stackup.dielectric_mm();
         let outer = 2.0 * pi * (r * r - b * b) * 0.035;
@@ -172,7 +174,8 @@ fn the_laminate_is_physical_around_inner_copper_and_drills() -> Result<()> {
     // the track's 10 × 0.3 rectangle and the two ring discs less what of
     // each the track already covers; the drills go through everything.
     let disc = pi * 0.3 * 0.3;
-    let drill = pi * 0.15 * 0.15;
+    let drilled = 0.15 + crate::pad_outline::PLATING_MM;
+    let drill = pi * drilled * drilled;
     let removed = baseline_removed(&project)?;
     let expected =
         laminate(&baseline) - 2.0 * drill * t - 2.0 * removed * foil + 2.0 * 2.0 * drill * foil;
@@ -308,6 +311,8 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
     assert_eq!(hit([30.0, 20.0]), Some(BodyKind::MaskCap));
     assert_eq!(hit([40.25, 20.0]), Some(BodyKind::PadFinish));
     assert_eq!(hit([40.0 + 0.117, 20.0]), Some(BodyKind::ViaBore));
+    // The bore is open to the finished drill (0.15 mm radius).
+    assert_eq!(hit([40.0 + 0.14, 20.0]), Some(BodyKind::ViaBore));
     // Straight into the drill, the hole is dark, though the inner tracks
     // end at its centre.
     assert_eq!(hit([40.0, 20.0]), Some(BodyKind::ViaBore));
@@ -317,6 +322,37 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
         .find(|g| g.kind == BodyKind::MaskCap && g.layer == Some(CopperLayer::Top))
         .ok_or_else(|| invalid("no dome"))?;
     near(dome.max[2], t + 0.035 + pcbcraft_core::MASK_UM / 1000.0);
+    Ok(())
+}
+
+/// An open via's mask opening is its ring grown by the rules' mask
+/// expansion, as the Gerber mask draws it (`Via::mask_opening`).
+#[test]
+fn an_open_via_s_mask_opening_follows_the_mask_expansion_rule() -> Result<()> {
+    use pcbcraft_core::rules::{RuleKey, RuleOverride, RuleValue};
+    let (mut project, _, _) = four_layer()?;
+    project.rules = pcbcraft_core::rules::fixtures::rules().map_err(invalid)?;
+    project.rules.overrides.push(RuleOverride {
+        key: RuleKey::MaskExpansion,
+        value: RuleValue::Length(0.2),
+    });
+    let model = build(&project)?;
+    let top = |at: [f64; 2]| -> Option<BodyKind> {
+        model
+            .geometry
+            .iter()
+            .filter(|g| !matches!(g.kind, BodyKind::Silkscreen))
+            .filter_map(|g| {
+                g.raycast(Vec3::new(at[0], at[1], 10.0), Vec3::new(0.0, 0.0, -1.0))
+                    .map(|(d, _)| (d, g.kind))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, k)| k)
+    };
+    // The open via's 0.6 mm ring at (40, 20): bare laminate shows out to
+    // 0.3 + 0.2 mm, the mask beyond.
+    assert_eq!(top([40.0, 20.45]), Some(BodyKind::OpenLaminate));
+    assert_eq!(top([40.0, 20.55]), Some(BodyKind::MaskTop));
     Ok(())
 }
 
@@ -381,7 +417,7 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
         .filter(|g| g.kind == BodyKind::Silkscreen)
         .collect();
     assert!(!films.is_empty());
-    let mask_top = 1.6 + crate::stack::MASK_OVER_LAMINATE_MM;
+    let mask_top = 1.6 + project.stackup.mask_laminate_nm.to_mm_f64();
     for film in &films {
         // Each part's legend shares the part's pick identity.
         let source = model
@@ -400,7 +436,7 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
     let pads = layout::placed_pads(&project);
     for pad in &pads {
         let c = pad.center();
-        let z = 1.6 + crate::stack::MASK_OVER_LAMINATE_MM;
+        let z = 1.6 + project.stackup.mask_laminate_nm.to_mm_f64();
         for film in &films {
             assert!(
                 !film.world_mesh().contains(Vec3::new(c[0], c[1], z)),
@@ -521,7 +557,7 @@ fn native_heights_agree_with_the_stack() -> Result<()> {
     stackup.mask_um = 22.0;
     project.stackup = stackup.clone();
     let model = build(&project)?;
-    let stack = Stack::of(&stackup);
+    let stack = Stack::of(&stackup, project.fabrication.pad_finish);
     assert_eq!(model.stack, stack);
     let mut seen = std::collections::BTreeSet::new();
     for g in model

@@ -45,7 +45,7 @@ fn draw(ui: &mut Ui, assist: &mut DatasheetAssist) {
 #[test]
 fn the_start_page_button_opens_the_form() -> Result<(), String> {
     let ctx = egui::Context::default();
-    solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+    pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
     let mut assist = DatasheetAssist::default();
     let painted = frame(&ctx, vec![], |ui| draw(ui, &mut assist));
     let (_, rect) = painted
@@ -111,7 +111,7 @@ fn the_start_page_button_opens_the_form() -> Result<(), String> {
 #[test]
 fn the_form_opens_in_view() -> Result<(), String> {
     let ctx = egui::Context::default();
-    solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+    pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
     let mut assist = DatasheetAssist::default();
     let view = 500.0;
     let page = |ui: &mut Ui, assist: &mut DatasheetAssist| {
@@ -203,7 +203,7 @@ fn progress_and_the_result_arrive_from_the_thread() {
 #[test]
 fn an_openai_compatible_model_is_declared_not_detected() -> Result<(), String> {
     let ctx = egui::Context::default();
-    solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+    pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
     let mut assist = DatasheetAssist {
         open: true,
         provider: Provider::OpenAiCompatible,

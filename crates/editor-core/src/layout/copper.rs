@@ -314,7 +314,7 @@ impl BoardCopper {
 
     /// The board checks: placement, edge and clearance from these outlines,
     /// then the connectivity findings of `graph` (the same revision's
-    /// copper graph), the via and the courtyard checks.
+    /// copper graph), the via, pad hole and courtyard checks.
     pub fn checks(&self, project: &Project, graph: &CopperGraph) -> Vec<Finding> {
         let mut issues = Vec::new();
         for id in sync_preview(project) {
@@ -427,6 +427,7 @@ impl BoardCopper {
         }
         issues.extend(graph.findings(project));
         issues.extend(super::via::findings(self, project));
+        issues.extend(super::pad_hole::findings(self, project, graph));
         issues.extend(courtyard::findings(project));
         issues
     }

@@ -1,4 +1,4 @@
-# Pcbcraft roadmap
+# Sparksmith roadmap
 
 The [product plan](docs/pcbcraft-plan.md) defines release scope. This file tracks execution; unchecked work is not implemented.
 

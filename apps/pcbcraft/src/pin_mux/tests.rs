@@ -15,7 +15,7 @@ use pcbcraft_core::{
     ComponentRef, FunctionId, FunctionKey, LibraryCommand, Outcome, PhysicalChoice, Revision,
     RuleId,
 };
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

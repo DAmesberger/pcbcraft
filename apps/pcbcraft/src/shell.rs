@@ -7,8 +7,8 @@
 //! ui_kit/panel.rs (card frames). MIT option; see ATTRIBUTION.md. The
 //! upstream fonts, icons, tokens and Container are used directly.
 use egui::{Align2, FontId, Rect, Response, Sense, Ui, pos2, vec2};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::{
     icons,
     toolbar::{RIBBON_HEIGHT, TAB_ROW_HEIGHT},
     ui_kit::{Container, Edge, Surface, type_face},
@@ -224,7 +224,7 @@ mod tool_width_tests {
     #[test]
     fn a_split_button_fits_its_own_name() {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let variant = |id, label| Tool::new(id, "line", label);
         let mut widths = (0.0, 0.0, 0.0);
         ctx.run_ui(Default::default(), |ui| {
@@ -534,7 +534,7 @@ pub fn ribbon(
             let card = Rect::from_min_max(pos2(tile.right() + gap, available.top()), available.max);
             for rect in [tile, card] {
                 ui.painter().add(
-                    host.frame(&ctx, t.toolbar, solidcraft_ui_egui::frame::Side::Left)
+                    host.frame(&ctx, t.toolbar, pcbcraft_ui::frame::Side::Left)
                         .paint(rect),
                 );
             }
@@ -1086,7 +1086,7 @@ pub fn card(
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
             let card = host
-                .frame(ctx, t.panel, solidcraft_ui_egui::frame::Side::Left)
+                .frame(ctx, t.panel, pcbcraft_ui::frame::Side::Left)
                 .inner_margin(egui::Margin::same(4))
                 .show(ui, |ui| {
                     let inner = rect.width() - 8.0;
@@ -1149,7 +1149,7 @@ pub fn column_card<R>(
     }
     let host = Container::new(ctx, Surface::Panel);
     let frame = host
-        .frame(ctx, t.panel, solidcraft_ui_egui::frame::Side::Left)
+        .frame(ctx, t.panel, pcbcraft_ui::frame::Side::Left)
         .inner_margin(egui::Margin::symmetric(COLUMN_CARD_INSET, inset));
     let inner = (rect.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);
     let shown = host

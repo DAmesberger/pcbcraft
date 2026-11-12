@@ -9,10 +9,15 @@ use std::sync::{Arc, OnceLock};
 /// native measure is exact but costly (a laminate slab of thousands of
 /// holes measures slower than it builds), and nothing on the way to the
 /// screen needs it. Clones share the one measurement.
+///
+/// A lazy volume never holds the body it measures: its measure reaches
+/// the body through the model that made it, so geometry handed to the
+/// screen (or kept by a later model) does not keep an evaluated B-rep
+/// alive. Once that model is gone, an unmeasured volume reads NaN.
 #[derive(Clone)]
 pub struct Volume {
     cell: Arc<OnceLock<f64>>,
-    measure: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+    measure: Option<Arc<dyn Fn() -> Option<f64> + Send + Sync>>,
 }
 
 impl Volume {
@@ -23,18 +28,34 @@ impl Volume {
         }
     }
 
-    /// Measured by `measure` when first read (NaN when it fails).
-    pub fn lazy(measure: impl Fn() -> f64 + Send + Sync + 'static) -> Self {
+    /// Measured by `measure` when first read: `None` while it cannot
+    /// measure (the body is gone; read as NaN, not kept), NaN when the
+    /// measure fails.
+    pub fn lazy(measure: impl Fn() -> Option<f64> + Send + Sync + 'static) -> Self {
         Self {
             cell: Arc::new(OnceLock::new()),
             measure: Some(Arc::new(measure)),
         }
     }
 
+    /// This volume if it is known or measured, else `again`: a model that
+    /// takes this geometry from an earlier one measures it on its own body.
+    pub fn or_measured_by(&self, again: impl FnOnce() -> Self) -> Self {
+        if self.measure.is_none() || self.cell.get().is_some() {
+            self.clone()
+        } else {
+            again()
+        }
+    }
+
     pub fn get(&self) -> f64 {
-        *self
-            .cell
-            .get_or_init(|| self.measure.as_ref().map_or(f64::NAN, |m| m()))
+        if let Some(volume) = self.cell.get() {
+            return *volume;
+        }
+        match self.measure.as_ref().and_then(|m| m()) {
+            Some(volume) => *self.cell.get_or_init(|| volume),
+            None => f64::NAN,
+        }
     }
 }
 

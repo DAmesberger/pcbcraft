@@ -2,14 +2,12 @@
 
 use super::*;
 use egui::{Event, PointerButton, Pos2, RawInput};
-use std::cell::Cell;
 
-/// One painted text: what it says, where, and whether it was clipped.
+/// One painted text: what it says and where.
 #[derive(Clone, Debug)]
 struct Painted {
     text: String,
     rect: Rect,
-    elided: bool,
 }
 
 struct Harness {
@@ -51,7 +49,6 @@ impl Harness {
                 egui::Shape::Text(t) => out.push(Painted {
                     text: t.galley.text().to_owned(),
                     rect: t.galley.rect.translate(t.pos.to_vec2()),
-                    elided: t.galley.elided,
                 }),
                 egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
                 _ => {}
@@ -86,18 +83,6 @@ fn rect_of(painted: &[Painted], text: &str) -> Rect {
     find(painted, text)
         .unwrap_or_else(|| panic!("{text:?} is not painted: {painted:?}"))
         .rect
-}
-
-fn row_view(title: &str) -> IssueRowView {
-    IssueRowView {
-        level: Level::Error,
-        title: title.to_owned(),
-        count: 1,
-        fix: None,
-        open: false,
-        detail: IssueDetail::default(),
-        objects: Vec::new(),
-    }
 }
 
 fn counts(error: usize, warning: usize, to_do: usize, info: usize) -> IssueCounts {
@@ -199,248 +184,4 @@ fn the_issue_line_is_reserved_and_inert_while_empty() {
     assert!(h.click(full.center(), |ui| {
         issue_line(ui, &counts(1, 0, 0, 0), "on R1").clicked()
     }));
-}
-
-#[test]
-fn a_row_click_locates_and_its_controls_do_only_their_own_thing() {
-    let mut h = Harness::new(360.0);
-    let id = egui::Id::unique("row");
-    let mut view = row_view("R3 ↔ R6: 4 pads too close");
-    view.fix = Some("Assign…".to_owned());
-    view.count = 3;
-    view.detail.cause = Some("Pads of different nets are too close.".to_owned());
-    // At rest the title has the row: no Fix, pill or locate beside it.
-    let (_, rest) = h.frame(Vec::new(), |ui| issue_row(ui, id, &view));
-    let at_rest = rect_of(&rest, &view.title);
-    assert!(find(&rest, "Assign…").is_none(), "{rest:?}");
-    assert!(find(&rest, "×3").is_none(), "{rest:?}");
-    // Hovered, the row shows them.
-    let (_, painted) = h.frame(vec![Event::PointerMoved(at_rest.center())], |ui| {
-        issue_row(ui, id, &view)
-    });
-    let (title, fix) = (rect_of(&painted, &view.title), rect_of(&painted, "Assign…"));
-    assert!(find(&painted, "×3").is_some(), "{painted:?}");
-    let row = Rect::from_min_size(pos2(0.0, title.top() - 4.0), vec2(360.0, ISSUE_ROW_HEIGHT));
-
-    let on_title = h.click(title.center(), |ui| issue_row(ui, id, &view));
-    assert_eq!(
-        on_title,
-        IssueRowResponse {
-            locate: true,
-            ..Default::default()
-        }
-    );
-    let on_fix = h.click(fix.center(), |ui| issue_row(ui, id, &view));
-    assert_eq!(
-        on_fix,
-        IssueRowResponse {
-            fix: true,
-            ..Default::default()
-        }
-    );
-    let tokens = Tokens::get();
-    let chevron = pos2(
-        row.left() + tokens.space_6 + tokens.form_section_icon_size / 2.0,
-        title.center().y,
-    );
-    let on_chevron = h.click(chevron, |ui| issue_row(ui, id, &view));
-    assert_eq!(
-        on_chevron,
-        IssueRowResponse {
-            toggle: true,
-            ..Default::default()
-        }
-    );
-    let locate = pos2(row.right() - tokens.space_6 - 10.0, title.center().y);
-    let on_locate = h.click(locate, |ui| issue_row(ui, id, &view));
-    assert_eq!(
-        on_locate,
-        IssueRowResponse {
-            locate: true,
-            ..Default::default()
-        }
-    );
-}
-
-/// A row is a button: dragging across its title selects no text, so Copy
-/// afterwards copies nothing (B-b).
-#[test]
-fn dragging_across_a_row_selects_no_text() {
-    let mut h = Harness::new(360.0);
-    let id = egui::Id::unique("drag");
-    let view = row_view("R1 pin 1 unconnected");
-    let (_, painted) = h.frame(Vec::new(), |ui| issue_row(ui, id, &view));
-    let title = rect_of(&painted, &view.title);
-    let (from, to) = (title.left_center(), title.right_center());
-    let press = |pos, pressed| Event::PointerButton {
-        pos,
-        button: PointerButton::Primary,
-        pressed,
-        modifiers: Default::default(),
-    };
-    let mut copied = Vec::new();
-    for events in [
-        vec![Event::PointerMoved(from)],
-        vec![press(from, true)],
-        vec![Event::PointerMoved(title.center())],
-        vec![Event::PointerMoved(to)],
-        vec![press(to, false)],
-        vec![Event::Copy],
-    ] {
-        h.time += 0.05;
-        let output = h.ctx.run_ui(
-            RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(360.0, 400.0))),
-                time: Some(h.time),
-                events,
-                ..Default::default()
-            },
-            |ui| {
-                issue_row(ui, id, &view);
-            },
-        );
-        copied.extend(
-            output
-                .platform_output
-                .commands
-                .into_iter()
-                .filter_map(|c| match c {
-                    egui::OutputCommand::CopyText(text) => Some(text),
-                    _ => None,
-                }),
-        );
-    }
-    assert!(
-        copied.iter().all(String::is_empty),
-        "a drag selected text: {copied:?}"
-    );
-}
-
-#[test]
-fn a_long_title_is_clipped_to_one_line_inside_the_row() {
-    let mut h = Harness::new(240.0);
-    let view = row_view(&"Courtyards of R7 and R10 overlap on the top side ".repeat(2));
-    let ((), painted) = h.frame(Vec::new(), |ui| {
-        issue_row(ui, egui::Id::unique("long"), &view);
-    });
-    let title = find(&painted, view.title.as_str()).expect("the title is painted");
-    assert!(title.elided);
-    assert!(title.rect.right() <= 240.0, "{:?}", title.rect);
-    assert!(title.rect.height() < ISSUE_ROW_HEIGHT);
-}
-
-#[test]
-fn an_open_row_shows_its_details_and_chips_that_locate_one_object() {
-    let mut h = Harness::new(360.0);
-    let id = egui::Id::unique("open");
-    let mut view = row_view("2 pads have no package terminal");
-    view.detail = IssueDetail {
-        cause: Some("Each pad needs a package terminal.".to_owned()),
-        fix: Some("Assign the pads by number.".to_owned()),
-    };
-    view.objects = vec!["Pad 1".to_owned(), "Pad 2".to_owned()];
-    let (_, closed) = h.frame(Vec::new(), |ui| issue_row(ui, id, &view));
-    assert!(find(&closed, "Pad 2").is_none());
-    view.open = true;
-    let (_, painted) = h.frame(Vec::new(), |ui| issue_row(ui, id, &view));
-    for text in [
-        "Each pad needs a package terminal.",
-        "Assign the pads by number.",
-        "Pad 1",
-    ] {
-        assert!(find(&painted, text).is_some(), "{text}: {painted:?}");
-    }
-    let chip = rect_of(&painted, "Pad 2");
-    let response = h.click(chip.center(), |ui| issue_row(ui, id, &view));
-    assert_eq!(response.object, Some(1));
-    assert!(!response.locate);
-}
-
-/// Nothing is capped: 10 000 rows take their full height, but only the rows
-/// in view are built.
-#[test]
-fn the_list_is_uncapped_and_builds_only_visible_rows() {
-    let mut h = Harness::new(360.0);
-    let groups = [
-        IssueGroupView {
-            level: Level::Error,
-            title: "Clearance".to_owned(),
-            rows: 10_000,
-            open: true,
-            fix: None,
-        },
-        IssueGroupView {
-            level: Level::ToDo,
-            title: "Not placed".to_owned(),
-            rows: 6,
-            open: false,
-            fix: Some("Update PCB…".to_owned()),
-        },
-    ];
-    let built = Cell::new(0_usize);
-    let (content, painted) = h.frame(Vec::new(), |ui| {
-        built.set(0);
-        egui::ScrollArea::vertical()
-            .max_height(300.0)
-            .show(ui, |ui| {
-                issues_list(ui, egui::Id::unique("list"), &groups, |g, r| {
-                    built.set(built.get() + 1);
-                    row_view(&format!("Row {g}.{r}"))
-                })
-            })
-            .content_size
-    });
-    let total = (10_000.0 + 2.0) * ISSUE_ROW_HEIGHT;
-    assert!((content.y - total).abs() < 1.0, "{content:?} vs {total}");
-    assert!(
-        built.get() <= 300 / ISSUE_ROW_HEIGHT as usize + 2,
-        "{}",
-        built.get()
-    );
-    assert!(find(&painted, "Clearance").is_some());
-    assert!(
-        find(&painted, "10,000").is_some(),
-        "the group count is shown"
-    );
-    assert!(find(&painted, "Row 0.0").is_some());
-}
-
-#[test]
-fn list_events_name_the_group_or_row() {
-    let mut h = Harness::new(360.0);
-    let groups = [IssueGroupView {
-        level: Level::ToDo,
-        title: "Not placed".to_owned(),
-        rows: 2,
-        open: true,
-        fix: Some("Update PCB…".to_owned()),
-    }];
-    let mut draw = |ui: &mut Ui| {
-        issues_list(ui, egui::Id::unique("events"), &groups, |_, r| {
-            row_view(&format!("R2{r} is not placed"))
-        })
-    };
-    let (_, painted) = h.frame(Vec::new(), &mut draw);
-    let header = rect_of(&painted, "Not placed");
-    let fix = rect_of(&painted, "Update PCB…");
-    let second = rect_of(&painted, "R21 is not placed");
-    assert_eq!(
-        h.click(header.center(), &mut draw),
-        Some(IssueListEvent::Group(0))
-    );
-    assert_eq!(
-        h.click(fix.center(), &mut draw),
-        Some(IssueListEvent::GroupFix(0))
-    );
-    assert_eq!(
-        h.click(second.center(), &mut draw),
-        Some(IssueListEvent::Row {
-            group: 0,
-            row: 1,
-            action: IssueRowResponse {
-                locate: true,
-                ..Default::default()
-            },
-        })
-    );
 }

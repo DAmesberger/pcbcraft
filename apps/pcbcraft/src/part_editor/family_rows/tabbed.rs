@@ -217,7 +217,7 @@ mod tests {
     /// The labels the rows draw in one frame of `form`.
     fn drawn(form: &mut TabbedForm) -> Vec<String> {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut out = Vec::new();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             land_rows(ui, form);

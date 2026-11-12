@@ -1,6 +1,6 @@
-# Pcbcraft agent instructions
+# Sparksmith agent instructions
 
-Pcbcraft is PCB design software, written in Rust, with component authoring, schematics, PCB layout and integrated 3D, using Solidcraft's technology and UI conventions. These instructions are adapted from Solidcraft; see [attribution](ATTRIBUTION.md).
+Sparksmith is PCB design software, written in Rust, with component authoring, schematics, PCB layout and integrated 3D, using Solidcraft's technology and UI conventions. These instructions are adapted from Solidcraft; see [attribution](ATTRIBUTION.md).
 
 ## Start here
 
@@ -19,7 +19,7 @@ The workspace layers are: `pcbcraft-core` (pure document, typed operations, the 
 - Plan routing for push-and-shove from the first implementation; deliver it by release 2 if it is absent from release 1.
 - Production Rust uses checked input handling and `Result`; deny application `unsafe`, except in small, documented native-platform modules that have no safe API (as in Solidcraft): each allows it for itself only, and states why. Forbid unchecked `unwrap`, `expect`, panic and unfinished-code macros. Bound input sizes and arithmetic; keep long work off the UI thread. Shared dependency internals retain their upstream policies.
 - Preserve work with atomic saves and recovery. Reject unsupported versions and required features instead of silently dropping them. Until the first release, the file format has one version and no migrations or legacy readers; add explicit migrations once files are released.
-- Pcbcraft is MIT OR Apache-2.0. Follow Solidcraft's independent-implementation policy: use public specifications/documentation and permissive code dependencies; do not read, copy, paraphrase or link GPL/LGPL/AGPL code. Do not read or copy KiCad (source or its symbol, footprint and 3D libraries, including CC-BY-SA data), LibrePCB, Horizon EDA, gEDA/Lepton or Fritzing, and take no code, data, text, icons or ids from commercial EDA tools. Part CAD data published for use in other tools (for example manufacturer footprints and STEP models) may be used like a datasheet, with its source and licence recorded. Fixtures are original. Attribute reused code, instructions and assets; preserve their notices. `cargo xtask licences --check` enforces dependency licenses and `cargo xtask clean-room` rejects EDA library files; reasoning is in [pcbcraft-libraries](skills/pcbcraft-libraries/SKILL.md#clean-room-sources).
+- Sparksmith is MIT OR Apache-2.0. Follow Solidcraft's independent-implementation policy: use public specifications/documentation and permissive code dependencies; do not read, copy, paraphrase or link GPL/LGPL/AGPL code. Do not read or copy KiCad (source or its symbol, footprint and 3D libraries, including CC-BY-SA data), LibrePCB, Horizon EDA, gEDA/Lepton or Fritzing, and take no code, data, text, icons or ids from commercial EDA tools. Part CAD data published for use in other tools (for example manufacturer footprints and STEP models) may be used like a datasheet, with its source and licence recorded. Fixtures are original. Attribute reused code, instructions and assets; preserve their notices. `cargo xtask licences --check` enforces dependency licenses, `cargo xtask brand-crates` keeps SolidCraft's brand-licensed UI crates (and `solidcraft-ui-egui`) out of the dependency graph, since the interface code is vendored in `crates/ui`, and `cargo xtask clean-room` rejects EDA library files; reasoning is in [pcbcraft-libraries](skills/pcbcraft-libraries/SKILL.md#clean-room-sources).
 - Verify observable behavior and measured correctness. Label performance targets as targets until measured. Do not weaken expected results to make a test pass.
 - Keep changes within the task. Work in an isolated checkout for any Solidcraft changes; honor that checkout's instructions. These rules do not authorize upstream pushes, issues, PRs or publication.
 
@@ -34,4 +34,4 @@ The workspace layers are: `pcbcraft-core` (pure document, typed operations, the 
 | Tests, benchmarks, CI, crash fixes or completion evidence | [pcbcraft-verification](skills/pcbcraft-verification/SKILL.md) |
 | Creating a component from datasheets through MCP (also served as the `datasheet_to_component` MCP prompt) | [pcbcraft-datasheet-part](skills/pcbcraft-datasheet-part/SKILL.md) |
 
-Read only the branches relevant to the work. Maintain instructions and their enforcement together; do not copy upstream paths or commands that Pcbcraft does not implement.
+Read only the branches relevant to the work. Maintain instructions and their enforcement together; do not copy upstream paths or commands that Sparksmith does not implement.

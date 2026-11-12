@@ -7,7 +7,7 @@ use super::*;
 use egui::{Pos2, Shape};
 use pcbcraft_core::Engine;
 use pcbcraft_core::issues::Severity;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -86,7 +86,7 @@ fn hint_shows_whole(
     ctx: &egui::Context,
     hint: &str,
 ) -> TestResult {
-    let width = solidcraft_theme::Tokens::get().form_card_width;
+    let width = pcbcraft_ui::theme::Tokens::get().form_card_width;
     frame_at(editor, engine, ctx, vec![], width);
     let (output, _) = frame_at(editor, engine, ctx, vec![], width);
     let output = &output;

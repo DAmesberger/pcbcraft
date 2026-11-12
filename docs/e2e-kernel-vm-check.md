@@ -1,6 +1,6 @@
 # VM check: SMLib kernel, 3D and the unseen features
 
-On 8 November 2026 an agent checked Pcbcraft in the Herdr macOS VM after the move to Solidcraft's SMLib kernel, and looked for the first time on screen at features merged without a visual check. It worked as a designer would and judged the look as well as the behaviour. Related: the [third run](e2e-run-3.md), [schematic wires](schematic-wires.md), [materials](materials.md).
+On 8 November 2026 an agent checked Sparksmith in the Herdr macOS VM after the move to Solidcraft's SMLib kernel, and looked for the first time on screen at features merged without a visual check. It worked as a designer would and judged the look as well as the behaviour. Related: the [third run](e2e-run-3.md), [schematic wires](schematic-wires.md), [materials](materials.md).
 
 **Setup.** Build 713244b (`component-model`, which includes the wire arc corners and run 3's minor fixes), `--profile ci`, in a hand-built `Pcbcraft.app`. The VM is macOS 27.2 arm64 with 8 cores and 16 GB, a 1920 × 1200 display at 1×, and a 1380 × 900 app window. The app was driven through the guest driver (`mcp__herdr-vm__*`). Times come from the guest clock and from `ps` CPU time sampled over SSH. No product code was read beyond docs and the gold test, no product code was changed, and no paid API calls were made. Test files and the app instances were removed afterwards, and the recovery folder is empty.
 

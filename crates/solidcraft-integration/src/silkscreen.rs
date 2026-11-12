@@ -11,7 +11,7 @@ use crate::Result;
 use crate::appearance::{self, Board, CAP_MARGIN_MM, Land, Path, Region, ViaMark, slab};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
-use crate::stack::{FINISH_MM, INK_MM, INK_SINK_SHARE, Slot};
+use crate::stack::{INK_MM, INK_SINK_SHARE, Slot};
 use pcbcraft_core::geometry::Shape;
 use pcbcraft_core::layout::{self, BoardDrawing, PlacedItem};
 use pcbcraft_core::library::graphics::PlacedText;
@@ -20,9 +20,6 @@ use pcbcraft_core::rules::SilkscreenRules;
 use pcbcraft_core::{CopperLayer, Id, Layer, Point, Project};
 use std::collections::BTreeMap;
 
-/// Fabricators clip legend this far clear of mask openings (est.; quoted
-/// silkscreen-to-pad clearances are 0.05–0.15 mm).
-pub const OPENING_CLEARANCE_MM: f64 = 0.05;
 /// Chord tolerance of curves in the legend.
 const LEGEND_TOLERANCE_MM: f64 = 0.01;
 /// Segments of a stroke's round end.
@@ -43,7 +40,8 @@ pub struct Legend<'a> {
 }
 
 /// The silkscreen films of `project`, cut at the mask openings of
-/// `legend.lands`. Each film is a [`BodyKind::Silkscreen`] geometry whose
+/// `legend.lands` grown by the rules' silkscreen-to-pad clearance
+/// (`rules.silkscreen.pad_clearance`), as fabricators clip legend. Each film is a [`BodyKind::Silkscreen`] geometry whose
 /// `layer` names its side's outer copper layer: one film per placed part and
 /// side, plus its pieces standing on mask caps.
 pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
@@ -84,7 +82,7 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
             .iter()
             .filter(|land| land.layer == side)
             .flat_map(|land| land.openings.iter())
-            .map(|o| offset_polygon(o, OPENING_CLEARANCE_MM).unwrap_or_else(|| o.clone()))
+            .map(|o| offset_polygon(o, silk.pad_clearance).unwrap_or_else(|| o.clone()))
             .collect();
         // On the mask (or the bare laminate): the stack's legend slot; and
         // on the crown of the mask (or the finish) over copper.
@@ -94,7 +92,7 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
         let crown = if board.mask(side) {
             board.crown(side)
         } else {
-            board.copper(side) + FINISH_MM
+            board.copper(side) + board.stack.finish_mm()
         };
         let sink = INK_SINK_SHARE * INK_MM;
         let flat = Region {

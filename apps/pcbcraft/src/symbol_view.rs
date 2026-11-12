@@ -10,7 +10,7 @@ use pcbcraft_core::geometry::{Shape, signed_area2};
 use pcbcraft_core::library::graphics::SYMBOL_STROKE_MM;
 use pcbcraft_core::library::{Fill, HAlign, TextMetric, VAlign};
 use pcbcraft_core::schematic::{PlacedText, PlacedUnit};
-use solidcraft_ui_egui::ui_kit::type_face;
+use pcbcraft_ui::ui_kit::type_face;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, OnceLock};
@@ -399,7 +399,7 @@ pub fn paint_text(painter: &Painter, view: View, text: &PlacedText, color: Color
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solidcraft_ui_egui::fonts;
+    use pcbcraft_ui::fonts;
 
     fn area(points: &[Point], triangles: &[[u32; 3]]) -> f64 {
         triangles
@@ -448,7 +448,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(fonts::system_fonts_ready(), "the search finished");
-        fonts::setup_fonts_without_waiting(&ctx, "en", "");
+        fonts::setup_fonts_without_waiting(&ctx, "en");
         ctx.run_ui(Default::default(), |_| {})
             .textures_delta
             .clear();

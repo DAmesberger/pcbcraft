@@ -20,7 +20,7 @@ use pcbcraft_core::library::marking::{
 use pcbcraft_core::{
     ComponentInstance, Engine, Id, InstanceCommand, Operation, Project, Query, QueryResult,
 };
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 /// The template variable a date code fills (`{var:date_code}`).
 pub const DATE_CODE: &str = "date_code";
@@ -490,7 +490,7 @@ mod tests {
         use crate::kit;
         use egui::{Pos2, Rect};
         use pcbcraft_core::{Engine, InstanceCommand, Operation};
-        use solidcraft_ui_egui::fonts;
+        use pcbcraft_ui::fonts;
 
         type TestResult = Result<(), Box<dyn std::error::Error>>;
 

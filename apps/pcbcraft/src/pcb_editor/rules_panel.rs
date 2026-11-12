@@ -37,8 +37,8 @@ use pcbcraft_core::rules::{
 };
 use pcbcraft_core::{Engine, Operation, Query, QueryResult};
 use pcbcraft_io::rule_profiles::{self, Listing, ProfileLibrary};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -63,8 +63,12 @@ pub enum RuleTopic {
     Clearance,
     BoardEdge,
     ViaAnnularRing,
+    PthAnnularRing,
+    NpthAnnularRing,
     DrillToCopper,
     HoleSpacing,
+    /// Pad holes to any hole: one of several hole-kind pairs.
+    PadHoleSpacing,
     Courtyard,
 }
 
@@ -73,17 +77,22 @@ impl RuleTopic {
         match self {
             Self::Clearance => RuleGroup::Copper,
             Self::BoardEdge => RuleGroup::BoardEdge,
-            Self::ViaAnnularRing | Self::DrillToCopper | Self::HoleSpacing => {
-                RuleGroup::HolesAndVias
-            }
+            Self::ViaAnnularRing
+            | Self::PthAnnularRing
+            | Self::NpthAnnularRing
+            | Self::DrillToCopper
+            | Self::HoleSpacing
+            | Self::PadHoleSpacing => RuleGroup::HolesAndVias,
             Self::Courtyard => RuleGroup::Placement,
         }
     }
 
     pub fn key(self) -> Option<RuleKey> {
         match self {
-            Self::Clearance | Self::BoardEdge | Self::DrillToCopper => None,
+            Self::Clearance | Self::BoardEdge | Self::DrillToCopper | Self::PadHoleSpacing => None,
             Self::ViaAnnularRing => Some(RuleKey::ViaAnnularRingMin),
+            Self::PthAnnularRing => Some(RuleKey::PthAnnularRingMin),
+            Self::NpthAnnularRing => Some(RuleKey::NpthAnnularRingMin),
             Self::HoleSpacing => Some(RuleKey::Clearance {
                 a: CopperObject::ViaHole,
                 b: CopperObject::ViaHole,
@@ -102,6 +111,10 @@ const TOPICS: &[(&str, RuleTopic)] = &[
     ("board.via_drill_clearance", RuleTopic::DrillToCopper),
     ("board.hole_clearance", RuleTopic::DrillToCopper),
     ("board.via_hole_spacing", RuleTopic::HoleSpacing),
+    ("board.pth_annular_ring", RuleTopic::PthAnnularRing),
+    ("board.npth_annular_ring", RuleTopic::NpthAnnularRing),
+    ("board.pad_hole_clearance", RuleTopic::DrillToCopper),
+    ("board.pad_hole_spacing", RuleTopic::PadHoleSpacing),
     ("board.courtyard_overlap", RuleTopic::Courtyard),
     ("board.courtyard_clearance", RuleTopic::Courtyard),
     ("fill.clearance", RuleTopic::Clearance),
@@ -848,9 +861,13 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
                 kit::hint(
                     ui,
                     "This board has no fab profile, so nothing is checked",
-                    "Choose your fabricator's profile. Pcbcraft ships none: import a profile \
-                     file (Your profiles › Import…; examples/profiles/ has sourced ones) or \
-                     write one from the fabricator's capability page.",
+                    concat!(
+                        "Choose your fabricator's profile. ",
+                        pcbcraft_core::product_name!(),
+                        " ships none: import a profile \
+                         file (Your profiles › Import…; examples/profiles/ has sourced ones) or \
+                         write one from the fabricator's capability page."
+                    ),
                 );
             }
         }

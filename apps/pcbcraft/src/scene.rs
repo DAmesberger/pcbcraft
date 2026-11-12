@@ -254,7 +254,11 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                 }
                 let sources = model.sources.clone();
                 kept.board = Some((Arc::clone(&project), model));
-                (geometry, sources, Stack::of(&project.stackup))
+                (
+                    geometry,
+                    sources,
+                    Stack::of(&project.stackup, project.fabrication.pad_finish),
+                )
             });
             (ticket, built.map_err(|e| e.to_string()))
         }
@@ -636,8 +640,15 @@ impl SceneController {
     }
 
     /// Highlight every body of the selected instance, track, via or net;
-    /// the selected object's in a stronger tint than its net's.
-    pub fn highlight(&mut self, chosen: &crate::pcb_editor::Group, net: Option<Id>) {
+    /// the selected object's in a stronger tint than its net's. `lit` (what
+    /// a table row hovers) takes the net's tint. An overlay only: the model
+    /// is not rebuilt.
+    pub fn highlight(
+        &mut self,
+        chosen: &crate::pcb_editor::Group,
+        net: Option<Id>,
+        lit: &crate::pcb_editor::Group,
+    ) {
         let mut ids = Vec::new();
         let mut selected = Vec::new();
         for s in &self.sources {
@@ -645,7 +656,7 @@ impl SceneController {
             if picked {
                 selected.push(s.pick_id);
             }
-            if picked || s.net.is_some() && s.net == net {
+            if picked || s.net.is_some() && s.net == net || picks(s, lit) {
                 ids.push(s.pick_id);
             }
         }

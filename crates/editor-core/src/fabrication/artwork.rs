@@ -47,7 +47,11 @@ pub(super) fn common_attributes(
 ) -> Vec<(&'static str, String)> {
     let mut out = vec![(
         "GenerationSoftware",
-        format!("Pcbcraft,Pcbcraft,{}", env!("CARGO_PKG_VERSION")),
+        format!(
+            "{0},{0},{1}",
+            crate::product::NAME,
+            env!("CARGO_PKG_VERSION")
+        ),
     )];
     if let Some(date) = &options.creation_date {
         out.push(("CreationDate", escape(date)));
@@ -333,7 +337,7 @@ fn mask(board: &Board<'_>, side: Layer, attributes: &[(&str, String)]) -> Result
     let mut w = Writer::new(attributes);
     let e = board.mask_expansion;
     for via in project.vias.iter().filter(|v| !v.tented) {
-        let d = w.aperture(Aperture::circle(via.diameter + 2.0 * e)?, None);
+        let d = w.aperture(Aperture::circle(via.mask_opening(e))?, None);
         w.flash(d, via.position)?;
     }
     for hole in project.board().holes.iter() {

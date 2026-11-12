@@ -6,7 +6,7 @@ use crate::resolve_parts::demo_part;
 use pcbcraft_core::PartRef;
 use pcbcraft_core::fields::{PropertyEdit, PropertyInput};
 use pcbcraft_core::format::{EditorFile, FILE_VERSION};
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

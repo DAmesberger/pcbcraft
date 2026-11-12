@@ -14,6 +14,7 @@ use syn::visit::Visit;
 /// (module, modules it may use). Order is the document's numbering, which is acyclic.
 const MAP: &[(&str, &[&str])] = &[
     ("permission", &[]),
+    ("product", &[]),
     ("geometry", &[]),
     ("ids", &[]),
     ("shared", &[]),

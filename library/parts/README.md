@@ -1,6 +1,6 @@
 # Built-in part files
 
-Parametric SolidCraft designs that packages use as their 3D body ([lean parts](../../docs/part-templates.md#11-lean-parts-contract)). Each follows Pcbcraft's naming conventions; `pcbcraft-cli part check FILE` checks them.
+Parametric SolidCraft designs that packages use as their 3D body ([lean parts](../../docs/part-templates.md#11-lean-parts-contract)). Each follows Sparksmith's naming conventions; `sparksmith part check FILE` checks them.
 
 | File | Built-in name | What it is | Provenance | Licence |
 |---|---|---|---|---|

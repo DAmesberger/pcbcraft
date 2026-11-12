@@ -10,10 +10,10 @@
 
 use super::severity::{Level, severity_glyph};
 use egui::{Rect, RichText, Ui, vec2};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::frame::Side;
-use solidcraft_ui_egui::ui_kit::type_face;
-use solidcraft_ui_egui::ui_kit::{self, Button, Container, Surface};
+use pcbcraft_ui::frame::Side;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::type_face;
+use pcbcraft_ui::ui_kit::{self, Button, Container, Surface};
 use std::collections::VecDeque;
 
 /// How long a toast stays, in seconds (upstream `STATUS_TOAST_MS = 6000`).
@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn the_stack_draws_inside_the_canvas() {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut toasts = Toasts::default();
         toasts.push(
             Level::Ok,

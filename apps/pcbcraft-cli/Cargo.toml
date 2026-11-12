@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+# The binary takes the product's short name (pcbcraft_core::product).
+[[bin]]
+name = "sparksmith"
+path = "src/main.rs"
+
 [lints]
 workspace = true
 

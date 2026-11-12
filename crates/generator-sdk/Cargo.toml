@@ -1,0 +1,24 @@
+[package]
+name = "pcbcraft-generator-sdk"
+description = "Toolkit for writing Pcbcraft generator modules: exports, parameters, drawing and land helpers, golden tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+# no_std + alloc: compiled into every generator module. Nothing here may
+# embed host paths, time or other build-machine state (reproducible modules).
+[dependencies]
+pcbcraft-generator-abi.workspace = true
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+# The request and response buffers between calls (MIT; already in the tree
+# through wasmi).
+spin = { version = "0.9", default-features = false, features = ["mutex", "spin_mutex"] }
+
+# The module's allocator: the one `std` uses on this target (MIT OR Apache-2.0).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dlmalloc = { version = "0.2", default-features = false, features = ["global"] }

@@ -10,6 +10,7 @@ mod chrome;
 mod command_dispatch;
 mod command_palette;
 mod key_reveal;
+mod list_prefs;
 mod live_mcp;
 mod open_timing;
 mod settings_window;
@@ -28,8 +29,8 @@ use crate::shell::Workspace;
 use crate::{part_editor, pcb_editor, schematic_editor, viewport};
 use pcbcraft_core::layout::fill::{FillCommand, RefillTarget, StoredFill};
 use pcbcraft_core::{Engine, Operation, format::EditorFile};
-use solidcraft_theme::{self as theme};
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
+use pcbcraft_ui::theme::{self as theme};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -98,6 +99,9 @@ pub struct App {
     /// The Browser's width as last dragged (kept per user in the
     /// settings); the layout clamps it to what the window fits.
     browser_width: f32,
+    /// The Parts and Vias band under the PCB canvas (⇧⌘L) and its height.
+    parts_band: bool,
+    parts_height: f32,
     /// "Update project copy" imported a revision at this engine revision;
     /// cancelling its review undoes that import (see `review_closed`).
     pending_import: Option<PendingImport>,
@@ -144,7 +148,7 @@ impl App {
         follow_system_theme(&cc.egui_ctx, true);
         // Solidcraft's icons and glyphs, which its UI kit draws only once
         // a host installs them (once per process).
-        solidcraft_ui_egui::icon_svg::install();
+        pcbcraft_ui::icon_svg::install();
         fonts::setup_bundled_fonts(&cc.egui_ctx);
         fonts::load_system_fonts_in_background(&cc.egui_ctx);
         let render_state = cc.wgpu_render_state.as_ref().ok_or("wgpu is required")?;
@@ -280,6 +284,8 @@ impl App {
             browser_component: None,
             browser_menu: Default::default(),
             browser_width,
+            parts_band: false,
+            parts_height: chrome::PARTS_HEIGHT,
             pending_import: None,
             closing: false,
             now: 0.0,
@@ -585,7 +591,7 @@ impl App {
     fn system_fonts(&mut self, ctx: &egui::Context) {
         if !self.system_fonts && fonts::system_fonts_ready() {
             self.system_fonts = true;
-            fonts::setup_fonts_without_waiting(ctx, "en", "");
+            fonts::setup_fonts_without_waiting(ctx, "en");
         }
     }
 
@@ -1022,7 +1028,7 @@ impl App {
             let why = if crate::open_documents::is_project(&path) {
                 "another project opened at the same time"
             } else {
-                "Pcbcraft opens .pcbcraft projects"
+                concat!(pcbcraft_core::product_name!(), " opens .pcbcraft projects")
             };
             self.say(
                 Level::Warning,
@@ -1162,7 +1168,8 @@ impl App {
         let pick = if self.workspace == Workspace::Part {
             // Component 3D shows every layer of its package.
             self.scene.viewport.set_layers(Default::default());
-            self.scene.highlight(&Default::default(), None);
+            self.scene
+                .highlight(&Default::default(), None, &Default::default());
             // A read-only library item builds from its scratch engine and
             // never sends an operation to the project.
             let preview = self.part.lend_preview();
@@ -1182,8 +1189,11 @@ impl App {
         } else {
             crate::part_editor::reset_model_view(&mut self.scene.viewport);
             self.scene.viewport.set_layers(self.pcb.layer_view());
-            self.scene
-                .highlight(&self.pcb.selected(), self.pcb.highlighted_net());
+            self.scene.highlight(
+                &self.pcb.selected(),
+                self.pcb.highlighted_net(),
+                &self.pcb.lit(),
+            );
             let pick = self.scene.viewport.show(ui, viewport::NavCaps::BOARD);
             // How to move the view; the Fit view button's hover help lists
             // every binding.
@@ -1191,7 +1201,7 @@ impl App {
                 crate::kit::canvas_hint(
                     &ui.painter_at(rect),
                     rect,
-                    solidcraft_theme::Tokens::get().space_16,
+                    pcbcraft_ui::theme::Tokens::get().space_16,
                     crate::navigation::hint_3d(),
                 );
             }
@@ -1414,6 +1424,7 @@ impl eframe::App for App {
         // The key reveal watches ⌘ and ⌥ before anyone takes a key; key
         // tips, while shown, take the keys themselves.
         self.reveal_input(&ctx);
+        self.list_prefs(&ctx);
         // A key being recorded in Settings reaches nothing else.
         self.record_key(&ctx);
         // The palette's keys come before any canvas sees them.
@@ -1434,6 +1445,7 @@ impl eframe::App for App {
         // must already hold the document the field committed to.
         self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.dispatch_keys(&ctx);
+        self.list_changes(&ctx);
         self.native_menu(&ctx);
         guard_close(&ctx, &mut self.files, self.closing);
         self.files.observe(&self.engine, ctx.input(|i| i.time));
@@ -1495,7 +1507,7 @@ fn updating_chip(
     badge: Option<egui::Rect>,
     failed: Option<&str>,
 ) {
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     let text = failed.unwrap_or("Updating");
     let right = badge.map_or(area.right(), |b| b.left());
     let width = if failed.is_some() {
@@ -1565,6 +1577,9 @@ mod dimension_list_tests;
 #[cfg(test)]
 #[path = "app/flow_tests.rs"]
 mod flow_tests;
+#[cfg(test)]
+#[path = "app/parts_band_tests.rs"]
+mod parts_band_tests;
 
 #[cfg(test)]
 #[path = "app/ax_harness.rs"]
@@ -1577,8 +1592,8 @@ mod ax_tests;
 // The font tests rely on macOS system fonts, so the module only exists there.
 #[cfg(all(test, target_os = "macos"))]
 mod font_tests {
-    use solidcraft_ui_egui::fonts;
-    use solidcraft_ui_egui::ui_kit::type_face;
+    use pcbcraft_ui::fonts;
+    use pcbcraft_ui::ui_kit::type_face;
 
     /// The bundled faces have no CJK glyphs; the system fallbacks the app
     /// installs once found do (macOS ships Hiragino), in every family a
@@ -1652,7 +1667,7 @@ mod font_tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(fonts::system_fonts_ready(), "the search finished");
-        fonts::setup_fonts_without_waiting(ctx, "en", "");
+        fonts::setup_fonts_without_waiting(ctx, "en");
     }
 }
 

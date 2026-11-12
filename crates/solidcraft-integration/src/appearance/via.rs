@@ -10,7 +10,7 @@ use crate::geom::prelude::*;
 use crate::geom::{Mesh, Vec3};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
-use crate::stack::{FINISH_MM, MASK_OVER_LAMINATE_MM, PROUD_MM};
+use crate::stack::PROUD_MM;
 use pcbcraft_core::{CopperLayer, Layer};
 
 /// The dome a tented side shows and the bore shadow of an open one.
@@ -62,7 +62,8 @@ pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) 
     // disc on it would share the part's underside seen up the drill.
     for side in [Layer::Top, Layer::Bottom].into_iter().filter(|s| open(*s)) {
         let copper = board.copper(side);
-        let (z0, z1) = board.span(side, copper + FINISH_MM / 2.0, copper + FINISH_MM);
+        let finish = board.stack.finish_mm();
+        let (z0, z1) = board.span(side, copper + finish / 2.0, copper + finish);
         push(
             out,
             Some(board),
@@ -99,7 +100,7 @@ fn tent_height(board: &Board, via: &ViaMark, side: Layer, r: f64) -> f64 {
         crown
     } else {
         // Ends just under the mask's top, so the dome rises out of it.
-        let foot = MASK_OVER_LAMINATE_MM - PROUD_MM;
+        let foot = board.stack.mask_laminate_mm() - PROUD_MM;
         let t = ((r - ring) / TENT_SKIRT_MM).clamp(0.0, 1.0);
         let ease = 0.5 + 0.5 * (std::f64::consts::PI * t).cos();
         foot + (crown - foot) * ease
@@ -260,6 +261,7 @@ mod tests {
             drill: 0.3,
             diameter: 0.6,
             tented,
+            mask_opening: 0.7,
         }
     }
 
@@ -291,7 +293,7 @@ mod tests {
             let h1 = tent_height(&board, &via(true), side, 0.25);
             assert!(h0 < h1 && (h1 - crown).abs() < 1e-12);
             // Its foot sinks into the flat mask.
-            assert!(tent_height(&board, &via(true), side, r) < MASK_OVER_LAMINATE_MM);
+            assert!(tent_height(&board, &via(true), side, r) < board.stack.mask_laminate_mm());
         }
         Ok(())
     }
@@ -323,10 +325,13 @@ mod tests {
         }
         // Tented on top only when the bottom has no mask.
         let half = Board {
-            stack: crate::stack::Stack::of(&pcbcraft_core::Stackup {
-                mask_bottom: false,
-                ..pcbcraft_core::Stackup::default()
-            }),
+            stack: crate::stack::Stack::of(
+                &pcbcraft_core::Stackup {
+                    mask_bottom: false,
+                    ..pcbcraft_core::Stackup::default()
+                },
+                board.fabrication.pad_finish,
+            ),
             ..board.clone()
         };
         let mut out = Vec::new();

@@ -848,7 +848,11 @@ impl Request {
             info::<part_files::CheckPartFileParams>(
                 "library.check_part_file",
                 "Evaluate a SolidCraft part file at given parameter values and report its convention check.",
-                "Evaluate a SolidCraft part file (path to a .solidcraft design, or builtin: esp32-s31-wroom-3) at literal values for some of its user parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report the convention check (docs/part-templates.md §11): parameters with their values, bodies with the Pcbcraft material each appearance names, marking surfaces from marking-<name> construction planes sized by marking_<name>_u/_v, the pin1 point, bounds, timing and findings (part_file.read, part_file.structure, part_file.value, part_file.feature, part_file.seating, part_file.material, part_file.marking blocking; part_file.origin, part_file.no_marking, part_file.import, part_file.slow advisory). Lists the material appearance names. Not a document change.",
+                concat!(
+                    "Evaluate a SolidCraft part file (path to a .solidcraft design, or builtin: esp32-s31-wroom-3) at literal values for some of its user parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report the convention check (docs/part-templates.md §11): parameters with their values, bodies with the ",
+                    pcbcraft_core::product_name!(),
+                    " material each appearance names, marking surfaces from marking-<name> construction planes sized by marking_<name>_u/_v, the pin1 point, bounds, timing and findings (part_file.read, part_file.structure, part_file.value, part_file.feature, part_file.seating, part_file.material, part_file.marking blocking; part_file.origin, part_file.no_marking, part_file.import, part_file.slow advisory). Lists the material appearance names. Not a document change."
+                ),
             ),
             info::<part_files::UsePartFileParams>(
                 "library.use_part_file",

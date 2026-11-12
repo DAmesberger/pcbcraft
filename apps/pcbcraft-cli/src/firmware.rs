@@ -4,6 +4,7 @@
 //! lists [`USAGE`].
 use super::{Result, execute, open, print};
 use pcbcraft_core::library::bundle::asset_hash;
+use pcbcraft_core::product::SHORT_NAME as CLI;
 use serde_json::json;
 use std::io::Read;
 
@@ -44,7 +45,7 @@ pub fn run(args: &[String]) -> Result<()> {
     let (project, designator, emitter, output, template) = match args {
         [p, d, e, o] => (p, d, e, o, None),
         [p, d, e, o, t] => (p, d, e, o, Some(t)),
-        _ => return Err(format!("usage: pcbcraft-cli {USAGE}").into()),
+        _ => return Err(format!("usage: {CLI} {USAGE}").into()),
     };
     let emitter = match (emitter.as_str(), template) {
         ("user", Some(t)) => template_emitter(t)?,

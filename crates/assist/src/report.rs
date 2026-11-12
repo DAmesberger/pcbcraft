@@ -231,7 +231,7 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
     if !facts.pins.is_empty() {
         let _ = writeln!(
             s,
-            "\n## Pins\n\nOne row per package pin as imported; check each against the datasheet in the Pins tab. `pcbcraft-cli review-diff A.pcbcraft B.pcbcraft` lists two runs' differences pin by pin.\n"
+            "\n## Pins\n\nOne row per package pin as imported; check each against the datasheet in the Pins tab. `sparksmith review-diff A.pcbcraft B.pcbcraft` lists two runs' differences pin by pin.\n"
         );
         s.push_str(&crate::pins::markdown(&facts.pins));
     }

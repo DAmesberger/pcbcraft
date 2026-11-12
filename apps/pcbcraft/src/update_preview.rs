@@ -25,7 +25,7 @@ use pcbcraft_core::{
         summarize,
     },
 };
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 use std::collections::BTreeSet;
 
 /// One shown title, at most this many characters.
@@ -1099,7 +1099,7 @@ mod tests {
         let caption =
             text_where(&output, |t| t.eq_ignore_ascii_case("Instances")).ok_or("no caption")?;
         let row = text_at(&output, &designator).ok_or("no row")?;
-        let t = solidcraft_theme::Tokens::get();
+        let t = pcbcraft_ui::theme::Tokens::get();
         assert!(
             row.x - caption.x < t.form_label_width / 2.0,
             "row text at {}, caption at {}",
@@ -1587,7 +1587,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let mut engine = with_unplaced()?;
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut review = UpdatePreview::default();
         review.begin(&engine, Change::SyncPcb {});
         let (output, _) = frame(&mut review, &engine, &ctx, vec![]);
@@ -1655,7 +1655,7 @@ mod tests {
             command: pcbcraft_core::schematic::SchematicCommand::Disconnect { wire },
         };
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut review = UpdatePreview::default();
         review.begin(&engine, change);
         let plan = review.plan.as_ref().ok_or("plan")?;
@@ -1697,7 +1697,7 @@ mod tests {
     fn a_refused_apply_stays_open_with_its_refusal() -> Result<(), Box<dyn std::error::Error>> {
         let engine = with_unplaced()?;
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut review = UpdatePreview::default();
         review.begin(&engine, Change::SyncPcb {});
         // The app refuses it in the same frame (as App::apply would, to the
@@ -1802,7 +1802,7 @@ mod tests {
             }),
         );
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut review = UpdatePreview::default();
         review.begin(&engine, Change::Schematic { command: drop });
         let (output, _) = frame(&mut review, &engine, &ctx, vec![]);

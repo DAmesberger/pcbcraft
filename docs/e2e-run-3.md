@@ -1,6 +1,6 @@
 # Third end-to-end run: USB-C sensor board to a fab-ready export
 
-On 6 November 2026 an agent designed a small USB-C powered sensor board in Pcbcraft's desktop app, working as a designer would, and took it through to production files. The aim was to reach Export with nothing waived, and to check save and reopen, the new features, edge cases and looks along the way. It follows the [first](e2e-ux-run.md) and [second](e2e-ux-run-2.md) UX runs, the [precision run](e2e-precision-run.md) and the [batch check](e2e-batch-check.md).
+On 6 November 2026 an agent designed a small USB-C powered sensor board in Sparksmith's desktop app, working as a designer would, and took it through to production files. The aim was to reach Export with nothing waived, and to check save and reopen, the new features, edge cases and looks along the way. It follows the [first](e2e-ux-run.md) and [second](e2e-ux-run-2.md) UX runs, the [precision run](e2e-precision-run.md) and the [batch check](e2e-batch-check.md).
 
 **Setup.** The build was 09556d6 (`component-model`), installed as `~/Applications/Pcbcraft.app` in the Herdr macOS VM: a 1920 × 1200 display at 1×, with a 1380 × 900 app window. It was driven through the guest CLI, because the guest MCP server was disconnected.
 
@@ -379,4 +379,4 @@ This is the first run to finish without waiving, and all of that run's blockers 
 
 ## Clean-up
 
-The app was quit twice (the board with no unsaved changes, then the throwaway project with Don't Save), and no Pcbcraft process remains in the guest. The board file, production folder and temporary files were deleted in the guest; the Recovery folder is empty. `results/run3.png` and the file copies in `results/` were deleted. The VM was left running. The board was not committed.
+The app was quit twice (the board with no unsaved changes, then the throwaway project with Don't Save), and no Sparksmith process remains in the guest. The board file, production folder and temporary files were deleted in the guest; the Recovery folder is empty. `results/run3.png` and the file copies in `results/` were deleted. The VM was left running. The board was not committed.

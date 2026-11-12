@@ -17,8 +17,8 @@ use crate::commands::{Chord, Command, Context, Registry};
 use crate::keymap::Unapplied;
 use crate::kit;
 use pcbcraft_io::settings::{HOLD_MS_RANGE, RevealSettings};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::{ui_kit, ui_kit::Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::{ui_kit, ui_kit::Button};
 
 const MAX_FILTER: usize = 128;
 
@@ -55,6 +55,10 @@ pub(crate) struct SettingsWindow {
     /// The Default fab profile choices, read from the profile library
     /// when the window opens.
     profiles: Option<Vec<(Option<String>, String)>>,
+    /// The Lists section's settings: the app sets them before
+    /// [`Self::show`] and keeps them when `lists_changed`.
+    pub lists: pcbcraft_io::settings::ListSettings,
+    pub lists_changed: bool,
 }
 
 impl SettingsWindow {
@@ -224,6 +228,9 @@ impl SettingsWindow {
                         "Require a reason to waive errors",
                         require_waiver_reason,
                     );
+                });
+                kit::section(ui, "settings-lists", "Lists", true, None, |ui| {
+                    self.lists_changed = lists_rows(ui, &mut self.lists);
                 });
                 kit::section(ui, "settings-reveal", "Key reveal", true, None, |ui| {
                     reveal_changed |= reveal_rows(ui, reveal);
@@ -506,6 +513,8 @@ impl super::App {
         let mut keyboard = self.sources.keyboard().clone();
         let mut require_reason = self.sources.require_waiver_reason();
         let mut default_profile = self.sources.default_rule_profile();
+        self.settings_window.lists = self.sources.list_settings().clone();
+        self.settings_window.lists_changed = false;
         let (action, reveal_changed, waiver_changed, profile_changed) = self.settings_window.show(
             ctx,
             &self.registry,
@@ -516,6 +525,11 @@ impl super::App {
         );
         if profile_changed {
             self.sources.set_default_rule_profile(default_profile);
+        }
+        if self.settings_window.lists_changed {
+            let lists = std::mem::take(&mut self.settings_window.lists);
+            self.sources.set_list_settings(lists);
+            self.list_prefs(ctx);
         }
         if reveal_changed && let Err(reason) = self.sources.set_keyboard(keyboard) {
             self.say(crate::kit::severity::Level::Warning, reason);
@@ -548,6 +562,32 @@ impl super::App {
             self.say(crate::kit::severity::Level::Warning, reason);
         }
     }
+}
+
+/// The Lists section: row density and motion. Returns whether either
+/// changed.
+fn lists_rows(ui: &mut egui::Ui, lists: &mut pcbcraft_io::settings::ListSettings) -> bool {
+    use pcbcraft_io::settings::ListDensity;
+    let mut changed = kit::choice_row(
+        ui,
+        "Rows",
+        &mut lists.density,
+        &[
+            (ListDensity::Compact, "Compact".to_owned()),
+            (ListDensity::Comfortable, "Comfortable".to_owned()),
+        ],
+    );
+    changed |= kit::choice_row(
+        ui,
+        "Motion",
+        &mut lists.reduced_motion,
+        &[
+            (None, "As the system".to_owned()),
+            (Some(false), "Full".to_owned()),
+            (Some(true), "Reduced".to_owned()),
+        ],
+    );
+    changed
 }
 
 /// The Default fab profile choices: none, then every readable profile of
@@ -609,7 +649,7 @@ mod tests {
             }
         }
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let registry = Registry::standard();
         let mut window = SettingsWindow::default();
         window.open();

@@ -138,19 +138,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
 dependencies = [
  "cfg-if",
- "cipher 0.4.4",
+ "cipher",
  "cpufeatures 0.2.17",
-]
-
-[[package]]
-name = "aes"
-version = "0.9.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc0fc36d7440d015b45468ba08a21e80e056ebbd014c611c6298bb7503e04bd1"
-dependencies = [
- "cipher 0.5.2",
- "cpubits",
- "cpufeatures 0.3.1",
 ]
 
 [[package]]
@@ -528,15 +517,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "block-padding"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "710f1dd022ef4e93f8a438b4ba958de7f64308434fa6a87104481645cc30068b"
-dependencies = [
- "hybrid-array",
-]
-
-[[package]]
 name = "block2"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -790,16 +770,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26b52a9543ae338f279b96b0b9fed9c8093744685043739079ce85cd58f289a6"
 dependencies = [
- "cipher 0.4.4",
-]
-
-[[package]]
-name = "cbc"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce2dc9ee5f88d11e0beb842c88b33c8a5cf0d1329c4b19494af42b07dbfe8896"
-dependencies = [
- "cipher 0.5.2",
+ "cipher",
 ]
 
 [[package]]
@@ -882,17 +853,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
  "crypto-common 0.1.7",
- "inout 0.1.4",
-]
-
-[[package]]
-name = "cipher"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c"
-dependencies = [
- "crypto-common 0.2.2",
- "inout 0.2.6",
+ "inout",
 ]
 
 [[package]]
@@ -923,12 +884,6 @@ checksum = "2ec7c5eb7a16992b1904d76c517d170ab353b0e0b3d5a0c81a8a0cd1037893cf"
 dependencies = [
  "bytemuck",
 ]
-
-[[package]]
-name = "color_quant"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
 name = "combine"
@@ -1074,12 +1029,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
-name = "cpubits"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15b85f9c39137c3a891689859392b1bd49812121d0d61c9caf00d46ed5ce06ae"
-
-[[package]]
 name = "cpufeatures"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1188,9 +1137,9 @@ version = "4.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "708b509edf7889e53d7efb0ffadd994cc6c2345ccb62f55cfd6b0682165e4fa6"
 dependencies = [
- "aes 0.8.4",
- "block-padding 0.3.3",
- "cbc 0.1.2",
+ "aes",
+ "block-padding",
+ "cbc",
  "dbus",
  "fastrand",
  "hkdf",
@@ -1267,6 +1216,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dlmalloc"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad5208a115eaba24916f7456929832e310a81518c641f93fee4f89aa93aa3675"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1299,16 +1259,7 @@ version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a8bfa975b1aec2145850fcaa1c6fe269a16578c44705a532ae3edc92b8881c7"
 dependencies = [
- "cipher 0.4.4",
-]
-
-[[package]]
-name = "ecb"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26f2a8b3e564eba0877223dc343703ad0385794e882e6d13f3a4dd5c6b1f41ac"
-dependencies = [
- "cipher 0.5.2",
+ "cipher",
 ]
 
 [[package]]
@@ -1887,16 +1838,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gif"
-version = "0.14.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
-dependencies = [
- "color_quant",
- "weezl 0.1.12",
-]
-
-[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2470,25 +2411,12 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
- "color_quant",
- "gif",
- "image-webp",
  "moxcms",
  "num-traits",
  "png",
  "tiff",
  "zune-core",
  "zune-jpeg",
-]
-
-[[package]]
-name = "image-webp"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
-dependencies = [
- "byteorder-lite",
- "quick-error",
 ]
 
 [[package]]
@@ -2515,18 +2443,8 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
 dependencies = [
- "block-padding 0.3.3",
+ "block-padding",
  "generic-array",
-]
-
-[[package]]
-name = "inout"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a580c13f0ffc335ef42dd3f6b1a41b726051c5e1656d9a3aa6fddb3c5dfbbf9"
-dependencies = [
- "block-padding 0.4.2",
- "hybrid-array",
 ]
 
 [[package]]
@@ -2686,6 +2604,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
+name = "leb128fmt"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
+
+[[package]]
 name = "libc"
 version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2779,17 +2703,17 @@ version = "0.42.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25aab26d99567469098e64a02f42679f8965c6401263eefa31d8f2dcc37a221c"
 dependencies = [
- "aes 0.8.4",
+ "aes",
  "bitflags 2.13.2",
- "cbc 0.1.2",
- "ecb 0.1.2",
+ "cbc",
+ "ecb",
  "encoding_rs",
  "flate2",
  "getrandom 0.4.3",
  "indexmap",
  "itoa",
  "log",
- "md-5 0.10.6",
+ "md-5",
  "nom",
  "rand 0.10.3",
  "rangemap",
@@ -2797,34 +2721,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.21",
  "ttf-parser",
- "weezl 0.1.12",
-]
-
-[[package]]
-name = "lopdf"
-version = "0.45.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfffda0fe1ab0157e1a13c14bebd3f28671f2fccb7922f0722ec53926e6922d3"
-dependencies = [
- "aes 0.9.4",
- "bitflags 2.13.2",
- "brotli-decompressor",
- "cbc 0.2.1",
- "ecb 0.2.1",
- "encoding_rs",
- "flate2",
- "getrandom 0.4.3",
- "indexmap",
- "itoa",
- "log",
- "md-5 0.11.0",
- "nom",
- "rand 0.10.3",
- "rangemap",
- "sha2 0.11.1",
- "stringprep",
- "thiserror 2.0.21",
- "weezl 0.2.1",
+ "weezl",
 ]
 
 [[package]]
@@ -2844,16 +2741,6 @@ checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
 dependencies = [
  "cfg-if",
  "digest 0.10.7",
-]
-
-[[package]]
-name = "md-5"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69b6441f590336821bb897fb28fc622898ccceb1d6cea3fde5ea86b090c4de98"
-dependencies = [
- "cfg-if",
- "digest 0.11.3",
 ]
 
 [[package]]
@@ -2889,12 +2776,6 @@ dependencies = [
  "cc",
  "walkdir",
 ]
-
-[[package]]
-name = "minisign-verify"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "871285dc19d8d0ebe0eef3d0e99a205f2a71363b122632cbbfa4a6c370a960ce"
 
 [[package]]
 name = "miniz_oxide"
@@ -3060,7 +2941,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b93853da6d84c2e3c7d730d6473e8817692dd89be387eb01b94d7f108ecb5b8c"
 dependencies = [
- "spin",
+ "spin 0.5.2",
 ]
 
 [[package]]
@@ -3634,12 +3515,12 @@ dependencies = [
  "pcbcraft-core",
  "pcbcraft-io",
  "pcbcraft-solidcraft",
+ "pcbcraft-ui",
  "pollster 0.4.0",
  "rfd",
  "serde_json",
- "solidcraft-theme",
- "solidcraft-ui-egui",
  "solidcraft-viewport-egui",
+ "solidcraft-viewport-gpu",
  "spade",
  "tempfile",
 ]
@@ -3699,6 +3580,7 @@ name = "pcbcraft-core"
 version = "0.1.0"
 dependencies = [
  "i_overlay",
+ "pcbcraft-fabcheck",
  "pcbcraft-units-derive",
  "qrcodegen",
  "rhai",
@@ -3712,6 +3594,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pcbcraft-fabcheck"
+version = "0.1.0"
+dependencies = [
+ "i_overlay",
+]
+
+[[package]]
 name = "pcbcraft-firmware"
 version = "0.1.0"
 dependencies = [
@@ -3720,6 +3609,52 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "pcbcraft-gen-chip"
+version = "0.1.0"
+dependencies = [
+ "pcbcraft-generator-sdk",
+]
+
+[[package]]
+name = "pcbcraft-generator-abi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "pcbcraft-generator-sdk"
+version = "0.1.0"
+dependencies = [
+ "dlmalloc",
+ "pcbcraft-generator-abi",
+ "serde",
+ "serde_json",
+ "spin 0.9.9",
+]
+
+[[package]]
+name = "pcbcraft-generators"
+version = "0.1.0"
+dependencies = [
+ "pcbcraft-generator-abi",
+ "serde_json",
+ "wasmi",
+ "wat",
+]
+
+[[package]]
+name = "pcbcraft-generators-probe"
+version = "0.1.0"
+dependencies = [
+ "pcbcraft-generator-abi",
+ "pcbcraft-generators",
 ]
 
 [[package]]
@@ -3735,6 +3670,17 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "zip",
+]
+
+[[package]]
+name = "pcbcraft-kicad"
+version = "0.1.0"
+dependencies = [
+ "i_overlay",
+ "pcbcraft-core",
+ "pcbcraft-fabcheck",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3760,6 +3706,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "pcbcraft-ui"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "egui",
+ "egui-wgpu",
+ "log",
+ "serde",
+ "serde_json",
+ "solidcore-record",
+ "solidcraft-color",
+ "solidcraft-geom",
+ "solidcraft-ui-registry",
+ "solidcraft-ui-text",
+ "solidcraft-viewport",
+ "solidcraft-viewport-egui",
+ "solidcraft-viewport-gpu",
+ "tiny-skia",
+ "toml",
+ "ttf-parser",
+ "web-time",
+]
+
+[[package]]
 name = "pcbcraft-units-derive"
 version = "0.1.0"
 dependencies = [
@@ -3779,7 +3749,7 @@ dependencies = [
  "encoding_rs",
  "euclid 0.20.14",
  "log",
- "lopdf 0.42.0",
+ "lopdf",
  "postscript",
  "type1-encoding-parser",
  "unicode-normalization",
@@ -4599,8 +4569,8 @@ version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4d35ad99a181be0a60ffcbe85d680d98f87bdc4d7644ade319b87076b9dbfd4"
 dependencies = [
- "aes 0.8.4",
- "cbc 0.1.2",
+ "aes",
+ "cbc",
  "futures-util",
  "generic-array",
  "hkdf",
@@ -5016,17 +4986,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solidcraft-control-egui"
-version = "0.40.0-rc.3"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=64bebfef0a77dab8c79666114c7601c9dda55d12#64bebfef0a77dab8c79666114c7601c9dda55d12"
-dependencies = [
- "egui",
- "image",
- "serde_json",
- "solidcraft-control",
-]
-
-[[package]]
 name = "solidcraft-derive"
 version = "0.40.0-rc.3"
 source = "git+https://github.com/DAmesberger/solidcraft.git?rev=64bebfef0a77dab8c79666114c7601c9dda55d12#64bebfef0a77dab8c79666114c7601c9dda55d12"
@@ -5097,26 +5056,6 @@ dependencies = [
  "solidcore-record",
  "solidcore-tess",
  "thiserror 2.0.21",
-]
-
-[[package]]
-name = "solidcraft-gpu"
-version = "0.40.0-rc.3"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=64bebfef0a77dab8c79666114c7601c9dda55d12#64bebfef0a77dab8c79666114c7601c9dda55d12"
-dependencies = [
- "log",
- "pollster 0.4.0",
- "robust",
- "serde",
- "solidcore-record",
- "solidcore-tess",
- "solidcraft-color",
- "solidcraft-geom",
- "solidcraft-render",
- "solidcraft-viewport",
- "solidcraft-viewport-gpu",
- "thiserror 2.0.21",
- "wgpu",
 ]
 
 [[package]]
@@ -5196,7 +5135,7 @@ dependencies = [
  "solidcraft-viewport",
  "sysinfo",
  "web-time",
- "weezl 0.1.12",
+ "weezl",
 ]
 
 [[package]]
@@ -5228,14 +5167,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "solidcraft-space-mouse"
-version = "0.40.0-rc.3"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=64bebfef0a77dab8c79666114c7601c9dda55d12#64bebfef0a77dab8c79666114c7601c9dda55d12"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "solidcraft-step"
 version = "0.40.0-rc.3"
 source = "git+https://github.com/DAmesberger/solidcraft.git?rev=64bebfef0a77dab8c79666114c7601c9dda55d12#64bebfef0a77dab8c79666114c7601c9dda55d12"
@@ -5244,79 +5175,6 @@ dependencies = [
  "solidcore-record",
  "solidcraft-geom",
  "solidcraft-profile",
-]
-
-[[package]]
-name = "solidcraft-theme"
-version = "0.40.0-rc.3"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=64bebfef0a77dab8c79666114c7601c9dda55d12#64bebfef0a77dab8c79666114c7601c9dda55d12"
-dependencies = [
- "egui",
- "serde",
- "serde_json",
- "solidcraft-color",
-]
-
-[[package]]
-name = "solidcraft-ui-egui"
-version = "0.40.0-rc.3"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=64bebfef0a77dab8c79666114c7601c9dda55d12#64bebfef0a77dab8c79666114c7601c9dda55d12"
-dependencies = [
- "arboard",
- "egui",
- "egui-wgpu",
- "image",
- "log",
- "lopdf 0.45.0",
- "minisign-verify",
- "nix 0.31.3",
- "semver",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "solidcore-record",
- "solidcore-tess",
- "solidcraft-color",
- "solidcraft-control",
- "solidcraft-control-egui",
- "solidcraft-engine",
- "solidcraft-gpu",
- "solidcraft-space-mouse",
- "solidcraft-theme",
- "solidcraft-ui-kit",
- "solidcraft-ui-registry",
- "solidcraft-ui-text",
- "solidcraft-viewport",
- "solidcraft-viewport-egui",
- "solidcraft-viewport-gpu",
- "tiny-skia",
- "toml",
- "ttf-parser",
- "web-time",
- "winreg",
- "zip",
-]
-
-[[package]]
-name = "solidcraft-ui-kit"
-version = "0.40.0-rc.3"
-source = "git+https://github.com/DAmesberger/solidcraft.git?rev=64bebfef0a77dab8c79666114c7601c9dda55d12#64bebfef0a77dab8c79666114c7601c9dda55d12"
-dependencies = [
- "arboard",
- "egui",
- "egui-wgpu",
- "log",
- "muda",
- "serde",
- "serde_json",
- "solidcraft-color",
- "solidcraft-theme",
- "solidcraft-ui-registry",
- "solidcraft-ui-text",
- "solidcraft-viewport-egui",
- "solidcraft-viewport-gpu",
- "tiny-skia",
- "web-time",
 ]
 
 [[package]]
@@ -5402,6 +5260,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
+name = "spin"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+
+[[package]]
 name = "spirv"
 version = "0.4.0+sdk-1.4.341.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5427,6 +5291,16 @@ name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
+
+[[package]]
+name = "string-interner"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0"
+dependencies = [
+ "hashbrown 0.15.5",
+ "serde",
+]
 
 [[package]]
 name = "stringprep"
@@ -5582,7 +5456,7 @@ dependencies = [
  "flate2",
  "half",
  "quick-error",
- "weezl 0.1.12",
+ "weezl",
  "zune-jpeg",
 ]
 
@@ -5636,6 +5510,7 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
+ "png",
  "tiny-skia-path",
 ]
 
@@ -6174,6 +6049,99 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f692aa943ccd88363733b77063f32cfed5bc6cbea8e6e8b251b302f881606fe"
 
 [[package]]
+name = "wasm-encoder"
+version = "0.263.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b883a26aea02eaabe2d2c3fba7eb039ef5cdcb5d5201ae5551e73d5e251a81f"
+dependencies = [
+ "leb128fmt",
+ "wasmparser 0.263.0",
+]
+
+[[package]]
+name = "wasmi"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78693fcdd618e0fc34af59c6b8efa9ac5d58c68df940beff4bedddb6acfe7c27"
+dependencies = [
+ "spin 0.9.9",
+ "wasmi_collections",
+ "wasmi_core",
+ "wasmi_ir",
+ "wasmparser 0.228.0",
+]
+
+[[package]]
+name = "wasmi_collections"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a8be2aa467cf2d29e96ff759472c36eeb44a3c81c67fc9cb76c9a24c519c557"
+dependencies = [
+ "string-interner",
+]
+
+[[package]]
+name = "wasmi_core"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69372d5fda3ea3d1e0aa6603c7888110e0187e88ea17cd8fc2e2df0a0e1f37fa"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "wasmi_ir"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f17b774caa13c618c7244f1ee51fe23c5e7b8538a471fa46d9949779758aed6"
+dependencies = [
+ "wasmi_core",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.228.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4abf1132c1fdf747d56bbc1bb52152400c70f336870f968b85e89ea422198ae3"
+dependencies = [
+ "bitflags 2.13.2",
+ "indexmap",
+]
+
+[[package]]
+name = "wasmparser"
+version = "0.263.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f5fa0a054ae153606df820eb0a84213e28cda41bbe04ba2628e71b6ba100fcb"
+dependencies = [
+ "bitflags 2.13.2",
+ "indexmap",
+ "semver",
+]
+
+[[package]]
+name = "wast"
+version = "263.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69d90bcf581b501aa1c358bc5dc0faa979cd375796908860ebcb6d1d70b907c7"
+dependencies = [
+ "bumpalo",
+ "leb128fmt",
+ "memchr",
+ "unicode-width",
+ "wasm-encoder",
+]
+
+[[package]]
+name = "wat"
+version = "1.263.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbc9c5aca783b3f1838be89f3f9937c528b90ec5faa6fb62d809726c16a7d8f7"
+dependencies = [
+ "wast",
+]
+
+[[package]]
 name = "wayland-backend"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6316,12 +6284,6 @@ name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
-
-[[package]]
-name = "weezl"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4ca08e5ef825b65b056d9efbd95c8750683f0a6d0466d02e96dc2e4e360f3d2"
 
 [[package]]
 name = "wgpu"
@@ -6872,16 +6834,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "winreg"
-version = "0.56.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
-dependencies = [
- "cfg-if",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6989,10 +6941,13 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "pcbcraft-core",
+ "pcbcraft-fabcheck",
  "pcbcraft-io",
+ "pcbcraft-kicad",
  "pcbcraft-solidcraft",
  "proc-macro2",
  "serde_json",
+ "sha2 0.10.9",
  "syn 2.0.119",
  "zip",
 ]

@@ -13,8 +13,8 @@ use crate::kit;
 use pcbcraft_core::library::footprint_source::{
     Expr, FootprintEdit, FootprintParam, ParamName, ParamUnit, package_values,
 };
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 
 /// The panel's text buffers, rebuilt from the rows whenever the source
 /// changes; a refused edit keeps its text.

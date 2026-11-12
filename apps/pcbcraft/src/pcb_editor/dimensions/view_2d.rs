@@ -35,9 +35,9 @@ use pcbcraft_core::library::footprint_source::SketchCurveId;
 use pcbcraft_core::model::board::ConstraintTarget;
 use pcbcraft_core::model::dimension::{BoardRef, BoxSide, FeatureRef, PadPoint};
 use pcbcraft_core::{Engine, Id, Operation, Project};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::menu::menu_frame;
-use solidcraft_ui_egui::ui_kit::{Container, Surface as Panel};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::menu::menu_frame;
+use pcbcraft_ui::ui_kit::{Container, Surface as Panel};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 

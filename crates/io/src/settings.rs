@@ -42,7 +42,15 @@ pub const CONFIG_VAR: &str = "PCBCRAFT_CONFIG_DIR";
 pub const CACHE_VAR: &str = "PCBCRAFT_CACHE_DIR";
 /// Overrides the recovery directory (tests, sandboxes).
 pub const RECOVERY_VAR: &str = "PCBCRAFT_RECOVERY_DIR";
-const APP_DIR: &str = "pcbcraft";
+/// The per-user folder name (config, cache, Linux state): the product's
+/// short name.
+const APP_DIR: &str = pcbcraft_core::product::SHORT_NAME;
+/// The recovery folder's parent on macOS and Windows: the product name.
+const APP_NAME: &str = pcbcraft_core::product::NAME;
+/// The folder names before the rename (docs/rename-phase-b.md), read only by
+/// [`UserDirs::adopt_former`].
+const FORMER_APP_DIR: &str = "pcbcraft";
+const FORMER_APP_NAME: &str = "Pcbcraft";
 
 /// One configured library folder.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -99,6 +107,109 @@ pub struct UserSettings {
     /// filter), as last set; every kind by default.
     #[serde(default, skip_serializing_if = "SelectionFilter::is_default")]
     pub selection_filter: SelectionFilter,
+    /// Row density, reduced motion and saved list filters.
+    #[serde(default, skip_serializing_if = "ListSettings::is_default")]
+    pub lists: ListSettings,
+}
+
+/// Saved list filters kept.
+pub const MAX_SAVED_FILTERS: usize = 64;
+/// Bytes of a saved filter's list name.
+pub const MAX_FILTER_LIST: usize = 64;
+/// Bytes of a saved filter's query: the catalog query's own bound.
+pub const MAX_FILTER_QUERY: usize = pcbcraft_core::catalog::MAX_QUERY;
+
+/// How tall list rows are.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ListDensity {
+    #[default]
+    Compact,
+    /// Six points taller rows.
+    Comfortable,
+}
+
+/// One saved filter of one list: a query the list's filter bar offers
+/// as a named chip.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SavedFilter {
+    /// The list's stable name (`pcb.parts`, `issues`).
+    pub list: String,
+    pub query: String,
+}
+
+/// The lists' settings (Settings › Lists).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ListSettings {
+    #[serde(default)]
+    pub density: ListDensity,
+    /// `None` follows the system's Reduce motion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reduced_motion: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub saved_filters: Vec<SavedFilter>,
+}
+
+impl ListSettings {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Bounds and duplicates.
+    pub fn check(&self) -> Result<()> {
+        if self.saved_filters.len() > MAX_SAVED_FILTERS {
+            return Err(Error::Invalid(format!(
+                "at most {MAX_SAVED_FILTERS} saved filters"
+            )));
+        }
+        let mut seen = BTreeSet::new();
+        for f in &self.saved_filters {
+            let fits = |t: &str, max: usize| {
+                !t.trim().is_empty() && t.len() <= max && !t.chars().any(char::is_control)
+            };
+            if !fits(&f.list, MAX_FILTER_LIST) || !fits(&f.query, MAX_FILTER_QUERY) {
+                return Err(Error::Invalid(format!(
+                    "a saved filter needs a list name of at most {MAX_FILTER_LIST} bytes and a \
+                     query of at most {MAX_FILTER_QUERY}, printable"
+                )));
+            }
+            if !seen.insert((&f.list, &f.query)) {
+                return Err(Error::Invalid(format!(
+                    "the saved filter ‘{}’ of {} is listed twice",
+                    f.query, f.list
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Save `query` for `list`, at the end; refused past the bound. Saving
+    /// one already saved changes nothing.
+    pub fn save_filter(&mut self, list: &str, query: &str) -> Result<()> {
+        let query = query.trim();
+        if self
+            .saved_filters
+            .iter()
+            .any(|f| f.list == list && f.query == query)
+        {
+            return Ok(());
+        }
+        let mut next = self.clone();
+        next.saved_filters.push(SavedFilter {
+            list: list.to_owned(),
+            query: query.to_owned(),
+        });
+        next.check()?;
+        *self = next;
+        Ok(())
+    }
+
+    pub fn remove_filter(&mut self, list: &str, query: &str) {
+        self.saved_filters
+            .retain(|f| !(f.list == list && f.query == query));
+    }
 }
 
 /// The board selection filter: whether a click, the rectangle and ⌘A may
@@ -155,6 +266,7 @@ impl Default for UserSettings {
             projects: Vec::new(),
             default_rule_profile: None,
             selection_filter: SelectionFilter::default(),
+            lists: ListSettings::default(),
         }
     }
 }
@@ -309,7 +421,7 @@ pub fn write_keymap(path: &Path, bindings: &[KeyBinding]) -> Result<()> {
 
 /// Where per-user files live: `PCBCRAFT_CONFIG_DIR` / `PCBCRAFT_CACHE_DIR`
 /// when set (tests, sandboxes), else the platform's config and cache
-/// directories under `pcbcraft`.
+/// directories under the product's short name (`sparksmith`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserDirs {
     pub config: PathBuf,
@@ -318,7 +430,7 @@ pub struct UserDirs {
 
 impl UserDirs {
     /// `PCBCRAFT_CONFIG_DIR` / `PCBCRAFT_CACHE_DIR` when set, else the
-    /// platform directories under `pcbcraft`.
+    /// platform directories under the product's short name.
     pub fn from_env() -> Result<Self> {
         Self::from_vars(|name| std::env::var_os(name))
     }
@@ -327,38 +439,14 @@ impl UserDirs {
     /// directory must be absolute.
     pub fn from_vars(var: impl Fn(&str) -> Option<OsString>) -> Result<Self> {
         let set = |name: &str| var(name).filter(|v| !v.is_empty()).map(PathBuf::from);
-        let home = set("HOME");
-        let platform = |kind: &str| -> Option<PathBuf> {
-            if cfg!(target_os = "macos") {
-                let base = home.as_ref()?.join("Library");
-                Some(match kind {
-                    "config" => base.join("Application Support").join(APP_DIR),
-                    _ => base.join("Caches").join(APP_DIR),
-                })
-            } else if cfg!(windows) {
-                Some(match kind {
-                    "config" => set("APPDATA")?.join(APP_DIR),
-                    _ => set("LOCALAPPDATA")?.join(APP_DIR).join("cache"),
-                })
-            } else {
-                Some(match kind {
-                    "config" => set("XDG_CONFIG_HOME")
-                        .filter(|p| p.is_absolute())
-                        .or_else(|| home.as_ref().map(|h| h.join(".config")))?
-                        .join(APP_DIR),
-                    _ => set("XDG_CACHE_HOME")
-                        .filter(|p| p.is_absolute())
-                        .or_else(|| home.as_ref().map(|h| h.join(".cache")))?
-                        .join(APP_DIR),
-                })
-            }
-        };
         let pick = |variable: &str, kind: &str| -> Result<PathBuf> {
-            let path = set(variable).or_else(|| platform(kind)).ok_or_else(|| {
-                Error::Invalid(format!(
-                    "no {kind} directory: set {variable} or the platform's home directory"
-                ))
-            })?;
+            let path = set(variable)
+                .or_else(|| platform_dir(&var, kind, APP_DIR))
+                .ok_or_else(|| {
+                    Error::Invalid(format!(
+                        "no {kind} directory: set {variable} or the platform's home directory"
+                    ))
+                })?;
             if !path.is_absolute() || path.as_os_str().len() > MAX_PATH {
                 return Err(Error::Invalid(format!(
                     "the {kind} directory {} must be an absolute path of at most {MAX_PATH} bytes",
@@ -379,8 +467,8 @@ impl UserDirs {
 
     /// Where crash-recovery snapshots live: `PCBCRAFT_RECOVERY_DIR` when
     /// set, else the platform's state directory (`~/Library/Application
-    /// Support/Pcbcraft/Recovery`, `%LOCALAPPDATA%\Pcbcraft\Recovery`,
-    /// `$XDG_STATE_HOME/pcbcraft/recovery` or `~/.local/state/pcbcraft/recovery`).
+    /// Support/Sparksmith/Recovery`, `%LOCALAPPDATA%\Sparksmith\Recovery`,
+    /// `$XDG_STATE_HOME/sparksmith/recovery` or `~/.local/state/sparksmith/recovery`).
     /// Never a temporary or the current directory: without an absolute home
     /// this is an error, and the caller says recovery is unavailable.
     pub fn recovery_from_env() -> Result<PathBuf> {
@@ -390,24 +478,7 @@ impl UserDirs {
     /// [`UserDirs::recovery_from_env`] over any variable lookup (tests).
     pub fn recovery_from_vars(var: impl Fn(&str) -> Option<OsString>) -> Result<PathBuf> {
         let set = |name: &str| var(name).filter(|v| !v.is_empty()).map(PathBuf::from);
-        let absolute = |p: PathBuf| Some(p).filter(|p| p.is_absolute());
-        let home = || absolute(set("HOME")?);
-        let path = set(RECOVERY_VAR).or_else(|| {
-            if cfg!(target_os = "macos") {
-                Some(home()?.join("Library/Application Support/Pcbcraft/Recovery"))
-            } else if cfg!(windows) {
-                Some(
-                    absolute(set("LOCALAPPDATA")?)?
-                        .join("Pcbcraft")
-                        .join("Recovery"),
-                )
-            } else {
-                let state = set("XDG_STATE_HOME")
-                    .and_then(absolute)
-                    .or_else(|| Some(home()?.join(".local/state")))?;
-                Some(state.join("pcbcraft/recovery"))
-            }
-        });
+        let path = set(RECOVERY_VAR).or_else(|| recovery_dir(&var, APP_NAME, APP_DIR));
         let path = path.ok_or_else(|| {
             Error::Invalid(format!(
                 "no recovery directory: set {RECOVERY_VAR} or the platform's home directory"
@@ -420,6 +491,136 @@ impl UserDirs {
             )));
         }
         Ok(path)
+    }
+
+    /// Once, on the first launch after the rename from Pcbcraft: copy the
+    /// config folder and the recovery folder kept under the former name to
+    /// the current ones ([`UserDirs::adopt_former_from_vars`] over the
+    /// process environment).
+    pub fn adopt_former() -> Vec<Result<Adopted>> {
+        Self::adopt_former_from_vars(|name| std::env::var_os(name))
+    }
+
+    /// [`UserDirs::adopt_former`] over any variable lookup (tests). A folder
+    /// is copied only when no override variable names it, the current
+    /// folder does not exist and the former one does; so it happens once,
+    /// and a fresh install or an already adopted folder is left alone. The
+    /// former folder is never changed or removed. The copy is made in a
+    /// temporary sibling and renamed into place, so an interrupted copy
+    /// leaves no partial folder and is tried again on the next launch. The
+    /// cache is not copied: it is rebuilt from the library folders.
+    pub fn adopt_former_from_vars(var: impl Fn(&str) -> Option<OsString>) -> Vec<Result<Adopted>> {
+        let set = |name: &str| var(name).filter(|v| !v.is_empty());
+        let mut pairs = Vec::new();
+        if set(CONFIG_VAR).is_none() {
+            pairs.push((
+                platform_dir(&var, "config", FORMER_APP_DIR),
+                platform_dir(&var, "config", APP_DIR),
+            ));
+        }
+        if set(RECOVERY_VAR).is_none() {
+            pairs.push((
+                recovery_dir(&var, FORMER_APP_NAME, FORMER_APP_DIR),
+                recovery_dir(&var, APP_NAME, APP_DIR),
+            ));
+        }
+        // In order: on a case-insensitive macOS volume the recovery folder
+        // sits inside the config folder, so copying the config folder first
+        // also brings the recovery folder, which is then left alone.
+        pairs
+            .into_iter()
+            .filter_map(|pair| match pair {
+                (Some(from), Some(to)) => crate::former_name::adopt(&from, &to).transpose(),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// [`UserDirs::adopt_former`] at the start of the app or the CLI, each
+/// outcome a line on stderr. A failed copy leaves the former folder as it
+/// is and is tried again on the next start.
+pub fn adopt_former_folders() {
+    let app = pcbcraft_core::product::SHORT_NAME;
+    for adopted in UserDirs::adopt_former() {
+        match adopted {
+            Ok(Adopted { from, to }) => eprintln!(
+                "{app}: copied {} to {}; the former folder is kept",
+                from.display(),
+                to.display()
+            ),
+            Err(error) => {
+                eprintln!("{app}: settings from the former name were not copied: {error}")
+            }
+        }
+    }
+}
+
+/// A folder copied from its former name by [`UserDirs::adopt_former`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Adopted {
+    pub from: PathBuf,
+    pub to: PathBuf,
+}
+
+/// The platform's config or cache folder named `app_dir`; `None` without
+/// the home or platform variables it is built from.
+fn platform_dir(
+    var: &impl Fn(&str) -> Option<OsString>,
+    kind: &str,
+    app_dir: &str,
+) -> Option<PathBuf> {
+    let set = |name: &str| var(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let home = set("HOME");
+    if cfg!(target_os = "macos") {
+        let base = home.as_ref()?.join("Library");
+        Some(match kind {
+            "config" => base.join("Application Support").join(app_dir),
+            _ => base.join("Caches").join(app_dir),
+        })
+    } else if cfg!(windows) {
+        Some(match kind {
+            "config" => set("APPDATA")?.join(app_dir),
+            _ => set("LOCALAPPDATA")?.join(app_dir).join("cache"),
+        })
+    } else {
+        Some(match kind {
+            "config" => set("XDG_CONFIG_HOME")
+                .filter(|p| p.is_absolute())
+                .or_else(|| home.as_ref().map(|h| h.join(".config")))?
+                .join(app_dir),
+            _ => set("XDG_CACHE_HOME")
+                .filter(|p| p.is_absolute())
+                .or_else(|| home.as_ref().map(|h| h.join(".cache")))?
+                .join(app_dir),
+        })
+    }
+}
+
+/// The platform's recovery folder for an app called `name` (`short` on
+/// Linux); `None` without an absolute home or platform variable.
+fn recovery_dir(
+    var: &impl Fn(&str) -> Option<OsString>,
+    name: &str,
+    short: &str,
+) -> Option<PathBuf> {
+    let set = |v: &str| var(v).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let absolute = |p: PathBuf| Some(p).filter(|p| p.is_absolute());
+    let home = || absolute(set("HOME")?);
+    if cfg!(target_os = "macos") {
+        Some(
+            home()?
+                .join("Library/Application Support")
+                .join(name)
+                .join("Recovery"),
+        )
+    } else if cfg!(windows) {
+        Some(absolute(set("LOCALAPPDATA")?)?.join(name).join("Recovery"))
+    } else {
+        let state = set("XDG_STATE_HOME")
+            .and_then(absolute)
+            .or_else(|| Some(home()?.join(".local/state")))?;
+        Some(state.join(short).join("recovery"))
     }
 }
 
@@ -624,7 +825,7 @@ impl UserSettings {
                 "a favourite or recent entry is listed twice".into(),
             ));
         }
-        Ok(())
+        self.lists.check()
     }
 }
 
@@ -663,6 +864,48 @@ mod tests {
         } else {
             path.to_owned()
         }
+    }
+
+    /// Density, reduced motion and saved filters round-trip; saved filters
+    /// are bounded, printable and unique, and saving one twice keeps one.
+    #[test]
+    fn list_settings_round_trip_and_bound_saved_filters() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(SETTINGS_FILE);
+        let mut settings = UserSettings::default();
+        settings.lists.density = ListDensity::Comfortable;
+        settings.lists.reduced_motion = Some(true);
+        settings
+            .lists
+            .save_filter("pcb.parts", "side:bottom pkg:0603")?;
+        settings
+            .lists
+            .save_filter("pcb.parts", "side:bottom pkg:0603")?;
+        settings.lists.save_filter("issues", "clearance")?;
+        assert_eq!(settings.lists.saved_filters.len(), 2);
+        write_settings(&path, &settings)?;
+        assert_eq!(read_settings(&path)?, settings);
+        settings.lists.remove_filter("issues", "clearance");
+        assert_eq!(settings.lists.saved_filters.len(), 1);
+        for (list, query) in [("", "x"), ("pcb.parts", " "), ("pcb.parts", "a\u{7}")] {
+            let mut bad = settings.lists.clone();
+            assert!(bad.save_filter(list, query).is_err(), "{list:?} {query:?}");
+            assert_eq!(bad, settings.lists, "a refused save changes nothing");
+        }
+        let long = "x".repeat(MAX_FILTER_QUERY + 1);
+        assert!(
+            settings
+                .lists
+                .clone()
+                .save_filter("pcb.parts", &long)
+                .is_err()
+        );
+        let mut full = ListSettings::default();
+        for i in 0..MAX_SAVED_FILTERS {
+            full.save_filter("pcb.parts", &format!("x>{i}"))?;
+        }
+        assert!(full.save_filter("pcb.parts", "y>1").is_err());
+        Ok(())
     }
 
     #[test]
@@ -853,26 +1096,26 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert_eq!(
                 platform.config,
-                PathBuf::from("/home/someone/Library/Application Support/pcbcraft")
+                PathBuf::from("/home/someone/Library/Application Support/sparksmith")
             );
             assert_eq!(
                 platform.cache,
-                PathBuf::from("/home/someone/Library/Caches/pcbcraft")
+                PathBuf::from("/home/someone/Library/Caches/sparksmith")
             );
         } else if cfg!(unix) {
             assert_eq!(
                 platform.config,
-                PathBuf::from("/home/someone/.config/pcbcraft")
+                PathBuf::from("/home/someone/.config/sparksmith")
             );
             assert_eq!(
                 platform.cache,
-                PathBuf::from("/home/someone/.cache/pcbcraft")
+                PathBuf::from("/home/someone/.cache/sparksmith")
             );
         } else if cfg!(windows) {
-            assert_eq!(platform.config, PathBuf::from(&appdata).join("pcbcraft"));
+            assert_eq!(platform.config, PathBuf::from(&appdata).join("sparksmith"));
             assert_eq!(
                 platform.cache,
-                PathBuf::from(&local).join("pcbcraft").join("cache")
+                PathBuf::from(&local).join("sparksmith").join("cache")
             );
         }
         if !cfg!(windows) {
@@ -1081,22 +1324,22 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert_eq!(
                 UserDirs::recovery_from_vars(vars(&[("HOME", "/h")]))?,
-                PathBuf::from("/h/Library/Application Support/Pcbcraft/Recovery")
+                PathBuf::from("/h/Library/Application Support/Sparksmith/Recovery")
             );
         } else if cfg!(windows) {
             assert_eq!(
                 UserDirs::recovery_from_vars(vars(&[("LOCALAPPDATA", &local)]))?,
-                PathBuf::from(&local).join("Pcbcraft").join("Recovery")
+                PathBuf::from(&local).join("Sparksmith").join("Recovery")
             );
             assert!(UserDirs::recovery_from_vars(vars(&[("LOCALAPPDATA", "rel")])).is_err());
         } else {
             assert_eq!(
                 UserDirs::recovery_from_vars(vars(&[("HOME", "/h")]))?,
-                PathBuf::from("/h/.local/state/pcbcraft/recovery")
+                PathBuf::from("/h/.local/state/sparksmith/recovery")
             );
             assert_eq!(
                 UserDirs::recovery_from_vars(vars(&[("HOME", "/h"), ("XDG_STATE_HOME", "s")]))?,
-                PathBuf::from("/h/.local/state/pcbcraft/recovery"),
+                PathBuf::from("/h/.local/state/sparksmith/recovery"),
                 "a relative XDG_STATE_HOME is ignored"
             );
         }

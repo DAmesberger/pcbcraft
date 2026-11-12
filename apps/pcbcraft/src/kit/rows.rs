@@ -15,11 +15,11 @@
 use super::severity::{Level, severity_glyph};
 use super::text;
 use egui::{Align, Color32, FontId, Layout, Rect, Response, Sense, Ui, UiBuilder, pos2, vec2};
-use solidcraft_theme::Tokens;
 #[cfg(test)]
-use solidcraft_ui_egui::fonts;
-use solidcraft_ui_egui::ui_kit;
-use solidcraft_ui_egui::ui_kit::type_face;
+use pcbcraft_ui::fonts;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit;
+use pcbcraft_ui::ui_kit::type_face;
 
 /// Rows a list shows before it is bounded with "Show all".
 pub const LIST_MAX_ROWS: usize = 8;
@@ -589,6 +589,10 @@ pub fn field_error(ui: &mut Ui, field: &Response, message: &str, not_stored: boo
 /// it, wrapped, so a refusal that names parts and distances is read in
 /// full. Call it right after the field's row; it shows until the field is
 /// edited again or the document changes.
+#[allow(
+    dead_code,
+    reason = "Board parameters show refusals through kit::list; other cards may again"
+)]
 pub fn field_refused(ui: &mut Ui, field: &Response, message: &str) -> Response {
     let t = Tokens::get();
     let size = t.font_small;

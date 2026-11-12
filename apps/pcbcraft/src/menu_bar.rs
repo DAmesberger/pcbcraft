@@ -72,7 +72,7 @@ pub const APP: &[Entry] = &[
     Entry::System(System::HideOthers),
     Entry::System(System::ShowAll),
     Sep,
-    C("app.quit", "Quit Pcbcraft"),
+    C("app.quit", concat!("Quit ", pcbcraft_core::product_name!())),
 ];
 
 pub const FILE: &[Entry] = &[
@@ -142,7 +142,7 @@ pub const HELP: &[Entry] = &[
 
 /// The macOS menu bar, left to right.
 pub const BAR: &[(&str, &[Entry])] = &[
-    ("Pcbcraft", APP),
+    (pcbcraft_core::product::NAME, APP),
     ("File", FILE),
     ("Edit", EDIT),
     ("View", VIEW),
@@ -385,8 +385,8 @@ pub const MENU_WIDTH: f32 = 250.0;
 /// the right, thin separators between groups, a disabled row dimmed.
 /// Returns the command of the row clicked.
 pub fn show_rows(ui: &mut egui::Ui, rows: &[Option<Row>]) -> Option<&'static str> {
-    use solidcraft_ui_egui::ui_kit::Item;
-    use solidcraft_ui_egui::ui_kit::menu::list_row;
+    use pcbcraft_ui::ui_kit::Item;
+    use pcbcraft_ui::ui_kit::menu::list_row;
     ui.set_width(MENU_WIDTH);
     ui.spacing_mut().item_spacing.y = 0.0;
     let mut chosen = None;

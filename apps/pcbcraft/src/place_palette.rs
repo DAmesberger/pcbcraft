@@ -46,8 +46,8 @@ use pcbcraft_core::library::templates::generic::GenericState;
 use pcbcraft_core::{
     ComponentRef, DefinitionId, DefinitionKind, Engine, Id, PartRef, Query, QueryResult, Revision,
 };
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::collections::BTreeMap;
 
 /// Rows one search asks for.
@@ -2023,7 +2023,7 @@ mod tests {
     fn choose_part_is_a_docked_dialog_that_returns_the_highlighted_part()
     -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut engine = Engine::demo()?;
         let part = crate::resolve_parts::demo_part(&mut engine, "EX-R0603-10K0-F")?;
         let QueryResult::Search(mut report) = engine.query(Query::Search {
@@ -2148,7 +2148,7 @@ mod tests {
     fn choose_assigns_through_the_engine_and_closes_with_a_toast()
     -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut engine = Engine::demo()?;
         let part = crate::resolve_parts::demo_part(&mut engine, "EX-R0603-10K0-F")?;
         let r1 = engine
@@ -2250,7 +2250,7 @@ mod tests {
     fn a_part_for_a_newer_revision_reviews_an_update_and_parts_are_not_placed()
     -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut engine = Engine::demo()?;
         let part = crate::resolve_parts::demo_part(&mut engine, "EX-R0603-10K0-F")?;
         let QueryResult::Search(mut report) = engine.query(Query::Search {
@@ -2461,7 +2461,7 @@ mod tests {
     fn folder_rows_place_from_the_library_and_offer_the_other_revision_choice()
     -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let library = pcbcraft_core::ids::LibraryId(0xabc);
         let folder = folder_catalog(library, "Team parts", 2)?;

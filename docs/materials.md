@@ -1,6 +1,6 @@
 # Physical looks of the PCB 3D model
 
-The PCB 3D view and the saved `.solidcraft` model use the same physical looks. The board's [fabrication attributes](#fabrication-presets) (mask colour and finish, pad finish, silkscreen colour) are saved in the Pcbcraft design and change only the display-only layers; the saved `.solidcraft` model is the same for every choice. Each native body (laminate, copper, package envelopes) stores a Solidcraft appearance (`appearance.assign` with `pbr: {metallic, roughness, dielectric_ior}`). The viewport reads that stored look back, so it shows exactly what the file holds. Display-only layers (soldermask and via tents, plated finish, open-via bores, silkscreen, edge stackup bands, terminations, overcoat, solder) take their look from the same table; they are not saved (see below). The values live in `crates/solidcraft-integration/src/material.rs`.
+The PCB 3D view and the saved `.solidcraft` model use the same physical looks. The board's [fabrication attributes](#fabrication-presets) (mask colour and finish, pad finish, silkscreen colour) are saved in the Sparksmith design and change only the display-only layers; the saved `.solidcraft` model is the same for every choice. Each native body (laminate, copper, package envelopes) stores a Solidcraft appearance (`appearance.assign` with `pbr: {metallic, roughness, dielectric_ior}`). The viewport reads that stored look back, so it shows exactly what the file holds. Display-only layers (soldermask and via tents, plated finish, open-via bores, silkscreen, edge stackup bands, terminations, overcoat, solder) take their look from the same table; they are not saved (see below). The values live in `crates/solidcraft-integration/src/material.rs`.
 
 ## Conventions
 
@@ -22,7 +22,7 @@ The PCB 3D view and the saved `.solidcraft` model use the same physical looks. T
 | `chip_capacitor` | MLCC ceramic | (0.32, 0.25, 0.15) | 0 | 0.55 | 2.4 | **est.** Sintered barium titanate, tan; n ≈ 2.4 (handbook). |
 | `overcoat` | Resistor overcoat | (0.025, 0.025, 0.027) | 0 | 0.30 | 1.55 | **est.** Glass or epoxy overcoat with a black marking layer over the resistive film. |
 | `substrate` | FR-4 laminate (board edge) | (0.36, 0.32, 0.17) | 0 | 0.60 | 1.55 | **est.** E-glass (n ≈ 1.55) in epoxy (n ≈ 1.55–1.6), CRC/Palik indices. The colour is the natural laminate's pale tan. |
-| `mask_top`, `mask_bottom` | Soldermask over laminate | `mask_over(pigment, FR-4, 20 µm)`; green ≈ (0.0118, 0.116, 0.032) | 0 | per finish | 1.52 | Layer model and [mask colours](#mask-colours) below. Thickness and gloss come from LPI datasheets. |
+| `mask_top`, `mask_bottom` | Soldermask over laminate | `mask_over(pigment, FR-4, d)`, d the stackup's mask over laminate (20 µm by default); green ≈ (0.0118, 0.116, 0.032) | 0 | per finish | 1.52 | Layer model and [mask colours](#mask-colours) below. Thickness and gloss come from LPI datasheets. |
 | `mask_cap` | Soldermask over copper | `mask_over(pigment, Cu, d)`, d the stackup's mask over copper (12 µm by default); green ≈ (0.064, 0.237, 0.069) | 0 | per finish | 1.52 | Lighter in every channel than over laminate, so traces read as lighter lines. |
 | `package_body`, `part_body` | Black epoxy mould compound | (0.022, 0.022, 0.024) | 0 | 0.45 | 1.55 | **est.** Silica-filled epoxy (filler n ≈ 1.46, resin ≈ 1.57) with carbon black. EDM-textured top. |
 
@@ -38,7 +38,8 @@ T = exp(−σ d),  σ = −ln(T₂₀) / 20 µm
 ```
 
 - `R`: diffuse reflectance under the mask (FR-4 albedo, or copper F0, which overestimates the micro-etched copper slightly).
-- `d`: mask thickness, 20 µm over laminate (the display slab, below) and the stackup's mask over copper on a track's crown (`Stackup::mask_um`, 12 µm by default: LPI thins over copper crowns and edges; 10–20 µm over copper in the LPI datasheets). The geometry and the colour use the same value; the cap geometry was 15 µm while the colour used 12 µm until the stack slice (S1) made the stackup's value the only one.
+- `d`: mask thickness, the stackup's: over laminate `Stackup::mask_laminate_nm` (20 µm by default, **uncited**, see below), and on a track's crown `Stackup::mask_um` (12 µm by default: LPI thins over copper crowns and edges; 10–20 µm over copper in the LPI datasheets). The geometry and the colour use the same values, and the fabrication drawing states both.
+- **The 20 µm over laminate is uncited.** LPI flows into the gaps between copper, so it is thicker over laminate than over copper. No source consulted gives a value over laminate that Sparksmith could cite: Eurocircuits' soldermask page (more than 7 µm on conductor tops and edges, at most 40 µm for 35 µm copper) and Bittele's specification (at least 10 µm on conductors, 5 µm at corners, at most 40 µm) state only over copper; South-Electronic's article says over bare laminate "it might be thicker, closer to 50 micrometers", an approximation, not a specification. The earlier display value stays until a fabricator or datasheet figure is found.
 - `T₂₀`: **est.** per-pass transmittance through 20 µm of the pigmented resin. For green, (0.10, 0.45, 0.18): phthalocyanine green plus a yellow pigment pass 500–570 nm and absorb red and blue. Other colours are in [mask colours](#mask-colours).
 - `ρ_scatter`: **est.** pigment back-scatter over a black base; green (0.010, 0.085, 0.030).
 - `F0 = 0.043`: from n = 1.52.
@@ -50,7 +51,7 @@ The laminate result lands close to the check target estimated independently from
 
 The saved native model holds only physical bodies: the laminate, exact copper (pads, tracks on every copper layer and board vias), package envelopes and generated package models (one shared definition per package revision, every body with its material). They are disjoint except where copper joins copper (a track ending in its pad), so Solidcraft's interference checks and mass properties of the saved file are physical; a test checks the bodies' boxes pairwise and the total volume.
 
-The stackup (`Project::stackup`) sets the heights: the laminate is the sum of the dielectrics (parameters `dielectric_N_thickness`, summed as `board_thickness`), each foil has its own thickness parameter (`copper_thickness` for the top; a foil as thick follows it), and inner copper sits at the top of the dielectric below it. Inner copper is embedded in the laminate, which is built as stacked slabs: a slab per dielectric with every drill as a hole, and at each inner foil's level a slab whose holes are also that layer's copper (tracks and via rings), where the copper is now; a test checks the laminate's volume against the exact areas. A via size is one component placed at each via of that size: a plated barrel (drill less 0.025 mm plating) through the laminate and an annular ring on each layer it joins, outer rings capping the barrel and inner rings round it (exact circles, the laminate's holes).
+The stackup (`Project::stackup`) sets the heights: the laminate is the sum of the dielectrics (parameters `dielectric_N_thickness`, summed as `board_thickness`), each foil has its own thickness parameter (`copper_thickness` for the top; a foil as thick follows it), and inner copper sits at the top of the dielectric below it. Inner copper is embedded in the laminate, which is built as stacked slabs: a slab per dielectric with every drill as a hole, and at each inner foil's level a slab whose holes are also that layer's copper (tracks and via rings), where the copper is now; a test checks the laminate's volume against the exact areas. A via size is one component placed at each via of that size: a plated barrel through the laminate, open to the finished drill (a hole's size is its finished size) with its 25 µm wall outside it, so the laminate is drilled 0.05 mm wider (`PLATING_MM`: IPC-6012's least average hole-wall copper for class 3; class 2 asks 20 µm; neither the stackup nor the fab profile records a plating thickness) and an annular ring on each layer it joins, outer rings capping the barrel and inner rings round it (exact circles, the laminate's holes).
 
 Everything else is a display-only layer built on the model worker as meshes in Solidcraft's mesh type (`crates/solidcraft-integration/src/appearance.rs`). They are drawn and picked like native bodies (mask caps and finish strips pick as their track, terminations, overcoat and solder as their part) but are never saved, and they are not native features, so they add nothing to native construction time.
 
@@ -58,15 +59,15 @@ Everything else is a display-only layer built on the model worker as meshes in S
 
 | Layer | Size | Why |
 |---|---|---|
-| Soldermask slabs | 0.020 mm over each board face, 0.03 mm in from the board outline | Thinner than real LPI over laminate (25–35 µm), so exposed pads stand clear of the depth bias at grazing angles. The pull-back (**est.**; fabricators pull mask back from a routed edge) keeps the mask's walls off the laminate's, which drew a dashed line along the far edge at the silhouette. |
+| Soldermask slabs | The stackup's mask over laminate (`Stackup::mask_laminate_nm`, 20 µm by default, uncited) over each board face, out to the board outline | The mask reaches the routed edge, as the Gerber mask does: no rule pulls it back. (Until 11 November 2026 the 3D mask stopped an estimated 0.03 mm short of the edge, which the Gerber never did.) |
 | Mask cap over a track | The stackup's mask over copper (`Stackup::mask_um`, 12 µm by default) above the copper, 0.01 mm wider each side, round free ends | Round ends follow routed copper; the cap is interrupted wherever the track crosses a same-layer mask opening, including tracks passing through a land. |
-| Laminate in a mask opening | A film 0.002 mm thick on the laminate inside each land's and open via's mask opening, less the copper there, and in the mask's pull-back from the routed edge (`open_laminate`) | The laminate's own face lies under the mask and is left out of the material stream; this film shades the laminate where the mask is open (a fiducial's clearance, a land's expansion). |
-| Mask opening | Land + 0.05 mm; an open via's ring + 0.05 mm | A common fabrication default. |
+| Laminate in a mask opening | A film 0.002 mm thick on the laminate inside each land's and open via's mask opening, less the copper there (`open_laminate`) | The laminate's own face lies under the mask and is left out of the material stream; this film shades the laminate where the mask is open (a fiducial's clearance, a land's expansion). |
+| Mask opening | Land + its mask expansion; an open via's ring + the rules' mask expansion (`Via::mask_opening`) | The board's effective rules (`rules.mask.expansion`), the same function the Gerber mask uses. |
 | Tented via | A dome of revolution over the ring: as high as a mask cap (copper + the stackup's mask), sagging 0.012 mm over the drill but staying 0.002 mm above the copper (0.010 mm at the default 12 µm mask), sloping into the flat mask 0.08 mm beyond the ring | **est.** Dry-film and LPI tents dip a little into the hole they bridge; the slope keeps the bump from reading as a stamped disc. |
 | Open via | Finished ring (as a land) and a dark sleeve 0.01 mm thick lining the bore, through the board and both foils (`via_bore`) | The view computes no occlusion, so a bore five or more diameters deep would light up like an open copper face; real ones read as dark holes. Reflectance 0.01 (**est.**). |
-| Silkscreen | Legend ink 0.015 mm thick, half sunk into the mask; on a track's mask cap or a tent's crown it stands on the crown instead; clipped 0.05 mm clear of mask openings | Screen-printed and inkjet legend is 10–25 µm (**est.**); quoted silkscreen-to-pad clearances are 0.05–0.15 mm. Text uses Pcbcraft's own stroke font (`silkscreen/font.rs`) laid out by the core's text metric; bottom-side text is reflected in its box so it reads from below. |
+| Silkscreen | Legend ink 0.015 mm thick, half sunk into the mask; on a track's mask cap or a tent's crown it stands on the crown instead; clipped clear of mask openings by the rules' silkscreen-to-pad clearance (`rules.silkscreen.pad_clearance`) | Screen-printed and inkjet legend is 10–25 µm (**est.**). Text uses Sparksmith's own stroke font (`silkscreen/font.rs`) laid out by the core's text metric; bottom-side text is reflected in its box so it reads from below. |
 | Edge stackup bands | Thin frames 0.002 mm proud of the routed faces (copper lines 0.003 mm): a band per dielectric (split around inner foils), a line per foil, a mask lip over each outer foil | Display only, so the board reads as a sectioned real board; the native laminate stays one body. Weave strength per glass style (**est.**): 7628 1.0, 2116 0.8, 1080 0.6, 106 0.45; prepreg 0.75 × its style. |
-| Plated finish | 0.005 mm around each land; over track copper inside an opening, 0.004 mm | ENIG nickel is 3–6 µm (IPC-4552). Fabrication plates all copper a mask opening exposes, so no bare copper shows where a track enters a land. |
+| Plated finish | The board's pad finish's thickness ([pad finishes](#pad-finishes)) around each land; over track copper inside an opening, 0.8 of it | Fabrication plates all copper a mask opening exposes, so no bare copper shows where a track enters a land. |
 | Chip terminations | Both ends of the long axis, a band of a fifth of the length (at most 0.5 mm), 0.01 mm proud of the top, sides, end and underside | Chip parts are packages with a chip form (publication requires exactly two package terminals for these). On an envelope chip these are display-only, and an inductor shows the ceramic chip's terminations; a generated chip has real tin termination bodies and a ferrite inductor body. The bands follow EIA chip-resistor bands (0.3–0.5 mm from 0603 to 1206). The rule uses only the package, so the Component preview and the board agree. |
 | Lead bands | Land ∩ body, 15 % of the body height | Moulded packages with at most two lands. |
 | Resistor overcoat | Body top between the bands, 0.04 mm in from the long edges, 0.005 mm proud | Leaves the white alumina rim and sides visible. Only chip resistors get it; chip capacitors are MLCC ceramic without an overcoat. |
@@ -116,7 +117,7 @@ Family defaults (`library::default_material`, never from names): chip bodies alu
 
 ## Fabrication presets
 
-The board's fabrication attributes are typed data in the Pcbcraft design (`Project::fabrication`), set with `layout.set_fabrication` from the PCB Board card's Board setup dialog (Soldermask, Mask finish, Pad finish, Silkscreen), the CLI or MCP. Defaults: green, gloss, ENIG, white legend. Every combination is valid data; whether a fabricator offers it is theirs to say. The 3D view draws the mask as a lacquer: a clear coat (weight 1, IOR 1.52, the [finish](#mask-finish)'s roughness) carries the gloss over a diffuse pigmented body, drawn with Solidcraft's opt-in product look ([PCB 3D look](#pcb-3d-look)). The "over laminate/over copper" values below are the layer's whole diffuse reflectance (`mask_over`); the body under the coat is that divided by (1 − F0) = 0.957 (`mask_body`), because the coat applies the air-to-resin Fresnel transmission. The body has IOR 1 (no interface of its own) and roughness 1. Solidcraft's split-sum studio light takes the coat's reflectance out of the body once, so the mask's total diffuse reflectance under the studio matches the table; its direct lights attenuate at entry and exit, about 4 % darker (**est.** from F0).
+The board's fabrication attributes are typed data in the Sparksmith design (`Project::fabrication`), set with `layout.set_fabrication` from the PCB Board card's Board setup dialog (Soldermask, Mask finish, Pad finish, Silkscreen), the CLI or MCP. Defaults: green, gloss, ENIG, white legend. Every combination is valid data; whether a fabricator offers it is theirs to say. The 3D view draws the mask as a lacquer: a clear coat (weight 1, IOR 1.52, the [finish](#mask-finish)'s roughness) carries the gloss over a diffuse pigmented body, drawn with Solidcraft's opt-in product look ([PCB 3D look](#pcb-3d-look)). The "over laminate/over copper" values below are the layer's whole diffuse reflectance (`mask_over`); the body under the coat is that divided by (1 − F0) = 0.957 (`mask_body`), because the coat applies the air-to-resin Fresnel transmission. The body has IOR 1 (no interface of its own) and roughness 1. Solidcraft's split-sum studio light takes the coat's reflectance out of the body once, so the mask's total diffuse reflectance under the studio matches the table; its direct lights attenuate at entry and exit, about 4 % darker (**est.** from F0).
 
 ### Mask colours
 
@@ -155,7 +156,7 @@ Measured gloss masks read 80–94 and matte masks 3–43 on a handheld glossmete
 
 ### Surface patterns
 
-Drawn by the product look from the world position in millimetres (display only). Glass style 7628 (44 × 31 ends per inch, 0.173 mm thick; [Isola glass fabric](https://www.isola-group.com/wp-content/uploads/Isola-Glass-Fabric-04_2022.pdf)) gives a yarn pitch of 0.577 × 0.819 mm and the ply period up a routed edge. Pattern amplitudes are Solidcraft's (visual estimates). Pcbcraft chooses where they show and how strongly:
+Drawn by the product look from the world position in millimetres (display only). Glass style 7628 (44 × 31 ends per inch, 0.173 mm thick; [Isola glass fabric](https://www.isola-group.com/wp-content/uploads/Isola-Glass-Fabric-04_2022.pdf)) gives a yarn pitch of 0.577 × 0.819 mm and the ply period up a routed edge. Pattern amplitudes are Solidcraft's (visual estimates). Sparksmith chooses where they show and how strongly:
 
 | Body | Pattern | Strength |
 |---|---|---|
@@ -168,6 +169,15 @@ The weave is a plain weave of continuous warp and weft bundles that rise over on
 Show-through is **est.** No measured print-through value was found in public sources; the mask levels the surface and the weave changes the colour beneath. It follows the opacity order: clear resin shows the weave plainly (as clear-mask boards do), the translucent pigments faintly, the most opaque ones (black, white, yellow: ≥ 800 mJ/cm² exposure, Taiyo) not at all. Legend ink shows the silkscreen grain; the edge bands show the weave per glass style.
 
 ### Pad finishes
+
+Each finish's 3D thickness is the middle of the range a fabricator publishes (`stack::finish_um`):
+
+| Pad finish | Published range | 3D thickness | Source |
+|---|---|---|---|
+| ENIG | Ni 3–6 µm, Au 0.025–0.05 µm | 4.54 µm | JLCPCB, *Surface finish* help page (read 2026-11-11): "Nickel thickness: approximately 3-6 micrometers", gold "approximately 0.025-0.05 micrometers thick". IPC-4552 gives Ni 3–6 µm too. |
+| HASL (tin-lead), lead-free HASL | 2–40 µm | 21 µm | LC-PCB, *Process capability parameter table*, row 63 (read 2026-11-11): "2-40um" for leaded and lead-free. JLCPCB gives "approximately 1-40 micrometers" for leaded and "comparable" for lead-free. |
+| OSP | 0.2–0.3 µm | 0.25 µm | LC-PCB table, row 64: "Film thickness: 0.2-0.3um". |
+| Immersion silver | 0.2–0.4 µm | 0.3 µm | LC-PCB table, row 66: "Silver thickness: 0.2-0.4um". |
 
 | Pad finish | Base colour (linear F0) | Rough | Source |
 |---|---|---|---|
@@ -191,7 +201,7 @@ Tin and tin-lead were lowered (from 0.70 and 0.68) and made smoother (HASL from 
 
 ## Look diagnosis
 
-Measured headless on 8 November 2026 at fork `21ac01f4a` (studio `Contrast` turned 145°, exposure 1.1), before the studio and look retunes (Solidcraft track L, then Pcbcraft track PL). The tests and the harness are in `apps/pcbcraft/src/viewport/pictures/look.rs`.
+Measured headless on 8 November 2026 at fork `21ac01f4a` (studio `Contrast` turned 145°, exposure 1.1), before the studio and look retunes (Solidcraft track L, then Sparksmith track PL). The tests and the harness are in `apps/pcbcraft/src/viewport/pictures/look.rs`.
 
 **How pixels are assigned.** The viewport draws a backdrop behind the model, so the clear colour does not mark empty pixels. A material's pixels are those that change when only its bodies are redrawn matte red and then matte blue. Both redraws have the same specular part, so only that material's diffuse light differs. Scene-referred values undo the PBR Neutral tone map (an exact inverse below the shoulder) and divide out the exposure. The earlier gold test kept every pixel that did not match the clear colour, so its numbers (0.17, 0.21 and 0.24 against the 0.30 bar) measured mostly the backdrop, not the pads.
 
@@ -215,7 +225,7 @@ Measured headless on 8 November 2026 at fork `21ac01f4a` (studio `Contrast` turn
 - Gold mixed with any grey or white reflection would raise G/R above 0.73, never lower it. The finish's own pixels keep gold's hue in every view (scene G/R 0.74–0.76).
 - The finish covers the copper's top and sides 5 µm thick (`appearance.rs`), so from above the board no pad copper should show. From above, none does. From oblique views, the copper wins most of each pad.
 - This fits the material stream's depth bias of some pixels' depth slope. That bias spans about 20 µm at overview (commit `c49269b`), well over 5 µm. `model_scene::covered` keeps tracks, laminate and mask undersides out of the stream, but not pad copper under a finish.
-- Fixing this is a renderer change in Pcbcraft. It is not a material or studio change.
+- Fixing this is a renderer change in Sparksmith. It is not a material or studio change.
 - **Cause and fix (S1).** Pad copper is placed (one shared mesh per pad shape), so it was shaded from its shared triangles in a draw after the whole material stream, where the finish is; the stream writes no depth, so the later draw won wherever the bias let both pass. The marking on the module's can had the same cause in reverse: the decals were in the stream, the can is placed. Now the board's stack decides both (see [what the material stream draws](#geometry-that-carries-the-looks)): copper's faces under its finish or mask cap (tops and walls) leave the stream, and decals, legend and a part's films are drawn after the bodies they lie on.
 
 **Olive from above** is the studio and the tone map, not the F0. From above, the scene-referred hue is gold (G/R 0.74, B/R 0.31). The radiance is low, though: the reference metal reads only 0.15 there. PBR Neutral's toe subtracts most of the darkest channel at low levels, so the display B/R falls to 0.15. The founder's decision is a soft top light in the studio, with no change to F0.
@@ -257,7 +267,7 @@ Reading the table:
 - The legend shows at oblique views (4× the pixels): before, the mask drawn after it covered most of it. At the overview, the 17 pixels that survived were its brightest; the 430 now include thin strokes that share their pixel with the mask, hence the lower mean.
 - Laminate inside mask openings is shaded (with its weave) instead of its flat plain colour: mean and p95 rise a little.
 
-**After the studio and look retune (9 November 2026).** Pcbcraft selects Solidcraft's `Contrast` studio, which now carries a soft overhead scrim (`lighting.rs`), turned 285° at exposure 1.1. The look graphs lower the mask's orange-peel relief from 6 to 1.5 µm and the legend ink's grain (swing 0.36 → 0.12, relief 2 → 0.5 µm). White legend ink is 0.85 diffuse reflectance (was 0.78; TiO2 inks reach 0.85–0.90). Same harness, before (fork `04d3c2ffc`, turn 145°) → after, mean display luminance (p95):
+**After the studio and look retune (9 November 2026).** Sparksmith selects Solidcraft's `Contrast` studio, which now carries a soft overhead scrim (`lighting.rs`), turned 285° at exposure 1.1. The look graphs lower the mask's orange-peel relief from 6 to 1.5 µm and the legend ink's grain (swing 0.36 → 0.12, relief 2 → 0.5 µm). White legend ink is 0.85 diffuse reflectance (was 0.78; TiO2 inks reach 0.85–0.90). Same harness, before (fork `04d3c2ffc`, turn 145°) → after, mean display luminance (p95):
 
 | Board, view | Gold | Mask | Silk | Laminate |
 |---|---|---|---|---|
@@ -293,6 +303,10 @@ The core table's source keys are `johnson-christy-1972`, `rakic-1998`, `hoffman`
 - E. D. Palik, *Handbook of Optical Constants of Solids*, and the CRC Handbook of Chemistry and Physics. Refractive indices of epoxy, E-glass and silica; Sn, to confirm the tin estimate.
 - B. Burley, "Physically-Based Shading at Disney" (2012). Perceptual roughness.
 - IPC-4552, ENIG: Ni 3–6 µm, Au 0.04–0.10 µm. IPC-4553, immersion silver.
+- IPC-6012, plated-hole wall copper: 20 µm average for class 2, 25 µm for class 3 (`PLATING_MM`).
+- JLCPCB, [Surface finish](https://jlcpcb.com/help/article/jlcpcb-surface-finish) help page, read 2026-11-11: ENIG and HASL thicknesses.
+- LC-PCB, [Process capability parameter table](https://lc-pcb.com/capabilities), read 2026-11-11: rows 63 (HASL), 64 (OSP) and 66 (immersion silver).
+- Isola, [370HR](https://www.isola-group.com/pcb-laminates-prepreg/370hr/) product page, core data table, read 2026-11-11: Dk at 1 GHz of the standard single-ply cores 1x106 (71 % resin) 3.81, 1x1080 (58 %) 4.04, 1x2116 (47 %) 4.26, 1x7628 (42 %) 4.36. `Dielectric::permittivity`'s estimates when the stackup gives no Dk (106: 3.8, 1080: 4.0, 2116: 4.3) agree with the first three within 0.05; its 7628 value, 4.6, does not and is uncited.
 - Soldermask colour and gloss: NPL MAT 5 (glossmeter readings and thickness), Taiyo PSR-4000 BN DI colour datasheet (exposure energy), Peters Elpemer 2467 report, NCAB, Andy Brown, JLCPCB and circuitstate articles; links in [mask colours](#mask-colours). Public articles and datasheets only.
 - Isola, *Glass Fabric* data sheet (04/2022): style 7628 counts and thickness.
 - Clear-coat layering after the OpenPBR coat model (Academy Software Foundation specification); the shader is Solidcraft's.

@@ -1,0 +1,26 @@
+[package]
+name = "pcbcraft-generators"
+description = "Runs Pcbcraft generator modules in a bounded wasmi sandbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+pcbcraft-generator-abi = { workspace = true, features = ["nfc"] }
+# The WebAssembly interpreter (MIT OR Apache-2.0). Core modules only, no
+# SIMD (the feature stays off, so SIMD modules fail validation), no wat
+# parser; `deterministic` canonicalises NaN results; `portable-dispatch`
+# (the loop interpreter) because the tail-call dispatch overflowed the stack
+# on a long-running module in the test profile. Runs natively and when this
+# crate is built for wasm32.
+wasmi = { version = "=2.0.0", default-features = false, features = ["std", "validate", "deterministic", "portable-dispatch"] }
+
+[dev-dependencies]
+# Hand-written refusal fixtures in the text format (Apache-2.0 WITH
+# LLVM-exception OR Apache-2.0 OR MIT).
+wat = "1"
+serde_json.workspace = true

@@ -1,6 +1,6 @@
 # 3D build speed on the SMLib kernel: profile and options
 
-Measured on 8 November 2026 to let the founder choose an approach. Nothing was fixed. Build 062990a (`component-model`), Solidcraft fork 21ac01f4a (solidcore a445bdaa), `ci` profile, with Pcbcraft's default `Validation::Off`. Host: Apple M5 Max, 18 cores, 128 GB, load average 5–7 from other agents' builds, so single runs vary by about ±10 %. Everything ran headless; no app was started.
+Measured on 8 November 2026 to let the founder choose an approach. Nothing was fixed. Build 062990a (`component-model`), Solidcraft fork 21ac01f4a (solidcore a445bdaa), `ci` profile, with Sparksmith's default `Validation::Off`. Host: Apple M5 Max, 18 cores, 128 GB, load average 5–7 from other agents' builds, so single runs vary by about ±10 %. Everything ran headless; no app was started.
 
 ## Numbers first
 
@@ -17,9 +17,9 @@ Measured on 8 November 2026 to let the founder choose an approach. Nothing was f
 | One extruded region of N edges | 250: 0.2 s · 1,000: 3.3 s · 2,000: 17 s · 4,000: 75 s | grows as about N^2.2 |
 | Old kernel (truck), same board and benchmark | **3.4 s** build · track edit 0.8 s · 1,000 extra vias 2.5 s | every fill extrusion under 28 ms; a 4,000-edge region 35 ms |
 
-**The cause is one function.** Every slow feature is an extrusion of a large planar profile. In solidcore, `create_linear_sweep` builds the side faces and then stitches them. Each stitch edit rebuilds the notification records of the whole B-rep, so the work is quadratic in the number of faces. Pcbcraft hits it with copper fills (2,500–3,500 side faces each) and laminate slabs (one face per drilled hole).
+**The cause is one function.** Every slow feature is an extrusion of a large planar profile. In solidcore, `create_linear_sweep` builds the side faces and then stitches them. Each stitch edit rebuilds the notification records of the whole B-rep, so the work is quadratic in the number of faces. Sparksmith hits it with copper fills (2,500–3,500 side faces each) and laminate slabs (one face per drilled hole).
 
-**Three Pcbcraft-side defects multiply it:**
+**Three Sparksmith-side defects multiply it:**
 
 1. A rounding `-0` turns a 0.1 s part rotation into a full rebuild.
 2. The fills sit after the parts, pads and tracks in the native timeline. Solidcraft's per-feature cache key includes the digest of the whole state before the feature, so any edit to a part or track re-extrudes every fill.
@@ -34,7 +34,7 @@ The benchmark is `crates/automation/tests/build_profile.rs`, which is committed 
 - Solidcraft's own span profiler (`solidcraft-profile`, compiled in for this test only through `pcbcraft-solidcraft`'s `profile` feature).
 
 ```
-nix develop -c cargo test --profile ci -p pcbcraft-automation --test build_profile -- --ignored --nocapture
+nix develop -c cargo test --profile ci -p pcbcraft-automation --features profile --test build_profile -- --ignored --nocapture
 ```
 
 Its environment variables pick the edit, the variant (`no-fills`, `parts=N`, `addvias=N`, …) and the synthetic `extrusion_scaling` test. The function-level profile is macOS `/usr/bin/sample` at 1 ms on the test binary, over a 202 s build: 159,931 samples on the build thread. The 18 `solidcraft-kernel` worker threads were idle almost all of that time, so the build runs on one core, as the VM showed.
@@ -52,7 +52,7 @@ Its environment variables pick the edit, the variant (`no-fills`, `parts=N`, `ad
 
 | Phase | Time | Notes |
 | --- | --- | --- |
-| Pcbcraft building the native document (its own code) | ~0.5 s | `build_on` outside native calls: pads, contours, fills' loops, identity |
+| Sparksmith building the native document (its own code) | ~0.5 s | `build_on` outside native calls: pads, contours, fills' loops, identity |
 | Solidcraft command handling (self) | 0.85 s | 2,600+ commands; `sketch.create` alone is 0.28 s |
 | Solidcraft `doc evaluate` (self) | 0.6 s | timeline bookkeeping |
 | **Extrude features** | **177.1 s** | |
@@ -129,7 +129,7 @@ The slabs are quadratic in the same way. Extrapolated, a 10,000-via slab would t
 
 Parts grow about linearly. Each new package definition costs a few hundred milliseconds, mainly the template's edge-round fillets (0.22–0.29 s per package), and a definition is built once however many instances use it. The step from 15 to 20 is the module and the THT parts. Their drills add holes to every slab (from 87 to 115 faces), and their part files add bodies.
 
-**Answer: linear per body, but quadratic within one body.** There is no huge Boolean (13 small ones in all). The quadratic is inside solidcore's sweep of each large planar profile, and Pcbcraft makes a few very large ones: the fills, and slabs that hold every drill.
+**Answer: linear per body, but quadratic within one body.** There is no huge Boolean (13 small ones in all). The quadratic is inside solidcore's sweep of each large planar profile, and Sparksmith makes a few very large ones: the fills, and slabs that hold every drill.
 
 ## 3. Why one part rotation rebuilds the whole board
 
@@ -157,7 +157,7 @@ The pad offset is rounded to a nanometre (`pad.offset().map(|v| (v * 1e9).round(
 - Deferred evaluation (`defer_evaluation`) for batches.
 - Meshes kept by `geometry_key`.
 
-There is no dependency-aware invalidation: a feature that does not read an earlier body still misses its cache when that body changes. Pcbcraft can work around that only through the order of the timeline.
+There is no dependency-aware invalidation: a feature that does not read an earlier body still misses its cache when that body changes. Sparksmith can work around that only through the order of the timeline.
 
 ## 4. What the old kernel did differently
 
@@ -191,7 +191,7 @@ Gains are measured where marked; the rest are bounded by this profile. Effort is
 | a2 | **Fills first** in the native timeline (before parts, pads and tracks; the laminate stays last) | Part or track edits stop re-extruding fills: 205 s → **3.1 s** (measured) | 2–4 h: the order and the identity, replay and pick tests | Low–medium: pick order and saved identity change once; no released files exist | Yes |
 | a3 | **Evaluate a redrawn fill once** (redefine before evaluating, or under deferred evaluation) | A refilled fill: 135 s → about 65 s (bounded: one of the two measured evaluations) | 2–4 h | Low | Yes |
 | a | a1 + a2 + a3 together | Edits that leave the fills alone: 0.1–3 s. A refill still costs one fill's extrusion (28–65 s) until c1 or d1 | 5–9 h | Low | Yes |
-| b | **Instant 3D from Pcbcraft's 2D data**, the kernel solid built in the background | First picture in about the time of the display layers, which are already built from 2D (~0.1 s) plus the part meshes. The kernel build still runs; its CPU time is unchanged | 12–20 h: stand-in copper, laminate and fills from 2D polygons, picking by source, swapped per body as the kernel finishes | Medium: two pictures of one board for a while; the stand-in must look and pick the same | **Only as a transient stand-in**, as the translucent box is today. The live model must become the kernel model, which is the saved `.solidcraft`. A permanent 2D-drawn view would be a second geometry path |
+| b | **Instant 3D from Sparksmith's 2D data**, the kernel solid built in the background | First picture in about the time of the display layers, which are already built from 2D (~0.1 s) plus the part meshes. The kernel build still runs; its CPU time is unchanged | 12–20 h: stand-in copper, laminate and fills from 2D polygons, picking by source, swapped per body as the kernel finishes | Medium: two pictures of one board for a while; the stand-in must look and pick the same | **Only as a transient stand-in**, as the translucent box is today. The live model must become the kernel model, which is the saved `.solidcraft`. A permanent 2D-drawn view would be a second geometry path |
 | c1 | **solidcore: make stitch bookkeeping incremental** (reseed only the entities an edit touched, not `reset_to_keys` over all) | Bounded by the profile: ≥ 76 % of the build is that bookkeeping. At the measured 0.2 ms per face, the ESP32 fills would take about 2.5 s (from 173 s) and a 1,000-hole slab about 0.2 s (from 9.2 s) | 8–16 h in solidcore, with its own tests | Medium: core topology code in a dependency; needs upstream review | Yes (no second engine). **Upstream contribution: needs the founder's go** |
 | c2 | **Solidcraft: per-feature cache keyed on what the feature reads** (a new-body extrude reads its sketch and parameters, not earlier bodies) | Makes a2 unnecessary and helps every Solidcraft user; same gain as a2 here | 6–12 h | Medium–high: cache correctness across all feature kinds | Yes. **Upstream: needs the go** |
 | c3 | **Solidcraft kernel: a prism fast path** that builds a planar extrusion's B-rep topology directly, as truck's `tsweep` did, instead of sweep and stitch | Like c1 for extrusions only; the old kernel built this board in 3.4 s, with a 4,000-edge region in 35 ms | 12–24 h | Medium: a second construction path for one feature kind inside Solidcraft's kernel crate | Yes (still one engine). **Upstream: needs the go** |
@@ -203,7 +203,7 @@ Gains are measured where marked; the rest are bounded by this profile. Effort is
 
 ## Recommendation
 
-1. **Now, Pcbcraft only, no upstream:** a1 + a2 + a3 (5–9 h), then d1 (6–10 h). Expected on the ESP32 board:
+1. **Now, Sparksmith only, no upstream:** a1 + a2 + a3 (5–9 h), then d1 (6–10 h). Expected on the ESP32 board:
    - open in 3D in about 9 s, from 183 s (5.5 s for the board without fills, plus about 3.5 s of tiled fills);
    - part and track edits in 0.1–3 s;
    - a refill in a few seconds.
@@ -214,7 +214,7 @@ Gains are measured where marked; the rest are bounded by this profile. Effort is
 
 ## Decisions for the founder
 
-1. Approve the Pcbcraft-side fixes a1, a2 and a3. They are small, low-risk and measured.
+1. Approve the Sparksmith-side fixes a1, a2 and a3. They are small, low-risk and measured.
 2. Accept **tiled fills and laminate slabs** (d1) in the saved `.solidcraft` and in STEP: several bodies per fill and per slab, instead of one. If not, the build speed waits on c1 or c3.
 3. **Go or no-go for an upstream solidcore contribution (c1).** If go, decide the channel (issue first, or a PR from the fork) and who reviews. Until then, nothing is posted.
 4. Whether "3D opens instantly" justifies the 2D stand-in (b), with its brief period of two pictures of one board.
@@ -243,7 +243,7 @@ Build bdc78b4 (`component-model`), Solidcraft fork 04d3c2ffc (solidcore c0d3cc01
 | · 22 % | `create_faces_with_curves`: each loop added (`make_vertex_loop`, `remove_loop`) calls `face_notify`, which walks every edge-use and vertex-use of the face: quadratic in a cap's loops |
 | · 1.6 % | `point_3d_classify` |
 
-**What an edit and its undo cost, and why.** The width edit moves every fill (they follow the board), so every fill is refilled and its sketch redrawn. A redrawn region's extrusion picked its profile by curves the redraw replaces, so the update redefines it (`timeline.redefine`). Two Pcbcraft-side costs were measured and are fixed:
+**What an edit and its undo cost, and why.** The width edit moves every fill (they follow the board), so every fill is refilled and its sketch redrawn. A redrawn region's extrusion picked its profile by curves the redraw replaces, so the update redefines it (`timeline.redefine`). Two Sparksmith-side costs were measured and are fixed:
 
 1. Each redefinition ran with the history rolled forward, so it evaluated every feature after it again: the refill update ran 2,878 SMLib extrusions where the build runs 1,028. The redefinitions now run while the history is still rolled back, and the update keeps every result it evaluates (`Model::keep`) until the history is rolled forward once: 948 extrusions, and 3 s of meshing instead of 8 s.
 2. An undo back to a board the app's model worker made updated the last model back to it, as long as the edit. The worker now keeps its last three earlier board models (copies sharing the evaluated design and meshes, `NativeModel::snapshot`), and an undo or redo back to one shows it again without building or updating. (Since 11 November it keeps one, and never the board an edit had before the fill worker refilled it: no history step returns to that board, and each kept model holds about 0.9 GB of evaluated bodies on this board; see `apps/pcbcraft/src/scene/memory_tests.rs`.)
@@ -337,3 +337,19 @@ More tiles cost more than their smaller extrusions save: Solidcraft's evaluation
 | …its stale fills refilled | rebuilt, 23–27 s | 6.0 s, in place (8 commands) |
 
 Selecting R2 and switching between Layout and 3D made no board model. The app's own benchmark (`edit_timing_tests`, host, J1 0 → 1 mm): J1 shown at 4.4 s, the refilled model at 14.2 s (was 26.9 s; the refill updated in place in 9.7 s, was built anew in 21–23 s).
+
+## Update, 11 November 2026: what an updated model held
+
+Same host and `ci` profile, load average 30–130 (other agents' builds), so times here are not comparable; memory is live heap from `heap -s`.
+
+**The ~380 MB an updated model held beyond a fresh build** was Sparksmith's. Each body's lazy volume (`Volume::lazy` in `project.rs`) captured the evaluated body, and an update takes every unchanged body's geometry from the last model, volume and all. So the updated model kept the last model's bodies wherever the update re-evaluated one: laminate slabs of the same inputs, for example. The geometry the 3D view shows kept them too. A lazy volume now reaches its body through the model that made it (a weak handle to the model's world state), and an update measures what it takes from the last model on its own bodies. Geometry handed on holds no evaluated body: an unmeasured volume reads NaN once its model is gone. Only tests read volumes.
+
+| ESP32 board | Before | After |
+| --- | --- | --- |
+| One width edit and its refill, the updated model (`model_memory`) | +1,278 MB (fresh build of the same board: +912 MB) | +904 MB (fresh build: +846–912 MB) |
+| App, 3D open, 4 board edits (`memory_tests`, one earlier model kept) | live 1.91 → 2.22 → 2.31 → 2.28 GB; RSS 3.32 GB | live 1.77 → 1.80 → 1.79 → 1.80 GB; RSS 2.92 GB |
+| …then 4 undos | live up to 2.28 GB; RSS 3.70 GB | live up to 1.82 GB; RSS 3.40 GB |
+
+The rest is one board model (~0.9 GB of solidcore B-rep) for the current board and one for the undo. The undo depth stays the founder's call (R8-1 in the night findings): each further instant undo step still costs about 0.9 GB on this board.
+
+**Where an edit's update goes now** (`PCBCRAFT_PROFILE_EDIT=width`, load ~50): build 26.5 s; width +1 mm with stale fills 8.8 s, 736 SMLib extrusions; the refill 18.5 s, 1,188 extrusions against 1,322 in the build, of which the two redefined foil-level slabs' evaluations are 9.3 s; the undo 20.4 s, 1,193 extrusions. Almost every feature after the first changed tile is evaluated again, because Solidcraft keys each feature's cached result on every body made before it. That is Solidcraft's to change (option c2; upstream's read-based key #6295 is measured on the exported board separately).

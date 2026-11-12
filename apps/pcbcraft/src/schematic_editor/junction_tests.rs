@@ -6,7 +6,7 @@
 use super::*;
 use egui::vec2;
 use pcbcraft_core::schematic::WirePoint;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

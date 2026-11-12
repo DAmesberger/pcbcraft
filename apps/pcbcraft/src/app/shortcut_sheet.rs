@@ -4,7 +4,7 @@
 //! registry (`Registry::rebind`) once a preferences page exists.
 use crate::commands::{Context, Registry};
 use crate::kit;
-use solidcraft_ui_egui::ui_kit;
+use pcbcraft_ui::ui_kit;
 
 const MAX_FILTER: usize = 128;
 

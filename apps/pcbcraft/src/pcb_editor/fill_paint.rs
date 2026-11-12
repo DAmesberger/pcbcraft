@@ -14,7 +14,7 @@ use egui::{Color32, Pos2, Shape, Stroke};
 use pcbcraft_core::library::{Outline, Segment};
 use pcbcraft_core::model::fill::FilledRegion;
 use pcbcraft_core::{CopperLayer, Fill, Id, Point, Project};
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;

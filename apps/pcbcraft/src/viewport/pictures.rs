@@ -14,7 +14,7 @@ use egui_wgpu::wgpu;
 use pcbcraft_core::library::package_form::{typical_nm as nm, typical_point as pt};
 use pcbcraft_core::{Fabrication, Layer, MaskColour, PadFinish, Project};
 use pcbcraft_solidcraft::material::BodyKind;
-use solidcraft_ui_egui::gpu::StudioPreset;
+use solidcraft_viewport_gpu::view::StudioPreset;
 
 /// What the window clears to behind the model (the light theme's sweep,
 /// mid-way).

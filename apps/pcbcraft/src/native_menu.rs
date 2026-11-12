@@ -206,15 +206,21 @@ impl Drop for NativeMenu {
 fn predefined(system: System) -> PredefinedMenuItem {
     match system {
         System::About => PredefinedMenuItem::about(
-            Some("About Pcbcraft"),
+            Some(concat!("About ", pcbcraft_core::product_name!())),
             Some(AboutMetadata {
-                name: Some("Pcbcraft".into()),
+                name: Some(pcbcraft_core::product::NAME.into()),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
+                credits: Some(format!(
+                    "Built on Solidcraft's engine (github.com/tangency-labs/solidcraft).\n{}",
+                    pcbcraft_core::product::WEBSITE
+                )),
                 ..Default::default()
             }),
         ),
         System::Services => PredefinedMenuItem::services(None),
-        System::Hide => PredefinedMenuItem::hide(Some("Hide Pcbcraft")),
+        System::Hide => {
+            PredefinedMenuItem::hide(Some(concat!("Hide ", pcbcraft_core::product_name!())))
+        }
         System::HideOthers => PredefinedMenuItem::hide_others(None),
         System::ShowAll => PredefinedMenuItem::show_all(None),
         System::Minimize => PredefinedMenuItem::minimize(None),

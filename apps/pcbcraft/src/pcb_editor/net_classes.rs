@@ -16,7 +16,7 @@ use pcbcraft_core::rules::{
     NetClass, NetClassId, NetClassPattern, NetClassSpec, PadConnection, RulesCommand,
 };
 use pcbcraft_core::{Engine, Id, Operation, Project, layout};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::collections::HashMap;
 
 /// The open Net classes card's own state: the class it edits and the text
@@ -909,7 +909,7 @@ mod tests {
         editor.open_net_classes(None);
         assert_eq!(editor.subject(), kit::card::Subject::Dialog);
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut output = ctx.run_ui(Default::default(), |ui| {
             let _ = editor.subject_slot(ui, &engine);
         });
@@ -938,7 +938,7 @@ mod tests {
         let mut editor = PcbEditor::default();
         editor.open_net_classes(Some(class));
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
@@ -977,7 +977,7 @@ mod tests {
         let mut editor = PcbEditor::default();
         editor.open_net_classes(Some(class));
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,

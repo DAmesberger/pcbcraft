@@ -29,7 +29,7 @@ use pcbcraft_core::units::Nm;
 use pcbcraft_core::{DefinitionId, Engine, LibraryCommand, Operation};
 use pcbcraft_solidcraft::models::imported;
 use pcbcraft_solidcraft::models::inspect::{self, InspectedBody, ModelInspection};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -1899,7 +1899,7 @@ mod tests {
         impl Harness {
             fn new() -> Result<Self, Box<dyn std::error::Error>> {
                 let ctx = egui::Context::default();
-                solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+                pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
                 let mut engine = Engine::default();
                 let mut editor = PartEditor::default();
                 editor.load_template(Template::TwoTerminal);

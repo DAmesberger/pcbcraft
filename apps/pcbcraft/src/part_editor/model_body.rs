@@ -19,7 +19,7 @@ use pcbcraft_core::library::{
 use pcbcraft_core::materials::MaterialId;
 use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{Engine, Operation, PackageTerminalId, PadId};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::ops::RangeInclusive;
 
 const LENGTH: RangeInclusive<f64> = 0.01..=1000.0;
@@ -619,7 +619,7 @@ impl ModelCard {
 /// The model card: the outline thumbnail, then name, revision and the
 /// source line, licence and lead map.
 fn model_card_rows(ui: &mut Ui, card: &ModelCard) {
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), t.space_24 * 3.0),
         egui::Sense::hover(),

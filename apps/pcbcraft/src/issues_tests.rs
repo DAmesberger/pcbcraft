@@ -280,7 +280,7 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         Self { ctx, time: 0.0 }
     }
 
@@ -355,7 +355,7 @@ fn the_card_lists_groups_and_a_row_click_locates_it() -> Fallible<()> {
     });
     assert!(at(&collapsed, "Issues").is_some());
     assert!(
-        at(&collapsed, &first.title).is_none(),
+        at(&collapsed, &first.title.to_uppercase()).is_none(),
         "collapsed is only the bar"
     );
 
@@ -367,7 +367,10 @@ fn the_card_lists_groups_and_a_row_click_locates_it() -> Fallible<()> {
     let (_, painted) = h.frame(Vec::new(), |ui| {
         surface.card(ui, &engine, Workspace::Pcb, &[])
     });
-    assert!(at(&painted, &first.title).is_some(), "{painted:?}");
+    assert!(
+        at(&painted, &first.title.to_uppercase()).is_some(),
+        "{painted:?}"
+    );
     assert!(at(&painted, &board.coverage).is_some(), "{painted:?}");
     assert!(at(&painted, "Copy report").is_some());
     let row = &board.rows[first.rows[0]];
@@ -449,7 +452,10 @@ fn the_selection_scope_without_a_selection_says_so() -> Fallible<()> {
     let (_, painted) = h.frame(Vec::new(), |ui| {
         surface.card(ui, &engine, Workspace::Pcb, &[])
     });
-    assert!(at(&painted, &first.title).is_some(), "{painted:?}");
+    assert!(
+        at(&painted, &first.title.to_uppercase()).is_some(),
+        "{painted:?}"
+    );
 
     surface.scope = Scope::Selection;
     let here = match surface.summary(&engine, Workspace::Pcb) {
@@ -963,6 +969,172 @@ fn the_card_never_paints_over_itself_in_a_small_column() -> Fallible<()> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+/// A click on a folded group's header opens it and lists its rows.
+#[test]
+fn a_header_click_opens_a_folded_group() -> Fallible<()> {
+    let engine = Engine::demo()?;
+    let board = report(
+        &engine,
+        IssueScope::Area {
+            area: IssueArea::Board,
+        },
+    )?;
+    let group = groups(&board, None)
+        .into_iter()
+        .find(|g| !opens_by_default(g.level))
+        .ok_or("a group that starts folded")?;
+    let row = &board.rows[group.rows[0]];
+    let mut surface = Surface::default();
+    surface.open();
+    let mut h = Harness::new();
+    let (_, painted) = h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    assert!(at(&painted, &row.title).is_none(), "folded at first");
+    let header = at(&painted, &group.title.to_uppercase()).ok_or("the header")?;
+    h.click(header.center(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let (_, painted) = h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    assert!(at(&painted, &row.title).is_some(), "{painted:?}");
+    Ok(())
+}
+
+fn key(key: egui::Key) -> Event {
+    Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }
+}
+
+/// Inline waive in the card: Waive… opens a reason field under the row,
+/// Enter asks for one `fabrication.waive` with the key of every finding
+/// the row merges; applied, the row leaves the open list for Waived, whose
+/// Restore asks for `fabrication.unwaive` and brings it back.
+#[test]
+fn a_waived_row_moves_to_waived_and_restore_brings_it_back() -> Fallible<()> {
+    let mut engine = Engine::demo()?;
+    let all = report(&engine, IssueScope::All)?;
+    let listed = groups(&all, None);
+    let (group, row) = listed
+        .iter()
+        .find_map(|g| {
+            g.rows
+                .iter()
+                .map(|&i| &all.rows[i])
+                .find(|r| waivable(r))
+                .map(|r| (g.key.clone(), r.clone()))
+        })
+        .ok_or("the demo has a waivable issue")?;
+    let mut surface = Surface {
+        scope: Scope::All,
+        ..Default::default()
+    };
+    surface.open();
+    // Only the row's group open, so the row and Waived both show.
+    for g in &listed {
+        if (g.key == group) != surface.is_open(g) {
+            surface.toggled.insert(g.key.clone());
+        }
+    }
+    let mut h = Harness::new();
+    let (_, painted) = h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let title = at(&painted, &row.title).ok_or("row title")?;
+    h.frame(vec![Event::PointerMoved(title.center())], |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let (_, painted) = h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let waive = at(&painted, "Waive\u{2026}").ok_or("Waive… on the hovered row")?;
+    h.click(waive.center(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    h.frame(
+        vec![Event::Text("Accepted for the prototype".into())],
+        |ui| surface.card(ui, &engine, Workspace::Pcb, &[]),
+    );
+    let (request, _) = h.frame(vec![key(egui::Key::Enter)], |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let Some(Request::Fix(Fix::Apply { operation, .. })) = request else {
+        return Err(format!("expected the waive, got {request:?}").into());
+    };
+    let Operation::Fabrication(FabricationCommand::Waive { keys, reason }) = *operation.clone()
+    else {
+        return Err(format!("expected fabrication.waive, got {operation:?}").into());
+    };
+    assert_eq!(reason, "Accepted for the prototype");
+    assert_eq!(keys, waiver_keys(&row));
+    assert!(!keys.is_empty());
+    engine.apply(engine.revision(), *operation)?;
+    for key in &keys {
+        assert!(engine.project().production.waiver(key).is_some(), "{key}");
+    }
+    let key = row_key(&row);
+    assert!(
+        !report(&engine, IssueScope::All)?
+            .rows
+            .iter()
+            .any(|r| row_key(r) == key),
+        "the row left the open list"
+    );
+    h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let (_, painted) = h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    assert!(at(&painted, "WAIVED").is_some(), "{painted:?}");
+    let waived = waived_rows(&engine);
+    let at_waived = waived
+        .keys
+        .iter()
+        .position(|k| *k == keys[0])
+        .ok_or("the waiver is listed")?;
+    let name = &waived.views[at_waived].name;
+    let entry = at(&painted, name).ok_or("the waived entry")?;
+    h.frame(vec![Event::PointerMoved(entry.center())], |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let (_, painted) = h.frame(Vec::new(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let restore = at(&painted, "Restore").ok_or("Restore on the hovered entry")?;
+    let request = h.click(restore.center(), |ui| {
+        surface.card(ui, &engine, Workspace::Pcb, &[])
+    });
+    let Some(Request::Fix(Fix::Apply { operation, .. })) = request else {
+        return Err(format!("expected Restore, got {request:?}").into());
+    };
+    assert!(
+        matches!(&*operation, Operation::Fabrication(FabricationCommand::Unwaive { key }) if *key == keys[0]),
+        "{operation:?}"
+    );
+    engine.apply(engine.revision(), *operation)?;
+    assert!(engine.project().production.waiver(&keys[0]).is_none());
+    if keys.len() == 1 {
+        assert!(
+            report(&engine, IssueScope::All)?
+                .rows
+                .iter()
+                .any(|r| row_key(r) == key),
+            "the row is back in the open list"
+        );
     }
     Ok(())
 }

@@ -13,7 +13,7 @@ use pcbcraft_core::functions::rules::{
 use pcbcraft_core::functions::{self, FunctionSelections, PinConfigs, Resolution};
 use pcbcraft_core::library::ComponentDefinition;
 use pcbcraft_core::{FunctionId, RuleId, TerminalId};
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// What the syntax check says about one script.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -358,10 +358,10 @@ pub fn explain_panel(ui: &mut Ui, component: &ComponentDefinition, editor: &mut 
                 ui.data_mut(|d| d.insert_temp(all_id, true));
             }
             kit::actions(ui, |ui| {
-                let clear = solidcraft_ui_egui::ui_kit::button(
+                let clear = pcbcraft_ui::ui_kit::button(
                     ui,
                     "Reset choices",
-                    solidcraft_ui_egui::ui_kit::Button::Enabled(!editor.scratch.is_empty()),
+                    pcbcraft_ui::ui_kit::Button::Enabled(!editor.scratch.is_empty()),
                 )
                 .on_hover_text("Back to each terminal's default; the document is unchanged")
                 .clicked();

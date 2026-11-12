@@ -19,7 +19,9 @@ pub mod card;
 pub mod dialog;
 mod form;
 pub mod issues;
+pub mod issues_list;
 mod item_row;
+pub mod list;
 pub mod messages;
 pub mod pick;
 pub mod review;
@@ -31,7 +33,7 @@ pub mod toast;
 mod tree;
 
 pub use form::*;
-pub use issues::{count_badge, issues_bar, issues_list};
+pub use issues::{count_badge, issues_bar};
 pub use item_row::*;
 pub use pick::{PickResponse, PickRow, Tick, pick_row};
 pub use rows::*;
@@ -41,8 +43,8 @@ pub use tree::*;
 pub use {dialog::DialogPanel, issues::issue_line, severity::severity_glyph};
 
 use egui::{Color32, Painter, Pos2, Rect, vec2};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::icons;
+use pcbcraft_ui::icons;
+use pcbcraft_ui::theme::Tokens;
 
 /// The kit chevron: down when open, right when folded.
 pub fn disclosure(painter: &Painter, center: Pos2, open: bool, ink: Color32) {

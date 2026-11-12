@@ -1,8 +1,8 @@
 # Part templates as Solidcraft documents
 
-Contract and design note, 2 November 2026. Design only: nothing here is built except the spike in `crates/solidcraft-integration/tests/template_spike.rs`. Base: Pcbcraft `component-model` at 55f47d6 and the Solidcraft fork `pcbcraft-via2` at d53b131 (which Pcbcraft pins). Rollback points are the tags `pre-part-templates` (Pcbcraft) and `pcbcraft-pre-part-templates` (fork).
+Contract and design note, 2 November 2026. Design only: nothing here is built except the spike in `crates/solidcraft-integration/tests/template_spike.rs`. Base: Sparksmith `component-model` at 55f47d6 and the Solidcraft fork `pcbcraft-via2` at d53b131 (which Sparksmith pins). Rollback points are the tags `pre-part-templates` (Sparksmith) and `pcbcraft-pre-part-templates` (fork).
 
-A **part template** is a parametric `.solidcraft` design, made in Solidcraft with its materials, which also declares what Pcbcraft needs from it:
+A **part template** is a parametric `.solidcraft` design, made in Solidcraft with its materials, which also declares what Sparksmith needs from it:
 
 - an interface of named, typed parameters;
 - anchors;
@@ -13,7 +13,7 @@ A **part template** is a parametric `.solidcraft` design, made in Solidcraft wit
 - body roles and materials;
 - validation rules.
 
-A package refers to one exact template revision and gives it parameter values. Pcbcraft builds the 3D model, the land pattern, the envelope, the lead contacts and the marking surfaces from it. Complex parts (power modules, shielded connectors and inductors) and purely mechanical parts (standoffs, heatsinks, brackets) no longer need Rust code per family.
+A package refers to one exact template revision and gives it parameter values. Sparksmith builds the 3D model, the land pattern, the envelope, the lead contacts and the marking surfaces from it. Complex parts (power modules, shielded connectors and inductors) and purely mechanical parts (standoffs, heatsinks, brackets) no longer need Rust code per family.
 
 Vocabulary: "template" already names package-row templates, footprint templates and the template gallery ([glossary](../GLOSSARY.md)). This note always says **part template**. In code the names are `PartTemplate…`, and in commands `part_template`.
 
@@ -23,23 +23,23 @@ Vocabulary: "template" already names package-row templates, footprint templates 
 - release 1 varies instances by **render-time markings only**, with no per-instance geometry overrides (the `instance` binding of D5 is deferred);
 - upstream PRs are approved to *prepare* (§8), starting with the **photoreal look** rather than the performance work. Each PR still needs the founder's OK before it is opened.
 
-**Revision (founder, 3 November 2026): lean parts, Solidcraft stays generic.** No Pcbcraft-specific data goes into Solidcraft, in the fork or upstream: no metadata namespace, attribute panel or interface block (this drops SC2, SC5 and the `org.pcbcraft.*` interface below). The fork extends only the generic material model: a data-only material node graph (MaterialX/OpenPBR-style; clear coat is a graph input, not a format field), designed in the fork's docs/material-graph.md and proposed upstream once proven. A part is an ordinary Solidcraft design: named parameters choose the variant; its origin is the footprint origin and z = 0 its seating plane; marking areas and anchors are named construction planes and points that Pcbcraft finds by documented names and checks itself. Footprints stay Pcbcraft's (package forms and the datasheet assistant) and do not come from the part file. Sections below that assume the interface metadata are superseded where they conflict with this paragraph.
+**Revision (founder, 3 November 2026): lean parts, Solidcraft stays generic.** No Sparksmith-specific data goes into Solidcraft, in the fork or upstream: no metadata namespace, attribute panel or interface block (this drops SC2, SC5 and the `org.pcbcraft.*` interface below). The fork extends only the generic material model: a data-only material node graph (MaterialX/OpenPBR-style; clear coat is a graph input, not a format field), designed in the fork's docs/material-graph.md and proposed upstream once proven. A part is an ordinary Solidcraft design: named parameters choose the variant; its origin is the footprint origin and z = 0 its seating plane; marking areas and anchors are named construction planes and points that Sparksmith finds by documented names and checks itself. Footprints stay Sparksmith's (package forms and the datasheet assistant) and do not come from the part file. Sections below that assume the interface metadata are superseded where they conflict with this paragraph.
 
 ## 1. Decisions
 
 | # | Decision | Why |
 |---|---|---|
-| D1 | A part template is an ordinary Solidcraft design. Pcbcraft's interface lives in namespaced document metadata (`org.pcbcraft.part_template.N`). It refers to Solidcraft objects only by stable names (parameter, body, feature and sketch-curve ids) inside reference objects that renames follow (§3 SC2). | Plain Solidcraft opens and edits templates without a format change, and upstream Solidcraft stays compatible. Solidcraft has no per-body attribute store; metadata with followed references is the smallest addition. |
+| D1 | A part template is an ordinary Solidcraft design. Sparksmith's interface lives in namespaced document metadata (`org.pcbcraft.part_template.N`). It refers to Solidcraft objects only by stable names (parameter, body, feature and sketch-curve ids) inside reference objects that renames follow (§3 SC2). | Plain Solidcraft opens and edits templates without a format change, and upstream Solidcraft stays compatible. Solidcraft has no per-body attribute store; metadata with followed references is the smallest addition. |
 | D2 | A template's history is **inserted** into the board design, one component definition per distinct parameter set. Its features are cloned with a typed remap, its parameters prefixed (`pkg<id>r<rev>_<name>`) and its bodies named `<definition> <template body>` (§3 SC1). Evaluated bodies are never inserted as STEP. | The saved `.solidcraft` board stays parametric, as AGENTS.md requires, and needs no second evaluation path. The spike shows the insert gives the same geometry exactly, at no measurable overhead (§2). |
-| D3 | Pcbcraft keeps one definition per distinct `(template revision, parameter values)`, under the key `ParamSetKey = sha256(asset hash ‖ canonical values ‖ engine revision)`. Instances share it. | Solidcraft's evaluation cache keys on feature identity, so two definitions with equal values do not share results (measured). Deduplication is Pcbcraft's job. |
+| D3 | Sparksmith keeps one definition per distinct `(template revision, parameter values)`, under the key `ParamSetKey = sha256(asset hash ‖ canonical values ‖ engine revision)`. Instances share it. | Solidcraft's evaluation cache keys on feature identity, so two definitions with equal values do not share results (measured). Deduplication is Sparksmith's job. |
 | D4 | Parameter values a package or instance gives are **literal quantities** (number and unit, count, boolean, choice, text), never expressions. | One definition cannot then refer to another's parameters, and values can be validated and hashed. |
 | D5 | Each parameter declares its `binding`. `package` parameters are geometry fixed by the package. `instance` parameters are geometry an instance may override, each distinct set becoming another definition. `render` parameters are display only: markings and material slots, which never rebuild geometry. | This splits render-time variation (the ESP32 module's marking, a resistor's "101", an electrolytic sleeve's text and stripe) from geometry. |
-| D6 | **The land pattern is derived**, not linked. Pcbcraft evaluates the template's tagged land sketch at the package's values and writes ordinary footprint pads (`MaskRule` and `PasteRule` from the tags), recording which template revision and `ParamSetKey` they came from. A footprint edited by hand is detached from it. | A footprint stays independent of the package body ([part library design](part-library-design.md)). Board rules and lint apply to real pads as they do today. Template-driven sketch sources (`FootprintSource`) are a later option (O3). |
+| D6 | **The land pattern is derived**, not linked. Sparksmith evaluates the template's tagged land sketch at the package's values and writes ordinary footprint pads (`MaskRule` and `PasteRule` from the tags), recording which template revision and `ParamSetKey` they came from. A footprint edited by hand is detached from it. | A footprint stays independent of the package body ([part library design](part-library-design.md)). Board rules and lint apply to real pads as they do today. Template-driven sketch sources (`FootprintSource`) are a later option (O3). |
 | D7 | Markings stay display-only (F7). A template declares marking surfaces (planes and cylinders), a default `MarkingSpec` and named slots. `SurfaceRef::Anchor` resolves against the template's surfaces instead of the hard-coded `surface::anchors(form)`. Slots bind to `{mpn}`, `{field:…\|code}`, `{svg:NAME}`, `{param:NAME}`, `{designator}` and the rest. | The marking engine, codes, wraps, finishes, QR codes and decals stay as built (D4–D7). Only where surfaces and defaults come from changes. |
-| D8 | Body looks bind to Pcbcraft `MaterialId`s or to named material slots, through the template metadata. The Solidcraft appearance the author assigns carries the id in its name (`pcbcraft:<material_id>`) and stores the opaque PBR projection. | The authored file shows the right looks in plain Solidcraft. Pcbcraft draws the full look (clear coat, pattern) from its cited table ([materials](materials.md)). Persisting coat and pattern in Solidcraft's `Look` is a later fork and upstream change (SC6). |
+| D8 | Body looks bind to Sparksmith `MaterialId`s or to named material slots, through the template metadata. The Solidcraft appearance the author assigns carries the id in its name (`pcbcraft:<material_id>`) and stores the opaque PBR projection. | The authored file shows the right looks in plain Solidcraft. Sparksmith draws the full look (clear coat, pattern) from its cited table ([materials](materials.md)). Persisting coat and pattern in Solidcraft's `Look` is a later fork and upstream change (SC6). |
 | D9 | A new revisioned library kind `PartTemplate` holds the template bytes (packed by hash) and the inspected interface, which publish and build check again. `PackageForm::PartTemplate` and `PackageModel::PartTemplate` refer to it. | Same pattern as the Model kind (D1 as built): exact revisions, snapshots, bundles and update plans. |
 | D10 | Built-in families migrate to **built-in part templates**. The typed forms (`ChipForm`, `ModuleForm`, …) stay as typed views; a pure function maps each to the template's values. The Rust builders are deleted only once every starter row of the family passes parity (§7). | The form UI, package rows and footprint family templates keep working. Migrating is a per-family switch with a measured gate. |
-| D11 | The fork's authoring interface is **generic** (exposed parameters, namespaced attributes on design objects with schema-driven forms, a material library). Pcbcraft's semantics come in as a JSON schema file and are checked by Pcbcraft (`pcbcraft-cli part-template check`). | Nothing Pcbcraft-specific lands in the shared engine, so the work can go upstream. |
+| D11 | The fork's authoring interface is **generic** (exposed parameters, namespaced attributes on design objects with schema-driven forms, a material library). Sparksmith's semantics come in as a JSON schema file and are checked by Sparksmith (`sparksmith part-template check`). | Nothing Sparksmith-specific lands in the shared engine, so the work can go upstream. |
 | D12 | A template is untrusted input. Its size is bounded, its evaluation runs off the UI thread with cancel and a time budget, and built-in templates may contain no import features. | Same input policy as models and datasheets. |
 
 ## 2. Spike: inserting a template's history (measured)
@@ -98,7 +98,7 @@ Work happens in an isolated fork worktree branched from `pcbcraft-via2`, followi
 - new UI strings go in `assets/locales/pending/`;
 - any format change is one file in `crates/doc/src/format/pending/`.
 
-Nothing is pushed to `origin`. Pushing to `fork` happens only after integration, as for earlier fork changes. Pcbcraft then pins the new revision.
+Nothing is pushed to `origin`. Pushing to `fork` happens only after integration, as for earlier fork changes. Sparksmith then pins the new revision.
 
 ### SC1 — Insert a design's history (required)
 
@@ -127,8 +127,8 @@ impl Session {
 }
 ```
 
-- **Command.** `component.insert_history { design: base64 | path, component?, name, param_prefix, body_prefix, values?, parent? }`, with a schema. The reply is the report. The JSON command exists for MCP and for Solidcraft users; Pcbcraft calls the Rust API. It is deferrable within `defer_evaluation` (it joins the `DEFERRABLE` handling), so a board inserts every definition before one evaluation.
-- **Remap.** It uses `Feature::remap_clone` with complete maps, including the source's evaluated body names (patterns pin them) and `param_defs()`, which covers user parameters, feature inputs and sketch dimensions. Model parameters keep `model: true`. Source configuration rules (`ConfigRule`) are copied with their parameter names prefixed. Configuration rows are not copied: Pcbcraft turns them into presets.
+- **Command.** `component.insert_history { design: base64 | path, component?, name, param_prefix, body_prefix, values?, parent? }`, with a schema. The reply is the report. The JSON command exists for MCP and for Solidcraft users; Sparksmith calls the Rust API. It is deferrable within `defer_evaluation` (it joins the `DEFERRABLE` handling), so a board inserts every definition before one evaluation.
+- **Remap.** It uses `Feature::remap_clone` with complete maps, including the source's evaluated body names (patterns pin them) and `param_defs()`, which covers user parameters, feature inputs and sketch dimensions. Model parameters keep `model: true`. Source configuration rules (`ConfigRule`) are copied with their parameter names prefixed. Configuration rows are not copied: Sparksmith turns them into presets.
 - **Refusals**, leaving the host unchanged:
   - a source with subcomponents, occurrences, joints, body transfers, links or external face anchors (release 1 templates are single-component);
   - a name collision after prefixing;
@@ -146,8 +146,8 @@ impl Session {
   - `{"$feature": name}`
   - `{"$sketch": feature, "$curves": [ids]}`
   - `{"$pattern": feature, "$id": sketch pattern id}`
-- **Following renames.** `Document::rename_param`, `body.rename`, feature rename and `rename_body_keys` rewrite these references. This is generic and has no Pcbcraft semantics.
-- **Validation.** `document.references` lists dangling references, which the Pcbcraft check reports.
+- **Following renames.** `Document::rename_param`, `body.rename`, feature rename and `rename_body_keys` rewrite these references. This is generic and has no Sparksmith semantics.
+- **Validation.** `document.references` lists dangling references, which the Sparksmith check reports.
 - **Size.** Metadata keeps its limits (64 KiB per value, 256 keys, 256 KiB in all). The interface is chunked as `org.pcbcraft.part_template.0`, `.1`, …, each at most 48 KiB, like the model chunks today.
 
 ### SC3 — Read the evaluated interface (required)
@@ -158,21 +158,21 @@ These are pure queries on an evaluated `Session`, with Rust functions and comman
 - **Pattern copies.** `inspect.pattern_copies { feature }` returns `(copy index [i, j], body name)` for a body pattern, and `(index, curve ids)` for a sketch pattern (`SketchPattern.instances`).
 - **Sketch regions.** `inspect.sketch_regions { feature }` returns each closed region of a solved sketch as loops of curve ids with exact lines and arcs, in the template frame.
 
-### SC4 — The Pcbcraft material library (required, small)
+### SC4 — The Sparksmith material library (required, small)
 
-Pcbcraft exports its material table as a Solidcraft local material library (`crates/engine/src/cmd/libraries.rs` format). Each entry's name is `pcbcraft:<material_id>` and carries the opaque PBR projection (`models::look`). Authors assign looks from it. Material slots are named appearances (`pcbcraft-slot:<slot>`).
+Sparksmith exports its material table as a Solidcraft local material library (`crates/engine/src/cmd/libraries.rs` format). Each entry's name is `pcbcraft:<material_id>` and carries the opaque PBR projection (`models::look`). Authors assign looks from it. Material slots are named appearances (`pcbcraft-slot:<slot>`).
 
 ### SC5 — Authoring UI (minimum viable version)
 
 This is generic and in the fork:
 
 - **Parameters panel.** An "Interface" column group: exposed, label, group, minimum, maximum, step or choices, and binding. It writes to the metadata namespace that the open document declares as its interface schema.
-- **Attributes panel.** Namespaced attributes on the selected body, feature, sketch region, sketch pattern or construction feature, edited through a form generated from a JSON schema the namespace owner ships. Pcbcraft ships `org.pcbcraft.part_template.schema.json`. The panel shows dangling references from SC2.
-- **No Pcbcraft-specific panel.** Pad-number previews, numbering checks and land rules come from `pcbcraft-cli part-template check FILE [--watch]`, which re-checks the file on every save (§6).
+- **Attributes panel.** Namespaced attributes on the selected body, feature, sketch region, sketch pattern or construction feature, edited through a form generated from a JSON schema the namespace owner ships. Sparksmith ships `org.pcbcraft.part_template.schema.json`. The panel shows dangling references from SC2.
+- **No Sparksmith-specific panel.** Pad-number previews, numbering checks and land rules come from `sparksmith part-template check FILE [--watch]`, which re-checks the file on every save (§6).
 
 ### SC6 — Persisting the full material look (later, upstream-bound)
 
-`Look` gains an optional clear coat (`{factor, roughness, ior}`) and a surface pattern. This is one pending format file. Solidcraft's product look then renders the authored file as Pcbcraft does. Until then Pcbcraft draws the full look from the `MaterialId` (D8).
+`Look` gains an optional clear coat (`{factor, roughness, ior}`) and a surface pattern. This is one pending format file. Solidcraft's product look then renders the authored file as Sparksmith does. Until then Sparksmith draws the full look from the `MaterialId` (D8).
 
 ### What Solidcraft already offers, and the gaps
 
@@ -181,11 +181,11 @@ This is generic and in the fork:
 - **No general attribute store.** SC2 fills that gap without a format change.
 - **No parameter interface.** `Param` holds name, expression, unit, comment and the `model` flag, with no range or exposure; SC5 stores the interface in metadata.
 - **Design-wide parameters.** Parameters are global per design, so SC1 prefixes them.
-- **What Pcbcraft avoids.** It never stores face names in the interface in release 1. Anchors and marking surfaces are construction features with extents given as expressions, which do not depend on topological naming. A face reference (`$face`) is a later addition, once a template needs a surface no construction feature can give.
+- **What Sparksmith avoids.** It never stores face names in the interface in release 1. Anchors and marking surfaces are construction features with extents given as expressions, which do not depend on topological naming. A face reference (`$face`) is a later addition, once a template needs a surface no construction feature can give.
 
 ## 4. Template format (`pcbcraft-part-template/1`)
 
-The interface is one JSON object, chunked across `org.pcbcraft.part_template.N`. Reference objects are those of SC2. Expressions use Solidcraft's expression language over the template's parameter names, evaluated by Solidcraft at the requested values. Pcbcraft never evaluates an expression with its own evaluator.
+The interface is one JSON object, chunked across `org.pcbcraft.part_template.N`. Reference objects are those of SC2. Expressions use Solidcraft's expression language over the template's parameter names, evaluated by Solidcraft at the requested values. Sparksmith never evaluates an expression with its own evaluator.
 
 Example, abridged, for a four-row shielded module:
 
@@ -286,7 +286,7 @@ The land pattern is a sketch in the seating plane whose regions are tagged:
   - `mask` (`inherit | tented | {expansion}`);
   - `paste` (`inherit | none | {reduction} | {windows: [loops]}`);
   - `hole`, an inner loop or a drill expression.
-- **Conversion.** Pcbcraft classifies each region with the footprint evaluator's existing profile pass (`crates/solidcraft-integration/src/footprint/`), which gives typed shapes or exact custom outlines. The pads are written into the footprint draft with the footprint's defaults and the board's rules, as `library.package_from_template` does today. Mask and paste are *intent*; the footprint lint (`footprint.mask_web`, paste windows inside pads) and the board checks apply to the result.
+- **Conversion.** Sparksmith classifies each region with the footprint evaluator's existing profile pass (`crates/solidcraft-integration/src/footprint/`), which gives typed shapes or exact custom outlines. The pads are written into the footprint draft with the footprint's defaults and the board's rules, as `library.package_from_template` does today. Mask and paste are *intent*; the footprint lint (`footprint.mask_web`, paste windows inside pads) and the board checks apply to the result.
 - **Unsupported curves.** A region that is not closed, or has a curve the profile pass cannot classify, is the refusal `part_template.land_region`, naming the curves.
 
 ### Courtyard and keep-outs
@@ -310,7 +310,7 @@ The land pattern is a sketch in the seating plane whose regions are tagged:
 
 ### Validation rules
 
-**Structural**, checked by Pcbcraft on import and publish, and by `pcbcraft-cli part-template check`. All are blocking unless marked:
+**Structural**, checked by Sparksmith on import and publish, and by `sparksmith part-template check`. All are blocking unless marked:
 
 - The schema version is known; every reference resolves (SC2).
 - Every exposed parameter has a range, and its default lies in it.
@@ -332,7 +332,7 @@ The land pattern is a sketch in the seating plane whose regions are tagged:
 
 **Bounds.** At most 512 KiB of interface, 256 parameters, 64 lead entries, 1024 land regions, 16 keep-outs, 16 surfaces, 32 slots and 64 presets. The asset itself is at most 64 MiB, the container limit. All are targets.
 
-## 5. Pcbcraft integration
+## 5. Sparksmith integration
 
 ### Library kind (core, `library/part_template.rs`)
 
@@ -396,7 +396,7 @@ These are typed, one undo step each, and failures leave the document unchanged. 
 | Library command | `library.import_part_template` | `{ bytes \| asset, name, provenance }` → a PartTemplate draft (inspected, interface stored). With `assign: { package, values, lead_map }` it also sets the package draft, in the same step. |
 | Library command | `library.package_from_template` (extended) | Row source `{source: part_template, template, values, preset?}`: package form, model, terminals by key, and derived lands in a new or the landing footprint draft, in one step. |
 | Library command | `library.edit_package` (extended) | `PackageEdit::SetTemplateValues { values }`, `SetTemplateMaterials`, `SetLeadMap`. Lands are re-derived only while the footprint is still derived from this template (D6). |
-| Library command | `library.edit_part_template` | Metadata-only edits Pcbcraft may make: presets, description, provenance. Geometry and interface are edited in Solidcraft, then re-imported as a new revision. |
+| Library command | `library.edit_part_template` | Metadata-only edits Sparksmith may make: presets, description, provenance. Geometry and interface are edited in Solidcraft, then re-imported as a new revision. |
 | Instance command | `instance.set_template_values` | Instance overrides; refuses non-`instance` parameters. |
 | Query | `library.part_template_interface { template }` | The parameter schema with ranges, groups and descriptions, plus anchors, slots and presets: what an agent reads. |
 | Query | `library.part_template_plan { package, template, values }` | Evaluated summary and changes (envelope, leads, pads, keep-outs, findings) without geometry. |
@@ -455,8 +455,8 @@ The server instructions describe the flow: choose a template by `family_hint` an
 4. **Tag the leads**: select a body or body pattern, then in Attributes set role and key expression (`1 + i`).
 5. **Draw the land pattern** as a sketch on the seating plane. Patterns of a pad region become pad rows. Tag each region or pattern with number, lead, kind, mask and paste. Add courtyard and keep-out regions in their own sketches.
 6. **Add marking surfaces**: construction planes or axes with size expressions. Edit the default marking and slots in the Attributes form.
-7. **Assign looks** from the Pcbcraft material library (SC4), or a material slot.
-8. **Check and save**: run `pcbcraft-cli part-template check part.sc --watch` beside Solidcraft. It reports pad numbering, lead and pad pairing, range corners and timing on every save. Save as a container with the model cache, then import in Pcbcraft.
+7. **Assign looks** from the Sparksmith material library (SC4), or a material slot.
+8. **Check and save**: run `sparksmith part-template check part.sc --watch` beside Solidcraft. It reports pad numbering, lead and pad pairing, range corners and timing on every save. Save as a container with the model cache, then import in Sparksmith.
 
 **Minimum viable versions:**
 
@@ -553,7 +553,7 @@ This is a plan only. Opening any PR needs the founder's explicit go.
 - Do not edit generated files (`docs/features.md`, `THIRD-PARTY-LICENSES.txt`). Put each regression test in the area's existing test file.
 - Never force-push `main`, and do not push just to catch up.
 
-**Licence.** All fork work is our original contribution under Solidcraft's MIT OR Apache-2.0. Nothing Pcbcraft-specific is proposed: no material table, no `org.pcbcraft` schema. The Pcbcraft material library file stays in Pcbcraft.
+**Licence.** All fork work is our original contribution under Solidcraft's MIT OR Apache-2.0. Nothing Sparksmith-specific is proposed: no material table, no `org.pcbcraft` schema. The Sparksmith material library file stays in Sparksmith.
 
 ## 9. Work breakdown
 
@@ -614,23 +614,23 @@ They are parallel after C0. Hours are agent-hours.
 2. **O2: where the interface lives.** Namespaced metadata with references (recommended: no format change, upstream-compatible), or a native Solidcraft "design interface" format change.
 3. **O3: land pattern.** Derived pads (recommended for release 1), or a live parametric `FootprintSource` linked to the template.
 4. **O4: per-instance geometric overrides.** Allow `instance` binding (each set its own definition, at most 8 per package), or keep geometry package-only in release 1 and let instances vary only render parameters.
-5. **O5: fork authoring UI.** Generic panels v1 (recommended, upstreamable), or a Pcbcraft-specific template panel in the fork with live pad previews.
+5. **O5: fork authoring UI.** Generic panels v1 (recommended, upstreamable), or a Sparksmith-specific template panel in the fork with live pad previews.
 6. **O6: the upstream PRs.** Go or no go, and whether to start with the performance PR (recommended) or the product look.
 7. **O7: material persistence.** Propose clear coat and pattern in Solidcraft's `Look` upstream (SC6), or keep the `pcbcraft:<material_id>` naming as the only binding.
 8. **O8: imported geometry in user templates.** Allow a vendor STEP inside a user template when its licence is recorded (recommended), or forbid import features in all templates.
-9. **O9: file extension.** Templates saved as `.sc` (upstream's current default) or `.solidcraft` (Pcbcraft's convention so far).
+9. **O9: file extension.** Templates saved as `.sc` (upstream's current default) or `.solidcraft` (Sparksmith's convention so far).
 
 ## 10. Out of scope
 
 - Multi-component templates (subassemblies, moving parts), and joints inside templates.
 - Freeform marking surfaces ([D7 next step](component-model.md#markings-on-any-surface-d7-as-built)).
 - Data Matrix codes.
-- Template editing inside Pcbcraft: geometry is always edited in Solidcraft.
-- Live two-way sync between an open Solidcraft template and Pcbcraft. Re-import makes a new revision; `--watch` only checks.
+- Template editing inside Sparksmith: geometry is always edited in Solidcraft.
+- Live two-way sync between an open Solidcraft template and Sparksmith. Re-import makes a new revision; `--watch` only checks.
 
 ## 11. Lean parts: contract
 
-Contract, 3 November 2026, for the founder's revision above. For release 1 it replaces §3 SC2–SC5, §4 and the `PartTemplate` kind of §5. A **part file** is an ordinary parametric Solidcraft design (`.solidcraft`). A package uses one by naming it and giving values for some of its parameters. Pcbcraft builds the 3D body through Solidcraft's engine and reads the marking surfaces from named construction planes. The footprint, terminals and keep-outs stay the package's own (package form, datasheet assistant). Release 1 varies geometry per package only; instances vary by render-time markings.
+Contract, 3 November 2026, for the founder's revision above. For release 1 it replaces §3 SC2–SC5, §4 and the `PartTemplate` kind of §5. A **part file** is an ordinary parametric Solidcraft design (`.solidcraft`). A package uses one by naming it and giving values for some of its parameters. Sparksmith builds the 3D body through Solidcraft's engine and reads the marking surfaces from named construction planes. The footprint, terminals and keep-outs stay the package's own (package form, datasheet assistant). Release 1 varies geometry per package only; instances vary by render-time markings.
 
 ### L1. The package's reference
 
@@ -664,7 +664,7 @@ A part file follows these conventions, all over generic Solidcraft features:
 | Single component | The part's features live in the root component: no subcomponents, occurrences or joints. |
 | Frame | The design origin is the footprint origin; z = 0 is the seating plane; x runs along the package length. The lowest geometry lies at z = 0 (±0.01 mm), and the origin lies inside the xy bounds. |
 | Parameters | Plain user parameter names (`can_height`, `body_height`, `rows_left`). Any user parameter may be given a value; the rest are internal. |
-| Materials | Each body's Solidcraft appearance is named after a Pcbcraft material: its `MaterialId` in kebab case (`nickel-silver`, `solder-mask-green`, `gold`, `epoxy-mould`, …; `pcbcraft-cli part check --materials` lists them). Case and `_`, `-` or space are not told apart. A body with any other appearance, or none, is a blocking finding. The Solidcraft look keeps Pcbcraft's opaque PBR projection, so plain Solidcraft shows it right; Pcbcraft draws its own full look for the material. When the fork's material graph lands, a graph material named the same way maps the same way (only `part_file::material_of` changes). |
+| Materials | Each body's Solidcraft appearance is named after a Sparksmith material: its `MaterialId` in kebab case (`nickel-silver`, `solder-mask-green`, `gold`, `epoxy-mould`, …; `sparksmith part check --materials` lists them). Case and `_`, `-` or space are not told apart. A body with any other appearance, or none, is a blocking finding. The Solidcraft look keeps Sparksmith's opaque PBR projection, so plain Solidcraft shows it right; Sparksmith draws its own full look for the material. When the fork's material graph lands, a graph material named the same way maps the same way (only `part_file::material_of` changes). |
 | Marking surfaces | A construction plane named `marking-<name>` is a marking surface. Its origin is the area's centre, its x axis the area's u (reading) direction, and its normal points out of the part. Its size is the two length parameters `marking_<name>_u` and `marking_<name>_v` (`-` in `<name>` becomes `_`). It becomes the anchor `<name>` with `-` turned into `_` (`marking-can-top` → `can_top`). `marking-top` is the default marking area (`placement.on: model`); without it, the default is the first surface. |
 | Anchors | A construction point named `pin1` marks pin 1. It is optional and reported by the check. Other named construction points are listed but not used in release 1. |
 | Roles | A body's role follows its material: a lead finish (`gold`, `tin-matte`, `tin-bright`, `solder-sac`, `nickel`, `copper-alloy`, `phosphor-bronze`, `brass`) is a termination, drawn as a lead; anything else is the body. This is display only: a part file carries no lead tags, and terminals and pads stay the package's. |
@@ -678,7 +678,7 @@ A part file follows these conventions, all over generic Solidcraft features:
 - `part_file.empty`, `part_file.bodies`: no bodies, or more than 1024;
 - `part_file.seating`: the lowest geometry is not at z = 0;
 - `part_file.origin` (advisory): the origin is outside the xy bounds;
-- `part_file.material`: a body's appearance names no Pcbcraft material (the bodies are named);
+- `part_file.material`: a body's appearance names no Sparksmith material (the bodies are named);
 - `part_file.marking`: a `marking-*` plane without both size parameters, a size that is not positive, or two surfaces with one anchor name;
 - `part_file.no_marking` (advisory): no marking surface;
 - `part_file.import` (advisory): the file contains an import feature; its source licence must be recorded on the Model;
@@ -724,23 +724,23 @@ pub fn cache_counts() -> (u64 /* hits */, u64 /* evaluations */);
 | Automation command | `library.use_part_file` | `{ package, path \| builtin, values?, name?, expected_revision? }` → the check report and the new revision. It reads the file (bounded) and checks it, refusing blocking findings. It then applies `library.import_model` with `assign.part`, or `SetModel` when the same asset is already a Model in the project. |
 | Automation command | `library.set_part_values` | `{ package, values, expected_revision? }` → report and revision. It evaluates at the new values and applies `SetModel`. |
 | Automation query | `library.check_part_file` | `{ path \| builtin, values? }` → the report: parameters, bodies, materials, surfaces, pin 1, bounds, findings, timing. |
-| CLI | `pcbcraft-cli part check FILE [--set name=value]… [--json] [--materials]` | The report; exit status 1 on a blocking finding. |
+| CLI | `sparksmith part check FILE [--set name=value]… [--json] [--materials]` | The report; exit status 1 on a blocking finding. |
 | MCP and assistant | `library_check_part_file`, `library_use_part_file`, `library_set_part_values` | The automation requests above, as tools. |
 
 Built-in part files ship under `library/parts/` and are named by `builtin` (`esp32-s31-wroom-3`). They are original work (MIT OR Apache-2.0), authored through Solidcraft's commands by `cargo test -p pcbcraft-solidcraft --test author_parts -- --ignored`.
 
 ### L5. As built (3 November 2026)
 
-- **Code.** Core: `PackageModel::PartFile(Box<PartFileModel>)`, `PartValue`, `PartDerived` and the findings in `library/package_model.rs` and `library/model3d.rs` (`part_findings`); `surface::package_anchors` gives a part file's surfaces to marking layout, `library.marking_surfaces` and the Component 3D marking tab. Integration: `models/part_file.rs` (evaluate, cache, check, insert, `role_of`, `material_of`, built-ins) and `project::{define_part, part_bytes, preview_part}`. Automation: `session/part_files.rs`. CLI: `pcbcraft-cli part check`. Assistant: `library_check_part_file`, `library_use_part_file`, `library_set_part_values`, and one sentence in the prompt.
+- **Code.** Core: `PackageModel::PartFile(Box<PartFileModel>)`, `PartValue`, `PartDerived` and the findings in `library/package_model.rs` and `library/model3d.rs` (`part_findings`); `surface::package_anchors` gives a part file's surfaces to marking layout, `library.marking_surfaces` and the Component 3D marking tab. Integration: `models/part_file.rs` (evaluate, cache, check, insert, `role_of`, `material_of`, built-ins) and `project::{define_part, part_bytes, preview_part}`. Automation: `session/part_files.rs`. CLI: `sparksmith part check`. Assistant: `library_check_part_file`, `library_use_part_file`, `library_set_part_values`, and one sentence in the prompt.
 - **Roles.** A body's role follows its material (L2); the WROOM-3 part draws its 107 pads and castellations as leads and its board, can and antenna as the body, as the module builder did.
 - **First part.** `library/parts/esp32-s31-wroom-3.solidcraft` (152 KiB JSON, 24 user parameters, 110 bodies, 8 marking planes and `pin1`). It is authored by `tests/author_parts.rs` through Solidcraft's commands (`parameters.import`, `appearance.assign`, `construct.plane.offset`, `construct.point.vertex`) and the public remap API, starting from the module builder's construction. Only what the builder drives by parameters is parametric (board size and thickness, pad thickness, can size, height and round); the pad rows, notches and antenna stay as drawn for the WROOM-3.
 - **Example.** `examples/esp32-s31-wroom-3` uses it (replay step 06b, `write_the_example_part_file`).
 - **Parity** (`part_file_tests.rs`): 110/110 bodies; worst bounding-box difference 0 mm; worst relative volume difference 0; total volume 1852.0734 mm³ both; union bounds equal; materials and drawn kinds equal; the eight marking surfaces equal `surface::anchors(form)` within 1e-9 mm, and the default area is the can (21 × 23 mm), as before. Pictures: the `write_wroom_board_pictures` set renders the board from the part file.
 - **Cost** (release, Apple M5 Max, `tests/part_timings.rs`, three runs): module builder 103–122 ms; part file cold (read, apply values, evaluate, inspect) 45–47 ms, of which Solidcraft's evaluation is 43–45 ms; cached 0.27 ms; insert into a board 47–49 ms. Equal keys share one definition in a board.
-- **Fork.** `component.insert_history` is on the fork branch `insert-history` (commit 7442748af, on `pcbcraft-via2` d53b131), not pushed and not pinned: Pcbcraft's insert uses the public API at the current pin, so merging this work needs no fork push. Switching `part_file::insert` to the command is a later, contract-neutral change once the fork is pushed and pinned.
+- **Fork.** `component.insert_history` is on the fork branch `insert-history` (commit 7442748af, on `pcbcraft-via2` d53b131), not pushed and not pinned: Sparksmith's insert uses the public API at the current pin, so merging this work needs no fork push. Switching `part_file::insert` to the command is a later, contract-neutral change once the fork is pushed and pinned.
 - **Desktop chooser.** The Component 3D tab's Model section has **Part file…**: the chooser sheet (`apps/pcbcraft/src/part_chooser.rs`, [M5](mechanical-parts.md#m5-desktop)) lists the built-ins, the project's part-file Models, up to eight recent files (per-user settings) and Open file…, and shows the check, the parameters form, bodies and materials and timing, evaluated on a worker thread. **Use** applies `pcbcraft_automation::part_files::use_part_file_operation`; a package using a part file shows its file, licence, size and parameters, and each committed field is one `set_part_values_operation` (one undo step). **Use generated model** returns to the package's own model.
 - **Open.** Instances vary by markings only (release 1).
 
 ## 12. Mechanical parts and the part-file chooser
 
-The desktop part-file chooser and parametric 3D parts placed directly on the PCB (solderable nuts and standoffs, spacers, heatsinks) are specified in [mechanical-parts.md](mechanical-parts.md). They build on L1–L4 unchanged: a directly placed part is an ordinary instance of a generated component set whose package uses a part file, one set per variant (file, values, lands, assembly flags), and its footprint is Pcbcraft data, never taken from the part file.
+The desktop part-file chooser and parametric 3D parts placed directly on the PCB (solderable nuts and standoffs, spacers, heatsinks) are specified in [mechanical-parts.md](mechanical-parts.md). They build on L1–L4 unchanged: a directly placed part is an ordinary instance of a generated component set whose package uses a part file, one set per variant (file, values, lands, assembly flags), and its footprint is Sparksmith data, never taken from the part file.

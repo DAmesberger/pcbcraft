@@ -16,7 +16,7 @@ use super::App;
 use crate::kit::{self, severity::Level, toast::ToastAction};
 use pcbcraft_automation::live::{self, Admitted, ControlRequest, Endpoint, Verdict};
 use pcbcraft_automation::{Mode, Policy, Question, Session};
-use solidcraft_ui_egui::{ui_kit, ui_kit::Button};
+use pcbcraft_ui::{ui_kit, ui_kit::Button};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
@@ -149,12 +149,12 @@ impl LiveMcp {
 }
 
 /// The CLI the configuration starts: the one beside this app when it is
-/// there, else whatever `pcbcraft-cli` the client's PATH finds.
+/// there, else whatever `sparksmith` the client's PATH finds.
 fn cli_path() -> String {
     let name = if cfg!(windows) {
-        "pcbcraft-cli.exe"
+        concat!(pcbcraft_core::product_short_name!(), ".exe")
     } else {
-        "pcbcraft-cli"
+        pcbcraft_core::product::SHORT_NAME
     };
     std::env::current_exe()
         .ok()
@@ -311,7 +311,10 @@ impl App {
         let failure = self.live.failure.clone();
         let cli = cli_path();
         let config = live::client_config(&cli);
-        let claude = format!("claude mcp add pcbcraft -- \"{cli}\" mcp --live");
+        let claude = format!(
+            "claude mcp add {} -- \"{cli}\" mcp --live",
+            pcbcraft_core::product::SHORT_NAME
+        );
         let mut copy = None;
         let closed = ui_kit::Window::new(
             egui::Id::unique("app-live-mcp"),

@@ -31,6 +31,10 @@
         "value": 0.0,
         "source": "Not a meaningful pair: 0."
       },
+      "clearance_board_edge_npth_hole": {
+        "value": 0.0,
+        "source": "JLCPCB does not publish this limit: 0, not checked."
+      },
       "clearance_board_edge_pth_hole": {
         "value": 0.0,
         "source": "JLCPCB does not publish this limit: 0, not checked."
@@ -47,13 +51,21 @@
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
       },
+      "clearance_fill_npth_hole": {
+        "value": 0.2,
+        "source": "Traces, \"NPTH to Track\": \"0.2mm\"."
+      },
       "clearance_fill_pth_hole": {
-        "value": 0.28,
-        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the minimum."
+        "value": 0.35,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the recommended value, chosen over the minimum (0.28 mm)."
       },
       "clearance_fill_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"."
+      },
+      "clearance_npth_hole_npth_hole": {
+        "value": 0.45,
+        "source": "Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no NPTH-specific row; Pcbcraft reads the pad hole row as covering unplated pad holes too (founder decision, 2026-11-12)."
       },
       "clearance_pad_board_edge": {
         "value": 0.2,
@@ -63,13 +75,17 @@
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
       },
+      "clearance_pad_npth_hole": {
+        "value": 0.2,
+        "source": "Traces, \"NPTH to Track\": \"0.2mm\"."
+      },
       "clearance_pad_pad": {
         "value": 0.15,
         "source": "Traces, \"SMD pad to pad clearance (different nets)\": \"0.15mm\"."
       },
       "clearance_pad_pth_hole": {
-        "value": 0.28,
-        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the minimum."
+        "value": 0.35,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the recommended value, chosen over the minimum (0.28 mm)."
       },
       "clearance_pad_via": {
         "value": 0.1,
@@ -77,7 +93,11 @@
       },
       "clearance_pad_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"."
+      },
+      "clearance_pth_hole_npth_hole": {
+        "value": 0.45,
+        "source": "Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no NPTH-specific row; Pcbcraft reads the pad hole row as covering unplated pad holes too (founder decision, 2026-11-12)."
       },
       "clearance_pth_hole_pth_hole": {
         "value": 0.45,
@@ -91,13 +111,17 @@
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
       },
+      "clearance_track_npth_hole": {
+        "value": 0.2,
+        "source": "Traces, \"NPTH to Track\": \"0.2mm\"."
+      },
       "clearance_track_pad": {
         "value": 0.1,
         "source": "Traces, \"Pad to track clearance (1oz)\": \"0.1mm\"; \"Min. 0.1 mm (stay well above if possible)\"."
       },
       "clearance_track_pth_hole": {
-        "value": 0.28,
-        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the minimum."
+        "value": 0.35,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the recommended value, chosen over the minimum (0.28 mm)."
       },
       "clearance_track_track": {
         "value": 0.1,
@@ -109,7 +133,7 @@
       },
       "clearance_track_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"."
       },
       "clearance_via_board_edge": {
         "value": 0.2,
@@ -119,6 +143,10 @@
         "value": 0.1,
         "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
       },
+      "clearance_via_hole_npth_hole": {
+        "value": 0.45,
+        "source": "Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no NPTH-specific or via-to-pad-hole row; Pcbcraft reads the pad hole row as covering unplated pad holes too (founder decision, 2026-11-12): the larger, the pad hole's."
+      },
       "clearance_via_hole_pth_hole": {
         "value": 0.45,
         "source": "Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no via-to-pad-hole row: the larger, the pad hole's."
@@ -127,9 +155,13 @@
         "value": 0.2,
         "source": "Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"."
       },
+      "clearance_via_npth_hole": {
+        "value": 0.2,
+        "source": "Traces, \"NPTH to Track\": \"0.2mm\"."
+      },
       "clearance_via_pth_hole": {
-        "value": 0.28,
-        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the minimum."
+        "value": 0.35,
+        "source": "Traces, \"PTH to Track\": \"0.28mm\", \"0.35mm is recommended, minimum 0.28mm\"; the recommended value, chosen over the minimum (0.28 mm)."
       },
       "clearance_via_via": {
         "value": 0.1,
@@ -137,7 +169,7 @@
       },
       "clearance_via_via_hole": {
         "value": 0.2,
-        "source": "Traces, \"Via hole to Track\": \"0.2mm\"; unplated holes take this rule too (Traces, \"NPTH to Track\": \"0.2mm\")."
+        "source": "Traces, \"Via hole to Track\": \"0.2mm\"."
       },
       "copper_angle_min": {
         "value": 0.0,
@@ -186,6 +218,10 @@
       "mask_web_min": {
         "value": 0.1,
         "source": "Soldermask, \"Soldermask bridge\": \"0.10mm\"; \"1oz: Min. pad spacing: 0.10 mm (green, red, yellow, blue, purple)\", \"Min. pad spacing: 0.13 mm (black, white)\"."
+      },
+      "npth_annular_ring_min": {
+        "value": 0.45,
+        "source": "Traces, \"NPTH pad annular ring\": \"≧0.45mm\"; \"Recommended 0.45 mm or more. This is to allow a 0.2 mm ring of copper to be removed around the hole for the sealing film to attach.\""
       },
       "pair_gap_tolerance": {
         "value": 0.02,

@@ -31,8 +31,8 @@ use pcbcraft_core::{
     schematic::{self, ClipObject, SchematicCommand, WirePoint, WireTarget},
     updates::{ApplyUpdate, Change, InstanceChange},
 };
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -2548,7 +2548,7 @@ impl SchematicEditor {
         let dragged_box = self
             .box_from
             .zip(ui.input(|i| i.pointer.latest_pos()))
-            .map(|(from, to)| solidcraft_ui_egui::selection::BoxSel::from_drag(from, to));
+            .map(|(from, to)| pcbcraft_ui::selection::BoxSel::from_drag(from, to));
         if let Some(bx) = dragged_box.clone() {
             group::paint_box(&painter, bx);
         }
@@ -3318,7 +3318,7 @@ mod tests {
     use pcbcraft_core::fields::PropertyInput;
     use pcbcraft_core::functions::{FunctionEdit, TerminalFunctions};
     use pcbcraft_core::updates::InstanceChange;
-    use solidcraft_ui_egui::fonts;
+    use pcbcraft_ui::fonts;
 
     #[test]
     fn placed_instance_removal_opens_review_without_mutating_the_board() -> pcbcraft_core::Result<()>

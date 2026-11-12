@@ -1,6 +1,6 @@
 # Copper geometry and interactive 3D performance
 
-Source snapshot: Solidcraft `4f3ac07aec69489183185071f07d7fbcf4f51e64`, inspected 29 October 2026. This is source research and a proposed architecture, not measured Pcbcraft performance.
+Source snapshot: Solidcraft `4f3ac07aec69489183185071f07d7fbcf4f51e64`, inspected 29 October 2026. This is source research and a proposed architecture, not measured Sparksmith performance.
 
 ## Product requirement
 
@@ -14,7 +14,7 @@ This requirement is compatible with GPU triangle rendering. A mesh with top, bot
 
 **Repeated geometry.** The viewport groups shared mesh references into instanced draws, keeps shared triangle data, and supports mesh levels of detail. This is useful for repeated component models and suitably identical pad/via shapes. It does not imply that unrelated trace segments automatically become efficient instances. [Viewport instancing](https://github.com/tangency-labs/solidcraft/blob/4f3ac07aec69489183185071f07d7fbcf4f51e64/crates/ui-egui/src/viewport.rs#L1304).
 
-**Picking.** Solidcraft builds per-mesh triangle/edge indexes and caches them. Native builds prepare larger indexes on a worker while picking uses a fallback scan; the inspected wasm branch builds synchronously. Existing hit records identify CAD faces, edges and sketch objects, not electrical nets. Pcbcraft therefore needs a stable semantic mapping and a broad-phase spatial index appropriate for many copper objects, even if it reuses the triangle-index machinery. [Picking indexes](https://github.com/tangency-labs/solidcraft/blob/4f3ac07aec69489183185071f07d7fbcf4f51e64/crates/ui-egui/src/pick_index.rs), [hit types](https://github.com/tangency-labs/solidcraft/blob/4f3ac07aec69489183185071f07d7fbcf4f51e64/crates/ui-egui/src/viewport.rs#L220).
+**Picking.** Solidcraft builds per-mesh triangle/edge indexes and caches them. Native builds prepare larger indexes on a worker while picking uses a fallback scan; the inspected wasm branch builds synchronously. Existing hit records identify CAD faces, edges and sketch objects, not electrical nets. Sparksmith therefore needs a stable semantic mapping and a broad-phase spatial index appropriate for many copper objects, even if it reuses the triangle-index machinery. [Picking indexes](https://github.com/tangency-labs/solidcraft/blob/4f3ac07aec69489183185071f07d7fbcf4f51e64/crates/ui-egui/src/pick_index.rs), [hit types](https://github.com/tangency-labs/solidcraft/blob/4f3ac07aec69489183185071f07d7fbcf4f51e64/crates/ui-egui/src/viewport.rs#L220).
 
 **Evaluation reuse.** Model bodies share cached meshes, display plans and measurements. However, the document evaluator traverses a feature timeline and its cache keys include the starting model state. This does not establish object-local rebuild cost for a board represented by thousands of sequential extrusions. Reuse must be measured after editing an early trace, not inferred from a warm static viewport. [Body caches and evaluator](https://github.com/tangency-labs/solidcraft/blob/4f3ac07aec69489183185071f07d7fbcf4f51e64/crates/doc/src/eval.rs#L1641).
 
@@ -22,7 +22,7 @@ These are promising building blocks, not proof that current Solidcraft handles a
 
 ## Proposed shared engine extension
 
-Prototype a native copper collection/feature in the shared Solidcraft engine. Store persistent per-item geometry parameters and identities; evaluate/copy/cache independently by item or bounded spatial chunk. If existing APIs already provide equivalent behavior at the measured scale, use them. Otherwise extend Solidcraft, rather than creating a second Pcbcraft modelling engine.
+Prototype a native copper collection/feature in the shared Solidcraft engine. Store persistent per-item geometry parameters and identities; evaluate/copy/cache independently by item or bounded spatial chunk. If existing APIs already provide equivalent behavior at the measured scale, use them. Otherwise extend Solidcraft, rather than creating a second Sparksmith modelling engine.
 
 - A track contains its path, width, copper thickness and layer elevation; generate a closed volume with correct joins and end shapes.
 - A pad contains its land geometry, thickness, elevation and any drill opening. A plated via includes the barrel and layer lands, with the hole remaining empty.
@@ -31,7 +31,7 @@ Prototype a native copper collection/feature in the shared Solidcraft engine. St
 
 Simple extrusion volumes do not require a chain of general 3D unions. Shared engine routines can construct/render them directly from their native definitions and provide exact geometry for operations that require it. Physical same-net overlaps and adjacent regions need an explicit union/ownership policy: coincident surfaces must not flicker, material measures must not double-count overlap, and selecting an individual source trace must still work. Benchmark a local 2D footprint union plus thickness extrusion where an aggregate is required; do not fuse every net after every pointer move.
 
-Persistent native definitions are essential. A cached display mesh is disposable acceleration data, not the only saved representation. Stock compatible Solidcraft must understand and recompute the saved copper feature. Introducing one therefore includes a shared format/API change and minimum-version requirement; that same feature implementation must ship in the compatible Solidcraft application. An opaque Pcbcraft-only blob or an unknown feature that silently loads as missing copper does not satisfy compatibility.
+Persistent native definitions are essential. A cached display mesh is disposable acceleration data, not the only saved representation. Stock compatible Solidcraft must understand and recompute the saved copper feature. Introducing one therefore includes a shared format/API change and minimum-version requirement; that same feature implementation must ship in the compatible Solidcraft application. An opaque Sparksmith-only blob or an unknown feature that silently loads as missing copper does not satisfy compatibility.
 
 ## Interaction without rebuilding the board
 

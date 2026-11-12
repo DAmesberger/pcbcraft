@@ -16,6 +16,7 @@ use pcbcraft_core::format::{EditorFile, FILE_VERSION};
 use pcbcraft_core::library::templates::catalog::RowCitation;
 use pcbcraft_core::library::templates::starter::{StarterRow, parse_all};
 use pcbcraft_core::library::{DefinitionMeta, Library, Published};
+use pcbcraft_core::product::SHORT_NAME as CLI;
 use pcbcraft_core::{DefinitionId, DefinitionKind, DefinitionRef, Engine, Project, Revision};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -26,7 +27,7 @@ pub const USAGE: &str =
   sample-packages --review         print the starter rows' provenance review list";
 
 /// The library folder's default display name.
-const DEFAULT_NAME: &str = "Pcbcraft Packages";
+const DEFAULT_NAME: &str = concat!(pcbcraft_core::product_name!(), " Packages");
 
 fn starter_rows() -> Result<Vec<StarterRow>> {
     Ok(parse_all()?)
@@ -178,7 +179,7 @@ pub fn run(args: &[String]) -> Result<()> {
             rest.first().map_or(DEFAULT_NAME, String::as_str),
             &starter_rows()?,
         )?),
-        _ => Err(format!("usage: pcbcraft-cli {USAGE}").into()),
+        _ => Err(format!("usage: {CLI} {USAGE}").into()),
     }
 }
 

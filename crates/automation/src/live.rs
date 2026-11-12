@@ -59,13 +59,17 @@ const WAIT: Duration = Duration::from_secs(120);
 const ASK_WAIT: Duration = Duration::from_secs(600);
 const ACCEPT_POLL: Duration = Duration::from_millis(25);
 /// Where a refused client reads how to connect.
-const DOCS: &str = "the Pcbcraft README, section Live MCP";
+const DOCS: &str = concat!(
+    "the ",
+    pcbcraft_core::product_name!(),
+    " README, section Live MCP"
+);
 
 /// Pcbcraft's control channel: token files in `<config>/control`
 /// (`PCBCRAFT_CONFIG_DIR` moves the config folder, `PCBCRAFT_CONTROL_DIR`
 /// the token folder) and `PCBCRAFT_CONTROL_TOKEN` for a harness.
 pub const APP: App = App {
-    name: "Pcbcraft",
+    name: pcbcraft_core::product::NAME,
     data_dir: config_dir,
     env: control_env,
     utc: seconds,
@@ -333,7 +337,7 @@ impl Drop for Endpoint {
 /// configuration holds no secret and outlives this session.
 pub fn client_config(cli: &str) -> String {
     let config = json!({
-        "mcpServers": {"pcbcraft": {"command": cli, "args": ["mcp", "--live"]}}
+        "mcpServers": {pcbcraft_core::product::SHORT_NAME: {"command": cli, "args": ["mcp", "--live"]}}
     });
     serde_json::to_string_pretty(&config).unwrap_or_default()
 }
@@ -423,7 +427,7 @@ pub fn admit(
             "live.window_only",
             command,
             "the open window owns its file, and its File menu asks the person about unsaved work. Nothing was changed.".into(),
-            "Ask the person to open, save or start a project in Pcbcraft, then carry on.",
+            concat!("Ask the person to open, save or start a project in ", pcbcraft_core::product_name!(), ", then carry on."),
         ));
     }
     let mut request = json!({
@@ -523,12 +527,17 @@ impl Client {
     /// The window on `port`, or the one the discovery file names, with
     /// `token`, else the app's `CONTROL_TOKEN`, else its token file.
     pub fn find(app: &App, port: Option<u16>, token: Option<&str>) -> Result<Self, String> {
-        let port = port.or_else(|| app.read_current_port()).ok_or(
-            "no Pcbcraft window has live MCP on: in Pcbcraft, choose Help › Connect AI assistants… and turn it on",
-        )?;
+        let port = port.or_else(|| app.read_current_port()).ok_or(concat!(
+            "no ",
+            pcbcraft_core::product_name!(),
+            " window has live MCP on: in ",
+            pcbcraft_core::product_name!(),
+            ", choose Help › Connect AI assistants… and turn it on"
+        ))?;
         let token = app.client_token(port, token).ok_or_else(|| {
             format!(
-                "no token for the Pcbcraft window on port {port}: turn live MCP on in that window, or give PCBCRAFT_CONTROL_TOKEN"
+                "no token for the {} window on port {port}: turn live MCP on in that window, or give PCBCRAFT_CONTROL_TOKEN",
+                pcbcraft_core::product::NAME
             )
         })?;
         Ok(Self::with_token(port, token))
@@ -551,7 +560,8 @@ impl Client {
     pub fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let unreachable = |error: std::io::Error| {
             format!(
-                "could not reach the Pcbcraft window on port {}: {error}. Is live MCP still on?",
+                "could not reach the {} window on port {}: {error}. Is live MCP still on?",
+                pcbcraft_core::product::NAME,
                 self.port
             )
         };
@@ -571,7 +581,8 @@ impl Client {
         writer.write_all(&bytes).map_err(unreachable)?;
         let lost = |why: &str| {
             format!(
-                "no reply from the Pcbcraft window ({why}); inspect the project before sending a change again"
+                "no reply from the {} window ({why}); inspect the project before sending a change again",
+                pcbcraft_core::product::NAME
             )
         };
         let reply = match crate::lines::next(&mut reader, MAX_REPLY) {

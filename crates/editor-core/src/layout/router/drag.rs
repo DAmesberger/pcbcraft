@@ -19,7 +19,6 @@
 //! `layout.track_drag_preview` for CLI and MCP, all call it.
 use super::world::{Ctx, Hit, Piece, State};
 use super::{RouteIndex, RouteMode, RoutePlan, bisect, shove, shoved, yes};
-use crate::diagnostics::ObjectRef;
 use crate::diagnostics::{Error, Result};
 use crate::geometry::{Point, distance};
 use crate::ids::Id;
@@ -655,15 +654,43 @@ fn coupled_partner(project: &Project, pair: &DiffPair, track: Id) -> Option<Id> 
 
 /// The pair's skew, uncoupled-length and gap findings, by code.
 fn pair_findings(project: &Project, graph: &CopperGraph, pair: &DiffPair) -> Vec<(String, String)> {
-    let net = ObjectRef::Net { id: pair.positive };
-    length::checks(project, graph)
+    length::pair_checks(project, graph, pair)
         .into_iter()
-        .filter(|f| {
-            ["pair.skew", "pair.uncoupled", "pair.gap"].contains(&f.code.as_str())
-                && f.objects.contains(&net)
-        })
+        .filter(|f| ["pair.skew", "pair.uncoupled", "pair.gap"].contains(&f.code.as_str()))
         .map(|f| (f.code, f.message))
         .collect()
+}
+
+/// The copper graph a drag checks `pair` on after an edit, `next` the
+/// board after it and `before` the whole board's graph before it: the
+/// graph of the pair's nets alone ([`CopperGraph::of_nets`]), which
+/// measures the pair as the whole board's graph would, so a pointer move
+/// does not rebuild the board's graph. `None` when either graph stopped
+/// at a limit: its joints may differ from the whole board's, and the
+/// caller builds that instead.
+pub(crate) fn pair_graph(
+    before: &CopperGraph,
+    next: &Project,
+    pair: &DiffPair,
+) -> Option<CopperGraph> {
+    if !before.complete() {
+        return None;
+    }
+    let graph = CopperGraph::of_nets(next, &[pair.positive, pair.negative]);
+    graph.complete().then_some(graph)
+}
+
+/// The pair's skew, uncoupled-length and gap findings on `next`, the
+/// board after an edit whose graph before it was `before`.
+pub(crate) fn pair_findings_after(
+    before: &CopperGraph,
+    next: &Project,
+    pair: &DiffPair,
+) -> Vec<(String, String)> {
+    match pair_graph(before, next, pair) {
+        Some(graph) => pair_findings(next, &graph, pair),
+        None => pair_findings(next, &CopperGraph::of(next), pair),
+    }
 }
 
 /// The first pair finding `edits` add on the board (one it did not have),
@@ -673,7 +700,7 @@ fn new_pair_finding(ctx: &Ctx<'_>, edits: &RouteEditSet, pair: &DiffPair) -> Opt
     if let Err(e) = apply_routes(&mut next, edits.clone()) {
         return Some(e.to_string());
     }
-    let after = pair_findings(&next, &CopperGraph::of(&next), pair);
+    let after = pair_findings_after(ctx.graph(), &next, pair);
     if after.is_empty() {
         return None;
     }

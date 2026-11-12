@@ -17,7 +17,7 @@ from the same script. No voice-over is needed; captions carry the story.
   app follows the system appearance: record with macOS in Dark mode); window-only capture, so no
   other app can appear in the frame.
 - **Board:** the ESP32-S31 dev board being designed now (see *Dependencies*). Until it lands,
-  the 4-layer showcase (`pcbcraft-cli showcase`) stands in.
+  the 4-layer showcase (`sparksmith showcase`) stands in.
 - **Captions:** IBM Plex Sans (SIL OFL, the app's own UI font), white on a 72 % dark box, lower
   centre, at most 7 words, 2.5–3.5 s each, 0.35 s fades. Feature claims in captions must match the
   README draft word for word where they quote numbers.
@@ -32,7 +32,7 @@ from the same script. No voice-over is needed; captions carry the story.
 
 | # | Scene | What happens on screen | Duration | Caption | Feature it proves | Ready? |
 |---|---|---|---|---|---|---|
-| 0 | Cold open | Black, then the finished dev board in 3D, slowly orbiting under the studio light; the title fades in. | 4 s | **Pcbcraft** · *one design, components to Gerbers* | Integrated photoreal 3D | Waits: dev board; better with Realistic mode |
+| 0 | Cold open | Black, then the finished dev board in 3D, slowly orbiting under the studio light; the title fades in. | 4 s | **Sparksmith** · *one design, components to Gerbers* | Integrated photoreal 3D | Waits: dev board; better with Realistic mode |
 | 1 | Datasheet in | Component workspace start page → **Create from datasheet…**; drop the two WROOM-3 PDFs (file names only), part name, model; Start. Progress ticks up. | 8 s | *Give it the datasheets.* | AI-assisted component creation (`pcbcraft-assist`) | Works today; see note A |
 | 2 | Review | Time-cut to the finished run: the review report lists values with page, table and confidence; the Pins tab shows 99 pins with their IO MUX functions. | 6 s | *Every value cited to its page.* | Review flow; pin functions | Works today |
 | 3 | The part in 3D | Component 3D tab: the WROOM-3 part file with the laser-etched name on the can, the QR code and pin-1 mark; a slow orbit and a push-in onto the etching. | 10 s | *A parametric Solidcraft part, with real markings.* | Lean parts; markings D7 | Works today; Realistic mode and material graphs will lift it |
@@ -45,7 +45,7 @@ from the same script. No voice-over is needed; captions carry the story.
 | 10 | 3D fly-around | **D** to 3D; a smooth orbit with arrow keys, push-in to a chip's solder fillets and ENIG lands, a tented via; Board setup → soldermask black, matte; Layers popover strips mask, then copper layers one by one. | 16 s | *Real copper, real thickness. Same selection.* | Thickness-aware copper; product look; shared selection | **Proof take recorded** on the showcase; Realistic mode pending |
 | 11 | Production | Output › Production: pre-flight report; one warning waived with a reason; Export as ZIP; the written files list (Gerber X2, Excellon, job, BOM, pick-and-place, drawings). | 10 s | *Gerbers, drills, BOM and drawings — checked first.* | Fabrication output and pre-flight | Works today |
 | 12 | Agent step | Side-by-side: a terminal running Claude Code with the `pcbcraft` MCP server; prompt *"run the pre-flight and route the last unrouted net"*; the tool calls (`project_query fabrication.preflight`, `project_apply layout.route_step`, `project_save`) scroll; cut to the app reopening the file with the new track highlighted. | 14 s | *Your agent uses the same engine. And the same undo.* | One command engine across UI, CLI and MCP | Works today with reopen; see note B |
-| 13 | End card | The board in 3D, frozen; text. | 5 s | **Pcbcraft** · MIT OR Apache-2.0 · *repository URL* | — | Template only |
+| 13 | End card | The board in 3D, frozen; text. | 5 s | **Sparksmith** · MIT OR Apache-2.0 · *repository URL* | — | Template only |
 
 Total: 126 s.
 

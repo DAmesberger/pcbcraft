@@ -15,7 +15,7 @@ The founder asked for controlled impedance from the stackup, differential pairs 
 - **Net class signal rules** (`rules/signal.rs`, `SignalRules` on `NetClass.signal`): single-ended `impedance` (10–200 Ω), differential `diff_impedance` (20–300 Ω), `impedance_tolerance` (0.5–50 %, 10 % when unset), `pair_max_uncoupled` and `pair_max_skew` (mm; each unchecked when unset). The class's `diff_pair_width` and `diff_pair_gap`, reserved before, now set the pair width and gap; with a differential target, whichever is unset is derived.
 - **Differential pairs** (`DiffPair`): a name, a positive and a negative net, and optional endpoints (`PairEndpoints`: `[start, end]` terminals per half, set through `diff_pair.edit`; each must be a pad of its half's net). A net is in at most one pair, and the two nets differ. The positive net's class supplies the pair's rules. Pairs follow nets through merges (`rules::signal::follow_nets`, called where net-class assignments follow): a merged-away net is replaced by its survivor, and a pair whose halves became one net, or lost one, is removed.
 - **Length groups** (`LengthGroup`): nets and pairs (a pair contributes both halves), an optional `target` and a `tolerance`. With a target, every routed member must lie within `target ± tolerance`; without one, within `tolerance` below the longest member. A group of one pair matches the pair's halves.
-- **Stackup** (`model/stackup.rs`): `Dielectric.dk` is the fabricator's Dk; when absent, `Dielectric::permittivity` uses a generic estimate by glass style (106: 3.8, 1080: 4.0, 2116: 4.3, 7628: 4.6, typical published FR-4 values near 1 GHz, not fabricator data). `CopperFoil.plane` marks a ground or power plane. `layout.set_stackup` validates Dk in 1–20.
+- **Stackup** (`model/stackup.rs`): `Dielectric.dk` is the fabricator's Dk; when absent, `Dielectric::permittivity` uses a generic estimate by glass style (106: 3.8, 1080: 4.0, 2116: 4.3, 7628: 4.6, typical FR-4 values near 1 GHz, not fabricator data). Against Isola's published 370HR core Dk at 1 GHz ([materials](materials.md#sources)) the first three agree within 0.05 (3.81, 4.04, 4.26); 7628's 4.6 does not (Isola 4.36) and is uncited. `CopperFoil.plane` marks a ground or power plane. `layout.set_stackup` validates Dk in 1–20.
 - **Clearance inside a pair** (`layout/limits.rs`): between the two halves of a pair, only the profile's object-pair clearance applies, not class or class-pair clearances, so a pair can run at a gap smaller than its class clearance to other nets. The profile's track-to-track clearance is the smallest pair gap the rules allow (`impedance::pair_gap_min`).
 
 ## Impedance model
@@ -37,7 +37,7 @@ The formulas are our own implementation of published equations (`layout::impedan
 
 **Reference values** (`layout/impedance/tests.rs`):
 
-| Case | Reference | Pcbcraft |
+| Case | Reference | Sparksmith |
 | --- | --- | --- |
 | Microstrip, d = 1.27 mm, εr = 2.20, W/d = 3.081, t = 0 | 50 Ω, εe = 1.87 (Pozar, *Microwave Engineering*, Example 3.7) | 50.02 Ω, εe = 1.881 (test tolerance 1 %) |
 | Microstrip in air, u = 1, t = 0 | 126.4 Ω (hand evaluation: 59.96 Ω · ln(6 + √5)), εe = 1 exactly | 126.4 Ω, εe = 1 |

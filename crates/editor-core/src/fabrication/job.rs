@@ -91,8 +91,8 @@ pub fn file(
     let c = &rules.copper.clearance;
     let mut header = json!({
         "GenerationSoftware": {
-            "Vendor": "Pcbcraft",
-            "Application": "Pcbcraft",
+            "Vendor": crate::product::NAME,
+            "Application": crate::product::NAME,
             "Version": env!("CARGO_PKG_VERSION"),
         },
     });

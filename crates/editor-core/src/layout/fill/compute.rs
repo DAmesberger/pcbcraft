@@ -391,9 +391,11 @@ impl<'a> Ctx<'a> {
         // 2. Obstacles.
         let mut rings: Vec<Ring> = Vec::new();
         let mut regions: Vec<Region> = Vec::new();
-        // Via drills and unplated holes keep the via hole clearance,
-        // plated pad and mounting holes the plated hole clearance.
+        // Plated pad and mounting holes keep the plated hole clearance,
+        // unplated ones the unplated hole clearance; via drills keep the
+        // via hole clearance.
         let hole_gap = |plated: bool| self.clearance(fill, CopperObject::hole(plated), None) + tol;
+        let via_hole_gap = self.clearance(fill, CopperObject::ViaHole, None) + tol;
         for cut in &board.cutouts {
             if let Some(ring) = geom::ccw(cut.outline.flatten(tol)) {
                 regions.extend(geom::offset(&[vec![ring]], edge + tol, tol));
@@ -477,7 +479,7 @@ impl<'a> Ctx<'a> {
             match connection {
                 PadConnection::None => {
                     let gap = self.clearance(fill, CopperObject::Via, self.class(Some(v.net)));
-                    let r = (v.diameter / 2.0 + gap).max(v.drill / 2.0 + hole_gap(false) - tol);
+                    let r = (v.diameter / 2.0 + gap).max(v.drill / 2.0 + via_hole_gap - tol);
                     rings.push(geom::circle(v.position, r + tol, tol));
                 }
                 PadConnection::Solid => {

@@ -22,7 +22,7 @@ use pcbcraft_assist::profile as run_profile;
 use pcbcraft_assist::{Datasheet, Event, Goal, RunConfig};
 use pcbcraft_automation::Session;
 use pcbcraft_core::Engine;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -155,7 +155,11 @@ impl DatasheetAssist {
     fn form(&mut self, ui: &mut Ui) {
         kit::note(
             ui,
-            "A model reads the datasheets and drafts the component, symbol, package, footprint and 3D model through the Pcbcraft tools. The result is a new project of unreviewed drafts with a review report; nothing is published.",
+            concat!(
+                "A model reads the datasheets and drafts the component, symbol, package, footprint and 3D model through the ",
+                pcbcraft_core::product_name!(),
+                " tools. The result is a new project of unreviewed drafts with a review report; nothing is published."
+            ),
         );
         kit::note(
             ui,

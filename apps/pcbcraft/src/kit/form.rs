@@ -1,10 +1,10 @@
 //! Form rows and controls (upstream `ui_kit/layout.rs` and `fields.rs`).
 use egui::{Align, Layout, Response, RichText, Ui, UiBuilder, vec2};
-use solidcraft_theme::Tokens;
 #[cfg(test)]
-use solidcraft_ui_egui::fonts;
-use solidcraft_ui_egui::ui_kit;
-use solidcraft_ui_egui::ui_kit::type_face;
+use pcbcraft_ui::fonts;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit;
+use pcbcraft_ui::ui_kit::type_face;
 
 /// Form scope: tokenised spacing, type and control looks for every row
 /// inside `add` (upstream `layout::scope`).

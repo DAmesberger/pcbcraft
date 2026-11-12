@@ -58,4 +58,12 @@ impl Via {
     pub fn annular_ring(&self) -> f64 {
         (self.diameter - self.drill) / 2.0
     }
+
+    /// The soldermask opening's diameter in mm over an open (untented)
+    /// via: its ring grown on every side by `expansion`, the effective
+    /// rules' `mask.expansion`. The Gerber mask and the 3D mask both read
+    /// it.
+    pub fn mask_opening(&self, expansion: f64) -> f64 {
+        self.diameter + 2.0 * expansion
+    }
 }

@@ -15,8 +15,8 @@ use pcbcraft_core::{CopperLayer, Layer};
 use pcbcraft_solidcraft::material::BodyKind;
 use pcbcraft_solidcraft::scene::Geometry;
 use pcbcraft_solidcraft::stack::{Slot, Stack};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button, Container, Surface};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button, Container, Surface};
 use std::collections::BTreeSet;
 
 /// Width of the layer popover's content.
@@ -324,7 +324,7 @@ mod tests {
 
     fn four() -> Result<Stack, String> {
         pcbcraft_core::Stackup::preset(4)
-            .map(|s| Stack::of(&s))
+            .map(|s| Stack::of(&s, pcbcraft_core::PadFinish::default()))
             .map_err(|e| e.to_string())
     }
 
@@ -367,11 +367,14 @@ mod tests {
         assert_eq!(two.len(), stack.len() - 2);
         // Only the films the stackup has: no bottom mask or top legend
         // toggle on a board without them.
-        let bare = ViewLayer::stack(&Stack::of(&pcbcraft_core::Stackup {
-            mask_bottom: false,
-            silkscreen_top: false,
-            ..pcbcraft_core::Stackup::default()
-        }));
+        let bare = ViewLayer::stack(&Stack::of(
+            &pcbcraft_core::Stackup {
+                mask_bottom: false,
+                silkscreen_top: false,
+                ..pcbcraft_core::Stackup::default()
+            },
+            pcbcraft_core::PadFinish::default(),
+        ));
         assert_eq!(bare.len(), two.len() - 2);
         assert!(!bare.contains(&ViewLayer::Mask(Layer::Bottom)));
         assert!(!bare.contains(&ViewLayer::Silkscreen(Layer::Top)));

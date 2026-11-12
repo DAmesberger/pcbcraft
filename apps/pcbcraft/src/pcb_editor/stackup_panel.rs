@@ -21,7 +21,7 @@ use pcbcraft_core::{
     },
     model::fill::KeepoutLayers,
 };
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::collections::BTreeMap;
 
 /// The Stackup dialog's state: the draft, where removed layers' copper
@@ -460,7 +460,7 @@ fn carried_layers(project: &Project) -> Vec<CopperLayer> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use solidcraft_ui_egui::fonts;
+    use pcbcraft_ui::fonts;
 
     /// At the Properties column's width (about 230 points, as measured in
     /// the app), in the dialog's form, the table shows every value and
@@ -471,7 +471,7 @@ mod tests {
     fn the_layer_table_fits_the_properties_column() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
         fonts::setup_bundled_fonts(&ctx);
-        solidcraft_theme::apply(&ctx);
+        pcbcraft_ui::theme::apply(&ctx);
         let draft = StackupDraft::of(&Stackup::preset(4)?);
         let input = || egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(

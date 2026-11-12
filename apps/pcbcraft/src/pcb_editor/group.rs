@@ -23,7 +23,7 @@ use pcbcraft_core::layout::arrange::{CopperMove, PartMove};
 use pcbcraft_core::layout::several::Objects;
 use pcbcraft_core::layout::{self, LayoutCommand};
 use pcbcraft_core::{Id, Operation, Point, Project};
-use solidcraft_ui_egui::selection::BoxSel;
+use pcbcraft_ui::selection::BoxSel;
 use std::collections::BTreeSet;
 
 /// The objects of a selection, by kind.
@@ -519,7 +519,7 @@ impl PcbEditor {
 
     /// The card's footer: Flip for parts, Delete for copper.
     pub(super) fn group_footer(&mut self, ui: &mut Ui, project: &Project) -> Option<Operation> {
-        use solidcraft_ui_egui::ui_kit::{self, Button};
+        use pcbcraft_ui::ui_kit::{self, Button};
         let mut output = None;
         let delete = self.delete_group();
         if ui_kit::button(ui, "Delete", Button::Enabled(delete.is_some()))
@@ -544,7 +544,7 @@ impl PcbEditor {
     /// The selection filter's popover rows, beside the view popover.
     pub fn filter_menu(&mut self, ui: &mut Ui) {
         kit::form(ui, |ui| {
-            ui.set_width(solidcraft_theme::Tokens::get().form_label_width * 2.4);
+            ui.set_width(pcbcraft_ui::theme::Tokens::get().form_label_width * 2.4);
             kit::section(ui, "pcb-select-filter", "Select", true, None, |ui| {
                 let f = &mut self.filter;
                 kit::check(ui, "Parts and pads", &mut f.parts);

@@ -1,0 +1,31 @@
+[package]
+name = "pcbcraft-gen-chip"
+description = "Pcbcraft generator module: chip resistors, capacitors, inductors, ferrite beads and LEDs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# cdylib: the module (`cargo xtask generators build`); rlib: the native
+# golden tests.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The workspace lints, except unsafe_code: denied, not forbidden, so that the
+# SDK's export macro can allow it for `#[unsafe(no_mangle)]` on the four ABI
+# exports, which have no safe spelling. This crate writes no unsafe code.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+
+# A generator depends on the SDK only; `cargo xtask layers` enforces it.
+[dependencies]
+pcbcraft-generator-sdk.workspace = true

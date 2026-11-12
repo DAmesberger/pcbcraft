@@ -9,7 +9,7 @@
 //! runs, Esc closes), drawn with the kit's search sheet.
 use crate::kit;
 use egui::pos2;
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// How many recent commands are kept (as Solidcraft's command search).
 const RECENT: usize = 12;

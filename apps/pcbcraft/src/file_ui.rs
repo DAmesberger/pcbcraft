@@ -5,8 +5,8 @@
 use crate::kit::severity::Level;
 use pcbcraft_core::{Document, Engine, Project, format::EditorFile};
 use pcbcraft_io::recovery::{self, RecoveryEntry, RecoveryStore};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -249,10 +249,12 @@ fn worker(ctx: egui::Context, directory: Outcome<PathBuf>, events: Sender<Event>
         });
         let startup = match (&directory, &store) {
             (Err(error), _) => Err(format!(
-                "Recovery unavailable: {error}. Unsaved work is not kept if Pcbcraft stops."
+                "Recovery unavailable: {error}. Unsaved work is not kept if {product} stops.",
+                product = pcbcraft_core::product::NAME
             )),
             (_, Err(error)) => Err(format!(
-                "{error}. Unsaved work is not kept if Pcbcraft stops."
+                "{error}. Unsaved work is not kept if {product} stops.",
+                product = pcbcraft_core::product::NAME
             )),
             (Ok(directory), Ok(_)) => recovery::list(directory).map_err(|e| e.to_string()),
         };
@@ -662,12 +664,15 @@ impl FileUi {
         } else {
             dialog
                 .set_title(if kind == Kind::Open {
-                    "Open Pcbcraft project"
+                    concat!("Open ", pcbcraft_core::product_name!(), " project")
                 } else {
-                    "Save Pcbcraft project"
+                    concat!("Save ", pcbcraft_core::product_name!(), " project")
                 })
                 .set_file_name(&filename)
-                .add_filter("Pcbcraft project", &["pcbcraft", "PCBCRAFT"])
+                .add_filter(
+                    concat!(pcbcraft_core::product_name!(), " project"),
+                    &["pcbcraft", "PCBCRAFT"],
+                )
         };
         // Construct the parented native future on the event thread, just as
         // Solidcraft services do. Awaiting it does not block egui or file I/O.
@@ -1172,7 +1177,7 @@ fn same_content(a: &Document, b: &Document) -> bool {
 
 /// The name the project panel proposes: the file's own, else the project's
 /// name ("USB sensor board.pcbcraft") without characters a file name
-/// cannot hold, else "untitled.pcbcraft".
+/// cannot hold, else [`pcbcraft_core::UNTITLED`] ("Untitled.pcbcraft").
 fn proposed_file_name(path: Option<&Path>, project: &str) -> String {
     if let Some(name) = path.and_then(|p| p.file_name()).and_then(|n| n.to_str()) {
         return name.to_owned();
@@ -1181,12 +1186,11 @@ fn proposed_file_name(path: Option<&Path>, project: &str) -> String {
         .chars()
         .filter(|c| !matches!(c, '/' | '\\' | ':') && !c.is_control())
         .collect();
-    let stem = stem.trim().trim_start_matches('.');
-    if stem.is_empty() {
-        "untitled.pcbcraft".to_owned()
-    } else {
-        format!("{stem}.pcbcraft")
-    }
+    let stem = match stem.trim().trim_start_matches('.') {
+        "" => pcbcraft_core::UNTITLED,
+        stem => stem,
+    };
+    format!("{stem}.{}", pcbcraft_core::format::EXTENSION)
 }
 
 /// Whether the engine's document differs from `saved` only by drafts opened
@@ -1312,7 +1316,10 @@ mod tests {
             "USB sensor board.pcbcraft"
         );
         assert_eq!(proposed_file_name(None, " a/b:c "), "abc.pcbcraft");
-        assert_eq!(proposed_file_name(None, "  "), "untitled.pcbcraft");
+        assert_eq!(
+            proposed_file_name(None, "  "),
+            format!("{}.pcbcraft", Project::default().name)
+        );
         assert_eq!(
             proposed_file_name(Some(Path::new("/x/board.pcbcraft")), "USB sensor board"),
             "board.pcbcraft"
