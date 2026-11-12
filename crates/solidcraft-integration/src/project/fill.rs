@@ -50,18 +50,20 @@ pub(super) struct FillMark {
     pub regions: Vec<FilledRegion>,
 }
 
-/// The fills with copper to build, in document order, each region
-/// simplified for the model ([`simplified`]).
-pub(super) fn built(project: &Project) -> Vec<(&Fill, Vec<FilledRegion>)> {
-    project
-        .fills
-        .iter()
-        .filter_map(|f| {
-            let regions = f.computed.as_ref()?.regions.as_slice();
-            (!regions.is_empty() && project.stackup.has(f.layer))
-                .then(|| (f, regions.iter().map(simplified).collect()))
-        })
-        .collect()
+/// The fills with stored copper on a layer of the stackup, in document
+/// order.
+pub(super) fn with_copper(project: &Project) -> impl Iterator<Item = &Fill> {
+    project.fills.iter().filter(|f| {
+        f.computed.as_ref().is_some_and(|c| !c.regions.is_empty()) && project.stackup.has(f.layer)
+    })
+}
+
+/// A fill's stored regions simplified for the model ([`simplified`]).
+pub(super) fn simplified_regions(fill: &Fill) -> Vec<FilledRegion> {
+    fill.computed
+        .as_ref()
+        .map(|c| c.regions.iter().map(simplified).collect())
+        .unwrap_or_default()
 }
 
 /// The chord tolerance a fill's boundary is simplified to in the native

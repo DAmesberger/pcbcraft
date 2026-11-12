@@ -110,6 +110,12 @@ pub struct UserSettings {
     /// Row density, reduced motion and saved list filters.
     #[serde(default, skip_serializing_if = "ListSettings::is_default")]
     pub lists: ListSettings,
+    /// The 3D view meshes the board's flat bodies (laminate and copper)
+    /// straight from the board plan instead of building them in the
+    /// kernel (off by default: the exact build stays the live path until
+    /// the direct mesh has replaced it).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mesh_board_directly: bool,
 }
 
 /// Saved list filters kept.
@@ -267,6 +273,7 @@ impl Default for UserSettings {
             default_rule_profile: None,
             selection_filter: SelectionFilter::default(),
             lists: ListSettings::default(),
+            mesh_board_directly: false,
         }
     }
 }

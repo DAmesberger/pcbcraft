@@ -20,7 +20,7 @@ use pcbcraft_core::library::{Definition, ModelPlacement, PackageDefinition, Pack
 use pcbcraft_core::{Engine, Id, Project};
 use pcbcraft_solidcraft::marking::board::BoardMarkings;
 use pcbcraft_solidcraft::models::imported::SourceCache;
-use pcbcraft_solidcraft::project::Source;
+use pcbcraft_solidcraft::project::{Flat, Source};
 use pcbcraft_solidcraft::stack::Stack;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -102,7 +102,7 @@ pub fn library_asset(
 enum Job {
     /// A board, with the flag that stops its build once a newer request
     /// replaces it.
-    Project(u64, Arc<Project>, Arc<AtomicBool>),
+    Project(u64, Arc<Project>, Arc<AtomicBool>, Flat),
     Package(u64, Box<PackageDefinition>, Option<Box<LibraryAsset>>),
     /// A build that panics, as a dependency's bug would.
     #[cfg(test)]
@@ -204,8 +204,14 @@ impl Made {
 /// Build one job's display geometry and pick sources.
 fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
     match job {
-        Job::Project(ticket, project, cancel) => {
+        Job::Project(ticket, project, cancel, flat) => {
             let started = std::time::Instant::now();
+            // Models of the other way of holding the board's flat bodies
+            // are neither updated nor shown again.
+            if kept.board.as_ref().is_some_and(|(_, m)| m.flat() != flat) {
+                kept.board = None;
+            }
+            kept.earlier.retain(|(_, m)| m.flat() == flat);
             let same = |board: &Arc<Project>| Arc::ptr_eq(board, &project) || **board == *project;
             let (made, how) =
                 if let Some(at) = kept.earlier.iter().position(|(board, _)| same(board)) {
@@ -229,10 +235,11 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                             }
                         }
                         None => (
-                            pcbcraft_solidcraft::project::build_with(
+                            pcbcraft_solidcraft::project::build_flat(
                                 &project,
                                 &kept.sources,
                                 Some(cancel),
+                                flat,
                             ),
                             Made::Built,
                         ),
@@ -307,29 +314,54 @@ impl Worker {
         let (results, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let mut kept = Kept::default();
-            while let Ok(mut job) = jobs.recv() {
+            // A request that came while a meshed board was made.
+            let mut next: Option<Job> = None;
+            loop {
+                let mut job = match next.take() {
+                    Some(job) => job,
+                    None => match jobs.recv() {
+                        Ok(job) => job,
+                        Err(_) => break,
+                    },
+                };
                 while let Ok(newer) = jobs.try_recv() {
                     job = newer;
                 }
                 let ticket = job.ticket();
+                let meshed = matches!(job, Job::Project(.., Flat::Meshed));
                 // A build that panics (a bug in a dependency) fails its
                 // request; the worker goes on with the next one, from no
                 // kept model, so the view never waits on a dead worker.
                 let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let (_, result) = build(job, &mut kept);
+                    // A meshed board's next model is made in a fraction of
+                    // the time packing this one takes: once a newer request
+                    // waits (a refill after an edit), this one is kept for
+                    // that model to update, and not packed or shown.
+                    if meshed
+                        && result.is_ok()
+                        && let Ok(newer) = jobs.try_recv()
+                    {
+                        next = Some(newer);
+                        return None;
+                    }
                     let started = std::time::Instant::now();
                     let result = result.and_then(|(geometry, sources, stack)| {
                         model_scene::build(geometry, &stack).map(|scene| (scene, sources))
                     });
-                    (result, started)
+                    Some((result, started))
                 }));
-                let (result, started) = made.unwrap_or_else(|_| {
-                    kept = Kept::default();
-                    (
-                        Err("The 3D model could not be built (internal error)".to_owned()),
-                        std::time::Instant::now(),
-                    )
-                });
+                let (result, started) = match made {
+                    Ok(Some(made)) => made,
+                    Ok(None) => continue,
+                    Err(_) => {
+                        kept = Kept::default();
+                        (
+                            Err("The 3D model could not be built (internal error)".to_owned()),
+                            std::time::Instant::now(),
+                        )
+                    }
+                };
                 if std::env::var_os("PCBCRAFT_TIMINGS").is_some() {
                     eprintln!(
                         "pcbcraft: model {ticket} packed for drawing in {:.2} s",
@@ -444,6 +476,9 @@ pub struct SceneController {
     cameras: [Option<pcbcraft_solidcraft::viewport::Camera>; 2],
     /// Another document was opened: its first board model is framed.
     fit_board: bool,
+    /// How board models hold the board's flat bodies (Settings, "Mesh the
+    /// board directly"): built natively, or meshed from the board plan.
+    flat: Flat,
     /// Results taken from the worker, current or dropped.
     #[cfg(test)]
     received: u64,
@@ -465,6 +500,7 @@ impl SceneController {
             status: Status::Idle,
             cameras: [None; 2],
             fit_board: false,
+            flat: Flat::Native,
             #[cfg(test)]
             received: 0,
         }
@@ -496,6 +532,24 @@ impl SceneController {
         self.shown = None;
         self.sources.clear();
         self.prefetch = Prefetch::default();
+    }
+
+    /// Hold the board's flat bodies as `flat` says from the next board
+    /// model on: a change asks for the board's model again (the model shown
+    /// stays up, under the "Updating" note, until it comes).
+    pub fn set_flat(&mut self, flat: Flat) {
+        if flat != self.flat {
+            self.flat = flat;
+            if self.key.as_ref().is_some_and(|k| !k.is_package()) {
+                self.key = None;
+            }
+            self.prefetch = Prefetch::default();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn flat(&self) -> Flat {
+        self.flat
     }
 
     pub fn status(&self) -> &Status {
@@ -531,7 +585,7 @@ impl SceneController {
         let cancel = Arc::new(AtomicBool::new(false));
         let job = match (&key, package) {
             (ModelKey::Project(project), _) => {
-                Job::Project(ticket, Arc::clone(project), Arc::clone(&cancel))
+                Job::Project(ticket, Arc::clone(project), Arc::clone(&cancel), self.flat)
             }
             (ModelKey::Package(_), Some(package)) => match library() {
                 Ok(library) => {
@@ -829,11 +883,14 @@ mod tests {
         let flag = || Arc::new(AtomicBool::new(false));
         worker
             .sender
-            .send(Job::Project(1, Arc::new(project), flag()))?;
+            .send(Job::Project(1, Arc::new(project), flag(), Flat::Native))?;
         let first = wait(1)?.result?;
-        worker
-            .sender
-            .send(Job::Project(2, Arc::new(edited.clone()), flag()))?;
+        worker.sender.send(Job::Project(
+            2,
+            Arc::new(edited.clone()),
+            flag(),
+            Flat::Native,
+        ))?;
         let (scene, sources) = wait(2)?.result?;
         let fresh = pcbcraft_solidcraft::project::build(&edited)?;
         assert_eq!(sources.len(), first.1.len());
@@ -869,9 +926,12 @@ mod tests {
         let flag = || Arc::new(AtomicBool::new(false));
         let mut kept = Kept::default();
         let mut made = |board: &Arc<Project>| {
-            build(Job::Project(0, Arc::clone(board), flag()), &mut kept)
-                .1
-                .map(|(geometry, _, _)| geometry)
+            build(
+                Job::Project(0, Arc::clone(board), flag(), Flat::Native),
+                &mut kept,
+            )
+            .1
+            .map(|(geometry, _, _)| geometry)
         };
         // The native bodies' meshes, by identity.
         let meshes = |geometry: &[pcbcraft_solidcraft::scene::Geometry]| -> Vec<usize> {
@@ -886,6 +946,132 @@ mod tests {
         assert_ne!(first, second, "the wider track has a mesh of its own");
         assert_eq!(meshes(&made(&project)?), first, "undone");
         assert_eq!(meshes(&made(&edited)?), second, "redone");
+        Ok(())
+    }
+
+    /// With "Mesh the board directly", the worker meshes the board's flat
+    /// bodies from the board plan: the same objects are drawn and picked
+    /// as from the exact model, a track edit keeps every other mesh, and
+    /// switching the setting back builds the exact model anew instead of
+    /// updating the meshed one.
+    #[test]
+    fn the_direct_mesh_setting_meshes_the_boards_flat_bodies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_solidcraft::material::BodyKind;
+        let project = Arc::new(Engine::showcase()?.project().clone());
+        let mut edited = (*project).clone();
+        let track = edited.tracks.first_mut().ok_or("a track")?;
+        track.width += 0.05;
+        let edited = Arc::new(edited);
+        let flag = || Arc::new(AtomicBool::new(false));
+        let mut kept = Kept::default();
+        let made = |board: &Arc<Project>, flat: Flat, kept: &mut Kept| {
+            build(Job::Project(0, Arc::clone(board), flag(), flat), kept)
+                .1
+                .map(|(geometry, sources, _)| (geometry, sources))
+        };
+        let copper = |kind: BodyKind| {
+            matches!(
+                kind,
+                BodyKind::Substrate
+                    | BodyKind::PadCopper
+                    | BodyKind::CopperTrack
+                    | BodyKind::ViaCopper
+                    | BodyKind::FillCopper
+            )
+        };
+        // What each flat body is picked as, once each.
+        let picked =
+            |(geometry, sources): &(Vec<pcbcraft_solidcraft::scene::Geometry>, Vec<Source>)| {
+                let mut out: Vec<String> = geometry
+                    .iter()
+                    .filter(|g| copper(g.kind))
+                    .map(|g| {
+                        let source = g.item.and_then(|p| sources.iter().find(|s| s.pick_id == p));
+                        format!(
+                            "{:?} {}",
+                            g.kind,
+                            source.map_or("board", |s| s.label.as_str())
+                        )
+                    })
+                    .collect();
+                out.sort();
+                out.dedup();
+                out
+            };
+        let exact = made(&project, Flat::Native, &mut kept)?;
+        let meshed = made(&project, Flat::Meshed, &mut kept)?;
+        assert_eq!(
+            kept.board.as_ref().map(|(_, m)| m.flat()),
+            Some(Flat::Meshed)
+        );
+        assert_eq!(picked(&meshed), picked(&exact));
+        let laminate = |geometry: &[pcbcraft_solidcraft::scene::Geometry]| {
+            geometry
+                .iter()
+                .filter(|g| g.kind == BodyKind::Substrate)
+                .count()
+        };
+        assert!(laminate(&exact.0) > 1, "the exact model's slabs");
+        assert_eq!(laminate(&meshed.0), 1, "the laminate drawn whole");
+        // A track made wider: every flat mesh but that track's is kept.
+        let meshes = |geometry: &[pcbcraft_solidcraft::scene::Geometry]| {
+            geometry
+                .iter()
+                .filter(|g| copper(g.kind))
+                .map(|g| Arc::as_ptr(&g.mesh) as usize)
+                .collect::<std::collections::HashSet<_>>()
+        };
+        let wider = made(&edited, Flat::Meshed, &mut kept)?;
+        let (before, after) = (meshes(&meshed.0), meshes(&wider.0));
+        assert_eq!(
+            after.difference(&before).count(),
+            1,
+            "the wider track's mesh alone is new"
+        );
+        // Back to the exact model: built anew, with its slabs.
+        let back = made(&edited, Flat::Native, &mut kept)?;
+        assert_eq!(
+            kept.board.as_ref().map(|(_, m)| m.flat()),
+            Some(Flat::Native)
+        );
+        assert!(laminate(&back.0) > 1);
+        Ok(())
+    }
+
+    /// The controller asks for the board's model again when the setting
+    /// changes, and the worker answers with the other kind of model.
+    #[test]
+    fn changing_the_direct_mesh_setting_asks_for_the_board_again()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut scene = SceneController::new(
+            egui::Context::default(),
+            crate::viewport::Viewport::detached(),
+        );
+        let key = ModelKey::Project(Arc::new(Engine::demo()?.project().clone()));
+        scene.request(key.clone(), None, || Ok(None));
+        let asked = scene.requests();
+        scene.request(key.clone(), None, || Ok(None));
+        assert_eq!(
+            scene.requests(),
+            asked,
+            "the same board is not asked for twice"
+        );
+        scene.set_flat(Flat::Meshed);
+        assert_eq!(scene.flat(), Flat::Meshed);
+        scene.request(key.clone(), None, || Ok(None));
+        assert_eq!(
+            scene.requests(),
+            asked + 1,
+            "asked again for the meshed model"
+        );
+        scene.set_flat(Flat::Meshed);
+        scene.request(key, None, || Ok(None));
+        assert_eq!(
+            scene.requests(),
+            asked + 1,
+            "an unchanged setting asks nothing"
+        );
         Ok(())
     }
 
@@ -915,9 +1101,12 @@ mod tests {
         let flag = || Arc::new(AtomicBool::new(false));
         let mut kept = Kept::default();
         let made = |board: &Arc<Project>, kept: &mut Kept| {
-            build(Job::Project(0, Arc::clone(board), flag()), kept)
-                .1
-                .map(|(geometry, _, _)| geometry)
+            build(
+                Job::Project(0, Arc::clone(board), flag(), Flat::Native),
+                kept,
+            )
+            .1
+            .map(|(geometry, _, _)| geometry)
         };
         let first = made(&before, &mut kept)?;
         made(&edited, &mut kept)?;
@@ -963,7 +1152,12 @@ mod tests {
         };
         let (edited, refilled) = (board(1.0)?, board(2.0)?);
         let made = |project: &Arc<Project>| -> Result<Built, Box<dyn std::error::Error>> {
-            let job = Job::Project(0, Arc::clone(project), Arc::new(AtomicBool::new(false)));
+            let job = Job::Project(
+                0,
+                Arc::clone(project),
+                Arc::new(AtomicBool::new(false)),
+                Flat::Native,
+            );
             let (_, built) = build(job, &mut Kept::default());
             let (geometry, sources, stack) = built?;
             Ok(Built {
@@ -1019,9 +1213,12 @@ mod tests {
         assert_eq!(failed.ticket, 1);
         assert!(failed.result.is_err());
         let project = Arc::new(Engine::demo()?.project().clone());
-        worker
-            .sender
-            .send(Job::Project(2, project, Arc::new(AtomicBool::new(false))))?;
+        worker.sender.send(Job::Project(
+            2,
+            project,
+            Arc::new(AtomicBool::new(false)),
+            Flat::Native,
+        ))?;
         let built = worker.receiver.recv_timeout(wait)?;
         assert_eq!(built.ticket, 2);
         assert!(built.result.is_ok());
@@ -1038,9 +1235,12 @@ mod tests {
         let flag = || Arc::new(AtomicBool::new(false));
         for ticket in 1..=4u64 {
             board.placements[0].position[0] += 1.0;
-            worker
-                .sender
-                .send(Job::Project(ticket, Arc::new(board.clone()), flag()))?;
+            worker.sender.send(Job::Project(
+                ticket,
+                Arc::new(board.clone()),
+                flag(),
+                Flat::Native,
+            ))?;
         }
         let mut answered = Vec::new();
         while let Ok(built) = worker
@@ -1068,6 +1268,7 @@ mod tests {
             1,
             Arc::new(broken),
             Arc::new(AtomicBool::new(false)),
+            Flat::Native,
         ))?;
         worker
             .sender

@@ -294,3 +294,32 @@ fn an_update_of_a_meshed_model_stays_meshed() -> Result<()> {
     }
     Ok(())
 }
+
+/// A plan made with the fills' memo is the plan made anew: after a track
+/// edit and its refill, the refilled fills are planned again and the
+/// others taken as they were.
+#[test]
+fn a_plan_from_the_memo_is_the_plan_made_anew() -> Result<()> {
+    use pcbcraft_core::layout::fill::{RefillTarget, refill};
+    let mut project = showcase()?;
+    let mut memo = plan::Memo::default();
+    let pads = crate::project::placed_pads(&project)?;
+    let first = plan::of_pads(&project, &pads, &mut memo)?;
+    assert_eq!(format!("{first:?}"), format!("{:?}", plan::of(&project)?));
+    for track in &mut project.tracks {
+        track.width += 0.05;
+    }
+    let refilled =
+        refill(&project, RefillTarget::All).map_err(|e| Error::Verification(e.to_string()))?;
+    assert!(!refilled.is_empty());
+    for (id, copper) in refilled {
+        if let Some(fill) = project.fills.iter_mut().find(|f| f.id == id) {
+            fill.computed = Some(copper);
+        }
+    }
+    let pads = crate::project::placed_pads(&project)?;
+    let again = plan::of_pads(&project, &pads, &mut memo)?;
+    assert_eq!(format!("{again:?}"), format!("{:?}", plan::of(&project)?));
+    assert_ne!(format!("{again:?}"), format!("{first:?}"));
+    Ok(())
+}

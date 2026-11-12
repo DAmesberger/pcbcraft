@@ -880,6 +880,20 @@ impl LibrarySources {
         }
     }
 
+    /// Whether the 3D view meshes the board's flat bodies directly
+    /// (Settings).
+    pub fn mesh_board_directly(&self) -> bool {
+        self.settings.mesh_board_directly
+    }
+
+    /// Keep the direct-mesh setting per user.
+    pub fn set_mesh_board_directly(&mut self, on: bool) {
+        if on != self.settings.mesh_board_directly {
+            self.settings.mesh_board_directly = on;
+            self.persist();
+        }
+    }
+
     /// Whether the app's waivers need a reason (Settings).
     pub fn require_waiver_reason(&self) -> bool {
         self.settings.require_waiver_reason

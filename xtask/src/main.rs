@@ -173,9 +173,9 @@ fn wasm_tests(package: &str, filter: &str, what: &str) -> Result<()> {
 /// The board's exact native build against the board plan it is made
 /// from, on every example board (`crates/automation/tests/board_parity.rs`):
 /// the same flat bodies by kind, source, layer, box and volume, and every
-/// native body as recorded in its `tests/board_parity/` record. It builds
-/// every example board, so the workspace tests leave it out and CI runs it
-/// once, here.
+/// native body as recorded in its `tests/board_parity/` record; and the
+/// live view's meshes of each plan (`mesh::parity`). The exact build is
+/// slow, so the workspace tests leave it out and CI runs it once, here.
 fn board_parity() -> Result<()> {
     cargo(&[
         "test",
@@ -187,7 +187,7 @@ fn board_parity() -> Result<()> {
         "--test",
         "board_parity",
         "--",
-        "--ignored",
+        "--include-ignored",
         "--nocapture",
     ])
 }

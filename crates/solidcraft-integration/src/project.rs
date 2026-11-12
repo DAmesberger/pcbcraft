@@ -91,6 +91,8 @@ pub struct NativeModel {
     /// The flat bodies' meshes made for this model ([`Flat::Meshed`]), for
     /// an update to reuse.
     meshes: mesh::Memo,
+    /// The fills' plans made for this model, for an update to reuse.
+    plans: plan::Memo,
     pub geometry: Vec<Geometry>,
     pub sources: Vec<Source>,
     /// The board's layer stack ([`crate::stack::Stack::none`] for a
@@ -167,6 +169,7 @@ impl NativeModel {
             native: self.native.snapshot(),
             flat: self.flat,
             meshes: self.meshes.clone(),
+            plans: self.plans.clone(),
             geometry: self.geometry.clone(),
             sources: self.sources.clone(),
             stack: self.stack.clone(),
@@ -211,6 +214,8 @@ struct Builder {
     flat: Flat,
     /// Flat-body meshes made before ([`mesh::Memo`]).
     meshes: mesh::Memo,
+    /// Fill plans made before ([`plan::Memo`]).
+    plans: plan::Memo,
     bodies: BTreeMap<String, BodyKind>,
     /// Generated package-model definitions built so far.
     models: Vec<ModelDefinition>,
@@ -248,6 +253,7 @@ impl Builder {
             native,
             flat,
             meshes: mesh::Memo::default(),
+            plans: plan::Memo::default(),
             bodies: BTreeMap::new(),
             models: Vec::new(),
             placed: BTreeSet::new(),
@@ -269,7 +275,7 @@ impl Builder {
     fn replaying(
         native: Native,
         flat: Flat,
-        meshes: mesh::Memo,
+        (meshes, plans): (mesh::Memo, plan::Memo),
         known: Vec<ModelDefinition>,
         known_libraries: Vec<(u64, LibraryDefinition)>,
         previous: Previous,
@@ -280,6 +286,7 @@ impl Builder {
             native,
             flat,
             meshes,
+            plans,
             bodies: BTreeMap::new(),
             models: Vec::new(),
             placed: BTreeSet::new(),
@@ -997,6 +1004,7 @@ fn finish_with(
         native,
         flat: Flat::Native,
         meshes: mesh::Memo::default(),
+        plans: plan::Memo::default(),
         geometry,
         sources,
         stack: crate::stack::Stack::none(),
@@ -1584,6 +1592,7 @@ pub fn update(
         native,
         flat,
         meshes,
+        plans,
         geometry,
         models,
         libraries,
@@ -1596,7 +1605,7 @@ pub fn update(
         let b = Builder::replaying(
             native,
             flat,
-            meshes,
+            (meshes, plans),
             models,
             libraries,
             Previous::of(geometry, reuse),
@@ -1630,7 +1639,8 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     let pads = placed_pads(project)?;
     // The board's flat bodies, described once ([`plan`]): the fills, pads,
     // tracks, vias and laminate below are built from it.
-    let plan = plan::of_pads(project, &pads)?;
+    let plan = plan::of_pads(project, &pads, &mut b.plans)?;
+    let plans = std::mem::take(&mut b.plans);
     // Meshed, the native design holds the parts alone: none of the flat
     // bodies' commands, parameters or joints below are made.
     let native_flat = b.flat == Flat::Native;
@@ -2066,24 +2076,47 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     // and is finished and meshed.
     let mut memo = std::mem::take(&mut b.display);
     let layers = |memo: &mut appearance::Memo| -> Result<Vec<Geometry>> {
-        let mut layers = appearance::board_with(&display, &lands, &paths, &marks, &parts, memo)?;
-        layers.extend(fill::films(&display, &lands, &marks, &fills)?);
-        layers.extend(appearance::open_laminate(
-            &display,
-            &lands,
-            &paths,
-            &fill::outlines(&fills),
-        )?);
-        layers.extend(crate::silkscreen::films(
-            project,
-            &crate::silkscreen::Legend {
-                board: &display,
-                lands: &lands,
-                paths: &paths,
-                vias: &marks,
-                picks: &picks,
-            },
-        )?);
+        let films = || fill::films(&display, &lands, &marks, &fills);
+        let open = || appearance::open_laminate(&display, &lands, &paths, &fill::outlines(&fills));
+        let legend = || {
+            crate::silkscreen::films(
+                project,
+                &crate::silkscreen::Legend {
+                    board: &display,
+                    lands: &lands,
+                    paths: &paths,
+                    vias: &marks,
+                    picks: &picks,
+                },
+            )
+        };
+        // The films over the fills, the bare laminate and the legend need
+        // nothing of each other: each is drawn on a core of its own.
+        #[cfg(not(target_arch = "wasm32"))]
+        let (layers, films, open, legend) = std::thread::scope(|scope| {
+            let films = scope.spawn(films);
+            let open = scope.spawn(open);
+            let legend = scope.spawn(legend);
+            let layers = appearance::board_with(&display, &lands, &paths, &marks, &parts, memo);
+            let failed = || Err(Error::Verification("drawing a display layer failed".into()));
+            (
+                layers,
+                films.join().unwrap_or_else(|_| failed()),
+                open.join().unwrap_or_else(|_| failed()),
+                legend.join().unwrap_or_else(|_| failed()),
+            )
+        });
+        #[cfg(target_arch = "wasm32")]
+        let (layers, films, open, legend) = (
+            appearance::board_with(&display, &lands, &paths, &marks, &parts, memo),
+            films(),
+            open(),
+            legend(),
+        );
+        let mut layers = layers?;
+        layers.extend(films?);
+        layers.extend(open?);
+        layers.extend(legend?);
         layers.extend(crate::stackup_edge::bands(stackup, &display)?);
         Ok(layers)
     };
@@ -2144,6 +2177,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     model.geometry.extend(layers?);
     model.display = memo;
     model.meshes = meshes;
+    model.plans = plans;
     model.flat = if native_flat {
         Flat::Native
     } else {
