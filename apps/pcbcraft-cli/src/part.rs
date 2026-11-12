@@ -3,6 +3,7 @@
 //! §11), through `library.check_part_file`. Read-only; the exit status is a
 //! failure on a blocking finding.
 use super::{Result, execute, open, print};
+use pcbcraft_core::product::SHORT_NAME as CLI;
 use serde_json::{Map, Value, json};
 
 pub const USAGE: &str = "part check FILE.solidcraft|--builtin NAME [--set NAME=VALUE[mm|deg]]... [--json] [--materials]
@@ -32,7 +33,7 @@ fn value(text: &str) -> Result<Value> {
 }
 
 pub fn run(args: &[String]) -> Result<()> {
-    let usage = || format!("usage: pcbcraft-cli {USAGE}");
+    let usage = || format!("usage: {CLI} {USAGE}");
     let Some((command, rest)) = args.split_first() else {
         return Err(usage().into());
     };
@@ -91,7 +92,7 @@ fn list(args: &[String]) -> Result<()> {
     let json_out = match args {
         [] => false,
         [flag] if flag == "--json" => true,
-        _ => return Err(format!("usage: pcbcraft-cli {USAGE}").into()),
+        _ => return Err(format!("usage: {CLI} {USAGE}").into()),
     };
     let mut session = open(None)?;
     let reply = execute(

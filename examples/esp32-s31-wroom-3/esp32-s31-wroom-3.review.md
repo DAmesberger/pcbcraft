@@ -50,7 +50,7 @@ Component with 99 pins (94 signal pads, the 3 × 3 EPAD as pin 95 and four corne
 | pin 1 position | left column, first pad below corner pad 99: (-10.3, 7.2) | ESPFP p.1 pad 1 | High | Espressif's footprint: pad 1 at (-10.3, -10.2), y down from the pad-body centre: (-10.3, 7.2) here; 1.1 mm below corner pad 99, pad 94 1.375 mm from it. |
 | numbering | 1-25 left top to bottom, 26-47 bottom left to right, 48-72 right bottom to top, 73-94 top right to left; corners 96 BL, 97 BR, 98 TR, 99 TL | WROOM3 p.12 Figure 3-1 (top view) | High |  |
 | EPAD | 9 × 1.8 mm squares, 0.55 mm gaps (2.35 mm pitch), 3 × 3 turned 45°, 6.5 mm across, centred on the pad body | ESPFP p.1 pad 95 (nine pads) | High | Espressif's footprint: nine 1.8 mm pads turned 45° at (0, 0), (±1.6617, ±1.6617), (±3.3234, 0) and (0, ±3.3234) about the pad-body centre (2.35 mm pitch along the turned axes, 0.55 mm gaps); the STEP agrees. The pad nearest the antenna is chamfered (see the open question); drawn square here. |
-| can mark | Ø0.5 mm hole in the can lid at (-9.5, -13.5), the -x/-y corner by pins 25/26 | ESPSTEP p.1 shield can lid | High | Matches the Ø0.5 in the datasheet's top view (Figure 10-1). It is not a pin-1 mark (pin 1 is at the +y end of the left row), so the can carries no polarity mark here; Espressif's footprint has no pin-1 silkscreen mark either (Pcbcraft's footprint adds its own at pad 1). |
+| can mark | Ø0.5 mm hole in the can lid at (-9.5, -13.5), the -x/-y corner by pins 25/26 | ESPSTEP p.1 shield can lid | High | Matches the Ø0.5 in the datasheet's top view (Figure 10-1). It is not a pin-1 mark (pin 1 is at the +y end of the left row), so the can carries no polarity mark here; Espressif's footprint has no pin-1 silkscreen mark either (Sparksmith's footprint adds its own at pad 1). |
 | land pattern | equal to the module pads (no extension given) | WROOM3 p.67 Figure 11-1 | High |  |
 | antenna keep-out | the 22 × 6 mm antenna area on every copper layer | ESPFP p.1 zone "antenna keepout" | High | Espressif's footprint: a keep-out over the 22 × 6 mm antenna area on the outer and first inner copper layers (no tracks, vias, pads, pours or parts). The guidelines also ask for the antenna at the board edge or a cut-out with at least 15 mm clearance; not modelled. |
 | antenna placement | antenna outside the base board or board cut-out, min 15 mm clearance | HWDG p.28 Figure 23 | High |  |
@@ -97,7 +97,7 @@ Each rule evaluated without selections, with each function, peripheral or role i
 
 ## Pins
 
-One row per package pin as imported; check each against the datasheet in the Pins tab. `pcbcraft-cli review-diff A.pcbcraft B.pcbcraft` lists two runs' differences pin by pin.
+One row per package pin as imported; check each against the datasheet in the Pins tab. `sparksmith review-diff A.pcbcraft B.pcbcraft` lists two runs' differences pin by pin.
 
 | Pin | Name | Default | Functions [mux] peripheral.role | Source | Flags |
 |---|---|---|---|---|---|

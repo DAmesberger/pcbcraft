@@ -72,7 +72,7 @@ pub const APP: &[Entry] = &[
     Entry::System(System::HideOthers),
     Entry::System(System::ShowAll),
     Sep,
-    C("app.quit", "Quit Pcbcraft"),
+    C("app.quit", concat!("Quit ", pcbcraft_core::product_name!())),
 ];
 
 pub const FILE: &[Entry] = &[
@@ -142,7 +142,7 @@ pub const HELP: &[Entry] = &[
 
 /// The macOS menu bar, left to right.
 pub const BAR: &[(&str, &[Entry])] = &[
-    ("Pcbcraft", APP),
+    (pcbcraft_core::product::NAME, APP),
     ("File", FILE),
     ("Edit", EDIT),
     ("View", VIEW),

@@ -1,6 +1,6 @@
 # Schematic capture: labels, power ports, sheets and printing
 
-As built on 2 November 2026. This extends the single-sheet capture described in [editor evidence](editor-evidence.md) (symbol occurrences, wires, junctions) to designs of real size: net labels and power ports, several sheets with a hierarchy, sheet furniture with a page frame and title block, designator annotation across sheets, label/hierarchy/power ERC and vector PDF printing. Every change is a typed `SchematicCommand` applied through the one engine (`Operation::Schematic`), so the desktop, the CLI (`pcbcraft-cli apply`) and MCP (`project.apply`) share it; each is one undo step and is refused without changes on invalid input.
+As built on 2 November 2026. This extends the single-sheet capture described in [editor evidence](editor-evidence.md) (symbol occurrences, wires, junctions) to designs of real size: net labels and power ports, several sheets with a hierarchy, sheet furniture with a page frame and title block, designator annotation across sheets, label/hierarchy/power ERC and vector PDF printing. Every change is a typed `SchematicCommand` applied through the one engine (`Operation::Schematic`), so the desktop, the CLI (`sparksmith apply`) and MCP (`project.apply`) share it; each is one undo step and is refused without changes on invalid input.
 
 ## Document
 

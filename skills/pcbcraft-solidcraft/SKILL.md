@@ -1,6 +1,6 @@
 ---
 name: pcbcraft-solidcraft
-description: Integrate Solidcraft APIs, native parametric models, volumetric PCB copper, picking metadata or 3D performance in Pcbcraft.
+description: Integrate Solidcraft APIs, native parametric models, volumetric PCB copper, picking metadata or 3D performance in Sparksmith.
 ---
 
 # Shared Solidcraft engine
@@ -10,7 +10,7 @@ Read [native integration research](../../docs/solidcraft-interop-research.md) fo
 ## Native models
 
 - Pin the tested Solidcraft revision and record required capabilities. Use its engine, evaluation and native writer. The displayed model and `.solidcraft` output share parametric definitions.
-- Prove that dependencies survive saving and reopening: board thickness moves top/bottom attachments correctly; component X/Y/rotation and model dimensions recompute without Pcbcraft.
+- Prove that dependencies survive saving and reopening: board thickness moves top/bottom attachments correctly; component X/Y/rotation and model dimensions recompute without Sparksmith.
 - Distinguish evaluated numeric transforms from persistent placement expressions. The inspected `occurrence.move` path stores matrices, and `component.insert_design` transfers evaluated solids; neither alone proves retained editable composition.
 - Reuse native model definitions with independent occurrence parameters and stable identity mappings. Snapshot required model assets and parameter interfaces. Vendor STEP stays identified as imported geometry.
 - If an API or native feature is missing, extend the shared Solidcraft engine in an isolated checkout. The compatible Solidcraft application must include it too. Unknown features cannot silently degrade to absent copper or flattened geometry.

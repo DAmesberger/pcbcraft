@@ -4,6 +4,7 @@
 //! Switching a project's profile is the typed `rules.set_fab_profile` request
 //! (`stdio`/`mcp`); this subcommand only moves profile files.
 use super::{Result, open, print};
+use pcbcraft_core::product::SHORT_NAME as CLI;
 use pcbcraft_core::rules::{RuleEntry, RuleProfile};
 use pcbcraft_io::rule_profiles::{self, ProfileLibrary};
 use pcbcraft_io::settings::UserDirs;
@@ -11,11 +12,15 @@ use serde_json::json;
 use std::path::Path;
 
 /// The usage line(s).
-pub const USAGE: &str = "fab-profile list        list the user's fab profiles (Pcbcraft ships none)
+pub const USAGE: &str = concat!(
+    "fab-profile list        list the user's fab profiles (",
+    pcbcraft_core::product_name!(),
+    " ships none)
   fab-profile import FILE.json
                                    add a fab profile file to the user's library
   fab-profile export ID|FILE.pcbcraft NEW_FILE.json
-                                   write a fab profile (or a project's effective rules)";
+                                   write a fab profile (or a project's effective rules)"
+);
 
 fn library() -> Result<ProfileLibrary> {
     Ok(ProfileLibrary::from_dirs(&UserDirs::from_env()?))
@@ -91,7 +96,7 @@ fn reply(library: &ProfileLibrary, args: &[String]) -> Result<serde_json::Value>
             rule_profiles::export(&profile, Path::new(target))?;
             Ok(json!({"exported": summary(&profile, "file"), "path": target}))
         }
-        _ => Err(format!("usage: pcbcraft-cli {USAGE}").into()),
+        _ => Err(format!("usage: {CLI} {USAGE}").into()),
     }
 }
 
@@ -117,7 +122,7 @@ mod tests {
         assert_eq!(
             listed["profiles"].as_array().map(Vec::len),
             Some(0),
-            "Pcbcraft ships no profiles"
+            concat!(pcbcraft_core::product_name!(), " ships no profiles")
         );
         let imported = reply(&library, &args(&["import", EXAMPLE]))?;
         assert_eq!(imported["imported"]["id"], "jlcpcb-2-layer-1oz");

@@ -107,7 +107,8 @@ pub fn excellon(
     s.push_str("M48\n");
     let _ = writeln!(
         s,
-        "; Pcbcraft {} drill file: {}",
+        "; {} {} drill file: {}",
+        crate::product::NAME,
         env!("CARGO_PKG_VERSION"),
         if plated { "plated" } else { "non-plated" }
     );

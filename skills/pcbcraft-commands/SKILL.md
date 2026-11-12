@@ -1,6 +1,6 @@
 ---
 name: pcbcraft-commands
-description: Design or change Pcbcraft commands, transactions, crate boundaries, CLI or MCP operations.
+description: Design or change Sparksmith commands, transactions, crate boundaries, CLI or MCP operations.
 ---
 
 # Commands and boundaries

@@ -1,6 +1,6 @@
 ---
 name: pcbcraft-ui
-description: Build or change Pcbcraft panels, controls, navigation, 2D/3D selection and visible workflows in the Solidcraft UI style.
+description: Build or change Sparksmith panels, controls, navigation, 2D/3D selection and visible workflows in the Solidcraft UI style.
 ---
 
 # UI and interaction

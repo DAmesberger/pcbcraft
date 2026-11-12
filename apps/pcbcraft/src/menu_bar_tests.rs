@@ -128,8 +128,8 @@ fn menus_are_grouped_like_a_mac_app() {
             })
             .map(|(title, _)| *title)
     };
-    assert_eq!(menu_of("app.settings"), Some("Pcbcraft"));
-    assert_eq!(menu_of("app.quit"), Some("Pcbcraft"));
+    assert_eq!(menu_of("app.settings"), Some(pcbcraft_core::product::NAME));
+    assert_eq!(menu_of("app.quit"), Some(pcbcraft_core::product::NAME));
     assert_eq!(menu_of("file.save"), Some("File"));
     assert_eq!(menu_of("edit.undo"), Some("Edit"));
     assert_eq!(menu_of("view.browser"), Some("View"));
@@ -139,7 +139,14 @@ fn menus_are_grouped_like_a_mac_app() {
     let titles: Vec<&str> = BAR.iter().map(|(t, _)| *t).collect();
     assert_eq!(
         titles,
-        ["Pcbcraft", "File", "Edit", "View", "Window", "Help"]
+        [
+            pcbcraft_core::product::NAME,
+            "File",
+            "Edit",
+            "View",
+            "Window",
+            "Help"
+        ]
     );
     // The in-window menu keeps to File and the app's own windows.
     for id in ["view.browser", "app.palette"] {

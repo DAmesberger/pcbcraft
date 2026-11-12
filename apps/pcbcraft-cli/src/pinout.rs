@@ -6,6 +6,7 @@
 //! Imported rows stay unreviewed drafts; nothing is published.
 use super::{Result, execute, open, print};
 use pcbcraft_automation::Session;
+use pcbcraft_core::product::SHORT_NAME as CLI;
 use serde_json::{Value, json};
 
 /// The usage lines.
@@ -30,7 +31,7 @@ struct Args {
 fn parse(args: &[String]) -> Result<Args> {
     let (mode, file, rest) = match args {
         [mode, file, rest @ ..] if mode == "preview" || mode == "apply" => (mode, file, rest),
-        _ => return Err(format!("usage: pcbcraft-cli {USAGE}").into()),
+        _ => return Err(format!("usage: {CLI} {USAGE}").into()),
     };
     let mut parsed = Args {
         apply: mode == "apply",
@@ -59,7 +60,7 @@ fn parse(args: &[String]) -> Result<Args> {
             "--except" if parsed.apply => {
                 parsed.except = Some(value.split(',').map(|s| s.trim().to_owned()).collect());
             }
-            _ => return Err(format!("unknown option {flag}; usage: pcbcraft-cli {USAGE}").into()),
+            _ => return Err(format!("unknown option {flag}; usage: {CLI} {USAGE}").into()),
         }
     }
     if parsed.project.is_empty() {

@@ -89,7 +89,12 @@ pub(crate) fn read(path: &Path, role: Role, load: Load) -> Result<Contents> {
         .read_to_end(&mut magic)?;
     if magic != ZIP_MAGIC {
         return Err(Error::Invalid(
-            "container.format: not a Pcbcraft project container (a .pcbcraft file is a ZIP archive holding project.json)".into(),
+            concat!(
+                "container.format: not a ",
+                pcbcraft_core::product_name!(),
+                " project container (a .pcbcraft file is a ZIP archive holding project.json)"
+            )
+            .into(),
         ));
     }
     file.rewind()?;

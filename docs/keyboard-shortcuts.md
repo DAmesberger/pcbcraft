@@ -37,7 +37,7 @@ While the Route tool is armed, its keys shadow these:
 
 While the schematic's Wire tool is armed, F flips the elbow instead of fitting the view, A switches arc corners instead of rounding a picked wire corner, and Esc ends the wire in progress before it cancels the tool. R, Route's own key, has no meaning inside Route mode and arms Route again. While the Tune tool is armed, F flips the meander's side instead of fitting the view. The Fill tool's Esc drops its outline first. The board shape's F is Fillet.
 
-**Quit** (`app.quit`, ⌘Q) is a registry command like the others, so it can be rebound. It makes the same request as the window's close button: unsaved work asks Save, Don't Save or Cancel first. Close Window (`window.close`, ⌘W) makes the same request, since Pcbcraft has one window. egui's built-in quit key, which closed the window without asking, is turned off. Dock › Quit and logout still end the app without a prompt, keeping unsaved work for recovery.
+**Quit** (`app.quit`, ⌘Q) is a registry command like the others, so it can be rebound. It makes the same request as the window's close button: unsaved work asks Save, Don't Save or Cancel first. Close Window (`window.close`, ⌘W) makes the same request, since Sparksmith has one window. egui's built-in quit key, which closed the window without asking, is turned off. Dock › Quit and logout still end the app without a prompt, keeping unsaved work for recovery.
 
 ## Menus
 
@@ -45,7 +45,7 @@ On macOS the menu bar (`native_menu.rs`, built with muda as in Solidcraft) repla
 
 | Menu | Items |
 |---|---|
-| Pcbcraft | About · Settings… ⌘, · Services · Hide, Hide Others, Show All · Quit ⌘Q |
+| Sparksmith | About · Settings… ⌘, · Services · Hide, Hide Others, Show All · Quit ⌘Q |
 | File | New Project ⌘N · Open… ⌘O · Save ⌘S · Save As… ⇧⌘S · Export to Solidcraft… ⇧⌘E · Export Schematic PDF… · Library Sources… · Close Window ⌘W |
 | Edit | Undo ⌘Z · Redo ⇧⌘Z · Cut ⌘X · Copy ⌘C · Paste ⌘V · Delete · Select All ⌘A |
 | View | Component ⌘1 · Schematic ⌘2 · PCB ⌘3 · Switch Layout and 3D · Fit View · Show/Hide Browser ⌘B · Show/Hide Issues ⇧⌘I · Command Palette… ⌘P |
@@ -158,4 +158,4 @@ The PCB 3D view has a navigation cube in its top-right corner. It follows Solidc
 | Zoom toward the pointer | Pinch | Wheel |
 | Fit | F | Middle double-click |
 
-A plain left-drag on empty space does not orbit. In Solidcraft's Fusion preset, which Pcbcraft follows, a left-drag on empty space is box selection. In PCB 3D the left button also selects and drives the move gizmo, so a bare drag that sometimes orbits and sometimes selects or moves would be ambiguous. ⌘-drag on empty space and the cube give a left-button orbit that cannot be confused with either.
+A plain left-drag on empty space does not orbit. In Solidcraft's Fusion preset, which Sparksmith follows, a left-drag on empty space is box selection. In PCB 3D the left button also selects and drives the move gizmo, so a bare drag that sometimes orbits and sometimes selects or moves would be ambiguous. ⌘-drag on empty space and the cube give a left-button orbit that cannot be confused with either.

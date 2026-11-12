@@ -445,7 +445,7 @@ impl Document {
         if let Some(title) = &self.title {
             doc_info.title(pdf_writer::TextStr(title));
         }
-        doc_info.creator(pdf_writer::TextStr("Pcbcraft"));
+        doc_info.creator(pdf_writer::TextStr(pcbcraft_core::product::NAME));
         drop(doc_info);
         Ok(pdf.finish())
     }

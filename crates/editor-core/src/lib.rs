@@ -27,6 +27,7 @@ pub mod materials;
 pub mod model;
 pub mod nets;
 pub mod pins;
+pub mod product;
 pub mod quantity;
 pub mod rules;
 pub mod schematic;

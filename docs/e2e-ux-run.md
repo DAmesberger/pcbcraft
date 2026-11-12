@@ -1,6 +1,6 @@
 # End-to-end UX run through the desktop UI: USB sensor board, one hour
 
-On 5 November 2026 an agent designed a small USB-powered sensor board in Pcbcraft's desktop app the way a designer would: through the ribbon, the cards, the canvas and the shortcuts. The aim was to judge the UX against the founder's bar: text that is readable, distinguishable and expands on hover when shortened; screens that are not crowded; and a next step that is obvious. The app ran in the Herdr macOS VM (macOS 27.2, 1920 × 1200 display at 1×, app window 1380 × 900). The build was 0f6b200 (`component-model` branch) with the `ci` profile, bundled with `apps/pcbcraft/macos/Info.plist`. The budget was **one hour of design time**. The clock started at the first action in the app, 18:34:06, and the run stopped at 19:24:09, after **50 min 3 s**, with every step reached. The agent read no product source, changed no product code and did not use `pcbcraft-cli`. It made no paid API calls.
+On 5 November 2026 an agent designed a small USB-powered sensor board in Sparksmith's desktop app the way a designer would: through the ribbon, the cards, the canvas and the shortcuts. The aim was to judge the UX against the founder's bar: text that is readable, distinguishable and expands on hover when shortened; screens that are not crowded; and a next step that is obvious. The app ran in the Herdr macOS VM (macOS 27.2, 1920 × 1200 display at 1×, app window 1380 × 900). The build was 0f6b200 (`component-model` branch) with the `ci` profile, bundled with `apps/pcbcraft/macos/Info.plist`. The budget was **one hour of design time**. The clock started at the first action in the app, 18:34:06, and the run stopped at 19:24:09, after **50 min 3 s**, with every step reached. The agent read no product source, changed no product code and did not use `pcbcraft-cli`. It made no paid API calls.
 
 Screenshots referenced below are in the agent's `target/e2e-ux/` and were not committed.
 
@@ -99,8 +99,8 @@ Estimates are agent hours. "Founder's bar" marks findings about cut-off text, cr
    - The real ⌘S shortcut saved an already-saved file: the file size changed from 37 039 to 36 993 bytes after changing `inset`. On an untitled project, ⌘S showed nothing (finding 19).
    - The app menu's Quit and Dock › Quit were **not tested** for lack of time.
 5. **Opening from Finder: works.**
-   - `open -a Pcbcraft ~/untitled.pcbcraft` launched the app with the file, and a toast confirmed "Opened /Users/agent/untitled.pcbcraft".
-   - Double-clicking the file in Finder launched Pcbcraft and opened it, with board, schematic and parameters intact.
+   - `open -a Sparksmith ~/untitled.pcbcraft` launched the app with the file, and a toast confirmed "Opened /Users/agent/untitled.pcbcraft".
+   - Double-clicking the file in Finder launched Sparksmith and opened it, with board, schematic and parameters intact.
    - The file has a generic icon (finding 20).
 
 ## Founder's parametric checks

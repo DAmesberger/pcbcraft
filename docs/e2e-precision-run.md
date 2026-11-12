@@ -1,6 +1,6 @@
 # Precision run: save and reopen, edge cases, menus
 
-On 6 November 2026 an agent tested Pcbcraft's desktop app for correctness and polish rather than speed. The run had three parts:
+On 6 November 2026 an agent tested Sparksmith's desktop app for correctness and polish rather than speed. The run had three parts:
 
 - an item-by-item check of save and reopen on a real board;
 - a set of edge cases;
@@ -85,7 +85,7 @@ Step 4 did not test what it set out to. On reopening, the Browser had *Component
 | E8 | Schematic change on a routed board | Review of the copper impact | A wire from CC2 to CC1 opened "Connect pins: adds 1 wire, removes 1 net, changes 1 …". It lists the tracks that would be left on the wrong net, each with "Remove that track", and **Apply update** is disabled until they are confirmed (`e21-merge.png`). Cancel left the board unchanged. Rows are cut off ("Track on CC2 would be lef…"). | Pass (truncation Minor) |
 | E9 | Delete a net label | Delete key removes it | Delete and Backspace did nothing. The card's **Remove** removed it (`e06.png`). This is the second run's finding 5, still open. | Major (with E2) |
 | E10 | Copy and paste (R5 in the schematic) | ⌘C / ⌘V duplicates the part | ⌘V did nothing visible. Still 20 instances, and no message. The palette has no Copy or Paste command. | Major |
-| E11 | Two documents | Second window, or a prompt before replacing | `open` of a second file while the app had unsaved changes showed "Save changes before continuing?" (Cancel / Don't Save / Save). Don't Save opened the second file in the same window. Pcbcraft is single-document, and this is handled safely. | Pass |
+| E11 | Two documents | Second window, or a prompt before replacing | `open` of a second file while the app had unsaved changes showed "Save changes before continuing?" (Cancel / Don't Save / Save). Don't Save opened the second file in the same window. Sparksmith is single-document, and this is handled safely. | Pass |
 | E12 | Close the window or quit | Same prompt | The red close button showed "Save changes before quitting?", the same as ⌘Q. Cancel kept the window and its edits. | Pass |
 | E13 | Don't Save, then the Recovery folder | Empty | Empty, and the file was unchanged. | Pass |
 | E14 | Force-kill (`kill -9`) with unsaved edits, then relaunch | Offer recovery | The relaunch showed "Recover an earlier session?" with the name, the time ("just now"), 20 instances and the original path. It offers Discard / Keep for later / Restore. Restore brought back the unsaved route (tracks 218) and a toast: "Recovered …; save it to keep it" (`e29`, `e30`). **But ⌘S then opened the Save panel proposing "untitled" in the home folder** (`e32-savepanel.png`), not the board's name or its original folder `~/prec`. | Pass (Minor: save defaults) |

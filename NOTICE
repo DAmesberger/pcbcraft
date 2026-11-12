@@ -1,4 +1,4 @@
-Pcbcraft
+Sparksmith
 Copyright (c) 2026 Pcbcraft contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option
 (LICENSE-MIT, LICENSE-APACHE).
@@ -33,11 +33,11 @@ IBM Plex Sans and IBM Plex Mono are bundled by the Solidcraft UI package and lic
 SIL Open Font License 1.1; the notices are in licenses/ibm-plex-sans-OFL.txt and
 licenses/ibm-plex-mono-OFL.txt. Copyright (c) 2017 IBM Corp., Reserved Font Name "Plex".
 
-Pcbcraft's electronics model, commands, checks and test fixtures are original. No source code,
+Sparksmith's electronics model, commands, checks and test fixtures are original. No source code,
 library data (symbols, footprints, 3D models) or other material is taken from GPL/LGPL/AGPL
 electronics tools or from commercial EDA tools.
 
-Pcbcraft is an independent project and is not affiliated with, sponsored by or endorsed by KiCad,
+Sparksmith is an independent project and is not affiliated with, sponsored by or endorsed by KiCad,
 LibrePCB, Horizon EDA, Altium, Autodesk, Cadence, Siemens, Zuken or any other EDA vendor or
 project. KiCad, LibrePCB, Horizon EDA, Altium Designer, Eagle, Fusion, OrCAD and other product
 names are trademarks of their respective owners. They appear only to describe this independence

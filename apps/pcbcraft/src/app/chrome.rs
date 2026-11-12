@@ -134,7 +134,7 @@ impl App {
                         ui.add_space(TRAFFIC_LIGHTS);
                     }
                     ui.label(
-                        egui::RichText::new("Pcbcraft")
+                        egui::RichText::new(pcbcraft_core::product::NAME)
                             .font(type_face::bold(t.font_heading))
                             .color(t.app_bar_text),
                     );

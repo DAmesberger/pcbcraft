@@ -303,7 +303,7 @@ impl Call {
             return Err(fail(
                 "generator.abi_mismatch",
                 format!(
-                    "The generator speaks ABI {version}; this Pcbcraft runs ABI {}. It was not run.",
+                    "The generator speaks ABI {version}; this application runs ABI {}. It was not run.",
                     v1::ABI
                 ),
             ));
@@ -506,7 +506,7 @@ impl GeneratorRuntime for WasmiRuntime {
             return Err(fail(
                 "generator.abi_mismatch",
                 format!(
-                    "The request is for ABI {}; this Pcbcraft runs ABI {}.",
+                    "The request is for ABI {}; this application runs ABI {}.",
                     request.abi,
                     v1::ABI
                 ),

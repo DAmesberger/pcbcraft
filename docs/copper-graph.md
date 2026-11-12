@@ -406,7 +406,7 @@ Built on `component-model` at a13196d, 8 November 2026.
 
 - `fill::links`, `FillLink` and the graph's `fill_joints` adapter that read them.
 - Fill compute's `probe_spokes`, `probe_solid`, `ray_exit`, the track centre-line sampling, the renumbering of joins after island removal, and the old `fill.island_unconnected` count from stored joins in `fill/checks.rs`.
-- **From the file format:** `FilledCopper::joins` and the `FillJoin` type (`Pad` and `Via` with `connection`, `spokes` and `region`, and `Track` with `region`). Each was a stored second answer to "what does this fill join", which the graph now derives. Before removing them I checked every reader. Gerber, the 3D scene and the fill rebuild read none of them. The spoke count lost its only reader when `fill.thermal_starved` was removed (gap 17 of the ESP32 log). `connection` is a function of the fill settings, the net class and the rules. The spoke geometry is in the copper polygons. `FilledCopper` keeps `key`, `regions` and `removed_islands` (the fill card shows the count). Pcbcraft is pre-release with one format version, so files written before this change and still carrying `joins` are refused by `deny_unknown_fields`; a refill writes the new form. The validation that a join named an existing island went with the field. The MCP and CLI schemas derive from the types, so they changed with them. No hand-written schema listed the fields.
+- **From the file format:** `FilledCopper::joins` and the `FillJoin` type (`Pad` and `Via` with `connection`, `spokes` and `region`, and `Track` with `region`). Each was a stored second answer to "what does this fill join", which the graph now derives. Before removing them I checked every reader. Gerber, the 3D scene and the fill rebuild read none of them. The spoke count lost its only reader when `fill.thermal_starved` was removed (gap 17 of the ESP32 log). `connection` is a function of the fill settings, the net class and the rules. The spoke geometry is in the copper polygons. `FilledCopper` keeps `key`, `regions` and `removed_islands` (the fill card shows the count). Sparksmith is pre-release with one format version, so files written before this change and still carrying `joins` are refused by `deny_unknown_fields`; a refill writes the new form. The validation that a join named an existing island went with the field. The MCP and CLI schemas derive from the types, so they changed with them. No hand-written schema listed the fields.
 
 ### Behaviour changes and test corrections
 
@@ -456,7 +456,7 @@ Measured against a build of the base (a13196d), alternating base and new runs, o
 
 | Work | Base | Slice 3 |
 | --- | --- | --- |
-| ESP32 board, `fill.refill` of all four fills through `pcbcraft-cli stdio` (`ci` profile; best / median of 8, three rounds) | 81–82 / 82–84 ms | 81–83 / 83–87 ms |
+| ESP32 board, `fill.refill` of all four fills through `sparksmith stdio` (`ci` profile; best / median of 8, three rounds) | 81–82 / 82–84 ms | 81–83 / 83–87 ms |
 | 10,000-via plane, `a_large_board_fills_in_seconds` (one fill, 5,000 joined vias; `test` profile; best / median of 6) | 1.75 / 2.0 s | 1.83 / 1.94 s |
 | `via_board(10_000, 2_000)`: `CopperGraph::of` (best / median of 6) | 5.9 / 6.3 ms | 7.8 / 8.3 ms |
 | The same board: board checks with the graph | 25.0 / 28.0 ms | 28.0 / 29.4 ms |

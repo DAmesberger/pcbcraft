@@ -12,13 +12,13 @@ So the design has to deliver four things:
 2. **Reliable reasoning**, measured as routes that pass the checks, not as how readable the text looks.
 3. **Traceable to a person:** anything the LLM read or wrote can be shown on the board.
 4. **One engine:** nothing bypasses the typed commands or the design rules.
-5. **Any LLM:** Pcbcraft is an LLM-first product (founder, 5 November 2026), and that includes local models. So nothing here may depend on one provider, and the encoding has to work with models that have small contexts and no vision.
+5. **Any LLM:** Sparksmith is an LLM-first product (founder, 5 November 2026), and that includes local models. So nothing here may depend on one provider, and the encoding has to work with models that have small contexts and no vision.
 
 ## Starting point
 
 - Routing commands exist: `layout.route_step`, `route_preview`, `route_pair`, `length_report`, `tune_preview`, with walkaround and shove. `gap-mcp` is making replies compact, and `gap-board` is adding `detour_factor` and `max_detour`.
 - There's no query that describes the space on a board. A client today would read the snapshot's coordinates.
-- The ESP32 run routed its 187 steps through a scripted client. No LLM has yet routed a board in Pcbcraft, so there's no evidence about what helps one do it.
+- The ESP32 run routed its 187 steps through a scripted client. No LLM has yet routed a board in Sparksmith, so there's no evidence about what helps one do it.
 
 ## Design principles
 
@@ -82,7 +82,7 @@ refused VBUS at x18.2 y7.4: needs 0.2mm to C3.1, has 0.12. Try: right-of:C3 or l
 
 These are part of the design, not an extra:
 
-- **`pcbcraft-cli view`** prints or renders any query result. The same call with `--format png` draws that window, with the same labels.
+- **`sparksmith view`** prints or renders any query result. The same call with `--format png` draws that window, with the same labels.
 - **A trace of a session:** each request, the window it read and the copper it produced, as a filmstrip of pictures you can step through. It also makes a good demo clip for the launch video.
 - **A desktop overlay** can come later: highlight what the LLM last read and the route it proposed, as a preview to accept or reject.
 

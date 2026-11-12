@@ -2,7 +2,7 @@
 
 Status: spike, finished. The prototype was test-only code in `crates/solidcraft-integration/src/footprint_spike/` (`#[cfg(test)]`, not a product API); it was removed once the product evaluator in `crates/solidcraft-integration/src/footprint/` carried its golden-hash tests, and remains in git history (the scratch-`Session` bridge is the starting point for F6). No core type, command or UI changed. Solidcraft revision: `4f3ac07aec69489183185071f07d7fbcf4f51e64`.
 
-It answers one question from the footprint design (slice F0): can Pcbcraft drive parametric footprints with Solidcraft's public sketch solver, keep stable pad identity, and get the same result on native and wasm? **Yes.** The numbers below are measured, not targets.
+It answers one question from the footprint design (slice F0): can Sparksmith drive parametric footprints with Solidcraft's public sketch solver, keep stable pad identity, and get the same result on native and wasm? **Yes.** The numbers below are measured, not targets.
 
 ## Method
 
@@ -25,7 +25,7 @@ The prototype uses only the `solidcraft_engine::{sketch, doc::expr}` re-exports,
    - the layouts are dual-row, quad and grid;
    - skips are an explicit list or a centred void;
    - numbering is sequential or grid-alpha (row letters without I, O, Q, S, X and Z).
-9. **Quantize and hash.** Results are quantized to 1e-6 mm (1 nm) and to micro-degrees by Pcbcraft's own quantizer. Two FNV-1a hashes are computed: one of the typed pads, and one of the raw f64 bits of every solved point.
+9. **Quantize and hash.** Results are quantized to 1e-6 mm (1 nm) and to micro-degrees by Sparksmith's own quantizer. Two FNV-1a hashes are computed: one of the typed pads, and one of the raw f64 bits of every solved point.
 
 Pad identity is `PadKey::Anchor(point id)` or `PadKey::Array { array, i, j }`. It is never geometry, profile order or pad number.
 
@@ -139,7 +139,7 @@ The probe (`bridge.rs`) creates a throwaway `Session::default()` and runs `sketc
   - mirror 0.071/0.110;
   - offset 0.090/0.100.
 - **Required care:**
-  - Pcbcraft's dimension bindings (`Constraint.param`) and point expressions name footprint parameters that the scratch document does not have. Left attached, the command fails: `point assembly.p0 X: unknown parameter pkg_E` was observed. The bridge therefore detaches both and re-attaches them by id. A command that deletes an expression-driven point is refused.
+  - Sparksmith's dimension bindings (`Constraint.param`) and point expressions name footprint parameters that the scratch document does not have. Left attached, the command fails: `point assembly.p0 X: unknown parameter pkg_E` was observed. The bridge therefore detaches both and re-attaches them by id. A command that deletes an expression-driven point is refused.
   - Fillet and offset bind their new dimension to a parameter they invent in the scratch document (`d1`, with expression `0.2 mm`). The bridge reports it, so the caller must adopt it under a footprint parameter name, which can collide with a user name such as `d1`.
   - Mirror about a sketch axis (`line: "y"`) projects the axis in as a **link**, which the subset refuses. Only the sketch's own lines are allowed as mirror lines.
   - Offset is **associative** (an `OffsetChain`), which is refused. Breaking one output dissolves the whole chain, and the outputs are then under-constrained (dof 4).
@@ -158,7 +158,7 @@ It is cheap, works on wasm, and needs no fork. Revisit the fork export only if t
 
 ## Problems found
 
-1. **The canonical round trip is strict by design.** The input must be byte-for-value what serde writes; for example, `fixed: false` cannot be omitted. Pcbcraft therefore must store only `serde_json::to_string(&sketch)` output.
+1. **The canonical round trip is strict by design.** The input must be byte-for-value what serde writes; for example, `fixed: false` cannot be omitted. Sparksmith therefore must store only `serde_json::to_string(&sketch)` output.
 
    A Solidcraft bump that adds a serialized field will refuse every stored sketch until an explicit re-save. That is the intended behaviour (design §2.7), but it needs a re-save command and a CI corpus check.
 2. **`Vec2` serializes as `[x, y]`,** not `{x, y}`. This only matters to anyone writing sketch JSON by hand.

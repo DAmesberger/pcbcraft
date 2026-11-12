@@ -10,7 +10,7 @@ The recordings hold the model's replies only. The `pcbcraft-assist` tests (`test
 Replay one without the model (any PDF stands in; the recorded page views then answer with errors):
 
 ```sh
-pcbcraft-cli design-part --replay examples/qwen3.8-flash-next/tlv757.recording.jsonl \
+sparksmith design-part --replay examples/qwen3.8-flash-next/tlv757.recording.jsonl \
   --provider openai --base-url http://localhost:8000/v1 --model RadixArk/Qwen3.8-Flash-Next-NVFP4 \
   --context-tokens 262144 --vision yes --datasheet tlv757p.pdf \
   --name TLV75733PDBVR --out new.pcbcraft

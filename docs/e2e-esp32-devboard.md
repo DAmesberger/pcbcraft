@@ -1,6 +1,6 @@
 # End-to-end run: ESP32-S31 dev board (release plan step 5)
 
-On 3 November 2026 an agent designed an ESP32-S31-WROOM-3 development board, from components to Gerbers, through Pcbcraft's command engine. It worked as a CLI client would, sending JSON lines to `pcbcraft-cli stdio`. The base was `component-model` at 5e0922b, the build was the `ci` profile, and the machine was a macOS arm64 laptop. This note is the friction and gap log. The board is [examples/esp32-s31-devboard](../examples/esp32-s31-devboard/README.md).
+On 3 November 2026 an agent designed an ESP32-S31-WROOM-3 development board, from components to Gerbers, through Sparksmith's command engine. It worked as a CLI client would, sending JSON lines to `pcbcraft-cli stdio`. The base was `component-model` at 5e0922b, the build was the `ci` profile, and the machine was a macOS arm64 laptop. This note is the friction and gap log. The board is [examples/esp32-s31-devboard](../examples/esp32-s31-devboard/README.md).
 
 The agent used the tools as a user would. It added no features and made no code fixes, because nothing stopped the run entirely; every workaround is listed below. Estimates are agent hours.
 

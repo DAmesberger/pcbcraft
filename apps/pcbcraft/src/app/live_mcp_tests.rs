@@ -14,7 +14,7 @@ type Fallible<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 /// No token or discovery files: the test never touches the user's folders.
 const TEST_APP: live::App = live::App {
-    name: "Pcbcraft",
+    name: pcbcraft_core::product::NAME,
     data_dir: || None,
     env: |_| None,
     utc: |secs| format!("{secs}"),

@@ -1,5 +1,7 @@
-//! Pcbcraft desktop editor.
+//! Sparksmith desktop editor (formerly Pcbcraft).
 mod app;
+#[cfg(test)]
+mod bundle_tests;
 mod commands;
 mod context_menu;
 mod file_ui;
@@ -38,6 +40,8 @@ mod viewport;
 
 fn main() -> eframe::Result {
     let compact = std::env::args().any(|argument| argument == "--compact");
+    // Before anything reads or creates the per-user folders.
+    pcbcraft_io::settings::adopt_former_folders();
     // Files opened from Finder arrive as AppKit events, not arguments.
     #[cfg(target_os = "macos")]
     open_documents::install();
@@ -56,7 +60,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "Pcbcraft",
+        pcbcraft_core::product::NAME,
         options,
         Box::new(|cc| Ok(Box::new(app::App::new(cc)?))),
     )

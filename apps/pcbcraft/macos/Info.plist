@@ -1,19 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Info.plist for a hand-built Pcbcraft.app (Contents/Info.plist; the binary is
-     Contents/MacOS/pcbcraft). There is no packaging script yet: set CFBundleVersion
-     to the build's revision when copying. The document-type keys follow Solidcraft's
-     assets/platforms/macos/Info.plist.in: they make Pcbcraft the owner of .pcbcraft
+<!-- Info.plist for a hand-built Sparksmith.app (Contents/Info.plist; the binary is
+     Contents/MacOS/pcbcraft until the crates are renamed, docs/rename-phase-b.md).
+     There is no packaging script yet: set CFBundleVersion to the build's revision
+     when copying. The names and identifiers match pcbcraft_core::product, which
+     src/bundle_tests.rs checks. The document-type keys follow Solidcraft's
+     assets/platforms/macos/Info.plist.in: they make Sparksmith the owner of .pcbcraft
      files, so Finder's double-click, Open With and a Dock drop reach
      src/open_documents.rs. -->
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>Pcbcraft</string>
+  <string>Sparksmith</string>
   <key>CFBundleDisplayName</key>
-  <string>Pcbcraft</string>
+  <string>Sparksmith</string>
   <key>CFBundleIdentifier</key>
-  <string>com.amescon.pcbcraft.dev</string>
+  <string>io.sparksmith.app</string>
   <key>CFBundleExecutable</key>
   <string>pcbcraft</string>
   <key>CFBundlePackageType</key>
@@ -32,11 +34,11 @@
   <array>
     <dict>
       <key>CFBundleTypeName</key>
-      <string>Pcbcraft project</string>
+      <string>Sparksmith project</string>
       <key>CFBundleTypeExtensions</key>
       <array><string>pcbcraft</string></array>
       <key>LSItemContentTypes</key>
-      <array><string>com.amescon.pcbcraft.project</string></array>
+      <array><string>io.sparksmith.project</string></array>
       <key>CFBundleTypeRole</key>
       <string>Editor</string>
       <key>LSHandlerRank</key>
@@ -47,9 +49,9 @@
   <array>
     <dict>
       <key>UTTypeIdentifier</key>
-      <string>com.amescon.pcbcraft.project</string>
+      <string>io.sparksmith.project</string>
       <key>UTTypeDescription</key>
-      <string>Pcbcraft project</string>
+      <string>Sparksmith project</string>
       <key>UTTypeConformsTo</key>
       <array><string>public.data</string><string>public.content</string></array>
       <key>UTTypeTagSpecification</key>

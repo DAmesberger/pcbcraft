@@ -1191,10 +1191,14 @@ fn defaults() -> Vec<Command> {
             .chord(Chord::cmd(K::Slash))
             .icon("list")
             .keywords("keys keymap hotkeys help cheat sheet"),
-        app("app.quit", "Quit Pcbcraft", A::Quit)
-            .chord(Chord::cmd(K::Q))
-            .icon("close")
-            .keywords("exit close window"),
+        app(
+            "app.quit",
+            concat!("Quit ", pcbcraft_core::product_name!()),
+            A::Quit,
+        )
+        .chord(Chord::cmd(K::Q))
+        .icon("close")
+        .keywords("exit close window"),
         app("window.close", "Close window", A::CloseWindow)
             .chord(Chord::cmd(K::W))
             .icon("close")
