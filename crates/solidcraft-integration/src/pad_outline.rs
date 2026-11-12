@@ -122,6 +122,57 @@ impl Contour {
     }
 }
 
+impl Contour {
+    /// The enclosed area, mm², exact: a circle's, or an outline's polygon
+    /// through its segment ends with each arc's circular segment added
+    /// (bulging out) or taken away (bulging in).
+    pub fn area(&self) -> f64 {
+        match self {
+            Self::Circle { radius, .. } => std::f64::consts::PI * radius * radius,
+            Self::Outline(outline) => {
+                let mut twice = 0.0;
+                let mut arcs = 0.0;
+                let mut from = outline.start;
+                for segment in &outline.segments {
+                    let to = segment.to();
+                    twice += from[0] * to[1] - to[0] * from[1];
+                    if let Segment::Arc { bulge, .. } = *segment
+                        && let Some(arc) = Arc::of(from, to, bulge)
+                    {
+                        arcs += arc.radius * arc.radius / 2.0 * (arc.sweep - arc.sweep.sin());
+                    }
+                    from = to;
+                }
+                // An outline that does not end where it starts closes.
+                let start = outline.start;
+                twice += from[0] * start[1] - start[0] * from[1];
+                (twice / 2.0 + arcs).abs()
+            }
+        }
+    }
+
+    /// The box round the contour, low and high corner; arcs bounded by
+    /// their points at `tolerance`.
+    pub fn bounds(&self, tolerance: f64) -> Result<(Point, Point)> {
+        if let Self::Circle { center, radius } = self {
+            return Ok((
+                [center[0] - radius, center[1] - radius],
+                [center[0] + radius, center[1] + radius],
+            ));
+        }
+        let points = self.flatten(tolerance)?;
+        Ok(points.iter().fold(
+            ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]),
+            |(lo, hi), p| {
+                (
+                    [lo[0].min(p[0]), lo[1].min(p[1])],
+                    [hi[0].max(p[0]), hi[1].max(p[1])],
+                )
+            },
+        ))
+    }
+}
+
 /// A circular arc from a bulge segment.
 pub struct Arc {
     pub center: Point,
