@@ -337,3 +337,19 @@ More tiles cost more than their smaller extrusions save: Solidcraft's evaluation
 | …its stale fills refilled | rebuilt, 23–27 s | 6.0 s, in place (8 commands) |
 
 Selecting R2 and switching between Layout and 3D made no board model. The app's own benchmark (`edit_timing_tests`, host, J1 0 → 1 mm): J1 shown at 4.4 s, the refilled model at 14.2 s (was 26.9 s; the refill updated in place in 9.7 s, was built anew in 21–23 s).
+
+## Update, 11 November 2026: what an updated model held
+
+Same host and `ci` profile, load average 30–130 (other agents' builds), so times here are not comparable; memory is live heap from `heap -s`.
+
+**The ~380 MB an updated model held beyond a fresh build** was Pcbcraft's. Each body's lazy volume (`Volume::lazy` in `project.rs`) captured the evaluated body, and an update takes every unchanged body's geometry from the last model, volume and all. So the updated model kept the last model's bodies wherever the update re-evaluated one: laminate slabs of the same inputs, for example. The geometry the 3D view shows kept them too. A lazy volume now reaches its body through the model that made it (a weak handle to the model's world state), and an update measures what it takes from the last model on its own bodies. Geometry handed on holds no evaluated body: an unmeasured volume reads NaN once its model is gone. Only tests read volumes.
+
+| ESP32 board | Before | After |
+| --- | --- | --- |
+| One width edit and its refill, the updated model (`model_memory`) | +1,278 MB (fresh build of the same board: +912 MB) | +904 MB (fresh build: +846–912 MB) |
+| App, 3D open, 4 board edits (`memory_tests`, one earlier model kept) | live 1.91 → 2.22 → 2.31 → 2.28 GB; RSS 3.32 GB | live 1.77 → 1.80 → 1.79 → 1.80 GB; RSS 2.92 GB |
+| …then 4 undos | live up to 2.28 GB; RSS 3.70 GB | live up to 1.82 GB; RSS 3.40 GB |
+
+The rest is one board model (~0.9 GB of solidcore B-rep) for the current board and one for the undo. The undo depth stays the founder's call (R8-1 in the night findings): each further instant undo step still costs about 0.9 GB on this board.
+
+**Where an edit's update goes now** (`PCBCRAFT_PROFILE_EDIT=width`, load ~50): build 26.5 s; width +1 mm with stale fills 8.8 s, 736 SMLib extrusions; the refill 18.5 s, 1,188 extrusions against 1,322 in the build, of which the two redefined foil-level slabs' evaluations are 9.3 s; the undo 20.4 s, 1,193 extrusions. Almost every feature after the first changed tile is evaluated again, because Solidcraft keys each feature's cached result on every body made before it. That is Solidcraft's to change (option c2; upstream's read-based key #6295 is measured on the exported board separately).
