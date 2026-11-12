@@ -237,6 +237,9 @@ pub struct HoleRules {
     pub drill_min: f64,
     pub via_annular_ring_min: f64,
     pub pth_annular_ring_min: f64,
+    /// Copper kept round an unplated hole in a pad with copper (0: not
+    /// checked).
+    pub npth_annular_ring_min: f64,
     /// Board thickness over drill diameter; `None` is not checked.
     pub aspect_ratio_max: Option<f64>,
     pub via_drill_default: f64,
@@ -422,6 +425,7 @@ impl DesignRules {
                 drill_min: 0.0,
                 via_annular_ring_min: 0.0,
                 pth_annular_ring_min: 0.0,
+                npth_annular_ring_min: 0.0,
                 aspect_ratio_max: None,
                 via_drill_default: 0.0,
                 via_diameter_default: 0.0,
@@ -498,6 +502,7 @@ impl Default for DesignRules {
                 drill_min: 0.1,
                 via_annular_ring_min: 0.1,
                 pth_annular_ring_min: 0.1,
+                npth_annular_ring_min: 0.0,
                 aspect_ratio_max: None,
                 via_drill_default: 0.3,
                 via_diameter_default: 0.6,
@@ -613,6 +618,7 @@ pub enum RuleKey {
     SilkTextStrokeShare,
     PairGapTolerance,
     PairGapToleranceShare,
+    NpthAnnularRingMin,
 }
 
 /// A rule's value.
@@ -647,6 +653,7 @@ impl RuleKey {
             Self::DrillMin,
             Self::ViaAnnularRingMin,
             Self::PthAnnularRingMin,
+            Self::NpthAnnularRingMin,
             Self::AspectRatioMax,
             Self::ViaDrillDefault,
             Self::ViaDiameterDefault,
@@ -732,6 +739,7 @@ impl RuleKey {
             Self::DrillMin
             | Self::ViaAnnularRingMin
             | Self::PthAnnularRingMin
+            | Self::NpthAnnularRingMin
             | Self::AspectRatioMax
             | Self::ViaDrillDefault
             | Self::ViaDiameterDefault => RuleGroup::HolesAndVias,
@@ -773,6 +781,7 @@ impl RuleKey {
                 Self::DrillMin => "min drill",
                 Self::ViaAnnularRingMin => "min via annular ring",
                 Self::PthAnnularRingMin => "min PTH annular ring",
+                Self::NpthAnnularRingMin => "min NPTH pad annular ring",
                 Self::AspectRatioMax => "max aspect ratio",
                 Self::ViaDrillDefault => "default via drill",
                 Self::ViaDiameterDefault => "default via diameter",
@@ -822,6 +831,7 @@ impl RuleKey {
             Self::DrillMin => Length(rules.holes.drill_min),
             Self::ViaAnnularRingMin => Length(rules.holes.via_annular_ring_min),
             Self::PthAnnularRingMin => Length(rules.holes.pth_annular_ring_min),
+            Self::NpthAnnularRingMin => Length(rules.holes.npth_annular_ring_min),
             Self::AspectRatioMax => Ratio(rules.holes.aspect_ratio_max),
             Self::ViaDrillDefault => Length(rules.holes.via_drill_default),
             Self::ViaDiameterDefault => Length(rules.holes.via_diameter_default),
@@ -884,6 +894,7 @@ impl RuleKey {
             Self::DrillMin => &mut rules.holes.drill_min,
             Self::ViaAnnularRingMin => &mut rules.holes.via_annular_ring_min,
             Self::PthAnnularRingMin => &mut rules.holes.pth_annular_ring_min,
+            Self::NpthAnnularRingMin => &mut rules.holes.npth_annular_ring_min,
             Self::AspectRatioMax => {
                 let Ratio(r) = value else { return wrong() };
                 rules.holes.aspect_ratio_max = r;

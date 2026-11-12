@@ -166,6 +166,9 @@
       "mask_web_min": {
         "value": 0.1
       },
+      "npth_annular_ring_min": {
+        "value": 0.0
+      },
       "pair_gap_tolerance": {
         "value": 0.02
       },

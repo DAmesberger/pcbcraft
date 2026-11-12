@@ -500,8 +500,9 @@ mod tests {
     /// hole at the recommended 0.35 mm rather than the 0.28 mm minimum, and
     /// the PTH annular ring at the recommended value rather than the
     /// absolute minimum (0.18 mm on 2 layers, 0.15 mm on 4). JLCPCB
-    /// publishes no unplated hole-to-hole row: those pairs are 0, not
-    /// checked.
+    /// publishes no unplated hole-to-hole row: its pad hole spacing
+    /// (0.45 mm) is read as covering unplated pad holes too, and the NPTH
+    /// pad annular ring is its 0.45 mm row.
     #[test]
     fn the_jlcpcb_examples_split_holes_and_take_the_recommended_values() -> Result<()> {
         use pcbcraft_core::rules::CopperObject::{NpthHole, Pad, PthHole, Track, ViaHole};
@@ -521,8 +522,9 @@ mod tests {
             assert_eq!(c.get(NpthHole, Track), 0.2, "{}", p.id);
             assert_eq!(c.get(NpthHole, Pad), 0.2, "{}", p.id);
             for hole in [ViaHole, PthHole, NpthHole] {
-                assert_eq!(c.get(NpthHole, hole), 0.0, "{}", p.id);
+                assert_eq!(c.get(NpthHole, hole), 0.45, "{}", p.id);
             }
+            assert_eq!(r.holes.npth_annular_ring_min, 0.45, "{}", p.id);
         }
         Ok(())
     }

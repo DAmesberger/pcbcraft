@@ -6,6 +6,8 @@
 //!   plated mounting hole, keeps at least the profile's `min PTH annular
 //!   ring` of copper around the finished hole. A pad has one outline on
 //!   every layer it has copper on, so one ring holds for each of them.
+//! - `board.npth_annular_ring`: an unplated hole in a pad with copper
+//!   keeps the profile's `min NPTH pad annular ring` the same way.
 //! - `board.pad_hole_clearance`: a pad hole passes through every copper
 //!   layer, so every track, pad and via within the hole kind's clearance
 //!   (`clearance_<copper>_pth_hole` or `_npth_hole`) is reported, except
@@ -214,7 +216,8 @@ pub(super) fn findings(
 }
 
 /// `board.pth_annular_ring` for every plated pad hole and plated
-/// mounting hole.
+/// mounting hole, and `board.npth_annular_ring` for every unplated hole
+/// in a pad with copper.
 fn rings(
     project: &Project,
     placed: &[PlacedPad],
@@ -222,34 +225,47 @@ fn rings(
     name: &dyn Fn(&PlacedPad) -> String,
 ) -> Vec<Finding> {
     let need = limits.need(RuleKey::PthAnnularRingMin);
+    let npth_need = limits.need(RuleKey::NpthAnnularRingMin);
     let mut issues = Vec::new();
-    let text = |ring: f64| {
-        format!(
-            "annular ring {} mm; needs at least {} mm ({})",
-            mm(ring),
-            mm(need.mm),
-            need.cite()
-        )
-    };
+    let least =
+        |need: &super::limits::Need| format!("needs at least {} mm ({})", mm(need.mm), need.cite());
+    let text = |ring: f64| format!("annular ring {} mm; {}", mm(ring), least(&need));
     for pad in placed {
         if pad.pad.kind.copper() == PadCopper::None {
             continue;
         }
         let outline = pad.outline();
-        let ring = pad
-            .holes()
-            .iter()
-            .filter(|h| h.plated)
-            .map(|h| annular_ring(&outline, &h.shape))
-            .fold(f64::INFINITY, f64::min);
+        let holes = pad.holes();
+        let ring_of = |plated: bool| {
+            holes
+                .iter()
+                .filter(|h| h.plated == plated)
+                .map(|h| annular_ring(&outline, &h.shape))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let object = ObjectRef::Pad {
+            instance: pad.instance,
+            pad: pad.pad.id,
+        };
+        let ring = ring_of(true);
         if ring.is_finite() && ring < need.mm - EPS {
             issues.push(Finding::new(
                 "board.pth_annular_ring",
                 format!("{}: {}", name(pad), text(ring)),
-                vec![ObjectRef::Pad {
-                    instance: pad.instance,
-                    pad: pad.pad.id,
-                }],
+                vec![object],
+            ));
+        }
+        let ring = ring_of(false);
+        if ring.is_finite() && ring < npth_need.mm - EPS {
+            issues.push(Finding::new(
+                "board.npth_annular_ring",
+                format!(
+                    "{}: annular ring {} mm round the unplated hole; {}",
+                    name(pad),
+                    mm(ring),
+                    least(&npth_need)
+                ),
+                vec![object],
             ));
         }
     }

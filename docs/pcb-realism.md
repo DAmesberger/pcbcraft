@@ -104,7 +104,8 @@ These limits are estimated prototype defaults, not a fabricator's rules:
 - `board.via_hole_spacing`: two drills are closer than 0.25 mm.
 
 Footprint pad holes have their own checks (`layout/pad_hole.rs`: `board.pth_annular_ring`,
-`board.pad_hole_clearance`, `board.pad_hole_spacing`); see
+`board.npth_annular_ring`, `board.pad_hole_clearance`,
+`board.pad_hole_spacing`); see
 [design rules](board-rules-and-shape.md).
 
 Issues classifies the three manufacturing checks as errors and a dangling via as a

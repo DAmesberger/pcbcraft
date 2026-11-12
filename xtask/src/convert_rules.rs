@@ -173,7 +173,8 @@ const NPTH_NOTE: &str = "convert-v1: unplated holes took the via hole rule until
                          their own, so this is that via hole value; enter the fabricator's NPTH value.";
 
 /// A profile's `npth_hole` rules from its `via_hole` ones (same value,
-/// the source with [`NPTH_NOTE`]); the number of rules added.
+/// the source with [`NPTH_NOTE`]) and an unchecked NPTH pad annular
+/// ring; the number of rules added.
 pub fn add_npth(profile: &mut Value) -> usize {
     let Some(rules) = profile.get_mut("rules").and_then(Value::as_object_mut) else {
         return 0;
@@ -197,8 +198,19 @@ pub fn add_npth(profile: &mut Value) -> usize {
         rules.insert(key, entry);
         n += 1;
     }
+    if !rules.contains_key("npth_annular_ring_min") {
+        rules.insert(
+            "npth_annular_ring_min".into(),
+            json!({"value": 0.0, "source": NPTH_RING_NOTE}),
+        );
+        n += 1;
+    }
     n
 }
+
+/// What a converted `npth_annular_ring_min` rule's source says.
+const NPTH_RING_NOTE: &str = "convert-v1: the NPTH pad annular ring was not checked before; \
+                              0, not checked. Enter the fabricator's value.";
 
 /// Each project override of a `via_hole` pair gains its `npth_hole` twin
 /// ([`NPTH_FROM_VIA_HOLE`]) unless that pair is overridden already; the
@@ -411,8 +423,8 @@ mod tests {
         assert_eq!(new["source"]["date"], "2026-10-30");
         let rules = new["rules"].as_object().ok_or("rules")?;
         // 36 clearance pairs (the old hole pairs split by hole kind, then
-        // the unplated-hole pairs added) and 38 other rules.
-        assert_eq!(rules.len(), 74);
+        // the unplated-hole pairs added) and 39 other rules.
+        assert_eq!(rules.len(), 75);
         assert_eq!(rules["drill_min"], json!({"value": 0.2}));
         assert_eq!(rules["clearance_track_board_edge"], json!({"value": 0.2}));
         assert_eq!(rules["board_outline_fit"], json!({"value": 0.01}));
@@ -453,8 +465,9 @@ mod tests {
             "overrides": [override_of("track", "hole"), override_of("hole", "hole"),
                           override_of("track", "pad")]}});
         let map = project.as_object_mut().ok_or("object")?;
-        // 2 profile splits, 2 override splits; 4 NPTH rules, 4 NPTH twins.
-        assert_eq!(convert_project_rules(map, None)?, 12);
+        // 2 profile splits, 2 override splits; 4 NPTH rules, the NPTH ring,
+        // 4 NPTH twins.
+        assert_eq!(convert_project_rules(map, None)?, 13);
         let rules = &project["rules"]["profile"]["rules"];
         assert_eq!(
             rules["clearance_track_pth_hole"],
@@ -465,7 +478,7 @@ mod tests {
         assert_eq!(rules["clearance_track_track"]["value"], 0.1);
         assert_eq!(rules["clearance_track_npth_hole"]["value"], 0.2);
         assert_eq!(rules["clearance_npth_hole_npth_hole"]["value"], 0.25);
-        assert_eq!(rules.as_object().ok_or("rules")?.len(), 10);
+        assert_eq!(rules.as_object().ok_or("rules")?.len(), 11);
         let overrides = project["rules"]["overrides"]
             .as_array()
             .ok_or("overrides")?
@@ -494,7 +507,7 @@ mod tests {
     fn a_profile_file_becomes_a_fab_profile_file_once() -> Result<()> {
         let mut file = json!({"format": 1, "profile": {"id": "fab", "rules": {
             "clearance_track_hole": {"value": 0.2}}}});
-        assert_eq!(convert_profile_file(&mut file)?, 3);
+        assert_eq!(convert_profile_file(&mut file)?, 4);
         assert!(file.get("profile").is_none());
         assert_eq!(
             file["fab_profile"]["rules"]["clearance_track_pth_hole"],
@@ -511,7 +524,7 @@ mod tests {
             "clearance_via_hole_via_hole": {"value": 0.25},
             "clearance_via_hole_pth_hole": {"value": 0.45},
             "clearance_board_edge_npth_hole": {"value": 0.0, "source": "Set by hand."}}}});
-        assert_eq!(convert_profile_file(&mut file)?, 4);
+        assert_eq!(convert_profile_file(&mut file)?, 5);
         let rules = &file["fab_profile"]["rules"];
         assert_eq!(rules["clearance_pad_npth_hole"]["value"], 0.2);
         let source = rules["clearance_pad_npth_hole"]["source"]

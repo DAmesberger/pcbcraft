@@ -239,8 +239,9 @@ fn a_pad_hole_keeps_its_clearance_to_other_copper() -> Result<()> {
 
 /// A pad hole keeps the hole-kind spacing to other holes: a via drill
 /// 0.3 mm from a plated pad hole is under JLCPCB's 0.45 mm pad hole
-/// spacing. JLCPCB publishes no unplated-hole spacing, so the same via by
-/// an unplated hole passes until a rule is set.
+/// spacing, and so is the same via by an unplated pad hole (the example
+/// reads the pad hole row as covering unplated pad holes); an override
+/// of the via-to-unplated pair moves that verdict.
 #[test]
 fn a_pad_hole_keeps_its_spacing_to_other_holes() -> Result<()> {
     let mut project = tht(
@@ -279,22 +280,46 @@ fn a_pad_hole_keeps_its_spacing_to_other_holes() -> Result<()> {
         round(0.6, false),
     )?;
     add_via(&mut project, net, [x, y - 0.75])?;
-    assert!(found(&project, "board.pad_hole_spacing").is_empty());
-    project.rules.overrides.push(RuleOverride {
-        key: RuleKey::Clearance {
-            a: CopperObject::ViaHole,
-            b: CopperObject::NpthHole,
-        },
-        value: RuleValue::Length(0.5),
-    });
     let findings = found(&project, "board.pad_hole_spacing");
     assert_eq!(findings.len(), 1, "{findings:#?}");
     assert!(
         findings[0]
             .message
-            .ends_with("needs 0.5 mm (project override: via hole to unplated hole clearance)"),
+            .ends_with("needs 0.45 mm (JLCPCB 2-layer 1 oz: via hole to unplated hole clearance)"),
         "{}",
         findings[0].message
     );
+    project.rules.overrides.push(RuleOverride {
+        key: RuleKey::Clearance {
+            a: CopperObject::ViaHole,
+            b: CopperObject::NpthHole,
+        },
+        value: RuleValue::Length(0.25),
+    });
+    assert!(found(&project, "board.pad_hole_spacing").is_empty());
+    Ok(())
+}
+
+/// An unplated hole in a pad with copper keeps the profile's NPTH pad
+/// annular ring (JLCPCB: 0.45 mm, so 0.2 mm can be cleared for the
+/// sealing film): a 1.4 mm land round a 0.6 mm hole leaves 0.4 mm; a
+/// 1.5 mm land passes. A bare unplated hole has no copper and no ring.
+#[test]
+fn an_unplated_hole_in_copper_keeps_the_npth_pad_annular_ring() -> Result<()> {
+    let circle = |diameter| PadShape::Circle { diameter };
+    let project = tht(PadKind::Mechanical, circle(1.4), round(0.6, false))?;
+    let findings = found(&project, "board.npth_annular_ring");
+    assert_eq!(findings.len(), 4, "every resistor pad: {findings:#?}");
+    assert!(
+        findings.iter().any(|f| f.message
+            == "R1 pad 1: annular ring 0.4 mm round the unplated hole; needs at least 0.45 mm \
+                (JLCPCB 2-layer 1 oz: min NPTH pad annular ring)"),
+        "{findings:#?}"
+    );
+    assert!(found(&project, "board.pth_annular_ring").is_empty());
+    let project = tht(PadKind::Mechanical, circle(1.5), round(0.6, false))?;
+    assert!(found(&project, "board.npth_annular_ring").is_empty());
+    let project = tht(PadKind::NonPlatedHole, circle(0.6), round(0.6, false))?;
+    assert!(found(&project, "board.npth_annular_ring").is_empty());
     Ok(())
 }

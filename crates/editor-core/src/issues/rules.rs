@@ -28,6 +28,7 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         | "board.pad_hole_clearance"
         | "board.pad_hole_spacing"
         | "board.pth_annular_ring"
+        | "board.npth_annular_ring"
         | "board.via_annular_ring"
         | "board.via_aspect_ratio"
         | "board.via_drill_clearance"
@@ -80,6 +81,7 @@ pub fn group_title(code: &str) -> String {
         "board.pad_hole_clearance" => "Pad holes too close to copper",
         "board.pad_hole_spacing" => "Pad holes too close to other holes",
         "board.pth_annular_ring" => "Thin plated-hole annular rings",
+        "board.npth_annular_ring" => "Thin copper round unplated holes",
         "board.courtyard_clearance" => "Courtyards too close",
         "fill.clearance" => "Fill clearance",
         "fill.empty" => "Empty fills",
@@ -206,7 +208,9 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "board.edge_clearance" => "Move it away from the edge",
         "board.hole_clearance" | "board.pad_hole_clearance" => "Move the copper away from the hole",
         "board.pad_hole_spacing" => "Move the part or the other hole",
-        "board.pth_annular_ring" => "Enlarge the pad or shrink its hole",
+        "board.pth_annular_ring" | "board.npth_annular_ring" => {
+            "Enlarge the pad or shrink its hole"
+        }
         "board.courtyard_clearance" => "Move the parts apart",
         "fill.clearance" | "fill.stale" => "Refill the fill",
         "fill.empty" => "Enlarge the fill outline or lower its priority",
@@ -464,6 +468,7 @@ pub const KNOWN_CODES: &[&str] = &[
     "board.courtyard_overlap",
     "board.edge_clearance",
     "board.hole_clearance",
+    "board.npth_annular_ring",
     "board.outside_outline",
     "board.pad_hole_clearance",
     "board.pad_hole_spacing",

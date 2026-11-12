@@ -64,6 +64,7 @@ pub enum RuleTopic {
     BoardEdge,
     ViaAnnularRing,
     PthAnnularRing,
+    NpthAnnularRing,
     DrillToCopper,
     HoleSpacing,
     /// Pad holes to any hole: one of several hole-kind pairs.
@@ -78,6 +79,7 @@ impl RuleTopic {
             Self::BoardEdge => RuleGroup::BoardEdge,
             Self::ViaAnnularRing
             | Self::PthAnnularRing
+            | Self::NpthAnnularRing
             | Self::DrillToCopper
             | Self::HoleSpacing
             | Self::PadHoleSpacing => RuleGroup::HolesAndVias,
@@ -90,6 +92,7 @@ impl RuleTopic {
             Self::Clearance | Self::BoardEdge | Self::DrillToCopper | Self::PadHoleSpacing => None,
             Self::ViaAnnularRing => Some(RuleKey::ViaAnnularRingMin),
             Self::PthAnnularRing => Some(RuleKey::PthAnnularRingMin),
+            Self::NpthAnnularRing => Some(RuleKey::NpthAnnularRingMin),
             Self::HoleSpacing => Some(RuleKey::Clearance {
                 a: CopperObject::ViaHole,
                 b: CopperObject::ViaHole,
@@ -109,6 +112,7 @@ const TOPICS: &[(&str, RuleTopic)] = &[
     ("board.hole_clearance", RuleTopic::DrillToCopper),
     ("board.via_hole_spacing", RuleTopic::HoleSpacing),
     ("board.pth_annular_ring", RuleTopic::PthAnnularRing),
+    ("board.npth_annular_ring", RuleTopic::NpthAnnularRing),
     ("board.pad_hole_clearance", RuleTopic::DrillToCopper),
     ("board.pad_hole_spacing", RuleTopic::PadHoleSpacing),
     ("board.courtyard_overlap", RuleTopic::Courtyard),
