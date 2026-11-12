@@ -18,12 +18,11 @@ use pcbcraft_core::library::footprint_source::{
 };
 use pcbcraft_core::library::graphics::{FootprintGraphic, Item, ShapeNm};
 use pcbcraft_core::library::{
-    ApertureId, CornerMask, Datum, FootprintDefinition, Hole, HoleShape, MAX_PADS, MaskRule, Pad,
+    ApertureId, CornerMask, Datum, FootprintDefinition, MAX_PADS, MaskRule, Pad,
     PadShape, PadVia, PasteRule, PasteWindow, Segment,
 };
 use pcbcraft_core::library::{MAX_PAD_VIAS, MAX_PASTE_WINDOWS};
-use pcbcraft_core::units::Nm;
-use serde::Serialize;
+use pcbcraft_core::units::{Angle, Nm, PointNm};
 use solidcraft_engine::sketch::{
     Analysis, CurveKind, Sketch, find_profiles, flips_from_stored, profile_at_point,
     solve_after_edit_with_analysis,
@@ -32,7 +31,7 @@ use solidcraft_engine::sketch::{
 use super::check::{self, MAX_COORD_MM};
 use super::classify::{self, UNCLASSIFIED};
 use super::params::{self, Values};
-use super::{Outcome, Problem, arrays, evaluator_ref, problem};
+use super::{Outcome, Problem, arrays, evaluator_ref, problem, stored};
 
 /// Evaluate a source. Design problems become blocking findings (the engine
 /// refuses to commit them); the stored source is never changed here.
@@ -280,7 +279,9 @@ fn mask(rule: &MaskRuleExpr, values: &Values) -> Outcome<MaskRule> {
     Ok(match rule {
         MaskRuleExpr::Inherit => MaskRule::Inherit,
         MaskRuleExpr::Tented => MaskRule::Tented,
-        MaskRuleExpr::Expansion(e) => MaskRule::Expansion(values.signed_length(&e.0)?),
+        MaskRuleExpr::Expansion(e) => MaskRule::Expansion(stored(Nm::from_mm_f64_rounded(
+            values.signed_length(&e.0)?,
+        ))?),
     })
 }
 
@@ -294,7 +295,9 @@ fn paste(
     Ok(match rule {
         PasteRuleExpr::Inherit => PasteRule::Inherit,
         PasteRuleExpr::None => PasteRule::None,
-        PasteRuleExpr::Reduction(e) => PasteRule::Reduction(values.length(&e.0)?),
+        PasteRuleExpr::Reduction(e) => {
+            PasteRule::Reduction(stored(Nm::from_mm_f64_rounded(values.length(&e.0)?))?)
+        }
         PasteRuleExpr::Windows(curves) => {
             PasteRule::Windows(paste_windows(sk, curves, anchor, rotation_deg)?)
         }
@@ -336,15 +339,18 @@ fn paste_windows(
         let pieces = classify::pieces(&profile.region.outer)?;
         let c = classify::classify(&pieces, anchor, Some(rotation_deg))?;
         let shape = match c.shape {
-            PadShape::Circle { diameter } => Shape::Circle {
+            PadShape::Circle { diameter_nm } => Shape::Circle {
                 center: [0.0, 0.0],
-                radius: diameter * 0.5,
+                radius: diameter_nm.to_mm_f64() * 0.5,
             },
-            PadShape::Rect { size } => Shape::Rect {
-                a: [-size[0] * 0.5, -size[1] * 0.5],
-                b: [size[0] * 0.5, size[1] * 0.5],
-                radius: 0.0,
-            },
+            PadShape::Rect { size } => {
+                let size = size.to_mm_f64();
+                Shape::Rect {
+                    a: [-size[0] * 0.5, -size[1] * 0.5],
+                    b: [size[0] * 0.5, size[1] * 0.5],
+                    radius: 0.0,
+                }
+            }
             PadShape::Custom { outline } => {
                 let mut points = vec![outline.start];
                 for s in &outline.segments {
@@ -399,8 +405,8 @@ fn vias(role: &PadRole, values: &Values) -> Outcome<Vec<PadVia>> {
             let id = u32::from(i) * u32::from(cols) + u32::from(j) + 1;
             out.push(PadVia {
                 id: ApertureId(id),
-                at: [x, y],
-                drill,
+                at: stored(PointNm::from_mm_f64_rounded([x, y]))?,
+                drill_nm: stored(Nm::from_mm_f64_rounded(drill))?,
             });
         }
     }
@@ -482,7 +488,7 @@ fn classify_roles(
                     &curves,
                     h.plated,
                     anchor,
-                    c.rotation_deg,
+                    c.rotation_deg(),
                 )?)
             }
             None => None,
@@ -492,13 +498,13 @@ fn classify_roles(
             kind: role.kind,
             terminal: role.terminal,
             number: role.number.clone(),
-            position: [anchor.x, anchor.y],
-            rotation_deg: c.rotation_deg,
+            position: stored(PointNm::from_mm_f64_rounded([anchor.x, anchor.y]))?,
+            rotation_mdeg: c.rotation_mdeg,
             side: role.side,
-            shape: c.shape,
             hole,
             mask: mask(&role.mask, values)?,
-            paste: paste(&role.paste, values, sketch, anchor, c.rotation_deg)?,
+            paste: paste(&role.paste, values, sketch, anchor, c.rotation_deg())?,
+            shape: c.shape,
             vias: vias(role, values)?,
         };
         if seeds
@@ -522,25 +528,27 @@ fn classify_roles(
 
 fn override_shape(shape: &PadShapeExpr, values: &Values) -> Outcome<PadShape> {
     Ok(match shape {
-        PadShapeExpr::Rect { width, height } => PadShape::Rect {
-            size: [values.positive(&width.0)?, values.positive(&height.0)?],
-        },
+        PadShapeExpr::Rect { width, height } => stored(PadShape::rect_mm([
+            values.positive(&width.0)?,
+            values.positive(&height.0)?,
+        ]))?,
         PadShapeExpr::RoundRect {
             width,
             height,
             radius_ratio,
-        } => PadShape::RoundRect {
-            size: [values.positive(&width.0)?, values.positive(&height.0)?],
-            radius_ratio: values.number(&radius_ratio.0)?,
-            max_radius: None,
-            corners: CornerMask::ALL,
-        },
-        PadShapeExpr::Circle { diameter } => PadShape::Circle {
-            diameter: values.positive(&diameter.0)?,
-        },
-        PadShapeExpr::Oblong { width, height } => PadShape::Oblong {
-            size: [values.positive(&width.0)?, values.positive(&height.0)?],
-        },
+        } => stored(PadShape::round_rect_mm(
+            [values.positive(&width.0)?, values.positive(&height.0)?],
+            values.number(&radius_ratio.0)?,
+            None,
+            CornerMask::ALL,
+        ))?,
+        PadShapeExpr::Circle { diameter } => {
+            stored(PadShape::circle_mm(values.positive(&diameter.0)?))?
+        }
+        PadShapeExpr::Oblong { width, height } => stored(PadShape::oblong_mm([
+            values.positive(&width.0)?,
+            values.positive(&height.0)?,
+        ]))?,
     })
 }
 
@@ -555,8 +563,8 @@ fn apply_override(pad: &mut Pad, o: &PadOverride, values: &Values, sk: &Sketch) 
         pad.mask = mask(m, values)?;
     }
     if let Some(p) = &o.paste {
-        let at = Vec2::new(pad.position[0], pad.position[1]);
-        pad.paste = paste(p, values, sk, at, pad.rotation_deg)?;
+        let [x, y] = pad.position();
+        pad.paste = paste(p, values, sk, Vec2::new(x, y), pad.rotation_deg())?;
     }
     Ok(())
 }
@@ -611,11 +619,13 @@ fn expand(
                 j: inst.j,
             };
             let mut pad = seed.pad.clone();
-            pad.position = [inst.centre.x, inst.centre.y];
+            pad.position = stored(PointNm::from_mm_f64_rounded([inst.centre.x, inst.centre.y]))?;
             // The full instance turn first: overrides are authored against
             // it, and folding then carries the removed turn into the hole,
             // vias and paste windows so nothing lands on the wrong side.
-            pad.rotation_deg += inst.turn_deg;
+            pad.rotation_mdeg = pad
+                .rotation_mdeg
+                .rotated_by(stored(Angle::from_degrees_f64_rounded(inst.turn_deg))?);
             pad.number = inst.number;
             if let Some(o) = overrides.get(&key) {
                 apply_override(&mut pad, o, values, sketch)?;
@@ -883,10 +893,7 @@ fn datum(request: &EvaluationRequest<'_>, sketch: &Sketch) -> Outcome<Datum> {
         Some(o) => angle_of(sketch, &o.0)?.rem_euclid(360.0),
         None => 0.0,
     };
-    Ok(Datum {
-        offset: [at.x, at.y],
-        rotation_deg,
-    })
+    stored(Datum::from_mm([at.x, at.y], rotation_deg))
 }
 
 /// Pcbcraft's own quantizer (Solidcraft's is private): 1e-6 mm, and
@@ -919,29 +926,14 @@ fn fold(pad: &mut Pad) -> Outcome<()> {
         .map_err(|e| problem("footprint.too_large", e.to_string()))
 }
 
+/// The solved pad's remaining f64 values quantized (lengths, positions and
+/// turns are stored in nanometres and millidegrees already) and its turn
+/// folded.
 fn q_pad(pad: &mut Pad) -> Outcome<()> {
-    pad.position = qp(pad.position)?;
-    // Rounding can land exactly on the period (180° or 360°); fold it back.
-    // Fold before quantising the pad-frame features the fold may turn.
     fold(pad)?;
-    pad.rotation_deg = q(pad.rotation_deg)?;
-    fold(pad)?;
-    pad.rotation_deg = q(pad.rotation_deg)?;
     match &mut pad.shape {
-        PadShape::Rect { size } | PadShape::Oblong { size } => *size = qp(*size)?,
-        PadShape::RoundRect {
-            size,
-            radius_ratio,
-            max_radius,
-            ..
-        } => {
-            *size = qp(*size)?;
-            *radius_ratio = q(*radius_ratio)?;
-            if let Some(m) = max_radius {
-                *m = q(*m)?;
-            }
-        }
-        PadShape::Circle { diameter } => *diameter = q(*diameter)?,
+        PadShape::Rect { .. } | PadShape::Oblong { .. } | PadShape::Circle { .. } => {}
+        PadShape::RoundRect { radius_ratio, .. } => *radius_ratio = q(*radius_ratio)?,
         PadShape::Custom { outline } => {
             outline.start = qp(outline.start)?;
             for s in &mut outline.segments {
@@ -955,73 +947,19 @@ fn q_pad(pad: &mut Pad) -> Outcome<()> {
             }
         }
     }
-    if let Some(Hole { shape, offset, .. }) = &mut pad.hole {
-        *offset = qp(*offset)?;
-        match shape {
-            HoleShape::Round { diameter } => *diameter = q(*diameter)?,
-            HoleShape::Slot {
-                width,
-                length,
-                angle_deg,
-            } => {
-                *width = q(*width)?;
-                *length = q(*length)?;
-                *angle_deg = q(*angle_deg)?;
-            }
-        }
-    }
-    if let MaskRule::Expansion(v) = &mut pad.mask {
-        *v = q(*v)?;
-    }
-    // Paste windows are stored in nanometres already.
-    if let PasteRule::Reduction(v) = &mut pad.paste {
-        *v = q(*v)?;
-    }
-    for v in &mut pad.vias {
-        v.at = qp(v.at)?;
-        v.drill = q(v.drill)?;
-    }
     Ok(())
 }
 
-/// 64-bit FNV-1a (enough to compare results; no new dependency).
-pub(crate) fn fnv(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
-}
+/// The result hash and its FNV-1a have one definition, in the core.
+pub(crate) use pcbcraft_core::library::footprint_source::fnv;
 
-/// What the result hash covers: geometry and numbering, keyed by stable
-/// identity, never terminals (assigning terminals is not a re-solve).
-#[derive(Serialize)]
-struct Hashed<'a> {
-    pads: Vec<(Option<GenerationKey>, Option<PadId>, Pad)>,
-    graphics: &'a [FootprintGraphic],
-    datum: &'a Datum,
-}
-
-pub(crate) fn result_hash(
+fn result_hash(
     pads: &[EvaluatedPad],
     graphics: &[FootprintGraphic],
     datum: &Datum,
 ) -> Outcome<String> {
-    let pads = pads
-        .iter()
-        .map(|p| {
-            let mut pad = p.pad.clone();
-            pad.terminal = None;
-            let id = if p.key.is_none() { Some(pad.id) } else { None };
-            pad.id = PadId(0);
-            (p.key, id, pad)
-        })
-        .collect();
-    let bytes = serde_json::to_vec(&Hashed {
-        pads,
-        graphics,
-        datum,
-    })
-    .map_err(|e| problem("footprint.internal", e.to_string()))?;
-    Ok(format!("{:016x}", fnv(&bytes)))
+    pcbcraft_core::library::footprint_source::result_hash(pads, graphics, datum)
+        .map_err(|e| problem("footprint.internal", e.to_string()))
 }
 
 fn pipeline(request: EvaluationRequest<'_>) -> Outcome<Evaluation> {
@@ -1047,9 +985,7 @@ fn pipeline(request: EvaluationRequest<'_>) -> Outcome<Evaluation> {
     for p in &mut pads {
         q_pad(&mut p.pad)?;
     }
-    let mut datum = datum(&request, &sketch)?;
-    datum.offset = qp(datum.offset)?;
-    datum.rotation_deg = q(datum.rotation_deg)?;
+    let datum = datum(&request, &sketch)?;
     let graphics = graphics(&request, &sketch, &values, &pads, datum)?;
     // Derived graphics are stored in nanometres already.
     let result_hash = result_hash(&pads, &graphics, &datum)?;

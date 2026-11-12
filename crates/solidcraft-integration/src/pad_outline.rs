@@ -179,13 +179,13 @@ fn distance(a: Point, b: Point) -> f64 {
 /// frame about the pad origin. `None` when nothing is left.
 pub fn shape_contour(shape: &PadShape, grow: f64) -> Option<Contour> {
     match shape {
-        PadShape::Rect { size } => rounded(*size, grow, [0.0; 4]),
+        PadShape::Rect { size } => rounded(size.to_mm_f64(), grow, [0.0; 4]),
         PadShape::RoundRect { size, corners, .. } => {
             let r = shape.corner_radius();
             let pick = |on: bool| if on { r } else { 0.0 };
             // Counter-clockwise from the bottom right.
             rounded(
-                *size,
+                size.to_mm_f64(),
                 grow,
                 [
                     pick(corners.bottom_right),
@@ -195,16 +195,17 @@ pub fn shape_contour(shape: &PadShape, grow: f64) -> Option<Contour> {
                 ],
             )
         }
-        PadShape::Circle { diameter } => {
-            let radius = diameter / 2.0 + grow;
+        PadShape::Circle { diameter_nm } => {
+            let radius = diameter_nm.to_mm_f64() / 2.0 + grow;
             (radius > EPS).then_some(Contour::Circle {
                 center: [0.0, 0.0],
                 radius,
             })
         }
         PadShape::Oblong { size } => {
+            let size = size.to_mm_f64();
             let r = size[0].min(size[1]) / 2.0;
-            rounded(*size, grow, [r; 4])
+            rounded(size, grow, [r; 4])
         }
         PadShape::Custom { outline } => {
             if grow.abs() < EPS {
@@ -303,25 +304,26 @@ fn rounded(size: Point, grow: f64, radii: [f64; 4]) -> Option<Contour> {
 /// A hole's contour in the pad frame, grown by `grow` (negative shrinks).
 pub fn hole_contour(hole: &Hole, grow: f64) -> Option<Contour> {
     let contour = match hole.shape {
-        HoleShape::Round { diameter } => {
-            let radius = diameter / 2.0 + grow;
+        HoleShape::Round { diameter_nm } => {
+            let radius = diameter_nm.to_mm_f64() / 2.0 + grow;
             (radius > EPS).then_some(Contour::Circle {
                 center: [0.0, 0.0],
                 radius,
             })?
         }
         HoleShape::Slot {
-            width,
-            length,
-            angle_deg,
+            width_nm,
+            length_nm,
+            angle_mdeg,
         } => {
+            let (width, length) = (width_nm.to_mm_f64(), length_nm.to_mm_f64());
             let width = width.min(length.max(width));
             let length = length.max(width);
             let r = width / 2.0;
-            rounded([length, width], grow, [r; 4])?.rotated(angle_deg)
+            rounded([length, width], grow, [r; 4])?.rotated(angle_mdeg.to_degrees_f64())
         }
     };
-    Some(contour.translated(hole.offset))
+    Some(contour.translated(hole.offset()))
 }
 
 /// The finished (plated) bore of a hole: the drill less the barrel wall on
@@ -340,6 +342,7 @@ pub fn mask_opening(pad: &Pad, defaults: &PadDefaults) -> Option<Contour> {
 mod tests {
     use super::*;
     use pcbcraft_core::library::CornerMask;
+    use crate::test_units::{deg, nm, pt};
 
     /// The native contour and the core's `PadShape::grown` (the one pad
     /// geometry 2D, checks and the update preview use) agree to within
@@ -353,22 +356,22 @@ mod tests {
             bottom_left: true,
         };
         let shapes = [
-            PadShape::Rect { size: [1.2, 0.6] },
+            PadShape::Rect { size: pt([1.2, 0.6]) },
             PadShape::RoundRect {
-                size: [1.2, 0.6],
+                size: pt([1.2, 0.6]),
                 radius_ratio: 0.25,
-                max_radius: None,
+                max_radius_nm: None,
                 corners: CornerMask::ALL,
             },
             PadShape::RoundRect {
-                size: [1.6, 0.8],
+                size: pt([1.6, 0.8]),
                 radius_ratio: 0.5,
-                max_radius: Some(0.3),
+                max_radius_nm: Some(nm(0.3)),
                 corners: d_shape,
             },
-            PadShape::Circle { diameter: 0.9 },
-            PadShape::Oblong { size: [1.5, 0.7] },
-            PadShape::Oblong { size: [0.6, 1.4] },
+            PadShape::Circle { diameter_nm: nm(0.9) },
+            PadShape::Oblong { size: pt([1.5, 0.7]) },
+            PadShape::Oblong { size: pt([0.6, 1.4]) },
         ];
         const TOL: f64 = 1e-4;
         for shape in &shapes {
@@ -425,15 +428,15 @@ mod tests {
     fn every_shape_has_its_exact_area_counter_clockwise() -> Result<()> {
         let pi = std::f64::consts::PI;
         let cases = [
-            (PadShape::Rect { size: [2.0, 1.0] }, 2.0),
-            (PadShape::Circle { diameter: 2.0 }, pi),
-            (PadShape::Oblong { size: [3.0, 1.0] }, 2.0 + pi / 4.0),
-            (PadShape::Oblong { size: [1.0, 3.0] }, 2.0 + pi / 4.0),
+            (PadShape::Rect { size: pt([2.0, 1.0]) }, 2.0),
+            (PadShape::Circle { diameter_nm: nm(2.0) }, pi),
+            (PadShape::Oblong { size: pt([3.0, 1.0]) }, 2.0 + pi / 4.0),
+            (PadShape::Oblong { size: pt([1.0, 3.0]) }, 2.0 + pi / 4.0),
             (
                 PadShape::RoundRect {
-                    size: [2.0, 1.0],
+                    size: pt([2.0, 1.0]),
                     radius_ratio: 0.25,
-                    max_radius: None,
+                    max_radius_nm: None,
                     corners: CornerMask::ALL,
                 },
                 2.0 - (4.0 - pi) * 0.0625,
@@ -441,9 +444,9 @@ mod tests {
             (
                 // A D shape: two corners at half the short side.
                 PadShape::RoundRect {
-                    size: [2.0, 1.0],
+                    size: pt([2.0, 1.0]),
                     radius_ratio: 0.5,
-                    max_radius: None,
+                    max_radius_nm: None,
                     corners: CornerMask {
                         top_left: false,
                         top_right: true,
@@ -455,9 +458,9 @@ mod tests {
             ),
             (
                 PadShape::RoundRect {
-                    size: [2.0, 1.0],
+                    size: pt([2.0, 1.0]),
                     radius_ratio: 0.5,
-                    max_radius: Some(0.1),
+                    max_radius_nm: Some(nm(0.1)),
                     corners: CornerMask::ALL,
                 },
                 2.0 - (4.0 - pi) * 0.01,
@@ -488,7 +491,7 @@ mod tests {
 
     #[test]
     fn stadium_ends_are_single_half_arcs_and_square_stadia_are_circles() -> Result<()> {
-        let Some(Contour::Outline(o)) = shape_contour(&PadShape::Oblong { size: [3.0, 1.0] }, 0.0)
+        let Some(Contour::Outline(o)) = shape_contour(&PadShape::Oblong { size: pt([3.0, 1.0]) }, 0.0)
         else {
             return Err(Error::Verification("oblong is an outline".into()));
         };
@@ -503,7 +506,7 @@ mod tests {
         assert_eq!(arcs, vec![1.0, 1.0]);
         assert_eq!(o.segments.len(), 4);
         assert!(matches!(
-            shape_contour(&PadShape::Oblong { size: [1.0, 1.0] }, 0.0),
+            shape_contour(&PadShape::Oblong { size: pt([1.0, 1.0]) }, 0.0),
             Some(Contour::Circle { radius, .. }) if (radius - 0.5).abs() < 1e-12
         ));
         Ok(())
@@ -511,19 +514,19 @@ mod tests {
 
     #[test]
     fn growing_and_shrinking_offsets_every_side() -> Result<()> {
-        let rect = shape_contour(&PadShape::Rect { size: [2.0, 1.0] }, 0.05);
+        let rect = shape_contour(&PadShape::Rect { size: pt([2.0, 1.0]) }, 0.05);
         close(
             flat_area(&rect.ok_or_else(|| Error::Verification("none".into()))?),
             2.1 * 1.1,
             1e-9,
         );
-        let circle = shape_contour(&PadShape::Circle { diameter: 1.0 }, -0.1);
+        let circle = shape_contour(&PadShape::Circle { diameter_nm: nm(1.0) }, -0.1);
         close(
             flat_area(&circle.ok_or_else(|| Error::Verification("none".into()))?),
             std::f64::consts::PI * 0.16,
             1e-3,
         );
-        assert!(shape_contour(&PadShape::Rect { size: [2.0, 1.0] }, -0.5).is_none());
+        assert!(shape_contour(&PadShape::Rect { size: pt([2.0, 1.0]) }, -0.5).is_none());
         let square = PadShape::Custom {
             outline: Outline {
                 start: [0.0, 0.0],
@@ -546,12 +549,12 @@ mod tests {
     fn slots_follow_their_angle_and_bores_lose_the_plating() -> Result<()> {
         let slot = Hole {
             shape: HoleShape::Slot {
-                width: 1.0,
-                length: 3.0,
-                angle_deg: 90.0,
+                width_nm: nm(1.0),
+                length_nm: nm(3.0),
+                angle_mdeg: deg(90.0),
             },
             plated: true,
-            offset: [0.5, 0.0],
+            offset: pt([0.5, 0.0]),
         };
         let points = hole_contour(&slot, 0.0)
             .ok_or_else(|| Error::Verification("none".into()))?
@@ -569,9 +572,9 @@ mod tests {
         close(lo[1], -1.5, 1e-4);
         close(hi[1], 1.5, 1e-4);
         let round = Hole {
-            shape: HoleShape::Round { diameter: 1.0 },
+            shape: HoleShape::Round { diameter_nm: nm(1.0) },
             plated: true,
-            offset: [0.0, 0.0],
+            offset: pt([0.0, 0.0]),
         };
         assert!(matches!(
             bore(&round),

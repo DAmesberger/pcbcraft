@@ -386,7 +386,7 @@ impl Wizard {
             .filter_map(|pad| {
                 let terminal = package.terminal(pad.terminal?)?;
                 let at =
-                    pcbcraft_core::library::package_fit::to_datum(&footprint.datum, pad.position);
+                    pcbcraft_core::library::package_fit::to_datum(&footprint.datum, pad.position());
                 Some((at, terminal.designation.clone()))
             })
             .collect();
@@ -1399,6 +1399,7 @@ mod tests {
     use pcbcraft_core::PadId;
     use pcbcraft_core::library::LibraryModel;
     use pcbcraft_core::library::{PackageTerminal, Pad};
+    use crate::schematic_editor::{pt};
 
     /// An original two-lead chip-like file: a body block and two metal
     /// end caps, as the integration crate's inspection reports them.
@@ -1463,8 +1464,8 @@ mod tests {
                 PadId(id),
                 PackageTerminalId(t),
                 t.to_string(),
-                [x, 0.0],
-                [0.6, 0.9],
+                pt([x, 0.0]),
+                pt([0.6, 0.9]),
             ));
         }
         (package, footprint)

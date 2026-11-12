@@ -114,7 +114,7 @@ fn targets(
         }
     }
     for pad in pads.iter().filter(|p| !skip_pads.contains(&p.id)) {
-        t.centers.push(pad.position);
+        t.centers.push(pad.position());
         let land = pad.land(chord);
         t.curves.push((land.coarse_bounds(0.0), land));
     }
@@ -376,7 +376,7 @@ impl PartEditor {
                                 .pads
                                 .iter()
                                 .find(|q| q.id == *id)
-                                .map_or(start, |q| q.position),
+                                .map_or(start, |q| q.position()),
                             Pick::Point(id) => sketch.point(id).map_or(start, |q| q.at),
                             Pick::Curve(_) => start,
                         };

@@ -226,51 +226,43 @@ impl UsbCForm {
             .zip(terminals.iter().zip(DESIGNATIONS))
         {
             let id = PadId(u32::try_from(pads.len() + 1).ok()?);
-            pads.push(Pad::smd_rect(
-                id,
-                *terminal,
-                number,
-                [x, self.land_y()],
-                [width, self.land_length()],
-            ));
+            pads.push(
+                Pad::smd_rect_mm(
+                    id,
+                    *terminal,
+                    number,
+                    [x, self.land_y()],
+                    [width, self.land_length()],
+                )
+                .ok()?,
+            );
         }
         let shell = *terminals.last()?;
         let tabs = [self.tabs[0], self.tabs[0], self.tabs[1], self.tabs[1]];
         for (centre, tab) in self.stake_centres().into_iter().zip(tabs) {
             let id = PadId(u32::try_from(pads.len() + 1).ok()?);
-            let mut pad = Pad::smd_rect(id, shell, "S", centre, tab.land());
+            let mut pad = Pad::smd_rect_mm(id, shell, "S", centre, tab.land()).ok()?;
             pad.kind = PadKind::PlatedThrough;
-            pad.shape = PadShape::Oblong { size: tab.land() };
+            pad.shape = PadShape::oblong_mm(tab.land()).ok()?;
             pad.hole = Some(Hole {
-                shape: HoleShape::Slot {
-                    width: tab.slot()[0],
-                    length: tab.slot()[1],
-                    angle_deg: 90.0,
-                },
+                shape: HoleShape::slot_mm(tab.slot()[0], tab.slot()[1], 90.0).ok()?,
                 plated: true,
-                offset: [0.0, 0.0],
+                offset: PointNm::ORIGIN,
             });
             pads.push(pad);
         }
         for x in [-self.peg_x(), self.peg_x()] {
             let id = PadId(u32::try_from(pads.len() + 1).ok()?);
-            let mut pad = Pad::smd_rect(id, shell, "", [x, self.peg_y()], [self.peg_hole(); 2]);
+            let mut pad =
+                Pad::smd_rect_mm(id, shell, "", [x, self.peg_y()], [self.peg_hole(); 2]).ok()?;
             pad.kind = PadKind::NonPlatedHole;
             pad.terminal = None;
-            pad.shape = PadShape::Circle {
-                diameter: self.peg_hole(),
-            };
+            pad.shape = PadShape::circle_mm(self.peg_hole()).ok()?;
             // No mask growth: the drawing leaves 0.175 mm of board between
             // the hole and the GND land beside it, too little for a mask
             // web after growing both openings.
-            pad.mask = MaskRule::Expansion(0.0);
-            pad.hole = Some(Hole {
-                shape: HoleShape::Round {
-                    diameter: self.peg_hole(),
-                },
-                plated: false,
-                offset: [0.0, 0.0],
-            });
+            pad.mask = MaskRule::Expansion(Nm::ZERO);
+            pad.hole = Some(Hole::round_mm(self.peg_hole(), false).ok()?);
             pads.push(pad);
         }
         Some(pads)
@@ -460,7 +452,7 @@ mod tests {
                 .all(|p| p.terminal.is_none())
         );
         // The drawing's pitch: B8 at −1.75, GND at ±3.2, VBUS at ±2.4.
-        let x = |n: &str| pads.iter().find(|p| p.number == n).map(|p| p.position[0]);
+        let x = |n: &str| pads.iter().find(|p| p.number == n).map(|p| p.position()[0]);
         assert_eq!(x("B8"), Some(-1.75));
         assert_eq!(x("A1B12"), Some(-3.2));
         assert_eq!(x("B4A9"), Some(2.4));

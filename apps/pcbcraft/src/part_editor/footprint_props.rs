@@ -12,12 +12,51 @@ use pcbcraft_core::library::{
     BindingDefinition, CornerMask, FootprintDefinition, Hole, HoleShape, MaskRule,
     PackageDefinition, Pad, PadKind, PadShape, PadSide, PasteRule, TerminalRule,
 };
+use pcbcraft_core::units::{Angle, Nm, PointNm};
 use pcbcraft_core::{PackageTerminalId, PadId};
+
+use super::family_rows::nm_row;
 
 const COORD: std::ops::RangeInclusive<f64> = -10000.0..=10000.0;
 const SIZE: std::ops::RangeInclusive<f64> = 0.01..=1000.0;
 const ANGLE: std::ops::RangeInclusive<f64> = -360.0..=360.0;
 const OPENING: std::ops::RangeInclusive<f64> = -10.0..=10.0;
+
+/// A row editing a stored point or size in millimetres; whether it changed.
+fn point_row(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut PointNm,
+    range: std::ops::RangeInclusive<f64>,
+) -> bool {
+    let mut mm = value.to_mm_f64();
+    match (
+        kit::pair_row(ui, label, &mut mm, "mm", range),
+        PointNm::from_mm_f64_rounded(mm),
+    ) {
+        (true, Ok(p)) => {
+            *value = p;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// A row editing a stored turn in degrees, reduced to one turn; whether it
+/// changed.
+fn angle_row(ui: &mut Ui, label: &str, value: &mut Angle) -> bool {
+    let mut deg = value.to_degrees_f64();
+    match (
+        kit::number_row(ui, label, &mut deg, "°", ANGLE),
+        Angle::from_degrees_f64_rounded(deg),
+    ) {
+        (true, Ok(a)) => {
+            *value = a;
+            true
+        }
+        _ => false,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HoleChoice {
@@ -93,7 +132,9 @@ pub(super) fn pad_shape_text(pad: &Pad) -> String {
         PadShape::Custom { .. } => "Custom",
     };
     match &pad.shape {
-        PadShape::Circle { diameter } => format!("{shape} {} mm", kit::number_text(*diameter)),
+        PadShape::Circle { diameter_nm } => {
+            format!("{shape} {} mm", kit::number_text(diameter_nm.to_mm_f64()))
+        }
         _ => format!(
             "{shape} {} × {} mm",
             kit::number_text(w),
@@ -133,20 +174,12 @@ impl PartEditor {
         };
         let footprint = &mut set.footprint;
         kit::section(ui, "package-datum", "Footprint", true, None, |ui| {
-            kit::pair_row(ui, "Datum", &mut footprint.datum.offset, "mm", COORD);
-            if kit::number_row(
-                ui,
-                "Rotation",
-                &mut footprint.datum.rotation_deg,
-                "°",
-                ANGLE,
-            ) {
-                footprint.datum.rotation_deg = footprint.datum.rotation_deg.rem_euclid(360.0);
-            }
+            point_row(ui, "Datum", &mut footprint.datum.offset, COORD);
+            angle_row(ui, "Rotation", &mut footprint.datum.rotation_mdeg);
             let openings = format!(
                 "{} / {}",
-                signed_mm(footprint.defaults.mask_expansion_mm, '+'),
-                signed_mm(footprint.defaults.paste_reduction_mm, '−')
+                signed_mm(footprint.defaults.mask_expansion_mm(), '+'),
+                signed_mm(footprint.defaults.paste_reduction_mm(), '−')
             );
             kit::value_row(ui, "Openings", &openings);
         });
@@ -158,8 +191,8 @@ impl PartEditor {
             false,
             None,
             |ui| {
-                kit::number_row(ui, "Mask", &mut defaults.mask_expansion_mm, "mm", OPENING);
-                kit::number_row(ui, "Paste", &mut defaults.paste_reduction_mm, "mm", OPENING);
+                nm_row(ui, "Mask", &mut defaults.mask_expansion_nm, OPENING);
+                nm_row(ui, "Paste", &mut defaults.paste_reduction_nm, OPENING);
                 kit::hint(
                     ui,
                     "Pads that inherit grow the mask and shrink the paste",
@@ -256,17 +289,17 @@ impl PartEditor {
 /// A pad's openings in one line: "inherits" or its own rules.
 fn openings_summary(pad: &Pad, defaults: &pcbcraft_core::library::PadDefaults) -> String {
     let mask = match pad.mask {
-        MaskRule::Inherit => signed_mm(defaults.mask_expansion_mm, '+'),
+        MaskRule::Inherit => signed_mm(defaults.mask_expansion_mm(), '+'),
         MaskRule::Tented => "tented".to_owned(),
-        MaskRule::Expansion(e) => signed_mm(e, '+'),
+        MaskRule::Expansion(e) => signed_mm(e.to_mm_f64(), '+'),
     };
     let paste = match &pad.paste {
         PasteRule::Inherit if pad.hole.is_some() || pad.kind == PadKind::Fiducial => {
             "no paste".to_owned()
         }
-        PasteRule::Inherit => signed_mm(defaults.paste_reduction_mm, '−'),
+        PasteRule::Inherit => signed_mm(defaults.paste_reduction_mm(), '−'),
         PasteRule::None => "no paste".to_owned(),
-        PasteRule::Reduction(r) => signed_mm(*r, '−'),
+        PasteRule::Reduction(r) => signed_mm(r.to_mm_f64(), '−'),
         PasteRule::Windows(w) => format!("{} windows", w.len()),
     };
     let inherits = matches!(pad.mask, MaskRule::Inherit) && matches!(pad.paste, PasteRule::Inherit);
@@ -330,8 +363,8 @@ fn pad_rows(
     } else {
         kit::value_row(ui, "Side", "All copper layers");
     }
-    kit::pair_row(ui, "Position", &mut pad.position, "mm", COORD);
-    if kit::number_row(ui, "Rotation", &mut pad.rotation_deg, "°", ANGLE) {
+    point_row(ui, "Position", &mut pad.position, COORD);
+    if angle_row(ui, "Rotation", &mut pad.rotation_mdeg) {
         // Out of range, the pad keeps the rotation as typed.
         let _unfolded = pad.fold_rotation();
     }
@@ -360,32 +393,34 @@ fn shape_rows(ui: &mut Ui, pad: &mut Pad) {
     }
     match &mut pad.shape {
         PadShape::Rect { size } | PadShape::Oblong { size } => {
-            kit::pair_row(ui, "Size", size, "mm", SIZE);
+            point_row(ui, "Size", size, SIZE);
         }
         PadShape::RoundRect {
             size,
             radius_ratio,
-            max_radius,
+            max_radius_nm,
             corners,
         } => {
-            kit::pair_row(ui, "Size", size, "mm", SIZE);
+            point_row(ui, "Size", size, SIZE);
             let mut percent = *radius_ratio * 100.0;
             if kit::number_row(ui, "Corner ratio", &mut percent, "%", 0.0..=50.0) {
                 *radius_ratio = percent / 100.0;
             }
-            let mut capped = max_radius.is_some();
+            let mut capped = max_radius_nm.is_some();
             if kit::check_row(ui, "Cap the corner radius", &mut capped) {
                 let radius = PadShape::RoundRect {
                     size: *size,
                     radius_ratio: *radius_ratio,
-                    max_radius: None,
+                    max_radius_nm: None,
                     corners: *corners,
                 }
                 .corner_radius();
-                *max_radius = capped.then_some(radius);
+                *max_radius_nm = capped
+                    .then(|| Nm::from_mm_f64_rounded(radius).ok())
+                    .flatten();
             }
-            if let Some(cap) = max_radius {
-                kit::number_row(ui, "Radius cap", cap, "mm", 0.0..=1000.0);
+            if let Some(cap) = max_radius_nm {
+                nm_row(ui, "Radius cap", cap, 0.0..=1000.0);
             }
             let before = *corners;
             kit::check_row(ui, "Top left", &mut corners.top_left);
@@ -407,8 +442,8 @@ fn shape_rows(ui: &mut Ui, pad: &mut Pad) {
             }
             let _unfolded = pad.fold_rotation();
         }
-        PadShape::Circle { diameter } => {
-            kit::number_row(ui, "Diameter", diameter, "mm", SIZE);
+        PadShape::Circle { diameter_nm } => {
+            nm_row(ui, "Diameter", diameter_nm, SIZE);
         }
         PadShape::Custom { .. } => {}
     }
@@ -435,24 +470,19 @@ fn hole_rows(ui: &mut Ui, pad: &mut Pad) {
         let plated = pad
             .hole
             .map_or(pad.kind != PadKind::NonPlatedHole, |h| h.plated);
-        let offset = pad.hole.map_or([0.0, 0.0], |h| h.offset);
-        pad.hole = match choice {
+        let offset = pad.hole.map_or(PointNm::ORIGIN, |h| h.offset);
+        let shape = match choice {
             HoleChoice::None => None,
-            HoleChoice::Round => Some(Hole {
-                shape: HoleShape::Round { diameter: short },
-                plated,
-                offset,
-            }),
-            HoleChoice::Slot => Some(Hole {
-                shape: HoleShape::Slot {
-                    width: short,
-                    length: 0.5 * w.max(h),
-                    angle_deg: if w >= h { 0.0 } else { 90.0 },
-                },
-                plated,
-                offset,
-            }),
+            HoleChoice::Round => HoleShape::round_mm(short).ok(),
+            HoleChoice::Slot => {
+                HoleShape::slot_mm(short, 0.5 * w.max(h), if w >= h { 0.0 } else { 90.0 }).ok()
+            }
         };
+        pad.hole = shape.map(|shape| Hole {
+            shape,
+            plated,
+            offset,
+        });
         if pad.hole.is_some() {
             pad.side = PadSide::Top;
         }
@@ -462,22 +492,22 @@ fn hole_rows(ui: &mut Ui, pad: &mut Pad) {
         return;
     };
     match &mut hole.shape {
-        HoleShape::Round { diameter } => {
-            kit::number_row(ui, "Diameter", diameter, "mm", SIZE);
+        HoleShape::Round { diameter_nm } => {
+            nm_row(ui, "Diameter", diameter_nm, SIZE);
         }
         HoleShape::Slot {
-            width,
-            length,
-            angle_deg,
+            width_nm,
+            length_nm,
+            angle_mdeg,
         } => {
-            kit::number_row(ui, "Width", width, "mm", SIZE);
-            kit::number_row(ui, "Length", length, "mm", SIZE);
-            if kit::number_row(ui, "Angle", angle_deg, "°", ANGLE) {
-                *angle_deg = angle_deg.rem_euclid(180.0);
+            nm_row(ui, "Width", width_nm, SIZE);
+            nm_row(ui, "Length", length_nm, SIZE);
+            if angle_row(ui, "Angle", angle_mdeg) {
+                *angle_mdeg = Angle::normalized(i64::from(angle_mdeg.millidegrees() % 180_000));
             }
         }
     }
-    kit::pair_row(ui, "Offset", &mut hole.offset, "mm", COORD);
+    point_row(ui, "Offset", &mut hole.offset, COORD);
     if kind == PadKind::Mechanical {
         kit::check_row(ui, "Plated", &mut hole.plated);
     } else {
@@ -502,7 +532,7 @@ fn opening_rows(ui: &mut Ui, pad: &mut Pad, defaults: &pcbcraft_core::library::P
     let masks = [
         (
             MaskChoice::Inherit,
-            format!("Default ({})", signed_mm(defaults.mask_expansion_mm, '+')),
+            format!("Default ({})", signed_mm(defaults.mask_expansion_mm(), '+')),
         ),
         (MaskChoice::Tented, "Tented".to_owned()),
         (MaskChoice::Expansion, "Expansion".to_owned()),
@@ -517,16 +547,16 @@ fn opening_rows(ui: &mut Ui, pad: &mut Pad, defaults: &pcbcraft_core::library::P
         pad.mask = match choice {
             MaskChoice::Inherit => MaskRule::Inherit,
             MaskChoice::Tented => MaskRule::Tented,
-            MaskChoice::Expansion => MaskRule::Expansion(defaults.mask_expansion_mm),
+            MaskChoice::Expansion => MaskRule::Expansion(defaults.mask_expansion_nm),
         };
     }
     if let MaskRule::Expansion(e) = &mut pad.mask {
-        kit::number_row(ui, "Expansion", e, "mm", OPENING);
+        nm_row(ui, "Expansion", e, OPENING);
     }
     let mut pastes = vec![
         (
             PasteChoice::Inherit,
-            format!("Default ({})", signed_mm(defaults.paste_reduction_mm, '−')),
+            format!("Default ({})", signed_mm(defaults.paste_reduction_mm(), '−')),
         ),
         (PasteChoice::None, "None".to_owned()),
         (PasteChoice::Reduction, "Reduction".to_owned()),
@@ -545,13 +575,13 @@ fn opening_rows(ui: &mut Ui, pad: &mut Pad, defaults: &pcbcraft_core::library::P
         pad.paste = match choice {
             PasteChoice::Inherit => PasteRule::Inherit,
             PasteChoice::None => PasteRule::None,
-            PasteChoice::Reduction => PasteRule::Reduction(defaults.paste_reduction_mm),
+            PasteChoice::Reduction => PasteRule::Reduction(defaults.paste_reduction_nm),
             PasteChoice::Windows => pad.paste.clone(),
         };
     }
     match &mut pad.paste {
         PasteRule::Reduction(r) => {
-            kit::number_row(ui, "Reduction", r, "mm", OPENING);
+            nm_row(ui, "Reduction", r, OPENING);
         }
         PasteRule::Windows(w) => kit::value_row(ui, "Windows", &w.len().to_string()),
         _ => {}

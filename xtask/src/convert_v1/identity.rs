@@ -32,11 +32,15 @@ pub struct Refreshed {
     /// Revisions from other project files whose lineage names cannot be
     /// recomputed, described.
     pub project_file_lineages: Vec<String>,
+    /// Fill keys recomputed (the refill was exactly the stored copper).
+    pub fill_keys: usize,
+    /// Fills whose refill would change their copper: left stale.
+    pub stale_fills: Vec<pcbcraft_core::Id>,
 }
 
 impl Refreshed {
     pub fn changed(&self) -> usize {
-        self.origins + self.design_keys
+        self.origins + self.design_keys + self.fill_keys
     }
 }
 
@@ -82,9 +86,45 @@ pub fn refresh(file: &mut EditorFile) -> Result<Refreshed> {
     if out.design_keys > 0 {
         *file.project.model_traces = next;
     }
+    fill_keys(file, &mut out)?;
     out.project_file_lineages.sort();
     out.project_file_lineages.dedup();
     Ok(out)
+}
+
+/// A fill's stored copper is keyed by a hash of its serialized inputs,
+/// pads included, so a format change alone makes every fill read stale.
+/// Each fill whose key no longer matches is refilled; when the refill is
+/// exactly the stored copper (the converted pads are the exact nanometre
+/// rounding of the old ones), only the key is new. A fill whose copper
+/// would change was stale before the conversion or depends on one that
+/// was: it keeps its copper and old key, and still reads stale.
+fn fill_keys(file: &mut EditorFile, out: &mut Refreshed) -> Result<()> {
+    use pcbcraft_core::layout::fill::{RefillTarget, refill};
+    let refilled = refill(&file.project, RefillTarget::Stale)?;
+    if refilled.is_empty() {
+        return Ok(());
+    }
+    let mut fills = file.project.fills.to_vec();
+    for (id, copper) in refilled {
+        let Some(fill) = fills.iter_mut().find(|f| f.id == id) else {
+            continue;
+        };
+        match &fill.computed {
+            Some(stored)
+                if stored.regions == copper.regions
+                    && stored.removed_islands == copper.removed_islands =>
+            {
+                fill.computed = Some(copper);
+                out.fill_keys += 1;
+            }
+            _ => out.stale_fills.push(id),
+        }
+    }
+    if out.fill_keys > 0 {
+        *file.project.fills = fills;
+    }
+    Ok(())
 }
 
 /// The content hash of the source record a project revision was copied

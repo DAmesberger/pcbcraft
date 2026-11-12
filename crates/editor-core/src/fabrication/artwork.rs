@@ -32,6 +32,7 @@ use crate::ids::Id;
 use crate::layout::{self, PlacedPad};
 use crate::layout::{BoardDrawing, PlacedItem};
 use crate::library::{CHECK_CHORD_MM, MaskRule, Outline, PadKind, PadShape, PasteRule, Segment};
+use crate::units::Nm;
 use crate::model::board::{CutoutKind, arc_geometry};
 use crate::model::{CopperLayer, Layer, Project};
 use std::collections::BTreeMap;
@@ -355,7 +356,7 @@ fn mask(board: &Board<'_>, side: Layer, attributes: &[(&str, String)]) -> Result
         let by = match pad.pad.mask {
             MaskRule::Inherit => e,
             MaskRule::Tented => continue,
-            MaskRule::Expansion(x) => x,
+            MaskRule::Expansion(x) => x.to_mm_f64(),
         };
         let Some(shape) = pad.pad.shape.grown(by, CHECK_CHORD_MM) else {
             continue;
@@ -383,12 +384,12 @@ fn paste(board: &Board<'_>, side: Layer, attributes: &[(&str, String)]) -> Resul
                 _ => Vec::new(),
             },
             PasteRule::None => Vec::new(),
-            PasteRule::Reduction(r) => shrink(*r).into_iter().collect(),
+            PasteRule::Reduction(r) => shrink(r.to_mm_f64()).into_iter().collect(),
             PasteRule::Windows(windows) => windows.iter().map(|w| w.shape.to_mm()).collect(),
         };
         for shape in &shapes {
             let exact = match (&pad.pad.shape, &pad.pad.paste) {
-                (PadShape::Custom { outline }, PasteRule::Reduction(r)) if *r == 0.0 => {
+                (PadShape::Custom { outline }, PasteRule::Reduction(r)) if *r == Nm::ZERO => {
                     Some(outline)
                 }
                 (PadShape::Custom { outline }, PasteRule::Inherit)

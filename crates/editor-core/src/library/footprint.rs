@@ -9,8 +9,9 @@ use super::package::PackageDefinition;
 use super::publish::{issue, object};
 use super::{Library, MAX_PADS};
 use crate::diagnostics::{Finding, ObjectRef, Result};
-use crate::geometry::{Bounds, Point, finite_within, point_valid};
+use crate::geometry::{Bounds, Point, point_valid};
 use crate::ids::{DefinitionId, PackageRef, PackageTerminalId, PadId};
+use crate::units::{Angle, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -20,9 +21,9 @@ mod geometry;
 pub use checks::{MIN_MASK_WEB_MM, MIN_SILK_TEXT_HEIGHT_MM, MIN_SILK_WIDTH_MM};
 pub use geometry::{CHECK_CHORD_MM, PAD_ARC_TOLERANCE_MM, TerminalRule, bulge_arc, offset_polygon};
 
-/// Default solder-mask expansion around a pad, in mm (an estimated prototype
-/// default, not a manufacturer qualification).
-pub const MASK_EXPANSION_MM: f64 = 0.05;
+/// Default solder-mask expansion around a pad, 0.05 mm (an estimated
+/// prototype default, not a manufacturer qualification).
+pub const MASK_EXPANSION_NM: Nm = super::package_form::const_nm(50_000);
 /// Segments in one custom pad [`Outline`].
 pub const MAX_OUTLINE_SEGMENTS: usize = 512;
 /// Paste windows on one pad.
@@ -115,14 +116,35 @@ impl FootprintKeepout {
 }
 
 /// The package datum (the placement origin) in the footprint frame: the
-/// placed footprint is moved by `-offset`, then turned by `-rotation_deg`
+/// placed footprint is moved by `-offset`, then turned by `-rotation_mdeg`
 /// so the datum's axes line up with the placement's.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Datum {
-    pub offset: Point,
+    pub offset: PointNm,
     /// Counter-clockwise rotation of the datum axes in the footprint frame.
-    pub rotation_deg: f64,
+    pub rotation_mdeg: Angle,
+}
+
+impl Datum {
+    /// `offset` in millimetres.
+    pub fn offset(&self) -> Point {
+        self.offset.to_mm_f64()
+    }
+
+    /// `rotation_mdeg` in degrees.
+    pub fn rotation_deg(&self) -> f64 {
+        self.rotation_mdeg.to_degrees_f64()
+    }
+
+    /// A datum at `offset` mm turned by `rotation_deg`, through the rounding
+    /// crossing.
+    pub fn from_mm(offset: Point, rotation_deg: f64) -> Result<Self> {
+        Ok(Self {
+            offset: PointNm::from_mm_f64_rounded(offset)?,
+            rotation_mdeg: Angle::from_degrees_f64_rounded(rotation_deg)?,
+        })
+    }
 }
 
 /// Footprint-wide pad rules that [`MaskRule::Inherit`] and
@@ -130,17 +152,60 @@ pub struct Datum {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PadDefaults {
-    /// Mask opening grows by this much on every side, in mm.
-    pub mask_expansion_mm: f64,
-    /// Paste opening shrinks by this much on every side, in mm.
-    pub paste_reduction_mm: f64,
+    /// Mask opening grows by this much on every side.
+    pub mask_expansion_nm: Nm,
+    /// Paste opening shrinks by this much on every side.
+    pub paste_reduction_nm: Nm,
 }
 
 impl Default for PadDefaults {
     fn default() -> Self {
         Self {
-            mask_expansion_mm: MASK_EXPANSION_MM,
-            paste_reduction_mm: 0.0,
+            mask_expansion_nm: MASK_EXPANSION_NM,
+            paste_reduction_nm: Nm::ZERO,
+        }
+    }
+}
+
+impl PadDefaults {
+    /// `mask_expansion_nm` in millimetres.
+    pub fn mask_expansion_mm(&self) -> f64 {
+        self.mask_expansion_nm.to_mm_f64()
+    }
+
+    /// `paste_reduction_nm` in millimetres.
+    pub fn paste_reduction_mm(&self) -> f64 {
+        self.paste_reduction_nm.to_mm_f64()
+    }
+}
+
+/// The wire form of [`PadDefaults`] (`FootprintEdit::SetDefaults`):
+/// millimetres. Written by hand, not derived, because the payloads name the
+/// fields `mask_expansion_mm` and `paste_reduction_mm` (the derive would
+/// drop the unit).
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PadDefaultsParams {
+    /// Mask opening grows by this much on every side.
+    pub mask_expansion_mm: crate::units::Length,
+    /// Paste opening shrinks by this much on every side.
+    pub paste_reduction_mm: crate::units::Length,
+}
+
+impl From<PadDefaults> for PadDefaultsParams {
+    fn from(d: PadDefaults) -> Self {
+        Self {
+            mask_expansion_mm: d.mask_expansion_nm.into(),
+            paste_reduction_mm: d.paste_reduction_nm.into(),
+        }
+    }
+}
+
+impl From<PadDefaultsParams> for PadDefaults {
+    fn from(d: PadDefaultsParams) -> Self {
+        Self {
+            mask_expansion_nm: d.mask_expansion_mm.into(),
+            paste_reduction_nm: d.paste_reduction_mm.into(),
         }
     }
 }
@@ -158,10 +223,10 @@ pub struct Pad {
     /// Display label ("1", "A1", "EP", "MH1"); not unique, not identity.
     pub number: String,
     /// The pad origin (shape centre) in the footprint frame.
-    pub position: Point,
+    pub position: PointNm,
     /// Counter-clockwise rotation of the shape about `position`,
     /// canonical per shape symmetry (see [`PadShape::canonical_rotation`]).
-    pub rotation_deg: f64,
+    pub rotation_mdeg: Angle,
     /// The copper side of a surface pad. Through-hole pads span all copper
     /// layers and record `Top`.
     pub side: PadSide,
@@ -266,22 +331,22 @@ impl CornerMask {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum PadShape {
     Rect {
-        size: Point,
+        size: PointNm,
     },
     /// Rounded corners of `radius_ratio` (0–0.5) of the short side, capped
-    /// at `max_radius` mm. A D-shape is two corners at 0.5.
+    /// at `max_radius_nm`. A D-shape is two corners at 0.5.
     RoundRect {
-        size: Point,
+        size: PointNm,
         radius_ratio: f64,
-        max_radius: Option<f64>,
+        max_radius_nm: Option<Nm>,
         corners: CornerMask,
     },
     Circle {
-        diameter: f64,
+        diameter_nm: Nm,
     },
     /// A stadium: semicircular ends on the long axis.
     Oblong {
-        size: Point,
+        size: PointNm,
     },
     /// An exact closed outline of lines and arcs.
     Custom {
@@ -295,15 +360,54 @@ impl PadShape {
     /// which is exact for lines; arcs may bulge past it.
     pub fn extent(&self) -> Point {
         match self {
-            Self::Rect { size } | Self::RoundRect { size, .. } | Self::Oblong { size } => *size,
-            Self::Circle { diameter } => [*diameter, *diameter],
+            Self::Rect { size } | Self::RoundRect { size, .. } | Self::Oblong { size } => {
+                size.to_mm_f64()
+            }
+            Self::Circle { diameter_nm } => [diameter_nm.to_mm_f64(); 2],
             Self::Custom { outline } => outline.vertex_bounds().size(),
         }
     }
 
+    /// A rectangle of `size` mm, through the rounding crossing.
+    pub fn rect_mm(size: Point) -> Result<Self> {
+        Ok(Self::Rect {
+            size: PointNm::from_mm_f64_rounded(size)?,
+        })
+    }
+
+    /// A stadium of `size` mm, through the rounding crossing.
+    pub fn oblong_mm(size: Point) -> Result<Self> {
+        Ok(Self::Oblong {
+            size: PointNm::from_mm_f64_rounded(size)?,
+        })
+    }
+
+    /// A circle of `diameter` mm, through the rounding crossing.
+    pub fn circle_mm(diameter: f64) -> Result<Self> {
+        Ok(Self::Circle {
+            diameter_nm: Nm::from_mm_f64_rounded(diameter)?,
+        })
+    }
+
+    /// A rounded rectangle of `size` mm with corners capped at `max_radius`
+    /// mm, through the rounding crossing.
+    pub fn round_rect_mm(
+        size: Point,
+        radius_ratio: f64,
+        max_radius: Option<f64>,
+        corners: CornerMask,
+    ) -> Result<Self> {
+        Ok(Self::RoundRect {
+            size: PointNm::from_mm_f64_rounded(size)?,
+            radius_ratio,
+            max_radius_nm: max_radius.map(Nm::from_mm_f64_rounded).transpose()?,
+            corners,
+        })
+    }
+
     /// Replace the extent of a sized primitive. Returns false (unchanged)
     /// for circles and custom outlines.
-    pub fn set_size(&mut self, new: Point) -> bool {
+    pub fn set_size(&mut self, new: PointNm) -> bool {
         match self {
             Self::Rect { size } | Self::RoundRect { size, .. } | Self::Oblong { size } => {
                 *size = new;
@@ -316,29 +420,21 @@ impl PadShape {
     /// Rotation normalised per shape symmetry: rect, rounded rect (all
     /// corners) and oblong to [0°, 180°), circle to 0, custom and
     /// partially rounded rects to [0°, 360°). Diffs compare canonical values.
-    pub fn canonical_rotation(&self, deg: f64) -> f64 {
+    pub fn canonical_rotation(&self, angle: Angle) -> Angle {
+        const HALF_TURN: i32 = crate::units::MILLIDEGREES_PER_TURN / 2;
+        let half = || Angle::normalized(i64::from(angle.millidegrees() % HALF_TURN));
         match self {
-            Self::Circle { .. } => 0.0,
-            Self::Rect { .. } | Self::Oblong { .. } => deg.rem_euclid(180.0),
-            Self::RoundRect { corners, .. } if *corners == CornerMask::ALL => deg.rem_euclid(180.0),
-            Self::RoundRect { .. } | Self::Custom { .. } => deg.rem_euclid(360.0),
+            Self::Circle { .. } => Angle::ZERO,
+            Self::Rect { .. } | Self::Oblong { .. } => half(),
+            Self::RoundRect { corners, .. } if *corners == CornerMask::ALL => half(),
+            Self::RoundRect { .. } | Self::Custom { .. } => angle,
         }
     }
 
     pub(super) fn finite(&self) -> bool {
         match self {
-            Self::Rect { size } | Self::Oblong { size } => finite_within(size),
-            Self::RoundRect {
-                size,
-                radius_ratio,
-                max_radius,
-                ..
-            } => {
-                finite_within(size)
-                    && radius_ratio.is_finite()
-                    && max_radius.is_none_or(f64::is_finite)
-            }
-            Self::Circle { diameter } => finite_within(&[*diameter]),
+            Self::Rect { .. } | Self::Oblong { .. } | Self::Circle { .. } => true,
+            Self::RoundRect { radius_ratio, .. } => radius_ratio.is_finite(),
             Self::Custom { outline } => outline.finite(),
         }
     }
@@ -404,33 +500,56 @@ pub struct Hole {
     /// Whether the barrel is plated (copper on every layer joins it).
     pub plated: bool,
     /// Hole centre relative to the pad origin, in the pad frame.
-    pub offset: Point,
+    pub offset: PointNm,
+}
+
+impl Hole {
+    /// `offset` in millimetres.
+    pub fn offset(&self) -> Point {
+        self.offset.to_mm_f64()
+    }
+
+    /// A round drill of `diameter` mm on the pad origin, through the
+    /// rounding crossing.
+    pub fn round_mm(diameter: f64, plated: bool) -> Result<Self> {
+        Ok(Self {
+            shape: HoleShape::round_mm(diameter)?,
+            plated,
+            offset: PointNm::ORIGIN,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum HoleShape {
     /// A round drill.
-    Round { diameter: f64 },
-    /// A milled slot: `length` overall along `angle_deg` (pad frame), with
-    /// round ends of `width`.
+    Round { diameter_nm: Nm },
+    /// A milled slot: `length_nm` overall along `angle_mdeg` (pad frame),
+    /// with round ends of `width_nm`.
     Slot {
-        width: f64,
-        length: f64,
-        angle_deg: f64,
+        width_nm: Nm,
+        length_nm: Nm,
+        angle_mdeg: Angle,
     },
 }
 
 impl HoleShape {
-    fn finite(&self) -> bool {
-        match self {
-            Self::Round { diameter } => finite_within(&[*diameter]),
-            Self::Slot {
-                width,
-                length,
-                angle_deg,
-            } => finite_within(&[*width, *length]) && angle_deg.is_finite(),
-        }
+    /// A round drill of `diameter` mm, through the rounding crossing.
+    pub fn round_mm(diameter: f64) -> Result<Self> {
+        Ok(Self::Round {
+            diameter_nm: Nm::from_mm_f64_rounded(diameter)?,
+        })
+    }
+
+    /// A slot of `width` and `length` mm along `angle_deg`, through the
+    /// rounding crossing.
+    pub fn slot_mm(width: f64, length: f64, angle_deg: f64) -> Result<Self> {
+        Ok(Self::Slot {
+            width_nm: Nm::from_mm_f64_rounded(width)?,
+            length_nm: Nm::from_mm_f64_rounded(length)?,
+            angle_mdeg: Angle::from_degrees_f64_rounded(angle_deg)?,
+        })
     }
 }
 
@@ -438,27 +557,29 @@ impl HoleShape {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum MaskRule {
-    /// [`PadDefaults::mask_expansion_mm`].
+    /// [`PadDefaults::mask_expansion_nm`].
     #[default]
     Inherit,
     /// Covered by mask: no opening.
     Tented,
-    /// The shape grown by this many mm (negative shrinks).
-    Expansion(f64),
+    /// The shape grown by this much (negative shrinks).
+    #[serde(rename = "expansion_nm")]
+    Expansion(Nm),
 }
 
 /// The pad's solder-paste opening.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PasteRule {
-    /// [`PadDefaults::paste_reduction_mm`] (none for through-hole kinds and
+    /// [`PadDefaults::paste_reduction_nm`] (none for through-hole kinds and
     /// fiducials).
     #[default]
     Inherit,
     /// No paste.
     None,
-    /// The shape shrunk by this many mm.
-    Reduction(f64),
+    /// The shape shrunk by this much.
+    #[serde(rename = "reduction_nm")]
+    Reduction(Nm),
     /// Explicit windows (exposed pads), at most [`MAX_PASTE_WINDOWS`].
     Windows(Vec<PasteWindow>),
 }
@@ -477,8 +598,20 @@ pub struct PasteWindow {
 #[serde(deny_unknown_fields)]
 pub struct PadVia {
     pub id: ApertureId,
-    pub at: Point,
-    pub drill: f64,
+    pub at: PointNm,
+    pub drill_nm: Nm,
+}
+
+impl PadVia {
+    /// `at` in millimetres.
+    pub fn at(&self) -> Point {
+        self.at.to_mm_f64()
+    }
+
+    /// `drill_nm` in millimetres.
+    pub fn drill(&self) -> f64 {
+        self.drill_nm.to_mm_f64()
+    }
 }
 
 /// A paste window or pad via, unique within its pad.
@@ -489,24 +622,37 @@ pub struct PadVia {
 pub struct ApertureId(pub u32);
 
 impl Pad {
-    /// Normalise `rotation_deg` per shape symmetry without moving anything:
-    /// the turn the fold removes is applied to the pad-frame features the
-    /// shape symmetry does not cover (hole offset and slot angle, vias,
-    /// paste windows), so the pad's world geometry is unchanged. A paste
-    /// window turned by other than quarter turns is stored rounded to
-    /// nanometres; an error, leaving the pad unchanged, when it leaves the
-    /// coordinate bound.
+    /// `position` in millimetres.
+    pub fn position(&self) -> Point {
+        self.position.to_mm_f64()
+    }
+
+    /// `rotation_mdeg` in degrees.
+    pub fn rotation_deg(&self) -> f64 {
+        self.rotation_mdeg.to_degrees_f64()
+    }
+
+    /// Normalise `rotation_mdeg` per shape symmetry without moving
+    /// anything: the turn the fold removes is applied to the pad-frame
+    /// features the shape symmetry does not cover (hole offset and slot
+    /// angle, vias, paste windows), so the pad's world geometry is
+    /// unchanged. A paste window turned by other than quarter turns is
+    /// stored rounded to nanometres; an error, leaving the pad unchanged,
+    /// when it leaves the coordinate bound.
     pub fn fold_rotation(&mut self) -> Result<()> {
-        let canonical = self.shape.canonical_rotation(self.rotation_deg);
-        let removed = (self.rotation_deg - canonical).rem_euclid(360.0);
-        if removed.abs() < 1e-12 || (360.0 - removed).abs() < 1e-12 {
-            self.rotation_deg = canonical;
+        let canonical = self.shape.canonical_rotation(self.rotation_mdeg);
+        let removed = Angle::normalized(
+            i64::from(self.rotation_mdeg.millidegrees()) - i64::from(canonical.millidegrees()),
+        );
+        if removed == Angle::ZERO {
+            self.rotation_mdeg = canonical;
             return Ok(());
         }
         let turn = crate::geometry::Transform2 {
-            rotation_deg: removed,
+            rotation_deg: removed.to_degrees_f64(),
             ..crate::geometry::Transform2::IDENTITY
         };
+        let turn_point = |p: PointNm| PointNm::from_mm_f64_rounded(turn.apply(p.to_mm_f64()));
         let windows = match &self.paste {
             PasteRule::Windows(windows) => windows
                 .iter()
@@ -519,16 +665,27 @@ impl Pad {
                 .collect::<Result<Vec<_>>>()?,
             _ => Vec::new(),
         };
-        self.rotation_deg = canonical;
-        if let Some(hole) = &mut self.hole {
-            hole.offset = turn.apply(hole.offset);
-            if let HoleShape::Slot { angle_deg, .. } = &mut hole.shape {
-                *angle_deg = (*angle_deg + removed).rem_euclid(180.0);
+        let hole = match self.hole {
+            Some(mut hole) => {
+                hole.offset = turn_point(hole.offset)?;
+                if let HoleShape::Slot { angle_mdeg, .. } = &mut hole.shape {
+                    *angle_mdeg = Angle::normalized(
+                        i64::from(angle_mdeg.rotated_by(removed).millidegrees())
+                            % i64::from(crate::units::MILLIDEGREES_PER_TURN / 2),
+                    );
+                }
+                Some(hole)
             }
-        }
-        for via in &mut self.vias {
-            via.at = turn.apply(via.at);
-        }
+            None => None,
+        };
+        let vias = self
+            .vias
+            .iter()
+            .map(|v| Ok(PadVia { at: turn_point(v.at)?, ..*v }))
+            .collect::<Result<Vec<_>>>()?;
+        self.rotation_mdeg = canonical;
+        self.hole = hole;
+        self.vias = vias;
         if let PasteRule::Windows(w) = &mut self.paste {
             *w = windows;
         }
@@ -541,8 +698,8 @@ impl Pad {
         id: PadId,
         terminal: PackageTerminalId,
         number: impl Into<String>,
-        position: Point,
-        size: Point,
+        position: PointNm,
+        size: PointNm,
     ) -> Self {
         Self {
             id,
@@ -550,7 +707,7 @@ impl Pad {
             terminal: Some(terminal),
             number: number.into(),
             position,
-            rotation_deg: 0.0,
+            rotation_mdeg: Angle::ZERO,
             side: PadSide::Top,
             shape: PadShape::Rect { size },
             hole: None,
@@ -560,39 +717,44 @@ impl Pad {
         }
     }
 
+    /// [`Self::smd_rect`] at `position` mm of `size` mm, through the
+    /// rounding crossing.
+    pub fn smd_rect_mm(
+        id: PadId,
+        terminal: PackageTerminalId,
+        number: impl Into<String>,
+        position: Point,
+        size: Point,
+    ) -> Result<Self> {
+        Ok(Self::smd_rect(
+            id,
+            terminal,
+            number,
+            PointNm::from_mm_f64_rounded(position)?,
+            PointNm::from_mm_f64_rounded(size)?,
+        ))
+    }
+
     /// The axis-aligned box of the pad's extent in the footprint frame
     /// (rotation included; custom arcs not bulged).
     pub fn bounds(&self) -> Bounds {
         let [w, h] = self.shape.extent();
-        let (c, s) = crate::geometry::cos_sin(self.rotation_deg);
+        let (c, s) = crate::geometry::cos_sin(self.rotation_deg());
         let hw = 0.5 * (w * c.abs() + h * s.abs());
         let hh = 0.5 * (w * s.abs() + h * c.abs());
+        let [x, y] = self.position();
         Bounds {
-            min: [self.position[0] - hw, self.position[1] - hh],
-            max: [self.position[0] + hw, self.position[1] + hh],
+            min: [x - hw, y - hh],
+            max: [x + hw, y + hh],
         }
     }
 
     fn finite(&self) -> bool {
-        point_valid(self.position)
-            && self.rotation_deg.is_finite()
-            && self.shape.finite()
-            && self
-                .hole
-                .is_none_or(|h| h.shape.finite() && point_valid(h.offset))
-            && match &self.mask {
-                MaskRule::Expansion(v) => v.is_finite(),
-                _ => true,
-            }
+        self.shape.finite()
             && match &self.paste {
-                PasteRule::Reduction(v) => v.is_finite(),
                 PasteRule::Windows(w) => w.iter().all(|w| w.shape.valid()),
                 _ => true,
             }
-            && self
-                .vias
-                .iter()
-                .all(|v| point_valid(v.at) && finite_within(&[v.drill]))
     }
 
     fn within_bounds(&self) -> bool {
@@ -662,13 +824,7 @@ impl FootprintDefinition {
     }
 
     pub(super) fn geometry_finite(&self) -> bool {
-        point_valid(self.datum.offset)
-            && self.datum.rotation_deg.is_finite()
-            && finite_within(&[
-                self.defaults.mask_expansion_mm,
-                self.defaults.paste_reduction_mm,
-            ])
-            && self.pads.iter().all(Pad::finite)
+        self.pads.iter().all(Pad::finite)
             && self.graphics.iter().all(|g| g.item.finite())
             && self.keepouts.iter().all(|k| k.outline.finite())
     }

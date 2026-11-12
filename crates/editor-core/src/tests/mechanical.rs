@@ -1,5 +1,6 @@
 //! Mechanical parts placed directly on the board (docs/mechanical-parts.md):
 //! the variant set, dedupe, re-pointing, removal and the assembly outputs.
+use crate::tests::support::{mdeg, nm, pt};
 use super::support::{Snapshot, apply};
 use crate::fabrication::assembly::{PlacementConvention, rows};
 use crate::ids::ContentHash;
@@ -65,10 +66,10 @@ fn nut(height: f64, pads: PadUse) -> PartSpec {
         },
         lands: vec![MechanicalLand {
             name: "1".into(),
-            at: [0.0, 0.0],
+            at: pt([0.0, 0.0]),
             shape: LandShape::Circle {
-                diameter: 5.6,
-                hole: Some(3.2),
+                diameter: nm(5.6),
+                hole: Some(nm(3.2)),
             },
         }],
         pads,
@@ -195,6 +196,30 @@ fn equal_specs_share_one_variant_and_the_model_is_shared_by_hash() -> Result<()>
     Ok(())
 }
 
+/// The variant key's canonical form is millimetre lands with their wire
+/// names, so a key stored before lands were nanometres still finds its
+/// variant. Pinned to the value computed when lands were f64 mm.
+#[test]
+fn variant_keys_stay_valid_across_the_nanometre_lands() -> Result<()> {
+    let mut spec = nut(3.0, PadUse::Terminals);
+    spec.lands.push(MechanicalLand {
+        name: "2".into(),
+        at: pt([-3.25, 1.5]),
+        shape: LandShape::Rect {
+            size: pt([1.2, 0.6]),
+            rotation_deg: crate::units::Degrees(mdeg(90.0)),
+        },
+    });
+    spec.lands.push(MechanicalLand {
+        name: "3".into(),
+        at: pt([2.0, -0.125]),
+        shape: LandShape::Hole { diameter: nm(1.05) },
+    });
+    let key = variant_key(&spec, asset_hash(FILE))?;
+    assert_eq!(key.to_string(), "4471db07556989250fab610ab9a2917519ac11ce9091c6b4da9961a2aa007eaf");
+    Ok(())
+}
+
 #[test]
 fn terminal_pads_land_terminals_and_the_bom_and_pick_and_place_follow_the_flags() -> Result<()> {
     let mut engine = Engine::default();
@@ -303,8 +328,8 @@ fn refusals_change_nothing() -> Result<()> {
     assert!(place(&mut engine, bad, [20.0, 20.0]).is_err());
     let mut bad = nut(3.0, PadUse::Mechanical);
     bad.lands[0].shape = LandShape::Circle {
-        diameter: 3.0,
-        hole: Some(3.0),
+        diameter: nm(3.0),
+        hole: Some(nm(3.0)),
     };
     assert!(place(&mut engine, bad, [20.0, 20.0]).is_err());
     kept.assert_kept(&engine, "invalid specs");

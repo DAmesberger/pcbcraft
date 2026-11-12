@@ -1,3 +1,4 @@
+use crate::tests::support::{mdeg, pt};
 use super::*;
 use crate::library::{CornerMask, PadShape};
 use crate::tests::support::nm;
@@ -35,7 +36,7 @@ fn key(i: u16) -> GenerationKey {
 fn evaluated(k: GenerationKey) -> EvaluatedPad {
     EvaluatedPad {
         key: Some(k),
-        pad: Pad::smd_rect(PadId(0), PackageTerminalId(1), "1", [0.0, 0.0], [1.0, 1.0]),
+        pad: Pad::smd_rect(PadId(0), PackageTerminalId(1), "1", pt([0.0, 0.0]), pt([1.0, 1.0])),
     }
 }
 
@@ -98,17 +99,17 @@ fn a_blocking_finding_leaves_the_footprint_unchanged() {
 
 #[test]
 fn rotation_is_canonical_per_shape_symmetry() {
-    let rect = PadShape::Rect { size: [1.0, 2.0] };
-    assert_eq!(rect.canonical_rotation(180.0), 0.0);
-    assert_eq!(rect.canonical_rotation(-90.0), 90.0);
+    let rect = PadShape::Rect { size: pt([1.0, 2.0]) };
+    assert_eq!(rect.canonical_rotation(mdeg(180.0)), mdeg(0.0));
+    assert_eq!(rect.canonical_rotation(mdeg(-90.0)), mdeg(90.0));
     assert_eq!(
-        PadShape::Circle { diameter: 1.0 }.canonical_rotation(37.0),
-        0.0
+        PadShape::Circle { diameter_nm: nm(1.0) }.canonical_rotation(mdeg(37.0)),
+        mdeg(0.0)
     );
     let d_shape = PadShape::RoundRect {
-        size: [1.0, 2.0],
+        size: pt([1.0, 2.0]),
         radius_ratio: 0.5,
-        max_radius: None,
+        max_radius_nm: None,
         corners: CornerMask {
             top_left: true,
             top_right: true,
@@ -116,8 +117,8 @@ fn rotation_is_canonical_per_shape_symmetry() {
             bottom_left: false,
         },
     };
-    assert_eq!(d_shape.canonical_rotation(180.0), 180.0);
-    assert_eq!(d_shape.canonical_rotation(-90.0), 270.0);
+    assert_eq!(d_shape.canonical_rotation(mdeg(180.0)), mdeg(180.0));
+    assert_eq!(d_shape.canonical_rotation(mdeg(-90.0)), mdeg(270.0));
 }
 
 #[test]
@@ -229,21 +230,21 @@ fn a_shrunk_array_retires_its_keys_and_still_passes_the_key_rule() -> Result<()>
 fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() -> Result<()> {
     use crate::geometry::{Shape, Transform2};
     use crate::library::{ApertureId, Hole, HoleShape, PadVia, PasteRule, PasteWindow, ShapeNm};
-    let mut pad = Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", [1.0, 2.0], [2.0, 1.0]);
-    pad.rotation_deg = 180.0;
+    let mut pad = Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", pt([1.0, 2.0]), pt([2.0, 1.0]));
+    pad.rotation_mdeg = mdeg(180.0);
     pad.hole = Some(Hole {
         shape: HoleShape::Slot {
-            width: 0.3,
-            length: 0.8,
-            angle_deg: 30.0,
+            width_nm: nm(0.3),
+            length_nm: nm(0.8),
+            angle_mdeg: mdeg(30.0),
         },
         plated: true,
-        offset: [0.4, 0.1],
+        offset: pt([0.4, 0.1]),
     });
     pad.vias = vec![PadVia {
         id: ApertureId(1),
-        at: [-0.5, 0.2],
-        drill: 0.2,
+        at: pt([-0.5, 0.2]),
+        drill_nm: nm(0.2),
     }];
     pad.paste = PasteRule::Windows(vec![PasteWindow {
         id: ApertureId(2),
@@ -254,24 +255,24 @@ fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() -> Result<()> {
     }]);
     let world = |p: &Pad, v: [f64; 2]| {
         Transform2 {
-            translate: p.position,
-            rotation_deg: p.rotation_deg,
+            translate: p.position(),
+            rotation_deg: p.rotation_deg(),
             mirror: false,
         }
         .apply(v)
     };
     let before = pad.clone();
     pad.fold_rotation()?;
-    assert_eq!(pad.rotation_deg, 0.0);
+    assert_eq!(pad.rotation_deg(), 0.0);
     let hole = |p: &Pad| p.hole.map(|h| h.offset).unwrap_or_default();
-    assert_eq!(world(&pad, hole(&pad)), world(&before, hole(&before)));
+    assert_eq!(world(&pad, hole(&pad).to_mm_f64()), world(&before, hole(&before).to_mm_f64()));
     assert_eq!(
-        world(&pad, pad.vias[0].at),
-        world(&before, before.vias[0].at)
+        world(&pad, pad.vias[0].at.to_mm_f64()),
+        world(&before, before.vias[0].at.to_mm_f64())
     );
     assert!(matches!(
         pad.hole.map(|h| h.shape),
-        Some(HoleShape::Slot { angle_deg, .. }) if (angle_deg - 30.0).abs() < 1e-9
+        Some(HoleShape::Slot { angle_mdeg, .. }) if angle_mdeg == mdeg(30.0)
     ));
     let centre = |p: &Pad| match &p.paste {
         PasteRule::Windows(w) => match w[0].shape {
@@ -284,9 +285,9 @@ fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() -> Result<()> {
     // A D-shape has no 180° symmetry: nothing folds.
     let mut d = before.clone();
     d.shape = PadShape::RoundRect {
-        size: [2.0, 1.0],
+        size: pt([2.0, 1.0]),
         radius_ratio: 0.5,
-        max_radius: None,
+        max_radius_nm: None,
         corners: CornerMask {
             top_left: true,
             top_right: false,

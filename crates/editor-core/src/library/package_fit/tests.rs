@@ -1,6 +1,7 @@
 //! Original fixtures: a SOIC-8-like gull-wing form on a hand-placed land
 //! pattern whose rows run along y (pin 1 top left, counter-clockwise), the
 //! model's rows along x, so the fit must find a quarter turn.
+use crate::tests::support::{pt};
 use super::*;
 use crate::ids::{DefinitionId, PadId};
 use crate::library::footprint::Pad;
@@ -56,8 +57,8 @@ fn soic_footprint(clockwise: bool) -> FootprintDefinition {
                 PadId(k + 1),
                 PackageTerminalId(k + 1),
                 (k + 1).to_string(),
-                position,
-                [1.55, 0.6],
+                pt(position),
+                pt([1.55, 0.6]),
             )
         })
         .collect();
@@ -121,8 +122,8 @@ fn a_soic_fits_its_pads_with_an_exact_quarter_turn_and_is_seated() -> Result<()>
 fn a_turned_land_pattern_fits_freely_but_not_by_quarter_turns() -> Result<()> {
     let mut fp = soic_footprint(false);
     for pad in &mut fp.pads {
-        pad.position = rotate(pad.position, 30.0);
-        pad.position = [pad.position[0] + 1.0, pad.position[1] - 2.0];
+        pad.position = pt(rotate(pad.position(), 30.0));
+        pad.position = pt([pad.position()[0] + 1.0, pad.position()[1] - 2.0]);
     }
     let pairs = soic_pairs(&fp)?;
     let free = fit_leads(&ModelPlacement::default(), &pairs, FitRotation::Free)?;

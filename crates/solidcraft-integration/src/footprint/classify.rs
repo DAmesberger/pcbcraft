@@ -6,9 +6,10 @@
 use crate::geom::prelude::*;
 use crate::geom::{Loop2, Seg2, Vec2};
 use pcbcraft_core::library::{CornerMask, Hole, HoleShape, Outline, PadShape, Segment};
+use pcbcraft_core::units::{Angle, Nm, PointNm};
 use solidcraft_engine::sketch::{CurveKind, Sketch};
 
-use super::{Outcome, problem};
+use super::{Outcome, problem, stored};
 
 /// Geometric tolerance of classification, mm (the quantum is 1e-6 mm).
 pub(crate) const EPS: f64 = 1e-6;
@@ -160,11 +161,19 @@ fn axis_deg(a: Vec2, b: Vec2) -> f64 {
     if d > 180.0 - 1e-9 { 0.0 } else { d }
 }
 
-/// The shape and its rotation (degrees).
+/// The shape and its rotation, both stored (rounded through the crossing).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Classified {
     pub shape: PadShape,
-    pub rotation_deg: f64,
+    pub rotation_mdeg: Angle,
+}
+
+impl Classified {
+    /// The stored rotation in degrees: the frame holes and paste windows
+    /// are measured in.
+    pub fn rotation_deg(&self) -> f64 {
+        self.rotation_mdeg.to_degrees_f64()
+    }
 }
 
 /// Classify a closed loop around `anchor`. `orientation` (degrees) fixes
@@ -182,23 +191,27 @@ pub(crate) fn classify(
         })
         .fold(None, |m: Option<f64>, d| Some(m.map_or(d, |m| m.min(d))))
         .unwrap_or(0.0);
+    // The shape is measured in the solved frame; its turn is stored rounded
+    // to whole millidegrees.
     let theta = orientation.unwrap_or(natural);
     let rad = theta.to_radians();
     let frame: Vec<Piece> = pieces.iter().map(|p| local(*p, anchor, rad)).collect();
-    if let Some(shape) = primitive(&frame) {
+    if let Some(shape) = primitive(&frame)? {
         return Ok(Classified {
-            rotation_deg: shape.canonical_rotation(theta),
+            rotation_mdeg: shape
+                .canonical_rotation(stored(Angle::from_degrees_f64_rounded(theta))?),
             shape,
         });
     }
     let theta = orientation.unwrap_or(0.0);
+    let turn = stored(Angle::from_degrees_f64_rounded(theta))?;
     let rad = theta.to_radians();
     let frame: Vec<Piece> = pieces.iter().map(|p| local(*p, anchor, rad)).collect();
     let shape = PadShape::Custom {
         outline: outline(&frame)?,
     };
     Ok(Classified {
-        rotation_deg: shape.canonical_rotation(theta),
+        rotation_mdeg: shape.canonical_rotation(turn),
         shape,
     })
 }
@@ -216,8 +229,32 @@ fn about_zero(v: f64) -> bool {
 }
 
 /// A primitive centred on the pad origin in the pad frame, if the loop is
-/// one.
-fn primitive(frame: &[Piece]) -> Option<PadShape> {
+/// one, stored through the crossing.
+fn primitive(frame: &[Piece]) -> Outcome<Option<PadShape>> {
+    primitive_mm(frame)
+        .map(|p| {
+            stored(match p {
+                Primitive::Rect(size) => PadShape::rect_mm(size),
+                Primitive::Circle(d) => PadShape::circle_mm(d),
+                Primitive::Oblong(size) => PadShape::oblong_mm(size),
+                Primitive::RoundRect(size, ratio) => {
+                    PadShape::round_rect_mm(size, ratio, None, CornerMask::ALL)
+                }
+            })
+        })
+        .transpose()
+}
+
+/// A primitive pad shape in millimetres.
+enum Primitive {
+    Rect([f64; 2]),
+    Circle(f64),
+    Oblong([f64; 2]),
+    /// The size and the corner radius ratio.
+    RoundRect([f64; 2], f64),
+}
+
+fn primitive_mm(frame: &[Piece]) -> Option<Primitive> {
     let lines: Vec<(Vec2, Vec2)> = frame
         .iter()
         .filter_map(|p| match *p {
@@ -246,7 +283,7 @@ fn primitive(frame: &[Piece]) -> Option<PadShape> {
         (0, [(c, r, sweep)])
             if (sweep.abs() - TAU).abs() <= 1e-9 && about_zero(c.x) && about_zero(c.y) =>
         {
-            Some(PadShape::Circle { diameter: 2.0 * r })
+            Some(Primitive::Circle(2.0 * r))
         }
         (4, []) if aligned => {
             let (min, max) = vertex_box(frame);
@@ -254,9 +291,7 @@ fn primitive(frame: &[Piece]) -> Option<PadShape> {
             let alternate = lines
                 .windows(2)
                 .all(|w| matches!(w, [(a, b), (c, d)] if horizontal(*a, *b) != horizontal(*c, *d)));
-            (symmetric && alternate).then_some(PadShape::Rect {
-                size: [max.x - min.x, max.y - min.y],
-            })
+            (symmetric && alternate).then_some(Primitive::Rect([max.x - min.x, max.y - min.y]))
         }
         (2, [(c1, r, s1), (c2, _, s2)])
             if alternating
@@ -271,13 +306,9 @@ fn primitive(frame: &[Piece]) -> Option<PadShape> {
             let along_x = lines.iter().all(|&(a, b)| horizontal(a, b));
             let along_y = lines.iter().all(|&(a, b)| vertical(a, b));
             if along_x && about_zero(c1.y) {
-                Some(PadShape::Oblong {
-                    size: [len + 2.0 * r, 2.0 * r],
-                })
+                Some(Primitive::Oblong([len + 2.0 * r, 2.0 * r]))
             } else if along_y && about_zero(c1.x) {
-                Some(PadShape::Oblong {
-                    size: [2.0 * r, len + 2.0 * r],
-                })
+                Some(Primitive::Oblong([2.0 * r, len + 2.0 * r]))
             } else {
                 None
             }
@@ -298,12 +329,7 @@ fn primitive(frame: &[Piece]) -> Option<PadShape> {
                 .all(|(c, ..)| (c.x.abs() - hx).abs() <= EPS && (c.y.abs() - hy).abs() <= EPS);
             let size = [2.0 * (hx + r), 2.0 * (hy + r)];
             let short = size[0].min(size[1]);
-            (corners_ok && short > 0.0).then_some(PadShape::RoundRect {
-                size,
-                radius_ratio: r / short,
-                max_radius: None,
-                corners: CornerMask::ALL,
-            })
+            (corners_ok && short > 0.0).then_some(Primitive::RoundRect(size, r / short))
         }
         _ => None,
     }
@@ -378,9 +404,9 @@ pub(crate) fn hole(
         .collect();
     match kinds.as_slice() {
         [CurveKind::Circle { c, r }] => Ok(Hole {
-            shape: HoleShape::Round { diameter: 2.0 * r },
+            shape: stored(HoleShape::round_mm(2.0 * r))?,
             plated,
-            offset: point(to_local(pos(*c)?)),
+            offset: stored(PointNm::from_mm_f64_rounded(point(to_local(pos(*c)?))))?,
         }),
         _ => {
             let mut centres = Vec::new();
@@ -400,14 +426,20 @@ pub(crate) fn hole(
             match (centres.as_slice(), radii.as_slice(), lines) {
                 ([c1, c2], [r1, r2], 2) if (r1 - r2).abs() <= EPS => {
                     let mid = Vec2::new((c1.x + c2.x) * 0.5, (c1.y + c2.y) * 0.5);
+                    // The slot turn folds to [0°, 180°): whole millidegrees
+                    // round to 180° at most, which is 0 again.
+                    let angle = stored(Angle::from_degrees_f64_rounded(
+                        (axis_deg(*c1, *c2) - rotation_deg).rem_euclid(180.0),
+                    ))?;
+                    let angle = Angle::normalized(i64::from(angle.millidegrees() % 180_000));
                     Ok(Hole {
                         shape: HoleShape::Slot {
-                            width: 2.0 * r1,
-                            length: c1.dist(*c2) + 2.0 * r1,
-                            angle_deg: (axis_deg(*c1, *c2) - rotation_deg).rem_euclid(180.0),
+                            width_nm: stored(Nm::from_mm_f64_rounded(2.0 * r1))?,
+                            length_nm: stored(Nm::from_mm_f64_rounded(c1.dist(*c2) + 2.0 * r1))?,
+                            angle_mdeg: angle,
                         },
                         plated,
-                        offset: point(to_local(mid)),
+                        offset: stored(PointNm::from_mm_f64_rounded(point(to_local(mid))))?,
                     })
                 }
                 _ => Err(problem(BAD, "a hole is a circle or a slot")),

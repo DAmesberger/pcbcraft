@@ -125,12 +125,13 @@ impl PadShape {
             Self::RoundRect {
                 size,
                 radius_ratio,
-                max_radius,
+                max_radius_nm,
                 ..
             } => {
-                let short = size[0].min(size[1]).max(0.0);
+                let [w, h] = size.to_mm_f64();
+                let short = w.min(h).max(0.0);
                 let r = (radius_ratio * short).clamp(0.0, short / 2.0);
-                max_radius.map_or(r, |m| r.min(m.max(0.0)))
+                max_radius_nm.map_or(r, |m| r.min(m.to_mm_f64().max(0.0)))
             }
             _ => 0.0,
         }
@@ -142,9 +143,9 @@ impl PadShape {
     /// custom outline is a mitred polygon offset. `None` when it vanishes.
     pub fn grown(&self, by: f64, tol: f64) -> Option<Shape> {
         match self {
-            Self::Rect { size } => rounded_box(*size, 0.0, [false; 4], by),
+            Self::Rect { size } => rounded_box(size.to_mm_f64(), 0.0, [false; 4], by),
             Self::RoundRect { size, corners, .. } => rounded_box(
-                *size,
+                size.to_mm_f64(),
                 self.corner_radius(),
                 [
                     corners.bottom_left,
@@ -154,14 +155,17 @@ impl PadShape {
                 ],
                 by,
             ),
-            Self::Circle { diameter } => {
-                let radius = diameter / 2.0 + by;
+            Self::Circle { diameter_nm } => {
+                let radius = diameter_nm.to_mm_f64() / 2.0 + by;
                 (radius > 0.0).then_some(Shape::Circle {
                     center: [0.0, 0.0],
                     radius,
                 })
             }
-            Self::Oblong { size } => rounded_box(*size, size[0].min(size[1]) / 2.0, [true; 4], by),
+            Self::Oblong { size } => {
+                let size = size.to_mm_f64();
+                rounded_box(size, size[0].min(size[1]) / 2.0, [true; 4], by)
+            }
             Self::Custom { outline } => {
                 let ring = outline.flatten(tol);
                 let ring = if by == 0.0 {
@@ -226,21 +230,24 @@ impl HoleShape {
     /// `length` overall along `angle_deg` for a slot.
     pub fn shape(&self) -> Shape {
         match *self {
-            Self::Round { diameter } => Shape::Circle {
+            Self::Round { diameter_nm } => Shape::Circle {
                 center: [0.0, 0.0],
-                radius: diameter / 2.0,
+                radius: diameter_nm.to_mm_f64() / 2.0,
             },
             Self::Slot {
-                width,
-                length,
-                angle_deg,
-            } => rounded_box([length.max(width), width], width / 2.0, [true; 4], 0.0)
-                .unwrap_or_else(|| Shape::polygon(Vec::new()))
-                .transformed(&Transform2 {
-                    translate: [0.0, 0.0],
-                    rotation_deg: angle_deg,
-                    mirror: false,
-                }),
+                width_nm,
+                length_nm,
+                angle_mdeg,
+            } => {
+                let (width, length) = (width_nm.to_mm_f64(), length_nm.to_mm_f64());
+                rounded_box([length.max(width), width], width / 2.0, [true; 4], 0.0)
+                    .unwrap_or_else(|| Shape::polygon(Vec::new()))
+                    .transformed(&Transform2 {
+                        translate: [0.0, 0.0],
+                        rotation_deg: angle_mdeg.to_degrees_f64(),
+                        mirror: false,
+                    })
+            }
         }
     }
 
@@ -253,7 +260,7 @@ impl HoleShape {
 impl Hole {
     /// The drill outline in the pad frame.
     pub fn shape(&self) -> Shape {
-        self.shape.shape().translated(self.offset)
+        self.shape.shape().translated(self.offset())
     }
 
     /// The drill outline in the pad frame, as a ring within `tol`.
@@ -286,8 +293,8 @@ impl Pad {
     /// Pad frame to footprint frame: rotate about the pad origin, then move.
     pub fn frame(&self) -> Transform2 {
         Transform2 {
-            translate: self.position,
-            rotation_deg: self.rotation_deg,
+            translate: self.position(),
+            rotation_deg: self.rotation_deg(),
             mirror: false,
         }
     }
@@ -320,9 +327,9 @@ impl Pad {
     /// the pad is tented.
     pub fn mask_expansion(&self, defaults: &PadDefaults) -> Option<f64> {
         match self.mask {
-            MaskRule::Inherit => Some(defaults.mask_expansion_mm),
+            MaskRule::Inherit => Some(defaults.mask_expansion_mm()),
             MaskRule::Tented => None,
-            MaskRule::Expansion(e) => Some(e),
+            MaskRule::Expansion(e) => Some(e.to_mm_f64()),
         }
     }
 
@@ -347,12 +354,12 @@ impl Pad {
         match &self.paste {
             PasteRule::Inherit => match self.kind {
                 PadKind::Smd | PadKind::Mechanical if self.hole.is_none() => {
-                    shrink(defaults.paste_reduction_mm)
+                    shrink(defaults.paste_reduction_mm())
                 }
                 _ => Vec::new(),
             },
             PasteRule::None => Vec::new(),
-            PasteRule::Reduction(r) => shrink(*r),
+            PasteRule::Reduction(r) => shrink(r.to_mm_f64()),
             PasteRule::Windows(windows) => windows
                 .iter()
                 .map(|w| w.shape.to_mm().transformed(&frame))
@@ -412,6 +419,7 @@ mod tests {
     use crate::geometry::signed_area2;
     use crate::library::CornerMask;
     use std::f64::consts::PI;
+    use crate::tests::support::{mdeg, nm, pt};
 
     fn area(ring: &[Point]) -> f64 {
         signed_area2(ring) / 2.0
@@ -425,17 +433,17 @@ mod tests {
     fn flattened_shapes_are_counter_clockwise_with_their_exact_area() {
         let tol = 1e-4;
         let cases = [
-            (PadShape::Rect { size: [2.0, 1.0] }, 2.0),
-            (PadShape::Circle { diameter: 2.0 }, PI),
+            (PadShape::Rect { size: pt([2.0, 1.0]) }, 2.0),
+            (PadShape::Circle { diameter_nm: nm(2.0) }, PI),
             // Two semicircles of radius 0.5 and a 1 × 1 middle.
-            (PadShape::Oblong { size: [2.0, 1.0] }, 1.0 + PI * 0.25),
-            (PadShape::Oblong { size: [1.0, 3.0] }, 2.0 + PI * 0.25),
+            (PadShape::Oblong { size: pt([2.0, 1.0]) }, 1.0 + PI * 0.25),
+            (PadShape::Oblong { size: pt([1.0, 3.0]) }, 2.0 + PI * 0.25),
             // Ratio 0.25 of the 1 mm short side, every corner.
             (
                 PadShape::RoundRect {
-                    size: [2.0, 1.0],
+                    size: pt([2.0, 1.0]),
                     radius_ratio: 0.25,
-                    max_radius: None,
+                    max_radius_nm: None,
                     corners: CornerMask::ALL,
                 },
                 2.0 - (4.0 - PI) * 0.0625,
@@ -443,9 +451,9 @@ mod tests {
             // The cap wins over the ratio; only two corners (a D-shape).
             (
                 PadShape::RoundRect {
-                    size: [2.0, 1.0],
+                    size: pt([2.0, 1.0]),
                     radius_ratio: 0.5,
-                    max_radius: Some(0.1),
+                    max_radius_nm: Some(nm(0.1)),
                     corners: CornerMask {
                         top_left: true,
                         top_right: false,
@@ -508,24 +516,24 @@ mod tests {
     #[test]
     fn the_corner_radius_clamps_to_ratio_cap_and_half_side() {
         let rr = |ratio: f64, cap: Option<f64>| PadShape::RoundRect {
-            size: [2.0, 1.0],
+            size: pt([2.0, 1.0]),
             radius_ratio: ratio,
-            max_radius: cap,
+            max_radius_nm: cap.map(nm),
             corners: CornerMask::ALL,
         };
         assert!(close_to(rr(0.25, None).corner_radius(), 0.25, 1e-12));
         assert!(close_to(rr(0.25, Some(0.1)).corner_radius(), 0.1, 1e-12));
         assert!(close_to(rr(0.9, None).corner_radius(), 0.5, 1e-12));
         assert!(close_to(rr(-1.0, None).corner_radius(), 0.0, 1e-12));
-        assert_eq!(PadShape::Rect { size: [1.0, 1.0] }.corner_radius(), 0.0);
+        assert_eq!(PadShape::Rect { size: pt([1.0, 1.0]) }.corner_radius(), 0.0);
     }
 
     #[test]
     fn slots_extend_along_their_angle_and_pads_rotate_about_their_origin() {
         let slot = HoleShape::Slot {
-            width: 0.5,
-            length: 2.0,
-            angle_deg: 90.0,
+            width_nm: nm(0.5),
+            length_nm: nm(2.0),
+            angle_mdeg: mdeg(90.0),
         };
         let ring = slot.flatten(1e-4);
         let b = crate::geometry::Bounds::of(ring.iter().copied());
@@ -534,13 +542,13 @@ mod tests {
         };
         assert!(close_to(b.size()[0], 0.5, 1e-3) && close_to(b.size()[1], 2.0, 1e-3));
         let pad = Pad {
-            rotation_deg: 90.0,
+            rotation_mdeg: mdeg(90.0),
             ..Pad::smd_rect(
                 crate::ids::PadId(1),
                 crate::ids::PackageTerminalId(1),
                 "1",
-                [3.0, 1.0],
-                [2.0, 1.0],
+                pt([3.0, 1.0]),
+                pt([2.0, 1.0]),
             )
         };
         let outline = pad.outline(1e-3);
@@ -554,8 +562,8 @@ mod tests {
 
     #[test]
     fn containment_and_gaps_between_rings() {
-        let land = PadShape::Circle { diameter: 2.0 }.flatten(1e-3);
-        let inner = HoleShape::Round { diameter: 1.0 }.flatten(1e-3);
+        let land = PadShape::Circle { diameter_nm: nm(2.0) }.flatten(1e-3);
+        let inner = HoleShape::Round { diameter_nm: nm(1.0) }.flatten(1e-3);
         assert!(ring_within(&inner, &land, 2e-3));
         let moved: Vec<Point> = inner.iter().map(|p| [p[0] + 0.6, p[1]]).collect();
         assert!(!ring_within(&moved, &land, 2e-3));

@@ -263,13 +263,14 @@ mod tests {
     use super::*;
     use crate::ids::{PackageTerminalId, PadId};
     use crate::tests::support::{nm, shape_nm};
+    use crate::tests::support::{pt};
 
     fn chip() -> (FootprintDefinition, PackageDefinition) {
         let footprint = FootprintDefinition {
             next_local: 3,
             pads: vec![
-                Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", [-1.2, 0.0], [1.0, 1.4]),
-                Pad::smd_rect(PadId(2), PackageTerminalId(2), "2", [1.2, 0.0], [1.0, 1.4]),
+                Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", pt([-1.2, 0.0]), pt([1.0, 1.4])),
+                Pad::smd_rect(PadId(2), PackageTerminalId(2), "2", pt([1.2, 0.0]), pt([1.0, 1.4])),
             ],
             ..FootprintDefinition::default()
         };
@@ -332,14 +333,14 @@ mod tests {
                 .collect()
         };
         let mut outside = footprint.clone();
-        outside.pads[0].position[0] += 20.0;
+        outside.pads[0].position.x_nm = outside.pads[0].position.x_nm.checked_add(nm(20.0))?;
         assert!(
             codes(&outside)
                 .iter()
                 .any(|c| c == "footprint.pad_outside_courtyard")
         );
         let mut silk = footprint.clone();
-        let centre = silk.pads[0].position;
+        let centre = silk.pads[0].position();
         silk.graphics.push(crate::library::FootprintGraphic {
             id: GraphicId(silk.next_local),
             layer: crate::library::DrawingLayer::Silkscreen,

@@ -259,7 +259,12 @@ pub fn parse_table(file: &'static str, source: &str) -> Result<Vec<StarterRow>> 
             typed(row.get("size_code"), &format!("{context}: size_code"))?;
         let skeleton: SkeletonHint = typed(row.get("skeleton"), &format!("{context}: skeleton"))?;
         let symbol: Option<SymbolKind> = typed(row.get("symbol"), &format!("{context}: symbol"))?;
-        let lands = typed(row.get("lands"), &format!("{context}: lands"))?;
+        // Hand-edited millimetres, as the values.
+        let lands = typed::<Option<super::catalog::LandValuesParams>>(
+            row.get("lands"),
+            &format!("{context}: lands"),
+        )?
+        .map(super::catalog::LandValues::from);
         let problems = values.range_problems();
         if !problems.is_empty() {
             return Err(invalid(format!("{context}: {}", problems.join(" "))));

@@ -19,6 +19,7 @@ use pcbcraft_core::library::model3d::{
 };
 use pcbcraft_core::library::{Basis, PackageModel, PadKind, PadShape, Provenance};
 use pcbcraft_core::model::Layer;
+use pcbcraft_core::units::{Degrees, Nm, PointNm};
 use pcbcraft_core::{Engine, Operation};
 use pcbcraft_solidcraft::models::part_file::{self, EvaluatedPart, PartReport, PartValues};
 use schemars::JsonSchema;
@@ -255,18 +256,19 @@ pub fn rule_lands(part: &EvaluatedPart, rules: &[LandRule]) -> Result<Vec<Mechan
         .enumerate()
         .map(|(k, rule)| {
             let name = (k + 1).to_string();
+            let length = |t| -> Result<Nm> { Ok(Nm::from_mm_f64_rounded(term_value(part, t)?)?) };
             let shape = match *rule {
                 LandRule::Annulus { outer, hole } => LandShape::Circle {
-                    diameter: term_value(part, outer)?,
-                    hole: Some(term_value(part, hole)?),
+                    diameter: length(outer)?,
+                    hole: Some(length(hole)?),
                 },
                 LandRule::Hole { diameter } => LandShape::Hole {
-                    diameter: term_value(part, diameter)?,
+                    diameter: length(diameter)?,
                 },
             };
             Ok(MechanicalLand {
                 name,
-                at: [0.0, 0.0],
+                at: PointNm::ORIGIN,
                 shape,
             })
         })
@@ -292,7 +294,7 @@ pub fn footprint_lands(engine: &Engine, footprint: FootprintRef) -> Result<Vec<M
         .enumerate()
         .map(|(k, pad)| {
             let hole = pad.hole.as_ref().and_then(|h| match h.shape {
-                pcbcraft_core::library::HoleShape::Round { diameter } => Some(diameter),
+                pcbcraft_core::library::HoleShape::Round { diameter_nm } => Some(diameter_nm),
                 pcbcraft_core::library::HoleShape::Slot { .. } => None,
             });
             let name: String = if pad.number.trim().is_empty() {
@@ -305,16 +307,16 @@ pub fn footprint_lands(engine: &Engine, footprint: FootprintRef) -> Result<Vec<M
                     .collect()
             };
             let shape = match (&pad.kind, &pad.shape) {
-                (PadKind::NonPlatedHole, PadShape::Circle { diameter }) => LandShape::Hole {
-                    diameter: hole.unwrap_or(*diameter),
+                (PadKind::NonPlatedHole, PadShape::Circle { diameter_nm }) => LandShape::Hole {
+                    diameter: hole.unwrap_or(*diameter_nm),
                 },
-                (_, PadShape::Circle { diameter }) => LandShape::Circle {
-                    diameter: *diameter,
+                (_, PadShape::Circle { diameter_nm }) => LandShape::Circle {
+                    diameter: *diameter_nm,
                     hole,
                 },
                 (_, PadShape::Rect { size }) if hole.is_none() => LandShape::Rect {
                     size: *size,
-                    rotation_deg: pad.rotation_deg,
+                    rotation_deg: Degrees(pad.rotation_mdeg),
                 },
                 _ => {
                     return Err(invalid(format!(

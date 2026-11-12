@@ -68,12 +68,12 @@ pub fn geometry(project: &Project, feature: &FeatureRef) -> Result<FeatureGeomet
             let to_part = part_frame(&footprint.datum);
             match at {
                 PadPoint::Centre => Ok(FeatureGeometry::Point {
-                    at: to_part.apply(pad.position),
+                    at: to_part.apply(pad.position()),
                 }),
                 PadPoint::Side(side) => {
                     let frame = Transform2 {
-                        translate: pad.position,
-                        rotation_deg: pad.rotation_deg,
+                        translate: pad.position(),
+                        rotation_deg: pad.rotation_deg(),
                         mirror: false,
                     }
                     .then(&to_part);
@@ -127,9 +127,9 @@ fn physical(
 /// Footprint-local to part frame: the datum to the origin, its rotation
 /// undone (as `layout::placed::placement_transform` before the placement).
 fn part_frame(datum: &Datum) -> Transform2 {
-    Transform2::translation([-datum.offset[0], -datum.offset[1]]).then(&Transform2 {
+    Transform2::translation([-datum.offset()[0], -datum.offset()[1]]).then(&Transform2 {
         translate: [0.0, 0.0],
-        rotation_deg: -datum.rotation_deg,
+        rotation_deg: -datum.rotation_deg(),
         mirror: false,
     })
 }
@@ -156,8 +156,8 @@ fn extent(project: &Project, placement: Id) -> Result<Bounds> {
     }
     let pads = footprint.pads.iter().flat_map(|pad| {
         let frame = Transform2 {
-            translate: pad.position,
-            rotation_deg: pad.rotation_deg,
+            translate: pad.position(),
+            rotation_deg: pad.rotation_deg(),
             mirror: false,
         }
         .then(&to_part);

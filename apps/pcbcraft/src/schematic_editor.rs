@@ -3216,6 +3216,12 @@ pub(crate) fn nm(mm: f64) -> pcbcraft_core::units::Nm {
     pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
 
+/// A turn a test writes in degrees.
+#[cfg(test)]
+pub(crate) fn mdeg(degrees: f64) -> pcbcraft_core::units::Angle {
+    pcbcraft_core::units::Angle::from_degrees_f64_rounded(degrees).unwrap_or_default()
+}
+
 /// A shape a test writes in mm, as a library stores it; test shapes lie
 /// within the range.
 #[cfg(test)]

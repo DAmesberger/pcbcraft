@@ -18,6 +18,7 @@ use crate::library::samples::{self, Preset, SampleRefs, TemplateSpec};
 use crate::library::symbol_style::{SymbolConventions, SymbolKind};
 use crate::library::templates::footprint_family::TemplateKind;
 use crate::library::{Definition, DefinitionMeta, DraftEdit, Library};
+use crate::units::{self, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -211,18 +212,37 @@ impl SizeCode {
 
 /// Optional land overrides for the family's footprint template, from a
 /// cited manufacturer land pattern (template defaults are estimates).
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+/// Command payloads and replies carry the millimetre wire form
+/// ([`LandValuesParams`]).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
 #[serde(deny_unknown_fields)]
+#[params(default)]
 pub struct LandValues {
     #[serde(default)]
-    pub pad_length: Option<f64>,
+    pub pad_length_nm: Option<Nm>,
     #[serde(default)]
-    pub pad_width: Option<f64>,
+    pub pad_width_nm: Option<Nm>,
     /// Gap between opposite lands, or row span centre to centre.
     #[serde(default)]
-    pub gap: Option<f64>,
+    pub gap_nm: Option<Nm>,
+    /// The exposed pad's size along x and y.
     #[serde(default)]
-    pub exposed_pad: Option<[f64; 2]>,
+    pub exposed_pad: Option<PointNm>,
+}
+
+/// Serde adapter: optional [`LandValues`] in a command payload or reply take
+/// the millimetre wire form ([`LandValuesParams`]).
+pub mod option_lands_mm {
+    use super::{LandValues, LandValuesParams};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(lands: &Option<LandValues>, s: S) -> Result<S::Ok, S::Error> {
+        lands.clone().map(LandValuesParams::from).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<LandValues>, D::Error> {
+        Option::<LandValuesParams>::deserialize(d).map(|l| l.map(LandValues::from))
+    }
 }
 
 /// The symbol and field starting point a new component gets.
@@ -315,7 +335,6 @@ impl PackageRowDefinition {
 
     pub(crate) fn values_finite(&self) -> bool {
         self.values.lengths().iter().all(|v| v.is_finite())
-            && self.lands.as_ref().is_none_or(LandValues::finite)
     }
 
     /// The row's values are cited from an outline drawing.
@@ -481,12 +500,24 @@ impl PackageRowDefinition {
 }
 
 impl LandValues {
-    fn finite(&self) -> bool {
-        [self.pad_length, self.pad_width, self.gap]
-            .into_iter()
-            .flatten()
-            .chain(self.exposed_pad.into_iter().flatten())
-            .all(f64::is_finite)
+    /// `pad_length_nm` in millimetres.
+    pub fn pad_length(&self) -> Option<f64> {
+        self.pad_length_nm.map(Nm::to_mm_f64)
+    }
+
+    /// `pad_width_nm` in millimetres.
+    pub fn pad_width(&self) -> Option<f64> {
+        self.pad_width_nm.map(Nm::to_mm_f64)
+    }
+
+    /// `gap_nm` in millimetres.
+    pub fn gap(&self) -> Option<f64> {
+        self.gap_nm.map(Nm::to_mm_f64)
+    }
+
+    /// `exposed_pad` in millimetres, `[x, y]`.
+    pub fn exposed_pad(&self) -> Option<[f64; 2]> {
+        self.exposed_pad.map(PointNm::to_mm_f64)
     }
 
     /// Range problems of the overrides: every given size is positive and
@@ -498,23 +529,26 @@ impl LandValues {
             FORM_LENGTH_LIMIT_NM.to_mm_f64(),
         );
         let mut out = Vec::new();
-        let mut check = |name: &str, v: f64| {
-            if !(v.is_finite() && (min..=max).contains(&v)) {
-                out.push(format!("{name} must be {min}–{max} mm (is {v})."));
+        let mut check = |name: &str, v: Nm| {
+            if !(FORM_LENGTH_MIN_NM..=FORM_LENGTH_LIMIT_NM).contains(&v) {
+                out.push(format!(
+                    "{name} must be {min}–{max} mm (is {}).",
+                    v.to_mm_f64()
+                ));
             }
         };
-        if let Some(v) = self.pad_length {
+        if let Some(v) = self.pad_length_nm {
             check("Land length", v);
         }
-        if let Some(v) = self.pad_width {
+        if let Some(v) = self.pad_width_nm {
             check("Land width", v);
         }
-        if let Some(v) = self.gap {
+        if let Some(v) = self.gap_nm {
             check("Land span", v);
         }
-        if let Some([x, y]) = self.exposed_pad {
-            check("Exposed land length", x);
-            check("Exposed land width", y);
+        if let Some(p) = self.exposed_pad {
+            check("Exposed land length", p.x_nm);
+            check("Exposed land width", p.y_nm);
         }
         out
     }

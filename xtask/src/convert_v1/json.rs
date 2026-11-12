@@ -4,8 +4,6 @@
 //! `units::Angle::from_degrees_f64_rounded`) does. Each edit reports how many
 //! values it changed and leaves an already converted value alone, so a
 //! second run changes nothing.
-// The U2 domain conversions use these as they land; the last removes this.
-#![allow(dead_code)]
 use crate::Result;
 use serde_json::{Map, Value};
 
@@ -70,21 +68,6 @@ pub fn point_as(object: &mut Map<String, Value>, from: &str, to: &str) -> Result
     object.remove(from);
     object.insert(to.into(), converted);
     Ok(1)
-}
-
-/// Every point of the array at `key`; the number changed.
-pub fn points(object: &mut Map<String, Value>, key: &str) -> Result<usize> {
-    let Some(items) = object.get_mut(key).and_then(Value::as_array_mut) else {
-        return Ok(0);
-    };
-    let mut n = 0;
-    for item in items {
-        if let Some(converted) = point_value(item)? {
-            *item = converted;
-            n += 1;
-        }
-    }
-    Ok(n)
 }
 
 /// A millimetre length at `from` to nanometres at `to`; 1 if it changed.
@@ -227,25 +210,19 @@ mod tests {
 
     #[test]
     fn edits_once() -> Result<()> {
-        let mut value = json!({"at": [1.0, 2.0], "w": 0.25, "r": 90.0, "ps": [[0.0, 0.5]]});
+        let mut value = json!({"at": [1.0, 2.0], "w": 0.25, "r": 90.0});
         let o = value.as_object_mut().ok_or("object")?;
         assert_eq!(
-            point(o, "at")?
-                + length(o, "w", "w_nm", false)?
-                + angle(o, "r", "r_mdeg", true)?
-                + points(o, "ps")?,
-            4
+            point(o, "at")? + length(o, "w", "w_nm", false)? + angle(o, "r", "r_mdeg", true)?,
+            3
         );
         assert_eq!(
-            point(o, "at")?
-                + length(o, "w", "w_nm", false)?
-                + angle(o, "r", "r_mdeg", true)?
-                + points(o, "ps")?,
+            point(o, "at")? + length(o, "w", "w_nm", false)? + angle(o, "r", "r_mdeg", true)?,
             0
         );
         assert_eq!(
             value,
-            json!({"at": {"x_nm": 1_000_000, "y_nm": 2_000_000}, "w_nm": 250_000, "r_mdeg": 90_000, "ps": [{"x_nm": 0, "y_nm": 500_000}]})
+            json!({"at": {"x_nm": 1_000_000, "y_nm": 2_000_000}, "w_nm": 250_000, "r_mdeg": 90_000})
         );
         Ok(())
     }

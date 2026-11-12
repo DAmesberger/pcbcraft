@@ -236,12 +236,14 @@ fn pads(snapshot: &Value) -> BTreeMap<String, Vec<String>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     if let Some(f) = of_kind(snapshot, "footprint").next() {
         for p in body(f)["pads"].as_array().into_iter().flatten() {
+            // Stored in whole nanometres and millidegrees.
             let pos = &p["position"];
+            let mm = |nm: &Value| nm.as_f64().map_or(f64::NAN, |nm| nm / 1e6);
             let at = format!(
                 "({:.3}, {:.3}) {}° {}",
-                pos[0].as_f64().unwrap_or(f64::NAN),
-                pos[1].as_f64().unwrap_or(f64::NAN),
-                p["rotation_deg"].as_f64().unwrap_or(0.0),
+                mm(&pos["x_nm"]),
+                mm(&pos["y_nm"]),
+                p["rotation_mdeg"].as_f64().unwrap_or(0.0) / 1e3,
                 p["shape"]
             );
             out.entry(text(&p["number"])).or_default().push(at);

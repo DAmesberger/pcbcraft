@@ -465,7 +465,7 @@ fn point_to_point_moves_a_model_point_onto_a_pad_point() -> TestResult {
     // The −x termination's contact, then pad 2's centre (+x).
     let package = h.editor.draft.as_ref().ok_or("draft")?.package.clone();
     let lead = package_fit_lead(&package, 0)?;
-    let pad = h.editor.draft.as_ref().ok_or("draft")?.footprint.pads[1].position;
+    let pad = h.editor.draft.as_ref().ok_or("draft")?.footprint.pads[1].position();
     let source = h.screen(lead)?;
     h.click_view(source);
     assert!(matches!(

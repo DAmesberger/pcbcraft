@@ -615,7 +615,7 @@ fn silk_over_pads(project: &Project, items: &mut Vec<PreflightItem>) {
         let by = match pad.pad.mask {
             MaskRule::Inherit => rules.mask.expansion,
             MaskRule::Tented => continue,
-            MaskRule::Expansion(e) => e,
+            MaskRule::Expansion(e) => e.to_mm_f64(),
         };
         let Some(shape) = pad.pad.shape.grown(by, tol) else {
             continue;

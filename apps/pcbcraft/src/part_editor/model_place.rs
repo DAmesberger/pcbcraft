@@ -227,7 +227,7 @@ fn land(footprint: &FootprintDefinition, pad: &pcbcraft_core::library::Pad) -> V
 pub fn board_points(footprint: &FootprintDefinition) -> Vec<Point3> {
     let mut out = vec![[0.0; 3]];
     for pad in footprint.pads.iter().filter(|p| copper(p.kind)) {
-        let c = package_fit::to_datum(&footprint.datum, pad.position);
+        let c = package_fit::to_datum(&footprint.datum, pad.position());
         out.push([c[0], c[1], 0.0]);
         let ring = land(footprint, pad);
         for (i, a) in ring.iter().enumerate() {
@@ -376,6 +376,7 @@ mod tests {
     use pcbcraft_core::library::{GullWingForm, LeadSides, PackageForm, PackageTerminal, Pad};
     use pcbcraft_core::{PackageTerminalId, PadId};
     use pcbcraft_solidcraft::geom::Vec3;
+    use crate::schematic_editor::{pt};
 
     /// An original SOIC-8-like form whose rows run along x.
     pub fn soic() -> PackageDefinition {
@@ -419,8 +420,8 @@ mod tests {
                         PadId(k + 1),
                         PackageTerminalId(k + 1),
                         (k + 1).to_string(),
-                        position,
-                        [1.55, 0.6],
+                        pt(position),
+                        pt([1.55, 0.6]),
                     )
                 })
                 .collect(),

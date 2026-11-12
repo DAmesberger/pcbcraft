@@ -5,6 +5,7 @@
 //! is saved and the stored pad stays the authority.
 use pcbcraft_core::PackageTerminalId;
 use pcbcraft_core::Point;
+use pcbcraft_core::units::{Angle, Nm, PointNm};
 use pcbcraft_core::library::{
     CornerMask, Hole, HoleShape, MaskRule, Pad, PadKind, PadShape, PadSide, PasteRule, TerminalRule,
 };
@@ -49,7 +50,7 @@ impl ShapeChoice {
 /// The shape of family `to` with the same extent (a circle takes the short
 /// side). `None` for an exact outline, which only a sketch makes.
 pub fn convert_shape(shape: &PadShape, to: ShapeChoice) -> Option<PadShape> {
-    let size = shape.extent();
+    let size = PointNm::from_mm_f64_rounded(shape.extent()).ok()?;
     Some(match to {
         ShapeChoice::Rect => PadShape::Rect { size },
         ShapeChoice::RoundRect => match shape {
@@ -57,12 +58,12 @@ pub fn convert_shape(shape: &PadShape, to: ShapeChoice) -> Option<PadShape> {
             _ => PadShape::RoundRect {
                 size,
                 radius_ratio: 0.25,
-                max_radius: None,
+                max_radius_nm: None,
                 corners: CornerMask::ALL,
             },
         },
         ShapeChoice::Circle => PadShape::Circle {
-            diameter: size[0].min(size[1]),
+            diameter_nm: size.x_nm.min(size.y_nm),
         },
         ShapeChoice::Oblong => PadShape::Oblong { size },
         ShapeChoice::Custom => return None,
@@ -98,11 +99,12 @@ pub fn set_kind(pad: &mut Pad, kind: PadKind, fallback: Option<PackageTerminalId
             pad.terminal = pad.terminal.or(fallback);
         }
         PadKind::PlatedThrough | PadKind::NonPlatedHole => {
-            let diameter = default_drill(pad);
+            // A drill rounded to 0.05 mm is a whole number of nanometres.
+            let diameter_nm = Nm::from_mm_f64_rounded(default_drill(pad)).unwrap_or(Nm::ZERO);
             let hole = pad.hole.get_or_insert(Hole {
-                shape: HoleShape::Round { diameter },
+                shape: HoleShape::Round { diameter_nm },
                 plated: true,
-                offset: [0.0, 0.0],
+                offset: PointNm::ORIGIN,
             });
             hole.plated = kind == PadKind::PlatedThrough;
             pad.side = PadSide::Top;
@@ -171,8 +173,9 @@ impl NewPad {
     }
 }
 
-/// A new pad of `which` at `position`. `terminal` is used only by kinds that
-/// land one.
+/// A new pad of `which` at `position` (mm; [`free_spot`]'s spot, always
+/// within the stored range, else the origin). `terminal` is used only by
+/// kinds that land one.
 pub fn new_pad(
     which: NewPad,
     id: pcbcraft_core::PadId,
@@ -180,39 +183,48 @@ pub fn new_pad(
     number: String,
     position: Point,
 ) -> Pad {
+    let nm = |mm: i64| Nm::new(mm).unwrap_or(Nm::ZERO);
     let mut pad = Pad {
         id,
         kind: which.kind(),
         terminal: terminal.filter(|_| which.lands_terminal()),
         number,
-        position,
-        rotation_deg: 0.0,
+        position: PointNm::from_mm_f64_rounded(position).unwrap_or(PointNm::ORIGIN),
+        rotation_mdeg: Angle::ZERO,
         side: PadSide::Top,
-        shape: PadShape::Rect { size: [1.0, 1.4] },
+        shape: PadShape::Rect {
+            size: PointNm::new(nm(1_000_000), nm(1_400_000)),
+        },
         hole: None,
         mask: MaskRule::Inherit,
         paste: PasteRule::Inherit,
         vias: Vec::new(),
     };
-    let round = |diameter: f64, plated: bool| Hole {
-        shape: HoleShape::Round { diameter },
+    let round = |diameter_nm: Nm, plated: bool| Hole {
+        shape: HoleShape::Round { diameter_nm },
         plated,
-        offset: [0.0, 0.0],
+        offset: PointNm::ORIGIN,
     };
     match which {
         NewPad::Smd => {}
         NewPad::PlatedThrough => {
-            pad.shape = PadShape::Circle { diameter: 1.7 };
-            pad.hole = Some(round(1.0, true));
+            pad.shape = PadShape::Circle {
+                diameter_nm: nm(1_700_000),
+            };
+            pad.hole = Some(round(nm(1_000_000), true));
         }
         NewPad::Hole => {
-            pad.shape = PadShape::Circle { diameter: 1.2 };
-            pad.hole = Some(round(1.0, false));
+            pad.shape = PadShape::Circle {
+                diameter_nm: nm(1_200_000),
+            };
+            pad.hole = Some(round(nm(1_000_000), false));
             pad.paste = PasteRule::None;
         }
         NewPad::Fiducial => {
-            pad.shape = PadShape::Circle { diameter: 1.0 };
-            pad.mask = MaskRule::Expansion(0.5);
+            pad.shape = PadShape::Circle {
+                diameter_nm: nm(1_000_000),
+            };
+            pad.mask = MaskRule::Expansion(nm(500_000));
             pad.paste = PasteRule::None;
         }
     }
@@ -238,11 +250,12 @@ mod tests {
     use pcbcraft_core::PadId;
     use pcbcraft_core::geometry::{Bounds, Shape};
     use pcbcraft_core::library::{Outline, PadDefaults, Segment};
+    use crate::schematic_editor::{mdeg, nm, pt};
 
     const CHORD: f64 = 0.001;
 
     fn pad(shape: PadShape) -> Pad {
-        let mut pad = Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", [2.0, 1.0], [1.0, 1.0]);
+        let mut pad = Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", pt([2.0, 1.0]), pt([1.0, 1.0]));
         pad.shape = shape;
         pad
     }
@@ -253,9 +266,9 @@ mod tests {
 
     fn corner_radius(size: Point, radius_ratio: f64, max_radius: Option<f64>) -> f64 {
         PadShape::RoundRect {
-            size,
+            size: pt(size),
             radius_ratio,
-            max_radius,
+            max_radius_nm: max_radius.map(nm),
             corners: CornerMask::ALL,
         }
         .corner_radius()
@@ -267,8 +280,8 @@ mod tests {
 
     #[test]
     fn a_rotated_rect_land_spans_its_turned_extent_and_picks_inside_only() {
-        let mut p = pad(PadShape::Rect { size: [2.0, 1.0] });
-        p.rotation_deg = 90.0;
+        let mut p = pad(PadShape::Rect { size: pt([2.0, 1.0]) });
+        p.rotation_mdeg = mdeg(90.0);
         let b = bounds(&p.land(CHORD));
         assert_eq!(b, Some(p.bounds()));
         assert!(b.is_some_and(|b| close(b.size(), [1.0, 2.0])));
@@ -297,9 +310,9 @@ mod tests {
         assert_eq!(corner_radius([2.0, 1.0], 0.25, Some(0.1)), 0.1);
         // Only the top-left corner rounded: the bottom-right corner is sharp.
         let d = pad(PadShape::RoundRect {
-            size: [2.0, 2.0],
+            size: pt([2.0, 2.0]),
             radius_ratio: 0.5,
-            max_radius: None,
+            max_radius_nm: None,
             corners: CornerMask {
                 top_left: true,
                 top_right: false,
@@ -320,7 +333,7 @@ mod tests {
         );
         // An oblong's ends are half circles: its tip is on the land, its
         // corner is not.
-        let o = pad(PadShape::Oblong { size: [3.0, 1.0] });
+        let o = pad(PadShape::Oblong { size: pt([3.0, 1.0]) });
         let shape = Some(o.land(CHORD));
         let at = |q: Point| shape.as_ref().map(|s| s.distance(q, true));
         assert!(at([3.5, 1.0]).is_some_and(|d| d < 1e-3));
@@ -330,10 +343,10 @@ mod tests {
     #[test]
     fn mask_grows_and_paste_shrinks_by_their_rules() {
         let defaults = PadDefaults {
-            mask_expansion_mm: 0.1,
-            paste_reduction_mm: 0.05,
+            mask_expansion_nm: nm(0.1),
+            paste_reduction_nm: nm(0.05),
         };
-        let mut p = pad(PadShape::Rect { size: [1.0, 1.0] });
+        let mut p = pad(PadShape::Rect { size: pt([1.0, 1.0]) });
         let size = |s: Option<Shape>| s.as_ref().and_then(bounds).map(|b| b.size());
         assert!(size(p.mask_opening(&defaults, CHORD)).is_some_and(|s| close(s, [1.2, 1.2])));
         let paste = p.paste_openings(&defaults, CHORD);
@@ -341,7 +354,7 @@ mod tests {
         assert!(size(paste.into_iter().next()).is_some_and(|s| close(s, [0.9, 0.9])));
         p.mask = MaskRule::Tented;
         assert!(p.mask_opening(&defaults, CHORD).is_none());
-        p.mask = MaskRule::Expansion(0.3);
+        p.mask = MaskRule::Expansion(nm(0.3));
         assert!(size(p.mask_opening(&defaults, CHORD)).is_some_and(|s| close(s, [1.6, 1.6])));
         p.paste = PasteRule::None;
         assert!(p.paste_openings(&defaults, CHORD).is_empty());
@@ -353,20 +366,20 @@ mod tests {
 
     #[test]
     fn a_slot_hole_turns_with_its_angle_and_the_pad() {
-        let mut p = pad(PadShape::Oblong { size: [3.0, 1.6] });
+        let mut p = pad(PadShape::Oblong { size: pt([3.0, 1.6]) });
         p.kind = PadKind::PlatedThrough;
         p.hole = Some(Hole {
             shape: HoleShape::Slot {
-                width: 0.8,
-                length: 2.0,
-                angle_deg: 0.0,
+                width_nm: nm(0.8),
+                length_nm: nm(2.0),
+                angle_mdeg: mdeg(0.0),
             },
             plated: true,
-            offset: [0.0, 0.0],
+            offset: pt([0.0, 0.0]),
         });
         let size = |p: &Pad| p.hole_shape().as_ref().and_then(bounds).map(|b| b.size());
         assert!(size(&p).is_some_and(|s| close(s, [2.0, 0.8])));
-        p.rotation_deg = 90.0;
+        p.rotation_mdeg = mdeg(90.0);
         assert!(size(&p).is_some_and(|s| close(s, [0.8, 2.0])));
         let centre = p.hole_shape().as_ref().and_then(bounds).map(|b| b.center());
         assert!(centre.is_some_and(|c| close(c, [2.0, 1.0])));
@@ -403,13 +416,13 @@ mod tests {
 
     #[test]
     fn kinds_keep_terminals_holes_and_paste_consistent() {
-        let mut p = pad(PadShape::Circle { diameter: 1.6 });
+        let mut p = pad(PadShape::Circle { diameter_nm: nm(1.6) });
         set_kind(&mut p, PadKind::PlatedThrough, None);
         assert_eq!(p.terminal, Some(PackageTerminalId(1)), "kept");
         assert!(p.hole.is_some_and(|h| h.plated));
         assert_eq!(
             p.hole.map(|h| h.shape),
-            Some(HoleShape::Round { diameter: 0.8 })
+            Some(HoleShape::Round { diameter_nm: nm(0.8) })
         );
         set_kind(&mut p, PadKind::NonPlatedHole, None);
         assert_eq!(p.terminal, None, "a bare hole lands no terminal");
@@ -449,23 +462,23 @@ mod tests {
 
     #[test]
     fn converting_a_shape_keeps_its_extent_and_rotation_canonical() {
-        let mut p = pad(PadShape::Rect { size: [2.0, 1.0] });
-        p.rotation_deg = 270.0;
+        let mut p = pad(PadShape::Rect { size: pt([2.0, 1.0]) });
+        p.rotation_mdeg = mdeg(270.0);
         let shape = p.shape.clone();
         set_shape(&mut p, shape);
-        assert_eq!(p.rotation_deg, 90.0, "a rectangle repeats every half turn");
+        assert_eq!(p.rotation_deg(), 90.0, "a rectangle repeats every half turn");
         for (choice, _) in ShapeChoice::EDITABLE {
             let shape = convert_shape(&p.shape, choice);
             assert!(shape.as_ref().is_some_and(|s| ShapeChoice::of(s) == choice));
         }
         assert_eq!(
             convert_shape(&p.shape, ShapeChoice::Circle),
-            Some(PadShape::Circle { diameter: 1.0 })
+            Some(PadShape::Circle { diameter_nm: nm(1.0) })
         );
         assert_eq!(convert_shape(&p.shape, ShapeChoice::Custom), None);
         if let Some(circle) = convert_shape(&p.shape, ShapeChoice::Circle) {
             set_shape(&mut p, circle);
         }
-        assert_eq!(p.rotation_deg, 0.0);
+        assert_eq!(p.rotation_deg(), 0.0);
     }
 }

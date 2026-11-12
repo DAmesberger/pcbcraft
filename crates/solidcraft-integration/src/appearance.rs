@@ -1013,14 +1013,14 @@ fn pad_box(
         return None;
     }
     let datum = footprint.datum;
-    let turn = pad.rotation_deg - datum.rotation_deg;
+    let turn = pad.rotation_deg() - datum.rotation_deg();
     if !is_quarter_turn(turn) {
         return None;
     }
-    let (c, s) = cos_sin(-datum.rotation_deg);
+    let (c, s) = cos_sin(-datum.rotation_deg());
     let d = [
-        pad.position[0] - datum.offset[0],
-        pad.position[1] - datum.offset[1],
+        pad.position()[0] - datum.offset()[0],
+        pad.position()[1] - datum.offset()[1],
     ];
     let center = [c * d[0] - s * d[1], s * d[0] + c * d[1]];
     let [w, h] = pad.shape.extent();

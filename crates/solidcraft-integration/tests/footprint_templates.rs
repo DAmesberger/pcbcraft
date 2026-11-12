@@ -144,7 +144,7 @@ fn pad<'a>(def: &'a FootprintDefinition, number: &str) -> Result<&'a Pad> {
 }
 
 fn at(def: &FootprintDefinition, number: &str, x: f64, y: f64) -> Result<()> {
-    let p = pad(def, number)?.position;
+    let p = pad(def, number)?.position();
     if (p[0] - x).abs() > TOL || (p[1] - y).abs() > TOL {
         return Err(Error::Invalid(format!(
             "pad {number} at {p:?}, expected [{x}, {y}]"
@@ -227,7 +227,7 @@ fn chip_pads_follow_their_parameters_with_explicit_courtyard_and_assembly() -> R
     let one = pad(&def, "1")?;
     assert!(
         matches!(one.shape, PadShape::RoundRect { size, radius_ratio, .. }
-            if close(size[0], 0.6) && close(size[1], 0.8) && close(radius_ratio, 0.25)),
+            if close(size.to_mm_f64()[0], 0.6) && close(size.to_mm_f64()[1], 0.8) && close(radius_ratio, 0.25)),
         "{:?}",
         one.shape
     );
@@ -308,7 +308,7 @@ fn polarised_chip_marks_pin_one_with_a_silkscreen_dot_clear_of_copper() -> Resul
     assert!(close(radius, 0.15));
     // pin1_dot = pad_l / 2 + 0.4 left of pad 1, on its axis.
     assert!(
-        close(center[0], one.position[0] - 0.7) && close(center[1], 0.0),
+        close(center[0], one.position()[0] - 0.7) && close(center[1], 0.0),
         "{center:?}"
     );
     let found = lint(&def);
@@ -377,9 +377,9 @@ fn qfn16_has_an_exposed_pad_with_paste_windows_and_vias() -> Result<()> {
     at(&def, "16", -0.75, 1.9)?;
     let ep = pad(&def, "EP")?;
     assert_eq!(ep.terminal, None, "the EP terminal is an explicit choice");
-    assert!(close(ep.position[0], 0.0) && close(ep.position[1], 0.0));
+    assert!(close(ep.position()[0], 0.0) && close(ep.position()[1], 0.0));
     assert!(
-        matches!(ep.shape, PadShape::Rect { size } if close(size[0], 2.3) && close(size[1], 2.3)),
+        matches!(ep.shape, PadShape::Rect { size } if close(size.to_mm_f64()[0], 2.3) && close(size.to_mm_f64()[1], 2.3)),
         "{:?}",
         ep.shape
     );
@@ -475,7 +475,7 @@ fn qfn_without_side_pads_starts_pin_one_on_the_bottom() -> Result<()> {
     at(&def, "3", 0.25, 1.4)?;
     let one = pad(&def, "1")?;
     assert!(
-        matches!(one.shape, PadShape::Rect { size } if close(size[0], 0.25) && close(size[1], 0.8)),
+        matches!(one.shape, PadShape::Rect { size } if close(size.to_mm_f64()[0], 0.25) && close(size.to_mm_f64()[1], 0.8)),
         "{:?}",
         one.shape
     );
@@ -498,13 +498,13 @@ fn pin_header_is_plated_with_a_rounded_pin_one_override() -> Result<()> {
             .ok_or_else(|| Error::NotFound("hole".into()))?;
         assert!(hole.plated);
         assert!(
-            matches!(hole.shape, pcbcraft_core::library::HoleShape::Round { diameter } if close(diameter, 1.0)),
+            matches!(hole.shape, pcbcraft_core::library::HoleShape::Round { diameter_nm } if close(diameter_nm.to_mm_f64(), 1.0)),
             "{:?}",
             hole.shape
         );
     }
     assert!(matches!(pad(&def, "1")?.shape, PadShape::RoundRect { .. }));
-    assert!(matches!(pad(&def, "2")?.shape, PadShape::Circle { diameter } if close(diameter, 1.7)));
+    assert!(matches!(pad(&def, "2")?.shape, PadShape::Circle { diameter_nm } if close(diameter_nm.to_mm_f64(), 1.7)));
     assert_eq!(
         def.polarity.as_ref().map(|p| p.pad),
         Some(pad(&def, "1")?.id)
@@ -744,7 +744,7 @@ fn footprint_from_template_replace_is_one_atomic_undo_step() -> Result<()> {
         next_local: 2,
         ..FootprintDefinition::default()
     };
-    start.defaults.mask_expansion_mm = 0.07;
+    start.defaults.mask_expansion_nm = nm(0.07);
     start.graphics.push(designator_placeholder(
         GraphicId(1),
         PointNm::from_mm_f64_rounded([0.0, 3.0])?,

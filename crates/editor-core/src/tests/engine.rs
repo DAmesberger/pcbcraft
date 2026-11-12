@@ -759,7 +759,14 @@ fn corrupt_newer_and_invalid_documents_leave_engine_and_history_unchanged() -> R
     let mut unsafe_draft = before.clone();
     for draft in &mut unsafe_draft.drafts.items {
         if let crate::library::Definition::Footprint(f) = &mut draft.definition {
-            f.pads[0].position[0] = f64::INFINITY;
+            // Pad positions are whole nanometres; the f64 custom outline
+            // can still be non-finite.
+            f.pads[0].shape = crate::library::PadShape::Custom {
+                outline: crate::library::Outline {
+                    start: [f64::INFINITY, 0.0],
+                    segments: Vec::new(),
+                },
+            };
         }
     }
     assert!(engine.replace_document(unsafe_draft).is_err());

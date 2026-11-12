@@ -4,6 +4,7 @@
 //!
 //! The board is the demo's: R1 at (10, 10) and R2 at (25, 10), net 2
 //! joining R1.2 (land 10.3–11.3 mm in x) and R2.1 (land 23.7–24.7 mm).
+use crate::tests::support::{pt};
 use super::queries::spanning;
 use super::{CopperGraph, ElementKind};
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
@@ -379,7 +380,7 @@ fn pad(index: u32, x: f64) -> WorldPad {
         net: SHARED,
         position: [x, 0.0],
         size: [1.0, 1.0],
-        shape: PadShape::Rect { size: [1.0, 1.0] },
+        shape: PadShape::Rect { size: pt([1.0, 1.0]) },
         rotation_deg: 0.0,
         layer: Layer::Top,
         through: false,

@@ -71,7 +71,7 @@ fn check(def: &FootprintDefinition, number: &str, at: [f64; 2], size: [f64; 2]) 
     let p = pad(def, number)?;
     let b = p.bounds();
     let got = [b.max[0] - b.min[0], b.max[1] - b.min[1]];
-    let ok = (0..2).all(|i| (p.position[i] - at[i]).abs() < TOL && (got[i] - size[i]).abs() < TOL);
+    let ok = (0..2).all(|i| (p.position()[i] - at[i]).abs() < TOL && (got[i] - size[i]).abs() < TOL);
     if ok {
         Ok(())
     } else {

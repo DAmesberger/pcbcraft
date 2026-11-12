@@ -19,7 +19,7 @@ fn board(gap: f64, layers: [Layer; 2]) -> Result<(Project, Id, Id)> {
         let fp = &mut footprint.definition;
         let id = GraphicId(fp.next_local);
         fp.next_local += 1;
-        let [x, y] = fp.datum.offset;
+        let [x, y] = fp.datum.offset();
         fp.graphics.push(FootprintGraphic {
             id,
             layer: DrawingLayer::Courtyard,

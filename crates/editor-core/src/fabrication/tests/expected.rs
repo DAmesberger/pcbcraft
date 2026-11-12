@@ -103,7 +103,7 @@ pub(crate) fn mask(project: &Project, side: Layer, bitmap: &mut Bitmap) -> Falli
         let by = match pad.pad.mask {
             MaskRule::Inherit => expansion,
             MaskRule::Tented => continue,
-            MaskRule::Expansion(e) => e,
+            MaskRule::Expansion(e) => e.to_mm_f64(),
         };
         if let Some(shape) = pad.pad.shape.grown(by, TOLERANCE_MM) {
             bitmap.render(
@@ -157,7 +157,7 @@ pub(crate) fn paste(project: &Project, side: Layer, bitmap: &mut Bitmap) -> Fall
                 _ => Vec::new(),
             },
             PasteRule::None => Vec::new(),
-            PasteRule::Reduction(r) => shrink(*r).into_iter().collect(),
+            PasteRule::Reduction(r) => shrink(r.to_mm_f64()).into_iter().collect(),
             PasteRule::Windows(windows) => windows.iter().map(|w| w.shape.to_mm()).collect(),
         };
         for shape in shapes {

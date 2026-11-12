@@ -1,6 +1,7 @@
 //! Slice B1 behaviour: rows in the catalog, `new_from_template`,
 //! `package_from_template` and its plan, `save_package_row` and the row
 //! publish findings, all through the public engine.
+use crate::tests::support::{mdeg};
 use super::*;
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::ids::{DefinitionKind, FootprintRef, LibraryId};
@@ -151,10 +152,10 @@ fn rows_engine() -> Fallible<Engine> {
         page: Some(4),
     });
     qfn.lands = Some(LandValues {
-        pad_length: Some(0.7),
-        pad_width: Some(0.28),
-        gap: Some(4.9),
-        exposed_pad: Some([3.3, 3.3]),
+        pad_length_nm: Some(nm(0.7)),
+        pad_width_nm: Some(nm(0.28)),
+        gap_nm: Some(nm(4.9)),
+        exposed_pad: Some(pt([3.3, 3.3])),
     });
     publish_row(&mut engine, "QFN-32 5x5 0.5 EP3.45", qfn)?;
     publish_row(&mut engine, "QFN-16 3x3", row(Preset::Qfn16.form(), &[]))?;
@@ -463,11 +464,11 @@ fn a_component_from_a_cited_row_is_one_undo_step_and_publishes() -> Fallible<()>
         .iter()
         .find(|p| p.number == "EP")
         .ok_or("EP")?;
-    assert_eq!(ep.shape, PadShape::Rect { size: [3.3, 3.3] });
+    assert_eq!(ep.shape, PadShape::Rect { size: pt([3.3, 3.3]) });
     let first = footprint.pads.first().ok_or("pad 1")?;
-    assert_eq!(first.shape, PadShape::Rect { size: [0.28, 0.7] });
+    assert_eq!(first.shape, PadShape::Rect { size: pt([0.28, 0.7]) });
     assert!(
-        (first.position[1] + 2.45).abs() < 1e-9,
+        (first.position()[1] + 2.45).abs() < 1e-9,
         "{:?}",
         first.position
     );
@@ -643,7 +644,7 @@ fn edited_values_make_a_custom_package_with_estimated_lands() -> Fallible<()> {
         .ok_or("EP")?;
     assert_eq!(
         ep.shape,
-        PadShape::Rect { size: [3.45, 3.45] },
+        PadShape::Rect { size: pt([3.45, 3.45]) },
         "row lands dropped"
     );
     let symbol = engine.drafts().get(ids[1]).ok_or("symbol")?;
@@ -1161,10 +1162,10 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
                     "{name}"
                 );
                 for pad in pads {
-                    let PadShape::Circle { diameter } = pad.shape else {
+                    let PadShape::Circle { diameter_nm } = pad.shape else {
                         return Err(format!("{name}: a round grid land").into());
                     };
-                    assert!(diameter < g.pitch()[0].min(g.pitch()[1]), "{name}");
+                    assert!(diameter_nm.to_mm_f64() < g.pitch()[0].min(g.pitch()[1]), "{name}");
                 }
             }
             PackageForm::Tabbed(t) if t.tab.is_some() => {
@@ -1843,7 +1844,7 @@ fn no_lead_and_chip_starter_rows_keep_the_mask_web() -> Fallible<()> {
 #[test]
 fn qfn48_corner_lands_keep_the_mask_web() -> Fallible<()> {
     use crate::library::samples;
-    use crate::library::{MASK_EXPANSION_MM, MIN_MASK_WEB_MM};
+    use crate::library::{MASK_EXPANSION_NM, MIN_MASK_WEB_MM};
     let starter = crate::library::templates::starter::row("QFN-48 7×7 0.5 EP 5.3")?;
     let PackageForm::NoLead(form) = &starter.definition.values else {
         return Err("a no-lead row".into());
@@ -1862,7 +1863,7 @@ fn qfn48_corner_lands_keep_the_mask_web() -> Fallible<()> {
         let dy = (a.min[1] - b.max[1]).max(b.min[1] - a.max[1]).max(0.0);
         Ok(dx.hypot(dy))
     };
-    let need = MIN_MASK_WEB_MM + 2.0 * MASK_EXPANSION_MM;
+    let need = MIN_MASK_WEB_MM + 2.0 * MASK_EXPANSION_NM.to_mm_f64();
     for (a, b) in [("1", "48"), ("12", "13"), ("24", "25"), ("36", "37")] {
         let g = gap(a, b)?;
         assert!(g >= need - 1e-9 && g < need + 1e-3, "{a}–{b}: {g}");
@@ -1905,7 +1906,7 @@ fn qfn48_corner_lands_keep_the_mask_web() -> Fallible<()> {
         .iter_mut()
         .find(|p| p.number == "6")
         .ok_or("pad 6")?;
-    six.position[0] += 0.001;
+    six.position.x_nm = six.position.x_nm.checked_add(nm(0.001))?;
     assert_eq!(webs(&footprint), 1, "pads 6 and 7 at 0.099 mm");
     Ok(())
 }
@@ -2215,17 +2216,17 @@ fn a_usb_c_receptacle_is_found_built_mapped_and_published() -> Fallible<()> {
     };
     // The drawing: VBUS at ±2.40, GND at ±3.20, 0.60 and 0.30 wide lands
     // 1.15 long, 3.68 from the outline centre (7.355 from the board edge).
-    assert_eq!(pad("A4B9")?.position, [-2.4, 3.68]);
-    assert_eq!(pad("B1A12")?.position, [3.2, 3.68]);
-    assert_eq!(pad("A6")?.position, [-0.25, 3.68]);
-    assert_eq!(pad("A6")?.shape, PadShape::Rect { size: [0.3, 1.15] });
-    assert_eq!(pad("A1B12")?.shape, PadShape::Rect { size: [0.6, 1.15] });
+    assert_eq!(pad("A4B9")?.position, pt([-2.4, 3.68]));
+    assert_eq!(pad("B1A12")?.position, pt([3.2, 3.68]));
+    assert_eq!(pad("A6")?.position, pt([-0.25, 3.68]));
+    assert_eq!(pad("A6")?.shape, PadShape::Rect { size: pt([0.3, 1.15]) });
+    assert_eq!(pad("A1B12")?.shape, PadShape::Rect { size: pt([0.6, 1.15]) });
     assert_eq!(
         pad("S")?.hole.as_ref().map(|h| h.shape),
         Some(crate::library::HoleShape::Slot {
-            width: 0.6,
-            length: 1.4,
-            angle_deg: 90.0
+            width_nm: nm(0.6),
+            length_nm: nm(1.4),
+            angle_mdeg: mdeg(90.0)
         })
     );
     assert!(
@@ -2407,8 +2408,8 @@ fn a_chip_led_is_found_drawn_marked_and_carries_its_fields() -> Fallible<()> {
         let polarity = footprint.polarity.as_ref().ok_or("the marked pad")?;
         let first = footprint.pads.first().ok_or("pad 1")?;
         assert_eq!(polarity.pad, first.id);
-        assert_eq!(first.position, [-gap, 0.0], "the cathode at −x");
-        assert_eq!(first.shape, PadShape::Rect { size: land });
+        assert_eq!(first.position, pt([-gap, 0.0]), "the cathode at −x");
+        assert_eq!(first.shape, PadShape::Rect { size: pt(land) });
         let legend = polarity
             .markers
             .iter()

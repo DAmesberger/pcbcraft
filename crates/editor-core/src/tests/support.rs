@@ -424,8 +424,8 @@ pub fn bodies(spec: &Spec<'_>, f: &Fixture) -> Vec<DraftEdit> {
                     PadId(*id),
                     PackageTerminalId(*id),
                     id.to_string(),
-                    [i as f64 * 1.5 - 1.5, 0.0],
-                    [0.6, 0.8],
+                    pt([i as f64 * 1.5 - 1.5, 0.0]),
+                    pt([0.6, 0.8]),
                 )
             })
             .collect(),
@@ -895,6 +895,11 @@ pub fn pt(p: Point) -> crate::units::PointNm {
 /// A length a test writes in mm, as the document stores it.
 pub fn nm(mm: f64) -> crate::units::Nm {
     crate::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+}
+
+/// A turn a test writes in degrees, as the document stores it.
+pub fn mdeg(degrees: f64) -> crate::units::Angle {
+    crate::units::Angle::from_degrees_f64_rounded(degrees).unwrap_or_default()
 }
 
 /// A fixture pin at a test point in mm, pointing into the fixture body.

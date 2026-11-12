@@ -23,9 +23,9 @@ pub const MAX_PLACED_GRAPHIC_VERTICES: usize = 262_144;
 /// placement position.
 pub fn placement_transform(placement: &Placement, datum: &Datum) -> Transform2 {
     let to_datum =
-        Transform2::translation([-datum.offset[0], -datum.offset[1]]).then(&Transform2 {
+        Transform2::translation([-datum.offset()[0], -datum.offset()[1]]).then(&Transform2 {
             translate: [0.0, 0.0],
-            rotation_deg: -datum.rotation_deg,
+            rotation_deg: -datum.rotation_deg(),
             mirror: false,
         });
     to_datum.then(&Transform2 {
@@ -37,14 +37,14 @@ pub fn placement_transform(placement: &Placement, datum: &Datum) -> Transform2 {
 
 /// Undo the datum rotation about the datum (identity at 0°).
 pub(super) fn undo_datum_rotation(p: Point, datum: &Datum) -> Point {
-    if datum.rotation_deg == 0.0 {
+    if datum.rotation_deg() == 0.0 {
         return p;
     }
-    let (c, s) = cos_sin(-datum.rotation_deg);
-    let d = [p[0] - datum.offset[0], p[1] - datum.offset[1]];
+    let (c, s) = cos_sin(-datum.rotation_deg());
+    let d = [p[0] - datum.offset()[0], p[1] - datum.offset()[1]];
     [
-        datum.offset[0] + c * d[0] - s * d[1],
-        datum.offset[1] + s * d[0] + c * d[1],
+        datum.offset()[0] + c * d[0] - s * d[1],
+        datum.offset()[1] + s * d[0] + c * d[1],
     ]
 }
 
@@ -326,7 +326,7 @@ pub struct PlacedHole {
 impl PlacedPad {
     /// The pad origin (shape centre) on the board.
     pub fn center(&self) -> Point {
-        self.transform.apply(self.pad.position)
+        self.transform.apply(self.pad.position())
     }
 
     /// Pad frame to board coordinates.
@@ -361,8 +361,8 @@ impl PlacedPad {
             })
             .chain(self.pad.vias.iter().map(|via| PlacedHole {
                 shape: Shape::Circle {
-                    center: t.apply(via.at),
-                    radius: via.drill / 2.0,
+                    center: t.apply(via.at()),
+                    radius: via.drill() / 2.0,
                 },
                 plated: true,
             }))

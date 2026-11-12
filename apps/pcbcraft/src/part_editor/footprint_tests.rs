@@ -1,6 +1,7 @@
 //! Footprint tab behaviour: drawing and picking typed pads, grid drags,
 //! pad tools, layer toggles and the inspector rows, each edit committed
 //! once through the public `library.edit` command.
+use crate::schematic_editor::{mdeg, nm, pt};
 use super::footprint_canvas;
 use super::*;
 use pcbcraft_core::library::{CornerMask, Hole, HoleShape, MaskRule, PadKind, PadShape, PasteRule};
@@ -176,8 +177,8 @@ fn the_footprint_view_draws_and_picks_pads_by_their_land() -> Result<(), Box<dyn
     let second = pads(&editor).get(1).cloned().ok_or("two pads")?;
     if let Some(set) = &mut editor.draft {
         let pad = &mut set.footprint.pads[1];
-        pad.shape = PadShape::Rect { size: [0.6, 3.0] };
-        pad.rotation_deg = 90.0;
+        pad.shape = PadShape::Rect { size: pt([0.6, 3.0]) };
+        pad.rotation_mdeg = mdeg(90.0);
     }
     editor.footprint_view = None;
     let shown = canvas_frame(&mut editor, &engine, &ctx, vec![]);
@@ -186,12 +187,12 @@ fn the_footprint_view_draws_and_picks_pads_by_their_land() -> Result<(), Box<dyn
     }
     let at = |e: &PartEditor, p: Point| footprint_canvas::screen(e, CANVAS, p).ok_or("not fitted");
     // Inside the turned land, outside the unturned one: picks pad 2.
-    let inside = at(&editor, [second.position[0] + 1.2, second.position[1]])?;
+    let inside = at(&editor, [second.position()[0] + 1.2, second.position()[1]])?;
     click(&mut editor, &engine, &ctx, inside);
     assert_eq!(editor.selected_pad, Some(second.id));
     assert_eq!(editor.selected, Some(TerminalId(2)));
     // Inside the unturned box only: nothing is picked.
-    let outside = at(&editor, [second.position[0], second.position[1] + 1.2])?;
+    let outside = at(&editor, [second.position()[0], second.position()[1] + 1.2])?;
     click(&mut editor, &engine, &ctx, outside);
     assert_eq!(editor.selected_pad, None);
     Ok(())
@@ -207,10 +208,10 @@ fn dragging_a_pad_snaps_to_the_footprint_grid_and_commits_once()
     let mut editor = footprint_editor(&ctx, &engine)?;
     let first = pads(&editor).first().cloned().ok_or("a pad")?;
     let at = |e: &PartEditor, p: Point| footprint_canvas::screen(e, CANVAS, p).ok_or("not fitted");
-    let from = at(&editor, first.position)?;
+    let from = at(&editor, first.position.to_mm_f64())?;
     let to = at(
         &editor,
-        [first.position[0] - 0.413, first.position[1] + 0.271],
+        [first.position()[0] - 0.413, first.position()[1] + 0.271],
     )?;
     for events in [
         vec![egui::Event::PointerMoved(from)],
@@ -225,16 +226,16 @@ fn dragging_a_pad_snaps_to_the_footprint_grid_and_commits_once()
         "nothing commits mid-drag"
     );
     canvas_frame(&mut editor, &engine, &ctx, vec![button(to, false)]);
-    let moved = pads(&editor).first().map(|p| p.position).ok_or("a pad")?;
+    let moved = pads(&editor).first().map(|p| p.position()).ok_or("a pad")?;
     let on_grid = |v: f64| ((v / 0.05).round() * 0.05 - v).abs() < 1e-9;
     assert!(on_grid(moved[0]) && on_grid(moved[1]), "{moved:?}");
     assert!(
-        (moved[0] - (first.position[0] - 0.4)).abs() < 0.051,
+        (moved[0] - (first.position()[0] - 0.4)).abs() < 0.051,
         "{moved:?}"
     );
     assert!(commit(&mut editor, &mut engine, &ctx)?);
     let stored = committed_pads(&engine, &editor).ok_or("committed")?;
-    assert_eq!(stored[0].position, moved);
+    assert_eq!(stored[0].position(), moved);
     engine.undo()?;
     editor.commit(&ctx, &engine);
     assert_eq!(
@@ -257,9 +258,9 @@ fn typed_pad_edits_round_trip_through_the_engine() -> Result<(), Box<dyn std::er
         footprint_geometry::set_shape(
             pad,
             PadShape::RoundRect {
-                size: [1.2, 1.6],
+                size: pt([1.2, 1.6]),
                 radius_ratio: 0.25,
-                max_radius: Some(0.2),
+                max_radius_nm: Some(nm(0.2)),
                 corners: CornerMask {
                     top_left: true,
                     top_right: false,
@@ -268,25 +269,25 @@ fn typed_pad_edits_round_trip_through_the_engine() -> Result<(), Box<dyn std::er
                 },
             },
         );
-        pad.rotation_deg = pad.shape.canonical_rotation(450.0);
-        pad.mask = MaskRule::Expansion(0.1);
-        pad.paste = PasteRule::Reduction(0.05);
+        pad.rotation_mdeg = pad.shape.canonical_rotation(mdeg(450.0));
+        pad.mask = MaskRule::Expansion(nm(0.1));
+        pad.paste = PasteRule::Reduction(nm(0.05));
         let pad = &mut set.footprint.pads[1];
         footprint_geometry::set_kind(pad, PadKind::PlatedThrough, None);
-        footprint_geometry::set_shape(pad, PadShape::Oblong { size: [1.6, 2.4] });
+        footprint_geometry::set_shape(pad, PadShape::Oblong { size: pt([1.6, 2.4]) });
         pad.hole = Some(Hole {
             shape: HoleShape::Slot {
-                width: 0.6,
-                length: 1.2,
-                angle_deg: 90.0,
+                width_nm: nm(0.6),
+                length_nm: nm(1.2),
+                angle_mdeg: mdeg(90.0),
             },
             plated: true,
-            offset: [0.0, 0.1],
+            offset: pt([0.0, 0.1]),
         });
-        set.footprint.datum.rotation_deg = 90.0;
+        set.footprint.datum.rotation_mdeg = mdeg(90.0);
     }
     let edited = pads(&editor);
-    assert_eq!(edited[0].rotation_deg, 90.0, "450° is canonical 90°");
+    assert_eq!(edited[0].rotation_deg(), 90.0, "450° is canonical 90°");
     assert!(commit(&mut editor, &mut engine, &ctx)?);
     assert_eq!(committed_pads(&engine, &editor), Some(edited.clone()));
     assert_eq!(

@@ -95,11 +95,17 @@ pub fn run(args: &[String]) -> Result<()> {
             println!("{shown}: already current");
         } else {
             println!(
-                "{shown}: converted {} values, recomputed {} origin hashes and {} design keys (original kept as {})",
+                "{shown}: converted {} values, recomputed {} origin hashes, {} design keys and {} fill keys (original kept as {})",
                 done.values,
                 done.identity.origins,
                 done.identity.design_keys,
+                done.identity.fill_keys,
                 backup.display()
+            );
+        }
+        for fill in &done.identity.stale_fills {
+            println!(
+                "{shown}: fill {fill} would refill to other copper, so it was already stale; refill it in the app"
             );
         }
         for lineage in &done.identity.project_file_lineages {

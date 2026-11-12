@@ -213,13 +213,13 @@ mod tests {
                                   "start_deg": 0.0, "sweep_deg": 360.0}},
                 "width": 0.05, "fill": "none"}}
         }]);
-        let mut pad = serde_json::to_value(pcbcraft_core::library::Pad::smd_rect(
+        let mut pad = serde_json::to_value(pcbcraft_core::library::Pad::smd_rect_mm(
             pcbcraft_core::ids::PadId(1),
             pcbcraft_core::ids::PackageTerminalId(1),
             "1",
             [0.0, 0.0],
             [1.0, 1.0],
-        ))?;
+        )?)?;
         pad["paste"] = json!({"windows": [{"id": 1, "shape":
             {"polygon": {"points": [[0.0, 0.0], [0.25, 0.0], [0.0, 0.25]]}}}]});
         body["pads"] = json!([pad]);

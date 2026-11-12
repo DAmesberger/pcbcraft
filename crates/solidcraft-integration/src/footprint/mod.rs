@@ -59,6 +59,12 @@ pub(crate) fn problem(code: &'static str, message: impl Into<String>) -> Problem
 
 pub(crate) type Outcome<T> = std::result::Result<T, Problem>;
 
+/// A solved value stored through the rounding crossing (design §2.2): a
+/// value it refuses (not finite, beyond ±2 m) is `footprint.too_large`.
+pub(crate) fn stored<T>(value: Result<T>) -> Outcome<T> {
+    value.map_err(|e| problem("footprint.too_large", e.to_string()))
+}
+
 impl From<Problem> for Error {
     fn from(p: Problem) -> Self {
         let message = format!("{}: {}", p.code, p.message);
