@@ -1,5 +1,18 @@
 {
-  "format": "solidcraft/51",
+  "format": "solidcraft/52",
+  "format_pending": [
+    "3d-wire-point-nodes",
+    "frame-end-caps",
+    "joint-origin-inside",
+    "nested-face-name",
+    "opus-quality",
+    "render-indirect-clamp",
+    "render-quality-controls",
+    "revolve-axis-sketch",
+    "sheet-flange-segments",
+    "sketch-link-construction-point",
+    "two-sided-cut-cap-names"
+  ],
   "name": "GCT USB4105-GF-A USB-C receptacle",
   "units": "mm",
   "params": [
@@ -169,6 +182,34 @@
       "expr": "0.6 mm",
       "unit": "mm",
       "comment": "how far the tails run under the shell (illustrative)",
+      "model": false
+    },
+    {
+      "name": "opening_u",
+      "expr": "opening_w",
+      "unit": "mm",
+      "comment": "opening datum across: the plug's shell",
+      "model": false
+    },
+    {
+      "name": "opening_v",
+      "expr": "opening_h",
+      "unit": "mm",
+      "comment": "opening datum high: the plug's shell",
+      "model": false
+    },
+    {
+      "name": "opening_r",
+      "expr": "opening_h / 2",
+      "unit": "mm",
+      "comment": "opening datum corner radius: round ends",
+      "model": false
+    },
+    {
+      "name": "opening_depth",
+      "expr": "1.85 mm",
+      "unit": "mm",
+      "comment": "opening datum depth: the plug's shell before its overmold (mating view, 1.85 min)",
       "model": false
     },
     {
@@ -860,6 +901,14 @@
               2.225
             ],
             "fixed": false
+          },
+          {
+            "id": "p13",
+            "pos": [
+              0.0,
+              -0.2749999999999997
+            ],
+            "fixed": false
           }
         ],
         "curves": [
@@ -922,6 +971,13 @@
             "a": 12,
             "b": 13,
             "construction": false
+          },
+          {
+            "id": "l5",
+            "type": "line",
+            "a": 5,
+            "b": 11,
+            "construction": true
           }
         ],
         "constraints": [
@@ -1041,14 +1097,20 @@
             "type": "equal",
             "a": 4,
             "b": 7
+          },
+          {
+            "id": "k21",
+            "type": "midpoint",
+            "p": 15,
+            "l": 8
           }
         ],
         "counters": {
           "a": 4,
           "corner": 2,
-          "k": 20,
-          "l": 4,
-          "p": 12
+          "k": 21,
+          "l": 5,
+          "p": 13
         }
       }
     },
@@ -1352,10 +1414,41 @@
     },
     {
       "id": 23,
-      "name": "marking-top",
+      "name": "opening",
       "suppressed": false,
       "param_names": [
         "d56"
+      ],
+      "type": "construction_plane",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "placed",
+          "origin": [
+            "0 mm",
+            "-depth / 2",
+            "opening_z"
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            -0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "distance": "0 mm"
+      }
+    },
+    {
+      "id": 24,
+      "name": "marking-top",
+      "suppressed": false,
+      "param_names": [
+        "d57"
       ],
       "type": "construction_plane",
       "plane": {
@@ -1382,7 +1475,7 @@
       }
     }
   ],
-  "next_id": 24,
+  "next_id": 25,
   "next_component_color_index": 0,
   "appearances": {
     "bodies": {

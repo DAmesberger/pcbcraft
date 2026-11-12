@@ -10,6 +10,18 @@
 //! parameters `marking_<name>_u` and `marking_<name>_v` is a marking
 //! surface; a construction point `pin1` marks pin 1.
 //!
+//! Package datums (slice B2, docs/architecture/board-interface.md) are
+//! declared the same way ([`DATUM_CONVENTION`]): a construction plane
+//! `opening` or `opening-<suffix>` is the datum `opening` or
+//! `opening_<suffix>`, a rectangle in the plane sized by the lengths
+//! `<datum>_u` (along the plane's x) and `<datum>_v`, its corners rounded
+//! by `<datum>_r` when given, swept `<datum>_depth` along the plane's
+//! normal (a volume) when given, with the clearance `<datum>_clearance`
+//! when given; the normal points out of the part, along the mating plug's
+//! way in. A construction axis `axis` or `axis-<suffix>` is the datum
+//! `axis` or `axis_<suffix>`, its diameter `<datum>_d` when given. Every
+//! declared datum is marked external: it was declared for the enclosure.
+//!
 //! [`insert`] adds an evaluated part's history to a board design as one
 //! component definition, parameters prefixed, so the saved board stays
 //! parametric. It uses only the pinned fork's public API (the spike's typed
@@ -20,6 +32,10 @@ use crate::native::Native;
 use crate::{Error, Result};
 use pcbcraft_core::library::BodyRole;
 use pcbcraft_core::library::bundle::{MAX_ASSET_BYTES, asset_hash};
+use pcbcraft_core::library::datum::{
+    DatumFrame, DatumName, DatumProfile, MAX_PACKAGE_DATUMS, PART_FILE_AXIS, PART_FILE_OPENING,
+    PackageDatum, PackageDatumGeometry, PackageDatumOrigin, PackageDatumParams,
+};
 use pcbcraft_core::library::marking::surface::{AnchorInfo, SurfaceGeometry};
 use pcbcraft_core::library::model3d::MarkingArea;
 use pcbcraft_core::library::package_model::{
@@ -27,6 +43,7 @@ use pcbcraft_core::library::package_model::{
     part_parameter_name_ok,
 };
 use pcbcraft_core::materials::MaterialId;
+use pcbcraft_core::units::Nm;
 use serde::{Deserialize, Serialize};
 use solidcraft_engine::Session;
 use solidcraft_engine::doc::construct::ConstructGeom;
@@ -43,6 +60,11 @@ pub const MARKING_PLANE: &str = "marking-";
 pub const DEFAULT_MARKING: &str = "marking-top";
 /// The pin-1 construction point.
 pub const PIN1_POINT: &str = "pin1";
+/// The datum convention in one line, for the check's description.
+pub const DATUM_CONVENTION: &str = "package datums from opening-<name> construction planes \
+    (sized by <datum>_u and <datum>_v, optional <datum>_r, <datum>_depth and \
+    <datum>_clearance; the normal points out along the plug's way in) and axis-<name> \
+    construction axes (optional diameter <datum>_d)";
 /// The lowest geometry lies this close to z = 0, mm.
 pub const SEATING_TOLERANCE_MM: f64 = 0.01;
 /// Cold evaluation above this is advisory `part_file.slow`, ms (a target).
@@ -100,6 +122,8 @@ pub struct EvaluatedPart {
     pub pin1: Option<[f64; 3]>,
     /// Other named construction points.
     pub points: Vec<(String, [f64; 3])>,
+    /// Package datums the part declares, model frame.
+    pub datums: Vec<PackageDatum>,
     pub bounds_mm: [[f64; 3]; 2],
     pub findings: Vec<PartFinding>,
     /// Cold evaluation time of this parameter set, ms.
@@ -132,6 +156,9 @@ pub struct PartReport {
     pub surfaces: Vec<AnchorInfo>,
     pub pin1: Option<[f64; 3]>,
     pub points: Vec<(String, [f64; 3])>,
+    /// Package datums the part declares, model frame, millimetres.
+    #[serde(default)]
+    pub datums: Vec<PackageDatumParams>,
     pub bounds_mm: [[f64; 3]; 2],
     pub findings: Vec<PartFinding>,
     pub evaluate_ms: f64,
@@ -154,6 +181,7 @@ impl EvaluatedPart {
             surfaces: self.surfaces.clone(),
             pin1: self.pin1,
             points: self.points.clone(),
+            datums: self.datums.iter().cloned().map(Into::into).collect(),
             bounds_mm: self.bounds_mm,
             findings: self.findings.clone(),
             evaluate_ms: self.evaluate_ms,
@@ -189,6 +217,7 @@ pub fn derived(part: &EvaluatedPart) -> Result<PartDerived> {
             .map_err(|e| Error::Invalid(format!("part_file.bounds: {e}")))?,
         bodies: u32::try_from(part.bodies.len()).unwrap_or(u32::MAX),
         surfaces: part.surfaces.clone(),
+        datums: part.datums.clone(),
     })
 }
 
@@ -201,7 +230,21 @@ pub fn matches(stored: &PartDerived, now: &PartDerived) -> bool {
         SurfaceGeometry::Plane(a) => Some(a),
         SurfaceGeometry::Cylinder(_) => None,
     };
+    // Datums compare in millimetres (directions unitless), every number
+    // within the recheck tolerance.
+    let datums = |d: &PartDerived| {
+        d.datums
+            .iter()
+            .map(|d| serde_json::to_value(PackageDatumParams::from(d.clone())).ok())
+            .collect::<Vec<_>>()
+    };
+    let (was, is) = (datums(stored), datums(now));
     stored.bodies == now.bodies
+        && was.len() == is.len()
+        && was
+            .iter()
+            .zip(&is)
+            .all(|(a, b)| matches!((a, b), (Some(a), Some(b)) if same_json(a, b, tol)))
         && close(&stored.bounds().concat(), &now.bounds().concat())
         && stored.surfaces.len() == now.surfaces.len()
         && stored.surfaces.iter().zip(&now.surfaces).all(|(a, b)| {
@@ -216,6 +259,26 @@ pub fn matches(stored: &PartDerived, now: &PartDerived) -> bool {
                     _ => false,
                 }
         })
+}
+
+/// Two JSON values equal but for numbers, which agree within `tol`.
+fn same_json(a: &serde_json::Value, b: &serde_json::Value, tol: f64) -> bool {
+    use serde_json::Value as V;
+    match (a, b) {
+        (V::Number(x), V::Number(y)) => match (x.as_f64(), y.as_f64()) {
+            (Some(x), Some(y)) => (x - y).abs() <= tol,
+            _ => false,
+        },
+        (V::Array(x), V::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(x, y)| same_json(x, y, tol))
+        }
+        (V::Object(x), V::Object(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|w| same_json(v, w, tol)))
+        }
+        _ => a == b,
+    }
 }
 
 /// The Pcbcraft material an appearance name means: a [`MaterialId`] in
@@ -554,13 +617,29 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
             ),
         ));
     }
-    // Construction geometry: marking planes and named points.
+    // Construction geometry: marking planes, declared datums and named
+    // points.
     let mut surfaces: Vec<AnchorInfo> = Vec::new();
     let mut pin1 = None;
     let mut points = Vec::new();
     let mut marking_problems = Vec::new();
+    let mut datums: Vec<PackageDatum> = Vec::new();
+    let mut datum_problems = Vec::new();
+    let mut declare = |datum: std::result::Result<PackageDatum, String>| match datum {
+        Ok(d) if datums.iter().any(|e| e.name == d.name) => {
+            datum_problems.push(format!("two datums are named {}", d.name.0));
+        }
+        Ok(d) => datums.push(d),
+        Err(problem) => datum_problems.push(problem),
+    };
     for c in &state.construct {
         match &c.geom {
+            ConstructGeom::Plane(plane) if declares(&c.name, PART_FILE_OPENING) => {
+                declare(plane_datum(&c.name, plane, &length));
+            }
+            ConstructGeom::Axis { origin, dir } if declares(&c.name, PART_FILE_AXIS) => {
+                declare(axis_datum(&c.name, *origin, *dir, &length));
+            }
             ConstructGeom::Plane(plane) => {
                 let Some(rest) = c.name.strip_prefix(MARKING_PLANE) else {
                     continue;
@@ -613,6 +692,15 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
             surfaces.len()
         ));
     }
+    if datums.len() > MAX_PACKAGE_DATUMS {
+        datum_problems.push(format!(
+            "{} datums; a package declares at most {MAX_PACKAGE_DATUMS}",
+            datums.len()
+        ));
+    }
+    if !datum_problems.is_empty() {
+        findings.push(finding("part_file.datum", true, datum_problems.join("; ")));
+    }
     if !marking_problems.is_empty() {
         findings.push(finding(
             "part_file.marking",
@@ -646,12 +734,130 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
         surfaces,
         pin1,
         points,
+        datums,
         bounds_mm,
         findings,
         evaluate_ms,
         source: doc,
         state,
     })
+}
+
+/// Whether a construction feature's name declares a datum of `prefix`:
+/// the prefix alone or followed by `-`.
+fn declares(name: &str, prefix: &str) -> bool {
+    name.strip_prefix(prefix)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+}
+
+/// The datum name a declaring feature gives, or why it gives none.
+fn datum_name(feature: &str, prefix: &str) -> std::result::Result<DatumName, String> {
+    DatumName::from_part_file(feature, prefix).ok_or_else(|| {
+        format!(
+            "‘{}’ does not make a datum name ({prefix} or {prefix}-<suffix> in lower case \
+             letters, digits and -, at most {} bytes)",
+            feature.chars().take(40).collect::<String>(),
+            pcbcraft_core::library::datum::MAX_DATUM_NAME
+        )
+    })
+}
+
+fn stored(mm: f64, what: &str) -> std::result::Result<Nm, String> {
+    Nm::from_mm_f64_rounded(mm).map_err(|e| format!("{what}: {e}"))
+}
+
+fn triple(mm: [f64; 3], what: &str) -> std::result::Result<[Nm; 3], String> {
+    Ok([
+        stored(mm[0], what)?,
+        stored(mm[1], what)?,
+        stored(mm[2], what)?,
+    ])
+}
+
+/// An `opening-*` plane as a package datum: a rectangle `<datum>_u` ×
+/// `<datum>_v` in the plane, rounded by `<datum>_r`, swept `<datum>_depth`
+/// along the normal when given.
+fn plane_datum(
+    feature: &str,
+    plane: &solidcore_record::Plane,
+    length: &impl Fn(&str) -> Option<f64>,
+) -> std::result::Result<PackageDatum, String> {
+    let name = datum_name(feature, PART_FILE_OPENING)?;
+    let n = &name.0;
+    let (Some(u), Some(v)) = (length(&format!("{n}_u")), length(&format!("{n}_v"))) else {
+        return Err(format!(
+            "{feature} needs the length parameters {n}_u and {n}_v"
+        ));
+    };
+    let (Some(x), Some(y)) = (plane.x.normalized(), plane.y.normalized()) else {
+        return Err(format!("{feature} has no direction"));
+    };
+    let profile = DatumProfile::Rect {
+        size_nm: [stored(u, feature)?, stored(v, feature)?],
+        corner_radius_nm: stored(length(&format!("{n}_r")).unwrap_or(0.0), feature)?,
+    };
+    let frame = DatumFrame {
+        origin_nm: triple(arr(plane.origin), feature)?,
+        x: arr(x),
+        y: arr(y),
+    };
+    let geometry = match length(&format!("{n}_depth")) {
+        Some(depth) => PackageDatumGeometry::Volume {
+            frame,
+            profile,
+            height_nm: stored(depth, feature)?,
+        },
+        None => PackageDatumGeometry::Profile { frame, profile },
+    };
+    declared(name, geometry, length)
+}
+
+/// An `axis-*` construction axis as a package datum, its diameter
+/// `<datum>_d` when given.
+fn axis_datum(
+    feature: &str,
+    origin: crate::geom::Vec3,
+    dir: crate::geom::Vec3,
+    length: &impl Fn(&str) -> Option<f64>,
+) -> std::result::Result<PackageDatum, String> {
+    let name = datum_name(feature, PART_FILE_AXIS)?;
+    let Some(direction) = dir.normalized() else {
+        return Err(format!("{feature} has no direction"));
+    };
+    let diameter_nm = match length(&format!("{}_d", name.0)) {
+        Some(d) => Some(stored(d, feature)?),
+        None => None,
+    };
+    let geometry = PackageDatumGeometry::Axis {
+        point_nm: triple(arr(origin), feature)?,
+        direction: arr(direction),
+        diameter_nm,
+    };
+    declared(name, geometry, length)
+}
+
+/// A declared datum, external, with its `<datum>_clearance` when given,
+/// checked on its own.
+fn declared(
+    name: DatumName,
+    geometry: PackageDatumGeometry,
+    length: &impl Fn(&str) -> Option<f64>,
+) -> std::result::Result<PackageDatum, String> {
+    let clearance_nm = match length(&format!("{}_clearance", name.0)) {
+        Some(c) => Some(stored(c, &name.0)?),
+        None => None,
+    };
+    let datum = PackageDatum {
+        name,
+        geometry,
+        clearance_nm,
+        external: true,
+        origin: PackageDatumOrigin::PartFile,
+    };
+    match datum.problem() {
+        Some(problem) => Err(problem),
+        None => Ok(datum),
+    }
 }
 
 fn valid_stem(stem: &str) -> bool {

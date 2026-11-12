@@ -71,6 +71,7 @@ fn spec(bytes: &[u8]) -> PartSpec {
             bounds_nm: crate::test_units::bounds(part.bounds_mm),
             bodies: 1,
             surfaces: vec![],
+            datums: vec![],
         },
         lands: vec![],
         pads: PadUse::default(),

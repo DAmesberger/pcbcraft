@@ -380,6 +380,16 @@ mm_accessors!(HeaderForm {
 });
 
 impl PackageForm {
+    /// The datums the form declares from its datasheet values, in the
+    /// model frame: a USB-C receptacle's opening. Other forms declare
+    /// none; nothing is inferred from a part's name or category.
+    pub fn datums(&self) -> Vec<super::datum::PackageDatum> {
+        match self {
+            Self::UsbC(f) => vec![f.opening_datum()],
+            _ => Vec::new(),
+        }
+    }
+
     /// The family-file implementation of a later family.
     pub fn family_form(&self) -> Option<&dyn FamilyForm> {
         match self {

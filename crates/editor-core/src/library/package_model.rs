@@ -4,6 +4,7 @@
 //! See `docs/component-model.md` (M1–M3 as built). Frames: footprint origin F →
 //! datum D = F ∘ `Datum { offset, rotation }` → model frame M = D ∘
 //! [`ModelPlacement`]. z = 0 is the seating plane (top of land copper).
+use super::datum::{DatumName, PackageDatum, PackageDatumOrigin};
 use super::package_form::PackageForm;
 use super::{Datum, PackageDefinition};
 use crate::diagnostics::{Error, Result};
@@ -108,6 +109,11 @@ pub struct PartDerived {
     /// model frame; the first is the default area.
     #[serde(default)]
     pub surfaces: Vec<super::marking::surface::AnchorInfo>,
+    /// Datums the part file declares (`opening-*` construction planes,
+    /// `axis-*` axes), model frame; copied into the package's datums when
+    /// the part file is used (slice B2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub datums: Vec<super::datum::PackageDatum>,
 }
 
 impl PartDerived {
@@ -203,6 +209,7 @@ impl PartFileModel {
                 ));
             }
         }
+        out.extend(super::datum::datum_problems(&d.datums));
         out
     }
 
@@ -508,6 +515,39 @@ pub enum PackageEdit {
     ),
     /// Computed into a [`ModelPlacement`] (`package_fit::apply_quick`).
     ApplyQuick(QuickAction),
+    /// `package.datum.add`: declare a new datum, in millimetres. Refused
+    /// when the package already has one of that name.
+    AddDatum(
+        #[serde(with = "datum_mm")]
+        #[schemars(with = "super::datum::PackageDatumParams")]
+        PackageDatum,
+    ),
+    /// `package.datum.edit`: replace the datum of the same name. The
+    /// result counts as authored, so a part file or form no longer
+    /// replaces it. Refused when there is none.
+    SetDatum(
+        #[serde(with = "datum_mm")]
+        #[schemars(with = "super::datum::PackageDatumParams")]
+        PackageDatum,
+    ),
+    /// `package.datum.remove`: remove the datum named so. Refused when
+    /// there is none.
+    RemoveDatum(DatumName),
+}
+
+/// Serde adapter: a [`PackageDatum`] in a command payload takes the
+/// millimetre wire form ([`super::datum::PackageDatumParams`]).
+pub mod datum_mm {
+    use super::super::datum::{PackageDatum, PackageDatumParams};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(d: &PackageDatum, s: S) -> Result<S::Ok, S::Error> {
+        PackageDatumParams::from(d.clone()).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<PackageDatum, D::Error> {
+        PackageDatumParams::deserialize(d).map(PackageDatum::from)
+    }
 }
 
 impl PackageEdit {
@@ -547,8 +587,44 @@ pub fn edit_package(
                 if let Some(envelope) = form.envelope_nm()? {
                     out.envelope_nm = envelope;
                 }
+                // A connector form emits its openings (decision 5).
+                out.replace_datums(PackageDatumOrigin::Form, &form.datums());
             }
-            PackageEdit::SetModel(model) => out.model = model.clone(),
+            PackageEdit::SetModel(model) => {
+                out.model = model.clone();
+                // A part file's declared datums come with it, and go when
+                // another model replaces it.
+                let declared = match model {
+                    PackageModel::PartFile(part) => part.derived.datums.as_slice(),
+                    _ => &[],
+                };
+                out.replace_datums(PackageDatumOrigin::PartFile, declared);
+            }
+            PackageEdit::AddDatum(datum) => {
+                if out.datum(&datum.name.0).is_some() {
+                    return Err(Error::Invalid(format!(
+                        "package.datum: the package already has a datum named {}",
+                        datum.name.0
+                    )));
+                }
+                out.datums.push(authored(datum)?);
+            }
+            PackageEdit::SetDatum(datum) => {
+                let datum = authored(datum)?;
+                let slot = out
+                    .datums
+                    .iter_mut()
+                    .find(|d| d.name == datum.name)
+                    .ok_or_else(|| no_datum(&datum.name))?;
+                *slot = datum;
+            }
+            PackageEdit::RemoveDatum(name) => {
+                let before = out.datums.len();
+                out.datums.retain(|d| &d.name != name);
+                if out.datums.len() == before {
+                    return Err(no_datum(name));
+                }
+            }
             // Whole nanometres and millidegrees: in range by type.
             PackageEdit::SetPlacement(placement) => out.placement = *placement,
             // Without a footprint here, the pad-relative actions refuse;
@@ -559,6 +635,24 @@ pub fn edit_package(
         }
     }
     Ok(out)
+}
+
+/// A datum as an edit writes it: checked on its own, marked authored.
+fn authored(datum: &PackageDatum) -> Result<PackageDatum> {
+    if let Some(problem) = datum.problem() {
+        return Err(Error::Invalid(format!("package.datum: {problem}")));
+    }
+    Ok(PackageDatum {
+        origin: PackageDatumOrigin::Authored,
+        ..datum.clone()
+    })
+}
+
+fn no_datum(name: &DatumName) -> Error {
+    Error::NotFound(format!(
+        "package.datum: the package has no datum named {}",
+        name.0
+    ))
 }
 
 /// Model frame → footprint frame: `datum ∘ placement`. The one frame 2D,

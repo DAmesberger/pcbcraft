@@ -377,9 +377,10 @@ pub fn rewrite_refs(definition: &mut Definition, map: &mut dyn RefMap) -> Result
                 model,
                 placement,
                 mechanical: _,
+                datums: _,
             } = package;
             // The form, model and placement name no other lineage and no
-            // asset: materials are built-in `MaterialId`s of the project's
+            // asset (nor do the datums, explicit local geometry): materials are built-in `MaterialId`s of the project's
             // `material_table`, not library references. Matched without
             // wildcards so a reference added to any of them (an imported
             // model's asset, M4) fails to compile here until it is rewritten.

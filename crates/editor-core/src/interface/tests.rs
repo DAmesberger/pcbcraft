@@ -12,6 +12,7 @@ use crate::model::interface::{AutoRule, DatumId, DatumSource, Tier};
 use std::collections::BTreeMap;
 
 mod b1;
+mod package_datums;
 mod skeletons;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;

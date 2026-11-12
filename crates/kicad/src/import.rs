@@ -550,6 +550,7 @@ fn drafts(
                 },
                 placement: ModelPlacement::default(),
                 mechanical: None,
+                datums: Vec::new(),
             }),
         },
         DraftEdit {

@@ -616,6 +616,7 @@ pub const KNOWN_CODES: &[&str] = &[
     "model.leads",
     "model.licence",
     "package.body_below_board",
+    "package.datum",
     "package.designation",
     "package.envelope",
     "package.envelope_derived",

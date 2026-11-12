@@ -22,6 +22,9 @@ use super::{FORM_LENGTH_LIMIT_NM, FamilyForm, length_problem, typical_nm, typica
 use crate::functions::Direction;
 use crate::geometry::Point3;
 use crate::ids::{PackageTerminalId, PadId};
+use crate::library::datum::{
+    DatumFrame, DatumName, DatumProfile, PackageDatum, PackageDatumGeometry, PackageDatumOrigin,
+};
 use crate::library::footprint::{Hole, HoleShape, MaskRule, Pad, PadKind, PadShape};
 use crate::library::footprint_source::{PACKAGE_PREFIX, PackageValue, ParamName, ParamValue};
 use crate::units::{self, Nm, PointNm};
@@ -54,6 +57,18 @@ pub const TERMINALS: [(&str, Direction, &[usize]); 9] = [
 
 /// Slack when the shell exactly fills the outline, mm.
 const FIT_EPS_MM: f64 = 1e-6;
+
+/// How far a mating plug's metal shell reaches in front of the mating face
+/// before its overmold begins: the drawing's "Plug and Receptacle Mating
+/// View" (rev B4, sheet 1), "1.85 Min". A panel in front of the receptacle
+/// lies within this reach, so the opening datum is this deep.
+pub const PLUG_SHELL_REACH_NM: Nm = match Nm::try_new(1_850_000) {
+    Some(reach) => reach,
+    None => Nm::ZERO,
+};
+
+/// The name of the opening datum the form emits.
+pub const OPENING_DATUM: &str = "opening";
 
 /// One pair of shell stakes (at −x and +x): its plated slot and land.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, units::Params)]
@@ -178,6 +193,41 @@ impl UsbCForm {
             peg_y_nm: mm(2.605),
             peg_diameter_nm: mm(0.5),
             peg_hole_nm: mm(0.65),
+        }
+    }
+
+    /// The opening datum (decision 5 of 12 November 2026: a connector's
+    /// opening is package data from its drawing). The aperture the mating
+    /// plug needs is the plug's shell, which fills the receptacle's
+    /// opening: a stadium `opening` across and high, centred
+    /// `opening_z` up on the mating face (y = −depth / 2). Its frame's z
+    /// points out of the receptacle along the insertion path and the
+    /// space reaches [`PLUG_SHELL_REACH_NM`], where the plug's overmold
+    /// begins. Marked external: it is meant for the enclosure. The drawing
+    /// gives no panel clearance, so none is recorded.
+    pub fn opening_datum(&self) -> PackageDatum {
+        let [across, high] = self.opening_nm;
+        PackageDatum {
+            name: DatumName(OPENING_DATUM.into()),
+            geometry: PackageDatumGeometry::Volume {
+                frame: DatumFrame {
+                    origin_nm: [
+                        Nm::ZERO,
+                        Nm::try_new(-self.depth_nm.get() / 2).unwrap_or(Nm::ZERO),
+                        self.opening_z_nm,
+                    ],
+                    x: [1.0, 0.0, 0.0],
+                    y: [0.0, 0.0, 1.0],
+                },
+                profile: DatumProfile::Rect {
+                    size_nm: [across, high],
+                    corner_radius_nm: Nm::try_new(across.min(high).get() / 2).unwrap_or(Nm::ZERO),
+                },
+                height_nm: PLUG_SHELL_REACH_NM,
+            },
+            clearance_nm: None,
+            external: true,
+            origin: PackageDatumOrigin::Form,
         }
     }
 

@@ -639,6 +639,17 @@ fn package_definition(
             bom: spec.bom,
             pick_and_place: spec.in_pick_and_place(),
         })),
+        // The part file's declared datums, as `library.edit_package
+        // SetModel` copies them.
+        datums: spec
+            .derived
+            .datums
+            .iter()
+            .map(|d| super::datum::PackageDatum {
+                origin: super::datum::PackageDatumOrigin::PartFile,
+                ..d.clone()
+            })
+            .collect(),
         ..PackageDefinition::default()
     })
 }

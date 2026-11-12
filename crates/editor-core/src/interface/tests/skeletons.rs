@@ -1,7 +1,7 @@
-//! Acceptance tests of slices B2 and B3, as placeholders that fail (B1's
-//! are written, in `b1.rs`). Each slice removes the `ignore` from its tests
-//! and writes the body; the name and the doc comment are the requirement,
-//! from
+//! Acceptance tests of slices B2 and B3 (B1's are written, in `b1.rs`;
+//! B2's bodies are in `package_datums.rs`). B3's are placeholders that
+//! fail: the slice removes the `ignore` from its tests and writes the
+//! body; the name and the doc comment are the requirement, from
 //! docs/architecture/board-interface.md ("Slices and their tests") and the
 //! design note's acceptance criteria. Never weaken one to make it pass.
 use super::Fallible;
@@ -10,31 +10,30 @@ fn not_built(slice: &str) -> Fallible {
     Err(format!("{slice}: not built yet").into())
 }
 
-// B2: package datums.
+// B2: package datums. The bodies are in `super::package_datums`; the
+// part-file reader's half of the first also runs against the real USB4105
+// part file in `pcbcraft-solidcraft` (`board::package_datum_tests`).
 
 /// A USB-C part file's `opening` plane becomes the package datum
 /// `opening`, and reaches a placed instance in the board frame on both
 /// sides and at every rotation.
 #[test]
-#[ignore = "B2: package datums"]
 fn b2_a_part_file_opening_reaches_the_board_frame() -> Fallible {
-    not_built("B2")
+    super::package_datums::a_part_file_opening_reaches_the_board_frame()
 }
 
 /// A package datum marked `external` is exported for every placement by
 /// the automatic rule; one not marked needs `interface.export`.
 #[test]
-#[ignore = "B2: external package datums"]
 fn b2_external_datums_are_exported_per_placement() -> Fallible {
-    not_built("B2")
+    super::package_datums::external_datums_are_exported_per_placement()
 }
 
 /// No opening is inferred from a part's name or category: a part named
 /// "USB-C" without a declared datum exports none.
 #[test]
-#[ignore = "B2: no inference from names"]
 fn b2_no_opening_is_inferred_from_a_name() -> Fallible {
-    not_built("B2")
+    super::package_datums::no_opening_is_inferred_from_a_name()
 }
 
 // B3: the exported design, the sidecar, publish and its preview

@@ -378,7 +378,7 @@ pub fn derive(project: &Project, datum: &InterfaceDatum) -> Derived {
                 .into_iter()
                 .find(|d| d.name.0 == name)
             {
-                Some(d) => found(d.kind, d.geometry),
+                Some(d) => found(d.geometry.kind(), Some(d.geometry)),
                 None => found(kind, None),
             }
         }

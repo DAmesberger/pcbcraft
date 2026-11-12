@@ -1194,6 +1194,25 @@ fn package_details_name_each_physical_change() {
     assert!(lines[1].starts_with("model placement"));
 }
 
+/// A package datum an enclosure may reference is named in the update
+/// preview when a revision adds, changes or removes it.
+#[test]
+fn package_details_name_each_datum_change() {
+    use crate::library::{PackageForm, UsbCForm};
+    let plain = PackageDefinition::default();
+    let usb = PackageDefinition {
+        datums: PackageForm::UsbC(Box::new(UsbCForm::typical())).datums(),
+        ..PackageDefinition::default()
+    };
+    assert_eq!(package_details(&plain, &usb), ["datum opening added."]);
+    assert_eq!(package_details(&usb, &plain), ["datum opening removed."]);
+    let mut wider = usb.clone();
+    for d in &mut wider.datums {
+        d.external = false;
+    }
+    assert_eq!(package_details(&usb, &wider), ["datum opening changed."]);
+}
+
 #[test]
 fn a_package_change_is_listed_once_for_every_instance_it_reaches() -> Result<()> {
     let Routed {
