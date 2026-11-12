@@ -88,22 +88,51 @@ pub fn mono(l: &ListTokens) -> FontId {
 
 /// The slots that fit every one of `values`: the fraction slot is at least
 /// `.000` wide, so values line up even when they differ in decimals.
+///
+/// Figures are tabular mono, so the widest integer and fraction are the
+/// ones with the most characters: only those (per leading sign, which may
+/// come from another font) and each distinct unit are laid out, and a
+/// column of 10 000 vias costs a handful of layouts.
 pub fn slots<'a>(ui: &Ui, l: &ListTokens, values: impl IntoIterator<Item = &'a str>) -> Slots {
     let font = mono(l);
     let small = FontId::monospace(l.fs_s);
+    // The longest text per (slot, leading character), by characters.
+    let mut longest: std::collections::HashMap<(u8, Option<char>), &str> = Default::default();
+    let mut keep = |slot: u8, text: &'a str| {
+        if text.is_empty() {
+            return;
+        }
+        let at = longest.entry((slot, text.chars().next())).or_insert(text);
+        if text.chars().count() > at.chars().count() {
+            *at = text;
+        }
+    };
+    let mut units: Vec<&str> = Vec::new();
+    for value in values {
+        match split(value) {
+            Some(n) => {
+                keep(0, n.int);
+                keep(1, n.frac);
+                if !units.contains(&n.unit) && units.len() < 64 {
+                    units.push(n.unit);
+                }
+            }
+            None => keep(0, value.trim()),
+        }
+    }
     let mut s = Slots {
         frac: width(ui, ".000", &font),
         ..Default::default()
     };
-    for value in values {
-        if let Some(n) = split(value) {
-            s.int = s.int.max(width(ui, n.int, &font));
-            s.frac = s.frac.max(width(ui, n.frac, &font));
-            s.unit = s.unit.max(width(ui, n.unit, &small));
+    for ((slot, _), text) in longest {
+        let w = width(ui, text, &font);
+        if slot == 0 {
+            s.int = s.int.max(w);
         } else {
-            s.int = s.int.max(width(ui, value, &font));
+            s.frac = s.frac.max(w);
         }
     }
+    s.unit = widest(ui, &small, units);
     s
 }
 

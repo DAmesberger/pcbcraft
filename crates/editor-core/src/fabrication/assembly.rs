@@ -184,7 +184,10 @@ fn instance_value(
 
 /// The package name of an instance (the package definition's name, else
 /// the footprint's), or `None` without a physical choice.
-fn package_name(project: &Project, instance: &crate::model::ComponentInstance) -> Option<String> {
+pub fn package_name(
+    project: &Project,
+    instance: &crate::model::ComponentInstance,
+) -> Option<String> {
     let resolved = instances::resolve(&project.library, instance).ok()?;
     let physical = resolved.physical?;
     let name = physical.package.meta.name.trim();

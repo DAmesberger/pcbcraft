@@ -98,6 +98,9 @@ pub fn layout<'r>(
         .map(|s| measure::widest(ui, &caption, [s.caption]) + 12.0)
         .collect();
     let mut numbers: Vec<Vec<&str>> = vec![Vec::new(); specs.len()];
+    // Each distinct text of a column is laid out once: 10 000 vias share
+    // a few dozen net names.
+    let mut seen: std::collections::HashSet<(usize, bool, &str)> = Default::default();
     for cells in rows {
         for (i, cell) in cells.iter().enumerate() {
             let (Some(spec), Some(w)) = (specs.get(i), ideal.get_mut(i)) else {
@@ -106,10 +109,17 @@ pub fn layout<'r>(
             if spec.numeric {
                 if let (Cell::Number(t), Some(n)) = (cell, numbers.get_mut(i)) {
                     n.push(t);
+                    continue;
                 }
-                continue;
+                // Text in a number column ("not placed") is measured as text.
+                if cell.text().is_empty() {
+                    continue;
+                }
             }
             let swatch = matches!(cell, Cell::Layer(..) | Cell::Net(..));
+            if !seen.insert((i, swatch, cell.text())) {
+                continue;
+            }
             let text_w = measure::widest(ui, &font, [cell.text()]);
             *w = w.max(text_w + if swatch { l.swatch + l.gap } else { 0.0 });
         }
@@ -275,6 +285,8 @@ pub fn row(
     let painter = ui.painter_at(rect);
     let cy = rect.center().y;
     let font = FontId::proportional(l.fs);
+    // Shown cells cut short: their whole text goes in the row's hover.
+    let mut cut: Vec<String> = Vec::new();
     for (i, cell) in cells.iter().enumerate() {
         let (Some(at), Some(spec)) = (layout.cell(rect, i, l.pad_x), specs.get(i)) else {
             continue;
@@ -295,6 +307,9 @@ pub fn row(
                     _ => l.fg,
                 };
                 let g = line(t, font.clone(), ink, at.width());
+                if g.elided {
+                    cut.push(format!("{}: {t}", spec.caption));
+                }
                 let x = if spec.numeric {
                     at.right() - g.size().x
                 } else {
@@ -319,6 +334,9 @@ pub fn row(
                 }
                 let left = at.left() + l.swatch + l.gap;
                 let g = line(t, FontId::proportional(l.fs_s), l.fg_dim, at.right() - left);
+                if g.elided {
+                    cut.push(format!("{}: {t}", spec.caption));
+                }
                 painter.galley(pos2(left, cy - g.size().y / 2.0), g, l.fg_dim);
             }
         }
@@ -335,7 +353,7 @@ pub fn row(
         info.value = Some(index as f64 + 1.0);
         info
     });
-    let hidden: Vec<String> = layout
+    let mut hidden: Vec<String> = layout
         .fit
         .hidden
         .iter()
@@ -344,6 +362,7 @@ pub fn row(
             (!c.text().is_empty()).then(|| format!("{}: {}", s.caption, c.text()))
         })
         .collect();
+    hidden.splice(0..0, cut);
     let response = if hidden.is_empty() {
         response
     } else {

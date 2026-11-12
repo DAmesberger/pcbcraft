@@ -168,6 +168,42 @@ fn ten_thousand_rows_build_a_screenful() {
     assert!(started.elapsed().as_secs_f32() < 2.0);
 }
 
+/// A selection made elsewhere reveals its row: the next frame scrolls the
+/// virtualised list so that row is built and shown.
+#[test]
+fn reveal_scrolls_a_row_into_view() {
+    let names: Vec<String> = (0..2_000).map(|i| format!("V{i}")).collect();
+    let l: Vec<Line<'_>> = names
+        .iter()
+        .map(|n| Line::item(RowKey::of(n), n.as_str()))
+        .collect();
+    let view = ListView::new(
+        egui::Id::unique("reveal"),
+        "Vias",
+        Layout::Scrolled { height: 300.0 },
+    );
+    let mut h = Harness::new(300.0, 400.0);
+    let show = |h: &mut Harness| {
+        h.frame(vec![], |ui| {
+            let cols = Columns::default();
+            view.show(ui, &l, |ui, rect, line, cx| {
+                let name = [line.name];
+                row::paint(ui, cx.id, rect, &Row::new(line.key, &name), &cols)
+            });
+        })
+    };
+    let painted = show(&mut h);
+    assert!(!painted.iter().any(|p| p.text == "V1500"));
+    view.reveal(h.ctx(), 1500);
+    show(&mut h);
+    let painted = show(&mut h);
+    let row = painted.iter().find(|p| p.text == "V1500");
+    assert!(
+        row.is_some_and(|p| p.rect.top() >= 0.0 && p.rect.bottom() <= 300.0),
+        "V1500 shown: {row:?}"
+    );
+}
+
 /// The filter bar shows a chip per term and an error chip that says why;
 /// the chip's × removes its term.
 #[test]

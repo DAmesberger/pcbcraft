@@ -459,6 +459,8 @@ pub enum AppCommand {
     SelectAll,
     ToggleBrowser,
     ToggleIssues,
+    /// The Parts and Vias band under the PCB canvas.
+    ToggleParts,
     Messages,
     LibrarySources,
     /// The Settings window (its Keyboard section).
@@ -1612,6 +1614,15 @@ fn defaults() -> Vec<Command> {
             Chord::key(K::Escape),
         ),
         // PCB, both views.
+        Command::new(
+            "view.parts",
+            "Show or hide Parts and vias",
+            C::Pcb,
+            Action::App(A::ToggleParts),
+        )
+        .chord(Chord::cmd(K::L).with_shift())
+        .icon("list")
+        .keywords("table list parts vias designators placement band panel"),
         Command::new(
             "pcb.toggle-3d",
             "Switch Layout and 3D",

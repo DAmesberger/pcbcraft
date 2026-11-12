@@ -295,6 +295,9 @@ impl PcbEditor {
             None
         };
         scene.viewport.set_hover(hovered);
+        // Without the tool, the part or via under the pointer lights its
+        // table row (one ray per pointer move).
+        self.hover_3d(scene, pointer.filter(|_| !armed && !moving && !over_label));
         if armed && crate::keys::pressed(ui.ctx(), "pcb.dimension-cancel") {
             self.cancel_dimension();
         }
