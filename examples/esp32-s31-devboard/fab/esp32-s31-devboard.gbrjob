@@ -88,8 +88,8 @@
   },
   "Header": {
     "GenerationSoftware": {
-      "Application": "Pcbcraft",
-      "Vendor": "Pcbcraft",
+      "Application": "Sparksmith",
+      "Vendor": "Sparksmith",
       "Version": "0.1.0"
     }
   },
