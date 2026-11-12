@@ -121,6 +121,23 @@ impl ListView<'_> {
         ctx.memory_mut(|m| m.request_focus(self.focus_id()));
     }
 
+    /// Scroll a virtualised list so line `index` shows whole on the next
+    /// frame, moving as little as possible (a selection made elsewhere,
+    /// such as on the canvas, brings its row into view).
+    pub fn reveal(&self, ctx: &egui::Context, index: usize) {
+        let Layout::Scrolled { height } = self.layout else {
+            return;
+        };
+        let row_h = ListTokens::get(ctx).row_h;
+        let (top, shown) = ctx
+            .data(|d| d.get_temp::<(f32, f32)>(self.id.with("scroll")))
+            .unwrap_or((0.0, height));
+        let to = virt::reveal(index, row_h, top, shown);
+        if (to - top).abs() > 0.5 {
+            ctx.data_mut(|d| d.insert_temp(self.id.with("reveal"), to));
+        }
+    }
+
     /// Show the list over `lines`; `paint` draws one line into its rect
     /// and returns what it did.
     pub fn show(
@@ -204,11 +221,14 @@ impl ListView<'_> {
                     return;
                 };
                 let target = top + index as f32 * row_h;
-                let y = ui.ctx().animate_value_with_time(
-                    self.id.with(("y", line.key)),
-                    target,
-                    l.motion_flip,
-                );
+                // FLIP animates the row's place in the list, not on the
+                // screen: scrolling or moving the list never animates rows.
+                let y = top
+                    + ui.ctx().animate_value_with_time(
+                        self.id.with(("y", line.key)),
+                        index as f32 * row_h,
+                        l.motion_flip,
+                    );
                 let mut y = y;
                 if let Some(d) = drag
                     && d.key == line.key
