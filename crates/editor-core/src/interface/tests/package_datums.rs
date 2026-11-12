@@ -411,7 +411,7 @@ fn datum_edits_are_checked_and_authored_datums_are_kept() -> Fallible {
         return Err("a part file".into());
     };
     let again = PackageEdit::SetModel(PackageModel::PartFile(part.clone()));
-    let reused = edit_package(package, &[again.clone()])?;
+    let reused = edit_package(package, std::slice::from_ref(&again))?;
     assert_eq!(reused.datums, package.datums);
     let narrower = PackageDatum {
         external: false,
