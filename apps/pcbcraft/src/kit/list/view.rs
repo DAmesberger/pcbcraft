@@ -121,6 +121,23 @@ impl ListView<'_> {
         ctx.memory_mut(|m| m.request_focus(self.focus_id()));
     }
 
+    /// Scroll a virtualised list so line `index` shows whole on the next
+    /// frame, moving as little as possible (a selection made elsewhere,
+    /// such as on the canvas, brings its row into view).
+    pub fn reveal(&self, ctx: &egui::Context, index: usize) {
+        let Layout::Scrolled { height } = self.layout else {
+            return;
+        };
+        let row_h = ListTokens::get(ctx).row_h;
+        let (top, shown) = ctx
+            .data(|d| d.get_temp::<(f32, f32)>(self.id.with("scroll")))
+            .unwrap_or((0.0, height));
+        let to = virt::reveal(index, row_h, top, shown);
+        if (to - top).abs() > 0.5 {
+            ctx.data_mut(|d| d.insert_temp(self.id.with("reveal"), to));
+        }
+    }
+
     /// Show the list over `lines`; `paint` draws one line into its rect
     /// and returns what it did.
     pub fn show(
@@ -361,7 +378,7 @@ impl ListView<'_> {
         }
         for key in pass.folds {
             state.cursor = Some(key);
-            let effect = nav::reduce(&mut state, lines, Input::Space, cx);
+            let effect = nav::reduce(&mut state, lines, fold_input(lines, key), cx);
             push(&mut out.effects, effect);
         }
         // A press elsewhere ends the list's hold on the keyboard.
@@ -424,6 +441,17 @@ impl ListView<'_> {
         out.state = state.clone();
         state.store(ui.ctx(), self.id);
         out
+    }
+}
+
+/// The input a chevron click on `key` stands for: Space folds a group
+/// header, but on a tree row it would toggle the selection, so a row folds
+/// with ← and opens with →.
+fn fold_input(lines: &[Line<'_>], key: RowKey) -> Input {
+    match lines.iter().find(|x| x.key == key) {
+        Some(x) if !x.header && x.fold == super::model::Fold::Open => Input::Left,
+        Some(x) if !x.header => Input::Right,
+        _ => Input::Space,
     }
 }
 
@@ -553,4 +581,38 @@ pub fn no_match(ui: &mut Ui, query: &str) -> bool {
     });
     ui.add_space(6.0);
     clear
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kit::list::model::Fold;
+
+    /// A chevron on a tree row folds or opens it; it never toggles the
+    /// row's selection, as Space would.
+    #[test]
+    fn a_rows_chevron_folds_it_and_a_headers_folds_the_group() {
+        let (g, a, b) = (RowKey::of("g"), RowKey::of("a"), RowKey::of("b"));
+        let lines = [
+            Line::header(g, "Group", false),
+            Line {
+                fold: Fold::Open,
+                ..Line::item(a, "A").under(g)
+            },
+            Line {
+                fold: Fold::Folded,
+                ..Line::item(b, "B").under(g)
+            },
+        ];
+        let cx = nav::Context::default();
+        for (key, folded) in [(a, true), (b, false), (g, true)] {
+            let mut state = ListState {
+                cursor: Some(key),
+                ..Default::default()
+            };
+            let effect = nav::reduce(&mut state, &lines, fold_input(&lines, key), cx);
+            assert_eq!(effect, Effect::Fold(key, folded));
+            assert!(state.selection.is_empty());
+        }
+    }
 }
