@@ -13,11 +13,17 @@
 //! nothing asks core nothing.
 use crate::kit::{
     self,
-    issues::{IssueGroupView, IssueListEvent, IssueRowView},
+    issues_list::{
+        IssueGroupView, IssueListEvent, IssueRowView, IssueSource, Reason, RowAction, Waived,
+        WaivedView,
+    },
+    list::RowKey,
     severity::Level,
 };
+use crate::refusal::{self, Origin};
 use crate::shell::Workspace;
 use egui::{Align, Layout, Rect, Ui, UiBuilder, pos2, vec2};
+use pcbcraft_core::fabrication::{FabricationCommand, preflight};
 use pcbcraft_core::ids::TerminalId;
 use pcbcraft_core::issues::{IssueArea, IssueCounts, IssueReport, IssueRow, IssueScope, Severity};
 use pcbcraft_core::library::Definition;
@@ -460,11 +466,12 @@ fn flat(groups: &[Group]) -> Vec<usize> {
     groups.iter().flat_map(|g| g.rows.iter().copied()).collect()
 }
 
-/// The object names of every row of a report, from core, computed once per
-/// report.
+/// The object names and list keys of every row of a report, from core,
+/// computed once per report.
 struct Names {
     report: Arc<IssueReport>,
     rows: Vec<Vec<String>>,
+    keys: Vec<RowKey>,
 }
 
 fn names_of(engine: &Engine, report: &Arc<IssueReport>) -> Names {
@@ -483,7 +490,96 @@ fn names_of(engine: &Engine, report: &Arc<IssueReport>) -> Names {
     Names {
         report: report.clone(),
         rows,
+        keys: report.rows.iter().map(|r| RowKey::of(row_key(r))).collect(),
     }
+}
+
+/// The findings a row merges: its own and the ones merged into it.
+fn findings(row: &IssueRow) -> impl Iterator<Item = &pcbcraft_core::Finding> {
+    std::iter::once(&row.finding).chain(&row.also)
+}
+
+/// Whether a row offers Waive…: no finding of it blocks a stage (a waiver
+/// is for production only) or is one core never lets be waived.
+fn waivable(row: &IssueRow) -> bool {
+    row.blocks().is_none()
+        && findings(row).all(|f| !preflight::NO_WAIVER.contains(&f.code.as_str()))
+}
+
+/// The waiver keys of every finding of a row, so waiving it removes the
+/// whole row from the open list.
+fn waiver_keys(row: &IssueRow) -> Vec<String> {
+    let mut keys: Vec<String> = findings(row)
+        .map(|f| preflight::key(&f.code, &f.objects))
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+/// The fold key of the Waived group in [`Surface::toggled`].
+const WAIVED_FOLD: &str = "\u{1f}waived";
+
+/// The project's waivers as the Waived group shows them: the objects each
+/// names (the key holds its code and objects) and its reason, computed
+/// once per document revision. Titles would need the production check,
+/// so the objects stand in for them.
+struct WaivedRows {
+    at: (u64, usize),
+    /// The waiver keys, for Restore.
+    keys: Vec<String>,
+    views: Vec<WaivedView>,
+}
+
+fn waived_rows(engine: &Engine) -> WaivedRows {
+    let project = engine.project();
+    let waivers = &project.production.waivers;
+    let parsed: Vec<Vec<ObjectRef>> = waivers
+        .iter()
+        .map(|w| {
+            w.key
+                .split_once(' ')
+                .and_then(|(_, objects)| serde_json::from_str(objects).ok())
+                .unwrap_or_default()
+        })
+        .collect();
+    let all: Vec<ObjectRef> = parsed.iter().flatten().copied().collect();
+    let mut names = pcbcraft_core::issues::object_names(project, engine.drafts(), &all).into_iter();
+    let views = waivers
+        .iter()
+        .zip(&parsed)
+        .map(|(w, objects)| {
+            let named: Vec<String> = names.by_ref().take(objects.len()).collect();
+            WaivedView {
+                key: RowKey::of(("waived", &w.key)),
+                name: if named.is_empty() {
+                    "A finding without objects".to_owned()
+                } else {
+                    named.join(" \u{b7} ")
+                },
+                reason: w.reason.clone(),
+            }
+        })
+        .collect();
+    WaivedRows {
+        at: document(engine),
+        keys: waivers.iter().map(|w| w.key.clone()).collect(),
+        views,
+    }
+}
+
+/// A waive reason being typed under a row.
+#[derive(Clone, Debug, PartialEq)]
+struct Waiving {
+    /// The row, by its list key.
+    key: RowKey,
+    text: String,
+    /// The engine's refusal of the last Enter.
+    error: Option<String>,
+    /// Give the field the keyboard on the next frame.
+    start: bool,
+    /// Enter sent the waiver; its refusal, if any, comes back next frame.
+    sent: bool,
 }
 
 /// The Issues surface's state: the card's expansion, scope, filter, folds
@@ -495,14 +591,16 @@ pub struct Surface {
     filter: Option<Severity>,
     /// Groups whose fold differs from their default.
     toggled: BTreeSet<String>,
-    /// Rows whose details are disclosed.
-    open: BTreeSet<String>,
+    /// Rows whose details are disclosed, by their list key.
+    open: BTreeSet<RowKey>,
     shown: Option<Shown>,
     area: Slot,
     all: Slot,
     selection: Slot,
     names: Option<Names>,
     badges: Option<((u64, usize), Arc<Badges>)>,
+    waived: Option<Arc<WaivedRows>>,
+    waiving: Option<Waiving>,
     /// A row's right-click menu, by the row's key.
     menu: crate::context_menu::State<String>,
 }
@@ -648,26 +746,19 @@ impl Surface {
             Rect::from_min_size(pos2(full.left(), split), vec2(full.width(), footer_height));
         let mut request = None;
         let report = answer.report().cloned();
+        // The list is the card's one scroll (virtualised, with sticky
+        // group headers); a hint takes only its own lines.
         let listed = ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("issues-body")
-                .max_height(body.height())
-                .min_scrolled_height(body.height())
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    egui::Frame::NONE
-                        .inner_margin(egui::Margin::symmetric(t.space_4 as i8, 0))
-                        .show(ui, |ui| match &answer {
-                            Answer::Refused(why) => {
-                                kit::hint(ui, "The issues could not be counted", why);
-                            }
-                            Answer::Report(report) => {
-                                request = self.list(ui, engine, report, selection, &idle);
-                            }
-                        });
-                })
-                .content_size
-                .y
+            ui.set_clip_rect(ui.clip_rect().intersect(body));
+            match &answer {
+                Answer::Refused(why) => hint(ui, "The issues could not be counted", why),
+                Answer::Report(report) => {
+                    let (asked, height) =
+                        self.list(ui, engine, report, selection, &idle, body.height());
+                    request = asked;
+                    height
+                }
+            }
         });
         kit::card::remember_issues_wants(ui.ctx(), body.top() - top + listed.inner + footer_height);
         let measured = ui
@@ -732,7 +823,22 @@ impl Surface {
         });
     }
 
-    /// The grouped list, or why it is empty.
+    /// The project's waivers as the Waived group shows them, recomputed
+    /// only when the document changes.
+    fn waived(&mut self, engine: &Engine) -> Arc<WaivedRows> {
+        let at = document(engine);
+        match &self.waived {
+            Some(rows) if rows.at == at => rows.clone(),
+            _ => {
+                let rows = Arc::new(waived_rows(engine));
+                self.waived = Some(rows.clone());
+                rows
+            }
+        }
+    }
+
+    /// The grouped list in a scroll `height` high, or why it is empty;
+    /// returns what it asks for and the height it wants.
     fn list(
         &mut self,
         ui: &mut Ui,
@@ -740,9 +846,20 @@ impl Surface {
         report: &Arc<IssueReport>,
         selection: &[ObjectRef],
         idle: &str,
-    ) -> Option<Request> {
+        height: f32,
+    ) -> (Option<Request>, f32) {
         let groups = groups(report, self.filter);
-        if groups.is_empty() {
+        // Waivers are the project's: listed under every scope but the
+        // selection's, and with every kind shown.
+        let waived = self.waived(engine);
+        let waived_rows: &[WaivedView] = if self.scope != Scope::Selection && self.filter.is_none()
+        {
+            &waived.views
+        } else {
+            &[]
+        };
+        if groups.is_empty() && waived_rows.is_empty() {
+            self.waiving = None;
             let empty = match (self.scope, self.filter, report.rows.is_empty()) {
                 (Scope::Selection, _, _) if selection.is_empty() => idle.to_owned(),
                 (_, Some(_), false) => {
@@ -750,12 +867,12 @@ impl Surface {
                 }
                 _ => "No issues".to_owned(),
             };
-            kit::hint(ui, &empty, &report.coverage);
-            return None;
+            return (None, hint(ui, &empty, &report.coverage));
         }
         let views: Vec<IssueGroupView> = groups
             .iter()
             .map(|g| IssueGroupView {
+                key: RowKey::of(&g.key),
                 level: g.level,
                 title: g.title.clone(),
                 rows: g.rows.len(),
@@ -764,25 +881,72 @@ impl Surface {
             })
             .collect();
         self.names(engine, report);
-        let names = self.names.as_ref().map_or(&[][..], |n| n.rows.as_slice());
-        let open = &self.open;
-        let event = kit::issues_list(ui, egui::Id::unique("issues-list"), &views, |g, r| {
-            let index = groups[g].rows[r];
-            let row = &report.rows[index];
-            IssueRowView {
-                level: row.severity.into(),
-                title: row.title.clone(),
-                count: row.findings(),
-                fix: if groups[g].fix.is_some() {
-                    None
-                } else {
-                    fix(row).map(|f| f.label().to_owned())
-                },
-                open: open.contains(&row_key(row)),
-                detail: row.detail.clone(),
-                objects: names.get(index).cloned().unwrap_or_default(),
+        let ctx = ui.ctx().clone();
+        // The waive sent last frame: refused, the field stays with why;
+        // applied, its row has left the list.
+        if let Some(w) = self.waiving.as_mut().filter(|w| w.sent) {
+            w.sent = false;
+            match refusal::claim(&ctx, Origin::Field(kit::issues_list::reason_id())) {
+                Some(why) => {
+                    w.error = Some(why);
+                    w.start = true;
+                }
+                None => self.waiving = None,
             }
-        });
+        }
+        let empty = Names {
+            report: report.clone(),
+            rows: Vec::new(),
+            keys: Vec::new(),
+        };
+        let names = self.names.as_ref().unwrap_or(&empty);
+        let at = |key: RowKey| {
+            groups.iter().enumerate().find_map(|(g, group)| {
+                let r = group
+                    .rows
+                    .iter()
+                    .position(|&i| names.keys.get(i) == Some(&key))?;
+                Some((g, r))
+            })
+        };
+        let waiving_at = self.waiving.as_ref().and_then(|w| at(w.key));
+        let listed = Listed {
+            report,
+            groups: &groups,
+            views,
+            names,
+            open: &self.open,
+        };
+        let reason = match (self.waiving.as_mut(), waiving_at) {
+            (Some(w), Some((group, row))) => Some(Reason {
+                group,
+                row,
+                text: &mut w.text,
+                error: w.error.as_deref(),
+                required: engine.waiver_reason_required(),
+                start: w.start,
+            }),
+            _ => None,
+        };
+        let out = kit::issues_list::issues_list(
+            ui,
+            egui::Id::unique("issues-list"),
+            height,
+            &listed,
+            Waived {
+                rows: waived_rows,
+                open: !self.toggled.contains(WAIVED_FOLD),
+            },
+            reason,
+        );
+        let keys = names.keys.clone();
+        if waiving_at.is_none() {
+            // Its row is gone (fixed, or filtered out): the waive ends.
+            self.waiving = None;
+        }
+        if let Some(w) = self.waiving.as_mut() {
+            w.start = false;
+        }
         // The open row menu, about the row it opened on; a row gone from
         // the list closes it.
         let menu_row = self
@@ -790,51 +954,121 @@ impl Surface {
             .target()
             .and_then(|key| report.rows.iter().find(|r| row_key(r) == *key));
         let rows = menu_row.map(row_menu).unwrap_or_default();
-        if let Some(crate::context_menu::Run::Act(act)) = self.menu.show(ui.ctx(), &rows)
+        if let Some(crate::context_menu::Run::Act(act)) = self.menu.show(&ctx, &rows)
             && let Some(row) = menu_row
         {
-            return match act {
+            let asked = match act {
                 RowAct::Locate => Some(self.show(row)),
                 RowAct::Fix => fix(row).map(Request::Fix),
             };
+            return (asked, out.height);
         }
-        match event? {
+        let mut request = None;
+        for event in out.events {
+            let asked = self.on_event(&ctx, event, report, &groups, &keys, waiving_at, &waived);
+            request = request.or(asked);
+        }
+        (request, out.height)
+    }
+
+    /// Act on one list event.
+    #[allow(clippy::too_many_arguments)]
+    fn on_event(
+        &mut self,
+        ctx: &egui::Context,
+        event: IssueListEvent,
+        report: &IssueReport,
+        groups: &[Group],
+        keys: &[RowKey],
+        waiving_at: Option<(usize, usize)>,
+        waived: &WaivedRows,
+    ) -> Option<Request> {
+        let index = |g: usize, r: usize| groups.get(g).and_then(|group| group.rows.get(r)).copied();
+        match event {
             IssueListEvent::Group(g) => {
-                let key = &groups[g].key;
+                let key = &groups.get(g)?.key;
                 if !self.toggled.remove(key) {
                     self.toggled.insert(key.clone());
                 }
                 None
             }
-            IssueListEvent::GroupFix(g) => groups[g].fix.clone().map(Request::Fix),
+            IssueListEvent::WaivedFold => {
+                if !self.toggled.remove(WAIVED_FOLD) {
+                    self.toggled.insert(WAIVED_FOLD.to_owned());
+                }
+                None
+            }
+            IssueListEvent::GroupFix(g) => groups.get(g)?.fix.clone().map(Request::Fix),
+            IssueListEvent::Restore(i) => {
+                let key = waived.keys.get(i)?.clone();
+                Some(Request::Fix(Fix::Apply {
+                    label: "Restore",
+                    done: "Restored the finding to the list",
+                    operation: Box::new(Operation::Fabrication(FabricationCommand::Unwaive {
+                        key,
+                    })),
+                }))
+            }
+            IssueListEvent::Cancel => {
+                self.waiving = None;
+                None
+            }
+            IssueListEvent::Commit => {
+                let (g, r) = waiving_at?;
+                let row = report.rows.get(index(g, r)?)?;
+                let w = self.waiving.as_mut()?;
+                w.sent = true;
+                // A refusal (a required reason left empty) comes back to
+                // the field, not a toast.
+                refusal::mark(ctx, Origin::Field(kit::issues_list::reason_id()));
+                Some(Request::Fix(Fix::Apply {
+                    label: "Waive",
+                    done: "Waived; it is listed under Waived",
+                    operation: Box::new(Operation::Fabrication(FabricationCommand::Waive {
+                        keys: waiver_keys(row),
+                        reason: w.text.trim().to_owned(),
+                    })),
+                }))
+            }
             IssueListEvent::Row { group, row, action } => {
-                let issue = &report.rows[groups[group].rows[row]];
-                if let Some(at) = action.menu {
-                    self.menu.open(at, row_key(issue));
-                    // It draws from the next frame.
-                    ui.ctx().request_repaint();
-                    return None;
-                }
-                if action.toggle {
-                    let key = row_key(issue);
-                    if !self.open.remove(&key) {
-                        self.open.insert(key);
+                let i = index(group, row)?;
+                let issue = report.rows.get(i)?;
+                match action {
+                    RowAction::Menu(at) => {
+                        self.menu.open(at, row_key(issue));
+                        // It draws from the next frame.
+                        ctx.request_repaint();
+                        None
                     }
-                    return None;
+                    RowAction::Toggle => {
+                        let key = *keys.get(i)?;
+                        if !self.open.remove(&key) {
+                            self.open.insert(key);
+                        }
+                        None
+                    }
+                    RowAction::Fix => fix(issue).map(Request::Fix),
+                    RowAction::Waive => {
+                        self.waiving = Some(Waiving {
+                            key: *keys.get(i)?,
+                            text: String::new(),
+                            error: None,
+                            start: true,
+                            sent: false,
+                        });
+                        None
+                    }
+                    RowAction::Object(object) => {
+                        let refs: Vec<ObjectRef> =
+                            issue.objects().copied().skip(object).take(1).collect();
+                        Some(Request::Locate {
+                            pin_mux: pin_mux_target(&issue.finding.code, &refs),
+                            refs,
+                            area: issue.area,
+                        })
+                    }
+                    RowAction::Locate => Some(self.show(issue)),
                 }
-                if action.fix {
-                    return fix(issue).map(Request::Fix);
-                }
-                if let Some(object) = action.object {
-                    let refs: Vec<ObjectRef> =
-                        issue.objects().copied().skip(object).take(1).collect();
-                    return Some(Request::Locate {
-                        pin_mux: pin_mux_target(&issue.finding.code, &refs),
-                        refs,
-                        area: issue.area,
-                    });
-                }
-                action.locate.then(|| self.show(issue))
             }
         }
     }
@@ -1012,6 +1246,95 @@ impl Surface {
         });
         self.badges = Some((at, badges.clone()));
         badges
+    }
+}
+
+/// A hint in the card's body (empty or refused); returns its height.
+fn hint(ui: &mut Ui, title: &str, detail: &str) -> f32 {
+    let t = Tokens::get();
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(t.space_4 as i8, 0))
+        .show(ui, |ui| kit::hint(ui, title, detail))
+        .response
+        .rect
+        .height()
+}
+
+/// What the Issues list reads: the report's rows in their groups, with the
+/// object names and keys computed once per report.
+struct Listed<'a> {
+    report: &'a IssueReport,
+    groups: &'a [Group],
+    views: Vec<IssueGroupView>,
+    names: &'a Names,
+    open: &'a BTreeSet<RowKey>,
+}
+
+/// The detail of a row the list cannot find (never shown).
+static NO_DETAIL: pcbcraft_core::issues::IssueDetail = pcbcraft_core::issues::IssueDetail {
+    cause: None,
+    fix: None,
+};
+
+impl Listed<'_> {
+    fn index(&self, group: usize, row: usize) -> Option<usize> {
+        self.groups.get(group)?.rows.get(row).copied()
+    }
+
+    fn issue(&self, group: usize, row: usize) -> Option<(usize, &IssueRow)> {
+        let i = self.index(group, row)?;
+        Some((i, self.report.rows.get(i)?))
+    }
+}
+
+impl IssueSource for Listed<'_> {
+    fn groups(&self) -> &[IssueGroupView] {
+        &self.views
+    }
+
+    fn key(&self, group: usize, row: usize) -> RowKey {
+        self.index(group, row)
+            .and_then(|i| self.names.keys.get(i).copied())
+            .unwrap_or_default()
+    }
+
+    fn title(&self, group: usize, row: usize) -> &str {
+        self.issue(group, row).map_or("", |(_, r)| r.title.as_str())
+    }
+
+    fn disclosed(&self, group: usize, row: usize) -> Option<bool> {
+        let (i, issue) = self.issue(group, row)?;
+        let objects = self.names.rows.get(i).is_some_and(|n| !n.is_empty());
+        (issue.detail.cause.is_some() || issue.detail.fix.is_some() || objects)
+            .then(|| self.open.contains(&self.key(group, row)))
+    }
+
+    fn row(&self, group: usize, row: usize) -> IssueRowView<'_> {
+        let Some((i, issue)) = self.issue(group, row) else {
+            return IssueRowView {
+                level: Level::Info,
+                title: "",
+                count: 0,
+                fix: None,
+                waive: false,
+                detail: &NO_DETAIL,
+                objects: &[],
+            };
+        };
+        let group_fix = self.groups.get(group).is_some_and(|g| g.fix.is_some());
+        IssueRowView {
+            level: issue.severity.into(),
+            title: &issue.title,
+            count: issue.findings(),
+            fix: if group_fix {
+                None
+            } else {
+                fix(issue).map(|f| f.label())
+            },
+            waive: waivable(issue),
+            detail: &issue.detail,
+            objects: self.names.rows.get(i).map_or(&[], Vec::as_slice),
+        }
     }
 }
 
