@@ -417,6 +417,12 @@ impl PadShape {
         }
     }
 
+    /// [`Self::set_size`] of `new` mm, through the rounding crossing; an
+    /// error, leaving the shape unchanged, beyond the coordinate bound.
+    pub fn set_size_mm(&mut self, new: Point) -> Result<bool> {
+        Ok(self.set_size(PointNm::from_mm_f64_rounded(new)?))
+    }
+
     /// Rotation normalised per shape symmetry: rect, rounded rect (all
     /// corners) and oblong to [0°, 180°), circle to 0, custom and
     /// partially rounded rects to [0°, 360°). Diffs compare canonical values.
@@ -720,6 +726,14 @@ impl Pad {
             paste: PasteRule::Inherit,
             vias: Vec::new(),
         }
+    }
+
+    /// Move the pad origin to `position` mm, through the rounding
+    /// crossing; an error, leaving the pad unchanged, beyond the
+    /// coordinate bound.
+    pub fn set_position_mm(&mut self, position: Point) -> Result<()> {
+        self.position = PointNm::from_mm_f64_rounded(position)?;
+        Ok(())
     }
 
     /// [`Self::smd_rect`] at `position` mm of `size` mm, through the

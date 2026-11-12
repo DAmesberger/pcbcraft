@@ -11,7 +11,6 @@ use crate::diagnostics::{Error, Result};
 use crate::ids::PadId;
 use crate::library::{self, Definition, DefinitionMeta, FootprintDefinition, Pad};
 use crate::quantity::{LENGTH, Quantity, UnitSet};
-use crate::units::PointNm;
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString, Scope};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -227,7 +226,7 @@ impl PadArray {
             .get(&id)
             .cloned()
             .ok_or_else(|| failure("unknown pad ID"))?;
-        pad.position = PointNm::from_mm_f64_rounded([
+        pad.set_position_mm([
             millimetres(&x).map_err(callback_error)?,
             millimetres(&y).map_err(callback_error)?,
         ])
@@ -239,8 +238,7 @@ impl PadArray {
         if size.iter().any(|v| *v < 0.01) {
             return Err(failure("pad dimensions must be at least 0.01 mm"));
         }
-        let size = PointNm::from_mm_f64_rounded(size).map_err(callback_error)?;
-        if !pad.shape.set_size(size) {
+        if !pad.shape.set_size_mm(size).map_err(callback_error)? {
             return Err(failure("scripts size only rectangular and oblong pads"));
         }
         self.generated.insert(id, pad);

@@ -34,7 +34,6 @@ use crate::layout::{BoardDrawing, PlacedItem};
 use crate::library::{CHECK_CHORD_MM, MaskRule, Outline, PadKind, PadShape, PasteRule, Segment};
 use crate::model::board::{CutoutKind, arc_geometry};
 use crate::model::{CopperLayer, Layer, Project};
-use crate::units::Nm;
 use std::collections::BTreeMap;
 
 /// The pen the profile is drawn with, mm (its centre line is the edge).
@@ -393,7 +392,7 @@ fn paste(board: &Board<'_>, side: Layer, attributes: &[(&str, String)]) -> Resul
         };
         for shape in &shapes {
             let exact = match (&pad.pad.shape, &pad.pad.paste) {
-                (PadShape::Custom { outline }, PasteRule::Reduction(r)) if *r == Nm::ZERO => {
+                (PadShape::Custom { outline }, PasteRule::Reduction(r)) if r.get() == 0 => {
                     Some(outline)
                 }
                 (PadShape::Custom { outline }, PasteRule::Inherit)
