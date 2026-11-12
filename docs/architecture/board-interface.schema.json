@@ -867,7 +867,7 @@
       },
       {
         "additionalProperties": false,
-        "description": "Record a publish the host has written: the revision, its hash, the\ntier and every datum's hash, and the board's interface identity on\nthe first publish. Sent by the host after `interface.publish`\nwrote the files; refused when `source_id` differs from a recorded\none or the revision does not follow the recorded one.",
+        "description": "Record a publish the host has written. It holds the revision, its\nhash, the tier and every datum's hash, and the board's interface\nidentity on the first publish. Sent by the host after `interface.publish`\nwrote the files; refused when `source_id` differs from a recorded\none or the revision does not follow the recorded one.",
         "properties": {
           "command": {
             "const": "interface.record_publish",
