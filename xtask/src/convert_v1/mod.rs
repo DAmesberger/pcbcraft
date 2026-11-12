@@ -95,11 +95,12 @@ pub fn run(args: &[String]) -> Result<()> {
             println!("{shown}: already current");
         } else {
             println!(
-                "{shown}: converted {} values, recomputed {} origin hashes, {} design keys and {} fill keys (original kept as {})",
+                "{shown}: converted {} values, recomputed {} origin hashes, {} design keys and {} fill keys (fill copper moved at most {} nm; original kept as {})",
                 done.values,
                 done.identity.origins,
                 done.identity.design_keys,
                 done.identity.fill_keys,
+                done.identity.fill_moved_nm,
                 backup.display()
             );
         }
