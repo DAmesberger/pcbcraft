@@ -73,6 +73,8 @@ pub enum Operation {
     Dimension(layout::dimensions::DimensionCommand),
     /// Pre-flight waivers for fabrication output (`fabrication.*`).
     Fabrication(fabrication::FabricationCommand),
+    /// The board interface an enclosure references (`interface.*`).
+    Interface(interface::InterfaceCommand),
     Update(Box<updates::ApplyUpdate>),
 }
 
@@ -89,6 +91,7 @@ impl Operation {
             Self::Board(command) => command.class(),
             Self::Dimension(command) => command.class(),
             Self::Fabrication(command) => command.class(),
+            Self::Interface(command) => command.class(),
             Self::Update(_) => Class::Edit,
         }
     }
@@ -105,6 +108,7 @@ impl Operation {
             Self::Board(command) => command.command(),
             Self::Dimension(command) => command.command(),
             Self::Fabrication(command) => command.command(),
+            Self::Interface(command) => command.command(),
             Self::Update(_) => "update",
         }
     }
@@ -127,7 +131,8 @@ impl Operation {
             | Self::Fill(_)
             | Self::Board(_)
             | Self::Dimension(_)
-            | Self::Fabrication(_) => Area::Pcb,
+            | Self::Fabrication(_)
+            | Self::Interface(_) => Area::Pcb,
             Self::Schematic(
                 schematic::SchematicCommand::SetProperties { .. }
                 | schematic::SchematicCommand::RenameProject { .. },
@@ -181,6 +186,7 @@ impl Operation {
             layout::outline::BoardCommand::CLASSES,
             layout::dimensions::DimensionCommand::CLASSES,
             fabrication::FabricationCommand::CLASSES,
+            interface::InterfaceCommand::CLASSES,
             UPDATE,
         ]
         .into_iter()
@@ -201,6 +207,7 @@ impl Operation {
             layout::outline::BoardCommand::TITLES,
             layout::dimensions::DimensionCommand::TITLES,
             fabrication::FabricationCommand::TITLES,
+            interface::InterfaceCommand::TITLES,
             UPDATE,
         ]
         .into_iter()
@@ -460,6 +467,12 @@ pub enum Query {
         #[serde(default)]
         profile: Option<fabrication::ProfileChoice>,
     },
+    /// The board interface: every exported datum with its id, slot, token,
+    /// display name, role, kind, source, geometry (board millimetres),
+    /// status and whether it changed since the last publish; the automatic
+    /// rules; the retired slots; the last published revision.
+    #[serde(rename = "interface.list")]
+    InterfaceList {},
 }
 
 // A new command chooses its permission class here.
@@ -505,6 +518,7 @@ declare_classes!(Query {
     TrackDragPreview "layout.track_drag_preview" Read "Preview a track drag",
     TunePreview "layout.tune_preview" Read "Preview length tuning",
     Preflight "fabrication.preflight" Read "Production check",
+    InterfaceList "interface.list" Read "List the board interface",
 });
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -551,6 +565,7 @@ pub enum QueryResult {
     TunePreview(Box<layout::meander::TunePreview>),
     RoutePreview(Box<layout::router::RoutePlan>),
     Preflight(Box<fabrication::PreflightReport>),
+    InterfaceList(Box<interface::InterfaceList>),
 }
 
 /// The host engines a command may need. The core never interprets a
@@ -1488,6 +1503,12 @@ impl Engine {
                 }
                 Outcome::None
             }
+            Operation::Interface(command) => {
+                if let Some(table) = interface::apply::apply(&candidate.project, command)? {
+                    Arc::make_mut(&mut candidate.project).interface = table.into();
+                }
+                Outcome::None
+            }
             Operation::Update(update) => {
                 candidate.project = Arc::new(updates::candidate(
                     &self.document.project,
@@ -1552,6 +1573,11 @@ impl Engine {
             // only when a reviewed update asks for it.
             if !merge_named {
                 nets::refuse_named_merges(&self.document.project, project)?;
+            }
+            // The interface's automatic datums follow the board: a new
+            // hole takes a new slot, a deleted one retires its slot.
+            if let Some(table) = interface::auto::follow(&self.document.project, project)? {
+                project.interface = table.into();
             }
             validate::edited_document(
                 &self.document.project,
@@ -1740,6 +1766,9 @@ impl Engine {
                     )?,
                 )))
             }
+            Query::InterfaceList {} => Ok(QueryResult::InterfaceList(Box::new(
+                interface::list::list(&self.document.project)?,
+            ))),
             Query::FillStatus {} => Ok(QueryResult::FillStatus(layout::fill::status(
                 &self.document.project,
             ))),
@@ -1969,10 +1998,13 @@ impl Engine {
     pub fn undo_at(&mut self, expected_revision: u64) -> Result<()> {
         self.check_revision(expected_revision)?;
         let revision = self.next_revision()?;
-        let (previous, step) = self
+        let (mut previous, step) = self
             .undo
-            .pop_back()
+            .back()
+            .cloned()
             .ok_or_else(|| Error::History("nothing to undo".into()))?;
+        Self::carry_interface(&self.document, &mut previous)?;
+        self.undo.pop_back();
         self.redo
             .push((std::mem::replace(&mut self.document, previous), step));
         self.set_revision(revision);
@@ -1985,14 +2017,29 @@ impl Engine {
     pub fn redo_at(&mut self, expected_revision: u64) -> Result<()> {
         self.check_revision(expected_revision)?;
         let revision = self.next_revision()?;
-        let (next, step) = self
+        let (mut next, step) = self
             .redo
-            .pop()
+            .last()
+            .cloned()
             .ok_or_else(|| Error::History("nothing to redo".into()))?;
+        Self::carry_interface(&self.document, &mut next)?;
+        self.redo.pop();
         self.undo
             .push_back((std::mem::replace(&mut self.document, next), step));
         self.set_revision(revision);
         self.last_step = None;
+        Ok(())
+    }
+
+    /// An undo or redo moves from `current` to `restored`: the interface's
+    /// slot and datum counters keep their highest values, so a slot or id
+    /// handed out once is never handed out again
+    /// (`interface::auto::carry`).
+    fn carry_interface(current: &Document, restored: &mut Document) -> Result<()> {
+        if let Some(table) = interface::auto::carry(&current.project.interface, &restored.project)?
+        {
+            Arc::make_mut(&mut restored.project).interface = table.into();
+        }
         Ok(())
     }
 

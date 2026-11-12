@@ -1,87 +1,13 @@
-//! Acceptance tests of slices B1 to B3, as placeholders that fail. Each
-//! slice removes the `ignore` from its tests and writes the body; the name
-//! and the doc comment are the requirement, from
+//! Acceptance tests of slices B2 and B3, as placeholders that fail (B1's
+//! are written, in `b1.rs`). Each slice removes the `ignore` from its tests
+//! and writes the body; the name and the doc comment are the requirement,
+//! from
 //! docs/architecture/board-interface.md ("Slices and their tests") and the
 //! design note's acceptance criteria. Never weaken one to make it pass.
 use super::Fallible;
 
 fn not_built(slice: &str) -> Fallible {
     Err(format!("{slice}: not built yet").into())
-}
-
-// B1: the datum model, automatic rules, slot table, commands, persistence.
-
-/// A new board exports its frame, top, bottom, thickness, outline, every
-/// cutout and mounting hole, and the tallest part per side, each in its own
-/// slot, through `interface.list`.
-#[test]
-#[ignore = "B1: automatic rules"]
-fn b1_automatic_rules_export_the_board() -> Fallible {
-    not_built("B1")
-}
-
-/// Switching a rule off retires the slots of its datums; on again
-/// allocates new slots, never the retired ones.
-#[test]
-#[ignore = "B1: interface.auto"]
-fn b1_switching_a_rule_retires_and_never_reuses() -> Fallible {
-    not_built("B1")
-}
-
-/// `interface.export` of a part face, a pad, a board curve, a part frame
-/// and envelope and a board parameter allocates one slot each and is one
-/// undo step each; exporting the same thing twice is refused unchanged.
-#[test]
-#[ignore = "B1: interface.export"]
-fn b1_export_allocates_one_slot_per_datum() -> Fallible {
-    not_built("B1")
-}
-
-/// Exporting a housing reference, a missing instance or an unknown package
-/// datum is refused and leaves document, revision and history unchanged.
-#[test]
-#[ignore = "B1: refusals"]
-fn b1_refused_exports_change_nothing() -> Fallible {
-    not_built("B1")
-}
-
-/// `interface.unexport` retires the slot; a later export takes a new one.
-#[test]
-#[ignore = "B1: interface.unexport"]
-fn b1_unexport_retires_the_slot() -> Fallible {
-    not_built("B1")
-}
-
-/// `interface.rename` and renaming the part (J1 → J7) change the display
-/// name only: id, slot and token stay.
-#[test]
-#[ignore = "B1: interface.rename"]
-fn b1_renames_change_the_display_name_only() -> Fallible {
-    not_built("B1")
-}
-
-/// Slots, retired slots and ids are the same after undo, redo, save and
-/// reopen; undoing an export does not give its slot to the next export.
-#[test]
-#[ignore = "B1: persistence"]
-fn b1_slots_survive_undo_redo_save_and_reopen() -> Fallible {
-    not_built("B1")
-}
-
-/// Deleting the part an exported datum belongs to reports the datum as
-/// lost (`interface.datum_lost`) and keeps its slot until it is
-/// unexported.
-#[test]
-#[ignore = "B1: lost datums"]
-fn b1_a_deleted_owner_makes_the_datum_lost() -> Fallible {
-    not_built("B1")
-}
-
-/// Selecting, hovering and moving the camera never touch the table.
-#[test]
-#[ignore = "B1: view state is not document state"]
-fn b1_selection_never_changes_the_interface() -> Fallible {
-    not_built("B1")
 }
 
 // B2: package datums.

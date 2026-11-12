@@ -2,14 +2,14 @@
 //! append-only slot table, the `interface.*` commands, the reports, the
 //! findings and the exported sidecar (docs/architecture/board-interface.md).
 //!
-//! Slice B0 is the contract. This module owns the rules every later slice
-//! shares and that are complete now: a key's syntax per role, a role's
-//! kind, tokens built from ids only, slot allocation that never reuses a
-//! slot, the slot table's invariants and the sidecar's versioned, bounded
-//! reading. The commands, reports and findings are typed here; slice B1
-//! wires the commands and `interface.list` into the engine, slice B2 adds
-//! package datums, and slice B3 builds the exported design and the
-//! sidecar. Until then no transport offers them.
+//! Slice B0 is the contract: a key's syntax per role, a role's kind,
+//! tokens built from ids only, slot allocation that never reuses a slot,
+//! the slot table's invariants and the sidecar's versioned, bounded
+//! reading. Slice B1 keeps the table in `Project::interface`: the
+//! automatic rules ([`auto`]), the commands ([`apply`]), `interface.list`
+//! and the datums' derived geometry ([`list`]), all through the engine.
+//! Slice B2 adds package datums ([`package`]), and slice B3 builds the
+//! exported design and the sidecar.
 //!
 //! The stored data (`model::interface`) holds identity only. A datum's
 //! geometry ([`DatumGeometry`]) is derived from the board and its parts
@@ -18,7 +18,7 @@ use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::library::Outline;
 use crate::library::datum::{DatumKind, DatumName};
-use crate::library::footprint_source::ParamName;
+use crate::library::footprint_source::{ParamName, SketchCurveId};
 use crate::model::interface::{
     DatumKey, DatumOwner, DatumRole, InterfaceDatum, InterfaceTable, MAX_DATUMS, MAX_SLOTS, Slot,
 };
@@ -26,8 +26,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+pub mod apply;
+pub mod auto;
 pub mod command;
 pub mod findings;
+pub mod list;
+pub mod package;
 pub mod report;
 pub mod sidecar;
 #[cfg(test)]
@@ -279,6 +283,20 @@ pub fn token_valid(text: &str) -> bool {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
+}
+
+/// The sketch curve that owns a cutout's datum: the loop's oldest curve,
+/// taken as the lowest by kind prefix, then by number (`l7` before `l10`).
+/// Sketch curve ids are never reused and each kind's numbers only grow, so
+/// adding or editing the loop's other curves keeps the owner, and with it
+/// the datum's token and slot.
+pub fn cutout_owner(curves: &[SketchCurveId]) -> Option<&SketchCurveId> {
+    curves.iter().min_by_key(|c| {
+        let text = c.0.as_str();
+        let digits = text.len() - text.trim_end_matches(|ch: char| ch.is_ascii_digit()).len();
+        let (prefix, number) = text.split_at(text.len() - digits);
+        (prefix, number.len(), number, text)
+    })
 }
 
 /// Allocate the next slot. Slots are never reused: the counter only grows,
