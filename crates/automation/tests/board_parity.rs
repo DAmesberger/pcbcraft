@@ -4,9 +4,10 @@
 //! 1. the record of the build as it was before the board plan existed
 //!    (`tests/board_parity/<board>.jsonl`), so extracting the plan changed
 //!    no body; and
-//! 2. the board plan the build was made from: each flat body the plan
-//!    describes is built once, of its kind, source, layer, box and volume,
-//!    and nothing flat is built that the plan does not describe.
+//! 2. the board plan the build was made from ([`plan::parity`]): each
+//!    flat body the plan describes is built once, of its kind, source,
+//!    layer, box and volume, and nothing flat is built that the plan does
+//!    not describe.
 //!
 //! Bodies are compared as sets, by kind, source object, layer, bounding box
 //! and volume. `SPARKSMITH_BLESS_PARITY=1` writes the records anew (only
@@ -15,7 +16,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use pcbcraft_core::Project;
-use pcbcraft_solidcraft::project::{self, NativeModel};
+use pcbcraft_solidcraft::project::{self, NativeModel, plan};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -211,6 +212,26 @@ fn example_boards_match_their_record_and_plan() {
                     report("built bodies not recorded", &extra)
                 ));
             }
+        }
+        let start = Instant::now();
+        let plan = plan::of(project).unwrap();
+        eprintln!(
+            "{name}: plan of {} flat bodies in {:.0} ms",
+            plan.bodies().count(),
+            start.elapsed().as_secs_f64() * 1e3
+        );
+        let differences = plan::parity(&plan, &model).unwrap();
+        if !differences.is_empty() {
+            failures.push(format!(
+                "{name} against its plan, {} differences:\n  {}",
+                differences.len(),
+                differences
+                    .iter()
+                    .take(20)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            ));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));

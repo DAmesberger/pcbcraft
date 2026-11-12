@@ -95,6 +95,15 @@ Field keys come from the project's field names and units, so a query reports `V>
 
 Library folders ([S3](parts-library.md#s3-as-built)) are plain directories of immutable revision files, shareable through git. `library.source.add` lists one in the user's settings (`PCBCRAFT_CONFIG_DIR`, `PCBCRAFT_CACHE_DIR` override the platform directories); `library.search` then includes its entries, `library.place_from_folder` imports and places in one undo step and `library.publish_to_folder` promotes a project revision to a writable folder. Imported revisions keep their origin and attached copies, so projects reopen without the folder. `library.import_from_project` copies one published revision and its closure from another `.pcbcraft` file, as one undo step.
 
+## Board parity
+
+The board's flat bodies (laminate slabs, pad, track, via and fill copper) are described once by the board plan (`pcbcraft_solidcraft::project::plan`): each body's kind, source object, layer, z span, outline loops and look, as pure data read from the document. The exact native build makes each of them from the plan. `cargo xtask board-parity` builds every example board under `examples/` and checks, body by body, as sets compared by kind, source, layer, bounding box and volume:
+
+- the build against the plan (`plan::parity`): each planned body built once, its box within 1 µm and its volume within 1 ppm (measured on the ESP32-S31 example: 0.2 µm and 0.07 ppm at most) (laminate slabs, whose holes may cross, are compared by box only), and no flat body built that the plan lacks;
+- every native body against the record in `crates/automation/tests/board_parity/<board>.jsonl` (box to 1 nm, volume to 1 ppm), made from the build before the plan existed.
+
+A change meant to change the built bodies rewrites the records with `SPARKSMITH_BLESS_PARITY=1 cargo xtask board-parity`; say so in its commit. CI runs the check once, after the workspace tests, which leave it out (it is an ignored test).
+
 ## KiCad import comparison
 
 `cargo xtask kicad-compare --design PATH` (or `PCBCRAFT_KICAD_DESIGN`) imports every `.kicad_pcb` of a design, writes our fabrication files and compares their pad layers (copper pads, mask, paste) and drill hits with KiCad's own plots to 1 µm. KiCad's plots come from the installed `kicad-cli`, run on a copy in the ignored `target/kicad-compare/<run>/`, which is deleted after each plot; no tool runs in the design folder, and the design is never written. The summary prints counts, areas and widths only; names and locations stay in each board's local `report.json`. Pieces on round custom-pad primitives that KiCad draws as chords may be 6 µm wide (its default maximum error and 1 µm); pieces at sharp land corners of mask and paste openings are counted apart (`pass*`), because KiCad offsets those corners round and our writer keeps them sharp. `cargo test -p pcbcraft-kicad --test oracle -- --ignored` with `PCBCRAFT_KICAD_ORACLE=1` runs the same comparison on Rust-built synthetic boards; CI runs the synthetic tests without KiCad.
