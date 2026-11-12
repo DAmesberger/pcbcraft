@@ -29,6 +29,8 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 | `pcbcraft-core` | Pure, wasm-compatible document: revisioned library definitions and drafts, component instances and symbol occurrences, schematic, persistent nets, layout, impact plans, completeness findings, typed `Operation`s and `Query`s, the one `Engine` (shared undo, engine-owned drafts), file format, typed errors and check findings. |
 | `pcbcraft-io` | Bounded reads, atomic writes, crash recovery. |
 | `pcbcraft-solidcraft` | Builds the native Solidcraft model through a typed facade over Solidcraft's command API. |
+| `pcbcraft-kicad` | KiCad board import, slice K1: footprints, pads (every shape, custom pads, mask, paste and drills) and their placement, built into a new project through the one engine, with an import report of what is exact, approximated, reported or refused. It reads the bytes it is given. |
+| `pcbcraft-fabcheck` | Development only (a dev-dependency and `xtask`): Gerber and Excellon readers, exact polygon comparison in integer nanometres (difference area, widest piece), drill-hit pairing, and `kicad-cli` run as a black-box oracle on a temporary copy. |
 | `pcbcraft-firmware` | Pin-configuration exports from the core's pin report (JSON, C header, Zephyr overlay skeleton, Rust constants); pure text, beside `pcbcraft-io`. |
 | `pcbcraft-automation` | Headless `Session` (engine + open/save/export) shared by the JSON-lines transport and the MCP server, and the live channel into the open window ([live MCP](#live-mcp)). |
 | `pcbcraft-assist` | The datasheet assistant: a tool loop over the automation session that drafts a part from its datasheets, on a model you configure (Anthropic Messages or any OpenAI-compatible endpoint, hosted or local), with token, time and request caps ([as built](datasheet-assistant.md)). |
@@ -89,6 +91,10 @@ For Claude Code: `claude mcp add pcbcraft -- /path/to/pcbcraft-cli mcp --live`.
 Field keys come from the project's field names and units, so a query reports `V>=10k: 10 k has no unit of voltage` rather than guessing.
 
 Library folders ([S3](parts-library.md#s3-as-built)) are plain directories of immutable revision files, shareable through git. `library.source.add` lists one in the user's settings (`PCBCRAFT_CONFIG_DIR`, `PCBCRAFT_CACHE_DIR` override the platform directories); `library.search` then includes its entries, `library.place_from_folder` imports and places in one undo step and `library.publish_to_folder` promotes a project revision to a writable folder. Imported revisions keep their origin and attached copies, so projects reopen without the folder. `library.import_from_project` copies one published revision and its closure from another `.pcbcraft` file, as one undo step.
+
+## KiCad import comparison
+
+`cargo xtask kicad-compare --design PATH` (or `PCBCRAFT_KICAD_DESIGN`) imports every `.kicad_pcb` of a design, writes our fabrication files and compares their pad layers (copper pads, mask, paste) and drill hits with KiCad's own plots to 1 µm. KiCad's plots come from the installed `kicad-cli`, run on a copy in the ignored `target/kicad-compare/<run>/`, which is deleted after each plot; no tool runs in the design folder, and the design is never written. The summary prints counts, areas and widths only; names and locations stay in each board's local `report.json`. Pieces on round custom-pad primitives that KiCad draws as chords may be 6 µm wide (its default maximum error and 1 µm); pieces at sharp land corners of mask and paste openings are counted apart (`pass*`), because KiCad offsets those corners round and our writer keeps them sharp. `cargo test -p pcbcraft-kicad --test oracle -- --ignored` with `PCBCRAFT_KICAD_ORACLE=1` runs the same comparison on Rust-built synthetic boards; CI runs the synthetic tests without KiCad.
 
 ## Scripting integration proof
 

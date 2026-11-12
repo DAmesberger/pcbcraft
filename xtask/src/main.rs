@@ -5,6 +5,7 @@ mod convert_v1;
 mod core_modules;
 mod f64_lengths;
 mod generators;
+mod kicad_compare;
 mod layers;
 mod licences;
 mod raw_keys;
@@ -56,6 +57,11 @@ fn run() -> Result<()> {
         && command == "generators"
     {
         return generators::run(rest);
+    }
+    if let Some((command, rest)) = args.split_first()
+        && command == "kicad-compare"
+    {
+        return kicad_compare::run(rest);
     }
     let command = match args.as_slice() {
         [command] => command.as_str(),
@@ -121,7 +127,7 @@ fn run() -> Result<()> {
         _ => Err(
             "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
              | licences --check | clean-room | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
-             | convert-v1 [--profile PROFILE.json] PATH…"
+             | convert-v1 [--profile PROFILE.json] PATH… | kicad-compare [--design PATH]"
                 .into(),
         ),
     }

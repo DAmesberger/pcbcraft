@@ -13,6 +13,9 @@ workspace = true
 # the revision and design hashes a project remembers.
 pcbcraft-core.workspace = true
 pcbcraft-io.workspace = true
+# `kicad-compare`: the KiCad import and the Gerber/Excellon comparison.
+pcbcraft-kicad.workspace = true
+pcbcraft-fabcheck.workspace = true
 serde_json.workspace = true
 # Hashes generator modules for generators/modules.lock (MIT OR Apache-2.0).
 sha2.workspace = true

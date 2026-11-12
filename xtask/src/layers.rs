@@ -4,13 +4,17 @@
 //! - 0 `pcbcraft-units-derive`: the core's compile-time derive of the
 //!   millimetre wire form of its nanometre records.
 //! - 1 `pcbcraft-core`: document, commands, engine. Pure: no files, UI or Solidcraft.
-//! - 2 `pcbcraft-io`: file effects. `pcbcraft-solidcraft`: native 3D via `solidcraft-engine` only.
+//! - 2 `pcbcraft-io`: file effects. `pcbcraft-kicad`: KiCad board import over the
+//!   command engine (it reads the bytes it is given). `pcbcraft-solidcraft`: native 3D via `solidcraft-engine` only.
 //!   `pcbcraft-firmware`: firmware pin-configuration emitters over the core IR (slice C4).
 //! - 3 `pcbcraft-automation`: headless session, JSON-lines and MCP transports, and
 //!   the live channel into the open window over `solidcraft-control`.
 //! - 4 `pcbcraft-assist`: AI-assisted part design over the automation session
 //!   (the only crate with an HTTP client).
 //! - 5 apps: `pcbcraft` (desktop UI) and `pcbcraft-cli`.
+//!
+//! `pcbcraft-fabcheck` (Gerber and Excellon files read back and compared) is
+//! a leaf crates may use as a dev-dependency only; `xtask` uses it directly.
 //!
 //! Generator plugins sit beside the layers:
 //! - `pcbcraft-generator-abi` is a leaf: wire types any crate may use; it
@@ -27,6 +31,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("pcbcraft-units-derive", 0),
     ("pcbcraft-core", 1),
     ("pcbcraft-io", 2),
+    ("pcbcraft-kicad", 2),
     ("pcbcraft-solidcraft", 2),
     ("pcbcraft-firmware", 2),
     ("pcbcraft-generators", 2),
@@ -54,7 +59,10 @@ const UI_CRATES: &[&str] = &[
 const CORE_FORBIDDEN: &[&str] = &["tempfile"];
 
 /// Leaf crates: below every layer, depending on no workspace crate.
-const LEAVES: &[&str] = &["pcbcraft-generator-abi"];
+const LEAVES: &[&str] = &["pcbcraft-generator-abi", DEV_ONLY];
+/// The verification readers (Gerber, Excellon, comparison): a leaf that
+/// workspace crates may use only as a dev-dependency, so nothing ships it.
+const DEV_ONLY: &str = "pcbcraft-fabcheck";
 /// The toolkit generator modules are written with.
 const SDK: &str = "pcbcraft-generator-sdk";
 /// Test modules nothing may depend on.
@@ -142,6 +150,11 @@ pub fn check() -> Result<()> {
             let dev = dependency.get("kind").and_then(serde_json::Value::as_str) == Some("dev");
             if let Some(problem) = generator_rule(name, dep) {
                 violations.push(problem);
+            }
+            if dep == DEV_ONLY && !dev {
+                violations.push(format!(
+                    "{name} depends on {DEV_ONLY}; use it as a dev-dependency only"
+                ));
             }
             if let (Some(own), Some(other)) = (own, layer(dep))
                 && other >= own
