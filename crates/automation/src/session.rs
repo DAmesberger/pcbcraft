@@ -424,6 +424,13 @@ pub enum Request {
     /// Mechanical parts: new values (or flags) for a placed part.
     #[serde(rename = "layout.set_part_file_values")]
     SetPartFileValues(mechanical_parts::SetPartFileValuesParams),
+    /// Board interface: what publishing it would change, per datum.
+    #[serde(rename = "interface.publish_preview")]
+    InterfacePreview(pcbcraft_core::interface::PublishPreviewParams),
+    /// Board interface: write the design an enclosure links and its
+    /// sidecar, then record the publish.
+    #[serde(rename = "interface.publish")]
+    InterfacePublish(pcbcraft_core::interface::PublishParams),
 }
 
 // A new request chooses its permission class here. `project.apply` and
@@ -472,6 +479,8 @@ pcbcraft_core::declare_classes!(Request {
     PartFiles "library.part_files" Read "List part files",
     PlacePartFile "layout.place_part_file" Edit "Place a part file on the board",
     SetPartFileValues "layout.set_part_file_values" Edit "Change a placed part file",
+    InterfacePreview "interface.publish_preview" Read "Preview publishing the board interface",
+    InterfacePublish "interface.publish" Ask "Publish the board interface",
 });
 
 impl Request {
@@ -534,6 +543,8 @@ impl Request {
         "library.check_part_file",
         "library.use_part_file",
         "layout.place_part_file",
+        "interface.publish_preview",
+        "interface.publish",
     ];
 
     /// Every file or folder path this request names.
@@ -561,6 +572,8 @@ impl Request {
             Self::CheckPartFile(params) => params.path.iter().map(String::as_str).collect(),
             Self::UsePartFile(params) => params.path.iter().map(String::as_str).collect(),
             Self::PlacePartFile(params) => params.path.iter().map(String::as_str).collect(),
+            Self::InterfacePreview(params) => params.path.iter().map(String::as_str).collect(),
+            Self::InterfacePublish(params) => vec![params.path.as_str()],
             Self::Apply(_)
             | Self::ApplyAll(_)
             | Self::Inspect(_)
@@ -612,6 +625,7 @@ impl Request {
             Self::SetPartValues(params) => Some(params.expected_revision),
             Self::PlacePartFile(params) => Some(params.expected_revision),
             Self::SetPartFileValues(params) => Some(params.expected_revision),
+            Self::InterfacePublish(params) => Some(params.expected_revision),
             Self::Inspect(_)
             | Self::Schema(_)
             | Self::Query(_)
@@ -636,7 +650,8 @@ impl Request {
             | Self::SchematicPdf(_)
             | Self::MarkingSurfaces(_)
             | Self::CheckPartFile(_)
-            | Self::PartFiles(_) => None,
+            | Self::PartFiles(_)
+            | Self::InterfacePreview(_) => None,
         }
     }
 
@@ -878,6 +893,16 @@ impl Request {
                 "layout.set_part_file_values",
                 "Give a placed mechanical part new parameter values, pads or BOM flags.",
                 "Give a placed mechanical part new literal values (they replace the previous values) and optionally new pads, bom or pick_and_place: re-evaluated and checked, a built-in's lands re-derived (other lands kept), and the instance moved to the variant for them (reused or made), keeping its designator, placement and marking, in one undo step at expected_revision. Returns the snapshot, the outcome and the check report.",
+            ),
+            info::<pcbcraft_core::interface::PublishPreviewParams>(
+                "interface.publish_preview",
+                "Preview publishing the board interface: each exported datum unchanged, moved (by how much), reshaped, added or removed.",
+                "What interface.publish would change for an enclosure linked to this board (docs/architecture/board-interface.md): every exported datum in slot order, unchanged, moved by an offset in mm and a turn, reshaped, added, removed (an enclosure feature using it will fail) or with a changed status, each with the sentence the user reads (\"J1 opening, 2 mm along X\"); the revision publishing would record and its hash. path: the published .solidcraft design whose sidecar says where each datum was (without it a changed datum reads only as changed). tier: interface, mechanical (default, or the last published) or full. Not a document change.",
+            ),
+            info::<pcbcraft_core::interface::PublishParams>(
+                "interface.publish",
+                "Publish the board interface: write the .solidcraft design an enclosure links and its sidecar, atomically.",
+                "Write the board interface at path, a .solidcraft design built by Solidcraft whose slots carry every exported datum as named reference bodies with stable face names (then the laminate, pads and parts for tier mechanical, the default, or every copper body for full), and its sidecar <name>.interface.json beside it; both replace what was there atomically. Then records the publish (revision, hash, per-datum hashes) in one undo step at expected_revision; a stale revision writes nothing. Refused when the files there are another board's interface. The revision grows only when the datums changed.",
             ),
             info::<models::ModelFileParams>(
                 "library.inspect_model_file",
@@ -1248,6 +1273,8 @@ impl Session {
             Request::PartFiles(_) => return self.part_files(),
             Request::PlacePartFile(params) => return self.place_part_file(*params),
             Request::SetPartFileValues(params) => return self.set_part_file_values(params),
+            Request::InterfacePreview(params) => return self.interface_preview(params),
+            Request::InterfacePublish(params) => return self.interface_publish(params),
         }
         Ok(self.document_reply())
     }
@@ -1546,6 +1573,7 @@ pub fn schemas() -> Value {
 
 pub mod discovery;
 mod firmware;
+mod interface;
 mod marking;
 pub mod mechanical_parts;
 pub mod metadata;
@@ -1567,6 +1595,8 @@ mod firmware_tests;
 mod folder_tests;
 #[cfg(test)]
 mod high_speed_tests;
+#[cfg(test)]
+mod interface_publish_tests;
 #[cfg(test)]
 mod interface_tests;
 #[cfg(test)]

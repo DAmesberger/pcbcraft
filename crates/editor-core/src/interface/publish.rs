@@ -436,11 +436,17 @@ pub fn preview(
                 _ => ChangeKind::Changed,
             },
         };
+        // A datum whose owner is gone reads under the name it was
+        // published with ("R4 envelope", not "A deleted part's envelope").
+        let name = match (&change, before(row.slot)) {
+            (ChangeKind::StatusChanged { .. }, Some(b)) if row.geometry.is_none() => b.name.clone(),
+            _ => row.name.clone(),
+        };
         changes.push(DatumChange {
             datum: row.id,
             slot: row.slot,
-            summary: summary(&row.name, &change),
-            name: row.name.clone(),
+            summary: summary(&name, &change),
+            name,
             change,
         });
     }
