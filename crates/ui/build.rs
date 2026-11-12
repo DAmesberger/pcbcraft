@@ -84,7 +84,8 @@ fn icon_data() -> Result<(), String> {
     let mut ids = std::collections::BTreeSet::new();
     let svg_dir = root.join("svg");
     println!("cargo:rerun-if-changed={}", root.display());
-    for fam in ["model", "small", "flat", "workspace"] {
+    // The vendored set keeps no "workspace" masters: none was reachable.
+    for fam in ["model", "small", "flat"] {
         let dir = svg_dir.join(fam);
         let mut files: Vec<_> =
             std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?.filter_map(Result::ok).map(|e| e.path()).collect();
