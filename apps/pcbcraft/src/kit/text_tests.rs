@@ -5,7 +5,7 @@
 //! [`cuts_without_hover`] from their own tests. [`png`] turns a frame into
 //! a picture for a person to look at (`write_text_pictures`).
 use super::*;
-use crate::kit::issues::{IssueGroupView, IssueRowView};
+use crate::kit::issues_list::{IssueListOutput, Waived, issues_list, tests::Rows};
 use crate::kit::rows::tests::Harness;
 use crate::kit::severity::Level;
 use crate::kit::*;
@@ -258,31 +258,24 @@ fn a_dialog_header_and_status_and_a_tool_card_name_show_in_full_on_hover() {
 fn issue_rows_and_groups_show_their_whole_title_on_hover() {
     let mut harness = Harness::new(200.0, 400.0);
     let ctx = harness.ctx().clone();
-    let rows: Vec<IssueRowView> = (1..=3)
-        .map(|n| IssueRowView {
-            level: Level::Error,
-            title: format!("Terminal ‘{n}’ has no pin in symbol ‘Temp sensor LM75B’"),
-            count: 1,
-            fix: None,
-            open: false,
-            detail: Default::default(),
-            objects: Vec::new(),
-        })
+    let titles: Vec<String> = (1..=3)
+        .map(|n| format!("Terminal ‘{n}’ has no pin in symbol ‘Temp sensor LM75B’"))
         .collect();
-    let group = IssueGroupView {
-        level: Level::Error,
-        title: "Terminals without a pin on this symbol".into(),
-        rows: rows.len(),
-        open: true,
-        fix: None,
-    };
+    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let rows = Rows::one("Terminals without a pin on this symbol", &refs);
+    let mut out = IssueListOutput::default();
     let (cut, missing) = cuts_without_hover(&ctx, |events| {
         harness.output(events, |ui| {
-            issues_list(
+            out = issues_list(
                 ui,
                 egui::Id::unique("issues"),
-                std::slice::from_ref(&group),
-                |_, r| rows.get(r).cloned().unwrap_or_else(|| rows[0].clone()),
+                300.0,
+                &rows,
+                Waived {
+                    rows: &[],
+                    open: true,
+                },
+                None,
             );
         })
     });
