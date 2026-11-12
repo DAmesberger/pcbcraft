@@ -349,7 +349,7 @@ pub fn parity(exact: &NativeModel, live: &NativeModel) -> Result<Parity> {
                 .fold(0.0_f64, f64::max);
             out.vertices += a.positions.len();
             out.worst_mm = out.worst_mm.max(worst);
-            if !(worst <= PLACEMENT_MM) {
+            if worst.is_nan() || worst > PLACEMENT_MM {
                 out.differences.push(format!(
                     "{label} body {index}: a vertex lies {worst:.6} mm from the exact build's"
                 ));
