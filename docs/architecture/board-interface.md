@@ -9,7 +9,7 @@ Implementation contract, slice B0, 12 November 2026. This document says how a bo
 - Live updates over SolidCraft's control channel are opt-in per link, and later (B7).
 - Nothing Sparksmith-specific goes into Solidcraft; nothing is posted upstream.
 
-**Status.** Contract only. The types, rules that are complete without the engine, findings, schemas and test placeholders exist (`crates/editor-core/src/interface.rs`, `crates/editor-core/src/model/interface.rs`, `crates/editor-core/src/library/datum.rs`). No transport offers an `interface.*` command yet, and `Project` does not yet hold the table. Slice B1 adds both.
+**Status.** B0 (the contract) and B1 (the datum model) are built. `Project::interface` holds the slot table; the automatic rules, the `interface.*` document commands and `interface.list` run through the one engine, so the UI, the CLI and MCP share them (`crates/editor-core/src/interface/{auto,apply,list}.rs`). Package datums (B2), the exported design, the sidecar and the publish requests (B3) are still placeholders: `interface::package::placed` returns no package datums yet, so the `external_datums` rule exports nothing and a package datum export is refused as unknown.
 
 ## Principles
 
@@ -56,11 +56,11 @@ A datum's **key** is its owner, its role and, for some roles, a name (`model::in
 
 **Identity.**
 
-- A datum has a document id, `DatumId`, allocated by `Project::allocate` like every other project object and never reused.
+- A datum has a document id, `DatumId`, allocated from the table's own counter (`InterfaceTable::next_datum`), as nets have their own, so exporting never shifts the ids of other objects (replays and recordings name them). It is never reused, through undo and redo too.
 - A datum has a **slot**, `Slot`: its position in the board's append-only slot table, from 0. A slot is never reused. Removing a datum **retires** its slot; the slot counter only grows (`interface::allocate_slot`, `interface::retire`). A board holds at most 65,536 slots over its whole history (`MAX_SLOTS`) and 4,096 live datums (`MAX_DATUMS`).
 - A datum has a display name for people, derived ("J1 opening") unless the user set one. It is never identity: renaming J1, or the datum, changes the display name only.
 - The **token** written into the exported design and the sidecar is built from ids only (`interface::token`). Tokens are dot-separated segments of `[A-Za-z0-9_]`, at most 320 bytes. A sketch curve id that cannot be written so is refused (`interface.token`), never rewritten.
-- A cutout's owner is the sketch curve that starts its loop. Sketch curve ids are never reused, so the token survives edits to the loop's other curves.
+- A cutout's owner is its loop's oldest curve, taken as the lowest by kind prefix and then by number (`l7` before `l10`; `interface::cutout_owner`). Sketch curve ids are never reused and each kind's numbers only grow, so the token survives edits to the loop's other curves.
 - A feature datum's key has no name; the feature it exports (`InterfaceDatum.feature`, a `BoardRef` that is never a housing reference) tells it apart, and one feature is exported at most once.
 - Package datum names are `[a-z][a-z0-9_]*`, at most 32 bytes (`DatumName`); `frame` and `envelope` are reserved, because every placement already has datums with those tokens. A board parameter's name keeps its `ParamName` syntax.
 
@@ -89,7 +89,9 @@ An opening is never inferred from a part's name or category.
 | `external_datums` | every package datum marked `external`, for each placed instance |
 | `side_heights` | the tallest part per side |
 
-Switching a rule off retires the slots of the datums it made; switching it on again allocates new slots.
+Switching a rule off retires the slots of the datums it made; switching it on again allocates new slots. An automatic datum whose owner goes (a deleted mounting hole) is retired the same way; undo brings it back in its slot. A user datum whose owner goes stays, lost (`interface.datum_lost`), until it is unexported.
+
+**When the table is stored.** A project stores no table until its first `interface.*` command, so a project that never uses the interface saves, reopens and undoes exactly as before. Until then `interface.list` shows the slots that first command will store; nothing outside the document can have seen them, since only a publish writes them out. From then on the engine keeps the table matched to the board after every change (`interface::auto::follow`), and after every undo and redo keeps the slot and datum counters at their highest (`interface::auto::carry`): an undone export's slot is retired, never handed to the next export, while an automatic datum the restored board still needs keeps its slot and id.
 
 **By the user** (`interface.export`): a part's frame or envelope, any other package datum, any dimensionable feature ("Export to enclosure" in the Properties card and context menu, in Layout and in 3D), and board parameters.
 
@@ -99,7 +101,7 @@ Document changes are `interface::InterfaceCommand`s: typed, through the one engi
 
 | Command | Kind | Class | Does |
 | --- | --- | --- | --- |
-| `interface.list` | query | read | The datums with id, slot, token, display name, role, kind, source, geometry, status and whether each changed since the last publish; the rules; the retired slots; the last revision (`InterfaceList`) |
+| `interface.list` | query (`Query::InterfaceList`) | read | The datums with id, slot, token, display name, role, kind, source, geometry, status and whether each changed since the last publish; the rules; the retired slots; the last revision (`InterfaceList`) |
 | `interface.export {target, name?}` | operation | edit | Exports a feature, package datum, part frame or envelope, or board parameter (`ExportTarget`); allocates a slot |
 | `interface.unexport {datum}` | operation | edit | Retires the datum's slot; the publish preview names the enclosure features that used it |
 | `interface.rename {datum, name?}` | operation | edit | Sets the display name, or with no name returns to the derived one |
@@ -111,6 +113,8 @@ Document changes are `interface::InterfaceCommand`s: typed, through the one engi
 | `housing.link`, `housing.preview`, `housing.update {expect_hash}`, `housing.relink`, `housing.unlink` | — | — | The enclosure side, as designed in [board sketch references](../board-sketch-references.md#7-the-housing-round-trip) (slice B4) |
 
 `interface.publish` takes `expected_revision`, the name every revision-bound request uses, for the design note's `expect_revision`. Its tier defaults to `mechanical`.
+
+`interface.list` derives every datum's geometry from the document (`interface::list::derive`): board frame and faces at z = 0 and the stackup's thickness, the outline and cutouts as profiles, holes as axes with their drill, a part's frame on the surface it sits on, its envelope as its courtyard box times its package's envelope height, the tallest part per side over the outline, a board parameter's value when it is a number (an expression needs the host's evaluator, so its geometry is left out), and an exported feature's trace in the board as an axis (a point, circle or arc) or a plane (a line). A datum's content hash (`interface::list::datum_hash`) covers its token, role, kind, geometry and status, not its display name; `changed` compares it with the recorded publish.
 
 The publish preview lists, per datum (`ChangeKind`): unchanged, moved (by an offset in millimetres and a turn in degrees), reshaped, added, retired, or status changed. The dry run (`DryRun`, slice B4) reports enclosure features, by their SolidCraft names, that move, fail, leave a joint unsolved, or reference a face that is not exported. The user's enclosure file is never touched.
 
@@ -218,7 +222,7 @@ Lost and inexact references are never waived, as for part dimensions (`board.ref
 
 | Slice | Content | Placeholder tests |
 | --- | --- | --- |
-| B1 | the table in `Project`, automatic rules, `interface.*` commands and `interface.list` in the engine, persistence | `b1_automatic_rules_export_the_board`, `b1_switching_a_rule_retires_and_never_reuses`, `b1_export_allocates_one_slot_per_datum`, `b1_refused_exports_change_nothing`, `b1_unexport_retires_the_slot`, `b1_renames_change_the_display_name_only`, `b1_slots_survive_undo_redo_save_and_reopen`, `b1_a_deleted_owner_makes_the_datum_lost`, `b1_selection_never_changes_the_interface` |
+| B1 (built; `interface/tests/b1.rs`, and `session/interface_tests.rs` in the automation crate over the ESP32 example) | the table in `Project`, automatic rules, `interface.*` commands and `interface.list` in the engine, persistence | `b1_automatic_rules_export_the_board`, `b1_switching_a_rule_retires_and_never_reuses`, `b1_export_allocates_one_slot_per_datum`, `b1_refused_exports_change_nothing`, `b1_unexport_retires_the_slot`, `b1_renames_change_the_display_name_only`, `b1_slots_survive_undo_redo_save_and_reopen`, `b1_a_deleted_owner_makes_the_datum_lost`, `b1_selection_never_changes_the_interface` |
 | B2 | package datums, the part-file convention, authoring, connector templates that emit openings | `b2_a_part_file_opening_reaches_the_board_frame`, `b2_external_datums_are_exported_per_placement`, `b2_no_opening_is_inferred_from_a_name` |
 | B3 | the exported design with slots and tiers, the sidecar and metadata, `publish_preview` (diff only) and `publish` | `b3_the_preview_lists_the_one_moved_datum`, `b3_the_enclosure_cutout_follows_by_two_millimetres`, `b3_the_sidecar_is_byte_identical_after_reopen`, `b3_unrelated_edits_change_nothing_in_the_enclosure`, `b3_publish_records_a_revision_only_when_the_hash_changes`, `b3_publishing_the_interface_tier_is_under_100_ms` (a target until measured) |
 

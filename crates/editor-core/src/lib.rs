@@ -467,10 +467,10 @@ pub enum Query {
         #[serde(default)]
         profile: Option<fabrication::ProfileChoice>,
     },
-    /// The board interface: every exported datum with its id, slot, token,
-    /// display name, role, kind, source, geometry (board millimetres),
-    /// status and whether it changed since the last publish; the automatic
-    /// rules; the retired slots; the last published revision.
+    /// The board interface's exported datums, rules and retired slots.
+    /// Each datum has its id, slot, token, display name, role, kind,
+    /// source, geometry (board millimetres), status and whether it changed
+    /// since the last publish; the list has the last published revision.
     #[serde(rename = "interface.list")]
     InterfaceList {},
 }
