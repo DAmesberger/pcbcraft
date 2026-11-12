@@ -154,7 +154,7 @@ impl ListTokens {
             xh_line,
             fg: t.form_ink,
             fg_dim: t.form_dim,
-            fg_faint: t.text_dim.gamma_multiply(0.8),
+            fg_faint: t.text_dim,
             line: t.border,
             line_strong: t.border.gamma_multiply(1.6),
             focus: t.form_primary,

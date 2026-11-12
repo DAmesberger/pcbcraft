@@ -98,6 +98,7 @@ impl<'a> ItemRow<'a> {
 }
 
 /// What a row did this frame.
+#[allow(dead_code, reason = "the lists still on item_row read only some of it")]
 pub struct ItemRowResponse {
     /// The row itself (not its value or action) was clicked.
     pub clicked: bool,

@@ -434,10 +434,10 @@ fn edge_pill(ui: &mut Ui, l: &ListTokens, rect: Rect, name: &str, place: virt::P
         rect.bottom() - size.y - 4.0
     };
     let pill = Rect::from_min_size(pos2(rect.right() - size.x - 14.0, y), size);
-    let response = ui.interact(pill, ui.id().with(("edge-pill", name)), Sense::click());
+    let response = ui.interact(pill, ui.scope_id().with(("edge-pill", name)), Sense::click());
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
-        ui.id().with("edge-pill-layer"),
+        ui.scope_id().with("edge-pill-layer"),
     ));
     painter.rect_filled(pill, size.y / 2.0, l.surface);
     painter.rect_stroke(
@@ -463,7 +463,7 @@ fn bubble(ui: &Ui, l: &ListTokens, rect: Rect, typed: &str) {
     );
     let painter = ui.ctx().layer_painter(egui::LayerId::new(
         egui::Order::Foreground,
-        ui.id().with("type-ahead"),
+        ui.scope_id().with("type-ahead"),
     ));
     painter.rect_filled(at, 5.0, l.fg.gamma_multiply(0.88));
     painter.galley(at.center() - g.size() / 2.0, g, l.surface);

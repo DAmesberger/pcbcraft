@@ -112,7 +112,9 @@ fn length() -> VocabularyKind {
         UnitSet {
             dimension: pcbcraft_core::quantity::LENGTH,
             units: vec![
-                unit("m", &[], 1.0, true),
+                unit("mm", &[], 1e-3, false),
+                unit("µm", &["um"], 1e-6, false),
+                unit("m", &[], 1.0, false),
                 unit("mil", &["thou"], 2.54e-5, false),
                 unit("in", &["inch"], 0.0254, false),
             ],
@@ -134,7 +136,7 @@ fn angle() -> VocabularyKind {
 
 impl Fields {
     pub fn new(fields: Vec<Field>) -> Self {
-        let quantity = |kind: &VocabularyKind| ValueType::Quantity {
+        let quantity = |_: &VocabularyKind| ValueType::Quantity {
             kind: QuantityKindRef {
                 id: DefinitionId(0),
                 revision: Revision::FIRST,

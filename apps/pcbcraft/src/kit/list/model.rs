@@ -78,6 +78,11 @@ impl<'a> Line<'a> {
 /// Natural order of designators and names: digit runs compare as numbers,
 /// so R2 sorts before R10; letters compare without case.
 pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    natural(a, b, true).then_with(|| natural(a, b, false))
+}
+
+/// [`natural_cmp`]'s one pass: letters without case when `fold`.
+fn natural(a: &str, b: &str, fold: bool) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
     loop {
@@ -106,10 +111,11 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
                 }
             }
             (Some(x), Some(y)) => {
-                let order = x
-                    .to_lowercase()
-                    .cmp(y.to_lowercase())
-                    .then_with(|| x.cmp(&y));
+                let order = if fold {
+                    x.to_lowercase().cmp(y.to_lowercase())
+                } else {
+                    x.cmp(&y)
+                };
                 if order != Ordering::Equal {
                     return order;
                 }

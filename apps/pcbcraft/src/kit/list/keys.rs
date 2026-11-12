@@ -153,13 +153,15 @@ mod tests {
             key(egui::Key::ArrowDown, egui::Modifiers::NONE),
             egui::Event::Text("r1".into()),
         ];
-        let _ = ctx.run_ui(
+        ctx.run_ui(
             egui::RawInput {
                 events,
                 ..Default::default()
             },
             |ui| got = inputs(ui.ctx(), 1.0),
-        );
+        )
+        .textures_delta
+        .clear();
         assert_eq!(
             got,
             vec![

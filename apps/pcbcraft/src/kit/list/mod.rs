@@ -15,6 +15,9 @@
 //! Feature code builds [`model::Line`]s from its data each frame, paints
 //! each with [`row::paint`] and acts on [`view::ListOutput::effects`]
 //! through typed commands; a list never changes the document itself.
+// Wave 1 migrates the first lists onto the kit; the parts of its API the
+// remaining lists will use (spec §7) are not all called yet.
+#![allow(dead_code, reason = "the list kit's API, used as lists migrate (spec §7)")]
 pub mod columns;
 pub mod edit;
 pub mod filter;
@@ -32,12 +35,15 @@ pub mod view;
 pub mod virt;
 
 pub use keys::LIST_KEYS;
-pub use model::{Fold, Line, RowKey, natural_cmp};
-pub use nav::Effect;
-pub use row::{Action, Columns, Row, RowResponse, Swatch, Value};
-pub use state::{ListState, Sort};
-pub use tokens::{Density, ListTokens, Prefs};
-pub use view::{Layout, LineCtx, ListOutput, ListView};
+#[allow(unused_imports, reason = "the list kit's API; lists use it as they migrate")]
+pub use {
+    model::{Fold, Line, RowKey, natural_cmp},
+    nav::Effect,
+    row::{Action, Columns, Row, RowResponse, Swatch, Value},
+    state::{ListState, Sort},
+    tokens::{Density, ListTokens, Prefs},
+    view::{Layout, LineCtx, ListOutput, ListView},
+};
 
 #[cfg(test)]
 mod tests;

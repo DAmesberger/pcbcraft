@@ -41,7 +41,7 @@ pub fn field(
             .id(id)
             .font(measure::mono(&l))
             .margin(egui::vec2(5.0, 1.0))
-            .horizontal_align(egui::Align::RIGHT)
+            .align(egui::Align2::RIGHT_CENTER)
             .char_limit(512)
             .desired_width(r.width()),
     );

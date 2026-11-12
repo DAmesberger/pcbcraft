@@ -28,7 +28,7 @@ fn show(ui: &mut egui::Ui, lines: &[Line<'_>], layout: Layout) -> ListOutput {
     let view = ListView {
         delete: true,
         reorder: true,
-        ..ListView::new(egui::Id::new("test-list"), "Parts", layout)
+        ..ListView::new(egui::Id::unique("test-list"), "Parts", layout)
     };
     let values = ["12.700 mm", "3 mm", "-1.25 mm", "40 mm", "Held", "0.5 mm"];
     let cols = Columns::measure(ui, &ListTokens::get(ui.ctx()), values.iter().map(|v| Value::Number(v)));
@@ -137,7 +137,7 @@ fn ten_thousand_rows_build_a_screenful() {
     let started = std::time::Instant::now();
     h.frame(vec![], |ui| {
         let view = ListView::new(
-            egui::Id::new("vias"),
+            egui::Id::unique("vias"),
             "Vias",
             Layout::Scrolled { height: 400.0 },
         );
@@ -163,7 +163,7 @@ fn the_filter_bar_shows_chips_and_removes_a_term() {
         query::Field::new("side", query::Kind::Choice(vec!["Top".into(), "Bottom".into()])),
     ]);
     let bar = filter::FilterBar {
-        id: egui::Id::new("bar"),
+        id: egui::Id::unique("bar"),
         list: "test.parts",
         hint: "Filter",
         saving: true,

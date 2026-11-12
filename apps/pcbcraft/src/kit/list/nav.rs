@@ -553,8 +553,8 @@ mod tests {
         );
         assert_eq!(
             reduce(&mut s, &folded, Input::Space, cx()),
-            Effect::Fold(g, true),
-            "Space folds a header"
+            Effect::Fold(g, false),
+            "Space on a folded header unfolds it"
         );
     }
 
