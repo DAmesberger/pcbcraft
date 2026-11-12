@@ -22,14 +22,16 @@ pub enum Edit {
 }
 
 /// The editor of the row value at `rect`, named `label` ("Origin → left
-/// edge"). `start` gives it the keyboard (the frame the edit opens).
+/// edge"). While `start` is set the field asks for the keyboard (with
+/// its text selected) and clears `start` once it has it, so a click in the
+/// frame the edit opens (a double-click) cannot leave it without focus.
 pub fn field(
     ui: &mut Ui,
     id: egui::Id,
     rect: Rect,
     text: &mut String,
     invalid: bool,
-    start: bool,
+    start: &mut bool,
     label: &str,
 ) -> Edit {
     let l = ListTokens::get(ui.ctx());
@@ -63,7 +65,11 @@ pub fn field(
         Stroke::new(2.0, ink.gamma_multiply(0.22)),
         egui::StrokeKind::Outside,
     );
-    if start {
+    if *start {
+        if response.has_focus() {
+            *start = false;
+            return Edit::Open;
+        }
         response.request_focus();
         if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
             let all = egui::text::CCursorRange::two(

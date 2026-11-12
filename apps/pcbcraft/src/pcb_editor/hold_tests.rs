@@ -679,13 +679,14 @@ fn a_refused_board_parameter_keeps_its_value_and_shows_the_whole_reason() -> Fal
         (output, command, mark)
     };
     let width = engine.project().board_size[0];
-    let stored = format!("{} mm", kit::number_text(width));
+    // The list row shows the number and its unit in their own slots.
+    let stored = kit::number_text(width);
     let (output, _, _) = frame(&mut editor, &engine, vec![]);
     let field = visible_texts(&output)
         .into_iter()
         .find(|(t, _)| *t == stored)
         .map(|(_, p)| p)
-        .ok_or_else(|| format!("no width field showing {stored}"))?;
+        .ok_or_else(|| format!("no width row showing {stored}"))?;
     frame(
         &mut editor,
         &engine,
@@ -705,6 +706,19 @@ fn a_refused_board_parameter_keeps_its_value_and_shows_the_whole_reason() -> Fal
             },
         ],
     );
+    // Enter on the selected row opens its value in place.
+    frame(
+        &mut editor,
+        &engine,
+        vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+    );
+    frame(&mut editor, &engine, vec![]);
     frame(
         &mut editor,
         &engine,
@@ -758,7 +772,10 @@ fn a_refused_board_parameter_keeps_its_value_and_shows_the_whole_reason() -> Fal
     let shown: Vec<String> = visible_texts(&output).into_iter().map(|(t, _)| t).collect();
     assert!(shown.contains(&stored), "back to {stored}: {shown:?}");
     assert!(!shown.iter().any(|t| t == "8 mm"), "{shown:?}");
-    assert!(shown.contains(&reason), "the whole reason: {shown:?}");
+    assert!(
+        shown.iter().any(|t| t.ends_with(&reason)),
+        "the whole reason: {shown:?}"
+    );
     assert!(
         !red_rings(&output),
         "the field holds a valid value and is not marked"
@@ -779,7 +796,7 @@ fn a_refused_board_parameter_keeps_its_value_and_shows_the_whole_reason() -> Fal
     frame(&mut editor, &engine, vec![]);
     let (output, _, _) = frame(&mut editor, &engine, vec![]);
     let shown: Vec<String> = visible_texts(&output).into_iter().map(|(t, _)| t).collect();
-    assert!(!shown.contains(&reason), "{shown:?}");
+    assert!(!shown.iter().any(|t| t.ends_with(&reason)), "{shown:?}");
     Ok(())
 }
 
@@ -811,13 +828,14 @@ fn a_valid_value_clears_a_board_parameter_error() -> Fallible {
         repeat: false,
         modifiers,
     };
-    let stored = format!("{} mm", kit::number_text(engine.project().board_size[0]));
+    let shown_width = kit::number_text(engine.project().board_size[0]);
+    let stored = format!("{shown_width} mm");
     let (output, _) = frame(&mut editor, vec![]);
     let field = visible_texts(&output)
         .into_iter()
-        .find(|(t, _)| *t == stored)
+        .find(|(t, _)| *t == shown_width)
         .map(|(_, p)| p)
-        .ok_or_else(|| format!("no width field showing {stored}"))?;
+        .ok_or_else(|| format!("no width row showing {shown_width}"))?;
     let enter = |editor: &mut PcbEditor, text: &str| {
         frame(
             editor,
@@ -837,6 +855,9 @@ fn a_valid_value_clears_a_board_parameter_error() -> Fallible {
                 },
             ],
         );
+        // Enter opens the row's value in place (when it is not already).
+        frame(editor, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+        frame(editor, vec![]);
         frame(
             editor,
             vec![
@@ -907,6 +928,13 @@ fn a_rectangle_boards_parameters_read_and_undo_clears_a_dimension_error() -> Fal
             engine,
             vec![egui::Event::PointerMoved(field), click(true), click(false)],
         );
+        // Enter opens the row's value in place.
+        frame(
+            editor,
+            engine,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        frame(editor, engine, vec![]);
         frame(
             editor,
             engine,
@@ -926,20 +954,21 @@ fn a_rectangle_boards_parameters_read_and_undo_clears_a_dimension_error() -> Fal
     let (output, _) = frame(&mut editor, &engine, vec![]);
     let field = visible_texts(&output)
         .into_iter()
-        .find(|(t, _)| t == "5 mm")
+        .find(|(t, _)| t == "5")
         .map(|(_, p)| p)
-        .ok_or("no dimension field showing 5 mm")?;
+        .ok_or("no dimension row showing 5 mm")?;
     let op = enter(&mut editor, &engine, field, "height / 2").ok_or("height / 2 was refused")?;
     hosted(&mut engine, op)?;
     let (output, _) = frame(&mut editor, &engine, vec![]);
     assert!(!red_rings(&output), "a valid expression is marked");
     assert!(enter(&mut editor, &engine, field, "abc").is_none());
     let (output, _) = frame(&mut editor, &engine, vec![]);
-    assert!(red_rings(&output), "the invalid value is marked");
+    let shown: Vec<String> = visible_texts(&output).into_iter().map(|(t, _)| t).collect();
+    assert!(red_rings(&output), "the invalid value is marked: {shown:?}");
     engine.undo()?;
     let (output, _) = frame(&mut editor, &engine, vec![]);
     let shown: Vec<String> = visible_texts(&output).into_iter().map(|(t, _)| t).collect();
-    assert!(shown.iter().any(|t| t == "5 mm"), "{shown:?}");
+    assert!(shown.iter().any(|t| t == "5"), "{shown:?}");
     assert!(!red_rings(&output), "the undone field stays marked");
     Ok(())
 }

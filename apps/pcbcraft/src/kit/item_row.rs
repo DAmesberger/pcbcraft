@@ -75,6 +75,10 @@ pub struct RowAction<'a> {
 
 impl<'a> RowAction<'a> {
     /// A delete or remove action named `label` ("Delete dimension …").
+    #[allow(
+        dead_code,
+        reason = "Dimensions and Board parameters moved to kit::list; the remaining item_row lists move in wave 2"
+    )]
     pub fn delete(label: &'a str) -> Self {
         Self {
             icon: "delete",
@@ -340,6 +344,10 @@ pub fn item_row<R>(
 /// `driven` its result), or `fx 20 mm` where that does not fit, with the
 /// whole on hover; plain text that does not fit ends in "…". `invalid`
 /// marks text that is not stored.
+#[allow(
+    dead_code,
+    reason = "Dimensions and Board parameters moved to kit::list; the remaining item_row lists move in wave 2"
+)]
 pub fn value_field(
     ui: &mut Ui,
     id: &str,

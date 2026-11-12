@@ -1317,17 +1317,18 @@ impl PcbEditor {
                         .error
                         .as_ref()
                         .is_some_and(|(n, _)| n.as_ref() == Some(&name));
+                    let mut start = start;
                     let edit = list::edit::field(
                         ui,
                         list_id.with(&name.0),
                         *rect,
                         text,
                         failed,
-                        start,
+                        &mut start,
                         &name.0,
                     );
                     if let Some(e) = &mut rows.editing {
-                        e.1 = false;
+                        e.1 = start;
                     }
                     if edit != list::edit::Edit::Open {
                         // The rows take the keyboard back.

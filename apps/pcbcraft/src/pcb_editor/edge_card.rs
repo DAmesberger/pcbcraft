@@ -443,6 +443,7 @@ impl PcbEditor {
             // was, so its error is kept.
             self.edge.error = None;
             self.edge.sent = None;
+            self.edge.editing = None;
         }
         let board = self
             .shape
@@ -568,7 +569,7 @@ impl PcbEditor {
                                     .selection
                                     .iter()
                                     .next()
-                                    .and_then(|k| at(k))
+                                    .and_then(&at)
                                     .and_then(|i| dims.get(i))
                                     .map(|d| d.id),
                             );
@@ -621,8 +622,7 @@ impl PcbEditor {
                         .cloned()
                         .unwrap_or_default();
                     let edit =
-                        list::edit::field(ui, id.with(*dim), *rect, text, invalid, *start, &label);
-                    *start = false;
+                        list::edit::field(ui, id.with(*dim), *rect, text, invalid, start, &label);
                     if edit != list::edit::Edit::Open {
                         // The rows take the keyboard back.
                         view.request_focus(ui.ctx());
