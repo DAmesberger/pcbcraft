@@ -74,6 +74,12 @@ pub struct Sidecar {
     /// Ascending.
     #[serde(default)]
     pub retired_slots: Vec<Slot>,
+    /// Live datums the design carries nothing for, ascending: lost ones,
+    /// and parameters whose value is an expression the core cannot
+    /// evaluate. Their slots keep their place, and an enclosure reference
+    /// to one fails until it resolves again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unresolved_slots: Vec<Slot>,
 }
 
 #[derive(Deserialize)]
@@ -141,13 +147,17 @@ impl Sidecar {
         }
         if !self.datums.windows(2).all(|w| w[0].slot < w[1].slot)
             || !self.retired_slots.windows(2).all(|w| w[0] < w[1])
+            || !self.unresolved_slots.windows(2).all(|w| w[0] < w[1])
         {
             return bad("slots must be ascending and unique");
         }
         let mut tokens = BTreeSet::new();
         let mut ids = BTreeSet::new();
         for datum in &self.datums {
-            if datum.slot.0 >= MAX_SLOTS || self.retired_slots.binary_search(&datum.slot).is_ok() {
+            if datum.slot.0 >= MAX_SLOTS
+                || self.retired_slots.binary_search(&datum.slot).is_ok()
+                || self.unresolved_slots.binary_search(&datum.slot).is_ok()
+            {
                 return bad("a datum's slot is out of range or retired");
             }
             if !token_valid(&datum.token) || !tokens.insert(datum.token.as_str()) {
@@ -176,9 +186,42 @@ impl Sidecar {
                 return bad("a datum names too many faces, or a face name is not printable");
             }
         }
-        if self.retired_slots.last().is_some_and(|s| s.0 >= MAX_SLOTS) {
-            return bad("a retired slot is out of range");
+        if self.retired_slots.last().is_some_and(|s| s.0 >= MAX_SLOTS)
+            || self
+                .unresolved_slots
+                .last()
+                .is_some_and(|s| s.0 >= MAX_SLOTS)
+            || self.unresolved_slots.len() > MAX_DATUMS
+            || self
+                .unresolved_slots
+                .iter()
+                .any(|s| self.retired_slots.binary_search(s).is_ok())
+        {
+            return bad("a retired or unresolved slot is out of range or listed twice");
         }
         Ok(())
+    }
+
+    /// The number of slots the exported design lays out: one past the
+    /// highest live, retired or unresolved slot.
+    pub fn slot_count(&self) -> u32 {
+        let last = self
+            .datums
+            .last()
+            .map(|d| d.slot)
+            .into_iter()
+            .chain(self.retired_slots.last().copied())
+            .chain(self.unresolved_slots.last().copied())
+            .max();
+        last.map_or(0, |s| s.0.saturating_add(1))
+    }
+
+    /// The sidecar as written: pretty JSON with a final newline. Field
+    /// order is the types' and maps are sorted, so the same sidecar is the
+    /// same bytes on every machine.
+    pub fn text(&self) -> Result<String> {
+        let mut text = serde_json::to_string_pretty(self)?;
+        text.push('\n');
+        Ok(text)
     }
 }
