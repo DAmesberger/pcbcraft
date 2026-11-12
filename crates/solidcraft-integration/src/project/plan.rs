@@ -873,7 +873,11 @@ const FLAT: [BodyKind; 5] = [
 /// a via's bodies under no layer (a via shows with every layer), so a
 /// via ring's layer is not compared. Empty when they agree.
 pub fn parity(plan: &BoardPlan, model: &super::NativeModel) -> Result<Vec<String>> {
-    let count = model.world.bodies.len();
+    let count = model
+        .world()
+        .ok_or_else(|| Error::Verification("the model has no native design".into()))?
+        .bodies
+        .len();
     let natives = model
         .geometry
         .get(..count)

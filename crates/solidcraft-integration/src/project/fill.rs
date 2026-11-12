@@ -195,45 +195,74 @@ pub(super) fn build(
 ) -> Result<Vec<FillMark>> {
     let mut marks = Vec::new();
     for planned in plan {
-        let fill = project
-            .fills
-            .iter()
-            .find(|f| f.id == planned.fill)
-            .ok_or_else(|| Error::Verification(format!("fill {} is gone", planned.fill)))?;
-        let component = if b.flat == super::Flat::Native {
-            native(b, project, fill, planned, board, joints)?
-        } else {
-            super::NO_COMPONENT
-        };
-        let pick = next_pick(sources);
-        let label = if fill.name.is_empty() {
-            format!(
-                "Fill · {}",
-                fill.net.map_or("No net", |n| project.net_name(n))
-            )
-        } else {
-            format!("Fill · {}", fill.name)
-        };
-        sources.push(Source {
-            pick_id: pick,
-            instance: None,
-            pad: None,
-            track: None,
-            via: None,
-            fill: Some(fill.id),
-            net: fill.net,
-            layer: Some(fill.layer),
-            label,
-            component,
-            occurrence: None,
-        });
-        marks.push(FillMark {
-            pick,
-            layer: fill.layer,
-            regions: planned.regions.clone(),
-        });
+        let fill = planned_fill(project, planned)?;
+        let component = native(b, project, fill, planned, board, joints)?;
+        marks.push(mark(project, fill, planned, component, sources));
     }
     Ok(marks)
+}
+
+/// [`build`] without native bodies (the live view's model, whose flat
+/// bodies are meshed from the plan): each planned fill's source and what
+/// the display layers draw over it.
+pub(super) fn marks(
+    project: &Project,
+    plan: &[FillPlan],
+    sources: &mut Vec<Source>,
+) -> Result<Vec<FillMark>> {
+    let mut marks = Vec::with_capacity(plan.len());
+    for planned in plan {
+        let fill = planned_fill(project, planned)?;
+        marks.push(mark(project, fill, planned, super::NO_COMPONENT, sources));
+    }
+    Ok(marks)
+}
+
+/// The document fill a fill plan was made of.
+fn planned_fill<'a>(project: &'a Project, planned: &FillPlan) -> Result<&'a Fill> {
+    project
+        .fills
+        .iter()
+        .find(|f| f.id == planned.fill)
+        .ok_or_else(|| Error::Verification(format!("fill {} is gone", planned.fill)))
+}
+
+/// A fill's source (its bodies in `component`), pushed to `sources`, and
+/// what the display layers draw over the fill.
+fn mark(
+    project: &Project,
+    fill: &Fill,
+    planned: &FillPlan,
+    component: u64,
+    sources: &mut Vec<Source>,
+) -> FillMark {
+    let pick = next_pick(sources);
+    let label = if fill.name.is_empty() {
+        format!(
+            "Fill · {}",
+            fill.net.map_or("No net", |n| project.net_name(n))
+        )
+    } else {
+        format!("Fill · {}", fill.name)
+    };
+    sources.push(Source {
+        pick_id: pick,
+        instance: None,
+        pad: None,
+        track: None,
+        via: None,
+        fill: Some(fill.id),
+        net: fill.net,
+        layer: Some(fill.layer),
+        label,
+        component,
+        occurrence: None,
+    });
+    FillMark {
+        pick,
+        layer: fill.layer,
+        regions: planned.regions.clone(),
+    }
 }
 
 /// A planned fill's tiles as native bodies in a component of their own,

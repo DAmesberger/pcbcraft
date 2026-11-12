@@ -238,7 +238,7 @@ fn stackup_parameters_drive_the_saved_board_after_reopening() -> Result<()> {
     );
     // Thicken the bottom prepreg: the inner layers, the top and the vias'
     // barrels follow; the bottom copper stays.
-    let mut native = before.native;
+    let mut native = before.native.ok_or_else(crate::project::no_design)?;
     native.change_parameters(json!({"dielectric_3_thickness": "0.5 mm"}))?;
     before = finish(native, before.sources)?;
     let t = project.stackup.dielectric_mm() + 0.3;

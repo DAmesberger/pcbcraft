@@ -778,7 +778,12 @@ fn every_instance_shares_one_definition_and_keeps_its_own_identity() -> Result<(
         "one occurrence per instance"
     );
     // The native file holds the definition's bodies once.
-    let state = model.native().session().model.state();
+    let state = model
+        .native()
+        .ok_or_else(|| Error::Verification("no native design".into()))?
+        .session()
+        .model
+        .state();
     let defined = state
         .bodies
         .iter()

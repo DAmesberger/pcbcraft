@@ -198,14 +198,9 @@ fn a_meshed_model_picks_every_flat_body_as_its_object() -> Result<()> {
         out
     };
     assert_eq!(objects(&live), objects(&exact));
-    // No native flat body in the live model's design.
-    let world = live.native().world_state()?;
-    assert!(
-        live.geometry[..world.bodies.len()]
-            .iter()
-            .all(|g| !flat(g.kind)),
-        "the meshed model's design holds parts only"
-    );
+    // The live model has no design of the board: its parts are their
+    // package revisions' own designs.
+    assert!(live.native().is_none() && live.world().is_none());
     // The same display layers.
     let display = |model: &crate::project::NativeModel| {
         let mut kinds: Vec<String> = model

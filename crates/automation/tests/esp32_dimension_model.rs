@@ -142,7 +142,10 @@ fn same_model(a: &NativeModel, b: &NativeModel) -> Fallible {
         serde_json::to_value(&a.sources)?,
         serde_json::to_value(&b.sources)?
     );
-    let (p, q) = (&a.native().session().doc, &b.native().session().doc);
+    let (p, q) = (
+        &a.native().ok_or("no native design")?.session().doc,
+        &b.native().ok_or("no native design")?.session().doc,
+    );
     assert_eq!(p.metadata, q.metadata, "saved identity");
     assert_eq!(p.appearances.bodies, q.appearances.bodies, "saved looks");
     Ok(())
@@ -215,11 +218,18 @@ fn same_board(a: &NativeModel, b: &NativeModel) -> Fallible {
     };
     assert_eq!(anonymous(&a.sources)?, anonymous(&b.sources)?, "sources");
     assert_eq!(
-        anonymous(&project::saved_sources(a.native())?)?,
-        anonymous(&project::saved_sources(b.native())?)?,
+        anonymous(&project::saved_sources(
+            a.native().ok_or("no native design")?
+        )?)?,
+        anonymous(&project::saved_sources(
+            b.native().ok_or("no native design")?
+        )?)?,
         "saved sources"
     );
-    let (p, q) = (&a.native().session().doc, &b.native().session().doc);
+    let (p, q) = (
+        &a.native().ok_or("no native design")?.session().doc,
+        &b.native().ok_or("no native design")?.session().doc,
+    );
     assert_eq!(p.appearances.bodies, q.appearances.bodies, "saved looks");
     Ok(())
 }
