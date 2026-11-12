@@ -74,14 +74,22 @@ fn esp32_an_updated_model_holds_what_a_fresh_build_holds() {
     let t = Instant::now();
     let mut model = project::build_with(engine.project(), &sources, None).unwrap();
     let held = |base: f64| live().map_or(f64::NAN, |now| now - base);
-    println!("build {:.1} s: +{:.0} MB", t.elapsed().as_secs_f64(), held(base));
+    println!(
+        "build {:.1} s: +{:.0} MB",
+        t.elapsed().as_secs_f64(),
+        held(base)
+    );
     // The width edit as the app follows it: the model updated with the
     // fills' stale copper, the fills refilled, the model updated again.
     bump(&mut engine, "width", 1.0);
     let t = Instant::now();
     let (next, how) = project::update(model, engine.project(), &sources, None).unwrap();
     model = next;
-    println!("width +1: update {:.1} s {how:?}: +{:.0} MB", t.elapsed().as_secs_f64(), held(base));
+    println!(
+        "width +1: update {:.1} s {how:?}: +{:.0} MB",
+        t.elapsed().as_secs_f64(),
+        held(base)
+    );
     let fresh = pcbcraft_core::layout::fill::compute_stale(engine.project(), &mut cache).unwrap();
     let revision = engine.revision();
     engine.store_fills(revision, fresh).unwrap();
@@ -89,14 +97,20 @@ fn esp32_an_updated_model_holds_what_a_fresh_build_holds() {
     let (next, how) = project::update(model, engine.project(), &sources, None).unwrap();
     model = next;
     let updated = held(base);
-    println!("refilled: update {:.1} s {how:?}: +{updated:.0} MB", t.elapsed().as_secs_f64());
+    println!(
+        "refilled: update {:.1} s {how:?}: +{updated:.0} MB",
+        t.elapsed().as_secs_f64()
+    );
     // A fresh build of the same board, alone.
     drop(model);
     let base = live().unwrap_or(base);
     let t = Instant::now();
     let built = project::build_with(engine.project(), &sources, None).unwrap();
     let fresh = held(base);
-    println!("fresh build {:.1} s: +{fresh:.0} MB", t.elapsed().as_secs_f64());
+    println!(
+        "fresh build {:.1} s: +{fresh:.0} MB",
+        t.elapsed().as_secs_f64()
+    );
     drop(built);
     // Measured 1.40× before the fix, 0.99–1.07× after (allocator noise).
     assert!(

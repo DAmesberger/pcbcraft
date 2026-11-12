@@ -281,7 +281,10 @@ fn geometry_holds_no_evaluated_body_once_its_model_is_gone() -> Result<()> {
     }
     let (model, how) = update(model, &project, &SourceCache::default(), None)?;
     assert!(matches!(how, Rebuilt::InPlace(n) if n > 0), "{how:?}");
-    assert!(world.upgrade().is_none(), "the last model's bodies are kept");
+    assert!(
+        world.upgrade().is_none(),
+        "the last model's bodies are kept"
+    );
     near(substrate(&model.geometry)?.volume(), 60.0 * 40.0 * 1.6);
     drop(model);
     assert!(shown.volume().is_nan(), "the shown geometry kept its body");
