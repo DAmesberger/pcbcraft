@@ -10,7 +10,7 @@ use pcbcraft_core::library::footprint_source::FootprintSource;
 use pcbcraft_core::{Engine, Operation};
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 use pcbcraft_solidcraft::footprint::view::{ViewCurve, ViewPoint};
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

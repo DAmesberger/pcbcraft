@@ -26,9 +26,9 @@ use pcbcraft_core::library::footprint_source::{
 };
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 use pcbcraft_solidcraft::footprint::view::ViewGeometry;
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::icons;
-use solidcraft_ui_egui::ui_kit::type_face;
+use pcbcraft_ui::icons;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::type_face;
 
 /// Pick distance around sketch points and curves, in pixels.
 const PICK_PX: f32 = 6.0;

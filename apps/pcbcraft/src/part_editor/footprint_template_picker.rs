@@ -780,7 +780,7 @@ mod tests {
     #[test]
     fn from_template_opens_the_gallery_on_the_package() -> Result<(), Box<dyn std::error::Error>> {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let mut editor = PartEditor::default();
         editor.open_first(&engine);

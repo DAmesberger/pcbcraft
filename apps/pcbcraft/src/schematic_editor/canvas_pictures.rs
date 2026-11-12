@@ -5,7 +5,7 @@
 use super::*;
 use egui::epaint::{ClippedPrimitive, Primitive};
 use egui::vec2;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 use std::collections::HashMap;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;

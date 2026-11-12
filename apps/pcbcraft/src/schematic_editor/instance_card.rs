@@ -16,7 +16,7 @@ use pcbcraft_core::{
     ComponentRef, Engine, InstanceCommand, Operation, Project, schematic::SchematicCommand,
     updates::Change,
 };
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 /// The occurrence rotations the instance properties offer.
 const ROTATIONS: [(Rotation, &str); 4] = [

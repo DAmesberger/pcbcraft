@@ -38,7 +38,7 @@ use pcbcraft_core::rules::RuleProfile;
 use pcbcraft_core::{Engine, Operation};
 use pcbcraft_io::fabrication::{ExportReport, ExportRequest, Progress};
 use pcbcraft_io::rule_profiles::ProfileLibrary;
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -1134,12 +1134,8 @@ fn reason_form(
         {
             out.0 = true;
         }
-        if solidcraft_ui_egui::ui_kit::button(
-            ui,
-            "Cancel",
-            solidcraft_ui_egui::ui_kit::Button::Enabled(true),
-        )
-        .clicked()
+        if pcbcraft_ui::ui_kit::button(ui, "Cancel", pcbcraft_ui::ui_kit::Button::Enabled(true))
+            .clicked()
         {
             out.1 = true;
         }

@@ -28,7 +28,7 @@ use pcbcraft_core::catalog::{
 };
 use pcbcraft_core::ids::LibraryId;
 use pcbcraft_core::{ComponentRef, DefinitionId, DefinitionKind, Engine, Query, QueryResult};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::sync::Arc;
 
 /// The search text, kept in egui memory.
@@ -440,7 +440,7 @@ impl Catalog {
         {
             action = Some(Action::ManageSources);
         }
-        ui.spacing_mut().item_spacing.y = solidcraft_theme::Tokens::get().space_4;
+        ui.spacing_mut().item_spacing.y = pcbcraft_ui::theme::Tokens::get().space_4;
         if let Some(chosen) = details(ui, engine, found, &feed) {
             action = Some(chosen);
         }
@@ -844,7 +844,7 @@ mod tests {
 
     fn context() -> egui::Context {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         ctx
     }
 

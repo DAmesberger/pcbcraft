@@ -278,7 +278,7 @@ impl Trackpad {
 /// view) covers: its height and its gap above the canvas bottom. Toasts
 /// sit above it, and a flat canvas's fit keeps the page out of it.
 pub fn bar_band() -> f32 {
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     t.space_16 + t.control_height + 2.0 * t.space_4
 }
 

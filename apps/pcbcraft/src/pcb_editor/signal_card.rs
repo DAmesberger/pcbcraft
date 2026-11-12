@@ -19,7 +19,7 @@ use pcbcraft_core::rules::signal::{
     PairEndpoints,
 };
 use pcbcraft_core::{Engine, Id, Operation, Project};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::collections::HashMap;
 
 /// The open card's state.

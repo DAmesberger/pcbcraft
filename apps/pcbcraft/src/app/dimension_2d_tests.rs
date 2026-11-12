@@ -14,7 +14,7 @@ use pcbcraft_core::library::footprint_source::{DimValue, SketchRef};
 use pcbcraft_core::model::dimension::{BoardRef, FeatureGeometry, FeatureRef};
 use pcbcraft_core::{Id, Project};
 use pcbcraft_solidcraft::board::SketchBoardEvaluator;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type Fallible<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

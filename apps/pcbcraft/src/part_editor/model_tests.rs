@@ -14,7 +14,7 @@ use pcbcraft_core::library::package_form::typical_nm as nm;
 use pcbcraft_core::library::{
     Axis, ChipForm, ChipKind, Definition, ModelPlacement, PackageEdit, PackageForm, QuickAction,
 };
-use solidcraft_ui_egui::gizmo;
+use pcbcraft_ui::gizmo;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

@@ -620,7 +620,7 @@ impl PcbEditor {
             .blocker()
             .and_then(|blocker| self.blocker_outline(project, blocker))
         {
-            let t = solidcraft_theme::Tokens::get();
+            let t = pcbcraft_ui::theme::Tokens::get();
             let points = outline.into_iter().map(|p| view.screen(p)).collect();
             painter.add(Shape::closed_line(points, Stroke::new(2.0, t.warning)));
         }
@@ -682,7 +682,7 @@ impl PcbEditor {
             target_ring,
             note,
         } = look;
-        let t = solidcraft_theme::Tokens::get();
+        let t = pcbcraft_ui::theme::Tokens::get();
         let scale = view.view.scale;
         let screen = |p: Point| view.screen(p);
         let ink = BoardInk::get();
@@ -1203,7 +1203,7 @@ mod tests {
             editor.paint_route_preview(ui.painter(), view, project, [10.0, 5.0]);
         });
         output.textures_delta.clear();
-        let t = solidcraft_theme::Tokens::get();
+        let t = pcbcraft_ui::theme::Tokens::get();
         let added: Vec<&egui::epaint::PathShape> = output
             .shapes
             .iter()
@@ -1303,7 +1303,7 @@ mod tests {
         // accent, which reads over a pour of the layer's colour (demo runs 2
         // and 3: a centre line alone left the shove unseen).
         let full = ink.on_board(colors.copper_layer(CopperLayer::Top), 1.0);
-        let t = solidcraft_theme::Tokens::get();
+        let t = pcbcraft_ui::theme::Tokens::get();
         let drawn = fills(&mut editor, CopperLayer::Top);
         assert_eq!(drawn.len(), 1, "one shoved leg");
         let (fill, stroke) = &drawn[0];

@@ -86,10 +86,10 @@ use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, FunctionId, GraphicId, LibraryCommand, ObjectRef,
     Operation, PackageTerminalId, PadId, Query, QueryResult, TerminalId, UnitId,
 };
-use solidcraft_theme::Tokens;
 #[cfg(test)]
-use solidcraft_ui_egui::fonts;
-use solidcraft_ui_egui::ui_kit::type_face;
+use pcbcraft_ui::fonts;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::type_face;
 use std::sync::Arc;
 #[cfg(test)]
 pub use working_set::Template;
@@ -1665,7 +1665,7 @@ impl PartEditor {
         engine: &Engine,
         inspected: Inspected,
     ) -> Option<Operation> {
-        use solidcraft_ui_egui::ui_kit::{self, Button};
+        use pcbcraft_ui::ui_kit::{self, Button};
         let remove = |ui: &mut Ui, label: &str, tip: &str| {
             ui_kit::button(ui, label, Button::Normal)
                 .on_hover_text(tip)

@@ -8,8 +8,8 @@
 
 use super::severity::{Level, severity_glyph};
 use egui::{RichText, vec2};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit;
 use std::collections::VecDeque;
 
 /// Entries kept; older ones are dropped.
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn the_window_draws() {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut m = Messages::default();
         m.push(
             Level::Warning,

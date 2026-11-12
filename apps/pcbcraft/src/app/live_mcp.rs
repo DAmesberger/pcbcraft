@@ -16,7 +16,7 @@ use super::App;
 use crate::kit::{self, severity::Level, toast::ToastAction};
 use pcbcraft_automation::live::{self, Admitted, ControlRequest, Endpoint, Verdict};
 use pcbcraft_automation::{Mode, Policy, Question, Session};
-use solidcraft_ui_egui::{ui_kit, ui_kit::Button};
+use pcbcraft_ui::{ui_kit, ui_kit::Button};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 

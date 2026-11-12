@@ -27,9 +27,9 @@ use pcbcraft_core::{BoardShape, Engine, Operation, Point, Project};
 use pcbcraft_solidcraft::footprint::view::{
     self as sketch_view, LiveSketch, ParamEvaluation, SketchView, SolveReport, ViewGeometry,
 };
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit;
-use solidcraft_ui_egui::ui_kit::type_face;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit;
+use pcbcraft_ui::ui_kit::type_face;
 
 /// Pick and snap distance, in pixels.
 const PICK_PX: f32 = 7.0;

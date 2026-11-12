@@ -22,7 +22,7 @@ use pcbcraft_assist::profile as run_profile;
 use pcbcraft_assist::{Datasheet, Event, Goal, RunConfig};
 use pcbcraft_automation::Session;
 use pcbcraft_core::Engine;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

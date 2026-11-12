@@ -15,8 +15,8 @@ use pcbcraft_core::{CopperLayer, Layer};
 use pcbcraft_solidcraft::material::BodyKind;
 use pcbcraft_solidcraft::scene::Geometry;
 use pcbcraft_solidcraft::stack::{Slot, Stack};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button, Container, Surface};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button, Container, Surface};
 use std::collections::BTreeSet;
 
 /// Width of the layer popover's content.

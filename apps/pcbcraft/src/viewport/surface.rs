@@ -21,7 +21,7 @@ use crate::model_scene::next_key;
 use pcbcraft_solidcraft::geom::{Vec3, prelude::*};
 use pcbcraft_solidcraft::material::BodyKind;
 use pcbcraft_solidcraft::scene::Geometry;
-use solidcraft_ui_egui::gpu::{BlockBuilder, PaletteIndex, SceneBlock, TriClass};
+use solidcraft_viewport_gpu::view::{BlockBuilder, PaletteIndex, SceneBlock, TriClass};
 
 /// The surface of a body under a screen point.
 #[derive(Clone, Copy, Debug, PartialEq)]

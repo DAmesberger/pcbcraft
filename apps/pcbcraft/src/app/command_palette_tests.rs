@@ -57,7 +57,7 @@ fn frame(
 
 fn context() -> egui::Context {
     let ctx = egui::Context::default();
-    solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+    pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
     ctx
 }
 

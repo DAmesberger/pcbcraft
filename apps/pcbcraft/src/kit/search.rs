@@ -6,9 +6,9 @@
 //! compact `filter_field` and `search_message` are local additions in the
 //! same look.
 use egui::{FontId, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::type_face;
-use solidcraft_ui_egui::ui_kit::{Container, Surface};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::type_face;
+use pcbcraft_ui::ui_kit::{Container, Surface};
 
 /// Upstream search row: one control height plus 10 pt.
 pub fn search_row_height() -> f32 {

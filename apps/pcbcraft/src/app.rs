@@ -28,8 +28,8 @@ use crate::shell::Workspace;
 use crate::{part_editor, pcb_editor, schematic_editor, viewport};
 use pcbcraft_core::layout::fill::{FillCommand, RefillTarget, StoredFill};
 use pcbcraft_core::{Engine, Operation, format::EditorFile};
-use solidcraft_theme::{self as theme};
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
+use pcbcraft_ui::theme::{self as theme};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -144,7 +144,7 @@ impl App {
         follow_system_theme(&cc.egui_ctx, true);
         // Solidcraft's icons and glyphs, which its UI kit draws only once
         // a host installs them (once per process).
-        solidcraft_ui_egui::icon_svg::install();
+        pcbcraft_ui::icon_svg::install();
         fonts::setup_bundled_fonts(&cc.egui_ctx);
         fonts::load_system_fonts_in_background(&cc.egui_ctx);
         let render_state = cc.wgpu_render_state.as_ref().ok_or("wgpu is required")?;
@@ -585,7 +585,7 @@ impl App {
     fn system_fonts(&mut self, ctx: &egui::Context) {
         if !self.system_fonts && fonts::system_fonts_ready() {
             self.system_fonts = true;
-            fonts::setup_fonts_without_waiting(ctx, "en", "");
+            fonts::setup_fonts_without_waiting(ctx, "en");
         }
     }
 
@@ -1191,7 +1191,7 @@ impl App {
                 crate::kit::canvas_hint(
                     &ui.painter_at(rect),
                     rect,
-                    solidcraft_theme::Tokens::get().space_16,
+                    pcbcraft_ui::theme::Tokens::get().space_16,
                     crate::navigation::hint_3d(),
                 );
             }
@@ -1495,7 +1495,7 @@ fn updating_chip(
     badge: Option<egui::Rect>,
     failed: Option<&str>,
 ) {
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     let text = failed.unwrap_or("Updating");
     let right = badge.map_or(area.right(), |b| b.left());
     let width = if failed.is_some() {
@@ -1577,8 +1577,8 @@ mod ax_tests;
 // The font tests rely on macOS system fonts, so the module only exists there.
 #[cfg(all(test, target_os = "macos"))]
 mod font_tests {
-    use solidcraft_ui_egui::fonts;
-    use solidcraft_ui_egui::ui_kit::type_face;
+    use pcbcraft_ui::fonts;
+    use pcbcraft_ui::ui_kit::type_face;
 
     /// The bundled faces have no CJK glyphs; the system fallbacks the app
     /// installs once found do (macOS ships Hiragino), in every family a
@@ -1652,7 +1652,7 @@ mod font_tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(fonts::system_fonts_ready(), "the search finished");
-        fonts::setup_fonts_without_waiting(ctx, "en", "");
+        fonts::setup_fonts_without_waiting(ctx, "en");
     }
 }
 

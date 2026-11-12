@@ -12,7 +12,7 @@ use crate::refusal::{self, Origin};
 use egui::{FontId, Pos2, Rect, Stroke, Ui, vec2};
 use pcbcraft_core::layout::dimensions::DimensionCommand;
 use pcbcraft_core::{Engine, Id, Operation, Project};
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// Enter and Esc this frame, for a value field over the view: Enter
 /// commits the value typed, Esc drops it.

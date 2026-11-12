@@ -17,7 +17,7 @@ use pcbcraft_core::{
     Engine, Id, LabelKind, Operation, Point, PortShape, PowerStyle, Project, SheetId, SheetItem,
     WireEnd,
 };
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// A selectable sheet object other than a symbol occurrence or a wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

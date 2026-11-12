@@ -26,7 +26,7 @@ impl Harness {
     /// A session whose recovery folder is `dir`'s, as left by earlier ones.
     fn in_dir(dir: tempfile::TempDir) -> Fallible<Self> {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;
         let files = FileUi::with_directory(
             &ctx,

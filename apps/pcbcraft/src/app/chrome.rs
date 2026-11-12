@@ -9,11 +9,11 @@ use crate::kit;
 use crate::reveal::{self, Target};
 use crate::shell::{self, Workspace};
 use egui::{Rect, pos2, vec2};
-use solidcraft_theme::Tokens;
 #[cfg(test)]
-use solidcraft_ui_egui::fonts;
-use solidcraft_ui_egui::ui_kit::type_face;
-use solidcraft_ui_egui::{
+use pcbcraft_ui::fonts;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::type_face;
+use pcbcraft_ui::{
     toolbar::APP_BAR_HEIGHT,
     ui_kit::{Container, Edge, Surface},
     window_chrome::TRAFFIC_LIGHTS,
@@ -762,7 +762,7 @@ fn bar_icon(ui: &mut egui::Ui, icon: &str, label: &str, enabled: bool) -> egui::
         ui.painter()
             .rect_filled(rect, t.radius_sm, t.app_bar_hover_button);
     }
-    solidcraft_ui_egui::icons::paint_on(
+    pcbcraft_ui::icons::paint_on(
         ui.painter(),
         rect.shrink(t.space_4),
         icon,
@@ -780,8 +780,8 @@ pub(super) fn recent_menu(
     ui: &mut egui::Ui,
     projects: &[crate::recent_projects::RecentItem],
 ) -> Option<std::path::PathBuf> {
-    use solidcraft_ui_egui::ui_kit::Item;
-    use solidcraft_ui_egui::ui_kit::menu::list_row;
+    use pcbcraft_ui::ui_kit::Item;
+    use pcbcraft_ui::ui_kit::menu::list_row;
     ui.set_width(crate::menu_bar::MENU_WIDTH);
     ui.spacing_mut().item_spacing.y = 0.0;
     let mut chosen = None;
@@ -862,7 +862,7 @@ mod tests {
     fn the_application_bar_is_legible() -> Result<(), Box<dyn std::error::Error>> {
         use crate::kit::text::tests::Screen;
         for dark in [false, true] {
-            solidcraft_theme::set_dark(dark);
+            pcbcraft_ui::theme::set_dark(dark);
             let t = Tokens::get();
             assert!(kit::contrast(t.app_bar_text, t.app_bar) >= 4.5);
             let screen = Screen::new(vec2(200.0, 40.0));
@@ -1044,7 +1044,7 @@ mod tests {
     #[test]
     fn dragging_the_browser_edge_resizes_it_within_its_range() {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let range = MIN_BROWSER_WIDTH..=400.0;
         let mut width = BROWSER_WIDTH;
         let mut time = 0.0;

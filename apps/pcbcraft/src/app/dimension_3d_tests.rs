@@ -19,7 +19,7 @@ use pcbcraft_core::library::footprint_source::{
 use pcbcraft_core::model::board::{BoardShape, BoardSketch};
 use pcbcraft_core::model::dimension::{BoardRef, FeatureGeometry, FeatureRef};
 use pcbcraft_solidcraft::board::SketchBoardEvaluator;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 type Fallible<T = ()> = Result<T, Box<dyn std::error::Error>>;

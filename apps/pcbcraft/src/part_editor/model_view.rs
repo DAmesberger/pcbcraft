@@ -12,9 +12,9 @@ use pcbcraft_core::geometry::{Point3, Transform3};
 use pcbcraft_core::library::package_fit;
 use pcbcraft_core::{Engine, Operation};
 use pcbcraft_solidcraft::geom::Vec3;
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::gizmo::{self, Triad};
-use solidcraft_ui_egui::viewport::Proj;
+use pcbcraft_ui::gizmo::{self, Triad};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::viewport::Proj;
 use std::sync::Arc;
 
 /// How near a snap point the pointer takes it (px).

@@ -37,8 +37,8 @@ use pcbcraft_core::rules::{
 };
 use pcbcraft_core::{Engine, Operation, Query, QueryResult};
 use pcbcraft_io::rule_profiles::{self, Listing, ProfileLibrary};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};

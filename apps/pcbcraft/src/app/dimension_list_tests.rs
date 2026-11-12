@@ -90,7 +90,7 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
     // name, value and Delete rows took.
     let face_row = ax.find(Role::Button, FACE)?;
     let origin_row = ax.find(Role::Button, ORIGIN)?;
-    let t = solidcraft_theme::Tokens::get();
+    let t = pcbcraft_ui::theme::Tokens::get();
     for row in [&face_row, &origin_row] {
         assert!(
             row.rect.height() <= t.control_height + t.space_4 + 0.5,

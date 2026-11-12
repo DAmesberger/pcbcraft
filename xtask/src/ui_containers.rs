@@ -103,7 +103,9 @@ pub fn check() -> Result<()> {
         rust_files(&root.join(directory), &mut files)?;
     }
     let mut violations = Vec::new();
-    for file in files {
+    // The vendored kit is where `Container` and `Window` themselves are built.
+    let kit = root.join("crates/ui");
+    for file in files.into_iter().filter(|f| !f.starts_with(&kit)) {
         let source = std::fs::read_to_string(&file)?;
         let syntax = syn::parse_file(&source)
             .map_err(|e| format!("{}: cannot parse: {e}", file.display()))?;

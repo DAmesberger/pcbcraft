@@ -12,7 +12,6 @@ use pcbcraft_core::model::dimension::{
     BoardRef, BoxSide, FeatureRef, PartDimension, PartDimensionSpec, ReferenceStatus,
 };
 use pcbcraft_core::{CopperLayer, Id, Layer, Project};
-use pcbcraft_solidcraft::dims::ConstraintKind;
 use pcbcraft_solidcraft::geom::Vec2;
 
 /// Decimals of a drawn length (Solidcraft's default).
@@ -284,13 +283,7 @@ pub(super) fn label(value: f64, d: Option<&PartDimension>) -> String {
         _ => None,
     });
     let reference = d.is_some_and(|d| d.reference);
-    solidcraft_ui_egui::dim_view::label(
-        &ConstraintKind::Distance { p: 0, q: 1, value },
-        expr,
-        reference,
-        "mm",
-        DECIMALS,
-    )
+    pcbcraft_ui::dim_view::length_label(value, expr, reference, "mm", DECIMALS)
 }
 
 /// The middle of the board outline's bounds (board mm).

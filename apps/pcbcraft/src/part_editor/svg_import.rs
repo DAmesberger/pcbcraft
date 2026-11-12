@@ -9,8 +9,8 @@ use crate::kit::severity::Level;
 use pcbcraft_core::geometry::Point;
 use pcbcraft_core::library::graphics::{DrawingLayer, SILK_STROKE_MM, SYMBOL_STROKE_MM};
 use pcbcraft_solidcraft::svg::{self, Artwork};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc::Receiver};
 

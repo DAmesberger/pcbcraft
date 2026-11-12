@@ -171,7 +171,7 @@ impl Chord {
 
     /// The canonical name, as Solidcraft's keymap stores it: `Ctrl+Shift+S`.
     pub fn name(self) -> String {
-        solidcraft_ui_egui::keymap::key_name(self.key, self.modifiers())
+        pcbcraft_ui::keymap::key_name(self.key, self.modifiers())
     }
 
     /// A chord from its canonical name or its macOS glyphs (`Shift+V`,
@@ -995,7 +995,7 @@ const WORD_MATCH: u32 = 300;
 /// How well `q` (lower case) finds `command`: its title first, then its
 /// keywords, context and id. 0: no match.
 pub fn match_score(q: &str, command: &Command) -> u32 {
-    use solidcraft_ui_egui::shortcut_box::score;
+    use pcbcraft_ui::shortcut_box::score;
     if q.is_empty() {
         return 1;
     }

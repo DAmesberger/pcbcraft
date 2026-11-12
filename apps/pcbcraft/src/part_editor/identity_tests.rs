@@ -5,7 +5,7 @@ use super::folder_preview;
 use super::identity::Subject;
 use super::*;
 use pcbcraft_core::ids::LibraryId;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -373,8 +373,8 @@ fn a_lent_preview_is_restored_only_under_its_own_subject() -> TestResult {
 #[test]
 fn state_chips_are_legible_and_do_not_look_selected() {
     for dark in [false, true] {
-        solidcraft_theme::set_dark(dark);
-        let t = solidcraft_theme::Tokens::get();
+        pcbcraft_ui::theme::set_dark(dark);
+        let t = pcbcraft_ui::theme::Tokens::get();
         for strong in [false, true] {
             let (fill, ink) = super::identity::chip_colours(&t, strong);
             assert_ne!(fill, t.chip, "the selection chip's fill");

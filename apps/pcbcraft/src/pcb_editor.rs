@@ -27,7 +27,7 @@ use pcbcraft_core::{
     library::{PadKind, PlacedText, TextMetric},
     updates::Change,
 };
-use solidcraft_theme::{self as theme, Tokens};
+use pcbcraft_ui::theme::{self as theme, Tokens};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -58,8 +58,8 @@ mod menu;
 use layer_focus::OTHER_SHADE;
 use layer_focus::{FAR_SHADE, LayerFocus, Look};
 #[cfg(test)]
-use solidcraft_ui_egui::fonts;
-use solidcraft_ui_egui::ui_kit::type_face;
+use pcbcraft_ui::fonts;
+use pcbcraft_ui::ui_kit::type_face;
 #[cfg(test)]
 mod layer_focus_tests;
 pub(crate) mod net_classes;
@@ -1739,7 +1739,7 @@ impl PcbEditor {
         let dragged_box = self
             .box_from
             .zip(ui.input(|i| i.pointer.latest_pos()))
-            .map(|(from, to)| solidcraft_ui_egui::selection::BoxSel::from_drag(from, to));
+            .map(|(from, to)| pcbcraft_ui::selection::BoxSel::from_drag(from, to));
         if response.drag_stopped_by(PointerButton::Primary)
             && let Some(bx) = &dragged_box
         {

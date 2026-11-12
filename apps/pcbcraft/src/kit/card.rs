@@ -12,7 +12,7 @@
 use super::issues::{ISSUES_BAR_HEIGHT, issue_line};
 use egui::{Rect, Ui, pos2, vec2};
 use pcbcraft_core::issues::IssueCounts;
-use solidcraft_theme::Tokens;
+use pcbcraft_ui::theme::Tokens;
 
 /// The pinned footer's height, in points.
 pub const FOOTER_HEIGHT: f32 = 48.0;
@@ -399,7 +399,7 @@ mod tests {
     #[test]
     fn the_card_fills_its_height_with_a_pinned_slot_and_footer() {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         let mut regions = Vec::new();
         let mut bottom = 0.0;
         let mut footer_rect = Rect::NOTHING;

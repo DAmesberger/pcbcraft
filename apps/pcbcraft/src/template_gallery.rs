@@ -75,8 +75,8 @@ use pcbcraft_core::{
     ComponentRef, DefinitionId, Engine, LibraryCommand, Operation, PackageTerminalId, Query,
     QueryResult,
 };
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::sync::Arc;
 
 /// The sheet's id (also its refusal origin).
@@ -2044,7 +2044,7 @@ mod tests {
 
     fn context() -> egui::Context {
         let ctx = egui::Context::default();
-        solidcraft_ui_egui::fonts::setup_bundled_fonts(&ctx);
+        pcbcraft_ui::fonts::setup_bundled_fonts(&ctx);
         ctx
     }
 

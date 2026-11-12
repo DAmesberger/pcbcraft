@@ -13,7 +13,7 @@ use pcbcraft_core::model::board::{NamedEdge, ShapeFaultKind, SolvedBoard};
 use pcbcraft_core::{BoardShape, Engine, Operation};
 use pcbcraft_solidcraft::footprint::SketchEvaluator;
 use pcbcraft_solidcraft::footprint::view::LiveSketch;
-use solidcraft_ui_egui::fonts;
+use pcbcraft_ui::fonts;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -1462,7 +1462,7 @@ fn an_undo_clears_a_sketch_dimension_value_error() -> Fallible {
                 _ => false,
             }
         }
-        let red = solidcraft_theme::Tokens::get().error;
+        let red = pcbcraft_ui::theme::Tokens::get().error;
         output.shapes.iter().any(|c| walk(&c.shape, red))
     };
     slot(&mut d.editor, &d.engine, &d.ctx, vec![]);

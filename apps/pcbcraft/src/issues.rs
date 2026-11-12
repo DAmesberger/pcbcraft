@@ -22,8 +22,8 @@ use pcbcraft_core::ids::TerminalId;
 use pcbcraft_core::issues::{IssueArea, IssueCounts, IssueReport, IssueRow, IssueScope, Severity};
 use pcbcraft_core::library::Definition;
 use pcbcraft_core::{DefinitionId, Engine, Id, ObjectRef, Operation, Query, QueryResult};
-use solidcraft_theme::Tokens;
-use solidcraft_ui_egui::ui_kit;
+use pcbcraft_ui::theme::Tokens;
+use pcbcraft_ui::ui_kit;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 

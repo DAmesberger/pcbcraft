@@ -3,7 +3,7 @@
 //! domain colours with light and dark variants. The 3D model's materials are
 //! physical looks stored in the native file (`pcbcraft_solidcraft::material`).
 use egui::Color32;
-use solidcraft_theme::{self as theme, Tokens};
+use pcbcraft_ui::theme::{self as theme, Tokens};
 
 pub struct BoardColors {
     pub copper_top: Color32,

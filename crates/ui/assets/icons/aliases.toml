@@ -1,0 +1,10 @@
+# App icon ids that reuse another master instead of carrying a copy.
+#   alias = "master"                              same artwork, default (Solid) colours
+#   alias = { master = "m", accent = "surface" }  same artwork in another accent (palette.toml)
+# Icons that mean the same operation in another workspace belong here, so they stay identical.
+# Vendored from SolidCraft's assets/icons/ui/design/aliases.toml: only the aliases Pcbcraft uses.
+[alias]
+surface_extrude = { master = "extrude", accent = "surface" }
+error = { master = "status_error", accent = "surface" }
+warning = { master = "status_warning", accent = "mesh" }
+ground = "c_fix"

@@ -1,3 +1,4 @@
+mod brand_crates;
 mod clean_room;
 mod connectivity;
 mod convert_rules;
@@ -70,6 +71,7 @@ fn run() -> Result<()> {
             connectivity::check()?;
             f64_lengths::check()?;
             licences::check()?;
+            brand_crates::check()?;
             clean_room::check()?;
             ui_containers::check()?;
             ui_forms::check()?;
@@ -115,12 +117,13 @@ fn run() -> Result<()> {
         "f64-lengths" => f64_lengths::check(),
         "clean-room" => clean_room::check(),
         "licences --check" => licences::check(),
+        "brand-crates" => brand_crates::check(),
         "ui-containers" => ui_containers::check(),
         "ui-forms" => ui_forms::check(),
         "raw-keys" => raw_keys::check(),
         _ => Err(
             "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
-             | licences --check | clean-room | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
+             | licences --check | brand-crates | clean-room | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
              | convert-v1 [--profile PROFILE.json] PATH…"
                 .into(),
         ),

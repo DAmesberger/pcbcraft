@@ -10,7 +10,7 @@ use egui::Ui;
 use pcbcraft_core::library::package_fit;
 use pcbcraft_core::library::{Axis, ModelPlacement, PackageEdit, QuickAction};
 use pcbcraft_core::{Engine, Operation};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 const LENGTH: std::ops::RangeInclusive<f64> = -10000.0..=10000.0;
 /// A fitted error above this is explained (mm, estimate).

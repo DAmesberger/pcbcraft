@@ -7,7 +7,7 @@ use crate::refusal::{self, Origin};
 use egui::Ui;
 use pcbcraft_core::layout::connectivity::{Meets, TrackEnd};
 use pcbcraft_core::{Id, Operation, Point, Project, Track, layout::LayoutCommand};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 /// Track widths the engine accepts (mm), as `layout.track_set` documents.
 const WIDTH_RANGE: std::ops::RangeInclusive<f64> = 0.05..=5.0;

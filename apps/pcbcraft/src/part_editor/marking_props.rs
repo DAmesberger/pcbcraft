@@ -34,7 +34,7 @@ use pcbcraft_core::library::marking::{
 use pcbcraft_core::library::{ComponentDefinition, Definition, DraftEdit, Library, PackedAsset};
 use pcbcraft_core::units::{Nm, PointNm};
 use pcbcraft_core::{DefinitionId, Engine, FieldRef, LibraryCommand, Operation};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -1123,7 +1123,7 @@ impl MarkingProps {
 mod tests {
     use super::*;
     use egui::{Pos2, Rect};
-    use solidcraft_ui_egui::fonts;
+    use pcbcraft_ui::fonts;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 

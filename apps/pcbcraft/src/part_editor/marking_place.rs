@@ -12,7 +12,7 @@ use pcbcraft_core::library::marking::{
     BoxFace, Finish, MAX_DECALS, MarkingSpec, Placement, SurfaceRef, Wrap,
 };
 use pcbcraft_core::units::{Angle, PointNm};
-use solidcraft_ui_egui::ui_kit::{self, Button};
+use pcbcraft_ui::ui_kit::{self, Button};
 
 const OFFSET_MM: std::ops::RangeInclusive<f64> = -100.0..=100.0;
 const TURN_DEG: std::ops::RangeInclusive<f64> = -360.0..=360.0;

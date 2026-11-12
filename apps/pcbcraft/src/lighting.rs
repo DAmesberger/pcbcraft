@@ -19,7 +19,7 @@ use pcbcraft_solidcraft::{
     geom::{Aabb3, Vec3},
     viewport::Camera,
 };
-use solidcraft_ui_egui::gpu::{ProductLook, StudioPreset};
+use solidcraft_viewport_gpu::view::{ProductLook, StudioPreset};
 
 /// Most lights the viewport shader reads.
 pub const MAX_LIGHTS: usize = 21;
