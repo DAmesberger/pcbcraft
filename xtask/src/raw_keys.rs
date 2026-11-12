@@ -52,6 +52,11 @@ const EXCEPTIONS: &[(&str, usize, &str)] = &[
         "text field: Enter commits and Esc reverts the dimension being typed",
     ),
     (
+        "kit/list/edit.rs",
+        2,
+        "text field: Esc cancels and Tab moves to the next row in the inline list edit (one helper for every list)",
+    ),
+    (
         "pcb_editor/dimensions/edit.rs",
         2,
         "text field: Enter commits and Esc drops the part dimension value being typed, in Layout or 3D (one helper for both fields)",

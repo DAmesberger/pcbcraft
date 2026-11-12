@@ -64,6 +64,19 @@ fn reading(term: &Term, field: DefinitionId) -> Option<f64> {
         })
 }
 
+/// Each term's source range, quotes included, in the order the parser
+/// reads the terms, so a filter bar can remove one chip's term.
+#[test]
+fn term_spans_cover_each_term_and_its_quotes() -> TestResult {
+    let text = "res>=10k  \"top side\" 0603 µF";
+    let spans = term_spans(text)?;
+    let shown: Vec<&str> = spans.iter().filter_map(|r| text.get(r.clone())).collect();
+    assert_eq!(shown, vec!["res>=10k", "\"top side\"", "0603", "µF"]);
+    assert!(term_spans("\"open").is_err());
+    assert!(term_spans("  ")?.is_empty());
+    Ok(())
+}
+
 #[test]
 fn synthetic_project_is_a_valid_document() -> TestResult {
     let engine = engine(24)?;

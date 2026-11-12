@@ -20,6 +20,7 @@ pub mod dialog;
 mod form;
 pub mod issues;
 mod item_row;
+pub mod list;
 pub mod messages;
 pub mod pick;
 pub mod review;

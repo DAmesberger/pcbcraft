@@ -107,6 +107,109 @@ pub struct UserSettings {
     /// filter), as last set; every kind by default.
     #[serde(default, skip_serializing_if = "SelectionFilter::is_default")]
     pub selection_filter: SelectionFilter,
+    /// Row density, reduced motion and saved list filters.
+    #[serde(default, skip_serializing_if = "ListSettings::is_default")]
+    pub lists: ListSettings,
+}
+
+/// Saved list filters kept.
+pub const MAX_SAVED_FILTERS: usize = 64;
+/// Bytes of a saved filter's list name.
+pub const MAX_FILTER_LIST: usize = 64;
+/// Bytes of a saved filter's query: the catalog query's own bound.
+pub const MAX_FILTER_QUERY: usize = pcbcraft_core::catalog::MAX_QUERY;
+
+/// How tall list rows are.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ListDensity {
+    #[default]
+    Compact,
+    /// Six points taller rows.
+    Comfortable,
+}
+
+/// One saved filter of one list: a query the list's filter bar offers
+/// as a named chip.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SavedFilter {
+    /// The list's stable name (`pcb.parts`, `issues`).
+    pub list: String,
+    pub query: String,
+}
+
+/// The lists' settings (Settings › Lists).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ListSettings {
+    #[serde(default)]
+    pub density: ListDensity,
+    /// `None` follows the system's Reduce motion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reduced_motion: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub saved_filters: Vec<SavedFilter>,
+}
+
+impl ListSettings {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Bounds and duplicates.
+    pub fn check(&self) -> Result<()> {
+        if self.saved_filters.len() > MAX_SAVED_FILTERS {
+            return Err(Error::Invalid(format!(
+                "at most {MAX_SAVED_FILTERS} saved filters"
+            )));
+        }
+        let mut seen = BTreeSet::new();
+        for f in &self.saved_filters {
+            let fits = |t: &str, max: usize| {
+                !t.trim().is_empty() && t.len() <= max && !t.chars().any(char::is_control)
+            };
+            if !fits(&f.list, MAX_FILTER_LIST) || !fits(&f.query, MAX_FILTER_QUERY) {
+                return Err(Error::Invalid(format!(
+                    "a saved filter needs a list name of at most {MAX_FILTER_LIST} bytes and a \
+                     query of at most {MAX_FILTER_QUERY}, printable"
+                )));
+            }
+            if !seen.insert((&f.list, &f.query)) {
+                return Err(Error::Invalid(format!(
+                    "the saved filter ‘{}’ of {} is listed twice",
+                    f.query, f.list
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Save `query` for `list`, at the end; refused past the bound. Saving
+    /// one already saved changes nothing.
+    pub fn save_filter(&mut self, list: &str, query: &str) -> Result<()> {
+        let query = query.trim();
+        if self
+            .saved_filters
+            .iter()
+            .any(|f| f.list == list && f.query == query)
+        {
+            return Ok(());
+        }
+        let mut next = self.clone();
+        next.saved_filters.push(SavedFilter {
+            list: list.to_owned(),
+            query: query.to_owned(),
+        });
+        next.check()?;
+        *self = next;
+        Ok(())
+    }
+
+    pub fn remove_filter(&mut self, list: &str, query: &str) {
+        self.saved_filters
+            .retain(|f| !(f.list == list && f.query == query));
+    }
 }
 
 /// The board selection filter: whether a click, the rectangle and ⌘A may
@@ -163,6 +266,7 @@ impl Default for UserSettings {
             projects: Vec::new(),
             default_rule_profile: None,
             selection_filter: SelectionFilter::default(),
+            lists: ListSettings::default(),
         }
     }
 }
@@ -721,7 +825,7 @@ impl UserSettings {
                 "a favourite or recent entry is listed twice".into(),
             ));
         }
-        Ok(())
+        self.lists.check()
     }
 }
 
@@ -760,6 +864,38 @@ mod tests {
         } else {
             path.to_owned()
         }
+    }
+
+    /// Density, reduced motion and saved filters round-trip; saved filters
+    /// are bounded, printable and unique, and saving one twice keeps one.
+    #[test]
+    fn list_settings_round_trip_and_bound_saved_filters() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(SETTINGS_FILE);
+        let mut settings = UserSettings::default();
+        settings.lists.density = ListDensity::Comfortable;
+        settings.lists.reduced_motion = Some(true);
+        settings.lists.save_filter("pcb.parts", "side:bottom pkg:0603")?;
+        settings.lists.save_filter("pcb.parts", "side:bottom pkg:0603")?;
+        settings.lists.save_filter("issues", "clearance")?;
+        assert_eq!(settings.lists.saved_filters.len(), 2);
+        write_settings(&path, &settings)?;
+        assert_eq!(read_settings(&path)?, settings);
+        settings.lists.remove_filter("issues", "clearance");
+        assert_eq!(settings.lists.saved_filters.len(), 1);
+        for (list, query) in [("", "x"), ("pcb.parts", " "), ("pcb.parts", "a\u{7}")] {
+            let mut bad = settings.lists.clone();
+            assert!(bad.save_filter(list, query).is_err(), "{list:?} {query:?}");
+            assert_eq!(bad, settings.lists, "a refused save changes nothing");
+        }
+        let long = "x".repeat(MAX_FILTER_QUERY + 1);
+        assert!(settings.lists.clone().save_filter("pcb.parts", &long).is_err());
+        let mut full = ListSettings::default();
+        for i in 0..MAX_SAVED_FILTERS {
+            full.save_filter("pcb.parts", &format!("x>{i}"))?;
+        }
+        assert!(full.save_filter("pcb.parts", "y>1").is_err());
+        Ok(())
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod chrome;
 mod command_dispatch;
 mod command_palette;
 mod key_reveal;
+mod list_prefs;
 mod live_mcp;
 mod open_timing;
 mod settings_window;
@@ -1414,6 +1415,7 @@ impl eframe::App for App {
         // The key reveal watches ⌘ and ⌥ before anyone takes a key; key
         // tips, while shown, take the keys themselves.
         self.reveal_input(&ctx);
+        self.list_prefs(&ctx);
         // A key being recorded in Settings reaches nothing else.
         self.record_key(&ctx);
         // The palette's keys come before any canvas sees them.
@@ -1434,6 +1436,7 @@ impl eframe::App for App {
         // must already hold the document the field committed to.
         self.files.observe(&self.engine, ctx.input(|i| i.time));
         self.dispatch_keys(&ctx);
+        self.list_changes(&ctx);
         self.native_menu(&ctx);
         guard_close(&ctx, &mut self.files, self.closing);
         self.files.observe(&self.engine, ctx.input(|i| i.time));
