@@ -742,14 +742,18 @@ fn the_board_card_edits_a_board_parameter() -> Fallible {
     let mut editor = PcbEditor::default();
     let (output, _) = slot(&mut editor, &engine, &ctx, vec![]);
     let shown = painted(&output);
-    // Each parameter is one row: its name and its value; an expression
-    // reads its result inline after `fx`.
-    assert!(shown.iter().any(|(t, _)| t == "width"), "{shown:?}");
-    assert!(shown.iter().any(|(t, _)| t == "80 mm"), "{shown:?}");
-    assert!(
-        shown.iter().any(|(t, _)| t == "fxwidth / 2 = 40 mm"),
-        "{shown:?}"
-    );
+    // Each parameter is one list row: its name and its value, the number
+    // and its dim unit in their own slots; an expression reads `fx expr =`
+    // and its result inline.
+    let has = |s: &str| shown.iter().any(|(t, _)| t == s);
+    for text in ["width", "80", "mm", "half", "fx", "width / 2", " = ", "40"] {
+        assert!(has(text), "{text}: {shown:?}");
+    }
+    // The two values line up on their decimal point: "80" and "40"
+    // (the same width) sit at one x.
+    let right = |s: &str| shown.iter().find(|(t, _)| t == s).map(|(_, at)| at.x);
+    let (a, b) = (right("80").ok_or("80")?, right("40").ok_or("40")?);
+    assert!((a - b).abs() < 0.5, "aligned: {a} {b}");
     let board =
         crate::pcb_editor::board_shape_ui::sketch_of(engine.project()).ok_or("no sketch")?;
     let edit = parameter_edit(board, &ParamName("width".into()), "90 mm", ParamUnit::Mm)?;

@@ -13,7 +13,7 @@ use super::board_shape::{
     self as shape, CutoutShape, Gesture, Scene, ShapeOptions, ShapeTool, Step,
 };
 use super::{BoardInk, BoardView, PcbEditor, ZOOM_RANGE, board_view, zoom_pan};
-use crate::kit::{self, ToolCard};
+use crate::kit::{self, ToolCard, list};
 use crate::part_editor::{footprint_dims as dims, footprint_params};
 use crate::refusal::{self, Origin};
 use egui::{Align2, Color32, PointerButton, Pos2, Rect, Sense, Shape, Stroke, Ui, vec2};
@@ -116,6 +116,9 @@ pub(super) struct ParamRows {
     refused: Option<Refused>,
     /// The row whose commit was sent last, to claim its refusal.
     sent: Option<Option<ParamName>>,
+    /// The parameter whose value is being edited in its row, and whether
+    /// its field takes the keyboard this frame.
+    editing: Option<(ParamName, bool)>,
 }
 
 fn field_id(name: Option<&ParamName>) -> egui::Id {
@@ -1182,8 +1185,10 @@ impl PcbEditor {
             true,
             Some(board.parameters.len()),
             |ui| {
-                // Each parameter is one row: its name, its expression (an
-                // `fx` row shows what it evaluates to) and its remove icon.
+                // Each parameter is one row of the list: its name, its
+                // expression (`fx expr = value` when it is driven) and its
+                // remove action. Double-click, Enter or F2 edits the value
+                // in its row; Enter or leaving the field commits it.
                 let results: Vec<Option<String>> = board
                     .parameters
                     .iter()
@@ -1197,81 +1202,188 @@ impl PcbEditor {
                         _ => None,
                     })
                     .collect();
-                let column = kit::value_column(
-                    ui,
-                    board.parameters.iter().zip(&results).map(|(p, r)| match r {
-                        Some(r) => format!("fx {} = {r}", p.expr.0),
-                        None => p.expr.0.clone(),
-                    }),
-                );
-                let count = board.parameters.len();
-                kit::list_frame(ui, count, count, |ui, index| {
-                    let Some(param) = board.parameters.get(index) else {
-                        return;
+                let l = list::ListTokens::get(ui.ctx());
+                let shown: Vec<list::Value<'_>> = board
+                    .parameters
+                    .iter()
+                    .zip(&results)
+                    .map(|(p, r)| match r {
+                        Some(r) => list::Value::Expr {
+                            expr: &p.expr.0,
+                            value: r,
+                        },
+                        None => list::Value::Number(&p.expr.0),
+                    })
+                    .collect();
+                let cols = list::Columns::measure(ui, &l, shown.iter().copied());
+                let keys: Vec<list::RowKey> = board
+                    .parameters
+                    .iter()
+                    .map(|p| list::RowKey::of(("board-param", &p.name.0)))
+                    .collect();
+                let lines: Vec<list::Line<'_>> = board
+                    .parameters
+                    .iter()
+                    .zip(&keys)
+                    .map(|(p, k)| list::Line::item(*k, &p.name.0))
+                    .collect();
+                let removes: Vec<String> = board
+                    .parameters
+                    .iter()
+                    .map(|p| format!("Remove parameter {}", p.name.0))
+                    .collect();
+                let list_id = egui::Id::unique(("board-parameters-list", editable));
+                let editing = rows.editing.as_ref().map(|(n, _)| n.clone());
+                let view = list::ListView {
+                    multiple: false,
+                    delete: editable,
+                    editing: editing.is_some(),
+                    ..list::ListView::new(
+                        list_id,
+                        "Board parameters",
+                        list::Layout::Bounded {
+                            rows: kit::LIST_MAX_ROWS,
+                        },
+                    )
+                };
+                let out = view.show(ui, &lines, |ui, rect, line, cx| {
+                    let i = keys.iter().position(|k| *k == line.key).unwrap_or(0);
+                    let name = [line.name];
+                    let remove = [list::Action {
+                        tip: "Refused while it is read",
+                        ..list::Action::delete(removes.get(i).map_or("", String::as_str))
+                    }];
+                    let mut row = list::Row::new(line.key, &name);
+                    row.selected = cx.selected;
+                    row.cursor = cx.cursor;
+                    row.role = egui::Role::ListBoxOption;
+                    row.value = if board.parameters.get(i).map(|p| &p.name) == editing.as_ref() {
+                        list::Value::None
+                    } else {
+                        shown.get(i).copied().unwrap_or_default()
                     };
-                    let Some(text) = rows.exprs.get_mut(&param.name) else {
-                        return;
-                    };
-                    let failed = rows
-                        .error
-                        .as_ref()
-                        .is_some_and(|(n, _)| n.as_ref() == Some(&param.name));
-                    let name = [param.name.0.as_str()];
-                    let remove = format!("Remove parameter {}", param.name.0);
-                    let mut row = kit::ItemRow::new(&name, column);
                     if editable {
-                        row.action = Some(kit::RowAction {
-                            icon: "delete",
-                            label: &remove,
-                            tip: "Refused while it is read",
-                        });
+                        row.actions = &remove;
                     }
-                    let result = results.get(index).cloned().flatten();
-                    let (response, field) = kit::item_row(ui, &row, |ui| {
-                        kit::value_field(ui, "expression", text, failed, result.as_deref())
-                    });
-                    if response.action {
-                        operation = Some(shape::operation(vec![BoardEdit::RemoveParameter {
-                            name: param.name.clone(),
-                        }]));
-                        sent = Some(Some(param.name.clone()));
-                    }
-                    if field.lost_focus() && text.trim() != param.expr.0 {
-                        match shape::parameter_edit(board, &param.name, text, param.unit) {
-                            Ok(edit) => {
-                                operation = Some(shape::operation(vec![edit]));
-                                sent = Some(Some(param.name.clone()));
+                    row.flash = list::motion::flash(ui.ctx(), list_id, line.key);
+                    list::row::paint(ui, cx.id, rect, &row, &cols)
+                });
+                let at = |k: &list::RowKey| {
+                    keys.iter()
+                        .position(|x| x == k)
+                        .and_then(|i| board.parameters.get(i))
+                };
+                let removed = out
+                    .actions
+                    .iter()
+                    .filter_map(|(k, _)| at(k))
+                    .chain(out.effects.iter().filter_map(|e| match e {
+                        list::Effect::Delete(gone) => gone.first().and_then(at),
+                        _ => None,
+                    }))
+                    .next();
+                if let Some(param) = removed.filter(|_| editable) {
+                    operation = Some(shape::operation(vec![BoardEdit::RemoveParameter {
+                        name: param.name.clone(),
+                    }]));
+                    sent = Some(Some(param.name.clone()));
+                }
+                for effect in &out.effects {
+                    match effect {
+                        list::Effect::Activate(k) => {
+                            if let Some(p) = at(k) {
+                                rows.exprs.insert(p.name.clone(), p.expr.0.clone());
+                                rows.editing = Some((p.name.clone(), true));
                                 rows.error = None;
                             }
-                            Err(why) => rows.error = Some((Some(param.name.clone()), why)),
                         }
-                    } else if field.lost_focus() && failed {
-                        // Back at the stored value: the earlier text's error goes.
-                        rows.error = None;
-                    }
-                    let refused = rows
-                        .refused
-                        .as_ref()
-                        .filter(|(n, _, _)| *n == param.name)
-                        .map(|(_, why, _)| why.clone());
-                    match (&rows.error, values.iter().find(|v| v.name == param.name)) {
-                        (Some((Some(n), why)), _) if *n == param.name => {
-                            kit::field_error(ui, &field, why, true);
-                        }
-                        _ if refused.is_some() => {
-                            kit::field_refused(ui, &field, refused.as_deref().unwrap_or_default());
-                        }
-                        (
-                            _,
-                            Some(ParamEvaluation {
-                                value: Err(why), ..
-                            }),
-                        ) => {
-                            kit::field_error(ui, &field, why, false);
+                        list::Effect::CancelEdit => {
+                            rows.editing = None;
+                            rows.error = None;
                         }
                         _ => {}
                     }
-                });
+                }
+                // The value being edited, in its row.
+                if let Some((name, start)) = rows.editing.clone()
+                    && let Some(param) = board.parameters.iter().find(|p| p.name == name)
+                    && let Some((_, rect)) = out
+                        .value_rects
+                        .iter()
+                        .find(|(k, _)| *k == list::RowKey::of(("board-param", &name.0)))
+                    && let Some(text) = rows.exprs.get_mut(&name)
+                {
+                    let failed = rows
+                        .error
+                        .as_ref()
+                        .is_some_and(|(n, _)| n.as_ref() == Some(&name));
+                    let mut start = start;
+                    let edit = list::edit::field(
+                        ui,
+                        list_id.with(&name.0),
+                        *rect,
+                        text,
+                        failed,
+                        &mut start,
+                        &name.0,
+                    );
+                    if let Some(e) = &mut rows.editing {
+                        e.1 = start;
+                    }
+                    if edit != list::edit::Edit::Open {
+                        // The rows take the keyboard back.
+                        view.request_focus(ui.ctx());
+                    }
+                    match edit {
+                        list::edit::Edit::Open => {}
+                        list::edit::Edit::Cancel => {
+                            rows.editing = None;
+                            rows.error = None;
+                        }
+                        list::edit::Edit::Commit | list::edit::Edit::CommitNext => {
+                            if text.trim() == param.expr.0 {
+                                rows.editing = None;
+                                rows.error = None;
+                            } else {
+                                match shape::parameter_edit(board, &param.name, text, param.unit) {
+                                    Ok(edit) => {
+                                        operation = Some(shape::operation(vec![edit]));
+                                        sent = Some(Some(param.name.clone()));
+                                        list::motion::start_flash(
+                                            ui.ctx(),
+                                            list_id,
+                                            list::RowKey::of(("board-param", &name.0)),
+                                        );
+                                        rows.error = None;
+                                        rows.editing = None;
+                                    }
+                                    Err(why) => {
+                                        rows.error = Some((Some(param.name.clone()), why));
+                                        rows.editing = Some((name.clone(), true));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Why a value is wrong or was refused, or does not evaluate:
+                // one line under the list, naming the parameter.
+                let refused = rows
+                    .refused
+                    .as_ref()
+                    .map(|(n, why, _)| (n.clone(), why.clone()));
+                let why = match &rows.error {
+                    Some((Some(n), why)) => Some((n.clone(), why.clone())),
+                    _ => refused.or_else(|| {
+                        values.iter().find_map(|v| match &v.value {
+                            Err(why) => Some((v.name.clone(), why.clone())),
+                            Ok(_) => None,
+                        })
+                    }),
+                };
+                if let Some((name, why)) = why {
+                    list::row::field_error(ui, &format!("{}: {why}", name.0), 0.0);
+                }
                 if board.parameters.is_empty() {
                     kit::hint(
                         ui,
@@ -1323,7 +1435,7 @@ impl PcbEditor {
                         rows.new_expr.clear();
                         rows.error = None;
                     }
-                } else if kit::summary_row(ui, "", Some("Add parameter…")) {
+                } else if list::row::add_row(ui, "Add a board parameter") {
                     rows.adding = true;
                 }
             },

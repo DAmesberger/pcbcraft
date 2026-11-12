@@ -44,11 +44,14 @@ pub enum Context {
     /// The Layout view while the board shape sketch is open.
     BoardShape,
     Pcb3d,
+    /// A focused list (Dimensions, Issues, the parts table): its keys
+    /// replace the workspace's while it has the keyboard.
+    List,
 }
 
 impl Context {
     /// Every context, in sheet order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Global,
         Self::Component,
         Self::Symbol,
@@ -62,6 +65,7 @@ impl Context {
         Self::PcbTune,
         Self::BoardShape,
         Self::Pcb3d,
+        Self::List,
     ];
 
     pub fn label(self) -> &'static str {
@@ -79,13 +83,14 @@ impl Context {
             Self::PcbTune => "PCB › Tune tool",
             Self::BoardShape => "PCB › Board shape",
             Self::Pcb3d => "PCB › 3D",
+            Self::List => "Lists",
         }
     }
 
     pub fn parent(self) -> Option<Self> {
         match self {
             Self::Global => None,
-            Self::Component | Self::Schematic | Self::Pcb => Some(Self::Global),
+            Self::Component | Self::Schematic | Self::Pcb | Self::List => Some(Self::Global),
             Self::Symbol | Self::Footprint => Some(Self::Component),
             Self::SchematicWire => Some(Self::Schematic),
             Self::PcbLayout | Self::Pcb3d => Some(Self::Pcb),
@@ -100,7 +105,12 @@ impl Context {
     pub fn modal(self) -> bool {
         matches!(
             self,
-            Self::SchematicWire | Self::PcbRoute | Self::PcbFill | Self::PcbTune | Self::BoardShape
+            Self::SchematicWire
+                | Self::PcbRoute
+                | Self::PcbFill
+                | Self::PcbTune
+                | Self::BoardShape
+                | Self::List
         )
     }
 
@@ -108,7 +118,7 @@ impl Context {
     /// its own keys and the Everywhere commands apply (the board shape
     /// sketch has its own ribbon).
     pub fn exclusive(self) -> bool {
-        self == Self::BoardShape
+        matches!(self, Self::BoardShape | Self::List)
     }
 
     /// Whether `self` is `other` or lies inside it.
@@ -385,6 +395,8 @@ pub const SHADOWS: &[(Context, Chord, &str)] = &[
         Chord::key(egui::Key::Backspace),
         "pcb.delete",
     ),
+    // A focused list: ⌘A selects its shown rows, not the canvas's objects.
+    (Context::List, Chord::cmd(egui::Key::A), "edit.select-all"),
 ];
 
 /// The Fill tool's keys, handled by the PCB canvas (`fill_tool`).
@@ -447,6 +459,8 @@ pub enum AppCommand {
     SelectAll,
     ToggleBrowser,
     ToggleIssues,
+    /// The Parts and Vias band under the PCB canvas.
+    ToggleParts,
     Messages,
     LibrarySources,
     /// The Settings window (its Keyboard section).
@@ -702,6 +716,7 @@ impl Registry {
         .with_keys(Context::PcbFill, FILL_KEYS)
         .with_keys(Context::PcbTune, crate::pcb_editor::TUNE_KEYS)
         .with_gestures(Context::Pcb3d, crate::navigation::NAVIGATION_3D)
+        .with_keys(Context::List, crate::kit::list::LIST_KEYS)
     }
 
     /// Add a view's pointer gestures ("Shift + two fingers", what it does)
@@ -1599,6 +1614,15 @@ fn defaults() -> Vec<Command> {
             Chord::key(K::Escape),
         ),
         // PCB, both views.
+        Command::new(
+            "view.parts",
+            "Show or hide Parts and vias",
+            C::Pcb,
+            Action::App(A::ToggleParts),
+        )
+        .chord(Chord::cmd(K::L).with_shift())
+        .icon("list")
+        .keywords("table list parts vias designators placement band panel"),
         Command::new(
             "pcb.toggle-3d",
             "Switch Layout and 3D",

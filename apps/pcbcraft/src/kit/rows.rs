@@ -589,6 +589,10 @@ pub fn field_error(ui: &mut Ui, field: &Response, message: &str, not_stored: boo
 /// it, wrapped, so a refusal that names parts and distances is read in
 /// full. Call it right after the field's row; it shows until the field is
 /// edited again or the document changes.
+#[allow(
+    dead_code,
+    reason = "Board parameters show refusals through kit::list; other cards may again"
+)]
 pub fn field_refused(ui: &mut Ui, field: &Response, message: &str) -> Response {
     let t = Tokens::get();
     let size = t.font_small;

@@ -88,8 +88,8 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
 
     // One compact row each: the name on one line, half the height the
     // name, value and Delete rows took.
-    let face_row = ax.find(Role::Button, FACE)?;
-    let origin_row = ax.find(Role::Button, ORIGIN)?;
+    let face_row = ax.find(Role::ListBoxOption, FACE)?;
+    let origin_row = ax.find(Role::ListBoxOption, ORIGIN)?;
     let t = pcbcraft_ui::theme::Tokens::get();
     for row in [&face_row, &origin_row] {
         assert!(
@@ -103,16 +103,19 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
             || (face_row.rect.top() - origin_row.rect.bottom()).abs() < 1.0,
         "the rows follow each other: {face_row:?} {origin_row:?}"
     );
-    // Each value is a field named by its row; the driven one reads `fx` and
-    // its result inline (with its expression where the column has room),
-    // and the whole on hover.
-    let field = ax.find(Role::TextInput, FACE)?;
-    let driven_field = ax.find(Role::TextInput, ORIGIN)?;
-    let whole = format!("fx{expr} = ");
-    let inline = |s: &String| s.starts_with("fx") && s.ends_with(" mm") && !s.contains(':');
-    assert!(ax.texts.iter().any(inline), "fx…: {:?}", ax.texts);
-    // The pointer rests on it until its tooltip shows.
-    ax.hover(driven_field.center());
+    // Each value is read-only text until edited; the driven one reads `fx`
+    // and its result, decimal-aligned with a dim unit (with its expression
+    // where the column has room), and the whole on hover.
+    assert!(
+        ax.texts.iter().any(|s| s == "fx") && ax.texts.iter().any(|s| s == "mm"),
+        "fx and a unit: {:?}",
+        ax.texts
+    );
+    assert!(!ax.has(Role::TextInput, FACE), "no field until edited");
+    let whole = format!("{expr} = ");
+    // The pointer rests on the value until its tooltip shows.
+    let driven_value = egui::pos2(origin_row.rect.right() - 60.0, origin_row.rect.center().y);
+    ax.hover(driven_value);
     for _ in 0..4 {
         ax.frame(vec![]);
     }
@@ -145,8 +148,8 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
     let origin_at = egui::pos2(origin_row.rect.left() + 12.0, origin_row.rect.center().y);
     ax.click_at(origin_at);
     assert_eq!(ax.app.pcb.selected_dimension(), Some(origin.id));
-    assert_eq!(ax.find(Role::Button, ORIGIN)?.toggled, Some(true));
-    assert_eq!(ax.find(Role::Button, FACE)?.toggled, Some(false));
+    assert_eq!(ax.find(Role::ListBoxOption, ORIGIN)?.toggled, Some(true));
+    assert_eq!(ax.find(Role::ListBoxOption, FACE)?.toggled, Some(false));
     ax.hover(egui::pos2(4.0, 450.0));
     assert_eq!(ax.app.pcb.dimensions_lit(), vec![origin.id]);
     // Selecting the face dimension in 3D (a click on its label in the
@@ -163,18 +166,26 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
         .ok_or("the face dimension's label is in the view")?;
     ax.click_at(label.center());
     assert_eq!(ax.app.pcb.selected_dimension(), Some(face));
-    assert_eq!(ax.find(Role::Button, FACE)?.toggled, Some(true));
-    assert_eq!(ax.find(Role::Button, ORIGIN)?.toggled, Some(false));
+    assert_eq!(ax.find(Role::ListBoxOption, FACE)?.toggled, Some(true));
+    assert_eq!(ax.find(Role::ListBoxOption, ORIGIN)?.toggled, Some(false));
     assert_eq!(ax.app.pcb.dimensions_lit(), vec![face]);
 
     // The value commits as one edit of the same dimension, which moves J1;
     // one undo puts both back.
+    // Enter on the selected row opens its value in place, all selected.
     let revision = ax.app.engine.revision();
-    ax.click_at(field.center());
-    ax.command_key(egui::Key::A);
+    let face_row = ax.find(Role::ListBoxOption, FACE)?;
+    ax.click_at(egui::pos2(
+        face_row.rect.left() + 30.0,
+        face_row.rect.center().y,
+    ));
+    ax.key(egui::Key::Enter);
+    ax.settle();
+    ax.find(Role::TextInput, FACE)?;
     ax.type_text("1 mm");
     ax.key(egui::Key::Enter);
     ax.settle();
+    assert!(!ax.has(Role::TextInput, FACE), "the edit closed");
     let project = ax.app.engine.project();
     let edited = project
         .part_dimensions
@@ -204,13 +215,13 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
 
     // The delete icon at the row's end removes the dimension and leaves J1
     // in place; one undo brings it back.
-    let row = ax.find(Role::Button, FACE)?;
+    let row = ax.find(Role::ListBoxOption, FACE)?;
     ax.hover(egui::pos2(row.rect.left() + 12.0, row.rect.center().y));
     ax.button(&delete)?;
     let project = ax.app.engine.project();
     assert!(!project.part_dimensions.iter().any(|d| d.id == face));
     assert_eq!(project.placement_of(j1), Some(&placement));
-    assert!(!ax.has(Role::Button, FACE), "its row is gone");
+    assert!(!ax.has(Role::ListBoxOption, FACE), "its row is gone");
     ax.app.run_command(&ctx, "edit.undo");
     ax.settle();
     assert!(
@@ -221,7 +232,7 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
             .iter()
             .any(|d| d.id == face)
     );
-    ax.find(Role::Button, FACE)?;
+    ax.find(Role::ListBoxOption, FACE)?;
     Ok(())
 }
 
@@ -277,5 +288,107 @@ fn the_updating_chip_sits_beside_the_issues_badge() -> Fallible {
         chip.rect,
         badge.rect
     );
+    Ok(())
+}
+
+/// J1 selected in Layout. The Dimensions list rows are focused by a
+/// click.
+fn j1_in_layout() -> Fallible<(Ax, pcbcraft_core::Id)> {
+    let engine = esp32()?;
+    let j1 = engine
+        .project()
+        .instances
+        .iter()
+        .find(|i| i.designator == "J1")
+        .map(|i| i.id)
+        .ok_or("no J1")?;
+    let mut ax = Ax::with_engine(engine, Workspace::Pcb)?;
+    ax.app.pcb.set_selection(Some(j1), None, None);
+    ax.settle();
+    Ok((ax, j1))
+}
+
+fn order(ax: &Ax) -> Vec<pcbcraft_core::Id> {
+    ax.app
+        .engine
+        .project()
+        .part_dimensions
+        .iter()
+        .map(|d| d.id)
+        .collect()
+}
+
+/// ⌥↓ on a focused row moves it one place down as one
+/// `layout.dimension_order`: the rows swap, J1 stays where it is, and one
+/// undo restores the order.
+#[test]
+fn option_down_reorders_dimensions_as_one_undo_step() -> Fallible {
+    let (mut ax, j1) = j1_in_layout()?;
+    let before = order(&ax);
+    let placement = ax.app.engine.project().placement_of(j1).cloned();
+    let first = ax
+        .all(Role::ListBoxOption, FACE)
+        .into_iter()
+        .chain(ax.all(Role::ListBoxOption, ORIGIN))
+        .min_by(|a, b| a.rect.top().total_cmp(&b.rect.top()))
+        .cloned()
+        .ok_or("a dimension row")?;
+    let other = if first.name == FACE { ORIGIN } else { FACE };
+    ax.click_at(egui::pos2(first.rect.left() + 30.0, first.rect.center().y));
+    ax.key_with(egui::Key::ArrowDown, egui::Modifiers::ALT);
+    ax.settle();
+    let after = order(&ax);
+    assert_ne!(after, before, "the order changed");
+    let mut swapped = before.clone();
+    swapped.swap(0, 1);
+    assert_eq!(after, swapped);
+    assert_eq!(ax.app.engine.project().placement_of(j1).cloned(), placement);
+    // The row moved down: the other row is now above it.
+    let moved = ax.find(Role::ListBoxOption, &first.name)?;
+    let above = ax.find(Role::ListBoxOption, other)?;
+    assert!(above.rect.top() < moved.rect.top(), "{above:?} {moved:?}");
+    let ctx = ax.ctx.clone();
+    ax.app.run_command(&ctx, "edit.undo");
+    ax.settle();
+    assert_eq!(order(&ax), before, "one undo step");
+    Ok(())
+}
+
+/// Esc drops an inline edit and sends nothing; invalid text shows why
+/// under the list and leaves the document unchanged.
+#[test]
+fn esc_cancels_and_invalid_text_is_refused_in_place() -> Fallible {
+    let (mut ax, _) = j1_in_layout()?;
+    let row = ax.find(Role::ListBoxOption, FACE)?;
+    ax.click_at(egui::pos2(row.rect.left() + 30.0, row.rect.center().y));
+    let revision = ax.app.engine.revision();
+    const NOTE: &str = "Follows the board when it changes";
+    let note = ax.find(Role::Label, NOTE)?.rect;
+    ax.key(egui::Key::F2);
+    ax.settle();
+    ax.find(Role::TextInput, FACE)?;
+    // The field opens in its row: nothing under the list moves.
+    assert_eq!(ax.find(Role::Label, NOTE)?.rect, note);
+    ax.type_text("7 mm");
+    ax.key(egui::Key::Escape);
+    ax.settle();
+    assert!(!ax.has(Role::TextInput, FACE));
+    assert_eq!(ax.app.engine.revision(), revision, "Esc sends nothing");
+    // Enter opens it again; text that is not a length is refused in place.
+    ax.key(egui::Key::Enter);
+    ax.settle();
+    ax.find(Role::TextInput, FACE)?;
+    ax.type_text("wobble");
+    ax.key(egui::Key::Enter);
+    ax.settle();
+    assert_eq!(ax.app.engine.revision(), revision, "nothing sent");
+    assert!(
+        ax.texts
+            .iter()
+            .any(|t| t.starts_with(FACE) && t.contains(':')),
+        "the reason names the row: {:?}",
+        ax.texts
+    );
+    ax.find(Role::TextInput, FACE)?;
     Ok(())
 }

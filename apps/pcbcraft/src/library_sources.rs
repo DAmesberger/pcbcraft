@@ -866,6 +866,20 @@ impl LibrarySources {
         }
     }
 
+    /// Row density, reduced motion and saved filters (Settings › Lists).
+    pub fn list_settings(&self) -> &settings::ListSettings {
+        &self.settings.lists
+    }
+
+    /// Keep the lists' settings per user; a change the settings refuse
+    /// (past the saved-filter bound) is not kept.
+    pub fn set_list_settings(&mut self, lists: settings::ListSettings) {
+        if lists != self.settings.lists && lists.check().is_ok() {
+            self.settings.lists = lists;
+            self.persist();
+        }
+    }
+
     /// Whether the app's waivers need a reason (Settings).
     pub fn require_waiver_reason(&self) -> bool {
         self.settings.require_waiver_reason

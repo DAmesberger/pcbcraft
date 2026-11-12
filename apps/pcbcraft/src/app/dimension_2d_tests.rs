@@ -99,7 +99,10 @@ impl Harness {
         let Self {
             app, ctx, frame, ..
         } = self;
-        let out = ctx.run_ui(input, |ui| eframe::App::ui(app, ui, frame));
+        let mut out = ctx.run_ui(input, |ui| eframe::App::ui(app, ui, frame));
+        // New glyphs (the lists' mono sizes) grow the font atlas in later
+        // frames too; a headless frame has no renderer to hand them to.
+        out.textures_delta.clear();
         self.lines.clear();
         for shape in &out.shapes {
             lines(&shape.shape, &mut self.lines);

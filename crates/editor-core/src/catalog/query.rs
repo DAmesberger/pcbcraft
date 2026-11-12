@@ -485,7 +485,7 @@ pub fn parse_query(
         });
     }
     let mut terms = Vec::new();
-    for (token, quoted) in tokens {
+    for (token, quoted, _) in tokens {
         let fail = |message: String| QueryError {
             term: token.clone(),
             message,
@@ -502,40 +502,53 @@ pub fn parse_query(
     Ok(CatalogQuery { terms })
 }
 
+/// The byte range of each term of `text` in the source, in the order
+/// [`parse_query`] reads them; a quoted text's range takes its quotes. A
+/// filter bar removes one term (its chip) or sets aside a term it cannot
+/// read by these ranges, so the query keeps one tokenizer.
+pub fn term_spans(text: &str) -> std::result::Result<Vec<std::ops::Range<usize>>, String> {
+    Ok(tokens(text)?.into_iter().map(|token| token.2).collect())
+}
+
+/// One token: its text, whether it was quoted, and its source range.
+type Token = (String, bool, std::ops::Range<usize>);
+
 /// Whitespace-separated tokens; `"…"` keeps spaces and is always text.
-fn tokens(text: &str) -> std::result::Result<Vec<(String, bool)>, String> {
+fn tokens(text: &str) -> std::result::Result<Vec<Token>, String> {
     let mut out = Vec::new();
-    let mut chars = text.chars().peekable();
-    while let Some(&c) = chars.peek() {
+    let mut chars = text.char_indices().peekable();
+    while let Some(&(start, c)) = chars.peek() {
         if c.is_whitespace() {
             chars.next();
         } else if c == '"' {
             chars.next();
             let mut quoted = String::new();
-            let mut closed = false;
-            for c in chars.by_ref() {
+            let mut end = None;
+            for (at, c) in chars.by_ref() {
                 if c == '"' {
-                    closed = true;
+                    end = Some(at + 1);
                     break;
                 }
                 quoted.push(c);
             }
-            if !closed {
+            let Some(end) = end else {
                 return Err("a quoted text needs its closing \"".into());
-            }
+            };
             if !quoted.trim().is_empty() {
-                out.push((quoted.trim().to_owned(), true));
+                out.push((quoted.trim().to_owned(), true, start..end));
             }
         } else {
             let mut token = String::new();
-            while let Some(&c) = chars.peek() {
+            let mut end = start;
+            while let Some(&(at, c)) = chars.peek() {
                 if c.is_whitespace() {
                     break;
                 }
                 token.push(c);
+                end = at + c.len_utf8();
                 chars.next();
             }
-            out.push((token, false));
+            out.push((token, false, start..end));
         }
     }
     Ok(out)

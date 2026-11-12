@@ -37,6 +37,45 @@ pub(super) const BROWSER_WIDTH: f32 = 260.0;
 pub(super) const MIN_BROWSER_WIDTH: f32 = 170.0;
 pub(super) const MAX_BROWSER_WIDTH: f32 = 620.0;
 
+/// The Parts and Vias band's height before the user drags its edge.
+pub(super) const PARTS_HEIGHT: f32 = 240.0;
+/// The band's lowest height: the tabs, captions, a few rows and the footer.
+const PARTS_MIN_HEIGHT: f32 = 150.0;
+/// The most of the canvas column the band may take.
+const PARTS_MAX_SHARE: f32 = 0.7;
+
+/// The PCB canvas split by the Parts and Vias band under it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Band {
+    pub canvas: Rect,
+    pub band: Rect,
+    /// The gap between them: dragging it resizes the band.
+    pub rail: Rect,
+}
+
+/// Split `canvas` for a band `height` high (kept inside what the canvas
+/// fits).
+pub(super) fn parts_band(canvas: Rect, height: f32) -> Band {
+    let max = (canvas.height() * PARTS_MAX_SHARE).max(0.0);
+    let height = if height.is_finite() {
+        height
+    } else {
+        PARTS_HEIGHT
+    }
+    .clamp(PARTS_MIN_HEIGHT.min(max), max);
+    let band = Rect::from_min_max(pos2(canvas.left(), canvas.bottom() - height), canvas.max);
+    let top = Rect::from_min_max(
+        canvas.min,
+        pos2(canvas.right(), (band.top() - SHELL_GAP).max(canvas.top())),
+    );
+    let rail = Rect::from_x_y_ranges(canvas.x_range(), top.bottom()..=band.top());
+    Band {
+        canvas: top,
+        band,
+        rail,
+    }
+}
+
 /// Where the floating cards and canvas go inside the viewport.
 pub(super) struct Layout {
     pub canvas: Rect,
@@ -287,8 +326,17 @@ impl App {
             .central()
             .frame(egui::Frame::NONE.fill(t.viewport_bottom))
             .show(ui, |ui| {
-                let layout = layout(ui.max_rect(), self.browser, self.browser_width);
+                let mut layout = layout(ui.max_rect(), self.browser, self.browser_width);
                 self.browser_visible = layout.browser.is_some();
+                // The cross-highlight slot starts empty each frame.
+                if self.pcb.begin_hover() {
+                    ctx.request_repaint();
+                }
+                let band = (self.workspace == Workspace::Pcb && self.parts_band)
+                    .then(|| parts_band(layout.canvas, self.parts_height));
+                if let Some(band) = band {
+                    layout.canvas = band.canvas;
+                }
                 ui.scope_builder(egui::UiBuilder::new().max_rect(layout.canvas), |ui| {
                     ui.set_clip_rect(layout.canvas);
                     self.canvas(ui);
@@ -371,8 +419,40 @@ impl App {
                         self.sources.open_card();
                     }
                 }
+                if let Some(band) = band {
+                    self.parts_band_ui(ui, band);
+                }
                 self.column(&ctx, layout.inspector);
             });
+    }
+
+    /// The Parts and Vias band under the PCB canvas; its top edge drags
+    /// its height.
+    fn parts_band_ui(&mut self, ui: &mut egui::Ui, band: Band) {
+        let ctx = ui.ctx().clone();
+        let rail = ui
+            .interact(
+                band.rail,
+                egui::Id::unique("parts-band-resize"),
+                egui::Sense::drag(),
+            )
+            .on_hover_cursor(egui::CursorIcon::ResizeVertical);
+        rail.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::Role::Splitter, true, "Resize Parts and vias")
+        });
+        if rail.dragged() {
+            let delta = ui.input(|i| i.pointer.delta().y);
+            if delta.is_finite() {
+                self.parts_height = (band.band.height() - delta).max(0.0);
+            }
+        }
+        shell::column_card(
+            &ctx,
+            "parts-band",
+            band.band,
+            shell::COLUMN_CARD_INSET,
+            |ui| self.pcb.parts_panel(ui, &self.engine),
+        );
     }
 
     /// The right column: the subject slot above the always-visible Issues
@@ -634,7 +714,11 @@ impl App {
         let three_d = self.model_key().is_some();
         let pcb_3d = self.workspace == Workspace::Pcb && self.pcb.is_3d();
         let pcb_view = self.workspace == Workspace::Pcb && self.pcb.has_view_menu();
-        let buttons = 1.0 + 2.0 * f32::from(u8::from(pcb_view)) + 2.0 * f32::from(u8::from(pcb_3d));
+        let pcb = self.workspace == Workspace::Pcb;
+        let buttons = 1.0
+            + 2.0 * f32::from(u8::from(pcb_view))
+            + 2.0 * f32::from(u8::from(pcb_3d))
+            + f32::from(u8::from(pcb));
         let size = vec2(
             buttons * t.control_height + (buttons + 1.0) * t.space_4,
             crate::kit::navigation_bar_height(),
@@ -700,6 +784,23 @@ impl App {
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| self.pcb.filter_menu(ui));
             self.sources.set_selection_filter(self.pcb.filter());
+        }
+        if pcb {
+            // The Parts and Vias band, outlined while shown.
+            let label = self.with_shortcut("Parts and vias", AppCommand::ToggleParts);
+            let parts = shell::icon_button(&mut child, "list", &label, true);
+            if self.parts_band {
+                ui.painter().rect_stroke(
+                    parts.rect,
+                    t.radius_sm,
+                    egui::Stroke::new(1.0, t.accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            reveal::register(ui.ctx(), Target::App(AppCommand::ToggleParts), parts.rect);
+            if parts.clicked() {
+                self.parts_band = !self.parts_band;
+            }
         }
         if pcb_3d {
             // Solidcraft's Realistic look toggle (its navigation bar's

@@ -19,7 +19,9 @@ pub mod card;
 pub mod dialog;
 mod form;
 pub mod issues;
+pub mod issues_list;
 mod item_row;
+pub mod list;
 pub mod messages;
 pub mod pick;
 pub mod review;
@@ -31,7 +33,7 @@ pub mod toast;
 mod tree;
 
 pub use form::*;
-pub use issues::{count_badge, issues_bar, issues_list};
+pub use issues::{count_badge, issues_bar};
 pub use item_row::*;
 pub use pick::{PickResponse, PickRow, Tick, pick_row};
 pub use rows::*;

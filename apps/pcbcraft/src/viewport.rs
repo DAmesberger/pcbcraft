@@ -624,6 +624,12 @@ impl Viewport {
         self.highlight_selected(ids, Vec::new());
     }
 
+    /// The highlighted pick identities.
+    #[cfg(test)]
+    pub fn highlighted(&self) -> &[u64] {
+        &self.highlighted
+    }
+
     /// [`Self::highlight`] with `selected` (the picked object's identities,
     /// also in `ids`) drawn in a stronger tint than the rest (its net).
     pub fn highlight_selected(&mut self, ids: Vec<u64>, selected: Vec<u64>) {

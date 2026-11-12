@@ -372,3 +372,92 @@ fn the_selection_filter_persists_per_user() -> Fallible {
     );
     Ok(())
 }
+
+/// The first issue row the Board's Issues card lists that offers Waive…:
+/// one that blocks no stage.
+fn waivable_board_row(engine: &Engine) -> Fallible<pcbcraft_core::issues::IssueRow> {
+    use pcbcraft_core::issues::{IssueArea, IssueScope, Severity};
+    let pcbcraft_core::QueryResult::Issues(report) =
+        engine.query(pcbcraft_core::Query::Issues {
+            scope: IssueScope::Area {
+                area: IssueArea::Board,
+            },
+        })?
+    else {
+        return Err("the issues query answered something else".into());
+    };
+    report
+        .rows
+        .into_iter()
+        .find(|r| {
+            r.severity != Severity::Info
+                && r.blocks().is_none()
+                && !pcbcraft_core::fabrication::preflight::NO_WAIVER
+                    .contains(&r.finding.code.as_str())
+        })
+        .ok_or_else(|| "the demo board has no waivable issue".into())
+}
+
+/// Inline waive, as a person does it: Waive… on a row opens a reason
+/// field in the list; with Settings › Production "Require a reason" on,
+/// Enter on an empty reason is refused under the field and changes
+/// nothing; a reason and Enter waive every finding of the row in one undo
+/// step, the row moves to Waived, and one undo brings it back.
+#[test]
+fn an_issue_is_waived_inline_with_a_reason_and_one_undo_restores_it() -> Fallible {
+    let mut ax = Ax::new(Workspace::Pcb)?;
+    ax.app.engine.require_waiver_reason(true);
+    let row = waivable_board_row(&ax.app.engine)?;
+    let keys: Vec<String> = std::iter::once(&row.finding)
+        .chain(&row.also)
+        .map(|f| pcbcraft_core::fabrication::preflight::key(&f.code, &f.objects))
+        .collect();
+    let before = ax.app.engine.document().clone();
+    let bar = ax.find_prefix(Role::Button, "Issues:")?;
+    ax.click_at(bar.center());
+    ax.settle();
+    // Its group may start folded (to do): unfold it.
+    if !ax.has(Role::TreeItem, &row.title) {
+        let header = ax.find_prefix(Role::TreeItem, &format!("{}, ", row.group.title))?;
+        ax.click_at(header.center());
+        ax.settle();
+    }
+    ax.click(Role::Button, &format!("Waive: {}", row.title))?;
+    ax.settle();
+    let field = format!("Reason to waive {}", row.title);
+    ax.find(Role::TextInput, &field)?;
+    ax.key(Key::Enter);
+    ax.settle();
+    assert_eq!(
+        ax.app.engine.document(),
+        &before,
+        "the refused waive changed nothing"
+    );
+    assert!(
+        ax.texts.iter().any(|t| t.contains("reason is required")),
+        "the refusal shows under the field: {:?}",
+        ax.texts
+    );
+    ax.find(Role::TextInput, &field)?;
+    let reason = "Accepted for the prototype run";
+    ax.type_text(reason);
+    ax.key(Key::Enter);
+    ax.settle();
+    let waivers = &ax.app.engine.project().production.waivers;
+    for key in &keys {
+        assert!(
+            waivers.iter().any(|w| &w.key == key && w.reason == reason),
+            "{key} waived: {waivers:?}"
+        );
+    }
+    assert!(!ax.has(Role::TextInput, &field), "the field closed");
+    assert!(
+        !ax.all_prefix(Role::TreeItem, "Waived").is_empty(),
+        "the Waived group shows:\n{}",
+        ax.dump()
+    );
+    ax.command_key(Key::Z);
+    ax.settle();
+    assert_eq!(ax.app.engine.document(), &before, "one undo restores it");
+    Ok(())
+}
