@@ -12,6 +12,8 @@ members = [
     "crates/generator-sdk",
     "crates/generators",
     "crates/generators-probe",
+    "crates/fabcheck",
+    "crates/kicad",
     "generators/chip",
     "apps/pcbcraft-cli",
     "crates/ui",
@@ -37,6 +39,8 @@ pcbcraft-generator-abi = { path = "crates/generator-abi" }
 pcbcraft-generator-sdk = { path = "crates/generator-sdk" }
 pcbcraft-generators = { path = "crates/generators" }
 pcbcraft-ui = { path = "crates/ui" }
+pcbcraft-fabcheck = { path = "crates/fabcheck" }
+pcbcraft-kicad = { path = "crates/kicad" }
 tempfile = "3"
 sha2 = "0.10"
 getrandom = "0.3"

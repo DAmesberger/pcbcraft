@@ -6,18 +6,18 @@
 //! a decimal point are read as written; integers carry 3 implied decimals
 //! in mm (4 in inches). Comments (`;`) are kept, so the X2-style
 //! `; #@! TF.…` attribute comments can be checked.
-use super::Fallible;
-use crate::geometry::Point;
+use crate::Fallible;
+use crate::Point;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Hit {
+pub enum Hit {
     Round { tool: u32, at: Point },
     Slot { tool: u32, from: Point, to: Point },
 }
 
 impl Hit {
-    pub(crate) fn tool(&self) -> u32 {
+    pub fn tool(&self) -> u32 {
         match *self {
             Self::Round { tool, .. } | Self::Slot { tool, .. } => tool,
         }
@@ -25,17 +25,20 @@ impl Hit {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct DrillFile {
+pub struct DrillFile {
     pub metric: bool,
     /// Tool number to diameter, mm.
     pub tools: BTreeMap<u32, f64>,
     pub hits: Vec<Hit>,
     pub comments: Vec<String>,
+    /// Tool number to the values of the X2-style aperture attribute
+    /// comment `; #@! TA.AperFunction,…` written before its definition.
+    pub tool_functions: BTreeMap<u32, Vec<String>>,
 }
 
 impl DrillFile {
     /// The values of an X2-style attribute comment `; #@! TF.<name>,…`.
-    pub(crate) fn attribute(&self, name: &str) -> Option<Vec<String>> {
+    pub fn attribute(&self, name: &str) -> Option<Vec<String>> {
         self.comments.iter().find_map(|c| {
             let rest = c.trim().strip_prefix("#@!")?.trim();
             let rest = rest.strip_prefix("TF")?;
@@ -45,7 +48,7 @@ impl DrillFile {
     }
 }
 
-pub(crate) fn parse(source: &str) -> Fallible<DrillFile> {
+pub fn parse(source: &str) -> Fallible<DrillFile> {
     let mut file = DrillFile::default();
     let mut unit: Option<f64> = None;
     let mut header = false;
@@ -55,13 +58,21 @@ pub(crate) fn parse(source: &str) -> Fallible<DrillFile> {
     let mut at: Point = [0.0, 0.0];
     let mut routing = false;
     let mut down = false;
+    let mut function: Option<Vec<String>> = None;
     for raw in source.lines() {
         let line = raw.trim();
         if line.is_empty() {
             continue;
         }
         if let Some(comment) = line.strip_prefix(';') {
-            file.comments.push(comment.trim().to_string());
+            let comment = comment.trim();
+            if let Some(rest) = comment
+                .strip_prefix("#@!")
+                .and_then(|r| r.trim().strip_prefix("TA.AperFunction,"))
+            {
+                function = Some(rest.split(',').map(str::to_string).collect());
+            }
+            file.comments.push(comment.to_string());
             continue;
         }
         if ended {
@@ -86,6 +97,9 @@ pub(crate) fn parse(source: &str) -> Fallible<DrillFile> {
                 let (number, diameter) = tool_definition(t)?;
                 let s = unit.ok_or("excellon: a tool before METRIC/INCH")?;
                 file.tools.insert(number, diameter * s);
+                if let Some(values) = function.take() {
+                    file.tool_functions.insert(number, values);
+                }
             } else {
                 return Err(format!("excellon: unsupported header line {line:?}").into());
             }

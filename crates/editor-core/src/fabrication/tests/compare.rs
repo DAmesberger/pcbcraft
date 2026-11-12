@@ -381,6 +381,41 @@ fn the_showcase_layers_match_the_core_geometry() -> Fallible<()> {
     Ok(())
 }
 
+/// The exact polygon path (`pcbcraft_fabcheck::polygons`) agrees with the
+/// raster on every written layer of the showcase and the sketched board:
+/// the polygon area lies within the raster's sampling bound of the raster
+/// area, and a layer compared with itself has no difference.
+#[test]
+fn the_polygon_path_agrees_with_the_raster_on_every_layer() -> Fallible<()> {
+    use pcbcraft_fabcheck::{compare, polygons};
+    for (label, project) in [("showcase", showcase()?), ("sketched", sketched()?)] {
+        let set = fabrication::generate(&project, &FabricationOptions::default())?;
+        let grid = expected::board_bitmap(&project, 1.003_17, PIXEL)?;
+        let mut layers = 0;
+        for file in set.files.iter().filter(|f| f.name.ends_with(".gbr")) {
+            if file.name.ends_with("-profile.gbr") {
+                continue;
+            }
+            let parsed = reader::parse(std::str::from_utf8(&file.bytes)?)?;
+            let raster = rendered(&parsed, &grid)?;
+            let exact = polygons::render(&parsed, |_| true)?;
+            let area = polygons::area_mm2(&exact);
+            let limit = allowed(&raster::compare(&raster, &raster)?, perimeter(&raster));
+            assert!(
+                (area - raster.area_mm2()).abs() <= limit,
+                "{label} {}: polygons {area} mm², raster {} mm², limit {limit}",
+                file.name,
+                raster.area_mm2()
+            );
+            let same = compare::compare(&exact, &exact, 1000)?;
+            assert_eq!((same.difference_mm2, same.worst_width_um), (0.0, 0.0));
+            layers += 1;
+        }
+        assert!(layers >= 8, "{label}: {layers} layers");
+    }
+    Ok(())
+}
+
 #[test]
 fn a_sketched_board_with_arcs_cutouts_slots_and_holes_matches() -> Fallible<()> {
     let project = sketched()?;

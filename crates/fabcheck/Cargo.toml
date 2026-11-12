@@ -1,0 +1,15 @@
+[package]
+name = "pcbcraft-fabcheck"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+# A development tool: read Gerber and Excellon files back and compare them.
+# Workspace crates use it as a dev-dependency only (`cargo xtask layers`).
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+i_overlay.workspace = true

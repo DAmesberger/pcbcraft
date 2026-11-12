@@ -4,19 +4,19 @@
 //! even-odd crossings of the pixel-centre line, composite (macro) shapes by
 //! span set operations in primitive order. Dark objects set, clear objects
 //! clear, in object order.
-use super::Fallible;
-use super::excellon_reader::{DrillFile, Hit};
-use super::reader::{Contour, GerberFile, Kind, Path, Prim, Template};
-use crate::geometry::Point;
+use crate::Fallible;
+use crate::Point;
+use crate::excellon::{DrillFile, Hit};
+use crate::gerber::{Contour, GerberFile, Kind, Path, Prim, Template};
 
 /// Chord tolerance arcs are flattened at for rasterising, mm.
-pub(crate) const ARC_TOLERANCE_MM: f64 = 0.0005;
+pub const ARC_TOLERANCE_MM: f64 = 0.0005;
 /// The most pixels one bitmap holds (64 MiB of bits).
 const MAX_PIXELS: usize = 1 << 29;
 
 /// A window of square pixels, one bit each.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Bitmap {
+pub struct Bitmap {
     pub min: Point,
     pub pixel: f64,
     pub width: usize,
@@ -27,7 +27,7 @@ pub(crate) struct Bitmap {
 
 impl Bitmap {
     /// The window from `min` to `max` (grown to whole pixels) at `pixel` mm.
-    pub(crate) fn new(min: Point, max: Point, pixel: f64) -> Fallible<Self> {
+    pub fn new(min: Point, max: Point, pixel: f64) -> Fallible<Self> {
         if !(pixel > 0.0 && pixel.is_finite() && max[0] > min[0] && max[1] > min[1]) {
             return Err("raster: an empty window or pixel".into());
         }
@@ -49,36 +49,36 @@ impl Bitmap {
     }
 
     /// A bitmap on the same grid, empty.
-    pub(crate) fn blank(&self) -> Self {
+    pub fn blank(&self) -> Self {
         Self {
             bits: vec![0; self.bits.len()],
             ..self.clone()
         }
     }
 
-    pub(crate) fn same_grid(&self, o: &Bitmap) -> bool {
+    pub fn same_grid(&self, o: &Bitmap) -> bool {
         self.min == o.min
             && self.pixel == o.pixel
             && self.width == o.width
             && self.height == o.height
     }
 
-    pub(crate) fn get(&self, i: usize, j: usize) -> bool {
+    pub fn get(&self, i: usize, j: usize) -> bool {
         i < self.width && j < self.height && self.bits[j * self.words + i / 64] >> (i % 64) & 1 == 1
     }
 
     /// Whether the pixel whose centre is nearest `p` is dark.
-    pub(crate) fn at(&self, p: Point) -> bool {
+    pub fn at(&self, p: Point) -> bool {
         let i = ((p[0] - self.min[0]) / self.pixel).floor();
         let j = ((p[1] - self.min[1]) / self.pixel).floor();
         i >= 0.0 && j >= 0.0 && self.get(i as usize, j as usize)
     }
 
-    pub(crate) fn count(&self) -> u64 {
+    pub fn count(&self) -> u64 {
         self.bits.iter().map(|w| u64::from(w.count_ones())).sum()
     }
 
-    pub(crate) fn area_mm2(&self) -> f64 {
+    pub fn area_mm2(&self) -> f64 {
         self.count() as f64 * self.pixel * self.pixel
     }
 
@@ -131,7 +131,7 @@ impl Bitmap {
     }
 
     /// Render `shape` dark or clear.
-    pub(crate) fn render(&mut self, shape: &Shape, dark: bool) {
+    pub fn render(&mut self, shape: &Shape, dark: bool) {
         let (rows, spans) = spans_of(shape, self);
         for (k, row) in spans.iter().enumerate() {
             for (x0, x1) in row {
@@ -141,7 +141,7 @@ impl Bitmap {
     }
 
     /// `self` OR `o` (same grid).
-    pub(crate) fn union(&mut self, o: &Bitmap) -> Fallible<()> {
+    pub fn union(&mut self, o: &Bitmap) -> Fallible<()> {
         if !self.same_grid(o) {
             return Err("raster: different grids".into());
         }
@@ -152,7 +152,7 @@ impl Bitmap {
     }
 
     /// `self` AND NOT `o` (same grid).
-    pub(crate) fn subtract(&mut self, o: &Bitmap) -> Fallible<()> {
+    pub fn subtract(&mut self, o: &Bitmap) -> Fallible<()> {
         if !self.same_grid(o) {
             return Err("raster: different grids".into());
         }
@@ -165,7 +165,7 @@ impl Bitmap {
 
 /// A shape to rasterise, in mm.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Shape {
+pub enum Shape {
     Disc {
         c: Point,
         r: f64,
@@ -187,7 +187,7 @@ pub(crate) enum Shape {
 }
 
 impl Shape {
-    pub(crate) fn rect(center: Point, w: f64, h: f64) -> Self {
+    pub fn rect(center: Point, w: f64, h: f64) -> Self {
         let (x, y) = (w / 2.0, h / 2.0);
         Self::Poly {
             contours: vec![vec![
@@ -390,7 +390,7 @@ fn subtract(a: &[Span], b: &[Span]) -> Vec<Span> {
 
 /// The points of an arc from `from` to `to` about `center`, within
 /// [`ARC_TOLERANCE_MM`]; `from == to` is a full circle.
-pub(crate) fn arc_points(from: Point, to: Point, center: Point, clockwise: bool) -> Vec<Point> {
+pub fn arc_points(from: Point, to: Point, center: Point, clockwise: bool) -> Vec<Point> {
     let r = (from[0] - center[0]).hypot(from[1] - center[1]);
     let a0 = (from[1] - center[1]).atan2(from[0] - center[0]);
     let a1 = (to[1] - center[1]).atan2(to[0] - center[0]);
@@ -418,7 +418,7 @@ pub(crate) fn arc_points(from: Point, to: Point, center: Point, clockwise: bool)
 }
 
 /// A contour as a closed ring, arcs flattened.
-pub(crate) fn contour_ring(contour: &Contour) -> Vec<Point> {
+pub fn contour_ring(contour: &Contour) -> Vec<Point> {
     let mut ring = vec![contour.start];
     let mut at = contour.start;
     for segment in &contour.segments {
@@ -558,7 +558,7 @@ fn with_hole(shape: Shape, at: Point, hole: Option<f64>) -> Shape {
 }
 
 /// The image of an aperture flashed at `at`.
-pub(crate) fn flash(template: &Template, at: Point) -> Shape {
+pub fn flash(template: &Template, at: Point) -> Shape {
     match template {
         Template::Circle { diameter, hole } => with_hole(
             Shape::Disc {
@@ -606,7 +606,7 @@ pub(crate) fn flash(template: &Template, at: Point) -> Shape {
 }
 
 /// Render every object of a Gerber file, in order.
-pub(crate) fn render_gerber(file: &GerberFile, bitmap: &mut Bitmap) -> Fallible<()> {
+pub fn render_gerber(file: &GerberFile, bitmap: &mut Bitmap) -> Fallible<()> {
     for object in &file.objects {
         let aperture = || -> Fallible<&Template> {
             let id = object
@@ -668,7 +668,7 @@ pub(crate) fn render_gerber(file: &GerberFile, bitmap: &mut Bitmap) -> Fallible<
 }
 
 /// Render every hit and slot of a drill file whose tool `keep` accepts.
-pub(crate) fn render_drill(file: &DrillFile, bitmap: &mut Bitmap) -> Fallible<()> {
+pub fn render_drill(file: &DrillFile, bitmap: &mut Bitmap) -> Fallible<()> {
     for hit in &file.hits {
         let tool = |t: u32| -> Fallible<f64> {
             file.tools
@@ -699,7 +699,7 @@ pub(crate) fn render_drill(file: &DrillFile, bitmap: &mut Bitmap) -> Fallible<()
 
 /// Two renderings of one layer compared.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Comparison {
+pub struct Comparison {
     pub pixel: f64,
     pub area_a: f64,
     pub area_b: f64,
@@ -709,7 +709,7 @@ pub(crate) struct Comparison {
     pub xor_share: f64,
 }
 
-pub(crate) fn compare(a: &Bitmap, b: &Bitmap) -> Fallible<Comparison> {
+pub fn compare(a: &Bitmap, b: &Bitmap) -> Fallible<Comparison> {
     if !a.same_grid(b) {
         return Err("raster: different grids".into());
     }
@@ -732,6 +732,6 @@ pub(crate) fn compare(a: &Bitmap, b: &Bitmap) -> Fallible<Comparison> {
     })
 }
 
-pub(crate) fn xor_area_mm2(a: &Bitmap, b: &Bitmap) -> Fallible<f64> {
+pub fn xor_area_mm2(a: &Bitmap, b: &Bitmap) -> Fallible<f64> {
     Ok(compare(a, b)?.xor_area)
 }

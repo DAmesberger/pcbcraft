@@ -3580,6 +3580,7 @@ name = "pcbcraft-core"
 version = "0.1.0"
 dependencies = [
  "i_overlay",
+ "pcbcraft-fabcheck",
  "pcbcraft-units-derive",
  "qrcodegen",
  "rhai",
@@ -3590,6 +3591,13 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "pcbcraft-fabcheck"
+version = "0.1.0"
+dependencies = [
+ "i_overlay",
 ]
 
 [[package]]
@@ -3662,6 +3670,17 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "zip",
+]
+
+[[package]]
+name = "pcbcraft-kicad"
+version = "0.1.0"
+dependencies = [
+ "i_overlay",
+ "pcbcraft-core",
+ "pcbcraft-fabcheck",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6922,7 +6941,9 @@ name = "xtask"
 version = "0.1.0"
 dependencies = [
  "pcbcraft-core",
+ "pcbcraft-fabcheck",
  "pcbcraft-io",
+ "pcbcraft-kicad",
  "proc-macro2",
  "serde_json",
  "sha2 0.10.9",

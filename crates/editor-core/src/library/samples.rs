@@ -1636,7 +1636,7 @@ pub(crate) fn block_symbol(
 
 /// [`block_symbol`] wide enough for `terminals`' names (see
 /// [`fit_pin_names`]).
-pub(crate) fn named_block_symbol(
+pub fn named_block_symbol(
     component: DefinitionId,
     terminals: &[(TerminalId, &str)],
 ) -> Result<SymbolDefinition> {

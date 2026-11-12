@@ -6,17 +6,17 @@
 //! object attributes. Coordinates come out in millimetres. Deprecated or
 //! unused commands (`LM`, `LR`, `LS`, `SR`, `IP`, `G74`, …) are refused,
 //! since the writer must not emit them.
-use super::Fallible;
-use crate::geometry::Point;
+use crate::Fallible;
+use crate::Point;
 use std::collections::BTreeMap;
 
 /// Attribute name to values (`.FileFunction` → `["Copper", "L1", "Top"]`).
-pub(crate) type Attrs = BTreeMap<String, Vec<String>>;
+pub type Attrs = BTreeMap<String, Vec<String>>;
 
 /// One macro primitive after its parameters were evaluated, in mm and
 /// degrees.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Prim {
+pub enum Prim {
     Circle {
         on: bool,
         diameter: f64,
@@ -53,7 +53,7 @@ pub(crate) enum Prim {
 
 /// An aperture template with its parameters, in mm.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Template {
+pub enum Template {
     Circle {
         diameter: f64,
         hole: Option<f64>,
@@ -81,14 +81,14 @@ pub(crate) enum Template {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Aperture {
+pub struct Aperture {
     pub template: Template,
     /// The aperture attribute dictionary when it was defined.
     pub attributes: Attrs,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Path {
+pub enum Path {
     Line {
         to: Point,
     },
@@ -101,13 +101,13 @@ pub(crate) enum Path {
 
 /// A closed region contour from `start`.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Contour {
+pub struct Contour {
     pub start: Point,
     pub segments: Vec<Path>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Kind {
+pub enum Kind {
     Flash {
         at: Point,
     },
@@ -128,7 +128,7 @@ pub(crate) enum Kind {
 
 /// One graphics object.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Object {
+pub struct Object {
     pub kind: Kind,
     /// The aperture of a flash or draw; `None` for a region.
     pub aperture: Option<u32>,
@@ -140,7 +140,7 @@ pub(crate) struct Object {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct GerberFile {
+pub struct GerberFile {
     pub metric: bool,
     pub integer_digits: u32,
     pub decimals: u32,
@@ -153,15 +153,15 @@ pub(crate) struct GerberFile {
 
 impl GerberFile {
     /// The values of a file attribute (`.FileFunction`).
-    pub(crate) fn file_attribute(&self, name: &str) -> Option<&[String]> {
+    pub fn file_attribute(&self, name: &str) -> Option<&[String]> {
         self.file_attributes.get(name).map(Vec::as_slice)
     }
-    pub(crate) fn flashes(&self) -> impl Iterator<Item = &Object> {
+    pub fn flashes(&self) -> impl Iterator<Item = &Object> {
         self.objects
             .iter()
             .filter(|o| matches!(o.kind, Kind::Flash { .. }))
     }
-    pub(crate) fn regions(&self) -> impl Iterator<Item = &Object> {
+    pub fn regions(&self) -> impl Iterator<Item = &Object> {
         self.objects
             .iter()
             .filter(|o| matches!(o.kind, Kind::Region { .. }))
@@ -193,7 +193,7 @@ struct State {
 }
 
 /// Parse one Gerber file.
-pub(crate) fn parse(source: &str) -> Fallible<GerberFile> {
+pub fn parse(source: &str) -> Fallible<GerberFile> {
     let text: String = source
         .chars()
         .filter(|c| *c != '\r' && *c != '\n')
@@ -250,7 +250,7 @@ fn attribute(text: &str) -> (String, Vec<String>) {
 }
 
 /// Undo `\uXXXX` escapes (UTF-16 code units) in an attribute field.
-pub(crate) fn unescape(field: &str) -> String {
+pub fn unescape(field: &str) -> String {
     let mut units: Vec<u16> = Vec::new();
     let mut out = String::new();
     let mut rest = field;
