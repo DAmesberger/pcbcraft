@@ -669,6 +669,12 @@ fn stadium(s: &mut Session, tag: &str, [length, high, v]: [&str; 3], at: [f64; 3
 ///   **Tongue** (LCP), a plate with rounded corners centred in the opening.
 /// - Twelve gold solder **tails** in the rear row, at the drawing's x
 ///   positions and widths (0.20 mm signal, 0.45 mm shared VBUS and GND).
+/// - The **`opening` datum** (slice B2): a construction plane on the
+///   mating face at the opening's centre, its normal out along the plug's
+///   way in, sized by `opening_u` × `opening_v` with round ends
+///   (`opening_r`) and `opening_depth` deep: the plug's shell, which fills
+///   the 8.34 × 2.56 mm opening, out to the drawing's mating view's
+///   "1.85 Min" where the plug's overmold begins.
 ///
 /// Origin at the outline centre, as the footprint's. The shell's front
 /// face (the extrusion's start face, `F2:start` of the Shell body) is what
@@ -764,8 +770,44 @@ pub fn author_usb4105() -> Vec<u8> {
                 "mm",
                 "how far the tails run under the shell (illustrative)",
             ),
+            // The `opening` datum (slice B2): the aperture the mating
+            // plug needs is the plug's shell, which fills the receptacle's
+            // opening, out to where the plug's overmold begins.
+            (
+                "opening_u",
+                "opening_w",
+                "mm",
+                "opening datum across: the plug's shell",
+            ),
+            (
+                "opening_v",
+                "opening_h",
+                "mm",
+                "opening datum high: the plug's shell",
+            ),
+            (
+                "opening_r",
+                "opening_h / 2",
+                "mm",
+                "opening datum corner radius: round ends",
+            ),
+            (
+                "opening_depth",
+                "1.85 mm",
+                "mm",
+                "opening datum depth: the plug's shell before its overmold (mating view, 1.85 min)",
+            ),
         ],
         ["width * 0.6", "depth * 0.6"],
+    );
+    // The opening plane on the mating face at the opening's centre: x
+    // across, y up, so its normal (x × y) is −y, out along the plug's way
+    // in.
+    run(
+        &mut s,
+        "construct.plane.offset",
+        json!({"base": {"origin": ["0 mm", "-depth / 2", "opening_z"], "x_dir": [1, 0, 0],
+            "y_dir": [0, 0, 1]}, "offset": "0 mm", "name": "opening"}),
     );
     let (w, h, ow, oh, oz) = (8.94, 3.31, 8.34, 2.56, 1.73);
     let opening = ["opening_w", "opening_h", "-opening_z"];

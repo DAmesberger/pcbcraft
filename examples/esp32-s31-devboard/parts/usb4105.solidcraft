@@ -1,5 +1,18 @@
 {
-  "format": "solidcraft/51",
+  "format": "solidcraft/52",
+  "format_pending": [
+    "3d-wire-point-nodes",
+    "frame-end-caps",
+    "joint-origin-inside",
+    "nested-face-name",
+    "opus-quality",
+    "render-indirect-clamp",
+    "render-quality-controls",
+    "revolve-axis-sketch",
+    "sheet-flange-segments",
+    "sketch-link-construction-point",
+    "two-sided-cut-cap-names"
+  ],
   "name": "GCT USB4105-GF-A USB-C receptacle",
   "units": "mm",
   "params": [
@@ -172,6 +185,34 @@
       "model": false
     },
     {
+      "name": "opening_u",
+      "expr": "opening_w",
+      "unit": "mm",
+      "comment": "opening datum across: the plug's shell",
+      "model": false
+    },
+    {
+      "name": "opening_v",
+      "expr": "opening_h",
+      "unit": "mm",
+      "comment": "opening datum high: the plug's shell",
+      "model": false
+    },
+    {
+      "name": "opening_r",
+      "expr": "opening_h / 2",
+      "unit": "mm",
+      "comment": "opening datum corner radius: round ends",
+      "model": false
+    },
+    {
+      "name": "opening_depth",
+      "expr": "1.85 mm",
+      "unit": "mm",
+      "comment": "opening datum depth: the plug's shell before its overmold (mating view, 1.85 min)",
+      "model": false
+    },
+    {
       "name": "marking_top_u",
       "expr": "width * 0.6",
       "unit": "mm",
@@ -186,7 +227,7 @@
       "model": false
     },
     {
-      "name": "d18",
+      "name": "d19",
       "expr": "tongue_r",
       "unit": "mm",
       "model": true
@@ -195,10 +236,41 @@
   "features": [
     {
       "id": 1,
-      "name": "Shell profile",
+      "name": "opening",
       "suppressed": false,
       "param_names": [
         "d1"
+      ],
+      "type": "construction_plane",
+      "plane": {
+        "type": "offset",
+        "base": {
+          "type": "placed",
+          "origin": [
+            "0 mm",
+            "-depth / 2",
+            "opening_z"
+          ],
+          "x_dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "y_dir": [
+            -0.0,
+            0.0,
+            1.0
+          ]
+        },
+        "distance": "0 mm"
+      }
+    },
+    {
+      "id": 2,
+      "name": "Shell profile",
+      "suppressed": false,
+      "param_names": [
+        "d2"
       ],
       "type": "sketch",
       "plane": {
@@ -434,17 +506,17 @@
       }
     },
     {
-      "id": 2,
+      "id": 3,
       "name": "Shell",
       "suppressed": false,
       "body_names": [
         "Shell"
       ],
       "param_names": [
-        "d2"
+        "d3"
       ],
       "type": "extrude",
-      "sketch": 1,
+      "sketch": 2,
       "profiles": {
         "type": "curves",
         "loops": [
@@ -464,13 +536,13 @@
       "operation": "new_body"
     },
     {
-      "id": 3,
+      "id": 4,
       "name": "Stake 1",
       "suppressed": false,
       "param_names": [
-        "d3",
         "d4",
-        "d5"
+        "d5",
+        "d6"
       ],
       "participants": [
         "Shell"
@@ -478,29 +550,6 @@
       "type": "box",
       "corner": [
         "-width / 2",
-        "-depth / 2 + stake_front_y - stake_len / 2",
-        "0 mm"
-      ],
-      "length": "shell_t",
-      "width": "stake_len",
-      "height": "opening_z",
-      "operation": "join"
-    },
-    {
-      "id": 4,
-      "name": "Stake 2",
-      "suppressed": false,
-      "param_names": [
-        "d6",
-        "d7",
-        "d8"
-      ],
-      "participants": [
-        "Shell"
-      ],
-      "type": "box",
-      "corner": [
-        "width / 2 - shell_t",
         "-depth / 2 + stake_front_y - stake_len / 2",
         "0 mm"
       ],
@@ -511,12 +560,35 @@
     },
     {
       "id": 5,
+      "name": "Stake 2",
+      "suppressed": false,
+      "param_names": [
+        "d7",
+        "d8",
+        "d9"
+      ],
+      "participants": [
+        "Shell"
+      ],
+      "type": "box",
+      "corner": [
+        "width / 2 - shell_t",
+        "-depth / 2 + stake_front_y - stake_len / 2",
+        "0 mm"
+      ],
+      "length": "shell_t",
+      "width": "stake_len",
+      "height": "opening_z",
+      "operation": "join"
+    },
+    {
+      "id": 6,
       "name": "Stake 3",
       "suppressed": false,
       "param_names": [
-        "d9",
         "d10",
-        "d11"
+        "d11",
+        "d12"
       ],
       "participants": [
         "Shell"
@@ -533,13 +605,13 @@
       "operation": "join"
     },
     {
-      "id": 6,
+      "id": 7,
       "name": "Stake 4",
       "suppressed": false,
       "param_names": [
-        "d12",
         "d13",
-        "d14"
+        "d14",
+        "d15"
       ],
       "participants": [
         "Shell"
@@ -556,11 +628,11 @@
       "operation": "join"
     },
     {
-      "id": 7,
+      "id": 8,
       "name": "Insulator profile",
       "suppressed": false,
       "param_names": [
-        "d15"
+        "d16"
       ],
       "type": "sketch",
       "plane": {
@@ -694,17 +766,17 @@
       }
     },
     {
-      "id": 8,
+      "id": 9,
       "name": "Insulator",
       "suppressed": false,
       "body_names": [
         "Insulator"
       ],
       "param_names": [
-        "d16"
+        "d17"
       ],
       "type": "extrude",
-      "sketch": 7,
+      "sketch": 8,
       "profiles": {
         "type": "all"
       },
@@ -716,11 +788,11 @@
       "operation": "new_body"
     },
     {
-      "id": 9,
+      "id": 10,
       "name": "Tongue profile",
       "suppressed": false,
       "param_names": [
-        "d17"
+        "d18"
       ],
       "type": "sketch",
       "plane": {
@@ -860,6 +932,14 @@
               2.225
             ],
             "fixed": false
+          },
+          {
+            "id": "p13",
+            "pos": [
+              0.0,
+              -0.2749999999999997
+            ],
+            "fixed": false
           }
         ],
         "curves": [
@@ -922,6 +1002,13 @@
             "a": 12,
             "b": 13,
             "construction": false
+          },
+          {
+            "id": "l5",
+            "type": "line",
+            "a": 5,
+            "b": 11,
+            "construction": true
           }
         ],
         "constraints": [
@@ -974,7 +1061,7 @@
             "type": "radius",
             "c": 4,
             "value": 0.3,
-            "param": "d18"
+            "param": "d19"
           },
           {
             "id": "k10",
@@ -1041,29 +1128,35 @@
             "type": "equal",
             "a": 4,
             "b": 7
+          },
+          {
+            "id": "k21",
+            "type": "midpoint",
+            "p": 15,
+            "l": 8
           }
         ],
         "counters": {
           "a": 4,
           "corner": 2,
-          "k": 20,
-          "l": 4,
-          "p": 12
+          "k": 21,
+          "l": 5,
+          "p": 13
         }
       }
     },
     {
-      "id": 10,
+      "id": 11,
       "name": "Tongue",
       "suppressed": false,
       "body_names": [
         "Tongue"
       ],
       "param_names": [
-        "d19"
+        "d20"
       ],
       "type": "extrude",
-      "sketch": 9,
+      "sketch": 10,
       "profiles": {
         "type": "all"
       },
@@ -1075,16 +1168,16 @@
       "operation": "new_body"
     },
     {
-      "id": 11,
+      "id": 12,
       "name": "Tail A1B12",
       "suppressed": false,
       "body_names": [
         "Tail A1B12"
       ],
       "param_names": [
-        "d20",
         "d21",
-        "d22"
+        "d22",
+        "d23"
       ],
       "type": "box",
       "corner": [
@@ -1098,16 +1191,16 @@
       "operation": "new_body"
     },
     {
-      "id": 12,
+      "id": 13,
       "name": "Tail A4B9",
       "suppressed": false,
       "body_names": [
         "Tail A4B9"
       ],
       "param_names": [
-        "d23",
         "d24",
-        "d25"
+        "d25",
+        "d26"
       ],
       "type": "box",
       "corner": [
@@ -1121,16 +1214,16 @@
       "operation": "new_body"
     },
     {
-      "id": 13,
+      "id": 14,
       "name": "Tail B8",
       "suppressed": false,
       "body_names": [
         "Tail B8"
       ],
       "param_names": [
-        "d26",
         "d27",
-        "d28"
+        "d28",
+        "d29"
       ],
       "type": "box",
       "corner": [
@@ -1144,16 +1237,16 @@
       "operation": "new_body"
     },
     {
-      "id": 14,
+      "id": 15,
       "name": "Tail A5",
       "suppressed": false,
       "body_names": [
         "Tail A5"
       ],
       "param_names": [
-        "d29",
         "d30",
-        "d31"
+        "d31",
+        "d32"
       ],
       "type": "box",
       "corner": [
@@ -1167,16 +1260,16 @@
       "operation": "new_body"
     },
     {
-      "id": 15,
+      "id": 16,
       "name": "Tail B7",
       "suppressed": false,
       "body_names": [
         "Tail B7"
       ],
       "param_names": [
-        "d32",
         "d33",
-        "d34"
+        "d34",
+        "d35"
       ],
       "type": "box",
       "corner": [
@@ -1190,16 +1283,16 @@
       "operation": "new_body"
     },
     {
-      "id": 16,
+      "id": 17,
       "name": "Tail A6",
       "suppressed": false,
       "body_names": [
         "Tail A6"
       ],
       "param_names": [
-        "d35",
         "d36",
-        "d37"
+        "d37",
+        "d38"
       ],
       "type": "box",
       "corner": [
@@ -1213,16 +1306,16 @@
       "operation": "new_body"
     },
     {
-      "id": 17,
+      "id": 18,
       "name": "Tail A7",
       "suppressed": false,
       "body_names": [
         "Tail A7"
       ],
       "param_names": [
-        "d38",
         "d39",
-        "d40"
+        "d40",
+        "d41"
       ],
       "type": "box",
       "corner": [
@@ -1236,16 +1329,16 @@
       "operation": "new_body"
     },
     {
-      "id": 18,
+      "id": 19,
       "name": "Tail B6",
       "suppressed": false,
       "body_names": [
         "Tail B6"
       ],
       "param_names": [
-        "d41",
         "d42",
-        "d43"
+        "d43",
+        "d44"
       ],
       "type": "box",
       "corner": [
@@ -1259,16 +1352,16 @@
       "operation": "new_body"
     },
     {
-      "id": 19,
+      "id": 20,
       "name": "Tail A8",
       "suppressed": false,
       "body_names": [
         "Tail A8"
       ],
       "param_names": [
-        "d44",
         "d45",
-        "d46"
+        "d46",
+        "d47"
       ],
       "type": "box",
       "corner": [
@@ -1282,16 +1375,16 @@
       "operation": "new_body"
     },
     {
-      "id": 20,
+      "id": 21,
       "name": "Tail B5",
       "suppressed": false,
       "body_names": [
         "Tail B5"
       ],
       "param_names": [
-        "d47",
         "d48",
-        "d49"
+        "d49",
+        "d50"
       ],
       "type": "box",
       "corner": [
@@ -1305,16 +1398,16 @@
       "operation": "new_body"
     },
     {
-      "id": 21,
+      "id": 22,
       "name": "Tail B4A9",
       "suppressed": false,
       "body_names": [
         "Tail B4A9"
       ],
       "param_names": [
-        "d50",
         "d51",
-        "d52"
+        "d52",
+        "d53"
       ],
       "type": "box",
       "corner": [
@@ -1328,16 +1421,16 @@
       "operation": "new_body"
     },
     {
-      "id": 22,
+      "id": 23,
       "name": "Tail B1A12",
       "suppressed": false,
       "body_names": [
         "Tail B1A12"
       ],
       "param_names": [
-        "d53",
         "d54",
-        "d55"
+        "d55",
+        "d56"
       ],
       "type": "box",
       "corner": [
@@ -1351,11 +1444,11 @@
       "operation": "new_body"
     },
     {
-      "id": 23,
+      "id": 24,
       "name": "marking-top",
       "suppressed": false,
       "param_names": [
-        "d56"
+        "d57"
       ],
       "type": "construction_plane",
       "plane": {
@@ -1382,7 +1475,7 @@
       }
     }
   ],
-  "next_id": 24,
+  "next_id": 25,
   "next_component_color_index": 0,
   "appearances": {
     "bodies": {

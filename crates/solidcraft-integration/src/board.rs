@@ -1340,6 +1340,8 @@ pub fn laminate(project: &pcbcraft_core::Project) -> Option<Laminate> {
 #[cfg(test)]
 mod closed_loop_tests;
 pub mod model_refs;
+#[cfg(test)]
+mod package_datum_tests;
 mod parts;
 #[cfg(test)]
 mod tests;

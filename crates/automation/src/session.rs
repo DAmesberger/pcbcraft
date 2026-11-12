@@ -851,13 +851,13 @@ impl Request {
                 concat!(
                     "Evaluate a SolidCraft part file (path to a .solidcraft design, or builtin: esp32-s31-wroom-3) at literal values for some of its user parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report the convention check (docs/part-templates.md §11): parameters with their values, bodies with the ",
                     pcbcraft_core::product_name!(),
-                    " material each appearance names, marking surfaces from marking-<name> construction planes sized by marking_<name>_u/_v, the pin1 point, bounds, timing and findings (part_file.read, part_file.structure, part_file.value, part_file.feature, part_file.seating, part_file.material, part_file.marking blocking; part_file.origin, part_file.no_marking, part_file.import, part_file.slow advisory). Lists the material appearance names. Not a document change."
+                    " material each appearance names, marking surfaces from marking-<name> construction planes sized by marking_<name>_u/_v, package datums from opening-<name> construction planes (sized by <datum>_u and <datum>_v, optional <datum>_r, <datum>_depth and <datum>_clearance; the normal points out along the plug's way in) and axis-<name> construction axes (optional diameter <datum>_d), the pin1 point, bounds, timing and findings (part_file.read, part_file.structure, part_file.value, part_file.feature, part_file.seating, part_file.material, part_file.marking, part_file.datum blocking; part_file.origin, part_file.no_marking, part_file.import, part_file.slow advisory). Lists the material appearance names. Not a document change."
                 ),
             ),
             info::<part_files::UsePartFileParams>(
                 "library.use_part_file",
                 "Make a SolidCraft part file a package draft's 3D model, at literal parameter values.",
-                "Make a package draft's 3D model a SolidCraft part file at literal parameter values: the file (path, with its licence, or a builtin) is checked, packed as a Model of format solidcraft (or the same file's existing model is reused) and the package's model set to it, with the evaluated bounds and marking surfaces stored, in one undo step at expected_revision. Refused whole on a blocking finding. The footprint, terminals and keep-outs stay the package's own. Returns the outcome and the check report.",
+                "Make a package draft's 3D model a SolidCraft part file at literal parameter values: the file (path, with its licence, or a builtin) is checked, packed as a Model of format solidcraft (or the same file's existing model is reused) and the package's model set to it, with the evaluated bounds, marking surfaces and declared datums stored (the datums become the package's, marked as the part file's), in one undo step at expected_revision. Refused whole on a blocking finding. The footprint, terminals and keep-outs stay the package's own. Returns the outcome and the check report.",
             ),
             info::<part_files::SetPartValuesParams>(
                 "library.set_part_values",
