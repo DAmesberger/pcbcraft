@@ -108,12 +108,14 @@ fn run() -> Result<()> {
                 "ci",
                 "--no-fail-fast",
             ])?;
+            board_parity()?;
             if command == "ci" {
                 wasm()?;
                 generators::run(&["check".into()])?;
             }
             Ok(())
         }
+        "board-parity" => board_parity(),
         "wasm" => wasm(),
         "wasm-scripting" => wasm_tests("pcbcraft-core", "scripting::tests", "scripting"),
         "wasm-footprint" => wasm_tests("pcbcraft-solidcraft", "footprint::tests", "footprint"),
@@ -128,7 +130,7 @@ fn run() -> Result<()> {
         "ui-forms" => ui_forms::check(),
         "raw-keys" => raw_keys::check(),
         _ => Err(
-            "usage: cargo xtask ci | ci-native | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
+            "usage: cargo xtask ci | ci-native | board-parity | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
              | licences --check | brand-crates | clean-room | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
              | convert-v1 [--profile PROFILE.json] PATH… | kicad-compare [--design PATH]"
                 .into(),
@@ -166,6 +168,28 @@ fn wasm_tests(package: &str, filter: &str, what: &str) -> Result<()> {
         return Err(format!("wasm {what} tests failed: {status}").into());
     }
     Ok(())
+}
+
+/// The board's exact native build against the board plan it is made
+/// from, on every example board (`crates/automation/tests/board_parity.rs`):
+/// the same flat bodies by kind, source, layer, box and volume, and every
+/// native body as recorded in its `tests/board_parity/` record. It builds
+/// every example board, so the workspace tests leave it out and CI runs it
+/// once, here.
+fn board_parity() -> Result<()> {
+    cargo(&[
+        "test",
+        "--locked",
+        "--profile",
+        "ci",
+        "-p",
+        "pcbcraft-automation",
+        "--test",
+        "board_parity",
+        "--",
+        "--ignored",
+        "--nocapture",
+    ])
 }
 
 /// The pure core and the native adapter must build for the browser.

@@ -25,8 +25,8 @@ use pcbcraft_core::library::{
     ModelPlacement, PackageDefinition, PackageModel, Pad, PadCopper, PadDefaults, PadShape,
 };
 use pcbcraft_core::{
-    CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, Stackup, ViaSpan,
-    instances, layout,
+    CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, Stackup, instances,
+    layout,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -1557,20 +1557,14 @@ pub fn update(
 /// Build `project` with `b`: a new design, or one replayed.
 fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
-    if project
-        .vias
-        .iter()
-        .any(|v| !matches!(v.span, ViaSpan::Through))
-    {
-        return Err(Error::Invalid(
-            "blind and buried vias are not built in the native model yet".into(),
-        ));
-    }
     let stackup = &project.stackup;
+    let pads = placed_pads(project)?;
+    // The board's flat bodies, described once ([`plan`]): the fills, pads,
+    // tracks, vias and laminate below are built from it.
+    let plan = plan::of_pads(project, &pads)?;
     // The board is evaluated once its parts are in, not after every command.
     b.native.defer_evaluation()?;
     stackup_params(&mut b, project)?;
-    let pads = placed_pads(project)?;
     b.params(&object_params(project, &pads)?)?;
     // What an edit rarely changes comes first in the design's history, so
     // evaluating an edit reuses it: the generated and library package
@@ -1597,7 +1591,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             _ => {}
         }
     }
-    let mut styles = via_styles(&mut b, project)?;
+    let mut styles = via_styles(&mut b, project, &plan.vias)?;
     let substrate = b.native.component("PCB substrate", true)?;
     let board = substrate.occurrence;
     let mut sources = vec![];
@@ -1613,7 +1607,14 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     // feature after the first one deleted is evaluated again: measured on
     // the ESP32 board, the fills just before the laminate made a refill
     // 1.6 s faster and a track edit 2.6 s slower.)
-    let fills = fill::build(&mut b, project, board, &mut sources, &mut joints)?;
+    let fills = fill::build(
+        &mut b,
+        project,
+        &plan.fills,
+        board,
+        &mut sources,
+        &mut joints,
+    )?;
     for placement in &project.placements {
         let instance = project
             .instance(placement.instance)
@@ -1750,7 +1751,12 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         });
     }
     let mut lands = Vec::with_capacity(pads.len());
-    for pad in &pads {
+    if plan.pads.len() != pads.len() {
+        return Err(Error::Verification(
+            "the board plan holds another number of pads".into(),
+        ));
+    }
+    for (pad, planned) in pads.iter().zip(&plan.pads) {
         let local = pad.pad();
         let pick = next_pick(&sources);
         let copper = local.kind.copper();
@@ -1802,67 +1808,60 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         if copper == PadCopper::None {
             continue;
         }
-        let Some(shape) = shape else {
-            return Err(Error::Invalid(format!(
-                "{} pad {} has no copper outline",
-                pad.designator, local.id
-            )));
-        };
         let prefix = format!("instance_{}", pad.placed.instance);
         let pp = format!("pad_{}_{}", pad.placed.instance, local.id);
         let created = b.native.component(&pp, false)?;
         let near_copper = copper_param(pad.placed.layer.into());
         let far_copper = copper_param(other(pad.placed.layer).into());
-        let land = |b: &mut Builder, name: &str, offset: Expr, height: &str| -> Result<()> {
-            let mut contours = vec![pad.local(&shape)];
-            contours.extend(bores.iter().map(|c| pad.local(c)));
+        let profile = |b: &mut Builder, body: &plan::PlanBody, offset: Expr, height: &str| {
             b.native.profile_body(ProfileBody {
-                name,
+                name: &body.name,
                 offset,
-                contours: &contours,
+                contours: &body.loops,
                 height: height.into(),
             })?;
-            b.record(name, BodyKind::PadCopper)
+            b.record(&body.name, BodyKind::PadCopper)
         };
-        match axis_box(pad) {
-            Some(along_y) => {
-                let (x, y) = if along_y {
-                    (format!("{pp}_width"), format!("{pp}_length"))
-                } else {
-                    (format!("{pp}_length"), format!("{pp}_width"))
-                };
-                b.body(
-                    BodyKind::PadCopper,
-                    BoxBody {
-                        name: &pp,
-                        corner: [
-                            format!("-{x} / 2").into(),
-                            format!("-{y} / 2").into(),
-                            0.into(),
-                        ],
-                        size: [x.into(), y.into(), near_copper.as_str().into()],
-                    },
-                )?;
+        for body in &planned.bodies {
+            let plan::Origin::Pad { part, .. } = body.source else {
+                return Err(Error::Verification(format!(
+                    "pad {pp}'s plan holds body {}",
+                    body.name
+                )));
+            };
+            match part {
+                plan::PadPart::Land => match axis_box(pad) {
+                    Some(along_y) => {
+                        let (x, y) = if along_y {
+                            (format!("{pp}_width"), format!("{pp}_length"))
+                        } else {
+                            (format!("{pp}_length"), format!("{pp}_width"))
+                        };
+                        b.body(
+                            BodyKind::PadCopper,
+                            BoxBody {
+                                name: &body.name,
+                                corner: [
+                                    format!("-{x} / 2").into(),
+                                    format!("-{y} / 2").into(),
+                                    0.into(),
+                                ],
+                                size: [x.into(), y.into(), near_copper.as_str().into()],
+                            },
+                        )?;
+                    }
+                    None => profile(&mut b, body, 0.into(), &near_copper)?,
+                },
+                plan::PadPart::Opposite => profile(
+                    &mut b,
+                    body,
+                    format!("- board_thickness - {far_copper}").into(),
+                    &far_copper,
+                )?,
+                plan::PadPart::Barrel(_) => {
+                    profile(&mut b, body, "- board_thickness".into(), "board_thickness")?
+                }
             }
-            None => land(&mut b, &pp, 0.into(), &near_copper)?,
-        }
-        if copper == PadCopper::Through {
-            land(
-                &mut b,
-                &format!("{pp}_opposite"),
-                format!("- board_thickness - {far_copper}").into(),
-                &far_copper,
-            )?;
-        }
-        for (index, [drill, bore]) in pad.barrels().iter().enumerate() {
-            let name = format!("{pp}_barrel_{index}");
-            b.native.profile_body(ProfileBody {
-                name: &name,
-                offset: "- board_thickness".into(),
-                contours: &[pad.local(drill), pad.local(bore)],
-                height: "board_thickness".into(),
-            })?;
-            b.record(&name, BodyKind::PadCopper)?;
         }
         // Rounded to a nanometre, so moving a part (whose offsets carry
         // rounding of its position) leaves the joint as it was.
@@ -1896,7 +1895,12 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         });
     }
     let mut paths = Vec::with_capacity(project.tracks.len());
-    for track in &project.tracks {
+    if plan.tracks.len() != project.tracks.len() {
+        return Err(Error::Verification(
+            "the board plan holds another number of tracks".into(),
+        ));
+    }
+    for (track, planned) in project.tracks.iter().zip(&plan.tracks) {
         let mount = match track.layer.side() {
             Some(side) => Mount::Side(side),
             None => Mount::Height(inner_base(stackup, track.layer)?.into()),
@@ -1908,13 +1912,10 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         let created = b.native.component(&prefix, false)?;
         let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
         // The stadium in the track's frame: start at the origin, along +x.
-        let length = (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1]);
-        let contour = polygon(&track_outline([0.0, 0.0], [length, 0.0], track.width))
-            .ok_or_else(|| Error::Invalid(format!("track {} has no length", track.id)))?;
         b.native.whole_profile_body(ProfileBody {
-            name: &prefix,
+            name: &planned.body.name,
             offset: 0.into(),
-            contours: &[contour],
+            contours: &planned.body.loops,
             height: copper_param(track.layer).into(),
         })?;
         b.record(&prefix, BodyKind::CopperTrack)?;
@@ -1996,7 +1997,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         // The laminate last: its sketches hold every drill, which each
         // command after it would otherwise read again.
         b.native.activate(substrate.component)?;
-        laminate(&mut b, project, &pads, &fills)?;
+        laminate(&mut b, project, &plan.laminate)?;
         // Every joint goes in once the parts are built, solved together (one
         // by one, each would solve all the joints made before it); a copy of
         // a shared definition starts where its first occurrence stands.
@@ -2036,53 +2037,44 @@ struct ViaStyle {
     first: u64,
 }
 
-/// The definition of `via`'s size.
-fn via_style(b: &mut Builder, project: &Project, via: &pcbcraft_core::Via) -> Result<ViaStyle> {
+/// The definition of `via`'s size, its bodies the via's plan's.
+fn via_style(
+    b: &mut Builder,
+    project: &Project,
+    via: &pcbcraft_core::Via,
+    planned: &plan::ViaPlan,
+) -> Result<ViaStyle> {
     let stackup = &project.stackup;
-    let layers = stackup.layers();
     let name = format!("via_{}_{}", mm_slug(via.drill), mm_slug(via.diameter));
     let created = b.native.component(&name, false)?;
-    let drill = pad_outline::plated_drill_radius(via.drill);
-    let bore = via.drill / 2.0;
-    let ring = via.diameter / 2.0;
-    let circle = |radius| Contour::Circle {
-        center: [0.0, 0.0],
-        radius,
-    };
-    if bore > 0.0 {
-        let body = format!("{name}_barrel");
-        b.native.profile_body(ProfileBody {
-            name: &body,
-            offset: 0.into(),
-            contours: &[circle(drill), circle(bore)],
-            height: "board_thickness".into(),
-        })?;
-        b.record(&body, BodyKind::ViaCopper)?;
-    }
-    // Through vias join every layer.
-    for layer in layers.iter().filter(|l| via.on(**l, &layers)) {
-        if bore <= 0.0 && layer.side().is_some() {
-            continue;
-        }
-        let body = format!("{name}_ring_{}", layer_slug(*layer));
-        let height = copper_param(*layer);
+    for body in &planned.bodies {
+        let plan::Origin::Via { part, .. } = body.source else {
+            return Err(Error::Verification(format!(
+                "via {}'s plan holds body {}",
+                via.id, body.name
+            )));
+        };
         // Outer rings cap the barrel; inner rings stand round it, in the
         // circle the laminate's foil level leaves for them.
-        let (offset, contours): (Expr, [Contour; 2]) = match layer {
-            CopperLayer::Top => ("board_thickness".into(), [circle(ring), circle(bore)]),
-            CopperLayer::Bottom => (format!("- {height}").into(), [circle(ring), circle(bore)]),
-            CopperLayer::Inner(_) => (
-                inner_base(stackup, *layer)?.into(),
-                [circle(ring), circle(drill)],
-            ),
+        let (offset, height): (Expr, String) = match part {
+            plan::ViaPart::Barrel => (0.into(), "board_thickness".into()),
+            plan::ViaPart::Ring(layer) => {
+                let height = copper_param(layer);
+                let offset = match layer {
+                    CopperLayer::Top => "board_thickness".into(),
+                    CopperLayer::Bottom => format!("- {height}").into(),
+                    CopperLayer::Inner(_) => inner_base(stackup, layer)?.into(),
+                };
+                (offset, height)
+            }
         };
         b.native.profile_body(ProfileBody {
-            name: &body,
+            name: &body.name,
             offset,
-            contours: &contours,
+            contours: &body.loops,
             height: height.as_str().into(),
         })?;
-        b.record(&body, BodyKind::ViaCopper)?;
+        b.record(&body.name, BodyKind::ViaCopper)?;
     }
     Ok(ViaStyle {
         component: created.component,
@@ -2097,12 +2089,21 @@ fn mm_slug(value: f64) -> String {
 }
 
 /// One definition per via size ([`via_style`]), built before the laminate.
-fn via_styles(b: &mut Builder, project: &Project) -> Result<BTreeMap<ViaKey, ViaStyle>> {
+fn via_styles(
+    b: &mut Builder,
+    project: &Project,
+    planned: &[plan::ViaPlan],
+) -> Result<BTreeMap<ViaKey, ViaStyle>> {
+    if planned.len() != project.vias.len() {
+        return Err(Error::Verification(
+            "the board plan holds another number of vias".into(),
+        ));
+    }
     let mut styles: BTreeMap<ViaKey, ViaStyle> = BTreeMap::new();
-    for via in &project.vias {
+    for (via, planned) in project.vias.iter().zip(planned) {
         let key = (via.drill.to_bits(), via.diameter.to_bits());
         if let std::collections::btree_map::Entry::Vacant(slot) = styles.entry(key) {
-            slot.insert(via_style(b, project, via)?);
+            slot.insert(via_style(b, project, via, planned)?);
         }
     }
     Ok(styles)
@@ -2346,160 +2347,89 @@ fn dielectric_sum(stackup: &Stackup, range: std::ops::Range<usize>) -> String {
     }
 }
 
-/// The laminate as the stack it is made of: each dielectric a slab
-/// extruded from the board outline with every drill as a hole, and where
-/// an inner foil lies at the top of a dielectric, the foil's level a slab
-/// of its own whose holes are also that layer's copper (tracks and via
-/// rings, united by the sketch where they overlap; inner fills and the
-/// copper they touch as one union, [`fill::foil_level`]). The saved bodies
-/// are disjoint and the laminate's mass is physical, without a Boolean: a
-/// board of thousands of vias is built in time linear in their number.
-/// A rectangular board's outline follows `board_width` and `board_depth`;
-/// a sketched board's is its solved outline, with its cutouts, slots and
-/// mounting holes as holes of every slab ([`crate::board::laminate`]),
-/// and it does not follow those parameters. The holes sit
-/// where the board's copper is now (they do not follow placement
-/// parameters edited in Solidcraft); the slabs' heights follow the stackup
-/// parameters.
-fn laminate(
-    b: &mut Builder,
-    project: &Project,
-    pads: &[PlacedPad<'_>],
-    fills: &[fill::FillMark],
-) -> Result<()> {
+/// The laminate's slabs ([`plan::BoardPlan::laminate`]), each extruded
+/// with its holes: the saved bodies are disjoint and the laminate's mass
+/// is physical, without a Boolean, so a board of thousands of vias is
+/// built in time linear in their number. A rectangular board's outline
+/// follows `board_width` and `board_depth`; a sketched board's is its
+/// solved outline ([`crate::board::laminate`]), and it does not follow
+/// those parameters. The holes sit where the board's copper is now (they
+/// do not follow placement parameters edited in Solidcraft); the slabs'
+/// heights follow the stackup parameters.
+fn laminate(b: &mut Builder, project: &Project, slabs: &[plan::PlanBody]) -> Result<()> {
     let stackup = &project.stackup;
-    let pad_drills: Vec<Contour> = pads
-        .iter()
-        .flat_map(|pad| pad.drills().into_iter().map(|d| pad.board(&d)))
-        .collect();
-    if pad_drills.len().saturating_add(project.vias.len()) > MAX_DRILLS {
-        return Err(Error::Invalid(format!(
-            "the board has more than {MAX_DRILLS} drilled holes"
-        )));
-    }
-    let via_drills = project.vias.iter().map(|via| Contour::Circle {
-        center: via.position,
-        radius: pad_outline::plated_drill_radius(via.drill),
-    });
-    // A rectangular board's outline is the board size parameters'
-    // rectangle ([`Native::board_slab`]); a sketched board's is its solved
-    // outline, and its cutouts, slots and mounting holes are holes of
-    // every slab. The contours are the holes.
-    let shaped = crate::board::laminate(project);
-    let through: Vec<Contour> = shaped
-        .as_ref()
-        .map(|l| l.through.clone())
-        .unwrap_or_default();
-    let mut dielectric = pad_drills.clone();
-    dielectric.extend(via_drills);
-    dielectric.extend(through.iter().cloned());
-    let dielectric = without_nested(dielectric);
-    let layers = stackup.layers();
     let count = stackup.dielectrics.len();
-    let mut slab = 0usize;
-    let mut name = || {
-        slab += 1;
-        if slab == 1 {
-            "Substrate".to_owned()
-        } else {
-            format!("Substrate {slab}")
-        }
-    };
+    // A sketched board's outline; a rectangular one's follows the size
+    // parameters ([`Native::board_slab`]).
+    let shaped = !project.board_shape.is_rectangle();
     // What every slab's solid depends on besides its holes and heights.
-    let outline = shaped.map(|l| l.outline);
+    let outline = slabs
+        .first()
+        .and_then(|slab| slab.loops.first())
+        .filter(|_| shaped);
     let base = digest(&(stackup, project.board_size, &outline));
-    let extrude = |b: &mut Builder, body: ProfileBody<'_>| -> Result<()> {
+    for slab in slabs {
+        let plan::Origin::Laminate(level) = slab.source else {
+            return Err(Error::Verification(format!(
+                "the laminate's plan holds body {}",
+                slab.name
+            )));
+        };
+        let (outer, holes) = slab
+            .loops
+            .split_first()
+            .ok_or_else(|| Error::Verification(format!("slab {} has no outline", slab.name)))?;
+        let (offset, height): (String, String) = match level {
+            plan::Level::Dielectric(index) => (
+                dielectric_sum(stackup, index + 1..count),
+                dielectric_sum(stackup, index..index + 1),
+            ),
+            plan::Level::Foil { layer, .. } => (inner_base(stackup, layer)?, copper_param(layer)),
+            plan::Level::UnderFoil(index) => {
+                let foil = stackup
+                    .layers()
+                    .into_iter()
+                    .find(|l| l.side().is_none() && stackup.index(*l) == Some(index))
+                    .ok_or_else(|| {
+                        Error::Verification(format!("slab {} has no foil above it", slab.name))
+                    })?;
+                (
+                    dielectric_sum(stackup, index + 1..count),
+                    format!(
+                        "{} - {}",
+                        dielectric_sum(stackup, index..index + 1),
+                        copper_param(foil)
+                    ),
+                )
+            }
+        };
+        let body = ProfileBody {
+            name: &slab.name,
+            offset: offset.as_str().into(),
+            contours: holes,
+            height: height.as_str().into(),
+        };
         let inputs = digest(&(base, body.name, &body.offset, &body.height, body.contours));
-        let name = body.name.to_owned();
         // A slab in pieces (laminate left in a fill's clearance) is one
         // body per piece, each a slab of these inputs.
-        let made = match &outline {
-            None => b.native.board_slab(body, BOARD_SIZE)?,
-            Some(outline) => b.native.outlined_slab(body, outline)?,
+        let made = if shaped {
+            b.native.outlined_slab(body, outer)?
+        } else {
+            b.native.board_slab(body, BOARD_SIZE)?
         };
-        if !made.contains(&name) {
-            return Err(Error::Verification(format!("slab {name} made no body")));
+        if !made.contains(&slab.name) {
+            return Err(Error::Verification(format!(
+                "slab {} made no body",
+                slab.name
+            )));
         }
         // The slab's extrusion is the last command it ran.
         let step = b.native.step().saturating_sub(1);
-        b.laminate.push((name.clone(), inputs, step));
+        b.laminate.push((slab.name.clone(), inputs, step));
         for piece in made {
             b.slabs.insert(piece.clone(), inputs);
             b.record(&piece, BodyKind::Substrate)?;
         }
-        Ok(())
-    };
-    for index in 0..count {
-        let low = dielectric_sum(stackup, index + 1..count);
-        let thickness = dielectric_sum(stackup, index..index + 1);
-        // An inner foil at this dielectric's top (`inner_base`).
-        let foil = layers
-            .iter()
-            .copied()
-            .find(|l| l.side().is_none() && stackup.index(*l) == Some(index));
-        let Some(layer) = foil else {
-            let name = name();
-            extrude(
-                b,
-                ProfileBody {
-                    name: &name,
-                    offset: low.as_str().into(),
-                    contours: &dielectric,
-                    height: thickness.as_str().into(),
-                },
-            )?;
-            continue;
-        };
-        // The foil's level: its copper is cut out with the pad drills and
-        // the board's cutouts (via drills lie inside their rings); with a
-        // fill on it, the fill's copper too ([`fill::foil_level`]).
-        let mut holes = pad_drills.clone();
-        holes.extend(through.iter().cloned());
-        let mut level = holes.clone();
-        level.extend(
-            project
-                .tracks
-                .iter()
-                .filter(|t| t.layer == layer)
-                .filter_map(|t| polygon(&track_outline(t.start, t.end, t.width))),
-        );
-        level.extend(
-            project
-                .vias
-                .iter()
-                .filter(|v| v.on(layer, &layers))
-                .map(|v| Contour::Circle {
-                    center: v.position,
-                    radius: v.diameter / 2.0,
-                }),
-        );
-        // A via ring or drill inside a wide track's copper is already cut
-        // with it; drawn too, it would be an island of laminate.
-        let level = match fill::foil_level(project, layer, &holes, fills) {
-            Some(level) => level,
-            None => without_nested(level),
-        };
-        let foil_name = name();
-        let foil_height = copper_param(layer);
-        extrude(
-            b,
-            ProfileBody {
-                name: &foil_name,
-                offset: inner_base(stackup, layer)?.into(),
-                contours: &level,
-                height: foil_height.as_str().into(),
-            },
-        )?;
-        let below = name();
-        extrude(
-            b,
-            ProfileBody {
-                name: &below,
-                offset: low.as_str().into(),
-                contours: &dielectric,
-                height: format!("{thickness} - {foil_height}").into(),
-            },
-        )?;
     }
     Ok(())
 }
@@ -2616,6 +2546,7 @@ fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
 
 mod fill;
 mod identity;
+pub mod plan;
 #[cfg(test)]
 mod realism_tests;
 #[cfg(test)]

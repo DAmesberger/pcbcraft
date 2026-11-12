@@ -2124,3 +2124,135 @@ fn nested_holes_are_dropped_and_overlapping_ones_kept() -> Result<()> {
     assert_eq!(circles, vec![[8.0, 0.0], [20.0, 0.0]]);
     Ok(())
 }
+
+/// The showcase with its pours filled: four layers, inner tracks, vias
+/// and fills on outer and inner layers.
+fn showcase() -> Result<Project> {
+    Ok(Engine::showcase()
+        .map_err(|error| Error::Verification(error.to_string()))?
+        .project()
+        .clone())
+}
+
+/// The exact build makes the board plan's flat bodies and no others
+/// ([`plan::parity`]): every kind of land of the shaped fixture, on both
+/// sides and turned, and the showcase's tracks, vias, fills and the
+/// laminate's foil levels.
+#[test]
+fn the_build_makes_the_plans_flat_bodies_and_no_others() -> Result<()> {
+    for project in [shaped()?, showcase()?] {
+        let plan = plan::of(&project)?;
+        assert!(
+            plan.laminate.len() >= project.stackup.dielectrics.len(),
+            "a slab per dielectric at least"
+        );
+        let model = build(&project)?;
+        let differences = plan::parity(&plan, &model)?;
+        assert!(differences.is_empty(), "{differences:#?}");
+    }
+    Ok(())
+}
+
+/// The parity check sees a body the plan lacks, a body it holds that is
+/// not built and one built in another shape.
+#[test]
+fn the_parity_check_finds_a_dropped_added_or_reshaped_body() -> Result<()> {
+    let project = showcase()?;
+    let model = build(&project)?;
+    let plan = plan::of(&project)?;
+    // A track's body dropped from the plan: built, not planned.
+    let mut dropped = plan.clone();
+    dropped.tracks.pop();
+    let differences = plan::parity(&dropped, &model)?;
+    assert_eq!(differences.len(), 1, "{differences:#?}");
+    assert!(differences[0].starts_with("built, not planned"));
+    // A via body planned twice: planned, not built.
+    let mut added = plan.clone();
+    let extra = added.vias[0].bodies[0].clone();
+    added.vias[0].bodies.push(extra);
+    let differences = plan::parity(&added, &model)?;
+    assert_eq!(differences.len(), 1, "{differences:#?}");
+    assert!(differences[0].starts_with("planned, not built"));
+    // A slab planned 10 µm thicker: neither matches the other.
+    let mut thicker = plan.clone();
+    thicker.laminate[0].z[1] += 0.01;
+    let differences = plan::parity(&thicker, &model)?;
+    assert_eq!(differences.len(), 2, "{differences:#?}");
+    // A track planned 0.1 mm wider: neither matches the other.
+    let mut wider = plan;
+    let track = &project.tracks[0];
+    let body = &mut wider.tracks[0].body;
+    let length = (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1]);
+    body.loops = vec![
+        polygon(&track_outline([0.0, 0.0], [length, 0.0], track.width + 0.1))
+            .ok_or_else(|| Error::Verification("no track".into()))?,
+    ];
+    let differences = plan::parity(&wider, &model)?;
+    assert_eq!(differences.len(), 2, "{differences:#?}");
+    Ok(())
+}
+
+/// The plan's heights are the stackup's: the laminate's slabs stack from
+/// z = 0 to the board thickness without gap or overlap, each copper body
+/// lies in its layer's foil, and a barrel spans the laminate.
+#[test]
+fn plan_bodies_lie_in_their_layers() -> Result<()> {
+    for project in [shaped()?, showcase()?] {
+        let plan = plan::of(&project)?;
+        let stackup = &project.stackup;
+        let thickness = stackup.dielectric_mm();
+        let mut slabs: Vec<[f64; 2]> = plan.laminate.iter().map(|s| s.z).collect();
+        slabs.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        let (Some(first), Some(last)) = (slabs.first(), slabs.last()) else {
+            return Err(Error::Verification("no slab".into()));
+        };
+        near(first[0], 0.0);
+        near(last[1], thickness);
+        for pair in slabs.windows(2) {
+            near(pair[0][1], pair[1][0]);
+        }
+        for body in plan.bodies().filter(|b| b.kind != BodyKind::Substrate) {
+            match body.layer {
+                Some(layer) => {
+                    let (low, high) = stackup
+                        .copper_span(layer)
+                        .ok_or_else(|| Error::Verification("no layer".into()))?;
+                    near(body.z[0], low);
+                    near(body.z[1], high);
+                }
+                None => {
+                    near(body.z[0], 0.0);
+                    near(body.z[1], thickness);
+                }
+            }
+            assert!(body.volume().is_some_and(|v| v > 0.0), "{}", body.name);
+        }
+    }
+    // The shaped fixture's plated-through stadium: a land each side and a
+    // barrel, on both placements.
+    let project = shaped()?;
+    let plan = plan::of(&project)?;
+    let parts: Vec<plan::PadPart> = plan
+        .pads
+        .iter()
+        .flat_map(|p| &p.bodies)
+        .filter_map(|b| match b.source {
+            plan::Origin::Pad {
+                pad: PadId(2),
+                part,
+                ..
+            } => Some(part),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        parts,
+        [
+            plan::PadPart::Land,
+            plan::PadPart::Opposite,
+            plan::PadPart::Barrel(0)
+        ]
+        .repeat(2)
+    );
+    Ok(())
+}

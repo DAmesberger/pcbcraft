@@ -24,13 +24,14 @@
 //! The fill copper is the copper the document stores: the board view and
 //! the 3D view show the same regions, stale or not, and a refill (a new
 //! document revision) rebuilds them.
+use super::plan::FillPlan;
 use super::{Builder, Source, copper_param, inner_base, next_pick, polygon, track_outline};
-use crate::Result;
 use crate::appearance::{self, Board, Land, Region, ViaMark};
 use crate::material::BodyKind;
 use crate::native::{BoardJoint, Expr, JointFrame, Mount, ProfileBody};
 use crate::pad_outline::{Contour, FLATTEN_TOLERANCE_MM};
 use crate::scene::Geometry;
+use crate::{Error, Result};
 use pcbcraft_core::layout::fill::{FillContact, copper_union};
 use pcbcraft_core::model::Fill;
 use pcbcraft_core::model::fill::FilledRegion;
@@ -42,18 +43,16 @@ const CAP_TILE_MM: f64 = 4.0;
 mod tiles;
 pub(super) use tiles::{TILE_MM, Tile, tiles};
 
-/// A fill as the display layers see it: its pick, layer and regions, and
-/// the tiles its saved copper is built in.
+/// A fill as the display layers see it: its pick, layer and regions.
 pub(super) struct FillMark {
     pub pick: u64,
     pub layer: CopperLayer,
     pub regions: Vec<FilledRegion>,
-    pub tiles: Vec<FilledRegion>,
 }
 
 /// The fills with copper to build, in document order, each region
 /// simplified for the model ([`simplified`]).
-fn built(project: &Project) -> Vec<(&Fill, Vec<FilledRegion>)> {
+pub(super) fn built(project: &Project) -> Vec<(&Fill, Vec<FilledRegion>)> {
     project
         .fills
         .iter()
@@ -158,7 +157,7 @@ fn douglas_peucker(points: &[Point], a: usize, b: usize, tolerance: f64, keep: &
 
 /// A region's outer boundary and holes, or nothing for a region of
 /// fewer than three points.
-fn loops(region: &FilledRegion) -> Vec<&[Point]> {
+pub(super) fn loops(region: &FilledRegion) -> Vec<&[Point]> {
     if region.outer.len() < 3 {
         return Vec::new();
     }
@@ -173,40 +172,32 @@ fn loops(region: &FilledRegion) -> Vec<&[Point]> {
         .collect()
 }
 
-fn body_name(fill: &Fill) -> String {
+pub(super) fn body_name(fill: &Fill) -> String {
     format!("fill_{}", fill.id)
 }
 
 /// The board joints [`build`] adds, made with every other part's.
 pub(super) type Joints = Vec<(BoardJoint, JointFrame, Option<String>)>;
 
-/// Every fill's copper ([`bodies`]).
+/// Each planned fill's copper ([`super::plan::FillPlan`]) as its tiles'
+/// bodies in one component of its own, held upright on the board at the
+/// origin; its source names the fill, its net and layer. Returns what the
+/// display layers draw over each.
 pub(super) fn build(
     b: &mut Builder,
     project: &Project,
+    plan: &[FillPlan],
     board: u64,
     sources: &mut Vec<Source>,
     joints: &mut Joints,
-) -> Result<Vec<FillMark>> {
-    bodies(b, project, board, sources, joints, built(project))
-}
-
-/// Each fill's copper as one body in a component of its own, held upright
-/// on the board at the origin; its source names the fill, its net and
-/// layer. Returns what the display layers draw over each.
-fn bodies(
-    b: &mut Builder,
-    project: &Project,
-    board: u64,
-    sources: &mut Vec<Source>,
-    joints: &mut Joints,
-    built: Vec<(&Fill, Vec<FilledRegion>)>,
 ) -> Result<Vec<FillMark>> {
     let mut marks = Vec::new();
-    for (fill, regions) in built {
-        if regions.iter().all(|r| loops(r).is_empty()) {
-            continue;
-        }
+    for planned in plan {
+        let fill = project
+            .fills
+            .iter()
+            .find(|f| f.id == planned.fill)
+            .ok_or_else(|| Error::Verification(format!("fill {} is gone", planned.fill)))?;
         let name = body_name(fill);
         let height = copper_param(fill.layer);
         let offset: Expr = match fill.layer {
@@ -221,36 +212,18 @@ fn bodies(
         // sketch makes exactly one body of a known name. A tile is a unit of
         // its content: refilled, only the tiles whose copper changed are
         // built again.
-        let raw = fill
-            .computed
-            .as_ref()
-            .map(|c| c.regions.as_slice())
-            .unwrap_or_default();
-        let cut = tiles(raw, TILE_MM, MODEL_CHORD_MM);
-        let mut kept = Vec::with_capacity(cut.len());
-        for Tile {
-            column,
-            row,
-            piece,
-            region,
-        } in cut
-        {
-            let contours: Vec<Contour> = loops(&region).into_iter().filter_map(polygon).collect();
-            if contours.is_empty() {
-                continue;
-            }
-            let body = format!("{name}_{column}_{row}_{piece}");
-            let content = super::digest(&(&offset, &height, &contours));
-            b.native.unit(&body, Some(content))?;
+        for (body, _) in &planned.tiles {
+            let contours = &body.loops;
+            let content = super::digest(&(&offset, &height, contours));
+            b.native.unit(&body.name, Some(content))?;
             b.native.batched_body(ProfileBody {
-                name: &body,
+                name: &body.name,
                 offset: offset.clone(),
-                contours: &contours,
+                contours,
                 height: height.as_str().into(),
             })?;
-            b.record(&body, BodyKind::FillCopper)?;
+            b.record(&body.name, BodyKind::FillCopper)?;
             b.native.unit_end()?;
-            kept.push(region);
         }
         joints.push((
             BoardJoint {
@@ -289,8 +262,7 @@ fn bodies(
         marks.push(FillMark {
             pick,
             layer: fill.layer,
-            regions,
-            tiles: kept,
+            regions: planned.regions.clone(),
         });
     }
     Ok(marks)
@@ -321,12 +293,12 @@ pub(super) fn foil_level(
     project: &Project,
     layer: CopperLayer,
     holes: &[Contour],
-    fills: &[FillMark],
+    fills: &[FillPlan],
 ) -> Option<Vec<Contour>> {
     let regions: Vec<FilledRegion> = fills
         .iter()
         .filter(|f| f.layer == layer)
-        .flat_map(|f| f.tiles.iter().cloned())
+        .flat_map(|f| f.tiles.iter().map(|(_, region)| region.clone()))
         .filter(|r| r.outer.len() >= 3)
         .collect();
     if regions.is_empty() {
