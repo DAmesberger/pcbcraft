@@ -225,9 +225,10 @@ pub fn check_key(key: &DatumKey) -> Result<()> {
     if owner_ok && name_ok {
         Ok(())
     } else {
+        let role = serde_json::to_value(key.role)?;
         Err(Error::Invalid(format!(
-            "interface.key: a {:?} datum cannot belong to {:?} with name {name:?}",
-            key.role, key.owner
+            "interface.key: a {} datum cannot belong to this object with this name",
+            role.as_str().unwrap_or("datum")
         )))
     }
 }
