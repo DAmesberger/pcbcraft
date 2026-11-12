@@ -9,7 +9,9 @@ Implementation contract, slice B0, 12 November 2026. This document says how a bo
 - Live updates over SolidCraft's control channel are opt-in per link, and later (B7).
 - Nothing Sparksmith-specific goes into Solidcraft; nothing is posted upstream.
 
-**Status.** B0 (the contract), B1 (the datum model) and B2 (package datums) are built. `Project::interface` holds the slot table; the automatic rules, the `interface.*` document commands and `interface.list` run through the one engine, so the UI, the CLI and MCP share them (`crates/editor-core/src/interface/{auto,apply,list}.rs`). The exported design, the sidecar and the publish requests (B3) are still placeholders.
+**Status.** B0 (the contract), B1 (the datum model), B2 (package datums) and B3 (the exported design, the sidecar and the publish requests) are built. `Project::interface` holds the slot table; the automatic rules, the `interface.*` document commands and `interface.list` run through the one engine, so the UI, the CLI and MCP share them (`crates/editor-core/src/interface/{auto,apply,list}.rs`). The enclosure link and the dry run (B4) and the UI (B6) are not built.
+
+**Slice B3 (the export) is built**: the core makes the sidecar a publish writes and the preview's diff (`interface::publish`); `pcbcraft-solidcraft` builds the design from that sidecar (`interface`) and opens an enclosure headlessly (`enclosure`); the automation session serves `interface.publish_preview` and `interface.publish`, and `pcbcraft-io` puts the files in place (`interface`). Its gate runs over the ESP32 example through the JSON transport, with a headless SolidCraft enclosure (`session::interface_publish_tests`): J1 moved 2 mm by its dimension previews as exactly one moved datum, "J1 opening, 2 mm along X"; the enclosure's cutout follows by 2 mm ± 1 µm with no other wall face moved and the boss on mounting hole 1 unmoved; the sidecar is byte for byte the same after reopening and in another folder; deleting R4 (whose envelope slot comes before R5's), adding a board fill and renaming J1 leave every face of the enclosure where it was; deleting J1 is reported. Publishing the interface tier of the ESP32 board took 82.7 ms (median of ten, the `ci` profile, on a shared machine; the 100 ms target is for release).
 
 **Slice B2 (package datums) is built**: the stored form, the part-file convention, the datum edits, the USB-C form's opening, the Datums section of the Component 3D tab, and the placement of a package's datums in the board frame (`interface::package`), which B1's `external_datums` rule and B3's builder read. Its gate test runs the example's USB4105 part file through `layout.place_part` on both sides at every quarter turn and at 33°, against the board Solidcraft builds (`pcbcraft-solidcraft` `board::package_datum_tests`).
 
@@ -115,7 +117,7 @@ Document changes are `interface::InterfaceCommand`s: typed, through the one engi
 | `interface.rename {datum, name?}` | operation | edit | Sets the display name, or with no name returns to the derived one |
 | `interface.auto {rule, on}` | operation | edit | Switches an automatic rule |
 | `interface.record_publish {source_id, record}` | operation | edit | Records a publish the host wrote: revision, hash, tier, per-datum hashes, and the board's interface identity on the first publish |
-| `interface.publish_preview {tier?}` | host request | read | The diff against the last published revision and, with a linked enclosure, the dry run (`PublishPreview`) |
+| `interface.publish_preview {tier?, path?}` | host request | read | The diff against the last published revision and, with a linked enclosure, the dry run (`PublishPreview`). `path` is the published design whose sidecar says where each datum was |
 | `interface.publish {path, tier, expected_revision}` | host request | ask | Writes the design and sidecar atomically, then records the publish; refused, writing nothing, at a stale revision |
 | `package.datum.add`, `edit`, `remove` | operation | edit | On a package draft (slice B2): the `add_datum`, `set_datum` and `remove_datum` edits of `library.edit_package`, in millimetres on the wire, any number of them with other package edits in one undo step. `set_datum` replaces the datum of its name and makes it authored. A repeated or unknown name, or bad geometry, refuses the batch unchanged |
 | `housing.link`, `housing.preview`, `housing.update {expect_hash}`, `housing.relink`, `housing.unlink` | — | — | The enclosure side, as designed in [board sketch references](../board-sketch-references.md#7-the-housing-round-trip) (slice B4) |
@@ -124,7 +126,9 @@ Document changes are `interface::InterfaceCommand`s: typed, through the one engi
 
 `interface.list` derives every datum's geometry from the document (`interface::list::derive`): board frame and faces at z = 0 and the stackup's thickness, the outline and cutouts as profiles, holes as axes with their drill, a part's frame on the surface it sits on, its envelope as its courtyard box times its package's envelope height, the tallest part per side over the outline, a board parameter's value when it is a number (an expression needs the host's evaluator, so its geometry is left out), and an exported feature's trace in the board as an axis (a point, circle or arc) or a plane (a line). A datum's content hash (`interface::list::datum_hash`) covers its token, role, kind, geometry and status, not its display name; `changed` compares it with the recorded publish.
 
-The publish preview lists, per datum (`ChangeKind`): unchanged, moved (by an offset in millimetres and a turn in degrees), reshaped, added, retired, or status changed. The dry run (`DryRun`, slice B4) reports enclosure features, by their SolidCraft names, that move, fail, leave a joint unsolved, or reference a face that is not exported. The user's enclosure file is never touched.
+The publish preview lists, per datum (`ChangeKind`): unchanged, moved (by an offset in millimetres and a turn in degrees), reshaped, added, retired, status changed, or changed (how is not known: the published sidecar was not there to compare with), each with the sentence the user reads (`summary`: "J1 opening, 2 mm along X"; "J1 opening, removed: an enclosure feature that uses it will fail"). A datum compares against the recorded publish's hash; a move is read from the published sidecar's geometry, trusted only where its datum hash is the recorded one. A datum whose owner is gone reads under the name it was published with. The dry run (`DryRun`, slice B4) reports enclosure features, by their SolidCraft names, that move, fail, leave a joint unsolved, or reference a face that is not exported. The user's enclosure file is never touched.
+
+**Publishing, as built** (`interface.publish`, B3): the request's `expected_revision` is checked before anything runs, so a stale one writes nothing. The core's `interface::publish::candidate` gives the sidecar (every live datum with its derived geometry and hash, in slot order; retired slots; live datums without geometry as `unresolved_slots`; the table hash and the revision). The board's `source_id` is drawn on the first publish; publishing over files of another board's interface is refused. `pcbcraft_solidcraft::interface::build` makes the design and names each datum's faces in the sidecar; the design is saved to a hidden sibling file, the sidecar written atomically beside it, and the design renamed over the published one. Then `interface.record_publish` records the publish, one undo step; undoing it takes back the record, not the files, so the next preview compares with the earlier revision and the next publish records that revision again (or the next one, when the datums changed).
 
 ## The export format
 
@@ -132,7 +136,7 @@ The publish preview lists, per datum (`ChangeKind`): unchanged, moved (by an off
 
 *Section 1, the slots, always first and always in slot order.*
 
-- Each slot uses a fixed budget of feature ids, padded: four (`SLOT_FEATURE_BUDGET`). A retired slot is made and deleted, so it still uses its ids. Solidcraft never reuses a feature id.
+- Each slot uses a fixed budget of feature ids, padded: four (`SLOT_FEATURE_BUDGET`). As built, a datum's carrier takes two (a sketch and its extrusion) and empty sketches made and deleted use up the rest; a retired or unresolved slot is all padding. Solidcraft never reuses a feature id. A carrier that needed more than the budget would fail the build rather than shift later slots.
 - Because every slot's ids follow from its position, every datum's face names are the same in every build, on every machine and after every restart. No persistent native design is kept.
 - A profile datum is a sketch whose curves carry explicit ids taken from the document's curve and hole ids, extruded once. Solidcraft names a side face after its sketch curve, so the board's edges and hole walls get stable names from one feature.
 - How each kind is carried while only solids cross a link:
@@ -145,7 +149,12 @@ The publish preview lists, per datum (`ChangeKind`): unchanged, moved (by an off
 | Volume | a prism body |
 | Frame, parameter | the sidecar only, until parameters can cross a link |
 
-Datum solids sit in a separate component named as reference geometry, so mass, interference and bills of materials can exclude them.
+Datum solids sit in a separate component named as reference geometry (`Board interface (reference geometry)`), so mass, interference and bills of materials can exclude them. As built:
+
+- The slab `board` is the outline datum's carrier, in its slot, with every cutout and mounting hole of the board; its sides are named after the board sketch's curve ids (a rectangle's after its edges, `bottom`, `right`, `top`, `left`) and its hole walls after the hole ids (`F<n>:side:h1`). Board top and bottom are its caps (`F<n>:top`, `F<n>:start`).
+- A datum's own body is named by its token (`i80.opening`, `i84.envelope`); its sketch curves are `e1`, `e2`, … so its sides are `F<n>:side:e1`, …, its cap on the frame's plane `front` (`F<n>:start`) and its far cap `back`. An axis's cylinder is 1 mm long (a hole without the slab: the board's thickness), 0.2 mm across when it has no diameter; a profile that is not the board's is a 0.01 mm prism.
+- Every face the sidecar names is one the built body has (a degenerate segment, such as the zero-length side of a stadium, makes no face and is not listed).
+- The sidecar is also in the design's metadata under `org.pcbcraft.electronics.interface` (format and chunk count) and `org.pcbcraft.electronics.interface.<k>` (`{"text": …}`, 30,000 bytes each).
 
 *Section 2, optional, after the slots:* the mechanical board (laminate, pads, parts) or the full board (with copper). Its feature numbers may change freely; the publish preview warns when an enclosure references anything in it.
 
@@ -187,7 +196,7 @@ The design note's example spread a datum's frame and profile over the datum itse
 
 - `format` is the format name, `/` and a major version. A reader refuses a major it does not know (`interface.format_newer`) and anything that is not this format (`interface.format`). Fields may be added within a major, so the sidecar's types ignore unknown fields.
 - Reading is bounded: at most 16 MiB (`interface.sidecar_size`), then `Sidecar::check` holds units `mm`, the datum and slot bounds, ascending unique slots disjoint from the retired ones, valid unique tokens, unique ids, printable names and roles, geometry that is finite, bounded and of the datum's kind, and at most 64 named faces per datum.
-- `revision` counts publishes whose content hash differs, from 1. Each datum has its own hash, so a diff is per datum.
+- `revision` counts publishes whose content hash differs, from 1. Each datum has its own hash, so a diff is per datum. The table hash covers the live datums' slots, tokens and hashes, the retired slots and the unresolved slots; display names, the tier and face names are not part of it, so renaming J1 or publishing another tier keeps the revision.
 - `source_id` is drawn by the host (the core never generates randomness) on the first publish and kept. Renumbering slots, a deliberate compaction, starts a new `source_id` epoch, with an impact preview saying that every enclosure reference must be picked again.
 
 The sidecar is shaped to become the `board.json` part of the exchange file proposed upstream (RFC 0001): its `manifest.json` fields are `source_id`, `revision`, `hash` and `units`; its persistent face names are the slot faces; its reference outcomes are this design's statuses.
@@ -219,7 +228,10 @@ Lost and inexact references are never waived, as for part dimensions (`board.ref
 | --- | --- |
 | `library::datum` | `DatumKind`, `DatumName`, the reserved names and the part-file prefixes, shared by package datums and the interface |
 | `model::interface` | the stored data, identity only: `InterfaceTable`, `InterfaceDatum`, `DatumId`, `Slot`, `DatumKey`, `DatumOwner`, `DatumRole`, `DatumSource`, `AutoRule`, `Tier`, `PublishedRecord`, `PublishedDatum`, and the bounds |
-| `interface` (core module 11a) | the rules, geometry, commands, reports, sidecar, findings and schemas |
+| `interface` (core module 11a) | the rules, geometry, commands, reports, sidecar, findings and schemas; `interface::publish`, the candidate sidecar, its record and the preview's diff |
+| `pcbcraft_solidcraft::interface`, `pcbcraft_solidcraft::enclosure` | the exported design built from the sidecar; a SolidCraft enclosure opened headlessly (link, Update Links, faces, failures) |
+| `pcbcraft_io::interface` | the sidecar's path and reading, the identity drawn on the first publish, the files put in place atomically |
+| `pcbcraft_automation` session (`session/interface.rs`) | `interface.publish_preview` and `interface.publish` |
 | `ids` | `InterfaceSourceId`, the board's random interface identity |
 
 `interface` sits above `layout` and below `erc` in the [module map](../component-model.md#d-module-map), which `cargo xtask core-modules` enforces: it may use `geometry`, `ids`, `diagnostics`, `library`, `model`, `instances`, `layout` and `units`. `issues`, `fabrication`, `updates` and `commands` may use it.
@@ -232,12 +244,13 @@ Lost and inexact references are never waived, as for part dimensions (`board.ref
 | --- | --- | --- |
 | B1 (built; `interface/tests/b1.rs`, and `session/interface_tests.rs` in the automation crate over the ESP32 example) | the table in `Project`, automatic rules, `interface.*` commands and `interface.list` in the engine, persistence | `b1_automatic_rules_export_the_board`, `b1_switching_a_rule_retires_and_never_reuses`, `b1_export_allocates_one_slot_per_datum`, `b1_refused_exports_change_nothing`, `b1_unexport_retires_the_slot`, `b1_renames_change_the_display_name_only`, `b1_slots_survive_undo_redo_save_and_reopen`, `b1_a_deleted_owner_makes_the_datum_lost`, `b1_selection_never_changes_the_interface` |
 | B2 (built; `interface/tests/package_datums.rs`, and `board::package_datum_tests` in `pcbcraft-solidcraft`) | package datums, the part-file convention, authoring, connector templates that emit openings | `b2_a_part_file_opening_reaches_the_board_frame`, `b2_external_datums_are_exported_per_placement`, `b2_no_opening_is_inferred_from_a_name` |
-| B3 | the exported design with slots and tiers, the sidecar and metadata, `publish_preview` (diff only) and `publish` | `b3_the_preview_lists_the_one_moved_datum`, `b3_the_enclosure_cutout_follows_by_two_millimetres`, `b3_the_sidecar_is_byte_identical_after_reopen`, `b3_unrelated_edits_change_nothing_in_the_enclosure`, `b3_publish_records_a_revision_only_when_the_hash_changes`, `b3_publishing_the_interface_tier_is_under_100_ms` (a target until measured) |
+| B3 (built; `interface/tests/b3.rs` in the core on the demo board, `interface::tests` in `pcbcraft-solidcraft`, and `session::interface_publish_tests` in the automation crate over the ESP32 example) | the exported design with slots and tiers, the sidecar and metadata, `publish_preview` (diff only) and `publish` | `b3_the_preview_lists_the_one_moved_datum`, `b3_the_enclosure_cutout_follows_by_two_millimetres`, `b3_the_sidecar_is_byte_identical_after_reopen`, `b3_unrelated_edits_change_nothing_in_the_enclosure`, `b3_publish_records_a_revision_only_when_the_hash_changes`, `b3_deleting_j1_is_reported`, `b3_publish_at_a_stale_revision_writes_nothing`, `b3_the_mechanical_tier_keeps_the_slots`, `b3_publishing_the_interface_tier_is_under_100_ms` (ignored; 82.7 ms measured in the `ci` profile, the target is for release) |
 
 B4 (the enclosure link and dry run), B5 (the two-way check, a test per conflict row), B6 (UI), B7 (live channel) and B9 (VM run) follow the design note.
 
 ## Open questions
 
-- **Recording a publish in the undo history.** `interface.record_publish` is a document change, so undo can take it back while the written file stays. B3 decides whether the preview compares against the recorded hashes, the sidecar on disk, or both, and how an undone record reads.
-- **Moved distances in the preview.** The stored record keeps per-datum hashes, not geometry. "Moved by 2 mm" needs the previous geometry: B3 reads it from the published sidecar, and reports only "changed" when the file is gone.
+- **Recording a publish in the undo history** (settled in B3). The preview compares against the recorded hashes, and reads moves from the sidecar on disk where its hashes are the recorded ones. An undone record reads as the earlier revision; the files stay as written.
+- **Moved distances in the preview** (settled in B3). Read from the published sidecar given as `path`; without it a changed datum reads as `changed`.
+- **The enclosure feature that follows** (acceptance 2's second half) needs the dry run, slice B4.
 - **A datum in `ObjectRef`.** Findings name the owner for now (above).
