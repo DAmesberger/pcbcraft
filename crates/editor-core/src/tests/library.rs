@@ -434,7 +434,9 @@ fn empty_and_contradictory_drafts_persist_but_nan_and_oversize_are_rejected() ->
     let f = draft(&mut engine, &two("Contradictory"))?;
     with(&mut engine, f.footprint, footprint_body, |fp| {
         fp.pads.push(fp.pads[0].clone()); // duplicate local ID
-        fp.pads[0].shape = crate::library::PadShape::Rect { size: [-1.0, 0.0] };
+        fp.pads[0].shape = crate::library::PadShape::Rect {
+            size: pt([-1.0, 0.0]),
+        };
     })?;
     let bytes = format::encode(&engine.to_file())?;
     let reopened = Engine::from_file(format::decode(&bytes)?)?;
@@ -445,8 +447,13 @@ fn empty_and_contradictory_drafts_persist_but_nan_and_oversize_are_rejected() ->
     );
     let before = engine.document().clone();
     let revision = engine.revision();
+    // The datum is whole nanometres; a keep-out outline is still f64.
     let nan = with(&mut engine, f.footprint, footprint_body, |fp| {
-        fp.datum.offset = [f64::NAN, 0.0]
+        fp.keepouts = vec![crate::library::FootprintKeepout::rect(
+            "NaN",
+            [f64::NAN, 0.0],
+            [1.0, 1.0],
+        )]
     });
     assert_eq!(nan.err().map(|e| e.code()), Some("invalid_input"));
     let oversize = with(&mut engine, f.component, component_body, |c| {
@@ -533,11 +540,13 @@ fn new_library_commands_fail_atomically() -> Result<()> {
         },
         LibraryCommand::NewDraft {
             meta: meta("NaN"),
+            // The datum is whole nanometres; a keep-out outline is still f64.
             definition: Definition::Footprint(crate::library::FootprintDefinition {
-                datum: crate::library::Datum {
-                    offset: [f64::NAN, 0.0],
-                    rotation_deg: 0.0,
-                },
+                keepouts: vec![crate::library::FootprintKeepout::rect(
+                    "NaN",
+                    [f64::NAN, 0.0],
+                    [1.0, 1.0],
+                )],
                 ..Default::default()
             }),
         },
@@ -690,36 +699,40 @@ fn each_footprint_rule_blocks_publication() -> Result<()> {
         }),
         ("footprint.hole_kind", |fp| {
             fp.pads[0].hole = Some(Hole {
-                shape: HoleShape::Round { diameter: 0.2 },
+                shape: HoleShape::Round {
+                    diameter_nm: nm(0.2),
+                },
                 plated: true,
-                offset: [0.0, 0.0],
+                offset: pt([0.0, 0.0]),
             })
         }),
         ("footprint.hole_outside_land", |fp| {
             fp.pads[0].kind = PadKind::PlatedThrough;
             fp.pads[0].hole = Some(Hole {
-                shape: HoleShape::Round { diameter: 0.4 },
+                shape: HoleShape::Round {
+                    diameter_nm: nm(0.4),
+                },
                 plated: true,
-                offset: [0.3, 0.0],
+                offset: pt([0.3, 0.0]),
             });
         }),
         ("footprint.hole_shape", |fp| {
             fp.pads[0].kind = PadKind::PlatedThrough;
             fp.pads[0].hole = Some(Hole {
                 shape: HoleShape::Slot {
-                    width: 0.4,
-                    length: 0.2,
-                    angle_deg: 0.0,
+                    width_nm: nm(0.4),
+                    length_nm: nm(0.2),
+                    angle_mdeg: mdeg(0.0),
                 },
                 plated: true,
-                offset: [0.0, 0.0],
+                offset: pt([0.0, 0.0]),
             });
         }),
         ("footprint.hole_outside_land", |fp| {
             fp.pads[0].vias.push(crate::library::PadVia {
                 id: ApertureId(1),
-                at: [0.25, 0.0],
-                drill: 0.3,
+                at: pt([0.25, 0.0]),
+                drill_nm: nm(0.3),
             })
         }),
         ("footprint.paste_window_outside_pad", |fp| {
@@ -745,13 +758,15 @@ fn each_footprint_rule_blocks_publication() -> Result<()> {
             fp.pads[0].paste = PasteRule::Windows(vec![window.clone(), window]);
         }),
         ("footprint.pad_size", |fp| {
-            fp.pads[0].shape = PadShape::Rect { size: [0.0, 0.8] }
+            fp.pads[0].shape = PadShape::Rect {
+                size: pt([0.0, 0.8]),
+            }
         }),
         ("footprint.pad_shape", |fp| {
             fp.pads[0].shape = PadShape::RoundRect {
-                size: [0.6, 0.8],
+                size: pt([0.6, 0.8]),
                 radius_ratio: 0.7,
-                max_radius: None,
+                max_radius_nm: None,
                 corners: CornerMask::ALL,
             }
         }),
@@ -953,24 +968,26 @@ fn consistent_pads_of_every_kind_and_shape_publish() -> Result<()> {
         // Pad 1: plated-through oblong with a slot; pad 2: rounded SMD with
         // paste windows and a via.
         fp.pads[0].kind = PadKind::PlatedThrough;
-        fp.pads[0].shape = PadShape::Oblong { size: [1.0, 2.0] };
-        fp.pads[0].rotation_deg = 90.0;
+        fp.pads[0].shape = PadShape::Oblong {
+            size: pt([1.0, 2.0]),
+        };
+        fp.pads[0].rotation_mdeg = mdeg(90.0);
         fp.pads[0].hole = Some(Hole {
             shape: HoleShape::Slot {
-                width: 0.5,
-                length: 1.2,
-                angle_deg: 90.0,
+                width_nm: nm(0.5),
+                length_nm: nm(1.2),
+                angle_mdeg: mdeg(90.0),
             },
             plated: true,
-            offset: [0.0, 0.0],
+            offset: pt([0.0, 0.0]),
         });
         fp.pads[1].shape = PadShape::RoundRect {
-            size: [1.2, 1.2],
+            size: pt([1.2, 1.2]),
             radius_ratio: 0.25,
-            max_radius: Some(0.2),
+            max_radius_nm: Some(nm(0.2)),
             corners: CornerMask::ALL,
         };
-        fp.pads[1].position = [3.0, 0.0];
+        fp.pads[1].position = pt([3.0, 0.0]);
         fp.pads[1].paste = PasteRule::Windows(vec![
             PasteWindow {
                 id: ApertureId(1),
@@ -983,32 +1000,50 @@ fn consistent_pads_of_every_kind_and_shape_publish() -> Result<()> {
         ]);
         fp.pads[1].vias.push(crate::library::PadVia {
             id: ApertureId(3),
-            at: [0.0, 0.0],
-            drill: 0.2,
+            at: pt([0.0, 0.0]),
+            drill_nm: nm(0.2),
         });
         // A terminal-less mounting hole, a fiducial and a mechanical tab
         // with an exact outline (a half-disc: a line and a bulge arc).
-        let mut hole = Pad::smd_rect(PadId(3), PackageTerminalId(1), "MH", [0.0, 4.0], [1.0, 1.0]);
+        let mut hole = Pad::smd_rect(
+            PadId(3),
+            PackageTerminalId(1),
+            "MH",
+            pt([0.0, 4.0]),
+            pt([1.0, 1.0]),
+        );
         hole.kind = PadKind::NonPlatedHole;
         hole.terminal = None;
-        hole.shape = PadShape::Circle { diameter: 1.2 };
+        hole.shape = PadShape::Circle {
+            diameter_nm: nm(1.2),
+        };
         hole.hole = Some(Hole {
-            shape: HoleShape::Round { diameter: 1.0 },
+            shape: HoleShape::Round {
+                diameter_nm: nm(1.0),
+            },
             plated: false,
-            offset: [0.0, 0.0],
+            offset: pt([0.0, 0.0]),
         });
         let mut fiducial = Pad::smd_rect(
             PadId(4),
             PackageTerminalId(1),
             "FID",
-            [4.0, 4.0],
-            [1.0, 1.0],
+            pt([4.0, 4.0]),
+            pt([1.0, 1.0]),
         );
         fiducial.kind = PadKind::Fiducial;
         fiducial.terminal = None;
-        fiducial.shape = PadShape::Circle { diameter: 1.0 };
-        fiducial.mask = MaskRule::Expansion(0.5);
-        let mut tab = Pad::smd_rect(PadId(5), PackageTerminalId(1), "", [-4.0, 4.0], [1.0, 1.0]);
+        fiducial.shape = PadShape::Circle {
+            diameter_nm: nm(1.0),
+        };
+        fiducial.mask = MaskRule::Expansion(nm(0.5));
+        let mut tab = Pad::smd_rect(
+            PadId(5),
+            PackageTerminalId(1),
+            "",
+            pt([-4.0, 4.0]),
+            pt([1.0, 1.0]),
+        );
         tab.kind = PadKind::Mechanical;
         tab.terminal = None;
         tab.shape = PadShape::Custom {
@@ -1023,7 +1058,7 @@ fn consistent_pads_of_every_kind_and_shape_publish() -> Result<()> {
                 ],
             },
         };
-        tab.rotation_deg = 30.0;
+        tab.rotation_mdeg = mdeg(30.0);
         fp.pads.extend([hole, fiducial, tab]);
         fp.next_local = 6;
     })?;
@@ -1040,11 +1075,11 @@ fn footprint_lint_is_advisory_and_follows_drawings() -> Result<()> {
     // Three pads 0.6 mm wide at 0.7 mm pitch leave a 0.1 - 2 × 0.05 = 0 mm
     // mask web; no courtyard; no polarity.
     with(&mut engine, f.footprint, footprint_body, |fp| {
-        fp.pads[0].position = [-0.7, 0.0];
-        fp.pads[1].position = [0.0, 0.0];
+        fp.pads[0].position = pt([-0.7, 0.0]);
+        fp.pads[1].position = pt([0.0, 0.0]);
         let mut extra = fp.pads[1].clone();
         extra.id = PadId(3);
-        extra.position = [3.0, 0.0];
+        extra.position = pt([3.0, 0.0]);
         fp.pads.push(extra);
         fp.next_local = 4;
     })?;
@@ -1324,8 +1359,15 @@ fn footprint_source_and_drawing_bounds_refuse_the_draft() -> Result<()> {
         ("oversized pad number", |fp| {
             fp.pads[0].number = "9".repeat(crate::library::MAX_LABEL + 1)
         }),
-        ("non-finite pad default", |fp| {
-            fp.defaults.mask_expansion_mm = f64::INFINITY
+        // Pad defaults are whole nanometres, never non-finite; the f64
+        // custom outline still is checked.
+        ("non-finite pad outline", |fp| {
+            fp.pads[0].shape = crate::library::PadShape::Custom {
+                outline: crate::library::Outline {
+                    start: [f64::INFINITY, 0.0],
+                    segments: Vec::new(),
+                },
+            }
         }),
     ];
     for (what, breaker) in cases {

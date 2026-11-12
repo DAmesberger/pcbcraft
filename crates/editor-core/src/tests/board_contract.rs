@@ -46,7 +46,7 @@ fn the_prototype_fixture_holds_the_former_hardcoded_limits() -> Fallible<()> {
     assert_eq!(r.holes.via_annular_ring_min, 0.1);
     assert_eq!(r.holes.via_drill_default, 0.3);
     assert_eq!(r.holes.via_diameter_default, 0.6);
-    assert_eq!(r.mask.expansion, library::MASK_EXPANSION_MM);
+    assert_eq!(r.mask.expansion, library::MASK_EXPANSION_NM.to_mm_f64());
     assert_eq!(r.mask.web_min, library::MIN_MASK_WEB_MM);
     assert_eq!(r.silkscreen.line_width_min, library::MIN_SILK_WIDTH_MM);
     assert_eq!(

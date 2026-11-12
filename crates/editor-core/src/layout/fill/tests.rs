@@ -745,7 +745,9 @@ fn a_hole_through_stale_copper_is_reported() -> Fallible<()> {
                 pad.kind = crate::library::PadKind::NonPlatedHole;
                 if let Some(hole) = &mut pad.hole {
                     hole.plated = false;
-                    hole.shape = crate::library::HoleShape::Round { diameter: 3.0 };
+                    hole.shape = crate::library::HoleShape::Round {
+                        diameter_nm: crate::tests::support::nm(3.0),
+                    };
                 }
             }
         }

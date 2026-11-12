@@ -14,6 +14,7 @@ use crate::layout::{self, WorldPad};
 use crate::library::{Outline, PadShape, Segment};
 use crate::model::fill::{FillSettings, FillSpec};
 use crate::model::{CopperLayer, Fill, Layer, Project, Stackup, Track, Via, ViaSpan};
+use crate::tests::support::pt;
 
 pub(super) const R1_2: Point = [10.8, 10.0];
 pub(super) const R2_1: Point = [24.2, 10.0];
@@ -379,7 +380,9 @@ fn pad(index: u32, x: f64) -> WorldPad {
         net: SHARED,
         position: [x, 0.0],
         size: [1.0, 1.0],
-        shape: PadShape::Rect { size: [1.0, 1.0] },
+        shape: PadShape::Rect {
+            size: pt([1.0, 1.0]),
+        },
         rotation_deg: 0.0,
         layer: Layer::Top,
         through: false,

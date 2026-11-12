@@ -86,7 +86,7 @@ fn pads_land_where_kicad_draws_them_on_both_sides_and_every_angle() -> Fallible<
             let ours = pad(project, &pads, k, kpad.number).ok_or("pad")?;
             let t = ours.pad_transform();
             // The hole (or the pad origin without one) is at `at`.
-            let hole = ours.pad.hole.map_or([0.0, 0.0], |h| h.offset);
+            let hole = ours.pad.hole.map_or([0.0, 0.0], |h| h.offset());
             let expect = kicad_world(origin, fp.at, [kpad.at[0], kpad.at[1]]);
             assert!(
                 near(t.apply(hole), expect),
@@ -156,12 +156,13 @@ fn a_drill_offset_moves_the_copper_not_the_hole() -> Fallible<()> {
         let ours = pad(project, &pads, k, "10").ok_or("pad 10")?;
         let hole = ours.pad.hole.ok_or("no hole")?;
         assert!(
-            matches!(hole.shape, HoleShape::Slot { width, length, .. } if width == 0.6 && length == 1.2)
+            matches!(hole.shape, HoleShape::Slot { width_nm, length_nm, .. }
+                if width_nm.get() == 600_000 && length_nm.get() == 1_200_000)
         );
         let t = ours.pad_transform();
         // The hole at `at` (1.5, 2.5); the copper 0.2 along the pad's x.
         assert!(near(
-            t.apply(hole.offset),
+            t.apply(hole.offset()),
             kicad_world(origin, fp.at, [1.5, 2.5])
         ));
         assert!(near(
@@ -181,11 +182,11 @@ fn margins_resolve_pad_then_footprint_then_board() -> Fallible<()> {
     let get = |k: usize, n: &str| pad(project, &pads, k, n).map(|p| p.pad.clone());
     let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
     let expansion = |p: &pcbcraft_core::library::Pad| match p.mask {
-        MaskRule::Expansion(e) => e,
+        MaskRule::Expansion(e) => e.to_mm_f64(),
         _ => f64::NAN,
     };
     let reduction = |p: &pcbcraft_core::library::Pad| match p.paste {
-        PasteRule::Reduction(r) => r,
+        PasteRule::Reduction(r) => r.to_mm_f64(),
         _ => f64::NAN,
     };
     // The board's 0.05 mask and −0.02 paste margins.
@@ -312,8 +313,8 @@ fn a_definition_frame_is_independent_of_placement() -> Fallible<()> {
     let placed = placed_pads(imported.engine.project());
     let def = &placed[0].pad;
     // KiCad's (1, 0.5) with y down is (1, −0.5) with y up.
-    assert_eq!(def.position, [1.0, -0.5]);
-    assert_eq!(def.rotation_deg, 0.0);
+    assert_eq!(def.position(), [1.0, -0.5]);
+    assert_eq!(def.rotation_deg(), 0.0);
     let turned = Transform2 {
         translate: [20.0, -10.0],
         rotation_deg: 90.0,
@@ -325,7 +326,7 @@ fn a_definition_frame_is_independent_of_placement() -> Fallible<()> {
         .ok_or("R2")?;
     assert!(near(
         second.pad_transform().apply([0.0, 0.0]),
-        turned.apply(def.position)
+        turned.apply(def.position())
     ));
     Ok(())
 }

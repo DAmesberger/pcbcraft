@@ -226,10 +226,11 @@ impl PadArray {
             .get(&id)
             .cloned()
             .ok_or_else(|| failure("unknown pad ID"))?;
-        pad.position = [
+        pad.set_position_mm([
             millimetres(&x).map_err(callback_error)?,
             millimetres(&y).map_err(callback_error)?,
-        ];
+        ])
+        .map_err(callback_error)?;
         let size = [
             millimetres(&width).map_err(callback_error)?,
             millimetres(&height).map_err(callback_error)?,
@@ -237,7 +238,7 @@ impl PadArray {
         if size.iter().any(|v| *v < 0.01) {
             return Err(failure("pad dimensions must be at least 0.01 mm"));
         }
-        if !pad.shape.set_size(size) {
+        if !pad.shape.set_size_mm(size).map_err(callback_error)? {
             return Err(failure("scripts size only rectangular and oblong pads"));
         }
         self.generated.insert(id, pad);

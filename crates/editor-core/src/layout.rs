@@ -512,7 +512,7 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
                 continue;
             };
             // Pad rotation relative to the datum, reflected on the bottom.
-            let local = pad.rotation_deg - datum.rotation_deg;
+            let local = pad.rotation_deg() - datum.rotation_deg();
             let local = if placement.layer == Layer::Bottom {
                 -local
             } else {
@@ -525,8 +525,8 @@ pub fn pads(project: &Project) -> Vec<WorldPad> {
                 net: *net,
                 position: placed_point(
                     placement,
-                    placed::undo_datum_rotation(pad.position, datum),
-                    datum.offset,
+                    placed::undo_datum_rotation(pad.position(), datum),
+                    datum.offset(),
                 ),
                 size: pad.shape.extent(),
                 shape: pad.shape.clone(),

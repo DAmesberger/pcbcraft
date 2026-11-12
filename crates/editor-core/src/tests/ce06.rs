@@ -360,11 +360,11 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
                 PadId(i),
                 PackageTerminalId(i),
                 i.to_string(),
-                [
+                pt([
                     -4.5 + f64::from((i - 1) % 10),
                     if i <= 10 { -3.0 } else { 3.0 },
-                ],
-                [0.4, 0.6],
+                ]),
+                pt([0.4, 0.6]),
             )
         })
         .collect();
@@ -373,8 +373,8 @@ fn mcu_bodies(m: &Mcu) -> Vec<DraftEdit> {
             PadId(n),
             PackageTerminalId(21),
             "21",
-            [0.0, y],
-            [0.8, 0.6],
+            pt([0.0, y]),
+            pt([0.8, 0.6]),
         ));
     }
     let footprint = FootprintDefinition {

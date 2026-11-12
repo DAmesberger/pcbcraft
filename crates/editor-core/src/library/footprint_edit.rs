@@ -283,7 +283,7 @@ fn apply_one(
     report: &mut FootprintEditReport,
 ) -> Result<()> {
     match edit {
-        FootprintEdit::SetDefaults(defaults) => return set_defaults(next, *defaults),
+        FootprintEdit::SetDefaults(defaults) => return set_defaults(next, (*defaults).into()),
         FootprintEdit::Detach => {
             if next.source.take().is_none() {
                 return Err(Error::Invalid(
@@ -529,9 +529,6 @@ fn apply_one(
 }
 
 fn set_defaults(next: &mut FootprintDefinition, defaults: PadDefaults) -> Result<()> {
-    if !(defaults.mask_expansion_mm.is_finite() && defaults.paste_reduction_mm.is_finite()) {
-        return Err(Error::Invalid("pad defaults must be finite".into()));
-    }
     next.defaults = defaults;
     Ok(())
 }

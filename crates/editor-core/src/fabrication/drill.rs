@@ -159,18 +159,19 @@ pub fn holes(project: &Project) -> Vec<DrillHole> {
         let label = labels.get(&(placed.instance, placed.pad.id)).cloned();
         if let Some(hole) = &placed.pad.hole {
             let feature = match hole.shape {
-                HoleShape::Round { diameter } => HoleFeature::Round {
-                    at: t.apply(hole.offset),
-                    diameter,
+                HoleShape::Round { diameter_nm } => HoleFeature::Round {
+                    at: t.apply(hole.offset()),
+                    diameter: diameter_nm.to_mm_f64(),
                 },
                 HoleShape::Slot {
-                    width,
-                    length,
-                    angle_deg,
+                    width_nm,
+                    length_nm,
+                    angle_mdeg,
                 } => {
+                    let (width, length) = (width_nm.to_mm_f64(), length_nm.to_mm_f64());
                     let half = (length.max(width) - width) / 2.0;
-                    let (c, s) = crate::geometry::cos_sin(angle_deg);
-                    let o = hole.offset;
+                    let (c, s) = crate::geometry::cos_sin(angle_mdeg.to_degrees_f64());
+                    let o = hole.offset();
                     HoleFeature::Slot {
                         from: t.apply([o[0] - c * half, o[1] - s * half]),
                         to: t.apply([o[0] + c * half, o[1] + s * half]),
@@ -194,8 +195,8 @@ pub fn holes(project: &Project) -> Vec<DrillHole> {
         for via in &placed.pad.vias {
             out.push(DrillHole {
                 feature: HoleFeature::Round {
-                    at: t.apply(via.at),
-                    diameter: via.drill,
+                    at: t.apply(via.at()),
+                    diameter: via.drill(),
                 },
                 plated: true,
                 function: HoleFunction::ComponentPin,

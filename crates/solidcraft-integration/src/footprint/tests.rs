@@ -4,6 +4,7 @@
 //! in Node (`cargo xtask wasm-footprint`) and assert the same golden hashes
 //! as natively: the native/wasm agreement check.
 
+use crate::test_units::pt;
 use std::collections::BTreeSet;
 
 use crate::models::tests::nm;
@@ -339,7 +340,7 @@ fn bga256() -> Result<Fp> {
 }
 
 fn rect(w: f64, h: f64) -> PadShape {
-    PadShape::Rect { size: [w, h] }
+    PadShape::Rect { size: pt([w, h]) }
 }
 
 fn solve_of(fp: &Fp) -> Result<(SolveStatus, u32, String)> {
@@ -360,13 +361,13 @@ fn soic8_solves_to_eight_typed_pads() -> Result<()> {
     assert_eq!(solve_of(&fp)?.1, 0, "fully constrained");
     let one = fp.pad("1")?;
     assert_eq!(one.id, seed);
-    assert_eq!((one.position, one.rotation_deg), ([-2.7, 1.905], 0.0));
+    assert_eq!((one.position(), one.rotation_deg()), ([-2.7, 1.905], 0.0));
     assert_eq!(one.shape, rect(1.55, 0.6));
-    assert_eq!(fp.pad("4")?.position, [-2.7, -1.905]);
+    assert_eq!(fp.pad("4")?.position, pt([-2.7, -1.905]));
     // Row 1 faces row 0 turned 180°: canonical rotation of a rect is 0.
     let five = fp.pad("5")?;
-    assert_eq!((five.position, five.rotation_deg), ([2.7, -1.905], 0.0));
-    assert_eq!(fp.pad("8")?.position, [2.7, 1.905]);
+    assert_eq!((five.position(), five.rotation_deg()), ([2.7, -1.905], 0.0));
+    assert_eq!(fp.pad("8")?.position, pt([2.7, 1.905]));
     let ids: BTreeSet<PadId> = fp.def.pads.iter().map(|p| p.id).collect();
     assert_eq!(ids.len(), 8, "every pad has its own id");
     assert!(
@@ -395,7 +396,7 @@ fn pitch_and_count_changes_keep_pad_identity() -> Result<()> {
     let before = by_number(&fp);
     fp.edit(vec![param("pitch", "1.0 mm", ParamUnit::Mm)])?;
     assert_eq!(by_number(&fp), before, "same ids, same numbers");
-    assert_eq!(fp.pad("4")?.position, [-2.7, -1.5]);
+    assert_eq!(fp.pad("4")?.position, pt([-2.7, -1.5]));
     let old: BTreeSet<PadId> = fp.def.pads.iter().map(|p| p.id).collect();
     let grown = fp.edit(vec![param("per_row", "7", ParamUnit::Count)])?;
     let now: BTreeSet<PadId> = fp.def.pads.iter().map(|p| p.id).collect();
@@ -435,30 +436,35 @@ fn qfn_places_each_side_and_reads_the_drill_role() -> Result<()> {
     assert_eq!(solve_of(&fp)?.1, 0);
     let one = fp.pad("1")?;
     assert_eq!(
-        (one.position, one.shape.clone()),
+        (one.position(), one.shape.clone()),
         ([-2.4, 1.0], rect(0.8, 0.25))
     );
-    assert_eq!(fp.pad("5")?.position, [-2.4, -1.0]);
+    assert_eq!(fp.pad("5")?.position, pt([-2.4, -1.0]));
     // Bottom side: 3 pads left to right, a quarter turn (90° canonical).
     let six = fp.pad("6")?;
-    assert_eq!((six.position, six.rotation_deg), ([-0.5, -1.9], 90.0));
-    assert_eq!(fp.pad("8")?.position, [0.5, -1.9]);
-    assert_eq!(fp.pad("9")?.position, [2.4, -1.0]);
-    assert_eq!(fp.pad("14")?.position, [0.5, 1.9]);
-    assert_eq!(fp.pad("16")?.position, [-0.5, 1.9]);
+    assert_eq!((six.position(), six.rotation_deg()), ([-0.5, -1.9], 90.0));
+    assert_eq!(fp.pad("8")?.position, pt([0.5, -1.9]));
+    assert_eq!(fp.pad("9")?.position, pt([2.4, -1.0]));
+    assert_eq!(fp.pad("14")?.position, pt([0.5, 1.9]));
+    assert_eq!(fp.pad("16")?.position, pt([-0.5, 1.9]));
     let ep = fp.pad("EP")?;
     assert_eq!(
-        (ep.position, ep.shape.clone()),
+        (ep.position(), ep.shape.clone()),
         ([0.0, 0.0], rect(2.6, 2.6))
     );
     let hole = ep.hole.ok_or_else(|| Error::NotFound("ep hole".into()))?;
-    assert_eq!(hole.shape, HoleShape::Round { diameter: 0.3 });
-    assert_eq!(hole.offset, [0.0, 0.0]);
+    assert_eq!(
+        hole.shape,
+        HoleShape::Round {
+            diameter_nm: nm(0.3)
+        }
+    );
+    assert_eq!(hole.offset, pt([0.0, 0.0]));
     let centres: BTreeSet<[u64; 2]> = fp
         .def
         .pads
         .iter()
-        .map(|p| [p.position[0].to_bits(), p.position[1].to_bits()])
+        .map(|p| [p.position()[0].to_bits(), p.position()[1].to_bits()])
         .collect();
     assert_eq!(centres.len(), 17);
     Ok(())
@@ -471,13 +477,18 @@ fn bga256_grid_with_centre_void() -> Result<()> {
     assert_eq!(fp.def.pads.len(), 240);
     let a1 = fp.pad("A1")?;
     assert_eq!(
-        (a1.position, a1.shape.clone()),
-        ([-7.5, 7.5], PadShape::Circle { diameter: 0.45 })
+        (a1.position(), a1.shape.clone()),
+        (
+            [-7.5, 7.5],
+            PadShape::Circle {
+                diameter_nm: nm(0.45)
+            }
+        )
     );
-    assert_eq!(fp.pad("T16")?.position, [7.5, -7.5]);
+    assert_eq!(fp.pad("T16")?.position, pt([7.5, -7.5]));
     assert_eq!(
         fp.pad("J1")?.position,
-        [-7.5, -0.5],
+        pt([-7.5, -0.5]),
         "row 9 is J: I is skipped"
     );
     assert!(
@@ -494,10 +505,13 @@ fn bga256_grid_with_centre_void() -> Result<()> {
 
 /// Golden result hashes recorded natively (macOS arm64, ci profile) and
 /// asserted on every target, plus the raw f64 bits of every solved point.
+/// The result hash covers the serialized pads, so it was re-recorded when
+/// pads moved to integer nanometres (units U2); the point bits did not
+/// change.
 const GOLDEN: [(&str, &str, u64); 3] = [
-    ("SOIC-8", "12196ba69182e5d5", 0x516c3fa73ba0b6d9),
-    ("QFN", "ad5c8b43e2c76d8e", 0x635aadbec8021745),
-    ("BGA-256", "73f138be63545fd7", 0x1bd4d84c6beaade5),
+    ("SOIC-8", "d51c531fbf130b01", 0x516c3fa73ba0b6d9),
+    ("QFN", "c176c839ba863f74", 0x635aadbec8021745),
+    ("BGA-256", "4c4168012618e881", 0x1bd4d84c6beaade5),
 ];
 
 fn raw_bits(fp: &Fp) -> Result<u64> {
@@ -743,16 +757,26 @@ fn every_template_classifies_to_its_shape() -> Result<()> {
     ])?;
     assert_eq!(report.pads.len(), 4);
     assert_eq!(fp.pad("1")?.shape, rect(1.0, 2.0));
-    assert_eq!(fp.pad("2")?.shape, PadShape::Circle { diameter: 1.2 });
-    assert_eq!(fp.pad("3")?.shape, PadShape::Oblong { size: [2.0, 1.0] });
     assert_eq!(
-        fp.pad("3")?.rotation_deg,
+        fp.pad("2")?.shape,
+        PadShape::Circle {
+            diameter_nm: nm(1.2)
+        }
+    );
+    assert_eq!(
+        fp.pad("3")?.shape,
+        PadShape::Oblong {
+            size: pt([2.0, 1.0])
+        }
+    );
+    assert_eq!(
+        fp.pad("3")?.rotation_deg(),
         90.0,
         "a tall oblong is a long one turned"
     );
     assert!(matches!(
         fp.pad("4")?.shape,
-        PadShape::RoundRect { size: [2.0, 1.0], radius_ratio, .. } if (radius_ratio - 0.25).abs() < 1e-9
+        PadShape::RoundRect { size, radius_ratio, .. } if size == pt([2.0, 1.0]) && (radius_ratio - 0.25).abs() < 1e-9
     ));
     // Each template leaves only its anchor free.
     assert_eq!(solve_of(&fp)?.1, 8);
@@ -801,7 +825,7 @@ fn a_custom_profile_pad_keeps_its_exact_outline() -> Result<()> {
         }),
     ])?;
     let p = fp.pad("1")?;
-    assert_eq!(p.position, [0.5, 0.5]);
+    assert_eq!(p.position, pt([0.5, 0.5]));
     let PadShape::Custom { outline } = &p.shape else {
         return Err(Error::Invalid(format!("not custom: {:?}", p.shape)));
     };
@@ -876,7 +900,7 @@ fn deleting_an_anchor_retires_its_pad_and_its_curves() -> Result<()> {
         ids: vec![SketchRef::Point(anchor)],
     })])?;
     assert_eq!(fp.def.pads.len(), 1);
-    assert_eq!(fp.pad("2")?.position, [1.0, 0.0]);
+    assert_eq!(fp.pad("2")?.position, pt([1.0, 0.0]));
     let source = fp
         .def
         .source
@@ -894,12 +918,12 @@ fn deleting_an_anchor_retires_its_pad_and_its_curves() -> Result<()> {
 #[test]
 fn rename_parameter_follows_every_reference() -> Result<()> {
     let (mut fp, _) = soic8()?;
-    let before: Vec<[f64; 2]> = fp.def.pads.iter().map(|p| p.position).collect();
+    let before: Vec<[f64; 2]> = fp.def.pads.iter().map(|p| p.position()).collect();
     fp.edit(vec![FootprintEdit::RenameParameter {
         from: ParamName("pitch".into()),
         to: ParamName("e".into()),
     }])?;
-    let after: Vec<[f64; 2]> = fp.def.pads.iter().map(|p| p.position).collect();
+    let after: Vec<[f64; 2]> = fp.def.pads.iter().map(|p| p.position()).collect();
     assert_eq!(before, after);
     let source = fp
         .def
@@ -913,7 +937,7 @@ fn rename_parameter_follows_every_reference() -> Result<()> {
         "template dims stay bound"
     );
     fp.edit(vec![param("e", "1.0 mm", ParamUnit::Mm)])?;
-    assert_eq!(fp.pad("4")?.position, [-2.7, -1.5]);
+    assert_eq!(fp.pad("4")?.position, pt([-2.7, -1.5]));
     Ok(())
 }
 
@@ -941,7 +965,12 @@ fn overrides_apply_per_instance_and_orphans_block() -> Result<()> {
             ..PadOverride::default()
         },
     }])?;
-    assert_eq!(fp.pad("8")?.shape, PadShape::Oblong { size: [1.55, 0.6] });
+    assert_eq!(
+        fp.pad("8")?.shape,
+        PadShape::Oblong {
+            size: pt([1.55, 0.6])
+        }
+    );
     assert_eq!(fp.pad("7")?.shape, rect(1.55, 0.6));
     let orphaned = fp.edit(vec![param("per_row", "3", ParamUnit::Count)]);
     assert!(
@@ -1086,7 +1115,7 @@ fn preview_reports_blocking_findings_without_committing() -> Result<()> {
         ok.definition
             .pads
             .iter()
-            .any(|p| p.position == [-2.7, -1.5])
+            .any(|p| p.position == pt([-2.7, -1.5]))
     );
     Ok(())
 }
@@ -1123,8 +1152,8 @@ fn an_explicit_footprint_with_pads_does_not_gain_a_source() -> Result<()> {
         PadId(1),
         PackageTerminalId(101),
         "1",
-        [0.0, 0.0],
-        [1.0, 1.0],
+        pt([0.0, 0.0]),
+        pt([1.0, 1.0]),
     ));
     let err = fp.edit(vec![param("a", "1 mm", ParamUnit::Mm)]);
     assert!(matches!(&err, Err(Error::Conflict(m)) if m.starts_with("footprint.explicit")));
@@ -1171,7 +1200,10 @@ fn tampered_pads_with_an_intact_hash_are_stale() -> Result<()> {
     let (fp, _) = soic8()?;
     let mut tampered = fp.def.clone();
     if let Some(p) = tampered.pads.first_mut() {
-        p.position[0] += 0.5;
+        p.position.x_nm = p
+            .position
+            .x_nm
+            .checked_add(pcbcraft_core::units::Nm::new(500_000)?)?;
     }
     let err = footprint_edit::check_fresh(&tampered, &fp.pkg, &EV);
     assert!(
@@ -1214,21 +1246,21 @@ fn a_folded_turn_carries_the_hole_offset() -> Result<()> {
             .hole
             .as_ref()
             .ok_or_else(|| Error::NotFound("hole".into()))?;
-        let (c, s) = pcbcraft_core::geometry::cos_sin(p.rotation_deg);
+        let (c, s) = pcbcraft_core::geometry::cos_sin(p.rotation_deg());
         Ok([
-            p.position[0] + c * h.offset[0] - s * h.offset[1],
-            p.position[1] + s * h.offset[0] + c * h.offset[1],
+            p.position()[0] + c * h.offset()[0] - s * h.offset()[1],
+            p.position()[1] + s * h.offset()[0] + c * h.offset()[1],
         ])
     };
     let one = fp.pad("1")?;
     let w1 = world(one)?;
-    assert!((w1[0] - (one.position[0] - 0.2)).abs() < 1e-6, "{w1:?}");
+    assert!((w1[0] - (one.position()[0] - 0.2)).abs() < 1e-6, "{w1:?}");
     for n in ["5", "6", "7", "8"] {
         let p = fp.pad(n)?;
-        assert_eq!(p.rotation_deg, 0.0, "pad {n} folds to 0°");
+        assert_eq!(p.rotation_deg(), 0.0, "pad {n} folds to 0°");
         let w = world(p)?;
         assert!(
-            (w[0] - (p.position[0] + 0.2)).abs() < 1e-6 && (w[1] - p.position[1]).abs() < 1e-6,
+            (w[0] - (p.position()[0] + 0.2)).abs() < 1e-6 && (w[1] - p.position()[1]).abs() < 1e-6,
             "pad {n}: drill at {w:?}, pad at {:?}",
             p.position
         );

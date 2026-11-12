@@ -359,7 +359,7 @@ fn mask(board: &Board<'_>, side: Layer, attributes: &[(&str, String)]) -> Result
         let by = match pad.pad.mask {
             MaskRule::Inherit => e,
             MaskRule::Tented => continue,
-            MaskRule::Expansion(x) => x,
+            MaskRule::Expansion(x) => x.to_mm_f64(),
         };
         let Some(shape) = pad.pad.shape.grown(by, CHECK_CHORD_MM) else {
             continue;
@@ -387,12 +387,12 @@ fn paste(board: &Board<'_>, side: Layer, attributes: &[(&str, String)]) -> Resul
                 _ => Vec::new(),
             },
             PasteRule::None => Vec::new(),
-            PasteRule::Reduction(r) => shrink(*r).into_iter().collect(),
+            PasteRule::Reduction(r) => shrink(r.to_mm_f64()).into_iter().collect(),
             PasteRule::Windows(windows) => windows.iter().map(|w| w.shape.to_mm()).collect(),
         };
         for shape in &shapes {
             let exact = match (&pad.pad.shape, &pad.pad.paste) {
-                (PadShape::Custom { outline }, PasteRule::Reduction(r)) if *r == 0.0 => {
+                (PadShape::Custom { outline }, PasteRule::Reduction(r)) if r.get() == 0 => {
                     Some(outline)
                 }
                 (PadShape::Custom { outline }, PasteRule::Inherit)

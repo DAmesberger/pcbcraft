@@ -3279,6 +3279,7 @@ fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> 
 mod tests {
     use super::board_card::fabrication_edit;
     use super::*;
+    use crate::schematic_editor::{mdeg, nm, pt};
     use pcbcraft_core::layout::RouteRequest;
     use pcbcraft_core::{Fabrication, MaskColour};
 
@@ -3926,25 +3927,27 @@ mod tests {
             }
             let pth = &mut f.pads[0];
             pth.kind = PadKind::PlatedThrough;
-            pth.position = [-1.5, 0.0];
-            pth.shape = PadShape::Oblong { size: [1.6, 2.4] };
+            pth.position = pt([-1.5, 0.0]);
+            pth.shape = PadShape::Oblong {
+                size: pt([1.6, 2.4]),
+            };
             pth.hole = Some(Hole {
                 shape: HoleShape::Slot {
-                    width: 0.6,
-                    length: 1.2,
-                    angle_deg: 90.0,
+                    width_nm: nm(0.6),
+                    length_nm: nm(1.2),
+                    angle_mdeg: mdeg(90.0),
                 },
                 plated: true,
-                offset: [0.0, 0.0],
+                offset: pt([0.0, 0.0]),
             });
             pth.vias = vec![PadVia {
                 id: pcbcraft_core::library::ApertureId(1),
-                at: [0.0, 0.9],
-                drill: 0.2,
+                at: pt([0.0, 0.9]),
+                drill_nm: nm(0.2),
             }];
             let smd = &mut f.pads[1];
-            smd.position = [1.5, 0.0];
-            smd.rotation_deg = 30.0;
+            smd.position = pt([1.5, 0.0]);
+            smd.rotation_mdeg = mdeg(30.0);
             smd.shape = PadShape::Custom {
                 outline: Outline {
                     start: [-0.6, -0.6],

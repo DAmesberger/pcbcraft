@@ -68,7 +68,7 @@ fn compatible_geometry_preview_is_read_only_preserves_copper_and_survives_offlin
     } = routed()?;
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.footprint, footprint_body, |fp| {
-            fp.pads[1].position = [1.2, 2.0]
+            fp.pads[1].position = pt([1.2, 2.0])
         })?;
         with(e, f.package, package_body, |p| {
             // A refusal would leave the envelope stale, which publishing rejects.
@@ -293,7 +293,7 @@ fn locked_affected_tracks_and_placements_block_even_with_removal_opt_in() -> Res
     } = routed()?;
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.footprint, footprint_body, |fp| {
-            fp.pads[1].position = [1.2, 2.0]
+            fp.pads[1].position = pt([1.2, 2.0])
         })
     })?;
     apply(
@@ -351,7 +351,7 @@ fn moved_foreign_pad_cannot_silently_short_retained_track() -> Result<()> {
     } = routed()?;
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.footprint, footprint_body, |fp| {
-            fp.pads[0].position = [3.0, 0.0]
+            fp.pads[0].position = pt([3.0, 0.0])
         })
     })?;
     let plan = engine.preview_update(revision_change(r1, target));
@@ -917,23 +917,27 @@ fn footprint_pad_diffs_name_each_aspect_by_pad_id() -> Result<()> {
             // turn of a rectangle is no turn. Pad 2: a plated hole, so it
             // becomes plated-through. A new mechanical pad with no terminal.
             let p1 = &mut fp.pads[0];
-            p1.shape = PadShape::Oblong { size: [1.0, 1.4] };
+            p1.shape = PadShape::Oblong {
+                size: pt([1.0, 1.4]),
+            };
             p1.number = "A".into();
             p1.mask = MaskRule::Tented;
-            p1.rotation_deg = 180.0;
+            p1.rotation_mdeg = mdeg(180.0);
             let p2 = &mut fp.pads[1];
             p2.kind = PadKind::PlatedThrough;
             p2.hole = Some(Hole {
-                shape: HoleShape::Round { diameter: 0.5 },
+                shape: HoleShape::Round {
+                    diameter_nm: nm(0.5),
+                },
                 plated: true,
-                offset: [0.0, 0.0],
+                offset: pt([0.0, 0.0]),
             });
             let mut tab = fp.pads[0].clone();
             tab.id = crate::PadId(fp.next_local);
             tab.kind = PadKind::Mechanical;
             tab.terminal = None;
             tab.number = "MP".into();
-            tab.position = [0.0, 3.0];
+            tab.position = pt([0.0, 3.0]);
             // One assembly graphic changes, one silkscreen line is added.
             if let Some(FootprintGraphic {
                 item: Item::Shape { width_nm, .. },
@@ -1051,8 +1055,13 @@ fn array_growth_and_shrink_list_new_and_retired_pads() {
         pads: pads
             .iter()
             .map(|(id, _, t)| {
-                let mut pad =
-                    Pad::smd_rect(PadId(*id), PackageTerminalId(1), "", [0.0, 0.0], [1.0, 1.0]);
+                let mut pad = Pad::smd_rect(
+                    PadId(*id),
+                    PackageTerminalId(1),
+                    "",
+                    pt([0.0, 0.0]),
+                    pt([1.0, 1.0]),
+                );
                 pad.terminal = t.map(PackageTerminalId);
                 pad
             })
@@ -1345,9 +1354,9 @@ fn the_impact_plan_reads_net_class_clearances() -> Result<()> {
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.footprint, footprint_body, |fp| {
             let pad = &mut fp.pads[0];
-            let unturned = pad.rotation_deg == 0.0 || pad.rotation_deg == 180.0;
+            let unturned = pad.rotation_deg() == 0.0 || pad.rotation_deg() == 180.0;
             let half = pad.shape.extent()[usize::from(unturned)] / 2.0;
-            pad.position = [3.0, above + half];
+            pad.position = pt([3.0, above + half]);
         })
     })?;
     let plan = engine.preview_update(revision_change(r1, target));

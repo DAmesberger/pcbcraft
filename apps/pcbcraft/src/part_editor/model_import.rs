@@ -386,7 +386,7 @@ impl Wizard {
             .filter_map(|pad| {
                 let terminal = package.terminal(pad.terminal?)?;
                 let at =
-                    pcbcraft_core::library::package_fit::to_datum(&footprint.datum, pad.position);
+                    pcbcraft_core::library::package_fit::to_datum(&footprint.datum, pad.position());
                 Some((at, terminal.designation.clone()))
             })
             .collect();
@@ -1395,6 +1395,7 @@ fn review_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schematic_editor::pt;
     use pcbcraft_core::PackageTerminalId;
     use pcbcraft_core::PadId;
     use pcbcraft_core::library::LibraryModel;
@@ -1463,8 +1464,8 @@ mod tests {
                 PadId(id),
                 PackageTerminalId(t),
                 t.to_string(),
-                [x, 0.0],
-                [0.6, 0.9],
+                pt([x, 0.0]),
+                pt([0.6, 0.9]),
             ));
         }
         (package, footprint)

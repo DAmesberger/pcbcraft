@@ -106,12 +106,12 @@ fn shape_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) -> bool {
     let problem = match &pad.shape {
         PadShape::RoundRect {
             radius_ratio,
-            max_radius,
+            max_radius_nm,
             ..
         } => {
             if !(0.0..=0.5).contains(radius_ratio) {
                 Some("a corner ratio of 0–0.5 of the short side")
-            } else if max_radius.is_some_and(|r| r < 0.0) {
+            } else if max_radius_nm.is_some_and(|r| r < crate::units::Nm::ZERO) {
                 Some("a non-negative corner radius cap")
             } else {
                 None
@@ -205,9 +205,13 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
     let tol = 2.0 * CHECK_CHORD_MM;
     if let Some(hole) = &pad.hole {
         let size_ok = match hole.shape {
-            HoleShape::Round { diameter } => size_valid(&[diameter]),
-            HoleShape::Slot { width, length, .. } => {
-                size_valid(&[width, length]) && length >= width
+            HoleShape::Round { diameter_nm } => size_valid(&[diameter_nm.to_mm_f64()]),
+            HoleShape::Slot {
+                width_nm,
+                length_nm,
+                ..
+            } => {
+                size_valid(&[width_nm.to_mm_f64(), length_nm.to_mm_f64()]) && length_nm >= width_nm
             }
         };
         if !size_ok {
@@ -238,12 +242,12 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
         }
         let drill = super::Hole {
             shape: HoleShape::Round {
-                diameter: via.drill,
+                diameter_nm: via.drill_nm,
             },
             plated: true,
             offset: via.at,
         };
-        if !size_valid(&[via.drill]) || !ring_within(&drill.ring(CHECK_CHORD_MM), &land, tol) {
+        if !size_valid(&[via.drill()]) || !ring_within(&drill.ring(CHECK_CHORD_MM), &land, tol) {
             out.push(issue(
                 "footprint.hole_outside_land",
                 format!(
@@ -769,15 +773,27 @@ mod rules_tests {
     use crate::ids::{GraphicId, PackageTerminalId, PadId};
     use crate::library::graphics::{FootprintGraphic, Side};
     use crate::rules::{RuleValue, RulesCommand};
-    use crate::tests::support::{nm, shape_nm};
+    use crate::tests::support::{nm, pt, shape_nm};
 
     /// Two 0.5 mm square lands 0.3 mm apart (copper), each opening grown
     /// by the default 0.05 mm: a 0.2 mm mask web; and a 0.12 mm silk line.
     fn footprint() -> FootprintDefinition {
         FootprintDefinition {
             pads: vec![
-                Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", [0.0, 0.0], [0.5, 0.5]),
-                Pad::smd_rect(PadId(2), PackageTerminalId(2), "2", [0.8, 0.0], [0.5, 0.5]),
+                Pad::smd_rect(
+                    PadId(1),
+                    PackageTerminalId(1),
+                    "1",
+                    pt([0.0, 0.0]),
+                    pt([0.5, 0.5]),
+                ),
+                Pad::smd_rect(
+                    PadId(2),
+                    PackageTerminalId(2),
+                    "2",
+                    pt([0.8, 0.0]),
+                    pt([0.5, 0.5]),
+                ),
             ],
             graphics: vec![FootprintGraphic {
                 id: GraphicId(10),

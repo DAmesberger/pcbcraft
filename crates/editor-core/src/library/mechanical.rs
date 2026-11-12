@@ -26,6 +26,7 @@ use crate::ids::{
     MAX_LABEL, ModelRef, PackageRef, PackageTerminalId, PadId, Revision, SymbolRef, TerminalId,
     UnitId,
 };
+use crate::units::{self, Angle, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -35,9 +36,10 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_LANDS: usize = 64;
 /// Longest land name (the pad number), bytes.
 pub const MAX_LAND_NAME: usize = 16;
-/// Smallest and largest land or hole size, mm.
-pub const LAND_MIN_MM: f64 = 0.05;
-pub const LAND_MAX_MM: f64 = 100.0;
+/// Smallest and largest land or hole size (0.05 and 100 mm); a land lies
+/// within ±`LAND_MAX_NM` of the origin.
+pub const LAND_MIN_NM: Nm = super::package_form::const_nm(50_000);
+pub const LAND_MAX_NM: Nm = super::package_form::const_nm(100_000_000);
 /// Longest part name and source text, bytes.
 pub const MAX_PART_NAME: usize = 128;
 /// Paste windows of an annular land: this many ring segments of this sweep.
@@ -80,13 +82,17 @@ pub enum PadUse {
     Terminals,
 }
 
-/// One land of a mechanical part, in the footprint frame (mm).
+/// One land of a mechanical part, in the footprint frame. A request value
+/// (never stored): the wire carries millimetres and degrees, and that form
+/// is also the canonical form [`variant_key`] hashes.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MechanicalLand {
     /// The pad number: 1–16 bytes of ASCII letters, digits, `_` and `-`.
     pub name: String,
-    pub at: Point,
+    #[serde(with = "units::point_mm")]
+    #[schemars(with = "units::PointMm")]
+    pub at: PointNm,
     pub shape: LandShape,
 }
 
@@ -96,17 +102,31 @@ pub struct MechanicalLand {
 pub enum LandShape {
     /// Round copper, optionally around a non-plated hole (an annular land).
     Circle {
-        diameter: f64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        hole: Option<f64>,
+        #[serde(with = "units::length_mm")]
+        #[schemars(with = "units::Length")]
+        diameter: Nm,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            with = "units::option_length_mm"
+        )]
+        #[schemars(with = "Option<units::Length>")]
+        hole: Option<Nm>,
     },
     Rect {
-        size: Point,
+        #[serde(with = "units::point_mm")]
+        #[schemars(with = "units::PointMm")]
+        size: PointNm,
+        /// Counter-clockwise, in degrees.
         #[serde(default)]
-        rotation_deg: f64,
+        rotation_deg: units::Degrees,
     },
     /// A bare non-plated hole.
-    Hole { diameter: f64 },
+    Hole {
+        #[serde(with = "units::length_mm")]
+        #[schemars(with = "units::Length")]
+        diameter: Nm,
+    },
 }
 
 impl LandShape {
@@ -161,8 +181,8 @@ fn yes() -> bool {
     true
 }
 
-fn size_ok(v: f64) -> bool {
-    v.is_finite() && (LAND_MIN_MM..=LAND_MAX_MM).contains(&v)
+fn size_ok(v: Nm) -> bool {
+    (LAND_MIN_NM..=LAND_MAX_NM).contains(&v)
 }
 
 fn text_ok(text: &str, max: usize) -> bool {
@@ -237,27 +257,29 @@ impl PartSpec {
             if !names.insert(land.name.as_str()) {
                 return Err(invalid(format!("two lands are named {}", land.name)));
             }
-            if !finite_within(&land.at) || land.at.iter().any(|v| v.abs() > LAND_MAX_MM) {
+            if [land.at.x_nm, land.at.y_nm]
+                .iter()
+                .any(|v| v.abs() > LAND_MAX_NM)
+            {
                 return Err(invalid(format!(
-                    "land {} lies outside ±{LAND_MAX_MM} mm",
-                    land.name
+                    "land {} lies outside ±{} mm",
+                    land.name,
+                    LAND_MAX_NM.to_mm_f64()
                 )));
             }
             let shape_ok = match &land.shape {
                 LandShape::Circle { diameter, hole } => {
                     size_ok(*diameter) && hole.is_none_or(|h| size_ok(h) && h < *diameter)
                 }
-                LandShape::Rect { size, rotation_deg } => {
-                    size.iter().all(|v| size_ok(*v))
-                        && rotation_deg.is_finite()
-                        && rotation_deg.abs() <= 360.0
-                }
+                LandShape::Rect { size, .. } => size_ok(size.x_nm) && size_ok(size.y_nm),
                 LandShape::Hole { diameter } => size_ok(*diameter),
             };
             if !shape_ok {
                 return Err(invalid(format!(
-                    "land {} needs sizes of {LAND_MIN_MM}–{LAND_MAX_MM} mm and a hole smaller than its land",
-                    land.name
+                    "land {} needs sizes of {}–{} mm and a hole smaller than its land",
+                    land.name,
+                    LAND_MIN_NM.to_mm_f64(),
+                    LAND_MAX_NM.to_mm_f64()
                 )));
             }
         }
@@ -265,7 +287,13 @@ impl PartSpec {
     }
 }
 
-/// The variant key of `spec` for the part file `asset`.
+/// The variant key of `spec` for the part file `asset`: SHA-256 of the
+/// canonical JSON below. Its lands are [`MechanicalLand`]'s wire form,
+/// millimetres and degrees under the names `at`, `diameter`, `hole`, `size`
+/// and `rotation_deg`, exactly as when lands were stored as f64
+/// millimetres: a key stored then still finds its variant for every spec
+/// whose lengths have at most six decimals and whose rotations are within
+/// 0–360° at three (pinned by a test).
 pub fn variant_key(spec: &PartSpec, asset: ContentHash) -> Result<ContentHash> {
     #[derive(Serialize)]
     struct Canonical<'a> {
@@ -668,40 +696,46 @@ fn footprint_definition(
             terminal,
             number: land.name.clone(),
             position: land.at,
-            rotation_deg: 0.0,
+            rotation_mdeg: Angle::ZERO,
             side: PadSide::Top,
-            shape: PadShape::Circle { diameter: 1.0 },
+            shape: PadShape::Circle {
+                diameter_nm: Nm::ZERO,
+            },
             hole: None,
             mask: super::MaskRule::Inherit,
             paste: PasteRule::Inherit,
             vias: Vec::new(),
         };
-        let round = |d: f64| Hole {
-            shape: HoleShape::Round { diameter: d },
+        let round = |d: Nm| Hole {
+            shape: HoleShape::Round { diameter_nm: d },
             plated: false,
-            offset: [0.0, 0.0],
+            offset: PointNm::ORIGIN,
         };
         pads.push(match &land.shape {
             LandShape::Circle { diameter, hole } => Pad {
                 shape: PadShape::Circle {
-                    diameter: *diameter,
+                    diameter_nm: *diameter,
                 },
                 hole: hole.map(round),
                 paste: match hole {
-                    Some(h) => PasteRule::Windows(ring_paste(*diameter, *h, &mut next_aperture)?),
+                    Some(h) => PasteRule::Windows(ring_paste(
+                        diameter.to_mm_f64(),
+                        h.to_mm_f64(),
+                        &mut next_aperture,
+                    )?),
                     None => PasteRule::Inherit,
                 },
                 ..base
             },
             LandShape::Rect { size, rotation_deg } => Pad {
                 shape: PadShape::Rect { size: *size },
-                rotation_deg: PadShape::Rect { size: *size }.canonical_rotation(*rotation_deg),
+                rotation_mdeg: PadShape::Rect { size: *size }.canonical_rotation(rotation_deg.0),
                 ..base
             },
             LandShape::Hole { diameter } => Pad {
                 kind: PadKind::NonPlatedHole,
                 shape: PadShape::Circle {
-                    diameter: *diameter,
+                    diameter_nm: *diameter,
                 },
                 hole: Some(round(*diameter)),
                 ..base

@@ -8,7 +8,7 @@
 //! reads. Identity is never geometric: a role pad is named by its sketch
 //! anchor point, an array pad by its [`GenerationKey`]; both map to a
 //! stable [`PadId`].
-use super::footprint::{Datum, FootprintDefinition, Pad, PadDefaults, PadKind, PadSide};
+use super::footprint::{Datum, FootprintDefinition, Pad, PadDefaultsParams, PadKind, PadSide};
 use super::graphics::MAX_GRAPHICS;
 use super::graphics::{DrawingLayer, Fill, FootprintGraphic, Side};
 use super::package::PackageDefinition;
@@ -604,7 +604,8 @@ pub enum FootprintEdit {
         point: SketchPointId,
         orientation: Option<SketchCurveId>,
     },
-    SetDefaults(PadDefaults),
+    /// Footprint-wide pad rules, in millimetres.
+    SetDefaults(PadDefaultsParams),
     /// Drop the source; keep the solved data as an explicit footprint.
     Detach,
 }
@@ -989,6 +990,76 @@ impl FootprintSource {
                 .iter()
                 .all(|o| o.value.paste.as_ref().is_none_or(paste_ok))
             && self.expressions().iter().all(|e| e.within_bounds())
+    }
+}
+
+/// 64-bit FNV-1a (enough to compare results; no new dependency).
+pub fn fnv(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// [`SolveSummary::result_hash`] of an evaluation: geometry and numbering,
+/// keyed by stable identity, never terminals (assigning terminals is not
+/// a re-solve). The evaluator computes it over what it solved; the same
+/// function over what [`commit`] stored gives the same hash
+/// ([`FootprintDefinition::stored_result_hash`]).
+pub fn result_hash(
+    pads: &[EvaluatedPad],
+    graphics: &[FootprintGraphic],
+    datum: &Datum,
+) -> Result<String> {
+    #[derive(Serialize)]
+    struct Hashed<'a> {
+        pads: Vec<(Option<GenerationKey>, Option<PadId>, Pad)>,
+        graphics: &'a [FootprintGraphic],
+        datum: &'a Datum,
+    }
+    let pads = pads
+        .iter()
+        .map(|p| {
+            let mut pad = p.pad.clone();
+            pad.terminal = None;
+            let id = if p.key.is_none() { Some(pad.id) } else { None };
+            pad.id = PadId(0);
+            (p.key, id, pad)
+        })
+        .collect();
+    let bytes = serde_json::to_vec(&Hashed {
+        pads,
+        graphics,
+        datum,
+    })
+    .map_err(|e| Error::Invalid(format!("footprint.internal: {e}")))?;
+    Ok(format!("{:016x}", fnv(&bytes)))
+}
+
+impl FootprintDefinition {
+    /// The [`result_hash`] of the solved data [`commit`] stored: its pads in
+    /// order, each with the key the source keeps for it, the derived
+    /// graphics in order and the datum. `None` without a source.
+    pub fn stored_result_hash(&self) -> Result<Option<String>> {
+        let Some(source) = &self.source else {
+            return Ok(None);
+        };
+        let pads: Vec<EvaluatedPad> = self
+            .pads
+            .iter()
+            .map(|pad| EvaluatedPad {
+                key: source.keys.iter().find(|k| k.pad == pad.id).map(|k| k.key),
+                pad: pad.clone(),
+            })
+            .collect();
+        let derived: std::collections::BTreeSet<GraphicId> =
+            source.graphics.iter().map(|r| r.id).collect();
+        let graphics: Vec<FootprintGraphic> = self
+            .graphics
+            .iter()
+            .filter(|g| derived.contains(&g.id))
+            .cloned()
+            .collect();
+        result_hash(&pads, &graphics, &self.datum).map(Some)
     }
 }
 

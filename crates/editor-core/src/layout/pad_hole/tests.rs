@@ -10,6 +10,7 @@ use crate::layout::{PlacedPad, checks, placed_pads};
 use crate::library::{Hole, HoleShape, PadKind, PadShape};
 use crate::model::{CopperLayer, Project, Track, Via, ViaSpan};
 use crate::rules::{CopperObject, ProjectRules, RuleKey, RuleOverride, RuleValue, fixtures};
+use crate::tests::support::{mdeg, nm, pt};
 
 /// The demo board on the JLCPCB example, every resistor pad of `kind`
 /// with land `shape` and `hole`.
@@ -31,9 +32,11 @@ fn tht(kind: PadKind, shape: PadShape, hole: Hole) -> Result<Project> {
 
 fn round(diameter: f64, plated: bool) -> Hole {
     Hole {
-        shape: HoleShape::Round { diameter },
+        shape: HoleShape::Round {
+            diameter_nm: nm(diameter),
+        },
         plated,
-        offset: [0.0, 0.0],
+        offset: pt([0.0, 0.0]),
     }
 }
 
@@ -100,7 +103,9 @@ fn gap_in(message: &str, before: &str) -> Result<f64> {
 /// holes have no ring rule.
 #[test]
 fn a_plated_pad_hole_keeps_the_pth_annular_ring() -> Result<()> {
-    let circle = |diameter| PadShape::Circle { diameter };
+    let circle = |diameter| PadShape::Circle {
+        diameter_nm: nm(diameter),
+    };
     // 1.0 mm land, 0.6 mm hole: 0.2 mm of copper, under 0.25 mm.
     let project = tht(PadKind::PlatedThrough, circle(1.0), round(0.6, true))?;
     let findings = found(&project, "board.pth_annular_ring");
@@ -116,7 +121,7 @@ fn a_plated_pad_hole_keeps_the_pth_annular_ring() -> Result<()> {
     assert!(found(&project, "board.pth_annular_ring").is_empty());
     // The same hole 0.1 mm off centre leaves 0.15 mm on one side.
     let mut offset = round(0.6, true);
-    offset.offset = [0.1, 0.0];
+    offset.offset = pt([0.1, 0.0]);
     let project = tht(PadKind::PlatedThrough, circle(1.1), offset)?;
     let findings = found(&project, "board.pth_annular_ring");
     assert_eq!(findings.len(), 4, "{findings:#?}");
@@ -125,14 +130,14 @@ fn a_plated_pad_hole_keeps_the_pth_annular_ring() -> Result<()> {
     // round; in a 1.1 × 2.1 mm land, 0.25 mm.
     let slot = Hole {
         shape: HoleShape::Slot {
-            width: 0.6,
-            length: 1.6,
-            angle_deg: 0.0,
+            width_nm: nm(0.6),
+            length_nm: nm(1.6),
+            angle_mdeg: mdeg(0.0),
         },
         plated: true,
-        offset: [0.0, 0.0],
+        offset: pt([0.0, 0.0]),
     };
-    let oblong = |x, y| PadShape::Oblong { size: [x, y] };
+    let oblong = |x, y| PadShape::Oblong { size: pt([x, y]) };
     let project = tht(PadKind::PlatedThrough, oblong(2.0, 1.0), slot)?;
     let findings = found(&project, "board.pth_annular_ring");
     assert_eq!(findings.len(), 4, "{findings:#?}");
@@ -142,9 +147,9 @@ fn a_plated_pad_hole_keeps_the_pth_annular_ring() -> Result<()> {
     // Turned across the land, the slot breaks out of it: no ring at all.
     let mut across = slot;
     across.shape = HoleShape::Slot {
-        width: 0.6,
-        length: 1.6,
-        angle_deg: 90.0,
+        width_nm: nm(0.6),
+        length_nm: nm(1.6),
+        angle_mdeg: mdeg(90.0),
     };
     let project = tht(PadKind::PlatedThrough, oblong(2.1, 1.1), across)?;
     let findings = found(&project, "board.pth_annular_ring");
@@ -167,7 +172,9 @@ fn a_pad_hole_keeps_its_clearance_to_other_copper() -> Result<()> {
     // track to pad rule), 0.3 mm from the hole (under 0.35 mm).
     let mut project = tht(
         PadKind::PlatedThrough,
-        PadShape::Circle { diameter: 0.8 },
+        PadShape::Circle {
+            diameter_nm: nm(0.8),
+        },
         round(0.6, true),
     )?;
     let pad = r1_pad(&project, "1")?;
@@ -213,7 +220,9 @@ fn a_pad_hole_keeps_its_clearance_to_other_copper() -> Result<()> {
     // 0.3 mm away passes, one 0.15 mm away does not.
     let mut project = tht(
         PadKind::NonPlatedHole,
-        PadShape::Circle { diameter: 0.6 },
+        PadShape::Circle {
+            diameter_nm: nm(0.6),
+        },
         round(0.6, false),
     )?;
     add_track(&mut project, other, [x - 0.5, y + 0.7], [x + 0.5, y + 0.7])?;
@@ -246,7 +255,9 @@ fn a_pad_hole_keeps_its_clearance_to_other_copper() -> Result<()> {
 fn a_pad_hole_keeps_its_spacing_to_other_holes() -> Result<()> {
     let mut project = tht(
         PadKind::PlatedThrough,
-        PadShape::Circle { diameter: 1.2 },
+        PadShape::Circle {
+            diameter_nm: nm(1.2),
+        },
         round(0.6, true),
     )?;
     let pad = r1_pad(&project, "1")?;
@@ -276,7 +287,9 @@ fn a_pad_hole_keeps_its_spacing_to_other_holes() -> Result<()> {
 
     let mut project = tht(
         PadKind::NonPlatedHole,
-        PadShape::Circle { diameter: 1.2 },
+        PadShape::Circle {
+            diameter_nm: nm(1.2),
+        },
         round(0.6, false),
     )?;
     add_via(&mut project, net, [x, y - 0.75])?;
@@ -306,7 +319,9 @@ fn a_pad_hole_keeps_its_spacing_to_other_holes() -> Result<()> {
 /// 1.5 mm land passes. A bare unplated hole has no copper and no ring.
 #[test]
 fn an_unplated_hole_in_copper_keeps_the_npth_pad_annular_ring() -> Result<()> {
-    let circle = |diameter| PadShape::Circle { diameter };
+    let circle = |diameter| PadShape::Circle {
+        diameter_nm: nm(diameter),
+    };
     let project = tht(PadKind::Mechanical, circle(1.4), round(0.6, false))?;
     let findings = found(&project, "board.npth_annular_ring");
     assert_eq!(findings.len(), 4, "every resistor pad: {findings:#?}");

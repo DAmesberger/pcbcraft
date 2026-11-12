@@ -75,6 +75,8 @@ pub enum Case {
     BoardObjects,
     /// G12: 3D model references.
     Models,
+    /// A pad whose size, place or margins are beyond the coordinate bound.
+    PadOutOfRange,
 }
 
 impl Case {
@@ -169,6 +171,11 @@ impl Case {
                 "board-level objects (tracks, vias, zones, drawings), not in this slice",
             ),
             Self::Models => ("G12", Report, "3D model references, ignored"),
+            Self::PadOutOfRange => (
+                "-",
+                Refused,
+                "pads with a size, place or margin beyond the coordinate bound",
+            ),
         }
     }
 }

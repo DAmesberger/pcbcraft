@@ -447,13 +447,14 @@ impl ModuleForm {
         };
         for (centre, size) in self.row_lands() {
             let (t, number) = terminal.next()?;
-            push(Pad::smd_rect(PadId(0), *t, number, centre, size))?;
+            push(Pad::smd_rect_mm(PadId(0), *t, number, centre, size).ok()?)?;
         }
         if let Some(g) = &self.ground {
             let (t, number) = terminal.next()?;
             for centre in self.ground_centres() {
-                let mut pad = Pad::smd_rect(PadId(0), *t, number.clone(), centre, g.size());
-                pad.rotation_deg = pad.shape.canonical_rotation(g.rotation_deg());
+                let mut pad =
+                    Pad::smd_rect_mm(PadId(0), *t, number.clone(), centre, g.size()).ok()?;
+                pad.rotation_mdeg = pad.shape.canonical_rotation(g.rotation_mdeg);
                 push(pad)?;
             }
         }
@@ -463,8 +464,8 @@ impl ModuleForm {
                 PadId(0),
                 *t,
                 number,
-                single.centre(),
-                single.size(),
+                single.centre,
+                single.size,
             ))?;
         }
         Some(pads)

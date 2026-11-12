@@ -287,8 +287,8 @@ fn rect_pad(project: &Project) -> Fallible<crate::layout::WorldPad> {
         .find(|p| {
             let quarter = crate::geometry::is_quarter_turn(p.rotation_deg);
             let (size, r) = match p.shape {
-                PadShape::Rect { size } => (size, 0.0),
-                PadShape::RoundRect { size, .. } => (size, p.shape.corner_radius()),
+                PadShape::Rect { size } => (size.to_mm_f64(), 0.0),
+                PadShape::RoundRect { size, .. } => (size.to_mm_f64(), p.shape.corner_radius()),
                 _ => return false,
             };
             let turned = (p.rotation_deg.rem_euclid(180.0) - 90.0).abs() < 1e-9;

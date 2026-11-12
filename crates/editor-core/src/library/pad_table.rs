@@ -11,9 +11,9 @@ use super::{
     PackageDefinition, Pad, PadKind, PadShape, PadSide, PasteRule,
 };
 use crate::diagnostics::{Error, Finding, Result};
-use crate::geometry::Point;
 use crate::ids::{DefinitionId, GraphicId, MAX_LABEL, PackageTerminalId, PadId};
 use crate::rules::ProjectRules;
+use crate::units::{self, Angle, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -34,24 +34,34 @@ pub enum RowShape {
     Circle,
 }
 
-/// One land of the table.
+/// One land of the table. The request carries millimetres (`Length`s) and
+/// degrees.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PadRow {
     /// The pad's number as the datasheet prints it.
     pub number: String,
-    pub at: Point,
+    #[serde(with = "units::point_mm")]
+    #[schemars(with = "units::PointMm")]
+    pub at: PointNm,
     /// Copper size `[along x, along y]` before `rotation_deg`.
-    pub size: Point,
+    #[serde(with = "units::point_mm")]
+    #[schemars(with = "units::PointMm")]
+    pub size: PointNm,
     #[serde(default)]
     pub shape: RowShape,
     #[serde(default)]
-    pub rotation_deg: f64,
+    pub rotation_deg: units::Degrees,
     #[serde(default)]
     pub side: PadSide,
     /// A plated round drill makes the land plated through.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub drill: Option<f64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "units::option_length_mm"
+    )]
+    #[schemars(with = "Option<units::Length>")]
+    pub drill: Option<Nm>,
     /// The package terminal's designation it lands. Several rows may land
     /// one terminal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,14 +77,18 @@ pub struct PadRow {
 #[serde(deny_unknown_fields)]
 pub struct SlotRow {
     pub number: String,
-    pub at: Point,
+    #[serde(with = "units::point_mm")]
+    #[schemars(with = "units::PointMm")]
+    pub at: PointNm,
     /// The finished slot `[along x, along y]`; its round ends are on the
     /// long axis.
-    pub slot: Point,
+    #[serde(with = "units::point_mm")]
+    #[schemars(with = "units::PointMm")]
+    pub slot: PointNm,
     /// Oblong copper `[along x, along y]`. Required when plated; an unplated
     /// slot has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub land: Option<Point>,
+    pub land: Option<units::PointMm>,
     #[serde(default = "plated")]
     pub plated: bool,
     /// As for [`PadRow::terminal`]; an unplated slot lands nothing.
@@ -92,8 +106,12 @@ fn plated() -> bool {
 pub struct HoleRow {
     #[serde(default)]
     pub number: String,
-    pub at: Point,
-    pub diameter: f64,
+    #[serde(with = "units::point_mm")]
+    #[schemars(with = "units::PointMm")]
+    pub at: PointNm,
+    #[serde(with = "units::length_mm")]
+    #[schemars(with = "units::Length")]
+    pub diameter: Nm,
 }
 
 /// The `library.footprint_from_pads` request.
@@ -171,17 +189,17 @@ fn named_terminal(
 }
 
 fn row_pad(id: PadId, row: &PadRow, package: &PackageDefinition) -> Result<Pad> {
-    let [x, y] = row.size;
+    let PointNm { x_nm: x, y_nm: y } = row.size;
     let shape = match row.shape {
         RowShape::Rect => PadShape::Rect { size: row.size },
         RowShape::Rounded => PadShape::RoundRect {
             size: row.size,
             radius_ratio: ROUNDED_RATIO,
-            max_radius: None,
+            max_radius_nm: None,
             corners: CornerMask::ALL,
         },
         RowShape::Oblong => PadShape::Oblong { size: row.size },
-        RowShape::Circle if (x - y).abs() <= 1e-9 => PadShape::Circle { diameter: x },
+        RowShape::Circle if x == y => PadShape::Circle { diameter_nm: x },
         RowShape::Circle => {
             return Err(invalid(format!(
                 "pad {} is a circle, so its size needs two equal values",
@@ -199,9 +217,11 @@ fn row_pad(id: PadId, row: &PadRow, package: &PackageDefinition) -> Result<Pad> 
         (Some(diameter), false) => (
             PadKind::PlatedThrough,
             Some(Hole {
-                shape: HoleShape::Round { diameter },
+                shape: HoleShape::Round {
+                    diameter_nm: diameter,
+                },
                 plated: true,
-                offset: [0.0, 0.0],
+                offset: PointNm::ORIGIN,
             }),
         ),
         (None, true) => (PadKind::Mechanical, None),
@@ -213,7 +233,7 @@ fn row_pad(id: PadId, row: &PadRow, package: &PackageDefinition) -> Result<Pad> 
         terminal: named_terminal(package, &row.number, row.terminal.as_deref())?,
         number: row.number.clone(),
         position: row.at,
-        rotation_deg: row.rotation_deg,
+        rotation_mdeg: row.rotation_deg.0,
         side: row.side,
         shape,
         hole,
@@ -226,22 +246,26 @@ fn row_pad(id: PadId, row: &PadRow, package: &PackageDefinition) -> Result<Pad> 
 }
 
 /// A slot's hole: its round ends on the long axis.
-fn slot_hole(slot: Point, plated: bool) -> Hole {
-    let [x, y] = slot;
+fn slot_hole(slot: PointNm, plated: bool) -> Hole {
+    let PointNm { x_nm: x, y_nm: y } = slot;
     Hole {
         shape: HoleShape::Slot {
-            width: x.min(y),
-            length: x.max(y),
-            angle_deg: if y > x { 90.0 } else { 0.0 },
+            width_nm: x.min(y),
+            length_nm: x.max(y),
+            angle_mdeg: if y > x {
+                Angle::normalized(90_000)
+            } else {
+                Angle::ZERO
+            },
         },
         plated,
-        offset: [0.0, 0.0],
+        offset: PointNm::ORIGIN,
     }
 }
 
 fn slot_pad(id: PadId, row: &SlotRow, package: &PackageDefinition) -> Result<Pad> {
     let (kind, land) = match (row.plated, row.land) {
-        (true, Some(land)) => (PadKind::PlatedThrough, land),
+        (true, Some(land)) => (PadKind::PlatedThrough, land.0),
         (true, None) => {
             return Err(invalid(format!(
                 "plated slot {} needs its land size",
@@ -268,7 +292,7 @@ fn slot_pad(id: PadId, row: &SlotRow, package: &PackageDefinition) -> Result<Pad
         terminal: named_terminal(package, &row.number, row.terminal.as_deref())?,
         number: row.number.clone(),
         position: row.at,
-        rotation_deg: 0.0,
+        rotation_mdeg: Angle::ZERO,
         side: PadSide::Top,
         shape: PadShape::Oblong { size: land },
         hole: Some(slot_hole(row.slot, row.plated)),
@@ -285,17 +309,17 @@ fn hole_pad(id: PadId, row: &HoleRow) -> Pad {
         terminal: None,
         number: row.number.clone(),
         position: row.at,
-        rotation_deg: 0.0,
+        rotation_mdeg: Angle::ZERO,
         side: PadSide::Top,
         shape: PadShape::Circle {
-            diameter: row.diameter,
+            diameter_nm: row.diameter,
         },
         hole: Some(Hole {
             shape: HoleShape::Round {
-                diameter: row.diameter,
+                diameter_nm: row.diameter,
             },
             plated: false,
-            offset: [0.0, 0.0],
+            offset: PointNm::ORIGIN,
         }),
         mask: MaskRule::Inherit,
         paste: PasteRule::Inherit,

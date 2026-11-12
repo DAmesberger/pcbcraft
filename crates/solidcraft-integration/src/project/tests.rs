@@ -1,6 +1,7 @@
 use super::*;
 #[allow(unused_imports)]
 use crate::models::tests::{nm, pt};
+use crate::test_units::deg;
 use pcbcraft_core::geometry::cos_sin;
 use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm, PackageModel};
 
@@ -60,7 +61,7 @@ fn fixture() -> Result<Project> {
         .definition
         .placement
         .translation_nm = crate::test_units::nm3([0.25, -0.4, 0.2]);
-    project.library.footprints[0].definition.datum.offset = [0.3, -0.4];
+    project.library.footprints[0].definition.datum.offset = pt([0.3, -0.4]);
     for (placement, (position, layer)) in project
         .placements
         .iter_mut()
@@ -1029,8 +1030,8 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
         PadId(90),
         unmapped,
         "MP",
-        [0.0, 3.0],
-        [0.8, 0.8],
+        pt([0.0, 3.0]),
+        pt([0.8, 0.8]),
     ));
     footprint.next_local = 91;
     // Library validation refuses such a definition today, so the
@@ -1245,7 +1246,7 @@ fn shaped() -> Result<Project> {
     use pcbcraft_core::library::{Hole, HoleShape, MaskRule, Outline, PadKind, PadSide, Segment};
     let mut project = fixture()?;
     let footprint = &mut project.library.footprints[0].definition;
-    footprint.datum.rotation_deg = 90.0;
+    footprint.datum.rotation_mdeg = deg(90.0);
     let [first, second] = &mut footprint.pads[..] else {
         return Err(Error::Verification("demo footprint has two pads".into()));
     };
@@ -1263,38 +1264,46 @@ fn shaped() -> Result<Project> {
             ],
         },
     };
-    first.rotation_deg = 30.0;
+    first.rotation_mdeg = deg(30.0);
     second.kind = PadKind::PlatedThrough;
-    second.shape = PadShape::Oblong { size: [1.6, 1.0] };
-    second.rotation_deg = 45.0;
+    second.shape = PadShape::Oblong {
+        size: pt([1.6, 1.0]),
+    };
+    second.rotation_mdeg = deg(45.0);
     second.hole = Some(Hole {
-        shape: HoleShape::Round { diameter: 0.6 },
+        shape: HoleShape::Round {
+            diameter_nm: nm(0.6),
+        },
         plated: true,
-        offset: [0.2, 0.0],
+        offset: pt([0.2, 0.0]),
     });
     let mut bare = first.clone();
     bare.id = PadId(90);
     bare.kind = PadKind::NonPlatedHole;
     bare.terminal = None;
     bare.number = "MH".into();
-    bare.position = [0.0, 2.5];
-    bare.rotation_deg = 0.0;
-    bare.shape = PadShape::Circle { diameter: 1.2 };
+    bare.position = pt([0.0, 2.5]);
+    bare.rotation_mdeg = deg(0.0);
+    bare.shape = PadShape::Circle {
+        diameter_nm: nm(1.2),
+    };
     bare.hole = Some(Hole {
-        shape: HoleShape::Round { diameter: 1.0 },
+        shape: HoleShape::Round {
+            diameter_nm: nm(1.0),
+        },
         plated: false,
-        offset: [0.0, 0.0],
+        offset: pt([0.0, 0.0]),
     });
     let mut tab = bare.clone();
     tab.id = PadId(91);
     tab.kind = PadKind::Mechanical;
     tab.number = "MP".into();
-    tab.position = [0.0, -2.5];
+    tab.position = pt([0.0, -2.5]);
     tab.side = PadSide::Bottom;
     tab.shape = PadShape::RoundRect {
-        size: [0.8, 0.5],
+        size: pt([0.8, 0.5]),
         radius_ratio: 0.25,
-        max_radius: None,
+        max_radius_nm: None,
         corners: pcbcraft_core::library::CornerMask::ALL,
     };
     tab.hole = None;
@@ -1306,8 +1315,8 @@ fn shaped() -> Result<Project> {
 
 /// A pad-frame point of a placed pad on the board.
 fn on_board(pad: &layout::PlacedPad, q: Point) -> Point {
-    let (c, s) = cos_sin(pad.pad.rotation_deg);
-    let p = pad.pad.position;
+    let (c, s) = cos_sin(pad.pad.rotation_deg());
+    let p = pad.pad.position();
     pad.transform
         .apply([p[0] + c * q[0] - s * q[1], p[1] + s * q[0] + c * q[1]])
 }
@@ -1560,8 +1569,8 @@ fn an_envelope_follows_its_turned_placement_and_datum_like_its_2d_outline() -> R
     package.placement = crate::test_units::placement([0.25, -0.4, 0.0], [90.0, 0.0, 90.0]);
     let package = package.clone();
     let datum = pcbcraft_core::library::Datum {
-        offset: [0.3, -0.4],
-        rotation_deg: 90.0,
+        offset: pt([0.3, -0.4]),
+        rotation_mdeg: deg(90.0),
     };
     project.library.footprints[0].definition.datum = datum;
     for placement in &mut project.placements {

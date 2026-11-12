@@ -100,7 +100,7 @@ fn pad_generator_is_available_through_the_shared_transport_contract() -> TestRes
     let draft = &reply["result"]["drafts"][index];
     assert_eq!(
         draft["draft"]["definition"]["body"]["pads"][1]["position"],
-        json!([2.0, 0.0])
+        json!({"x_nm": 2_000_000, "y_nm": 0})
     );
     assert_eq!(draft["check"]["result"]["publishable"], true, "{draft}");
     assert_eq!(session.engine().project(), original.project.as_ref());

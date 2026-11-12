@@ -2,7 +2,7 @@
 //! two-terminal arrangements, not component categories; every value,
 //! including the designator prefix and body style the caller passes, is
 //! ordinary definition data a user then edits.
-use super::footprint::{Hole, HoleShape, PadKind, PadShape};
+use super::footprint::{Hole, PadKind, PadShape};
 use super::graphics::{self, HAlign, Justify, PIN_TEXT_HEIGHT, ShapeNm, TextContent, VAlign};
 use super::package_form::{typical_nm, typical_point};
 use super::symbol_style::{self, SymbolConventions, SymbolKind};
@@ -206,7 +206,7 @@ fn sample(name: &str, kind: Kind<'_>, refs: SampleRefs, layout: Layout) -> Resul
         DraftEdit {
             id: refs.footprint.id,
             meta: meta(&format!("{name} footprint")),
-            definition: Definition::Footprint(footprint(refs.package, &package, &layout)),
+            definition: Definition::Footprint(footprint(refs.package, &package, &layout)?),
         },
         DraftEdit {
             id: refs.binding.id,
@@ -235,15 +235,15 @@ fn footprint(
     package_ref: PackageRef,
     package: &PackageDefinition,
     layout: &Layout,
-) -> FootprintDefinition {
+) -> Result<FootprintDefinition> {
     let pads = [PackageTerminalId(1), PackageTerminalId(2)]
         .iter()
         .zip(layout.pads)
         .zip([PadId(1), PadId(2)])
         .map(|((terminal, position), id)| {
-            Pad::smd_rect(id, *terminal, id.0.to_string(), position, layout.land)
+            Pad::smd_rect_mm(id, *terminal, id.0.to_string(), position, layout.land)
         })
-        .collect();
+        .collect::<Result<_>>()?;
     let mut footprint = FootprintDefinition {
         package: package_ref,
         next_local: 3,
@@ -251,7 +251,7 @@ fn footprint(
         ..FootprintDefinition::default()
     };
     redraw(&mut footprint, package);
-    footprint
+    Ok(footprint)
 }
 
 /// Replace a two-land sample footprint's drawings with the standard ones
@@ -547,7 +547,7 @@ const TOE_HEEL_SHIFT_MM: f64 = 0.1;
 /// mask web` rule plus the footprint's default mask expansion on both
 /// sides, so the lint's `footprint.mask_web` holds under the same rules.
 fn no_lead_copper_gap(rules: &DesignRules) -> f64 {
-    rules.mask.web_min + 2.0 * super::footprint::MASK_EXPANSION_MM
+    rules.mask.web_min + 2.0 * super::footprint::MASK_EXPANSION_NM.to_mm_f64()
 }
 
 /// [`form_lands_with`] under the default design-rule profile.
@@ -690,15 +690,13 @@ pub fn form_lands_with(
                 at[0] = at[0].signum() * (outer + inner) / 2.0;
             }
         }
-        let mut pad = Pad::smd_rect(id, *terminal, number, at, land);
+        let mut pad = Pad::smd_rect_mm(id, *terminal, number, at, land).ok()?;
         if k >= leads {
             // The exposed pad.
             if let PackageForm::NoLead(n) = form
                 && let Some(ep) = n.exposed_pad
             {
-                pad.shape = PadShape::Rect {
-                    size: ep.to_mm_f64(),
-                };
+                pad.shape = PadShape::Rect { size: ep };
                 pad.number = "EP".into();
             }
         } else if let PackageForm::Header(h) = form {
@@ -706,44 +704,26 @@ pub fn form_lands_with(
             pad.kind = PadKind::PlatedThrough;
             // Pin 1 square, the others round.
             if k > 0 {
-                pad.shape = PadShape::Circle { diameter };
+                pad.shape = PadShape::circle_mm(diameter).ok()?;
             }
-            pad.hole = Some(Hole {
-                shape: HoleShape::Round {
-                    diameter: h.pin_side() * std::f64::consts::SQRT_2 + 0.1,
-                },
-                plated: true,
-                offset: [0.0, 0.0],
-            });
+            pad.hole =
+                Some(Hole::round_mm(h.pin_side() * std::f64::consts::SQRT_2 + 0.1, true).ok()?);
         } else if let PackageForm::Tht(t) = form {
             let (drill, land) = t.estimated_drill_and_land();
             pad.kind = PadKind::PlatedThrough;
             pad.shape = if k == 0 && t.marks_pin_one() {
-                PadShape::RoundRect {
-                    size: [land, land],
-                    radius_ratio: 0.25,
-                    max_radius: None,
-                    corners: super::footprint::CornerMask::ALL,
-                }
+                PadShape::round_rect_mm([land, land], 0.25, None, super::footprint::CornerMask::ALL)
+                    .ok()?
             } else {
-                PadShape::Circle { diameter: land }
+                PadShape::circle_mm(land).ok()?
             };
-            pad.hole = Some(Hole {
-                shape: HoleShape::Round { diameter: drill },
-                plated: true,
-                offset: [0.0, 0.0],
-            });
+            pad.hole = Some(Hole::round_mm(drill, true).ok()?);
         } else if let PackageForm::Grid(_) = form {
-            pad.shape = PadShape::Circle {
-                diameter: size(k)[0],
-            };
+            pad.shape = PadShape::circle_mm(size(k)[0]).ok()?;
         } else if let PackageForm::Molded(_) = form {
-            pad.shape = PadShape::RoundRect {
-                size: size(k),
-                radius_ratio: 0.25,
-                max_radius: None,
-                corners: super::footprint::CornerMask::ALL,
-            };
+            pad.shape =
+                PadShape::round_rect_mm(size(k), 0.25, None, super::footprint::CornerMask::ALL)
+                    .ok()?;
         }
         pads.push(pad);
     }
@@ -1045,21 +1025,21 @@ pub fn heel_trim_with(form: &PackageForm, rules: &DesignRules) -> f64 {
 /// centre-to-centre distance between opposite lands (both pairs of sides
 /// of a four-sided form), and the exposed pad's size. Plated-through pins
 /// keep their lands. Values that are not positive and finite are ignored.
-pub fn apply_lands(pads: &mut [Pad], form: &PackageForm, lands: &LandValues) {
-    let ok = |v: Option<f64>| v.filter(|v| v.is_finite() && *v > 0.0);
+pub fn apply_lands(pads: &mut [Pad], form: &PackageForm, lands: &LandValues) -> Result<()> {
+    let ok = |v: Option<Nm>| v.filter(|v| *v > Nm::ZERO);
     // Round lands (grid balls, through-hole rings) take one diameter.
     if let PackageForm::Grid(_) | PackageForm::Tht(_) = form {
-        let Some(d) = ok(lands.pad_width).or(ok(lands.pad_length)) else {
-            return;
+        let Some(d) = ok(lands.pad_width_nm).or(ok(lands.pad_length_nm)) else {
+            return Ok(());
         };
         for pad in pads.iter_mut() {
             match &mut pad.shape {
-                PadShape::Circle { diameter } => *diameter = d,
-                PadShape::RoundRect { size, .. } => *size = [d, d],
+                PadShape::Circle { diameter_nm } => *diameter_nm = d,
+                PadShape::RoundRect { size, .. } => *size = PointNm::new(d, d),
                 _ => {}
             }
         }
-        return;
+        return Ok(());
     }
     let per = match form {
         PackageForm::GullWing(g) => Some((g.sides, g.leads_per_side)),
@@ -1076,7 +1056,7 @@ pub fn apply_lands(pads: &mut [Pad], form: &PackageForm, lands: &LandValues) {
     };
     let tabbed = matches!(form, PackageForm::Tabbed(_));
     if !chip && !tabbed && per.is_none() {
-        return;
+        return Ok(());
     }
     for (k, pad) in pads.iter_mut().enumerate() {
         if pad.kind != PadKind::Smd || Some(k) == tab {
@@ -1086,13 +1066,11 @@ pub fn apply_lands(pads: &mut [Pad], form: &PackageForm, lands: &LandValues) {
             continue;
         };
         if pad.number == "EP" {
-            if let Some([x, y]) = lands.exposed_pad
-                && x.is_finite()
-                && y.is_finite()
-                && x > 0.0
-                && y > 0.0
+            if let Some(ep) = lands.exposed_pad
+                && ep.x_nm > Nm::ZERO
+                && ep.y_nm > Nm::ZERO
             {
-                *size = [x, y];
+                *size = ep;
             }
             continue;
         }
@@ -1103,17 +1081,24 @@ pub fn apply_lands(pads: &mut [Pad], form: &PackageForm, lands: &LandValues) {
             Some((sides, per)) if !across_x(sides, per, k) => 1,
             _ => 0,
         };
-        if let Some(l) = ok(lands.pad_length) {
-            size[axis] = l;
+        if let Some(l) = ok(lands.pad_length_nm) {
+            *axis_mut(size, axis) = l;
         }
-        if let Some(w) = ok(lands.pad_width) {
-            size[1 - axis] = w;
+        if let Some(w) = ok(lands.pad_width_nm) {
+            *axis_mut(size, 1 - axis) = w;
         }
-        if let Some(gap) = ok(lands.gap) {
-            let sign = if pad.position[axis] < 0.0 { -1.0 } else { 1.0 };
-            pad.position[axis] = sign * gap / 2.0;
+        if let Some(gap) = ok(lands.gap_nm) {
+            let at = axis_mut(&mut pad.position, axis);
+            let sign = if *at < Nm::ZERO { -1.0 } else { 1.0 };
+            *at = Nm::from_mm_f64_rounded(sign * gap.to_mm_f64() / 2.0)?;
         }
     }
+    Ok(())
+}
+
+/// Coordinate `axis` (0 is x) of `p`.
+fn axis_mut(p: &mut PointNm, axis: usize) -> &mut Nm {
+    if axis == 0 { &mut p.x_nm } else { &mut p.y_nm }
 }
 
 /// The lands a template build gives a typed `form` landing `terminals`
@@ -1140,10 +1125,10 @@ pub fn template_lands_with(
 ) -> Option<Vec<Pad>> {
     let mut pads = form_lands_with(form, terminals, rules)?;
     match lands {
-        Some(lands) => apply_lands(&mut pads, form, lands),
+        Some(lands) => apply_lands(&mut pads, form, lands).ok()?,
         None => {
-            trim_pads(&mut pads, heel_trim_with(form, rules));
-            clear_corners(&mut pads, form, no_lead_copper_gap(rules));
+            trim_pads(&mut pads, heel_trim_with(form, rules)).ok()?;
+            clear_corners(&mut pads, form, no_lead_copper_gap(rules)).ok()?;
         }
     }
     Some(pads)
@@ -1156,12 +1141,12 @@ pub fn template_lands_with(
 /// length, the least that leaves `copper_gap` (the no-lead copper gap) of copper
 /// between them; the toes stay. A pair that cannot be cleared within half
 /// of the shorter land is left as it is (the lint then reports it).
-fn clear_corners(pads: &mut [Pad], form: &PackageForm, copper_gap: f64) {
+fn clear_corners(pads: &mut [Pad], form: &PackageForm, copper_gap: f64) -> Result<()> {
     let PackageForm::NoLead(n) = form else {
-        return;
+        return Ok(());
     };
     if n.sides != LeadSides::Four {
-        return;
+        return Ok(());
     }
     // Perimeter lands: index, long axis, outward sign and extent.
     let lands: Vec<(usize, usize, f64, Bounds)> = pads
@@ -1174,8 +1159,12 @@ fn clear_corners(pads: &mut [Pad], form: &PackageForm, copper_gap: f64) {
             if pad.number == "EP" {
                 return None;
             }
-            let axis = usize::from(size[1] > size[0]);
-            let outward = if pad.position[axis] < 0.0 { -1.0 } else { 1.0 };
+            let axis = usize::from(size.y_nm > size.x_nm);
+            let outward = if pad.position()[axis] < 0.0 {
+                -1.0
+            } else {
+                1.0
+            };
             Some((k, axis, outward, pad.bounds()))
         })
         .collect();
@@ -1218,13 +1207,30 @@ fn clear_corners(pads: &mut [Pad], form: &PackageForm, copper_gap: f64) {
         if by <= 0.0 {
             continue;
         }
-        if let Some(pad) = pads.get_mut(k)
-            && let PadShape::Rect { size } = &mut pad.shape
-        {
-            size[axis] -= by;
-            pad.position[axis] += outward * by / 2.0;
+        if let Some(pad) = pads.get_mut(k) {
+            shorten(pad, axis, by, outward)?;
         }
     }
+    Ok(())
+}
+
+/// Shorten a rectangular land by `by` mm along `axis` and move its centre
+/// `outward` by half of that, keeping its outer end exactly in place: the
+/// half step is rounded to whole nanometres once, so the trim is even.
+fn shorten(pad: &mut Pad, axis: usize, by: f64, outward: f64) -> Result<()> {
+    let PadShape::Rect { size } = &mut pad.shape else {
+        return Ok(());
+    };
+    let half = Nm::from_mm_f64_rounded(by / 2.0)?;
+    let length = axis_mut(size, axis);
+    *length = length.checked_sub(half)?.checked_sub(half)?;
+    let at = axis_mut(&mut pad.position, axis);
+    *at = if outward < 0.0 {
+        at.checked_sub(half)?
+    } else {
+        at.checked_add(half)?
+    };
+    Ok(())
 }
 
 /// The distance between two axis-aligned rectangles (0 when they touch or
@@ -1280,11 +1286,11 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit
     let pads = if spec.template {
         template_lands_with(&package.form, &package_terminals, spec.lands, spec.rules)
     } else {
-        form_lands_with(&package.form, &package_terminals, spec.rules).map(|mut pads| {
+        form_lands_with(&package.form, &package_terminals, spec.rules).and_then(|mut pads| {
             if let Some(lands) = spec.lands {
-                apply_lands(&mut pads, &package.form, lands);
+                apply_lands(&mut pads, &package.form, lands).ok()?;
             }
-            pads
+            Some(pads)
         })
     }
     .unwrap_or_default();
@@ -1475,8 +1481,8 @@ fn mark_row_end(edits: &mut [DraftEdit]) {
         {
             let half = pad.bounds().size().map(|v| v / 2.0);
             let center = [
-                pad.position[0],
-                pad.position[1] + half[1] + polarity_gap(footprint, pad),
+                pad.position()[0],
+                pad.position()[1] + half[1] + polarity_gap(footprint, pad),
             ];
             mark_polarity_at(footprint, PadId(1), center);
         }
@@ -1502,8 +1508,8 @@ pub fn mark_polarity(footprint: &mut FootprintDefinition, pad_id: PadId) {
     };
     let half = pad.bounds().size().map(|v| v / 2.0);
     let center = [
-        pad.position[0] - half[0] - polarity_gap(footprint, pad),
-        pad.position[1],
+        pad.position()[0] - half[0] - polarity_gap(footprint, pad),
+        pad.position()[1],
     ];
     mark_polarity_at(footprint, pad_id, center);
 }
@@ -1541,34 +1547,40 @@ fn mark_polarity_at(footprint: &mut FootprintDefinition, pad_id: PadId, center: 
 /// Shorten every rectangular land but the exposed pad of the footprint
 /// among `edits` by `mm` at its inner end (the heel, towards the footprint
 /// centre along the land's long axis), keeping its outer end in place.
-pub fn trim_heels(edits: &mut [DraftEdit], mm: f64) {
+pub fn trim_heels(edits: &mut [DraftEdit], mm: f64) -> Result<()> {
     for edit in edits {
         if let Definition::Footprint(footprint) = &mut edit.definition {
-            trim_pads(&mut footprint.pads, mm);
+            trim_pads(&mut footprint.pads, mm)?;
         }
     }
+    Ok(())
 }
 
 /// [`trim_heels`] on a pad list.
-fn trim_pads(pads: &mut [Pad], mm: f64) {
+fn trim_pads(pads: &mut [Pad], mm: f64) -> Result<()> {
     if !(mm.is_finite() && mm > 0.0) {
-        return;
+        return Ok(());
     }
     for pad in pads {
-        let PadShape::Rect { size } = &mut pad.shape else {
+        let PadShape::Rect { size } = &pad.shape else {
             continue;
         };
         if pad.number == "EP" {
             continue;
         }
+        let size = size.to_mm_f64();
         let axis = usize::from(size[1] > size[0]);
         if size[axis] <= mm {
             continue;
         }
-        size[axis] -= mm;
-        let outward = if pad.position[axis] < 0.0 { -1.0 } else { 1.0 };
-        pad.position[axis] += outward * mm / 2.0;
+        let outward = if pad.position()[axis] < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        shorten(pad, axis, mm, outward)?;
     }
+    Ok(())
 }
 
 /// A rectangle with the first half of `terminals` down its left side and
@@ -2185,7 +2197,7 @@ mod tests {
     fn land_estimates_follow_the_land_rules() -> Result<()> {
         let ids = |n: u32| (1..=n).map(PackageTerminalId).collect::<Vec<_>>();
         let width = |pads: &[Pad]| match pads.first().map(|p| &p.shape) {
-            Some(PadShape::Rect { size }) => size[0],
+            Some(PadShape::Rect { size }) => size.to_mm_f64()[0],
             _ => f64::NAN,
         };
         let soic = Preset::Soic8.form();
@@ -2209,7 +2221,7 @@ mod tests {
         let lands =
             form_lands_with(&chip, &ids(2), &apart).ok_or(Error::Invalid("lands".into()))?;
         let inner = |p: &Pad| match p.shape {
-            PadShape::Rect { size } => p.position[0].abs() - size[0] / 2.0,
+            PadShape::Rect { size } => p.position()[0].abs() - size.to_mm_f64()[0] / 2.0,
             _ => f64::NAN,
         };
         for pad in &lands {

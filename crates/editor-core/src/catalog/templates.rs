@@ -73,8 +73,13 @@ pub struct TemplateHit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub starter: Option<String>,
     /// The row's land overrides, which the preview applies exactly as
-    /// `library.new_from_template` does.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// `library.new_from_template` does. In millimetres.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::library::templates::catalog::option_lands_mm"
+    )]
+    #[schemars(with = "Option<crate::library::templates::catalog::LandValuesParams>")]
     pub lands: Option<LandValues>,
     pub tier: MatchTier,
 }

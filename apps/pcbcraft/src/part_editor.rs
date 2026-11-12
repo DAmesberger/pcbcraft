@@ -1280,6 +1280,14 @@ impl PartEditor {
             .find(|n| !taken(n))
             .unwrap_or_else(|| physical.to_string());
         let chip = set.package.chip_kind().is_some() && set.package.terminals.len() >= 2;
+        let land = Pad::smd_rect_mm(
+            PadId(pad),
+            physical,
+            number.clone(),
+            [0.0, row * 2.0],
+            [1.0, 1.4],
+        )
+        .ok()?;
         set.component.terminals.push(Terminal {
             id: electrical,
             name: number.clone(),
@@ -1288,13 +1296,7 @@ impl PartEditor {
                 Direction::Passive,
             )),
         });
-        set.footprint.pads.push(Pad::smd_rect(
-            PadId(pad),
-            physical,
-            number.clone(),
-            [0.0, row * 2.0],
-            [1.0, 1.4],
-        ));
+        set.footprint.pads.push(land);
         set.package.terminals.push(PackageTerminal {
             id: physical,
             designation: number,
@@ -2494,6 +2496,7 @@ mod draft_tests {
     use super::details_card::set_field_default;
     use super::symbol_card::add_function;
     use super::*;
+    use crate::schematic_editor::pt;
     use pcbcraft_core::fields::FieldValue;
     use pcbcraft_core::library::TextMetric;
     use pcbcraft_core::schematic;
@@ -2635,7 +2638,7 @@ mod draft_tests {
             "the demo drafts are published"
         );
         if let Some(set) = &mut editor.draft {
-            set.footprint.pads[0].position = [-1.5, 0.0];
+            set.footprint.pads[0].position = pt([-1.5, 0.0]);
         }
         if let Some(operation) = editor.commit(&ctx, &engine) {
             engine.apply(engine.revision(), operation)?;
@@ -2702,7 +2705,7 @@ mod draft_tests {
         };
         assert_eq!(browser_draft(&engine, &editor), Some(false), "opened only");
         if let Some(set) = &mut editor.draft {
-            set.footprint.pads[0].position = [-1.5, 0.0];
+            set.footprint.pads[0].position = pt([-1.5, 0.0]);
         }
         if let Some(operation) = editor.commit(&ctx, &engine) {
             engine.apply(engine.revision(), operation)?;

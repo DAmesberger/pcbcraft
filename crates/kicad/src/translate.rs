@@ -30,6 +30,7 @@ use pcbcraft_core::library::{
     ApertureId, CornerMask, Hole, HoleShape, MAX_OUTLINE_SEGMENTS, MaskRule, Outline, Pad, PadKind,
     PadShape, PadSide, PasteRule, PasteWindow, Segment, ShapeNm,
 };
+use pcbcraft_core::units::{Angle, Nm};
 use pcbcraft_core::{PackageTerminalId, PadId};
 
 /// Largest distance of a custom pad's chord from its round primitive, mm.
@@ -50,6 +51,22 @@ fn snap(v: f64) -> f64 {
 
 fn snap_point(p: Point) -> Point {
     [snap(p[0]), snap(p[1])]
+}
+
+/// Millimetres in whole nanometres; beyond the coordinate bound the pad
+/// is refused.
+fn nm(v: f64) -> Result<Nm, Case> {
+    Nm::from_mm_f64_rounded(v).map_err(|_| Case::PadOutOfRange)
+}
+
+/// A point in whole nanometres (see [`nm`]).
+fn nm_point(p: Point) -> Result<pcbcraft_core::units::PointNm, Case> {
+    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).map_err(|_| Case::PadOutOfRange)
+}
+
+/// A KiCad length (whole nanometres already) within the coordinate bound.
+fn nm_exact(v: i64) -> Result<Nm, Case> {
+    Nm::new(v).map_err(|_| Case::PadOutOfRange)
 }
 
 /// An angle in [0, 360) to a billionth of a degree.
@@ -134,11 +151,21 @@ impl Local {
 
 /// Translate one pad of a placed footprint.
 pub fn pad(board: &Board, fp: &Footprint, kpad: &KPad, report: &mut Report) -> Mapped {
+    pad_or_refusal(board, fp, kpad, report).unwrap_or_else(Mapped::Refused)
+}
+
+/// [`pad`], with a refusal as the error.
+fn pad_or_refusal(
+    board: &Board,
+    fp: &Footprint,
+    kpad: &KPad,
+    report: &mut Report,
+) -> Result<Mapped, Case> {
     if !kpad.unknown.is_empty() {
         for path in &kpad.unknown {
             report.add_detail(Case::PadUnknownToken, &fp.reference, &kpad.number, path);
         }
-        return Mapped::Refused(Case::PadUnknownToken);
+        return Err(Case::PadUnknownToken);
     }
     let place = transform(board, fp);
     let (c, s) = pcbcraft_core::geometry::cos_sin(place.rotation_deg);
@@ -182,11 +209,11 @@ pub fn pad(board: &Board, fp: &Footprint, kpad: &KPad, report: &mut Report) -> M
                 (kpad.on("F.Paste"), kpad.on("B.Paste"))
             };
             let pad_side = match (on_component, on_other) {
-                (true, true) => return Mapped::Refused(Case::PadOnBothSides),
+                (true, true) => return Err(Case::PadOnBothSides),
                 (false, false) => match (paste_component, paste_other) {
                     (true, false) => PadSide::Top,
                     (false, true) => PadSide::Bottom,
-                    _ => return Mapped::Refused(Case::PadWithoutCopper),
+                    _ => return Err(Case::PadWithoutCopper),
                 },
                 (true, false) => PadSide::Top,
                 (false, true) => PadSide::Bottom,
@@ -207,34 +234,38 @@ pub fn pad(board: &Board, fp: &Footprint, kpad: &KPad, report: &mut Report) -> M
         (PadSide::Bottom, "F") => "B",
         (PadSide::Bottom, _) => "F",
     };
-    let shape = match pad_shape(kpad, size, map, report, fp) {
-        Ok(shape) => shape,
-        Err(case) => return Mapped::Refused(case),
-    };
-    let hole = kpad.drill.map(|d| {
-        let back = local(d.offset);
-        let offset = map.point([-back[0], -back[1]]);
-        let (w, h) = (mm(d.size[0]), mm(d.size[1]));
-        let shape = if d.oval && (w - h).abs() > 1e-9 {
-            HoleShape::Slot {
-                width: w.min(h),
-                length: w.max(h),
-                angle_deg: if w >= h { 0.0 } else { 90.0 },
-            }
-        } else {
-            HoleShape::Round { diameter: w }
-        };
-        Hole {
-            shape,
-            plated: kpad.kind == PadType::ThroughHole,
-            offset: snap_point(offset),
+    let shape = pad_shape(kpad, size, map, report, fp)?;
+    let hole = match kpad.drill {
+        Some(d) => {
+            let back = local(d.offset);
+            let offset = map.point([-back[0], -back[1]]);
+            let (w, h) = (nm_exact(d.size[0])?, nm_exact(d.size[1])?);
+            let shape = if d.oval && w != h {
+                HoleShape::Slot {
+                    width_nm: w.min(h),
+                    length_nm: w.max(h),
+                    angle_mdeg: if w >= h {
+                        Angle::ZERO
+                    } else {
+                        Angle::normalized(90_000)
+                    },
+                }
+            } else {
+                HoleShape::Round { diameter_nm: w }
+            };
+            Some(Hole {
+                shape,
+                plated: kpad.kind == PadType::ThroughHole,
+                offset: nm_point(offset)?,
+            })
         }
-    });
-    let mask = mask_rule(board, fp, kpad, copper_side, report);
-    let paste = paste_rule(board, fp, kpad, copper_side, size, report);
+        None => None,
+    };
+    let mask = mask_rule(board, fp, kpad, copper_side, report)?;
+    let paste = paste_rule(board, fp, kpad, copper_side, size, report)?;
     if matches!(&shape, PadShape::Custom { .. })
-        && (matches!(mask, MaskRule::Expansion(e) if e != 0.0)
-            || matches!(paste, PasteRule::Reduction(r) if r != 0.0))
+        && (matches!(mask, MaskRule::Expansion(e) if e != Nm::ZERO)
+            || matches!(paste, PasteRule::Reduction(r) if r != Nm::ZERO))
     {
         report.add(Case::CustomPadOffset);
     }
@@ -243,8 +274,9 @@ pub fn pad(board: &Board, fp: &Footprint, kpad: &KPad, report: &mut Report) -> M
         kind,
         terminal: None,
         number: kpad.number.clone(),
-        position: snap_point(def.translate),
-        rotation_deg: snap_angle(def.rotation_deg),
+        position: nm_point(def.translate)?,
+        rotation_mdeg: Angle::from_degrees_f64_rounded(def.rotation_deg)
+            .map_err(|_| Case::PadOutOfRange)?,
         side: pad_side,
         shape,
         hole,
@@ -254,41 +286,40 @@ pub fn pad(board: &Board, fp: &Footprint, kpad: &KPad, report: &mut Report) -> M
     };
     // A non-plated hole needs a land at least as large as the hole.
     if let (PadKind::NonPlatedHole, Some(h)) = (pad.kind, &pad.hole)
-        && let HoleShape::Round { diameter } = h.shape
-        && let PadShape::Circle { diameter: land } = &mut pad.shape
-        && *land < diameter
+        && let HoleShape::Round { diameter_nm } = h.shape
+        && let PadShape::Circle { diameter_nm: land } = &mut pad.shape
+        && *land < diameter_nm
     {
-        *land = diameter;
+        *land = diameter_nm;
     }
     if pad.fold_rotation().is_err() {
-        return Mapped::Refused(Case::CustomPadNotOneOutline);
+        return Err(Case::CustomPadNotOneOutline);
     }
-    pad.position = snap_point(pad.position);
-    pad.rotation_deg = snap_angle(pad.rotation_deg);
     let mut class = class_of(kpad, fp);
     if paste_ratio_approximate(board, fp, kpad, size) {
         class.push_str(" paste-ratio");
     }
     let ring = pad.shape.flatten(0.001);
     let t = Transform2 {
-        translate: pad.position,
-        rotation_deg: pad.rotation_deg,
+        translate: pad.position(),
+        rotation_deg: pad.rotation_deg(),
         mirror: false,
     }
     .then(&place);
     let world_box = Bounds::of(ring.iter().map(|p| t.apply(*p))).unwrap_or(Bounds::point(center));
     let grow = match pad.mask {
-        MaskRule::Expansion(e) => e,
+        MaskRule::Expansion(e) => e.to_mm_f64(),
         _ => 0.0,
     };
     let shrink = match pad.paste {
-        PasteRule::Reduction(r) => r,
+        PasteRule::Reduction(r) => r.to_mm_f64(),
         _ => 0.0,
     };
     // Sharp corners of the land, where a grown or shrunk opening may be
     // rounded (a true offset) or not.
     let vertices: Vec<Point> = match &pad.shape {
         PadShape::Rect { size } => {
+            let size = size.to_mm_f64();
             let (x, y) = (size[0] / 2.0, size[1] / 2.0);
             vec![[-x, -y], [x, -y], [x, y], [-x, y]]
         }
@@ -368,11 +399,11 @@ pub fn pad(board: &Board, fp: &Footprint, kpad: &KPad, report: &mut Report) -> M
         arcs,
         corners,
     });
-    if kpad.kind == PadType::Smd && !front && !back {
+    Ok(if kpad.kind == PadType::Smd && !front && !back {
         Mapped::PasteOnly(def)
     } else {
         Mapped::Pad(def)
-    }
+    })
 }
 
 /// A class name: type, shape, side and turn, never a name or value.
@@ -429,9 +460,9 @@ fn mask_rule(
     kpad: &KPad,
     copper_side: &str,
     report: &mut Report,
-) -> MaskRule {
-    let margin = mm(mask_margin(board, fp, kpad));
-    match kpad.kind {
+) -> Result<MaskRule, Case> {
+    let margin = nm_exact(mask_margin(board, fp, kpad))?;
+    Ok(match kpad.kind {
         PadType::ThroughHole | PadType::NpThroughHole => {
             match (kpad.on("F.Mask"), kpad.on("B.Mask")) {
                 (false, false) => MaskRule::Tented,
@@ -449,7 +480,7 @@ fn mask_rule(
                 MaskRule::Tented
             }
         }
-    }
+    })
 }
 
 /// Whether a relative paste margin applies to a pad that is not square.
@@ -470,9 +501,9 @@ fn paste_rule(
     copper_side: &str,
     size: Point,
     report: &mut Report,
-) -> PasteRule {
+) -> Result<PasteRule, Case> {
     if !kpad.on(&format!("{copper_side}.Paste")) {
-        return PasteRule::None;
+        return Ok(PasteRule::None);
     }
     let margin = kpad
         .margins
@@ -490,7 +521,7 @@ fn paste_rule(
     if ratio != 0.0 && (size[0] - size[1]).abs() > 1e-9 {
         report.add_detail(Case::PasteRatio, &fp.reference, &kpad.number, "");
     }
-    PasteRule::Reduction(snap(-(mm(margin) + ratio * short)))
+    Ok(PasteRule::Reduction(nm(-(mm(margin) + ratio * short))?))
 }
 
 /// The copper outline in the definition pad frame.
@@ -506,24 +537,28 @@ fn pad_shape(
             || kpad.chamfer.top_right
             || kpad.chamfer.bottom_left
             || kpad.chamfer.bottom_right);
+    let exact =
+        pcbcraft_core::units::PointNm::new(nm_exact(kpad.size[0])?, nm_exact(kpad.size[1])?);
     Ok(match kpad.shape {
         // KiCad writes chamfers on round-rect pads (a ratio of 0 for
         // sharp corners).
         PadShapeK::RoundRect if chamfered => PadShape::Custom {
             outline: chamfered_outline(kpad, size, map),
         },
-        PadShapeK::Rect => PadShape::Rect { size },
+        PadShapeK::Rect => PadShape::Rect { size: exact },
         PadShapeK::RoundRect => PadShape::RoundRect {
-            size,
+            size: exact,
             radius_ratio: kpad.rratio.clamp(0.0, 0.5),
-            max_radius: None,
+            max_radius_nm: None,
             corners: CornerMask::ALL,
         },
-        PadShapeK::Circle => PadShape::Circle { diameter: size[0] },
-        PadShapeK::Oval if (size[0] - size[1]).abs() < 1e-9 => {
-            PadShape::Circle { diameter: size[0] }
-        }
-        PadShapeK::Oval => PadShape::Oblong { size },
+        PadShapeK::Circle => PadShape::Circle {
+            diameter_nm: exact.x_nm,
+        },
+        PadShapeK::Oval if kpad.size[0] == kpad.size[1] => PadShape::Circle {
+            diameter_nm: exact.x_nm,
+        },
+        PadShapeK::Oval => PadShape::Oblong { size: exact },
         PadShapeK::Trapezoid => {
             report.add_detail(Case::PadShapeUnsupported, &fp.reference, &kpad.number, "");
             return Err(Case::PadShapeUnsupported);
@@ -821,15 +856,15 @@ pub fn terminal_id(k: usize) -> PackageTerminalId {
 /// window). Returns false when no pad lies under it.
 pub fn add_paste_window(pads: &mut [Pad], window: &Pad) -> bool {
     let reduction = match window.paste {
-        PasteRule::Reduction(r) => r,
+        PasteRule::Reduction(r) => r.to_mm_f64(),
         _ => 0.0,
     };
     let Some(opening) = window.shape.grown(-reduction, CHORD_MM) else {
         return false;
     };
     let frame = |p: &Pad| Transform2 {
-        translate: p.position,
-        rotation_deg: p.rotation_deg,
+        translate: p.position(),
+        rotation_deg: p.rotation_deg(),
         mirror: false,
     };
     let Some(target) = pads.iter_mut().find(|p| {
@@ -837,7 +872,7 @@ pub fn add_paste_window(pads: &mut [Pad], window: &Pad) -> bool {
             && p.kind != PadKind::NonPlatedHole
             && pcbcraft_core::geometry::polygon_contains(
                 &p.shape.flatten(0.001),
-                frame(p).inverse().apply(window.position),
+                frame(p).inverse().apply(window.position()),
             )
     }) else {
         return false;
@@ -847,7 +882,7 @@ pub fn add_paste_window(pads: &mut [Pad], window: &Pad) -> bool {
         PasteRule::Windows(w) => w.clone(),
         PasteRule::Reduction(r) => target
             .shape
-            .grown(-r, CHORD_MM)
+            .grown(-r.to_mm_f64(), CHORD_MM)
             .and_then(|s| ShapeNm::from_mm_rounded(&s).ok())
             .map(|shape| PasteWindow {
                 id: ApertureId(1),

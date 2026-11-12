@@ -15,7 +15,7 @@ use crate::library::{
     Definition, FootprintDefinition, HoleShape, ModelPlacement, PackageDefinition, PackageEdit,
     PackageForm, PadKind, QuickAction, SymbolDefinition, standard_fields,
 };
-use crate::tests::support::{nm, pt};
+use crate::tests::support::{mdeg, nm, pt};
 use crate::{
     Engine, Error, FieldRef, LibraryCommand, Operation, Outcome, Query, QueryResult, Result,
     TerminalId, UnitId,
@@ -83,10 +83,10 @@ fn connector(engine: &mut Engine) -> Result<Fixture> {
 fn pad_row(number: &str, at: [f64; 2], terminal: &str) -> PadRow {
     PadRow {
         number: number.into(),
-        at,
-        size: [0.6, 1.2],
+        at: pt(at),
+        size: pt([0.6, 1.2]),
         shape: Default::default(),
-        rotation_deg: 0.0,
+        rotation_deg: Default::default(),
         side: Default::default(),
         drill: None,
         terminal: Some(terminal.into()),
@@ -97,9 +97,9 @@ fn pad_row(number: &str, at: [f64; 2], terminal: &str) -> PadRow {
 fn slot_row(number: &str, at: [f64; 2], terminal: &str) -> SlotRow {
     SlotRow {
         number: number.into(),
-        at,
-        slot: [0.6, 1.6],
-        land: Some([1.0, 2.0]),
+        at: pt(at),
+        slot: pt([0.6, 1.6]),
+        land: Some(crate::units::PointMm(pt([1.0, 2.0]))),
         plated: true,
         terminal: Some(terminal.into()),
     }
@@ -121,13 +121,13 @@ fn table(draft: crate::DefinitionId) -> FootprintFromPads {
         holes: vec![
             HoleRow {
                 number: String::new(),
-                at: [-2.89, 1.5],
-                diameter: 0.65,
+                at: pt([-2.89, 1.5]),
+                diameter: nm(0.65),
             },
             HoleRow {
                 number: String::new(),
-                at: [2.89, 1.5],
-                diameter: 0.65,
+                at: pt([2.89, 1.5]),
+                diameter: nm(0.65),
             },
         ],
         assign_by_number: false,
@@ -188,9 +188,9 @@ fn a_pad_table_makes_the_footprint_and_one_undo_step() -> Result<()> {
     assert_eq!(
         hole.shape,
         HoleShape::Slot {
-            width: 0.6,
-            length: 1.6,
-            angle_deg: 90.0
+            width_nm: nm(0.6),
+            length_nm: nm(1.6),
+            angle_mdeg: mdeg(90.0)
         }
     );
     assert!(hole.plated);
@@ -265,21 +265,22 @@ fn a_bad_table_changes_nothing() -> Result<()> {
     unnumbered.pads[0].number = " ".into();
     refused(&mut engine, unnumbered, "needs a number");
 
-    let mut nan = table(f.footprint);
-    nan.pads[0].at = [f64::NAN, 0.0];
-    refused(&mut engine, nan, "finite");
+    // Rows hold whole nanometres: a position beyond ±2 m is refused where
+    // the request is read, before the engine sees it.
+    let far = serde_json::json!({"number": "1", "at": [1e300, 0.0], "size": [1.0, 1.0]});
+    assert!(serde_json::from_value::<PadRow>(far).is_err());
 
     let mut zero = table(f.footprint);
-    zero.pads[0].size = [0.0, 1.0];
+    zero.pads[0].size = pt([0.0, 1.0]);
     refused(&mut engine, zero, "footprint.pad_size");
 
     let mut drilled = table(f.footprint);
     drilled.pads[0].side = crate::library::PadSide::Bottom;
-    drilled.pads[0].drill = Some(0.5);
+    drilled.pads[0].drill = Some(nm(0.5));
     refused(&mut engine, drilled, "footprint.pad_side");
 
     let mut big = table(f.footprint);
-    big.slots[0].slot = [3.0, 3.0];
+    big.slots[0].slot = pt([3.0, 3.0]);
     refused(&mut engine, big, "footprint.hole_outside_land");
 
     let mut unplated = table(f.footprint);
@@ -359,7 +360,7 @@ fn a_set_placement_stays_and_a_plain_edit_is_stored_as_given() -> Result<()> {
     // at 9.5, 11 and 12.5, no courtyard.
     let mut moved = footprint(&engine, f.footprint)?;
     for pad in &mut moved.pads {
-        pad.position[0] += 11.0;
+        pad.position.x_nm = pad.position.x_nm.checked_add(nm(11.0))?;
     }
     support::edit(
         &mut engine,
@@ -411,8 +412,8 @@ fn a_typed_form_or_another_model_keeps_its_placement() -> Result<()> {
             crate::PadId(1),
             crate::ids::PackageTerminalId(1),
             "1",
-            [5.0, 0.0],
-            [1.0, 1.0],
+            pt([5.0, 0.0]),
+            pt([1.0, 1.0]),
         )],
         ..FootprintDefinition::default()
     };
@@ -451,12 +452,12 @@ fn a_datum_offset_moves_the_body_to_the_same_place() -> Result<()> {
             crate::PadId(1),
             crate::ids::PackageTerminalId(1),
             "1",
-            [5.0, 2.0],
-            [1.0, 1.0],
+            pt([5.0, 2.0]),
+            pt([1.0, 1.0]),
         )],
         ..FootprintDefinition::default()
     };
-    footprint.datum.offset = [1.0, 1.0];
+    footprint.datum.offset = pt([1.0, 1.0]);
     let package = PackageDefinition {
         envelope_nm: [nm(2.0), nm(2.0), nm(1.0)],
         ..PackageDefinition::default()
@@ -768,19 +769,19 @@ fn a_tabbed_form_s_land_pattern_builds_the_pads() -> Result<()> {
     assert_eq!(cited.pads.len(), 3);
     for pad in &cited.pads {
         assert_eq!(pad.shape.extent(), [0.6, 1.3]);
-        assert!(close(pad.position[1].abs(), 1.05), "{:?}", pad.position);
+        assert!(close(pad.position()[1].abs(), 1.05), "{:?}", pad.position);
     }
     // Along x the grid stays the form's: 0.95 mm either side of the middle.
-    assert!(close(cited.pads[0].position[0], -0.95));
-    assert!(close(cited.pads[1].position[0], 0.95));
-    assert!(close(cited.pads[2].position[0], 0.0));
+    assert!(close(cited.pads[0].position()[0], -0.95));
+    assert!(close(cited.pads[1].position()[0], 0.95));
+    assert!(close(cited.pads[2].position()[0], 0.0));
 
     // Without it, the estimates: 0.4 + 0.2 wide, 0.4 + 0.6 long; a 2.4 span,
     // foot 0.4, so land centres at 1.2 − 0.2 + 0.1.
     let estimated = footprint_of(&mut engine, new(TabbedForm::typical(), "Estimated"))?;
     let extent = estimated.pads[0].shape.extent();
     assert!(close(extent[0], 0.6) && close(extent[1], 1.0), "{extent:?}");
-    assert!(close(estimated.pads[0].position[1], -1.1));
+    assert!(close(estimated.pads[0].position()[1], -1.1));
     Ok(())
 }
 
@@ -818,7 +819,7 @@ fn a_tab_keeps_its_place_and_takes_its_own_land() -> Result<()> {
     let cited = form_lands(&PackageForm::Tabbed(Box::new(form)), &ids)
         .ok_or(Error::NotFound("lands".into()))?;
     assert_eq!(cited[0].shape.extent(), [1.0, 2.0]);
-    assert!(close(cited[0].position[1], -3.0));
+    assert!(close(cited[0].position()[1], -3.0));
     assert_eq!(cited[3].shape.extent(), [3.5, 2.5]);
     assert_eq!(
         cited[3].position, estimate[3].position,

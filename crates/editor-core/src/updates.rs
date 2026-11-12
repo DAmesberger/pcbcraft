@@ -506,17 +506,24 @@ fn kind_label(pad: &Pad) -> &'static str {
 
 fn hole_label(hole: &crate::library::Hole) -> String {
     let shape = match hole.shape {
-        crate::library::HoleShape::Round { diameter } => format!("drill ⌀{diameter} mm"),
+        crate::library::HoleShape::Round { diameter_nm } => {
+            format!("drill ⌀{} mm", diameter_nm.to_mm_f64())
+        }
         crate::library::HoleShape::Slot {
-            width,
-            length,
-            angle_deg,
-        } => format!("slot {width} × {length} mm at {angle_deg}°"),
+            width_nm,
+            length_nm,
+            angle_mdeg,
+        } => format!(
+            "slot {} × {} mm at {}°",
+            width_nm.to_mm_f64(),
+            length_nm.to_mm_f64(),
+            angle_mdeg.to_degrees_f64()
+        ),
     };
-    if hole.offset == [0.0, 0.0] {
+    if hole.offset == crate::units::PointNm::ORIGIN {
         shape
     } else {
-        format!("{shape}, offset {:?} mm", hole.offset)
+        format!("{shape}, offset {:?} mm", hole.offset())
     }
 }
 
@@ -526,10 +533,10 @@ fn local_pad(pad: Option<&Pad>) -> String {
             "{} {} at {:?} mm",
             kind_label(p),
             shape_label(&p.shape),
-            p.position
+            p.position()
         );
-        if p.rotation_deg != 0.0 {
-            out.push_str(&format!(", {}°", p.rotation_deg));
+        if p.rotation_deg() != 0.0 {
+            out.push_str(&format!(", {}°", p.rotation_deg()));
         }
         if let Some(hole) = &p.hole {
             out.push_str(&format!(", {}", hole_label(hole)));
@@ -538,7 +545,7 @@ fn local_pad(pad: Option<&Pad>) -> String {
             crate::library::MaskRule::Inherit => {}
             crate::library::MaskRule::Tented => out.push_str(", tented"),
             crate::library::MaskRule::Expansion(v) => {
-                out.push_str(&format!(", mask {} mm", v + 0.0));
+                out.push_str(&format!(", mask {} mm", v.to_mm_f64() + 0.0));
             }
         }
         if !matches!(p.paste, PasteRule::Inherit) {
@@ -563,12 +570,12 @@ fn pad_changes(a: &Pad, b: &Pad) -> Vec<(String, String)> {
     if a.position != b.position {
         out.push((
             "moves".to_string(),
-            format!("moves {:?} → {:?} mm", a.position, b.position),
+            format!("moves {:?} → {:?} mm", a.position(), b.position()),
         ));
     }
     let (ra, rb) = (
-        a.shape.canonical_rotation(a.rotation_deg),
-        b.shape.canonical_rotation(b.rotation_deg),
+        a.shape.canonical_rotation(a.rotation_mdeg),
+        b.shape.canonical_rotation(b.rotation_mdeg),
     );
     if a.shape != b.shape {
         out.push((
@@ -580,8 +587,11 @@ fn pad_changes(a: &Pad, b: &Pad) -> Vec<(String, String)> {
             ),
         ));
     }
-    if (ra - rb).abs() > 1e-9 {
-        out.push(("turns".to_string(), format!("turns {ra}° → {rb}°")));
+    if ra != rb {
+        out.push((
+            "turns".to_string(),
+            format!("turns {}° → {}°", ra.to_degrees_f64(), rb.to_degrees_f64()),
+        ));
     }
     if a.kind != b.kind || a.side != b.side {
         out.push((
@@ -625,7 +635,7 @@ fn pad_changes(a: &Pad, b: &Pad) -> Vec<(String, String)> {
     if a.mask != b.mask {
         out.push((
             "changes its mask".to_string(),
-            format!("mask {:?} → {:?}", a.mask, b.mask),
+            format!("mask {} → {}", mask_label(&a.mask), mask_label(&b.mask)),
         ));
     }
     if a.paste != b.paste {
@@ -649,12 +659,15 @@ fn pad_changes(a: &Pad, b: &Pad) -> Vec<(String, String)> {
 
 fn shape_label(shape: &PadShape) -> String {
     match shape {
-        PadShape::Rect { size } => format!("rect {size:?} mm"),
+        PadShape::Rect { size } => format!("rect {:?} mm", size.to_mm_f64()),
         PadShape::RoundRect {
             size, radius_ratio, ..
-        } => format!("rounded rect {size:?} mm, ratio {radius_ratio}"),
-        PadShape::Circle { diameter } => format!("circle ⌀{diameter} mm"),
-        PadShape::Oblong { size } => format!("oblong {size:?} mm"),
+        } => format!(
+            "rounded rect {:?} mm, ratio {radius_ratio}",
+            size.to_mm_f64()
+        ),
+        PadShape::Circle { diameter_nm } => format!("circle ⌀{} mm", diameter_nm.to_mm_f64()),
+        PadShape::Oblong { size } => format!("oblong {:?} mm", size.to_mm_f64()),
         PadShape::Custom { outline } => {
             format!("custom outline of {} segments", outline.segments.len())
         }
@@ -664,6 +677,14 @@ fn shape_label(shape: &PadShape) -> String {
 fn paste_label(paste: &PasteRule) -> String {
     match paste {
         PasteRule::Windows(w) => format!("{} windows", w.len()),
+        PasteRule::Reduction(r) => format!("Reduction({:?})", r.to_mm_f64()),
+        other => format!("{other:?}"),
+    }
+}
+
+fn mask_label(mask: &crate::library::MaskRule) -> String {
+    match mask {
+        crate::library::MaskRule::Expansion(e) => format!("Expansion({:?})", e.to_mm_f64()),
         other => format!("{other:?}"),
     }
 }
@@ -742,10 +763,10 @@ fn footprint_details(
             ),
             format!(
                 "{designator}: footprint mask expansion {} → {} mm, paste reduction {} → {} mm.",
-                a.defaults.mask_expansion_mm,
-                b.defaults.mask_expansion_mm,
-                a.defaults.paste_reduction_mm,
-                b.defaults.paste_reduction_mm
+                a.defaults.mask_expansion_mm(),
+                b.defaults.mask_expansion_mm(),
+                a.defaults.paste_reduction_mm(),
+                b.defaults.paste_reduction_mm()
             ),
         );
     }
@@ -1686,8 +1707,8 @@ fn definition_details(
             ),
             format!(
                 "{designator}: footprint datum {:?} → {:?} mm.",
-                datum(a.footprint),
-                datum(b.footprint)
+                datum(a.footprint).map(|d| (d.offset(), d.rotation_deg())),
+                datum(b.footprint).map(|d| (d.offset(), d.rotation_deg()))
             ),
         );
     }

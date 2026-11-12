@@ -564,20 +564,21 @@ pub fn edit_package(
 /// Model frame → footprint frame: `datum ∘ placement`. The one frame 2D,
 /// 3D, the courtyard and checks use for a package model.
 pub fn model_frame(datum: &Datum, placement: &ModelPlacement) -> Transform3 {
-    let d = Transform3::translation([datum.offset[0], datum.offset[1], 0.0])
-        .then(&Transform3::rot_z(datum.rotation_deg));
+    let d = Transform3::translation([datum.offset()[0], datum.offset()[1], 0.0])
+        .then(&Transform3::rot_z(datum.rotation_deg()));
     d.then(&placement.transform())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::support::{mdeg, pt};
 
     #[test]
     fn model_frame_composes_datum_then_placement() -> Result<()> {
         let datum = Datum {
-            offset: [1.0, 2.0],
-            rotation_deg: 90.0,
+            offset: pt([1.0, 2.0]),
+            rotation_mdeg: mdeg(90.0),
         };
         let placement = ModelPlacement::from_mm([1.0, 0.0, 0.5], [0.0; 3])?;
         // The placement's +x lies along the datum's rotated axis (+y).
@@ -629,7 +630,7 @@ mod frame_tests {
     use super::*;
     use crate::library::package_form::{ChipForm, ChipKind};
     use crate::library::{FootprintDefinition, PackageDefinition};
-    use crate::tests::support::nm;
+    use crate::tests::support::{mdeg, nm, pt};
 
     #[test]
     fn a_typed_form_sets_the_envelope_in_the_same_edit() -> Result<()> {
@@ -655,8 +656,8 @@ mod frame_tests {
     #[test]
     fn quarter_turn_frames_are_exact_and_compose() -> Result<()> {
         let datum = Datum {
-            offset: [0.5, -0.25],
-            rotation_deg: -90.0,
+            offset: pt([0.5, -0.25]),
+            rotation_mdeg: mdeg(-90.0),
         };
         let placement = ModelPlacement::from_mm([0.0, 0.0, 0.1], [90.0, 180.0, 270.0])?;
         assert!(placement.quarter_turns());
@@ -687,7 +688,7 @@ mod frame_tests {
             ..PackageDefinition::default()
         };
         let mut footprint = FootprintDefinition::default();
-        footprint.datum.offset = [1.0, 0.0];
+        footprint.datum.offset = pt([1.0, 0.0]);
         let o = footprint.envelope_outline(&package);
         assert_eq!((o.min, o.max), ([-1.0, -1.0], [3.0, 1.0]));
         // A quarter turn about z and a placement shift both apply.

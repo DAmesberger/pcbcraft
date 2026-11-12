@@ -76,7 +76,7 @@ fn pad<'a>(def: &'a FootprintDefinition, number: &str) -> Result<&'a Pad> {
 }
 
 fn at(def: &FootprintDefinition, number: &str, x: f64, y: f64) -> Result<()> {
-    let p = pad(def, number)?.position;
+    let p = pad(def, number)?.position();
     if (p[0] - x).abs() > TOL || (p[1] - y).abs() > TOL {
         return Err(Error::Invalid(format!(
             "pad {number} at {p:?}, expected [{x}, {y}]"
@@ -106,7 +106,7 @@ fn publishable_at_the_leads(def: &FootprintDefinition, pkg: &PackageDefinition) 
             .find(|p| p.terminal == Some(terminal.id))
             .ok_or_else(|| Error::NotFound(format!("pad of {}", terminal.designation)))?;
         assert!(
-            (p.position[0] - lead[0]).abs() < TOL && (p.position[1] - lead[1]).abs() < TOL,
+            (p.position()[0] - lead[0]).abs() < TOL && (p.position()[1] - lead[1]).abs() < TOL,
             "{}: pad {:?}, lead {lead:?}",
             terminal.designation,
             p.position
@@ -174,12 +174,12 @@ fn a_ball_grid_is_lettered_from_a1_with_nsmd_lands_at_the_balls() -> Result<()> 
         assert_eq!(p.kind, PadKind::Smd);
         // 0.8 × the 0.4 mm ball, the mask 0.05 mm clear all round.
         assert!(
-            matches!(p.shape, PadShape::Circle { diameter } if (diameter - 0.32).abs() < TOL),
+            matches!(p.shape, PadShape::Circle { diameter_nm } if (diameter_nm.to_mm_f64() - 0.32).abs() < TOL),
             "{:?}",
             p.shape
         );
         assert!(
-            matches!(p.mask, MaskRule::Expansion(v) if (v - 0.05).abs() < TOL),
+            matches!(p.mask, MaskRule::Expansion(v) if (v.to_mm_f64() - 0.05).abs() < TOL),
             "{}: {:?}",
             p.number,
             p.mask
@@ -223,7 +223,9 @@ fn depopulated_positions_leave_gaps_and_keep_every_other_name() -> Result<()> {
     at(&def, "J1", -3.6, -2.8)?;
     assert!(pad(&def, "I1").is_err());
     // Solder-mask defined: the opening 0.05 mm inside the copper.
-    assert!(matches!(pad(&def, "K10")?.mask, MaskRule::Expansion(v) if (v + 0.05).abs() < TOL));
+    assert!(
+        matches!(pad(&def, "K10")?.mask, MaskRule::Expansion(v) if (v.to_mm_f64() + 0.05).abs() < TOL)
+    );
     let found = lint(&def);
     assert!(found.is_empty(), "{found:?}");
     publishable_at_the_leads(&def, &pkg)?;
@@ -239,7 +241,7 @@ fn a_land_grid_uses_the_land_diameter_and_a_depopulated_a1_is_refused() -> Resul
     let template = FootprintTemplate::defaults(TemplateKind::Grid, &pkg);
     let def = build(&pkg, &template)?;
     assert!(
-        matches!(pad(&def, "B2")?.shape, PadShape::Circle { diameter } if (diameter - 0.4).abs() < TOL)
+        matches!(pad(&def, "B2")?.shape, PadShape::Circle { diameter_nm } if (diameter_nm.to_mm_f64() - 0.4).abs() < TOL)
     );
     publishable_at_the_leads(&def, &pkg)?;
 
@@ -303,14 +305,14 @@ fn a_dip_is_plated_counter_clockwise_from_the_bottom_left_with_pin_one_marked() 
         // The drill clears the 0.5 × 0.25 lead's diagonal by 0.3 mm,
         // rounded up to 0.05 mm.
         assert!(
-            matches!(hole.shape, HoleShape::Round { diameter } if (diameter - 0.9).abs() < TOL),
+            matches!(hole.shape, HoleShape::Round { diameter_nm } if (diameter_nm.to_mm_f64() - 0.9).abs() < TOL),
             "{:?}",
             hole.shape
         );
     }
     assert!(matches!(pad(&def, "1")?.shape, PadShape::RoundRect { .. }));
     assert!(
-        matches!(pad(&def, "2")?.shape, PadShape::Circle { diameter } if (diameter - 1.5).abs() < TOL)
+        matches!(pad(&def, "2")?.shape, PadShape::Circle { diameter_nm } if (diameter_nm.to_mm_f64() - 1.5).abs() < TOL)
     );
     assert!(def.polarity.is_some());
     let found = lint(&def);
@@ -359,7 +361,7 @@ fn two_lead_and_to_rows_follow_the_form() -> Result<()> {
     at(&def, "1", -1.0, 0.0)?;
     // The land shrinks within the 2 mm pitch.
     assert!(
-        matches!(pad(&def, "2")?.shape, PadShape::Circle { diameter } if diameter <= 1.75 + TOL)
+        matches!(pad(&def, "2")?.shape, PadShape::Circle { diameter_nm } if diameter_nm.to_mm_f64() <= 1.75 + TOL)
     );
     assert!(def.polarity.is_some());
     let found = lint(&def);

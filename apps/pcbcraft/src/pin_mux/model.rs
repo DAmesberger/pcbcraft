@@ -195,14 +195,14 @@ pub fn build(project: &Project, instance: &ComponentInstance) -> Result<Model> {
             .iter()
             .map(|pad| {
                 let extent = pad.shape.extent();
-                let (sin, cos) = pad.rotation_deg.to_radians().sin_cos();
+                let (sin, cos) = pad.rotation_deg().to_radians().sin_cos();
                 let size = [
                     (extent[0] * cos).abs() + (extent[1] * sin).abs(),
                     (extent[0] * sin).abs() + (extent[1] * cos).abs(),
                 ];
                 PadView {
                     number: pad.number.clone(),
-                    center: pad.position,
+                    center: pad.position(),
                     size,
                     round: matches!(
                         pad.shape,

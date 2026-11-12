@@ -1,4 +1,6 @@
 use super::*;
+use crate::tests::support::mdeg;
+use crate::tests::support::nm;
 use crate::tests::support::{by_designator, demo_fixture, ep, pt};
 use crate::{Engine, Operation, PadId, TerminalId, UnitId, instances, nets};
 
@@ -113,8 +115,8 @@ fn bottom_transform_uses_datum_then_rigid_flip_then_rotation() -> Result<()> {
     // Exact snapshots are immutable through commands; this fixture substitutes
     // a stored footprint to exercise the placement transform alone.
     let footprint = &mut project.library.footprints[0].definition;
-    footprint.datum.offset = [1.0, 1.0];
-    footprint.pads[0].position = [3.0, 4.0];
+    footprint.datum.offset = pt([1.0, 1.0]);
+    footprint.pads[0].position = pt([3.0, 4.0]);
     apply(
         &mut project,
         LayoutCommand::Move {
@@ -137,7 +139,7 @@ fn bottom_transform_uses_datum_then_rigid_flip_then_rotation() -> Result<()> {
         .iter()
         .find(|p| p.instance == r1 && p.pad.id == pad.pad)
         .ok_or_else(|| Error::NotFound("placed pad".into()))?;
-    let at = first.transform.apply(first.pad.position);
+    let at = first.transform.apply(first.pad.position());
     assert!((at[0] - 13.0).abs() < 1e-8 && (at[1] - 22.0).abs() < 1e-8);
     assert_eq!(first.net, Some(R1_1));
     assert_eq!(first.layer, Layer::Bottom);
@@ -578,9 +580,11 @@ fn a_plated_through_pad_connects_a_bottom_track() -> Result<()> {
     for pad in &mut project.library.footprints[0].definition.pads {
         pad.kind = crate::library::PadKind::PlatedThrough;
         pad.hole = Some(crate::library::Hole {
-            shape: crate::library::HoleShape::Round { diameter: 0.4 },
+            shape: crate::library::HoleShape::Round {
+                diameter_nm: nm(0.4),
+            },
             plated: true,
-            offset: [0.0, 0.0],
+            offset: pt([0.0, 0.0]),
         });
     }
     assert!(
@@ -660,11 +664,15 @@ fn with_pad_shape(mut project: Project, shape: PadShape) -> Project {
 }
 
 fn circle() -> PadShape {
-    PadShape::Circle { diameter: 1.0 }
+    PadShape::Circle {
+        diameter_nm: nm(1.0),
+    }
 }
 
 fn square() -> PadShape {
-    PadShape::Rect { size: [1.0, 1.0] }
+    PadShape::Rect {
+        size: pt([1.0, 1.0]),
+    }
 }
 
 fn shared_track(start: Point, end: Point) -> LayoutCommand {
@@ -784,20 +792,24 @@ fn a_track_tangent_to_round_pads_connects_them_and_a_small_gap_does_not() -> Res
 fn board_outlines_match_the_placed_pad_outlines() -> Result<()> {
     use crate::library::{CornerMask, Outline, Segment};
     let shapes = [
-        PadShape::Rect { size: [1.0, 0.6] },
+        PadShape::Rect {
+            size: pt([1.0, 0.6]),
+        },
         PadShape::RoundRect {
-            size: [1.2, 0.8],
+            size: pt([1.2, 0.8]),
             radius_ratio: 0.25,
-            max_radius: None,
+            max_radius_nm: None,
             corners: CornerMask::ALL,
         },
-        PadShape::Oblong { size: [1.4, 0.7] },
+        PadShape::Oblong {
+            size: pt([1.4, 0.7]),
+        },
         // Neither symmetric about the pad's x-axis: the bottom side must
         // mirror them, not only turn them.
         PadShape::RoundRect {
-            size: [1.2, 0.8],
+            size: pt([1.2, 0.8]),
             radius_ratio: 0.5,
-            max_radius: None,
+            max_radius_nm: None,
             corners: CornerMask {
                 top_left: true,
                 top_right: true,
@@ -823,9 +835,9 @@ fn board_outlines_match_the_placed_pad_outlines() -> Result<()> {
     for shape in shapes {
         let mut project = with_pad_shape(fixture()?, shape.clone());
         let footprint = &mut project.library.footprints[0].definition;
-        footprint.datum.rotation_deg = 30.0;
-        footprint.datum.offset = [0.3, -0.2];
-        footprint.pads[0].rotation_deg = 15.0;
+        footprint.datum.rotation_mdeg = mdeg(30.0);
+        footprint.datum.offset = pt([0.3, -0.2]);
+        footprint.pads[0].rotation_mdeg = mdeg(15.0);
         apply(
             &mut project,
             LayoutCommand::Move {

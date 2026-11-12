@@ -233,7 +233,7 @@ impl PartEditor {
                 .filter(|_| set.footprint.source.is_none())
                 .map(|pad| PadDrag {
                     pad: pad.id,
-                    start: pad.position,
+                    start: pad.position(),
                     grab: at,
                 });
         }
@@ -252,10 +252,12 @@ impl PartEditor {
                         (v / grid).round() * grid
                     }
                 };
-                pad.position = [
+                if let Ok(position) = pcbcraft_core::units::PointNm::from_mm_f64_rounded([
                     snap(drag.start[0] + at[0] - drag.grab[0]),
                     snap(drag.start[1] + at[1] - drag.grab[1]),
-                ];
+                ]) {
+                    pad.position = position;
+                }
             }
             if !response.dragged() {
                 self.pad_drag = None;
@@ -281,7 +283,7 @@ impl PartEditor {
             None,
             thin(t.text_dim),
         );
-        let datum = view.screen(set.footprint.datum.offset);
+        let datum = view.screen(set.footprint.datum.offset());
         for d in [vec2(8.0, 0.0), vec2(0.0, 8.0)] {
             painter.line_segment([datum - d, datum + d], Stroke::new(1.0, t.text_dim));
         }
@@ -343,10 +345,10 @@ impl PartEditor {
                 symbol_view::paint_shape(&painter, view, &hole, Some(ink.hole), thin(t.text_dim));
             }
             for via in &pad.vias {
-                let at = pad.to_footprint(via.at);
+                let at = pad.to_footprint(via.at());
                 painter.circle_filled(
                     view.screen(at),
-                    (via.drill as f32 * 0.5 * view.scale).max(1.0),
+                    (via.drill() as f32 * 0.5 * view.scale).max(1.0),
                     ink.hole,
                 );
             }
@@ -387,7 +389,7 @@ impl PartEditor {
         };
         // Pad numbers on top.
         for pad in &set.footprint.pads {
-            let at = view.screen(pad.position);
+            let at = view.screen(pad.position());
             let [w, h] = pad.shape.extent();
             // Fit the number inside the land: about 0.8 em per capital.
             let chars = pad.number.chars().count().max(1) as f32;

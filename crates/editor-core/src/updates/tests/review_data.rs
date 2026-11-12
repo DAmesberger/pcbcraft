@@ -7,7 +7,7 @@ fn plans(r: &mut Routed) -> Result<Vec<UpdatePlan>> {
     let f = r.fixture;
     let moved = cascade(&mut r.engine, &f, |e| {
         with(e, f.footprint, footprint_body, |fp| {
-            fp.pads[0].position = [3.0, 0.0]
+            fp.pads[0].position = pt([3.0, 0.0])
         })
     })?;
     let remapped = cascade(&mut r.engine, &f, |e| {
@@ -206,7 +206,7 @@ fn a_moved_pad_conflict_names_the_pad_of_the_other_net() -> Result<()> {
     } = routed()?;
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.footprint, footprint_body, |fp| {
-            fp.pads[0].position = [3.0, 0.0]
+            fp.pads[0].position = pt([3.0, 0.0])
         })
     })?;
     let plan = engine.preview_update(revision_change(r1, target));
@@ -250,7 +250,7 @@ fn blockers_have_plain_titles_and_locate_their_objects() -> Result<()> {
     } = routed()?;
     let target = cascade(&mut engine, &f, |e| {
         with(e, f.footprint, footprint_body, |fp| {
-            fp.pads[1].position = [1.2, 2.0]
+            fp.pads[1].position = pt([1.2, 2.0])
         })
     })?;
     for operation in [

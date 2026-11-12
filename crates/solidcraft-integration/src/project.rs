@@ -1051,14 +1051,14 @@ impl PlacedPad<'_> {
 
     /// Pad frame → footprint frame, as a vector (no translation).
     fn turn(&self, v: Point) -> Point {
-        let (c, s) = cos_sin(self.pad().rotation_deg);
+        let (c, s) = cos_sin(self.pad().rotation_deg());
         [c * v[0] - s * v[1], s * v[0] + c * v[1]]
     }
 
     /// A pad-frame contour on the board.
     fn board(&self, contour: &Contour) -> Contour {
         let t = self.placed.transform;
-        let position = self.pad().position;
+        let position = self.pad().position();
         contour.mapped(
             |q| {
                 let v = self.turn(q);
@@ -1099,8 +1099,8 @@ impl PlacedPad<'_> {
         let pad = self.pad();
         let mut out: Vec<Contour> = pad.hole.iter().filter_map(pad_outline::drilled).collect();
         out.extend(pad.vias.iter().map(|v| Contour::Circle {
-            center: v.at,
-            radius: pad_outline::plated_drill_radius(v.drill),
+            center: v.at(),
+            radius: pad_outline::plated_drill_radius(v.drill()),
         }));
         out
     }
@@ -1110,9 +1110,9 @@ impl PlacedPad<'_> {
         let pad = self.pad();
         let mut out: Vec<Contour> = pad.hole.iter().filter_map(pad_outline::bore).collect();
         out.extend(pad.vias.iter().filter_map(|v| {
-            let radius = v.drill / 2.0;
+            let radius = v.drill() / 2.0;
             (radius > 0.0).then_some(Contour::Circle {
-                center: v.at,
+                center: v.at(),
                 radius,
             })
         }));
@@ -1130,15 +1130,15 @@ impl PlacedPad<'_> {
             out.push([drill, bore]);
         }
         for via in &pad.vias {
-            let radius = via.drill / 2.0;
+            let radius = via.drill() / 2.0;
             if radius > 0.0 {
                 out.push([
                     Contour::Circle {
-                        center: via.at,
-                        radius: pad_outline::plated_drill_radius(via.drill),
+                        center: via.at(),
+                        radius: pad_outline::plated_drill_radius(via.drill()),
                     },
                     Contour::Circle {
-                        center: via.at,
+                        center: via.at(),
                         radius,
                     },
                 ]);
@@ -1184,7 +1184,7 @@ fn placed_pads(project: &Project) -> Result<Vec<PlacedPad<'_>>> {
                 .map(|p| p.footprint.definition.defaults)
                 .ok_or_else(|| Error::Invalid("missing pad definition".into()))?;
             let designator = instance.designator.as_str();
-            let origin = placed.transform.apply(placed.pad.position);
+            let origin = placed.transform.apply(placed.pad.position());
             Ok(PlacedPad {
                 placed,
                 placement,

@@ -8,6 +8,7 @@ use super::drawing::Tool;
 use super::*;
 use crate::issues::Locate;
 use crate::kit::card::Region;
+use crate::schematic_editor::pt;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -447,7 +448,7 @@ fn update_placed_instances_shows_only_for_older_instances() -> TestResult {
     assert!(!h.editor.inspector_card(&h.engine).footer, "all current");
     // Publish r2: the demo's placed instances stay on r1.
     if let Some(set) = &mut h.editor.draft {
-        set.footprint.pads[0].position = [-1.5, 0.0];
+        set.footprint.pads[0].position = pt([-1.5, 0.0]);
     }
     assert!(h.commit()?);
     assert!(

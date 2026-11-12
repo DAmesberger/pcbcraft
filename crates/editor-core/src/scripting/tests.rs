@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use super::*;
 use crate::quantity::{Dimension, UnitOfMeasure, UnitSet};
+use crate::tests::support::pt;
 use crate::{
     DefinitionId, Engine as DocumentEngine, LibraryCommand, Operation, Outcome,
     library::{Definition, DefinitionMeta},
@@ -77,8 +78,8 @@ fn draft() -> FootprintDefinition {
                     PadId(10 + i),
                     PackageTerminalId(200 + i),
                     (i + 1).to_string(),
-                    [0.0, i as f64 * 2.0],
-                    [1.0, 1.0],
+                    pt([0.0, i as f64 * 2.0]),
+                    pt([1.0, 1.0]),
                 )
             })
             .collect(),
@@ -217,8 +218,8 @@ fn generated_array_preserves_mapping_and_commits_as_one_undo_step() {
         (13, 203, 7.62),
     ]) {
         assert_eq!((pad.id.0, pad.terminal.map(|t| t.0)), (id, Some(terminal)));
-        assert!((pad.position[0] - x).abs() < 1e-12);
-        assert_eq!(pad.position[1], 0.0);
+        assert!((pad.position()[0] - x).abs() < 1e-12);
+        assert_eq!(pad.position()[1], 0.0);
         assert!((pad.shape.extent()[0] - 1.2).abs() < 1e-12);
         assert!((pad.shape.extent()[1] - 1.8).abs() < 1e-12);
     }
@@ -263,7 +264,7 @@ fn partial_generation_failures_preserve_document_revision_and_redo() {
         assert!(engine.can_redo());
     }
     engine.redo().unwrap();
-    assert!((generated(&engine).pads[3].position[0] - 7.62).abs() < 1e-12);
+    assert!((generated(&engine).pads[3].position()[0] - 7.62).abs() < 1e-12);
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]

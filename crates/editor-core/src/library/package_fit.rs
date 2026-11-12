@@ -395,8 +395,8 @@ pub fn body_centre(package: &PackageDefinition, placement: &ModelPlacement) -> P
 /// Footprint frame → datum frame.
 pub fn to_datum(datum: &Datum, p: Point) -> Point {
     rotate(
-        [p[0] - datum.offset[0], p[1] - datum.offset[1]],
-        -datum.rotation_deg,
+        [p[0] - datum.offset()[0], p[1] - datum.offset()[1]],
+        -datum.rotation_deg(),
     )
 }
 
@@ -439,7 +439,7 @@ pub fn form_pairs(
             let first = pads.first()?;
             let centres: Vec<Point> = pads
                 .iter()
-                .map(|p| to_datum(&footprint.datum, p.position))
+                .map(|p| to_datum(&footprint.datum, p.position()))
                 .collect();
             Some(LeadPair::from_mm(
                 terminal.id,
@@ -563,7 +563,7 @@ fn centre_on_pads(
                 .pads
                 .iter()
                 .filter(|p| copper(p.kind))
-                .map(|p| to_datum(&footprint.datum, p.position))
+                .map(|p| to_datum(&footprint.datum, p.position()))
                 .collect();
             if pads.is_empty() {
                 return Err(Error::Invalid(
@@ -775,8 +775,8 @@ pub fn lead_states(
                 .iter()
                 .map(|pad| {
                     let local = rotate(
-                        [q[0] - pad.position[0], q[1] - pad.position[1]],
-                        -pad.rotation_deg,
+                        [q[0] - pad.position()[0], q[1] - pad.position()[1]],
+                        -pad.rotation_deg(),
                     );
                     let extent = pad.shape.extent();
                     let across = if extent[0] <= extent[1] { 0 } else { 1 };

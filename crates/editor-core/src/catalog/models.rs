@@ -509,7 +509,7 @@ fn fit(target: &Target<'_>, model: &ModelDefinition) -> FitScore {
             };
             let centres: Vec<[f64; 2]> = pads
                 .iter()
-                .map(|p| package_fit::to_datum(&footprint.datum, p.position))
+                .map(|p| package_fit::to_datum(&footprint.datum, p.position()))
                 .collect();
             let n = f64::from(u32::try_from(centres.len()).unwrap_or(u32::MAX));
             let sum = centres

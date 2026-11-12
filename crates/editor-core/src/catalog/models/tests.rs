@@ -338,7 +338,7 @@ fn fits_rank_lead_fits_then_bounds_and_never_assign() -> Fallible<()> {
             let pad = footprint.pads.iter().find(|p| p.terminal == Some(t.id))?;
             Some((
                 t.designation.clone(),
-                package_fit::to_datum(&footprint.datum, pad.position),
+                package_fit::to_datum(&footprint.datum, pad.position()),
             ))
         })
         .collect();

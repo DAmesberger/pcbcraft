@@ -4,6 +4,7 @@ use super::*;
 use crate::library::PackageTerminal;
 use crate::library::footprint_source::FakeEvaluator;
 use crate::tests::support::nm;
+use crate::tests::support::pt;
 
 fn package(n: u32, body: [f64; 3]) -> PackageDefinition {
     PackageDefinition {
@@ -118,8 +119,8 @@ fn build_refuses_before_any_edit_and_leaves_the_draft_alone() -> Result<()> {
         PadId(1),
         crate::ids::PackageTerminalId(1),
         "1",
-        [0.0, 0.0],
-        [1.0, 1.0],
+        pt([0.0, 0.0]),
+        pt([1.0, 1.0]),
     ));
     let template = FootprintTemplate::defaults(TemplateKind::Chip, &pkg);
     assert!(matches!(

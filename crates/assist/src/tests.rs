@@ -295,7 +295,7 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     // The 1.4 mm land reaches 0.4 beyond the −x edge at −7: outer end −7.4,
     // centre −7.4 + 0.7.
     assert!(
-        (pin1.position[0] - (-7.4 + 0.7)).abs() < 1e-9,
+        (pin1.position()[0] - (-7.4 + 0.7)).abs() < 1e-9,
         "{:?}",
         pin1.position
     );

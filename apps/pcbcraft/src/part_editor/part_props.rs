@@ -1671,6 +1671,7 @@ impl super::PartEditor {
 mod tests {
     use super::*;
     use crate::part_editor::PartEditor;
+    use crate::schematic_editor::pt;
 
     fn ready() -> pcbcraft_core::Result<(egui::Context, Engine, PartEditor)> {
         let ctx = egui::Context::default();
@@ -1806,7 +1807,7 @@ mod tests {
         let shown = frame(&mut editor, &engine, &ctx, vec![]);
         assert!(!shown.iter().any(|(t, _)| t == label), "nothing to publish");
         if let Some(set) = &mut editor.draft {
-            set.footprint.pads[0].position = [-1.5, 0.0];
+            set.footprint.pads[0].position = pt([-1.5, 0.0]);
         }
         let operation = editor.commit(&ctx, &engine);
         apply(&mut engine, operation)?;
@@ -1873,7 +1874,7 @@ mod tests {
         editor.commit(&ctx, &engine);
         // A footprint edit makes the component's cascade unpublished.
         if let Some(set) = &mut editor.draft {
-            set.footprint.pads[0].position = [-1.5, 0.0];
+            set.footprint.pads[0].position = pt([-1.5, 0.0]);
         }
         let operation = editor.commit(&ctx, &engine);
         apply(&mut engine, operation)?;
