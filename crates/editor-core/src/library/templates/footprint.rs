@@ -262,15 +262,27 @@ pub fn add_standard_graphics_over(
 mod tests {
     use super::*;
     use crate::ids::{PackageTerminalId, PadId};
+    use crate::tests::support::pt;
     use crate::tests::support::{nm, shape_nm};
-    use crate::tests::support::{pt};
 
     fn chip() -> (FootprintDefinition, PackageDefinition) {
         let footprint = FootprintDefinition {
             next_local: 3,
             pads: vec![
-                Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", pt([-1.2, 0.0]), pt([1.0, 1.4])),
-                Pad::smd_rect(PadId(2), PackageTerminalId(2), "2", pt([1.2, 0.0]), pt([1.0, 1.4])),
+                Pad::smd_rect(
+                    PadId(1),
+                    PackageTerminalId(1),
+                    "1",
+                    pt([-1.2, 0.0]),
+                    pt([1.0, 1.4]),
+                ),
+                Pad::smd_rect(
+                    PadId(2),
+                    PackageTerminalId(2),
+                    "2",
+                    pt([1.2, 0.0]),
+                    pt([1.0, 1.4]),
+                ),
             ],
             ..FootprintDefinition::default()
         };

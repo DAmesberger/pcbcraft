@@ -9,8 +9,8 @@ use crate::ids::Id;
 use crate::layout::{PlacedPad, checks, placed_pads};
 use crate::library::{Hole, HoleShape, PadKind, PadShape};
 use crate::model::{CopperLayer, Project, Track, Via, ViaSpan};
-use crate::tests::support::{mdeg, nm, pt};
 use crate::rules::{CopperObject, ProjectRules, RuleKey, RuleOverride, RuleValue, fixtures};
+use crate::tests::support::{mdeg, nm, pt};
 
 /// The demo board on the JLCPCB example, every resistor pad of `kind`
 /// with land `shape` and `hole`.

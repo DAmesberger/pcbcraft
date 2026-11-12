@@ -18,8 +18,8 @@ use pcbcraft_core::library::footprint_source::{
 };
 use pcbcraft_core::library::graphics::{FootprintGraphic, Item, ShapeNm};
 use pcbcraft_core::library::{
-    ApertureId, CornerMask, Datum, FootprintDefinition, MAX_PADS, MaskRule, Pad,
-    PadShape, PadVia, PasteRule, PasteWindow, Segment,
+    ApertureId, CornerMask, Datum, FootprintDefinition, MAX_PADS, MaskRule, Pad, PadShape, PadVia,
+    PasteRule, PasteWindow, Segment,
 };
 use pcbcraft_core::library::{MAX_PAD_VIAS, MAX_PASTE_WINDOWS};
 use pcbcraft_core::units::{Angle, Nm, PointNm};

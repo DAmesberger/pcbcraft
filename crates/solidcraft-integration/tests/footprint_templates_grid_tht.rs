@@ -223,7 +223,9 @@ fn depopulated_positions_leave_gaps_and_keep_every_other_name() -> Result<()> {
     at(&def, "J1", -3.6, -2.8)?;
     assert!(pad(&def, "I1").is_err());
     // Solder-mask defined: the opening 0.05 mm inside the copper.
-    assert!(matches!(pad(&def, "K10")?.mask, MaskRule::Expansion(v) if (v.to_mm_f64() + 0.05).abs() < TOL));
+    assert!(
+        matches!(pad(&def, "K10")?.mask, MaskRule::Expansion(v) if (v.to_mm_f64() + 0.05).abs() < TOL)
+    );
     let found = lint(&def);
     assert!(found.is_empty(), "{found:?}");
     publishable_at_the_leads(&def, &pkg)?;

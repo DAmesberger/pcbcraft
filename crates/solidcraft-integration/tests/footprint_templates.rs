@@ -504,7 +504,9 @@ fn pin_header_is_plated_with_a_rounded_pin_one_override() -> Result<()> {
         );
     }
     assert!(matches!(pad(&def, "1")?.shape, PadShape::RoundRect { .. }));
-    assert!(matches!(pad(&def, "2")?.shape, PadShape::Circle { diameter_nm } if close(diameter_nm.to_mm_f64(), 1.7)));
+    assert!(
+        matches!(pad(&def, "2")?.shape, PadShape::Circle { diameter_nm } if close(diameter_nm.to_mm_f64(), 1.7))
+    );
     assert_eq!(
         def.polarity.as_ref().map(|p| p.pad),
         Some(pad(&def, "1")?.id)

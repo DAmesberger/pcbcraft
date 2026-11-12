@@ -1,6 +1,6 @@
-use crate::tests::support::{mdeg};
-use crate::tests::support::{nm};
 use super::*;
+use crate::tests::support::mdeg;
+use crate::tests::support::nm;
 use crate::tests::support::{by_designator, demo_fixture, ep, pt};
 use crate::{Engine, Operation, PadId, TerminalId, UnitId, instances, nets};
 
@@ -580,7 +580,9 @@ fn a_plated_through_pad_connects_a_bottom_track() -> Result<()> {
     for pad in &mut project.library.footprints[0].definition.pads {
         pad.kind = crate::library::PadKind::PlatedThrough;
         pad.hole = Some(crate::library::Hole {
-            shape: crate::library::HoleShape::Round { diameter_nm: nm(0.4) },
+            shape: crate::library::HoleShape::Round {
+                diameter_nm: nm(0.4),
+            },
             plated: true,
             offset: pt([0.0, 0.0]),
         });
@@ -662,11 +664,15 @@ fn with_pad_shape(mut project: Project, shape: PadShape) -> Project {
 }
 
 fn circle() -> PadShape {
-    PadShape::Circle { diameter_nm: nm(1.0) }
+    PadShape::Circle {
+        diameter_nm: nm(1.0),
+    }
 }
 
 fn square() -> PadShape {
-    PadShape::Rect { size: pt([1.0, 1.0]) }
+    PadShape::Rect {
+        size: pt([1.0, 1.0]),
+    }
 }
 
 fn shared_track(start: Point, end: Point) -> LayoutCommand {
@@ -786,14 +792,18 @@ fn a_track_tangent_to_round_pads_connects_them_and_a_small_gap_does_not() -> Res
 fn board_outlines_match_the_placed_pad_outlines() -> Result<()> {
     use crate::library::{CornerMask, Outline, Segment};
     let shapes = [
-        PadShape::Rect { size: pt([1.0, 0.6]) },
+        PadShape::Rect {
+            size: pt([1.0, 0.6]),
+        },
         PadShape::RoundRect {
             size: pt([1.2, 0.8]),
             radius_ratio: 0.25,
             max_radius_nm: None,
             corners: CornerMask::ALL,
         },
-        PadShape::Oblong { size: pt([1.4, 0.7]) },
+        PadShape::Oblong {
+            size: pt([1.4, 0.7]),
+        },
         // Neither symmetric about the pad's x-axis: the bottom side must
         // mirror them, not only turn them.
         PadShape::RoundRect {

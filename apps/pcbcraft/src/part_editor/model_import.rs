@@ -1395,11 +1395,11 @@ fn review_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schematic_editor::pt;
     use pcbcraft_core::PackageTerminalId;
     use pcbcraft_core::PadId;
     use pcbcraft_core::library::LibraryModel;
     use pcbcraft_core::library::{PackageTerminal, Pad};
-    use crate::schematic_editor::{pt};
 
     /// An original two-lead chip-like file: a body block and two metal
     /// end caps, as the integration crate's inspection reports them.

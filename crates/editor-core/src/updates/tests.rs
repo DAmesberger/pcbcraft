@@ -917,14 +917,18 @@ fn footprint_pad_diffs_name_each_aspect_by_pad_id() -> Result<()> {
             // turn of a rectangle is no turn. Pad 2: a plated hole, so it
             // becomes plated-through. A new mechanical pad with no terminal.
             let p1 = &mut fp.pads[0];
-            p1.shape = PadShape::Oblong { size: pt([1.0, 1.4]) };
+            p1.shape = PadShape::Oblong {
+                size: pt([1.0, 1.4]),
+            };
             p1.number = "A".into();
             p1.mask = MaskRule::Tented;
             p1.rotation_mdeg = mdeg(180.0);
             let p2 = &mut fp.pads[1];
             p2.kind = PadKind::PlatedThrough;
             p2.hole = Some(Hole {
-                shape: HoleShape::Round { diameter_nm: nm(0.5) },
+                shape: HoleShape::Round {
+                    diameter_nm: nm(0.5),
+                },
                 plated: true,
                 offset: pt([0.0, 0.0]),
             });
@@ -1051,8 +1055,13 @@ fn array_growth_and_shrink_list_new_and_retired_pads() {
         pads: pads
             .iter()
             .map(|(id, _, t)| {
-                let mut pad =
-                    Pad::smd_rect(PadId(*id), PackageTerminalId(1), "", pt([0.0, 0.0]), pt([1.0, 1.0]));
+                let mut pad = Pad::smd_rect(
+                    PadId(*id),
+                    PackageTerminalId(1),
+                    "",
+                    pt([0.0, 0.0]),
+                    pt([1.0, 1.0]),
+                );
                 pad.terminal = t.map(PackageTerminalId);
                 pad
             })

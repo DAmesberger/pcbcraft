@@ -649,7 +649,7 @@ fn model_card_rows(ui: &mut Ui, card: &ModelCard) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schematic_editor::{pt};
+    use crate::schematic_editor::pt;
 
     fn package(form: PackageForm, terminals: u32) -> PackageDefinition {
         PackageDefinition {
@@ -716,7 +716,13 @@ mod tests {
                 pt([1.0, 1.0]),
             ));
         }
-        let mut hole = Pad::smd_rect(PadId(7), PackageTerminalId(1), "MH", pt([5.0, 5.0]), pt([1.0; 2]));
+        let mut hole = Pad::smd_rect(
+            PadId(7),
+            PackageTerminalId(1),
+            "MH",
+            pt([5.0, 5.0]),
+            pt([1.0; 2]),
+        );
         hole.kind = PadKind::NonPlatedHole;
         hole.terminal = None;
         fp.pads.push(hole);

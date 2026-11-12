@@ -1,6 +1,5 @@
 //! Mechanical parts placed directly on the board (docs/mechanical-parts.md):
 //! the variant set, dedupe, re-pointing, removal and the assembly outputs.
-use crate::tests::support::{mdeg, nm, pt};
 use super::support::{Snapshot, apply};
 use crate::fabrication::assembly::{PlacementConvention, rows};
 use crate::ids::ContentHash;
@@ -13,6 +12,7 @@ use crate::library::model3d::{AssetRef, ModelDefinition, ModelFormat};
 use crate::library::package_model::{PartDerived, PartValue};
 use crate::library::{PackageModel, PadKind, PasteRule};
 use crate::model::Layer;
+use crate::tests::support::{mdeg, nm, pt};
 use crate::{Engine, Operation, Outcome, Result};
 use std::collections::BTreeMap;
 
@@ -216,7 +216,10 @@ fn variant_keys_stay_valid_across_the_nanometre_lands() -> Result<()> {
         shape: LandShape::Hole { diameter: nm(1.05) },
     });
     let key = variant_key(&spec, asset_hash(FILE))?;
-    assert_eq!(key.to_string(), "4471db07556989250fab610ab9a2917519ac11ce9091c6b4da9961a2aa007eaf");
+    assert_eq!(
+        key.to_string(),
+        "4471db07556989250fab610ab9a2917519ac11ce9091c6b4da9961a2aa007eaf"
+    );
     Ok(())
 }
 

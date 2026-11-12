@@ -32,9 +32,9 @@ use crate::ids::Id;
 use crate::layout::{self, PlacedPad};
 use crate::layout::{BoardDrawing, PlacedItem};
 use crate::library::{CHECK_CHORD_MM, MaskRule, Outline, PadKind, PadShape, PasteRule, Segment};
-use crate::units::Nm;
 use crate::model::board::{CutoutKind, arc_geometry};
 use crate::model::{CopperLayer, Layer, Project};
+use crate::units::Nm;
 use std::collections::BTreeMap;
 
 /// The pen the profile is drawn with, mm (its centre line is the edge).

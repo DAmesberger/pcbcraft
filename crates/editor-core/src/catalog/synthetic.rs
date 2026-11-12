@@ -266,7 +266,8 @@ fn shared_package(
                 if small {
                     for (pad, position) in footprint.pads.iter_mut().zip(SMALL.1) {
                         pad.position = crate::units::PointNm::from_mm_f64_rounded(position)?;
-                        pad.shape.set_size(crate::units::PointNm::from_mm_f64_rounded(SMALL.2)?);
+                        pad.shape
+                            .set_size(crate::units::PointNm::from_mm_f64_rounded(SMALL.2)?);
                     }
                     // The drawings follow the smaller lands and body.
                     if let Some(package) = &body {

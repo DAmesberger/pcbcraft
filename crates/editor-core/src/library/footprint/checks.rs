@@ -211,8 +211,7 @@ fn containment_findings(id: DefinitionId, pad: &Pad, out: &mut Vec<Finding>) {
                 length_nm,
                 ..
             } => {
-                size_valid(&[width_nm.to_mm_f64(), length_nm.to_mm_f64()])
-                    && length_nm >= width_nm
+                size_valid(&[width_nm.to_mm_f64(), length_nm.to_mm_f64()]) && length_nm >= width_nm
             }
         };
         if !size_ok {
@@ -781,8 +780,20 @@ mod rules_tests {
     fn footprint() -> FootprintDefinition {
         FootprintDefinition {
             pads: vec![
-                Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", pt([0.0, 0.0]), pt([0.5, 0.5])),
-                Pad::smd_rect(PadId(2), PackageTerminalId(2), "2", pt([0.8, 0.0]), pt([0.5, 0.5])),
+                Pad::smd_rect(
+                    PadId(1),
+                    PackageTerminalId(1),
+                    "1",
+                    pt([0.0, 0.0]),
+                    pt([0.5, 0.5]),
+                ),
+                Pad::smd_rect(
+                    PadId(2),
+                    PackageTerminalId(2),
+                    "2",
+                    pt([0.8, 0.0]),
+                    pt([0.5, 0.5]),
+                ),
             ],
             graphics: vec![FootprintGraphic {
                 id: GraphicId(10),

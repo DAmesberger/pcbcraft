@@ -590,11 +590,7 @@ fn pad_changes(a: &Pad, b: &Pad) -> Vec<(String, String)> {
     if ra != rb {
         out.push((
             "turns".to_string(),
-            format!(
-                "turns {}° → {}°",
-                ra.to_degrees_f64(),
-                rb.to_degrees_f64()
-            ),
+            format!("turns {}° → {}°", ra.to_degrees_f64(), rb.to_degrees_f64()),
         ));
     }
     if a.kind != b.kind || a.side != b.side {

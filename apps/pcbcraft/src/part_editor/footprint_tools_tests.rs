@@ -2,11 +2,11 @@
 //! `library.edit_footprint` commit through the real evaluator; Esc and a
 //! refused gesture leave the footprint unchanged; the ribbon, keys and
 //! canvas reach the same state machine.
-use crate::schematic_editor::{pt};
 use super::footprint_tools::{
     ActiveLayer, ArrayTool, FootprintTool, Gesture, Pick, Scene, ToolState,
 };
 use super::*;
+use crate::schematic_editor::pt;
 use pcbcraft_core::ids::PackageTerminalId;
 use pcbcraft_core::library::footprint_edit;
 use pcbcraft_core::library::footprint_source::{FootprintEdit, PadTemplate};
@@ -140,7 +140,11 @@ fn a_dual_row_gesture_draws_a_soic8_in_one_commit() -> TestResult {
         ("8", [2.7, 1.905]),
     ] {
         let pad = b.pad(n)?;
-        assert!(near(pad.position.to_mm_f64(), at), "pad {n} at {:?}", pad.position);
+        assert!(
+            near(pad.position.to_mm_f64(), at),
+            "pad {n} at {:?}",
+            pad.position
+        );
         assert_eq!(pad.shape, rect(1.55, 0.6), "pad {n}");
     }
     assert!(
@@ -199,7 +203,12 @@ fn pad_tools_place_one_pad_per_click_and_space_turns_it() -> TestResult {
     assert_eq!(names, ["pad_l", "pad_w"], "sizes are shared parameters");
     b.tools.arm(FootprintTool::Pad(PadTemplate::Circle));
     b.press([3.0, 0.0])?.ok_or("a round pad")?;
-    assert_eq!(b.pad("4")?.shape, PadShape::Circle { diameter_nm: nm(1.0) });
+    assert_eq!(
+        b.pad("4")?.shape,
+        PadShape::Circle {
+            diameter_nm: nm(1.0)
+        }
+    );
     Ok(())
 }
 
@@ -284,7 +293,12 @@ fn drill_and_slot_make_holes_on_pads_and_bare_npth_holes() -> TestResult {
     assert_eq!(one.kind, PadKind::PlatedThrough);
     let hole = one.hole.as_ref().ok_or("a hole")?;
     assert!(hole.plated);
-    assert_eq!(hole.shape, HoleShape::Round { diameter_nm: nm(0.8) });
+    assert_eq!(
+        hole.shape,
+        HoleShape::Round {
+            diameter_nm: nm(0.8)
+        }
+    );
     assert!(b.params().iter().any(|p| p == "drill"));
     b.press([0.0, 4.0])?.ok_or("a bare click")?;
     let npth =
@@ -304,7 +318,11 @@ fn drill_and_slot_make_holes_on_pads_and_bare_npth_holes() -> TestResult {
     b.press([5.3, 0.0])?.ok_or("both slot ends")?;
     let two = b.pad("2")?;
     match two.hole.as_ref().map(|h| h.shape) {
-        Some(HoleShape::Slot { width_nm, length_nm, .. }) => {
+        Some(HoleShape::Slot {
+            width_nm,
+            length_nm,
+            ..
+        }) => {
             let (width, length) = (width_nm.to_mm_f64(), length_nm.to_mm_f64());
             assert!(
                 (width - 0.8).abs() < 1e-6 && (length - 1.4).abs() < 1e-6,
@@ -330,7 +348,11 @@ fn quad_and_grid_arrays_with_skips() -> TestResult {
     b.press([0.0, 0.0])?.ok_or("one click places a quad")?;
     assert_eq!(b.fp.pads.len(), 16);
     let one = b.pad("1")?;
-    assert!(near(one.position.to_mm_f64(), [-2.4, 1.0]), "{:?}", one.position);
+    assert!(
+        near(one.position.to_mm_f64(), [-2.4, 1.0]),
+        "{:?}",
+        one.position
+    );
     assert_eq!(one.shape, rect(0.8, 0.25));
     let mut g = Bench::new(0);
     g.tools.options.pad.diameter = 1.0;
@@ -636,7 +658,11 @@ fn a_soic_drawn_on_the_canvas_is_one_undoable_commit() -> TestResult {
     let fp = committed(&engine, &editor).ok_or("a footprint draft")?;
     assert_eq!(fp.pads.len(), 8);
     let one = fp.pads.iter().find(|p| p.number == "1").ok_or("pad 1")?;
-    assert!(near(one.position.to_mm_f64(), [-2.7, 1.9]), "{:?}", one.position);
+    assert!(
+        near(one.position.to_mm_f64(), [-2.7, 1.9]),
+        "{:?}",
+        one.position
+    );
     assert_eq!(engine.revision(), revision + 1, "one commit");
     engine.undo()?;
     let back = committed(&engine, &editor).ok_or("a footprint draft")?;

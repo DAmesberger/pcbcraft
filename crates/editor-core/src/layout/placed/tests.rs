@@ -1,4 +1,3 @@
-use crate::tests::support::{mdeg};
 use super::*;
 use crate::geometry::distance;
 use crate::library::ApertureId;
@@ -6,6 +5,7 @@ use crate::library::{
     CornerMask, FootprintGraphic, Hole, HoleShape, Outline, PadKind, PadShape, PadVia, Segment,
     designator_placeholder,
 };
+use crate::tests::support::mdeg;
 use crate::tests::support::{by_designator, nm, pt, shape_nm};
 use crate::{Engine, Error, Result};
 
@@ -56,7 +56,9 @@ fn rotated_rect_pad_on_the_bottom_lands_where_the_transform_puts_it() -> Result<
         f.datum.offset = pt([0.0, 0.0]);
         f.pads[0].position = pt([2.0, 0.0]);
         f.pads[0].rotation_mdeg = mdeg(90.0);
-        f.pads[0].shape = PadShape::Rect { size: pt([2.0, 1.0]) };
+        f.pads[0].shape = PadShape::Rect {
+            size: pt([2.0, 1.0]),
+        };
     })?;
     let pad = first_pad(&project, r1)?;
     // Bottom flip keeps x, then 90° turns (2, 0) to (0, 2).
@@ -121,7 +123,9 @@ fn custom_outline_arcs_flatten_on_their_circle_and_bulge_the_right_way() -> Resu
 
 #[test]
 fn rounded_shapes_follow_their_corners_and_mask() {
-    let oblong = pad_outline(PadShape::Oblong { size: pt([2.0, 1.0]) });
+    let oblong = pad_outline(PadShape::Oblong {
+        size: pt([2.0, 1.0]),
+    });
     assert_eq!(oblong.distance([0.9, 0.0], true), 0.0);
     assert!(oblong.distance([0.97, 0.47], true) > 0.0, "corner is round");
     let d = pad_outline(PadShape::RoundRect {
@@ -144,7 +148,9 @@ fn rounded_shapes_follow_their_corners_and_mask() {
         corners: CornerMask::ALL,
     });
     assert_eq!(capped.distance([0.97, 0.47], true), 0.0, "radius capped");
-    let circle = pad_outline(PadShape::Circle { diameter_nm: nm(1.0) });
+    let circle = pad_outline(PadShape::Circle {
+        diameter_nm: nm(1.0),
+    });
     assert!(circle.distance([0.36, 0.36], true) > 0.0);
 }
 
@@ -155,7 +161,9 @@ fn through_hole_pads_span_every_layer_with_their_slot_and_vias() -> Result<()> {
         let pad = &mut f.pads[0];
         pad.position = pt([0.0, 0.0]);
         pad.kind = PadKind::PlatedThrough;
-        pad.shape = PadShape::Oblong { size: pt([3.0, 1.5]) };
+        pad.shape = PadShape::Oblong {
+            size: pt([3.0, 1.5]),
+        };
         pad.hole = Some(Hole {
             shape: HoleShape::Slot {
                 width_nm: nm(0.8),
@@ -172,7 +180,9 @@ fn through_hole_pads_span_every_layer_with_their_slot_and_vias() -> Result<()> {
         }];
         f.pads[1].kind = PadKind::NonPlatedHole;
         f.pads[1].hole = Some(Hole {
-            shape: HoleShape::Round { diameter_nm: nm(1.0) },
+            shape: HoleShape::Round {
+                diameter_nm: nm(1.0),
+            },
             plated: false,
             offset: pt([0.0, 0.0]),
         });
@@ -300,7 +310,9 @@ fn a_bare_hole_has_no_copper_on_any_layer() -> Result<()> {
     let (project, r1) = board([10.0, 10.0], 0.0, Layer::Top, |f| {
         f.pads[1].kind = PadKind::NonPlatedHole;
         f.pads[1].hole = Some(Hole {
-            shape: HoleShape::Round { diameter_nm: nm(1.0) },
+            shape: HoleShape::Round {
+                diameter_nm: nm(1.0),
+            },
             plated: false,
             offset: pt([0.0, 0.0]),
         });

@@ -1,7 +1,7 @@
-use crate::tests::support::{mdeg, pt};
 use super::*;
 use crate::library::{CornerMask, PadShape};
 use crate::tests::support::nm;
+use crate::tests::support::{mdeg, pt};
 
 fn source() -> FootprintSource {
     FootprintSource {
@@ -36,7 +36,13 @@ fn key(i: u16) -> GenerationKey {
 fn evaluated(k: GenerationKey) -> EvaluatedPad {
     EvaluatedPad {
         key: Some(k),
-        pad: Pad::smd_rect(PadId(0), PackageTerminalId(1), "1", pt([0.0, 0.0]), pt([1.0, 1.0])),
+        pad: Pad::smd_rect(
+            PadId(0),
+            PackageTerminalId(1),
+            "1",
+            pt([0.0, 0.0]),
+            pt([1.0, 1.0]),
+        ),
     }
 }
 
@@ -99,11 +105,16 @@ fn a_blocking_finding_leaves_the_footprint_unchanged() {
 
 #[test]
 fn rotation_is_canonical_per_shape_symmetry() {
-    let rect = PadShape::Rect { size: pt([1.0, 2.0]) };
+    let rect = PadShape::Rect {
+        size: pt([1.0, 2.0]),
+    };
     assert_eq!(rect.canonical_rotation(mdeg(180.0)), mdeg(0.0));
     assert_eq!(rect.canonical_rotation(mdeg(-90.0)), mdeg(90.0));
     assert_eq!(
-        PadShape::Circle { diameter_nm: nm(1.0) }.canonical_rotation(mdeg(37.0)),
+        PadShape::Circle {
+            diameter_nm: nm(1.0)
+        }
+        .canonical_rotation(mdeg(37.0)),
         mdeg(0.0)
     );
     let d_shape = PadShape::RoundRect {
@@ -230,7 +241,13 @@ fn a_shrunk_array_retires_its_keys_and_still_passes_the_key_rule() -> Result<()>
 fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() -> Result<()> {
     use crate::geometry::{Shape, Transform2};
     use crate::library::{ApertureId, Hole, HoleShape, PadVia, PasteRule, PasteWindow, ShapeNm};
-    let mut pad = Pad::smd_rect(PadId(1), PackageTerminalId(1), "1", pt([1.0, 2.0]), pt([2.0, 1.0]));
+    let mut pad = Pad::smd_rect(
+        PadId(1),
+        PackageTerminalId(1),
+        "1",
+        pt([1.0, 2.0]),
+        pt([2.0, 1.0]),
+    );
     pad.rotation_mdeg = mdeg(180.0);
     pad.hole = Some(Hole {
         shape: HoleShape::Slot {
@@ -265,7 +282,10 @@ fn folding_a_turn_keeps_hole_vias_and_paste_windows_in_place() -> Result<()> {
     pad.fold_rotation()?;
     assert_eq!(pad.rotation_deg(), 0.0);
     let hole = |p: &Pad| p.hole.map(|h| h.offset).unwrap_or_default();
-    assert_eq!(world(&pad, hole(&pad).to_mm_f64()), world(&before, hole(&before).to_mm_f64()));
+    assert_eq!(
+        world(&pad, hole(&pad).to_mm_f64()),
+        world(&before, hole(&before).to_mm_f64())
+    );
     assert_eq!(
         world(&pad, pad.vias[0].at.to_mm_f64()),
         world(&before, before.vias[0].at.to_mm_f64())

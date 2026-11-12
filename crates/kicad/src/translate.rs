@@ -537,7 +537,8 @@ fn pad_shape(
             || kpad.chamfer.top_right
             || kpad.chamfer.bottom_left
             || kpad.chamfer.bottom_right);
-    let exact = pcbcraft_core::units::PointNm::new(nm_exact(kpad.size[0])?, nm_exact(kpad.size[1])?);
+    let exact =
+        pcbcraft_core::units::PointNm::new(nm_exact(kpad.size[0])?, nm_exact(kpad.size[1])?);
     Ok(match kpad.shape {
         // KiCad writes chamfers on round-rect pads (a ratio of 0 for
         // sharp corners).

@@ -1,7 +1,7 @@
-use crate::test_units::{deg};
 use super::*;
 #[allow(unused_imports)]
 use crate::models::tests::{nm, pt};
+use crate::test_units::deg;
 use pcbcraft_core::geometry::cos_sin;
 use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm, PackageModel};
 
@@ -1266,10 +1266,14 @@ fn shaped() -> Result<Project> {
     };
     first.rotation_mdeg = deg(30.0);
     second.kind = PadKind::PlatedThrough;
-    second.shape = PadShape::Oblong { size: pt([1.6, 1.0]) };
+    second.shape = PadShape::Oblong {
+        size: pt([1.6, 1.0]),
+    };
     second.rotation_mdeg = deg(45.0);
     second.hole = Some(Hole {
-        shape: HoleShape::Round { diameter_nm: nm(0.6) },
+        shape: HoleShape::Round {
+            diameter_nm: nm(0.6),
+        },
         plated: true,
         offset: pt([0.2, 0.0]),
     });
@@ -1280,9 +1284,13 @@ fn shaped() -> Result<Project> {
     bare.number = "MH".into();
     bare.position = pt([0.0, 2.5]);
     bare.rotation_mdeg = deg(0.0);
-    bare.shape = PadShape::Circle { diameter_nm: nm(1.2) };
+    bare.shape = PadShape::Circle {
+        diameter_nm: nm(1.2),
+    };
     bare.hole = Some(Hole {
-        shape: HoleShape::Round { diameter_nm: nm(1.0) },
+        shape: HoleShape::Round {
+            diameter_nm: nm(1.0),
+        },
         plated: false,
         offset: pt([0.0, 0.0]),
     });

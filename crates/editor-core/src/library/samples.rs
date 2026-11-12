@@ -712,13 +712,8 @@ pub fn form_lands_with(
             let (drill, land) = t.estimated_drill_and_land();
             pad.kind = PadKind::PlatedThrough;
             pad.shape = if k == 0 && t.marks_pin_one() {
-                PadShape::round_rect_mm(
-                    [land, land],
-                    0.25,
-                    None,
-                    super::footprint::CornerMask::ALL,
-                )
-                .ok()?
+                PadShape::round_rect_mm([land, land], 0.25, None, super::footprint::CornerMask::ALL)
+                    .ok()?
             } else {
                 PadShape::circle_mm(land).ok()?
             };
@@ -726,13 +721,9 @@ pub fn form_lands_with(
         } else if let PackageForm::Grid(_) = form {
             pad.shape = PadShape::circle_mm(size(k)[0]).ok()?;
         } else if let PackageForm::Molded(_) = form {
-            pad.shape = PadShape::round_rect_mm(
-                size(k),
-                0.25,
-                None,
-                super::footprint::CornerMask::ALL,
-            )
-            .ok()?;
+            pad.shape =
+                PadShape::round_rect_mm(size(k), 0.25, None, super::footprint::CornerMask::ALL)
+                    .ok()?;
         }
         pads.push(pad);
     }

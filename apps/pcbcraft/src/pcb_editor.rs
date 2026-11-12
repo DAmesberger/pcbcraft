@@ -3279,9 +3279,9 @@ fn body_polygon(project: &Project, placement: &Placement) -> Option<[Point; 4]> 
 mod tests {
     use super::board_card::fabrication_edit;
     use super::*;
+    use crate::schematic_editor::{mdeg, nm, pt};
     use pcbcraft_core::layout::RouteRequest;
     use pcbcraft_core::{Fabrication, MaskColour};
-    use crate::schematic_editor::{mdeg, nm, pt};
 
     fn ids(engine: &Engine) -> (Id, Id) {
         let id = |d| {
@@ -3928,7 +3928,9 @@ mod tests {
             let pth = &mut f.pads[0];
             pth.kind = PadKind::PlatedThrough;
             pth.position = pt([-1.5, 0.0]);
-            pth.shape = PadShape::Oblong { size: pt([1.6, 2.4]) };
+            pth.shape = PadShape::Oblong {
+                size: pt([1.6, 2.4]),
+            };
             pth.hole = Some(Hole {
                 shape: HoleShape::Slot {
                     width_nm: nm(0.6),

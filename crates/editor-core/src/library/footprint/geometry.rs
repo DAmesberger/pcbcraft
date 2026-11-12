@@ -418,8 +418,8 @@ mod tests {
     use super::*;
     use crate::geometry::signed_area2;
     use crate::library::CornerMask;
-    use std::f64::consts::PI;
     use crate::tests::support::{mdeg, nm, pt};
+    use std::f64::consts::PI;
 
     fn area(ring: &[Point]) -> f64 {
         signed_area2(ring) / 2.0
@@ -433,11 +433,31 @@ mod tests {
     fn flattened_shapes_are_counter_clockwise_with_their_exact_area() {
         let tol = 1e-4;
         let cases = [
-            (PadShape::Rect { size: pt([2.0, 1.0]) }, 2.0),
-            (PadShape::Circle { diameter_nm: nm(2.0) }, PI),
+            (
+                PadShape::Rect {
+                    size: pt([2.0, 1.0]),
+                },
+                2.0,
+            ),
+            (
+                PadShape::Circle {
+                    diameter_nm: nm(2.0),
+                },
+                PI,
+            ),
             // Two semicircles of radius 0.5 and a 1 × 1 middle.
-            (PadShape::Oblong { size: pt([2.0, 1.0]) }, 1.0 + PI * 0.25),
-            (PadShape::Oblong { size: pt([1.0, 3.0]) }, 2.0 + PI * 0.25),
+            (
+                PadShape::Oblong {
+                    size: pt([2.0, 1.0]),
+                },
+                1.0 + PI * 0.25,
+            ),
+            (
+                PadShape::Oblong {
+                    size: pt([1.0, 3.0]),
+                },
+                2.0 + PI * 0.25,
+            ),
             // Ratio 0.25 of the 1 mm short side, every corner.
             (
                 PadShape::RoundRect {
@@ -525,7 +545,13 @@ mod tests {
         assert!(close_to(rr(0.25, Some(0.1)).corner_radius(), 0.1, 1e-12));
         assert!(close_to(rr(0.9, None).corner_radius(), 0.5, 1e-12));
         assert!(close_to(rr(-1.0, None).corner_radius(), 0.0, 1e-12));
-        assert_eq!(PadShape::Rect { size: pt([1.0, 1.0]) }.corner_radius(), 0.0);
+        assert_eq!(
+            PadShape::Rect {
+                size: pt([1.0, 1.0])
+            }
+            .corner_radius(),
+            0.0
+        );
     }
 
     #[test]
@@ -562,8 +588,14 @@ mod tests {
 
     #[test]
     fn containment_and_gaps_between_rings() {
-        let land = PadShape::Circle { diameter_nm: nm(2.0) }.flatten(1e-3);
-        let inner = HoleShape::Round { diameter_nm: nm(1.0) }.flatten(1e-3);
+        let land = PadShape::Circle {
+            diameter_nm: nm(2.0),
+        }
+        .flatten(1e-3);
+        let inner = HoleShape::Round {
+            diameter_nm: nm(1.0),
+        }
+        .flatten(1e-3);
         assert!(ring_within(&inner, &land, 2e-3));
         let moved: Vec<Point> = inner.iter().map(|p| [p[0] + 0.6, p[1]]).collect();
         assert!(!ring_within(&moved, &land, 2e-3));

@@ -62,24 +62,27 @@ fn replay(reference: &Reference) -> Fallible {
     let footprint = drafts
         .iter()
         .find_map(|d| match &d.definition {
-            pcbcraft_core::library::Definition::Footprint(f) => serde_json::to_value(f).ok(),
+            pcbcraft_core::library::Definition::Footprint(f) => Some(f),
             _ => None,
         })
         .ok_or("a footprint draft")?;
-    let pads = footprint["pads"].as_array().ok_or("pads")?;
+    let pads = &footprint.pads;
     assert_eq!(pads.len(), reference.pins.len());
     let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
     let mut ys = Vec::new();
     let mut xs = Vec::new();
     for pad in pads {
-        let size = &pad["shape"]["rect"]["size"];
-        let (w, h) = (size[0].as_f64().ok_or("w")?, size[1].as_f64().ok_or("h")?);
+        let pcbcraft_core::library::PadShape::Rect { size } = &pad.shape else {
+            return Err(format!("a rectangular land: {pad:?}").into());
+        };
+        let [w, h] = size.to_mm_f64();
         assert!(
             near(w, reference.land[0]) && near(h, reference.land[1]),
-            "{pad}"
+            "{pad:?}"
         );
-        xs.push(pad["position"][0].as_f64().ok_or("x")?);
-        ys.push(pad["position"][1].as_f64().ok_or("y")?);
+        let [x, y] = pad.position();
+        xs.push(x);
+        ys.push(y);
     }
     let spread = |v: &[f64]| {
         v.iter().copied().fold(f64::MIN, f64::max) - v.iter().copied().fold(f64::MAX, f64::min)

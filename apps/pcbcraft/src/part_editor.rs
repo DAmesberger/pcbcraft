@@ -2494,9 +2494,9 @@ fn published_text(name: &str, revision: u32, older: usize) -> String {
 #[cfg(test)]
 mod draft_tests {
     use super::details_card::set_field_default;
-    use crate::schematic_editor::pt;
     use super::symbol_card::add_function;
     use super::*;
+    use crate::schematic_editor::pt;
     use pcbcraft_core::fields::FieldValue;
     use pcbcraft_core::library::TextMetric;
     use pcbcraft_core::schematic;

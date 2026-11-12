@@ -21,12 +21,12 @@ use super::{
 use crate::diagnostics::{Error, Result};
 use crate::functions::{Direction, TerminalFunctions};
 use crate::geometry::{Bounds, Point, Shape, finite_within};
-use crate::units::{self, Angle, Nm, PointNm};
 use crate::ids::{
     BindingRef, ComponentRef, ContentHash, DefinitionId, FootprintRef, FunctionId, GraphicId,
     MAX_LABEL, ModelRef, PackageRef, PackageTerminalId, PadId, Revision, SymbolRef, TerminalId,
     UnitId,
 };
+use crate::units::{self, Angle, Nm, PointNm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

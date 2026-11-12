@@ -1,10 +1,10 @@
 //! Pure parts of the family templates; builds with the real evaluator are
 //! in `crates/solidcraft-integration/tests/footprint_templates.rs`.
-use crate::tests::support::{pt};
 use super::*;
 use crate::library::PackageTerminal;
 use crate::library::footprint_source::FakeEvaluator;
 use crate::tests::support::nm;
+use crate::tests::support::pt;
 
 fn package(n: u32, body: [f64; 3]) -> PackageDefinition {
     PackageDefinition {

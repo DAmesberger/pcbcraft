@@ -1,7 +1,6 @@
 //! Slice B1 behaviour: rows in the catalog, `new_from_template`,
 //! `package_from_template` and its plan, `save_package_row` and the row
 //! publish findings, all through the public engine.
-use crate::tests::support::{mdeg};
 use super::*;
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::ids::{DefinitionKind, FootprintRef, LibraryId};
@@ -14,6 +13,7 @@ use crate::library::templates::catalog::{
     Renumber, RowFrom, RowSource, SavePackageRow, TerminalMatch,
 };
 use crate::library::{Definition, DefinitionMeta, DraftEdit, PadShape};
+use crate::tests::support::mdeg;
 use crate::tests::support::{nm, pt};
 use crate::{Engine, LibraryCommand, Operation, Outcome, Query, QueryResult};
 use std::sync::Arc;
@@ -464,9 +464,19 @@ fn a_component_from_a_cited_row_is_one_undo_step_and_publishes() -> Fallible<()>
         .iter()
         .find(|p| p.number == "EP")
         .ok_or("EP")?;
-    assert_eq!(ep.shape, PadShape::Rect { size: pt([3.3, 3.3]) });
+    assert_eq!(
+        ep.shape,
+        PadShape::Rect {
+            size: pt([3.3, 3.3])
+        }
+    );
     let first = footprint.pads.first().ok_or("pad 1")?;
-    assert_eq!(first.shape, PadShape::Rect { size: pt([0.28, 0.7]) });
+    assert_eq!(
+        first.shape,
+        PadShape::Rect {
+            size: pt([0.28, 0.7])
+        }
+    );
     assert!(
         (first.position()[1] + 2.45).abs() < 1e-9,
         "{:?}",
@@ -644,7 +654,9 @@ fn edited_values_make_a_custom_package_with_estimated_lands() -> Fallible<()> {
         .ok_or("EP")?;
     assert_eq!(
         ep.shape,
-        PadShape::Rect { size: pt([3.45, 3.45]) },
+        PadShape::Rect {
+            size: pt([3.45, 3.45])
+        },
         "row lands dropped"
     );
     let symbol = engine.drafts().get(ids[1]).ok_or("symbol")?;
@@ -1165,7 +1177,10 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
                     let PadShape::Circle { diameter_nm } = pad.shape else {
                         return Err(format!("{name}: a round grid land").into());
                     };
-                    assert!(diameter_nm.to_mm_f64() < g.pitch()[0].min(g.pitch()[1]), "{name}");
+                    assert!(
+                        diameter_nm.to_mm_f64() < g.pitch()[0].min(g.pitch()[1]),
+                        "{name}"
+                    );
                 }
             }
             PackageForm::Tabbed(t) if t.tab.is_some() => {
@@ -2219,8 +2234,18 @@ fn a_usb_c_receptacle_is_found_built_mapped_and_published() -> Fallible<()> {
     assert_eq!(pad("A4B9")?.position, pt([-2.4, 3.68]));
     assert_eq!(pad("B1A12")?.position, pt([3.2, 3.68]));
     assert_eq!(pad("A6")?.position, pt([-0.25, 3.68]));
-    assert_eq!(pad("A6")?.shape, PadShape::Rect { size: pt([0.3, 1.15]) });
-    assert_eq!(pad("A1B12")?.shape, PadShape::Rect { size: pt([0.6, 1.15]) });
+    assert_eq!(
+        pad("A6")?.shape,
+        PadShape::Rect {
+            size: pt([0.3, 1.15])
+        }
+    );
+    assert_eq!(
+        pad("A1B12")?.shape,
+        PadShape::Rect {
+            size: pt([0.6, 1.15])
+        }
+    );
     assert_eq!(
         pad("S")?.hole.as_ref().map(|h| h.shape),
         Some(crate::library::HoleShape::Slot {

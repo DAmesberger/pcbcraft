@@ -4,11 +4,11 @@
 //! selection (SYMBOL, PIN, TERMINAL, GRAPHIC, TEXT) with object actions in
 //! its footer; an armed tool shows its own card; issues locate; and
 //! refusals are one-line toasts.
-use crate::schematic_editor::{pt};
 use super::drawing::Tool;
 use super::*;
 use crate::issues::Locate;
 use crate::kit::card::Region;
+use crate::schematic_editor::pt;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 

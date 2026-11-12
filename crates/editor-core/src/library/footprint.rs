@@ -681,7 +681,12 @@ impl Pad {
         let vias = self
             .vias
             .iter()
-            .map(|v| Ok(PadVia { at: turn_point(v.at)?, ..*v }))
+            .map(|v| {
+                Ok(PadVia {
+                    at: turn_point(v.at)?,
+                    ..*v
+                })
+            })
             .collect::<Result<Vec<_>>>()?;
         self.rotation_mdeg = canonical;
         self.hole = hole;

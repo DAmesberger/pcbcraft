@@ -220,7 +220,11 @@ mod tests {
         // vias 4 = 11; 4 → 2 + size + offset + diameter + mask = 6;
         // 5 → 2; 6 → 2 + size + cap = 4.
         assert_eq!(definition("footprint", o)?, 4 + 5 + 4 + 11 + 6 + 2 + 4);
-        assert_eq!(definition("footprint", o)?, 0, "a second run changes nothing");
+        assert_eq!(
+            definition("footprint", o)?,
+            0,
+            "a second run changes nothing"
+        );
         let fp: FootprintDefinition = serde_json::from_value(body.clone())?;
         assert_eq!(fp.datum.offset, p(500_000, -1_000_000)?);
         assert_eq!(fp.datum.rotation_mdeg, Angle::new(270_000)?);
@@ -260,7 +264,9 @@ mod tests {
             })
         );
         assert_eq!(fp.pads[3].mask, MaskRule::Expansion(Nm::ZERO));
-        assert!(matches!(&fp.pads[4].shape, PadShape::Custom { outline } if outline.start == [0.0, 0.0]));
+        assert!(
+            matches!(&fp.pads[4].shape, PadShape::Custom { outline } if outline.start == [0.0, 0.0])
+        );
         assert!(matches!(
             fp.pads[5].shape,
             PadShape::RoundRect {
@@ -394,7 +400,11 @@ mod tests {
             );
             let o = body.as_object_mut().ok_or("object")?;
             assert!(definition("footprint", o)? > 0);
-            assert_eq!(definition("footprint", o)?, 0, "a second run changes nothing");
+            assert_eq!(
+                definition("footprint", o)?,
+                0,
+                "a second run changes nothing"
+            );
             let converted: FootprintDefinition = serde_json::from_value(body)?;
             assert_eq!(converted, solved, "{kind:?}");
             check_fresh(&converted, &pkg, &SketchEvaluator)?;

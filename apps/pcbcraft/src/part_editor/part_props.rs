@@ -1671,7 +1671,7 @@ impl super::PartEditor {
 mod tests {
     use super::*;
     use crate::part_editor::PartEditor;
-    use crate::schematic_editor::{pt};
+    use crate::schematic_editor::pt;
 
     fn ready() -> pcbcraft_core::Result<(egui::Context, Engine, PartEditor)> {
         let ctx = egui::Context::default();

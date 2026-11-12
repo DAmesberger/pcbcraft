@@ -556,7 +556,10 @@ fn opening_rows(ui: &mut Ui, pad: &mut Pad, defaults: &pcbcraft_core::library::P
     let mut pastes = vec![
         (
             PasteChoice::Inherit,
-            format!("Default ({})", signed_mm(defaults.paste_reduction_mm(), '−')),
+            format!(
+                "Default ({})",
+                signed_mm(defaults.paste_reduction_mm(), '−')
+            ),
         ),
         (PasteChoice::None, "None".to_owned()),
         (PasteChoice::Reduction, "Reduction".to_owned()),

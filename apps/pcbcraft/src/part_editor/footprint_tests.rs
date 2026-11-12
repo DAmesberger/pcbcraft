@@ -1,9 +1,9 @@
 //! Footprint tab behaviour: drawing and picking typed pads, grid drags,
 //! pad tools, layer toggles and the inspector rows, each edit committed
 //! once through the public `library.edit` command.
-use crate::schematic_editor::{mdeg, nm, pt};
 use super::footprint_canvas;
 use super::*;
+use crate::schematic_editor::{mdeg, nm, pt};
 use pcbcraft_core::library::{CornerMask, Hole, HoleShape, MaskRule, PadKind, PadShape, PasteRule};
 
 const CANVAS: Rect = Rect {
@@ -177,7 +177,9 @@ fn the_footprint_view_draws_and_picks_pads_by_their_land() -> Result<(), Box<dyn
     let second = pads(&editor).get(1).cloned().ok_or("two pads")?;
     if let Some(set) = &mut editor.draft {
         let pad = &mut set.footprint.pads[1];
-        pad.shape = PadShape::Rect { size: pt([0.6, 3.0]) };
+        pad.shape = PadShape::Rect {
+            size: pt([0.6, 3.0]),
+        };
         pad.rotation_mdeg = mdeg(90.0);
     }
     editor.footprint_view = None;
@@ -274,7 +276,12 @@ fn typed_pad_edits_round_trip_through_the_engine() -> Result<(), Box<dyn std::er
         pad.paste = PasteRule::Reduction(nm(0.05));
         let pad = &mut set.footprint.pads[1];
         footprint_geometry::set_kind(pad, PadKind::PlatedThrough, None);
-        footprint_geometry::set_shape(pad, PadShape::Oblong { size: pt([1.6, 2.4]) });
+        footprint_geometry::set_shape(
+            pad,
+            PadShape::Oblong {
+                size: pt([1.6, 2.4]),
+            },
+        );
         pad.hole = Some(Hole {
             shape: HoleShape::Slot {
                 width_nm: nm(0.6),

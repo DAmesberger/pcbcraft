@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use crate::tests::support::{pt};
 use super::*;
 use crate::quantity::{Dimension, UnitOfMeasure, UnitSet};
+use crate::tests::support::pt;
 use crate::{
     DefinitionId, Engine as DocumentEngine, LibraryCommand, Operation, Outcome,
     library::{Definition, DefinitionMeta},

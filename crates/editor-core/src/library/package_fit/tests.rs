@@ -1,13 +1,13 @@
 //! Original fixtures: a SOIC-8-like gull-wing form on a hand-placed land
 //! pattern whose rows run along y (pin 1 top left, counter-clockwise), the
 //! model's rows along x, so the fit must find a quarter turn.
-use crate::tests::support::{pt};
 use super::*;
 use crate::ids::{DefinitionId, PadId};
 use crate::library::footprint::Pad;
 use crate::library::package_form::{ChipForm, ChipKind, GullWingForm, LeadSides};
 use crate::library::{PackageTerminal, footprint::FootprintDefinition};
 use crate::tests::support::nm;
+use crate::tests::support::pt;
 
 fn soic_form() -> PackageForm {
     PackageForm::GullWing(Box::new(GullWingForm {

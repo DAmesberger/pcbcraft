@@ -434,7 +434,9 @@ fn empty_and_contradictory_drafts_persist_but_nan_and_oversize_are_rejected() ->
     let f = draft(&mut engine, &two("Contradictory"))?;
     with(&mut engine, f.footprint, footprint_body, |fp| {
         fp.pads.push(fp.pads[0].clone()); // duplicate local ID
-        fp.pads[0].shape = crate::library::PadShape::Rect { size: pt([-1.0, 0.0]) };
+        fp.pads[0].shape = crate::library::PadShape::Rect {
+            size: pt([-1.0, 0.0]),
+        };
     })?;
     let bytes = format::encode(&engine.to_file())?;
     let reopened = Engine::from_file(format::decode(&bytes)?)?;
@@ -697,7 +699,9 @@ fn each_footprint_rule_blocks_publication() -> Result<()> {
         }),
         ("footprint.hole_kind", |fp| {
             fp.pads[0].hole = Some(Hole {
-                shape: HoleShape::Round { diameter_nm: nm(0.2) },
+                shape: HoleShape::Round {
+                    diameter_nm: nm(0.2),
+                },
                 plated: true,
                 offset: pt([0.0, 0.0]),
             })
@@ -705,7 +709,9 @@ fn each_footprint_rule_blocks_publication() -> Result<()> {
         ("footprint.hole_outside_land", |fp| {
             fp.pads[0].kind = PadKind::PlatedThrough;
             fp.pads[0].hole = Some(Hole {
-                shape: HoleShape::Round { diameter_nm: nm(0.4) },
+                shape: HoleShape::Round {
+                    diameter_nm: nm(0.4),
+                },
                 plated: true,
                 offset: pt([0.3, 0.0]),
             });
@@ -752,7 +758,9 @@ fn each_footprint_rule_blocks_publication() -> Result<()> {
             fp.pads[0].paste = PasteRule::Windows(vec![window.clone(), window]);
         }),
         ("footprint.pad_size", |fp| {
-            fp.pads[0].shape = PadShape::Rect { size: pt([0.0, 0.8]) }
+            fp.pads[0].shape = PadShape::Rect {
+                size: pt([0.0, 0.8]),
+            }
         }),
         ("footprint.pad_shape", |fp| {
             fp.pads[0].shape = PadShape::RoundRect {
@@ -960,7 +968,9 @@ fn consistent_pads_of_every_kind_and_shape_publish() -> Result<()> {
         // Pad 1: plated-through oblong with a slot; pad 2: rounded SMD with
         // paste windows and a via.
         fp.pads[0].kind = PadKind::PlatedThrough;
-        fp.pads[0].shape = PadShape::Oblong { size: pt([1.0, 2.0]) };
+        fp.pads[0].shape = PadShape::Oblong {
+            size: pt([1.0, 2.0]),
+        };
         fp.pads[0].rotation_mdeg = mdeg(90.0);
         fp.pads[0].hole = Some(Hole {
             shape: HoleShape::Slot {
@@ -995,12 +1005,22 @@ fn consistent_pads_of_every_kind_and_shape_publish() -> Result<()> {
         });
         // A terminal-less mounting hole, a fiducial and a mechanical tab
         // with an exact outline (a half-disc: a line and a bulge arc).
-        let mut hole = Pad::smd_rect(PadId(3), PackageTerminalId(1), "MH", pt([0.0, 4.0]), pt([1.0, 1.0]));
+        let mut hole = Pad::smd_rect(
+            PadId(3),
+            PackageTerminalId(1),
+            "MH",
+            pt([0.0, 4.0]),
+            pt([1.0, 1.0]),
+        );
         hole.kind = PadKind::NonPlatedHole;
         hole.terminal = None;
-        hole.shape = PadShape::Circle { diameter_nm: nm(1.2) };
+        hole.shape = PadShape::Circle {
+            diameter_nm: nm(1.2),
+        };
         hole.hole = Some(Hole {
-            shape: HoleShape::Round { diameter_nm: nm(1.0) },
+            shape: HoleShape::Round {
+                diameter_nm: nm(1.0),
+            },
             plated: false,
             offset: pt([0.0, 0.0]),
         });
@@ -1013,9 +1033,17 @@ fn consistent_pads_of_every_kind_and_shape_publish() -> Result<()> {
         );
         fiducial.kind = PadKind::Fiducial;
         fiducial.terminal = None;
-        fiducial.shape = PadShape::Circle { diameter_nm: nm(1.0) };
+        fiducial.shape = PadShape::Circle {
+            diameter_nm: nm(1.0),
+        };
         fiducial.mask = MaskRule::Expansion(nm(0.5));
-        let mut tab = Pad::smd_rect(PadId(5), PackageTerminalId(1), "", pt([-4.0, 4.0]), pt([1.0, 1.0]));
+        let mut tab = Pad::smd_rect(
+            PadId(5),
+            PackageTerminalId(1),
+            "",
+            pt([-4.0, 4.0]),
+            pt([1.0, 1.0]),
+        );
         tab.kind = PadKind::Mechanical;
         tab.terminal = None;
         tab.shape = PadShape::Custom {

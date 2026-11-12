@@ -4,7 +4,7 @@
 //! in Node (`cargo xtask wasm-footprint`) and assert the same golden hashes
 //! as natively: the native/wasm agreement check.
 
-use crate::test_units::{pt};
+use crate::test_units::pt;
 use std::collections::BTreeSet;
 
 use crate::models::tests::nm;
@@ -453,7 +453,12 @@ fn qfn_places_each_side_and_reads_the_drill_role() -> Result<()> {
         ([0.0, 0.0], rect(2.6, 2.6))
     );
     let hole = ep.hole.ok_or_else(|| Error::NotFound("ep hole".into()))?;
-    assert_eq!(hole.shape, HoleShape::Round { diameter_nm: nm(0.3) });
+    assert_eq!(
+        hole.shape,
+        HoleShape::Round {
+            diameter_nm: nm(0.3)
+        }
+    );
     assert_eq!(hole.offset, pt([0.0, 0.0]));
     let centres: BTreeSet<[u64; 2]> = fp
         .def
@@ -473,7 +478,12 @@ fn bga256_grid_with_centre_void() -> Result<()> {
     let a1 = fp.pad("A1")?;
     assert_eq!(
         (a1.position(), a1.shape.clone()),
-        ([-7.5, 7.5], PadShape::Circle { diameter_nm: nm(0.45) })
+        (
+            [-7.5, 7.5],
+            PadShape::Circle {
+                diameter_nm: nm(0.45)
+            }
+        )
     );
     assert_eq!(fp.pad("T16")?.position, pt([7.5, -7.5]));
     assert_eq!(
@@ -495,10 +505,13 @@ fn bga256_grid_with_centre_void() -> Result<()> {
 
 /// Golden result hashes recorded natively (macOS arm64, ci profile) and
 /// asserted on every target, plus the raw f64 bits of every solved point.
+/// The result hash covers the serialized pads, so it was re-recorded when
+/// pads moved to integer nanometres (units U2); the point bits did not
+/// change.
 const GOLDEN: [(&str, &str, u64); 3] = [
-    ("SOIC-8", "12196ba69182e5d5", 0x516c3fa73ba0b6d9),
-    ("QFN", "ad5c8b43e2c76d8e", 0x635aadbec8021745),
-    ("BGA-256", "73f138be63545fd7", 0x1bd4d84c6beaade5),
+    ("SOIC-8", "d51c531fbf130b01", 0x516c3fa73ba0b6d9),
+    ("QFN", "c176c839ba863f74", 0x635aadbec8021745),
+    ("BGA-256", "4c4168012618e881", 0x1bd4d84c6beaade5),
 ];
 
 fn raw_bits(fp: &Fp) -> Result<u64> {
@@ -744,8 +757,18 @@ fn every_template_classifies_to_its_shape() -> Result<()> {
     ])?;
     assert_eq!(report.pads.len(), 4);
     assert_eq!(fp.pad("1")?.shape, rect(1.0, 2.0));
-    assert_eq!(fp.pad("2")?.shape, PadShape::Circle { diameter_nm: nm(1.2) });
-    assert_eq!(fp.pad("3")?.shape, PadShape::Oblong { size: pt([2.0, 1.0]) });
+    assert_eq!(
+        fp.pad("2")?.shape,
+        PadShape::Circle {
+            diameter_nm: nm(1.2)
+        }
+    );
+    assert_eq!(
+        fp.pad("3")?.shape,
+        PadShape::Oblong {
+            size: pt([2.0, 1.0])
+        }
+    );
     assert_eq!(
         fp.pad("3")?.rotation_deg(),
         90.0,
@@ -942,7 +965,12 @@ fn overrides_apply_per_instance_and_orphans_block() -> Result<()> {
             ..PadOverride::default()
         },
     }])?;
-    assert_eq!(fp.pad("8")?.shape, PadShape::Oblong { size: pt([1.55, 0.6]) });
+    assert_eq!(
+        fp.pad("8")?.shape,
+        PadShape::Oblong {
+            size: pt([1.55, 0.6])
+        }
+    );
     assert_eq!(fp.pad("7")?.shape, rect(1.55, 0.6));
     let orphaned = fp.edit(vec![param("per_row", "3", ParamUnit::Count)]);
     assert!(
@@ -1172,7 +1200,10 @@ fn tampered_pads_with_an_intact_hash_are_stale() -> Result<()> {
     let (fp, _) = soic8()?;
     let mut tampered = fp.def.clone();
     if let Some(p) = tampered.pads.first_mut() {
-        p.position.x_nm = p.position.x_nm.checked_add(pcbcraft_core::units::Nm::new(500_000)?)?;
+        p.position.x_nm = p
+            .position
+            .x_nm
+            .checked_add(pcbcraft_core::units::Nm::new(500_000)?)?;
     }
     let err = footprint_edit::check_fresh(&tampered, &fp.pkg, &EV);
     assert!(

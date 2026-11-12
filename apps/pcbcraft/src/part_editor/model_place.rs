@@ -372,11 +372,11 @@ pub fn overlay(footprint: &FootprintDefinition, package: &PackageDefinition) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schematic_editor::pt;
     use pcbcraft_core::library::package_form::typical_nm as nm;
     use pcbcraft_core::library::{GullWingForm, LeadSides, PackageForm, PackageTerminal, Pad};
     use pcbcraft_core::{PackageTerminalId, PadId};
     use pcbcraft_solidcraft::geom::Vec3;
-    use crate::schematic_editor::{pt};
 
     /// An original SOIC-8-like form whose rows run along x.
     pub fn soic() -> PackageDefinition {
