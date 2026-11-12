@@ -17,6 +17,11 @@ const EPS: f64 = 1e-9;
 /// How far past its tile a wall piece is classified (well above the probe
 /// distance, well below any tile).
 const WALL_MARGIN_MM: f64 = 1e-4;
+/// Wall pieces are not cut this close to their ends (a tenth of the
+/// margin they are classified in).
+const SLIVER_MM: f64 = WALL_MARGIN_MM / 10.0;
+/// Edges whose directions differ by less than this sine are parallel.
+const PARALLEL: f64 = 1e-9;
 
 #[derive(Debug)]
 pub struct Region {
@@ -137,7 +142,17 @@ pub fn slab(region: &Region, z0: f64, z1: f64, tile: f64) -> Mesh {
         for i in 0..n {
             let (a, b) = (points[i], points[(i + 1) % n]);
             // Pieces cut at the tile lines, so each lies in the tile it is
-            // classified in.
+            // classified in. A line crossing within [`SLIVER_MM`] of an end
+            // cuts nothing: the piece reaches that little past its tile,
+            // well inside the margin it is classified in, and a sliver that
+            // short would be classified at its corner, where the probes
+            // either side of it can both fall outside the region.
+            let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+            let sliver = if length > 0.0 {
+                SLIVER_MM / length
+            } else {
+                0.0
+            };
             let mut ts = vec![0.0, 1.0];
             for k in 0..2 {
                 let d = b[k] - a[k];
@@ -149,7 +164,7 @@ pub fn slab(region: &Region, z0: f64, z1: f64, tile: f64) -> Mesh {
                 let last = ((to - lo[k]) / step).floor() as i64;
                 for line in first.max(0)..=last.min(first.max(0) + 4096) {
                     let t = (lo[k] + line as f64 * step - a[k]) / d;
-                    if t > 0.0 && t < 1.0 {
+                    if t > sliver && t < 1.0 - sliver {
                         ts.push(t);
                     }
                 }
@@ -236,11 +251,14 @@ fn split(p: Point, q: Point, loops: &[(Vec<Point>, bool)]) -> Vec<(Point, Point)
         let n = l.len();
         (0..n).map(move |i| (l[i], l[(i + 1) % n]))
     });
+    let length = r[0].hypot(r[1]);
     if count <= MAX_CROSSING_EDGES {
         for (lo, hi) in edges {
             let s = [hi[0] - lo[0], hi[1] - lo[1]];
             let d = r[0] * s[1] - r[1] * s[0];
-            if d.abs() < EPS * EPS {
+            // Parallel to the piece (to rounding: a clipped copy of the
+            // piece's own edge), it does not cross it.
+            if d.abs() < EPS * EPS || d.abs() <= PARALLEL * length * s[0].hypot(s[1]) {
                 continue;
             }
             let w = [lo[0] - p[0], lo[1] - p[1]];
@@ -657,6 +675,113 @@ mod tests {
             let mesh = slab(&region, 0.0, 0.1, tile);
             near(mesh.measure().volume, (1.0 - 0.3 * 0.5) * 0.1);
             near(face_area(&mesh, 2), (4.0 - 0.3 + 0.5 + 0.3 + 0.5) * 0.1);
+        }
+    }
+
+    /// A loop crossing a tile line a fraction of a micrometre from its
+    /// corner: the sliver of wall between the line and the corner still
+    /// stands, so the slab stays closed and exact.
+    #[test]
+    fn a_corner_just_past_a_tile_line_keeps_its_wall() {
+        for delta in [1e-7, 3e-7, 6e-7, 2e-6] {
+            for (apex, tile) in [([1.0 + delta, 2.0], 1.0), ([2.0, 1.0 + delta], 1.0)] {
+                let fill = vec![[0.0, 0.0], [2.0, 0.0], apex];
+                let region = Region {
+                    fills: vec![fill.clone()],
+                    cuts: vec![],
+                };
+                let mesh = slab(&region, 0.0, 1.0, tile);
+                let area = signed_area(&fill).abs();
+                assert!(
+                    (mesh.measure().volume - area).abs() < 1e-12,
+                    "{delta} {apex:?}: {} != {area}",
+                    mesh.measure().volume
+                );
+            }
+        }
+    }
+
+    /// A steep edge cut at a tile line: in the next tile, the clipped copy
+    /// of that edge runs along the piece, parallel to rounding, and does
+    /// not cut it (a cut there left a sliver of wall classified at the
+    /// corner, and the slab open). From a fill tile of the ESP32 example.
+    /// The outer loop of a fill tile of the ESP32 example (simplified to
+    /// the model chord), mm.
+    #[rustfmt::skip]
+    const FILL_TILE: [[f64; 2]; 190] = [
+        [0.305, 60.0], [0.305, 48.0], [3.195, 48.0], [3.195, 48.4501], [3.182362, 48.481328],
+        [3.095, 48.495], [3.095, 51.505], [3.398754, 51.505], [3.429982, 51.517638],
+        [3.44363, 51.548438], [3.333007, 51.757234], [3.295, 51.917597], [3.295, 52.082403],
+        [3.333007, 52.242766], [3.406971, 52.390041], [3.512906, 52.516289],
+        [3.592568, 52.575596], [3.6451, 52.614704], [3.796427, 52.67998], [3.958729, 52.708599],
+        [4.123255, 52.699016], [4.281137, 52.651749], [4.423863, 52.569347],
+        [4.543738, 52.45625], [4.6343, 52.318557], [4.690667, 52.163691], [4.709799, 52.0],
+        [4.690667, 51.836309], [4.6343, 51.681443], [4.564011, 51.574573], [4.55741, 51.541538],
+        [4.575643, 51.51321], [4.905, 51.505], [4.905, 51.287931], [4.917638, 51.256703],
+        [4.948438, 51.243055], [4.980061, 51.25467], [5.074572, 51.349106],
+        [5.195428, 51.418881], [5.330224, 51.455], [5.6501, 51.455], [5.681328, 51.467638],
+        [5.694976, 51.498438], [5.695, 56.455], [5.8001, 56.455], [5.831328, 56.467638],
+        [5.844976, 56.498438], [5.845, 57.367868], [6.387868, 56.825], [6.094516, 56.531648],
+        [6.081371, 56.500631], [6.0935, 56.469201], [6.126265, 56.455], [6.423534, 56.455],
+        [6.454762, 56.467638], [6.6, 56.612868], [6.744717, 56.468151], [6.775735, 56.455006],
+        [7.073735, 56.455], [7.104963, 56.467638], [7.118611, 56.498438], [7.106996, 56.530061],
+        [6.812132, 56.825], [7.355, 57.367868], [7.355, 56.4999], [7.367638, 56.468672],
+        [7.398438, 56.455024], [7.505, 56.455], [7.505, 55.849807], [7.517638, 55.818579],
+        [7.548438, 55.80493], [7.576712, 55.813791], [7.6451, 55.864704], [7.796427, 55.92998],
+        [7.958729, 55.958599], [8.125754, 55.948268], [8.281137, 55.901749],
+        [8.423863, 55.819347], [8.543738, 55.70625], [8.6343, 55.568557], [8.690667, 55.413691],
+        [8.709799, 55.25], [8.698709, 55.155112], [8.707636, 55.122629], [8.736643, 55.105497],
+        [9.0001, 55.105], [9.031328, 55.117638], [9.044976, 55.148438], [9.045, 56.642868],
+        [9.487868, 56.2], [9.094616, 55.806748], [9.081471, 55.775731], [9.0936, 55.744301],
+        [9.487868, 55.35], [9.319516, 55.181649], [9.306371, 55.150631], [9.3185, 55.119201],
+        [9.349073, 55.105054], [9.648534, 55.105], [9.7, 55.137868], [9.750735, 55.105006],
+        [10.048735, 55.105], [10.079963, 55.117638], [10.093611, 55.148438],
+        [10.081996, 55.180061], [9.912132, 55.35], [10.305384, 55.743252],
+        [10.318529, 55.774269], [10.3064, 55.805699], [9.912132, 56.2], [10.355, 56.642868],
+        [10.355, 55.1499], [10.367638, 55.118672], [10.398438, 55.105024], [10.505, 55.105],
+        [10.505, 48.0], [12.0, 48.0], [12.0, 55.753376], [11.9, 55.740211],
+        [11.755116, 55.759285], [11.625221, 55.813089], [11.889216, 56.077085],
+        [11.901588, 56.106278], [11.911616, 56.076252], [12.0, 55.987868], [12.0, 56.186674],
+        [11.927443, 56.149983], [11.901771, 56.109632], [11.890233, 56.139532],
+        [11.784363, 56.197555], [11.730788, 56.293614], [11.697617, 56.299493],
+        [11.413089, 56.025221], [11.359285, 56.155116], [11.340211, 56.3],
+        [11.359285, 56.444884], [11.415263, 56.577403], [11.675189, 56.312679],
+        [11.706207, 56.299534], [11.737637, 56.311662], [11.784363, 56.402445],
+        [11.892357, 56.462904], [11.900141, 56.488402], [11.910599, 56.4613], [12.0, 56.413326],
+        [12.0, 56.612132], [11.900774, 56.498164], [11.780283, 56.631849],
+        [11.749265, 56.644994], [11.451266, 56.645], [11.415587, 56.622317],
+        [11.381441, 56.644962], [10.632132, 56.645], [11.075, 57.087868], [11.468252, 56.694616],
+        [11.499269, 56.681471], [11.530699, 56.6936], [11.925, 57.087868], [12.0, 57.012868],
+        [12.0, 57.587132], [11.925, 57.512132], [11.531748, 57.905384], [11.500731, 57.918529],
+        [11.469301, 57.9064], [11.075, 57.512132], [10.605077, 57.996441], [10.187244, 58.0],
+        [10.156016, 57.987362], [10.142868, 57.955], [9.7, 57.512132], [9.230077, 57.996441],
+        [9.0, 58.0], [9.0, 60.0], [4.976013, 60.0], [4.889799, 59.791862], [4.761911, 59.583168],
+        [4.602951, 59.397049], [4.416832, 59.238089], [4.208138, 59.110201],
+        [3.982007, 59.016534], [3.744008, 58.959395], [3.5, 58.940192], [3.255992, 58.959395],
+        [3.017993, 59.016534], [2.791862, 59.110201], [2.583168, 59.238089],
+        [2.397049, 59.397049], [2.238089, 59.583168], [2.110201, 59.791862], [2.023986, 60.0],
+    ];
+
+    /// A steep edge cut at a tile line: in the next tile, the clipped copy
+    /// of that edge runs along the piece, parallel to rounding, and does
+    /// not cut it (a cut there left a sliver of wall classified at the
+    /// corner, and the slab open).
+    #[test]
+    fn a_steep_edge_cut_at_a_tile_line_keeps_its_wall() {
+        let fill = FILL_TILE.to_vec();
+        let area = signed_area(&fill).abs();
+        for tile in [100.0, 4.0, 1.0] {
+            let mesh = slab(
+                &Region {
+                    fills: vec![fill.clone()],
+                    cuts: vec![],
+                },
+                0.0,
+                1.0,
+                tile,
+            );
+            let volume = mesh.measure().volume;
+            assert!((volume - area).abs() < 1e-9, "{tile}: {volume} != {area}");
         }
     }
 

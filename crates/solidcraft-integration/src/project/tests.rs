@@ -1241,7 +1241,7 @@ fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Re
 /// original): an L-shaped custom pad turned 30°, a plated-through stadium
 /// turned 45° with an offset drill, a bare hole and a tented mechanical
 /// land on the far side; the datum is turned a quarter turn.
-fn shaped() -> Result<Project> {
+pub(super) fn shaped() -> Result<Project> {
     use pcbcraft_core::library::{Hole, HoleShape, MaskRule, Outline, PadKind, PadSide, Segment};
     let mut project = fixture()?;
     let footprint = &mut project.library.footprints[0].definition;
@@ -2127,7 +2127,7 @@ fn nested_holes_are_dropped_and_overlapping_ones_kept() -> Result<()> {
 
 /// The showcase with its pours filled: four layers, inner tracks, vias
 /// and fills on outer and inner layers.
-fn showcase() -> Result<Project> {
+pub(super) fn showcase() -> Result<Project> {
     Ok(Engine::showcase()
         .map_err(|error| Error::Verification(error.to_string()))?
         .project()

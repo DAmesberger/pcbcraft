@@ -198,45 +198,11 @@ pub(super) fn build(
             .iter()
             .find(|f| f.id == planned.fill)
             .ok_or_else(|| Error::Verification(format!("fill {} is gone", planned.fill)))?;
-        let name = body_name(fill);
-        let height = copper_param(fill.layer);
-        let offset: Expr = match fill.layer {
-            CopperLayer::Top => "board_thickness".into(),
-            CopperLayer::Bottom => format!("- {height}").into(),
-            CopperLayer::Inner(_) => inner_base(&project.stackup, fill.layer)?.into(),
+        let component = if b.flat == super::Flat::Native {
+            native(b, project, fill, planned, board, joints)?
+        } else {
+            super::NO_COMPONENT
         };
-        b.native.unit(&name, None)?;
-        let created = b.native.component(&name, false)?;
-        b.native.unit_end()?;
-        // One body per tile ([`tiles`]): the tiles are disjoint, so each
-        // sketch makes exactly one body of a known name. A tile is a unit of
-        // its content: refilled, only the tiles whose copper changed are
-        // built again.
-        for (body, _) in &planned.tiles {
-            let contours = &body.loops;
-            let content = super::digest(&(&offset, &height, contours));
-            b.native.unit(&body.name, Some(content))?;
-            b.native.batched_body(ProfileBody {
-                name: &body.name,
-                offset: offset.clone(),
-                contours,
-                height: height.as_str().into(),
-            })?;
-            b.record(&body.name, BodyKind::FillCopper)?;
-            b.native.unit_end()?;
-        }
-        joints.push((
-            BoardJoint {
-                board,
-                occurrence: created.occurrence,
-                x: 0.into(),
-                y: 0.into(),
-                angle: 0.into(),
-                mount: Mount::Height(0.into()),
-            },
-            JointFrame::ORIGIN,
-            None,
-        ));
         let pick = next_pick(sources);
         let label = if fill.name.is_empty() {
             format!(
@@ -256,7 +222,7 @@ pub(super) fn build(
             net: fill.net,
             layer: Some(fill.layer),
             label,
-            component: created.component,
+            component,
             occurrence: None,
         });
         marks.push(FillMark {
@@ -266,6 +232,58 @@ pub(super) fn build(
         });
     }
     Ok(marks)
+}
+
+/// A planned fill's tiles as native bodies in a component of their own,
+/// joined to the board: the component.
+fn native(
+    b: &mut Builder,
+    project: &Project,
+    fill: &Fill,
+    planned: &FillPlan,
+    board: u64,
+    joints: &mut Joints,
+) -> Result<u64> {
+    let name = body_name(fill);
+    let height = copper_param(fill.layer);
+    let offset: Expr = match fill.layer {
+        CopperLayer::Top => "board_thickness".into(),
+        CopperLayer::Bottom => format!("- {height}").into(),
+        CopperLayer::Inner(_) => inner_base(&project.stackup, fill.layer)?.into(),
+    };
+    b.native.unit(&name, None)?;
+    let created = b.native.component(&name, false)?;
+    b.native.unit_end()?;
+    // One body per tile ([`tiles`]): the tiles are disjoint, so each
+    // sketch makes exactly one body of a known name. A tile is a unit of
+    // its content: refilled, only the tiles whose copper changed are
+    // built again.
+    for (body, _) in &planned.tiles {
+        let contours = &body.loops;
+        let content = super::digest(&(&offset, &height, contours));
+        b.native.unit(&body.name, Some(content))?;
+        b.native.batched_body(ProfileBody {
+            name: &body.name,
+            offset: offset.clone(),
+            contours,
+            height: height.as_str().into(),
+        })?;
+        b.record(&body.name, BodyKind::FillCopper)?;
+        b.native.unit_end()?;
+    }
+    joints.push((
+        BoardJoint {
+            board,
+            occurrence: created.occurrence,
+            x: 0.into(),
+            y: 0.into(),
+            angle: 0.into(),
+            mount: Mount::Height(0.into()),
+        },
+        JointFrame::ORIGIN,
+        None,
+    ));
+    Ok(created.component)
 }
 
 /// Sides of the polygon a round outline joins the fill copper's union as

@@ -16,7 +16,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use pcbcraft_core::Project;
-use pcbcraft_solidcraft::project::{self, NativeModel, plan};
+use pcbcraft_solidcraft::project::{self, NativeModel, mesh, plan};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -233,6 +233,69 @@ fn example_boards_match_their_record_and_plan() {
                     .join("\n  ")
             ));
         }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Every example board's flat bodies meshed straight from its plan (the
+/// live view's path, [`mesh`]) are the plan's bodies ([`mesh::parity`]):
+/// one mesh per plan body, of its kind, source and layer, its box and
+/// volume within what flattening explains, and the laminate whole. Prints
+/// the meshing times (targets: the ESP32 board's bodies in under 100 ms;
+/// one track's width edit meshed again in a few ms).
+#[test]
+fn example_boards_mesh_as_their_plan() {
+    let mut failures = Vec::new();
+    for (name, project) in &boards() {
+        let plan = plan::of(project).unwrap();
+        let sources = mesh::plan_sources(&plan);
+        let mut memo = mesh::Memo::default();
+        let start = Instant::now();
+        let (meshed, cold) = mesh::bodies(&plan, &sources, &mut memo).unwrap();
+        let cold_ms = start.elapsed().as_secs_f64() * 1e3;
+        let triangles: usize = meshed.iter().map(|m| m.geometry.mesh.triangles.len()).sum();
+        let held: usize = {
+            let mut seen = std::collections::HashSet::new();
+            meshed
+                .iter()
+                .filter(|m| seen.insert(std::sync::Arc::as_ptr(&m.geometry.mesh)))
+                .map(|m| m.geometry.mesh.triangles.len())
+                .sum()
+        };
+        let differences = mesh::parity(&plan, &meshed).unwrap();
+        if !differences.is_empty() {
+            failures.push(format!(
+                "{name} meshed against its plan, {} differences:\n  {}",
+                differences.len(),
+                differences
+                    .iter()
+                    .take(20)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            ));
+        }
+        // One track made wider: that track alone is meshed again.
+        let mut edited = project.clone();
+        let mut width_ms = None;
+        if let Some(track) = edited.tracks.first_mut() {
+            track.width += 0.05;
+            let start = Instant::now();
+            let plan = plan::of(&edited).unwrap();
+            let plan_ms = start.elapsed().as_secs_f64() * 1e3;
+            let start = Instant::now();
+            let (_, stats) = mesh::bodies(&plan, &sources, &mut memo).unwrap();
+            width_ms = Some((plan_ms, start.elapsed().as_secs_f64() * 1e3));
+            assert_eq!(stats.meshed, 1, "{name}: {stats:?}");
+        }
+        eprintln!(
+            "{name}: {} flat bodies ({} meshes) meshed in {cold_ms:.1} ms, {triangles} triangles drawn \
+             ({held} held); a track width edit: plan {:.1} ms, mesh {:.1} ms",
+            cold.bodies,
+            cold.meshed,
+            width_ms.map_or(f64::NAN, |w| w.0),
+            width_ms.map_or(f64::NAN, |w| w.1),
+        );
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
