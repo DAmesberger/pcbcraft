@@ -260,8 +260,10 @@ impl App {
         } = parts;
         let mut pcb = pcb_editor::PcbEditor::default();
         *pcb.filter_mut() = sources.selection_filter();
+        let mut scene = SceneController::new(ctx.clone(), viewport);
+        scene.set_flat(settings_window::flat(sources.mesh_board_directly()));
         Self {
-            scene: SceneController::new(ctx.clone(), viewport),
+            scene,
             fills: crate::fill_worker::FillWorker::start(ctx.clone()),
             files,
             sources,

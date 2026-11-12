@@ -20,6 +20,7 @@ use crate::material::{self, BodyKind, Material};
 use crate::pad_outline::{self, Contour, FLATTEN_TOLERANCE_MM};
 use crate::{Error, Result};
 use pcbcraft_core::library::PadCopper;
+use pcbcraft_core::model::Fill;
 use pcbcraft_core::model::fill::FilledRegion;
 use pcbcraft_core::{CopperLayer, Fabrication, Id, Layer, PadId, Point, Project, ViaSpan};
 
@@ -271,6 +272,52 @@ impl BoardPlan {
             .chain(self.vias.iter().flat_map(|v| &v.bodies))
             .chain(&self.laminate)
     }
+
+    /// The laminate as the live view draws it: one body from the bottom
+    /// slab's bottom face to the top slab's top, its loops those of every
+    /// slab that is not a foil level (the board outline less every drill
+    /// and every cut through the board; those slabs hold the same loops).
+    /// It differs from the slabs only in each inner foil level, where the
+    /// slabs leave room for that layer's copper; drawn whole, that copper
+    /// lies inside it. The exact build makes the slabs ([`Self::laminate`]),
+    /// so its saved bodies stay disjoint. `None` for a plan without
+    /// laminate.
+    pub fn whole_laminate(&self) -> Result<Option<PlanBody>> {
+        let mut through = self
+            .laminate
+            .iter()
+            .filter(|s| !matches!(s.source, Origin::Laminate(Level::Foil { .. })));
+        let Some(first) = through.next() else {
+            return if self.laminate.is_empty() {
+                Ok(None)
+            } else {
+                Err(Error::Verification(
+                    "the laminate has only foil levels".into(),
+                ))
+            };
+        };
+        if let Some(other) = through.find(|s| s.loops != first.loops) {
+            return Err(Error::Verification(format!(
+                "laminate slabs {} and {} are drilled differently",
+                first.name, other.name
+            )));
+        }
+        let low = self
+            .laminate
+            .iter()
+            .map(|s| s.z[0])
+            .fold(f64::MAX, f64::min);
+        let high = self
+            .laminate
+            .iter()
+            .map(|s| s.z[1])
+            .fold(f64::MIN, f64::max);
+        Ok(Some(PlanBody {
+            name: "Substrate".to_owned(),
+            z: [low, high],
+            ..first.clone()
+        }))
+    }
 }
 
 /// The plan of `project`'s board. Refused (as the build refuses it) when
@@ -284,11 +331,24 @@ pub fn of(project: &Project) -> Result<BoardPlan> {
         .check()
         .map_err(|e| Error::Invalid(e.to_string()))?;
     let pads = placed_pads(project)?;
-    of_pads(project, &pads)
+    of_pads(project, &pads, &mut Memo::default())
 }
 
-/// [`of`] for the board's placed pads.
-pub(super) fn of_pads(project: &Project, pads: &[PlacedPad<'_>]) -> Result<BoardPlan> {
+/// The fills' plans made before, by a digest of each fill's stored copper
+/// and heights: a fill's tiles depend on nothing else, so [`of_pads`]
+/// takes an unchanged fill's from here instead of simplifying and tiling
+/// its copper again, and leaves here the ones it used.
+#[derive(Clone, Default)]
+pub struct Memo {
+    fills: std::collections::HashMap<u64, FillPlan>,
+}
+
+/// [`of`] for the board's placed pads, taking unchanged fills from `memo`.
+pub(super) fn of_pads(
+    project: &Project,
+    pads: &[PlacedPad<'_>],
+    memo: &mut Memo,
+) -> Result<BoardPlan> {
     if project
         .vias
         .iter()
@@ -298,7 +358,7 @@ pub(super) fn of_pads(project: &Project, pads: &[PlacedPad<'_>]) -> Result<Board
             "blind and buried vias are not built in the native model yet".into(),
         ));
     }
-    let fills = fills(project)?;
+    let fills = fills(project, memo)?;
     let laminate = laminate(project, pads, &fills)?;
     Ok(BoardPlan {
         pads: pads
@@ -325,62 +385,133 @@ fn board_thickness(project: &Project) -> f64 {
     project.stackup.dielectric_mm()
 }
 
+/// What a fill's plan is made from, digested: the fill, its stored
+/// copper (every number exactly) and its layer's heights.
+fn fill_key(fill: &Fill, z: (f64, f64)) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    format!(
+        "{:?} {:?} {:?} {:?}",
+        fill.id, fill.layer, fill.net, fill.name
+    )
+    .hash(&mut h);
+    z.0.to_bits().hash(&mut h);
+    z.1.to_bits().hash(&mut h);
+    let regions = fill
+        .computed
+        .as_ref()
+        .map(|c| c.regions.as_slice())
+        .unwrap_or_default();
+    regions.len().hash(&mut h);
+    for region in regions {
+        for points in std::iter::once(&region.outer).chain(&region.holes) {
+            points.len().hash(&mut h);
+            for p in points {
+                p[0].to_bits().hash(&mut h);
+                p[1].to_bits().hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
 /// Each fill with copper, one body per tile of its regions
-/// ([`fill::tiles`]).
-fn fills(project: &Project) -> Result<Vec<FillPlan>> {
+/// ([`fill::tiles`]): an unchanged fill's from `memo`, the others made on
+/// every core.
+fn fills(project: &Project, memo: &mut Memo) -> Result<Vec<FillPlan>> {
+    let built: Vec<(&Fill, u64, (f64, f64))> = fill::with_copper(project)
+        .map(|f| {
+            let z = span(project, f.layer)?;
+            Ok((f, fill_key(f, z), z))
+        })
+        .collect::<Result<_>>()?;
+    let wanted: Vec<&(&Fill, u64, (f64, f64))> = built
+        .iter()
+        .filter(|(_, key, _)| !memo.fills.contains_key(key))
+        .collect();
+    let slots: Vec<std::sync::OnceLock<Result<Option<FillPlan>>>> =
+        wanted.iter().map(|_| std::sync::OnceLock::new()).collect();
+    let indexed: Vec<usize> = (0..wanted.len()).collect();
+    super::on_threads(&indexed, |&i| {
+        if let (Some((fill, _, z)), Some(slot)) = (wanted.get(i), slots.get(i)) {
+            let _ = slot.set(fill_plan(fill, *z));
+        }
+    });
+    let mut made = std::collections::HashMap::new();
+    for ((_, key, _), slot) in wanted.iter().zip(slots) {
+        let plan = slot
+            .into_inner()
+            .ok_or_else(|| Error::Verification("a fill was not planned".into()))??;
+        made.insert(*key, plan);
+    }
+    let mut next = Memo::default();
     let mut out = Vec::new();
-    for (fill, regions) in fill::built(project) {
-        if regions.iter().all(|r| fill::loops(r).is_empty()) {
+    for (_, key, _) in &built {
+        let plan = match made.remove(key) {
+            Some(plan) => plan,
+            None => memo.fills.get(key).or_else(|| next.fills.get(key)).cloned(),
+        };
+        if let Some(plan) = plan {
+            next.fills.insert(*key, plan.clone());
+            out.push(plan);
+        }
+    }
+    *memo = next;
+    Ok(out)
+}
+
+/// A fill's plan: its copper simplified for the model and cut in tiles;
+/// `None` when no region has a loop.
+fn fill_plan(fill: &Fill, z: (f64, f64)) -> Result<Option<FillPlan>> {
+    let regions = fill::simplified_regions(fill);
+    if regions.iter().all(|r| fill::loops(r).is_empty()) {
+        return Ok(None);
+    }
+    let name = fill::body_name(fill);
+    let raw = fill
+        .computed
+        .as_ref()
+        .map(|c| c.regions.as_slice())
+        .unwrap_or_default();
+    let mut tiles = Vec::new();
+    for Tile {
+        column,
+        row,
+        piece,
+        region,
+    } in fill::tiles(raw, TILE_MM, MODEL_CHORD_MM)
+    {
+        let contours: Vec<Contour> = fill::loops(&region)
+            .into_iter()
+            .filter_map(polygon)
+            .collect();
+        if contours.is_empty() {
             continue;
         }
-        let z = span(project, fill.layer)?;
-        let name = fill::body_name(fill);
-        let raw = fill
-            .computed
-            .as_ref()
-            .map(|c| c.regions.as_slice())
-            .unwrap_or_default();
-        let mut tiles = Vec::new();
-        for Tile {
-            column,
-            row,
-            piece,
-            region,
-        } in fill::tiles(raw, TILE_MM, MODEL_CHORD_MM)
-        {
-            let contours: Vec<Contour> = fill::loops(&region)
-                .into_iter()
-                .filter_map(polygon)
-                .collect();
-            if contours.is_empty() {
-                continue;
-            }
-            let body = PlanBody::new(
-                format!("{name}_{column}_{row}_{piece}"),
-                BodyKind::FillCopper,
-                Origin::Fill {
-                    fill: fill.id,
-                    column,
-                    row,
-                    piece,
-                },
-                fill.net,
-                Some(fill.layer),
-                z,
-                Frame::BOARD,
-                contours,
-            );
-            tiles.push((body, region));
-        }
-        out.push(FillPlan {
-            fill: fill.id,
-            net: fill.net,
-            layer: fill.layer,
-            regions,
-            tiles,
-        });
+        let body = PlanBody::new(
+            format!("{name}_{column}_{row}_{piece}"),
+            BodyKind::FillCopper,
+            Origin::Fill {
+                fill: fill.id,
+                column,
+                row,
+                piece,
+            },
+            fill.net,
+            Some(fill.layer),
+            z,
+            Frame::BOARD,
+            contours,
+        );
+        tiles.push((body, region));
     }
-    Ok(out)
+    Ok(Some(FillPlan {
+        fill: fill.id,
+        net: fill.net,
+        layer: fill.layer,
+        regions,
+        tiles,
+    }))
 }
 
 /// A placed pad's copper: its land, a through pad's opposite land and

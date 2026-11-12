@@ -102,7 +102,11 @@ The board's flat bodies (laminate slabs, pad, track, via and fill copper) are de
 - the build against the plan (`plan::parity`): each planned body built once, its box within 1 µm and its volume within 1 ppm (measured on the ESP32-S31 example: 0.2 µm and 0.07 ppm at most) (laminate slabs, whose holes may cross, are compared by box only), and no flat body built that the plan lacks;
 - every native body against the record in `crates/automation/tests/board_parity/<board>.jsonl` (box to 1 nm, volume to 1 ppm), made from the build before the plan existed.
 
-A change meant to change the built bodies rewrites the records with `SPARKSMITH_BLESS_PARITY=1 cargo xtask board-parity`; say so in its commit. CI runs the check once, after the workspace tests, which leave it out (it is an ignored test).
+- the live view's meshes against the plan (`mesh::parity`, `example_boards_mesh_as_their_plan`): one mesh per plan body, of its kind, source and layer, the laminate drawn whole (`BoardPlan::whole_laminate`); each box within the flattening tolerance (2 µm), each volume exact on its flattened loops (1 ppb) and within flattening (loop length × 2 µm × thickness) of the plan body's exact volume. It needs no build, so the workspace tests run it too.
+
+A change meant to change the built bodies rewrites the records with `SPARKSMITH_BLESS_PARITY=1 cargo xtask board-parity`; say so in its commit. CI runs the exact-build check once, after the workspace tests, which leave it out (it is an ignored test).
+
+The 3D view uses the direct mesh when Settings › 3D view › "Mesh the board directly" is on (`Flat::Meshed`): the model worker's native design then holds the parts alone, and the flat bodies are meshed from the plan (`project::mesh`, with a per-body memo). Off, the exact build stays the live path. A meshed model is never saved; exports build the exact model.
 
 ## KiCad import comparison
 

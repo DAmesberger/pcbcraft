@@ -353,3 +353,20 @@ Same host and `ci` profile, load average 30–130 (other agents' builds), so tim
 The rest is one board model (~0.9 GB of solidcore B-rep) for the current board and one for the undo. The undo depth stays the founder's call (R8-1 in the night findings): each further instant undo step still costs about 0.9 GB on this board.
 
 **Where an edit's update goes now** (`PCBCRAFT_PROFILE_EDIT=width`, load ~50): build 26.5 s; width +1 mm with stale fills 8.8 s, 736 SMLib extrusions; the refill 18.5 s, 1,188 extrusions against 1,322 in the build, of which the two redefined foil-level slabs' evaluations are 9.3 s; the undo 20.4 s, 1,193 extrusions. Almost every feature after the first changed tile is evaluated again, because Solidcraft keys each feature's cached result on every body made before it. That is Solidcraft's to change (option c2; upstream's read-based key #6295 is measured on the exported board separately).
+
+## Update, 12 November 2026: the direct mesh (stage A2)
+
+Same host (18 cores), `ci` profile, load average 5–9 (other agents' builds). Settings › 3D view › "Mesh the board directly" (`Flat::Meshed`) draws the board's flat bodies from the board plan with the soldermask's mesher (`project::mesh`) instead of building them in the kernel; the native design then holds the parts alone. Off by default: the exact build stays the live path and the fallback until stage A4.
+
+**The mesher on the ESP32 board** (`example_boards_mesh_as_their_plan`): 916 flat bodies, 358 distinct meshes (every via of a size and every track of a length and width share one, placed), meshed in **6.4–7.2 ms** on all cores (target: under 100 ms). 296,000 triangles drawn, 175,000 held. The laminate is one body, not five slabs. Parity with the plan holds on every example board (`mesh::parity`). A track width edit meshes one body again: 0.7–0.9 ms.
+
+**What an edit costs now.** The plan itself was the larger cost: 66–77 ms, almost all of it simplifying and tiling the fills' copper. Fill plans are now kept by a digest of each fill's copper (`plan::Memo`; the exact build uses it too), and the display layers that read the fills (films, bare laminate, legend) are drawn on cores of their own. A meshed model's update for a width edit, headless: 142–169 ms before, **39–45 ms** after.
+
+| ESP32 board, app benchmark (`esp32_track_width_edit_in_the_app`) | Exact build | Direct mesh |
+| --- | --- | --- |
+| Open in 3D (build, then packed) | 12.6–13.9 s | 3.7–3.9 s (parts only) |
+| A track 0.05 mm narrower: its board shown, from the edit | 2.4–2.5 s | 0.17–0.26 s |
+| …the refilled board shown, from the refill's stored copper (3 fill tiles changed) | 6.5 s | **153 ms** |
+| …the same where the refill left the copper as it was | 2.4 s | 138–144 ms |
+
+Target for the last two rows: under 150 ms. Each meshed model is 40–60 ms of update and 80–90 ms of packing for the GPU (`model_scene::build`, unchanged and the same for both paths); the first, before this work, showed the refilled board 442 ms after the refill, because the edit's own model was packed and shown first. A meshed model whose next request is already waiting is now kept for that request to update and not packed. Packing is now the largest part; repacking only the changed bodies would be the next step.

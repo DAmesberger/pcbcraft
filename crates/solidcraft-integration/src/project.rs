@@ -67,8 +67,32 @@ pub struct Source {
     pub occurrence: Option<u64>,
 }
 
+/// How a model holds the board's flat bodies (laminate, pad, track, via
+/// and fill copper), all described by the board plan ([`plan`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Flat {
+    /// Built in the native design: the exact model, as saved and
+    /// exported.
+    #[default]
+    Native,
+    /// Meshed from the plan ([`mesh`]) for the live view: the native
+    /// design holds the parts only, and the model is never saved.
+    Meshed,
+}
+
+/// The component a source names when its object has no native body (a
+/// meshed flat body, [`Flat::Meshed`]).
+const NO_COMPONENT: u64 = u64::MAX;
+
 pub struct NativeModel {
     native: Native,
+    /// How the board's flat bodies are held.
+    flat: Flat,
+    /// The flat bodies' meshes made for this model ([`Flat::Meshed`]), for
+    /// an update to reuse.
+    meshes: mesh::Memo,
+    /// The fills' plans made for this model, for an update to reuse.
+    plans: plan::Memo,
     pub geometry: Vec<Geometry>,
     pub sources: Vec<Source>,
     /// The board's layer stack ([`crate::stack::Stack::none`] for a
@@ -114,9 +138,22 @@ struct Reused {
 }
 
 impl NativeModel {
-    /// Write the model as a new `.solidcraft` file; refuses existing files.
+    /// Write the model as a new `.solidcraft` file; refuses existing files,
+    /// and a model whose flat bodies are meshed ([`Flat::Meshed`]): its
+    /// design lacks them.
     pub fn save(&self, path: &str) -> Result<()> {
+        if self.flat == Flat::Meshed {
+            return Err(Error::Invalid(
+                "a model with meshed board bodies is drawn, never saved; build the exact model"
+                    .into(),
+            ));
+        }
         self.native.save_new(path)
+    }
+
+    /// How the model holds the board's flat bodies.
+    pub fn flat(&self) -> Flat {
+        self.flat
     }
 
     /// The native design the model was built as.
@@ -130,6 +167,9 @@ impl NativeModel {
     pub fn snapshot(&self) -> Self {
         Self {
             native: self.native.snapshot(),
+            flat: self.flat,
+            meshes: self.meshes.clone(),
+            plans: self.plans.clone(),
             geometry: self.geometry.clone(),
             sources: self.sources.clone(),
             stack: self.stack.clone(),
@@ -170,6 +210,12 @@ impl Previous {
 /// A native design under construction, recording each body's kind.
 struct Builder {
     native: Native,
+    /// How the board's flat bodies are made.
+    flat: Flat,
+    /// Flat-body meshes made before ([`mesh::Memo`]).
+    meshes: mesh::Memo,
+    /// Fill plans made before ([`plan::Memo`]).
+    plans: plan::Memo,
     bodies: BTreeMap<String, BodyKind>,
     /// Generated package-model definitions built so far.
     models: Vec<ModelDefinition>,
@@ -200,11 +246,14 @@ struct Builder {
 }
 
 impl Builder {
-    fn new(name: &str, sources: &SourceCache) -> Result<Self> {
+    fn new(name: &str, sources: &SourceCache, flat: Flat) -> Result<Self> {
         let mut native = Native::new(name)?;
         native.record();
         Ok(Self {
             native,
+            flat,
+            meshes: mesh::Memo::default(),
+            plans: plan::Memo::default(),
             bodies: BTreeMap::new(),
             models: Vec::new(),
             placed: BTreeSet::new(),
@@ -222,8 +271,11 @@ impl Builder {
 
     /// A build of an edited board replayed against `native`, the model
     /// `known` and `previous` came from ([`Native::replaying`]).
+    #[allow(clippy::too_many_arguments)]
     fn replaying(
         native: Native,
+        flat: Flat,
+        (meshes, plans): (mesh::Memo, plan::Memo),
         known: Vec<ModelDefinition>,
         known_libraries: Vec<(u64, LibraryDefinition)>,
         previous: Previous,
@@ -232,6 +284,9 @@ impl Builder {
     ) -> Self {
         Self {
             native,
+            flat,
+            meshes,
+            plans,
             bodies: BTreeMap::new(),
             models: Vec::new(),
             placed: BTreeSet::new(),
@@ -947,6 +1002,9 @@ fn finish_with(
     }
     Ok(NativeModel {
         native,
+        flat: Flat::Native,
+        meshes: mesh::Memo::default(),
+        plans: plan::Memo::default(),
         geometry,
         sources,
         stack: crate::stack::Stack::none(),
@@ -1492,8 +1550,20 @@ pub fn build_with(
     sources: &SourceCache,
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<NativeModel> {
+    build_flat(project, sources, cancel, Flat::Native)
+}
+
+/// [`build_with`], holding the board's flat bodies as `flat` says: built
+/// natively (the exact model) or meshed from the board plan (the live
+/// view's, [`mesh`]). An [`update`] of the model keeps its way.
+pub fn build_flat(
+    project: &Project,
+    sources: &SourceCache,
+    cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    flat: Flat,
+) -> Result<NativeModel> {
     sources.begin();
-    let built = Builder::new(&project.name, sources).and_then(|mut b| {
+    let built = Builder::new(&project.name, sources, flat).and_then(|mut b| {
         if let Some(cancel) = cancel {
             b.native.cancel_with(cancel);
         }
@@ -1520,6 +1590,9 @@ pub fn update(
 ) -> Result<(NativeModel, Rebuilt)> {
     let NativeModel {
         native,
+        flat,
+        meshes,
+        plans,
         geometry,
         models,
         libraries,
@@ -1531,6 +1604,8 @@ pub fn update(
     if let Some(native) = native.replaying() {
         let b = Builder::replaying(
             native,
+            flat,
+            (meshes, plans),
             models,
             libraries,
             Previous::of(geometry, reuse),
@@ -1551,7 +1626,10 @@ pub fn update(
             Err(error) => why = Some(error.to_string()),
         }
     }
-    Ok((build_with(project, sources, cancel)?, Rebuilt::Anew(why)))
+    Ok((
+        build_flat(project, sources, cancel, flat)?,
+        Rebuilt::Anew(why),
+    ))
 }
 
 /// Build `project` with `b`: a new design, or one replayed.
@@ -1561,11 +1639,15 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     let pads = placed_pads(project)?;
     // The board's flat bodies, described once ([`plan`]): the fills, pads,
     // tracks, vias and laminate below are built from it.
-    let plan = plan::of_pads(project, &pads)?;
+    let plan = plan::of_pads(project, &pads, &mut b.plans)?;
+    let plans = std::mem::take(&mut b.plans);
+    // Meshed, the native design holds the parts alone: none of the flat
+    // bodies' commands, parameters or joints below are made.
+    let native_flat = b.flat == Flat::Native;
     // The board is evaluated once its parts are in, not after every command.
     b.native.defer_evaluation()?;
     stackup_params(&mut b, project)?;
-    b.params(&object_params(project, &pads)?)?;
+    b.params(&object_params(project, &pads, native_flat)?)?;
     // What an edit rarely changes comes first in the design's history, so
     // evaluating an edit reuses it: the generated and library package
     // models and the via definitions, then the fills, then the parts and
@@ -1591,7 +1673,11 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             _ => {}
         }
     }
-    let mut styles = via_styles(&mut b, project, &plan.vias)?;
+    let mut styles = if native_flat {
+        via_styles(&mut b, project, &plan.vias)?
+    } else {
+        BTreeMap::new()
+    };
     let substrate = b.native.component("PCB substrate", true)?;
     let board = substrate.occurrence;
     let mut sources = vec![];
@@ -1810,6 +1896,23 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         }
         let prefix = format!("instance_{}", pad.placed.instance);
         let pp = format!("pad_{}_{}", pad.placed.instance, local.id);
+        let source = Source {
+            pick_id: pick,
+            instance: Some(pad.placed.instance),
+            pad: Some(local.id),
+            track: None,
+            via: None,
+            fill: None,
+            net: pad.placed.net,
+            layer: Some(pad.placed.layer.into()),
+            label: format!("{} pad {}", pad.designator, local.number),
+            component: NO_COMPONENT,
+            occurrence: None,
+        };
+        if !native_flat {
+            sources.push(source);
+            continue;
+        }
         let created = b.native.component(&pp, false)?;
         let near_copper = copper_param(pad.placed.layer.into());
         let far_copper = copper_param(other(pad.placed.layer).into());
@@ -1881,17 +1984,8 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             None,
         ));
         sources.push(Source {
-            pick_id: pick,
-            instance: Some(pad.placed.instance),
-            pad: Some(local.id),
-            track: None,
-            via: None,
-            fill: None,
-            net: pad.placed.net,
-            layer: Some(pad.placed.layer.into()),
-            label: format!("{} pad {}", pad.designator, local.number),
             component: created.component,
-            occurrence: None,
+            ..source
         });
     }
     let mut paths = Vec::with_capacity(project.tracks.len());
@@ -1906,32 +2000,37 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             None => Mount::Height(inner_base(stackup, track.layer)?.into()),
         };
         let prefix = format!("trace_{}", track.id);
-        // A track added or removed is a unit of its own: an update makes or
-        // deletes it alone.
-        b.native.unit(&prefix, None)?;
-        let created = b.native.component(&prefix, false)?;
-        let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
-        // The stadium in the track's frame: start at the origin, along +x.
-        b.native.whole_profile_body(ProfileBody {
-            name: &planned.body.name,
-            offset: 0.into(),
-            contours: &planned.body.loops,
-            height: copper_param(track.layer).into(),
-        })?;
-        b.record(&prefix, BodyKind::CopperTrack)?;
-        b.native.unit_end()?;
-        joints.push((
-            BoardJoint {
-                board,
-                occurrence: created.occurrence,
-                x: format!("{prefix}_x0").into(),
-                y: format!("{prefix}_y0").into(),
-                angle: angle.into(),
-                mount,
-            },
-            JointFrame::ORIGIN,
-            None,
-        ));
+        let component = if native_flat {
+            // A track added or removed is a unit of its own: an update makes or
+            // deletes it alone.
+            b.native.unit(&prefix, None)?;
+            let created = b.native.component(&prefix, false)?;
+            let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
+            // The stadium in the track's frame: start at the origin, along +x.
+            b.native.whole_profile_body(ProfileBody {
+                name: &planned.body.name,
+                offset: 0.into(),
+                contours: &planned.body.loops,
+                height: copper_param(track.layer).into(),
+            })?;
+            b.record(&prefix, BodyKind::CopperTrack)?;
+            b.native.unit_end()?;
+            joints.push((
+                BoardJoint {
+                    board,
+                    occurrence: created.occurrence,
+                    x: format!("{prefix}_x0").into(),
+                    y: format!("{prefix}_y0").into(),
+                    angle: angle.into(),
+                    mount,
+                },
+                JointFrame::ORIGIN,
+                None,
+            ));
+            created.component
+        } else {
+            NO_COMPONENT
+        };
         let pick = next_pick(&sources);
         // Inner copper is buried: no mask cap or finish over it.
         if let Some(side) = track.layer.side() {
@@ -1953,12 +2052,17 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             net: Some(track.net),
             layer: Some(track.layer),
             label: format!("Trace {}", track.id),
-            component: created.component,
+            component,
             occurrence: None,
         });
     }
     let display = appearance::Board::of(project);
-    let marks = vias(&mut b, project, &mut styles, &mut sources)?;
+    let marks = if native_flat {
+        vias(&mut b, project, &mut styles, &mut sources)?
+    } else {
+        let none = vec![None; project.vias.len()];
+        marks(project, &none, &none, &mut sources)?
+    };
     for mark in &marks {
         lands.extend(mark.lands(&display));
     }
@@ -1972,32 +2076,80 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     // and is finished and meshed.
     let mut memo = std::mem::take(&mut b.display);
     let layers = |memo: &mut appearance::Memo| -> Result<Vec<Geometry>> {
-        let mut layers = appearance::board_with(&display, &lands, &paths, &marks, &parts, memo)?;
-        layers.extend(fill::films(&display, &lands, &marks, &fills)?);
-        layers.extend(appearance::open_laminate(
-            &display,
-            &lands,
-            &paths,
-            &fill::outlines(&fills),
-        )?);
-        layers.extend(crate::silkscreen::films(
-            project,
-            &crate::silkscreen::Legend {
-                board: &display,
-                lands: &lands,
-                paths: &paths,
-                vias: &marks,
-                picks: &picks,
-            },
-        )?);
+        let films = || fill::films(&display, &lands, &marks, &fills);
+        let open = || appearance::open_laminate(&display, &lands, &paths, &fill::outlines(&fills));
+        let legend = || {
+            crate::silkscreen::films(
+                project,
+                &crate::silkscreen::Legend {
+                    board: &display,
+                    lands: &lands,
+                    paths: &paths,
+                    vias: &marks,
+                    picks: &picks,
+                },
+            )
+        };
+        // The films over the fills, the bare laminate and the legend need
+        // nothing of each other: each is drawn on a core of its own.
+        #[cfg(not(target_arch = "wasm32"))]
+        let (layers, films, open, legend) = std::thread::scope(|scope| {
+            let films = scope.spawn(films);
+            let open = scope.spawn(open);
+            let legend = scope.spawn(legend);
+            let layers = appearance::board_with(&display, &lands, &paths, &marks, &parts, memo);
+            let failed = || Err(Error::Verification("drawing a display layer failed".into()));
+            (
+                layers,
+                films.join().unwrap_or_else(|_| failed()),
+                open.join().unwrap_or_else(|_| failed()),
+                legend.join().unwrap_or_else(|_| failed()),
+            )
+        });
+        #[cfg(target_arch = "wasm32")]
+        let (layers, films, open, legend) = (
+            appearance::board_with(&display, &lands, &paths, &marks, &parts, memo),
+            films(),
+            open(),
+            legend(),
+        );
+        let mut layers = layers?;
+        layers.extend(films?);
+        layers.extend(open?);
+        layers.extend(legend?);
         layers.extend(crate::stackup_edge::bands(stackup, &display)?);
         Ok(layers)
     };
+    // Meshed, the flat bodies are meshed with the display layers, picked
+    // as the sources name them.
+    let mut meshes = std::mem::take(&mut b.meshes);
+    let meshed_sources = (!native_flat).then(|| sources.clone());
+    let meshed = |meshes: &mut mesh::Memo| -> Result<Vec<Geometry>> {
+        let Some(sources) = &meshed_sources else {
+            return Ok(Vec::new());
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let started = std::time::Instant::now();
+        let (bodies, stats) = mesh::bodies(&plan, sources, meshes)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        if std::env::var_os("PCBCRAFT_TIMINGS").is_some() {
+            eprintln!(
+                "pcbcraft: {} flat bodies meshed in {:.1} ms ({} meshes made, {} reused)",
+                stats.bodies,
+                started.elapsed().as_secs_f64() * 1e3,
+                stats.meshed,
+                stats.reused
+            );
+        }
+        Ok(bodies.into_iter().map(|m| m.geometry).collect())
+    };
     let native = |mut b: Builder| -> Result<NativeModel> {
-        // The laminate last: its sketches hold every drill, which each
-        // command after it would otherwise read again.
-        b.native.activate(substrate.component)?;
-        laminate(&mut b, project, &plan.laminate)?;
+        if native_flat {
+            // The laminate last: its sketches hold every drill, which each
+            // command after it would otherwise read again.
+            b.native.activate(substrate.component)?;
+            laminate(&mut b, project, &plan.laminate)?;
+        }
         // Every joint goes in once the parts are built, solved together (one
         // by one, each would solve all the joints made before it); a copy of
         // a shared definition starts where its first occurrence stands.
@@ -2005,21 +2157,32 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         b.finish(sources)
     };
     #[cfg(not(target_arch = "wasm32"))]
-    let (model, layers) = std::thread::scope(|scope| {
+    let (model, layers, flat) = std::thread::scope(|scope| {
         let drawn = scope.spawn(|| layers(&mut memo));
+        let flat = scope.spawn(|| meshed(&mut meshes));
         let model = native(b);
-        let layers = drawn.join().unwrap_or_else(|_| {
-            Err(Error::Verification(
-                "drawing the board's layers failed".into(),
-            ))
-        });
-        (model, layers)
+        let failed = |what: &str| Error::Verification(format!("{what} failed"));
+        let layers = drawn
+            .join()
+            .unwrap_or_else(|_| Err(failed("drawing the board's layers")));
+        let flat = flat
+            .join()
+            .unwrap_or_else(|_| Err(failed("meshing the board's bodies")));
+        (model, layers, flat)
     });
     #[cfg(target_arch = "wasm32")]
-    let (model, layers) = (native(b), layers(&mut memo));
+    let (model, layers, flat) = (native(b), layers(&mut memo), meshed(&mut meshes));
     let mut model = model?;
+    model.geometry.extend(flat?);
     model.geometry.extend(layers?);
     model.display = memo;
+    model.meshes = meshes;
+    model.plans = plans;
+    model.flat = if native_flat {
+        Flat::Native
+    } else {
+        Flat::Meshed
+    };
     model.stack = crate::stack::Stack::of(stackup, project.fabrication.pad_finish);
     Ok(model)
 }
@@ -2209,7 +2372,7 @@ fn vias(
                 .or_default()
                 .push((index, [x - x0, y - y0, 0.0])),
         }
-        style_of.push(style.component);
+        style_of.push(Some(style.component));
     }
     // Every further via of a size is placed in one command.
     for (key, wanted) in copies {
@@ -2227,11 +2390,31 @@ fn vias(
             }
         }
     }
+    marks(project, &style_of, &occurrences, sources)
+}
+
+/// Each via's source and what the display layers draw of it: the via
+/// placed as `occurrences` of the definitions `components` (each `None`
+/// while the via has no native body, [`Flat::Meshed`]).
+fn marks(
+    project: &Project,
+    components: &[Option<u64>],
+    occurrences: &[Option<u64>],
+    sources: &mut Vec<Source>,
+) -> Result<Vec<ViaMark>> {
     let mut marks = Vec::with_capacity(project.vias.len());
     let expansion = project.rules.effective().mask.expansion;
-    for ((via, component), occurrence) in project.vias.iter().zip(style_of).zip(occurrences) {
-        let occurrence =
-            occurrence.ok_or_else(|| Error::Verification(format!("via {} is unplaced", via.id)))?;
+    for ((via, component), occurrence) in project.vias.iter().zip(components).zip(occurrences) {
+        let (component, occurrence) =
+            match component {
+                Some(component) => (
+                    *component,
+                    Some(occurrence.ok_or_else(|| {
+                        Error::Verification(format!("via {} is unplaced", via.id))
+                    })?),
+                ),
+                None => (NO_COMPONENT, None),
+            };
         let pick = next_pick(sources);
         sources.push(Source {
             pick_id: pick,
@@ -2244,7 +2427,7 @@ fn vias(
             layer: None,
             label: format!("Via {}", via.id),
             component,
-            occurrence: Some(occurrence),
+            occurrence,
         });
         marks.push(ViaMark {
             pick,
@@ -2277,6 +2460,7 @@ const MAX_IMPORTED_PARAMS: usize = 8192;
 fn object_params(
     project: &Project,
     pads: &[PlacedPad<'_>],
+    flat: bool,
 ) -> Result<Vec<(String, f64, &'static str)>> {
     let mut out = Vec::new();
     for placement in &project.placements {
@@ -2302,6 +2486,9 @@ fn object_params(
                 out.push((format!("{prefix}_{axis}"), value, "mm"));
             }
         }
+    }
+    if !flat {
+        return Ok(out);
     }
     for pad in pads {
         let local = pad.pad();
@@ -2457,7 +2644,7 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
             "package envelope dimensions must be finite and positive".into(),
         ));
     }
-    let mut b = Builder::new("Package envelope", &SourceCache::default())?;
+    let mut b = Builder::new("Package envelope", &SourceCache::default(), Flat::Native)?;
     for (name, value) in ["length", "width", "height"]
         .into_iter()
         .zip(package.envelope())
@@ -2525,7 +2712,7 @@ pub fn preview_part(package: &PackageDefinition, bytes: &[u8]) -> Result<NativeM
             "model.unsupported: the package does not use a part file".into(),
         ));
     };
-    let mut b = Builder::new("Package model", &SourceCache::default())?;
+    let mut b = Builder::new("Package model", &SourceCache::default(), Flat::Native)?;
     let stem = b.define_part(DRAFT_MODEL, use_, bytes)?;
     let created = b.model_occurrence(&stem)?;
     move_by(&mut b.native, created.occurrence, &package.placement)?;
@@ -2538,7 +2725,7 @@ pub const DRAFT_MODEL: &str = "pkgdraft";
 /// The generated model of one package, draft or published, at its
 /// placement in the datum frame (z = 0 the seating plane).
 fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
-    let mut b = Builder::new("Package model", &SourceCache::default())?;
+    let mut b = Builder::new("Package model", &SourceCache::default(), Flat::Native)?;
     let created = b.model(DRAFT_MODEL, package)?;
     move_by(&mut b.native, created.occurrence, &package.placement)?;
     b.finish(vec![])
@@ -2546,6 +2733,7 @@ fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
 
 mod fill;
 mod identity;
+pub mod mesh;
 pub mod plan;
 #[cfg(test)]
 mod realism_tests;
