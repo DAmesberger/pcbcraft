@@ -508,6 +508,14 @@ pub struct Project {
     /// Waived pre-flight findings for fabrication output.
     #[serde(default, skip_serializing_if = "production::Production::is_default")]
     pub production: production::Production,
+    /// The board interface: the datums an enclosure may reference and
+    /// their append-only slot table (docs/architecture/board-interface.md).
+    #[serde(default, skip_serializing_if = "interface_is_empty")]
+    pub interface: Shared<interface::InterfaceTable>,
+}
+
+fn interface_is_empty(table: &Shared<interface::InterfaceTable>) -> bool {
+    table.is_empty()
 }
 
 /// The name of a new project, and the stem of the file name proposed for
@@ -545,6 +553,7 @@ impl Default for Project {
             sheet_symbols: Shared::default(),
             drawings: Shared::default(),
             production: production::Production::default(),
+            interface: Shared::default(),
         }
     }
 }

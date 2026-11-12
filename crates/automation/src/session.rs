@@ -1568,6 +1568,8 @@ mod folder_tests;
 #[cfg(test)]
 mod high_speed_tests;
 #[cfg(test)]
+mod interface_tests;
+#[cfg(test)]
 mod issues_tests;
 #[cfg(test)]
 mod metadata_tests;

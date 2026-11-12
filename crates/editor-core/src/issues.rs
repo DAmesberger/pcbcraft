@@ -474,8 +474,10 @@ fn collect(
             .into_iter()
             .map(|m| (IssueArea::Schematic, m)),
     );
+    let mut board = layout::checks_with(project, graph);
+    board.extend(crate::interface::list::checks(project));
     out.extend(
-        merge::board(layout::checks_with(project, graph))
+        merge::board(board)
             .into_iter()
             .map(|m| (IssueArea::Board, m)),
     );

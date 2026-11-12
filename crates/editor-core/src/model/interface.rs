@@ -5,8 +5,8 @@
 //! each time it is needed, never stored. The rules (slot allocation, the
 //! table's invariants, tokens) live in `crate::interface`.
 //!
-//! Contract only until slice B1, which adds the table to `Project` and the
-//! `interface.*` commands to the engine.
+//! The table is `Project::interface`; slice B1 keeps it through the
+//! `interface.*` commands and the automatic rules (`crate::interface::auto`).
 use crate::ids::{ContentHash, Id, InterfaceSourceId};
 use crate::library::footprint_source::SketchCurveId;
 use crate::model::board::BoardFeatureId;
@@ -26,8 +26,10 @@ pub const MAX_SLOTS: u32 = 65_536;
 /// fixed budget").
 pub const SLOT_FEATURE_BUDGET: u32 = 4;
 
-/// A datum's document identity, allocated by `Project::allocate` like every
-/// other project object. Never reused.
+/// A datum's document identity, allocated from the table's own counter
+/// ([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a
+/// datum never shifts the ids of other objects. Never reused: the counter,
+/// like the slot counter, only grows, through undo and redo too.
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
@@ -245,6 +247,10 @@ pub struct InterfaceTable {
     /// The next slot to allocate; every slot below it is live or retired.
     #[serde(default)]
     pub next_slot: u32,
+    /// The next [`DatumId`] to allocate, from 1 (0 until the first). Like
+    /// `next_slot`, it only grows.
+    #[serde(default)]
+    pub next_datum: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub datums: Vec<InterfaceDatum>,
     /// Slots whose datum was removed, ascending. Never allocated again.
@@ -255,4 +261,22 @@ pub struct InterfaceTable {
     pub rules_off: Vec<AutoRule>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub published: Option<PublishedRecord>,
+}
+
+impl InterfaceTable {
+    /// Nothing exported, allocated or published: what a project that never
+    /// had an interface holds, and what its file leaves out.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The live datum with this id.
+    pub fn datum(&self, id: DatumId) -> Option<&InterfaceDatum> {
+        self.datums.iter().find(|d| d.id == id)
+    }
+
+    /// Whether the automatic rule is on (every rule is, by default).
+    pub fn rule_on(&self, rule: AutoRule) -> bool {
+        self.rules_off.binary_search(&rule).is_err()
+    }
 }

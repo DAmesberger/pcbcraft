@@ -163,7 +163,7 @@
         "type": "string"
       },
       "DatumId": {
-        "description": "A datum's document identity, allocated by `Project::allocate` like every\nother project object. Never reused.",
+        "description": "A datum's document identity, allocated from the table's own counter\n([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a\ndatum never shifts the ids of other objects. Never reused: the counter,\nlike the slot counter, only grows, through undo and redo too.",
         "format": "uint64",
         "minimum": 0,
         "type": "integer"
@@ -867,7 +867,7 @@
       },
       {
         "additionalProperties": false,
-        "description": "Record a publish the host has written: the revision, its hash, the\ntier and every datum's hash, and the board's interface identity on\nthe first publish. Sent by the host after `interface.publish`\nwrote the files; refused when `source_id` differs from a recorded\none or the revision does not follow the recorded one.",
+        "description": "Record a publish the host has written. It holds the revision, its\nhash, the tier and every datum's hash, and the board's interface\nidentity on the first publish. Sent by the host after `interface.publish`\nwrote the files; refused when `source_id` differs from a recorded\none or the revision does not follow the recorded one.",
         "properties": {
           "command": {
             "const": "interface.record_publish",
@@ -1079,7 +1079,7 @@
         ]
       },
       "DatumId": {
-        "description": "A datum's document identity, allocated by `Project::allocate` like every\nother project object. Never reused.",
+        "description": "A datum's document identity, allocated from the table's own counter\n([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a\ndatum never shifts the ids of other objects. Never reused: the counter,\nlike the slot counter, only grows, through undo and redo too.",
         "format": "uint64",
         "minimum": 0,
         "type": "integer"
@@ -1562,7 +1562,7 @@
         "type": "object"
       },
       "DatumId": {
-        "description": "A datum's document identity, allocated by `Project::allocate` like every\nother project object. Never reused.",
+        "description": "A datum's document identity, allocated from the table's own counter\n([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a\ndatum never shifts the ids of other objects. Never reused: the counter,\nlike the slot counter, only grows, through undo and redo too.",
         "format": "uint64",
         "minimum": 0,
         "type": "integer"
@@ -2007,7 +2007,7 @@
         ]
       },
       "DatumId": {
-        "description": "A datum's document identity, allocated by `Project::allocate` like every\nother project object. Never reused.",
+        "description": "A datum's document identity, allocated from the table's own counter\n([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a\ndatum never shifts the ids of other objects. Never reused: the counter,\nlike the slot counter, only grows, through undo and redo too.",
         "format": "uint64",
         "minimum": 0,
         "type": "integer"
@@ -2591,7 +2591,7 @@
         "type": "string"
       },
       "DatumId": {
-        "description": "A datum's document identity, allocated by `Project::allocate` like every\nother project object. Never reused.",
+        "description": "A datum's document identity, allocated from the table's own counter\n([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a\ndatum never shifts the ids of other objects. Never reused: the counter,\nlike the slot counter, only grows, through undo and redo too.",
         "format": "uint64",
         "minimum": 0,
         "type": "integer"
@@ -3285,6 +3285,13 @@
           "$ref": "#/$defs/InterfaceDatum"
         },
         "type": "array"
+      },
+      "next_datum": {
+        "default": 0,
+        "description": "The next [`DatumId`] to allocate, from 1 (0 until the first). Like\n`next_slot`, it only grows.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
       },
       "next_slot": {
         "default": 0,

@@ -69,9 +69,9 @@ pub enum InterfaceCommand {
     /// the datums it made; on again allocates new slots.
     #[serde(rename = "interface.auto")]
     Auto { rule: AutoRule, on: bool },
-    /// Record a publish the host has written: the revision, its hash, the
-    /// tier and every datum's hash, and the board's interface identity on
-    /// the first publish. Sent by the host after `interface.publish`
+    /// Record a publish the host has written. It holds the revision, its
+    /// hash, the tier and every datum's hash, and the board's interface
+    /// identity on the first publish. Sent by the host after `interface.publish`
     /// wrote the files; refused when `source_id` differs from a recorded
     /// one or the revision does not follow the recorded one.
     #[serde(rename = "interface.record_publish")]

@@ -189,6 +189,7 @@ const MAP: &[(&str, &[&str])] = &[
             "nets",
             "schematic",
             "layout",
+            "interface",
         ],
     ),
     (

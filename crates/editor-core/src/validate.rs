@@ -72,6 +72,7 @@ fn project_except_library(p: &Project) -> Result<()> {
                 .into(),
         ));
     }
+    crate::interface::check_table(&p.interface)?;
     instances::check_all(p)?;
     instances::check_designators(p)?;
     schematic::validate(p)?;
