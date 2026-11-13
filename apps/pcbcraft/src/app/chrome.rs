@@ -832,10 +832,12 @@ impl App {
             let follow_label =
                 self.with_shortcut("Follow net (see-through)", AppCommand::ToggleFollowNet);
             let mut follow = self.scene.viewport.follow_net();
+            let mut interface = self.pcb.shows_interface_3d();
             if crate::layer_view::button(
                 &mut child,
                 &mut view,
                 &stack,
+                &mut interface,
                 &mut follow,
                 &follow_label,
                 canvas,
@@ -843,6 +845,7 @@ impl App {
                 self.scene.viewport.set_layers(view.clone());
                 self.pcb.set_layer_view(view);
             }
+            self.pcb.set_shows_interface_3d(interface);
             if follow != self.scene.viewport.follow_net() {
                 self.toggle_follow_net();
             }

@@ -968,9 +968,21 @@ fn painted(
     ctx: &egui::Context,
     view: &View,
 ) -> (Vec<String>, Vec<egui::Color32>, Vec<Pos2>) {
+    painted_at(editor, engine, ctx, view, true)
+}
+
+/// [`painted`], with the interface shown at rest or not (PCB 3D's
+/// Enclosure interface entry).
+fn painted_at(
+    editor: &mut PcbEditor,
+    engine: &Engine,
+    ctx: &egui::Context,
+    view: &View,
+    at_rest: bool,
+) -> (Vec<String>, Vec<egui::Color32>, Vec<Pos2>) {
     let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
         let painter = ui.painter().clone();
-        editor.paint_datums(ui, &painter, view, engine);
+        editor.paint_datums(ui, &painter, view, engine, at_rest);
     });
     output.textures_delta.clear();
     let mut words = Vec::new();
@@ -1053,6 +1065,63 @@ fn datums_are_drawn_in_layout_and_3d_by_one_painter() -> TestResult {
     editor.instance = Some(instance);
     let (words, _, _) = painted(&mut editor, &engine, &ctx, &View { oblique: false });
     assert!(words.contains(&opening), "the part's own datums: {words:?}");
+    Ok(())
+}
+
+/// PCB 3D hides the interface by default (finding 18 of the fourth E2E
+/// run): the Board card or a selected part draws nothing over the model
+/// until the Layers popover's Enclosure interface entry is on. Editing the
+/// interface shows it anyway: the selected datum, and every datum while a
+/// publish preview is docked.
+#[test]
+fn pcb_3d_shows_the_interface_only_when_asked_or_edited() -> TestResult {
+    let mut engine = demo()?;
+    let ctx = context();
+    let mut editor = PcbEditor::default();
+    let (instance, part) = first_part(&engine)?;
+    let opening = format!("{part} opening");
+    let view = View { oblique: true };
+    let in_3d = |editor: &mut PcbEditor, engine: &Engine| {
+        let at_rest = editor.shows_interface_3d();
+        painted_at(editor, engine, &ctx, &view, at_rest)
+    };
+
+    // By default: nothing over the board, with the Board card or the part.
+    assert!(!editor.shows_interface_3d());
+    let (words, colours, points) = in_3d(&mut editor, &engine);
+    assert!(words.is_empty() && colours.is_empty() && points.is_empty());
+    editor.instance = Some(instance);
+    let (words, _, points) = in_3d(&mut editor, &engine);
+    assert!(words.is_empty() && points.is_empty(), "{words:?}");
+
+    // The entry on: what Layout shows.
+    editor.set_shows_interface_3d(true);
+    let (words, _, _) = in_3d(&mut editor, &engine);
+    assert!(words.contains(&opening), "{words:?}");
+    editor.set_shows_interface_3d(false);
+    editor.instance = None;
+
+    // A datum selected in the Interface section: that datum, lit.
+    let shown = interface_card::shown(&engine)?;
+    let id = shown
+        .list
+        .datums
+        .iter()
+        .find(|r| r.name == opening)
+        .map(|r| r.id);
+    editor.interface.datum = id;
+    let (words, colours, _) = in_3d(&mut editor, &engine);
+    assert_eq!(words, [opening.clone()]);
+    let t = pcbcraft_ui::theme::Tokens::get();
+    assert!(colours.contains(&t.accent), "the selected datum is lit");
+    editor.interface.datum = None;
+
+    // The publish preview docked: the interface it publishes.
+    record_publish(&mut engine)?;
+    editor.open_publish(&ctx, &engine);
+    let _hold = waiting(&mut editor);
+    let (words, _, _) = in_3d(&mut editor, &engine);
+    assert!(words.contains(&opening), "{words:?}");
     Ok(())
 }
 

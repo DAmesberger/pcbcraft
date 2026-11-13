@@ -9,6 +9,11 @@
 //! bodies: only the appearance kind [`BodyKind::Marking`] maps to their
 //! toggle, and no saved body has it. They are drawn while
 //! [`LayerView::shows_markings`]: hiding the bodies hides them too.
+//!
+//! The Enclosure interface entry (finding 18 of the fourth E2E run) is not
+//! a layer of the model: it shows the board interface's datums painted
+//! over the view, off by default. It is kept beside the [`LayerView`], so
+//! turning it never repacks or rebuilds anything.
 use crate::shell;
 use egui::{Align2, FontId, Sense, Ui, pos2, vec2};
 use pcbcraft_core::{CopperLayer, Layer};
@@ -268,7 +273,8 @@ impl LayerView {
 }
 
 /// The navigation bar's layer button and its popover of toggles for a
-/// board of `stack`, with the follow-the-net toggle `follow` (labelled
+/// board of `stack` and the Enclosure interface entry `interface`, with
+/// the follow-the-net toggle `follow` (labelled
 /// `follow_label`, its shortcut in it) under them. Returns whether `view`
 /// changed. The button is outlined while a layer is hidden or the net is
 /// followed. The popover opens at the left of the 3D view `canvas`, above
@@ -278,6 +284,7 @@ pub fn button(
     ui: &mut Ui,
     view: &mut LayerView,
     stack: &Stack,
+    interface: &mut bool,
     follow: &mut bool,
     follow_label: &str,
     canvas: egui::Rect,
@@ -308,7 +315,7 @@ pub fn button(
                 .show(ui, |ui| {
                     crate::kit::form(ui, |ui| {
                         ui.set_width(POPOVER_WIDTH);
-                        changed = popover(ui, view, stack);
+                        changed = popover(ui, view, stack, interface);
                         follow_row(ui, follow, follow_label);
                     });
                 });
@@ -373,8 +380,10 @@ pub fn copper_rows(ui: &mut Ui, len: usize, mut row: impl FnMut(&mut Ui, usize))
         });
 }
 
-/// The popover's content: a caption, one check per layer and Show all.
-fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
+/// The popover's content: a caption, one check per layer, the Enclosure
+/// interface entry and Show all. Returns whether `view` changed; the
+/// interface entry changes `interface` only.
+fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack, interface: &mut bool) -> bool {
     let t = Tokens::get();
     let (rect, _) = ui.allocate_exact_size(vec2(POPOVER_WIDTH, CAPTION_HEIGHT), Sense::hover());
     ui.painter().text(
@@ -416,6 +425,7 @@ fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
     for layer in below {
         toggle(ui, *layer);
     }
+    crate::kit::check(ui, "Enclosure interface", interface);
     ui.horizontal(|ui| {
         let x_ray = LayerView::x_ray(stack);
         let preset = ui_kit::button(ui, "X-ray", Button::Enabled(*view != x_ray))
@@ -578,7 +588,7 @@ mod tests {
         let mut view = LayerView::default();
         let stack = Stack::default();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            popover(ui, &mut view, &stack);
+            popover(ui, &mut view, &stack, &mut false);
         });
         output.textures_delta.clear();
         let left = |label: &str| {
@@ -602,14 +612,24 @@ mod tests {
 
     /// Hover, press and release on `label`; whether the view changed.
     fn click(ctx: &egui::Context, view: &mut LayerView, label: &str) -> Result<bool, String> {
+        click_with(ctx, view, &mut false, label)
+    }
+
+    /// [`click`] with the Enclosure interface entry `interface`.
+    fn click_with(
+        ctx: &egui::Context,
+        view: &mut LayerView,
+        interface: &mut bool,
+        label: &str,
+    ) -> Result<bool, String> {
         let stack = Stack::default();
-        let frame = |view: &mut LayerView, events: Vec<egui::Event>| {
+        let mut frame = |view: &mut LayerView, events: Vec<egui::Event>| {
             let mut changed = false;
             let input = egui::RawInput {
                 events,
                 ..Default::default()
             };
-            let mut output = ctx.run_ui(input, |ui| changed = popover(ui, view, &stack));
+            let mut output = ctx.run_ui(input, |ui| changed = popover(ui, view, &stack, interface));
             // Tests have no renderer to apply texture deltas.
             output.textures_delta.clear();
             (output, changed)
@@ -631,6 +651,23 @@ mod tests {
             changed |= frame(view, events).1;
         }
         Ok(changed)
+    }
+
+    /// The Enclosure interface entry starts off, turns the overlay on and
+    /// off again, and never changes the layers, so the model is not packed
+    /// again ([`crate::viewport::Viewport::set_layers`] sees no change).
+    #[test]
+    fn the_enclosure_interface_entry_toggles_only_the_overlay() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let mut view = LayerView::default();
+        let mut interface = false;
+        for expected in [true, false] {
+            let changed = click_with(&ctx, &mut view, &mut interface, "Enclosure interface")?;
+            assert!(!changed, "the layers are unchanged");
+            assert_eq!(interface, expected);
+            assert_eq!(view, LayerView::default());
+        }
+        Ok(())
     }
 
     /// The popover's follow-the-net row toggles the preference on and off
@@ -785,7 +822,15 @@ mod tests {
             };
             let mut output = ctx.run_ui(input, |ui| {
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bar));
-                button(&mut child, &mut view, &stack, &mut follow, "Follow", canvas);
+                button(
+                    &mut child,
+                    &mut view,
+                    &stack,
+                    &mut false,
+                    &mut follow,
+                    "Follow",
+                    canvas,
+                );
             });
             output.textures_delta.clear();
             output
