@@ -1540,7 +1540,7 @@ fn save_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Ope
     }
 }
 
-/// The docked "Choose a fab profile" dialog of a new board: one choice,
+/// The docked "Fab profile" dialog of a new board: one choice,
 /// preselected; Use profile commits `rules.set_fab_profile`, Later closes
 /// the panel and leaves the board without rules.
 fn choose_slot(panel: &mut RulesPanel, ui: &mut Ui, close: &mut bool) -> Option<Operation> {
@@ -1553,12 +1553,7 @@ fn choose_slot(panel: &mut RulesPanel, ui: &mut Ui, close: &mut bool) -> Option<
         .map(|p| (p.id.clone(), p.name.clone()))
         .collect();
     let chosen = choices.iter().find(|p| p.id == *id).cloned();
-    let mut dialog = DialogPanel::new(
-        choose_id(),
-        "constraint",
-        "Choose a fab profile",
-        "Use profile",
-    );
+    let mut dialog = DialogPanel::new(choose_id(), "constraint", "Fab profile", "Use profile");
     dialog.kind = "Rules";
     dialog.body_rows = 4.0;
     dialog.refusal = refusal.as_deref();
