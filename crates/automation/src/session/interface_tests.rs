@@ -122,6 +122,7 @@ fn the_interface_slots_survive_undo_redo_save_and_reopen() -> TestResult {
             "h2",
             "h3",
             "h4",
+            "i80.opening",
             "side.bottom",
             "side.top",
         ]
@@ -156,11 +157,11 @@ fn the_interface_slots_survive_undo_redo_save_and_reopen() -> TestResult {
         .and_then(|d| d.last())
         .ok_or("exported")?
         .clone();
-    assert_eq!(row["slot"], 11);
+    assert_eq!(row["slot"], 12);
     assert_eq!(row["name"], "USB opening face");
     assert_eq!(row["status"], "resolved");
     assert_eq!(row["kind"], "plane", "{row}");
-    assert_eq!(slots(&exported)[..11], slots(&board)[..]);
+    assert_eq!(slots(&exported)[..12], slots(&board)[..]);
 
     // A deleted hole retires its slot; undo brings it back in that slot.
     remove_hole(&mut session, 2)?;
@@ -177,15 +178,15 @@ fn the_interface_slots_survive_undo_redo_save_and_reopen() -> TestResult {
     // retired.
     history(&mut session, "project.undo")?;
     history(&mut session, "project.undo")?;
-    assert_eq!(retired(&list(&mut session)?), [11]);
+    assert_eq!(retired(&list(&mut session)?), [12]);
     interface(
         &mut session,
         "interface.export",
         json!({"target": {"target": "feature", "feature": face}}),
     )?;
     let again = list(&mut session)?;
-    assert_eq!(slots(&again).last().map(|(s, _)| *s), Some(12));
-    assert_eq!(retired(&again), [11]);
+    assert_eq!(slots(&again).last().map(|(s, _)| *s), Some(13));
+    assert_eq!(retired(&again), [12]);
 
     // Save and reopen: the same list, and the counters keep going.
     let dir = tempfile::tempdir()?;
@@ -199,7 +200,7 @@ fn the_interface_slots_survive_undo_redo_save_and_reopen() -> TestResult {
     assert_eq!(list(&mut reopened)?, again);
     remove_hole(&mut reopened, 3)?;
     let after = list(&mut reopened)?;
-    assert_eq!(retired(&after), [7, 11]);
+    assert_eq!(retired(&after), [7, 12]);
     interface(
         &mut reopened,
         "interface.export",
@@ -208,7 +209,7 @@ fn the_interface_slots_survive_undo_redo_save_and_reopen() -> TestResult {
     let last = list(&mut reopened)?;
     assert_eq!(
         slots(&last).last(),
-        Some(&(13, "board.parameter.width".to_owned()))
+        Some(&(14, "board.parameter.width".to_owned()))
     );
     Ok(())
 }
