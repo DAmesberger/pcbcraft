@@ -1,5 +1,5 @@
 //! A JSON-lines replay (`*.jsonl`, one request per line, as
-//! `pcbcraft-cli stdio` reads it). Requests carry lengths on the wire as
+//! `sparksmith-cli stdio` reads it). Requests carry lengths on the wire as
 //! millimetres (`units::Length`) and need nothing, but a request can carry a
 //! whole definition in its stored form (`library.new_draft`, `library.edit`:
 //! `{"kind", "body"}`), which is converted as in a file. Lines that are not
@@ -81,6 +81,6 @@ pub fn convert(path: &Path, backup: &Path) -> Result<usize> {
     if !backup.exists() {
         fs::write(backup, &original)?;
     }
-    pcbcraft_io::persistence::atomic_write(path, out.as_bytes())?;
+    sparksmith_io::persistence::atomic_write(path, out.as_bytes())?;
     Ok(n)
 }

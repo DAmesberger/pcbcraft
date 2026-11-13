@@ -2,7 +2,7 @@
 //! Writes are atomic: a failed save leaves any existing file untouched and
 //! no temporary file behind.
 use crate::{Error, Result};
-use pcbcraft_core::format::{self, EditorFile, MAX_FILE_BYTES};
+use sparksmith_core::format::{self, EditorFile, MAX_FILE_BYTES};
 use std::fs::File;
 use std::{
     io::{Read, Write},
@@ -13,7 +13,7 @@ pub mod container;
 
 pub fn check_project_path(path: &Path) -> Result<()> {
     if path.extension().is_none_or(|e| e != format::EXTENSION) {
-        return Err(Error::Invalid("use a .pcbcraft project filename".into()));
+        return Err(Error::Invalid("use a .sparksmith project filename".into()));
     }
     if path.as_os_str().len() > 4096 {
         return Err(Error::Invalid("project path is too long".into()));

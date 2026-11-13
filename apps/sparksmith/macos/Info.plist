@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Info.plist for a hand-built Sparksmith.app (Contents/Info.plist; the binary is
+     Contents/MacOS/sparksmith-desktop, the desktop package's binary).
+     There is no packaging script yet: set CFBundleVersion to the build's revision
+     when copying. The names and identifiers match sparksmith_core::product, which
+     src/bundle_tests.rs checks. The document-type keys follow Solidcraft's
+     assets/platforms/macos/Info.plist.in: they make Sparksmith the owner of .sparksmith
+     files, so Finder's double-click, Open With and a Dock drop reach
+     src/open_documents.rs. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Sparksmith</string>
+  <key>CFBundleDisplayName</key>
+  <string>Sparksmith</string>
+  <key>CFBundleIdentifier</key>
+  <string>io.sparksmith.app</string>
+  <key>CFBundleExecutable</key>
+  <string>sparksmith-desktop</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Sparksmith project</string>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>sparksmith</string></array>
+      <key>LSItemContentTypes</key>
+      <array><string>io.sparksmith.project</string></array>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>io.sparksmith.project</string>
+      <key>UTTypeDescription</key>
+      <string>Sparksmith project</string>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string><string>public.content</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array><string>sparksmith</string></array>
+        <key>public.mime-type</key>
+        <array><string>application/x-sparksmith</string></array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

@@ -4,7 +4,7 @@
 //!
 //! # Pick-and-place convention
 //!
-//! The default ([`PlacementConvention::default`]) is Pcbcraft's own:
+//! The default ([`PlacementConvention::default`]) is Sparksmith's own:
 //!
 //! - **Point.** Each row gives the placement origin, which is the
 //!   footprint datum (`Placement::position`), not the body or pad centre.
@@ -98,7 +98,7 @@ pub struct RotationOffset {
     pub degrees: f64,
 }
 
-/// The pick-and-place convention. The default is Pcbcraft's: coordinates
+/// The pick-and-place convention. The default is Sparksmith's: coordinates
 /// of the placement origin (the footprint datum) from the board origin in
 /// mm, rotation counter-clockwise in degrees as seen from the top with the
 /// footprint as drawn in the library at 0°, bottom parts at their board

@@ -2,8 +2,8 @@ use super::*;
 #[allow(unused_imports)]
 use crate::models::tests::{nm, pt};
 use crate::test_units::deg;
-use pcbcraft_core::geometry::cos_sin;
-use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm, PackageModel};
+use sparksmith_core::geometry::cos_sin;
+use sparksmith_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm, PackageModel};
 
 /// Give `package` a chip form of `kind` over its envelope, or a generic
 /// (moulded) one, with an envelope model: these tests exercise the
@@ -29,8 +29,8 @@ pub(super) fn envelope_demo() -> Result<Project> {
     Ok(project)
 }
 use crate::geom::Vec3;
-use pcbcraft_core::library::PadShape;
-use pcbcraft_core::{Endpoint, Engine, TerminalId, Track};
+use sparksmith_core::library::PadShape;
+use sparksmith_core::{Endpoint, Engine, TerminalId, Track};
 
 /// The demo's two instances, by designator.
 pub(super) fn instances(project: &Project) -> Result<(Id, Id)> {
@@ -49,7 +49,7 @@ fn near(actual: f64, expected: f64) {
 
 /// The default pad finish's (ENIG's) thickness, mm.
 fn enig() -> f64 {
-    crate::stack::finish_um(pcbcraft_core::PadFinish::Enig) / 1000.0
+    crate::stack::finish_um(sparksmith_core::PadFinish::Enig) / 1000.0
 }
 
 fn fixture() -> Result<Project> {
@@ -493,7 +493,7 @@ fn placed_body_follows_the_package_body_not_the_designator() -> Result<()> {
 }
 
 /// Build timings for docs/editor-evidence.md:
-/// `cargo test --profile ci -p pcbcraft-solidcraft build_timings -- --ignored --nocapture`.
+/// `cargo test --profile ci -p sparksmith-solidcraft build_timings -- --ignored --nocapture`.
 #[test]
 #[ignore = "benchmark"]
 fn build_timings() -> Result<()> {
@@ -538,13 +538,13 @@ fn build_timings() -> Result<()> {
             4.0 + f64::from(k % 20) * 2.5,
             22.0 + f64::from(k / 20) * 1.5,
         ];
-        vias.vias.push(pcbcraft_core::Via {
+        vias.vias.push(sparksmith_core::Via {
             id,
             net,
             position,
             drill: 0.3,
             diameter: 0.6,
-            span: pcbcraft_core::ViaSpan::Through,
+            span: sparksmith_core::ViaSpan::Through,
             tented: k % 2 == 0,
             locked: false,
         });
@@ -651,21 +651,21 @@ fn with_tracks(count: usize, total: usize) -> Result<Project> {
     Ok(project)
 }
 
-/// One via board's build, for profiling (`PCBCRAFT_TRACKS` tracks in all,
-/// [`with_tracks`]): `PCBCRAFT_VIAS=10000 cargo test
-/// --profile ci -p pcbcraft-solidcraft via_build_profile -- --ignored --nocapture`.
+/// One via board's build, for profiling (`SPARKSMITH_TRACKS` tracks in all,
+/// [`with_tracks`]): `SPARKSMITH_VIAS=10000 cargo test
+/// --profile ci -p sparksmith-solidcraft via_build_profile -- --ignored --nocapture`.
 #[test]
 #[ignore = "benchmark"]
 fn via_build_profile() -> Result<()> {
-    let count = std::env::var("PCBCRAFT_VIAS")
+    let count = std::env::var("SPARKSMITH_VIAS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10_000);
-    let runs = std::env::var("PCBCRAFT_RUNS")
+    let runs = std::env::var("SPARKSMITH_RUNS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(1);
-    let tracks = std::env::var("PCBCRAFT_TRACKS")
+    let tracks = std::env::var("SPARKSMITH_TRACKS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -1011,17 +1011,17 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
     let connected_before = layout::pads(&project).len();
     // Synthetic: a mechanical land whose package terminal carries no
     // electrical terminal, so it has no net on either placement.
-    let unmapped = pcbcraft_core::PackageTerminalId(90);
+    let unmapped = sparksmith_core::PackageTerminalId(90);
     let package = &mut project.library.packages[0].definition;
     package
         .terminals
-        .push(pcbcraft_core::library::PackageTerminal {
+        .push(sparksmith_core::library::PackageTerminal {
             id: unmapped,
             designation: "MP".into(),
         });
     package.next_local = 91;
     let footprint = &mut project.library.footprints[0].definition;
-    footprint.pads.push(pcbcraft_core::library::Pad::smd_rect(
+    footprint.pads.push(sparksmith_core::library::Pad::smd_rect(
         PadId(90),
         unmapped,
         "MP",
@@ -1181,7 +1181,7 @@ fn check_chip_parts(model: &NativeModel) -> Result<()> {
 /// they are for the default fabrication.
 #[test]
 fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Result<()> {
-    use pcbcraft_core::{MaskColour, MaskFinish, PadFinish};
+    use sparksmith_core::{MaskColour, MaskFinish, PadFinish};
     let plain = build(&fixture()?)?;
     let mut project = fixture()?;
     project.fabrication = Fabrication {
@@ -1238,7 +1238,7 @@ fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Re
 /// turned 45° with an offset drill, a bare hole and a tented mechanical
 /// land on the far side; the datum is turned a quarter turn.
 pub(super) fn shaped() -> Result<Project> {
-    use pcbcraft_core::library::{Hole, HoleShape, MaskRule, Outline, PadKind, PadSide, Segment};
+    use sparksmith_core::library::{Hole, HoleShape, MaskRule, Outline, PadKind, PadSide, Segment};
     let mut project = fixture()?;
     let footprint = &mut project.library.footprints[0].definition;
     footprint.datum.rotation_mdeg = deg(90.0);
@@ -1299,7 +1299,7 @@ pub(super) fn shaped() -> Result<Project> {
         size: pt([0.8, 0.5]),
         radius_ratio: 0.25,
         max_radius_nm: None,
-        corners: pcbcraft_core::library::CornerMask::ALL,
+        corners: sparksmith_core::library::CornerMask::ALL,
     };
     tab.hole = None;
     tab.mask = MaskRule::Tented;
@@ -1563,7 +1563,7 @@ fn an_envelope_follows_its_turned_placement_and_datum_like_its_2d_outline() -> R
     set_body(package, None);
     package.placement = crate::test_units::placement([0.25, -0.4, 0.0], [90.0, 0.0, 90.0]);
     let package = package.clone();
-    let datum = pcbcraft_core::library::Datum {
+    let datum = sparksmith_core::library::Datum {
         offset: pt([0.3, -0.4]),
         rotation_mdeg: deg(90.0),
     };
@@ -1578,8 +1578,8 @@ fn an_envelope_follows_its_turned_placement_and_datum_like_its_2d_outline() -> R
         })?;
         // Expected: each envelope corner through the model frame into the
         // footprint frame, then onto the board as the pads are placed.
-        let frame = pcbcraft_core::library::model_frame(&datum, &package.placement);
-        let board = pcbcraft_core::layout::placement_transform(placement, &datum);
+        let frame = sparksmith_core::library::model_frame(&datum, &package.placement);
+        let board = sparksmith_core::layout::placement_transform(placement, &datum);
         let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
         for corner in package.envelope_corners() {
             let f = frame.apply(corner);
@@ -1618,7 +1618,7 @@ fn an_envelope_follows_its_turned_placement_and_datum_like_its_2d_outline() -> R
 #[test]
 fn a_saved_board_reopens_with_every_instance_on_its_one_shared_generated_definition() -> Result<()>
 {
-    use pcbcraft_core::library::GeneratedMaterials;
+    use sparksmith_core::library::GeneratedMaterials;
     // The demo's chip package with a generated model: two instances, one
     // on each side, both occurrences of one definition.
     let mut project = Engine::demo()
@@ -1742,13 +1742,13 @@ pub(super) fn via_board(count: usize) -> Result<Project> {
         let id = project
             .allocate()
             .map_err(|error| Error::Verification(error.to_string()))?;
-        project.vias.push(pcbcraft_core::Via {
+        project.vias.push(sparksmith_core::Via {
             id,
             net,
             position,
             drill: 0.3,
             diameter: 0.6,
-            span: pcbcraft_core::ViaSpan::Through,
+            span: sparksmith_core::ViaSpan::Through,
             tented: k % 2 == 0,
             locked: false,
         });
@@ -1885,7 +1885,7 @@ fn a_cancelled_build_stops_and_an_uncancelled_one_completes() -> Result<()> {
 /// parameters a track reach Solidcraft's 10,000 parameters a design first
 /// (`identity::tests` records 2,000 tracks and 16,384 vias through a real
 /// save). Slow (a full 10,000-via build):
-/// `cargo test --profile ci -p pcbcraft-solidcraft ten_thousand_vias_and_many_tracks -- --ignored --nocapture`.
+/// `cargo test --profile ci -p sparksmith-solidcraft ten_thousand_vias_and_many_tracks -- --ignored --nocapture`.
 #[test]
 #[ignore = "builds a 10,000-via board"]
 fn ten_thousand_vias_and_many_tracks_survive_reopening() -> Result<()> {
@@ -1971,10 +1971,10 @@ fn ten_thousand_vias_and_many_tracks_survive_reopening() -> Result<()> {
 /// first terminal on the model's lead.
 pub(super) fn library_demo() -> Result<Project> {
     use crate::models::imported::tests::{fixture_glb, lead_key, model, use_lead};
-    use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset};
-    use pcbcraft_core::library::model3d::{LeadTag, ModelFormat};
-    use pcbcraft_core::library::{DefinitionMeta, Published};
-    use pcbcraft_core::{DefinitionId, ModelRef, Revision};
+    use sparksmith_core::library::bundle::{AssetBytes, PackedAsset};
+    use sparksmith_core::library::model3d::{LeadTag, ModelFormat};
+    use sparksmith_core::library::{DefinitionMeta, Published};
+    use sparksmith_core::{DefinitionId, ModelRef, Revision};
     let bytes = fixture_glb();
     let seen = crate::models::inspect::inspect(&bytes, ModelFormat::Gltf)?;
     let mut definition = model(ModelFormat::Gltf, &bytes, &seen);
@@ -2017,7 +2017,7 @@ pub(super) fn library_demo() -> Result<Project> {
         .first()
         .map(|t| t.id.0)
         .ok_or_else(|| Error::Verification("demo package has no terminal".into()))?;
-    package.definition.model = PackageModel::Library(pcbcraft_core::library::LibraryModel {
+    package.definition.model = PackageModel::Library(sparksmith_core::library::LibraryModel {
         model: reference,
         ..use_lead(terminal)
     });

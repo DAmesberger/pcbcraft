@@ -1,5 +1,5 @@
 use super::*;
-use pcbcraft_core::Engine;
+use sparksmith_core::Engine;
 
 /// The store's file, which its first snapshot reserved.
 fn own(store: &RecoveryStore) -> Result<&Path> {
@@ -24,7 +24,7 @@ fn a_session_without_a_snapshot_leaves_no_file() -> Result<()> {
 #[test]
 fn independent_sessions_survive_drop_and_restore_project_plus_unfinished_draft() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let original = directory.path().join("original.pcbcraft");
+    let original = directory.path().join("original.sparksmith");
     std::fs::write(&original, b"original is never overwritten by recovery")?;
     let mut engine = Engine::demo()?;
     let plain = engine.to_file();
@@ -79,9 +79,9 @@ fn corrupted_or_newer_records_do_not_hide_other_recoveries() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let valid = RecoveryStore::new(directory.path())?;
     valid.write(&Engine::demo()?.to_file(), None)?;
-    let broken = directory.path().join("session-broken.pcbcraft-recovery");
+    let broken = directory.path().join("session-broken.sparksmith-recovery");
     std::fs::write(&broken, b"broken")?;
-    let newer = directory.path().join("session-newer.pcbcraft-recovery");
+    let newer = directory.path().join("session-newer.sparksmith-recovery");
     let meta = RecoveryMeta {
         version: 999,
         original_path: None,
@@ -112,17 +112,17 @@ fn corrupted_or_newer_records_do_not_hide_other_recoveries() -> Result<()> {
 fn discard_is_limited_to_direct_regular_session_files() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let outside = tempfile::tempdir()?;
-    let other = outside.path().join("session-outside.pcbcraft-recovery");
+    let other = outside.path().join("session-outside.sparksmith-recovery");
     std::fs::write(&other, b"preserve")?;
     assert!(remove_entry(directory.path(), &other).is_err());
-    let ordinary = directory.path().join("project.pcbcraft");
+    let ordinary = directory.path().join("project.sparksmith");
     std::fs::write(&ordinary, b"preserve")?;
     assert!(remove_entry(directory.path(), &ordinary).is_err());
     assert!(other.exists());
     assert!(ordinary.exists());
     #[cfg(unix)]
     {
-        let link = directory.path().join("session-link.pcbcraft-recovery");
+        let link = directory.path().join("session-link.sparksmith-recovery");
         std::os::unix::fs::symlink(&other, &link)?;
         assert!(remove_entry(directory.path(), &link).is_err());
         assert!(read(&link).is_err());
@@ -163,7 +163,7 @@ fn snapshots_carry_assets_in_the_container_and_listing_skips_them() -> Result<()
     assert!(entries[0].error.is_none());
 
     // A plain project container is not a recovery snapshot.
-    let project = directory.path().join("session-project.pcbcraft-recovery");
+    let project = directory.path().join("session-project.sparksmith-recovery");
     crate::persistence::container::write_container(&project, &document)?;
     let refused = read(&project)
         .err()

@@ -1,6 +1,6 @@
 //! `convert-v1`'s rule-profile step: rule profiles became files with a
-//! stated source, every rule named (`pcbcraft_core::rules::profile`), and
-//! Pcbcraft stopped shipping estimated built-in profiles.
+//! stated source, every rule named (`sparksmith_core::rules::profile`), and
+//! Sparksmith stopped shipping estimated built-in profiles.
 //!
 //! A project's old snapshot (`{id, name, provenance, rules: {copper: …}}`)
 //! is replaced by the `--profile FILE.json` given, keeping the project's
@@ -36,17 +36,17 @@ const ADDED: &[(&str, &str, &str)] = &[
     (
         "silk_text_stroke_share",
         "formula",
-        "Pcbcraft's former fixed legend stroke share, carried over by convert-v1.",
+        "Sparksmith's former fixed legend stroke share, carried over by convert-v1.",
     ),
     (
         "pair_gap_tolerance",
         "0.02",
-        "Pcbcraft's former coupled-gap tolerance floor, carried over by convert-v1.",
+        "Sparksmith's former coupled-gap tolerance floor, carried over by convert-v1.",
     ),
     (
         "pair_gap_tolerance_share",
         "0.1",
-        "Pcbcraft's former coupled-gap tolerance share, carried over by convert-v1.",
+        "Sparksmith's former coupled-gap tolerance share, carried over by convert-v1.",
     ),
 ];
 

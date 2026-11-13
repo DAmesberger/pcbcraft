@@ -1,5 +1,5 @@
 [package]
-name = "pcbcraft-kicad"
+name = "sparksmith-kicad"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,11 +9,11 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-pcbcraft-core.workspace = true
+sparksmith-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # Custom pads: anchor and primitives united into one outline.
 i_overlay.workspace = true
 
 [dev-dependencies]
-pcbcraft-fabcheck.workspace = true
+sparksmith-fabcheck.workspace = true

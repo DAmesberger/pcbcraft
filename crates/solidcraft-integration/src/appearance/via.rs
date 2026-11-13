@@ -11,7 +11,7 @@ use crate::geom::{Mesh, Vec3};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
 use crate::stack::PROUD_MM;
-use pcbcraft_core::{CopperLayer, Layer};
+use sparksmith_core::{CopperLayer, Layer};
 
 /// The dome a tented side shows and the bore shadow of an open one.
 pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) -> Result<()> {
@@ -242,7 +242,7 @@ fn dome(board: &Board, via: &ViaMark, side: Layer) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::Fabrication;
+    use sparksmith_core::Fabrication;
 
     fn board() -> Board {
         Board {
@@ -276,7 +276,7 @@ mod tests {
             assert_eq!(dome.layer, Some(CopperLayer::from(side)));
             assert_eq!(dome.item, Some(7));
             // It covers the ring and its skirt, above the copper's crown.
-            let crown = 0.035 + pcbcraft_core::MASK_UM / 1000.0;
+            let crown = 0.035 + sparksmith_core::MASK_UM / 1000.0;
             let r = 0.3 + TENT_SKIRT_MM;
             assert!((dome.max[0] - dome.min[0] - 2.0 * r).abs() < 1e-6);
             let (top, face) = match side {
@@ -326,9 +326,9 @@ mod tests {
         // Tented on top only when the bottom has no mask.
         let half = Board {
             stack: crate::stack::Stack::of(
-                &pcbcraft_core::Stackup {
+                &sparksmith_core::Stackup {
                     mask_bottom: false,
-                    ..pcbcraft_core::Stackup::default()
+                    ..sparksmith_core::Stackup::default()
                 },
                 board.fabrication.pad_finish,
             ),

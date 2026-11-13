@@ -18,20 +18,20 @@ use super::{Build, check_positive, mm, require, top_edges};
 use crate::Result;
 use crate::native::{Expr, Pattern, ProfileBody};
 use crate::pad_outline::Contour;
-use pcbcraft_core::library::package_form::module::{ModuleForm, ModuleSide};
-use pcbcraft_core::library::{BodyRole, Outline, Segment};
-use pcbcraft_core::materials::MaterialId;
+use sparksmith_core::library::package_form::module::{ModuleForm, ModuleSide};
+use sparksmith_core::library::{BodyRole, Outline, Segment};
+use sparksmith_core::materials::MaterialId;
 
 /// The builder revision (`PackageModel::Generated { family_rev }`).
 pub(super) const FAMILY_REV: Option<u16> = Some(1);
 
 /// Pad thickness under the board (est.: ENIG over 35 µm copper).
-const PAD_MM: f64 = pcbcraft_core::library::marking::surface::MODULE_PAD_MM;
+const PAD_MM: f64 = sparksmith_core::library::marking::surface::MODULE_PAD_MM;
 /// Castellation plating thickness in the notch (est.: plated-through
 /// copper 20–25 µm plus finish).
 const PLATING_MM: f64 = 0.03;
 /// Antenna trace thickness on the board (est.: 35 µm copper).
-const TRACE_MM: f64 = pcbcraft_core::library::marking::surface::MODULE_TRACE_MM;
+const TRACE_MM: f64 = sparksmith_core::library::marking::surface::MODULE_TRACE_MM;
 /// Antenna trace width (est.: printed 2.4 GHz meanders run 0.3–0.6 mm).
 const TRACE_WIDTH_MM: f64 = 0.45;
 /// Round of the can's top edges (est.: a drawn can's bend radius).
@@ -313,7 +313,7 @@ pub(super) fn build(b: &mut Build<'_>, f: &ModuleForm) -> Result<()> {
         let pad_material = b.material(BodyRole::ExposedPad);
         let centres = f.ground_centres();
         if let Some(first) = centres.first() {
-            let (c, s) = pcbcraft_core::geometry::cos_sin(g.rotation_deg());
+            let (c, s) = sparksmith_core::geometry::cos_sin(g.rotation_deg());
             let [hx, hy] = [g.size()[0] / 2.0, g.size()[1] / 2.0];
             let corner = |u: f64, v: f64| [first[0] + c * u - s * v, first[1] + s * u + c * v];
             let seed = b.name("ground pad");
@@ -462,9 +462,9 @@ mod tests {
         build_definition, family_rev,
     };
     use crate::native::Native;
-    use pcbcraft_core::PackageTerminalId;
-    use pcbcraft_core::library::package_form::module::{GroundPads, PadRow, SinglePad};
-    use pcbcraft_core::library::{GeneratedMaterials, PackageTerminal};
+    use sparksmith_core::PackageTerminalId;
+    use sparksmith_core::library::package_form::module::{GroundPads, PadRow, SinglePad};
+    use sparksmith_core::library::{GeneratedMaterials, PackageTerminal};
 
     /// An original synthetic LGA module: 16 × 20 mm, 3 mm high, pads on four
     /// sides at 1.0 mm, a 2 × 2 ground array turned 45°, two corner pads.
@@ -510,7 +510,7 @@ mod tests {
                 pitch: pt([2.0, 2.0]),
                 size: pt([1.2, 1.2]),
                 centre: pt([0.0, -2.5]),
-                rotation_mdeg: pcbcraft_core::units::Angle::new(45_000).unwrap_or_default(),
+                rotation_mdeg: sparksmith_core::units::Angle::new(45_000).unwrap_or_default(),
                 number: "37".into(),
             }),
             singles: vec![
@@ -529,8 +529,8 @@ mod tests {
         }
     }
 
-    fn keepout() -> pcbcraft_core::library::package_form::module::AntennaKeepout {
-        pcbcraft_core::library::package_form::module::AntennaKeepout {
+    fn keepout() -> sparksmith_core::library::package_form::module::AntennaKeepout {
+        sparksmith_core::library::package_form::module::AntennaKeepout {
             beyond_nm: [nm(0.0), nm(0.0), nm(0.0)],
         }
     }

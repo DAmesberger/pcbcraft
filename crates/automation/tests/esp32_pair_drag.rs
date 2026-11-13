@@ -6,26 +6,26 @@
 //! if the pair stays within its class limits; otherwise the drag is refused
 //! with a reason naming the pair. After each edit the board has no rule
 //! error and no pair finding, and one undo restores it.
-use pcbcraft_automation::session::{ApplyParams, Request, Session};
-use pcbcraft_core::diagnostics::Error;
-use pcbcraft_core::format::EditorFile;
-use pcbcraft_core::ids::Id;
-use pcbcraft_core::layout::fill::{FillCache, compute_stale};
-use pcbcraft_core::layout::posture::Posture;
-use pcbcraft_core::layout::router::drag::{PairDrag, TrackDragRequest, drag_plan};
-use pcbcraft_core::layout::router::{RouteIndex, RouteMode};
-use pcbcraft_core::layout::{self, LayoutCommand, length};
-use pcbcraft_core::model::Track;
-use pcbcraft_core::model::production::waiver_key;
-use pcbcraft_core::{Engine, Operation};
+use sparksmith_automation::session::{ApplyParams, Request, Session};
+use sparksmith_core::diagnostics::Error;
+use sparksmith_core::format::EditorFile;
+use sparksmith_core::ids::Id;
+use sparksmith_core::layout::fill::{FillCache, compute_stale};
+use sparksmith_core::layout::posture::Posture;
+use sparksmith_core::layout::router::drag::{PairDrag, TrackDragRequest, drag_plan};
+use sparksmith_core::layout::router::{RouteIndex, RouteMode};
+use sparksmith_core::layout::{self, LayoutCommand, length};
+use sparksmith_core::model::Track;
+use sparksmith_core::model::production::waiver_key;
+use sparksmith_core::{Engine, Operation};
 use std::path::Path;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn example() -> Fallible<Engine> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    Ok(Engine::from_file(pcbcraft_io::read_project(&path)?)?)
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    Ok(Engine::from_file(sparksmith_io::read_project(&path)?)?)
 }
 
 /// The tracks of the net named `name`.
@@ -364,8 +364,8 @@ fn pair_drag_preview_timings() -> Fallible {
 /// of one half alone, some of which break the pair.
 #[test]
 fn the_usb_pair_measures_the_same_on_its_own_nets() -> Fallible {
-    use pcbcraft_core::diagnostics::ObjectRef;
-    use pcbcraft_core::layout::CopperGraph;
+    use sparksmith_core::diagnostics::ObjectRef;
+    use sparksmith_core::layout::CopperGraph;
     let engine = example()?;
     let p = engine.project();
     let (dn, _) = long_runs(&engine)?;

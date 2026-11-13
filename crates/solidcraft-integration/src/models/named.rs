@@ -27,11 +27,11 @@ use super::imported::{self, checked_source};
 use super::{GeneratedBody, is_generated};
 use crate::native::{BoxBody, Expr, Native};
 use crate::{Error, Result};
-use pcbcraft_core::library::PackageDefinition;
-use pcbcraft_core::library::bundle::asset_hash;
-use pcbcraft_core::library::model3d::{ModelDefinition, ModelFormat};
 use serde_json::json;
 use solidcraft_engine::doc::{Document, ModelState};
+use sparksmith_core::library::PackageDefinition;
+use sparksmith_core::library::bundle::asset_hash;
+use sparksmith_core::library::model3d::{ModelDefinition, ModelFormat};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
 

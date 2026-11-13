@@ -213,7 +213,7 @@ pub fn look_graph_json(surface: OpaqueSurface, detail: Detail) -> Value {
         }
     };
     nodes.push(surface_json);
-    json!({"name": "pcbcraft look", "nodes": nodes, "output": "surface"})
+    json!({"name": "sparksmith look", "nodes": nodes, "output": "surface"})
 }
 
 /// The look lowered for the renderer. The graphs are this module's own, so a
@@ -236,7 +236,7 @@ pub fn lower_look(surface: OpaqueSurface, detail: Detail) -> Result<LoweredLook>
 mod tests {
     use super::*;
     use crate::material::{BodyKind, Pattern, detail, material};
-    use pcbcraft_core::Fabrication;
+    use sparksmith_core::Fabrication;
     use std::collections::HashSet;
 
     #[test]

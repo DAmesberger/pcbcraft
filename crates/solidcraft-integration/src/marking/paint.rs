@@ -50,8 +50,8 @@
 //! [`MAX_IMAGE_PIXELS`]); past a bound the artwork is refused whole.
 use super::shapes;
 use crate::{Error, Result};
-use pcbcraft_core::Point;
 use quick_xml::events::{BytesStart, Event};
+use sparksmith_core::Point;
 use std::collections::BTreeMap;
 
 pub use super::fill::FillRule;

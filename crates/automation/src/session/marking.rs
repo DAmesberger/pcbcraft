@@ -12,18 +12,18 @@
 //! and its size, so an agent placing a datasheet's marking can choose.
 use super::{Session, hosted};
 use crate::Result;
-use pcbcraft_core::library::marking::surface::{self, SurfaceGeometry};
-use pcbcraft_core::library::marking::{
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sparksmith_core::library::marking::surface::{self, SurfaceGeometry};
+use sparksmith_core::library::marking::{
     ARTWORK_MEDIA_TYPE, Align, Anchor, AreaChoiceParams, BoxFace, Ecc, Finish, MAX_ARTWORK_BYTES,
     MAX_DECALS, MAX_MARKING_ITEMS, MarkingItem, MarkingSpec, PlacementParams, PolarityMark,
     SurfaceRef, Symbology, Template,
 };
-use pcbcraft_core::library::{Definition, DraftEdit, PackageDefinition, PackedAsset};
-use pcbcraft_core::units::Length;
-use pcbcraft_core::{DefinitionId, FieldRef, LibraryCommand, Operation};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use sparksmith_core::library::{Definition, DraftEdit, PackageDefinition, PackedAsset};
+use sparksmith_core::units::Length;
+use sparksmith_core::{DefinitionId, FieldRef, LibraryCommand, Operation};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -165,7 +165,7 @@ pub struct MarkingSurfacesParams {
 }
 
 fn invalid(m: String) -> crate::Error {
-    crate::Error::Document(pcbcraft_core::Error::Invalid(m))
+    crate::Error::Document(sparksmith_core::Error::Invalid(m))
 }
 
 /// The items of one spec, artwork staged into `artwork`.
@@ -199,7 +199,7 @@ fn items(inputs: Vec<ItemInput>, artwork: &mut Vec<PackedAsset>) -> Result<Vec<M
                         MAX_ARTWORK_BYTES >> 10
                     )));
                 }
-                let data = pcbcraft_core::library::bundle::AssetBytes::new(svg.into_bytes());
+                let data = sparksmith_core::library::bundle::AssetBytes::new(svg.into_bytes());
                 let hash = data.hash();
                 if !artwork.iter().any(|a: &PackedAsset| a.hash == hash) {
                     artwork.push(PackedAsset {
@@ -329,7 +329,7 @@ impl Session {
                     decals,
                 };
                 if let Some(finding) =
-                    pcbcraft_core::library::marking::spec_findings(params.draft, &spec)
+                    sparksmith_core::library::marking::spec_findings(params.draft, &spec)
                         .into_iter()
                         .next()
                 {

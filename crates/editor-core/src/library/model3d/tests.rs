@@ -16,7 +16,7 @@ type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// Original fixture bytes: not a real STEP file, only content to hash.
 pub(crate) fn bytes(tag: &str) -> Vec<u8> {
-    format!("ISO-10303-21; pcbcraft original test fixture {tag}; END-ISO-10303-21;").into_bytes()
+    format!("ISO-10303-21; sparksmith original test fixture {tag}; END-ISO-10303-21;").into_bytes()
 }
 
 pub(crate) fn packed(data: &[u8], media_type: &str) -> PackedAsset {
@@ -82,7 +82,7 @@ pub(crate) fn model(asset: &PackedAsset) -> ModelDefinition {
             family: Some("two-lead test body".into()),
         },
         provenance: ModelProvenance {
-            vendor: Some("Pcbcraft tests".into()),
+            vendor: Some("Sparksmith tests".into()),
             url: None,
             retrieved: Some("2026-11-01".into()),
             redistribution: Redistribution::Permitted,

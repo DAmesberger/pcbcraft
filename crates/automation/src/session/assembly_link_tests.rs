@@ -10,15 +10,15 @@ use super::Session;
 use super::interface_publish_tests::{
     TestResult, apply, faces, instance, linked_design, ok, open, publish, remove,
 };
-use pcbcraft_core::Operation;
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
-use pcbcraft_core::library::footprint_source::{
+use serde_json::{Value, json};
+use sparksmith_core::Operation;
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::library::footprint_source::{
     DimKind, DimValue, ParamName, SketchConstraintId, SketchCurveId, SketchEdit, SketchPointId,
     SketchRef,
 };
-use pcbcraft_core::model::BoardShape;
-use pcbcraft_solidcraft::linked_design::LinkedDesign;
-use serde_json::{Value, json};
+use sparksmith_core::model::BoardShape;
+use sparksmith_solidcraft::linked_design::LinkedDesign;
 use std::path::Path;
 
 /// Where the far wall's inner face stands in the test document, mm: half
@@ -240,7 +240,7 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_publishing() -> TestResult {
         "{title}"
     );
     // Publishing waits, writing nothing.
-    let sidecar = pcbcraft_io::interface::sidecar_path(&design);
+    let sidecar = sparksmith_io::interface::sidecar_path(&design);
     let sidecar_bytes = std::fs::read(&sidecar)?;
     let revision = session.engine().revision();
     let refused = session.dispatch(json!({"command": "interface.publish", "params": {

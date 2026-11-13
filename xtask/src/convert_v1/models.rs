@@ -91,9 +91,9 @@ fn plane(a: &mut Map<String, Value>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::library::model3d::ModelDefinition;
-    use pcbcraft_core::library::{ModelPlacement, PackageModel};
     use serde_json::json;
+    use sparksmith_core::library::model3d::ModelDefinition;
+    use sparksmith_core::library::{ModelPlacement, PackageModel};
 
     /// `value`'s object with `remove` keys dropped and `old` merged in: the
     /// app's own encoding with this domain's fields in their old form.

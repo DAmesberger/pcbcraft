@@ -3498,248 +3498,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
-name = "pcbcraft"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "block2 0.6.2",
- "eframe",
- "egui",
- "egui-wgpu",
- "muda",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "pcbcraft-assist",
- "pcbcraft-automation",
- "pcbcraft-core",
- "pcbcraft-io",
- "pcbcraft-solidcraft",
- "pcbcraft-ui",
- "pollster 0.4.0",
- "rfd",
- "serde_json",
- "solidcraft-viewport-egui",
- "solidcraft-viewport-gpu",
- "spade",
- "tempfile",
-]
-
-[[package]]
-name = "pcbcraft-assist"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "hayro",
- "keyring",
- "pcbcraft-automation",
- "pcbcraft-core",
- "pcbcraft-io",
- "pdf-extract",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "ureq",
-]
-
-[[package]]
-name = "pcbcraft-automation"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.3.4",
- "pcbcraft-core",
- "pcbcraft-firmware",
- "pcbcraft-io",
- "pcbcraft-solidcraft",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "solidcraft-control",
- "tempfile",
- "thiserror 2.0.21",
- "tokio",
- "zip",
-]
-
-[[package]]
-name = "pcbcraft-cli"
-version = "0.1.0"
-dependencies = [
- "pcbcraft-assist",
- "pcbcraft-automation",
- "pcbcraft-core",
- "pcbcraft-io",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "pcbcraft-core"
-version = "0.1.0"
-dependencies = [
- "i_overlay",
- "pcbcraft-fabcheck",
- "pcbcraft-units-derive",
- "qrcodegen",
- "rhai",
- "rqrr",
- "schemars",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.21",
- "wasm-bindgen-test",
-]
-
-[[package]]
-name = "pcbcraft-fabcheck"
-version = "0.1.0"
-dependencies = [
- "i_overlay",
-]
-
-[[package]]
-name = "pcbcraft-firmware"
-version = "0.1.0"
-dependencies = [
- "pcbcraft-core",
- "rhai",
- "schemars",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pcbcraft-gen-chip"
-version = "0.1.0"
-dependencies = [
- "pcbcraft-generator-sdk",
-]
-
-[[package]]
-name = "pcbcraft-generator-abi"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "unicode-normalization",
-]
-
-[[package]]
-name = "pcbcraft-generator-sdk"
-version = "0.1.0"
-dependencies = [
- "dlmalloc",
- "pcbcraft-generator-abi",
- "serde",
- "serde_json",
- "spin 0.9.9",
-]
-
-[[package]]
-name = "pcbcraft-generators"
-version = "0.1.0"
-dependencies = [
- "pcbcraft-generator-abi",
- "serde_json",
- "wasmi",
- "wat",
-]
-
-[[package]]
-name = "pcbcraft-generators-probe"
-version = "0.1.0"
-dependencies = [
- "pcbcraft-generator-abi",
- "pcbcraft-generators",
-]
-
-[[package]]
-name = "pcbcraft-io"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.3.4",
- "pcbcraft-core",
- "pdf-writer",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "zip",
-]
-
-[[package]]
-name = "pcbcraft-kicad"
-version = "0.1.0"
-dependencies = [
- "i_overlay",
- "pcbcraft-core",
- "pcbcraft-fabcheck",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "pcbcraft-solidcraft"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "i_overlay",
- "js-sys",
- "pcbcraft-core",
- "png",
- "quick-xml",
- "schemars",
- "serde",
- "serde_json",
- "solidcore-record",
- "solidcraft-color",
- "solidcraft-engine",
- "solidcraft-viewport",
- "tempfile",
- "thiserror 2.0.21",
- "wasm-bindgen-test",
-]
-
-[[package]]
-name = "pcbcraft-ui"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "egui",
- "egui-wgpu",
- "log",
- "serde",
- "serde_json",
- "solidcore-record",
- "solidcraft-color",
- "solidcraft-geom",
- "solidcraft-ui-registry",
- "solidcraft-ui-text",
- "solidcraft-viewport",
- "solidcraft-viewport-egui",
- "solidcraft-viewport-gpu",
- "tiny-skia",
- "toml",
- "ttf-parser",
- "web-time",
-]
-
-[[package]]
-name = "pcbcraft-units-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "pdf-extract"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5252,6 +5010,248 @@ dependencies = [
  "num-traits",
  "robust",
  "smallvec",
+]
+
+[[package]]
+name = "sparksmith"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "block2 0.6.2",
+ "eframe",
+ "egui",
+ "egui-wgpu",
+ "muda",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "pollster 0.4.0",
+ "rfd",
+ "serde_json",
+ "solidcraft-viewport-egui",
+ "solidcraft-viewport-gpu",
+ "spade",
+ "sparksmith-assist",
+ "sparksmith-automation",
+ "sparksmith-core",
+ "sparksmith-io",
+ "sparksmith-solidcraft",
+ "sparksmith-ui",
+ "tempfile",
+]
+
+[[package]]
+name = "sparksmith-assist"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "hayro",
+ "keyring",
+ "pdf-extract",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sparksmith-automation",
+ "sparksmith-core",
+ "sparksmith-io",
+ "tempfile",
+ "thiserror 2.0.21",
+ "ureq",
+]
+
+[[package]]
+name = "sparksmith-automation"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "solidcraft-control",
+ "sparksmith-core",
+ "sparksmith-firmware",
+ "sparksmith-io",
+ "sparksmith-solidcraft",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "zip",
+]
+
+[[package]]
+name = "sparksmith-cli"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sparksmith-assist",
+ "sparksmith-automation",
+ "sparksmith-core",
+ "sparksmith-io",
+ "tempfile",
+]
+
+[[package]]
+name = "sparksmith-core"
+version = "0.1.0"
+dependencies = [
+ "i_overlay",
+ "qrcodegen",
+ "rhai",
+ "rqrr",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sparksmith-fabcheck",
+ "sparksmith-units-derive",
+ "thiserror 2.0.21",
+ "wasm-bindgen-test",
+]
+
+[[package]]
+name = "sparksmith-fabcheck"
+version = "0.1.0"
+dependencies = [
+ "i_overlay",
+]
+
+[[package]]
+name = "sparksmith-firmware"
+version = "0.1.0"
+dependencies = [
+ "rhai",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sparksmith-core",
+]
+
+[[package]]
+name = "sparksmith-gen-chip"
+version = "0.1.0"
+dependencies = [
+ "sparksmith-generator-sdk",
+]
+
+[[package]]
+name = "sparksmith-generator-abi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "sparksmith-generator-sdk"
+version = "0.1.0"
+dependencies = [
+ "dlmalloc",
+ "serde",
+ "serde_json",
+ "sparksmith-generator-abi",
+ "spin 0.9.9",
+]
+
+[[package]]
+name = "sparksmith-generators"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sparksmith-generator-abi",
+ "wasmi",
+ "wat",
+]
+
+[[package]]
+name = "sparksmith-generators-probe"
+version = "0.1.0"
+dependencies = [
+ "sparksmith-generator-abi",
+ "sparksmith-generators",
+]
+
+[[package]]
+name = "sparksmith-io"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "pdf-writer",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sparksmith-core",
+ "tempfile",
+ "thiserror 2.0.21",
+ "zip",
+]
+
+[[package]]
+name = "sparksmith-kicad"
+version = "0.1.0"
+dependencies = [
+ "i_overlay",
+ "serde",
+ "serde_json",
+ "sparksmith-core",
+ "sparksmith-fabcheck",
+]
+
+[[package]]
+name = "sparksmith-solidcraft"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "i_overlay",
+ "js-sys",
+ "png",
+ "quick-xml",
+ "schemars",
+ "serde",
+ "serde_json",
+ "solidcore-record",
+ "solidcraft-color",
+ "solidcraft-engine",
+ "solidcraft-viewport",
+ "sparksmith-core",
+ "tempfile",
+ "thiserror 2.0.21",
+ "wasm-bindgen-test",
+]
+
+[[package]]
+name = "sparksmith-ui"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "egui",
+ "egui-wgpu",
+ "log",
+ "serde",
+ "serde_json",
+ "solidcore-record",
+ "solidcraft-color",
+ "solidcraft-geom",
+ "solidcraft-ui-registry",
+ "solidcraft-ui-text",
+ "solidcraft-viewport",
+ "solidcraft-viewport-egui",
+ "solidcraft-viewport-gpu",
+ "tiny-skia",
+ "toml",
+ "ttf-parser",
+ "web-time",
+]
+
+[[package]]
+name = "sparksmith-units-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -6941,14 +6941,14 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
- "pcbcraft-core",
- "pcbcraft-fabcheck",
- "pcbcraft-io",
- "pcbcraft-kicad",
- "pcbcraft-solidcraft",
  "proc-macro2",
  "serde_json",
  "sha2 0.10.9",
+ "sparksmith-core",
+ "sparksmith-fabcheck",
+ "sparksmith-io",
+ "sparksmith-kicad",
+ "sparksmith-solidcraft",
  "syn 2.0.119",
  "zip",
 ]

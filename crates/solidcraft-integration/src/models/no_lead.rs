@@ -5,7 +5,7 @@
 use super::{Build, check_count, check_positive, mm, require, top_edges};
 use crate::Result;
 use crate::native::{BoxBody, Expr, Pattern};
-use pcbcraft_core::library::{BodyRole, LeadSides, NoLeadForm};
+use sparksmith_core::library::{BodyRole, LeadSides, NoLeadForm};
 
 /// Leadframe thickness (est.: 0.2 mm is the common QFN frame), at most a
 /// third of the body height.

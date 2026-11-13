@@ -28,8 +28,8 @@ pub mod golden;
 pub mod land;
 pub mod units;
 
-pub use pcbcraft_generator_abi as abi;
-pub use pcbcraft_generator_abi::v1;
+pub use sparksmith_generator_abi as abi;
+pub use sparksmith_generator_abi::v1;
 
 use alloc::vec::Vec;
 use v1::{Description, Generation, Problem, Request};
@@ -56,28 +56,28 @@ macro_rules! export_generator {
         /// ABI export: the ABI version.
         #[allow(unsafe_code)] // An exported symbol name; see the SDK's "Unsafe code".
         #[unsafe(no_mangle)]
-        pub extern "C" fn pcbcraft_gen_abi() -> u32 {
+        pub extern "C" fn sparksmith_gen_abi() -> u32 {
             $crate::entry::abi()
         }
 
         /// ABI export: a request buffer.
         #[allow(unsafe_code)] // An exported symbol name; see the SDK's "Unsafe code".
         #[unsafe(no_mangle)]
-        pub extern "C" fn pcbcraft_gen_alloc(len: u32) -> u32 {
+        pub extern "C" fn sparksmith_gen_alloc(len: u32) -> u32 {
             $crate::entry::alloc(len)
         }
 
         /// ABI export: the canonical description.
         #[allow(unsafe_code)] // An exported symbol name; see the SDK's "Unsafe code".
         #[unsafe(no_mangle)]
-        pub extern "C" fn pcbcraft_gen_describe() -> u64 {
+        pub extern "C" fn sparksmith_gen_describe() -> u64 {
             $crate::entry::describe::<$generator>()
         }
 
         /// ABI export: generate from the request in the buffer.
         #[allow(unsafe_code)] // An exported symbol name; see the SDK's "Unsafe code".
         #[unsafe(no_mangle)]
-        pub extern "C" fn pcbcraft_gen_generate(ptr: u32, len: u32) -> u64 {
+        pub extern "C" fn sparksmith_gen_generate(ptr: u32, len: u32) -> u64 {
             $crate::entry::generate::<$generator>(ptr, len)
         }
     };

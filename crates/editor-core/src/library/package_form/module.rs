@@ -6,7 +6,7 @@
 //! lead order and the host keep-out over the antenna live here; the lands
 //! are `samples::form_lands_with`, the footprint keep-out
 //! [`ModuleForm::antenna_keepout`] and the model builder
-//! `pcbcraft-solidcraft` `models/module.rs`.
+//! `sparksmith-solidcraft` `models/module.rs`.
 //!
 //! Frame: seen from above, x across the module (`width`), y along it
 //! (`length`), the antenna end at +y, the origin at the outline centre.

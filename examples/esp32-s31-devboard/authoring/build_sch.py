@@ -31,7 +31,7 @@ def build(s, L):
     lib = Lib(s)
     out = {"instances": {}}
     s.op("project.set_properties", {"properties": {"title": "ESP32-S31 dev board", "revision": "A", "date": "2026-11-03",
-                                                   "author": "Pcbcraft e2e run (agent)", "company": "Pcbcraft example"}})
+                                                   "author": "Sparksmith e2e run (agent)", "company": "Sparksmith example"}})
     s.op("sheet.rename", {"sheet": 1, "name": "Power and USB"})
     r = s.op("sheet.add", {"name": "Module and IO", "paper": "a3", "orientation": "landscape"})
     sheet2 = r["result"]["outcome"].get("sheet") or r["result"]["outcome"].get("id")

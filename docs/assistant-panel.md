@@ -131,7 +131,7 @@ If the agent hasn't answered after 10 s, the panel offers **End agent**. Other s
 
 ### Approvals
 
-- **Questions about our tools.** When the agent sends `session/request_permission` for a tool of its `pcbcraft-<random>` server, the panel answers `allow_once` automatically and leaves an *Auto-allowed* note. Our gate decides the call when it arrives, so the agent's question adds nothing. A setting turns this off.
+- **Questions about our tools.** When the agent sends `session/request_permission` for a tool of its `sparksmith-<random>` server, the panel answers `allow_once` automatically and leaves an *Auto-allowed* note. Our gate decides the call when it arrives, so the agent's question adds nothing. A setting turns this off.
 - **Questions about the agent's own tools** appear as a card with the agent's `options` (`allow_once`, `allow_always`, `reject_once`, `reject_always`).
 - **Our gate's Ask** (an export, a file, publishing) appears as an Allow/Deny card in the conversation. It shows the command, the paths it names and why. A held Ask is declined just before the channel's `ASK_WAIT` runs out, and the model gets `gate.denied`.
 
@@ -315,15 +315,15 @@ Other states:
 
 | Reused as is | Where |
 |---|---|
-| Typed engine, catalogue, classes, compact replies | `pcbcraft-core`, `crates/automation/src/session*` |
+| Typed engine, catalogue, classes, compact replies | `sparksmith-core`, `crates/automation/src/session*` |
 | MCP server, live mode, `live_tools` | `crates/automation/src/mcp.rs` |
 | Live channel: `Endpoint`, `admit`, `run`, `Client`, `--live` bridge | `crates/automation/src/live.rs`, Solidcraft's control channel |
 | Gate: `Policy`, `Mode`, `decide`, `check_request`, refusals | `crates/automation/src/gate.rs` |
-| Window pump, busy rule, Ask prompt, AI indicator, toasts | `apps/pcbcraft/src/app/live_mcp.rs` |
+| Window pump, busy rule, Ask prompt, AI indicator, toasts | `apps/sparksmith/src/app/live_mcp.rs` |
 | Model layer, backends, keys, endpoints, recording | `crates/assist/src/model*` |
 | Run profiles, harness fixes | `crates/assist/src/profile.rs`, `profiles/` |
 | PDF text and page rendering | `crates/assist/src/documents.rs` |
-| Undo fold (`join_last_step`) | `pcbcraft-core` `Engine` |
+| Undo fold (`join_last_step`) | `sparksmith-core` `Engine` |
 | Shortcut registry, palette, `ui_kit` containers, toasts, Messages | app |
 
 | New | Size |

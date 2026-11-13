@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/launch/media/pcbcraft-tour.mp4"><b>▶ Watch the two-minute tour</b></a> ·
+  <a href="docs/launch/media/sparksmith-tour.mp4"><b>▶ Watch the two-minute tour</b></a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#drive-it-from-an-agent-mcp">MCP</a> ·
   <a href="#status">Status</a>
@@ -96,12 +96,12 @@ Sparksmith builds with the Rust toolchain pinned in `rust-toolchain.toml` (1.96.
 rustfmt and the wasm target). Use rustup, or the Nix dev shell, which provides exactly that toolchain:
 
 ```sh
-git clone <repository-url> pcbcraft && cd pcbcraft
+git clone <repository-url> sparksmith && cd sparksmith
 nix develop                     # optional: the pinned toolchain without rustup
 
 # a routed 4-layer board with vias, fills and an inner plane
-cargo run --locked --profile ci -p pcbcraft-cli -- showcase showcase.pcbcraft
-cargo run --locked --profile ci -p pcbcraft -- showcase.pcbcraft
+cargo run --locked --profile ci -p sparksmith-cli -- showcase showcase.sparksmith
+cargo run --locked --profile ci -p sparksmith -- showcase.sparksmith
 ```
 
 Things to try on the showcase:
@@ -116,9 +116,9 @@ Things to try on the showcase:
 Other starting points:
 
 ```sh
-cargo run --locked --profile ci -p pcbcraft-cli -- parts parts.pcbcraft   # 24 invented EX- parts for the Place palette
-cargo run --locked --profile ci -p pcbcraft -- examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft
-cargo run --locked --profile ci -p pcbcraft-cli -- fab showcase.pcbcraft out/   # production files from the CLI
+cargo run --locked --profile ci -p sparksmith-cli -- parts parts.sparksmith   # 24 invented EX- parts for the Place palette
+cargo run --locked --profile ci -p sparksmith -- examples/esp32-s31-wroom-3/esp32-s31-wroom-3.sparksmith
+cargo run --locked --profile ci -p sparksmith-cli -- fab showcase.sparksmith out/   # production files from the CLI
 cargo xtask ci                  # formatting, layers, licences, clean room, strict Clippy, tests, wasm
 ```
 
@@ -137,12 +137,12 @@ returns the whole document; `project_schema` serves each operation's exact schem
 Build the CLI once, then register it with your MCP client. For Claude Code:
 
 ```sh
-cargo build --locked --profile ci -p pcbcraft-cli
-claude mcp add sparksmith -- "$PWD/target/ci/sparksmith" mcp "$PWD/showcase.pcbcraft"
+cargo build --locked --profile ci -p sparksmith-cli
+claude mcp add sparksmith -- "$PWD/target/ci/sparksmith" mcp "$PWD/showcase.sparksmith"
 ```
 
 (Inside `nix develop` the binary is at `target/nix/ci/sparksmith`.) Any MCP client works the
-same way: the command is `sparksmith mcp [FILE.pcbcraft]`. Then ask, for example: *"Find the
+same way: the command is `sparksmith mcp [FILE.sparksmith]`. Then ask, for example: *"Find the
 unrouted connections on the showcase and route GND with a via to the inner plane."* The agent
 works on a headless session of that file and saves it through `project_save`; open the file in the
 desktop app to see the result. The desktop window does not yet follow an agent's edits live.
@@ -150,15 +150,15 @@ desktop app to see the result. The desktop window does not yet follow an agent's
 The same requests run over JSON lines without MCP:
 
 ```sh
-cargo run --locked --profile ci -p pcbcraft-cli -- stdio showcase.pcbcraft
+cargo run --locked --profile ci -p sparksmith-cli -- stdio showcase.sparksmith
 {"command":"project.query","params":{"query":"library.search","params":{"query":"res>=10k pkg:0603","limit":10}}}
 ```
 
 To draft a component from datasheets (needs an Anthropic API key, held in memory only):
 
 ```sh
-ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p pcbcraft-cli -- design-part \
-  --datasheet PART.pdf --name PART --out part.pcbcraft   # drafts + PART.review.md; publishes nothing
+ANTHROPIC_API_KEY=… cargo run --locked --profile ci -p sparksmith-cli -- design-part \
+  --datasheet PART.pdf --name PART --out part.sparksmith   # drafts + PART.review.md; publishes nothing
 ```
 
 The desktop has the same as **Create from datasheet…** on the Component start page.
@@ -167,19 +167,19 @@ The desktop has the same as **Create from datasheet…** on the Component start 
 
 | Crate | Responsibility |
 | --- | --- |
-| `pcbcraft-core` | Pure, wasm-compatible document, typed operations and queries, the one `Engine` with shared undo, checks, fills, routing, fabrication generation and the file format. |
-| `pcbcraft-io` | Bounded reads, atomic writes, crash recovery, library folders, fabrication and PDF output. |
-| `pcbcraft-solidcraft` | Builds the native Solidcraft model through a typed facade over Solidcraft's command API. |
-| `pcbcraft-firmware` | Pin-configuration exports: JSON IR, C header, Zephyr overlay skeleton, Rust constants. |
-| `pcbcraft-automation` | Headless `Session` shared by the JSON-lines transport and the MCP server. |
-| `pcbcraft-assist` | The in-app datasheet runner: a model tool-use loop over the automation session, with request, token and time limits. |
-| `pcbcraft`, `pcbcraft-cli` | The egui/wgpu desktop editor and the command line (its binary is `sparksmith`). |
+| `sparksmith-core` | Pure, wasm-compatible document, typed operations and queries, the one `Engine` with shared undo, checks, fills, routing, fabrication generation and the file format. |
+| `sparksmith-io` | Bounded reads, atomic writes, crash recovery, library folders, fabrication and PDF output. |
+| `sparksmith-solidcraft` | Builds the native Solidcraft model through a typed facade over Solidcraft's command API. |
+| `sparksmith-firmware` | Pin-configuration exports: JSON IR, C header, Zephyr overlay skeleton, Rust constants. |
+| `sparksmith-automation` | Headless `Session` shared by the JSON-lines transport and the MCP server. |
+| `sparksmith-assist` | The in-app datasheet runner: a model tool-use loop over the automation session, with request, token and time limits. |
+| `sparksmith`, `sparksmith-cli` | The egui/wgpu desktop editor and the command line (its binary is `sparksmith`). |
 
 `cargo xtask ci` enforces the layer direction, the core module map, Solidcraft's UI containers,
 dependency licences, the clean-room rule and strict Clippy, runs the test suite (over 1,300 tests at
 the last recorded gate) and compiles the core for `wasm32-unknown-unknown`.
 
-Files are atomic `.pcbcraft` ZIP containers holding the exact revisioned library snapshot, so a
+Files are atomic `.sparksmith` ZIP containers holding the exact revisioned library snapshot, so a
 project reopens offline and a library edit never changes an existing board without a reviewed
 update. Unsaved work is snapshotted and offered back after a crash.
 

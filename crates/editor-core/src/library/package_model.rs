@@ -96,7 +96,7 @@ impl PartValue {
 }
 
 /// What a part file evaluated to when a package was given it: derived by
-/// the host (`pcbcraft_solidcraft::models::part_file`), stored so the core
+/// the host (`sparksmith_solidcraft::models::part_file`), stored so the core
 /// lays out markings without evaluating Solidcraft, and rechecked by every
 /// board build (`part_file.stale` on a difference).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]

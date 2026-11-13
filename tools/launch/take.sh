@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Record one storyboard shot of the Pcbcraft desktop app, window only, then post-process it.
+# Record one storyboard shot of the Sparksmith desktop app, window only, then post-process it.
 #
-#   tools/launch/take.sh SHOT PROJECT.pcbcraft OUT_DIR [--activate] [--settle SECONDS] [--prelude SHOT] [--no-post]
+#   tools/launch/take.sh SHOT PROJECT.sparksmith OUT_DIR [--activate] [--settle SECONDS] [--prelude SHOT] [--no-post]
 #
 # SHOT is a name in tools/launch/shots/ (without .shot) or a path. The app is started fresh with
 # its own recovery, settings and cache folders under target/launch/, so takes do not depend on the
@@ -9,7 +9,7 @@
 # recorded, and only that pid receives input. The app is closed by its pid at the end, also when
 # the take fails.
 #
-# Environment: PCBCRAFT_BIN (default target/nix/ci/pcbcraft, then target/ci/pcbcraft),
+# Environment: SPARKSMITH_BIN (default target/nix/ci/sparksmith-desktop, then target/ci/sparksmith-desktop),
 # FFMPEG (default: ffmpeg-full from nixpkgs), LAUNCH_FONT (caption font).
 set -euo pipefail
 
@@ -39,17 +39,17 @@ if [ ! -x "$kit" ] || [ "$here/launchkit.swift" -nt "$kit" ]; then
   mkdir -p "$repo/target/launch"
   swiftc -O -o "$kit" "$here/launchkit.swift"
 fi
-bin="${PCBCRAFT_BIN:-}"
-for candidate in "$repo/target/nix/ci/pcbcraft" "$repo/target/ci/pcbcraft"; do
+bin="${SPARKSMITH_BIN:-}"
+for candidate in "$repo/target/nix/ci/sparksmith-desktop" "$repo/target/ci/sparksmith-desktop"; do
   [ -n "$bin" ] || { [ -x "$candidate" ] && bin="$candidate"; }
 done
-[ -x "$bin" ] || { echo "build the app first: cargo build --locked --profile ci -p pcbcraft" >&2; exit 2; }
+[ -x "$bin" ] || { echo "build the app first: cargo build --locked --profile ci -p sparksmith" >&2; exit 2; }
 export FFMPEG="${FFMPEG:-$(nix build nixpkgs#ffmpeg-full.bin --print-out-paths --no-link)/bin/ffmpeg}"
 
 # A fresh, private app state for every take.
 state="$repo/target/launch/state"
 rm -rf "$state"; mkdir -p "$state/recovery" "$state/config" "$state/cache" "$state/home"
-export PCBCRAFT_RECOVERY_DIR="$state/recovery" PCBCRAFT_CONFIG_DIR="$state/config" PCBCRAFT_CACHE_DIR="$state/cache"
+export SPARKSMITH_RECOVERY_DIR="$state/recovery" SPARKSMITH_CONFIG_DIR="$state/config" SPARKSMITH_CACHE_DIR="$state/cache"
 
 app_pid=""; rec_pid=""
 cleanup() {

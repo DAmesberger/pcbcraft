@@ -1,4 +1,4 @@
-//! The probe: the generator host (`pcbcraft-generators`, wasmi included)
+//! The probe: the generator host (`sparksmith-generators`, wasmi included)
 //! built for `wasm32-unknown-unknown`, as a module the native host runs.
 //! It answers the golden check "under wasmi inside the wasm32 build": the
 //! native test hands it a generator module and a request, the probe runs
@@ -16,9 +16,9 @@
 //! Test code only: it is built by `cargo xtask generators check` and never
 //! shipped. Buffers cross without pointer dereferences, as in the SDK's
 //! `entry` module.
-use pcbcraft_generator_abi::v1::{self, Description, ErrorBody, Request, Scope};
-use pcbcraft_generator_abi::{Failure, codec};
-use pcbcraft_generators::{Limits, WasmiRuntime};
+use sparksmith_generator_abi::v1::{self, Description, ErrorBody, Request, Scope};
+use sparksmith_generator_abi::{Failure, codec};
+use sparksmith_generators::{Limits, WasmiRuntime};
 use std::sync::Mutex;
 
 /// Largest input: a module of the default limit plus a request.
@@ -78,14 +78,14 @@ fn run(input: &[u8]) -> Vec<u8> {
 /// ABI export: the ABI version.
 #[allow(unsafe_code)] // An exported symbol name: no safe spelling exists.
 #[unsafe(no_mangle)]
-pub extern "C" fn pcbcraft_gen_abi() -> u32 {
+pub extern "C" fn sparksmith_gen_abi() -> u32 {
     v1::ABI
 }
 
 /// ABI export: an input buffer.
 #[allow(unsafe_code)] // An exported symbol name: no safe spelling exists.
 #[unsafe(no_mangle)]
-pub extern "C" fn pcbcraft_gen_alloc(len: u32) -> u32 {
+pub extern "C" fn sparksmith_gen_alloc(len: u32) -> u32 {
     let Ok(len) = usize::try_from(len) else {
         return 0;
     };
@@ -106,7 +106,7 @@ pub extern "C" fn pcbcraft_gen_alloc(len: u32) -> u32 {
 /// ABI export: a description of the probe (no parameters).
 #[allow(unsafe_code)] // An exported symbol name: no safe spelling exists.
 #[unsafe(no_mangle)]
-pub extern "C" fn pcbcraft_gen_describe() -> u64 {
+pub extern "C" fn sparksmith_gen_describe() -> u64 {
     let description = Description {
         abi: v1::ABI,
         id_hint: "probe".into(),
@@ -125,7 +125,7 @@ pub extern "C" fn pcbcraft_gen_describe() -> u64 {
 /// ABI export: run the module and request in the input buffer.
 #[allow(unsafe_code)] // An exported symbol name: no safe spelling exists.
 #[unsafe(no_mangle)]
-pub extern "C" fn pcbcraft_gen_generate(ptr: u32, len: u32) -> u64 {
+pub extern "C" fn sparksmith_gen_generate(ptr: u32, len: u32) -> u64 {
     let input = INPUT
         .lock()
         .map(|mut input| std::mem::take(&mut *input))

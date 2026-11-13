@@ -8,8 +8,8 @@ use crate::model::openai::OpenAiBackend;
 use crate::model::wire::ScriptedWire;
 use crate::model::{ModelBackend, ModelProfile};
 use crate::tools::ToolOutcome;
-use pcbcraft_automation::{Mode, Policy};
 use serde_json::Value;
+use sparksmith_automation::{Mode, Policy};
 use std::sync::atomic::AtomicBool;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -277,7 +277,7 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     let footprint = drafts
         .iter()
         .find_map(|d| match &d.definition {
-            pcbcraft_core::library::Definition::Footprint(f) => Some(f),
+            sparksmith_core::library::Definition::Footprint(f) => Some(f),
             _ => None,
         })
         .ok_or("a footprint draft")?;
@@ -302,7 +302,7 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     let component = drafts
         .iter()
         .find_map(|d| match &d.definition {
-            pcbcraft_core::library::Definition::Component(c) => Some(c),
+            sparksmith_core::library::Definition::Component(c) => Some(c),
             _ => None,
         })
         .ok_or("a component draft")?;
@@ -446,7 +446,7 @@ fn pages_are_counted_for_the_estimate() -> Fallible {
 #[test]
 fn publishing_and_paths_outside_the_output_folder_are_refused_by_the_gate() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let policy = output_policy(&dir.path().join("part.pcbcraft"))?;
+    let policy = output_policy(&dir.path().join("part.sparksmith"))?;
     let mut session = Session::default();
     let before = session.engine().revision();
     // Publishing needs a person, and a run has no one to ask.
@@ -460,7 +460,7 @@ fn publishing_and_paths_outside_the_output_folder_are_refused_by_the_gate() -> F
     assert_eq!(reply["error"]["code"], "gate.cannot_ask", "{reply}");
     // A file outside the run's folder is refused before anything is written.
     let outside = tempfile::tempdir()?;
-    let target = outside.path().join("elsewhere.pcbcraft");
+    let target = outside.path().join("elsewhere.sparksmith");
     let reply = tools::send(
         &mut session,
         &policy,

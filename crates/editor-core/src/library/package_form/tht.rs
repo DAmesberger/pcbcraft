@@ -2,7 +2,7 @@
 //! radial (capacitors), DIP and TO (TO-92, TO-220 style single rows). The
 //! form, its range rules and lead order live here; the footprint template
 //! (plated drills) is `templates/footprint_family/tht.rs` and the model
-//! builder (bent and formed leads) `pcbcraft-solidcraft` `models/tht.rs`.
+//! builder (bent and formed leads) `sparksmith-solidcraft` `models/tht.rs`.
 //!
 //! The seating plane z = 0 is the board's top face; leads reach
 //! `lead_below` under it into the drills. Lead order: an axial or radial

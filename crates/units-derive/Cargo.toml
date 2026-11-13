@@ -1,10 +1,10 @@
 [package]
-name = "pcbcraft-units-derive"
+name = "sparksmith-units-derive"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Derives the millimetre wire form of Pcbcraft's nanometre records"
+description = "Derives the millimetre wire form of Sparksmith's nanometre records"
 
 [lints]
 workspace = true

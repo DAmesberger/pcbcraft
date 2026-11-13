@@ -4,11 +4,11 @@
 //! `library.import_model` with the wizard's mapping. Not a document change.
 use super::Session;
 use crate::Result;
-use pcbcraft_core::library::model3d::{ModelFormat, SourceFrame, SourceFrameParams};
-use pcbcraft_solidcraft::models::inspect;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sparksmith_core::library::model3d::{ModelFormat, SourceFrame, SourceFrameParams};
+use sparksmith_solidcraft::models::inspect;
 use std::path::Path;
 
 /// Longest accepted path, bytes.
@@ -35,7 +35,7 @@ fn extensions(format: ModelFormat) -> &'static [&'static str] {
 }
 
 fn invalid(message: String) -> crate::Error {
-    pcbcraft_solidcraft::Error::Invalid(message).into()
+    sparksmith_solidcraft::Error::Invalid(message).into()
 }
 
 impl Session {
@@ -57,7 +57,7 @@ impl Session {
                 accepted.join(" or .")
             )));
         }
-        let bytes = pcbcraft_io::persistence::read_bytes(path)?;
+        let bytes = sparksmith_io::persistence::read_bytes(path)?;
         let inspection = match &params.frame {
             Some(frame) => inspect::inspect_in(&bytes, params.format, &SourceFrame::from(*frame))?,
             None => inspect::inspect(&bytes, params.format)?,
@@ -69,8 +69,8 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::Engine;
     use serde_json::json;
+    use sparksmith_core::Engine;
 
     type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

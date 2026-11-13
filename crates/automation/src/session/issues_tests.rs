@@ -1,10 +1,10 @@
 //! `project.issues` golden tests: the JSON-lines and MCP transports return
 //! exactly the issue list the core query gives the desktop, pinned for the
-//! demo project in `golden/issues_demo.json`. Set `PCBCRAFT_BLESS=1` to
+//! demo project in `golden/issues_demo.json`. Set `SPARKSMITH_BLESS=1` to
 //! rewrite the golden file after an intended change, then review the diff.
 use super::*;
 use crate::mcp::Server;
-use pcbcraft_core::issues::style;
+use sparksmith_core::issues::style;
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -18,7 +18,7 @@ fn request(scope: Value) -> Value {
 /// when blessing.
 fn golden(current: &Value) -> Fallible<Value> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN);
-    if std::env::var_os("PCBCRAFT_BLESS").is_some() {
+    if std::env::var_os("SPARKSMITH_BLESS").is_some() {
         std::fs::write(&path, serde_json::to_string_pretty(current)? + "\n")?;
     }
     Ok(serde_json::from_str(&std::fs::read_to_string(&path)?)?)
@@ -33,8 +33,8 @@ fn json_lines_issues_of_the_demo_match_the_golden_file() -> Fallible<()> {
     assert_eq!(result, &golden(result)?);
     assert_eq!(result["report"], "issues");
     // The transport passes the core report through unchanged.
-    let direct = session.engine().query(pcbcraft_core::Query::Issues {
-        scope: pcbcraft_core::issues::IssueScope::All,
+    let direct = session.engine().query(sparksmith_core::Query::Issues {
+        scope: sparksmith_core::issues::IssueScope::All,
     })?;
     assert_eq!(result, &serde_json::to_value(direct)?);
     let rows = result["result"]["rows"].as_array().ok_or("rows")?;
@@ -96,7 +96,7 @@ fn an_area_scope_counts_the_other_areas_and_bad_scopes_are_refused() -> Fallible
 
 #[test]
 fn a_refusal_names_its_rule_beside_the_message() {
-    let error = pcbcraft_core::Error::Conflict(
+    let error = sparksmith_core::Error::Conflict(
         "footprint.explicit: this footprint has explicit pads".into(),
     );
     let reply = envelope(Err(error.into()));
@@ -108,8 +108,9 @@ fn a_refusal_names_its_rule_beside_the_message() {
         "This footprint has explicit pads"
     );
     // A refusal without a rule carries no rule field.
-    let plain = envelope(Err(
-        pcbcraft_core::Error::History("Nothing to undo".into()).into()
-    ));
+    let plain = envelope(Err(sparksmith_core::Error::History(
+        "Nothing to undo".into(),
+    )
+    .into()));
     assert!(plain["error"].get("rule").is_none(), "{plain}");
 }

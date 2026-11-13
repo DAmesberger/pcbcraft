@@ -4,7 +4,7 @@ use crate::models::imported::SourceCache;
 use crate::project::plan::{self, Level};
 use crate::project::tests::{shaped, showcase};
 use crate::project::{Flat, build, build_flat};
-use pcbcraft_core::Project;
+use sparksmith_core::Project;
 
 fn meshed(project: &Project) -> Result<(BoardPlan, Vec<Meshed>, Stats)> {
     let plan = plan::of(project)?;
@@ -299,7 +299,7 @@ fn a_meshed_model_picks_every_flat_body_as_its_object() -> Result<()> {
             (track.start[0] + track.end[0]) / 2.0,
             (track.start[1] + track.end[1]) / 2.0,
         ];
-        let (z, down) = if track.layer == pcbcraft_core::CopperLayer::Bottom {
+        let (z, down) = if track.layer == sparksmith_core::CopperLayer::Bottom {
             (-10.0, 1.0)
         } else {
             (10.0, -1.0)
@@ -374,7 +374,7 @@ fn an_update_of_a_meshed_model_stays_meshed() -> Result<()> {
 /// others taken as they were.
 #[test]
 fn a_plan_from_the_memo_is_the_plan_made_anew() -> Result<()> {
-    use pcbcraft_core::layout::fill::{RefillTarget, refill};
+    use sparksmith_core::layout::fill::{RefillTarget, refill};
     let mut project = showcase()?;
     let mut memo = plan::Memo::default();
     let pads = crate::project::placed_pads(&project)?;
@@ -473,7 +473,7 @@ fn the_meshed_laminate_has_the_board_outlines_edges() -> Result<()> {
 #[test]
 fn each_slab_carries_its_dielectrics_realistic_material() -> Result<()> {
     use crate::look_graph::look_key;
-    use pcbcraft_core::GlassStyle;
+    use sparksmith_core::GlassStyle;
     let mut project = showcase()?;
     let styles = [
         GlassStyle::Style7628,
@@ -488,7 +488,7 @@ fn each_slab_carries_its_dielectrics_realistic_material() -> Result<()> {
     let live = build_flat(&project, &SourceCache::default(), None, Flat::Meshed)?;
     let laminate = crate::material::material(
         BodyKind::Substrate,
-        &pcbcraft_core::Fabrication::default(),
+        &sparksmith_core::Fabrication::default(),
         &crate::stack::Stack::default(),
     )
     .surface()?;

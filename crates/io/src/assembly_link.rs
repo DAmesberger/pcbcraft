@@ -3,7 +3,7 @@
 //! folder that the engine opens. The user's linked design file is only ever
 //! read; the dry run and every read work on the copy.
 use crate::{Error, Result};
-use pcbcraft_core::ids::ContentHash;
+use sparksmith_core::ids::ContentHash;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -49,7 +49,7 @@ pub fn hash(path: &Path) -> Result<Option<ContentHash>> {
     if !path.try_exists()? {
         return Ok(None);
     }
-    Ok(Some(pcbcraft_core::interface::assembly_link::file_hash(
+    Ok(Some(sparksmith_core::interface::assembly_link::file_hash(
         &read(path)?,
     )))
 }
@@ -82,7 +82,7 @@ pub fn copy(path: &Path) -> Result<LinkedDesignCopy> {
         .filter(|p| !p.as_os_str().is_empty())
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     Ok(LinkedDesignCopy {
-        hash: pcbcraft_core::interface::assembly_link::file_hash(&bytes),
+        hash: sparksmith_core::interface::assembly_link::file_hash(&bytes),
         path: copy,
         folder,
         dir,

@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use solidcraft_engine::{Session, doc};
 use std::sync::Arc;
 
-const META: &str = "org.pcbcraft.copper-fixture";
+const META: &str = "org.sparksmith.copper-fixture";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Item {
@@ -278,7 +278,7 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
         metadata
             .get(META)
             .cloned()
-            .ok_or_else(|| Error::Invalid("not a Pcbcraft copper fixture".into()))?,
+            .ok_or_else(|| Error::Invalid("not a Sparksmith copper fixture".into()))?,
     )?;
     if manifest.version != 1 || manifest.items.len() != 7 {
         return Err(Error::Invalid("unsupported copper fixture manifest".into()));
@@ -339,11 +339,11 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
             dielectric: None,
             surface: crate::material::material(
                 kind,
-                &pcbcraft_core::Fabrication::default(),
+                &sparksmith_core::Fabrication::default(),
                 &crate::stack::Stack::default(),
             )
             .surface()?,
-            detail: crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
+            detail: crate::material::detail(kind, &sparksmith_core::Fabrication::default()),
             mesh: body.mesh(),
             place: None,
             volume: crate::scene::Volume::known(m.volume),

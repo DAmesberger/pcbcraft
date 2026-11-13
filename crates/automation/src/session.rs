@@ -2,7 +2,10 @@
 //! document mutation through [`Engine::apply`], or an external file effect.
 //! File effects never enter undo history.
 use crate::{Error, Result};
-use pcbcraft_core::{
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sparksmith_core::{
     Class, DefinitionId, Engine, LibraryCommand, Operation, Project, Query, QueryResult,
     catalog::EntryKey,
     erc,
@@ -18,9 +21,6 @@ use pcbcraft_core::{
     },
     updates,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -37,7 +37,7 @@ pub struct ApplyParams {
 pub struct ApplyAllParams {
     /// The revision the operations were prepared against.
     pub expected_revision: u64,
-    /// One to [`pcbcraft_core::MAX_BATCH`] operations; each sees the
+    /// One to [`sparksmith_core::MAX_BATCH`] operations; each sees the
     /// document the ones before it made.
     pub operations: Vec<Operation>,
 }
@@ -67,7 +67,7 @@ pub struct NewParams {
     /// profile file's `profile`. Omitted: the Settings default, else the
     /// built-in `jlcpcb-2-layer-1oz`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile: Option<pcbcraft_core::fabrication::ProfileChoice>,
+    pub profile: Option<sparksmith_core::fabrication::ProfileChoice>,
 }
 
 /// Open a project file in place of the current document.
@@ -118,7 +118,7 @@ pub struct ExportNativeParams {
     /// `mechanical` (default: laminate, pads, parts) or `full` (all copper
     /// too); the interface tier goes through `interface.publish`.
     #[serde(default)]
-    pub tier: pcbcraft_core::model::interface::Tier,
+    pub tier: sparksmith_core::model::interface::Tier,
     /// Write even if bodies do not fit the plan.
     #[serde(default)]
     pub write_anyway: bool,
@@ -131,13 +131,13 @@ pub struct SchematicPdfParams {
     pub path: String,
     /// Sheets to print, in page order; every sheet when empty.
     #[serde(default)]
-    pub sheets: Vec<pcbcraft_core::SheetId>,
+    pub sheets: Vec<sparksmith_core::SheetId>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SaveParams {
-    /// Destination `.pcbcraft` file; defaults to the path last opened or saved.
+    /// Destination `.sparksmith` file; defaults to the path last opened or saved.
     #[serde(default)]
     pub path: Option<String>,
 }
@@ -170,13 +170,13 @@ fn unit_scale() -> f64 {
     1.0
 }
 fn default_tolerance() -> f64 {
-    pcbcraft_solidcraft::svg::DEFAULT_TOLERANCE_MM
+    sparksmith_solidcraft::svg::DEFAULT_TOLERANCE_MM
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SourceAddParams {
-    /// A library folder holding `pcbcraft-library.json`.
+    /// A library folder holding `sparksmith-library.json`.
     pub path: String,
     /// Whether `library.publish_to_folder` may write to it.
     #[serde(default)]
@@ -240,9 +240,9 @@ pub struct PlaceFromParams {
     pub lineage: SourceLineageId,
     #[serde(default)]
     pub revision: Option<Revision>,
-    #[serde(with = "pcbcraft_core::units::point_mm")]
-    #[schemars(with = "[pcbcraft_core::units::Length; 2]")]
-    pub position: pcbcraft_core::units::PointNm,
+    #[serde(with = "sparksmith_core::units::point_mm")]
+    #[schemars(with = "[sparksmith_core::units::Length; 2]")]
+    pub position: sparksmith_core::units::PointNm,
     #[serde(default)]
     pub designator: Option<String>,
     #[serde(default)]
@@ -270,7 +270,7 @@ pub struct PublishParams {
 #[serde(deny_unknown_fields)]
 pub struct ImportFromProjectParams {
     pub expected_revision: u64,
-    /// The `.pcbcraft` file to read. It is not changed.
+    /// The `.sparksmith` file to read. It is not changed.
     pub path: String,
     /// A published revision in that file.
     pub root: DefinitionRef,
@@ -290,7 +290,7 @@ pub struct FabricationParams {
     #[serde(default)]
     pub profile: Option<String>,
     #[serde(default)]
-    pub options: pcbcraft_core::fabrication::FabricationOptions,
+    pub options: sparksmith_core::fabrication::FabricationOptions,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -332,10 +332,10 @@ pub enum Request {
     /// Start a new, empty project. History is cleared.
     #[serde(rename = "project.new")]
     New(NewParams),
-    /// Open a `.pcbcraft` file; a failure leaves the session unchanged.
+    /// Open a `.sparksmith` file; a failure leaves the session unchanged.
     #[serde(rename = "project.open")]
     Open(OpenParams),
-    /// Atomically write the document to a `.pcbcraft` file.
+    /// Atomically write the document to a `.sparksmith` file.
     #[serde(rename = "project.save")]
     Save(SaveParams),
     /// Preview a revision-bound update without changing the document.
@@ -441,26 +441,26 @@ pub enum Request {
     SetPartFileValues(mechanical_parts::SetPartFileValuesParams),
     /// Board interface: what publishing it would change, per datum.
     #[serde(rename = "interface.publish_preview")]
-    InterfacePreview(pcbcraft_core::interface::PublishPreviewParams),
+    InterfacePreview(sparksmith_core::interface::PublishPreviewParams),
     /// Board interface: write the design an assembly links and its
     /// sidecar, then record the publish.
     #[serde(rename = "interface.publish")]
-    InterfacePublish(pcbcraft_core::interface::PublishParams),
+    InterfacePublish(sparksmith_core::interface::PublishParams),
     /// Assembly link: follow a linked design face or parameter.
     #[serde(rename = "assembly.follow")]
-    AssemblyFollow(pcbcraft_core::interface::assembly_link::FollowParams),
+    AssemblyFollow(sparksmith_core::interface::assembly_link::FollowParams),
     /// Assembly link: what an update or relink would change.
     #[serde(rename = "assembly.preview")]
-    AssemblyPreview(pcbcraft_core::interface::assembly_link::PreviewParams),
+    AssemblyPreview(sparksmith_core::interface::assembly_link::PreviewParams),
     /// Assembly link: link, update or relink, as previewed.
     #[serde(rename = "assembly.update")]
-    AssemblyUpdate(pcbcraft_core::interface::assembly_link::UpdateParams),
+    AssemblyUpdate(sparksmith_core::interface::assembly_link::UpdateParams),
 }
 
 // A new request chooses its permission class here. `project.apply` and
 // `project.query` take their operation's or query's; a request that names a
 // path needs at least Ask ([`Request::effective_class`]).
-pcbcraft_core::declare_classes!(Request {
+sparksmith_core::declare_classes!(Request {
     Apply "project.apply" Edit "Apply an operation",
     ApplyAll "project.apply_all" Edit "Apply operations as one step",
     Inspect "project.inspect" Read "Inspect the project",
@@ -767,13 +767,13 @@ impl Request {
             ),
             info::<OpenParams>(
                 "project.open",
-                "Open a .pcbcraft project file in place of the document at expected_revision.",
-                "Open a .pcbcraft project file of the current format version in place of the document at expected_revision; other versions are refused. Failure, a stale revision included, leaves the session unchanged.",
+                "Open a .sparksmith project file in place of the document at expected_revision.",
+                "Open a .sparksmith project file of the current format version in place of the document at expected_revision; other versions are refused. Failure, a stale revision included, leaves the session unchanged.",
             ),
             info::<SaveParams>(
                 "project.save",
-                "Save the project atomically to a .pcbcraft file, by default its current path.",
-                "Atomically save to a .pcbcraft file (defaults to the current path). Not undoable.",
+                "Save the project atomically to a .sparksmith file, by default its current path.",
+                "Atomically save to a .sparksmith file (defaults to the current path). Not undoable.",
             ),
             info::<PreviewParams>(
                 "project.preview_update",
@@ -803,7 +803,7 @@ impl Request {
             info::<SourceAddParams>(
                 "library.source.add",
                 "Add a library folder as a source in the person's settings.",
-                "Add a library folder (pcbcraft-library.json manifest) as a source in the per-user settings. A missing folder, a malformed manifest, another format version, an unknown required feature, a repeated path or a repeated library id is refused and nothing changes. library.search and library.facets then include its entries (source library, with source_lineage).",
+                "Add a library folder (sparksmith-library.json manifest) as a source in the per-user settings. A missing folder, a malformed manifest, another format version, an unknown required feature, a repeated path or a repeated library id is refused and nothing changes. library.search and library.facets then include its entries (source library, with source_lineage).",
             ),
             info::<SourceCreateParams>(
                 "library.source.create",
@@ -842,8 +842,8 @@ impl Request {
             ),
             info::<ImportFromProjectParams>(
                 "library.import_from_project",
-                "Copy one published revision and its closure from another .pcbcraft file into this project.",
-                "Copy one published revision of another .pcbcraft file (never changed; root: its kind, id and revision there) and its full closure, packed assets included, into this project as one library.import at expected_revision: one undo step, nothing placed. Each copy records its origin (exact source revision, content hash); every pin keeps naming the exact revision it names there; copies are numbered in import order. Ids derive from the file's content, so replays are reproducible and importing again reuses the copies (no undo step); a newer revision of a copied lineage becomes its next project revision. A draft in that file cannot be imported: publish it there first. An unknown root lists what the file holds. Refused without changes on a stale revision, a dangling reference, a model that may not be redistributed, or a revision that differs from the copy already held (library.source_modified).",
+                "Copy one published revision and its closure from another .sparksmith file into this project.",
+                "Copy one published revision of another .sparksmith file (never changed; root: its kind, id and revision there) and its full closure, packed assets included, into this project as one library.import at expected_revision: one undo step, nothing placed. Each copy records its origin (exact source revision, content hash); every pin keeps naming the exact revision it names there; copies are numbered in import order. Ids derive from the file's content, so replays are reproducible and importing again reuses the copies (no undo step); a newer revision of a copied lineage becomes its next project revision. A draft in that file cannot be imported: publish it there first. An unknown root lists what the file holds. Refused without changes on a stale revision, a dangling reference, a model that may not be redistributed, or a revision that differs from the copy already held (library.source_modified).",
             ),
             info::<PlaceFromParams>(
                 "library.place_from_folder",
@@ -905,7 +905,7 @@ impl Request {
                 "Evaluate a SolidCraft part file at given parameter values and report its convention check.",
                 concat!(
                     "Evaluate a SolidCraft part file (path to a .solidcraft design, or builtin: esp32-s31-wroom-3) at literal values for some of its user parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report the convention check (docs/part-templates.md §11): parameters and values, bodies with the ",
-                    pcbcraft_core::product_name!(),
+                    sparksmith_core::product_name!(),
                     " material each appearance names, marking surfaces (marking-<name> planes sized by marking_<name>_u/_v), package datums (opening-<name> planes sized by <datum>_u/_v, optional <datum>_r, _depth, _clearance, normal pointing out along the plug's way in; axis-<name> axes, optional <datum>_d), pin1, bounds, timing and findings (part_file.read, part_file.structure, part_file.value, part_file.feature, part_file.seating, part_file.material, part_file.marking, part_file.datum blocking; part_file.origin, part_file.no_marking, part_file.import, part_file.slow advisory). Lists the material appearance names. Not a document change."
                 ),
             ),
@@ -934,27 +934,27 @@ impl Request {
                 "Give a placed mechanical part new parameter values, pads or BOM flags.",
                 "Give a placed mechanical part new literal values (they replace the previous values) and optionally new pads, bom or pick_and_place: re-evaluated and checked, a built-in's lands re-derived (other lands kept), and the instance moved to the variant for them (reused or made), keeping its designator, placement and marking, in one undo step at expected_revision. Returns the snapshot, the outcome and the check report.",
             ),
-            info::<pcbcraft_core::interface::PublishPreviewParams>(
+            info::<sparksmith_core::interface::PublishPreviewParams>(
                 "interface.publish_preview",
                 "Preview publishing the board interface: each exported datum unchanged, moved (by how much), reshaped, added or removed.",
                 "What interface.publish would change for a linked design (docs/architecture/board-interface.md): each exported datum in slot order, unchanged, moved (offset in mm and turn), reshaped, added, removed (a linked design feature using it will fail) or with a changed status, with the sentence the user reads (\"J1 opening, 2 mm along X\"); the revision publishing would record and its hash. path: the published .solidcraft design whose sidecar says where each datum was (without it a changed datum reads only as changed). tier: interface, mechanical (default, or the last published) or full. Not a document change.",
             ),
-            info::<pcbcraft_core::interface::PublishParams>(
+            info::<sparksmith_core::interface::PublishParams>(
                 "interface.publish",
                 "Publish the board interface: write the .solidcraft design an assembly links and its sidecar, atomically.",
                 "Write the board interface at path: a .solidcraft design whose slots carry every exported datum as named reference bodies with stable face names (plus laminate, pads and parts for tier mechanical, the default, or all copper for full) and its sidecar <name>.interface.json, both replaced atomically. Records the publish (revision, hash, per-datum hashes) at expected_revision; no undo step, like a save. A stale revision, another board's files there or a broken reference writes nothing. The revision grows only when the datums changed. For mechanical and full, published.check is project.export_native's check against the board plan.",
             ),
-            info::<pcbcraft_core::interface::assembly_link::FollowParams>(
+            info::<sparksmith_core::interface::assembly_link::FollowParams>(
                 "assembly.follow",
                 "Make the board follow a linked design face or length parameter.",
                 "body, face, pick: its trace becomes fixed board-sketch geometry to dimension curves to; or board_param, assembly_param. One undo step.",
             ),
-            info::<pcbcraft_core::interface::assembly_link::PreviewParams>(
+            info::<sparksmith_core::interface::assembly_link::PreviewParams>(
                 "assembly.preview",
                 "Preview updating the board from the linked design: what moves, what is lost.",
                 "Read the linked design at path (linked, or a new place) on a copy: references and board edges, holes and parts that would move, and expect_hash. Not a document change.",
             ),
-            info::<pcbcraft_core::interface::assembly_link::UpdateParams>(
+            info::<sparksmith_core::interface::assembly_link::UpdateParams>(
                 "assembly.update",
                 "Link the linked design, or update or relink the board from it as previewed.",
                 "Read the SolidCraft assembly at path whose component links design (interface.publish's path). None linked: link it. Else apply it at expect_hash, relinking if path moved; one undo step.",
@@ -1106,16 +1106,16 @@ impl Session {
                         .iter()
                         .cloned()
                         .collect();
-                    let dirs = pcbcraft_io::settings::UserDirs::from_env()?;
+                    let dirs = sparksmith_io::settings::UserDirs::from_env()?;
                     let listing =
-                        pcbcraft_io::rule_profiles::ProfileLibrary::from_dirs(&dirs).list()?;
+                        sparksmith_io::rule_profiles::ProfileLibrary::from_dirs(&dirs).list()?;
                     for p in listing.profiles.into_iter().chain(listing.builtins) {
                         if !profiles.iter().any(|q| q.id == p.id) {
                             profiles.push(p);
                         }
                     }
                     return Ok(serde_json::to_value(
-                        pcbcraft_core::QueryResult::RuleProfiles(profiles),
+                        sparksmith_core::QueryResult::RuleProfiles(profiles),
                     )?);
                 }
                 let query = match query {
@@ -1123,7 +1123,7 @@ impl Session {
                         profile: Some(ProfileChoice::Id(id)),
                     } => Query::Preflight {
                         profile: Some(ProfileChoice::Profile(Box::new(
-                            pcbcraft_io::fabrication::resolve_profile(&id)?,
+                            sparksmith_io::fabrication::resolve_profile(&id)?,
                         ))),
                     },
                     other => other,
@@ -1131,7 +1131,7 @@ impl Session {
                 return Ok(serde_json::to_value(self.engine.query_using(
                     query,
                     &self.sources.context(),
-                    Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
+                    Some(&sparksmith_solidcraft::footprint::SketchEvaluator),
                 )?)?);
             }
             Request::Undo(params) => {
@@ -1148,20 +1148,20 @@ impl Session {
                 let profile = match params.profile {
                     Some(ProfileChoice::Profile(profile)) => *profile,
                     Some(ProfileChoice::Id(id)) => {
-                        pcbcraft_io::rule_profiles::for_new_board_from_env(Some(&id))?
+                        sparksmith_io::rule_profiles::for_new_board_from_env(Some(&id))?
                     }
-                    None => pcbcraft_io::rule_profiles::for_new_board_from_env(None)?,
+                    None => sparksmith_io::rule_profiles::for_new_board_from_env(None)?,
                 };
                 let mut project = Project::default();
-                pcbcraft_core::rules::apply(
+                sparksmith_core::rules::apply(
                     &mut project.rules,
-                    pcbcraft_core::rules::RulesCommand::SetProfile {
+                    sparksmith_core::rules::RulesCommand::SetProfile {
                         profile: Box::new(profile),
                         keep_overrides: false,
                     },
                 )?;
                 self.engine.replace_document(EditorFile {
-                    version: pcbcraft_core::format::FILE_VERSION,
+                    version: sparksmith_core::format::FILE_VERSION,
                     project,
                     drafts: Drafts::default(),
                 })?;
@@ -1169,7 +1169,7 @@ impl Session {
             }
             Request::Open(params) => {
                 let path = PathBuf::from(params.path);
-                let file = pcbcraft_io::read_project(&path)?;
+                let file = sparksmith_io::read_project(&path)?;
                 self.engine.replace_document(file)?;
                 self.path = Some(path);
             }
@@ -1177,12 +1177,12 @@ impl Session {
                 let path = match params.path {
                     Some(path) => PathBuf::from(path),
                     None => self.path.clone().ok_or_else(|| {
-                        pcbcraft_io::Error::Invalid(
+                        sparksmith_io::Error::Invalid(
                             "this project has no file yet; give a path".into(),
                         )
                     })?,
                 };
-                pcbcraft_io::write_project(&path, &self.engine.to_file())?;
+                sparksmith_io::write_project(&path, &self.engine.to_file())?;
                 let saved = path.display().to_string();
                 self.path = Some(path);
                 return Ok(json!({"revision": self.engine.revision(), "saved_path": saved}));
@@ -1200,16 +1200,16 @@ impl Session {
                 )?;
             }
             Request::ExportNative(params) => {
-                let watch = pcbcraft_solidcraft::export::Watch::new();
-                let report = pcbcraft_solidcraft::export::board(
+                let watch = sparksmith_solidcraft::export::Watch::new();
+                let report = sparksmith_solidcraft::export::board(
                     self.engine.project(),
                     params.tier,
                     &params.path,
                     &watch,
                     if params.write_anyway {
-                        pcbcraft_solidcraft::export::Unfit::Write
+                        sparksmith_solidcraft::export::Unfit::Write
                     } else {
-                        pcbcraft_solidcraft::export::Unfit::Refuse
+                        sparksmith_solidcraft::export::Unfit::Refuse
                     },
                 )?;
                 return Ok(export_reply(
@@ -1225,12 +1225,12 @@ impl Session {
                 let profile = params
                     .profile
                     .as_deref()
-                    .map(pcbcraft_io::fabrication::resolve_profile)
+                    .map(sparksmith_io::fabrication::resolve_profile)
                     .transpose()?;
-                let report = pcbcraft_io::fabrication::export(
+                let report = sparksmith_io::fabrication::export(
                     self.engine.project(),
                     self.engine.drafts(),
-                    &pcbcraft_io::fabrication::ExportRequest {
+                    &sparksmith_io::fabrication::ExportRequest {
                         output: PathBuf::from(&params.output),
                         zip: params.zip,
                         profile,
@@ -1325,7 +1325,7 @@ impl Session {
             Request::InspectModelFile(params) => return self.inspect_model_file(params),
             Request::SetMarking(params) => return self.set_marking(params),
             Request::SchematicPdf(params) => {
-                let pages = pcbcraft_io::schematic_pdf::export_schematic_pdf(
+                let pages = sparksmith_io::schematic_pdf::export_schematic_pdf(
                     self.engine.project(),
                     &params.sheets,
                     Path::new(&params.path),
@@ -1365,7 +1365,7 @@ impl Session {
 
     /// The document state after an undo or redo, with the `step` it took
     /// back or applied again: its title and area, as the desktop says them.
-    fn stepped(&self, step: Option<pcbcraft_core::Step>) -> Result<Value> {
+    fn stepped(&self, step: Option<sparksmith_core::Step>) -> Result<Value> {
         let mut reply = self.document_reply();
         reply["step"] = serde_json::to_value(step)?;
         Ok(reply)
@@ -1388,7 +1388,7 @@ impl Session {
     /// from it and apply one `library.import` with that bundle inline.
     fn import_from_project(&mut self, params: ImportFromProjectParams) -> Result<Value> {
         let path = Path::new(&params.path);
-        let file = pcbcraft_io::read_project(path)?;
+        let file = sparksmith_io::read_project(path)?;
         let library = &file.project.library;
         if library.definition(params.root).is_none() {
             let held = held_revisions(&file);
@@ -1400,19 +1400,19 @@ impl Session {
                 None => format!(
                     "{} does not hold {} {} of lineage {}. It holds: {held}",
                     params.path,
-                    pcbcraft_core::library::names::noun(params.root.kind),
+                    sparksmith_core::library::names::noun(params.root.kind),
                     params.root.revision,
                     params.root.id
                 ),
             };
-            return Err(pcbcraft_core::Error::NotFound(message).into());
+            return Err(sparksmith_core::Error::NotFound(message).into());
         }
         let name = path
             .file_stem()
             .and_then(|stem| stem.to_str())
-            .filter(|stem| stem.len() <= pcbcraft_core::ids::MAX_LABEL)
+            .filter(|stem| stem.len() <= sparksmith_core::ids::MAX_LABEL)
             .unwrap_or("another project");
-        let bundle = pcbcraft_core::library::import::project_bundle(library, params.root, name)?;
+        let bundle = sparksmith_core::library::import::project_bundle(library, params.root, name)?;
         let operation = Operation::Library(LibraryCommand::Import {
             bundle: Box::new(bundle),
         });
@@ -1430,12 +1430,12 @@ impl Session {
     fn publish(&mut self, params: PublishParams) -> Result<Value> {
         let folder = self.sources.writable(params.library)?.clone();
         let members =
-            pcbcraft_core::library::bundle::closure(&self.engine.project().library, params.root)?;
+            sparksmith_core::library::bundle::closure(&self.engine.project().library, params.root)?;
         let fresh = match params.fresh {
             Some(fresh) => fresh,
             None => (0..members.len())
-                .map(|_| pcbcraft_io::library_folder::new_lineage_id())
-                .collect::<pcbcraft_io::Result<Vec<_>>>()?,
+                .map(|_| sparksmith_io::library_folder::new_lineage_id())
+                .collect::<sparksmith_io::Result<Vec<_>>>()?,
         };
         let name = folder.manifest.name.clone();
         let plan = match self.engine.query(Query::PromotePreview {
@@ -1446,7 +1446,7 @@ impl Session {
         })? {
             QueryResult::Promote(plan) => plan,
             _ => {
-                return Err(pcbcraft_core::Error::Invalid(
+                return Err(sparksmith_core::Error::Invalid(
                     "library.promote_preview gave another report".into(),
                 )
                 .into());
@@ -1454,7 +1454,7 @@ impl Session {
         };
         // Only the ids the plan used travel in the undoable operation.
         let used = plan.used.clone();
-        let written = pcbcraft_io::library_folder::write_bundle(&folder, &plan.bundle)?;
+        let written = sparksmith_io::library_folder::write_bundle(&folder, &plan.bundle)?;
         let operation = Operation::Library(LibraryCommand::Promote {
             root: params.root,
             library: params.library,
@@ -1474,8 +1474,8 @@ impl Session {
 
     /// Read, convert and add an SVG drawing as one graphic edit.
     fn import_svg(&mut self, params: ImportSvgParams) -> Result<Value> {
-        use pcbcraft_solidcraft::svg;
-        let text = pcbcraft_io::artwork::read_svg(Path::new(&params.path))?;
+        use sparksmith_solidcraft::svg;
+        let text = sparksmith_io::artwork::read_svg(Path::new(&params.path))?;
         let options = svg::Options {
             scale: params.scale,
             tolerance_mm: params.tolerance_mm,
@@ -1492,7 +1492,7 @@ impl Session {
                 draft: params.draft,
                 edits,
             }),
-            &pcbcraft_solidcraft::footprint::SketchEvaluator,
+            &sparksmith_solidcraft::footprint::SketchEvaluator,
         )?;
         let mut reply = self.document_reply();
         reply["outcome"] = serde_json::to_value(outcome)?;
@@ -1570,12 +1570,12 @@ pub fn publish_library(session: &mut Session, path: &str, name: &str) -> Result<
         .latest_parts()
         .iter()
         .map(|p| DefinitionRef {
-            kind: pcbcraft_core::DefinitionKind::Part,
+            kind: sparksmith_core::DefinitionKind::Part,
             id: p.id,
             revision: p.revision,
         })
         .chain(library.latest_components().iter().map(|c| DefinitionRef {
-            kind: pcbcraft_core::DefinitionKind::Component,
+            kind: sparksmith_core::DefinitionKind::Component,
             id: c.id,
             revision: c.revision,
         }))
@@ -1639,8 +1639,8 @@ pub fn schemas() -> Value {
     json!({
         "request": schemars::schema_for!(Request),
         "commands": Request::catalog(),
-        "document": pcbcraft_core::schemas(),
-        "solidcraft_revision": pcbcraft_solidcraft::SOLIDCRAFT_REVISION,
+        "document": sparksmith_core::schemas(),
+        "solidcraft_revision": sparksmith_solidcraft::SOLIDCRAFT_REVISION,
     })
 }
 
@@ -1700,30 +1700,30 @@ mod tests;
 #[cfg(test)]
 mod two_way_tests;
 
-/// The shipped showcase ([`pcbcraft_core::Engine::showcase_hosted`]) on
+/// The shipped showcase ([`sparksmith_core::Engine::showcase_hosted`]) on
 /// SolidCraft's sketch engine: its sketched board, cutout, slot and
 /// edge-held header included, on `profile`.
 pub fn showcase(
-    profile: pcbcraft_core::rules::RuleProfile,
-) -> pcbcraft_core::Result<pcbcraft_core::Engine> {
-    pcbcraft_core::Engine::showcase_hosted(hosted(), profile)
+    profile: sparksmith_core::rules::RuleProfile,
+) -> sparksmith_core::Result<sparksmith_core::Engine> {
+    sparksmith_core::Engine::showcase_hosted(hosted(), profile)
 }
 
 /// The host evaluators every applied operation gets: SolidCraft's sketch
 /// engine for footprint sources and for the board shape.
-pub fn hosted() -> pcbcraft_core::Evaluators<'static> {
-    pcbcraft_core::Evaluators {
-        footprint: Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
-        board: Some(&pcbcraft_solidcraft::board::SketchBoardEvaluator),
+pub fn hosted() -> sparksmith_core::Evaluators<'static> {
+    sparksmith_core::Evaluators {
+        footprint: Some(&sparksmith_solidcraft::footprint::SketchEvaluator),
+        board: Some(&sparksmith_solidcraft::board::SketchBoardEvaluator),
     }
 }
 
-/// `reply` with an export's report ([`pcbcraft_solidcraft::export::Report`]):
+/// `reply` with an export's report ([`sparksmith_solidcraft::export::Report`]):
 /// the tier, the bodies written, the check against the board plan with a
 /// sentence per differing body, and the timings.
 pub(crate) fn export_reply(
     project: &Project,
-    report: &pcbcraft_solidcraft::export::Report,
+    report: &sparksmith_solidcraft::export::Report,
     mut reply: Value,
 ) -> Value {
     reply["tier"] = json!(report.tier);

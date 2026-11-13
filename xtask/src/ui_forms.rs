@@ -1,5 +1,5 @@
 //! Feature panels build forms through the shared card kit
-//! (`apps/pcbcraft/src/kit`), not raw egui widgets, so every panel has the
+//! (`apps/sparksmith/src/kit`), not raw egui widgets, so every panel has the
 //! same label column, controls, sections and messages as Solidcraft's
 //! dialogs. Shell, kit, platform-dialog and renderer modules are the
 //! infrastructure that may use egui directly; every other module of the
@@ -15,7 +15,7 @@ use std::path::Path;
 use syn::visit::{self, Visit};
 
 /// Desktop modules allowed to use egui widgets directly, relative to
-/// `apps/pcbcraft/src`.
+/// `apps/sparksmith/src`.
 const INFRASTRUCTURE: &[&str] = &[
     "kit",
     "app",
@@ -53,7 +53,7 @@ const METHODS: &[&str] = &[
 ];
 
 /// Error and warning text sites that predate the sidebar redesign, per file
-/// relative to `apps/pcbcraft/src`. Each slice that migrates a file lowers or
+/// relative to `apps/sparksmith/src`. Each slice that migrates a file lowers or
 /// removes its entry; no file may gain one.
 const LEGACY_MESSAGES: &[(&str, usize)] = &[
     ("library_sources.rs", 5),
@@ -147,7 +147,7 @@ fn message_violation(file: &str, lines: &[usize], allowed: usize) -> Option<Stri
 }
 
 pub fn check() -> Result<()> {
-    let base = root()?.join("apps/pcbcraft/src");
+    let base = root()?.join("apps/sparksmith/src");
     let mut files = Vec::new();
     feature_files(&base, &base, &mut files)?;
     let mut violations = Vec::new();

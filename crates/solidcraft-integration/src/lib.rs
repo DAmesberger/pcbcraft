@@ -1,5 +1,5 @@
 //! Electronics → native Solidcraft. Builds the parametric `.solidcraft` model
-//! of a Pcbcraft project; its geometry, evaluation and persistence belong to
+//! of a Sparksmith project; its geometry, evaluation and persistence belong to
 //! Solidcraft's engine, reached only through [`native`]. Thin display-only
 //! layers over it (soldermask, plated finish, terminations, solder) are
 //! meshes in Solidcraft's mesh type ([`appearance`]), never saved.
@@ -59,8 +59,8 @@ mod fixtures;
 /// as zero.
 #[cfg(test)]
 pub(crate) mod test_units {
-    use pcbcraft_core::library::ModelPlacement;
-    use pcbcraft_core::units::{Angle, Nm, PointNm};
+    use sparksmith_core::library::ModelPlacement;
+    use sparksmith_core::units::{Angle, Nm, PointNm};
 
     pub fn nm(mm: f64) -> Nm {
         Nm::from_mm_f64_rounded(mm).unwrap_or_default()
@@ -94,7 +94,7 @@ pub(crate) mod test_units {
     }
 }
 
-/// The Solidcraft revision Pcbcraft builds against: the `pcbcraft-smlib-open`
+/// The Solidcraft revision Sparksmith builds against: the `pcbcraft-smlib-open`
 /// branch of the DAmesberger/solidcraft fork (upstream a34756830 plus the
 /// opt-in product look, via scaling and a font-order fix).
 pub const SOLIDCRAFT_REVISION: &str = "64bebfef0a77dab8c79666114c7601c9dda55d12";

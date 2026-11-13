@@ -4,10 +4,10 @@
 //! as the desktop Route tool places one. No route into a pin may run back
 //! on itself or turn by more than 90° (the founder's hook). The CC1 and
 //! CC2 tracks are taken up first; R4 and R5 pad 1 are their other ends.
-use pcbcraft_core::layout::posture::Posture;
-use pcbcraft_core::layout::router::{self, RouteIndex, RouteMode, RouteStepRequest};
-use pcbcraft_core::layout::{self, LayoutCommand, RouteEditSet};
-use pcbcraft_core::model::{CopperLayer, Project};
+use sparksmith_core::layout::posture::Posture;
+use sparksmith_core::layout::router::{self, RouteIndex, RouteMode, RouteStepRequest};
+use sparksmith_core::layout::{self, LayoutCommand, RouteEditSet};
+use sparksmith_core::model::{CopperLayer, Project};
 use std::path::Path;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -21,8 +21,8 @@ type Job = (u64, Point, Point);
 /// resistor pad.
 fn board() -> Fallible<(Project, Vec<Job>)> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    let mut p = pcbcraft_io::read_project(&path)?.project;
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    let mut p = sparksmith_io::read_project(&path)?.project;
     let labels = layout::pad_labels(&p);
     let pads = layout::pads(&p);
     let pad = |designator: &str, number: &str| -> Fallible<(u64, Point)> {

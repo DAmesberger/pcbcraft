@@ -364,7 +364,7 @@ Requests are limited to 16 KiB source, 64 unit sets (each of 1–32 units) and 6
 
 Module loading and clock support are disabled at build time. The API exposes no file/network/document access, and disables dynamic `eval`, printing, debugging output, anonymous functions and variable shadowing. Only explicit inputs and interpreter-local values are accessible. Callbacks return candidate data; they cannot commit document edits.
 
-Generated draft geometry persists using the existing `.pcbcraft` format and reopens without the script. Script source, recipe inputs and interpreter-version provenance are **not yet persisted as library assets**; API version 1 identifies this invocation contract, not a completed long-term scripting compatibility promise. There is no saved live dependency graph. This numeric pad-array proof does not replace Solidcraft's retained geometric expressions or claim parametric native regeneration for script formulas.
+Generated draft geometry persists using the existing `.sparksmith` format and reopens without the script. Script source, recipe inputs and interpreter-version provenance are **not yet persisted as library assets**; API version 1 identifies this invocation contract, not a completed long-term scripting compatibility promise. There is no saved live dependency graph. This numeric pad-array proof does not replace Solidcraft's retained geometric expressions or claim parametric native regeneration for script formulas.
 
 ### Verification
 

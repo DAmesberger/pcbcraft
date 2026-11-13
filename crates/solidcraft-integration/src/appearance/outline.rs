@@ -2,7 +2,7 @@
 //! union's inside on their left, chained into counter-clockwise outer loops
 //! and clockwise holes. Native cuts sketch it, so overlapping copper (a
 //! track running into a via's ring) is removed from the laminate once.
-use pcbcraft_core::Point;
+use sparksmith_core::Point;
 use std::collections::BTreeMap;
 
 const EPS: f64 = 1e-9;

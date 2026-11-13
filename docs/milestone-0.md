@@ -2,7 +2,7 @@
 
 The first executable result is a small Sparksmith window showing one board in 2D and 3D, with selectable volumetric copper and native parametric Solidcraft save/reopen. It proves the expensive and difficult boundaries before building complete editors.
 
-The product requirements remain in [the general plan](pcbcraft-plan.md). This milestone deliberately uses a small programmatically constructed fixture; it does not replace the first release's component, schematic and PCB editors.
+The product requirements remain in [the general plan](sparksmith-plan.md). This milestone deliberately uses a small programmatically constructed fixture; it does not replace the first release's component, schematic and PCB editors.
 
 ## 0A — reproducible workspace and gates
 

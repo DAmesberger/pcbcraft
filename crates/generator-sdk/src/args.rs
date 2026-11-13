@@ -1,12 +1,12 @@
 //! Typed access to a request's parameters, checked against the description
-//! with the ABI's own check ([`pcbcraft_generator_abi::params::check`]),
+//! with the ABI's own check ([`sparksmith_generator_abi::params::check`]),
 //! the same one the host runs before it calls.
 use alloc::format;
 use alloc::vec::Vec;
-use pcbcraft_generator_abi::params;
-use pcbcraft_generator_abi::v1::{Description, ParamValue, Params, Problem};
+use sparksmith_generator_abi::params;
+use sparksmith_generator_abi::v1::{Description, ParamValue, Params, Problem};
 
-pub use pcbcraft_generator_abi::params::problem;
+pub use sparksmith_generator_abi::params::problem;
 
 /// A request's parameters after [`checked`]: every declared parameter is
 /// present, of its type and in its range, and nothing else is.

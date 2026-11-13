@@ -6,15 +6,15 @@ use crate::material::BodyKind;
 #[allow(unused_imports)]
 use crate::models::tests::{nm, pt};
 use crate::scene::Geometry;
-use pcbcraft_core::library::marking::surface::{self as core_surface, Wrap};
-use pcbcraft_core::library::marking::{
+use sparksmith_core::library::marking::surface::{self as core_surface, Wrap};
+use sparksmith_core::library::marking::{
     BoxFace, Ecc, LaidText, MarkingItem, MarkingSpec, SurfaceRef, Symbology, Template,
 };
-use pcbcraft_core::library::package_form::module::ModuleForm;
-use pcbcraft_core::library::package_form::tht::{ThtForm, ThtKind};
-use pcbcraft_core::library::package_form::{FamilyForm, PackageForm};
-use pcbcraft_core::library::{GeneratedMaterials, PackageDefinition, PackageModel};
-use pcbcraft_core::materials::MaterialId;
+use sparksmith_core::library::package_form::module::ModuleForm;
+use sparksmith_core::library::package_form::tht::{ThtForm, ThtKind};
+use sparksmith_core::library::package_form::{FamilyForm, PackageForm};
+use sparksmith_core::library::{GeneratedMaterials, PackageDefinition, PackageModel};
+use sparksmith_core::materials::MaterialId;
 use std::collections::BTreeMap;
 use std::f64::consts::{PI, TAU};
 
@@ -22,7 +22,7 @@ type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 /// A line centred on `centre` (the core gives its box's bottom-left).
 fn text_line(text: &str, height: f64, centre: [f64; 2]) -> LaidElement {
-    let w = text.chars().count() as f64 * pcbcraft_core::library::marking::TEXT_ADVANCE * height;
+    let w = text.chars().count() as f64 * sparksmith_core::library::marking::TEXT_ADVANCE * height;
     LaidElement::Text(LaidText {
         text: text.into(),
         height_mm: height,
@@ -59,8 +59,8 @@ fn radial_form() -> ThtForm {
 /// The demo board with its package made a generated radial can (two
 /// leads, as the demo's parts have), every part turned a quarter and the
 /// second one on the bottom.
-fn radial_board() -> std::result::Result<pcbcraft_core::Project, Box<dyn std::error::Error>> {
-    let mut project = pcbcraft_core::Engine::demo()?.project().clone();
+fn radial_board() -> std::result::Result<sparksmith_core::Project, Box<dyn std::error::Error>> {
+    let mut project = sparksmith_core::Engine::demo()?.project().clone();
     let package = &mut project.library.packages[0].definition;
     let form = radial_form();
     package.envelope_nm = (form.envelope().ok_or("envelope")?).map(nm);
@@ -73,13 +73,13 @@ fn radial_board() -> std::result::Result<pcbcraft_core::Project, Box<dyn std::er
         p.rotation_deg = 90.0;
     }
     if let Some(bottom) = project.placements.get_mut(1) {
-        bottom.layer = pcbcraft_core::Layer::Bottom;
+        bottom.layer = sparksmith_core::Layer::Bottom;
     }
     Ok(project)
 }
 
 fn module_package() -> std::result::Result<PackageDefinition, Box<dyn std::error::Error>> {
-    let mut package = pcbcraft_core::Engine::demo()?.project().library.packages[0]
+    let mut package = sparksmith_core::Engine::demo()?.project().library.packages[0]
         .definition
         .clone();
     package.form = PackageForm::Module(Box::new(ModuleForm::typical()));
@@ -254,9 +254,9 @@ fn the_stripe_wraps_the_seam_on_the_negative_lead_side() -> TestResult {
 /// µF/V lines opposite the stripe on the sleeve, the decal draws both.
 #[test]
 fn a_generated_electrolytic_marking_wraps_its_sleeve() -> TestResult {
-    use pcbcraft_core::FieldRef;
-    use pcbcraft_core::ids::{DefinitionId, Revision};
-    use pcbcraft_core::library::marking::{self as core, MarkingInputs};
+    use sparksmith_core::FieldRef;
+    use sparksmith_core::ids::{DefinitionId, Revision};
+    use sparksmith_core::library::marking::{self as core, MarkingInputs};
     let (cap, volt) = (DefinitionId(5), DefinitionId(6));
     let spec = MarkingSpec {
         items: vec![MarkingItem::Electrolytic {
@@ -540,7 +540,8 @@ fn engravings_shade_their_walls_with_tilted_normals() -> TestResult {
 /// the dark area.
 #[test]
 fn a_2d_code_fills_its_dark_modules() -> TestResult {
-    let symbol = pcbcraft_core::library::marking::matrix::encode(Symbology::Qr, "C7", Ecc::Medium)?;
+    let symbol =
+        sparksmith_core::library::marking::matrix::encode(Symbology::Qr, "C7", Ecc::Medium)?;
     let dark = (0..symbol.size)
         .flat_map(|y| (0..symbol.size).map(move |x| (x, y)))
         .filter(|(x, y)| symbol.dark(*x, *y))
@@ -738,7 +739,7 @@ fn board_wraps_follow_each_instance_s_placement() -> TestResult {
 /// Debug-build timings are printed as evidence, not asserted.
 #[test]
 fn two_hundred_marked_instances_build_their_decals() -> TestResult {
-    let project = pcbcraft_core::Engine::demo()?.project().clone();
+    let project = sparksmith_core::Engine::demo()?.project().clone();
     let model = crate::project::build(&project)?;
     let area = MarkingArea {
         origin_nm: crate::test_units::nm3([0.0, 0.0, 1.0]),
@@ -747,14 +748,14 @@ fn two_hundred_marked_instances_build_their_decals() -> TestResult {
         size_nm: crate::test_units::nm2([6.0, 4.0]),
     };
     let symbol =
-        pcbcraft_core::library::marking::matrix::encode(Symbology::Qr, "U000", Ecc::Medium)?;
+        sparksmith_core::library::marking::matrix::encode(Symbology::Qr, "U000", Ecc::Medium)?;
     let marking = |k: usize| {
         laid(
             vec![
                 text_line(&format!("U{k:03}"), 0.6, [-1.2, 0.8]),
                 text_line("ESP-MOD", 0.5, [-1.2, -0.4]),
                 LaidElement::Matrix {
-                    symbol: pcbcraft_core::library::marking::matrix::encode(
+                    symbol: sparksmith_core::library::marking::matrix::encode(
                         Symbology::Qr,
                         &format!("U{k:03}"),
                         Ecc::Medium,
@@ -806,7 +807,7 @@ fn two_hundred_marked_instances_build_their_decals() -> TestResult {
 /// what the unmarked board saves.
 #[test]
 fn markings_are_absent_from_the_saved_model() -> TestResult {
-    let mut project = pcbcraft_core::Engine::demo()?.project().clone();
+    let mut project = sparksmith_core::Engine::demo()?.project().clone();
     let plain = crate::project::build(&project)?;
     let dir = tempfile::tempdir()?;
     let a = dir.path().join("plain.solidcraft");

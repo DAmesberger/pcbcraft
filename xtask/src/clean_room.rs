@@ -1,7 +1,7 @@
 //! `cargo xtask clean-room`: no third-party EDA library data in the repository.
 //!
-//! Pcbcraft does not copy KiCad libraries (CC-BY-SA) or library data of other EDA tools
-//! (see `skills/pcbcraft-libraries/SKILL.md#clean-room-sources`). Fixtures are original
+//! Sparksmith does not copy KiCad libraries (CC-BY-SA) or library data of other EDA tools
+//! (see `skills/sparksmith-libraries/SKILL.md#clean-room-sources`). Fixtures are original
 //! synthetic data. The gate lists tracked and untracked-but-not-ignored files and fails on
 //! EDA library file extensions, or on file contents that start like an EDA library or
 //! design file. It cannot recognise data that was retyped by hand; review still applies.
@@ -33,7 +33,7 @@ const EXTENSIONS: &[&str] = &[
 /// listed in [`ORIGINAL_MODELS`].
 const MODEL_EXTENSIONS: &[&str] = &["step", "stp", "glb", "gltf", "wrl"];
 
-/// Repository paths of original model fixtures (authored for Pcbcraft),
+/// Repository paths of original model fixtures (authored for Sparksmith),
 /// each reviewed when added.
 const ORIGINAL_MODELS: &[&str] = &[];
 
@@ -114,7 +114,7 @@ pub fn check() -> Result<()> {
         return Ok(());
     }
     Err(format!(
-        "third-party EDA library data is not allowed (skills/pcbcraft-libraries/SKILL.md#clean-room-sources):\n  {}",
+        "third-party EDA library data is not allowed (skills/sparksmith-libraries/SKILL.md#clean-room-sources):\n  {}",
         violations.join("\n  ")
     )
     .into())

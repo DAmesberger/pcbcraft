@@ -5,9 +5,9 @@
 //! shapes. SVG artwork is read by [`super::paint`].
 use crate::geom::Vec2;
 use crate::{Error, Result};
-use pcbcraft_core::Point;
-use pcbcraft_core::library::marking::{LaidText, PolarityMark, TEXT_ADVANCE};
 use solidcraft_engine::sketch::{LinkGeom, TextAlign, TextStyle, text_geometry_styled};
+use sparksmith_core::Point;
+use sparksmith_core::library::marking::{LaidText, PolarityMark, TEXT_ADVANCE};
 
 /// Chord tolerance of flattened glyph and artwork curves, mm.
 pub const CHORD_MM: f64 = 0.002;

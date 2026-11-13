@@ -5,7 +5,7 @@
 //! slot; features on unexported faces are named in the user's words. The
 //! halves that read a linked design run in the automation session
 //! (`session::two_way_tests`), and the board side of the cycle graph and
-//! the driven edge where the sketch evaluator runs (`pcbcraft-solidcraft`
+//! the driven edge where the sketch evaluator runs (`sparksmith-solidcraft`
 //! `board::fixed_tests`).
 use super::Fallible;
 use super::b3::{first_placed, with_openings};
@@ -193,7 +193,7 @@ fn b5_a_linked_design_holding_an_older_board_is_reported() -> Fallible {
 /// for that (slice P1): with no item both changed there is nothing to
 /// choose, so it is applied. A choice for an item that is no conflict is
 /// refused, changing nothing. Conflicting items and the choice between
-/// sides are tested where the sketch evaluator runs (`pcbcraft-solidcraft`
+/// sides are tested where the sketch evaluator runs (`sparksmith-solidcraft`
 /// `board::fixed_tests`).
 #[test]
 fn b5_both_changed_asks_for_the_preview() -> Fallible {

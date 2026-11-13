@@ -3,11 +3,9 @@
   "modules": [
     {
       "name": "chip",
-      "package": "pcbcraft-gen-chip",
+      "package": "sparksmith-gen-chip",
       "sha256": {
-        "aarch64-apple-darwin": "c400a1949deaa6f43d36c22a764de8a09f9f78639b52553de2582dd759b169b1",
-        "aarch64-unknown-linux-gnu": "7068941ed896dfa075dde0e187f940f7c4a883d244ff4a38ae3a35c8e302e36a",
-        "x86_64-unknown-linux-gnu": "ce8027d94dddf0cc770b9be3f06d15c47cefc8f6b8ea327030c2adf56b5b853e"
+        "aarch64-apple-darwin": "a5cf49bc0f7c17cf5e1ef5791a01fe22ed96e7ca4128d21abf20f173be18a1e3"
       }
     }
   ],

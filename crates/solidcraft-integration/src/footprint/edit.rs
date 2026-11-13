@@ -1,18 +1,18 @@
 //! Sketch edits and pad templates on Solidcraft's public `Sketch` API.
 //! Solidcraft's own builders are private engine code, so these are
-//! Pcbcraft's. New ids come from the sketch's counters and are reported by
+//! Sparksmith's. New ids come from the sketch's counters and are reported by
 //! diffing the entity ids before and after, never invented by the caller.
 
 use std::collections::BTreeSet;
 
 use crate::geom::Vec2;
-use pcbcraft_core::geometry::Point;
-use pcbcraft_core::library::footprint_source::{
-    DimKind, DimValue, GeomConstraint, PadTemplate, PadTemplateParams, SketchConstraintId,
-    SketchCurveId, SketchEdit, SketchOutcome, SketchPointId, SketchRef,
-};
 use solidcraft_engine::sketch::{
     ConstraintKind, CurveKind, Sketch, SketchError, measure_dimension,
+};
+use sparksmith_core::geometry::Point;
+use sparksmith_core::library::footprint_source::{
+    DimKind, DimValue, GeomConstraint, PadTemplate, PadTemplateParams, SketchConstraintId,
+    SketchCurveId, SketchEdit, SketchOutcome, SketchPointId, SketchRef,
 };
 
 use super::check::MAX_COORD_MM;
@@ -74,7 +74,7 @@ pub(crate) fn diff(before: &Sketch, after: &Sketch, sketch: String) -> SketchOut
     let new_ids = ids(after);
     let new: BTreeSet<&SketchRef> = new_ids.iter().collect();
     SketchOutcome {
-        sketch: pcbcraft_core::library::footprint_source::SketchBlob(sketch),
+        sketch: sparksmith_core::library::footprint_source::SketchBlob(sketch),
         created: new_ids
             .iter()
             .filter(|r| !old.contains(*r))

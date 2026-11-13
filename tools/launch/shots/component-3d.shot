@@ -1,5 +1,5 @@
 # Storyboard shot 3: the WROOM-3 part file in the Component 3D tab, with its markings.
-# Project: examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft (copy it first; the take never saves).
+# Project: examples/esp32-s31-wroom-3/esp32-s31-wroom-3.sparksmith (copy it first; the take never saves).
 # Window points for a 1500 x 1235 pt window.
 wait 0.5
 key 1 cmd                        # Component workspace (start page)

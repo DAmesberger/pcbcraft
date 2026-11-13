@@ -1,5 +1,5 @@
 [package]
-name = "pcbcraft-automation"
+name = "sparksmith-automation"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,10 +9,10 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-pcbcraft-core.workspace = true
-pcbcraft-io.workspace = true
-pcbcraft-solidcraft.workspace = true
-pcbcraft-firmware.workspace = true
+sparksmith-core.workspace = true
+sparksmith-io.workspace = true
+sparksmith-solidcraft.workspace = true
+sparksmith-firmware.workspace = true
 solidcraft-control.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -26,16 +26,16 @@ tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 # Solidcraft's span profiler compiled in, for the build profile benchmark
 # (tests/build_profile.rs) only. A feature, not a dev-dependency feature:
 # as a dev-dependency it was unified into every workspace test build, so
-# `cargo test --workspace` and `cargo build -p pcbcraft` each built
+# `cargo test --workspace` and `cargo build -p sparksmith` each built
 # Solidcraft's engine, document, kernel and UI crates in their own variant.
-profile = ["pcbcraft-solidcraft/profile"]
+profile = ["sparksmith-solidcraft/profile"]
 
 [[test]]
 name = "build_profile"
 required-features = ["profile"]
 
 [dev-dependencies]
-pcbcraft-core = { workspace = true, features = ["test-fixtures"] }
+sparksmith-core = { workspace = true, features = ["test-fixtures"] }
 tempfile.workspace = true
 rmcp = { workspace = true, features = ["client"] }
 tokio = { workspace = true, features = ["time"] }

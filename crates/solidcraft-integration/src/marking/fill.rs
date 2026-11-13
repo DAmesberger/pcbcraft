@@ -6,7 +6,7 @@
 //! wound the same way merge. Single-sided: every triangle is
 //! counter-clockwise in the plane.
 use crate::{Error, Result};
-use pcbcraft_core::Point;
+use sparksmith_core::Point;
 
 /// Edges one fill takes.
 pub const MAX_FILL_EDGES: usize = 32_768;

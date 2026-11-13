@@ -6,7 +6,7 @@
 //! ellipses, polylines and polygons, with transforms, user units scaled to
 //! millimetres from the root `width`/`height` and `viewBox` and y flipped.
 //! That reader returns curves without their element, so this module walks
-//! the XML itself for what Pcbcraft keeps per element (fill, stroke and
+//! the XML itself for what Sparksmith keeps per element (fill, stroke and
 //! stroke width, inherited through groups and `style`) and hands the reader
 //! one element at a time, inside its ancestors' transforms.
 //!
@@ -20,7 +20,7 @@
 //!   rectangle); its stroke width is kept as the outline width.
 //!
 //! Filled regions with holes (one element whose loops nest) are imported as
-//! outlines only: Pcbcraft graphics have no polygon with holes yet (FD15).
+//! outlines only: Sparksmith graphics have no polygon with holes yet (FD15).
 //! Text, images and `use` references are skipped and reported.
 //!
 //! The input is bounded: [`MAX_SVG_BYTES`], [`MAX_SVG_ELEMENTS`] and
@@ -29,17 +29,17 @@
 //! [`MAX_SHAPE_POINTS`] points in one filled region). Anything beyond is a
 //! refusal that names the limit, never a partial import.
 use crate::{Error, Result};
-use pcbcraft_core::geometry::{
+use quick_xml::events::{BytesStart, Event};
+use solidcraft_engine::io::Geom2;
+use sparksmith_core::geometry::{
     Bounds, Point, Shape, corner_radii_fit, fit_corner_radii, polygon_contains,
     polygon_self_intersects, signed_area2,
 };
-use pcbcraft_core::library::graphics::{
+use sparksmith_core::library::graphics::{
     DrawingLayer, Fill, GraphicEdit, GraphicTarget, Item, MAX_GRAPHIC_EDITS, MAX_SHAPE_POINTS,
     MAX_STROKE_MM, MAX_VERTICES, ShapeNm,
 };
-use pcbcraft_core::units::{Nm, PointNm};
-use quick_xml::events::{BytesStart, Event};
-use solidcraft_engine::io::Geom2;
+use sparksmith_core::units::{Nm, PointNm};
 use std::collections::BTreeMap;
 
 /// Largest SVG file imported, in bytes.

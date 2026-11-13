@@ -133,7 +133,7 @@ pub enum PartModelSource {
 
 ## M4. Commands
 
-### Core (`pcbcraft-core`, one undo step each, atomic)
+### Core (`sparksmith-core`, one undo step each, atomic)
 
 | ID | Payload | Result |
 |---|---|---|
@@ -141,7 +141,7 @@ pub enum PartModelSource {
 | `layout.set_part` | `{ instance, part: PartSpec }` | `Outcome::PartPlaced`. Re-points a mechanical instance to the spec's variant (found or made), keeping its id, designator, placement, marking and lock. Refused for an instance that is not a mechanical part, a locked placement, or a terminal change while the unit is on a sheet or a terminal is connected. |
 | `layout.remove_part` | `{ instance }` | Removes a mechanical instance that has no occurrence, with its placement. Refused if a terminal is connected (preview `Change::Instance { Remove }` instead). |
 
-### Automation (`pcbcraft-automation`: JSON lines, MCP)
+### Automation (`sparksmith-automation`: JSON lines, MCP)
 
 | ID | Payload | Result |
 |---|---|---|
@@ -152,7 +152,7 @@ pub enum PartModelSource {
 | MCP tools | `library_part_files`, `layout_place_part_file`, `layout_set_part_file_values` | The requests above. |
 | CLI | `sparksmith part list` | Built-ins with their parameters. `part check` also prints built-in lands. |
 
-**One builder.** `pcbcraft_automation::part_files` exposes the functions that build the core `Operation` for each request: `use_part_file_operation`, `set_part_values_operation`, `place_part_operation` and `set_part_operation`. They take the engine read-only and return the operation and the check report. The desktop calls them and applies the operation through its own engine, so UI, CLI and MCP issue the same typed command.
+**One builder.** `sparksmith_automation::part_files` exposes the functions that build the core `Operation` for each request: `use_part_file_operation`, `set_part_values_operation`, `place_part_operation` and `set_part_operation`. They take the engine read-only and return the operation and the check report. The desktop calls them and applies the operation through its own engine, so UI, CLI and MCP issue the same typed command.
 
 **The land source of a placed part.** For `set_part_file_values` it is read back from the variant:
 
@@ -161,7 +161,7 @@ pub enum PartModelSource {
 
 ## M5. Desktop
 
-- **Part-file chooser** (`apps/pcbcraft/src/part_chooser.rs`, one widget for both entry points). It is a Solidcraft-styled sheet with a source list on the left:
+- **Part-file chooser** (`apps/sparksmith/src/part_chooser.rs`, one widget for both entry points). It is a Solidcraft-styled sheet with a source list on the left:
   - **Built-in**: the starter set and the WROOM-3;
   - **This project**: Models of format `solidcraft`;
   - **Recent files**: at most 8, in the app settings;

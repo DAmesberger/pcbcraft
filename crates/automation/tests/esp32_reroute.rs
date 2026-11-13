@@ -6,24 +6,24 @@
 //! the stale fills are refilled as the desktop's fill worker does, the
 //! board has no rule error, the pair keeps within its class limits, the
 //! report names what was re-routed, and one undo restores the board.
-use pcbcraft_automation::session::{ApplyParams, Request, Session, hosted};
-use pcbcraft_core::format::EditorFile;
-use pcbcraft_core::layout::fill::{FillCache, compute_stale};
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
-use pcbcraft_core::layout::pair::{PairLeg, PairRouteRequest};
-use pcbcraft_core::layout::{self, LayoutCommand, RouteEditSet, length};
-use pcbcraft_core::library::footprint_source::{Expr, FootprintParam, ParamName, ParamUnit};
-use pcbcraft_core::model::CopperLayer;
-use pcbcraft_core::model::production::waiver_key;
-use pcbcraft_core::{Engine, Operation};
+use sparksmith_automation::session::{ApplyParams, Request, Session, hosted};
+use sparksmith_core::format::EditorFile;
+use sparksmith_core::layout::fill::{FillCache, compute_stale};
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::layout::pair::{PairLeg, PairRouteRequest};
+use sparksmith_core::layout::{self, LayoutCommand, RouteEditSet, length};
+use sparksmith_core::library::footprint_source::{Expr, FootprintParam, ParamName, ParamUnit};
+use sparksmith_core::model::CopperLayer;
+use sparksmith_core::model::production::waiver_key;
+use sparksmith_core::{Engine, Operation};
 use std::path::Path;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn example() -> Fallible<Engine> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    Ok(Engine::from_file(pcbcraft_io::read_project(&path)?)?)
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    Ok(Engine::from_file(sparksmith_io::read_project(&path)?)?)
 }
 
 fn set_width(mm: f64) -> Operation {

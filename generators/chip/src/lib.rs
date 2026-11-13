@@ -16,17 +16,17 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use pcbcraft_generator_sdk::args::{Args, checked, problem};
-use pcbcraft_generator_sdk::draw::{self, Drawing, LEFT, RIGHT};
-use pcbcraft_generator_sdk::land::{self, Box2};
-use pcbcraft_generator_sdk::units::{DEG, MM, div_round, mm_text};
-use pcbcraft_generator_sdk::v1::{
+use sparksmith_generator_sdk::args::{Args, checked, problem};
+use sparksmith_generator_sdk::draw::{self, Drawing, LEFT, RIGHT};
+use sparksmith_generator_sdk::land::{self, Box2};
+use sparksmith_generator_sdk::units::{DEG, MM, div_round, mm_text};
+use sparksmith_generator_sdk::v1::{
     self, BindingEntry, Choice, Component, Description, Direction, Fill, Footprint, Generation,
     Grammar, InstanceField, Lead, Opening, Package, PackageGeometry, Pad, PadShape, Param,
     ParamType, ParamValue, Preset, Primitive, Problem, Request, Rule, Scope, Side, Symbol,
     Terminal,
 };
-use pcbcraft_generator_sdk::{Generator, export_generator};
+use sparksmith_generator_sdk::{Generator, export_generator};
 
 /// The starter rows, in nm, with their citations.
 const PRESETS: &str = include_str!("../presets.json");
@@ -136,7 +136,7 @@ fn enumeration(
 /// The full description. Unreadable presets are a build bug that the
 /// golden and preset tests catch; describe still answers, without them.
 fn description() -> Description {
-    description_with(pcbcraft_generator_sdk::presets(PRESETS).unwrap_or_default())
+    description_with(sparksmith_generator_sdk::presets(PRESETS).unwrap_or_default())
 }
 
 /// The description, with `presets` (generate checks parameters against it

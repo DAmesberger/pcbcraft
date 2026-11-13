@@ -1,4 +1,4 @@
-//! Slice D2: glTF 2.0 materials as Pcbcraft reads them itself with
+//! Slice D2: glTF 2.0 materials as Sparksmith reads them itself with
 //! `serde_json` (Solidcraft's reader takes only the PBR factors): the
 //! metallic-roughness factors plus KHR_materials_clearcoat, _transmission,
 //! _ior and _emissive_strength. KHR_materials_volume has no place in
@@ -10,11 +10,11 @@
 //! counts are bounded and a value outside its specified range refuses the
 //! file naming the material, never a silent clamp.
 use crate::{Error, Result};
-use pcbcraft_core::library::model3d::CustomMaterial;
 use serde_json::{Map, Value};
+use sparksmith_core::library::model3d::CustomMaterial;
 
 /// Materials one GLB may carry.
-pub const MAX_GLTF_MATERIALS: usize = pcbcraft_core::library::model3d::MAX_CUSTOM_MATERIALS;
+pub const MAX_GLTF_MATERIALS: usize = sparksmith_core::library::model3d::MAX_CUSTOM_MATERIALS;
 /// Bytes of the JSON chunk read.
 pub const MAX_GLTF_JSON_BYTES: usize = 16 << 20;
 /// Characters of a material name kept (longer names are cut, for display).

@@ -294,7 +294,7 @@ pub fn show(ui: &mut egui::Ui, painter: &egui::Painter, proj: &Proj, id: egui::I
     ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     let r = ui.interact(Rect::from_center_size(p, vec2(24.0, 24.0)), id.with("hit"), Sense::drag());
     // SolidCraft drives a free drag from its modifier preferences (`tool_modifiers`), which
-    // Pcbcraft does not have: drags here always snap.
+    // Sparksmith does not have: drags here always snap.
     let free = false;
     let view = proj.ray(sh.ball).1;
     let plane_normal = |h: Handle| match h {

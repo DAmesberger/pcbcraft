@@ -23,7 +23,7 @@ fn apply(s: &mut Session, editor: &str, command: &str, params: Value) -> Fallibl
 }
 
 /// Whether point `q` lies in a filled island (even-odd over its rings).
-fn covered(copper: &pcbcraft_core::model::fill::FilledCopper, q: [f64; 2]) -> bool {
+fn covered(copper: &sparksmith_core::model::fill::FilledCopper, q: [f64; 2]) -> bool {
     let inside = |ring: &[[f64; 2]]| {
         let mut c = false;
         for (a, b) in ring.iter().zip(ring.iter().cycle().skip(1)) {
@@ -44,8 +44,8 @@ fn covered(copper: &pcbcraft_core::model::fill::FilledCopper, q: [f64; 2]) -> bo
 #[test]
 fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let mut backend = anthropic(script_on(Session::new(pcbcraft_core::Engine::demo()?))?);
-    let mut s = Session::new(pcbcraft_core::Engine::demo()?);
+    let mut backend = anthropic(script_on(Session::new(sparksmith_core::Engine::demo()?))?);
+    let mut s = Session::new(sparksmith_core::Engine::demo()?);
     let outcome = run(
         &goal(datasheet(&dir)?),
         &RunConfig::default(),
@@ -115,7 +115,7 @@ fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
     let project = s.engine().project();
     // The module (20 mm long, 5 mm antenna end) at (30, 15): keep-out
     // x 23..37, y 20..25.
-    let keepouts = pcbcraft_core::layout::placed_keepouts(project);
+    let keepouts = sparksmith_core::layout::placed_keepouts(project);
     assert_eq!(keepouts.len(), 1);
     let copper = project
         .fills
@@ -141,14 +141,14 @@ fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
         json!({"via": {"net": net, "position": [30.0, 22.5], "drill": 0.3, "diameter": 0.6,
             "span": "through", "tented": true}}),
     )?;
-    let checks = pcbcraft_core::layout::checks(s.engine().project());
+    let checks = sparksmith_core::layout::checks(s.engine().project());
     let via = checks
         .iter()
         .find(|f| f.code == "keepout.via")
         .ok_or_else(|| format!("a keepout.via finding: {checks:?}"))?;
     assert!(
         via.objects.iter().any(|o| matches!(o,
-            pcbcraft_core::diagnostics::ObjectRef::Instance { id } if Some(*id) == instance.as_u64())),
+            sparksmith_core::diagnostics::ObjectRef::Instance { id } if Some(*id) == instance.as_u64())),
         "reported against U: {via:?}"
     );
     // The board exports with the module's generated model.

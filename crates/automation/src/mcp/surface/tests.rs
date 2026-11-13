@@ -1,6 +1,6 @@
 //! P1 evidence: the `2026-07-28` core through rmcp's own client, the same
 //! server on the raw wire against a golden transcript
-//! (`golden/core.json`; set `PCBCRAFT_BLESS=1` to rewrite it after an
+//! (`golden/core.json`; set `SPARKSMITH_BLESS=1` to rewrite it after an
 //! intended change, then review the diff), the session thread behind the
 //! gate, and the catalog wiring.
 use super::catalog::{self, Unreachable};
@@ -40,7 +40,7 @@ impl ClientHandler for Client {
     fn get_info(&self) -> ClientConfig {
         ClientConfig::new(
             ClientCapabilities::default(),
-            Implementation::new("pcbcraft-p1-client", "0"),
+            Implementation::new("sparksmith-p1-client", "0"),
         )
     }
 }
@@ -206,7 +206,7 @@ fn script() -> Vec<(String, bool)> {
         (request(8, "prompts/list", json!({})), true),
         (request(9, "resources/list", json!({})), true),
         (
-            request(10, "resources/read", json!({"uri": "pcbcraft://catalog"})),
+            request(10, "resources/read", json!({"uri": "sparksmith://catalog"})),
             true,
         ),
         (old, true),
@@ -219,7 +219,7 @@ fn script() -> Vec<(String, bool)> {
             request(14, "logging/setLevel", json!({"level": "info"})),
             true,
         ),
-        (request(15, "pcbcraft/unknown", json!({})), true),
+        (request(15, "sparksmith/unknown", json!({})), true),
         (
             request(
                 16,
@@ -279,7 +279,7 @@ fn the_wire_matches_the_golden_transcript() -> Fallible<()> {
     })??;
 
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN);
-    if std::env::var_os("PCBCRAFT_BLESS").is_some() {
+    if std::env::var_os("SPARKSMITH_BLESS").is_some() {
         std::fs::write(&path, serde_json::to_string_pretty(&transcript)? + "\n")?;
     }
     let golden: Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
@@ -337,7 +337,7 @@ fn the_wire_matches_the_golden_transcript() -> Fallible<()> {
 #[test]
 fn the_desk_runs_every_request_through_the_gate() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let saved = dir.path().join("p1.pcbcraft").display().to_string();
+    let saved = dir.path().join("p1.sparksmith").display().to_string();
     let server = server(dir.path())?;
     block_on(async move {
         let desk = server.desk().clone();
@@ -391,7 +391,7 @@ fn the_desk_runs_every_request_through_the_gate() -> Fallible<()> {
         assert_eq!(refused["error"]["code"], "gate.never", "{refused}");
         Fallible::Ok(())
     })??;
-    assert!(!dir.path().join("p1.pcbcraft").exists());
+    assert!(!dir.path().join("p1.sparksmith").exists());
     Ok(())
 }
 
@@ -444,7 +444,7 @@ fn the_catalog_resolves_each_entry_by_its_kind() {
     let reachable: Vec<_> = catalog::reachable().map(|e| e.name.as_str()).collect();
     let expected: Vec<_> = all
         .iter()
-        .filter(|e| e.class != pcbcraft_core::Class::Never)
+        .filter(|e| e.class != sparksmith_core::Class::Never)
         .map(|e| e.name.as_str())
         .collect();
     assert_eq!(reachable, expected);

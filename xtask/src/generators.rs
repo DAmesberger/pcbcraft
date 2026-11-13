@@ -28,9 +28,9 @@ const PROFILE: &str = "generator";
 const LOCK: &str = "generators/modules.lock";
 /// The probe: the generator host itself built for wasm32 (a test module,
 /// not locked: it only has to agree with the native host).
-const PROBE: &str = "pcbcraft-generators-probe";
+const PROBE: &str = "sparksmith-generators-probe";
 /// Where `check` points the host's module tests.
-const MODULES_ENV: &str = "PCBCRAFT_GENERATOR_MODULES";
+const MODULES_ENV: &str = "SPARKSMITH_GENERATOR_MODULES";
 
 /// One generator crate under `generators/`.
 struct Generator {
@@ -420,7 +420,7 @@ fn module_tests(dir: &Path, extra: &[&str]) -> Result<()> {
         "test",
         "--locked",
         "--package",
-        "pcbcraft-generators",
+        "sparksmith-generators",
         "--test",
         "modules",
         "--profile",

@@ -1,4 +1,4 @@
-//! The one place Pcbcraft calls Solidcraft's command API.
+//! The one place Sparksmith calls Solidcraft's command API.
 //!
 //! Solidcraft commands take an ID and JSON parameters, and most have no
 //! upstream parameter contract yet. These typed builders keep every command
@@ -9,9 +9,9 @@
 use crate::material::Material;
 use crate::pad_outline::{Contour, bulge_midpoint};
 use crate::{Error, Result};
-use pcbcraft_core::Layer;
 use serde_json::{Value, json};
 use solidcraft_engine::Session;
+use sparksmith_core::Layer;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -177,7 +177,7 @@ pub struct BoardJoint {
 pub enum NamedLoop<'a> {
     /// Lines and arcs, one id per segment.
     Outline {
-        outline: &'a pcbcraft_core::library::Outline,
+        outline: &'a sparksmith_core::library::Outline,
         ids: Vec<String>,
     },
     Circle {
@@ -197,13 +197,13 @@ pub struct Native {
     watch: Option<Arc<crate::export::Watch>>,
 }
 
-/// MEASUREMENT SWITCH (repin-smlib): when SMLib's full check runs on Pcbcraft's native builds.
+/// MEASUREMENT SWITCH (repin-smlib): when SMLib's full check runs on Sparksmith's native builds.
 /// Off by default on this branch, Solidcraft's `Validation::Off`; set
-/// `PCBCRAFT_NATIVE_VALIDATION` to `each_feature` or `each_step` to run the check on demand. A
+/// `SPARKSMITH_NATIVE_VALIDATION` to `each_feature` or `each_step` to run the check on demand. A
 /// value it does not know runs Solidcraft's default check rather than skipping it.
 pub(crate) fn build_validation() -> solidcraft_engine::kernel::Validation {
     use solidcraft_engine::kernel::Validation;
-    match std::env::var("PCBCRAFT_NATIVE_VALIDATION") {
+    match std::env::var("SPARKSMITH_NATIVE_VALIDATION") {
         Ok(mode) => Validation::parse(&mode).unwrap_or_default(),
         Err(_) => Validation::Off,
     }
@@ -711,7 +711,7 @@ impl Native {
             }
             Contour::Outline(outline) => outline,
         };
-        use pcbcraft_core::library::Segment;
+        use sparksmith_core::library::Segment;
         if outline
             .segments
             .iter()
@@ -818,7 +818,7 @@ impl Native {
     }
 
     fn named_loop(&mut self, named: &NamedLoop<'_>) -> Result<()> {
-        use pcbcraft_core::library::Segment;
+        use sparksmith_core::library::Segment;
         match named {
             NamedLoop::Circle { center, radius, id } => {
                 self.call(
@@ -918,7 +918,7 @@ impl Native {
 
     /// Assign a physical look to bodies, in chunks the command accepts. The
     /// look is stored in the native file, so Solidcraft shows the same
-    /// material Pcbcraft does.
+    /// material Sparksmith does.
     pub fn appearance(&mut self, bodies: &[&str], material: &Material) -> Result<()> {
         self.look(
             bodies,
@@ -940,7 +940,7 @@ impl Native {
         for chunk in bodies.chunks(APPEARANCE_CHUNK) {
             self.call(
                 "appearance.assign",
-                json!({"bodies": chunk, "name": format!("Pcbcraft {}", look.name),
+                json!({"bodies": chunk, "name": format!("Sparksmith {}", look.name),
                     "color": color, "opacity": 1.0,
                     "pbr": {"metallic": look.metallic, "roughness": look.roughness,
                         "dielectric_ior": look.ior}}),
@@ -1073,7 +1073,7 @@ const MAX_DRAWING_BYTES: usize = 48 << 20;
 /// sketch insert reads in one command. Numbers are written in Rust's
 /// shortest round-trip form, so every coordinate is read back exactly.
 fn dxf(contours: &[Contour]) -> Result<String> {
-    use pcbcraft_core::library::Segment;
+    use sparksmith_core::library::Segment;
     use std::fmt::Write;
     let mut out = String::from("0\nSECTION\n2\nENTITIES\n");
     let finite = |v: f64| {

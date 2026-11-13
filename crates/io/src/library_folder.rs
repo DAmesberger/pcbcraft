@@ -1,7 +1,7 @@
 //! Local library folders (S3, D2), shared as plain files or git:
 //!
 //! ```text
-//! <folder>/pcbcraft-library.json       manifest: format, identity, name, required features
+//! <folder>/sparksmith-library.json       manifest: format, identity, name, required features
 //! <folder>/lineages/<id>/r0001.json    one immutable `RevisionRecord` per revision
 //! <folder>/assets/sha256/<hash>        asset bytes by content hash
 //! <folder>/catalog.json                mutable shelves and tags (D13), not revisioned
@@ -10,23 +10,23 @@
 //! Output is git-friendly: stable key order, pretty JSON with a final
 //! newline, one file per revision. An existing `rNNNN.json` is never
 //! overwritten. Meaning (records, hashes, bundles) stays in
-//! `pcbcraft_core::library::bundle`; this module only moves bytes.
+//! `sparksmith_core::library::bundle`; this module only moves bytes.
 use crate::persistence::{atomic_create, atomic_write};
 use crate::{Error, Result};
-use pcbcraft_core::ids::{
+use serde::{Deserialize, Serialize};
+use sparksmith_core::ids::{
     ContentHash, DefinitionId, LibraryId, Revision, SourceLineageId, printable,
 };
-use pcbcraft_core::library::bundle::{
+use sparksmith_core::library::bundle::{
     AssetBytes, Bundle, MAX_ASSET_BYTES, MAX_ASSETS, MAX_BUNDLE_RECORDS, MAX_LINKS, PackedAsset,
     RefSite, RevisionRecord, SourceRevision, asset_hash, content_hash, references, validate_bundle,
 };
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// The manifest's file name.
-pub const MANIFEST_FILE: &str = "pcbcraft-library.json";
+pub const MANIFEST_FILE: &str = "sparksmith-library.json";
 /// The mutable label file's name.
 pub const CATALOG_FILE: &str = "catalog.json";
 /// The one folder format this build reads and writes (pre-release: no
@@ -40,7 +40,7 @@ pub const MAX_FOLDER_RECORDS: usize = 20_000;
 /// Bytes of one revision or manifest file.
 pub const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
 
-/// `pcbcraft-library.json`.
+/// `sparksmith-library.json`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -242,7 +242,7 @@ fn malformed(path: &str, why: impl std::fmt::Display) -> Error {
 }
 
 fn conflict(message: String) -> Error {
-    Error::Document(pcbcraft_core::Error::Conflict(message))
+    Error::Document(sparksmith_core::Error::Conflict(message))
 }
 
 /// Atomically create `path` with `bytes` (creating its directory), never
@@ -341,10 +341,9 @@ pub fn open_folder(root: &Path) -> Result<Folder> {
     let bytes = read_bounded(&path, MAX_RECORD_BYTES)?;
     let manifest = parse_manifest(&bytes).map_err(|e| match e {
         ManifestError::Malformed(why) => malformed(MANIFEST_FILE, why),
-        ManifestError::Refused(why) => Error::Document(pcbcraft_core::Error::Unsupported(format!(
-            "library folder {}: {why}",
-            root.display()
-        ))),
+        ManifestError::Refused(why) => Error::Document(sparksmith_core::Error::Unsupported(
+            format!("library folder {}: {why}", root.display()),
+        )),
     })?;
     Ok(Folder {
         root: root.to_path_buf(),
@@ -363,7 +362,7 @@ pub fn create_folder(root: &Path, name: &str) -> Result<Folder> {
 /// second folder of one id is refused as for any copied folder. The id that
 /// names project files as a source is refused.
 pub fn create_folder_as(root: &Path, name: &str, library: LibraryId) -> Result<Folder> {
-    if library == pcbcraft_core::library::import::PROJECT_FILES {
+    if library == sparksmith_core::library::import::PROJECT_FILES {
         return Err(Error::Invalid(
             "that library id names project files as a source".into(),
         ));
@@ -556,7 +555,7 @@ impl OnDemand<'_> {
                 )));
             }
             if !present(&self.folder.root.join(record_path(at.lineage, at.revision))) {
-                return Err(Error::Document(pcbcraft_core::Error::NotFound(format!(
+                return Err(Error::Document(sparksmith_core::Error::NotFound(format!(
                     "the folder has no {}",
                     record_path(at.lineage, at.revision)
                 ))));
@@ -583,7 +582,7 @@ fn latest_revision(folder: &Folder, lineage: SourceLineageId) -> Result<Revision
     let name = lineage.to_string();
     let directory = folder.root.join(LINEAGES_DIR).join(&name);
     if !present(&directory) {
-        return Err(Error::Document(pcbcraft_core::Error::NotFound(format!(
+        return Err(Error::Document(sparksmith_core::Error::NotFound(format!(
             "the folder has no revision of lineage {lineage}"
         ))));
     }
@@ -599,7 +598,7 @@ fn latest_revision(folder: &Folder, lineage: SourceLineageId) -> Result<Revision
         latest = latest.max(Some(revision));
     }
     latest.ok_or_else(|| {
-        Error::Document(pcbcraft_core::Error::NotFound(format!(
+        Error::Document(sparksmith_core::Error::NotFound(format!(
             "the folder has no revision of lineage {lineage}"
         )))
     })
@@ -908,10 +907,9 @@ pub fn read_labels(folder: &Folder) -> Result<CatalogLabels> {
     let labels: CatalogLabels = serde_json::from_slice(&read_bounded(&path, MAX_RECORD_BYTES)?)
         .map_err(|e| malformed(CATALOG_FILE, e))?;
     if labels.format != CATALOG_FORMAT {
-        return Err(Error::Document(pcbcraft_core::Error::Unsupported(format!(
-            "{CATALOG_FILE} has unsupported format {}",
-            labels.format
-        ))));
+        return Err(Error::Document(sparksmith_core::Error::Unsupported(
+            format!("{CATALOG_FILE} has unsupported format {}", labels.format),
+        )));
     }
     check_labels(&labels)?;
     Ok(labels)

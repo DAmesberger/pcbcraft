@@ -127,7 +127,7 @@ The existing net rules (driver conflicts, input-only nets, undriven power inputs
 
 ## Printing
 
-`pcbcraft-io::schematic_pdf` writes a vector PDF through the shared PDF canvas `pcbcraft-io::pdf` (pdf-writer, MIT/Apache-2.0; also used by the fabrication drawings) with one page per sheet at its paper size, frame and title block included, from `schematic::scene`. A selection of sheets prints in page order. A sheet symbol is a link to its child sheet's page. Exposed as the CLI `export-schematic-pdf`, the automation request `schematic.export_pdf` (an external effect, not an undo step) and File › Export schematic PDF… in the desktop.
+`sparksmith-io::schematic_pdf` writes a vector PDF through the shared PDF canvas `sparksmith-io::pdf` (pdf-writer, MIT/Apache-2.0; also used by the fabrication drawings) with one page per sheet at its paper size, frame and title block included, from `schematic::scene`. A selection of sheets prints in page order. A sheet symbol is a link to its child sheet's page. Exposed as the CLI `export-schematic-pdf`, the automation request `schematic.export_pdf` (an external effect, not an undo step) and File › Export schematic PDF… in the desktop.
 
 ## Follow-ups
 

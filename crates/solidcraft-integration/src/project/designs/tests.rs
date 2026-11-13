@@ -7,7 +7,7 @@
 use super::*;
 use crate::project::tests::{envelope_demo, instances, library_demo, set_body};
 use crate::project::{Flat, Rebuilt, build, build_flat, update};
-use pcbcraft_core::{Engine, Id, Layer, Project};
+use sparksmith_core::{Engine, Id, Layer, Project};
 use std::collections::BTreeSet;
 
 /// The turns every kind of part model is placed at, on each side.
@@ -83,7 +83,7 @@ fn envelopes_sit_where_the_exact_build_holds_them() -> Result<()> {
     let package = &mut project.library.packages[0].definition;
     set_body(package, None);
     package.placement = crate::test_units::placement([0.25, -0.4, 0.1], [90.0, 0.0, 90.0]);
-    project.library.footprints[0].definition.datum = pcbcraft_core::library::Datum {
+    project.library.footprints[0].definition.datum = sparksmith_core::library::Datum {
         offset: crate::test_units::pt([0.3, -0.4]),
         rotation_mdeg: crate::test_units::deg(90.0),
     };
@@ -102,8 +102,8 @@ fn library_models_sit_where_the_exact_build_holds_them() -> Result<()> {
 fn part_files_sit_where_the_exact_build_holds_them() -> crate::board::tests::Fallible<()> {
     use crate::board::package_datum_tests::{USB4105, spec};
     use crate::board::tests::apply;
-    use pcbcraft_core::layout::LayoutCommand;
-    use pcbcraft_core::{Operation, Outcome};
+    use sparksmith_core::layout::LayoutCommand;
+    use sparksmith_core::{Operation, Outcome};
     let mut engine = Engine::demo()?;
     let spec = spec(USB4105)?;
     let mut x = -30.0;
@@ -195,7 +195,7 @@ fn the_live_model_places_one_design_per_package_revision_and_no_board() -> Resul
         .placements
         .iter()
         .filter_map(|p| project.instance(p.instance))
-        .filter_map(|i| pcbcraft_core::instances::resolve(&project.library, i).ok())
+        .filter_map(|i| sparksmith_core::instances::resolve(&project.library, i).ok())
         .filter_map(|r| r.physical)
         .map(|p| (p.package.id, p.package.revision))
         .collect();

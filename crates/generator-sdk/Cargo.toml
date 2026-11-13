@@ -1,6 +1,6 @@
 [package]
-name = "pcbcraft-generator-sdk"
-description = "Toolkit for writing Pcbcraft generator modules: exports, parameters, drawing and land helpers, golden tests"
+name = "sparksmith-generator-sdk"
+description = "Toolkit for writing Sparksmith generator modules: exports, parameters, drawing and land helpers, golden tests"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,7 @@ workspace = true
 # no_std + alloc: compiled into every generator module. Nothing here may
 # embed host paths, time or other build-machine state (reproducible modules).
 [dependencies]
-pcbcraft-generator-abi.workspace = true
+sparksmith-generator-abi.workspace = true
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 # The request and response buffers between calls (MIT; already in the tree

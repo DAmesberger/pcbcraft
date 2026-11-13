@@ -1,12 +1,12 @@
 //! The oracle: synthetic boards plotted by an installed `kicad-cli` and
 //! compared with our import's own fabrication output, layer by layer, to
-//! 1 µm. Opt-in (`PCBCRAFT_KICAD_ORACLE=1`): CI has no KiCad. Run with
-//! `cargo test -p pcbcraft-kicad --test oracle -- --ignored`.
+//! 1 µm. Opt-in (`SPARKSMITH_KICAD_ORACLE=1`): CI has no KiCad. Run with
+//! `cargo test -p sparksmith-kicad --test oracle -- --ignored`.
 mod support;
 
-use pcbcraft_core::fabrication::{self, FabricationOptions};
-use pcbcraft_fabcheck::reference;
-use pcbcraft_fabcheck::sets::{
+use sparksmith_core::fabrication::{self, FabricationOptions};
+use sparksmith_fabcheck::reference;
+use sparksmith_fabcheck::sets::{
     Arc, Corner, File, Judge, PadBox, PieceKind, Scope, attribute, compare_sets,
 };
 use std::path::PathBuf;
@@ -20,9 +20,9 @@ fn run_dir(name: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore = "needs kicad-cli; set PCBCRAFT_KICAD_ORACLE=1"]
+#[ignore = "needs kicad-cli; set SPARKSMITH_KICAD_ORACLE=1"]
 fn synthetic_footprints_match_kicad_within_a_micron() -> Fallible<()> {
-    if std::env::var_os("PCBCRAFT_KICAD_ORACLE").is_none() {
+    if std::env::var_os("SPARKSMITH_KICAD_ORACLE").is_none() {
         return Ok(());
     }
     let board = support::showcase();
@@ -33,7 +33,7 @@ fn synthetic_footprints_match_kicad_within_a_micron() -> Fallible<()> {
     let text = board.text();
     std::fs::write(&source, &text)?;
     let theirs = reference::plot(&source, None, board.copper, &dir)?;
-    let imported = pcbcraft_kicad::import(text.as_bytes())?;
+    let imported = sparksmith_kicad::import(text.as_bytes())?;
     let set = fabrication::generate(imported.engine.project(), &FabricationOptions::default())?;
     let ours: Vec<File> = set
         .files

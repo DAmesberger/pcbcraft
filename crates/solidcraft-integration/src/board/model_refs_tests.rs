@@ -3,10 +3,10 @@
 //! plane, with hand-worked expected values. The part is a 4 × 2 × 1 mm box
 //! with its corner at (−2, −1, 0) and a 1 mm hole through it at (0.5, 0).
 use super::*;
-use pcbcraft_core::library::package_model::PartFileModel;
-use pcbcraft_core::model::dimension::{BodyName, FaceName, ModelEdgeName};
 use serde_json::json;
 use solidcraft_engine::Session;
+use sparksmith_core::library::package_model::PartFileModel;
+use sparksmith_core::model::dimension::{BodyName, FaceName, ModelEdgeName};
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 

@@ -122,7 +122,7 @@ pub const E96: [u16; 96] = [
 
 /// EIA-96 multiplier letters with their power of ten. The alternative
 /// letters some makers print (`R` for Y, `S` for X, `H` for B) decode to
-/// the same values; Pcbcraft writes the letters below.
+/// the same values; Sparksmith writes the letters below.
 pub const EIA96_MULTIPLIERS: [(char, i32); 9] = [
     ('Z', -3),
     ('Y', -2),

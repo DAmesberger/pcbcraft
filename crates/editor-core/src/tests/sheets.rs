@@ -955,7 +955,7 @@ fn renaming_the_project_is_one_undo_step() -> Result<()> {
 fn a_first_save_names_an_untitled_project_after_its_file() {
     use std::path::Path;
     let mut project = std::sync::Arc::new(crate::Project::default());
-    let file = Path::new("/boards/usb-led-e2e.pcbcraft");
+    let file = Path::new("/boards/usb-led-e2e.sparksmith");
     assert_eq!(
         crate::name_by_file(&mut project, file).as_deref(),
         Some("usb-led-e2e")
@@ -963,14 +963,14 @@ fn a_first_save_names_an_untitled_project_after_its_file() {
     assert_eq!(project.name, "usb-led-e2e");
     // Now a name: a later save under another file keeps it.
     assert_eq!(
-        crate::name_by_file(&mut project, Path::new("other.pcbcraft")),
+        crate::name_by_file(&mut project, Path::new("other.sparksmith")),
         None
     );
     assert_eq!(project.name, "usb-led-e2e");
     for kept in [
-        "Untitled.pcbcraft",
-        " .pcbcraft",
-        &format!("{}.pcbcraft", "x".repeat(257)),
+        "Untitled.sparksmith",
+        " .sparksmith",
+        &format!("{}.sparksmith", "x".repeat(257)),
     ] {
         let mut project = std::sync::Arc::new(crate::Project::default());
         assert_eq!(

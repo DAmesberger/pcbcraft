@@ -20,12 +20,12 @@
 //! client to this channel ([`Client`]).
 use crate::gate::{Caller, Decision, Policy, Question, Refusal};
 use crate::session::{Request, Session, envelope, take_verbose};
-use pcbcraft_core::Class;
 use serde_json::{Value, json};
 use solidcraft_control::Effect;
 use solidcraft_control::auth;
 pub use solidcraft_control::auth::{App, ClientToken, Listen};
 use solidcraft_control::server::{Hub, Protocol, Summary, Waits};
+use sparksmith_core::Class;
 use std::ffi::OsString;
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -61,15 +61,15 @@ const ACCEPT_POLL: Duration = Duration::from_millis(25);
 /// Where a refused client reads how to connect.
 const DOCS: &str = concat!(
     "the ",
-    pcbcraft_core::product_name!(),
+    sparksmith_core::product_name!(),
     " README, section Live MCP"
 );
 
-/// Pcbcraft's control channel: token files in `<config>/control`
-/// (`PCBCRAFT_CONFIG_DIR` moves the config folder, `PCBCRAFT_CONTROL_DIR`
-/// the token folder) and `PCBCRAFT_CONTROL_TOKEN` for a harness.
+/// Sparksmith's control channel: token files in `<config>/control`
+/// (`SPARKSMITH_CONFIG_DIR` moves the config folder, `SPARKSMITH_CONTROL_DIR`
+/// the token folder) and `SPARKSMITH_CONTROL_TOKEN` for a harness.
 pub const APP: App = App {
-    name: pcbcraft_core::product::NAME,
+    name: sparksmith_core::product::NAME,
     data_dir: config_dir,
     env: control_env,
     utc: seconds,
@@ -77,13 +77,13 @@ pub const APP: App = App {
 };
 
 fn config_dir() -> Option<PathBuf> {
-    pcbcraft_io::settings::UserDirs::from_env()
+    sparksmith_io::settings::UserDirs::from_env()
         .ok()
         .map(|dirs| dirs.config)
 }
 
 fn control_env(name: &str) -> Option<OsString> {
-    std::env::var_os(format!("PCBCRAFT_{name}"))
+    std::env::var_os(format!("SPARKSMITH_{name}"))
 }
 
 fn seconds(secs: u64) -> String {
@@ -228,7 +228,7 @@ impl Endpoint {
             Arc::new(token.clone()),
         );
         let worker = std::thread::Builder::new()
-            .name("pcbcraft-live-mcp".into())
+            .name("sparksmith-live-mcp".into())
             .spawn(move || {
                 while !worker_stop.load(Ordering::Acquire) {
                     let stream = match listener.accept() {
@@ -267,7 +267,7 @@ impl Endpoint {
                         Arc::clone(&wake),
                     );
                     let served = std::thread::Builder::new()
-                        .name("pcbcraft-live-peer".into())
+                        .name("sparksmith-live-peer".into())
                         .spawn(move || {
                             hub.serve(stream, &token, send, false);
                             lock(&open).streams.retain(|(i, _)| *i != id);
@@ -337,7 +337,7 @@ impl Drop for Endpoint {
 /// configuration holds no secret and outlives this session.
 pub fn client_config(cli: &str) -> String {
     let config = json!({
-        "mcpServers": {pcbcraft_core::product::SHORT_NAME: {"command": cli, "args": ["mcp", "--live"]}}
+        "mcpServers": {sparksmith_core::product::SHORT_NAME: {"command": cli, "args": ["mcp", "--live"]}}
     });
     serde_json::to_string_pretty(&config).unwrap_or_default()
 }
@@ -427,7 +427,7 @@ pub fn admit(
             "live.window_only",
             command,
             "the open window owns its file, and its File menu asks the person about unsaved work. Nothing was changed.".into(),
-            concat!("Ask the person to open, save or start a project in ", pcbcraft_core::product_name!(), ", then carry on."),
+            concat!("Ask the person to open, save or start a project in ", sparksmith_core::product_name!(), ", then carry on."),
         ));
     }
     let mut request = json!({
@@ -529,15 +529,15 @@ impl Client {
     pub fn find(app: &App, port: Option<u16>, token: Option<&str>) -> Result<Self, String> {
         let port = port.or_else(|| app.read_current_port()).ok_or(concat!(
             "no ",
-            pcbcraft_core::product_name!(),
+            sparksmith_core::product_name!(),
             " window has live MCP on: in ",
-            pcbcraft_core::product_name!(),
+            sparksmith_core::product_name!(),
             ", choose Help › Connect AI assistants… and turn it on"
         ))?;
         let token = app.client_token(port, token).ok_or_else(|| {
             format!(
-                "no token for the {} window on port {port}: turn live MCP on in that window, or give PCBCRAFT_CONTROL_TOKEN",
-                pcbcraft_core::product::NAME
+                "no token for the {} window on port {port}: turn live MCP on in that window, or give SPARKSMITH_CONTROL_TOKEN",
+                sparksmith_core::product::NAME
             )
         })?;
         Ok(Self::with_token(port, token))
@@ -561,7 +561,7 @@ impl Client {
         let unreachable = |error: std::io::Error| {
             format!(
                 "could not reach the {} window on port {}: {error}. Is live MCP still on?",
-                pcbcraft_core::product::NAME,
+                sparksmith_core::product::NAME,
                 self.port
             )
         };
@@ -582,7 +582,7 @@ impl Client {
         let lost = |why: &str| {
             format!(
                 "no reply from the {} window ({why}); inspect the project before sending a change again",
-                pcbcraft_core::product::NAME
+                sparksmith_core::product::NAME
             )
         };
         let reply = match crate::lines::next(&mut reader, MAX_REPLY) {

@@ -3,8 +3,8 @@ use super::fill::{Flat, fill};
 use super::*;
 use crate::material::BodyKind;
 use crate::scene::Geometry;
-use pcbcraft_core::library::marking::{LaidText, PolarityMark};
-use pcbcraft_core::materials::MaterialId;
+use sparksmith_core::library::marking::{LaidText, PolarityMark};
+use sparksmith_core::materials::MaterialId;
 use std::collections::BTreeMap;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -87,7 +87,9 @@ fn text(text: &str, height: f64) -> LaidElement {
         height_mm: height,
         // Centred on the area: the core gives the box's bottom-left corner.
         origin: [
-            -(text.chars().count() as f64) * pcbcraft_core::library::marking::TEXT_ADVANCE * height
+            -(text.chars().count() as f64)
+                * sparksmith_core::library::marking::TEXT_ADVANCE
+                * height
                 / 2.0,
             -height / 2.0,
         ],
@@ -265,7 +267,7 @@ fn a_changed_value_refills_only_its_own_decal() -> TestResult {
     assert_eq!(cache.len(), 2, "the old decal of b is dropped");
     // Findings are advisory: they do not change the decal's identity.
     let mut noted = ten_k.clone();
-    noted.findings.push(pcbcraft_core::Finding::new(
+    noted.findings.push(sparksmith_core::Finding::new(
         "marking.does_not_fit",
         "x".into(),
         vec![],
@@ -445,10 +447,10 @@ fn bad_layouts_and_areas_are_refused() {
 
 /// The demo board's built geometry, sources and each placed instance.
 fn demo() -> std::result::Result<
-    (pcbcraft_core::Project, crate::project::NativeModel),
+    (sparksmith_core::Project, crate::project::NativeModel),
     Box<dyn std::error::Error>,
 > {
-    let project = pcbcraft_core::Engine::demo()?.project().clone();
+    let project = sparksmith_core::Engine::demo()?.project().clone();
     let model = crate::project::build(&project)?;
     Ok((project, model))
 }
@@ -552,7 +554,7 @@ fn a_package_preview_gets_its_decal_on_top() -> TestResult {
     let (project, model) = demo()?;
     let placement = project.placements.first().ok_or("no placement")?;
     let instance = project.instance(placement.instance).ok_or("no instance")?;
-    let physical = pcbcraft_core::instances::resolve(&project.library, instance)?
+    let physical = sparksmith_core::instances::resolve(&project.library, instance)?
         .physical
         .ok_or("no physical")?;
     let preview = crate::project::preview(&physical.package.definition)?;
@@ -626,8 +628,8 @@ fn bottom_faces_are_marked_from_below() -> TestResult {
 /// silently dropped.
 #[test]
 fn instance_layouts_read_the_project_in_place() -> TestResult {
-    use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
-    use pcbcraft_core::library::marking::{Align, MarkingItem, MarkingSpec, Template};
+    use sparksmith_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
+    use sparksmith_core::library::marking::{Align, MarkingItem, MarkingSpec, Template};
     let (mut project, _) = demo()?;
     let spec = MarkingSpec {
         items: vec![MarkingItem::Text {
@@ -635,7 +637,7 @@ fn instance_layouts_read_the_project_in_place() -> TestResult {
             height_nm: None,
             align: Align::Centre,
         }],
-        area: pcbcraft_core::library::marking::AreaChoice::Explicit {
+        area: sparksmith_core::library::marking::AreaChoice::Explicit {
             centre: crate::test_units::pt([0.0, 0.0]),
             size_nm: crate::test_units::nm2([1.2, 0.6]),
         },
@@ -687,13 +689,13 @@ fn instance_layouts_read_the_project_in_place() -> TestResult {
 /// packed asset; the same layout without the asset draws nothing.
 #[test]
 fn board_artwork_is_drawn_from_the_project_s_packed_svg() -> TestResult {
-    use pcbcraft_core::library::bundle::{AssetBytes, asset_hash};
-    use pcbcraft_core::library::marking::{
+    use sparksmith_core::library::bundle::{AssetBytes, asset_hash};
+    use sparksmith_core::library::marking::{
         ARTWORK_MEDIA_TYPE, Anchor, AreaChoice, InstanceMarking, MarkingItem, MarkingSpec,
     };
-    use pcbcraft_core::library::{Definition, DraftEdit, PackedAsset};
-    use pcbcraft_core::{InstanceCommand, LibraryCommand, Operation};
-    let mut engine = pcbcraft_core::Engine::demo()?;
+    use sparksmith_core::library::{Definition, DraftEdit, PackedAsset};
+    use sparksmith_core::{InstanceCommand, LibraryCommand, Operation};
+    let mut engine = sparksmith_core::Engine::demo()?;
     let bytes = ARTWORK.as_bytes().to_vec();
     let asset = PackedAsset {
         hash: asset_hash(&bytes),

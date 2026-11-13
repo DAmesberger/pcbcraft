@@ -12,10 +12,12 @@ use crate::material::{self, BodyKind};
 use crate::scene::{Geometry, Place};
 use crate::stack::{PROUD_MM, Stack};
 use crate::{Error, Result};
-use pcbcraft_core::geometry::{cos_sin, is_quarter_turn};
-use pcbcraft_core::library::offset_polygon;
-use pcbcraft_core::library::{ChipKind, FootprintDefinition, PackageDefinition, PadKind, PadSide};
-use pcbcraft_core::{CopperLayer, Fabrication, Layer, Placement, Point, Project, layout};
+use sparksmith_core::geometry::{cos_sin, is_quarter_turn};
+use sparksmith_core::library::offset_polygon;
+use sparksmith_core::library::{
+    ChipKind, FootprintDefinition, PackageDefinition, PadKind, PadSide,
+};
+use sparksmith_core::{CopperLayer, Fabrication, Layer, Placement, Point, Project, layout};
 use std::sync::Arc;
 
 mod outline;
@@ -95,7 +97,7 @@ impl Outline {
     /// The solved shape of a sketched `project`; `None` for a rectangle
     /// (the layers then draw `board_size`'s rectangle, as before).
     pub fn of(project: &Project) -> Option<Self> {
-        use pcbcraft_core::model::board::flatten;
+        use sparksmith_core::model::board::flatten;
         if project.board_shape.is_rectangle() {
             return None;
         }
@@ -243,7 +245,7 @@ pub struct ViaMark {
     pub diameter: f64,
     pub tented: bool,
     /// The mask opening's diameter where the via is open
-    /// ([`pcbcraft_core::Via::mask_opening`], as the Gerber draws it).
+    /// ([`sparksmith_core::Via::mask_opening`], as the Gerber draws it).
     pub mask_opening: f64,
 }
 
@@ -944,7 +946,7 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
 fn lead_band(
     package: &PackageDefinition,
     footprint: &FootprintDefinition,
-    pad: &pcbcraft_core::library::Pad,
+    pad: &sparksmith_core::library::Pad,
 ) -> Option<([f64; 2], [f64; 2])> {
     let [length, width, _] = package.envelope();
     let offset = package.placement.translation();
@@ -982,7 +984,7 @@ fn lead_band(
 /// whose terminations and fillets are not modelled.
 fn pad_box(
     footprint: &FootprintDefinition,
-    pad: &pcbcraft_core::library::Pad,
+    pad: &sparksmith_core::library::Pad,
 ) -> Option<(Point, Point)> {
     if pad.side != PadSide::Top || pad.kind == PadKind::NonPlatedHole {
         return None;
@@ -1333,9 +1335,9 @@ mod tests {
     /// in the Gerber), so no laminate shows there.
     #[test]
     fn a_mask_opening_shows_the_laminate_around_its_copper() -> Result<()> {
-        let stackup = pcbcraft_core::Stackup {
+        let stackup = sparksmith_core::Stackup {
             mask_bottom: false,
-            ..pcbcraft_core::Stackup::default()
+            ..sparksmith_core::Stackup::default()
         };
         let board = Board {
             width: 10.0,

@@ -1,5 +1,5 @@
 [package]
-name = "pcbcraft-core"
+name = "sparksmith-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,7 @@ workspace = true
 test-fixtures = []
 
 [dependencies]
-pcbcraft-units-derive.workspace = true
+sparksmith-units-derive.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
@@ -24,7 +24,7 @@ qrcodegen = "1.8"
 
 [dev-dependencies]
 # The Gerber and Excellon readers the fabrication tests read files back with.
-pcbcraft-fabcheck.workspace = true
+sparksmith-fabcheck.workspace = true
 rqrr = { version = "0.10", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

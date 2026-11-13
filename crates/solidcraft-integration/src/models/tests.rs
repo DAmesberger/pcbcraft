@@ -1,20 +1,20 @@
 use super::*;
 use crate::material::BodyKind;
 use crate::project;
-use pcbcraft_core::library::{
+use sparksmith_core::library::{
     ChipForm, ChipKind, GullWingForm, HeaderForm, LeadSides, NoLeadForm, PackageTerminal,
     RoleMaterial,
 };
-use pcbcraft_core::{Engine, Layer, PackageTerminalId};
+use sparksmith_core::{Engine, Layer, PackageTerminalId};
 
 /// A test length in mm, as stored.
-pub(crate) fn nm(mm: f64) -> pcbcraft_core::units::Nm {
-    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+pub(crate) fn nm(mm: f64) -> sparksmith_core::units::Nm {
+    sparksmith_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
 
 /// A test point or size in mm, as stored.
-pub(crate) fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
-    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+pub(crate) fn pt(p: [f64; 2]) -> sparksmith_core::units::PointNm {
+    sparksmith_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
 }
 
 fn near(actual: f64, expected: f64, what: &str) {
@@ -268,7 +268,7 @@ fn a_chip_led_is_a_substrate_and_terminations_under_a_clear_lens() -> Result<()>
 /// lands and four stakes the shell; bodies are disjoint.
 #[test]
 fn a_usb_c_receptacle_matches_the_drawing_outline() -> Result<()> {
-    let form = PackageForm::UsbC(Box::new(pcbcraft_core::library::UsbCForm::typical()));
+    let form = PackageForm::UsbC(Box::new(sparksmith_core::library::UsbCForm::typical()));
     let (mut native, definition) = built(form, 13)?;
     let (lo, hi) = bounds(&native, "pkgt shell")?;
     near(hi[0] - lo[0], 8.94, "shell width");
@@ -672,7 +672,7 @@ fn the_saved_model_reopens_parametric_with_materials_in_plain_solidcraft() -> Re
             .get(body.definition_name())
             .ok_or_else(|| Error::Verification("unrecorded body".into()))?;
         let metal =
-            recorded.material.category() == pcbcraft_core::materials::MaterialCategory::Metal;
+            recorded.material.category() == sparksmith_core::materials::MaterialCategory::Metal;
         assert_eq!(look.metallic() > 0.5, metal, "{}", body.name);
     }
     reopened.change_parameters(serde_json::json!({"pkgdraft_pitch": "1.1 mm"}))?;
@@ -733,7 +733,7 @@ fn the_preview_applies_the_placement() -> Result<()> {
 }
 
 /// The demo board with its chip package given a generated model.
-fn generated_demo() -> Result<pcbcraft_core::Project> {
+fn generated_demo() -> Result<sparksmith_core::Project> {
     let mut project = Engine::demo()
         .map_err(|e| Error::Verification(e.to_string()))?
         .project()
@@ -802,7 +802,7 @@ fn every_instance_shares_one_definition_and_keeps_its_own_identity() -> Result<(
         let high = bodies.iter().map(|g| g.max[2]).fold(f64::MIN, f64::max);
         match source.layer {
             // Seated on the land copper on top of the 1.6 mm board.
-            Some(pcbcraft_core::CopperLayer::Top) => near(low, 1.635, "top seating plane"),
+            Some(sparksmith_core::CopperLayer::Top) => near(low, 1.635, "top seating plane"),
             _ => near(high, -0.035, "bottom seating plane"),
         }
     }

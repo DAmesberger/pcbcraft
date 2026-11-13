@@ -12,9 +12,9 @@ use crate::sets::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// The program run; `PCBCRAFT_KICAD_CLI` overrides it.
+/// The program run; `SPARKSMITH_KICAD_CLI` overrides it.
 pub fn program() -> PathBuf {
-    std::env::var_os("PCBCRAFT_KICAD_CLI")
+    std::env::var_os("SPARKSMITH_KICAD_CLI")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("kicad-cli"))
 }

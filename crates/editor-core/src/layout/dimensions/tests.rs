@@ -1,7 +1,7 @@
 //! Part dimensions without a sketch evaluator: the wire form and bounds of
 //! the contract, the reference findings and their no-waiver rule, the
 //! refusals that need no solve, and the held refusal's words. The parts
-//! solve's tests live in `pcbcraft_solidcraft::board::parts`.
+//! solve's tests live in `sparksmith_solidcraft::board::parts`.
 use super::*;
 use crate::fabrication::FabricationCommand;
 use crate::ids::PadId;

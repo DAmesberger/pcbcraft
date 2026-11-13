@@ -381,13 +381,13 @@ fn the_showcase_layers_match_the_core_geometry() -> Fallible<()> {
     Ok(())
 }
 
-/// The exact polygon path (`pcbcraft_fabcheck::polygons`) agrees with the
+/// The exact polygon path (`sparksmith_fabcheck::polygons`) agrees with the
 /// raster on every written layer of the showcase and the sketched board:
 /// the polygon area lies within the raster's sampling bound of the raster
 /// area, and a layer compared with itself has no difference.
 #[test]
 fn the_polygon_path_agrees_with_the_raster_on_every_layer() -> Fallible<()> {
-    use pcbcraft_fabcheck::{compare, polygons};
+    use sparksmith_fabcheck::{compare, polygons};
     for (label, project) in [("showcase", showcase()?), ("sketched", sketched()?)] {
         let set = fabrication::generate(&project, &FabricationOptions::default())?;
         let grid = expected::board_bitmap(&project, 1.003_17, PIXEL)?;

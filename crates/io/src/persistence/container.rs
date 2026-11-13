@@ -1,4 +1,4 @@
-//! The `.pcbcraft` ZIP container (slice D0, founder decision F5).
+//! The `.sparksmith` ZIP container (slice D0, founder decision F5).
 //!
 //! A container holds exactly:
 //! - `project.json`: the editor file, every packed asset's bytes left empty;
@@ -9,16 +9,16 @@
 //! directory, link or encrypted entry, another compression method, a
 //! missing, unreferenced or mismatched asset) refuses the file and names
 //! the entry: nothing is dropped silently. Every read is bounded by the
-//! `pcbcraft_core::format::CONTAINER_*` limits, measured on the bytes that
+//! `sparksmith_core::format::CONTAINER_*` limits, measured on the bytes that
 //! actually decompress rather than on the sizes the archive declares.
 //! Writes go through the atomic path of [`super::atomic_write_with`].
 use crate::{Error, Result};
-use pcbcraft_core::format::{
+use sparksmith_core::format::{
     self, CONTAINER_ASSET_PREFIX, CONTAINER_DOCUMENT, CONTAINER_MAX_ASSET_BYTES,
     CONTAINER_MAX_BYTES, CONTAINER_MAX_ENTRIES, CONTAINER_RECOVERY, EditorFile, MAX_FILE_BYTES,
 };
-use pcbcraft_core::ids::ContentHash;
-use pcbcraft_core::library::bundle::AssetBytes;
+use sparksmith_core::ids::ContentHash;
+use sparksmith_core::library::bundle::AssetBytes;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{Read, Seek, Write};
@@ -91,8 +91,8 @@ pub(crate) fn read(path: &Path, role: Role, load: Load) -> Result<Contents> {
         return Err(Error::Invalid(
             concat!(
                 "container.format: not a ",
-                pcbcraft_core::product_name!(),
-                " project container (a .pcbcraft file is a ZIP archive holding project.json)"
+                sparksmith_core::product_name!(),
+                " project container (a .sparksmith file is a ZIP archive holding project.json)"
             )
             .into(),
         ));

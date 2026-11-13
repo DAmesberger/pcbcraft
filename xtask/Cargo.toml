@@ -11,23 +11,23 @@ workspace = true
 [dependencies]
 # `convert-v1` reads converted files back as the app does and recomputes
 # the revision and design hashes a project remembers.
-pcbcraft-core.workspace = true
-pcbcraft-io.workspace = true
+sparksmith-core.workspace = true
+sparksmith-io.workspace = true
 # `kicad-compare`: the KiCad import and the Gerber/Excellon comparison.
-pcbcraft-kicad.workspace = true
-pcbcraft-fabcheck.workspace = true
+sparksmith-kicad.workspace = true
+sparksmith-fabcheck.workspace = true
 serde_json.workspace = true
 # Hashes generator modules for generators/modules.lock (MIT OR Apache-2.0).
 sha2.workspace = true
 # Parses Rust for the UI container gate (MIT OR Apache-2.0; already in the tree).
 syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
-# Reads and rewrites `.pcbcraft` containers for `convert-v1` (MIT; the
-# version and features pcbcraft-io uses).
+# Reads and rewrites `.sparksmith` containers for `convert-v1` (MIT; the
+# version and features sparksmith-io uses).
 zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 # The `convert-v1` footprint tests solve sourced footprints with the real
 # evaluator and check them fresh after conversion (tests only: the gates
 # never build Solidcraft).
-pcbcraft-solidcraft.workspace = true
+sparksmith-solidcraft.workspace = true

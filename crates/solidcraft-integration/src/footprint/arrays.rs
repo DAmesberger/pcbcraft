@@ -4,7 +4,7 @@
 //! generation key `(array, i, j)`, never position or number.
 
 use crate::geom::Vec2;
-use pcbcraft_core::library::footprint_source::{
+use sparksmith_core::library::footprint_source::{
     ArrayLayout, NumberingScheme, PadArray, Pin1Position,
 };
 

@@ -7,18 +7,18 @@
 //! acceptance tests run through the automation session.
 use super::{SLAB, build, read_metadata};
 use crate::linked_design::{LinkedDesign, Operation};
-use pcbcraft_core::ids::{Id, InterfaceSourceId};
-use pcbcraft_core::interface::publish::{candidate, record};
-use pcbcraft_core::interface::{InterfaceCommand, Sidecar};
-use pcbcraft_core::layout::LayoutCommand;
-use pcbcraft_core::library::datum::{
+use serde_json::json;
+use sparksmith_core::ids::{Id, InterfaceSourceId};
+use sparksmith_core::interface::publish::{candidate, record};
+use sparksmith_core::interface::{InterfaceCommand, Sidecar};
+use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::library::datum::{
     DatumFrame, DatumName, DatumProfile, PackageDatum, PackageDatumGeometry, PackageDatumOrigin,
 };
-use pcbcraft_core::library::package_model::{PackageEdit, edit_package};
-use pcbcraft_core::model::interface::Tier;
-use pcbcraft_core::units::Nm;
-use pcbcraft_core::{Engine, Operation as Op};
-use serde_json::json;
+use sparksmith_core::library::package_model::{PackageEdit, edit_package};
+use sparksmith_core::model::interface::Tier;
+use sparksmith_core::units::Nm;
+use sparksmith_core::{Engine, Operation as Op};
 use std::collections::BTreeMap;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -185,9 +185,9 @@ fn every_named_face_is_in_the_design() -> Fallible {
         );
         let body = if slab { SLAB } else { datum.token.as_str() };
         match datum.kind {
-            pcbcraft_core::library::datum::DatumKind::Frame
-            | pcbcraft_core::library::datum::DatumKind::Parameter
-            | pcbcraft_core::library::datum::DatumKind::Plane
+            sparksmith_core::library::datum::DatumKind::Frame
+            | sparksmith_core::library::datum::DatumKind::Parameter
+            | sparksmith_core::library::datum::DatumKind::Plane
                 if !slab =>
             {
                 assert!(datum.faces.is_empty(), "{}", datum.token);
@@ -240,8 +240,8 @@ fn a_slot_keeps_its_names_whatever_comes_before_it() -> Fallible {
     let revision = engine.revision();
     engine.apply_update(
         revision,
-        pcbcraft_core::updates::Change::Instance {
-            edit: pcbcraft_core::updates::InstanceChange::Remove { instance: first },
+        sparksmith_core::updates::Change::Instance {
+            edit: sparksmith_core::updates::InstanceChange::Remove { instance: first },
         },
         false,
     )?;
@@ -323,7 +323,7 @@ fn a_linked_design_follows_a_moved_part() -> Fallible {
         .iter()
         .find(|d| d.token == token)
         .ok_or("opening")?;
-    let pcbcraft_core::interface::DatumGeometry::Volume { frame, .. } = &opening.geometry else {
+    let sparksmith_core::interface::DatumGeometry::Volume { frame, .. } = &opening.geometry else {
         return Err("a volume".into());
     };
     let o = frame.origin.0;
@@ -404,7 +404,7 @@ fn the_published_bottom_side_height_lies_under_the_board() -> Fallible {
             instance: part,
             position: p.position,
             rotation_deg: p.rotation_deg,
-            layer: pcbcraft_core::Layer::Bottom,
+            layer: sparksmith_core::Layer::Bottom,
         }),
     )?;
     let published = publish(&mut engine, Tier::Interface, &path)?;
@@ -413,7 +413,7 @@ fn the_published_bottom_side_height_lies_under_the_board() -> Fallible {
         .iter()
         .find(|d| d.token == "side.bottom")
         .ok_or("the bottom side height")?;
-    let pcbcraft_core::interface::DatumGeometry::Volume { height, .. } = &datum.geometry else {
+    let sparksmith_core::interface::DatumGeometry::Volume { height, .. } = &datum.geometry else {
         return Err("a volume".into());
     };
     assert!(*height > 0.0, "a part on the bottom");
@@ -424,7 +424,7 @@ fn the_published_bottom_side_height_lies_under_the_board() -> Fallible {
     let faces = linked_design.faces("side.bottom")?;
     assert!(!faces.is_empty());
     let board = engine.project().board().into_owned();
-    let b = pcbcraft_core::model::board::outline_bounds(&board.outer);
+    let b = sparksmith_core::model::board::outline_bounds(&board.outer);
     for f in &faces {
         let [x, y, z] = f.centroid;
         assert!(

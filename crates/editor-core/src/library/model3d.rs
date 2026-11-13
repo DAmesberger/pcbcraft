@@ -169,7 +169,7 @@ pub struct ModelBody {
 }
 
 /// A PBR material from a glTF file (metallic-roughness plus the KHR
-/// extensions Pcbcraft reads).
+/// extensions Sparksmith reads).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct CustomMaterial {

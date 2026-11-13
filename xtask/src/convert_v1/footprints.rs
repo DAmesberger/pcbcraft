@@ -67,7 +67,7 @@ fn solve_hash(body: &mut Map<String, Value>) -> Result<usize> {
     if body.get("source").is_none_or(Value::is_null) {
         return Ok(0);
     }
-    let mut footprint: pcbcraft_core::library::FootprintDefinition =
+    let mut footprint: sparksmith_core::library::FootprintDefinition =
         serde_json::from_value(Value::Object(body.clone()))
             .map_err(|e| format!("a converted footprint does not read: {e}"))?;
     let before = footprint.pads.clone();
@@ -147,11 +147,11 @@ fn land_values(lands: &mut Map<String, Value>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::library::FootprintDefinition;
-    use pcbcraft_core::library::templates::catalog::LandValues;
-    use pcbcraft_core::library::{HoleShape, MaskRule, PadShape, PasteRule};
-    use pcbcraft_core::units::{Angle, Nm, PointNm};
     use serde_json::json;
+    use sparksmith_core::library::FootprintDefinition;
+    use sparksmith_core::library::templates::catalog::LandValues;
+    use sparksmith_core::library::{HoleShape, MaskRule, PadShape, PasteRule};
+    use sparksmith_core::units::{Angle, Nm, PointNm};
 
     fn p(x: i64, y: i64) -> Result<PointNm> {
         Ok(PointNm::new(Nm::new(x)?, Nm::new(y)?))
@@ -356,13 +356,13 @@ mod tests {
     /// and stay publishable: no `footprint.stale`, no blocking finding.
     #[test]
     fn a_sourced_footprint_stays_fresh() -> Result<()> {
-        use pcbcraft_core::ids::PackageTerminalId;
-        use pcbcraft_core::library::footprint_edit::check_fresh;
-        use pcbcraft_core::library::templates::footprint_family::{
+        use sparksmith_core::ids::PackageTerminalId;
+        use sparksmith_core::library::footprint_edit::check_fresh;
+        use sparksmith_core::library::templates::footprint_family::{
             self, FootprintTemplate, TemplateKind,
         };
-        use pcbcraft_core::library::{PackageDefinition, PackageTerminal};
-        use pcbcraft_solidcraft::footprint::SketchEvaluator;
+        use sparksmith_core::library::{PackageDefinition, PackageTerminal};
+        use sparksmith_solidcraft::footprint::SketchEvaluator;
         let package = |n: u32, body: [f64; 3]| -> Result<PackageDefinition> {
             let mut envelope_nm = [Nm::ZERO; 3];
             for (e, mm) in envelope_nm.iter_mut().zip(body) {

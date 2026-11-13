@@ -1,25 +1,25 @@
 //! Slice B3's gate (acceptance 1 to 5 and 8 of the design note) through
 //! the JSON transport, over the ESP32-S31 dev board example, with a
-//! headless SolidCraft assembly (`pcbcraft_solidcraft::linked_design`) that
+//! headless SolidCraft assembly (`sparksmith_solidcraft::linked_design`) that
 //! links the published interface as SolidCraft's Insert Design does.
 //!
 //! The fixture is the example with J1's package carrying the opening its
 //! USB4105 part file declares (as the part-file reader stores it when the
 //! part file is used); every change after that is a typed command.
 use super::Session;
-use pcbcraft_core::layout::fill::FillCommand;
-use pcbcraft_core::library::package_model::{PackageEdit, edit_package};
-use pcbcraft_core::model::fill::{FillRegion, FillSpec};
-use pcbcraft_core::{CopperLayer, Engine, InstanceCommand, Operation};
-use pcbcraft_solidcraft::linked_design::{Face, LinkedDesign, Operation as Extrude};
 use serde_json::{Value, json};
+use sparksmith_core::layout::fill::FillCommand;
+use sparksmith_core::library::package_model::{PackageEdit, edit_package};
+use sparksmith_core::model::fill::{FillRegion, FillSpec};
+use sparksmith_core::{CopperLayer, Engine, InstanceCommand, Operation};
+use sparksmith_solidcraft::linked_design::{Face, LinkedDesign, Operation as Extrude};
 use std::path::{Path, PathBuf};
 
 pub(super) type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const EXAMPLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    "/../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith"
 );
 const USB4105: &[u8] =
     include_bytes!("../../../../examples/esp32-s31-devboard/parts/usb4105.solidcraft");
@@ -55,15 +55,15 @@ pub(super) fn instance(session: &Session, designator: &str) -> TestResult<u64> {
 /// The example, J1's package carrying the USB4105 part file's opening,
 /// saved in `dir` and opened.
 pub(super) fn open(dir: &Path) -> TestResult<Session> {
-    let mut file = pcbcraft_io::read_project(Path::new(EXAMPLE))?;
-    let part = pcbcraft_solidcraft::models::part_file::evaluate(USB4105, &Default::default())?;
+    let mut file = sparksmith_io::read_project(Path::new(EXAMPLE))?;
+    let part = sparksmith_solidcraft::models::part_file::evaluate(USB4105, &Default::default())?;
     let project = &mut file.project;
     let j1 = project
         .instances
         .iter()
         .find(|i| i.designator == "J1")
         .ok_or("J1")?;
-    let package = pcbcraft_core::instances::resolve(&project.library, j1)?
+    let package = sparksmith_core::instances::resolve(&project.library, j1)?
         .physical
         .ok_or("J1 is placed")?
         .package;
@@ -82,8 +82,8 @@ pub(super) fn open(dir: &Path) -> TestResult<Session> {
         .collect();
     assert_eq!(edits.len(), 1, "the part file declares its opening");
     entry.definition = edit_package(&entry.definition, &edits)?;
-    let path = dir.join("board.pcbcraft");
-    pcbcraft_io::write_project(&path, &file)?;
+    let path = dir.join("board.sparksmith");
+    sparksmith_io::write_project(&path, &file)?;
     let mut session = Session::new(Engine::default());
     ok(
         &mut session,
@@ -126,9 +126,9 @@ pub(super) fn changes(preview: &Value) -> Vec<Value> {
 /// parts dimensioned from J1 come along; their datums are not exported
 /// unless a test exports them.
 pub(super) fn move_j1(session: &mut Session, dx: f64) -> TestResult {
-    use pcbcraft_core::library::footprint_source::{DimValue, Expr};
-    use pcbcraft_core::model::board::ConstraintTarget;
-    use pcbcraft_core::model::dimension::{BoardRef, FeatureRef};
+    use sparksmith_core::library::footprint_source::{DimValue, Expr};
+    use sparksmith_core::model::board::ConstraintTarget;
+    use sparksmith_core::model::dimension::{BoardRef, FeatureRef};
     let j1 = instance(session, "J1")?;
     let x = |session: &Session| -> TestResult<f64> {
         Ok(session
@@ -138,7 +138,7 @@ pub(super) fn move_j1(session: &mut Session, dx: f64) -> TestResult {
             .ok_or("J1 placed")?
             .position[0])
     };
-    let held = |d: &&pcbcraft_core::model::dimension::PartDimension| {
+    let held = |d: &&sparksmith_core::model::dimension::PartDimension| {
         d.refs.len() == 2
             && matches!(d.refs.first(), Some(BoardRef::Part(FeatureRef::Origin { target: ConstraintTarget::Placement(p) })) if *p == j1)
             && matches!(d.refs.get(1), Some(BoardRef::Board(_)))
@@ -161,9 +161,9 @@ pub(super) fn move_j1(session: &mut Session, dx: f64) -> TestResult {
         dimension.value = Some(DimValue::Expr(Expr(format!("{text} + {step}"))));
         apply(
             session,
-            Operation::Dimension(pcbcraft_core::layout::dimensions::DimensionCommand::Edit {
-                dimension,
-            }),
+            Operation::Dimension(
+                sparksmith_core::layout::dimensions::DimensionCommand::Edit { dimension },
+            ),
         )?;
         let moved = x(session)? - before;
         if (moved - dx).abs() <= 1e-9 {
@@ -183,8 +183,8 @@ pub(super) fn move_j1(session: &mut Session, dx: f64) -> TestResult {
 /// with it.
 pub(super) fn remove(session: &mut Session, id: u64) -> TestResult {
     let revision = session.engine().revision();
-    let change = pcbcraft_core::updates::Change::Instance {
-        edit: pcbcraft_core::updates::InstanceChange::Remove { instance: id },
+    let change = sparksmith_core::updates::Change::Instance {
+        edit: sparksmith_core::updates::InstanceChange::Remove { instance: id },
     };
     ok(
         session,
@@ -195,8 +195,8 @@ pub(super) fn remove(session: &mut Session, id: u64) -> TestResult {
     Ok(())
 }
 
-pub(super) fn sidecar(design: &Path) -> TestResult<pcbcraft_core::interface::Sidecar> {
-    Ok(pcbcraft_io::interface::read_sidecar(design)?.ok_or("a sidecar")?)
+pub(super) fn sidecar(design: &Path) -> TestResult<sparksmith_core::interface::Sidecar> {
+    Ok(sparksmith_io::interface::read_sidecar(design)?.ok_or("a sidecar")?)
 }
 
 /// The test linked design (acceptance 3): the board linked and grounded; a
@@ -394,12 +394,12 @@ fn b3_the_sidecar_is_byte_identical_after_reopen() -> TestResult {
     let design = dir.path().join("board.solidcraft");
     let mut session = open(dir.path())?;
     publish(&mut session, &design, "interface")?;
-    let saved = dir.path().join("saved.pcbcraft");
+    let saved = dir.path().join("saved.sparksmith");
     ok(
         &mut session,
         json!({"command": "project.save", "params": {"path": saved.display().to_string()}}),
     )?;
-    let first = std::fs::read(pcbcraft_io::interface::sidecar_path(&design))?;
+    let first = std::fs::read(sparksmith_io::interface::sidecar_path(&design))?;
     drop(session);
 
     let mut reopened = Session::new(Engine::default());
@@ -409,12 +409,12 @@ fn b3_the_sidecar_is_byte_identical_after_reopen() -> TestResult {
             "path": saved.display().to_string()}}),
     )?;
     publish(&mut reopened, &design, "interface")?;
-    let again = std::fs::read(pcbcraft_io::interface::sidecar_path(&design))?;
+    let again = std::fs::read(sparksmith_io::interface::sidecar_path(&design))?;
     assert_eq!(first, again, "republished after reopening");
     let elsewhere = tempfile::tempdir()?;
     let other: PathBuf = elsewhere.path().join("board.solidcraft");
     publish(&mut reopened, &other, "interface")?;
-    let there = std::fs::read(pcbcraft_io::interface::sidecar_path(&other))?;
+    let there = std::fs::read(sparksmith_io::interface::sidecar_path(&other))?;
     assert_eq!(first, there, "published in another folder");
     let read = sidecar(&design)?;
     assert!(read.datums.iter().any(|d| !d.faces.is_empty()));
@@ -436,8 +436,8 @@ fn b3_unrelated_edits_change_nothing_in_the_linked_design() -> TestResult {
         let id = instance(&session, part)?;
         apply(
             &mut session,
-            Operation::Interface(pcbcraft_core::interface::InterfaceCommand::Export {
-                target: pcbcraft_core::interface::ExportTarget::PartEnvelope { instance: id },
+            Operation::Interface(sparksmith_core::interface::InterfaceCommand::Export {
+                target: sparksmith_core::interface::ExportTarget::PartEnvelope { instance: id },
                 name: None,
             }),
         )?;
@@ -476,7 +476,7 @@ fn b3_unrelated_edits_change_nothing_in_the_linked_design() -> TestResult {
                 net: None,
                 layer: CopperLayer::Bottom,
                 region: FillRegion::Board,
-                outline: pcbcraft_core::library::Outline {
+                outline: sparksmith_core::library::Outline {
                     start: [0.0, 0.0],
                     segments: vec![],
                 },
@@ -584,7 +584,7 @@ fn b3_publish_at_a_stale_revision_writes_nothing() -> TestResult {
         "expected_revision": revision + 1}}));
     assert_eq!(reply["ok"], false, "{reply}");
     assert!(!design.exists());
-    assert!(!pcbcraft_io::interface::sidecar_path(&design).exists());
+    assert!(!sparksmith_io::interface::sidecar_path(&design).exists());
     assert_eq!(
         std::fs::read_dir(dir.path())?.count(),
         1,
@@ -688,7 +688,7 @@ fn the_project_keeps_where_it_published() -> TestResult {
     let kept = hint(&session).ok_or("a hint")?;
     assert!(Path::new(&kept).is_absolute(), "{kept}");
     assert_eq!(Path::new(&kept).file_name(), outside.file_name(), "{kept}");
-    let saved = dir.path().join("board.pcbcraft");
+    let saved = dir.path().join("board.sparksmith");
     ok(
         &mut session,
         json!({"command": "project.save", "params": {"path": saved.display().to_string()}}),

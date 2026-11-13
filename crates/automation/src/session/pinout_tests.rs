@@ -558,7 +558,7 @@ pub(super) fn publish_and_place(s: &mut Scenario, imported: Imported) -> Fallibl
 /// one uncertain row, and rule scripts within the C1 source bound.
 #[test]
 fn the_exm48_fixture_is_a_consistent_pinout_document() -> Fallible<()> {
-    use pcbcraft_core::library::pinout::{PINOUT_FORMAT, PinoutDocument};
+    use sparksmith_core::library::pinout::{PINOUT_FORMAT, PinoutDocument};
     let document: PinoutDocument = serde_json::from_str(EXM48)?;
     assert_eq!(document.format, PINOUT_FORMAT);
     let [variant] = document.variants.as_slice() else {
@@ -605,7 +605,7 @@ fn the_exm48_fixture_is_a_consistent_pinout_document() -> Fallible<()> {
         document
             .rules
             .iter()
-            .all(|r| r.script.len() <= pcbcraft_core::functions::rules::MAX_RULE_SOURCE)
+            .all(|r| r.script.len() <= sparksmith_core::functions::rules::MAX_RULE_SOURCE)
     );
     // The corrected copy differs only in r20's flag and note.
     let corrected: PinoutDocument = serde_json::from_value(exm48_corrected()?)?;

@@ -6,7 +6,7 @@ use super::profile::bent_strip;
 use super::{Build, check_count, check_positive, mm, require, top_edges, upright_edges};
 use crate::Result;
 use crate::native::{Expr, Pattern, Plane, ProfileBody};
-use pcbcraft_core::library::{BodyRole, GullWingForm, LeadSides};
+use sparksmith_core::library::{BodyRole, GullWingForm, LeadSides};
 
 /// How far a lead root reaches into the moulding (at most a third of the
 /// half body).

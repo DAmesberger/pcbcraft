@@ -42,17 +42,17 @@ mod usb_c;
 use crate::material::BodyKind;
 use crate::native::{BoxBody, Expr, Native};
 use crate::{Error, Result};
-use pcbcraft_core::library::{
-    BodyRole, GeneratedMaterials, PackageDefinition, PackageForm, PackageModel,
-};
-use pcbcraft_core::materials::MaterialId;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sparksmith_core::library::{
+    BodyRole, GeneratedMaterials, PackageDefinition, PackageForm, PackageModel,
+};
+use sparksmith_core::materials::MaterialId;
 use std::collections::BTreeMap;
 
 /// Body role/material chunks of generated definitions:
-/// `org.pcbcraft.electronics.models.0`, `.1`, … each ≤ 48 KiB.
-pub const MODEL_BODIES_KEY: &str = "org.pcbcraft.electronics.models.";
+/// `org.sparksmith.electronics.models.0`, `.1`, … each ≤ 48 KiB.
+pub const MODEL_BODIES_KEY: &str = "org.sparksmith.electronics.models.";
 
 /// Prefix of the named native parameters of a package definition:
 /// `pkg<revision-key>_<name>`, e.g. `pkg3r1_pitch`, so several package
@@ -85,7 +85,7 @@ pub fn family_rev(form: &PackageForm) -> Option<u16> {
 }
 
 /// The definition name (and parameter stem) of one package revision.
-pub fn definition_name(package: pcbcraft_core::DefinitionId, revision: u32) -> String {
+pub fn definition_name(package: sparksmith_core::DefinitionId, revision: u32) -> String {
     format!("{PARAMETER_PREFIX}{}r{revision}", package.0)
 }
 
@@ -485,12 +485,12 @@ fn upright_edges(lo: [f64; 3], hi: [f64; 3]) -> [[f64; 3]; 4] {
 
 /// Bounds of a lead count.
 fn check_count(what: &str, n: u32) -> Result<()> {
-    if (1..=pcbcraft_core::library::package_form::MAX_FORM_LEADS).contains(&n) {
+    if (1..=sparksmith_core::library::package_form::MAX_FORM_LEADS).contains(&n) {
         Ok(())
     } else {
         Err(Error::Invalid(format!(
             "model.form: {what} must be 1–{}",
-            pcbcraft_core::library::package_form::MAX_FORM_LEADS
+            sparksmith_core::library::package_form::MAX_FORM_LEADS
         )))
     }
 }

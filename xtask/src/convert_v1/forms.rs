@@ -218,8 +218,8 @@ pub fn form(f: &mut Map<String, Value>) -> Result<usize> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
-    use pcbcraft_core::library::PackageForm;
     use serde_json::json;
+    use sparksmith_core::library::PackageForm;
 
     fn converted(kind: &str, mut body: Value) -> (Value, usize) {
         let n = definition(kind, body.as_object_mut().unwrap()).unwrap();
@@ -256,7 +256,7 @@ mod tests {
             form.envelope_nm().unwrap().map(|e| e[0].get()),
             Some(1_600_000)
         );
-        let envelope: [pcbcraft_core::units::Nm; 3] =
+        let envelope: [sparksmith_core::units::Nm; 3] =
             serde_json::from_value(body["envelope_nm"].clone()).unwrap();
         assert_eq!(envelope[2].get(), 450_000);
     }
@@ -318,7 +318,7 @@ mod tests {
             let form = form_of(old.clone());
             // The wire form of the converted form is the old millimetres.
             let wire = serde_json::to_value(
-                pcbcraft_core::library::package_form::PackageFormParams::from(form),
+                sparksmith_core::library::package_form::PackageFormParams::from(form),
             )
             .unwrap();
             let mut expected = old.clone();

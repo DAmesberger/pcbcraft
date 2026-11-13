@@ -5,7 +5,7 @@
 use super::{Build, check_count, check_positive, require, top_edges, upright_edges};
 use crate::Result;
 use crate::native::{BoxBody, Expr, Pattern};
-use pcbcraft_core::library::{BodyRole, HeaderForm};
+use sparksmith_core::library::{BodyRole, HeaderForm};
 
 /// Rounds of the moulded base's upright corners and top edges (est.).
 const CORNER_MM: f64 = 0.3;

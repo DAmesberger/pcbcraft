@@ -117,7 +117,7 @@ Phases:
 - **To reproduce the wasm run:**
 
   ```
-  CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p pcbcraft-solidcraft --lib --profile ci --target wasm32-unknown-unknown --target-dir target/wasm-test footprint_spike
+  CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p sparksmith-solidcraft --lib --profile ci --target wasm32-unknown-unknown --target-dir target/wasm-test footprint_spike
   ```
 
   F2's product evaluator (`crates/solidcraft-integration/src/footprint/`) carries the same check as `results_match_golden_hashes_on_this_target`; `cargo xtask wasm-footprint` runs its tests in Node.

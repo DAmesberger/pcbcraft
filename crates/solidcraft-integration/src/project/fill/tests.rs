@@ -3,8 +3,8 @@ use super::{MODEL_CHORD_MM, TILE_MM, simplify_loop, tiles};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
 use crate::{Error, Result};
-use pcbcraft_core::model::fill::{FilledCopper, FilledRegion};
-use pcbcraft_core::{CopperLayer, Engine, Id, Point, Project};
+use sparksmith_core::model::fill::{FilledCopper, FilledRegion};
+use sparksmith_core::{CopperLayer, Engine, Id, Point, Project};
 
 /// The showcase with its pours unfilled: the showcase refills them, and
 /// these tests give the pours known copper of their own.
@@ -44,7 +44,7 @@ fn copper(regions: Vec<FilledRegion>) -> FilledCopper {
 }
 
 /// The showcase pour on `layer`.
-fn pour(project: &mut Project, layer: CopperLayer) -> Result<&mut pcbcraft_core::Fill> {
+fn pour(project: &mut Project, layer: CopperLayer) -> Result<&mut sparksmith_core::Fill> {
     project
         .fills
         .iter_mut()
@@ -297,13 +297,13 @@ fn an_inner_fill_lies_in_its_own_foil_level() -> Result<()> {
         let id = plain
             .allocate()
             .map_err(|e| Error::Verification(e.to_string()))?;
-        plain.vias.push(pcbcraft_core::Via {
+        plain.vias.push(sparksmith_core::Via {
             id,
             net,
             position,
             drill: 0.3,
             diameter: 0.6,
-            span: pcbcraft_core::ViaSpan::Through,
+            span: sparksmith_core::ViaSpan::Through,
             tented: true,
             locked: false,
         });
@@ -394,7 +394,7 @@ fn a_pour_with_many_clearances_is_built_in_tiles() -> Result<()> {
 #[test]
 #[ignore = "speed bar not met on the SMLib kernel (fork 21ac01f4a, solidcore a445bdaa): showcase unfilled 2.0 s, filled 25.4 s; the founder accepted slower builds on 2026-11-06 and holds speed work"]
 fn the_showcase_fills_cost_little_of_the_build() -> Result<()> {
-    let filled = Engine::showcase_hosted_fixture(pcbcraft_core::Evaluators {
+    let filled = Engine::showcase_hosted_fixture(sparksmith_core::Evaluators {
         footprint: Some(&crate::footprint::SketchEvaluator),
         board: Some(&crate::board::SketchBoardEvaluator),
     })

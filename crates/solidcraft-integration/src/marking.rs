@@ -61,14 +61,14 @@ use crate::models::look;
 use crate::{Error, Result};
 use fill::{FillRule, Flat};
 use map::SurfaceMap;
-use pcbcraft_core::Point;
-use pcbcraft_core::ids::{ContentHash, Id};
-use pcbcraft_core::library::marking::surface::{CylinderArea, WrapChart};
-use pcbcraft_core::library::marking::{
+use solidcraft_viewport::surface::OpaqueSurface;
+use sparksmith_core::Point;
+use sparksmith_core::ids::{ContentHash, Id};
+use sparksmith_core::library::marking::surface::{CylinderArea, WrapChart};
+use sparksmith_core::library::marking::{
     Finish, LaidElement, MarkingLayout, Placement, PolarityMark, Symbol,
 };
-use pcbcraft_core::library::model3d::MarkingArea;
-use solidcraft_viewport::surface::OpaqueSurface;
+use sparksmith_core::library::model3d::MarkingArea;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;

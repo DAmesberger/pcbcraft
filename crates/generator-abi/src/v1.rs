@@ -1,7 +1,7 @@
 //! ABI version 1: exports, wire types and the bounds both sides rely on.
 //!
 //! Everything is keyed by generation keys (pad `"1"`, terminal `"A"`, unit
-//! `"A"`), never by Pcbcraft ids; the host maps keys to persistent ids.
+//! `"A"`), never by Sparksmith ids; the host maps keys to persistent ids.
 //! Lengths are integer nanometres (`_nm`, or a bare [`Point`]), angles
 //! integer millidegrees (`_mdeg`). No floats cross the boundary.
 use alloc::boxed::Box;
@@ -17,18 +17,18 @@ pub const ABI: u32 = 1;
 /// linear memory as `memory`, and imports nothing.
 pub mod exports {
     /// `() -> u32`: returns [`super::ABI`].
-    pub const ABI: &str = "pcbcraft_gen_abi";
+    pub const ABI: &str = "sparksmith_gen_abi";
     /// `(len: u32) -> u32`: a buffer of `len` bytes for the request, or 0
     /// when `len` exceeds [`super::limits::REQUEST_BYTES`].
-    pub const ALLOC: &str = "pcbcraft_gen_alloc";
+    pub const ALLOC: &str = "sparksmith_gen_alloc";
     /// `() -> u64`: `(ptr << 32) | len` of the canonical [`super::Description`].
-    pub const DESCRIBE: &str = "pcbcraft_gen_describe";
+    pub const DESCRIBE: &str = "sparksmith_gen_describe";
     /// `(ptr: u32, len: u32) -> u64`: takes the canonical [`super::Request`]
     /// in the buffer from `ALLOC` and returns `(ptr << 32) | len` of the
     /// response: one status byte ([`super::STATUS_OK`] or
     /// [`super::STATUS_ERR`]) then the canonical [`super::Generation`] or
     /// [`super::ErrorBody`].
-    pub const GENERATE: &str = "pcbcraft_gen_generate";
+    pub const GENERATE: &str = "sparksmith_gen_generate";
     /// The exported linear memory.
     pub const MEMORY: &str = "memory";
 }
@@ -39,7 +39,7 @@ pub const STATUS_OK: u8 = 0;
 pub const STATUS_ERR: u8 = 1;
 
 /// Bounds of the wire data that both sides enforce. Execution bounds (fuel,
-/// memory, time) belong to the host; see `pcbcraft_generators::Limits`.
+/// memory, time) belong to the host; see `sparksmith_generators::Limits`.
 pub mod limits {
     // Set from GP0's measurements (generators/README.md): the chip
     // generator's requests are at most 258 bytes, its description 14 KiB
@@ -335,7 +335,7 @@ pub struct Terminal {
     pub direction: Direction,
 }
 
-/// A terminal's electrical direction (Pcbcraft's pin function vocabulary).
+/// A terminal's electrical direction (Sparksmith's pin function vocabulary).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Direction {

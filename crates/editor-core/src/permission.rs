@@ -3,7 +3,7 @@
 //! Every command family lists its variants with [`declare_classes!`] beside
 //! its enum. The listing expands to an exhaustive `match`, so a new variant
 //! does not compile until it has chosen a class. The rules that act on a
-//! class live in `pcbcraft_automation::gate`.
+//! class live in `sparksmith_automation::gate`.
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

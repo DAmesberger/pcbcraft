@@ -20,8 +20,8 @@ What that means in practice:
 |---|---|---|
 | One typed engine for UI, CLI and MCP | Built | `crates/automation` |
 | MCP server | Built; compact replies | `crates/automation/src/mcp.rs` |
-| Live MCP into the open window | Built: Help › Connect AI assistants…, off at start; requests run on the UI thread on the window's engine and undo history, with the gate and an in-app Allow for Ask ([development notes](development.md#live-mcp)) | `crates/automation/src/live.rs`, `apps/pcbcraft/src/app/live_mcp.rs` |
-| Datasheet assistant | Built as an MCP workflow (9 November 2026): the `datasheet_to_component` prompt, served from the skill file `skills/pcbcraft-datasheet-part/SKILL.md`, and `library.review_check` on the agent's cited report. The in-app runner (Anthropic and OpenAI-compatible model layer, request, token and time limits, recording, review report) stays while the in-app assistant is decided ([datasheet assistant](datasheet-assistant.md#mcp-workflow)) | `crates/automation/src/mcp/prompts.rs`, `crates/automation/src/review.rs`, `crates/assist` |
+| Live MCP into the open window | Built: Help › Connect AI assistants…, off at start; requests run on the UI thread on the window's engine and undo history, with the gate and an in-app Allow for Ask ([development notes](development.md#live-mcp)) | `crates/automation/src/live.rs`, `apps/sparksmith/src/app/live_mcp.rs` |
+| Datasheet assistant | Built as an MCP workflow (9 November 2026): the `datasheet_to_component` prompt, served from the skill file `skills/sparksmith-datasheet-part/SKILL.md`, and `library.review_check` on the agent's cited report. The in-app runner (Anthropic and OpenAI-compatible model layer, request, token and time limits, recording, review report) stays while the in-app assistant is decided ([datasheet assistant](datasheet-assistant.md#mcp-workflow)) | `crates/automation/src/mcp/prompts.rs`, `crates/automation/src/review.rs`, `crates/assist` |
 | Review of a proposed change | `sparksmith review-diff` compares two projects | CLI |
 | In-app chat | **None** | |
 
@@ -67,7 +67,7 @@ One neutral interface in `crates/assist`, with no vendor shapes above it:
 
 ### 2. Agent run
 
-One loop for every task, generalised from `pcbcraft_assist::run`:
+One loop for every task, generalised from `sparksmith_assist::run`:
 
 - input: a goal, a tool set, a budget and a context;
 - output: events for the UI, and a recording that can be replayed offline;

@@ -2,9 +2,9 @@
 //! file bound, writes reproducible bytes, and refuses every malformed,
 //! oversized or unknown entry while naming it.
 use super::*;
-use pcbcraft_core::Engine;
-use pcbcraft_core::library::PackedAsset;
-use pcbcraft_core::library::bundle::asset_hash;
+use sparksmith_core::Engine;
+use sparksmith_core::library::PackedAsset;
+use sparksmith_core::library::bundle::asset_hash;
 
 /// Deterministic, incompressible bytes.
 pub(crate) fn noise(len: usize, seed: u64) -> Vec<u8> {
@@ -84,7 +84,7 @@ const S: CompressionMethod = CompressionMethod::Stored;
 #[test]
 fn a_project_with_assets_above_the_old_file_bound_round_trips() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("big.pcbcraft");
+    let path = dir.path().join("big.sparksmith");
     // 20 MiB of incompressible bytes: more than the whole former 16 MiB
     // project file and more than the former 8 MiB per asset.
     let large = packed(noise(20 * 1024 * 1024, 1), "model/step");
@@ -114,7 +114,10 @@ fn a_project_with_assets_above_the_old_file_bound_round_trips() -> Result<()> {
 #[test]
 fn writes_are_reproducible_and_a_project_without_assets_is_one_entry() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let (a, b) = (dir.path().join("a.pcbcraft"), dir.path().join("b.pcbcraft"));
+    let (a, b) = (
+        dir.path().join("a.sparksmith"),
+        dir.path().join("b.sparksmith"),
+    );
     let file = with_assets(vec![packed(noise(4096, 2), "model/step")])?;
     write_container(&a, &file)?;
     write_container(&b, &file)?;
@@ -129,7 +132,7 @@ fn writes_are_reproducible_and_a_project_without_assets_is_one_entry() -> Result
 #[test]
 fn missing_mismatched_unreferenced_and_unknown_entries_are_refused_by_name() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("refused.pcbcraft");
+    let path = dir.path().join("refused.sparksmith");
     let asset = packed(noise(2048, 3), "model/step");
     let other = packed(noise(2048, 4), "model/step");
     let file = with_assets(vec![asset.clone()])?;
@@ -224,7 +227,7 @@ fn missing_mismatched_unreferenced_and_unknown_entries_are_refused_by_name() -> 
 #[test]
 fn duplicate_entry_names_are_refused() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("dup.pcbcraft");
+    let path = dir.path().join("dup.sparksmith");
     let a = packed(noise(512, 5), "model/step");
     let b = packed(noise(512, 6), "model/step");
     let file = with_assets(vec![a.clone()])?;
@@ -262,7 +265,7 @@ fn duplicate_entry_names_are_refused() -> Result<()> {
 #[test]
 fn bounds_are_measured_on_decompressed_bytes_and_entry_counts() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("bounds.pcbcraft");
+    let path = dir.path().join("bounds.sparksmith");
     // A deflate bomb: 16 MiB + 1 of spaces as the document.
     let bomb = vec![b' '; MAX_FILE_BYTES + 1];
     raw_zip(&path, &[(CONTAINER_DOCUMENT, &bomb, D)])?;
@@ -288,7 +291,7 @@ fn bounds_are_measured_on_decompressed_bytes_and_entry_counts() -> Result<()> {
 #[test]
 fn a_corrupted_entry_fails_its_checksum_and_a_failed_write_keeps_the_target() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("crc.pcbcraft");
+    let path = dir.path().join("crc.sparksmith");
     let asset = packed(noise(4096, 7), "model/step");
     let file = with_assets(vec![asset.clone()])?;
     raw_zip(
@@ -309,7 +312,7 @@ fn a_corrupted_entry_fails_its_checksum_and_a_failed_write_keeps_the_target() ->
     assert!(read_container(&path).is_err());
 
     // A mismatched asset is refused before the target is touched.
-    let target = dir.path().join("kept.pcbcraft");
+    let target = dir.path().join("kept.sparksmith");
     write_container(&target, &file)?;
     let original = std::fs::read(&target)?;
     let mut bad = file.clone();
@@ -323,8 +326,8 @@ fn a_corrupted_entry_fails_its_checksum_and_a_failed_write_keeps_the_target() ->
 #[test]
 fn one_asset_at_the_raised_limit_round_trips_and_one_byte_more_is_refused() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("limit.pcbcraft");
-    let limit = pcbcraft_core::library::bundle::MAX_ASSET_BYTES;
+    let path = dir.path().join("limit.sparksmith");
+    let limit = sparksmith_core::library::bundle::MAX_ASSET_BYTES;
     let file = with_assets(vec![packed(noise(limit, 8), "model/step")])?;
     write_container(&path, &file)?;
     assert_eq!(read_container(&path)?, file);
@@ -332,7 +335,7 @@ fn one_asset_at_the_raised_limit_round_trips_and_one_byte_more_is_refused() -> R
     assert!(with_assets(vec![over.clone()]).is_err());
     let mut forced = Engine::demo()?.to_file();
     forced.project.library.assets = vec![over].into();
-    assert!(write_container(&dir.path().join("over.pcbcraft"), &forced).is_err());
-    assert!(!dir.path().join("over.pcbcraft").exists());
+    assert!(write_container(&dir.path().join("over.sparksmith"), &forced).is_err());
+    assert!(!dir.path().join("over.sparksmith").exists());
     Ok(())
 }

@@ -31,11 +31,11 @@
 use crate::native::{NamedLoop, Native};
 use crate::project;
 use crate::{Error, Result};
-use pcbcraft_core::interface::{DatumGeometry, Frame, Sidecar, SidecarDatum};
-use pcbcraft_core::library::Outline;
-use pcbcraft_core::model::Project;
-use pcbcraft_core::model::board::RECT_EDGES;
-use pcbcraft_core::model::interface::{DatumOwner, SLOT_FEATURE_BUDGET};
+use sparksmith_core::interface::{DatumGeometry, Frame, Sidecar, SidecarDatum};
+use sparksmith_core::library::Outline;
+use sparksmith_core::model::Project;
+use sparksmith_core::model::board::RECT_EDGES;
+use sparksmith_core::model::interface::{DatumOwner, SLOT_FEATURE_BUDGET};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The board slab's body name.
@@ -47,7 +47,7 @@ pub const REFERENCE_COMPONENT: &str = "Board interface (reference geometry)";
 /// The design metadata key holding the sidecar: its format and chunk
 /// count; the chunks follow under `<key>.0`, `<key>.1`, …, each as
 /// `{"text": …}` (Solidcraft keeps a tool's values as objects).
-pub const METADATA_KEY: &str = "org.pcbcraft.electronics.interface";
+pub const METADATA_KEY: &str = "org.sparksmith.electronics.interface";
 /// Bytes of sidecar text per metadata value, well under Solidcraft's
 /// 64 KiB limit on one value (escaping a quote doubles it).
 const CHUNK_BYTES: usize = 30_000;
@@ -57,7 +57,7 @@ const AXIS_DIAMETER_MM: f64 = 0.2;
 /// Depth of a profile's thin prism, mm.
 const PROFILE_DEPTH_MM: f64 = 0.01;
 /// Named faces one datum lists (the sidecar's bound).
-const MAX_FACES: usize = pcbcraft_core::interface::sidecar::MAX_FACES;
+const MAX_FACES: usize = sparksmith_core::interface::sidecar::MAX_FACES;
 
 /// A built interface design and the sidecar describing it, faces named.
 pub struct Exported {
@@ -472,7 +472,7 @@ fn metadata(text: &str) -> Vec<(String, serde_json::Value)> {
     let mut values = vec![(
         METADATA_KEY.to_owned(),
         serde_json::json!({
-            "format": pcbcraft_core::interface::FORMAT,
+            "format": sparksmith_core::interface::FORMAT,
             "chunks": chunks.len(),
         }),
     )];

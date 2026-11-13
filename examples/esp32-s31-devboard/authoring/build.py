@@ -5,7 +5,7 @@ from pc import Session, Refused
 import build_lib
 
 WT = os.getcwd()  # run from the repository root
-MODULE = "examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft"
+MODULE = "examples/esp32-s31-wroom-3/esp32-s31-wroom-3.sparksmith"
 upto = sys.argv[1] if len(sys.argv) > 1 else "lib"
 out = os.environ.get("E2E_OUT", "target/e2e-devboard")
 os.makedirs(out, exist_ok=True)
@@ -36,7 +36,7 @@ try:
 except Refused as e:
     print("REFUSED:", e)
     traceback.print_exc(limit=3)
-path = "examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft" if upto == "route" else out + f"/stage-{upto}.pcbcraft"
+path = "examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith" if upto == "route" else out + f"/stage-{upto}.sparksmith"
 if os.path.exists(path):
     os.remove(path)
 s.raw("project.save", {"path": path})

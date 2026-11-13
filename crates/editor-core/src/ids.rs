@@ -347,7 +347,7 @@ macro_rules! random_id {
         $(#[$doc])*
         ///
         /// Written as 32 lower-case hex digits. The core never generates one:
-        /// `pcbcraft-io` draws them from the operating system and passes them
+        /// `sparksmith-io` draws them from the operating system and passes them
         /// in as values.
         #[derive(
             Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq,

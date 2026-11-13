@@ -3137,7 +3137,7 @@
         "type": "integer"
       },
       "InterfaceSourceId": {
-        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
+        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`sparksmith-io` draws them from the operating system and passes them\nin as values.",
         "type": "string"
       },
       "ModelEdgeName": {
@@ -3939,7 +3939,7 @@
         "type": "object"
       },
       "InterfaceSourceId": {
-        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
+        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`sparksmith-io` draws them from the operating system and passes them\nin as values.",
         "type": "string"
       },
       "Outline": {
@@ -4887,7 +4887,7 @@
         "type": "object"
       },
       "InterfaceSourceId": {
-        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
+        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`sparksmith-io` draws them from the operating system and passes them\nin as values.",
         "type": "string"
       },
       "Outline": {
@@ -5802,7 +5802,7 @@
         "type": "object"
       },
       "InterfaceSourceId": {
-        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
+        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`sparksmith-io` draws them from the operating system and passes them\nin as values.",
         "type": "string"
       },
       "ModelEdgeName": {

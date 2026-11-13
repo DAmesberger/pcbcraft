@@ -31,10 +31,10 @@ The benchmark is `crates/automation/tests/build_profile.rs`, which is committed 
 
 - each Solidcraft feature kind's evaluation time (`FeatureResult::ms`);
 - the faces and edges of the slowest features' bodies;
-- Solidcraft's own span profiler (`solidcraft-profile`, compiled in for this test only through `pcbcraft-solidcraft`'s `profile` feature).
+- Solidcraft's own span profiler (`solidcraft-profile`, compiled in for this test only through `sparksmith-solidcraft`'s `profile` feature).
 
 ```
-nix develop -c cargo test --profile ci -p pcbcraft-automation --features profile --test build_profile -- --ignored --nocapture
+nix develop -c cargo test --profile ci -p sparksmith-automation --features profile --test build_profile -- --ignored --nocapture
 ```
 
 Its environment variables pick the edit, the variant (`no-fills`, `parts=N`, `addvias=N`, …) and the synthetic `extrusion_scaling` test. The function-level profile is macOS `/usr/bin/sample` at 1 ms on the test binary, over a 202 s build: 159,931 samples on the build thread. The 18 `solidcraft-kernel` worker threads were idle almost all of that time, so the build runs on one core, as the VM showed.
@@ -74,7 +74,7 @@ Its environment variables pick the edit, the variant (`no-fills`, `parts=N`, `ad
 | 99.3 % | `solidcraft_doc::eval::Model::evaluate` |
 | 98.1 % | `solidcraft_kernel::build::extrude_with` → `smlib_sweeps::imp::extrude` |
 | 96.7 % | `solidcore::sweep::api_brep::create_linear_sweep` |
-| 95.1 % | `pcbcraft_solidcraft::project::fill::build` → `Native::batched_body` (the fills) |
+| 95.1 % | `sparksmith_solidcraft::project::fill::build` → `Native::batched_body` (the fills) |
 | 73.3 % | `solidcore::topology::brep::p5::stitch_and_orient_with_identity` → `heal::stitch … do_stitching` |
 | 46.6 % | `heal::stitch::Stitch::edit_glue_vertices` |
 | 44.9 % | `topology::brep::p3::with_kernel_callbacks` (one call per glue edit) |
@@ -84,7 +84,7 @@ Its environment variables pick the edit, the variant (`no-fills`, `parts=N`, `ad
 | 20.0 % | `primitive_creation::primitives::create_face_id` → `make_face_with_curves` |
 | 12.6 % | `topology::brep::p3::make_wire_edge_vertex` |
 | 8.4 % | `topology::brep::p3::seed_records_once` |
-| 2.2 % | `pcbcraft_solidcraft::project::laminate` |
+| 2.2 % | `sparksmith_solidcraft::project::laminate` |
 | 0.9 % | `solidcraft_kernel::body::Body::mesh_untimed` |
 | 0.6 % | `solidcore::blend::fillet_executive … do_filleting` |
 | 0.4 % | `solidcraft_geom::tess::EvalSurface::derivs` (surface evaluation) |
@@ -222,14 +222,14 @@ Gains are measured where marked; the rest are bounded by this profile. Effort is
 
 ## Reproducing
 
-- Build and edits: `PCBCRAFT_PROFILE_EDIT=1` (part turn and undo), `=track` (track width), and `PCBCRAFT_PROFILE_REFILL=1` (refill after the turn), with the command above.
-- Scaling: `PCBCRAFT_PROFILE_VARIANT=parts=N` with `PCBCRAFT_PROFILE_NOFILLS=1`, or `PCBCRAFT_PROFILE_VARIANT=addvias=N`; and `extrusion_scaling` with `PCBCRAFT_SCALING_EDGES` and `PCBCRAFT_SCALING_SHAPE=outline|holes`.
+- Build and edits: `SPARKSMITH_PROFILE_EDIT=1` (part turn and undo), `=track` (track width), and `SPARKSMITH_PROFILE_REFILL=1` (refill after the turn), with the command above.
+- Scaling: `SPARKSMITH_PROFILE_VARIANT=parts=N` with `SPARKSMITH_PROFILE_NOFILLS=1`, or `SPARKSMITH_PROFILE_VARIANT=addvias=N`; and `extrusion_scaling` with `SPARKSMITH_SCALING_EDGES` and `SPARKSMITH_SCALING_SHAPE=outline|holes`.
 - Function profile: run the test binary directly and attach `/usr/bin/sample <pid> 1500 1 -mayDie -file out.txt`. The test binary's symbols are enough; neither samply nor `cargo flamegraph` is installed; `xctrace` is available but was not needed.
-- The `-0` and fills-first results are experiments: one-line changes, measured and reverted. Neither is in this commit. The only code in it is the benchmark and the off-by-default `profile` feature of `pcbcraft-solidcraft` (a re-export of Solidcraft's profiler), which the benchmark turns on as a dev-dependency feature.
+- The `-0` and fills-first results are experiments: one-line changes, measured and reverted. Neither is in this commit. The only code in it is the benchmark and the off-by-default `profile` feature of `sparksmith-solidcraft` (a re-export of Solidcraft's profiler), which the benchmark turns on as a dev-dependency feature.
 
 ## Update, 9 November 2026: board width, undo
 
-Build bdc78b4 (`component-model`), Solidcraft fork 04d3c2ffc (solidcore c0d3cc0124 with the stitch fix, after the `-0` fix and fills-first), same host and `ci` profile, load average 7–30 from other agents' builds: single runs vary by up to ±20 %. Best of three, headless. `PCBCRAFT_PROFILE_EDIT=width` is the board's `width` parameter 1 mm more through the engine (`board.edit`) and its undo, each followed as the app follows it: the model updated with the fills' stored copper, the stale fills refilled, the model updated again.
+Build bdc78b4 (`component-model`), Solidcraft fork 04d3c2ffc (solidcore c0d3cc0124 with the stitch fix, after the `-0` fix and fills-first), same host and `ci` profile, load average 7–30 from other agents' builds: single runs vary by up to ±20 %. Best of three, headless. `SPARKSMITH_PROFILE_EDIT=width` is the board's `width` parameter 1 mm more through the engine (`board.edit`) and its undo, each followed as the app follows it: the model updated with the fills' stored copper, the stale fills refilled, the model updated again.
 
 **Where the ESP32 build goes now (26.5–32 s).** Solidcraft spans: `solidcore smlib_extrude` 72 % (the four fill regions, 2,547–3,517 side faces each, are 17–21 s of it), `kernel mesh` 14 %, fillets 5 %, commands and evaluation bookkeeping 9 %. The build runs on one core; Solidcraft evaluates features one after another, and the 18 kernel worker threads idle. A `sample` of the build thread (25 s, 16,716 samples) inside the SMLib extrusions:
 
@@ -246,7 +246,7 @@ Build bdc78b4 (`component-model`), Solidcraft fork 04d3c2ffc (solidcore c0d3cc01
 **What an edit and its undo cost, and why.** The width edit moves every fill (they follow the board), so every fill is refilled and its sketch redrawn. A redrawn region's extrusion picked its profile by curves the redraw replaces, so the update redefines it (`timeline.redefine`). Two Sparksmith-side costs were measured and are fixed:
 
 1. Each redefinition ran with the history rolled forward, so it evaluated every feature after it again: the refill update ran 2,878 SMLib extrusions where the build runs 1,028. The redefinitions now run while the history is still rolled back, and the update keeps every result it evaluates (`Model::keep`) until the history is rolled forward once: 948 extrusions, and 3 s of meshing instead of 8 s.
-2. An undo back to a board the app's model worker made updated the last model back to it, as long as the edit. The worker now keeps its last three earlier board models (copies sharing the evaluated design and meshes, `NativeModel::snapshot`), and an undo or redo back to one shows it again without building or updating. (Since 11 November it keeps one, and never the board an edit had before the fill worker refilled it: no history step returns to that board, and each kept model holds about 0.9 GB of evaluated bodies on this board; see `apps/pcbcraft/src/scene/memory_tests.rs`.)
+2. An undo back to a board the app's model worker made updated the last model back to it, as long as the edit. The worker now keeps its last three earlier board models (copies sharing the evaluated design and meshes, `NativeModel::snapshot`), and an undo or redo back to one shows it again without building or updating. (Since 11 November it keeps one, and never the board an edit had before the fill worker refilled it: no history step returns to that board, and each kept model holds about 0.9 GB of evaluated bodies on this board; see `apps/sparksmith/src/scene/memory_tests.rs`.)
 
 | ESP32 board | Before | After |
 | --- | --- | --- |
@@ -268,7 +268,7 @@ A redefinition still evaluates its extrusion twice: once as the trial constructo
 
 ## Update, 10 November 2026: an edit in the app against headless
 
-Build b8066c8 (`component-model`), same host and `ci` profile, load average 4–6. The app's J1 edit (its dimension 0 → 1 mm, ESP32 board, 3D open) took about 28 s in the VM against 3.7 s headless. The app-side benchmark `apps/pcbcraft/src/scene/edit_timing_tests.rs` runs it through the app's own model worker and fill worker (`PCBCRAFT_TIMINGS=1` prints each board model the worker makes, how, and why an update fell back to a build):
+Build b8066c8 (`component-model`), same host and `ci` profile, load average 4–6. The app's J1 edit (its dimension 0 → 1 mm, ESP32 board, 3D open) took about 28 s in the VM against 3.7 s headless. The app-side benchmark `apps/sparksmith/src/scene/edit_timing_tests.rs` runs it through the app's own model worker and fill worker (`SPARKSMITH_TIMINGS=1` prints each board model the worker makes, how, and why an update fell back to a build):
 
 | Step | Time | How |
 | --- | --- | --- |
@@ -284,7 +284,7 @@ The worker made the edit's model in place, but the app dropped it: by the time i
 
 ## Update, 10 November 2026: a board width change in place
 
-Same host and `ci` profile, load average 12–15. `PCBCRAFT_PROFILE_EDIT=width` (ESP32 board, 40 → 41 mm through the engine).
+Same host and `ci` profile, load average 12–15. `SPARKSMITH_PROFILE_EDIT=width` (ESP32 board, 40 → 41 mm through the engine).
 
 **Why the width edit was built anew.** Not the outline: the laminate's outline is a sketch the update redraws, and the mask, silkscreen, edge and fill films are drawn from 2D data. The engine's carry (`dimensions::carry`) adds a track that joins a track stretched to the new edge (`trace_648`), and the update compared the build's command stream step by step: `parameters.import changed: added trace_648_x0 …`, so any added or removed track built the board anew. Undo removes the track and fell back the same way.
 
@@ -297,7 +297,7 @@ Same host and `ci` profile, load average 12–15. `PCBCRAFT_PROFILE_EDIT=width` 
 
 ## Update, 10 November 2026: tracks and vias added or removed by routing
 
-`PCBCRAFT_PROFILE_EDIT=route`: a routed step on the ESP32 board (an outer track and a via at its end) added, then removed. Before, any added or removed track or via built the board anew (the full build, 27–36 s under this load). Tracks are units since the width fix. Vias are placements of one definition per size, copied in one command per size; a via added or removed changes that command's number of copies. Now every recorded copy that stands where a copy is asked for is kept, the others are deleted (`selection.delete`), and the new ones are copied on the design; a via removed where the definition's first occurrence stood moves that occurrence to the next via, as a fresh build places it. A via of a new size still needs a new definition and is built anew.
+`SPARKSMITH_PROFILE_EDIT=route`: a routed step on the ESP32 board (an outer track and a via at its end) added, then removed. Before, any added or removed track or via built the board anew (the full build, 27–36 s under this load). Tracks are units since the width fix. Vias are placements of one definition per size, copied in one command per size; a via added or removed changes that command's number of copies. Now every recorded copy that stands where a copy is asked for is kept, the others are deleted (`selection.delete`), and the new ones are copied on the design; a via removed where the definition's first occurrence stood moves that occurrence to the next via, as a fresh build places it. A via of a new size still needs a new definition and is built anew.
 
 | ESP32 board | Before | After |
 | --- | --- | --- |
@@ -306,7 +306,7 @@ Same host and `ci` profile, load average 12–15. `PCBCRAFT_PROFILE_EDIT=width` 
 
 ## Update, 10 November 2026: refills in tiles
 
-`PCBCRAFT_PROFILE_EDIT=move`: J1 moved 0.5 mm, then the four fills it made stale refilled, as the app's fill worker does; same host, load average 5–25.
+`SPARKSMITH_PROFILE_EDIT=move`: J1 moved 0.5 mm, then the four fills it made stale refilled, as the app's fill worker does; same host, load average 5–25.
 
 **Why a refill was built anew.** Each fill region was one sketch and one extrusion, numbered by its place in the fill's copper; a refill that split or joined a region (J1's move takes the GND pour from 29 to 31 regions) changed the command stream, and even with the same regions every changed region was redrawn and redefined (`timeline.redefine`, two evaluations of a 2,500–3,500-face extrusion).
 
@@ -326,7 +326,7 @@ More tiles cost more than their smaller extrusions save: Solidcraft's evaluation
 
 **What remains.** A refill still evaluates every feature after the first tile it deletes: the later tiles, parts, pads, tracks and the laminate (1,128 SMLib extrusions in the J1 refill, the inner foil-level slabs 0.6 s each), because Solidcraft keys each feature's cached result on the digest of every body made before it. Only a generic Solidcraft change removes that: a feature's cache key built from what it reads (a new-body extrusion reads its sketch and parameters), option c2 above. It needs the founder's go and was not made.
 
-**In the VM** (8 cores, `ci` profile, `PcbcraftSpeedCheck.app` at d08cbb3 with `PCBCRAFT_TIMINGS`; the model worker's own lines), ESP32 example, 3D view open:
+**In the VM** (8 cores, `ci` profile, `PcbcraftSpeedCheck.app` at d08cbb3 with `SPARKSMITH_TIMINGS`; the model worker's own lines), ESP32 example, 3D view open:
 
 | | Before (VM, 10 November, earlier runs) | After |
 | --- | --- | --- |
@@ -352,7 +352,7 @@ Same host and `ci` profile, load average 30–130 (other agents' builds), so tim
 
 The rest is one board model (~0.9 GB of solidcore B-rep) for the current board and one for the undo. The undo depth stays the founder's call (R8-1 in the night findings): each further instant undo step still costs about 0.9 GB on this board.
 
-**Where an edit's update goes now** (`PCBCRAFT_PROFILE_EDIT=width`, load ~50): build 26.5 s; width +1 mm with stale fills 8.8 s, 736 SMLib extrusions; the refill 18.5 s, 1,188 extrusions against 1,322 in the build, of which the two redefined foil-level slabs' evaluations are 9.3 s; the undo 20.4 s, 1,193 extrusions. Almost every feature after the first changed tile is evaluated again, because Solidcraft keys each feature's cached result on every body made before it. That is Solidcraft's to change (option c2; upstream's read-based key #6295 is measured on the exported board separately).
+**Where an edit's update goes now** (`SPARKSMITH_PROFILE_EDIT=width`, load ~50): build 26.5 s; width +1 mm with stale fills 8.8 s, 736 SMLib extrusions; the refill 18.5 s, 1,188 extrusions against 1,322 in the build, of which the two redefined foil-level slabs' evaluations are 9.3 s; the undo 20.4 s, 1,193 extrusions. Almost every feature after the first changed tile is evaluated again, because Solidcraft keys each feature's cached result on every body made before it. That is Solidcraft's to change (option c2; upstream's read-based key #6295 is measured on the exported board separately).
 
 ## Update, 12 November 2026: the direct mesh (stage A2)
 
@@ -375,7 +375,7 @@ Target for the last two rows: under 150 ms. Each meshed model is 40–60 ms of u
 
 Same host (18 cores), `ci` profile, load average 6–8 (other agents' builds). The direct mesh is now the 3D view's only path: the setting is gone, the model worker keeps the last board model only and makes every next board (an edit, an undo, a redo, a refill) from what it kept (`project::update` on a meshed model: meshes, fill plans, display layers and part designs). No native design of the board is made for the view, and no earlier model is kept for undo. The exact build runs for export and `cargo xtask board-parity` only and is never updated in place, so the in-place update machinery is removed: the command log and replay (`native/replay.rs`), replay units for tracks and fill tiles, laminate re-piecing, the identity rewrite and the previous-geometry reuse (about 3,100 lines net). The exact build's command stream is unchanged; the fill tiles stay in the plan, so the saved model and STEP keep them.
 
-**Memory** (`apps/pcbcraft/src/scene/memory_tests.rs`, `esp32_memory_over_board_edits`: SceneController and FillWorker as the app runs them, no window; live heap from `heap -s`, resident size from `ps`):
+**Memory** (`apps/sparksmith/src/scene/memory_tests.rs`, `esp32_memory_over_board_edits`: SceneController and FillWorker as the app runs them, no window; live heap from `heap -s`, resident size from `ps`):
 
 | ESP32 board | Before (11 November, exact build live, one earlier model kept) | After |
 | --- | --- | --- |
@@ -387,7 +387,7 @@ Same host (18 cores), `ci` profile, load average 6–8 (other agents' builds). T
 
 Two runs; the second after the meshed bodies gained their outline edges (below). The gate's target, 3D open on the ESP32 board under 300 MB, is met on live heap (218–220 MB) and missed by about 20 MB on resident size (318–321 MB, which also counts allocator pages not returned and the test binary). The resident size then rises with edits while the live heap stays flat: it is the allocator keeping freed pages, not held models. Each edit and each undo settled in 1.6–1.8 s, of which the benchmark's own wait for a second of quiet frames is 1 s.
 
-**Timings** (`edit_timing_tests`, two runs each, `PCBCRAFT_TIMINGS=1`):
+**Timings** (`edit_timing_tests`, two runs each, `SPARKSMITH_TIMINGS=1`):
 
 | ESP32 board | A2, direct mesh behind the setting | After |
 | --- | --- | --- |
@@ -403,7 +403,7 @@ Each update from the last model takes 40–60 ms (the edit's board, then the ref
 
 ## Update, 13 November 2026: export tiers and the per-export check (stage A5)
 
-`pcbcraft_solidcraft::export::board` on the ESP32-S31 example (`crates/automation/tests/export_tiers.rs`, the `test` profile, which is optimised with debug information; 18-core host shared with other builds, load average 4–7). Every flat body was checked against the board plan before writing:
+`sparksmith_solidcraft::export::board` on the ESP32-S31 example (`crates/automation/tests/export_tiers.rs`, the `test` profile, which is optimised with debug information; 18-core host shared with other builds, load average 4–7). Every flat body was checked against the board plan before writing:
 
 | Tier | Wall | Build | Check | Save | Commands | Bodies written | Flat bodies planned / built | Differences | File |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |

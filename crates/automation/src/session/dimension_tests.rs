@@ -5,15 +5,15 @@
 //! operations an agent sends, and a face the part does not have is refused
 //! with the faces it does have.
 use super::Session;
-use pcbcraft_core::Engine;
-use pcbcraft_core::model::dimension::ReferenceStatus;
 use serde_json::{Value, json};
+use sparksmith_core::Engine;
+use sparksmith_core::model::dimension::ReferenceStatus;
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const EXAMPLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    "/../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith"
 );
 
 fn open() -> TestResult<Session> {
@@ -140,7 +140,7 @@ fn seat(session: &Session) -> f64 {
         .engine()
         .project()
         .stackup
-        .copper_span(pcbcraft_core::CopperLayer::Top)
+        .copper_span(sparksmith_core::CopperLayer::Top)
         .map_or(0.0, |s| s.1)
 }
 
@@ -148,13 +148,13 @@ fn seat(session: &Session) -> f64 {
 /// `at` (board mm, z above the top copper): the reference, as JSON, and
 /// the distance the tool shows from it to the bottom edge (y = 0) now.
 fn pick_to_bottom(session: &Session, designator: &str, at: [f64; 3]) -> TestResult<(Value, f64)> {
-    use pcbcraft_core::layout::dimensions::{FeatureGeometry, model, view};
+    use sparksmith_core::layout::dimensions::{FeatureGeometry, model, view};
     let project = session.engine().project();
     let id = project.instance_by_designator(designator).ok_or("part")?.id;
     let placement = project.placement_of(id).ok_or("placed")?;
     let (feature, trace) = model::pick(
         project,
-        &pcbcraft_solidcraft::board::SketchBoardEvaluator,
+        &sparksmith_solidcraft::board::SketchBoardEvaluator,
         id,
         [at[0], at[1], seat(session) + at[2]],
         0.2,
@@ -166,13 +166,13 @@ fn pick_to_bottom(session: &Session, designator: &str, at: [f64; 3]) -> TestResu
     };
     let shown = view::shown(&on_board, &bottom).ok_or("shown")?;
     Ok((
-        serde_json::to_value(pcbcraft_core::model::dimension::BoardRef::Part(feature))?,
+        serde_json::to_value(sparksmith_core::model::dimension::BoardRef::Part(feature))?,
         shown.value,
     ))
 }
 
 fn bottom_edge(session: &Session) -> TestResult<Value> {
-    let pcbcraft_core::model::board::BoardShape::Sketch(s) =
+    let sparksmith_core::model::board::BoardShape::Sketch(s) =
         &session.engine().project().board_shape
     else {
         return Err("a sketch board".into());
@@ -255,9 +255,9 @@ fn an_edge_dimension_moves_the_part_to_the_value_shown() -> TestResult {
         .iter()
         .filter(|d| {
             d.refs.iter().any(|r| {
-                matches!(r, pcbcraft_core::model::dimension::BoardRef::Part(
-                    pcbcraft_core::model::dimension::FeatureRef::Origin {
-                        target: pcbcraft_core::model::board::ConstraintTarget::Placement(p),
+                matches!(r, sparksmith_core::model::dimension::BoardRef::Part(
+                    sparksmith_core::model::dimension::FeatureRef::Origin {
+                        target: sparksmith_core::model::board::ConstraintTarget::Placement(p),
                     }) if *p == r5)
             })
         })

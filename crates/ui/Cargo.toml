@@ -1,12 +1,12 @@
 [package]
-name = "pcbcraft-ui"
-description = "Pcbcraft's UI toolkit: seeded from SolidCraft's MIT/Apache UI kit, theme tokens, icons and fonts as of a34756830"
+name = "sparksmith-ui"
+description = "Sparksmith's UI toolkit: seeded from SolidCraft's MIT/Apache UI kit, theme tokens, icons and fonts as of a34756830"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-# SolidCraft's own lint policy for this code (its workspace lints), not Pcbcraft's: vendored
+# SolidCraft's own lint policy for this code (its workspace lints), not Sparksmith's: vendored
 # code keeps its upstream policy.
 [lints.rust]
 unsafe_code = "forbid"
@@ -19,7 +19,7 @@ type_complexity = "allow"
 neg_cmp_op_on_partial_ord = "allow"
 
 # SolidCraft's rendering fixtures (`cfg(feature = "test-support")` in the vendored blur and history
-# code); never enabled in Pcbcraft.
+# code); never enabled in Sparksmith.
 [features]
 test-support = []
 

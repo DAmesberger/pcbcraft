@@ -8,25 +8,25 @@ use crate::geom::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::geom::Vec2;
-use pcbcraft_core::diagnostics::{Finding, ObjectRef, Stage};
-use pcbcraft_core::geometry::{Point, Shape};
-use pcbcraft_core::ids::PadId;
-use pcbcraft_core::library::footprint_source::{
-    DerivedGraphic, EvaluatedPad, Evaluation, EvaluationRequest, GenerationKey, GraphicRole,
-    GraphicSource, MaskRuleExpr, PadGeometry, PadOverride, PadRole, PadShapeExpr, PadTemplate,
-    PasteRuleExpr, SketchBlob, SolveStatus, SolveSummary,
-};
-use pcbcraft_core::library::graphics::{FootprintGraphic, Item, ShapeNm};
-use pcbcraft_core::library::{
-    ApertureId, CornerMask, Datum, FootprintDefinition, MAX_PADS, MaskRule, Pad, PadShape, PadVia,
-    PasteRule, PasteWindow, Segment,
-};
-use pcbcraft_core::library::{MAX_PAD_VIAS, MAX_PASTE_WINDOWS};
-use pcbcraft_core::units::{Angle, Nm, PointNm};
 use solidcraft_engine::sketch::{
     Analysis, CurveKind, Sketch, find_profiles, flips_from_stored, profile_at_point,
     solve_after_edit_with_analysis,
 };
+use sparksmith_core::diagnostics::{Finding, ObjectRef, Stage};
+use sparksmith_core::geometry::{Point, Shape};
+use sparksmith_core::ids::PadId;
+use sparksmith_core::library::footprint_source::{
+    DerivedGraphic, EvaluatedPad, Evaluation, EvaluationRequest, GenerationKey, GraphicRole,
+    GraphicSource, MaskRuleExpr, PadGeometry, PadOverride, PadRole, PadShapeExpr, PadTemplate,
+    PasteRuleExpr, SketchBlob, SolveStatus, SolveSummary,
+};
+use sparksmith_core::library::graphics::{FootprintGraphic, Item, ShapeNm};
+use sparksmith_core::library::{
+    ApertureId, CornerMask, Datum, FootprintDefinition, MAX_PADS, MaskRule, Pad, PadShape, PadVia,
+    PasteRule, PasteWindow, Segment,
+};
+use sparksmith_core::library::{MAX_PAD_VIAS, MAX_PASTE_WINDOWS};
+use sparksmith_core::units::{Angle, Nm, PointNm};
 
 use super::check::{self, MAX_COORD_MM};
 use super::classify::{self, UNCLASSIFIED};
@@ -231,8 +231,10 @@ fn non_copper(request: &EvaluationRequest<'_>) -> BTreeSet<String> {
     }
     for a in &s.arrays {
         match &a.layout {
-            pcbcraft_core::library::footprint_source::ArrayLayout::Linear { direction, .. }
-            | pcbcraft_core::library::footprint_source::ArrayLayout::DualRow {
+            sparksmith_core::library::footprint_source::ArrayLayout::Linear {
+                direction, ..
+            }
+            | sparksmith_core::library::footprint_source::ArrayLayout::DualRow {
                 direction, ..
             } => {
                 out.insert(direction.0.clone());
@@ -308,7 +310,7 @@ fn paste(
 /// Each window's id is the position of its first listed curve.
 fn paste_windows(
     sk: &Sketch,
-    curves: &[pcbcraft_core::library::footprint_source::SketchCurveId],
+    curves: &[sparksmith_core::library::footprint_source::SketchCurveId],
     anchor: Vec2,
     rotation_deg: f64,
 ) -> Outcome<Vec<PasteWindow>> {
@@ -605,8 +607,10 @@ fn expand(
             ));
         }
         let direction = match &array.layout {
-            pcbcraft_core::library::footprint_source::ArrayLayout::Linear { direction, .. }
-            | pcbcraft_core::library::footprint_source::ArrayLayout::DualRow {
+            sparksmith_core::library::footprint_source::ArrayLayout::Linear {
+                direction, ..
+            }
+            | sparksmith_core::library::footprint_source::ArrayLayout::DualRow {
                 direction, ..
             } => Some(super::evaluate::direction(sketch, &direction.0)?),
             _ => None,
@@ -699,7 +703,7 @@ fn arc_of(sk: &Sketch, c: usize, a: usize, b: usize) -> Outcome<Shape> {
 /// chain of lines (open polyline or closed polygon).
 fn curves_shape(
     sk: &Sketch,
-    ids: &[pcbcraft_core::library::footprint_source::SketchCurveId],
+    ids: &[sparksmith_core::library::footprint_source::SketchCurveId],
 ) -> Outcome<Shape> {
     const BAD: &str = "footprint.graphic";
     let pos = |i: usize| {
@@ -896,7 +900,7 @@ fn datum(request: &EvaluationRequest<'_>, sketch: &Sketch) -> Outcome<Datum> {
     stored(Datum::from_mm([at.x, at.y], rotation_deg))
 }
 
-/// Pcbcraft's own quantizer (Solidcraft's is private): 1e-6 mm, and
+/// Sparksmith's own quantizer (Solidcraft's is private): 1e-6 mm, and
 /// micro-degrees for angles.
 pub(crate) fn q(v: f64) -> Outcome<f64> {
     let k = (v * 1e6).round();
@@ -951,14 +955,14 @@ fn q_pad(pad: &mut Pad) -> Outcome<()> {
 }
 
 /// The result hash and its FNV-1a have one definition, in the core.
-pub(crate) use pcbcraft_core::library::footprint_source::fnv;
+pub(crate) use sparksmith_core::library::footprint_source::fnv;
 
 fn result_hash(
     pads: &[EvaluatedPad],
     graphics: &[FootprintGraphic],
     datum: &Datum,
 ) -> Outcome<String> {
-    pcbcraft_core::library::footprint_source::result_hash(pads, graphics, datum)
+    sparksmith_core::library::footprint_source::result_hash(pads, graphics, datum)
         .map_err(|e| problem("footprint.internal", e.to_string()))
 }
 

@@ -7,8 +7,8 @@
 //! stay cheap. Listing reads only the document and metadata entries.
 use crate::persistence::container::{self, Load, Method, Role};
 use crate::{Error, Result};
-use pcbcraft_core::format::{EditorFile, encode_bounded};
 use serde::{Deserialize, Serialize};
+use sparksmith_core::format::{EditorFile, encode_bounded};
 use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
@@ -16,7 +16,7 @@ use std::{
 };
 
 const PREFIX: &str = "session-";
-const SUFFIX: &str = ".pcbcraft-recovery";
+const SUFFIX: &str = ".sparksmith-recovery";
 /// Sessions a listing reads, newest first by file time. Older ones are
 /// listed in [`Listing::older`] by path only, so they can be discarded.
 pub const MAX_ENTRIES: usize = 128;

@@ -3,28 +3,30 @@
 //! driven by the package forms' `pkg_*` values. Fixtures are original
 //! round-number forms, from no library, datasheet or EDA tool.
 
-use pcbcraft_core::diagnostics::{Error, Result};
-use pcbcraft_core::ids::PackageTerminalId;
-use pcbcraft_core::library::footprint_edit;
-use pcbcraft_core::library::footprint_source::{Expr, FootprintEdit, ParamName, ParamUnit};
-use pcbcraft_core::library::package_form::molded::MoldedLead;
-use pcbcraft_core::library::package_form::tabbed::Tab;
-use pcbcraft_core::library::package_form::{MoldedForm, TabbedForm};
-use pcbcraft_core::library::templates::footprint_family::{self, FootprintTemplate, TemplateKind};
-use pcbcraft_core::library::{
+use sparksmith_core::diagnostics::{Error, Result};
+use sparksmith_core::ids::PackageTerminalId;
+use sparksmith_core::library::footprint_edit;
+use sparksmith_core::library::footprint_source::{Expr, FootprintEdit, ParamName, ParamUnit};
+use sparksmith_core::library::package_form::molded::MoldedLead;
+use sparksmith_core::library::package_form::tabbed::Tab;
+use sparksmith_core::library::package_form::{MoldedForm, TabbedForm};
+use sparksmith_core::library::templates::footprint_family::{
+    self, FootprintTemplate, TemplateKind,
+};
+use sparksmith_core::library::{
     FootprintDefinition, PackageDefinition, PackageForm, PackageTerminal, Pad,
 };
-use pcbcraft_solidcraft::footprint::SketchEvaluator;
+use sparksmith_solidcraft::footprint::SketchEvaluator;
 
 /// A test length in mm, as stored.
-fn nm(mm: f64) -> pcbcraft_core::units::Nm {
-    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+fn nm(mm: f64) -> sparksmith_core::units::Nm {
+    sparksmith_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
 
 /// A test point or size in mm, as stored.
 #[allow(dead_code)]
-fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
-    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+fn pt(p: [f64; 2]) -> sparksmith_core::units::PointNm {
+    sparksmith_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
 }
 
 const EV: SketchEvaluator = SketchEvaluator;
@@ -84,7 +86,7 @@ fn check(def: &FootprintDefinition, number: &str, at: [f64; 2], size: [f64; 2]) 
 }
 
 fn lint(def: &FootprintDefinition) -> Vec<String> {
-    def.lint(pcbcraft_core::DefinitionId(1))
+    def.lint(sparksmith_core::DefinitionId(1))
         .into_iter()
         .map(|f| f.code)
         .collect()

@@ -4,41 +4,41 @@
 //! profile. The live view meshes the board and has no native build to
 //! profile; its edits are timed by the app's `edit_timing_tests`.
 //!
-//! `nix develop -c cargo test --profile ci -p pcbcraft-automation --features profile --test build_profile -- --ignored --nocapture`
+//! `nix develop -c cargo test --profile ci -p sparksmith-automation --features profile --test build_profile -- --ignored --nocapture`
 //!
-//! - `PCBCRAFT_PROFILE_BOARD`: another `.pcbcraft` file.
-//! - `PCBCRAFT_PROFILE_VARIANT`: `full` (default), `no-vias`, `no-fills`,
+//! - `SPARKSMITH_PROFILE_BOARD`: another `.sparksmith` file.
+//! - `SPARKSMITH_PROFILE_VARIANT`: `full` (default), `no-vias`, `no-fills`,
 //!   `no-tracks`, `parts=N` (the first N placements), `vias=N` (the first N vias),
 //!   `addvias=N` (no fills, N more vias on a grid).
-//! - `PCBCRAFT_PROFILE_NOFILLS=1`: leave the fills out (after the variant).
-//! - `PCBCRAFT_PROFILE_TRACE`: write Solidcraft's Chrome trace there.
+//! - `SPARKSMITH_PROFILE_NOFILLS=1`: leave the fills out (after the variant).
+//! - `SPARKSMITH_PROFILE_TRACE`: write Solidcraft's Chrome trace there.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pcbcraft_core::Project;
-use pcbcraft_solidcraft::models::imported::SourceCache;
-use pcbcraft_solidcraft::project::{self, NativeModel};
+use sparksmith_core::Project;
+use sparksmith_solidcraft::models::imported::SourceCache;
+use sparksmith_solidcraft::project::{self, NativeModel};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
 /// The board file profiled.
 fn path() -> std::path::PathBuf {
-    std::env::var("PCBCRAFT_PROFILE_BOARD").map_or_else(
+    std::env::var("SPARKSMITH_PROFILE_BOARD").map_or_else(
         |_| {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft")
+                .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith")
         },
         std::path::PathBuf::from,
     )
 }
 
 fn board() -> Project {
-    let mut project = pcbcraft_io::read_project(&path())
+    let mut project = sparksmith_io::read_project(&path())
         .unwrap()
         .into_document()
         .project
         .as_ref()
         .clone();
-    let variant = std::env::var("PCBCRAFT_PROFILE_VARIANT").unwrap_or_else(|_| "full".into());
+    let variant = std::env::var("SPARKSMITH_PROFILE_VARIANT").unwrap_or_else(|_| "full".into());
     match variant.as_str() {
         "full" => {}
         "no-vias" => project.vias.clear(),
@@ -61,7 +61,7 @@ fn board() -> Project {
             let columns = ((project.board_size[0] - 4.0) / 1.27).floor().max(1.0) as usize;
             for k in 0..n {
                 let id = project.allocate().unwrap();
-                project.vias.push(pcbcraft_core::Via {
+                project.vias.push(sparksmith_core::Via {
                     id,
                     net,
                     position: [
@@ -70,7 +70,7 @@ fn board() -> Project {
                     ],
                     drill: 0.3,
                     diameter: 0.6,
-                    span: pcbcraft_core::ViaSpan::Through,
+                    span: sparksmith_core::ViaSpan::Through,
                     tented: true,
                     locked: false,
                 });
@@ -78,7 +78,7 @@ fn board() -> Project {
         }
         v => panic!("unknown variant {v}"),
     }
-    if std::env::var("PCBCRAFT_PROFILE_NOFILLS").is_ok() {
+    if std::env::var("SPARKSMITH_PROFILE_NOFILLS").is_ok() {
         project.fills.clear();
     }
     eprintln!(
@@ -150,17 +150,17 @@ fn features(model: &NativeModel) {
 }
 
 fn spans(title: &str) {
-    let report = pcbcraft_solidcraft::profile::report();
+    let report = sparksmith_solidcraft::profile::report();
     eprintln!("--- Solidcraft spans: {title} ---");
     for (category, total) in report.by_category() {
         eprintln!("  category {category}: {:.0} ms", total.as_secs_f64() * 1e3);
     }
     eprintln!("{}", report.table(40));
-    if let Ok(path) = std::env::var("PCBCRAFT_PROFILE_TRACE") {
+    if let Ok(path) = std::env::var("SPARKSMITH_PROFILE_TRACE") {
         let mut file = std::fs::File::create(format!("{path}.{title}.json")).unwrap();
-        pcbcraft_solidcraft::profile::write_chrome_trace(&mut file).unwrap();
+        sparksmith_solidcraft::profile::write_chrome_trace(&mut file).unwrap();
     }
-    pcbcraft_solidcraft::profile::reset();
+    sparksmith_solidcraft::profile::reset();
 }
 
 #[test]
@@ -168,8 +168,8 @@ fn spans(title: &str) {
 fn board_build_profile() {
     let project = board();
     let sources = SourceCache::default();
-    pcbcraft_solidcraft::profile::set_enabled(true);
-    pcbcraft_solidcraft::profile::reset();
+    sparksmith_solidcraft::profile::set_enabled(true);
+    sparksmith_solidcraft::profile::reset();
     let start = Instant::now();
     let model = project::build_with(&project, &sources, None).unwrap();
     let built = start.elapsed();
@@ -192,22 +192,22 @@ fn board_build_profile() {
 }
 
 /// One extruded copper region of `edges` straight edges: a 40 mm polygon
-/// (`PCBCRAFT_SCALING_SHAPE=outline`, default) or a 60 mm square with
+/// (`SPARKSMITH_SCALING_SHAPE=outline`, default) or a 60 mm square with
 /// square holes of four edges each (`holes`), extruded 35 µm by
 /// `Native::batched_body` as a fill's region is. Prints the time of each,
 /// to show how one extrusion grows with its edges.
-/// `PCBCRAFT_SCALING_EDGES=250,500,1000,2000` picks the sizes.
+/// `SPARKSMITH_SCALING_EDGES=250,500,1000,2000` picks the sizes.
 #[test]
 #[ignore = "benchmark"]
 fn extrusion_scaling() {
-    use pcbcraft_core::library::{Outline, Segment};
-    use pcbcraft_solidcraft::native::{Native, ProfileBody};
-    use pcbcraft_solidcraft::pad_outline::Contour;
-    let sizes: Vec<usize> = std::env::var("PCBCRAFT_SCALING_EDGES")
+    use sparksmith_core::library::{Outline, Segment};
+    use sparksmith_solidcraft::native::{Native, ProfileBody};
+    use sparksmith_solidcraft::pad_outline::Contour;
+    let sizes: Vec<usize> = std::env::var("SPARKSMITH_SCALING_EDGES")
         .ok()
         .map(|v| v.split(',').filter_map(|n| n.trim().parse().ok()).collect())
         .unwrap_or_else(|| vec![250, 500, 1000, 2000]);
-    let shape = std::env::var("PCBCRAFT_SCALING_SHAPE").unwrap_or_else(|_| "outline".into());
+    let shape = std::env::var("SPARKSMITH_SCALING_SHAPE").unwrap_or_else(|_| "outline".into());
     let polygon = |points: &[[f64; 2]]| {
         let (first, rest) = points.split_first().unwrap();
         let mut segments: Vec<Segment> = rest.iter().map(|&to| Segment::Line { to }).collect();
@@ -217,7 +217,7 @@ fn extrusion_scaling() {
             segments,
         })
     };
-    pcbcraft_solidcraft::profile::set_enabled(true);
+    sparksmith_solidcraft::profile::set_enabled(true);
     for edges in sizes {
         let contours: Vec<Contour> = match shape.as_str() {
             "outline" => {
@@ -254,7 +254,7 @@ fn extrusion_scaling() {
             s => panic!("unknown shape {s}"),
         };
         let mut native = Native::new("scaling").unwrap();
-        pcbcraft_solidcraft::profile::reset();
+        sparksmith_solidcraft::profile::reset();
         let start = Instant::now();
         native
             .batched_body(ProfileBody {
@@ -265,7 +265,7 @@ fn extrusion_scaling() {
             })
             .unwrap();
         let took = start.elapsed();
-        let report = pcbcraft_solidcraft::profile::report();
+        let report = sparksmith_solidcraft::profile::report();
         let extrude = report
             .rows
             .iter()

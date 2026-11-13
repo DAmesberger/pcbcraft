@@ -1,11 +1,11 @@
 //! Emitter tests over an original fixture: an invented EXM-48 controller
 //! with a USART, a plain LED output and a button input.
 use super::*;
-use pcbcraft_core::firmware::{
+use sparksmith_core::firmware::{
     FirmwareDevice, FirmwarePeripheral, FirmwarePin, NameConflict, PinConfigReport,
 };
-use pcbcraft_core::functions::{GpioRef, Level, Pull};
-use pcbcraft_core::ids::{ComponentRef, DefinitionId, ResourceId, Revision, TerminalId};
+use sparksmith_core::functions::{GpioRef, Level, Pull};
+use sparksmith_core::ids::{ComponentRef, DefinitionId, ResourceId, Revision, TerminalId};
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -97,16 +97,16 @@ fn the_c_header_defines_ports_pins_and_mux_codes() -> Fallible<()> {
     let text = &emitted.text;
     assert_eq!(emitted.file_name, "pins.h");
     for line in [
-        "#ifndef PCBCRAFT_PINS_U1_H",
+        "#ifndef SPARKSMITH_PINS_U1_H",
         "#define LED_STATUS_PORT \"A\"",
         "#define LED_STATUS_PIN 5",
-        "#define LED_STATUS_INITIAL PCBCRAFT_LEVEL_LOW",
-        "#define BUTTON_PULL PCBCRAFT_PULL_UP",
+        "#define LED_STATUS_INITIAL SPARKSMITH_LEVEL_LOW",
+        "#define BUTTON_PULL SPARKSMITH_PULL_UP",
         "#define CONSOLE_TX_AF \"AF7\"",
         "#define U1_PIN_COUNT 4",
-        "static const struct pcbcraft_pin u1_pins[U1_PIN_COUNT] = {",
-        "    { \"CONSOLE_RX\", \"PA10\", \"A\", 10, \"usart1_rx\", \"USART1\", \"rx\", \"AF7\", PCBCRAFT_PULL_UP, NULL, PCBCRAFT_LEVEL_UNSET },",
-        "#endif /* PCBCRAFT_PINS_U1_H */",
+        "static const struct sparksmith_pin u1_pins[U1_PIN_COUNT] = {",
+        "    { \"CONSOLE_RX\", \"PA10\", \"A\", 10, \"usart1_rx\", \"USART1\", \"rx\", \"AF7\", SPARKSMITH_PULL_UP, NULL, SPARKSMITH_LEVEL_UNSET },",
+        "#endif /* SPARKSMITH_PINS_U1_H */",
         " * A starting point: pin configuration only; it configures no clocks or registers.",
     ] {
         assert!(

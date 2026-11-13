@@ -15,21 +15,21 @@ use super::*;
 use crate::models::imported::tests::{fixture_glb, fixture_step, lead_key, model, use_lead};
 use crate::models::inspect::inspect;
 use crate::models::named;
-use pcbcraft_core::Engine;
-use pcbcraft_core::Operation;
-use pcbcraft_core::format::EditorFile;
-use pcbcraft_core::ids::{ComponentRef, DefinitionId, Id, ModelRef, Revision};
-use pcbcraft_core::layout::dimensions::{DimensionCommand, REFERENCE_INEXACT, checks};
-use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset};
-use pcbcraft_core::library::footprint_source::{DimKind, DimValue, SketchRef};
-use pcbcraft_core::library::model3d::{LeadTag, ModelFormat};
-use pcbcraft_core::library::{
+use sparksmith_core::Engine;
+use sparksmith_core::Operation;
+use sparksmith_core::format::EditorFile;
+use sparksmith_core::ids::{ComponentRef, DefinitionId, Id, ModelRef, Revision};
+use sparksmith_core::layout::dimensions::{DimensionCommand, REFERENCE_INEXACT, checks};
+use sparksmith_core::library::bundle::{AssetBytes, PackedAsset};
+use sparksmith_core::library::footprint_source::{DimKind, DimValue, SketchRef};
+use sparksmith_core::library::model3d::{LeadTag, ModelFormat};
+use sparksmith_core::library::{
     DefinitionMeta, LibraryModel, PackageDefinition, PackageModel, Published,
 };
-use pcbcraft_core::model::dimension::{
+use sparksmith_core::model::dimension::{
     BoardRef, BodyName, FaceName, PartDimension, PartDimensionSpec, PartRelation,
 };
-use pcbcraft_core::updates::{ApplyUpdate, Change};
+use sparksmith_core::updates::{ApplyUpdate, Change};
 
 /// The board sketch's right edge.
 fn right(engine: &Engine) -> Fallible<BoardRef> {
@@ -64,9 +64,9 @@ fn x_of(engine: &Engine, part: Id) -> f64 {
 }
 
 /// The package R1 uses.
-fn package_of(project: &pcbcraft_core::Project, part: Id) -> Fallible<PackageDefinition> {
+fn package_of(project: &sparksmith_core::Project, part: Id) -> Fallible<PackageDefinition> {
     let instance = project.instance(part).ok_or("instance")?;
-    let physical = pcbcraft_core::instances::resolve(&project.library, instance)?
+    let physical = sparksmith_core::instances::resolve(&project.library, instance)?
         .physical
         .ok_or("physical")?;
     Ok(physical.package.definition.clone())
@@ -194,7 +194,7 @@ fn with_library_model(format: ModelFormat, bytes: &[u8]) -> Fallible<(Engine, Mo
     });
     let part = r1(&engine)?;
     let instance = project.instance(part).ok_or("instance")?.clone();
-    let package_id = pcbcraft_core::instances::resolve(&project.library, &instance)?
+    let package_id = sparksmith_core::instances::resolve(&project.library, &instance)?
         .physical
         .ok_or("physical")?
         .package
@@ -249,7 +249,7 @@ fn revise(engine: &Engine, part: Id, bytes: &[u8]) -> Fallible<(Engine, Componen
     };
     let mut model = lib.model(use_.model).ok_or("model")?.clone();
     model.revision = next(model.revision);
-    let hash = pcbcraft_core::library::bundle::asset_hash(bytes);
+    let hash = sparksmith_core::library::bundle::asset_hash(bytes);
     if hash != model.definition.asset.hash {
         model.definition.asset.hash = hash;
         model.definition.asset.bytes = bytes.len() as u64;
@@ -449,7 +449,7 @@ fn a_gltf_face_is_refused_with_the_mesh_finding() -> Fallible<()> {
             dimension: flush(BoardRef::Part(face), edge),
         }),
     );
-    let Err(pcbcraft_core::Error::Unsupported(why)) = refused else {
+    let Err(sparksmith_core::Error::Unsupported(why)) = refused else {
         panic!("{refused:?}")
     };
     assert!(why.contains("layout.dimension_model"), "{why}");
@@ -472,11 +472,11 @@ fn board_point(
     let project = engine.project();
     let placement = project.placement_of(part).ok_or("placement")?;
     let local = package.placement.transform().apply(p);
-    let at = pcbcraft_core::layout::dimensions::view::part_transform(placement)
+    let at = sparksmith_core::layout::dimensions::view::part_transform(placement)
         .apply([local[0], local[1]]);
     let seat = project
         .stackup
-        .copper_span(pcbcraft_core::CopperLayer::Top)
+        .copper_span(sparksmith_core::CopperLayer::Top)
         .map_or(0.0, |s| s.1);
     Ok([at[0], at[1], seat + local[2]])
 }
@@ -495,7 +495,7 @@ fn a_3d_pick_on_a_generated_end_face_holds_r1_to_the_edge() -> Fallible<()> {
         return Err("face".into());
     };
     let at = board_point(&engine, part, &package, face.pick)?;
-    let (picked, trace) = pcbcraft_core::layout::dimensions::model::pick(
+    let (picked, trace) = sparksmith_core::layout::dimensions::model::pick(
         engine.project(),
         &crate::board::SketchBoardEvaluator,
         part,
@@ -541,14 +541,14 @@ fn a_3d_pick_on_a_gltf_model_is_refused_with_the_mesh_finding() -> Fallible<()> 
         .placement_of(part)
         .ok_or("placement")?
         .position;
-    let refused = pcbcraft_core::layout::dimensions::model::pick(
+    let refused = sparksmith_core::layout::dimensions::model::pick(
         engine.project(),
         &crate::board::SketchBoardEvaluator,
         part,
         [position[0], position[1], 1.7],
         0.0,
     );
-    let Err(pcbcraft_core::Error::Unsupported(why)) = refused else {
+    let Err(sparksmith_core::Error::Unsupported(why)) = refused else {
         panic!("{refused:?}")
     };
     assert!(

@@ -96,9 +96,9 @@ fn run() -> Result<()> {
                 "warnings",
             ])?;
             // The shipped binaries alone, without dev-dependencies: test
-            // fixtures (`pcbcraft-core/test-fixtures`) never build into them.
+            // fixtures (`sparksmith-core/test-fixtures`) never build into them.
             cargo(&[
-                "check", "--locked", "-p", "pcbcraft", "-p", "pcbcraft-cli", "--bins", "--profile",
+                "check", "--locked", "-p", "sparksmith", "-p", "sparksmith-cli", "--bins", "--profile",
                 "ci",
             ])?;
             // Every test binary runs, so one CI run reports all failures.
@@ -119,8 +119,8 @@ fn run() -> Result<()> {
         }
         "board-parity" => board_parity(),
         "wasm" => wasm(),
-        "wasm-scripting" => wasm_tests("pcbcraft-core", "scripting::tests", "scripting"),
-        "wasm-footprint" => wasm_tests("pcbcraft-solidcraft", "footprint::tests", "footprint"),
+        "wasm-scripting" => wasm_tests("sparksmith-core", "scripting::tests", "scripting"),
+        "wasm-footprint" => wasm_tests("sparksmith-solidcraft", "footprint::tests", "footprint"),
         "layers" => layers::check(),
         "core-modules" => core_modules::check(),
         "connectivity" => connectivity::check(),
@@ -186,7 +186,7 @@ fn board_parity() -> Result<()> {
         "--profile",
         "ci",
         "-p",
-        "pcbcraft-automation",
+        "sparksmith-automation",
         "--test",
         "board_parity",
         "--",
@@ -201,11 +201,11 @@ fn wasm() -> Result<()> {
         "check",
         "--locked",
         "-p",
-        "pcbcraft-core",
+        "sparksmith-core",
         "-p",
-        "pcbcraft-solidcraft",
+        "sparksmith-solidcraft",
         "-p",
-        "pcbcraft-generators",
+        "sparksmith-generators",
         "--lib",
         "--target",
         "wasm32-unknown-unknown",

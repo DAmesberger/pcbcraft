@@ -9,19 +9,19 @@ use std::collections::BTreeSet;
 
 use crate::models::tests::nm;
 
-use pcbcraft_core::diagnostics::{Error, Result};
-use pcbcraft_core::geometry::Shape;
-use pcbcraft_core::ids::{PackageTerminalId, PadId};
-use pcbcraft_core::library::footprint_edit::{self, AssignRule, FootprintEditReport};
-use pcbcraft_core::library::footprint_source::{
+use sparksmith_core::diagnostics::{Error, Result};
+use sparksmith_core::geometry::Shape;
+use sparksmith_core::ids::{PackageTerminalId, PadId};
+use sparksmith_core::library::footprint_edit::{self, AssignRule, FootprintEditReport};
+use sparksmith_core::library::footprint_source::{
     ArrayId, ArrayLayout, DimKind, DimValue, EvaluationRequest, Expr, FootprintEdit,
     FootprintEvaluator, GenerationKey, GeomConstraint, GraphicRole, GraphicSource, HoleRole,
     NumberingScheme, PackageValue, PadOverride, PadShapeExpr, PadTemplate, PadTemplateParams,
     ParamName, ParamUnit, ParamValue, Pin1Position, SketchCurveId, SketchEdit, SketchPointId,
     SketchRef, SkipRule, SolveStatus,
 };
-use pcbcraft_core::library::graphics::{DrawingLayer, Fill, Item, Side};
-use pcbcraft_core::library::{
+use sparksmith_core::library::graphics::{DrawingLayer, Fill, Item, Side};
+use sparksmith_core::library::{
     FootprintDefinition, HoleShape, PackageDefinition, PackageTerminal, Pad, PadKind, PadShape,
     PadSide, Segment,
 };
@@ -618,7 +618,7 @@ fn failed_edits_leave_the_footprint_unchanged() -> Result<()> {
         .as_ref()
         .and_then(|s| s.pads.iter().find(|r| r.pad == seed))
         .and_then(|r| match &r.geometry {
-            pcbcraft_core::library::footprint_source::PadGeometry::Template {
+            sparksmith_core::library::footprint_source::PadGeometry::Template {
                 owned_curves,
                 ..
             } => owned_curves.first().cloned(),
@@ -656,7 +656,7 @@ fn wrong_evaluator_revision_is_refused() -> Result<()> {
         .source
         .as_deref()
         .ok_or_else(|| Error::NotFound("source".into()))?;
-    let values = pcbcraft_core::library::footprint_source::package_values(&fp.pkg);
+    let values = sparksmith_core::library::footprint_source::package_values(&fp.pkg);
     let e = EV.evaluate(EvaluationRequest {
         source,
         package: &fp.pkg,
@@ -695,7 +695,7 @@ fn typed_package_values_are_injected() -> Result<()> {
     let mut source = source.clone();
     source
         .parameters
-        .push(pcbcraft_core::library::footprint_source::FootprintParam {
+        .push(sparksmith_core::library::footprint_source::FootprintParam {
             name: ParamName("tilt".into()),
             expr: Expr("pkg_a / 3".into()),
             unit: ParamUnit::Deg,
@@ -1029,7 +1029,7 @@ fn graphics_datum_and_derived_courtyard() -> Result<()> {
         })
         .collect();
     let role = |source, layer| GraphicRole {
-        id: pcbcraft_core::ids::GraphicId(0),
+        id: sparksmith_core::ids::GraphicId(0),
         layer,
         side: Side::Component,
         source,
@@ -1043,7 +1043,7 @@ fn graphics_datum_and_derived_courtyard() -> Result<()> {
         FootprintEdit::SetGraphicRole {
             role: role(
                 GraphicSource::Derived(
-                    pcbcraft_core::library::footprint_source::DerivedGraphic::CourtyardFromExtents {
+                    sparksmith_core::library::footprint_source::DerivedGraphic::CourtyardFromExtents {
                         excess: Expr("0.25 mm".into()),
                         round: Expr("0.05 mm".into()),
                     },
@@ -1140,7 +1140,7 @@ fn sketch_check_refuses_non_canonical_and_unsupported_input() -> Result<()> {
     let mut v: serde_json::Value = serde_json::from_str(&sketch.0)?;
     v["view"] = serde_json::json!({"three_d": true});
     assert!(check::check_sketch(&v.to_string()).is_err());
-    let huge = "x".repeat(pcbcraft_core::library::footprint_source::MAX_SKETCH_BYTES + 1);
+    let huge = "x".repeat(sparksmith_core::library::footprint_source::MAX_SKETCH_BYTES + 1);
     assert!(matches!(check::check_sketch(&huge), Err(p) if p.code == "footprint.too_large"));
     Ok(())
 }
@@ -1203,7 +1203,7 @@ fn tampered_pads_with_an_intact_hash_are_stale() -> Result<()> {
         p.position.x_nm = p
             .position
             .x_nm
-            .checked_add(pcbcraft_core::units::Nm::new(500_000)?)?;
+            .checked_add(sparksmith_core::units::Nm::new(500_000)?)?;
     }
     let err = footprint_edit::check_fresh(&tampered, &fp.pkg, &EV);
     assert!(
@@ -1246,7 +1246,7 @@ fn a_folded_turn_carries_the_hole_offset() -> Result<()> {
             .hole
             .as_ref()
             .ok_or_else(|| Error::NotFound("hole".into()))?;
-        let (c, s) = pcbcraft_core::geometry::cos_sin(p.rotation_deg());
+        let (c, s) = sparksmith_core::geometry::cos_sin(p.rotation_deg());
         Ok([
             p.position()[0] + c * h.offset()[0] - s * h.offset()[1],
             p.position()[1] + s * h.offset()[0] + c * h.offset()[1],

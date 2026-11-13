@@ -1,6 +1,6 @@
 //! Native tests: the golden hashes, hand-derived geometry and refusals.
 use super::*;
-use pcbcraft_generator_sdk::golden;
+use sparksmith_generator_sdk::golden;
 
 fn request(scope: Scope, overrides: &[(String, ParamValue)]) -> Request {
     let mut params = v1::Params::new();

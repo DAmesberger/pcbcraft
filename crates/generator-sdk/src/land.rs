@@ -5,7 +5,7 @@
 use crate::units::round_to;
 use alloc::vec;
 use alloc::vec::Vec;
-use pcbcraft_generator_abi::v1::{
+use sparksmith_generator_abi::v1::{
     Fill, Graphic, HAlign, Opening, Pad, PadShape, Point, Primitive, TextContent, VAlign,
 };
 
@@ -243,7 +243,7 @@ fn text(at: Point, height_nm: i64) -> Graphic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_generator_abi::v1::Side;
+    use sparksmith_generator_abi::v1::Side;
 
     fn rect(at: Point, size: Point) -> Pad {
         Pad {

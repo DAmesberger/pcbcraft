@@ -30,7 +30,7 @@ pub const DIELECTRIC_MM_RANGE: std::ops::RangeInclusive<f64> = 0.025..=3.2;
 /// colour, is this thickness.
 pub const MASK_UM: f64 = 12.0;
 /// Soldermask over bare laminate of a new stackup, in µm. **Uncited**:
-/// Pcbcraft's earlier 3D display value. LPI flows into the gaps between
+/// Sparksmith's earlier 3D display value. LPI flows into the gaps between
 /// copper, so it is thicker over laminate than over copper, but no
 /// fabricator capability page or mask datasheet consulted states a value
 /// over laminate (`docs/materials.md`, "Sources").

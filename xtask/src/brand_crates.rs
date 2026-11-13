@@ -1,9 +1,9 @@
-//! `cargo xtask brand-crates`: no SolidCraft brand-licensed crate in Pcbcraft's dependency graph.
+//! `cargo xtask brand-crates`: no SolidCraft brand-licensed crate in Sparksmith's dependency graph.
 //!
 //! Since upstream SolidCraft #14578 (after `a34756830`), `crates/ui-kit`, `crates/look` and
 //! `crates/theme` are under SolidCraft's Brand and Interface Licence: linking them from software
 //! that is not SolidCraft needs the maintainers' written permission (§3a). `solidcraft-ui-egui`
-//! links all three. Pcbcraft draws with its own vendored copy of the earlier MIT/Apache code
+//! links all three. Sparksmith draws with its own vendored copy of the earlier MIT/Apache code
 //! (`crates/ui`) instead, so none of these may be resolved for any target, platform or
 //! dependency kind. The gate reads the resolved graph from `cargo metadata --locked`.
 
@@ -11,7 +11,7 @@ use crate::{Result, root};
 use serde_json::Value;
 use std::process::Command;
 
-/// Packages Pcbcraft must not link: the brand-licensed crates and the UI crate that links them.
+/// Packages Sparksmith must not link: the brand-licensed crates and the UI crate that links them.
 const FORBIDDEN: &[&str] = &[
     "solidcraft-ui-kit",
     "solidcraft-look",

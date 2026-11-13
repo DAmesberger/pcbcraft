@@ -1,7 +1,7 @@
 //! The interface the document layer uses to run generator modules.
 //!
-//! It lives here, beside the wire types, so that `pcbcraft-core` can depend
-//! on it without depending on an interpreter: `pcbcraft-generators`
+//! It lives here, beside the wire types, so that `sparksmith-core` can depend
+//! on it without depending on an interpreter: `sparksmith-generators`
 //! implements it with wasmi, and a browser build may implement it with the
 //! browser's own `WebAssembly`.
 use crate::v1::{Description, Generation, Problem, Request};

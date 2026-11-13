@@ -4,12 +4,12 @@
 //! the module builder it replaces.
 use super::*;
 use crate::models;
-use pcbcraft_core::ids::PackageTerminalId;
-use pcbcraft_core::library::marking::surface;
-use pcbcraft_core::library::{
+use serde_json::json;
+use sparksmith_core::ids::PackageTerminalId;
+use sparksmith_core::library::marking::surface;
+use sparksmith_core::library::{
     GeneratedMaterials, PackageDefinition, PackageForm, PackageModel, PackageTerminal,
 };
-use serde_json::json;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -18,7 +18,7 @@ const WROOM3: &str = "esp32-s31-wroom-3";
 fn wroom3_package() -> PackageDefinition {
     // The fixture is the module datasheet's millimetres: the wire form.
     let form: PackageForm = serde_json::from_str::<
-        pcbcraft_core::library::package_form::PackageFormParams,
+        sparksmith_core::library::package_form::PackageFormParams,
     >(include_str!("../../tests/template_spike_wroom3.json"))
     .unwrap()
     .into();
@@ -94,7 +94,7 @@ fn appearance_names_map_every_material_and_nothing_else() {
     assert_eq!(material_of("Nickel Silver"), Some(MaterialId::NickelSilver));
     assert_eq!(material_of("nickel_silver"), Some(MaterialId::NickelSilver));
     assert_eq!(appearance_name(MaterialId::NickelSilver), "nickel-silver");
-    for other in ["", "chrome", "gold!", "pcbcraft:gold", &"x".repeat(100)] {
+    for other in ["", "chrome", "gold!", "sparksmith:gold", &"x".repeat(100)] {
         assert_eq!(material_of(other), None, "{other}");
     }
 }
@@ -160,7 +160,7 @@ fn the_wroom3_marking_planes_are_the_module_anchors() -> Fallible {
         panic!("a module");
     };
     let derived = derived(&part)?;
-    let file = pcbcraft_core::library::package_model::PartFileModel {
+    let file = sparksmith_core::library::package_model::PartFileModel {
         derived,
         ..Default::default()
     };
@@ -328,7 +328,7 @@ fn convention_breaks_are_findings_and_block_the_insert() -> Fallible {
     let part = evaluate(&good, &PartValues::new())?;
     assert!(!part.blocked(), "{:?}", part.findings);
     assert_eq!(part.surfaces.len(), 1);
-    // No appearance, and one Pcbcraft does not know.
+    // No appearance, and one Sparksmith does not know.
     let unmapped = small_part(
         &[
             ([-1.0, -0.5, 0.0], [2.0, 1.0, 1.0], None),

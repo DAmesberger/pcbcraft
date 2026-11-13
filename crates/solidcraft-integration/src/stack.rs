@@ -12,7 +12,7 @@
 //! The display films' own thicknesses are in this one table; their sources
 //! are in `docs/materials.md`.
 use crate::material::BodyKind;
-use pcbcraft_core::{CopperLayer, Layer, PadFinish, Stackup};
+use sparksmith_core::{CopperLayer, Layer, PadFinish, Stackup};
 
 /// Plated finish over exposed copper, µm: the middle of the thickness
 /// range a fabricator publishes for `finish` (sources in
@@ -258,8 +258,8 @@ impl Stack {
             dielectrics: Vec::new(),
             top: 0.0,
             copper: [0.0; 2],
-            mask: pcbcraft_core::MASK_UM / 1000.0,
-            mask_laminate: pcbcraft_core::MASK_LAMINATE.to_mm_f64(),
+            mask: sparksmith_core::MASK_UM / 1000.0,
+            mask_laminate: sparksmith_core::MASK_LAMINATE.to_mm_f64(),
             finish: finish_um(PadFinish::default()) / 1000.0,
         }
     }
@@ -455,7 +455,7 @@ mod tests {
         stackup.copper[2].thickness_um = 18.0;
         stackup.dielectrics[1].thickness_mm = 0.3;
         stackup.mask_um = 25.0;
-        stackup.mask_laminate_nm = pcbcraft_core::units::Nm::try_new(30_000).ok_or("nm")?;
+        stackup.mask_laminate_nm = sparksmith_core::units::Nm::try_new(30_000).ok_or("nm")?;
         let stack = Stack::of(&stackup, PadFinish::Enig);
         let order: Vec<Slot> = stack.slots().iter().map(|(s, _)| *s).collect();
         let mut expected = vec![
@@ -498,7 +498,10 @@ mod tests {
         let finish = stack.span_of(Slot::Finish(Layer::Top)).ok_or("no finish")?;
         let silk = stack.span_of(Slot::Silk(Layer::Top)).ok_or("no legend")?;
         // The default stackup's mask over copper is the core's seed.
-        near(Stack::default().mask_mm(), pcbcraft_core::MASK_UM / 1000.0);
+        near(
+            Stack::default().mask_mm(),
+            sparksmith_core::MASK_UM / 1000.0,
+        );
         assert!(finish[1] > top + 0.070 && silk[1] > top + 0.030);
         near(finish[1], top + 0.070 + finish_um(PadFinish::Enig) / 1000.0);
         // Each finish has its own thickness.

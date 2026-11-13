@@ -251,7 +251,7 @@ fn track_drag_is_one_undo_step_and_refused_when_blocked() -> Fallible {
 
 /// Per-move cost of a drag on the showcase: every unlocked top-layer
 /// track dragged through 20 offsets from −1 to +1 mm, a whole plan from
-/// the committed board each (`cargo test -p pcbcraft-core --release
+/// the committed board each (`cargo test -p sparksmith-core --release
 /// track_drag_timings -- --ignored --nocapture`).
 #[test]
 #[ignore = "timing report; run in release with --ignored --nocapture"]

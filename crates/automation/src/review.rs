@@ -2,7 +2,7 @@
 //! (`library.review_check`). Whoever reads the datasheets (an agent over MCP,
 //! the in-app assistant, a person) states every value it used with its
 //! document, page, table or figure and a confidence, and the open questions
-//! a person must settle before publishing. Pcbcraft never reads the
+//! a person must settle before publishing. Sparksmith never reads the
 //! datasheets itself: it checks that the report is complete and cites what
 //! it lists, and holds it against the drafts in the project (their import
 //! review state, the source pages of their imported functions and their

@@ -3,7 +3,7 @@
 //! Geometry, typography and colours come from [`crate::tokens::Tokens`].
 //!
 //! Vendored from SolidCraft's `crates/ui-kit` (see the crate documentation for the source revision
-//! and licence); only the controls Pcbcraft draws with are kept.
+//! and licence); only the controls Sparksmith draws with are kept.
 
 pub(crate) mod frame;
 pub(crate) mod icons;

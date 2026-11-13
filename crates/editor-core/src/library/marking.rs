@@ -7,7 +7,7 @@
 //! marking that cannot be represented draws nothing and gets an Info
 //! finding (`marking.unrepresentable`, `marking.does_not_fit`); a wrong
 //! code is never drawn. [`MarkingLayout`] is the 2D result the integration
-//! crate (`pcbcraft-solidcraft::marking`, D5) turns into a decal mesh.
+//! crate (`sparksmith-solidcraft::marking`, D5) turns into a decal mesh.
 pub mod codes;
 mod layout;
 pub mod matrix;
@@ -131,7 +131,7 @@ pub enum MarkingItem {
     /// User-supplied SVG artwork, packed by hash in `Library::assets` as
     /// [`ARTWORK_MEDIA_TYPE`] (`library.pack_artwork`), licence-gated like
     /// models: publishing needs the artwork packed and its licence stated
-    /// (`marking.artwork`). Pcbcraft ships no vendor logos.
+    /// (`marking.artwork`). Sparksmith ships no vendor logos.
     Artwork {
         svg: ContentHash,
         /// Width and height.

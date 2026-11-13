@@ -3,7 +3,7 @@
 //! `project.query`): pairs and length groups, the impedance calculator
 //! and table, the length report and a refused tuning.
 use super::*;
-use pcbcraft_core::Engine;
+use sparksmith_core::Engine;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 

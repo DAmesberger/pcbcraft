@@ -6,13 +6,13 @@
 //! 1,278 MB live against 912 MB for a fresh build, after one width edit
 //! and its refill.)
 //! By hand, macOS only (live heap from `heap -s`):
-//! `cargo test --profile ci -p pcbcraft-automation --test model_memory -- --ignored --nocapture`.
+//! `cargo test --profile ci -p sparksmith-automation --test model_memory -- --ignored --nocapture`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
-use pcbcraft_core::{Engine, Operation};
-use pcbcraft_solidcraft::models::imported::SourceCache;
-use pcbcraft_solidcraft::project;
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::{Engine, Operation};
+use sparksmith_solidcraft::models::imported::SourceCache;
+use sparksmith_solidcraft::project;
 use std::time::Instant;
 
 /// This process's live heap in MB (`heap -s`), or `None` where `heap` is
@@ -35,12 +35,12 @@ fn live() -> Option<f64> {
 
 fn path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft")
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith")
 }
 
 /// The board sketch's `name` parameter `by` mm more, as the board card sets it.
 fn bump(engine: &mut Engine, name: &str, by: f64) {
-    let pcbcraft_core::model::board::BoardShape::Sketch(sketch) = &engine.project().board_shape
+    let sparksmith_core::model::board::BoardShape::Sketch(sketch) = &engine.project().board_shape
     else {
         panic!("not a sketched board")
     };
@@ -51,14 +51,14 @@ fn bump(engine: &mut Engine, name: &str, by: f64) {
         .unwrap()
         .clone();
     let now: f64 = param.expr.0.trim_end_matches("mm").trim().parse().unwrap();
-    param.expr = pcbcraft_core::library::footprint_source::Expr(format!("{} mm", now + by));
+    param.expr = sparksmith_core::library::footprint_source::Expr(format!("{} mm", now + by));
     engine
         .apply_hosted(
             engine.revision(),
             Operation::Board(BoardCommand::Edit {
                 edits: vec![BoardEdit::SetParameter { param }],
             }),
-            pcbcraft_automation::session::hosted(),
+            sparksmith_automation::session::hosted(),
         )
         .unwrap();
 }
@@ -70,9 +70,9 @@ fn esp32_an_updated_model_holds_what_a_fresh_build_holds() {
         eprintln!("no `heap` here: nothing measured");
         return;
     };
-    let mut engine = Engine::from_file(pcbcraft_io::read_project(&path()).unwrap()).unwrap();
+    let mut engine = Engine::from_file(sparksmith_io::read_project(&path()).unwrap()).unwrap();
     let sources = SourceCache::default();
-    let mut cache = pcbcraft_core::layout::fill::FillCache::default();
+    let mut cache = sparksmith_core::layout::fill::FillCache::default();
     let t = Instant::now();
     let mut model =
         project::build_flat(engine.project(), &sources, None, project::Flat::Meshed).unwrap();
@@ -93,7 +93,7 @@ fn esp32_an_updated_model_holds_what_a_fresh_build_holds() {
         t.elapsed().as_secs_f64(),
         held(base)
     );
-    let fresh = pcbcraft_core::layout::fill::compute_stale(engine.project(), &mut cache).unwrap();
+    let fresh = sparksmith_core::layout::fill::compute_stale(engine.project(), &mut cache).unwrap();
     let revision = engine.revision();
     engine.store_fills(revision, fresh).unwrap();
     let t = Instant::now();

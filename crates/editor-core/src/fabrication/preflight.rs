@@ -131,7 +131,7 @@ pub fn apply(
     expecting = "a fab profile id from the profile library, or a whole fab profile"
 )]
 pub enum ProfileChoice {
-    /// A profile id. Pcbcraft has no built-in profiles: a host with a
+    /// A profile id. Sparksmith has no built-in profiles: a host with a
     /// profile library resolves an id to its profile before it asks.
     Id(String),
     Profile(Box<RuleProfile>),

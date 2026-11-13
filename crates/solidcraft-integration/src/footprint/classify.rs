@@ -5,9 +5,9 @@
 
 use crate::geom::prelude::*;
 use crate::geom::{Loop2, Seg2, Vec2};
-use pcbcraft_core::library::{CornerMask, Hole, HoleShape, Outline, PadShape, Segment};
-use pcbcraft_core::units::{Angle, Nm, PointNm};
 use solidcraft_engine::sketch::{CurveKind, Sketch};
+use sparksmith_core::library::{CornerMask, Hole, HoleShape, Outline, PadShape, Segment};
+use sparksmith_core::units::{Angle, Nm, PointNm};
 
 use super::{Outcome, problem, stored};
 
@@ -373,7 +373,7 @@ fn outline(frame: &[Piece]) -> Outcome<Outline> {
             }
         }
     }
-    if segments.len() > pcbcraft_core::library::MAX_OUTLINE_SEGMENTS {
+    if segments.len() > sparksmith_core::library::MAX_OUTLINE_SEGMENTS {
         return Err(problem(UNCLASSIFIED, "the outline has too many segments"));
     }
     Ok(Outline {

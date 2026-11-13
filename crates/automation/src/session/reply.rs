@@ -7,8 +7,8 @@
 use super::{InspectParams, Request, Session, envelope};
 use crate::gate::{Caller, Decision};
 use crate::{Error, Result};
-use pcbcraft_core::{Class, Document, Finding, Project, Query, QueryResult, erc, layout};
 use serde_json::{Map, Value, json};
+use sparksmith_core::{Class, Document, Finding, Project, Query, QueryResult, erc, layout};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -95,7 +95,7 @@ impl Session {
                         | Request::ApplyUpdate(_)
                 );
                 if !pure || request.effective_class() != Class::Edit {
-                    return Err(pcbcraft_core::Error::Invalid(format!(
+                    return Err(sparksmith_core::Error::Invalid(format!(
                         "{} has no dry run: only document operations, undo, redo and updates do",
                         request.subject()
                     ))
@@ -160,7 +160,7 @@ impl Session {
         if let Some(at) = params.at {
             let snapshot = self.snapshot();
             let value = snapshot.pointer(&at).ok_or_else(|| {
-                pcbcraft_core::Error::NotFound(format!("nothing at {at} in the snapshot"))
+                sparksmith_core::Error::NotFound(format!("nothing at {at} in the snapshot"))
             })?;
             return Ok(json!({"revision": self.engine.revision(), "at": at, "value": value}));
         }
@@ -248,7 +248,7 @@ impl Session {
             return Ok(Vec::new());
         }
         let QueryResult::Drafts(reports) = self.engine.query(Query::CheckDrafts {})? else {
-            return Err(pcbcraft_core::Error::Invalid(
+            return Err(sparksmith_core::Error::Invalid(
                 "component.check_drafts gave another report".into(),
             )
             .into());

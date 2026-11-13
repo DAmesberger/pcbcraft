@@ -2,7 +2,7 @@
 //! committed board), on the showcase and on a dense board of 10,000 vias
 //! and 1,500 tracks. The target is 16 ms per move (one frame at 60 Hz)
 //! in a release build. `route_plan_timings` prints the distributions
-//! (`cargo test -p pcbcraft-core --release route_plan_timings --
+//! (`cargo test -p sparksmith-core --release route_plan_timings --
 //! --ignored --nocapture`); the other test runs in every build and
 //! guards against runaway work and illegal proposals on the dense board.
 //! The timings share one copper graph per board, built and timed apart, as

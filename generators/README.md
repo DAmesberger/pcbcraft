@@ -1,6 +1,6 @@
 # Generator modules
 
-A generator is a pure function in a WebAssembly module: typed parameters in, a complete part body out (symbol, package and footprint; the 3D model description arrives with slice GP2). Each directory here is one generator crate that builds to `wasm32-unknown-unknown`. The modules are loaded as data, never linked into the app; the host that runs them is `crates/generators` (`pcbcraft-generators`).
+A generator is a pure function in a WebAssembly module: typed parameters in, a complete part body out (symbol, package and footprint; the 3D model description arrives with slice GP2). Each directory here is one generator crate that builds to `wasm32-unknown-unknown`. The modules are loaded as data, never linked into the app; the host that runs them is `crates/generators` (`sparksmith-generators`).
 
 Status: slice GP0, the foundation. The modules are not yet used by the catalog, the gallery or the part editor (GP1, GP5, GP7); the in-code templates stay until GP5. ABI 1 is open to change until the first release.
 
@@ -8,14 +8,14 @@ Status: slice GP0, the foundation. The modules are not yet used by the catalog, 
 
 | Path | What |
 | --- | --- |
-| `crates/generator-abi` | `pcbcraft-generator-abi`: the ABI 1 wire types (`v1`), the canonical JSON codec, the parameter check, and the `GeneratorRuntime` trait. `no_std` + `alloc`, no generator logic. |
-| `crates/generator-sdk` | `pcbcraft-generator-sdk`: what a generator is written with: `Generator` and `export_generator!`, the module's allocator and panic handler, typed parameters, symbol drawing, footprint drawing (courtyard, silkscreen broken round the pads, assembly), and the golden-test harness. |
-| `crates/generators` | `pcbcraft-generators`: the wasmi host, with `Limits` and the output checks. |
+| `crates/generator-abi` | `sparksmith-generator-abi`: the ABI 1 wire types (`v1`), the canonical JSON codec, the parameter check, and the `GeneratorRuntime` trait. `no_std` + `alloc`, no generator logic. |
+| `crates/generator-sdk` | `sparksmith-generator-sdk`: what a generator is written with: `Generator` and `export_generator!`, the module's allocator and panic handler, typed parameters, symbol drawing, footprint drawing (courtyard, silkscreen broken round the pads, assembly), and the golden-test harness. |
+| `crates/generators` | `sparksmith-generators`: the wasmi host, with `Limits` and the output checks. |
 | `crates/generators-probe` | A test module: the host itself built for wasm32, so the native tests can show the wasm32 build gives the same results. Never shipped. |
 | `generators/<name>/` | One generator: `Cargo.toml` (cdylib), `src/`, `presets.json`, `golden.json`. |
 | `generators/modules.lock` | Each module's SHA-256 per build host, committed. |
 
-`cargo xtask layers` keeps it apart: a generator crate depends on the SDK and the ABI only, only generator crates depend on the SDK, nothing depends on a generator crate or on the probe, and the ABI crate depends on no workspace crate (so `pcbcraft-core` can use its types and trait without an interpreter).
+`cargo xtask layers` keeps it apart: a generator crate depends on the SDK and the ABI only, only generator crates depend on the SDK, nothing depends on a generator crate or on the probe, and the ABI crate depends on no workspace crate (so `sparksmith-core` can use its types and trait without an interpreter).
 
 ## ABI 1
 
@@ -23,16 +23,16 @@ A module imports nothing and exports its memory as `memory` and four functions:
 
 | Export | Signature | Meaning |
 | --- | --- | --- |
-| `pcbcraft_gen_abi` | `() -> u32` | Returns 1. |
-| `pcbcraft_gen_alloc` | `(len: u32) -> u32` | A buffer for the request, or 0 when `len` is 0 or over 64 KiB. |
-| `pcbcraft_gen_describe` | `() -> u64` | `(ptr << 32) \| len` of the canonical `Description`. |
-| `pcbcraft_gen_generate` | `(ptr: u32, len: u32) -> u64` | Reads the canonical `Request` from the buffer and returns `(ptr << 32) \| len` of the response: a status byte (0 Ok, 1 Err), then the canonical `Generation` or `{"errors":[…]}`. |
+| `sparksmith_gen_abi` | `() -> u32` | Returns 1. |
+| `sparksmith_gen_alloc` | `(len: u32) -> u32` | A buffer for the request, or 0 when `len` is 0 or over 64 KiB. |
+| `sparksmith_gen_describe` | `() -> u64` | `(ptr << 32) \| len` of the canonical `Description`. |
+| `sparksmith_gen_generate` | `(ptr: u32, len: u32) -> u64` | Reads the canonical `Request` from the buffer and returns `(ptr << 32) \| len` of the response: a status byte (0 Ok, 1 Err), then the canonical `Generation` or `{"errors":[…]}`. |
 
 The host checks a module before anything runs (size, a valid core module of the allowed features, no imports, no start function, the four exports and the memory, memory within the limit), then gives every call a fresh instance with a fuel budget and a memory cap, decodes the reply with the canonical decoder and checks it: unique keys, every reference resolving (pads to package terminals, symbol pins and binding to component terminals), values in range, and the parts the scope requires present and no others.
 
 **Canonical JSON.** Object keys sorted by their UTF-8 bytes, each once; no whitespace; integers only (`i64`/`u64`, shortest form, so no floats, exponents or `-0`); strings as `serde_json` escapes them, otherwise literal UTF-8, and in Unicode NFC (checked by the host); absent optional fields omitted, never `null`. The decoder accepts only bytes the encoder would write. Lengths are integer nanometres and angles integer millidegrees.
 
-**Request.** `{abi: 1, scope: component | package, params: {key: value}}`. The parameters are complete: the host fills every default from the description first (`pcbcraft_generators::params::complete`), so the part key never depends on a module's defaults. Parameters a project setting decides (the least chip land gap, the resistor symbol style) are declared as `context` parameters and frozen into the request.
+**Request.** `{abi: 1, scope: component | package, params: {key: value}}`. The parameters are complete: the host fills every default from the description first (`sparksmith_generators::params::complete`), so the part key never depends on a module's defaults. Parameters a project setting decides (the least chip land gap, the resistor symbol style) are declared as `context` parameters and frozen into the request.
 
 **Identity.** Module hash: SHA-256 of the module bytes. Result hash: SHA-256 of the canonical `Generation` bytes (after the status byte). The part key (module hash with the params hash) is GP1's.
 
@@ -82,7 +82,7 @@ The feature list is measured: each allowed feature is switched off in turn and t
 
 Requests are 248–258 bytes. Linear memory ends at 1 152 KiB on every call (the 1 MiB stack plus heap). Fuel runs at about 1.1 G per second; it grows by about 460 per response byte.
 
-Limits (`pcbcraft_generators::Limits::DEFAULT`, `v1::limits`), set from these numbers:
+Limits (`sparksmith_generators::Limits::DEFAULT`, `v1::limits`), set from these numbers:
 
 | Bound | Note's target | Set | Why |
 | --- | --- | --- | --- |

@@ -1,5 +1,5 @@
 [package]
-name = "pcbcraft-solidcraft"
+name = "sparksmith-solidcraft"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -15,7 +15,7 @@ workspace = true
 profile = ["solidcraft-engine/profile"]
 
 [dependencies]
-pcbcraft-core.workspace = true
+sparksmith-core.workspace = true
 solidcraft-engine.workspace = true
 solidcraft-color.workspace = true
 solidcraft-viewport.workspace = true
@@ -31,7 +31,7 @@ png = "0.18"
 base64 = "0.22"
 
 [dev-dependencies]
-pcbcraft-core = { workspace = true, features = ["test-fixtures"] }
+sparksmith-core = { workspace = true, features = ["test-fixtures"] }
 tempfile = "3"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

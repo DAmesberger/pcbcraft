@@ -1,4 +1,4 @@
-//! Symbol drawing in nm, on Pcbcraft's symbol grid.
+//! Symbol drawing in nm, on Sparksmith's symbol grid.
 //!
 //! The conventions match the host's symbol style: a 2.5 mm module, pins
 //! ending on the grid, the designator above the body and the component
@@ -7,7 +7,7 @@ use crate::units::div_round;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use pcbcraft_generator_abi::v1::{
+use sparksmith_generator_abi::v1::{
     Fill, Graphic, HAlign, Point, Primitive, SymbolPin, TextContent, Unit, VAlign,
 };
 

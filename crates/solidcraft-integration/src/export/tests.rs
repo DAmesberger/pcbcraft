@@ -1,7 +1,7 @@
 use super::*;
 use crate::material::BodyKind;
 use crate::native::Native;
-use pcbcraft_core::Engine;
+use sparksmith_core::Engine;
 
 fn showcase() -> Result<Project> {
     Ok(Engine::showcase()
@@ -42,7 +42,7 @@ fn an_export_that_does_not_fit_is_refused_unless_written_anyway() -> Result<()> 
     let track = planned
         .tracks
         .iter_mut()
-        .find(|t| t.layer == pcbcraft_core::CopperLayer::Top)
+        .find(|t| t.layer == sparksmith_core::CopperLayer::Top)
         .ok_or_else(|| Error::Verification("the showcase has no track".into()))?;
     track.width += 0.1;
     let id = track.id;

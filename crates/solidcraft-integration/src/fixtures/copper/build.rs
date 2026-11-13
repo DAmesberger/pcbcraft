@@ -28,7 +28,7 @@ pub(super) fn fixture() -> Result<Session> {
     call(
         &mut s,
         "file.new",
-        json!({"name":"Pcbcraft copper acceptance fixture"}),
+        json!({"name":"Sparksmith copper acceptance fixture"}),
     )?;
     for (name, expression) in [
         ("board_thickness", "1.6 mm"),

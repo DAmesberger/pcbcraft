@@ -3,30 +3,32 @@
 //! drives the template defaults. The forms are original synthetic
 //! packages with round numbers (from no library, datasheet or EDA tool).
 
-use pcbcraft_core::diagnostics::{Error, Result};
-use pcbcraft_core::ids::PackageTerminalId;
-use pcbcraft_core::library::footprint_edit::{self, AssignRule};
-use pcbcraft_core::library::footprint_source::{Expr, FootprintEdit, ParamName, ParamUnit};
-use pcbcraft_core::library::package_form::grid::GridForm;
-use pcbcraft_core::library::package_form::tht::{ThtForm, ThtKind};
-use pcbcraft_core::library::templates::footprint_family::grid::GridLand;
-use pcbcraft_core::library::templates::footprint_family::tht::ThtLayout;
-use pcbcraft_core::library::templates::footprint_family::{self, FootprintTemplate, TemplateKind};
-use pcbcraft_core::library::{
+use sparksmith_core::diagnostics::{Error, Result};
+use sparksmith_core::ids::PackageTerminalId;
+use sparksmith_core::library::footprint_edit::{self, AssignRule};
+use sparksmith_core::library::footprint_source::{Expr, FootprintEdit, ParamName, ParamUnit};
+use sparksmith_core::library::package_form::grid::GridForm;
+use sparksmith_core::library::package_form::tht::{ThtForm, ThtKind};
+use sparksmith_core::library::templates::footprint_family::grid::GridLand;
+use sparksmith_core::library::templates::footprint_family::tht::ThtLayout;
+use sparksmith_core::library::templates::footprint_family::{
+    self, FootprintTemplate, TemplateKind,
+};
+use sparksmith_core::library::{
     FootprintDefinition, HoleShape, MaskRule, PackageDefinition, PackageForm, PackageTerminal, Pad,
     PadKind, PadShape,
 };
-use pcbcraft_solidcraft::footprint::SketchEvaluator;
+use sparksmith_solidcraft::footprint::SketchEvaluator;
 
 /// A test length in mm, as stored.
-fn nm(mm: f64) -> pcbcraft_core::units::Nm {
-    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+fn nm(mm: f64) -> sparksmith_core::units::Nm {
+    sparksmith_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
 
 /// A test point or size in mm, as stored.
 #[allow(dead_code)]
-fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
-    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+fn pt(p: [f64; 2]) -> sparksmith_core::units::PointNm {
+    sparksmith_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
 }
 
 const EV: SketchEvaluator = SketchEvaluator;
@@ -86,7 +88,7 @@ fn at(def: &FootprintDefinition, number: &str, x: f64, y: f64) -> Result<()> {
 }
 
 fn lint(def: &FootprintDefinition) -> Vec<String> {
-    def.lint(pcbcraft_core::DefinitionId(1))
+    def.lint(sparksmith_core::DefinitionId(1))
         .into_iter()
         .map(|f| f.code)
         .collect()
@@ -235,7 +237,7 @@ fn depopulated_positions_leave_gaps_and_keep_every_other_name() -> Result<()> {
 #[test]
 fn a_land_grid_uses_the_land_diameter_and_a_depopulated_a1_is_refused() -> Result<()> {
     let mut form = bga(3, 3, Vec::new());
-    form.contact = pcbcraft_core::library::package_form::grid::GridContact::Land;
+    form.contact = sparksmith_core::library::package_form::grid::GridContact::Land;
     form.contact_height_nm = nm(0.0);
     let pkg = grid_package(form.clone());
     let template = FootprintTemplate::defaults(TemplateKind::Grid, &pkg);

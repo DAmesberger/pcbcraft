@@ -301,7 +301,7 @@ fn inconsistent_records_are_refused() -> Result<()> {
     // pre-release layout) says so.
     let mut older = Map::new();
     older.insert(METADATA_KEY.into(), json!({"version": VERSION}));
-    older.insert("org.pcbcraft.electronics.bodies.0".into(), json!({}));
+    older.insert("org.sparksmith.electronics.bodies.0".into(), json!({}));
     assert!(matches!(
         read_values(&older),
         Err(Error::Verification(why)) if why.contains("older pre-release")

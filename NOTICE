@@ -1,5 +1,5 @@
 Sparksmith
-Copyright (c) 2026 Pcbcraft contributors.
+Copyright (c) 2026 Sparksmith contributors.
 Licensed under the MIT License or the Apache License, Version 2.0, at your option
 (LICENSE-MIT, LICENSE-APACHE).
 
@@ -15,7 +15,7 @@ built from the fork https://github.com/DAmesberger/solidcraft at revision
 with its vendored SMLib kernel, plus material-graph looks, via scaling and a font-order fix) and linked as its MIT/Apache crates
 (solidcraft-engine, solidcraft-viewport, solidcraft-viewport-gpu, solidcraft-viewport-egui and the
 others listed in ATTRIBUTION.md) together with Solidcraft's patched geometry and windowing crates.
-Copyright (c) 2026 SolidCraft contributors; MIT OR Apache-2.0. Pcbcraft does not link Solidcraft's
+Copyright (c) 2026 SolidCraft contributors; MIT OR Apache-2.0. Sparksmith does not link Solidcraft's
 brand-licensed crates (solidcraft-ui-kit, solidcraft-look, solidcraft-theme) or solidcraft-ui-egui.
 The desktop's UI toolkit (crates/ui) is seeded from Solidcraft's interface code (UI kit, theme
 tokens, icons, glyphs, font setup), vendored from that revision, whose upstream base a34756830 predates the brand licence,

@@ -7,23 +7,23 @@
 //! and a loop between the board and the linked design is found and blocks
 //! fabrication output.
 use super::tests::{Fallible, apply, created_curves_of, edit, sketch, sketched};
-use pcbcraft_core::fabrication::preflight;
-use pcbcraft_core::ids::ContentHash;
-use pcbcraft_core::interface::assembly_link::{
+use sparksmith_core::fabrication::preflight;
+use sparksmith_core::ids::ContentHash;
+use sparksmith_core::interface::assembly_link::{
     self, AssemblyCommand, AssemblyRead, FileCheck, LinkState, NewReference, ReferenceRead,
 };
-use pcbcraft_core::interface::findings;
-use pcbcraft_core::issues::Severity;
-use pcbcraft_core::layout::outline::BoardEdit;
-use pcbcraft_core::library::footprint_source::{
+use sparksmith_core::interface::findings;
+use sparksmith_core::issues::Severity;
+use sparksmith_core::layout::outline::BoardEdit;
+use sparksmith_core::library::footprint_source::{
     DimKind, DimValue, SketchConstraintId, SketchCurveId, SketchEdit, SketchPointId, SketchRef,
 };
-use pcbcraft_core::model::assembly_link::{Consumer, UseKind};
-use pcbcraft_core::model::dimension::{
+use sparksmith_core::model::assembly_link::{Consumer, UseKind};
+use sparksmith_core::model::dimension::{
     BodyName, FaceName, FeatureGeometry, FollowedFaceId, ReferenceStatus,
 };
-use pcbcraft_core::model::interface::DatumRole;
-use pcbcraft_core::{Engine, Operation};
+use sparksmith_core::model::interface::DatumRole;
+use sparksmith_core::{Engine, Operation};
 
 fn read(references: Vec<ReferenceRead>) -> AssemblyRead {
     AssemblyRead {
@@ -288,13 +288,13 @@ fn followed_on(mut engine: Engine, built_on: Vec<Consumer>) -> Fallible<(Engine,
 
 /// The board's datum with `role`, as a linked design feature would use it.
 fn uses(engine: &Engine, role: DatumRole, feature: &str) -> Fallible<Consumer> {
-    let table = pcbcraft_core::interface::list::table(engine.project())?;
+    let table = sparksmith_core::interface::list::table(engine.project())?;
     let datum = table
         .datums
         .iter()
         .find(|d| d.key.role == role)
         .ok_or("the board exports it")?;
-    let row = pcbcraft_core::interface::list::rows(engine.project(), &table)?
+    let row = sparksmith_core::interface::list::rows(engine.project(), &table)?
         .into_iter()
         .find(|r| r.id == datum.id)
         .ok_or("a row")?;
@@ -437,7 +437,7 @@ fn b5_a_loop_between_board_and_linked_design_blocks_fabrication() -> Fallible<()
     let revision = engine.revision();
     let waived = engine.apply(
         revision,
-        Operation::Fabrication(pcbcraft_core::fabrication::FabricationCommand::Waive {
+        Operation::Fabrication(sparksmith_core::fabrication::FabricationCommand::Waive {
             keys: vec![item.key.clone()],
             reason: "known".into(),
         }),
@@ -504,10 +504,10 @@ fn an_extent_only_loop_is_a_warning() -> Fallible<()> {
         assembly_link::status(engine.project(), FileCheck::NotChecked).state,
         LinkState::Cycle
     );
-    let issues = pcbcraft_core::issues::report(
+    let issues = sparksmith_core::issues::report(
         engine.project(),
         engine.drafts(),
-        &pcbcraft_core::issues::IssueScope::All,
+        &sparksmith_core::issues::IssueScope::All,
     )?;
     let row = issues
         .rows
@@ -558,12 +558,12 @@ fn file(n: u8) -> ContentHash {
 
 /// Publish as the host does, recording `written` as the design file's hash.
 fn publish(engine: &mut Engine, written: ContentHash) -> Fallible<()> {
-    use pcbcraft_core::interface::InterfaceCommand;
-    use pcbcraft_core::interface::publish::{candidate, record};
-    let source = pcbcraft_core::ids::InterfaceSourceId(0x005e_edb5);
+    use sparksmith_core::interface::InterfaceCommand;
+    use sparksmith_core::interface::publish::{candidate, record};
+    let source = sparksmith_core::ids::InterfaceSourceId(0x005e_edb5);
     let sidecar = candidate(
         engine.project(),
-        pcbcraft_core::model::interface::Tier::Interface,
+        sparksmith_core::model::interface::Tier::Interface,
         source,
     )?;
     let mut record = record(engine.project(), &sidecar)?;
@@ -749,9 +749,9 @@ fn when_both_changed_the_user_chooses_which_side_wins() -> Fallible<()> {
 #[test]
 fn a_binding_both_sides_changed_is_chosen_too() -> Fallible<()> {
     use assembly_link::{ConflictItem, Resolution, Side};
-    use pcbcraft_core::library::footprint_source::ParamName;
-    use pcbcraft_core::model::assembly_link::AssemblyBinding;
-    use pcbcraft_core::units::Nm;
+    use sparksmith_core::library::footprint_source::ParamName;
+    use sparksmith_core::model::assembly_link::AssemblyBinding;
+    use sparksmith_core::units::Nm;
     let mut engine = sketched()?;
     let width = engine.project().board_size[0];
     publish(&mut engine, file(1))?;

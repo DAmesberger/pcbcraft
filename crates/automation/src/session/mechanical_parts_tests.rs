@@ -1,9 +1,9 @@
 //! Mechanical parts through automation: list, place a built-in, reuse the
 //! variant, new values move the instance, explicit lands, refusals.
 use super::super::Session;
-use pcbcraft_core::Engine;
-use pcbcraft_core::library::PadKind;
 use serde_json::{Value, json};
+use sparksmith_core::Engine;
+use sparksmith_core::library::PadKind;
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -138,14 +138,14 @@ fn the_starter_set_builds_in_3d_and_reaches_the_outputs() -> TestResult {
         .map(|i| i.designator.as_str())
         .collect();
     assert_eq!(designators, ["HS1", "H2", "H1"]);
-    let model = pcbcraft_solidcraft::project::build(&project)?;
+    let model = sparksmith_solidcraft::project::build(&project)?;
     assert!(!model.geometry.is_empty());
-    let options = pcbcraft_core::fabrication::FabricationOptions::default();
-    let set = pcbcraft_core::fabrication::generate(&project, &options)?;
+    let options = sparksmith_core::fabrication::FabricationOptions::default();
+    let set = sparksmith_core::fabrication::generate(&project, &options)?;
     assert!(!set.files.is_empty());
-    let rows = pcbcraft_core::fabrication::assembly::rows(
+    let rows = sparksmith_core::fabrication::assembly::rows(
         &project,
-        &pcbcraft_core::fabrication::assembly::PlacementConvention::default(),
+        &sparksmith_core::fabrication::assembly::PlacementConvention::default(),
     )?;
     assert!(
         rows.iter().any(|r| r.designator == "H1"),
@@ -155,12 +155,12 @@ fn the_starter_set_builds_in_3d_and_reaches_the_outputs() -> TestResult {
         !rows.iter().any(|r| r.designator == "HS1"),
         "no heatsink row"
     );
-    let bom = pcbcraft_core::fabrication::assembly::bom_csv(&project)?;
+    let bom = sparksmith_core::fabrication::assembly::bom_csv(&project)?;
     assert!(bom.contains("HS1") && bom.contains("H1"));
-    let holes = pcbcraft_core::fabrication::drill::holes(&project);
+    let holes = sparksmith_core::fabrication::drill::holes(&project);
     assert!(
         holes.iter().any(|h| !h.plated
-            && matches!(h.feature, pcbcraft_core::fabrication::drill::HoleFeature::Round { diameter, .. } if (diameter - 3.2).abs() < 1e-6)),
+            && matches!(h.feature, sparksmith_core::fabrication::drill::HoleFeature::Round { diameter, .. } if (diameter - 3.2).abs() < 1e-6)),
         "the nut's 3.2 mm thread clearance is a non-plated hole"
     );
     Ok(())

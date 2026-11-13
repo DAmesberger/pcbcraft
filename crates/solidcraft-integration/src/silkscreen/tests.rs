@@ -1,12 +1,12 @@
 use super::*;
-use pcbcraft_core::library::graphics::{HAlign, Justify, TextMetric, VAlign};
-use pcbcraft_core::{Engine, Track};
+use sparksmith_core::library::graphics::{HAlign, Justify, TextMetric, VAlign};
+use sparksmith_core::{Engine, Track};
 
 /// The test prototype profile's silkscreen rules (1/7 of the height, at
 /// least 0.1 mm).
 fn silk() -> SilkscreenRules {
-    pcbcraft_core::rules::fixtures::prototype().map_or_else(
-        |_| pcbcraft_core::rules::DesignRules::unset().silkscreen,
+    sparksmith_core::rules::fixtures::prototype().map_or_else(
+        |_| sparksmith_core::rules::DesignRules::unset().silkscreen,
         |p| p.rules().silkscreen,
     )
 }
@@ -187,12 +187,12 @@ fn legend_over_a_track_stands_on_its_mask_cap() -> Result<()> {
 /// silkscreen-to-pad clearance: a wider clearance prints less ink.
 #[test]
 fn the_legend_clears_mask_openings_by_the_rule() -> Result<()> {
-    use pcbcraft_core::rules::{RuleKey, RuleOverride, RuleValue};
+    use sparksmith_core::rules::{RuleKey, RuleOverride, RuleValue};
     let mut project = Engine::demo()
         .map_err(|e| crate::Error::Verification(e.to_string()))?
         .project()
         .clone();
-    project.rules = pcbcraft_core::rules::fixtures::rules()
+    project.rules = sparksmith_core::rules::fixtures::rules()
         .map_err(|e| crate::Error::Verification(e.to_string()))?;
     let ink = |project: &Project| -> Result<f64> {
         Ok(crate::project::build(project)?
@@ -235,9 +235,9 @@ fn a_side_without_silkscreen_prints_nothing() -> Result<()> {
 /// native build failing here).
 #[test]
 fn a_moved_part_never_fails_the_build_through_its_legend() -> Result<()> {
-    use pcbcraft_core::layout::LayoutCommand;
-    use pcbcraft_core::{Layer, Operation};
-    let fail = |e: pcbcraft_core::Error| crate::Error::Verification(e.to_string());
+    use sparksmith_core::layout::LayoutCommand;
+    use sparksmith_core::{Layer, Operation};
+    let fail = |e: sparksmith_core::Error| crate::Error::Verification(e.to_string());
     let mut engine = Engine::showcase().map_err(fail)?;
     let u2 = engine
         .project()
@@ -279,10 +279,10 @@ fn a_moved_part_never_fails_the_build_through_its_legend() -> Result<()> {
 /// the text's new line and no further than its height.
 #[test]
 fn a_moved_designator_moves_its_legend_film() -> Result<()> {
-    use pcbcraft_core::layout::LayoutCommand;
-    use pcbcraft_core::model::TextPlacement;
-    use pcbcraft_core::{InstanceCommand, Layer, Operation};
-    let fail = |e: pcbcraft_core::Error| crate::Error::Verification(e.to_string());
+    use sparksmith_core::layout::LayoutCommand;
+    use sparksmith_core::model::TextPlacement;
+    use sparksmith_core::{InstanceCommand, Layer, Operation};
+    let fail = |e: sparksmith_core::Error| crate::Error::Verification(e.to_string());
     let mut engine = Engine::demo().map_err(fail)?;
     let project = engine.project();
     let [w, h] = project.board_size;
@@ -290,7 +290,7 @@ fn a_moved_designator_moves_its_legend_film() -> Result<()> {
         .placements
         .iter()
         .map(|p| p.instance)
-        .find(|id| pcbcraft_core::instances::text::target(project, *id, None).is_ok())
+        .find(|id| sparksmith_core::instances::text::target(project, *id, None).is_ok())
         .ok_or_else(|| crate::Error::Verification("no designator".into()))?;
     let revision = engine.revision();
     engine
@@ -304,7 +304,7 @@ fn a_moved_designator_moves_its_legend_film() -> Result<()> {
             }),
         )
         .map_err(fail)?;
-    let top = |project: &pcbcraft_core::Project| -> Result<f64> {
+    let top = |project: &sparksmith_core::Project| -> Result<f64> {
         let model = crate::project::build(project)?;
         Ok(model
             .geometry
@@ -345,9 +345,9 @@ fn a_moved_designator_moves_its_legend_film() -> Result<()> {
 /// under the cap.
 #[test]
 fn a_designator_over_a_pour_stands_on_its_mask() -> Result<()> {
-    use pcbcraft_core::layout::{BoardDrawing, PlacedItem};
-    use pcbcraft_core::model::fill::{FilledCopper, FilledRegion};
-    use pcbcraft_core::{Layer, Project};
+    use sparksmith_core::layout::{BoardDrawing, PlacedItem};
+    use sparksmith_core::model::fill::{FilledCopper, FilledRegion};
+    use sparksmith_core::{Layer, Project};
     let mut project: Project = Engine::showcase()
         .map_err(|e| crate::Error::Verification(e.to_string()))?
         .project()
@@ -371,7 +371,7 @@ fn a_designator_over_a_pour_stands_on_its_mask() -> Result<()> {
         }],
         removed_islands: 0,
     });
-    let (instance, centre) = pcbcraft_core::layout::placed_graphics(&project)
+    let (instance, centre) = sparksmith_core::layout::placed_graphics(&project)
         .into_iter()
         .find_map(|g| match (&g.layer, &g.item) {
             (BoardDrawing::Silkscreen(Layer::Top), PlacedItem::Text(t)) => Some((g.instance, t.at)),

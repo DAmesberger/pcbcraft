@@ -31,14 +31,14 @@
 //! says where it is wrong.
 use crate::project::{self, NativeModel, plan};
 use crate::{Error, Result};
-use pcbcraft_core::model::Project;
 use serde::Serialize;
+use sparksmith_core::model::Project;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 pub use crate::project::plan::{Check, Difference, Problem, Source};
-pub use pcbcraft_core::model::interface::Tier;
+pub use sparksmith_core::model::interface::Tier;
 
 /// Differences a report keeps whole; the rest are counted.
 pub const MAX_REPORTED: usize = 200;
@@ -396,9 +396,9 @@ pub fn describe(project: &Project, difference: &Difference) -> String {
         Source::Fill { fill } => format!("Fill {fill}"),
     };
     let layer = match difference.layer {
-        Some(pcbcraft_core::CopperLayer::Top) => " on the top layer".to_owned(),
-        Some(pcbcraft_core::CopperLayer::Bottom) => " on the bottom layer".to_owned(),
-        Some(pcbcraft_core::CopperLayer::Inner(n)) => format!(" on inner layer {n}"),
+        Some(sparksmith_core::CopperLayer::Top) => " on the top layer".to_owned(),
+        Some(sparksmith_core::CopperLayer::Bottom) => " on the bottom layer".to_owned(),
+        Some(sparksmith_core::CopperLayer::Inner(n)) => format!(" on inner layer {n}"),
         None => String::new(),
     };
     let what = kind_name(difference.kind);

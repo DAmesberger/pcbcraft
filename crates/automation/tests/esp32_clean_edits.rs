@@ -12,25 +12,25 @@
 //! warning and only the board's two waivers (the J1 locating-peg holes by
 //! the GCT USB4105 recommended layout), and one undo restores the board
 //! exactly.
-use pcbcraft_automation::session::hosted;
-use pcbcraft_core::format::EditorFile;
-use pcbcraft_core::layout::dimensions::DimensionCommand;
-use pcbcraft_core::layout::fill::{FillCache, compute_stale};
-use pcbcraft_core::layout::length;
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
-use pcbcraft_core::library::footprint_source::{
+use sparksmith_automation::session::hosted;
+use sparksmith_core::format::EditorFile;
+use sparksmith_core::layout::dimensions::DimensionCommand;
+use sparksmith_core::layout::fill::{FillCache, compute_stale};
+use sparksmith_core::layout::length;
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::library::footprint_source::{
     DimValue, Expr, FootprintParam, ParamName, ParamUnit,
 };
-use pcbcraft_core::model::dimension::{BoardRef, FeatureRef, PartDimension};
-use pcbcraft_core::{Engine, Operation, Project, Query, QueryResult};
+use sparksmith_core::model::dimension::{BoardRef, FeatureRef, PartDimension};
+use sparksmith_core::{Engine, Operation, Project, Query, QueryResult};
 use std::path::Path;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn example() -> Fallible<Engine> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    Ok(Engine::from_file(pcbcraft_io::read_project(&path)?)?)
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    Ok(Engine::from_file(sparksmith_io::read_project(&path)?)?)
 }
 
 /// No unwaived error, no warning, and the two J1 locating-peg waivers.

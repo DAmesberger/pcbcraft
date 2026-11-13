@@ -1,5 +1,5 @@
 [package]
-name = "pcbcraft-generators-probe"
+name = "sparksmith-generators-probe"
 description = "Test module: the generator host built for wasm32, run under the native host to prove both agree"
 version.workspace = true
 edition.workspace = true
@@ -25,5 +25,5 @@ todo = "deny"
 unreachable = "deny"
 
 [dependencies]
-pcbcraft-generators.workspace = true
-pcbcraft-generator-abi.workspace = true
+sparksmith-generators.workspace = true
+sparksmith-generator-abi.workspace = true

@@ -25,20 +25,20 @@ use crate::footprint::check::{self, MAX_COORD_MM};
 use crate::footprint::edit::{self, Ref};
 use crate::footprint::params::{self, Values};
 use crate::footprint::{Outcome, problem};
-use pcbcraft_core::diagnostics::{Finding, ObjectRef, Result};
-use pcbcraft_core::ids::Id;
-use pcbcraft_core::layout::dimensions::{
-    FeatureGeometry, PartFreedom, PartPose, PartsRequest, PartsSolution, REFERENCE_LOST,
-};
-use pcbcraft_core::library::footprint_source::{
-    DimKind, DimValue, GeomConstraint, SketchRef, SolveStatus,
-};
-use pcbcraft_core::model::board::{ConstraintTarget, arc_geometry};
-use pcbcraft_core::model::dimension::{
-    BoardRef, FeatureRef, MAX_PART_DIMENSIONS, PartAxis, PartDimension, PartRelation,
-};
 use solidcraft_engine::sketch::{
     Analysis, ConstraintKind, CurveKind, Hold, Sketch, measure_dimension, solve_with,
+};
+use sparksmith_core::diagnostics::{Finding, ObjectRef, Result};
+use sparksmith_core::ids::Id;
+use sparksmith_core::layout::dimensions::{
+    FeatureGeometry, PartFreedom, PartPose, PartsRequest, PartsSolution, REFERENCE_LOST,
+};
+use sparksmith_core::library::footprint_source::{
+    DimKind, DimValue, GeomConstraint, SketchRef, SolveStatus,
+};
+use sparksmith_core::model::board::{ConstraintTarget, arc_geometry};
+use sparksmith_core::model::dimension::{
+    BoardRef, FeatureRef, MAX_PART_DIMENSIONS, PartAxis, PartDimension, PartRelation,
 };
 
 /// Targets one parts solve takes.
@@ -260,7 +260,7 @@ fn feature(
 fn frame(
     sk: &mut Sketch,
     zero: usize,
-    part: &pcbcraft_core::layout::dimensions::SolvePart,
+    part: &sparksmith_core::layout::dimensions::SolvePart,
     dragged: Option<PartPose>,
 ) -> Outcome<Frame> {
     if part.features.len() > MAX_PART_FEATURES {

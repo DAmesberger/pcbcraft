@@ -3,33 +3,33 @@
 //! are original synthetic packages (round numbers, from no library,
 //! datasheet or EDA tool).
 
-use pcbcraft_core::diagnostics::{Error, Result};
-use pcbcraft_core::geometry::Shape;
-use pcbcraft_core::ids::{PackageTerminalId, PadId};
-use pcbcraft_core::library::footprint_edit::{self, AssignRule, FootprintEditReport};
-use pcbcraft_core::library::footprint_source::{
+use sparksmith_core::diagnostics::{Error, Result};
+use sparksmith_core::geometry::Shape;
+use sparksmith_core::ids::{PackageTerminalId, PadId};
+use sparksmith_core::library::footprint_edit::{self, AssignRule, FootprintEditReport};
+use sparksmith_core::library::footprint_source::{
     Expr, FootprintEdit, NumberingScheme, ParamName, ParamUnit,
 };
-use pcbcraft_core::library::graphics::{DrawingLayer, Fill, Item};
-use pcbcraft_core::library::templates::footprint_family::{
+use sparksmith_core::library::graphics::{DrawingLayer, Fill, Item};
+use sparksmith_core::library::templates::footprint_family::{
     self, ExposedVias, FootprintTemplate, TemplateKind,
 };
-use pcbcraft_core::library::{
+use sparksmith_core::library::{
     FootprintDefinition, PackageDefinition, PackageTerminal, Pad, PadKind, PadShape, PasteRule,
 };
-use pcbcraft_core::units::PointNm;
-use pcbcraft_solidcraft::footprint::SketchEvaluator;
+use sparksmith_core::units::PointNm;
+use sparksmith_solidcraft::footprint::SketchEvaluator;
 
 /// A test length in mm, as stored.
 #[allow(dead_code)]
-fn nm(mm: f64) -> pcbcraft_core::units::Nm {
-    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+fn nm(mm: f64) -> sparksmith_core::units::Nm {
+    sparksmith_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
 
 /// A test point or size in mm, as stored.
 #[allow(dead_code)]
-fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
-    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+fn pt(p: [f64; 2]) -> sparksmith_core::units::PointNm {
+    sparksmith_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
 }
 
 const EV: SketchEvaluator = SketchEvaluator;
@@ -39,12 +39,12 @@ const TOL: f64 = 1e-6;
 /// envelope with it, in the edit's one undo step.
 #[test]
 fn an_edited_footprint_carries_its_envelope_over_the_pads() -> Result<()> {
-    use pcbcraft_core::geometry::Point;
-    use pcbcraft_core::library::footprint_source::{PadTemplate, PadTemplateParams};
-    use pcbcraft_core::library::{
+    use sparksmith_core::geometry::Point;
+    use sparksmith_core::library::footprint_source::{PadTemplate, PadTemplateParams};
+    use sparksmith_core::library::{
         Definition, DefinitionMeta, ModelPlacement, PackageForm, PadSide,
     };
-    use pcbcraft_core::{Engine, LibraryCommand, Operation, Outcome, PackageRef, Revision};
+    use sparksmith_core::{Engine, LibraryCommand, Operation, Outcome, PackageRef, Revision};
     let mut engine = Engine::default();
     let meta = |name: &str| DefinitionMeta {
         name: name.into(),
@@ -175,11 +175,11 @@ fn rect_on(def: &FootprintDefinition, layer: DrawingLayer) -> Result<([f64; 2], 
 }
 
 fn area_of(shape: &Shape) -> f64 {
-    pcbcraft_core::geometry::signed_area2(&shape.flatten(1e-4)).abs() / 2.0
+    sparksmith_core::geometry::signed_area2(&shape.flatten(1e-4)).abs() / 2.0
 }
 
 fn lint(def: &FootprintDefinition) -> Vec<String> {
-    def.lint(pcbcraft_core::DefinitionId(1))
+    def.lint(sparksmith_core::DefinitionId(1))
         .into_iter()
         .map(|f| f.code)
         .collect()
@@ -273,9 +273,9 @@ fn chip_pads_follow_their_parameters_with_explicit_courtyard_and_assembly() -> R
 /// will stand, moves to just above the built courtyard, centred.
 #[test]
 fn a_designator_over_the_body_moves_above_the_courtyard() -> Result<()> {
-    use pcbcraft_core::ids::GraphicId;
-    use pcbcraft_core::library::designator_placeholder;
-    use pcbcraft_core::library::graphics::{TextContent, TextMetric};
+    use sparksmith_core::ids::GraphicId;
+    use sparksmith_core::library::designator_placeholder;
+    use sparksmith_core::library::graphics::{TextContent, TextMetric};
     for (n, body, kind) in [
         (2, [1.6, 0.8, 0.45], TemplateKind::Chip),
         // A 2512: the lands sit far apart, so the middle is clear of copper
@@ -462,7 +462,7 @@ fn qfn16_has_an_exposed_pad_with_paste_windows_and_vias() -> Result<()> {
 /// counts and spans and the derived courtyard's excess.
 #[test]
 fn parameter_readers_include_arrays_and_derived_roles() -> Result<()> {
-    use pcbcraft_solidcraft::footprint::view::readers;
+    use sparksmith_solidcraft::footprint::view::readers;
     let pkg = package(17, [4.0, 4.0, 0.9]);
     let (def, _) = build(&pkg, &FootprintTemplate::defaults(TemplateKind::Qfn, &pkg))?;
     let source = def
@@ -544,7 +544,7 @@ fn pin_header_is_plated_with_a_rounded_pin_one_override() -> Result<()> {
             .ok_or_else(|| Error::NotFound("hole".into()))?;
         assert!(hole.plated);
         assert!(
-            matches!(hole.shape, pcbcraft_core::library::HoleShape::Round { diameter_nm } if close(diameter_nm.to_mm_f64(), 1.0)),
+            matches!(hole.shape, sparksmith_core::library::HoleShape::Round { diameter_nm } if close(diameter_nm.to_mm_f64(), 1.0)),
             "{:?}",
             hole.shape
         );
@@ -662,8 +662,8 @@ fn every_default_template_builds_for_a_matching_package() -> Result<()> {
 /// publishes once its terminals are assigned.
 #[test]
 fn footprint_from_template_is_one_atomic_undoable_command() -> Result<()> {
-    use pcbcraft_core::library::{Definition, DefinitionMeta};
-    use pcbcraft_core::{
+    use sparksmith_core::library::{Definition, DefinitionMeta};
+    use sparksmith_core::{
         DefinitionId, Engine, LibraryCommand, Operation, Outcome, PackageRef, Revision,
     };
     let mut engine = Engine::default();
@@ -762,9 +762,9 @@ fn footprint_from_template_is_one_atomic_undoable_command() -> Result<()> {
 /// changes nothing; on an empty draft it equals a plain build.
 #[test]
 fn footprint_from_template_replace_is_one_atomic_undo_step() -> Result<()> {
-    use pcbcraft_core::ids::GraphicId;
-    use pcbcraft_core::library::{Definition, DefinitionMeta, designator_placeholder};
-    use pcbcraft_core::{
+    use sparksmith_core::ids::GraphicId;
+    use sparksmith_core::library::{Definition, DefinitionMeta, designator_placeholder};
+    use sparksmith_core::{
         DefinitionId, Engine, LibraryCommand, Operation, Outcome, PackageRef, Revision,
     };
     let mut engine = Engine::default();
@@ -896,8 +896,8 @@ fn footprint_from_template_replace_is_one_atomic_undo_step() -> Result<()> {
 /// moves just above them, off copper.
 #[test]
 fn a_template_keeps_the_designator_off_its_pads() -> Result<()> {
-    use pcbcraft_core::ids::GraphicId;
-    use pcbcraft_core::library::designator_placeholder;
+    use sparksmith_core::ids::GraphicId;
+    use sparksmith_core::library::designator_placeholder;
     let pkg = package(17, [4.0, 4.0, 0.9]);
     let mut draft = empty();
     draft.graphics.push(designator_placeholder(

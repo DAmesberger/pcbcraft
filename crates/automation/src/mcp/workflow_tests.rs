@@ -185,14 +185,14 @@ fn the_prompt_is_listed_and_returns_the_workflow() -> Fallible<()> {
 fn the_skill_file_and_the_prompt_are_one_source() -> Fallible<()> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../skills/pcbcraft-datasheet-part/SKILL.md"
+        "/../../skills/sparksmith-datasheet-part/SKILL.md"
     );
     let on_disk = std::fs::read_to_string(path)?;
     assert_eq!(on_disk, DATASHEET_PART_SKILL);
-    assert!(on_disk.starts_with("---\nname: pcbcraft-datasheet-part\ndescription: "));
+    assert!(on_disk.starts_with("---\nname: sparksmith-datasheet-part\ndescription: "));
     let body = skill_body(&on_disk);
     assert!(body.starts_with("# Create a component from datasheets"));
-    assert!(!body.contains("\n---\n") && !body.contains("name: pcbcraft"));
+    assert!(!body.contains("\n---\n") && !body.contains("name: sparksmith"));
     let got = prompts::get(&json!({"name": DATASHEET_PART,
         "arguments": {"part": "P", "datasheets": "a.pdf"}}))
     .map_err(|e| e.to_string())?;

@@ -23,7 +23,7 @@ Nine places decide joining. A further five touch copper or connectivity but deci
 | D5b | `fill::links`, `layout/fill/checks.rs` | Whether a fill's joins count | **A stale fill joins nothing** until it is refilled. | D1, D2 |
 | D6 | `plan_update` impact, `updates.rs` (around line 2840) | Update PCB: which tracks or vias are "detached from" a changed pad, and which tracks are conflicts | `track_touches_pad` and `via_touches_pad`, pairwise, before and after, for each changed pad × every track and via (budget 100,000). This repeats D1's touch rule outside any index. **`NetChanged` marks every track of a net that loses a terminal** ("would join pads the net no longer joins") without asking which pads that copper joins. | The update preview, `update.apply` acknowledgements |
 | D7 | `Ctx::track_ends_at`, `Ctx::joint_at` (`router/world.rs`), `adopt_line` and `follow` (`router/shove.rs`) | Where a shoved chain ends, and which tracks follow a moved via | Track ends coincide within 1 µm. A via joins only at its exact centre (1 µm). A pad joins if the point is inside its polygon. **A joint in mid-span (a T, or a via on the segment) is invisible.** | Shove, pair shove |
-| D8 | `joins_net_copper`, `head_joins_layers` (`apps/pcbcraft/src/pcb_editor/route_tool.rs`) | Whether a route click finishes the route, and whether a layer change needs a via | A point lies on a same-net track (on the layer) or inside a same-net via disc (**on any layer**), excluding the route's own copper. It finishes on the start island too, and ignores fills. | Desktop route tool |
+| D8 | `joins_net_copper`, `head_joins_layers` (`apps/sparksmith/src/pcb_editor/route_tool.rs`) | Whether a route click finishes the route, and whether a layer change needs a via | A point lies on a same-net track (on the layer) or inside a same-net via disc (**on any layer**), excluding the route's own copper. It finishes on the start island too, and ignores fills. | Desktop route tool |
 | D9 | `meander::plan` (`layout/meander.rs`) | That a track's joints are its two ends ("The ends are exactly the track's, so its joints stay joined") | An implicit assumption. A T or via in mid-span is not looked for. | Tune tool, `layout.tune` |
 
 ### Non-deciders
@@ -167,7 +167,7 @@ The desktop stops building its own `BoardCopper` for connectivity, and the Issue
 
 ### Measured today
 
-The existing benchmark's board (`via/tests.rs::via_board`) has 10,000 through vias and 2,000 tracks on 4 layers. Measurements were taken on an Apple M5 Max, with the `test` profile (pcbcraft-core at opt-level 1, dependencies at 2), best of 5:
+The existing benchmark's board (`via/tests.rs::via_board`) has 10,000 through vias and 2,000 tracks on 4 layers. Measurements were taken on an Apple M5 Max, with the `test` profile (sparksmith-core at opt-level 1, dependencies at 2), best of 5:
 
 | Work | Time |
 | --- | --- |
@@ -240,7 +240,7 @@ Tests whose expectations change (by reading; slice owners confirm):
 
 - `tests/high_speed.rs`: `a_pin_to_pin_branch_is_a_link_and_raises_nothing` and `the_receptacle_jumpers_are_links_and_not_skew` drop the `branches` assertions and keep "no finding" and "0 skew". `an_open_branch_is_not_skew_and_the_dangling_check_reports_it` keeps its skew, uncoupled and `track_dangling` assertions, drops the `open.length` and `pins` assertions, and asserts the 4 mm instead through `NetRow.length.total − path`.
 - `crates/io/tests/esp32_pair.rs`: the `branches.len() == 2` and JSON `branches` assertions go. It asserts 0 mm skew, and the two 29.865 mm paths stay.
-- `apps/pcbcraft/src/pcb_editor/pair_tests.rs::the_high_speed_card_lists_the_path_and_the_branches`: rewritten to assert the path rows only, and renamed.
+- `apps/sparksmith/src/pcb_editor/pair_tests.rs::the_high_speed_card_lists_the_path_and_the_branches`: rewritten to assert the path rows only, and renamed.
 - `layout/fill/tests.rs` around line 438: "stale joins are dropped" is unchanged (Q3 keeps the policy). Island tests may keep islands they used to drop if a track joins them by edge only; the fixture decides.
 - `layout/tests.rs` and `via/tests.rs` airwire tests: counts are unchanged. Tests that compare pad pairs must expect the nearest pairs.
 - `updates` tests asserting `NetChanged` for every track of a changed net: these change to the copper that actually joins the moved terminals.
@@ -374,9 +374,9 @@ Changed expectations in existing tests, each a correction under the founder's ru
 - `tests/high_speed.rs::a_pin_to_pin_branch_is_a_link_and_raises_nothing`, renamed `…_is_a_track_between_pins_and_raises_nothing`: the link's 4 mm and pin are asserted as the net's total less its path; "no finding" and "0 skew" are unchanged.
 - `tests/high_speed.rs::an_unfinished_half_is_measured_by_its_copper`: drops `branches.is_empty()`; the rest is unchanged.
 - `crates/io/tests/esp32_pair.rs`: `the_receptacle_jumpers_are_links_and_not_skew`, renamed `…_are_off_the_path_and_not_skew`, asserts the jumpers' 2.245 mm and 6.98 mm as each net's total less its path, that the report JSON has no `branches`, and that neither path runs via a fill. `real_skew_on_the_path_is_still_reported` drops `branches.len() == 2`. Paths, 0 mm skew and set endpoints are unchanged.
-- `apps/pcbcraft/src/pcb_editor/pair_tests.rs::the_high_speed_card_lists_the_path_and_the_branches`, renamed `…_lists_the_paths_and_not_the_copper_off_them`: asserts the path rows, Skew and Uncoupled, and that no Branch, Link or Stub row is shown.
+- `apps/sparksmith/src/pcb_editor/pair_tests.rs::the_high_speed_card_lists_the_path_and_the_branches`, renamed `…_lists_the_paths_and_not_the_copper_off_them`: asserts the path rows, Skew and Uncoupled, and that no Branch, Link or Stub row is shown.
 
-No other expectation changed. On the ESP32 reference board the whole length report (34 nets, the USB pair's 29.866 mm paths, 0 mm skew, 7.907 mm uncoupled, the groups) is bit-identical to slice 1's, and the board stays at 0 issues. Its fab output and `.pcbcraft` are byte-identical (`regenerate.sh`).
+No other expectation changed. On the ESP32 reference board the whole length report (34 nets, the USB pair's 29.866 mm paths, 0 mm skew, 7.907 mm uncoupled, the groups) is bit-identical to slice 1's, and the board stays at 0 issues. Its fab output and `.sparksmith` are byte-identical (`regenerate.sh`).
 
 ### Measured
 
@@ -444,7 +444,7 @@ No existing island was lost or altered: every old region is in the new list, byt
 
 Under the old probes, a spoke piece joined only if copper lay both mid-gap and beyond the gap, and a track joined only along its centre line. Under the one rule they touch same-net copper, so they are joined and kept. This is the design's row "Fill islands touched by a track's edge only: removed → kept and joined". They are electrically harmless.
 
-In `fab/`, only the two outer copper Gerbers change: `copper-l1-top.gbr` gains 509 lines (20 regions) and `copper-l4-bottom.gbr` gains 22 (1 region). Every other fab file is byte-identical. In the `.pcbcraft`, the only changes are the removed `joins` lists (33, 5, 33 and 120 entries), the added regions and the two `removed_islands` counts; every key and every other entry is unchanged. The committed schematic PDF was left as it was.
+In `fab/`, only the two outer copper Gerbers change: `copper-l1-top.gbr` gains 509 lines (20 regions) and `copper-l4-bottom.gbr` gains 22 (1 region). Every other fab file is byte-identical. In the `.sparksmith`, the only changes are the removed `joins` lists (33, 5, 33 and 120 entries), the added regions and the two `removed_islands` counts; every key and every other entry is unchanged. The committed schematic PDF was left as it was.
 
 ### Open fill-policy question (not built)
 
@@ -491,7 +491,7 @@ From `updates.rs`: the pairwise loops over every changed pad × every track and 
 - `updates/tests/review_data.rs::a_removal_is_listed_by_area_kind_and_object_with_refs`. For the same reason as the first item, the removal has no conflict. The conflict-field assertions (net, layer, 5.6 mm, `NetChanged`, ack, line) now run on disconnecting the wire, a real conflict. There the conflict names the pad on the other net (it was `None`).
 - `layout/via/tests.rs::electrical_changes_to_a_net_with_vias_are_reviewed_updates`. The lone via joined no pad, so it no longer conflicts when the net splits. The test now routes R1.2 to R2.1 through two vias and keeps the lone via. The two route vias and four tracks are offered (a real conflict), and the lone via survives the apply.
 - `tests/ce04.rs::ce04_two_units_share_one_package_placement_and_identity`. The stub routed off Q1.1's pad joins that pad alone. Unplacing unit A, or removing Q1, used to offer it for removal; now the stub stays, and applying the unplace keeps it. It joins no pad of another net.
-- `apps/pcbcraft/src/update_preview.rs::an_update_with_only_via_conflicts_applies_once_acknowledged`. Its via moves from open board (12, 20), where it joined no pad and now stays, into R2.1's pad. R2.1 goes to another net when the wire is disconnected, so the via is a real conflict, and it is the only one.
+- `apps/sparksmith/src/update_preview.rs::an_update_with_only_via_conflicts_applies_once_acknowledged`. Its via moves from open board (12, 20), where it joined no pad and now stays, into R2.1's pad. R2.1 goes to another net when the wire is disconnected, so the via is a real conflict, and it is the only one.
 - `layout/tests.rs::round_pad_clearance_holds_either_side_of_the_rule` asserts that the track and pad share no island of the graph, in place of the deleted `track_touches_pad`.
 
 New tests:
@@ -499,7 +499,7 @@ New tests:
 - `a_split_offers_only_the_copper_joining_both_sides`: disconnecting N2 offers only the track that joins R1.2 and R2.1, naming the pad on the other net. A floating N2 track elsewhere stays; the old rule offered it too.
 - `a_net_losing_an_unrouted_terminal_keeps_its_copper`: R3.1 joins N2 and then leaves it, and nothing is offered. The old rule offered the routed track.
 
-The real conflicts stay offered: a remapped pad, a moved foreign pad (clearance), a renumbered terminal, a disconnected wire, and the vias of a split route. The ESP32 reference board stays at 0 issues, and `regenerate.sh` reproduces its `.pcbcraft` and fab output byte for byte. The schematic PDF was left as committed.
+The real conflicts stay offered: a remapped pad, a moved foreign pad (clearance), a renumbered terminal, a disconnected wire, and the vias of a split route. The ESP32 reference board stays at 0 issues, and `regenerate.sh` reproduces its `.sparksmith` and fab output byte for byte. The schematic PDF was left as committed.
 
 ### Measured
 
@@ -578,7 +578,7 @@ Every change is a correction. No existing expectation changed: the router, pair,
   Pairs on the 45° grid still shove without a limit, with skew unchanged within 1e-6 mm, as the existing pair tests assert.
 - **A bare hole carrying a terminal** (a footprint error that `footprint.terminal_forbidden` reports) was a land on its side in the graph. It is now no copper anywhere (`placed/tests.rs::a_bare_hole_has_no_copper_on_any_layer`).
 
-The ESP32 reference board stays at 0 issues (`project.issues`: 0 errors, 0 warnings). `regenerate.sh` reproduces its `.pcbcraft` and `fab/` byte for byte. The schematic PDF it rewrote was restored to the committed file.
+The ESP32 reference board stays at 0 issues (`project.issues`: 0 errors, 0 warnings). `regenerate.sh` reproduces its `.sparksmith` and `fab/` byte for byte. The schematic PDF it rewrote was restored to the committed file.
 
 ### Measured
 

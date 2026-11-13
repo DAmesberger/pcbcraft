@@ -5,8 +5,8 @@
 //! edges: the body's long edges and each termination's outer end.
 use super::{Build, check_positive, mm, require, top_edges};
 use crate::Result;
-use pcbcraft_core::library::{BodyRole, ChipForm, ChipKind};
-use pcbcraft_core::materials::MaterialId;
+use sparksmith_core::library::{BodyRole, ChipForm, ChipKind};
+use sparksmith_core::materials::MaterialId;
 
 /// Edge rounds (est.: tumbled ceramic chips and dipped terminations show
 /// 20–80 µm radii), capped by the chip's size below.

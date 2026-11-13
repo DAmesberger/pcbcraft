@@ -1,16 +1,16 @@
 //! Fabrication export: the pre-flight gate, the core's file set, the PDF
 //! drawings, and an atomic write as a folder or one ZIP. The desktop
-//! dialog, the CLI (`pcbcraft-cli fab`) and the automation request
+//! dialog, the CLI (`sparksmith-cli fab`) and the automation request
 //! `project.export_fabrication` all call [`export`].
 use crate::{Error, Result};
-use pcbcraft_core::fabrication::{
-    self, FabFile, FabricationOptions, FileGroup, PreflightReport, drawing,
-};
-use pcbcraft_core::library::Drafts;
-use pcbcraft_core::rules::RuleProfile;
-use pcbcraft_core::{Project, fabrication::preflight};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sparksmith_core::fabrication::{
+    self, FabFile, FabricationOptions, FileGroup, PreflightReport, drawing,
+};
+use sparksmith_core::library::Drafts;
+use sparksmith_core::rules::RuleProfile;
+use sparksmith_core::{Project, fabrication::preflight};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -90,7 +90,7 @@ pub fn export(
     let report = preflight::report(project, drafts, request.profile.as_ref())?;
     timed("preflight", start);
     if !report.ready() {
-        return Err(Error::Document(pcbcraft_core::Error::Conflict(format!(
+        return Err(Error::Document(sparksmith_core::Error::Conflict(format!(
             "fabrication.blocked: {} unwaived error{} in the production check; fix or waive {} before export",
             report.blocking,
             if report.blocking == 1 { "" } else { "s" },
@@ -201,7 +201,7 @@ fn write_folder(output: &Path, files: &[FabFile]) -> Result<()> {
         .unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
     let staging = tempfile::Builder::new()
-        .prefix(".pcbcraft-fab-")
+        .prefix(".sparksmith-fab-")
         .tempdir_in(parent)?;
     for file in files {
         let path = staging.path().join(&file.name);
@@ -274,11 +274,11 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let output = dir.path().join("fab");
         std::fs::create_dir(&output)?;
-        let missing = dir.path().join(".pcbcraft-fab-gone");
+        let missing = dir.path().join(".sparksmith-fab-gone");
         assert!(move_into_place(&missing, &output).is_err());
         assert!(output.is_dir(), "the user's folder is kept");
 
-        let staged = dir.path().join(".pcbcraft-fab-done");
+        let staged = dir.path().join(".sparksmith-fab-done");
         std::fs::create_dir(&staged)?;
         std::fs::write(staged.join("board.gbr"), "G04*")?;
         move_into_place(&staged, &output)?;

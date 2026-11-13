@@ -3,7 +3,7 @@
 //! `examples/esp32-s31-devboard/nets.json` holds each net's name and its
 //! members as `designator.terminal`, taken from the example before the
 //! schematic connected what its wires run over.
-use pcbcraft_core::schematic;
+use sparksmith_core::schematic;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -12,7 +12,7 @@ type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[test]
 fn the_example_keeps_its_nets_and_no_wire_runs_over_a_point() -> Fallible {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/esp32-s31-devboard");
-    let project = pcbcraft_io::read_project(&dir.join("esp32-s31-devboard.pcbcraft"))?.project;
+    let project = sparksmith_io::read_project(&dir.join("esp32-s31-devboard.sparksmith"))?.project;
     let want: BTreeMap<String, Vec<String>> =
         serde_json::from_slice(&std::fs::read(dir.join("nets.json"))?)?;
     let designator = |id| {

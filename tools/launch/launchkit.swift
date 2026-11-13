@@ -1,4 +1,4 @@
-// launchkit: window-only screen recording and scripted input for Pcbcraft launch takes.
+// launchkit: window-only screen recording and scripted input for Sparksmith launch takes.
 //
 // Build: swiftc -O -o target/launch/launchkit tools/launch/launchkit.swift
 //        (tools/launch/take.sh does this for you)

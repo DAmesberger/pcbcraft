@@ -25,28 +25,28 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 
 use crate::geom::Vec2;
-use pcbcraft_core::diagnostics::{Error, Finding, ObjectRef, Result};
-use pcbcraft_core::geometry::Point;
-use pcbcraft_core::layout::dimensions::{PartsRequest, PartsSolution};
-use pcbcraft_core::layout::outline::{
-    BoardEvaluation, BoardShapeEvaluator, DrawnSlot, FATAL_PREFIX, Fillets, FixedEdit,
-    FreeFormCurve, SHAPE_UNSOLVED, refuses,
-};
-use pcbcraft_core::library::footprint_source::{
-    DimValue, EvaluatorRef, Expr, FootprintParam, ParamName, ParamUnit, SketchBlob, SketchCurveId,
-    SketchEdit, SketchOutcome, SketchPointId, SketchRef, SolveStatus, SolveSummary,
-};
-use pcbcraft_core::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
-use pcbcraft_core::model::board::{
-    BoardSketch, CutoutKind, CutoutRole, EdgeName, NamedEdge, RECT_EDGES, ShapeFault,
-    ShapeFaultKind, SolvedBoard, SolvedCutout, SolvedEdge, SolvedMountingHole,
-};
-use pcbcraft_core::model::dimension::FeatureGeometry;
-use pcbcraft_core::rules::{DEFAULT_OUTLINE_FIT_MM, OUTLINE_FIT_RANGE_MM};
 use solidcraft_engine::sketch::{
     ConstraintKind, CurveKind, ENDPOINT_JOIN_TOL, MAX_SPLINE_POINTS, Sketch, find_drawn_profiles,
     loose_ends,
 };
+use sparksmith_core::diagnostics::{Error, Finding, ObjectRef, Result};
+use sparksmith_core::geometry::Point;
+use sparksmith_core::layout::dimensions::{PartsRequest, PartsSolution};
+use sparksmith_core::layout::outline::{
+    BoardEvaluation, BoardShapeEvaluator, DrawnSlot, FATAL_PREFIX, Fillets, FixedEdit,
+    FreeFormCurve, SHAPE_UNSOLVED, refuses,
+};
+use sparksmith_core::library::footprint_source::{
+    DimValue, EvaluatorRef, Expr, FootprintParam, ParamName, ParamUnit, SketchBlob, SketchCurveId,
+    SketchEdit, SketchOutcome, SketchPointId, SketchRef, SolveStatus, SolveSummary,
+};
+use sparksmith_core::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
+use sparksmith_core::model::board::{
+    BoardSketch, CutoutKind, CutoutRole, EdgeName, NamedEdge, RECT_EDGES, ShapeFault,
+    ShapeFaultKind, SolvedBoard, SolvedCutout, SolvedEdge, SolvedMountingHole,
+};
+use sparksmith_core::model::dimension::FeatureGeometry;
+use sparksmith_core::rules::{DEFAULT_OUTLINE_FIT_MM, OUTLINE_FIT_RANGE_MM};
 
 use crate::geom::Seg2;
 
@@ -68,7 +68,7 @@ const EDGE: &str = "board.shape_edge";
 const RANGE: &str = "board.shape_range";
 const EDIT: &str = "board.sketch_edit";
 
-/// Solidcraft's sketch solver as Pcbcraft's board shape evaluator.
+/// Solidcraft's sketch solver as Sparksmith's board shape evaluator.
 /// Stateless; every call is pure in its inputs.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SketchBoardEvaluator;
@@ -221,22 +221,22 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
 
     fn trace_model(
         &self,
-        request: &pcbcraft_core::layout::dimensions::model::TraceRequest<'_>,
-    ) -> Result<pcbcraft_core::layout::dimensions::model::Traced> {
+        request: &sparksmith_core::layout::dimensions::model::TraceRequest<'_>,
+    ) -> Result<sparksmith_core::layout::dimensions::model::Traced> {
         model_refs::trace(request)
     }
 
     fn pick_model(
         &self,
-        request: &pcbcraft_core::layout::dimensions::model::PickRequest<'_>,
-    ) -> Result<pcbcraft_core::layout::dimensions::model::ModelPicked> {
+        request: &sparksmith_core::layout::dimensions::model::PickRequest<'_>,
+    ) -> Result<sparksmith_core::layout::dimensions::model::ModelPicked> {
         model_refs::pick(request)
     }
 
     fn model_faces(
         &self,
-        request: &pcbcraft_core::layout::dimensions::model::FacesRequest<'_>,
-    ) -> Result<Vec<pcbcraft_core::layout::dimensions::model::BodyFace>> {
+        request: &sparksmith_core::layout::dimensions::model::FacesRequest<'_>,
+    ) -> Result<Vec<sparksmith_core::layout::dimensions::model::BodyFace>> {
         model_refs::faces(request)
     }
 
@@ -797,7 +797,7 @@ fn outline_of(pieces: &[Piece]) -> Outcome<Outline> {
             }
         });
     }
-    if segments.len() > pcbcraft_core::library::MAX_OUTLINE_SEGMENTS {
+    if segments.len() > sparksmith_core::library::MAX_OUTLINE_SEGMENTS {
         return Err(problem(OUTLINE, "a loop has too many curves"));
     }
     Ok(Outline { start, segments })
@@ -1494,7 +1494,7 @@ pub struct Laminate {
     pub through: Vec<crate::pad_outline::Contour>,
 }
 
-pub fn laminate(project: &pcbcraft_core::Project) -> Option<Laminate> {
+pub fn laminate(project: &sparksmith_core::Project) -> Option<Laminate> {
     use crate::pad_outline::Contour;
     if project.board_shape.is_rectangle() {
         return None;

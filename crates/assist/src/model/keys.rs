@@ -4,9 +4,9 @@
 use super::Endpoint;
 use crate::{Error, Result};
 
-/// The keychain service every Pcbcraft model key is stored under; the entry
+/// The keychain service every Sparksmith model key is stored under; the entry
 /// is the connection's base URL, so a key is only ever used for its endpoint.
-const SERVICE: &str = "pcbcraft-llm";
+const SERVICE: &str = "sparksmith-llm";
 
 /// A key in memory. It is not `Serialize`, and its `Debug` shows nothing.
 #[derive(Clone)]
@@ -143,7 +143,7 @@ mod tests {
                 .unwrap_or_default()
         };
         // The variable need not exist: the refusal comes first.
-        assert!(refused(KeySource::Env("PCBCRAFT_NO_SUCH_VAR".into())).contains("plain HTTP"));
+        assert!(refused(KeySource::Env("SPARKSMITH_NO_SUCH_VAR".into())).contains("plain HTTP"));
         // Refused before the keychain is touched.
         assert!(refused(KeySource::Keychain).contains("plain HTTP"));
         // A server without a key may be anywhere.
@@ -154,8 +154,8 @@ mod tests {
     #[test]
     fn a_missing_key_names_the_variable() -> Result<()> {
         let near = Endpoint::parse("http://localhost:1/v1")?;
-        let e = KeySource::Env("PCBCRAFT_NO_SUCH_VAR".into()).resolve(&near);
-        assert!(e.is_err_and(|e| e.to_string().contains("PCBCRAFT_NO_SUCH_VAR")));
+        let e = KeySource::Env("SPARKSMITH_NO_SUCH_VAR".into()).resolve(&near);
+        assert!(e.is_err_and(|e| e.to_string().contains("SPARKSMITH_NO_SUCH_VAR")));
         Ok(())
     }
 }

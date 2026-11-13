@@ -16,10 +16,10 @@
 //! and operations are counted ([`MAX_TEMPLATE_OPERATIONS`], a target). A
 //! script error or exhausted limit is an error; nothing panics.
 use crate::{Emitted, MAX_OUTPUT_BYTES, text};
-use pcbcraft_core::firmware::{PinConfigReport, sanitise};
-use pcbcraft_core::{Error, Result};
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString, Map, Scope};
 use serde_json::Value;
+use sparksmith_core::firmware::{PinConfigReport, sanitise};
+use sparksmith_core::{Error, Result};
 
 /// Operations one template run may take (target).
 pub const MAX_TEMPLATE_OPERATIONS: u64 = 5_000_000;

@@ -1,5 +1,5 @@
 //! Bounded reads of artwork files to import into library drawings. The
-//! text is converted elsewhere (`pcbcraft_solidcraft::svg`); this module
+//! text is converted elsewhere (`sparksmith_solidcraft::svg`); this module
 //! only reads it safely.
 use crate::{Error, Result};
 use std::{io::Read, path::Path};

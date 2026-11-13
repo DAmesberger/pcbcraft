@@ -2,16 +2,16 @@
 //! built-in ESP32-S31-WROOM-3 part file against the module builder it
 //! replaces. Measured in a release build:
 //!
-//! `cargo test --release -p pcbcraft-solidcraft --test part_timings -- --ignored --nocapture`
+//! `cargo test --release -p sparksmith-solidcraft --test part_timings -- --ignored --nocapture`
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pcbcraft_core::ids::PackageTerminalId;
-use pcbcraft_core::library::package_model::PartValue;
-use pcbcraft_core::library::{
+use sparksmith_core::ids::PackageTerminalId;
+use sparksmith_core::library::package_model::PartValue;
+use sparksmith_core::library::{
     GeneratedMaterials, PackageDefinition, PackageForm, PackageModel, PackageTerminal,
 };
-use pcbcraft_solidcraft::models::{self, part_file};
-use pcbcraft_solidcraft::native::Native;
+use sparksmith_solidcraft::models::{self, part_file};
+use sparksmith_solidcraft::native::Native;
 use std::time::{Duration, Instant};
 
 fn ms(d: Duration) -> f64 {
@@ -21,7 +21,7 @@ fn ms(d: Duration) -> f64 {
 fn wroom3() -> PackageDefinition {
     // The fixture is the module datasheet's millimetres: the wire form.
     let form: PackageForm = serde_json::from_str::<
-        pcbcraft_core::library::package_form::PackageFormParams,
+        sparksmith_core::library::package_form::PackageFormParams,
     >(include_str!("template_spike_wroom3.json"))
     .unwrap()
     .into();

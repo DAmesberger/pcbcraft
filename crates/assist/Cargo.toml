@@ -1,5 +1,5 @@
 [package]
-name = "pcbcraft-assist"
+name = "sparksmith-assist"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,9 +9,9 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-pcbcraft-core.workspace = true
-pcbcraft-automation.workspace = true
-pcbcraft-io.workspace = true
+sparksmith-core.workspace = true
+sparksmith-automation.workspace = true
+sparksmith-io.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
@@ -25,5 +25,5 @@ hayro = "0.9"
 keyring = { version = "3.6", default-features = false, features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
 
 [dev-dependencies]
-pcbcraft-core = { workspace = true, features = ["test-fixtures"] }
+sparksmith-core = { workspace = true, features = ["test-fixtures"] }
 tempfile.workspace = true

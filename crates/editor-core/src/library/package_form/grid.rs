@@ -2,7 +2,7 @@
 //! depopulation mask and the row-letter alphabet (A1 numbering) as data.
 //! The form, its range rules and lead order live here; the footprint
 //! template is `templates/footprint_family/grid.rs` and the model builder
-//! `pcbcraft-solidcraft` `models/grid.rs`.
+//! `sparksmith-solidcraft` `models/grid.rs`.
 //!
 //! Frame: x along the body length (columns, numbered 1, 2, … from −x), y
 //! along the body width (rows, lettered from +y), seen from above. Ball A1

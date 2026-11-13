@@ -2,15 +2,15 @@
 //! refusals that leave the document unchanged, and a board using the part
 //! file built, saved, reopened and built again.
 use super::super::Session;
-use pcbcraft_core::Engine;
-use pcbcraft_core::library::{Definition, PackageModel};
 use serde_json::{Value, json};
+use sparksmith_core::Engine;
+use sparksmith_core::library::{Definition, PackageModel};
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const EXAMPLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft"
+    "/../../examples/esp32-s31-wroom-3/esp32-s31-wroom-3.sparksmith"
 );
 
 const BUILTIN: &str = "esp32-s31-wroom-3";
@@ -107,7 +107,7 @@ fn a_package_uses_the_part_file_in_one_step_and_refusals_change_nothing() -> Tes
     // licence is refused too.
     let dir = tempfile::tempdir()?;
     let own = dir.path().join("own.solidcraft");
-    let mut bytes = pcbcraft_solidcraft::models::part_file::builtin(BUILTIN)
+    let mut bytes = sparksmith_solidcraft::models::part_file::builtin(BUILTIN)
         .ok_or("builtin")?
         .to_vec();
     bytes.push(b'\n');
@@ -224,7 +224,7 @@ fn placed(session: &mut Session) -> TestResult {
 }
 
 /// The part file's bodies in a built board, by name.
-fn part_bodies(model: &pcbcraft_solidcraft::project::NativeModel) -> (usize, Vec<String>) {
+fn part_bodies(model: &sparksmith_solidcraft::project::NativeModel) -> (usize, Vec<String>) {
     let names: Vec<String> = model
         .models
         .iter()
@@ -251,15 +251,15 @@ fn a_board_using_the_part_file_saves_reopens_and_builds_the_same() -> TestResult
         assert_eq!(used["ok"], true, "{used}");
     }
     placed(&mut session)?;
-    let built = pcbcraft_solidcraft::project::build(session.engine().project())?;
+    let built = sparksmith_solidcraft::project::build(session.engine().project())?;
     let (count, names) = part_bodies(&built);
     assert_eq!(count, 110, "{names:?}");
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("board.pcbcraft");
-    pcbcraft_io::persistence::write_project(&path, &session.engine().to_file())?;
-    let reopened = pcbcraft_io::read_project(&path)?;
+    let path = dir.path().join("board.sparksmith");
+    sparksmith_io::persistence::write_project(&path, &session.engine().to_file())?;
+    let reopened = sparksmith_io::read_project(&path)?;
     let engine = Engine::from_file(reopened)?;
-    let again = pcbcraft_solidcraft::project::build(engine.project())?;
+    let again = sparksmith_solidcraft::project::build(engine.project())?;
     assert_eq!(part_bodies(&again), (count, names));
     // The native board: parametric, opens in plain Solidcraft.
     let native = dir.path().join("board.solidcraft");
@@ -269,7 +269,7 @@ fn a_board_using_the_part_file_saves_reopens_and_builds_the_same() -> TestResult
         json!({"path": native.to_string_lossy()}),
     );
     assert_eq!(exported["ok"], true, "{exported}");
-    let opened = pcbcraft_solidcraft::native::Native::open(&native.to_string_lossy())?;
+    let opened = sparksmith_solidcraft::native::Native::open(&native.to_string_lossy())?;
     assert_eq!(opened.evaluation_error(), None);
     assert!(
         opened
@@ -285,13 +285,13 @@ fn a_board_using_the_part_file_saves_reopens_and_builds_the_same() -> TestResult
 
 /// Switches the example's package to the built-in part file at the
 /// reference replay's values (`wroom3.replay.jsonl`, step 06b), as the
-/// replay does: `PCBCRAFT_WRITE_EXAMPLE=1 cargo test -p pcbcraft-automation
+/// replay does: `SPARKSMITH_WRITE_EXAMPLE=1 cargo test -p sparksmith-automation
 /// write_the_example_part_file -- --ignored`.
 #[test]
 #[ignore = "writes examples/esp32-s31-wroom-3"]
 fn write_the_example_part_file() -> TestResult {
-    if std::env::var_os("PCBCRAFT_WRITE_EXAMPLE").is_none() {
-        return Err("set PCBCRAFT_WRITE_EXAMPLE".into());
+    if std::env::var_os("SPARKSMITH_WRITE_EXAMPLE").is_none() {
+        return Err("set SPARKSMITH_WRITE_EXAMPLE".into());
     }
     let (mut session, package) = open()?;
     let revision = session.engine().revision();
@@ -302,7 +302,7 @@ fn write_the_example_part_file() -> TestResult {
             "values": wroom3_values()}),
     );
     assert_eq!(used["ok"], true, "{used}");
-    pcbcraft_io::persistence::write_project(
+    sparksmith_io::persistence::write_project(
         std::path::Path::new(EXAMPLE),
         &session.engine().to_file(),
     )?;

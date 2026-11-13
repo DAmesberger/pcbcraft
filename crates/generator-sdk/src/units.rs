@@ -1,6 +1,6 @@
 //! Integer lengths and angles as the ABI carries them.
 
-pub use pcbcraft_generator_abi::params::mm_text;
+pub use sparksmith_generator_abi::params::mm_text;
 
 /// Nanometres per millimetre.
 pub const MM: i64 = 1_000_000;

@@ -1,16 +1,16 @@
 //! Slice C4: `firmware.export_preview` (the emitted text) and
 //! `firmware.export` (written atomically through io; refuses existing
-//! files). Both read `project.pin_config` and run a `pcbcraft-firmware`
+//! files). Both read `project.pin_config` and run a `sparksmith-firmware`
 //! emitter. Not document changes: the document and its revision never
 //! change, and generated text is never imported back.
 use super::Session;
 use crate::Result;
-use pcbcraft_core::Id;
-use pcbcraft_core::firmware::PinConfigReport;
-use pcbcraft_firmware::{Emitter, MAX_TEMPLATE_BYTES};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sparksmith_core::Id;
+use sparksmith_core::firmware::PinConfigReport;
+use sparksmith_firmware::{Emitter, MAX_TEMPLATE_BYTES};
 use std::path::Path;
 
 /// Bytes of an output or template path.
@@ -34,13 +34,13 @@ pub struct FirmwareParams {
 
 impl Session {
     pub(super) fn firmware(&mut self, params: FirmwareParams, write: bool) -> Result<Value> {
-        let report = pcbcraft_core::firmware::pin_config(self.engine.project(), params.instance)?;
+        let report = sparksmith_core::firmware::pin_config(self.engine.project(), params.instance)?;
         export(&report, &params, write)
     }
 }
 
 fn invalid(message: &str) -> crate::Error {
-    pcbcraft_io::Error::Invalid(message.into()).into()
+    sparksmith_io::Error::Invalid(message.into()).into()
 }
 
 fn checked_path(path: &str) -> Result<&Path> {
@@ -54,9 +54,9 @@ fn checked_path(path: &str) -> Result<&Path> {
 fn template(params: &FirmwareParams) -> Result<Option<String>> {
     match (&params.emitter, &params.template_file) {
         (Emitter::User { .. }, Some(file)) => {
-            let bytes = pcbcraft_io::persistence::read_bytes(checked_path(file)?)?;
+            let bytes = sparksmith_io::persistence::read_bytes(checked_path(file)?)?;
             if bytes.len() > MAX_TEMPLATE_BYTES {
-                return Err(pcbcraft_io::Error::TooLarge(format!(
+                return Err(sparksmith_io::Error::TooLarge(format!(
                     "the template exceeds {} KiB",
                     MAX_TEMPLATE_BYTES >> 10
                 ))
@@ -81,7 +81,7 @@ pub(super) fn export(
     write: bool,
 ) -> Result<Value> {
     let source = template(params)?;
-    let emitted = pcbcraft_firmware::emit(report, &params.emitter, source.as_deref())?;
+    let emitted = sparksmith_firmware::emit(report, &params.emitter, source.as_deref())?;
     if !write {
         return Ok(serde_json::to_value(emitted)?);
     }
@@ -93,8 +93,10 @@ pub(super) fn export(
     )?;
     // Created without replacing: a file that appears at `path` before the
     // write lands is refused, never overwritten.
-    match pcbcraft_io::persistence::atomic_create(path, emitted.text.as_bytes()) {
-        Err(pcbcraft_io::Error::Io(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+    match sparksmith_io::persistence::atomic_create(path, emitted.text.as_bytes()) {
+        Err(sparksmith_io::Error::Io(error))
+            if error.kind() == std::io::ErrorKind::AlreadyExists =>
+        {
             return Err(invalid("output exists; choose a new file"));
         }
         other => other?,

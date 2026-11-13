@@ -7,9 +7,9 @@
 use crate::geom::Vec3;
 use crate::geom::prelude::*;
 use crate::{Error, Result};
-use pcbcraft_core::Point;
-use pcbcraft_core::library::marking::surface::{CylinderArea, WrapChart};
-use pcbcraft_core::library::model3d::MarkingArea;
+use sparksmith_core::Point;
+use sparksmith_core::library::marking::surface::{CylinderArea, WrapChart};
+use sparksmith_core::library::model3d::MarkingArea;
 
 /// Largest gap between a wrapped decal's chords and its cylinder, mm.
 pub const WRAP_CHORD_MM: f64 = 0.002;

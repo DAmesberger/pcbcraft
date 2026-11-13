@@ -6,7 +6,7 @@
 //! every vertex and crossing height and pairs the edges in each slab into
 //! trapezoids. Walls stand wherever the region's inside meets its outside.
 use crate::geom::{Mesh, Vec3};
-use pcbcraft_core::Point;
+use sparksmith_core::Point;
 
 /// Most tiles of one region; larger regions get larger tiles.
 const MAX_TILES: usize = 16_384;

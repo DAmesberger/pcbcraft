@@ -7,31 +7,31 @@
 //! own design with its parameters renamed to plain template names, which
 //! is what an authored template would look like to the insert path.
 //!
-//! `cargo test --release -p pcbcraft-solidcraft --test template_spike -- --ignored --nocapture`
+//! `cargo test --release -p sparksmith-solidcraft --test template_spike -- --ignored --nocapture`
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pcbcraft_core::ids::PackageTerminalId;
-use pcbcraft_core::library::{
-    GeneratedMaterials, LeadSides, NoLeadForm, PackageDefinition, PackageForm, PackageModel,
-    PackageTerminal,
-};
-use pcbcraft_solidcraft::models;
-use pcbcraft_solidcraft::native::Native;
 use serde_json::json;
 use solidcraft_engine::Session;
 use solidcraft_engine::doc::Document;
+use sparksmith_core::ids::PackageTerminalId;
+use sparksmith_core::library::{
+    GeneratedMaterials, LeadSides, NoLeadForm, PackageDefinition, PackageForm, PackageModel,
+    PackageTerminal,
+};
+use sparksmith_solidcraft::models;
+use sparksmith_solidcraft::native::Native;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 /// A test length in mm, as stored.
-fn nm(mm: f64) -> pcbcraft_core::units::Nm {
-    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+fn nm(mm: f64) -> sparksmith_core::units::Nm {
+    sparksmith_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
 
 /// A test point or size in mm, as stored.
 #[allow(dead_code)]
-fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
-    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+fn pt(p: [f64; 2]) -> sparksmith_core::units::PointNm {
+    sparksmith_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
 }
 
 const STEM: &str = "pkgT";
@@ -57,7 +57,7 @@ fn package(form: PackageForm, terminals: u32) -> PackageDefinition {
 fn wroom3() -> PackageDefinition {
     // The fixture is the module datasheet's millimetres: the wire form.
     let form: PackageForm = serde_json::from_str::<
-        pcbcraft_core::library::package_form::PackageFormParams,
+        sparksmith_core::library::package_form::PackageFormParams,
     >(include_str!("template_spike_wroom3.json"))
     .unwrap()
     .into();

@@ -1,6 +1,6 @@
 //! AI-assisted component design from datasheets, on any configured model.
 //!
-//! A run gives a model the datasheets and a goal with the Pcbcraft tool set
+//! A run gives a model the datasheets and a goal with the Sparksmith tool set
 //! ([`tools`]) and executes every tool call in-process against an automation
 //! [`Session`]: the same typed requests and command engine the MCP server,
 //! CLI and desktop use. The run ends with drafts in the session and a
@@ -16,12 +16,12 @@
 //!
 //! Caps are part of the loop ([`run()`]): requests, output tokens, total
 //! tokens and time, the same for every model, hosted or local, each checked
-//! before a request against the worst case of the next one. Pcbcraft keeps
+//! before a request against the worst case of the next one. Sparksmith keeps
 //! no prices and no spend: billing is the provider's. Keys come from the system
 //! keychain per connection or a named environment variable, and are never
 //! written anywhere ([`model::keys`]).
 //!
-//! This crate sits above `pcbcraft-automation` and below the apps
+//! This crate sits above `sparksmith-automation` and below the apps
 //! (`cargo xtask layers`); the HTTP client stays out of the core.
 pub mod documents;
 pub mod model;
@@ -33,9 +33,9 @@ mod run;
 pub mod tools;
 pub mod usage;
 
-use pcbcraft_automation::Session;
 use report::{ReviewReport, RunFacts};
 use serde_json::json;
+use sparksmith_automation::Session;
 use std::path::PathBuf;
 
 pub use documents::{MAX_DATASHEET_BYTES, TOKENS_PER_PAGE, pdf_pages};
@@ -219,8 +219,8 @@ pub fn write_outputs(
 /// Create `path` with `bytes` atomically, refusing an existing file: a
 /// failed or interrupted write leaves no partial file behind.
 pub(crate) fn write_new(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
-    pcbcraft_io::persistence::atomic_create(path, bytes).map_err(|error| match error {
-        pcbcraft_io::Error::Io(error) => Error::Io(error),
+    sparksmith_io::persistence::atomic_create(path, bytes).map_err(|error| match error {
+        sparksmith_io::Error::Io(error) => Error::Io(error),
         other => Error::Config(format!("{}: {other}", path.display())),
     })
 }

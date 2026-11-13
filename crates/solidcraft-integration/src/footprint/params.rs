@@ -4,11 +4,11 @@
 
 use std::collections::BTreeMap;
 
-use pcbcraft_core::library::footprint_source::{
-    FootprintParam, MAX_EXPR, MAX_PARAMETERS, PACKAGE_PREFIX, PackageValue, ParamUnit, ParamValue,
-};
 use solidcraft_engine::doc::DocError;
 use solidcraft_engine::doc::expr::{self, Kind, ParamDef, Value};
+use sparksmith_core::library::footprint_source::{
+    FootprintParam, MAX_EXPR, MAX_PARAMETERS, PACKAGE_PREFIX, PackageValue, ParamUnit, ParamValue,
+};
 
 use super::check::MAX_COORD_MM;
 use super::{Outcome, problem};
@@ -39,7 +39,7 @@ pub(crate) fn check_name(name: &str) -> Outcome<()> {
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_');
     if !first_ok
         || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-        || name.len() > pcbcraft_core::library::MAX_LABEL
+        || name.len() > sparksmith_core::library::MAX_LABEL
     {
         return Err(problem(NAME, format!("`{name}` is not a parameter name")));
     }

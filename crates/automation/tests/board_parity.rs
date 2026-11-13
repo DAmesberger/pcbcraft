@@ -20,8 +20,8 @@
 //! commit).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pcbcraft_core::Project;
-use pcbcraft_solidcraft::project::{self, NativeModel, designs, mesh, plan};
+use sparksmith_core::Project;
+use sparksmith_solidcraft::project::{self, NativeModel, designs, mesh, plan};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -36,7 +36,7 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Every example board: each `.pcbcraft` file under `examples/` with
+/// Every example board: each `.sparksmith` file under `examples/` with
 /// placed parts or copper on its board.
 fn boards() -> Vec<(String, Project)> {
     let mut files = Vec::new();
@@ -47,7 +47,7 @@ fn boards() -> Vec<(String, Project)> {
         }
         for file in std::fs::read_dir(&dir).unwrap() {
             let path = file.unwrap().path();
-            if path.extension().is_some_and(|e| e == "pcbcraft") {
+            if path.extension().is_some_and(|e| e == "sparksmith") {
                 files.push(path);
             }
         }
@@ -56,7 +56,7 @@ fn boards() -> Vec<(String, Project)> {
     files
         .into_iter()
         .filter_map(|path| {
-            let project = pcbcraft_io::read_project(&path)
+            let project = sparksmith_io::read_project(&path)
                 .unwrap()
                 .into_document()
                 .project
@@ -102,7 +102,7 @@ impl Record {
     }
 }
 
-fn layer_name(layer: Option<pcbcraft_core::CopperLayer>) -> String {
+fn layer_name(layer: Option<sparksmith_core::CopperLayer>) -> String {
     layer.map_or_else(|| "-".into(), |l| format!("{l:?}"))
 }
 
@@ -244,7 +244,7 @@ fn example_boards_match_their_record_and_plan() {
         let start = Instant::now();
         let live = project::build_flat(
             project,
-            &pcbcraft_solidcraft::models::imported::SourceCache::default(),
+            &sparksmith_solidcraft::models::imported::SourceCache::default(),
             None,
             project::Flat::Meshed,
         )

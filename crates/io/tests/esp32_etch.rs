@@ -2,9 +2,9 @@
 //! checks unset (no citable default exists), so its board and production
 //! checks have no etch finding. Set for a report, the example's findings
 //! are printed, not asserted: they are the board's, to fix or accept.
-use pcbcraft_core::layout;
-use pcbcraft_core::rules::{RuleKey, RuleValue, RulesCommand};
-use pcbcraft_core::{Engine, Operation, Query, QueryResult};
+use sparksmith_core::layout;
+use sparksmith_core::rules::{RuleKey, RuleValue, RulesCommand};
+use sparksmith_core::{Engine, Operation, Query, QueryResult};
 use std::path::Path;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -13,8 +13,8 @@ const CODES: [&str; 2] = ["board.acute_copper", "board.copper_sliver"];
 
 fn engine() -> Fallible<Engine> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    Ok(Engine::from_file(pcbcraft_io::read_project(&path)?)?)
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    Ok(Engine::from_file(sparksmith_io::read_project(&path)?)?)
 }
 
 fn preflight_codes(engine: &Engine) -> Fallible<Vec<String>> {

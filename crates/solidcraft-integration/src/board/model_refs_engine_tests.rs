@@ -7,24 +7,24 @@
 use super::super::tests::{Fallible, apply, edit, hosted, set, sketch, sketched};
 use super::tests::boxed;
 use super::*;
-use pcbcraft_core::Engine;
-use pcbcraft_core::Layer;
-use pcbcraft_core::Operation;
-use pcbcraft_core::Outcome;
-use pcbcraft_core::format::EditorFile;
-use pcbcraft_core::ids::{ComponentRef, Id, ModelRef, Revision};
-use pcbcraft_core::layout::LayoutCommand;
-use pcbcraft_core::layout::dimensions::{DimensionCommand, REFERENCE_LOST, checks};
-use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
-use pcbcraft_core::library::footprint_source::{DimKind, DimValue, SketchRef};
-use pcbcraft_core::library::mechanical::{PadUse, PartModelSource, PartSpec};
-use pcbcraft_core::library::model3d::{AssetRef, ModelDefinition, ModelFormat, ModelProvenance};
-use pcbcraft_core::library::package_model::PartDerived;
-use pcbcraft_core::library::{PackageModel, Provenance};
-use pcbcraft_core::model::dimension::{
+use sparksmith_core::Engine;
+use sparksmith_core::Layer;
+use sparksmith_core::Operation;
+use sparksmith_core::Outcome;
+use sparksmith_core::format::EditorFile;
+use sparksmith_core::ids::{ComponentRef, Id, ModelRef, Revision};
+use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::layout::dimensions::{DimensionCommand, REFERENCE_LOST, checks};
+use sparksmith_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
+use sparksmith_core::library::footprint_source::{DimKind, DimValue, SketchRef};
+use sparksmith_core::library::mechanical::{PadUse, PartModelSource, PartSpec};
+use sparksmith_core::library::model3d::{AssetRef, ModelDefinition, ModelFormat, ModelProvenance};
+use sparksmith_core::library::package_model::PartDerived;
+use sparksmith_core::library::{PackageModel, Provenance};
+use sparksmith_core::model::dimension::{
     BoardRef, BodyName, FaceName, PartDimensionSpec, PartRelation,
 };
-use pcbcraft_core::updates::{Change, ChangeObject};
+use sparksmith_core::updates::{Change, ChangeObject};
 
 const MEDIA: &str = "application/x-solidcraft";
 
@@ -235,7 +235,7 @@ fn a_dimension_to_a_sloped_face_is_refused() -> Fallible<()> {
             dimension: flush(front, edge),
         }),
     );
-    let Err(pcbcraft_core::Error::Unsupported(why)) = refused else {
+    let Err(sparksmith_core::Error::Unsupported(why)) = refused else {
         panic!("{refused:?}")
     };
     assert!(why.contains("pick an edge"), "{why}");
@@ -366,7 +366,7 @@ fn a_revision_that_loses_the_face_is_previewed_first_and_blocks_fab() -> Fallibl
     assert_eq!(plan.changes.first(), Some(&first.detail));
     engine.apply_hosted(
         plan.revision,
-        Operation::Update(Box::new(pcbcraft_core::updates::ApplyUpdate {
+        Operation::Update(Box::new(sparksmith_core::updates::ApplyUpdate {
             expected_revision: plan.revision,
             change,
             remove_conflicting_tracks: false,
@@ -384,7 +384,7 @@ fn a_revision_that_loses_the_face_is_previewed_first_and_blocks_fab() -> Fallibl
         1,
         "{findings:?}"
     );
-    let report = pcbcraft_core::fabrication::preflight::report(
+    let report = sparksmith_core::fabrication::preflight::report(
         engine.project(),
         &engine.document().drafts,
         None,

@@ -1,5 +1,5 @@
 use super::*;
-use pcbcraft_core::Engine;
+use sparksmith_core::Engine;
 
 fn call(server: &mut Server, id: u64, method: &str, params: Value) -> Value {
     server
@@ -114,7 +114,7 @@ fn query_tools_return_the_engine_report() -> Result<(), Box<dyn std::error::Erro
     let engine = Engine::demo()?;
     let instance = engine.project().instances[0].id;
     let direct =
-        serde_json::to_value(engine.query(pcbcraft_core::Query::InspectInstance { instance })?)?;
+        serde_json::to_value(engine.query(sparksmith_core::Query::InspectInstance { instance })?)?;
     let mut server = Server::new(Session::new(engine), Policy::default());
     let reply = call(
         &mut server,
@@ -132,7 +132,7 @@ fn query_tools_return_the_engine_report() -> Result<(), Box<dyn std::error::Erro
 /// same batch without it applies once and lists the new graphic IDs.
 #[test]
 fn graphic_edits_over_mcp_are_atomic() -> Result<(), Box<dyn std::error::Error>> {
-    use pcbcraft_core::library::Definition;
+    use sparksmith_core::library::Definition;
     let engine = Engine::demo()?;
     let symbol = engine
         .drafts()
@@ -212,7 +212,7 @@ fn library_folder_tools_are_listed_and_report_refusals() {
         &mut server,
         3,
         "tools/call",
-        json!({"name": "library_source_add", "arguments": {"path": "/nonexistent/pcbcraft-library"}}),
+        json!({"name": "library_source_add", "arguments": {"path": "/nonexistent/sparksmith-library"}}),
     );
     assert_eq!(missing["result"]["isError"], true);
     assert_eq!(payload(&missing)["code"], "gate.never", "{missing}");
@@ -240,7 +240,7 @@ pub(super) fn names_only_what_exists(text: &str) -> usize {
     // Dotted words that are prose or a refusal's rule, not wire IDs;
     // finding codes are checked against the registered codes.
     let prose = ["purchasing.state", "e.g", "library.other_revision"];
-    let finding = |word: &str| pcbcraft_core::issues::KNOWN_CODES.contains(&word);
+    let finding = |word: &str| sparksmith_core::issues::KNOWN_CODES.contains(&word);
     let words = text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.'));
     let mut named = 0;
     for word in words.map(|w| w.trim_matches('.')) {
@@ -435,7 +435,7 @@ fn the_tool_list_is_small_and_self_contained() {
 /// definition it reaches either in the reply or readable through `def`.
 #[test]
 fn every_operation_and_query_is_reachable_on_demand() -> super::scenario::Fallible<()> {
-    let schemas = pcbcraft_core::schemas();
+    let schemas = sparksmith_core::schemas();
     let mut names = Vec::new();
     // Independent of the code under test: every tag constant in the schemas.
     fn constants(value: &Value, tag: &str, out: &mut Vec<String>) {
@@ -599,7 +599,7 @@ fn verbose_over_mcp_returns_the_snapshot_once() -> super::scenario::Fallible<()>
 /// does not ask for it is refused too, and one that asks merges the nets.
 #[test]
 fn a_gnd_port_on_a_vbus_wire_over_mcp_merges_only_when_asked() -> super::scenario::Fallible<()> {
-    use pcbcraft_core::{Endpoint, TerminalId, schematic::pin_position};
+    use sparksmith_core::{Endpoint, TerminalId, schematic::pin_position};
     let engine = Engine::demo()?;
     let project = engine.project();
     let [first, second] = [0, 1].map(|n| project.instances.get(n).map(|i| i.id));

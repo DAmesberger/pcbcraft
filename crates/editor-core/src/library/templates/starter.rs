@@ -9,7 +9,7 @@
 //! template catalog (`library.templates`) always lists them, so the
 //! gallery is populated on a fresh install. A component built from one
 //! records the row's name and the table's format in its provenance
-//! (`RowSource::Starter`). `pcbcraft-cli sample-packages` still writes the
+//! (`RowSource::Starter`). `sparksmith-cli sample-packages` still writes the
 //! same rows to a library folder for an organisation to replace or extend.
 use crate::diagnostics::{Error, Result};
 use crate::ids::MAX_LABEL;
@@ -29,14 +29,14 @@ use std::sync::OnceLock;
 /// no legacy readers.
 pub const FORMAT: u64 = 1;
 
-/// The starter rows' licence: original data, licensed as Pcbcraft.
+/// The starter rows' licence: original data, licensed as Sparksmith.
 pub const LICENCE: &str = "MIT OR Apache-2.0";
 
 /// Bytes of one starter table (a bound on the parser's input).
 pub const MAX_TABLE_BYTES: usize = 1024 * 1024;
 
 /// The built-in source's display name.
-pub const SOURCE_NAME: &str = "Pcbcraft starter rows";
+pub const SOURCE_NAME: &str = "Sparksmith starter rows";
 
 /// The tables, one per family file.
 pub const TABLES: [(&str, &str); 9] = [
@@ -78,7 +78,7 @@ impl StarterRow {
     pub fn provenance_note(&self) -> String {
         let basis = match &self.definition.citation {
             Some(c) => format!(
-                "Pcbcraft starter table (original data, {LICENCE}). Values typed from {}{}{}{}.",
+                "Sparksmith starter table (original data, {LICENCE}). Values typed from {}{}{}{}.",
                 c.document,
                 c.document_revision
                     .as_ref()
@@ -90,7 +90,9 @@ impl StarterRow {
                     " (citation unverified: no drawing revision or page recorded)"
                 },
             ),
-            None => format!("Pcbcraft starter table (original data, {LICENCE}). Estimated values."),
+            None => {
+                format!("Sparksmith starter table (original data, {LICENCE}). Estimated values.")
+            }
         };
         match &self.note {
             Some(note) => format!("{basis} {note}"),

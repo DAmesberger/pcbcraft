@@ -13,23 +13,23 @@
 //! - The negative jumper, A7 through a via, the bottom jumper and a via to
 //!   B7, is 1.355 + 1.0 + 1.355 = 3.71 mm of track and two 1.635 mm barrels
 //!   (when the stackup's mid-planes are as the file says), 6.98 mm.
-use pcbcraft_core::diagnostics::Finding;
-use pcbcraft_core::ids::{Endpoint, Id};
-use pcbcraft_core::layout::length::{self, LengthReport, PairMeasured, PairRow};
-use pcbcraft_core::layout::posture::Posture;
-use pcbcraft_core::layout::router::{self, RouteIndex, RouteMode, RouteStepRequest};
-use pcbcraft_core::layout::{self, LayoutCommand};
-use pcbcraft_core::model::{CopperLayer, Project};
-use pcbcraft_core::rules::RulesCommand;
-use pcbcraft_core::rules::signal::{DiffPair, PairEndpoints};
+use sparksmith_core::diagnostics::Finding;
+use sparksmith_core::ids::{Endpoint, Id};
+use sparksmith_core::layout::length::{self, LengthReport, PairMeasured, PairRow};
+use sparksmith_core::layout::posture::Posture;
+use sparksmith_core::layout::router::{self, RouteIndex, RouteMode, RouteStepRequest};
+use sparksmith_core::layout::{self, LayoutCommand};
+use sparksmith_core::model::{CopperLayer, Project};
+use sparksmith_core::rules::RulesCommand;
+use sparksmith_core::rules::signal::{DiffPair, PairEndpoints};
 use std::path::Path;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn board() -> Fallible<Project> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    Ok(pcbcraft_io::read_project(&path)?.project)
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    Ok(sparksmith_io::read_project(&path)?.project)
 }
 
 fn usb(p: &Project) -> Fallible<DiffPair> {
@@ -121,21 +121,21 @@ fn real_skew_on_the_path_is_still_reported() -> Fallible {
         .iter()
         .filter(|t| t.net == dp)
         .max_by(|a, b| {
-            pcbcraft_core::geometry::distance(a.start, a.end)
-                .total_cmp(&pcbcraft_core::geometry::distance(b.start, b.end))
+            sparksmith_core::geometry::distance(a.start, a.end)
+                .total_cmp(&sparksmith_core::geometry::distance(b.start, b.end))
         })
         .map(|t| t.id)
         .ok_or("no track")?;
     // Lengthen the long run on one half by a meander.
-    let index = pcbcraft_core::layout::obstacles::Obstacles::of(&p);
-    let plan = pcbcraft_core::layout::meander::plan(
+    let index = sparksmith_core::layout::obstacles::Obstacles::of(&p);
+    let plan = sparksmith_core::layout::meander::plan(
         &p,
         &index,
-        &pcbcraft_core::layout::CopperGraph::of(&p),
-        &pcbcraft_core::layout::meander::TuneRequest {
+        &sparksmith_core::layout::CopperGraph::of(&p),
+        &sparksmith_core::layout::meander::TuneRequest {
             track,
-            amount: pcbcraft_core::layout::meander::TuneAmount::Add { mm: 1.0 },
-            style: pcbcraft_core::layout::meander::MeanderStyle::Trombone,
+            amount: sparksmith_core::layout::meander::TuneAmount::Add { mm: 1.0 },
+            style: sparksmith_core::layout::meander::MeanderStyle::Trombone,
             amplitude: Some(1.0),
             spacing: None,
             side: None,
@@ -160,8 +160,8 @@ fn real_skew_on_the_path_is_still_reported() -> Fallible {
 #[test]
 fn set_endpoints_are_measured_and_validated() -> Fallible {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    let mut engine = pcbcraft_core::Engine::from_file(pcbcraft_io::read_project(&path)?)?;
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    let mut engine = sparksmith_core::Engine::from_file(sparksmith_io::read_project(&path)?)?;
     let p = engine.project().clone();
     let pair = usb(&p)?;
     let pad = |designator: &str, number: &str| -> Fallible<Endpoint> {
@@ -182,7 +182,7 @@ fn set_endpoints_are_measured_and_validated() -> Fallible {
             .terminal)
     };
     let edit = |endpoints| {
-        pcbcraft_core::Operation::Rules(RulesCommand::EditDiffPair {
+        sparksmith_core::Operation::Rules(RulesCommand::EditDiffPair {
             pair: DiffPair {
                 endpoints,
                 ..pair.clone()
@@ -324,16 +324,16 @@ fn a_track_across_the_pair_never_tears_it() -> Fallible {
 #[test]
 fn issues_and_the_production_check_count_alike_but_for_production_findings() -> Fallible {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    let engine = pcbcraft_core::Engine::from_file(pcbcraft_io::read_project(&path)?)?;
-    let issues = match engine.query(pcbcraft_core::Query::Issues {
-        scope: pcbcraft_core::issues::IssueScope::All,
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    let engine = sparksmith_core::Engine::from_file(sparksmith_io::read_project(&path)?)?;
+    let issues = match engine.query(sparksmith_core::Query::Issues {
+        scope: sparksmith_core::issues::IssueScope::All,
     })? {
-        pcbcraft_core::QueryResult::Issues(report) => report,
+        sparksmith_core::QueryResult::Issues(report) => report,
         _ => return Err("issues".into()),
     };
-    let preflight = match engine.query(pcbcraft_core::Query::Preflight { profile: None })? {
-        pcbcraft_core::QueryResult::Preflight(report) => report,
+    let preflight = match engine.query(sparksmith_core::Query::Preflight { profile: None })? {
+        sparksmith_core::QueryResult::Preflight(report) => report,
         _ => return Err("preflight".into()),
     };
     let count = |code: &str| preflight.items.iter().filter(|i| i.code == code).count();

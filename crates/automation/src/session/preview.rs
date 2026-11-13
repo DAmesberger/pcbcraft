@@ -11,7 +11,7 @@ impl Session {
         let bundle = self
             .sources
             .bundle(params.library, params.lineage, params.revision)?;
-        let report = pcbcraft_core::catalog::preview::inspect_bundle(&bundle, None, None)?;
+        let report = sparksmith_core::catalog::preview::inspect_bundle(&bundle, None, None)?;
         Ok(serde_json::to_value(report)?)
     }
 }
@@ -20,11 +20,11 @@ impl Session {
 mod tests {
     use super::super::sources::Sources;
     use super::super::{Session, publish_library};
-    use pcbcraft_core::Engine;
-    use pcbcraft_core::format::{EditorFile, FILE_VERSION};
-    use pcbcraft_core::library::Drafts;
-    use pcbcraft_io::settings::UserDirs;
     use serde_json::{Value, json};
+    use sparksmith_core::Engine;
+    use sparksmith_core::format::{EditorFile, FILE_VERSION};
+    use sparksmith_core::library::Drafts;
+    use sparksmith_io::settings::UserDirs;
 
     type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -49,7 +49,7 @@ mod tests {
         let folder_text = folder.display().to_string();
         let mut author = Session::new(Engine::from_file(EditorFile {
             version: FILE_VERSION,
-            project: pcbcraft_core::catalog::synthetic::project_with_parts(4)?,
+            project: sparksmith_core::catalog::synthetic::project_with_parts(4)?,
             drafts: Drafts::default(),
         })?);
         let published = publish_library(&mut author, &folder_text, "Team library")?;

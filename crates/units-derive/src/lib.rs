@@ -23,7 +23,7 @@
 //! by hand.
 //!
 //! The generated code names `crate::units`, so the derive is for
-//! `pcbcraft-core`.
+//! `sparksmith-core`.
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as Tokens;
 use quote::{format_ident, quote};

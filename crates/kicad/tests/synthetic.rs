@@ -7,13 +7,13 @@
 //! is unset); a relative paste margin scales the pad size.
 mod support;
 
-use pcbcraft_core::geometry::{Transform2, polygon_contains};
-use pcbcraft_core::layout::{PlacedPad, placed_pads};
-use pcbcraft_core::library::{HoleShape, MaskRule, PadKind, PadShape, PasteRule};
-use pcbcraft_core::{Layer, Project};
-use pcbcraft_kicad::board::BoardError;
-use pcbcraft_kicad::report::Case;
-use pcbcraft_kicad::{ImportError, import};
+use sparksmith_core::geometry::{Transform2, polygon_contains};
+use sparksmith_core::layout::{PlacedPad, placed_pads};
+use sparksmith_core::library::{HoleShape, MaskRule, PadKind, PadShape, PasteRule};
+use sparksmith_core::{Layer, Project};
+use sparksmith_kicad::board::BoardError;
+use sparksmith_kicad::report::Case;
+use sparksmith_kicad::{ImportError, import};
 use support::{Board, Footprint, Pad};
 
 type Fallible<T> = Result<T, Box<dyn std::error::Error>>;
@@ -181,11 +181,11 @@ fn margins_resolve_pad_then_footprint_then_board() -> Fallible<()> {
     let pads = placed_pads(project);
     let get = |k: usize, n: &str| pad(project, &pads, k, n).map(|p| p.pad.clone());
     let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
-    let expansion = |p: &pcbcraft_core::library::Pad| match p.mask {
+    let expansion = |p: &sparksmith_core::library::Pad| match p.mask {
         MaskRule::Expansion(e) => e.to_mm_f64(),
         _ => f64::NAN,
     };
-    let reduction = |p: &pcbcraft_core::library::Pad| match p.paste {
+    let reduction = |p: &sparksmith_core::library::Pad| match p.paste {
         PasteRule::Reduction(r) => r.to_mm_f64(),
         _ => f64::NAN,
     };

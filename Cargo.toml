@@ -15,9 +15,9 @@ members = [
     "crates/fabcheck",
     "crates/kicad",
     "generators/chip",
-    "apps/pcbcraft-cli",
+    "apps/sparksmith-cli",
     "crates/ui",
-    "apps/pcbcraft",
+    "apps/sparksmith",
     "xtask",
 ]
 
@@ -28,19 +28,19 @@ rust-version = "1.96"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-pcbcraft-core = { path = "crates/editor-core" }
-pcbcraft-units-derive = { path = "crates/units-derive" }
-pcbcraft-io = { path = "crates/io" }
-pcbcraft-solidcraft = { path = "crates/solidcraft-integration" }
-pcbcraft-automation = { path = "crates/automation" }
-pcbcraft-firmware = { path = "crates/firmware" }
-pcbcraft-assist = { path = "crates/assist" }
-pcbcraft-generator-abi = { path = "crates/generator-abi" }
-pcbcraft-generator-sdk = { path = "crates/generator-sdk" }
-pcbcraft-generators = { path = "crates/generators" }
-pcbcraft-ui = { path = "crates/ui" }
-pcbcraft-fabcheck = { path = "crates/fabcheck" }
-pcbcraft-kicad = { path = "crates/kicad" }
+sparksmith-core = { path = "crates/editor-core" }
+sparksmith-units-derive = { path = "crates/units-derive" }
+sparksmith-io = { path = "crates/io" }
+sparksmith-solidcraft = { path = "crates/solidcraft-integration" }
+sparksmith-automation = { path = "crates/automation" }
+sparksmith-firmware = { path = "crates/firmware" }
+sparksmith-assist = { path = "crates/assist" }
+sparksmith-generator-abi = { path = "crates/generator-abi" }
+sparksmith-generator-sdk = { path = "crates/generator-sdk" }
+sparksmith-generators = { path = "crates/generators" }
+sparksmith-ui = { path = "crates/ui" }
+sparksmith-fabcheck = { path = "crates/fabcheck" }
+sparksmith-kicad = { path = "crates/kicad" }
 tempfile = "3"
 sha2 = "0.10"
 getrandom = "0.3"
@@ -60,7 +60,7 @@ egui = "0.37"
 egui-wgpu = "0.37"
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland", "accesskit"] }
 solidcraft-engine = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
-# Solidcraft's colour rules (the sRGB transfer function), reached through pcbcraft-solidcraft and
+# Solidcraft's colour rules (the sRGB transfer function), reached through sparksmith-solidcraft and
 # the vendored UI kit; the same revision.
 solidcraft-color = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
 # The vector types of Solidcraft's public API live in solidcore's record crate, which Solidcraft
@@ -68,7 +68,7 @@ solidcraft-color = { git = "https://github.com/DAmesberger/solidcraft.git", rev 
 solidcore-record = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
 # Solidcraft's control channel (per-session token files, the loopback JSON-lines
 # server) for live MCP into the open window; the same revision, reached through
-# pcbcraft-automation only.
+# sparksmith-automation only.
 solidcraft-control = { git = "https://github.com/DAmesberger/solidcraft.git", rev = "64bebfef0a77dab8c79666114c7601c9dda55d12" }
 # Solidcraft's shared viewport renderer: its shading models (surface, clear coat, material
 # graph) and, in the desktop app, its GPU pipelines and egui paint callbacks; the same revision.

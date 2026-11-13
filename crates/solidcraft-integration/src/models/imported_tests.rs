@@ -4,10 +4,10 @@
 use super::*;
 use crate::models::inspect::{self, ModelInspection};
 use crate::native::{BoxBody, Expr};
-use pcbcraft_core::PackageTerminalId;
-use pcbcraft_core::library::model3d::{AssetRef, LeadMapEntry, LeadTag, ModelBody};
-use pcbcraft_core::materials::MaterialId;
 use serde_json::{Value, json};
+use sparksmith_core::PackageTerminalId;
+use sparksmith_core::library::model3d::{AssetRef, LeadMapEntry, LeadTag, ModelBody};
+use sparksmith_core::materials::MaterialId;
 
 const EPS: f64 = 1e-5;
 
@@ -79,7 +79,7 @@ pub(crate) fn fixture_glb() -> Vec<u8> {
             "attributes": {"POSITION": 2 * k}, "indices": 2 * k + 1, "material": k}]}));
     }
     let document = json!({
-        "asset": {"version": "2.0", "generator": "pcbcraft test"},
+        "asset": {"version": "2.0", "generator": "sparksmith test"},
         "extensionsUsed": ["KHR_materials_clearcoat"],
         "scene": 0,
         "scenes": [{"nodes": [0, 1]}],
@@ -406,9 +406,9 @@ fn build_maps_bodies_terminals_and_looks() -> Result<()> {
             .model_body_look(body)
             .ok_or_else(|| fail("saved look"))?;
         match b.material {
-            ModelMaterial::Custom(_) => assert_eq!(saved.name, "Pcbcraft Epoxy"),
+            ModelMaterial::Custom(_) => assert_eq!(saved.name, "Sparksmith Epoxy"),
             ModelMaterial::Builtin(_) => {
-                assert!(saved.name.starts_with("Pcbcraft "), "{}", saved.name)
+                assert!(saved.name.starts_with("Sparksmith "), "{}", saved.name)
             }
         }
     }

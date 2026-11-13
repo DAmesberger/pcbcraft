@@ -31,19 +31,19 @@ use crate::material::{BodyKind, Detail, linear_to_srgb8};
 use crate::native::{Look, Native};
 use crate::scene::Geometry;
 use crate::{Error, Result};
-use pcbcraft_core::geometry::Transform3;
-use pcbcraft_core::ids::ContentHash;
-use pcbcraft_core::library::ModelPlacement;
-use pcbcraft_core::library::bundle::{MAX_ASSET_BYTES, asset_hash};
-use pcbcraft_core::library::model3d::{
-    BodyRole, CustomMaterial, LibraryModel, ModelDefinition, ModelFormat, ModelMaterial,
-    SourceFrame, UpAxis,
-};
-use pcbcraft_core::units::Nm;
 use serde_json::json;
 use solidcraft_engine::doc::FeatureKind;
 use solidcraft_viewport::clear_coat::ClearCoat;
 use solidcraft_viewport::surface::{MIN_ROUGHNESS, OpaqueSurface};
+use sparksmith_core::geometry::Transform3;
+use sparksmith_core::ids::ContentHash;
+use sparksmith_core::library::ModelPlacement;
+use sparksmith_core::library::bundle::{MAX_ASSET_BYTES, asset_hash};
+use sparksmith_core::library::model3d::{
+    BodyRole, CustomMaterial, LibraryModel, ModelDefinition, ModelFormat, ModelMaterial,
+    SourceFrame, UpAxis,
+};
+use sparksmith_core::units::Nm;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -56,9 +56,9 @@ pub const RECHECK_TOLERANCE_MM: f64 = 0.01;
 pub const CONTACT_BAND_MM: f64 = 0.01;
 /// The face-key separator of a lead tag.
 pub const FACE_KEY: &str = "@face:";
-/// Bytes of a body key ([`pcbcraft_core::library::model3d::MAX_BODY_KEY`]);
+/// Bytes of a body key ([`sparksmith_core::library::model3d::MAX_BODY_KEY`]);
 /// a longer file path is cut, then made unique.
-const MAX_KEY: usize = pcbcraft_core::library::model3d::MAX_BODY_KEY - 16;
+const MAX_KEY: usize = sparksmith_core::library::model3d::MAX_BODY_KEY - 16;
 /// Longest definition name (as for generated models).
 const MAX_STEM: usize = 64;
 /// The file name readers are given: it names nothing the keys depend on
@@ -923,7 +923,7 @@ pub fn build_library_model_cached(
             )));
         }
     }
-    let by_key: BTreeMap<&str, &pcbcraft_core::library::model3d::ModelBody> =
+    let by_key: BTreeMap<&str, &sparksmith_core::library::model3d::ModelBody> =
         model.bodies.iter().map(|b| (b.key.as_str(), b)).collect();
     let mut bodies = Vec::with_capacity(names.len());
     for (key, name) in keys.iter().zip(&names) {
