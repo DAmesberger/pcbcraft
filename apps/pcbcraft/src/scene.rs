@@ -905,7 +905,7 @@ mod tests {
 
     /// The worker meshes the board's flat bodies from the board plan: the
     /// same objects are drawn and picked as from the exact model, the
-    /// laminate is one body, and a track edit keeps every other mesh.
+    /// laminate is one body per slab, and a track edit keeps every other mesh.
     #[test]
     fn the_worker_meshes_the_boards_flat_bodies() -> Result<(), Box<dyn std::error::Error>> {
         use pcbcraft_solidcraft::material::BodyKind;
@@ -965,7 +965,10 @@ mod tests {
                 .count()
         };
         assert!(laminate(&exact.0) > 1, "the exact model's slabs");
-        assert_eq!(laminate(&meshed.0), 1, "the laminate drawn whole");
+        let slabs = pcbcraft_solidcraft::project::plan::of(&project)?
+            .laminate
+            .len();
+        assert_eq!(laminate(&meshed.0), slabs, "the laminate drawn per slab");
         // A track made wider: every flat mesh but that track's is kept.
         let meshes = |geometry: &[pcbcraft_solidcraft::scene::Geometry]| {
             geometry
