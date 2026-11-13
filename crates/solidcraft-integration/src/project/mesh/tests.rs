@@ -318,3 +318,58 @@ fn a_plan_from_the_memo_is_the_plan_made_anew() -> Result<()> {
     assert_ne!(format!("{again:?}"), format!("{first:?}"));
     Ok(())
 }
+
+/// The meshed laminate carries the edges the exact model's laminate has
+/// along the board outline: its top and bottom outlines as pickable edges,
+/// each bounding faces the mesh has, and the upright edges at the
+/// outline's corners; a round hole's outline is one closed edge, not one
+/// per flattened chord. The 3D dimension tool reaches the board's edges
+/// by them.
+#[test]
+fn the_meshed_laminate_has_the_board_outlines_edges() -> Result<()> {
+    let project = showcase()?;
+    let [width, depth] = project.board_size;
+    let (_, bodies, _) = meshed(&project)?;
+    let laminate = bodies
+        .iter()
+        .find(|m| m.source.is_none())
+        .ok_or_else(|| Error::Verification("no laminate".into()))?;
+    let mesh = &laminate.geometry.mesh;
+    assert_eq!(mesh.edges.len(), mesh.edge_faces.len());
+    let (lo, hi) = (laminate.geometry.min, laminate.geometry.max);
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    // A pickable edge along the board's bottom side (y = 0), corner to
+    // corner, at height `z`.
+    let along_bottom = |z: f64| {
+        mesh.edges.iter().enumerate().any(|(i, e)| {
+            mesh.edge_pickable(i)
+                && e.iter().all(|p| near(p.y, 0.0) && near(p.z, z))
+                && e.iter().any(|p| near(p.x, 0.0))
+                && e.iter().any(|p| near(p.x, width))
+        })
+    };
+    assert!(along_bottom(hi[2]), "the top outline along the bottom side");
+    assert!(
+        along_bottom(lo[2]),
+        "the bottom outline along the bottom side"
+    );
+    for corner in [[0.0, 0.0], [width, 0.0], [width, depth], [0.0, depth]] {
+        assert!(
+            mesh.edges.iter().any(|e| e.len() == 2
+                && e.iter()
+                    .all(|p| near(p.x, corner[0]) && near(p.y, corner[1]))),
+            "an upright edge at {corner:?}"
+        );
+    }
+    let faces: std::collections::BTreeSet<u32> = mesh.tri_face.iter().copied().collect();
+    for bounds in &mesh.edge_faces {
+        assert!(bounds.iter().all(|f| faces.contains(f)), "{bounds:?}");
+    }
+    let closed = mesh
+        .edges
+        .iter()
+        .filter(|e| e.len() > 4 && e.first() == e.last())
+        .count();
+    assert!(closed >= 2, "round holes as closed edges");
+    Ok(())
+}
