@@ -14,8 +14,10 @@
 use crate::native::{BoxBody, Native, id};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::Transform3;
+use pcbcraft_core::ids::ContentHash;
 use pcbcraft_core::interface::{EffectKind, EnclosureEffect, Sidecar};
 use pcbcraft_core::model::dimension::{BodyName, FaceName, ModelFaceRef};
+use pcbcraft_core::model::housing::UseKind;
 use serde_json::{Value, json};
 use solidcraft_engine::doc::FeatureKind;
 use solidcraft_engine::sketch::LinkSource;
@@ -233,16 +235,131 @@ pub struct BoardLink {
     pub to_board: Transform3,
     /// The linked bodies, by their names in the enclosure.
     pub bodies: Vec<String>,
+    /// SHA-256 of the board's design file as the enclosure last read it
+    /// (SolidCraft keeps it on the link), when it keeps one: the older-board
+    /// check.
+    pub file_sha256: Option<ContentHash>,
 }
 
 /// An enclosure feature that uses a published datum, as its sketch's
-/// links say.
+/// links say, or a joint that places the board by one.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Use {
-    /// The feature's name in the enclosure.
+    /// The feature's (or joint's) name in the enclosure.
     pub feature: String,
     pub feature_id: u64,
     pub token: String,
+    pub via: UseKind,
+}
+
+/// An enclosure feature attached to a face of the board's design that no
+/// slot carries (section 2).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Unexported {
+    pub feature: String,
+    /// The board design's body, by its name there ("U1 model"); empty when
+    /// only a face name says it is the board's.
+    pub body: String,
+}
+
+/// What a reference to the board's design is, by the slot that carries it.
+enum Carried<'a> {
+    /// Not the board's.
+    Elsewhere,
+    /// A slot's: the datum's token.
+    Slot(&'a str),
+    /// The board's, but no slot carries it.
+    Unexported,
+}
+
+/// Enclosure features one dependency walk visits, at most.
+const MAX_WALK: usize = 4096;
+
+/// The published datums by what names them in the enclosure: their bodies
+/// (by token) and their faces (by SolidCraft's digest of the published
+/// face name), with the slab's own token.
+struct Slots<'a> {
+    tokens: BTreeSet<&'a str>,
+    by_digest: BTreeMap<String, &'a str>,
+    /// The outline datum's token: every face of the slab is its slot's.
+    slab: Option<&'a str>,
+    linked: BTreeSet<&'a str>,
+}
+
+impl<'a> Slots<'a> {
+    fn new(link: &'a BoardLink, sidecar: &'a Sidecar) -> Self {
+        let mut by_digest = BTreeMap::new();
+        for d in &sidecar.datums {
+            for face in d.faces.values() {
+                by_digest
+                    .entry(link_digest(face))
+                    .or_insert(d.token.as_str());
+            }
+        }
+        Self {
+            tokens: sidecar.datums.iter().map(|d| d.token.as_str()).collect(),
+            by_digest,
+            slab: sidecar
+                .datums
+                .iter()
+                .find(|d| d.role == "board.outline")
+                .map(|d| d.token.as_str()),
+            linked: link.bodies.iter().map(String::as_str).collect(),
+        }
+    }
+
+    /// The datum a linked face name (`F<feature>:link:<digest>`) is of.
+    fn by_face(&self, face: &str) -> Option<&'a str> {
+        let (_, digest) = face.split_once(":link:")?;
+        self.by_digest
+            .get(digest.get(..16).unwrap_or(digest))
+            .copied()
+    }
+
+    /// A reference to `body` (its face `face`, when it names one).
+    fn carried(&self, body: &str, face: Option<&str>) -> Carried<'a> {
+        if !self.linked.contains(body) {
+            return Carried::Elsewhere;
+        }
+        if let Some(token) = self.tokens.get(body) {
+            return Carried::Slot(token);
+        }
+        if let Some(token) = face.and_then(|f| self.by_face(f)) {
+            return Carried::Slot(token);
+        }
+        match self.slab {
+            Some(token) if body == crate::interface::SLAB => Carried::Slot(token),
+            _ => Carried::Unexported,
+        }
+    }
+}
+
+/// Every string in a value that names a linked face.
+fn linked_faces(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(text) if text.contains(":link:") => out.push(text.clone()),
+        Value::Array(items) => items.iter().for_each(|v| linked_faces(v, out)),
+        Value::Object(map) => map.values().for_each(|v| linked_faces(v, out)),
+        _ => {}
+    }
+}
+
+/// The features a non-sketch feature's own fields name: a `sketch` or
+/// `profile` id, or a persistent face name (`F12:side:l3`).
+fn named_features(value: &Value, out: &mut Vec<u64>) {
+    match value {
+        Value::String(text) => out.extend(feature_of(text)),
+        Value::Array(items) => items.iter().for_each(|v| named_features(v, out)),
+        Value::Object(map) => {
+            for (key, v) in map {
+                match (key.as_str(), v.as_u64()) {
+                    ("sketch" | "profile" | "feature", Some(id)) => out.push(id),
+                    _ => named_features(v, out),
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// SolidCraft's digest of a linked design's face name, as a linked face's
@@ -381,6 +498,7 @@ impl Enclosure {
             feature: link.feature,
             to_board: to_transform(&inverse),
             bodies,
+            file_sha256: link.file_sha256.as_deref().and_then(ContentHash::parse),
         })
     }
 
@@ -425,53 +543,173 @@ impl Enclosure {
     }
 
     /// Every enclosure feature whose sketch projects or intersects a body
-    /// of the linked board that carries a datum `sidecar` names: a datum's
-    /// own body (named by its token), or a face of the board slab that the
-    /// sidecar lists for a datum.
+    /// of the linked board that a slot of `sidecar` carries (a datum's own
+    /// body, named by its token; a face the sidecar lists for a datum; any
+    /// face of the board slab, the outline's slot), and every joint that
+    /// places the board by a face a slot carries: the consumers, by slot.
     pub fn uses(&self, link: &BoardLink, sidecar: &Sidecar) -> Vec<Use> {
-        let tokens: BTreeSet<&str> = sidecar.datums.iter().map(|d| d.token.as_str()).collect();
-        let mut by_digest: BTreeMap<String, &str> = BTreeMap::new();
-        for d in &sidecar.datums {
-            for face in d.faces.values() {
-                by_digest
-                    .entry(link_digest(face))
-                    .or_insert(d.token.as_str());
-            }
-        }
-        let linked: BTreeSet<&str> = link.bodies.iter().map(String::as_str).collect();
+        let slots = Slots::new(link, sidecar);
         let mut out = BTreeSet::new();
         for feature in &self.native.session().doc.features {
             let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
                 continue;
             };
             for l in &sketch.links {
-                let body = match &l.source {
-                    LinkSource::Face { body, .. }
-                    | LinkSource::Edge { body, .. }
-                    | LinkSource::Vertex { body, .. }
-                    | LinkSource::Body { body } => body.as_str(),
-                    _ => continue,
-                };
-                if !linked.contains(body) {
+                let Some(body) = link_body(&l.source) else {
                     continue;
-                }
-                let by_face = l
-                    .face_name
-                    .as_deref()
-                    .and_then(|n| n.split_once(":link:"))
-                    .and_then(|(_, digest)| by_digest.get(digest.get(..16).unwrap_or(digest)))
-                    .copied();
-                let token = if tokens.contains(body) {
-                    Some(body)
-                } else {
-                    by_face
                 };
-                if let Some(token) = token {
+                if let Carried::Slot(token) = slots.carried(body, l.face_name.as_deref()) {
                     out.insert(Use {
                         feature: feature.name.clone(),
                         feature_id: feature.id,
                         token: token.to_owned(),
+                        via: UseKind::Sketch,
                     });
+                }
+            }
+        }
+        out.extend(self.joint_uses(link, &slots).0);
+        out.into_iter().collect()
+    }
+
+    /// Every enclosure feature (and joint) attached to a face of the
+    /// linked board that no slot carries: section 2's parts, laminate and
+    /// pads, whose names may move to another body when the board changes.
+    pub fn unexported(&self, link: &BoardLink, sidecar: &Sidecar) -> Vec<Unexported> {
+        let slots = Slots::new(link, sidecar);
+        let mut out = BTreeSet::new();
+        for feature in &self.native.session().doc.features {
+            let FeatureKind::Sketch { sketch, .. } = &feature.kind else {
+                continue;
+            };
+            for l in &sketch.links {
+                let Some(body) = link_body(&l.source) else {
+                    continue;
+                };
+                if let Carried::Unexported = slots.carried(body, l.face_name.as_deref()) {
+                    out.insert(Unexported {
+                        feature: feature.name.clone(),
+                        body: body.to_owned(),
+                    });
+                }
+            }
+        }
+        out.extend(self.joint_uses(link, &slots).1);
+        out.into_iter().collect()
+    }
+
+    /// The joints that hold the board's occurrence by one of its faces:
+    /// those on a face a slot carries, and those on one no slot carries.
+    fn joint_uses(&self, link: &BoardLink, slots: &Slots<'_>) -> (Vec<Use>, Vec<Unexported>) {
+        let doc = &self.native.session().doc;
+        let board_occurrences: BTreeSet<u64> = doc
+            .occurrences
+            .iter()
+            .filter(|o| o.component == link.component)
+            .map(|o| o.id)
+            .collect();
+        let mut uses = Vec::new();
+        let mut unexported = Vec::new();
+        for joint in &doc.assembly.joints {
+            if joint.suppressed {
+                continue;
+            }
+            for origin in [&joint.a, &joint.b] {
+                if !board_occurrences.contains(&origin.part()) {
+                    continue;
+                }
+                let mut faces = Vec::new();
+                if let Ok(snap) = serde_json::to_value(&origin.snap) {
+                    linked_faces(&snap, &mut faces);
+                }
+                for face in faces {
+                    match slots.by_face(&face) {
+                        Some(token) => uses.push(Use {
+                            feature: joint.name.clone(),
+                            feature_id: joint.id,
+                            token: token.to_owned(),
+                            via: UseKind::Joint,
+                        }),
+                        None => unexported.push(Unexported {
+                            feature: joint.name.clone(),
+                            body: String::new(),
+                        }),
+                    }
+                }
+            }
+        }
+        (uses, unexported)
+    }
+
+    /// The board's datums the enclosure geometry under the face `face`
+    /// (a persistent name) is built on: walking back from the feature that
+    /// made the face through the sketches, faces and bodies it is made
+    /// from to every reference a slot carries, and every joint that places
+    /// the board (the board frame, and the face's trace with it, depends
+    /// on those). The enclosure half of the cycle graph.
+    pub fn built_on(&self, link: &BoardLink, sidecar: &Sidecar, face: &str) -> Vec<Use> {
+        let slots = Slots::new(link, sidecar);
+        let doc = &self.native.session().doc;
+        let mut out: BTreeSet<Use> = self.joint_uses(link, &slots).0.into_iter().collect();
+        let mut queue: Vec<u64> = feature_of(face).into_iter().collect();
+        let mut seen = BTreeSet::new();
+        while let Some(id) = queue.pop() {
+            if seen.len() >= MAX_WALK || !seen.insert(id) {
+                continue;
+            }
+            let Some(feature) = doc.features.iter().find(|f| f.id == id) else {
+                continue;
+            };
+            if feature.id == link.feature {
+                continue;
+            }
+            match &feature.kind {
+                FeatureKind::Sketch { sketch, .. } => {
+                    for l in &sketch.links {
+                        let Some(body) = link_body(&l.source) else {
+                            continue;
+                        };
+                        match slots.carried(body, l.face_name.as_deref()) {
+                            Carried::Slot(token) => {
+                                out.insert(Use {
+                                    feature: feature.name.clone(),
+                                    feature_id: feature.id,
+                                    token: token.to_owned(),
+                                    via: UseKind::Sketch,
+                                });
+                            }
+                            Carried::Unexported => {}
+                            Carried::Elsewhere => match l.face_name.as_deref().and_then(feature_of)
+                            {
+                                Some(made) => queue.push(made),
+                                // A whole body: every feature that shaped it.
+                                None => queue.extend(
+                                    doc.features
+                                        .iter()
+                                        .filter(|f| f.body_names.iter().any(|b| b == body))
+                                        .map(|f| f.id),
+                                ),
+                            },
+                        }
+                    }
+                }
+                FeatureKind::Extrude { sketch, .. } => queue.push(sketch.0),
+                kind => {
+                    if let Ok(value) = serde_json::to_value(kind) {
+                        named_features(&value, &mut queue);
+                        let mut faces = Vec::new();
+                        linked_faces(&value, &mut faces);
+                        for face in faces {
+                            if let Some(token) = slots.by_face(&face) {
+                                out.insert(Use {
+                                    feature: feature.name.clone(),
+                                    feature_id: feature.id,
+                                    token: token.to_owned(),
+                                    via: UseKind::Sketch,
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -539,6 +777,7 @@ impl Enclosure {
         candidate: &Sidecar,
     ) -> Result<Vec<EnclosureEffect>> {
         let uses = self.uses(link, published);
+        let unexported = self.unexported(link, published);
         let before_errors: BTreeSet<String> = self
             .feature_errors()
             .into_iter()
@@ -586,6 +825,30 @@ impl Enclosure {
                 effect: EffectKind::JointUnsolved,
                 datum: None,
                 message: format!("Joint ‘{joint}’ would no longer solve"),
+            });
+        }
+        // Features on faces no slot carries may follow another body after
+        // the publish, whatever the dry run shows now.
+        let mut named = BTreeSet::new();
+        for u in unexported {
+            if !named.insert(u.feature.clone()) {
+                continue;
+            }
+            let part = if u.body.is_empty() {
+                "the board".to_owned()
+            } else {
+                format!("the board's ‘{}’", u.body)
+            };
+            effects.push(EnclosureEffect {
+                feature: u.feature.clone(),
+                effect: EffectKind::UnexportedReference,
+                datum: None,
+                message: pcbcraft_core::interface::findings::housing_unexported_face(
+                    &format!("‘{}’", u.feature),
+                    &part,
+                    Vec::new(),
+                )
+                .message,
             });
         }
         let after = self.own_faces(link)?;
@@ -653,6 +916,17 @@ impl Enclosure {
             });
         }
         Ok(effects)
+    }
+}
+
+/// The body a sketch link names.
+fn link_body(source: &LinkSource) -> Option<&str> {
+    match source {
+        LinkSource::Face { body, .. }
+        | LinkSource::Edge { body, .. }
+        | LinkSource::Vertex { body, .. }
+        | LinkSource::Body { body } => Some(body.as_str()),
+        _ => None,
     }
 }
 
