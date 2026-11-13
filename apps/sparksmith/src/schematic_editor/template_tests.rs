@@ -161,12 +161,13 @@ fn choosing_a_row_creates_the_component_and_arms_placement() -> TestResult {
 }
 
 /// VM check #4 (run 3 #10): on the placed USB-C receptacle no pin number's
-/// box runs past its pin end, touches the end's mark, another number or a
-/// pin name; stacked pads read in full (run 4 #12: the short form was cut
-/// too small to read), at the pin text height; the long value wraps
-/// within the body's width.
+/// box runs past its pin end, touches the end's mark, the body outline,
+/// another number or a pin name, measured at the drawn fonts' width; stacked
+/// pads read in full (run 4 #12: the short form was cut too small to read),
+/// at the pin text height. A connector without a value shows none, never
+/// its component name (run 4 #11).
 #[test]
-fn usb_c_pin_numbers_sit_clear_and_the_value_wraps() -> TestResult {
+fn usb_c_pin_numbers_sit_clear_and_no_name_is_its_value() -> TestResult {
     use sparksmith_core::geometry::Bounds;
     use sparksmith_core::schematic::{self, PIN_RING_MM};
     let mut engine = empty_engine();
@@ -191,10 +192,12 @@ fn usb_c_pin_numbers_sit_clear_and_the_value_wraps() -> TestResult {
     let occurrence = project.occurrences.first().ok_or("placed")?.id;
     let unit = schematic::placed_unit(project, occurrence)?;
     let m = TextMetric::default();
+    // Capitals and digits draw at up to 0.9 of their cap height.
+    let wide = TextMetric { advance: 0.9 };
     let numbers: Vec<(&schematic::PlacedPin, Bounds)> = unit
         .pins
         .iter()
-        .filter_map(|p| Some((p, p.number.as_ref()?.bounds(m))))
+        .filter_map(|p| Some((p, p.number.as_ref()?.bounds(wide))))
         .collect();
     assert_eq!(numbers.len(), 9, "every pin numbered");
     let names: Vec<Bounds> = unit
@@ -206,13 +209,15 @@ fn usb_c_pin_numbers_sit_clear_and_the_value_wraps() -> TestResult {
         let text = pin.number.as_ref().map_or("", |t| t.text.as_str());
         let ring = Bounds::point(pin.ring_centre(PIN_RING_MM)).inflated(PIN_RING_MM);
         assert!(!b.intersects(&ring), "{text}: on the pin end's mark");
-        // Along the pin, the box stays between its end and the body.
+        // Along the pin, the box keeps clear of the body outline (its
+        // stroke and a gap) and of the pin end's ring.
         let o = pin.outward();
         let along = |p: [f64; 2]| p[0] * o[0] + p[1] * o[1];
         let (lo, hi) = (along(pin.body_end), along(pin.end));
         for corner in [b.min, b.max, [b.min[0], b.max[1]], [b.max[0], b.min[1]]] {
             let a = along(corner);
-            assert!(a >= lo - 1e-9 && a <= hi + 1e-9, "{text}: past the pin end");
+            assert!(a >= lo + 0.25 - 1e-9, "{text}: on the body outline");
+            assert!(a <= hi - PIN_RING_MM + 1e-9, "{text}: over the pin end");
         }
         for (other, c) in &numbers[i + 1..] {
             let them = other.number.as_ref().map_or("", |t| t.text.as_str());
@@ -239,22 +244,13 @@ fn usb_c_pin_numbers_sit_clear_and_the_value_wraps() -> TestResult {
             number.height
         );
     }
-    let body = unit
-        .shapes
-        .iter()
-        .map(|s| s.shape.bounds(s.width))
-        .reduce(Bounds::union)
-        .ok_or("a body")?;
-    let value = unit
-        .texts
-        .iter()
-        .find(|t| t.text.contains("USB4105"))
-        .ok_or("the value")?;
-    assert!(value.text.contains('\n'), "{:?}", value.text);
-    let v = value.bounds(m);
+    // The component name ("USB-C receptacle …, GCT USB4105 …") is no value.
     assert!(
-        v.max[0] - v.min[0] <= body.max[0] - body.min[0] + 1e-9,
-        "{v:?} within {body:?}"
+        unit.texts
+            .iter()
+            .all(|t| !t.text.contains("USB4105") && !t.text.contains("receptacle")),
+        "{:?}",
+        unit.texts
     );
     Ok(())
 }

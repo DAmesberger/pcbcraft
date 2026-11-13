@@ -2334,7 +2334,9 @@ fn a_usb_c_receptacle_is_found_built_mapped_and_published() -> Fallible<()> {
     assert_eq!(symbol.units.iter().map(|u| u.pins.len()).sum::<usize>(), 9);
     // Run 4, finding 12: each pin's stacked pad numbers ("A1B12,B1A12")
     // fit along its stub at the pin text height, so none is cut to
-    // "A1B12…"; the stubs grow by whole modules and end on the grid.
+    // "A1B12…"; the stubs grow by whole modules and end on the grid. The
+    // number is measured at the drawn fonts' 0.9 cap-height advance and
+    // keeps 0.4 mm clear of the pin end's ring and of the body outline.
     let height = symbol.pin_text_height_nm.to_mm_f64();
     for pin in symbol.units.iter().flat_map(|u| &u.pins) {
         let number: Vec<&str> = package
@@ -2345,9 +2347,9 @@ fn a_usb_c_receptacle_is_found_built_mapped_and_published() -> Fallible<()> {
             .collect();
         let number = number.join(",");
         let length = pin.length_nm.to_mm_f64();
-        let width = number.chars().count() as f64 * 0.6 * height;
+        let width = number.chars().count() as f64 * 0.9 * height;
         assert!(
-            width <= 0.9 * length + 1e-9,
+            width + 2.0 * 0.4 <= length + 1e-9,
             "{number} on a {length} mm stub"
         );
         let modules = length / 2.5;
@@ -2362,7 +2364,7 @@ fn a_usb_c_receptacle_is_found_built_mapped_and_published() -> Fallible<()> {
         .flat_map(|u| &u.pins)
         .find(|p| p.terminal == gnd)
         .ok_or("the GND pin")?;
-    assert_eq!(gnd.length_nm, nm(7.5));
+    assert_eq!(gnd.length_nm, nm(12.5));
 
     let findings = draft_findings(&engine)?;
     assert_eq!(findings, Vec::<String>::new());
