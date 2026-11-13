@@ -166,6 +166,8 @@ Datum solids sit in a separate component named as reference geometry (`Board int
 | `mechanical` (default) | the slots, laminate, pads and parts |
 | `full` | the slots and every copper body |
 
+Section 2 of a mechanical or full publish is checked against the board plan of that tier's board before anything is written (stage A5, `pcbcraft_solidcraft::export::check`); the reply's `published.check` lists every body that differs, as `project.export_native` does ([development](../development.md), "Exports").
+
 **The sidecar,** `<name>.interface.json`, written beside the design, with the same content in the design's document metadata under a reverse-DNS key, in chunks under Solidcraft's 64 KiB value limit. Its schema is recorded in [board-interface.schema.json](board-interface.schema.json) (`sidecar`), with the stored table, the commands and the reports; a test fails when the recorded schemas and the types differ (set `PCBCRAFT_BLESS=1` to rewrite the file after a deliberate change).
 
 ```json

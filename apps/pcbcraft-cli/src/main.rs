@@ -50,8 +50,11 @@ const USAGE: &str = concat!(
                                    from the fab profile library (else the default)
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
   sample-library NEW_DIR [NAME]    write the synthetic catalog as a library folder
-  export FILE.pcbcraft NEW_FILE.solidcraft
-                                   export a project as a native Solidcraft model
+  export FILE.pcbcraft NEW_FILE.solidcraft [--tier mechanical|full]
+                                   export the board as a native Solidcraft model:
+                                   laminate, pads and parts (the default), or with
+                                   every copper body; its bodies are checked
+                                   against the board plan
   export-schematic-pdf FILE.pcbcraft OUT.pdf [--sheet ID]...
                                    print the schematic (all sheets, or the given
                                    sheets in page order) as a vector PDF"
@@ -261,11 +264,19 @@ fn run() -> Result<()> {
         [command, path, rest @ ..] if command == "sample-library" && rest.len() <= 1 => {
             sample_library(path, rest.first().map_or("Example library", String::as_str))
         }
-        [command, source, target] if command == "export" => {
+        [command, source, target, rest @ ..] if command == "export" => {
+            let tier = match rest {
+                [] => "mechanical",
+                [flag, tier] if flag == "--tier" && (tier == "mechanical" || tier == "full") => {
+                    tier.as_str()
+                }
+                _ => return Err("export: use --tier mechanical or --tier full".into()),
+            };
             let mut session = open(Some(source))?;
             print(&execute(
                 &mut session,
-                json!({"command": "project.export_native", "params": {"path": target}}),
+                json!({"command": "project.export_native",
+                       "params": {"path": target, "tier": tier}}),
             )?)
         }
         [command, source, target, rest @ ..] if command == "export-schematic-pdf" => {

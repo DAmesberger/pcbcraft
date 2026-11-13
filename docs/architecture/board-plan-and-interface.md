@@ -598,7 +598,7 @@ Stages A are option 3; stages B are the interface (2.8). Hours are estimates.
 | 6 | A4 | Remove the live native board and its kept undo models; the direct mesh becomes the only live path | 6–8 | 3D open on the ESP32 under 300 MB (target; about 1.8 GB live today, read in `docs/3d-speed-profile.md`); undo needs no kept model |
 | 7 | B4, B5 | Enclosure link and two-way check | 20–24 | Acceptance 6, 7; conflict table |
 | 8 | B6 | UI | 10–12 | VM review |
-| 9 | A5 | Export tiers, progress and cancel, the per-export volume check | 8–10 | A full export reports any body that differs from the plan |
+| 9 | A5 (built) | Export tiers, progress and cancel, the per-export volume check | 8–10 | A full export reports any body that differs from the plan (`export::tests::a_full_export_reports_a_body_that_differs_from_the_plan`) |
 | 10 | B7, B9 | Live channel; VM run and measurements | 14–17 | Acceptance 9 |
 | Later | A6 | Scale: one-slab laminate, lazy inner layers, compact meshes; then lift `MAX_TRACKS` | 10–16 | 20,000 vias and 60,000 tracks under 1 GB and 1 s (target) |
 | Later | A7 | Persisted part cache (mesh, face table, datums) | 10–14 | A board opens in 3D with no kernel call |

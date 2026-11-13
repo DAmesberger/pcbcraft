@@ -400,3 +400,14 @@ Two runs; the second after the meshed bodies gained their outline edges (below).
 Each update from the last model takes 40–60 ms (the edit's board, then the refilled one). The refilled board's 158–162 ms is still just above the A2 target of 150 ms; as A2 found, packing for the GPU (`model_scene::build`, 80–90 ms) is the larger part, and repacking only the changed bodies is the next step.
 
 **Edges of the meshed bodies.** With the direct mesh as the only live path, the 3D dimension tool could no longer reach the board's edges: the kernel's laminate had B-rep edges along the outline, the meshed one none (`dimension_3d_tests`). Each meshed plan body now carries a prism's edges (top and bottom outlines, one polyline per run of walls joined at a smooth turn, an upright edge at each sharp corner, each naming the faces it bounds; `the_meshed_laminate_has_the_board_outlines_edges`). It cost nothing measurable above: the second run's numbers include it.
+
+## Update, 13 November 2026: export tiers and the per-export check (stage A5)
+
+`pcbcraft_solidcraft::export::board` on the ESP32-S31 example (`crates/automation/tests/export_tiers.rs`, the `test` profile, which is optimised with debug information; 18-core host shared with other builds, load average 4–7). Every flat body was checked against the board plan before writing:
+
+| Tier | Wall | Build | Check | Save | Commands | Bodies written | Flat bodies planned / built | Differences | File |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Mechanical (default) | 10.3 s | 5.66 s | 1.66 s | 3.00 s | 1,235 | 470 | 254 / 254 | 0 | 71 KB |
+| Full | 24.2 s | 12.76 s | 3.83 s | 7.57 s | 3,243 | 1,414 | 920 / 920 | 0 | 717 KB |
+
+The check measures each copper body's volume (the kernel meshes it finely), which is most of its time; laminate slabs are compared by box only, as in `cargo xtask board-parity`. One run each; these are measurements of this board on this machine, not targets.

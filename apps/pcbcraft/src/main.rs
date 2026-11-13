@@ -14,6 +14,7 @@ mod layer_view;
 mod library_sources;
 mod lighting;
 mod menu_bar;
+mod model_export;
 mod model_library;
 mod model_scene;
 #[cfg(target_os = "macos")]
