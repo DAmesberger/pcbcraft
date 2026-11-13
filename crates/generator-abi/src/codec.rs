@@ -162,13 +162,6 @@ pub fn result_hash(canonical_generation: &[u8]) -> [u8; 32] {
     sha256(canonical_generation)
 }
 
-/// The params hash: SHA-256 of a request's canonical bytes (ABI, scope and
-/// the complete parameters). With the module hash it is the part key: two
-/// requests with equal keys ask the same module for the same part.
-pub fn params_hash(request: &crate::v1::Request) -> Result<[u8; 32], CodecError> {
-    Ok(sha256(&encode(request)?))
-}
-
 /// Lower-case hexadecimal of `bytes`.
 pub fn hex(bytes: &[u8]) -> String {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";

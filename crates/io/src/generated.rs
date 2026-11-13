@@ -24,17 +24,13 @@ pub fn verify(file: &EditorFile) -> Result<()> {
                    request: &sparksmith_generators::abi::v1::Request|
      -> std::result::Result<Generated, Failure> {
         let hash: ContentHash = module.hash;
-        if !loaded.contains_key(&hash) {
-            let compiled = runtime.load(&module.data)?;
-            loaded.insert(hash, compiled);
-        }
-        match loaded.get(&hash) {
-            Some(compiled) => compiled.generate(request),
-            None => Err(Failure::one(
-                "generator.invalid_module",
-                "The generator module could not be loaded. It was not run.".into(),
-            )),
-        }
+        let compiled = match loaded.entry(hash) {
+            std::collections::btree_map::Entry::Occupied(found) => found.into_mut(),
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(runtime.load(&module.data)?)
+            }
+        };
+        compiled.generate(request)
     };
     generated::verify(library, &mut run).map_err(Error::Document)
 }

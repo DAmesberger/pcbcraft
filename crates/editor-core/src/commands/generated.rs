@@ -178,9 +178,8 @@ pub(crate) fn generate(
             given.insert(param.key.clone(), value);
         }
     }
-    let wire =
-        sparksmith_generator_abi::params::complete(&description, request.scope.wire(), &given)
-            .map_err(|f| generated::failure(&f))?;
+    let wire = generated::complete(&description, request.scope.wire(), &given)
+        .map_err(|f| generated::failure(&f))?;
     let key = generated::key(request.module.hash, &wire)?;
     if let Some(existing) = generated::find(&document.project.library, &key) {
         return Ok(Outcome::Generated {

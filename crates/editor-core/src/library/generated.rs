@@ -122,6 +122,41 @@ impl ParamValue {
     }
 }
 
+/// The request for `given` parameters in `scope`, every default filled
+/// from the description, checked with the ABI's own parameter check (as
+/// `sparksmith_generators::params::complete` does on the host). Defaults
+/// are filled before hashing, so a default that changes in a later module
+/// can never change a part's key.
+pub fn complete(
+    description: &v1::Description,
+    scope: v1::Scope,
+    given: &v1::Params,
+) -> std::result::Result<v1::Request, Failure> {
+    if !description.scopes.contains(&scope) {
+        let what = match scope {
+            v1::Scope::Component => "complete parts",
+            v1::Scope::Package => "packages on their own",
+        };
+        return Err(Failure::one(
+            "param.scope",
+            format!("The {} generator does not make {what}.", description.name),
+        ));
+    }
+    let mut params = given.clone();
+    for param in &description.params {
+        params
+            .entry(param.key.clone())
+            .or_insert_with(|| param.default.clone());
+    }
+    sparksmith_generator_abi::params::check(description, &params)
+        .map_err(|problems| Failure { problems })?;
+    Ok(v1::Request {
+        abi: v1::ABI,
+        scope,
+        params,
+    })
+}
+
 /// Parameters by key.
 pub type GeneratorParams = BTreeMap<String, ParamValue>;
 
@@ -175,13 +210,15 @@ impl GeneratedFrom {
     }
 }
 
-/// The key of `request` to `module`.
+/// The key of `request` to `module`: the params hash is the SHA-256 of the
+/// request's canonical bytes (ABI, scope and complete parameters).
 pub fn key(module: ContentHash, request: &v1::Request) -> Result<PartKey> {
-    let params = sparksmith_generator_abi::params_hash(request).map_err(|e| {
+    let bytes = sparksmith_generator_abi::encode(request).map_err(|e| {
         Error::Invalid(format!(
             "generated.params: the parameters cannot be written canonically ({e})"
         ))
     })?;
+    let params = sparksmith_generator_abi::sha256(&bytes);
     Ok(PartKey {
         module,
         params: ContentHash(params),
