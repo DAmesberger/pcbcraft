@@ -478,3 +478,127 @@ fn a_side_that_is_not_printed_has_no_legend_finding() -> Fallible {
     );
     Ok(())
 }
+
+/// The footprint and package drafts a starter row builds.
+fn starter(
+    name: &str,
+) -> Fallible<(
+    crate::library::FootprintDefinition,
+    crate::library::PackageDefinition,
+)> {
+    use crate::library::templates::catalog::{NewFromTemplate, RowSource};
+    let mut engine = Engine::default();
+    let row = crate::library::templates::starter::row(name)?;
+    let crate::Outcome::DraftsCreated { ids } = engine.apply(
+        engine.revision(),
+        Operation::Library(crate::LibraryCommand::NewFromTemplate(Box::new(
+            NewFromTemplate {
+                row: RowSource::Starter { name: name.into() },
+                values: None,
+                skeleton: row.definition.skeleton,
+                name: name.into(),
+                designator_prefix: None,
+                symbol: None,
+                without_fields: false,
+            },
+        ))),
+    )?
+    else {
+        return Err("no drafts".into());
+    };
+    let (mut footprint, mut package) = (None, None);
+    for id in ids {
+        match engine.drafts().get(id).map(|d| &d.definition) {
+            Some(crate::library::Definition::Footprint(f)) => footprint = Some(f.clone()),
+            Some(crate::library::Definition::Package(p)) => package = Some(p.clone()),
+            _ => {}
+        }
+    }
+    Ok((footprint.ok_or("footprint")?, package.ok_or("package")?))
+}
+
+/// Run 4, finding 21: a part's default silkscreen designator lands clear of
+/// its body on every turn and on either side; an explicit offset in the
+/// Designator card is kept as given, even over the body.
+#[test]
+fn a_default_designator_stays_clear_of_the_body() -> Fallible {
+    use crate::geometry::Bounds;
+    use crate::library::graphics::TextMetric;
+    for name in ["Chip resistor 0603 (1608 metric)", "SOT-23-3"] {
+        let (footprint, package) = starter(name)?;
+        let envelope = footprint.envelope_outline(&package);
+        let mut engine = Engine::showcase()?;
+        let id = part_at(&mut engine, 0.0, Layer::Top)?;
+        let mut project = engine.project().clone();
+        let footprint_id =
+            instances::resolve(&project.library, project.instance(id).ok_or("part")?)?
+                .physical
+                .map(|p| p.footprint.id)
+                .ok_or("physical")?;
+        for published in project.library.footprints.iter_mut() {
+            if published.id == footprint_id {
+                published.definition = footprint.clone();
+            }
+        }
+        for layer in [Layer::Top, Layer::Bottom] {
+            for rotation in [0.0, 90.0, 180.0, 270.0] {
+                let placement = project
+                    .placements
+                    .iter_mut()
+                    .find(|p| p.instance == id)
+                    .ok_or("placement")?;
+                placement.rotation_deg = rotation;
+                placement.layer = layer;
+                let t = layout::placement_transform(placement, &footprint.datum);
+                let body = Bounds::of(
+                    [
+                        envelope.min,
+                        [envelope.max[0], envelope.min[1]],
+                        envelope.max,
+                        [envelope.min[0], envelope.max[1]],
+                    ]
+                    .map(|c| t.apply(c)),
+                )
+                .ok_or("body")?;
+                let text = designator_text(&project, id)?;
+                assert!(
+                    !text.bounds(TextMetric::default()).intersects(&body),
+                    "{name} at {rotation}° on {layer:?}: {:?} over {body:?}",
+                    text.bounds(TextMetric::default())
+                );
+            }
+        }
+        // Moved by hand onto the body (on the top, unturned, the
+        // footprint's axes are the board's): kept there.
+        let placement = project
+            .placements
+            .iter_mut()
+            .find(|p| p.instance == id)
+            .ok_or("placement")?;
+        placement.rotation_deg = 0.0;
+        placement.layer = Layer::Top;
+        let centre = placement.position;
+        let before = designator_text(&project, id)?;
+        let graphic = instances::text::target(&project, id, None)?;
+        let offset = [centre[0] - before.at[0], centre[1] - before.at[1]];
+        let instance = project
+            .instances
+            .iter_mut()
+            .find(|i| i.id == id)
+            .ok_or("instance")?;
+        instance.text_placements.insert(
+            graphic,
+            TextPlacement {
+                offset,
+                turn: Rotation::R0,
+            },
+        );
+        let after = designator_text(&project, id)?;
+        assert!(
+            (after.at[0] - centre[0]).abs() < 1e-6 && (after.at[1] - centre[1]).abs() < 1e-6,
+            "{name}: {:?} vs {centre:?}",
+            after.at
+        );
+    }
+    Ok(())
+}

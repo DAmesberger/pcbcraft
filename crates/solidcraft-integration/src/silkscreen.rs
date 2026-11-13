@@ -35,6 +35,9 @@ pub struct Legend<'a> {
     pub paths: &'a [Path],
     /// Board vias, whose tented domes the legend climbs.
     pub vias: &'a [ViaMark],
+    /// Outer-layer pour regions (outer loop, then its holes), whose mask
+    /// the legend climbs too.
+    pub pours: &'a [(Layer, Vec<Vec<Point>>)],
     /// The pick identity of each placed instance, which its legend shares.
     pub picks: &'a BTreeMap<Id, u64>,
 }
@@ -107,39 +110,25 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
             layer,
             slab(&flat, z0, z1, FILM_TILE_MM),
         ))?;
-        let covers = covers(legend, side);
-        let raised: Vec<Vec<Point>> = loops
-            .iter()
-            .flat_map(|stroke| {
-                covers
-                    .iter()
-                    .filter_map(move |cover| clip_convex(stroke, cover))
-            })
-            .collect();
-        if raised.is_empty() {
-            continue;
-        }
-        // One stroke clipped by overlapping covers (a track's cap and a
-        // via's dome) gives coincident pieces, whose shared edges the
-        // slab cannot pair: merged first, they are one region.
-        let raised = appearance::union(&raised).unwrap_or(raised);
         let (c0, c1) = board.span(side, crown - sink, crown + INK_MM);
-        display_only(appearance::push(
-            &mut films,
-            Some(board),
-            BodyKind::Silkscreen,
-            item,
-            layer,
-            slab(
-                &Region {
-                    fills: raised,
-                    cuts,
-                },
-                c0,
-                c1,
-                FILM_TILE_MM,
-            ),
-        ))?;
+        for raised in raised(&loops, &covers(legend, side)) {
+            display_only(appearance::push(
+                &mut films,
+                Some(board),
+                BodyKind::Silkscreen,
+                item,
+                layer,
+                slab(
+                    &Region {
+                        fills: raised.fills,
+                        cuts: raised.cuts.into_iter().chain(cuts.clone()).collect(),
+                    },
+                    c0,
+                    c1,
+                    FILM_TILE_MM,
+                ),
+            ))?;
+        }
     }
     Ok(films)
 }
@@ -155,23 +144,123 @@ fn display_only(pushed: Result<()>) -> Result<()> {
     }
 }
 
-/// The convex outlines on `side` where the mask stands over copper: track
-/// caps and tented via domes' crowns (copper itself when there is no mask).
-fn covers(legend: &Legend<'_>, side: Layer) -> Vec<Vec<Point>> {
-    let mut out: Vec<Vec<Point>> = legend
+/// The shapes on `side` where the mask stands over copper: track caps,
+/// tented via domes' crowns (copper itself when there is no mask) and the
+/// pours, each an outer loop counter-clockwise and its holes clockwise.
+fn covers(legend: &Legend<'_>, side: Layer) -> Vec<Vec<Vec<Point>>> {
+    let mut out: Vec<Vec<Vec<Point>>> = legend
         .paths
         .iter()
         .filter(|p| p.layer == side)
-        .map(|p| stadium(p.start, p.end, p.width / 2.0 + CAP_MARGIN_MM))
+        .map(|p| vec![stadium(p.start, p.end, p.width / 2.0 + CAP_MARGIN_MM)])
         .collect();
     out.extend(
         legend
             .vias
             .iter()
             .filter(|v| v.covered(legend.board, side))
-            .map(|v| appearance::circle(v.at, v.diameter / 2.0)),
+            .map(|v| vec![oriented(appearance::circle(v.at, v.diameter / 2.0), true)]),
+    );
+    out.extend(
+        legend
+            .pours
+            .iter()
+            .filter(|(layer, _)| *layer == side)
+            .map(|(_, loops)| {
+                loops
+                    .iter()
+                    .enumerate()
+                    .map(|(k, l)| oriented(l.clone(), k == 0))
+                    .collect()
+            }),
     );
     out
+}
+
+/// One raised film: its pieces and their holes.
+struct Raised {
+    fills: Vec<Vec<Point>>,
+    cuts: Vec<Vec<Point>>,
+}
+
+/// The ink of `loops` over `covers`, exactly (`i_overlay`'s non-zero
+/// intersection, so overlapping covers merge and a track in a pour's
+/// clearance gap stands on its own cap). A piece inside another piece's
+/// hole would be cut by that hole in one slab, so pieces go to one film
+/// per nesting depth; nearly always there is one.
+fn raised(loops: &[Vec<Point>], covers: &[Vec<Vec<Point>>]) -> Vec<Raised> {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::core::overlay_rule::OverlayRule;
+    use i_overlay::float::single::SingleFloatOverlay;
+    if loops.is_empty() || covers.is_empty() {
+        return Vec::new();
+    }
+    let ink: Vec<Vec<Vec<Point>>> = loops
+        .iter()
+        .map(|l| vec![oriented(l.clone(), true)])
+        .collect();
+    let pieces: Vec<Vec<Vec<Point>>> = ink
+        .overlay(&covers.to_vec(), OverlayRule::Intersect, FillRule::NonZero)
+        .into_iter()
+        .filter(|shape| shape.first().is_some_and(|outer| outer.len() >= 3))
+        .collect();
+    let depths: Vec<usize> = pieces
+        .iter()
+        .map(|shape| {
+            let probe = shape.first().and_then(|outer| outer.first()).copied();
+            probe.map_or(0, |p| {
+                pieces
+                    .iter()
+                    .flat_map(|s| s.iter().skip(1))
+                    .filter(|h| inside(p, h))
+                    .count()
+            })
+        })
+        .collect();
+    let mut films: Vec<Raised> = Vec::new();
+    for (shape, depth) in pieces.into_iter().zip(depths) {
+        while films.len() <= depth {
+            films.push(Raised {
+                fills: Vec::new(),
+                cuts: Vec::new(),
+            });
+        }
+        let mut rings = shape.into_iter();
+        if let (Some(film), Some(outer)) = (films.get_mut(depth), rings.next()) {
+            film.fills.push(outer);
+            film.cuts.extend(rings);
+        }
+    }
+    films.retain(|f| !f.fills.is_empty());
+    films
+}
+
+/// `ring` counter-clockwise when `ccw`, else clockwise.
+fn oriented(mut ring: Vec<Point>, ccw: bool) -> Vec<Point> {
+    let n = ring.len();
+    let area: f64 = (0..n)
+        .map(|i| ring[i][0] * ring[(i + 1) % n][1] - ring[(i + 1) % n][0] * ring[i][1])
+        .sum();
+    if (area > 0.0) != ccw {
+        ring.reverse();
+    }
+    ring
+}
+
+/// Whether `p` lies strictly inside `ring` (even-odd).
+fn inside(p: Point, ring: &[Point]) -> bool {
+    let n = ring.len();
+    let mut odd = false;
+    for i in 0..n {
+        let (a, b) = (ring[i], ring[(i + 1) % n]);
+        if (a[1] > p[1]) != (b[1] > p[1]) {
+            let x = a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
+            if x > p[0] {
+                odd = !odd;
+            }
+        }
+    }
+    odd
 }
 
 /// The loops of a stroked (and possibly filled) legend shape.
@@ -236,60 +325,6 @@ fn stadium(a: Point, b: Point, half: f64) -> Vec<Point> {
         }
     }
     out
-}
-
-/// Sutherland–Hodgman clip of `subject` to the convex loop `clip` (either
-/// orientation); `None` when nothing is left.
-fn clip_convex(subject: &[Point], clip: &[Point]) -> Option<Vec<Point>> {
-    let area = |p: &[Point]| -> f64 {
-        let n = p.len();
-        (0..n)
-            .map(|i| p[i][0] * p[(i + 1) % n][1] - p[(i + 1) % n][0] * p[i][1])
-            .sum()
-    };
-    let bounds = |p: &[Point]| {
-        p.iter()
-            .fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, q| {
-                [
-                    b[0].min(q[0]),
-                    b[1].min(q[1]),
-                    b[2].max(q[0]),
-                    b[3].max(q[1]),
-                ]
-            })
-    };
-    let (bs, bc) = (bounds(subject), bounds(clip));
-    if bs[2] < bc[0] || bc[2] < bs[0] || bs[3] < bc[1] || bc[3] < bs[1] {
-        return None;
-    }
-    let sign = if area(clip) < 0.0 { -1.0 } else { 1.0 };
-    let mut out: Vec<Point> = subject.to_vec();
-    let n = clip.len();
-    for i in 0..n {
-        let (a, b) = (clip[i], clip[(i + 1) % n]);
-        let side =
-            |p: Point| sign * ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]));
-        let input = std::mem::take(&mut out);
-        let m = input.len();
-        for j in 0..m {
-            let (p, q) = (input[(j + m - 1) % m], input[j]);
-            let (sp, sq) = (side(p), side(q));
-            if sq >= 0.0 {
-                if sp < 0.0 {
-                    let t = sp / (sp - sq);
-                    out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
-                }
-                out.push(q);
-            } else if sp >= 0.0 {
-                let t = sp / (sp - sq);
-                out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
-            }
-        }
-        if out.len() < 3 {
-            return None;
-        }
-    }
-    (area(&out).abs() > 1e-12).then_some(out)
 }
 
 #[cfg(test)]

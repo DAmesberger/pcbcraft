@@ -269,6 +269,52 @@ fn chip_pads_follow_their_parameters_with_explicit_courtyard_and_assembly() -> R
     Ok(())
 }
 
+/// Run 4, finding 21: a draft's designator in the middle, where the body
+/// will stand, moves to just above the built courtyard, centred.
+#[test]
+fn a_designator_over_the_body_moves_above_the_courtyard() -> Result<()> {
+    use pcbcraft_core::ids::GraphicId;
+    use pcbcraft_core::library::designator_placeholder;
+    use pcbcraft_core::library::graphics::{TextContent, TextMetric};
+    for (n, body, kind) in [
+        (2, [1.6, 0.8, 0.45], TemplateKind::Chip),
+        // A 2512: the lands sit far apart, so the middle is clear of copper
+        // but under the body.
+        (2, [6.3, 3.2, 0.6], TemplateKind::Chip),
+        (8, [4.9, 3.9, 1.5], TemplateKind::GullWing),
+    ] {
+        let pkg = package(n, body);
+        let mut draft = empty();
+        draft.graphics.push(designator_placeholder(
+            GraphicId(1),
+            PointNm::default(),
+            DrawingLayer::Silkscreen,
+        ));
+        draft.next_local = 2;
+        let template = FootprintTemplate::defaults(kind, &pkg);
+        let (def, _) = footprint_family::build(&draft, &pkg, &template, &EV)?;
+        let (a, b) = rect_on(&def, DrawingLayer::Courtyard)?;
+        let text = def
+            .graphics
+            .iter()
+            .find_map(|g| match &g.item {
+                Item::Text(t)
+                    if g.layer == DrawingLayer::Silkscreen
+                        && t.content == TextContent::Designator =>
+                {
+                    Some(t)
+                }
+                _ => None,
+            })
+            .ok_or_else(|| Error::NotFound("designator".into()))?;
+        let at = text.at.to_mm_f64();
+        let extent = text.bounds(TextMetric::default());
+        assert!(close(at[0], (a[0] + b[0]) / 2.0), "{kind:?}: {at:?}");
+        assert!(extent.min[1] > b[1], "{kind:?}: {extent:?} over {b:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn polarised_chip_marks_pin_one_with_a_silkscreen_dot_clear_of_copper() -> Result<()> {
     let pkg = package(2, [3.5, 2.8, 1.9]);
