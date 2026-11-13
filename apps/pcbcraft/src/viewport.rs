@@ -90,6 +90,17 @@ impl ShadowLayers {
             bottom: side(Layer::Bottom),
         }
     }
+
+    /// Following the net, the packages are see-through: they cast no
+    /// contact shadow, which would darken the net under them. The ground
+    /// shadow stays.
+    fn following(self, following: bool) -> Self {
+        Self {
+            top: self.top && !following,
+            bottom: self.bottom && !following,
+            ..self
+        }
+    }
 }
 
 /// A PBR repack running off the UI thread: the model generation and layer
@@ -97,6 +108,7 @@ impl ShadowLayers {
 struct Repack {
     generation: u64,
     layers: LayerView,
+    fade: Option<Arc<model_scene::Fade>>,
     result: Receiver<Result<GpuScene, String>>,
 }
 
@@ -175,6 +187,13 @@ pub struct Viewport {
     hovered: Option<(surface::Hovered, gpu::SceneBlock)>,
     /// Where the last click that picked landed (screen points).
     clicked_at: Option<egui::Pos2>,
+    /// Follow the net: a view preference, off by default ([`follow`]).
+    follow: bool,
+    /// The pick identities the follow-the-net look keeps solid (the
+    /// selected net's bodies), whether or not it is on.
+    focus: Vec<u64>,
+    /// The follow-the-net look drawn now: on, with a focus.
+    fade: Option<Arc<model_scene::Fade>>,
 }
 
 impl Viewport {
@@ -277,6 +296,9 @@ impl Viewport {
             realistic: true,
             hovered: None,
             clicked_at: None,
+            follow: false,
+            focus: Vec::new(),
+            fade: None,
         };
         result.fit();
         result
@@ -370,13 +392,16 @@ impl Viewport {
             model_scene::keep_visible(&mut stream.tris, &model.runs, &self.layers);
             stream.graphs = Default::default();
         }
+        // The follow-the-net look is packed again too; the model shows as
+        // built until then.
+        let as_built = every_layer && self.fade.is_none();
         self.model = Some(model);
         // Its bodies are new: a hover over the last model's is gone.
         self.hovered = None;
         self.generation = self.generation.wrapping_add(1);
         self.repack = None;
         self.publish_stream(stream);
-        if !every_layer {
+        if !as_built {
             self.start_repack();
         }
         self.shadow_view = None;
@@ -466,17 +491,21 @@ impl Viewport {
         let (send, result) = mpsc::channel();
         let view = layers.clone();
         let stack = model.stack.clone();
+        let fade = self.fade.clone();
+        let look = fade.clone();
         let spawned = std::thread::Builder::new()
             .name("pcb-3d-repack".into())
             .spawn(move || {
                 let packed =
-                    model_scene::pack(&geometry, &decals, &view, &stack).map(|(scene, _)| scene);
+                    model_scene::pack_faded(&geometry, &decals, &view, &stack, look.as_deref())
+                        .map(|(scene, _)| scene);
                 let _ = send.send(packed);
             });
         self.repack = match spawned {
             Ok(_) => Some(Repack {
                 generation: self.generation,
                 layers,
+                fade,
                 result,
             }),
             Err(_) => None,
@@ -490,7 +519,9 @@ impl Viewport {
         };
         match repack.result.try_recv() {
             Ok(Ok(stream))
-                if repack.generation == self.generation && repack.layers == self.layers =>
+                if repack.generation == self.generation
+                    && repack.layers == self.layers
+                    && repack.fade == self.fade =>
             {
                 self.repack = None;
                 self.publish_stream(stream);
@@ -544,6 +575,15 @@ impl Viewport {
         let display = self.display_place();
         let shown = |i: &&model_scene::Instanced| self.layers.draws(i.layer);
         let mut out = Vec::new();
+        if let Some(fade) = self.fade.as_deref() {
+            for i in model.instanced.iter().filter(shown) {
+                out.extend(i.split(scene, &model.geometry, display.as_ref(), fade));
+            }
+            for i in self.decals.meshes.iter().filter(shown) {
+                out.extend(i.split(scene, &self.decals.geometry, display.as_ref(), fade));
+            }
+            return out;
+        }
         for i in model.instanced.iter().filter(shown) {
             let mesh = match display {
                 // Unmoved: the placements as built, without a pass over them.
@@ -579,7 +619,7 @@ impl Viewport {
         (
             theme::is_dark(),
             self.camera.pitch < 0.0,
-            ShadowLayers::of(&self.layers),
+            ShadowLayers::of(&self.layers).following(self.fade.is_some()),
         )
     }
 
@@ -689,17 +729,26 @@ impl Viewport {
 
     /// The nearest shown body under a pixel of a `width` × `height` view
     /// and the distance along the pointer ray.
+    /// In the follow-the-net look the solid net is what lies under the
+    /// pointer where the ray meets it: the faded bodies in front of it are
+    /// seen through, and passed through.
     fn hit(&self, x: f64, y: f64, width: f64, height: f64) -> Option<(f64, &Geometry)> {
         let model = self.model.as_ref()?;
         let (origin, direction) = self.camera.ray(x, y, width, height);
         let (origin, direction) = self.model_ray(origin, direction);
-        model
+        let hits = model
             .geometry
             .iter()
             .filter(|g| self.layers.shows(g))
             .filter(|g| box_hit(g, origin, direction))
-            .filter_map(|g| g.raycast(origin, direction).map(|(d, _)| (d, g)))
-            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .filter_map(|g| g.raycast(origin, direction).map(|(d, _)| (d, g)));
+        let nearest = |a: &(f64, &Geometry), b: &(f64, &Geometry)| a.0.total_cmp(&b.0);
+        if let Some(fade) = self.fade.as_deref()
+            && let Some(solid) = hits.clone().filter(|(_, g)| fade.keeps(g)).min_by(nearest)
+        {
+            return Some(solid);
+        }
+        hits.min_by(nearest)
     }
 
     /// The rings marking selected objects that are small on screen in a
@@ -1417,6 +1466,7 @@ fn box_hit(g: &Geometry, origin: Vec3, direction: Vec3) -> bool {
 
 mod decals;
 mod display;
+mod follow;
 pub mod nav_cube;
 pub mod surface;
 pub use decals::DecalRequest;
@@ -1432,7 +1482,7 @@ mod tests {
     use pcbcraft_core::{CopperLayer, Layer};
     use pcbcraft_solidcraft::material::BodyKind;
 
-    fn demo() -> Result<Viewport, Box<dyn std::error::Error>> {
+    pub(super) fn demo() -> Result<Viewport, Box<dyn std::error::Error>> {
         let project = crate::model_scene::tests::demo_project()?;
         let model = pcbcraft_solidcraft::project::build(&project)?;
         let mut viewport = Viewport::detached();
@@ -1441,7 +1491,7 @@ mod tests {
         Ok(viewport)
     }
 
-    fn vias(count: usize) -> Result<Viewport, Box<dyn std::error::Error>> {
+    pub(super) fn vias(count: usize) -> Result<Viewport, Box<dyn std::error::Error>> {
         let project = crate::model_scene::tests::via_project(count)?;
         let model = pcbcraft_solidcraft::project::build(&project)?;
         let mut viewport = Viewport::detached();
@@ -1467,7 +1517,7 @@ mod tests {
     }
 
     /// The via bodies' plan centre and top, seen from straight above.
-    fn above_via(
+    pub(super) fn above_via(
         viewport: &mut Viewport,
         index: usize,
     ) -> Result<(u64, f64, f64), Box<dyn std::error::Error>> {
@@ -1734,7 +1784,7 @@ mod tests {
     }
 
     /// Wait for a layer repack to land.
-    fn settle(viewport: &mut Viewport) -> Result<(), Box<dyn std::error::Error>> {
+    pub(super) fn settle(viewport: &mut Viewport) -> Result<(), Box<dyn std::error::Error>> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while viewport.receive_repack() {
             if std::time::Instant::now() > deadline {

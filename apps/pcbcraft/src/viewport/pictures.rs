@@ -281,6 +281,9 @@ fn luminance(p: &[u8]) -> f64 {
 /// The ENIG material and look tests and the look diagnosis.
 mod look;
 
+/// The follow-the-net look as drawn, and its pictures.
+mod follow;
+
 /// The default overview of the showcase board is not flat: the studio's
 /// strip light lies on part of the gloss mask as a lacquer sheen, so the
 /// brightest board pixels stand well above the typical ones, while almost

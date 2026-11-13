@@ -1204,6 +1204,7 @@ impl App {
                     pcbcraft_ui::theme::Tokens::get().space_16,
                     crate::navigation::hint_3d(),
                 );
+                self.follow_pill(ui, rect);
             }
             pick
         };

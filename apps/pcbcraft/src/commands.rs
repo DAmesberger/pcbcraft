@@ -476,6 +476,9 @@ pub enum AppCommand {
     /// Switch the PCB 3D view between the Realistic look (the studio,
     /// reflections and materials) and Solidcraft's Standard modelling look.
     ToggleRealistic,
+    /// Turn following the net on or off in PCB 3D: the selected net solid,
+    /// everything else see-through.
+    ToggleFollowNet,
     /// Quit the app: unsaved work asks Save, Don't Save or Cancel first.
     Quit,
     /// Close the window: the app's one window, so the same request as Quit.
@@ -1676,6 +1679,18 @@ fn defaults() -> Vec<Command> {
         .chord(Chord::key(K::R).with_shift())
         .icon("render_scene")
         .keywords("standard photoreal materials studio lighting render shading"),
+    );
+    // Altium's net-follow view: ⇧N for Net.
+    v.push(
+        Command::new(
+            "view.follow-net",
+            "Follow net (see-through)",
+            C::Pcb3d,
+            Action::App(A::ToggleFollowNet),
+        )
+        .chord(Chord::key(K::N).with_shift())
+        .icon("trace")
+        .keywords("transparent translucent x-ray ghost fade dim isolate net track via layers"),
     );
     v.push(
         Command::new(

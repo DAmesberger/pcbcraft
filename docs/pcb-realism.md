@@ -249,6 +249,31 @@ These are never saved:
 - PCB 2D and 3D share one state for every copper layer, the vias and silkscreen.
   Component 3D always shows every layer.
 
+## Follow the net (`apps/pcbcraft`, `viewport/follow.rs`)
+
+- Follow net (see-through), ⇧N, the command palette's `view.follow-net` and the View row
+  of the 3D Layers popover, is a view preference, off by default. While it is on and a net
+  or a track or via is selected, the selected net's bodies (tracks, vias, pads, fills) and
+  the selected objects stay solid in their own looks. Every other body (laminate, mask, a
+  track's conforming mask, other copper, parts) is drawn see-through in its plain colour at
+  alpha 22/255 (`FADE_ALPHA`), so the net shows as it passes through the layers. A pill
+  ("Following N22") shows the mode; its × turns it off. The net tint and the selection ring
+  are drawn as usual.
+- Transparency is Solidcraft's: the faded bodies use its faded-context class (see-through
+  triangles and `InstanceLook::Faded` placements), which its renderer blends with
+  weighted blended order-independent transparency, and with unsorted alpha blending where a
+  device cannot blend into a float target. No renderer code changed.
+- It is display state over the cached meshes, like a layer toggle. Turning it on, or a new
+  net while it is on, packs the stream again off the UI thread
+  (`model_scene::pack_faded`) and splits each instanced mesh's placements into an opaque
+  and a faded mesh of the same shared triangles. No geometry is rebuilt. The faded bodies
+  have no material overlay. A followed body under the faded mask keeps its material, which
+  only a land's finish still covers.
+- A click or zoom anchor over the solid net picks it through the faded bodies in front of
+  it.
+- Tests in `viewport/follow.rs` cover the toggle, the opaque and faded split of stream and
+  placements, picking through, and selection changes that keep every cached mesh.
+
 ## PCB 2D (`apps/pcbcraft`)
 
 - Layout draws every copper layer of the stackup in its own colour. The active layer (the

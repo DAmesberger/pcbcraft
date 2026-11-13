@@ -176,7 +176,10 @@ impl Viewport {
         } else {
             transformed(&self.decals.geometry, &self.display)
         };
-        if let Ok((stream, _)) = model_scene::pack(geometry, &decals, &self.layers, &model.stack) {
+        let fade = self.fade.as_deref();
+        if let Ok((stream, _)) =
+            model_scene::pack_faded(geometry, &decals, &self.layers, &model.stack, fade)
+        {
             self.repack = None;
             self.publish_stream(stream);
         }
