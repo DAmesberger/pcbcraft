@@ -337,9 +337,20 @@ impl App {
                 if let Some(band) = band {
                     layout.canvas = band.canvas;
                 }
-                ui.scope_builder(egui::UiBuilder::new().max_rect(layout.canvas), |ui| {
-                    ui.set_clip_rect(layout.canvas);
+                // The 2D canvases run under the docked cards, which float
+                // over them; Fit keeps the content in the part left clear.
+                let under = match self.workspace {
+                    Workspace::Schematic => true,
+                    Workspace::Pcb => !self.pcb.is_3d(),
+                    Workspace::Part => false,
+                };
+                let surface = if under { ui.max_rect() } else { layout.canvas };
+                shell::set_canvas_clear(&ctx, layout.canvas);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(surface), |ui| {
+                    ui.set_clip_rect(surface);
                     self.canvas(ui);
+                    // The canvas's overlays stay in the clear part.
+                    ui.set_clip_rect(layout.canvas);
                     let badge = self
                         .issues
                         .badge(ui, layout.canvas, &self.engine, self.workspace);

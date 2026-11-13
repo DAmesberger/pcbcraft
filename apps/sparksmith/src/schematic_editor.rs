@@ -317,8 +317,11 @@ pub struct SchematicEditor {
     /// The extent of each resolved occurrence, with a wide text metric, so
     /// painting skips occurrences outside the view without measuring them.
     placed_bounds: BTreeMap<Id, Bounds>,
-    /// The canvas size of the last frame, in points.
+    /// The canvas size of the last frame, in points: the part the docked
+    /// cards leave clear.
     view: Vec2,
+    /// That clear part on screen, which the view centres on.
+    clear: Rect,
     /// The Place tool's ghost: the component's first unit as core draws it
     /// in its own frame, resolved once per component and revision.
     ghost: Option<(ComponentRef, u64, PlacedUnit)>,
@@ -429,6 +432,7 @@ impl Default for SchematicEditor {
             placed: Arc::default(),
             placed_bounds: BTreeMap::new(),
             view: Vec2::ZERO,
+            clear: Rect::NOTHING,
             ghost: None,
             update: Default::default(),
             wire_review: None,
@@ -848,12 +852,18 @@ impl SchematicEditor {
         self.focus_field = Some(format!("label/{label}/name"));
     }
 
-    /// Where sheet millimetres land in a canvas drawn in `canvas`, as the
+    /// The part of the last frame's canvas the docked cards leave clear.
+    #[cfg(test)]
+    pub(crate) fn clear_rect(&self) -> Rect {
+        self.clear
+    }
+
+    /// Where sheet millimetres land on the last frame's canvas, as the
     /// canvas maps them (UI tests click sheet points through it).
     #[cfg(test)]
-    pub(crate) fn screen_point(&self, canvas: Rect, p: Point) -> Pos2 {
+    pub(crate) fn screen_point(&self, p: Point) -> Pos2 {
         symbol_view::View {
-            origin: canvas.center() + self.pan,
+            origin: self.clear.center() + self.pan,
             scale: self.scale,
         }
         .screen(p)
@@ -1647,7 +1657,11 @@ impl SchematicEditor {
             return None;
         }
         crate::kit::tool_cursor(ui, &response, self.tool != Tool::Select);
-        self.view = rect.size();
+        // The sheet is drawn in all of `rect`, under the docked cards; the
+        // view centres on, and fits into, the part they leave clear.
+        let clear = crate::shell::canvas_clear(ui.ctx(), rect);
+        self.view = clear.size();
+        self.clear = clear;
         if self.fit_requested {
             let mut bounds = Rect::NOTHING;
             // The page and everything on the active sheet, with sheet y
@@ -1662,9 +1676,9 @@ impl SchematicEditor {
                 bounds = bounds.expand(5.0);
                 // Above the navigation bar's band, so the Fit button never
                 // sits on the title block at the page's foot.
-                let band = crate::navigation::bar_band().min(rect.height() / 2.0);
-                self.scale = (rect.width() / bounds.width())
-                    .min((rect.height() - band) / bounds.height())
+                let band = crate::navigation::bar_band().min(clear.height() / 2.0);
+                self.scale = (clear.width() / bounds.width())
+                    .min((clear.height() - band) / bounds.height())
                     .clamp(SCALE_MIN, SCALE_MAX);
                 self.pan = -bounds.center().to_vec2() * self.scale - Vec2::new(0.0, band / 2.0);
             } else {
@@ -1674,7 +1688,7 @@ impl SchematicEditor {
             self.fit_requested = false;
         }
         if let Some(bounds) = self.frame_request.take() {
-            self.frame_bounds(bounds, rect);
+            self.frame_bounds(bounds, clear);
         }
         let mut output = None;
         // The wheel and a pinch zoom about the pointer; two fingers pan.
@@ -1684,7 +1698,7 @@ impl SchematicEditor {
             let old_scale = self.scale;
             self.scale = (self.scale * wheel.scale_factor()).clamp(SCALE_MIN, SCALE_MAX);
             if let Some(pointer) = response.hover_pos() {
-                let relative = pointer - rect.center();
+                let relative = pointer - clear.center();
                 self.pan = relative - (relative - self.pan) * (self.scale / old_scale);
             }
         }
@@ -1774,7 +1788,7 @@ impl SchematicEditor {
         // The palette owns Esc, arrows and Enter while it is open.
         self.settle_template(ui.ctx(), engine);
         let placeable = |c: ComponentRef| first_choices(project, c).is_some();
-        let chosen = self.palette.show(ui, rect, engine, &placeable);
+        let chosen = self.palette.show(ui, clear, engine, &placeable);
         if chosen.is_some() {
             self.template_armed = None;
             self.place_values.clear();
@@ -1788,7 +1802,7 @@ impl SchematicEditor {
                     && let Some(position) = sheet_nm(self.drop_point(
                         project,
                         unit,
-                        rect,
+                        clear,
                         engine.drafts().grid.symbol_mm(),
                     ))
                 {
@@ -1877,7 +1891,7 @@ impl SchematicEditor {
             self.box_from = None;
             self.path_drag = None;
         }
-        let origin = rect.center() + self.pan;
+        let origin = clear.center() + self.pan;
         let scale = self.scale;
         let view = symbol_view::View { origin, scale };
         let screen = |p: Point| view.screen(p);
@@ -2645,7 +2659,7 @@ impl SchematicEditor {
             });
         }
         if let Some(hint) = canvas_hint(self, project) {
-            paint_canvas_hint(&painter, rect, &hint);
+            paint_canvas_hint(&painter, clear, &hint);
         }
         if let Some(op) = self.show_menu(ui.ctx(), engine) {
             output = Some(op);
@@ -2656,7 +2670,7 @@ impl SchematicEditor {
     /// Where the palette's Enter places `unit`: the free 5 mm grid point
     /// nearest the view centre whose symbol bounds (body and pin ends, plus
     /// a margin) clear every drawn symbol and lie inside the visible canvas
-    /// `rect`, which already excludes the Browser and properties cards.
+    /// `rect`: the part the Browser and properties cards leave clear.
     /// Falls back to the view centre when the view has no free spot.
     fn drop_point(&self, project: &Project, unit: &Unit, rect: Rect, grid: f64) -> Point {
         const MARGIN: f32 = 2.5;
