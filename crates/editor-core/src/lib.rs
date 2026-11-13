@@ -481,7 +481,7 @@ pub enum Query {
     #[serde(rename = "interface.list")]
     InterfaceList {},
     /// The assembly link's state from the document: none, a
-    /// broken reference (publishing to the linked design is blocked) or linked, with
+    /// broken reference (publishing is blocked) or linked, with
     /// the findings. `assembly.preview` reads the file.
     #[serde(rename = "assembly.status")]
     AssemblyStatus {},

@@ -141,3 +141,90 @@ fn the_project_keeps_where_it_last_published() -> Fallible {
     assert!(check_table(&table).is_err());
     Ok(())
 }
+
+/// The bottom side height lies under the board: its loop, taken through
+/// its frame into board coordinates, is the board outline (vertex for
+/// vertex), it turns the same way in its own frame as the top side's loop
+/// in its frame, and it runs from the bottom surface (z 0) down to
+/// −height.
+#[test]
+fn the_bottom_side_height_lies_under_the_board_outline() -> Fallible {
+    use crate::interface::{DatumGeometry, list};
+    use crate::model::interface::DatumRole;
+    let mut engine = super::b3::with_openings()?;
+    let (instance, position, rotation_deg, _) = first_placed(&engine)?;
+    let revision = engine.revision();
+    engine.apply(
+        revision,
+        Operation::Layout(crate::layout::LayoutCommand::Move {
+            instance,
+            position,
+            rotation_deg,
+            layer: crate::Layer::Bottom,
+        }),
+    )?;
+    let project = engine.project();
+    let table = list::table(project)?;
+    let side = |name: &str| -> Fallible<DatumGeometry> {
+        let datum = table
+            .datums
+            .iter()
+            .find(|d| d.key.role == DatumRole::SideHeight && d.key.name.as_deref() == Some(name))
+            .ok_or(format!("the {name} side height"))?;
+        list::derive(project, datum)
+            .geometry
+            .ok_or_else(|| "geometry".into())
+    };
+    // A loop's vertices in board coordinates at frame height `z`, and its
+    // signed area in the frame's own x–y.
+    let world = |g: &DatumGeometry, z: f64| -> Fallible<(Vec<[f64; 3]>, f64)> {
+        let DatumGeometry::Volume { frame, loops, .. } = g else {
+            return Err("a volume".into());
+        };
+        let outline = loops.first().ok_or("a loop")?;
+        let [o, x, y] = [frame.origin.0, frame.x.0, frame.y.0];
+        let n = [
+            x[1] * y[2] - x[2] * y[1],
+            x[2] * y[0] - x[0] * y[2],
+            x[0] * y[1] - x[1] * y[0],
+        ];
+        let local: Vec<[f64; 2]> = std::iter::once(outline.start)
+            .chain(outline.segments.iter().map(crate::library::Segment::to))
+            .collect();
+        let points: Vec<[f64; 3]> = local
+            .iter()
+            .map(|p| std::array::from_fn(|i| o[i] + x[i] * p[0] + y[i] * p[1] + n[i] * z))
+            .collect();
+        let area = local
+            .windows(2)
+            .map(|w| w[0][0] * w[1][1] - w[1][0] * w[0][1])
+            .sum::<f64>()
+            / 2.0;
+        Ok((points, area))
+    };
+    let bottom = side("bottom")?;
+    let DatumGeometry::Volume { height, .. } = &bottom else {
+        return Err("a volume".into());
+    };
+    assert!(*height > 0.0, "a part on the bottom");
+    let outer = &project.board().outer;
+    let mut board: Vec<[i64; 2]> = std::iter::once(outer.start)
+        .chain(outer.segments.iter().map(crate::library::Segment::to))
+        .map(|p| p.map(|v| (v * 1e6).round() as i64))
+        .collect();
+    let (at_surface, area) = world(&bottom, 0.0)?;
+    let (at_depth, _) = world(&bottom, *height)?;
+    let mut footprint: Vec<[i64; 2]> = at_surface
+        .iter()
+        .map(|p| [(p[0] * 1e6).round() as i64, (p[1] * 1e6).round() as i64])
+        .collect();
+    board.sort_unstable();
+    footprint.sort_unstable();
+    assert_eq!(footprint, board, "exactly under the board outline");
+    assert!(at_surface.iter().all(|p| p[2].abs() <= 1e-9));
+    assert!(at_depth.iter().all(|p| (p[2] + height).abs() <= 1e-9));
+    // The same turning sense in its frame as the top side's in its own.
+    let (_, top_area) = world(&side("top")?, 0.0)?;
+    assert!(area * top_area > 0.0, "{area} vs {top_area}");
+    Ok(())
+}
