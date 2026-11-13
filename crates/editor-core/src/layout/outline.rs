@@ -210,6 +210,20 @@ pub trait BoardShapeEvaluator: Sync {
             "board.fixed: this board evaluator cannot hold enclosure geometry".into(),
         ))
     }
+    /// Where the fixed geometry `owned` (what [`Self::fixed_geometry`]
+    /// added) stands in `sketch` (a point, or a line between its two ends),
+    /// with every entity that holds it (the point; the line and its ends).
+    /// `None` when the sketch no longer has it. The enclosure link checks
+    /// with it that no board edit moves what the enclosure drives.
+    fn fixed_geometry_of(
+        &self,
+        _sketch: &SketchBlob,
+        _owned: &SketchRef,
+    ) -> Result<Option<(crate::model::dimension::FeatureGeometry, Vec<SketchRef>)>> {
+        Err(Error::Unsupported(
+            "board.fixed: this board evaluator cannot hold enclosure geometry".into(),
+        ))
+    }
 }
 
 /// An edit of fixed, externally owned board-sketch geometry

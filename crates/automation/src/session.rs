@@ -1689,6 +1689,8 @@ mod svg_tests;
 mod templates_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod two_way_tests;
 
 /// The shipped showcase ([`pcbcraft_core::Engine::showcase_hosted`]) on
 /// SolidCraft's sketch engine: its sketched board, cutout, slot and

@@ -211,6 +211,7 @@ pub const NO_WAIVER: &[&str] = &[
     layout::dimensions::REFERENCE_INEXACT,
     crate::interface::findings::HOUSING_REFERENCE_LOST,
     crate::interface::findings::HOUSING_REFERENCE_INEXACT,
+    crate::interface::findings::HOUSING_CYCLE,
     "rules.no_fab_profile",
 ];
 
@@ -244,6 +245,7 @@ fn severity(row: &IssueRow) -> Option<Severity> {
             | layout::dimensions::REFERENCE_INEXACT
             | crate::interface::findings::HOUSING_REFERENCE_LOST
             | crate::interface::findings::HOUSING_REFERENCE_INEXACT
+            | crate::interface::findings::HOUSING_CYCLE
     ) {
         return Some(Severity::Error);
     }

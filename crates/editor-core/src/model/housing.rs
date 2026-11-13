@@ -10,7 +10,7 @@
 use crate::ids::ContentHash;
 use crate::library::footprint_source::{ParamName, SketchRef};
 use crate::model::dimension::{BodyName, FaceName, FeatureGeometry, HousingRefId, ReferenceStatus};
-use crate::model::interface::DatumId;
+use crate::model::interface::{DatumId, Slot};
 use crate::units::Nm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,9 @@ pub const MAX_HOUSING_REFS: usize = 256;
 pub const MAX_HOUSING_BINDINGS: usize = 64;
 /// Enclosure features one link records as using the board's datums.
 pub const MAX_CONSUMERS: usize = 4096;
+/// Datums one housing reference's enclosure geometry is recorded as built
+/// on, and loops the link records.
+pub const MAX_BUILT_ON: usize = 256;
 /// Bytes of the enclosure's path as the project stores it.
 pub const MAX_HOUSING_PATH: usize = 4096;
 /// Bytes of an enclosure name (a feature, body, component or parameter
@@ -61,8 +64,73 @@ pub struct HousingLink {
     /// Enclosure features that use the board's datums, as last read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub consumers: Vec<Consumer>,
+    /// SHA-256 of the board's published design file as the enclosure's
+    /// link to it last read it (SolidCraft keeps it on the link), when
+    /// the enclosure keeps one: another hash than the last publish's is
+    /// "the enclosure holds an older board" (slice B5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board_sha256: Option<ContentHash>,
+    /// Enclosure features attached to a face of the board's design that no
+    /// slot carries (section 2: parts, laminate, pads), as last read. Such a
+    /// face may move to another body when the board changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unexported: Vec<UnexportedUse>,
+    /// Loops between the two files: a housing reference whose enclosure
+    /// geometry is built on a datum that itself follows the reference on
+    /// the board. Derived after every edit that can change them
+    /// (`interface::housing::follow_cycles`); each blocks fabrication
+    /// output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cycles: Vec<HousingCycle>,
     /// Next [`HousingRefId`]; ids are never reused.
     pub next_ref: u32,
+}
+
+/// How an enclosure feature uses a datum.
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum UseKind {
+    /// A sketch projects or intersects the datum's geometry.
+    #[default]
+    Sketch,
+    /// A joint places the board by it: the whole board frame in the
+    /// enclosure, and every housing reference with it, depends on it.
+    Joint,
+}
+
+impl UseKind {
+    fn is_sketch(&self) -> bool {
+        *self == Self::Sketch
+    }
+}
+
+/// An enclosure feature attached to a face of the board's design that is
+/// not exported (no slot carries it).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct UnexportedUse {
+    /// The feature's name in the enclosure ("Lid rib").
+    pub feature: String,
+    /// The board design's body it is attached to, by its name there
+    /// ("U1 model").
+    pub body: String,
+}
+
+/// A loop between the two files: the board follows housing reference
+/// `reference`, whose enclosure geometry is built on `datum` through the
+/// enclosure's `feature`, and `datum` moves when the reference does.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct HousingCycle {
+    pub reference: HousingRefId,
+    pub datum: DatumId,
+    /// The enclosure feature (or joint) that uses the datum, by its name
+    /// there.
+    pub feature: String,
+    #[serde(default, skip_serializing_if = "UseKind::is_sketch")]
+    pub via: UseKind,
 }
 
 /// One piece of enclosure geometry the board follows (§7.2): a face of an
@@ -94,6 +162,12 @@ pub struct HousingRef {
     /// The board-sketch point or construction line that holds the trace,
     /// fixed and owned by this reference.
     pub sketch: SketchRef,
+    /// The board's datums the enclosure geometry under this face is built
+    /// on, as last read: through the sketches its feature is made from,
+    /// and every joint that places the board. A datum here that follows
+    /// this reference on the board is a loop (`housing.cycle`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub built_on: Vec<Consumer>,
 }
 
 /// A board parameter set from an enclosure user parameter (§7.2). Units
@@ -120,6 +194,13 @@ pub struct Consumer {
     pub feature: String,
     /// The datum it uses.
     pub datum: DatumId,
+    /// The slot that carries it in the published design: the enclosure's
+    /// link names a face or body of that slot. The board checks the
+    /// consumer by its slot, which is never reused.
+    pub slot: Slot,
+    /// A sketch, or a joint that places the board.
+    #[serde(default, skip_serializing_if = "UseKind::is_sketch")]
+    pub via: UseKind,
     /// The datum's token as published (`i80.opening`).
     pub token: String,
     /// The datum's display name as published ("J1 opening").

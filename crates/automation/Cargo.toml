@@ -39,3 +39,6 @@ pcbcraft-core = { workspace = true, features = ["test-fixtures"] }
 tempfile.workspace = true
 rmcp = { workspace = true, features = ["client"] }
 tokio = { workspace = true, features = ["time"] }
+# Rewrites a saved enclosure as a newer SolidCraft would save it (the
+# two-way check's tests).
+zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }

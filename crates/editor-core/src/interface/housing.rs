@@ -39,8 +39,9 @@ use crate::layout::outline::{BoardShapeEvaluator, FixedEdit};
 use crate::library::footprint_source::{Expr, FootprintParam, ParamName, ParamUnit};
 use crate::model::dimension::{BodyName, FaceName, FeatureGeometry, HousingRefId, ReferenceStatus};
 use crate::model::housing::{
-    Consumer, HousingBinding, HousingLink, HousingRef, MAX_CONSUMERS, MAX_HOUSING_BINDINGS,
-    MAX_HOUSING_NAME, MAX_HOUSING_PATH, MAX_HOUSING_REFS,
+    Consumer, HousingBinding, HousingCycle, HousingLink, HousingRef, MAX_BUILT_ON, MAX_CONSUMERS,
+    MAX_HOUSING_BINDINGS, MAX_HOUSING_NAME, MAX_HOUSING_PATH, MAX_HOUSING_REFS, UnexportedUse,
+    UseKind,
 };
 use crate::model::{BoardShape, Project};
 use crate::units::Nm;
@@ -94,6 +95,14 @@ pub struct HousingRead {
     pub bindings: Vec<BindingRead>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub consumers: Vec<Consumer>,
+    /// SHA-256 of the board's published design as the enclosure's link to
+    /// it last read it, when the enclosure keeps one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board_sha256: Option<ContentHash>,
+    /// Enclosure features attached to faces of the board that no slot
+    /// carries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unexported: Vec<UnexportedUse>,
 }
 
 /// One housing reference as the host found it.
@@ -111,6 +120,10 @@ pub struct ReferenceRead {
     pub geometry: Option<FeatureGeometry>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+    /// The board's datums the enclosure geometry under the face is built
+    /// on now.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub built_on: Vec<Consumer>,
 }
 
 /// One binding's enclosure parameter as the host found it.
@@ -132,6 +145,10 @@ pub struct NewReference {
     pub pick: [f64; 3],
     pub name: String,
     pub geometry: FeatureGeometry,
+    /// The board's datums the enclosure geometry under the face is built
+    /// on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub built_on: Vec<Consumer>,
 }
 
 /// The enclosure link's document changes. Each is one undo step; a refused
@@ -250,7 +267,26 @@ fn check_read(read: &HousingRead) -> Result<()> {
             )));
         }
     }
-    for c in &read.consumers {
+    check_consumers(&read.consumers)?;
+    if read.unexported.len() > MAX_CONSUMERS
+        || read
+            .unexported
+            .iter()
+            .any(|u| !name_ok(&u.feature) || !(u.body.is_empty() || name_ok(&u.body)))
+    {
+        return Err(bad(format!(
+            "housing.read: at most {MAX_CONSUMERS} features on unexported faces, with printable \
+             names"
+        )));
+    }
+    for r in &read.references {
+        check_built_on(&r.built_on)?;
+    }
+    Ok(())
+}
+
+fn check_consumers(consumers: &[Consumer]) -> Result<()> {
+    for c in consumers {
         if !name_ok(&c.feature) || !name_ok(&c.name) || !super::token_valid(&c.token) {
             return Err(bad(
                 "housing.read: a consumer needs printable names and a token",
@@ -258,6 +294,15 @@ fn check_read(read: &HousingRead) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn check_built_on(built_on: &[Consumer]) -> Result<()> {
+    if built_on.len() > MAX_BUILT_ON {
+        return Err(Error::Limit(format!(
+            "housing.limit: a reference is built on at most {MAX_BUILT_ON} datums"
+        )));
+    }
+    check_consumers(built_on)
 }
 
 fn evaluator(evaluator: Option<&dyn BoardShapeEvaluator>) -> Result<&dyn BoardShapeEvaluator> {
@@ -390,6 +435,9 @@ pub fn apply(
                 references: Vec::new(),
                 bindings: Vec::new(),
                 consumers: sorted(read.consumers),
+                board_sha256: read.board_sha256,
+                unexported: sorted(read.unexported),
+                cycles: Vec::new(),
                 next_ref: 1,
             }));
             Ok(())
@@ -412,6 +460,7 @@ pub fn apply(
             if !reference.body.valid() || !reference.face.valid() || !name_ok(&reference.name) {
                 return Err(bad("housing.reference: a body, a face, a name and a pick"));
             }
+            check_built_on(&reference.built_on)?;
             let pick = nm3(reference.pick)?;
             if link
                 .references
@@ -451,6 +500,7 @@ pub fn apply(
                 status: ReferenceStatus::Resolved,
                 note: String::new(),
                 sketch,
+                built_on: sorted(reference.built_on),
             });
             Ok(())
         }
@@ -536,10 +586,10 @@ fn resolve_board(project: &mut Project, board: Option<&dyn BoardShapeEvaluator>)
     crate::layout::outline::commit(project, sketch, evaluator(board)?)
 }
 
-fn sorted(mut consumers: Vec<Consumer>) -> Vec<Consumer> {
-    consumers.sort();
-    consumers.dedup();
-    consumers
+fn sorted<T: Ord>(mut items: Vec<T>) -> Vec<T> {
+    items.sort();
+    items.dedup();
+    items
 }
 
 /// `housing.record_update`.
@@ -554,6 +604,20 @@ fn update(
         .as_deref()
         .cloned()
         .ok_or_else(|| Error::Conflict("housing.unlinked: no enclosure is linked".into()))?;
+    // The enclosure changed while it still holds an older board: the two
+    // no longer agree on the board, so nothing of it is applied.
+    if read.file_sha256 != link.file_sha256
+        && matches!(
+            agreement(project, read.board_sha256),
+            Agreement::Older { .. }
+        )
+    {
+        return Err(Error::Conflict(format!(
+            "{}: {}",
+            findings::HOUSING_BOTH_CHANGED,
+            findings::housing_both_changed().message
+        )));
+    }
     let ids: BTreeSet<HousingRefId> = read.references.iter().map(|r| r.id).collect();
     if ids.len() != read.references.len()
         || read
@@ -578,6 +642,7 @@ fn update(
                     }
                     reference.status = r.status;
                     reference.note = r.note.clone();
+                    reference.built_on = sorted(r.built_on.clone());
                     if let Some(pick) = r.pick {
                         reference.pick = nm3(pick)?;
                     }
@@ -625,6 +690,8 @@ fn update(
     next.file_sha256 = read.file_sha256;
     next.board_revision = read.board_revision;
     next.consumers = sorted(read.consumers);
+    next.board_sha256 = read.board_sha256;
+    next.unexported = sorted(read.unexported);
     let mut reshaped = false;
     for (name, value) in &set {
         reshaped |= set_parameter(project, name, *value)?;
@@ -659,8 +726,10 @@ fn owner_words(project: &Project, token: &str) -> (String, Vec<ObjectRef>, bool)
     }
 }
 
-/// The enclosure features whose datum no longer resolves on the board:
-/// the datum is gone from the table, lost, or not in the last publish.
+/// The enclosure features whose datum no longer resolves on the board,
+/// checked by the slot the enclosure's link names (slots are never
+/// reused): the slot is retired or its datum lost, or the last publish no
+/// longer carries it.
 pub fn broken(project: &Project) -> Vec<&Consumer> {
     let Some(link) = project.housing.as_deref() else {
         return Vec::new();
@@ -671,16 +740,120 @@ pub fn broken(project: &Project) -> Vec<&Consumer> {
     link.consumers
         .iter()
         .filter(|c| {
-            let live = table.datum(c.datum).is_some_and(|d| {
-                super::list::derive(project, d).status == super::DatumStatus::Resolved
-            });
+            let live = table
+                .datums
+                .iter()
+                .find(|d| d.slot == c.slot)
+                .is_some_and(|d| {
+                    d.id == c.datum
+                        && super::list::derive(project, d).status == super::DatumStatus::Resolved
+                });
             let published = table
                 .published
                 .as_ref()
-                .is_none_or(|r| r.datums.iter().any(|d| d.id == c.datum));
+                .is_none_or(|r| r.datums.iter().any(|d| d.slot == c.slot && d.id == c.datum));
             !(live && published)
         })
         .collect()
+}
+
+/// Whether the enclosure holds the board's last published design.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Agreement {
+    /// Not known: the enclosure's link keeps no hash, or nothing was
+    /// published with one.
+    Unknown,
+    /// It holds the last publish.
+    Current,
+    /// It holds an earlier publish (`revision`, when the board remembers
+    /// it), or a design file this board did not write.
+    Older { revision: Option<u32> },
+}
+
+/// Whether the board design an enclosure holds (`held`, the SHA-256 on its
+/// link) is the board's last publish: the older-board check.
+pub fn agreement(project: &Project, held: Option<ContentHash>) -> Agreement {
+    let (Some(held), Some(record)) = (held, project.interface.published.as_ref()) else {
+        return Agreement::Unknown;
+    };
+    let Some(now) = record.design_sha256 else {
+        return Agreement::Unknown;
+    };
+    if held == now {
+        return Agreement::Current;
+    }
+    match record.earlier.iter().rev().find(|f| f.sha256 == held) {
+        // A publish with no datum changed keeps its revision, whatever
+        // bytes the file got.
+        Some(f) if f.revision == record.revision => Agreement::Current,
+        Some(f) => Agreement::Older {
+            revision: Some(f.revision),
+        },
+        None => Agreement::Older { revision: None },
+    }
+}
+
+/// The part a board body belongs to, in the user's words, from its name in
+/// the published design ("U1 model" is U1), and the objects to locate.
+fn body_words(project: &Project, body: &str) -> (String, Vec<ObjectRef>) {
+    // A pad's body names its instance (`pad_<instance>_<pad>`); a part's
+    // body may start with its designator.
+    let pad_of = body
+        .strip_prefix("pad_")
+        .and_then(|rest| rest.split('_').next())
+        .and_then(|n| n.parse::<Id>().ok());
+    let first = body.split_whitespace().next().unwrap_or_default();
+    let found = match pad_of {
+        Some(id) => project.instances.iter().find(|i| i.id == id),
+        None => project.instances.iter().find(|i| i.designator == first),
+    };
+    match found {
+        Some(i) => (i.designator.clone(), vec![ObjectRef::Instance { id: i.id }]),
+        None if body.is_empty() => ("the board".into(), vec![ObjectRef::Board]),
+        None => (format!("the board's ‘{body}’"), vec![ObjectRef::Board]),
+    }
+}
+
+/// A datum's display name now, or as the enclosure last read it.
+fn datum_words(project: &Project, datum: crate::model::interface::DatumId, read: &str) -> String {
+    super::list::table(project)
+        .ok()
+        .and_then(|t| {
+            t.datum(datum)
+                .map(|d| super::list::display_name(project, d))
+        })
+        .unwrap_or_else(|| read.to_owned())
+}
+
+/// `housing.cycle`'s sentence: what follows what, in both files' words.
+fn cycle_words(project: &Project, link: &HousingLink, cycle: &HousingCycle) -> String {
+    let reference = link.references.iter().find(|r| r.id == cycle.reference);
+    let reference_name = reference.map_or("geometry", |r| r.name.as_str());
+    let read = reference
+        .and_then(|r| r.built_on.iter().find(|c| c.datum == cycle.datum))
+        .map_or("a datum", |c| c.name.as_str());
+    let datum = datum_words(project, cycle.datum, read);
+    let tail = match cycle.via {
+        UseKind::Sketch => format!("and the enclosure builds ‘{}’ from {datum}", cycle.feature),
+        UseKind::Joint => format!(
+            "and the enclosure places the board by {datum} (‘{}’)",
+            cycle.feature
+        ),
+    };
+    format!(
+        "{} follows the enclosure's {reference_name}, {tail}. Break the loop: stop following \
+         {reference_name}, or build ‘{}’ in SolidCraft without {datum}",
+        capitalised(&datum),
+        cycle.feature
+    )
+}
+
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
 }
 
 /// The enclosure link's findings: lost and inexact housing references, and
@@ -756,6 +929,32 @@ pub fn checks(project: &Project) -> Vec<Finding> {
             objects,
         ));
     }
+    out.extend(two_way(project, link));
+    out
+}
+
+/// The two-way check's findings from what the board last read (slice
+/// B5): the enclosure holds an older board, an enclosure feature is on a
+/// face no slot carries, and loops between the two files.
+fn two_way(project: &Project, link: &HousingLink) -> Vec<Finding> {
+    let mut out = Vec::new();
+    if let Agreement::Older { revision } = agreement(project, link.board_sha256) {
+        out.push(findings::housing_older_board(revision));
+    }
+    for u in &link.unexported {
+        let (part, objects) = body_words(project, &u.body);
+        out.push(findings::housing_unexported_face(
+            &format!("‘{}’", u.feature),
+            &part,
+            objects,
+        ));
+    }
+    for cycle in &link.cycles {
+        out.push(findings::housing_cycle(
+            &cycle_words(project, link, cycle),
+            vec![ObjectRef::Board],
+        ));
+    }
     out
 }
 
@@ -768,11 +967,19 @@ pub enum LinkState {
     /// A reference no longer resolves, in either direction: fabrication
     /// output is blocked.
     BrokenReference,
+    /// The board and the enclosure follow each other in a loop:
+    /// fabrication output is blocked.
+    Cycle,
     /// The enclosure file is not where the request said; the board uses
     /// its snapshot.
     Missing,
+    /// The enclosure changed and still holds an older board: they no
+    /// longer agree.
+    BothChanged,
     /// The enclosure changed since the board read it.
     Changed,
+    /// The enclosure still holds an older published board.
+    OlderBoard,
     /// The board holds what the enclosure holds.
     InSync,
     /// Linked; the file was not checked (no path was given).
@@ -785,8 +992,11 @@ impl LinkState {
         match self {
             Self::Unlinked => "no enclosure",
             Self::BrokenReference => "broken reference",
+            Self::Cycle => "board and enclosure in a loop",
             Self::Missing => "enclosure missing",
+            Self::BothChanged => "both changed",
             Self::Changed => "enclosure changed",
+            Self::OlderBoard => "enclosure holds an older board",
             Self::InSync => "in sync",
             Self::Linked => "linked",
         }
@@ -835,18 +1045,30 @@ pub fn status(project: &Project, file: FileCheck) -> HousingStatus {
     let broken = findings.iter().any(|f| {
         f.code == findings::HOUSING_REFERENCE_LOST || f.code == findings::HOUSING_REFERENCE_INEXACT
     });
+    let cycle = !link.cycles.is_empty();
+    let older = matches!(
+        agreement(project, link.board_sha256),
+        Agreement::Older { .. }
+    );
+    let changed = matches!(file, FileCheck::Found(hash) if hash != link.file_sha256);
     let state = match file {
         _ if broken => LinkState::BrokenReference,
+        _ if cycle => LinkState::Cycle,
         FileCheck::Missing => LinkState::Missing,
-        FileCheck::Found(hash) if hash != link.file_sha256 => LinkState::Changed,
+        _ if changed && older => LinkState::BothChanged,
+        _ if changed => LinkState::Changed,
+        _ if older => LinkState::OlderBoard,
         FileCheck::Found(_) => LinkState::InSync,
         FileCheck::NotChecked => LinkState::Linked,
     };
     match file {
         FileCheck::Missing => findings.push(findings::housing_missing()),
-        FileCheck::Found(hash) if hash != link.file_sha256 => {
-            findings.push(findings::housing_stale());
+        _ if changed && older => {
+            // Both moved on since they last agreed: one finding says so.
+            findings.retain(|f| f.code != findings::HOUSING_OLDER_BOARD);
+            findings.push(findings::housing_both_changed());
         }
+        _ if changed => findings.push(findings::housing_stale()),
         _ => {}
     }
     HousingStatus {
@@ -923,10 +1145,16 @@ pub struct HousingPreview {
     /// Enclosure features newly using, or no longer using, the board.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub consumers: Vec<String>,
-    /// Why the update would be refused (the board would not solve), when
-    /// it would be; then nothing else is listed.
+    /// Why the update would be refused (the board would not solve, or
+    /// both files changed since they last agreed), when it would be; then
+    /// nothing else is listed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
+    /// The two-way check after the update (slice B5): the enclosure holds
+    /// an older board, features on unexported faces, loops; or, refused,
+    /// both changed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
 }
 
 fn offset_words(name: &str, d: Point) -> String {
@@ -1114,6 +1342,11 @@ pub fn diff(
             }
         }
     }
+    let findings = after
+        .housing
+        .as_deref()
+        .map(|link| two_way(after, link))
+        .unwrap_or_default();
     HousingPreview {
         document_revision,
         expect_hash,
@@ -1122,6 +1355,7 @@ pub fn diff(
         objects,
         consumers,
         refused: None,
+        findings,
     }
 }
 
@@ -1130,7 +1364,7 @@ pub fn refused(
     project: &Project,
     document_revision: u64,
     expect_hash: ContentHash,
-    why: String,
+    error: &Error,
 ) -> HousingPreview {
     HousingPreview {
         document_revision,
@@ -1142,7 +1376,12 @@ pub fn refused(
         references: Vec::new(),
         objects: Vec::new(),
         consumers: Vec::new(),
-        refused: Some(why),
+        findings: if error.rule() == Some(findings::HOUSING_BOTH_CHANGED) {
+            vec![findings::housing_both_changed()]
+        } else {
+            Vec::new()
+        },
+        refused: Some(error.to_string()),
     }
 }
 
@@ -1157,8 +1396,20 @@ pub fn check_link(link: &HousingLink) -> Result<()> {
         references: Vec::new(),
         bindings: Vec::new(),
         consumers: link.consumers.clone(),
+        board_sha256: link.board_sha256,
+        unexported: link.unexported.clone(),
     };
     check_read(&read)?;
+    if link.cycles.len() > MAX_BUILT_ON
+        || link
+            .cycles
+            .iter()
+            .any(|c| !name_ok(&c.feature) || !link.references.iter().any(|r| r.id == c.reference))
+    {
+        return Err(bad(
+            "housing.cycle: loops name the link's references and printable features",
+        ));
+    }
     if link.references.len() > MAX_HOUSING_REFS || link.bindings.len() > MAX_HOUSING_BINDINGS {
         return Err(Error::Limit(
             "housing.limit: too many references or bindings".into(),
@@ -1174,6 +1425,7 @@ pub fn check_link(link: &HousingLink) -> Result<()> {
         if !geometry_ok(&r.geometry) || !name_ok(&r.name) || r.note.len() > 1024 {
             return Err(bad("housing.reference: a bad trace or name"));
         }
+        check_built_on(&r.built_on)?;
     }
     let mut params = BTreeSet::new();
     for b in &link.bindings {
@@ -1182,6 +1434,252 @@ pub fn check_link(link: &HousingLink) -> Result<()> {
             || b.value.abs().get() > MAX_VALUE_NM
         {
             return Err(bad("housing.bind: bindings name each board parameter once"));
+        }
+    }
+    Ok(())
+}
+
+/// The probe a cycle check moves a reference's trace by, mm: small, and
+/// off every axis, so whatever is dimensioned to the trace moves.
+const PROBE_MM: f64 = 1e-3;
+/// How far (mm) a datum may move under the probe and still count as not
+/// following it (the solver's own noise).
+const PROBE_NOISE_MM: f64 = 1e-7;
+
+fn nudged(g: &FeatureGeometry) -> FeatureGeometry {
+    match *g {
+        FeatureGeometry::Point { at } => FeatureGeometry::Point {
+            at: [at[0] + PROBE_MM, at[1] + PROBE_MM * 0.613],
+        },
+        FeatureGeometry::Line { a, b } => {
+            let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+            let len = dx.hypot(dy);
+            let (ux, uy) = if len > SAME_MM {
+                (dx / len, dy / len)
+            } else {
+                (1.0, 0.0)
+            };
+            // Across the line, and a little along it.
+            let d = [(-uy + 0.37 * ux) * PROBE_MM, (ux + 0.37 * uy) * PROBE_MM];
+            FeatureGeometry::Line {
+                a: [a[0] + d[0], a[1] + d[1]],
+                b: [b[0] + d[0], b[1] + d[1]],
+            }
+        }
+        other => other,
+    }
+}
+
+/// Whether two derived geometries differ by more than solver noise.
+fn differ(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match (a, b) {
+        (Value::Number(x), Value::Number(y)) => match (x.as_f64(), y.as_f64()) {
+            (Some(x), Some(y)) => (x - y).abs() > PROBE_NOISE_MM,
+            _ => x != y,
+        },
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() != y.len() || x.iter().zip(y).any(|(p, q)| differ(p, q))
+        }
+        (Value::Object(x), Value::Object(y)) => {
+            x.len() != y.len() || x.iter().any(|(k, v)| y.get(k).is_none_or(|w| differ(v, w)))
+        }
+        _ => a != b,
+    }
+}
+
+/// Every live datum's derived geometry, by id.
+fn datum_geometry(
+    project: &Project,
+) -> Result<std::collections::BTreeMap<crate::model::interface::DatumId, serde_json::Value>> {
+    let table = super::list::table(project)?;
+    let mut out = std::collections::BTreeMap::new();
+    for d in &table.datums {
+        let derived = super::list::derive(project, d);
+        out.insert(d.id, serde_json::to_value(&derived.geometry)?);
+    }
+    Ok(out)
+}
+
+/// The datums that follow housing reference `reference` on the board: its
+/// trace moved by a small probe, the board and its dimensioned parts
+/// solved again on a copy, and every datum compared. `None` when the probe
+/// does not solve.
+fn followers(
+    project: &Project,
+    reference: &HousingRef,
+    evaluator: &dyn BoardShapeEvaluator,
+    before: &std::collections::BTreeMap<crate::model::interface::DatumId, serde_json::Value>,
+) -> Result<Option<BTreeSet<crate::model::interface::DatumId>>> {
+    let mut probe = project.clone();
+    let geometry = nudged(&reference.geometry);
+    if edit_fixed(
+        &mut probe,
+        evaluator,
+        &[FixedEdit::Move {
+            owned: &reference.sketch,
+            geometry: &geometry,
+        }],
+    )
+    .is_err()
+    {
+        return Ok(None);
+    }
+    if crate::layout::dimensions::follow(project, &mut probe, Some(evaluator)).is_err() {
+        return Ok(None);
+    }
+    let after = datum_geometry(&probe)?;
+    Ok(Some(
+        before
+            .iter()
+            .filter(|(id, g)| after.get(*id).is_none_or(|h| differ(g, h)))
+            .map(|(id, _)| *id)
+            .collect(),
+    ))
+}
+
+/// Derive the link's loops after an edit (slice B5, the cycle graph): a
+/// housing reference whose enclosure geometry is built on a board datum
+/// (a sketch projecting it, a joint placing the board by it) is a loop
+/// when that datum follows the reference on the board. Only references
+/// built on a datum are probed, and only when the board, its parts, its
+/// datums or the link changed; without the host's sketch evaluator the
+/// last loops are kept.
+pub fn follow_cycles(
+    before: &Project,
+    project: &mut Project,
+    board: Option<&dyn BoardShapeEvaluator>,
+) -> Result<()> {
+    let Some(link) = project.housing.as_deref() else {
+        return Ok(());
+    };
+    let probed: Vec<&HousingRef> = link
+        .references
+        .iter()
+        .filter(|r| r.status != ReferenceStatus::Lost && !r.built_on.is_empty())
+        .collect();
+    if probed.is_empty() {
+        if !link.cycles.is_empty()
+            && let Some(link) = project.housing.as_deref_mut()
+        {
+            link.cycles.clear();
+        }
+        return Ok(());
+    }
+    let unchanged = before.board_shape == project.board_shape
+        && before.placements == project.placements
+        && before.part_dimensions == project.part_dimensions
+        && before.interface == project.interface
+        && before
+            .housing
+            .as_deref()
+            .map(|l| (&l.references, &l.consumers))
+            == Some((&link.references, &link.consumers));
+    let Some(evaluator) = board else {
+        return Ok(());
+    };
+    if unchanged {
+        return Ok(());
+    }
+    let geometry = datum_geometry(project)?;
+    let mut cycles = Vec::new();
+    for reference in probed {
+        let Some(moved) = followers(project, reference, evaluator, &geometry)? else {
+            continue;
+        };
+        for used in &reference.built_on {
+            if moved.contains(&used.datum) {
+                cycles.push(HousingCycle {
+                    reference: reference.id,
+                    datum: used.datum,
+                    feature: used.feature.clone(),
+                    via: used.via,
+                });
+            }
+        }
+    }
+    let mut cycles = sorted(cycles);
+    cycles.truncate(MAX_BUILT_ON);
+    if let Some(link) = project.housing.as_deref_mut() {
+        link.cycles = cycles;
+    }
+    Ok(())
+}
+
+/// Refuse a board edit that moved or removed the geometry a housing
+/// reference owns: the enclosure drives it (`housing.driven_edge`). Only
+/// the enclosure link's own commands move it. Without the host's sketch
+/// evaluator there is nothing to read it with.
+pub fn guard_driven(
+    before: &Project,
+    project: &Project,
+    board: Option<&dyn BoardShapeEvaluator>,
+) -> Result<()> {
+    let Some(link) = project.housing.as_deref() else {
+        return Ok(());
+    };
+    if link.references.is_empty() || before.board_shape == project.board_shape {
+        return Ok(());
+    }
+    let BoardShape::Sketch(sketch) = &project.board_shape else {
+        return Err(findings::driven_edge());
+    };
+    let Some(evaluator) = board else {
+        return Ok(());
+    };
+    for r in &link.references {
+        match evaluator.fixed_geometry_of(&sketch.sketch, &r.sketch) {
+            Ok(Some((now, _))) if same_shape(&now, &r.geometry) && !moved(&r.geometry, &now) => {}
+            Ok(_) => return Err(findings::driven_edge()),
+            Err(Error::Unsupported(_)) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// Refuse, before it runs, a board edit that names geometry a housing
+/// reference owns to move or delete it (`housing.driven_edge`), so the user
+/// reads why in the enclosure's terms rather than the sketch's.
+pub fn guard_edits(
+    project: &Project,
+    edits: &[crate::layout::outline::BoardEdit],
+    board: Option<&dyn BoardShapeEvaluator>,
+) -> Result<()> {
+    use crate::library::footprint_source::{SketchEdit, SketchRef};
+    let Some(link) = project.housing.as_deref() else {
+        return Ok(());
+    };
+    let (BoardShape::Sketch(sketch), Some(evaluator)) = (&project.board_shape, board) else {
+        return Ok(());
+    };
+    if link.references.is_empty() {
+        return Ok(());
+    }
+    let mut named: Vec<SketchRef> = Vec::new();
+    for edit in edits {
+        if let crate::layout::outline::BoardEdit::Sketch { edit } = edit {
+            match edit {
+                SketchEdit::Move { ids, .. } | SketchEdit::Delete { ids } => {
+                    named.extend(ids.iter().cloned());
+                }
+                SketchEdit::Drag { point, .. } => named.push(SketchRef::Point(point.clone())),
+                _ => {}
+            }
+        }
+    }
+    if named.is_empty() {
+        return Ok(());
+    }
+    for r in &link.references {
+        let holders = match evaluator.fixed_geometry_of(&sketch.sketch, &r.sketch) {
+            Ok(Some((_, holders))) => holders,
+            Ok(None) => continue,
+            Err(Error::Unsupported(_)) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        if named.iter().any(|n| holders.contains(n)) {
+            return Err(findings::driven_edge());
         }
     }
     Ok(())

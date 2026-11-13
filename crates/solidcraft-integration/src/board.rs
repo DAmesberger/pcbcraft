@@ -247,6 +247,45 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
     ) -> Result<(SketchBlob, Option<SketchRef>)> {
         Ok(fixed_geometry(sketch, edit)?)
     }
+
+    fn fixed_geometry_of(
+        &self,
+        sketch: &SketchBlob,
+        owned: &SketchRef,
+    ) -> Result<Option<(FeatureGeometry, Vec<SketchRef>)>> {
+        Ok(fixed_geometry_of(sketch, owned)?)
+    }
+}
+
+/// [`BoardShapeEvaluator::fixed_geometry_of`]: where an owned point or
+/// line stands now, with the entities that hold it, or `None` when the
+/// sketch no longer has it.
+fn fixed_geometry_of(
+    blob: &SketchBlob,
+    owned: &SketchRef,
+) -> Outcome<Option<(FeatureGeometry, Vec<SketchRef>)>> {
+    let sk = check::check_board_sketch(&blob.0)?;
+    let Ok(points) = owned_points(&sk, owned) else {
+        return Ok(None);
+    };
+    let at = |i: usize| sk.points.get(i).map(|p| [p.pos.x, p.pos.y]);
+    let mut holders = vec![owned.clone()];
+    if matches!(owned, SketchRef::Curve(_)) {
+        holders.extend(
+            points
+                .iter()
+                .filter_map(|&i| sk.points.get(i))
+                .map(|p| SketchRef::Point(SketchPointId(p.id.clone()))),
+        );
+    }
+    let geometry = match points.as_slice() {
+        [p] => at(*p).map(|at| FeatureGeometry::Point { at }),
+        [a, b] => at(*a)
+            .zip(at(*b))
+            .map(|(a, b)| FeatureGeometry::Line { a, b }),
+        _ => None,
+    };
+    Ok(geometry.map(|g| (g, holders)))
 }
 
 /// A point of the sketch at `at`, board mm.

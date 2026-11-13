@@ -49,6 +49,7 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         | "board.reference_inexact"
         | "housing.reference_lost"
         | "housing.reference_inexact"
+        | "housing.cycle"
         | CHECK_FAILED => Severity::Error,
         "board.unrouted" | "board.unplaced" | NO_PART => Severity::ToDo,
         "erc.unchecked_terminal"
@@ -108,6 +109,9 @@ pub fn group_title(code: &str) -> String {
         "interface.datum_inexact" => "Exported datums to check",
         "housing.reference_lost" => "Enclosure references broken",
         "housing.reference_inexact" => "Enclosure references to check",
+        "housing.older_board" => "Enclosure holds an older board",
+        "housing.unexported_face" => "Enclosure uses faces not exported",
+        "housing.cycle" => "Board and enclosure in a loop",
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
@@ -239,6 +243,9 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
             "Restore what the enclosure uses, or pick another reference in SolidCraft"
         }
         "housing.reference_inexact" => "Check the reference, then update from the enclosure",
+        "housing.older_board" => "Run Update Links in SolidCraft, then update from the enclosure",
+        "housing.unexported_face" => "Export the face, then pick it again in SolidCraft",
+        "housing.cycle" => "Stop following the enclosure geometry, or rebuild it without the datum",
         "instance.unit_unplaced" => "Place the unit or mark it unused",
         "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
         "instance.required_terminal_no_connect" => "Connect the power input",
@@ -599,8 +606,11 @@ pub const KNOWN_CODES: &[&str] = &[
     "graphic.invisible",
     "graphic.polygon_self_intersecting",
     "graphic.radius_too_large",
+    "housing.cycle",
+    "housing.older_board",
     "housing.reference_inexact",
     "housing.reference_lost",
+    "housing.unexported_face",
     "impedance.mismatch",
     "instance.field_required",
     "instance.no_connect_connected",

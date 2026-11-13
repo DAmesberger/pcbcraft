@@ -9,7 +9,7 @@ Implementation contract, slice B0, 12 November 2026. This document says how a bo
 - Live updates over SolidCraft's control channel are opt-in per link, and later (B7).
 - Nothing Sparksmith-specific goes into Solidcraft; nothing is posted upstream.
 
-**Status.** B0 (the contract), B1 (the datum model), B2 (package datums) and B3 (the exported design, the sidecar and the publish requests) are built. `Project::interface` holds the slot table; the automatic rules, the `interface.*` document commands and `interface.list` run through the one engine, so the UI, the CLI and MCP share them (`crates/editor-core/src/interface/{auto,apply,list}.rs`). The enclosure link and the dry run (B4) are built (below); the two-way check (B5) and the UI (B6) are not.
+**Status.** B0 (the contract), B1 (the datum model), B2 (package datums) and B3 (the exported design, the sidecar and the publish requests) are built. `Project::interface` holds the slot table; the automatic rules, the `interface.*` document commands and `interface.list` run through the one engine, so the UI, the CLI and MCP share them (`crates/editor-core/src/interface/{auto,apply,list}.rs`). The enclosure link and the dry run (B4) and the two-way check (B5) are built (below); the UI (B6) is not.
 
 **Slice B3 (the export) is built**: the core makes the sidecar a publish writes and the preview's diff (`interface::publish`); `pcbcraft-solidcraft` builds the design from that sidecar (`interface`) and opens an enclosure headlessly (`enclosure`); the automation session serves `interface.publish_preview` and `interface.publish`, and `pcbcraft-io` puts the files in place (`interface`). Its gate runs over the ESP32 example through the JSON transport, with a headless SolidCraft enclosure (`session::interface_publish_tests`): J1 moved 2 mm by its dimension previews as exactly one moved datum, "J1 opening, 2 mm along X"; the enclosure's cutout follows by 2 mm ± 1 µm with no other wall face moved and the boss on mounting hole 1 unmoved; the sidecar is byte for byte the same after reopening and in another folder; deleting R4 (whose envelope slot comes before R5's), adding a board fill and renaming J1 leave every face of the enclosure where it was; deleting J1 is reported. Publishing the interface tier of the ESP32 board took 82.7 ms (median of ten, the `ci` profile, on a shared machine; the 100 ms target is for release).
 
@@ -231,6 +231,29 @@ The project stores at most one link (`Project::housing`, `model::housing::Housin
 
 Both are errors in the production check and in `fabrication::preflight::NO_WAIVER`: no waiver lifts them. `housing.status` reads "broken reference" while one exists.
 
+## The two-way check (slice B5)
+
+**Consumers by slot.** An enclosure reference is classified by what carries it in the published design (`pcbcraft_solidcraft::enclosure`, `Slots`): a datum's own body (named by its token), a face the sidecar lists for a datum (by SolidCraft's digest of the published face name), or any face of the board slab, which the outline's slot builds. Each consumer stores the slot (`Consumer::slot`), and the board checks it by that slot, which is never reused (`interface::housing::broken`): the slot retired, its datum lost, or the last publish no longer carrying it is a broken reference. A sketch, or a joint that holds the board's occurrence by such a face (`UseKind::Joint`), is a consumer. A reference to any other body of the board's design (section 2: parts, laminate, pads) is no slot's: the link records it as `HousingLink::unexported` and the board raises `housing.unexported_face`; the publish dry run lists it as `unexported_reference`.
+
+**The older-board check.** SolidCraft keeps the SHA-256 of a linked design file on the link (`DesignLink::file_sha256`). The host reads it with the enclosure (`BoardLink::file_sha256`, stored as `HousingLink::board_sha256`), and a publish records the SHA-256 of the file it wrote (`PublishedRecord::design_sha256`); `interface.record_publish` keeps the files earlier publishes wrote (`PublishedRecord::earlier`, at most 64, oldest first, the board's own record: a host-supplied list is refused), so the board names the revision an enclosure holds (`interface::housing::agreement`). A republish with no datum changed keeps its revision whatever bytes it wrote. A link without a hash claims nothing. An enclosure that holds an older board raises `housing.older_board` ("The enclosure still uses board revision 1. Run Update Links in SolidCraft, then check again"), an advisory. When the enclosure's own file changed as well, `housing.status` reads "both changed" and an update from it is refused, changing nothing (`housing.both_changed`: "The board and the enclosure both changed since they last agreed. Update the enclosure first; nothing was applied"); `housing.preview` shows the refusal and the finding.
+
+**The cycle graph.** Each housing reference records the board datums its enclosure geometry is built on (`HousingRef::built_on`), read with the enclosure (`Enclosure::built_on`): from the feature that made the followed face, back through the sketches, faces and bodies it is made from, to every reference a slot carries, and every joint that places the board (the board frame, and every trace with it, depends on those). That is the edge enclosure cutout ← board datum. The edge board outline ← enclosure sketch is the board's own: after every edit that changes the board, its parts, its datums or the link, the engine moves each reference built on a datum by a small probe on a copy, solves the board and its dimensioned parts again, and compares every datum (`interface::housing::follow_cycles`). A datum that follows the reference and is one it is built on is a loop, stored as `HousingLink::cycles` and raised as `housing.cycle` ("Board outline follows the enclosure's Far wall · inner face, and the enclosure builds ‘Far wall’ from Board outline. Break the loop: …"), an error that no waiver lifts. Only references built on a datum are probed, so a link with none costs nothing.
+
+**The driven edge.** A board edit that names the geometry a housing reference owns to move, drag or delete it is refused before it runs, and one that changed it anyway is refused after (`interface::housing::guard_edits`, `guard_driven`, with the evaluator's `fixed_geometry_of`): `housing.driven_edge`, "This edge follows the enclosure's wall. Break the link to edit it here". Only the `housing.*` commands move it.
+
+**Every row of the conflict table has a test.**
+
+| Situation | Code | Test |
+| --- | --- | --- |
+| The enclosure holds an older board | `housing.older_board` | `b5_the_enclosure_holds_an_older_board_until_it_updates_links` (automation, ESP32); `b5_an_enclosure_holding_an_older_board_is_reported`, `b5_the_board_remembers_its_published_files` (core) |
+| Both sides changed | `housing.both_changed` | `b5_both_changed_refuses_the_update` (automation and core) |
+| A datum the enclosure uses is gone | `housing.reference_lost` | `b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication` (automation); `b4_deleting_the_part_breaks_the_enclosure_reference`, `b5_consumers_are_checked_by_slot` (core) |
+| A reference is on an unexported face | `housing.unexported_face` | `b5_a_feature_on_an_unexported_face_is_named` (automation, mechanical tier, and core) |
+| The board's driven outline was edited locally | `housing.driven_edge` | `b5_a_board_edit_never_moves_what_the_enclosure_drives` (`pcbcraft-solidcraft`); `b5_a_loop_between_board_and_enclosure_is_found` (automation) |
+| A cycle | `housing.cycle` | `b5_a_loop_between_board_and_enclosure_is_found` (automation, both halves of the graph); `b5_a_loop_between_board_and_enclosure_blocks_fabrication` (`pcbcraft-solidcraft`) |
+| The enclosure is missing or moved | `housing.missing` | `b4_a_missing_enclosure_keeps_the_snapshot` (automation) |
+| The enclosure is from a newer SolidCraft | `housing.newer` | `b5_an_enclosure_from_a_newer_solidcraft_is_refused` (automation) |
+
 ## Findings
 
 `interface::findings` lists every code once (`CODES`) with whether it blocks fabrication output and whether a waiver may lift that. Messages are in the user's words, built by one function per code.
@@ -250,7 +273,7 @@ Both are errors in the production check and in `fabrication::preflight::NO_WAIVE
 | `housing.missing` | the enclosure file was not found; the board uses its snapshot | no | — |
 | `housing.newer` | the enclosure was saved by a newer SolidCraft | no | — |
 
-Lost and inexact references are never waived, as for part dimensions (`board.reference_lost`): they are re-picked, or acknowledged in an impact preview. Slice B4 raises `housing.reference_lost` and `housing.reference_inexact` (above) and reports `housing.missing` and `housing.newer` as refusals of the request that reads the file; the other `housing.*` advisories are slice B5's. A local edit to a board edge that the enclosure drives is refused with `housing.driven_edge` ("This edge follows the enclosure's wall. Break the link to edit it here."). Findings name the datum's owner (the instance, or the board), since `ObjectRef` has no datum variant; slice B6 decides whether locating a datum needs one.
+Lost and inexact references are never waived, as for part dimensions (`board.reference_lost`): they are re-picked, or acknowledged in an impact preview. Slice B4 raises `housing.reference_lost` and `housing.reference_inexact` (above) and reports `housing.missing` and `housing.newer` as refusals of the request that reads the file; slice B5 raises `housing.older_board`, `housing.both_changed`, `housing.unexported_face` and `housing.cycle` (above), and `housing.stale` with the file's hash. A local edit to a board edge that the enclosure drives is refused with `housing.driven_edge` ("This edge follows the enclosure's wall. Break the link to edit it here."). Findings name the datum's owner (the instance, or the board), since `ObjectRef` has no datum variant; slice B6 decides whether locating a datum needs one.
 
 ## Where the contract lives
 
@@ -280,7 +303,9 @@ Lost and inexact references are never waived, as for part dimensions (`board.ref
 
 | B4 (built; `interface/tests/b4.rs` in the core on the demo board, `board::fixed_tests` in `pcbcraft-solidcraft`, and `session::housing_tests` in the automation crate over the ESP32 example with a headless SolidCraft enclosure) | the enclosure link, references, bindings, snapshot, preview, update, relink; the dry run | `b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication` (acceptance 6), `b4_the_board_follows_the_enclosure_wall` (acceptance 7), `b4_the_dry_run_names_the_feature_that_follows`, `b4_a_missing_enclosure_keeps_the_snapshot`; in the core `b4_deleting_the_part_breaks_the_enclosure_reference`, `b4_a_datum_missing_from_the_publish_is_broken`, `b4_lost_and_inexact_references_are_reported`, `b4_refused_link_commands_change_nothing`, `b4_the_link_survives_save_and_reopen`; `a_board_edge_follows_the_fixed_line_a_reference_owns` |
 
-B5 (the two-way check, a test per conflict row), B6 (UI), B7 (live channel) and B9 (VM run) follow the design note.
+| B5 (built; `interface/tests/b5.rs` in the core, `board::fixed_tests` in `pcbcraft-solidcraft`, and `session::two_way_tests` in the automation crate over the ESP32 example) | consumers by slot, the older-board check by the link's hash, the cycle graph, the driven edge | a test per row of the conflict table (above) |
+
+B6 (UI), B7 (live channel) and B9 (VM run) follow the design note.
 
 ## Open questions
 

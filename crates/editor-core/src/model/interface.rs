@@ -233,6 +233,27 @@ pub struct PublishedRecord {
     pub tier: Tier,
     /// Every datum published, in slot order.
     pub datums: Vec<PublishedDatum>,
+    /// SHA-256 of the design file this publish wrote, as SolidCraft keeps
+    /// it on an enclosure's link to the file (slice B5): an enclosure whose
+    /// link holds another hash holds an older board.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design_sha256: Option<ContentHash>,
+    /// The files earlier publishes wrote, oldest first, at most
+    /// [`MAX_PUBLISHED_FILES`]: they name the revision an enclosure still
+    /// holds. Kept by `interface.record_publish`, never by the host.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub earlier: Vec<PublishedFile>,
+}
+
+/// Earlier published design files a record remembers.
+pub const MAX_PUBLISHED_FILES: usize = 64;
+
+/// A design file an earlier publish wrote: its revision and SHA-256.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PublishedFile {
+    pub revision: u32,
+    pub sha256: ContentHash,
 }
 
 /// The board's interface: its slot table, rules and last publish. Slot

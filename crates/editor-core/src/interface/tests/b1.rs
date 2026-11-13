@@ -729,6 +729,8 @@ fn recording_a_publish_marks_what_changed_since() -> Fallible {
         hash: ContentHash([hash; 32]),
         tier: Tier::Interface,
         datums: datums.clone(),
+        design_sha256: None,
+        earlier: Vec::new(),
     };
     let publish = |engine: &mut Engine, source_id, record| {
         apply(

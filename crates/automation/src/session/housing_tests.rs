@@ -23,11 +23,11 @@ use std::path::Path;
 
 /// Where the far wall's inner face stands in the test document, mm: half
 /// a millimetre beyond the board's top edge (y = 64).
-const FAR_WALL_Y: f64 = 64.5;
+pub(super) const FAR_WALL_Y: f64 = 64.5;
 
 /// The test enclosure with its far wall's inner face at `far_y`, saved at
 /// `path`.
-fn save_enclosure(design: &Path, opening: &str, far_y: f64, path: &Path) -> TestResult {
+pub(super) fn save_enclosure(design: &Path, opening: &str, far_y: f64, path: &Path) -> TestResult {
     let (mut housing, _) = enclosure(design, opening)?;
     housing.solid_box("Far wall", [-5.0, far_y, -2.0], [50.0, 2.0, 12.0])?;
     let _ = std::fs::remove_file(path);
@@ -37,7 +37,7 @@ fn save_enclosure(design: &Path, opening: &str, far_y: f64, path: &Path) -> Test
 
 /// The far wall's inner face (normal -y) in a saved enclosure: its name
 /// and a point on it.
-fn far_face(path: &Path) -> TestResult<(String, [f64; 3])> {
+pub(super) fn far_face(path: &Path) -> TestResult<(String, [f64; 3])> {
     let (mut housing, newer) = Enclosure::open(&path.display().to_string())?;
     assert!(!newer);
     let face = faces(&mut housing, "Far wall")?
@@ -48,7 +48,7 @@ fn far_face(path: &Path) -> TestResult<(String, [f64; 3])> {
 }
 
 /// `housing.status`, the document's view of the link.
-fn status(session: &mut Session) -> TestResult<Value> {
+pub(super) fn status(session: &mut Session) -> TestResult<Value> {
     Ok(ok(
         session,
         json!({"command": "project.query", "params": {
@@ -59,7 +59,7 @@ fn status(session: &mut Session) -> TestResult<Value> {
 
 /// Whether `housing.preview` finds the enclosure changed since the board
 /// read it.
-fn changed(session: &mut Session, housing: &Path, design: &Path) -> TestResult<bool> {
+pub(super) fn changed(session: &mut Session, housing: &Path, design: &Path) -> TestResult<bool> {
     let preview = ok(
         session,
         json!({"command": "housing.preview", "params": files(housing, design)}),
@@ -68,11 +68,11 @@ fn changed(session: &mut Session, housing: &Path, design: &Path) -> TestResult<b
 }
 
 /// The files every enclosure request names.
-fn files(housing: &Path, design: &Path) -> Value {
+pub(super) fn files(housing: &Path, design: &Path) -> Value {
     json!({"path": housing.display().to_string(), "design": design.display().to_string()})
 }
 
-fn with(mut params: Value, more: Value) -> Value {
+pub(super) fn with(mut params: Value, more: Value) -> Value {
     if let (Some(a), Some(b)) = (params.as_object_mut(), more.as_object()) {
         a.extend(b.clone());
     }
@@ -80,7 +80,7 @@ fn with(mut params: Value, more: Value) -> Value {
 }
 
 /// `housing.update` with no enclosure linked: link it.
-fn link(session: &mut Session, housing: &Path, design: &Path) -> TestResult<Value> {
+pub(super) fn link(session: &mut Session, housing: &Path, design: &Path) -> TestResult<Value> {
     let revision = session.engine().revision();
     ok(
         session,
@@ -92,7 +92,7 @@ fn link(session: &mut Session, housing: &Path, design: &Path) -> TestResult<Valu
 }
 
 /// The production check's items with `code`.
-fn preflight(session: &mut Session, code: &str) -> TestResult<Vec<Value>> {
+pub(super) fn preflight(session: &mut Session, code: &str) -> TestResult<Vec<Value>> {
     let reply = ok(
         session,
         json!({"command": "project.query", "params": {
@@ -107,7 +107,7 @@ fn preflight(session: &mut Session, code: &str) -> TestResult<Vec<Value>> {
         .collect())
 }
 
-fn undo(session: &mut Session) -> TestResult {
+pub(super) fn undo(session: &mut Session) -> TestResult {
     let revision = session.engine().revision();
     ok(
         session,
@@ -117,7 +117,7 @@ fn undo(session: &mut Session) -> TestResult {
 }
 
 /// The board's solved edge `name`: its two ends.
-fn edge(session: &Session, name: &str) -> TestResult<([f64; 2], [f64; 2])> {
+pub(super) fn edge(session: &Session, name: &str) -> TestResult<([f64; 2], [f64; 2])> {
     let BoardShape::Sketch(sketch) = &session.engine().project().board_shape else {
         return Err("a sketch board".into());
     };
@@ -130,7 +130,7 @@ fn edge(session: &Session, name: &str) -> TestResult<([f64; 2], [f64; 2])> {
     Ok((e.a, e.b))
 }
 
-fn position(session: &Session, designator: &str) -> TestResult<[f64; 2]> {
+pub(super) fn position(session: &Session, designator: &str) -> TestResult<[f64; 2]> {
     let id = instance(session, designator)?;
     Ok(session
         .engine()
