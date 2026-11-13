@@ -227,7 +227,7 @@ impl App {
         };
         let browser_width = sources.browser_width().unwrap_or(chrome::BROWSER_WIDTH);
         engine.require_waiver_reason(sources.require_waiver_reason());
-        Ok(Self::with_parts(
+        let mut app = Self::with_parts(
             &cc.egui_ctx,
             viewport::Viewport::new(render_state, &cc.egui_ctx),
             Parts {
@@ -241,7 +241,10 @@ impl App {
                 #[cfg(target_os = "macos")]
                 native_menu,
             },
-        ))
+        );
+        // A launch without a file is a new project: ask for its profile.
+        app.pcb.ask_for_profile();
+        Ok(app)
     }
 
     /// The app around what [`Self::new`] set up (a window's; a test's has
@@ -985,6 +988,10 @@ impl App {
         self.pending_import = None;
         self.pcb.set_selection(None, None, None);
         self.pcb.document_opened();
+        if path.is_none() && !recovered {
+            // File › New: ask for the new project's fab profile.
+            self.pcb.ask_for_profile();
+        }
         self.scene.document_opened();
         self.schematic.document_opened(self.engine.project());
         match self.files.adopt(&self.engine, path, recovered) {

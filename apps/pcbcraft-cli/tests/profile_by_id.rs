@@ -70,7 +70,16 @@ fn the_production_check_resolves_a_profile_id_through_the_library() -> Fallible 
         .iter()
         .filter_map(|p| p["id"].as_str())
         .collect();
-    assert_eq!(ids, ["test-fine", "test-prototype"]);
+    assert_eq!(
+        ids,
+        [
+            "test-fine",
+            "test-prototype",
+            "jlcpcb-2-layer-1oz",
+            "jlcpcb-4-layer-1oz"
+        ],
+        "the user's profiles, then the built-ins"
+    );
 
     // The showcase on the library's prototype profile, by id.
     let board = dir.path().join("board.pcbcraft");
@@ -110,5 +119,46 @@ fn the_production_check_resolves_a_profile_id_through_the_library() -> Fallible 
         "{by_id}"
     );
     assert_eq!(unknown["ok"], false, "{unknown}");
+    Ok(())
+}
+
+/// `project.new` never asks: without `profile` it takes the user's default
+/// (Settings), else the built-in JLCPCB 2-layer 1 oz; `profile` names any
+/// library or built-in id. `rules.fab_profiles` lists the built-ins.
+#[test]
+fn a_new_project_takes_the_builtin_jlcpcb_profile_unless_one_is_named() -> Fallible {
+    let dir = tempfile::tempdir()?;
+    let (config, cache) = (dir.path().join("config"), dir.path().join("cache"));
+    let profile_id =
+        json!({"command": "project.inspect", "params": {"at": "/project/rules/profile/id"}});
+    let replies = session(
+        &config,
+        &cache,
+        &[
+            json!({"command": "project.new", "params": {"expected_revision": 0}}),
+            profile_id.clone(),
+            json!({"command": "project.query", "params": {"query": "rules.fab_profiles", "params": {}}}),
+            json!({"command": "project.new", "params": {"expected_revision": 1, "profile": "jlcpcb-4-layer-1oz"}}),
+            profile_id,
+        ],
+    )?;
+    let [new, first, listed, named, second] = replies.as_slice() else {
+        return Err(format!("five replies expected: {replies:?}").into());
+    };
+    assert_eq!(new["ok"], true, "{new}");
+    assert_eq!(first["result"]["value"], "jlcpcb-2-layer-1oz", "{first}");
+    let ids: Vec<&str> = listed["result"]["result"]
+        .as_array()
+        .ok_or("profiles")?
+        .iter()
+        .filter_map(|p| p["id"].as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        ["jlcpcb-2-layer-1oz", "jlcpcb-4-layer-1oz"],
+        "{listed}"
+    );
+    assert_eq!(named["ok"], true, "{named}");
+    assert_eq!(second["result"]["value"], "jlcpcb-4-layer-1oz", "{second}");
     Ok(())
 }

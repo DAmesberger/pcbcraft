@@ -373,7 +373,8 @@ pub enum Query {
     #[serde(rename = "rules.effective")]
     RulesEffective {},
     /// The project's own profile snapshot, if any; hosts with a profile
-    /// library (desktop, CLI, MCP) append its profiles. Pcbcraft ships none.
+    /// library (desktop, CLI, MCP) append its profiles and the built-in
+    /// ones.
     #[serde(rename = "rules.fab_profiles")]
     RuleProfiles {},
     /// What `rules.set_fab_profile` with these arguments would change: rules

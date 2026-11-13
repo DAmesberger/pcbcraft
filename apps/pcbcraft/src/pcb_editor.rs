@@ -457,6 +457,9 @@ pub struct PcbEditor {
     stackup: Option<stackup_panel::StackupSetup>,
     /// The Design rules panel while it is open.
     rules: Option<rules_panel::RulesPanel>,
+    /// A new project: ask for its fab profile on the next subject slot
+    /// if it has none (`ask_for_profile`).
+    ask_profile: bool,
     /// The Production files dialog while it is open.
     production: Option<production::ProductionDialog>,
     /// The production folder kept for this project (the app's per-user
@@ -599,6 +602,7 @@ impl Default for PcbEditor {
             view_centre: None,
             stackup: None,
             rules: None,
+            ask_profile: false,
             production: None,
             production_folder: None,
             chosen_production_folder: None,
@@ -1310,6 +1314,9 @@ impl PcbEditor {
     pub fn subject_slot(&mut self, ui: &mut Ui, engine: &Engine) -> CardResponse<Operation> {
         self.sync(engine);
         self.claim_refusals(ui.ctx());
+        if std::mem::take(&mut self.ask_profile) && engine.project().rules.profile.is_none() {
+            self.choose_profile();
+        }
         if let Some(operation) = self.part_chooser_frame(ui.ctx(), engine) {
             return CardResponse::output(Some(operation));
         }

@@ -63,9 +63,10 @@ pub struct NewParams {
     /// The revision of the last reply; refused as stale when the document
     /// has moved since.
     pub expected_revision: u64,
-    /// The board's fab profile: a profile library id or a whole profile
-    /// file's `profile`. Omitted: the user's default fab profile
-    /// (Settings); with neither, `rules.no_fab_profile` refuses.
+    /// The board's fab profile: a profile library id (a built-in one
+    /// included) or a whole profile file's `profile`. Omitted: the user's
+    /// default fab profile (Settings), else the built-in JLCPCB 2-layer
+    /// 1 oz (`jlcpcb-2-layer-1oz`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<pcbcraft_core::fabrication::ProfileChoice>,
 }
@@ -285,8 +286,8 @@ pub struct FabricationParams {
     #[serde(default)]
     pub zip: bool,
     /// The fabrication fab profile to check against, by its id in the
-    /// user's profile library (Pcbcraft ships none). The project's own
-    /// rules when omitted.
+    /// user's profile library or a built-in's. The project's own rules
+    /// when omitted.
     #[serde(default)]
     pub profile: Option<String>,
     #[serde(default)]
@@ -763,7 +764,7 @@ impl Request {
             info::<NewParams>(
                 "project.new",
                 "Start a new empty project at expected_revision with its board's fab profile, clearing history.",
-                "Start a new empty project at expected_revision; clears history. profile is the board's fab profile: a profile library id (project.query rules.fab_profiles lists them) or a whole profile file's profile; omitted, the user's default fab profile; with neither, rules.no_fab_profile refuses. Refused without changes on a stale revision.",
+                "Start a new empty project at expected_revision; clears history. profile is the board's fab profile: a profile library id (project.query rules.fab_profiles lists them) or a whole profile file's profile; omitted, the user's default fab profile, else the built-in JLCPCB 2-layer 1 oz (jlcpcb-2-layer-1oz). Refused without changes on a stale revision.",
             ),
             info::<OpenParams>(
                 "project.open",
@@ -1096,7 +1097,7 @@ impl Session {
             Request::Schema(params) => return discovery::schema_reply(params),
             Request::Query(query) => {
                 // A profile id reads as it does for an export: one of the
-                // user's library.
+                // user's library or a built-in.
                 if let Query::RuleProfiles {} = query {
                     let mut profiles: Vec<_> = self
                         .engine
@@ -1109,7 +1110,7 @@ impl Session {
                     let dirs = pcbcraft_io::settings::UserDirs::from_env()?;
                     let listing =
                         pcbcraft_io::rule_profiles::ProfileLibrary::from_dirs(&dirs).list()?;
-                    for p in listing.profiles {
+                    for p in listing.profiles.into_iter().chain(listing.builtins) {
                         if !profiles.iter().any(|q| q.id == p.id) {
                             profiles.push(p);
                         }

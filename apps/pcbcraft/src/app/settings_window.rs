@@ -7,7 +7,7 @@
 //! engine's `require_waiver_reason` (kept in `UserSettings`). The Rules
 //! section's "Default fab profile" is the profile library entry a new
 //! board starts with (`UserSettings::default_rule_profile`); with none, a
-//! new board has no profile until one is chosen.
+//! new project asks for one, JLCPCB 2-layer 1 oz preselected.
 //!
 //! A key is recorded by clicking its cap and pressing the new chord (Esc
 //! cancels). A chord another command already takes where both apply (the
@@ -591,14 +591,22 @@ fn lists_rows(ui: &mut egui::Ui, lists: &mut pcbcraft_io::settings::ListSettings
 }
 
 /// The Default fab profile choices: none, then every readable profile of
-/// the user's library by name.
+/// the user's library by name, then the built-ins none of them replaces.
 fn profile_choices() -> Vec<(Option<String>, String)> {
+    use pcbcraft_io::rule_profiles::{ProfileLibrary, builtins};
     let mut out = vec![(None, "None: choose for each board".to_owned())];
-    if let Ok(dirs) = pcbcraft_io::settings::UserDirs::from_env()
-        && let Ok(listing) = pcbcraft_io::rule_profiles::ProfileLibrary::from_dirs(&dirs).list()
-    {
-        out.extend(listing.profiles.into_iter().map(|p| (Some(p.id), p.name)));
-    }
+    let listing = pcbcraft_io::settings::UserDirs::from_env()
+        .ok()
+        .and_then(|dirs| ProfileLibrary::from_dirs(&dirs).list().ok());
+    let profiles: Vec<_> = match listing {
+        Some(listing) => listing
+            .profiles
+            .into_iter()
+            .chain(listing.builtins)
+            .collect(),
+        None => builtins(),
+    };
+    out.extend(profiles.into_iter().map(|p| (Some(p.id), p.name)));
     out
 }
 

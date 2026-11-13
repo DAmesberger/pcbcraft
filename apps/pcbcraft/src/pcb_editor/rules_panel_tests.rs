@@ -635,3 +635,102 @@ fn the_via_tools_start_tented_as_the_profile_says() -> TestResult {
     assert!(editor.via_tented(engine.project()), "the tool's own choice");
     Ok(())
 }
+
+/// Run 4, finding 1: a new project asks for its fab profile with the
+/// built-in JLCPCB 2-layer 1 oz preselected (the 4-layer one beside it);
+/// Use profile sets it as one undo step and closes the panel. Edit shape
+/// then starts, and the Route card shows the profile's via size without
+/// an error.
+#[test]
+fn a_new_project_asks_for_a_profile_with_jlcpcb_preselected() -> TestResult {
+    let mut engine = Engine::default();
+    let ctx = context();
+    let mut editor = PcbEditor::default();
+    let (_dir, library) = library()?;
+    // Without a profile, Edit shape is refused.
+    let hosted = || pcbcraft_core::Evaluators {
+        footprint: None,
+        board: super::super::board_shape::host_evaluator(),
+    };
+    let start = || Operation::Board(pcbcraft_core::layout::outline::BoardCommand::StartSketch);
+    let mut unshaped = Engine::default();
+    assert!(
+        unshaped
+            .apply_hosted(unshaped.revision(), start(), hosted())
+            .is_err()
+    );
+    editor.open_rules_in(Some(library), None);
+    editor.ask_for_profile();
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let shown = texts(&output);
+    for text in ["Choose a fab profile", "JLCPCB 2-layer 1 oz", "Use profile"] {
+        assert!(shown.iter().any(|t| t == text), "{text}: {shown:?}");
+    }
+    // The picker lists both built-ins.
+    assert!(click(&mut editor, &engine, &ctx, "JLCPCB 2-layer 1 oz")?.is_none());
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let shown = texts(&output);
+    assert!(
+        shown.iter().any(|t| t == "JLCPCB 4-layer 1 oz"),
+        "{shown:?}"
+    );
+    // Clicking the choice again closes its list.
+    assert!(click(&mut editor, &engine, &ctx, "JLCPCB 2-layer 1 oz")?.is_none());
+    let use_it =
+        click(&mut editor, &engine, &ctx, "Use profile")?.ok_or("Use profile did nothing")?;
+    assert_eq!(marked(&ctx), Some(Origin::Dialog(choose_id())));
+    engine.apply(engine.revision(), use_it)?;
+    let builtin = rule_profiles::builtin(rule_profiles::DEFAULT_BUILTIN).ok_or("built-in")?;
+    assert_eq!(engine.project().rules.profile.as_ref(), Some(&builtin));
+    assert_eq!(builtin, fixtures::jlcpcb_example()?, "the shipped file");
+    frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(editor.rules.is_none(), "the panel closes once it is set");
+    assert_eq!(editor.subject(), Subject::Properties);
+    // Asked once: a later frame does not ask again.
+    frame(&mut editor, &engine, &ctx, vec![]);
+    assert!(editor.rules.is_none());
+
+    // The Route card shows the profile's via size, without an error.
+    editor.on_tool("route", &engine);
+    frame(&mut editor, &engine, &ctx, vec![]);
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let shown = texts(&output);
+    assert!(!shown.iter().any(|t| t == "Enter 0.1 to 6 mm"), "{shown:?}");
+    for size in ["0.3 mm", "0.45 mm"] {
+        assert!(shown.iter().any(|t| t == size), "{size}: {shown:?}");
+    }
+    // The Board card's Edit shape… starts the outline sketch.
+    let mut editor = PcbEditor::default();
+    let edit = click(&mut editor, &engine, &ctx, "Edit shape…")?.ok_or("Edit shape did nothing")?;
+    engine.apply_hosted(engine.revision(), edit, hosted())?;
+    assert!(matches!(
+        engine.project().board_shape,
+        pcbcraft_core::BoardShape::Sketch(_)
+    ));
+    engine.undo()?;
+    engine.undo()?;
+    assert!(engine.project().rules.profile.is_none(), "one undo step");
+    Ok(())
+}
+
+/// Cancel (Later) leaves the board without a profile and closes the
+/// panel; a board that has a profile is never asked.
+#[test]
+fn later_closes_the_question_and_a_profiled_board_is_not_asked() -> TestResult {
+    let engine = Engine::default();
+    let ctx = context();
+    let mut editor = PcbEditor::default();
+    let (_dir, library) = library()?;
+    editor.open_rules_in(Some(library), None);
+    editor.ask_for_profile();
+    assert!(click(&mut editor, &engine, &ctx, "Cancel")?.is_none());
+    assert!(editor.rules.is_none());
+    assert!(engine.project().rules.profile.is_none());
+
+    let profiled = Engine::demo()?;
+    let mut editor = PcbEditor::default();
+    editor.ask_for_profile();
+    frame(&mut editor, &profiled, &ctx, vec![]);
+    assert!(editor.rules.is_none(), "not asked");
+    Ok(())
+}

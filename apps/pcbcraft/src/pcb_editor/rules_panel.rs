@@ -2,9 +2,9 @@
 //! "Dialogs and reviews"; docs/board-rules-and-shape.md).
 //!
 //! The panel shows the project's profile snapshot with its source, a
-//! picker of the user's profiles (Pcbcraft ships none: a profile is a file
-//! with a stated source, imported or written by the user), and every rule
-//! grouped as the
+//! picker of the user's profiles and the built-in ones (read-only; a user
+//! profile with a built-in's id takes its place), and every rule grouped
+//! as the
 //! core groups them (Copper, Holes & vias, Mask, Silkscreen, Paste, Fills,
 //! Board edge, Placement, Lands) with the profile value beside the
 //! effective value. A value commits live, per field, as one
@@ -13,6 +13,9 @@
 //! another profile first shows its impact (`rules.preview_fab_profile`): the
 //! rules that change, the overrides dropped and the board issues that
 //! appear or go; Switch then commits `rules.set_fab_profile` as one undo step.
+//! A new project without a profile opens the panel at "Choose a fab
+//! profile" ([`PcbEditor::ask_for_profile`]): the built-in JLCPCB 2-layer
+//! 1 oz is preselected, and Use profile sets it in one undo step.
 //!
 //! The user profile library (`pcbcraft_io::rule_profiles`) is file
 //! effects, not document edits: saving, renaming, deleting, importing and
@@ -143,6 +146,9 @@ fn rename_id() -> egui::Id {
 fn delete_id() -> egui::Id {
     egui::Id::unique("pcb-rules-delete")
 }
+fn choose_id() -> egui::Id {
+    egui::Id::unique("pcb-rules-choose")
+}
 
 /// The impact review of switching to `profile`.
 struct Preview {
@@ -173,6 +179,13 @@ struct SaveForm {
 
 enum Mode {
     Table,
+    /// A new board's profile: the chosen id, the revision Use profile was
+    /// sent at, and the engine's refusal of it.
+    Choose {
+        id: String,
+        sent: Option<u64>,
+        refusal: Option<String>,
+    },
     Preview(Box<Preview>),
     Save(Box<SaveForm>),
     Rename {
@@ -240,12 +253,29 @@ impl RulesPanel {
     fn refresh(&mut self) {
         self.listing = match &self.library {
             Some(library) => library.list().map_err(|e| e.to_string()),
-            None => Ok(Listing::default()),
+            None => Ok(Listing {
+                builtins: rule_profiles::builtins(),
+                ..Listing::default()
+            }),
         };
     }
 
     fn user_profiles(&self) -> &[RuleProfile] {
         self.listing.as_ref().map_or(&[], |l| l.profiles.as_slice())
+    }
+
+    /// The picker's profiles: the user's, then the built-ins none of them
+    /// replaces (all built-ins when the folder cannot be read).
+    fn choices(&self) -> Vec<RuleProfile> {
+        match &self.listing {
+            Ok(listing) => listing
+                .profiles
+                .iter()
+                .chain(&listing.builtins)
+                .cloned()
+                .collect(),
+            Err(_) => rule_profiles::builtins(),
+        }
     }
 
     pub(super) fn subject(&self) -> Subject {
@@ -287,6 +317,12 @@ impl RulesPanel {
         {
             preview.refusal = Some(text);
             preview.sent = None;
+        }
+        if let Some(text) = refusal::claim(ctx, Origin::Dialog(choose_id()))
+            && let Mode::Choose { sent, refusal, .. } = &mut self.mode
+        {
+            *refusal = Some(text);
+            *sent = None;
         }
         if let Some(text) = refusal::claim(ctx, Origin::Dialog(save_id())) {
             toast::post(
@@ -643,6 +679,37 @@ impl PcbEditor {
         }
     }
 
+    /// Ask for a new project's fab profile the next time the board's
+    /// subject slot is drawn, if it has none then.
+    pub fn ask_for_profile(&mut self) {
+        self.ask_profile = true;
+    }
+
+    /// Open the panel at "Choose a fab profile" with the built-in JLCPCB
+    /// 2-layer 1 oz preselected (the user's own copy when it has that id).
+    pub(super) fn choose_profile(&mut self) {
+        if self.rules.is_none() {
+            self.open_rules(None);
+        }
+        let Some(panel) = &mut self.rules else {
+            return;
+        };
+        let choices = panel.choices();
+        let id = choices
+            .iter()
+            .find(|p| p.id == rule_profiles::DEFAULT_BUILTIN)
+            .or(choices.first())
+            .map_or_else(
+                || rule_profiles::DEFAULT_BUILTIN.to_owned(),
+                |p| p.id.clone(),
+            );
+        panel.mode = Mode::Choose {
+            id,
+            sent: None,
+            refusal: None,
+        };
+    }
+
     /// An Issues row's "Show rule": the panel, at that rule.
     pub fn show_rule(&mut self, topic: RuleTopic) {
         self.open_rules(Some(topic));
@@ -678,7 +745,23 @@ impl PcbEditor {
             panel.mode = Mode::Table;
         }
         let mut close = false;
+        // A new board's choice: done once the board has a profile (the
+        // engine took Use profile, or another file opened with one).
+        if let Mode::Choose { sent, .. } = &panel.mode
+            && let Some(profile) = &engine.project().rules.profile
+        {
+            if sent.is_some_and(|sent| sent != engine.revision()) {
+                toast::post(
+                    ui.ctx(),
+                    Level::Ok,
+                    format!("Using {}", profile.name),
+                    vec![ToastAction::Undo],
+                );
+            }
+            return CardResponse::output(None);
+        }
         let response = match &mut panel.mode {
+            Mode::Choose { .. } => CardResponse::output(choose_slot(&mut panel, ui, &mut close)),
             Mode::Preview(_) => CardResponse::output(preview_slot(&mut panel, ui, engine)),
             Mode::Save(_) => CardResponse::output(save_slot(&mut panel, ui, engine)),
             Mode::Rename { .. } => {
@@ -801,16 +884,17 @@ fn picks(
     rules: &ProjectRules,
 ) -> (Vec<(Pick, String)>, Pick, Option<RuleProfile>) {
     let mut options = Vec::new();
+    let choices = panel.choices();
     let Some(snapshot) = &rules.profile else {
         options.push((Pick::None, "Choose a profile…".to_owned()));
-        for p in panel.user_profiles() {
+        for p in &choices {
             options.push((Pick::User(p.id.clone()), p.name.clone()));
         }
         return (options, Pick::None, None);
     };
     let mut current = Pick::Board;
     let mut differs = None;
-    for p in panel.user_profiles() {
+    for p in &choices {
         let pick = Pick::User(p.id.clone());
         if p.id == snapshot.id {
             if p == snapshot {
@@ -831,7 +915,7 @@ fn picks(
 
 fn profile_of(panel: &RulesPanel, pick: &Pick) -> Option<RuleProfile> {
     match pick {
-        Pick::User(id) => panel.user_profiles().iter().find(|p| p.id == *id).cloned(),
+        Pick::User(id) => panel.choices().into_iter().find(|p| p.id == *id),
         Pick::Board | Pick::None => None,
     }
 }
@@ -864,9 +948,9 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
                     concat!(
                         "Choose your fabricator's profile. ",
                         pcbcraft_core::product_name!(),
-                        " ships none: import a profile \
-                         file (Your profiles › Import…; examples/profiles/ has sourced ones) or \
-                         write one from the fabricator's capability page."
+                        " has JLCPCB's built in; import another \
+                         fabricator's file (Your profiles › Import…) or write one from its \
+                         capability page."
                     ),
                 );
             }
@@ -1452,6 +1536,64 @@ fn save_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Ope
                     None
                 }
             }
+        }
+    }
+}
+
+/// The docked "Choose a fab profile" dialog of a new board: one choice,
+/// preselected; Use profile commits `rules.set_fab_profile`, Later closes
+/// the panel and leaves the board without rules.
+fn choose_slot(panel: &mut RulesPanel, ui: &mut Ui, close: &mut bool) -> Option<Operation> {
+    let choices = panel.choices();
+    let Mode::Choose { id, sent, refusal } = &mut panel.mode else {
+        return None;
+    };
+    let options: Vec<(String, String)> = choices
+        .iter()
+        .map(|p| (p.id.clone(), p.name.clone()))
+        .collect();
+    let chosen = choices.iter().find(|p| p.id == *id).cloned();
+    let mut dialog = DialogPanel::new(
+        choose_id(),
+        "constraint",
+        "Choose a fab profile",
+        "Use profile",
+    );
+    dialog.kind = "Rules";
+    dialog.body_rows = 4.0;
+    dialog.refusal = refusal.as_deref();
+    dialog.primary_disabled = if sent.is_some() {
+        Some("Setting the profile…")
+    } else if chosen.is_none() {
+        Some("Choose a profile")
+    } else {
+        None
+    };
+    let action = dialog.show(ui, |ui| {
+        kit::hint(
+            ui,
+            "A board's design rules come from its fabricator's profile",
+            "Change it later in Board › Rules.",
+        );
+        kit::choice_row(ui, "Fab profile", id, &options);
+        if let Some(profile) = &chosen {
+            kit::hint(ui, &source_line(&profile.source), &profile.source.notes);
+        }
+    });
+    match action? {
+        DialogAction::Cancel => {
+            *close = true;
+            None
+        }
+        DialogAction::Primary => {
+            let profile = chosen?;
+            *refusal = None;
+            *sent = Some(panel.revision.unwrap_or_default());
+            refusal::mark(ui.ctx(), Origin::Dialog(choose_id()));
+            Some(Operation::Rules(RulesCommand::SetProfile {
+                profile: Box::new(profile),
+                keep_overrides: false,
+            }))
         }
     }
 }
