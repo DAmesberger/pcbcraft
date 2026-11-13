@@ -45,7 +45,11 @@ fn wroom3() -> PackageDefinition {
 #[test]
 #[ignore = "timings"]
 fn part_file_timings() {
-    let bytes = part_file::builtin("esp32-s31-wroom-3").unwrap();
+    let bytes = &std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../library/parts/esp32-s31-wroom-3.solidcraft"
+    ))
+    .unwrap();
     for round in 1..=3 {
         // Today's path: the module builder.
         let t = Instant::now();

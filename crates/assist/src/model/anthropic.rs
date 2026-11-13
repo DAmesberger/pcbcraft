@@ -291,8 +291,11 @@ mod tests {
     use super::super::{Image, ToolSpec};
     use super::*;
 
+    /// A model whose run profile declares the server fallback.
     fn profile() -> ModelProfile {
-        ModelProfile::anthropic("claude-opus-5-5")
+        let mut p = ModelProfile::anthropic("claude-opus-5-5");
+        p.capabilities.server_fallback = true;
+        p
     }
 
     const THINKING: &str = r#"{"type": "thinking", "thinking": "", "signature": "CAQS6g=="}"#;

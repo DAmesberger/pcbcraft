@@ -29,7 +29,7 @@ fn replay(name: &str) -> Fallible<(Outcome, Replay, Session)> {
     };
     let outcome = run(
         &goal,
-        &RunConfig::default(),
+        &shipped_config()?,
         &mut backend,
         &mut session,
         &mut |_| {},
@@ -39,9 +39,9 @@ fn replay(name: &str) -> Fallible<(Outcome, Replay, Session)> {
 }
 
 /// The Messages body a kept request was sent as.
-fn wire(request: &KeptRequest) -> Value {
+fn wire(profile: &ModelProfile, request: &KeptRequest) -> Value {
     anthropic::request_body(
-        &RunConfig::default().profile,
+        profile,
         &ModelRequest {
             system: &request.system,
             tools: &request.tools,
@@ -166,7 +166,12 @@ fn every_request_extends_the_last_one_so_the_datasheet_cache_holds() -> Fallible
     // previous request's messages unchanged. The datasheets carry their
     // own breakpoint in the first message.
     let (_, transport, _) = replay("run1/run1.recording.jsonl")?;
-    let requests: Vec<Value> = transport.requests.iter().map(wire).collect();
+    let profile = shipped_config()?.profile;
+    let requests: Vec<Value> = transport
+        .requests
+        .iter()
+        .map(|r| wire(&profile, r))
+        .collect();
     let first = requests.first().ok_or("a request")?;
     assert_eq!(
         first["messages"][0]["content"][0]["cache_control"]["type"],

@@ -27,7 +27,6 @@ pub mod documents;
 pub mod model;
 pub mod pins;
 pub mod profile;
-mod prompt;
 pub mod report;
 mod run;
 pub mod tools;
@@ -39,7 +38,7 @@ use sparksmith_automation::Session;
 use std::path::PathBuf;
 
 pub use documents::{MAX_DATASHEET_BYTES, TOKENS_PER_PAGE, pdf_pages};
-pub use prompt::SYSTEM;
+pub use profile::AssistLibrary;
 pub use run::{RunConfig, output_policy, run};
 
 #[derive(Debug, thiserror::Error)]
@@ -63,9 +62,6 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
-
-/// The default model.
-pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
 
 /// A datasheet: a local PDF or an https URL the API fetches.
 #[derive(Clone, Debug, PartialEq)]

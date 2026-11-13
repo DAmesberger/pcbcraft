@@ -35,6 +35,25 @@ fn part_files_lists_the_builtins_with_their_parameters() -> TestResult {
         .find(|b| b["name"] == BODY)
         .ok_or("the module body is listed")?;
     assert_eq!(body["kind"], "package");
+    // Title, summary, prefix and licence come from the part's sidecar.
+    let shipped = super::builtin_parts()?.require(BODY)?;
+    assert_eq!(body["title"], shipped.title.as_str());
+    assert_eq!(body["summary"], shipped.summary.as_str());
+    assert_eq!(body["prefix"], "U");
+    assert_eq!(body["licence"], "MIT OR Apache-2.0");
+    let kinds: Vec<(&str, &str)> = builtin
+        .iter()
+        .filter_map(|b| Some((b["name"].as_str()?, b["kind"].as_str()?)))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            (BODY, "package"),
+            ("finned-heatsink", "mechanical"),
+            ("round-spacer", "pads"),
+            ("smd-nut", "pads"),
+        ]
+    );
     assert!(
         body["parameters"]
             .as_array()

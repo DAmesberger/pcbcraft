@@ -1,0 +1,5 @@
+{
+  "format": 1,
+  "about": "The datasheet assistant's shipped settings. The base system prompt is system-prompt.md, where {product} stands for the program's name; the run profiles are profiles/NAME.json, and a user's assist-profiles/NAME.json takes a built-in's place.",
+  "default_model": "claude-opus-5-5"
+}

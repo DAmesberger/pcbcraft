@@ -15,6 +15,24 @@ type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const WROOM3: &str = "esp32-s31-wroom-3";
 
+/// A part file of the repository's shipped library, read for the test (the
+/// program reads them through the shipped library at run time).
+fn builtin(name: &str) -> Option<&'static [u8]> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static READ: OnceLock<Mutex<HashMap<String, &'static [u8]>>> = OnceLock::new();
+    let mut read = READ.get_or_init(Default::default).lock().ok()?;
+    if let Some(bytes) = read.get(name) {
+        return Some(bytes);
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../library/parts")
+        .join(format!("{name}.solidcraft"));
+    let bytes: &'static [u8] = Box::leak(std::fs::read(path).ok()?.into_boxed_slice());
+    read.insert(name.to_owned(), bytes);
+    Some(bytes)
+}
+
 fn wroom3_package() -> PackageDefinition {
     // The fixture is the module datasheet's millimetres: the wire form.
     let form: PackageForm = serde_json::from_str::<

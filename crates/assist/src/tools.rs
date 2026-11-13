@@ -152,9 +152,9 @@ pub fn definitions() -> Vec<ToolSpec> {
         ),
         tool(
             "library_check_part_file",
-            "MCP library_check_part_file: evaluate a built-in SolidCraft part file (builtin: \"esp32-s31-wroom-3\", a shielded module body) at literal values for some of its parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report its parameters, bodies and materials, marking surfaces, bounds and convention findings. Changes nothing. Read the parameter list before choosing values.",
+            "MCP library_check_part_file: without builtin, list the built-in SolidCraft part files (name, title, what each is, kind, parameters). With builtin (a listed name), evaluate that part file at literal values for some of its parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report its parameters, bodies and materials, marking surfaces, bounds and convention findings. Changes nothing. Read the parameter list before choosing values.",
             json!({"builtin": {"type": "string"}, "values": object}),
-            &["builtin"],
+            &[],
         ),
         tool(
             "library_use_part_file",
@@ -253,6 +253,20 @@ pub fn execute(
         "library_set_marking" => json!({"command": "library.set_marking", "params": {
             "expected_revision": revision, "draft": input["draft"], "marking": input["marking"],
         }}),
+        "library_check_part_file" if input["builtin"].is_null() => {
+            let response = send(
+                session,
+                policy,
+                json!({"command": "library.part_files", "params": {}}),
+            );
+            return if response["ok"] == true {
+                let result = &response["result"];
+                let listed = result.get("result").unwrap_or(result);
+                reply(json!({"builtin": listed["builtin"]}), false, None)
+            } else {
+                reply(response["error"].clone(), true, None)
+            };
+        }
         "library_check_part_file" => {
             let response = send(
                 session,

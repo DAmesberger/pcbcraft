@@ -28,97 +28,14 @@ use sparksmith_solidcraft::models::part_file::{self, EvaluatedPart, PartReport, 
 use std::path::Path;
 use std::sync::Arc;
 
+pub use super::shipped_parts::{BuiltinPart, LandRule, Term, builtin_parts};
+
 /// Longest accepted path, bytes.
 const MAX_PATH: usize = 4095;
 /// The media type of a part file asset.
 const MEDIA_TYPE: &str = "application/x-solidcraft";
-/// Licence of Sparksmith's built-in part files.
-pub const BUILTIN_LICENCE: &str = "MIT OR Apache-2.0";
 /// The designator prefix of a part file that names none.
 pub const DEFAULT_PREFIX: &str = "MP";
-
-/// `diameter = scale × value(param) + add_mm` over a part's own parameter
-/// (its value in mm).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Term {
-    pub param: &'static str,
-    pub scale: f64,
-    pub add_mm: f64,
-}
-
-/// A built-in part's land rule: Sparksmith data over the part's parameters
-/// (the part file never supplies lands, M1.4).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LandRule {
-    /// A round copper land around a non-plated hole, at the origin.
-    Annulus { outer: Term, hole: Term },
-    /// A bare non-plated hole at the origin.
-    Hole { diameter: Term },
-}
-
-/// What a built-in part is placed as.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BuiltinPart {
-    /// The `part_file::BUILTIN` name.
-    pub name: &'static str,
-    pub title: &'static str,
-    pub prefix: &'static str,
-    /// Whether it is a mechanical part (placed on the board) rather than a
-    /// package body (used by a package).
-    pub mechanical: bool,
-    pub lands: &'static [LandRule],
-}
-
-const fn term(param: &'static str, add_mm: f64) -> Term {
-    Term {
-        param,
-        scale: 1.0,
-        add_mm,
-    }
-}
-
-/// Sparksmith's data about each built-in part file (docs/mechanical-parts.md
-/// M7). Generic illustrative land sizes; verify against the chosen part.
-pub const BUILTIN_PARTS: &[BuiltinPart] = &[
-    BuiltinPart {
-        name: "smd-nut",
-        title: "SMD nut",
-        prefix: "H",
-        mechanical: true,
-        lands: &[LandRule::Annulus {
-            outer: term("outer_d", 0.6),
-            hole: term("thread_d", 0.2),
-        }],
-    },
-    BuiltinPart {
-        name: "round-spacer",
-        title: "Round spacer",
-        prefix: "H",
-        mechanical: true,
-        lands: &[LandRule::Hole {
-            diameter: term("inner_d", 0.0),
-        }],
-    },
-    BuiltinPart {
-        name: "finned-heatsink",
-        title: "Finned heatsink",
-        prefix: "HS",
-        mechanical: true,
-        lands: &[],
-    },
-    BuiltinPart {
-        name: "esp32-s31-wroom-3",
-        title: "ESP32-S31-WROOM-3 module body",
-        prefix: "U",
-        mechanical: false,
-        lands: &[],
-    },
-];
-
-/// Sparksmith's data about a built-in part file.
-pub fn builtin_part(name: &str) -> Option<&'static BuiltinPart> {
-    BUILTIN_PARTS.iter().find(|b| b.name == name)
-}
 
 /// Where a part file comes from.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -134,6 +51,11 @@ pub enum PartFileSource {
 
 fn invalid(message: String) -> crate::Error {
     crate::Error::Document(sparksmith_core::Error::Invalid(message))
+}
+
+/// The shipped data about the built-in part file `name`, if it is one.
+pub fn builtin_part(name: &str) -> Result<Option<&'static BuiltinPart>> {
+    Ok(builtin_parts()?.get(name))
 }
 
 /// A part file's bytes, the name it goes by and its built-in data.
@@ -174,17 +96,11 @@ pub fn read_part(engine: &Engine, source: &PartFileSource) -> Result<ReadPart> {
             })
         }
         PartFileSource::Builtin(name) => {
-            let bytes = part_file::builtin(name).ok_or_else(|| {
-                let known: Vec<&str> = part_file::BUILTIN.iter().map(|(n, _)| *n).collect();
-                invalid(format!(
-                    "part_file.read: no built-in part file {name}; built-ins: {}",
-                    known.join(", ")
-                ))
-            })?;
+            let builtin = builtin_parts()?.require(name)?;
             Ok(ReadPart {
-                bytes: bytes.to_vec(),
-                file_name: format!("{name}.solidcraft"),
-                builtin: builtin_part(name),
+                bytes: builtin.bytes.to_vec(),
+                file_name: builtin.file_name(),
+                builtin: Some(builtin),
                 model: None,
             })
         }
@@ -211,10 +127,10 @@ pub fn read_part(engine: &Engine, source: &PartFileSource) -> Result<ReadPart> {
             let file_name = published.definition.asset.file_name.clone();
             // A project copy of a built-in is the built-in only with its
             // exact bytes.
-            let builtin = file_name
-                .strip_suffix(".solidcraft")
-                .and_then(builtin_part)
-                .filter(|b| part_file::builtin(b.name).is_some_and(|own| own == bytes.as_slice()));
+            let builtin = match file_name.strip_suffix(".solidcraft") {
+                Some(stem) => builtin_part(stem)?.filter(|b| *b.bytes == *bytes.as_slice()),
+                None => None,
+            };
             Ok(ReadPart {
                 bytes,
                 file_name,
@@ -234,7 +150,7 @@ pub fn checked(bytes: &[u8], values: &PartValues) -> Result<Arc<EvaluatedPart>> 
     Ok(part)
 }
 
-fn term_value(part: &EvaluatedPart, t: Term) -> Result<f64> {
+fn term_value(part: &EvaluatedPart, t: &Term) -> Result<f64> {
     let p = part
         .parameters
         .iter()
@@ -256,8 +172,9 @@ pub fn rule_lands(part: &EvaluatedPart, rules: &[LandRule]) -> Result<Vec<Mechan
         .enumerate()
         .map(|(k, rule)| {
             let name = (k + 1).to_string();
-            let length = |t| -> Result<Nm> { Ok(Nm::from_mm_f64_rounded(term_value(part, t)?)?) };
-            let shape = match *rule {
+            let length =
+                |t: &Term| -> Result<Nm> { Ok(Nm::from_mm_f64_rounded(term_value(part, t)?)?) };
+            let shape = match rule {
                 LandRule::Annulus { outer, hole } => LandShape::Circle {
                     diameter: length(outer)?,
                     hole: Some(length(hole)?),
@@ -471,16 +388,15 @@ fn model_source(
         return Ok(PartModelSource::Model { model });
     }
     let builtin = read.builtin.is_some();
-    let licence = if builtin {
-        BUILTIN_LICENCE.to_owned()
-    } else {
-        licence
+    let licence = match read.builtin {
+        Some(b) => b.licence.clone(),
+        None => licence
             .map(str::trim)
             .filter(|l| !l.is_empty())
             .map(str::to_owned)
             .ok_or_else(|| {
                 invalid("part_file.licence: a part file needs its licence stated".into())
-            })?
+            })?,
     };
     // The model's own bounds: the file as it is.
     let as_is = if part.parameters.iter().any(|p| p.given) {
@@ -543,7 +459,7 @@ pub fn place_part_operation(
         (Some(lands), None) => lands.clone(),
         (None, Some(footprint)) => footprint_lands(engine, footprint)?,
         (None, None) => match read.builtin {
-            Some(b) => rule_lands(&part, b.lands)?,
+            Some(b) => rule_lands(&part, &b.lands)?,
             None => Vec::new(),
         },
     };
@@ -560,15 +476,15 @@ pub fn place_part_operation(
         name: params
             .name
             .clone()
-            .or_else(|| read.builtin.map(|b| b.title.to_owned()))
+            .or_else(|| read.builtin.map(|b| b.title.clone()))
             .unwrap_or_else(|| read.file_name.trim_end_matches(".solidcraft").to_owned()),
         designator_prefix: params
             .prefix
             .clone()
-            .or_else(|| read.builtin.map(|b| b.prefix.to_owned()))
+            .or_else(|| read.builtin.map(|b| b.prefix.clone()))
             .unwrap_or_else(|| DEFAULT_PREFIX.to_owned()),
         source: match read.builtin {
-            Some(b) => b.name.to_owned(),
+            Some(b) => b.name.clone(),
             None => read.file_name.clone(),
         },
         model,
@@ -647,10 +563,13 @@ pub fn set_part_operation(
     let placed = placed_part(engine, params.instance)?;
     let read = read_part(engine, &PartFileSource::Model(placed.model))?;
     let part = checked(&read.bytes, &params.values)?;
-    let builtin = builtin_part(&placed.record.source)
-        .filter(|_| !placed.record.source.ends_with(".solidcraft"));
+    let builtin = if placed.record.source.ends_with(".solidcraft") {
+        None
+    } else {
+        builtin_part(&placed.record.source)?
+    };
     let lands = match builtin {
-        Some(b) => rule_lands(&part, b.lands)?,
+        Some(b) => rule_lands(&part, &b.lands)?,
         None => placed.lands.clone(),
     };
     let had_copper = placed.lands.iter().any(|l| l.shape.copper());
@@ -681,22 +600,22 @@ pub fn set_part_operation(
 impl Session {
     pub(super) fn part_files(&self) -> Result<Value> {
         let mut builtin = Vec::new();
-        for (name, bytes) in part_file::BUILTIN {
-            let data = builtin_part(name);
-            let report = part_file::evaluate(bytes, &PartValues::new())
+        for b in builtin_parts()?.all() {
+            let report = part_file::evaluate(&b.bytes, &PartValues::new())
                 .ok()
                 .map(|p| p.report());
             builtin.push(json!({
-                "name": name,
-                "title": data.map_or(*name, |b| b.title),
-                "prefix": data.map_or(DEFAULT_PREFIX, |b| b.prefix),
-                "kind": match data {
-                    Some(b) if b.mechanical && !b.lands.is_empty() => "pads",
-                    Some(b) if b.mechanical => "mechanical",
+                "name": b.name,
+                "title": b.title,
+                "summary": b.summary,
+                "prefix": b.prefix,
+                "kind": match b {
+                    b if b.mechanical && !b.lands.is_empty() => "pads",
+                    b if b.mechanical => "mechanical",
                     _ => "package",
                 },
                 "parameters": report.as_ref().map(|r| r.parameters.clone()).unwrap_or_default(),
-                "licence": BUILTIN_LICENCE,
+                "licence": b.licence,
             }));
         }
         let project: Vec<Value> = self

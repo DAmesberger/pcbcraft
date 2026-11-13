@@ -904,7 +904,7 @@ impl Request {
                 "library.check_part_file",
                 "Evaluate a SolidCraft part file at given parameter values and report its convention check.",
                 concat!(
-                    "Evaluate a SolidCraft part file (path to a .solidcraft design, or builtin: esp32-s31-wroom-3) at literal values for some of its user parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report the convention check (docs/part-templates.md §11): parameters and values, bodies with the ",
+                    "Evaluate a SolidCraft part file (path to a .solidcraft design, or builtin: a listed name) at literal values for some of its user parameters ({\"can_height\": {\"mm\": 2.465}}; units mm, deg, count, number) and report the convention check (docs/part-templates.md §11): parameters and values, bodies with the ",
                     sparksmith_core::product_name!(),
                     " material each appearance names, marking surfaces (marking-<name> planes sized by marking_<name>_u/_v), package datums (opening-<name> planes sized by <datum>_u/_v, optional <datum>_r, _depth, _clearance, normal pointing out along the plug's way in; axis-<name> axes, optional <datum>_d), pin1, bounds, timing and findings (part_file.read, part_file.structure, part_file.value, part_file.feature, part_file.seating, part_file.material, part_file.marking, part_file.datum blocking; part_file.origin, part_file.no_marking, part_file.import, part_file.slow advisory). Lists the material appearance names. Not a document change."
                 ),
@@ -922,7 +922,7 @@ impl Request {
             info::<NoParams>(
                 "library.part_files",
                 "List the SolidCraft part files this project can place or use.",
-                "List the SolidCraft part files this project can place or use (docs/mechanical-parts.md): the built-ins (name, title, designator prefix, kind pads, mechanical or package, parameters with units and defaults, licence) and the project's Models of format solidcraft (model, name, file, licence). Not a document change.",
+                "List the SolidCraft part files this project can place or use (docs/mechanical-parts.md): the built-ins (name, title, summary, designator prefix, kind pads, mechanical or package, parameters with units and defaults, licence) and the project's Models of format solidcraft (model, name, file, licence). Not a document change.",
             ),
             info::<mechanical_parts::PlacePartFileParams>(
                 "layout.place_part_file",
@@ -1656,6 +1656,7 @@ pub mod part_files;
 mod pinout;
 mod preview;
 mod reply;
+pub mod shipped_parts;
 pub(crate) use reply::take_verbose;
 pub mod sources;
 
