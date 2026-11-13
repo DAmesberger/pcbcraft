@@ -326,6 +326,27 @@ fn a_launch_without_a_file_opens_an_empty_project() -> Fallible {
     assert_empty(&ax.app.engine, "launch")
 }
 
+/// A launch shows the empty project's whole page framed, not zoomed into
+/// its top-left corner, where the first part landed on the border
+/// (docs/e2e-run-4.md, finding 10).
+#[test]
+fn a_launch_frames_the_whole_empty_page() -> Fallible {
+    let mut ax = Ax::with_engine(file_ui::new_project(), Workspace::Schematic)?;
+    ax.frame(vec![]);
+    let project = ax.app.engine.project();
+    let sheet = project.sheets.list.first().ok_or("a first sheet")?;
+    let ([w, h], [x, y]) = (sheet.size_mm(), sheet.top_left());
+    let (a, b) = ([x, y], [x + w, y - h]);
+    let (a, b) = (on_sheet(&ax, a)?, on_sheet(&ax, b)?);
+    let canvas = ax.find(Role::Canvas, "Schematic")?.rect;
+    // Fitted: the page fills the canvas's width or its height.
+    assert!(
+        (b.x - a.x) > canvas.width() * 0.8 || (b.y - a.y) > canvas.height() * 0.6,
+        "page {a:?}–{b:?} in {canvas:?}"
+    );
+    Ok(())
+}
+
 /// File › New replaces a design with the same empty project a launch
 /// opens.
 #[test]

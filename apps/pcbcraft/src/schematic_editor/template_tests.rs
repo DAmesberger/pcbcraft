@@ -162,7 +162,8 @@ fn choosing_a_row_creates_the_component_and_arms_placement() -> TestResult {
 
 /// VM check #4 (run 3 #10): on the placed USB-C receptacle no pin number's
 /// box runs past its pin end, touches the end's mark, another number or a
-/// pin name; stacked pads read in a short form; the long value wraps
+/// pin name; stacked pads read in full (run 4 #12: the short form was cut
+/// too small to read), at the pin text height; the long value wraps
 /// within the body's width.
 #[test]
 fn usb_c_pin_numbers_sit_clear_and_the_value_wraps() -> TestResult {
@@ -226,8 +227,17 @@ fn usb_c_pin_numbers_sit_clear_and_the_value_wraps() -> TestResult {
         .iter()
         .filter_map(|(p, _)| p.number.as_ref().map(|t| t.text.as_str()))
         .collect();
-    for short in ["A4B9…", "A1B12…"] {
-        assert!(shown.contains(&short), "{short} in {shown:?}");
+    for full in ["A4B9,B4A9", "A1B12,B1A12"] {
+        assert!(shown.contains(&full), "{full} in {shown:?}");
+    }
+    for (pin, _) in &numbers {
+        let number = pin.number.as_ref().ok_or("a number")?;
+        assert!(
+            (number.height - pcbcraft_core::library::graphics::PIN_TEXT_HEIGHT_MM).abs() < 1e-9,
+            "{} at {} mm",
+            number.text,
+            number.height
+        );
     }
     let body = unit
         .shapes
