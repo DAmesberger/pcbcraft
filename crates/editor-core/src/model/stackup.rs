@@ -188,13 +188,12 @@ pub struct Stackup {
     pub dielectrics: Vec<Dielectric>,
     pub mask_top: bool,
     pub mask_bottom: bool,
-    /// Soldermask thickness over copper in µm, on every side with mask.
-    /// Left out (0) of a `layout.set_stackup` request, the board's current
-    /// value is kept ([`Stackup::keeping_unstated`]).
+    /// Soldermask thickness over copper in µm, on every side with mask;
+    /// 0 or left out keeps the board's.
     #[serde(default)]
     pub mask_um: f64,
     /// Soldermask thickness over bare laminate, on every side with mask;
-    /// left out (0) like [`Stackup::mask_um`].
+    /// 0 or left out keeps the board's.
     #[serde(default)]
     pub mask_laminate_nm: Nm,
     pub silkscreen_top: bool,

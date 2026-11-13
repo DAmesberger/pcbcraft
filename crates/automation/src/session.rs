@@ -65,7 +65,7 @@ pub struct NewParams {
     pub expected_revision: u64,
     /// The board's fab profile: a library or shipped id, or a whole
     /// profile file's `profile`. Omitted: the Settings default, else the
-    /// shipped library's default.
+    /// shipped default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<sparksmith_core::fabrication::ProfileChoice>,
 }
@@ -775,7 +775,7 @@ impl Request {
             info::<NewParams>(
                 "project.new",
                 "Start a new empty project at expected_revision with its board's fab profile, clearing history.",
-                "Start a new empty project at expected_revision on the shipped new board; clears history. profile is the board's fab profile: a profile library id (project.query rules.fab_profiles lists them) or a whole profile file's profile; omitted, the Settings default, else the shipped library's default. Refused without changes on a stale revision.",
+                "Start a new empty project at expected_revision; clears history. profile is the board's fab profile: a profile library id (project.query rules.fab_profiles lists them) or a whole profile file's profile; omitted, the Settings default, else the shipped default. Refused without changes on a stale revision.",
             ),
             info::<OpenParams>(
                 "project.open",

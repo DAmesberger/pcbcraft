@@ -212,9 +212,10 @@ fn the_skill_file_and_the_prompt_are_one_source() -> Fallible<()> {
 #[test]
 fn a_scripted_session_completes_the_workflow_through_the_review_gate() -> Fallible<()> {
     // Publishing is Ask-class: allow-all stands in for the person's Allow,
-    // so the test reaches the review gate that must still refuse it.
+    // so the test reaches the review gate that must still refuse it. The
+    // board has a fab profile, whose margins the estimated lands take.
     let mut server = Server::new(
-        Session::default(),
+        Session::new(sparksmith_core::Engine::profiled()?),
         Policy::new(Mode::AllowAll, Vec::<std::path::PathBuf>::new()),
     );
     rpc(&mut server, "initialize", json!({}));
