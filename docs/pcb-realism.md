@@ -207,10 +207,26 @@ These are never saved:
   These are fillets rather than rounded sketch profiles for two reasons. A profile drawn
   from numbers would lose the body's parameters. The engine also refuses to intersect two
   rounded profile extrusions.
-- The studio is turned 145° and the exposure is 1.1: one strip light's mirror image is a
-  crisp-edged lacquer band at the overview's far end. Unturned, it washed a third of the
-  board pale with a blurred edge. A GPU test measures the sheen (95th-percentile mask
-  luminance 3.8× the median) and checks that nothing clips to white.
+- The studio is turned 285° and the exposure is 1.1: one strip light's mirror image lies on
+  the gloss mask as a sheen. Unturned, it washed a third of the board pale with a blurred
+  edge. A GPU test measures the sheen (95th-percentile mask luminance at least twice the
+  median) and checks that nothing clips to white.
+- The gloss mask's coat is at roughness 0.16 (it was 0.06): at 0.06 the strip light lay
+  across the board as a hard-edged white shaft in low views. A mask cured over traces, weave
+  and filler is not flat across a reflected light, so the sheen now falls off softly
+  (`the_gloss_mask_sheen_has_soft_edges`: 3 px at 0.06, 13 px at 0.16; see
+  [materials](materials.md#mask-finish)).
+- Exposed copper (tracks, pads, vias, fills, the foil lines at the edge) carries a native
+  Cu2O film a few nanometres thick: F0 (0.955, 0.61, 0.41) instead of freshly polished
+  copper's (0.955, 0.638, 0.538), whose cool pink read as pale salmon on the board. The
+  values and their source are at `COPPER_AIR` in `material.rs`; OSP keeps fresh copper
+  (`bare_copper_reads_as_copper`).
+- The Standard look draws every face in its plain colour under Solidcraft's modelling
+  light, without the materials. With them, a metal had only the few fixed lights of
+  Solidcraft's default material preview and no studio, so header pins read dark brown, and
+  the board edges that face away from those lights were black
+  (`the_standard_look_shows_the_edge_as_laminate_and_pins_as_gold`). Switching looks
+  repacks the stream from the cached meshes; nothing is rebuilt.
 - The rim light grazes at 12° instead of 35°, so its widened lobe no longer glows across
   close-ups.
 - Metals: gull-wing leads are satin bright tin (roughness 0.24), not charcoal; header pins
@@ -248,11 +264,15 @@ These are never saved:
   the dielectric under it (`peeling_each_layer_hides_exactly_that_layers_bodies`). A
   laminate body of no dielectric (an exact model's slab, read from a file) shows while
   every dielectric does.
-- X-ray, next to Show all, shows only copper and vias, so the stackup's copper shows layer
-  over layer.
+- X-ray, next to Show all, shows only copper and vias, and draws them see-through at alpha
+  64/255 (`X_RAY_ALPHA`, the follow-the-net machinery with nothing kept solid), so a top
+  pour no longer hides the inner layers and the stackup's copper shows layer over layer.
+  Showing a film, the laminate or the parts again ends the see-through look.
 - A Layers popover (eye icon) on the floating navigation bar holds the toggles. It lists
-  the layers in board order and has Show all. The icon is outlined in the accent colour
-  while any layer is hidden. PCB 2D keeps its own Layers and view popover.
+  the layers in board order and has Show all. It opens at the left of the 3D view above the
+  hint line, so a peel stays in sight while layers are toggled, and is never taller than the
+  view: what does not fit scrolls. The icon is outlined in the accent colour while any layer
+  is hidden. PCB 2D keeps its own Layers and view popover.
 - The toggles are display state only:
   - The model's PBR buffer has one run of bytes for each view layer.
   - Toggling repacks the shown bodies from the cached meshes, off the UI thread.
@@ -269,8 +289,12 @@ These are never saved:
   the selected objects stay solid in their own looks. Every other body (laminate, mask, a
   track's conforming mask, other copper, parts) is drawn see-through in its plain colour at
   alpha 22/255 (`FADE_ALPHA`), so the net shows as it passes through the layers. A pill
-  ("Following N22") shows the mode; its × turns it off. The net tint and the selection ring
-  are drawn as usual.
+  ("Following N22") shows the mode; its × turns it off. The net's bodies show in their own
+  copper look, untinted (a tint from the highlight layer turned them grey or selection
+  blue); the selected object keeps its tint and the selection ring.
+- In the Realistic look the faded bodies take the modelling light the Standard look has:
+  lit by the studio rig alone and tone mapped per channel they read as a dark smoke. The
+  solid bodies keep the studio (`the_faded_board_is_as_legible_in_the_realistic_look`).
 - Transparency is Solidcraft's: the faded bodies use its faded-context class (see-through
   triangles and `InstanceLook::Faded` placements), which its renderer blends with
   weighted blended order-independent transparency, and with unsorted alpha blending where a
@@ -282,7 +306,13 @@ These are never saved:
   have no material overlay. A followed body under the faded mask keeps its material, which
   only a land's finish still covers.
 - A click or zoom anchor over the solid net picks it through the faded bodies in front of
-  it.
+  it. A click whose nearest body is a part's package follows the net of that part's pad
+  under the pointer; with none of its pads there, the part is selected and the followed net
+  kept (`a_click_on_a_part_follows_the_pad_under_it_or_keeps_the_net`).
+- The short track by the USB-C connector is real geometry: USB_DN reaches both of the
+  connector's D− pins (A7 and B7). Track 400 runs 1.4 mm from the second pin to a via, and a
+  bottom track joins it to the first pin's via. It lies under the connector's shell, so the
+  faded shell dims it.
 - Tests in `viewport/follow.rs` cover the toggle, the opaque and faded split of stream and
   placements, picking through, and selection changes that keep every cached mesh.
 

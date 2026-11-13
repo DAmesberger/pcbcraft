@@ -146,12 +146,12 @@ Calibration notes:
 
 ### Mask finish
 
-Measured gloss masks read 80–94 and matte masks 3–43 on a handheld glossmeter, probably 60° gloss units ([NPL MAT 5](https://eprintspublications.npl.co.uk/4043/1/MAT5.pdf)). The finish sets the lacquer coat's perceptual roughness; the mapping is **est.** A single-surface look needed a compromise (0.12 too pin-point, 0.28 washed out); with the coat carrying the gloss and the body diffuse, a gloss coat can be sharp without bleaching the colour.
+Measured gloss masks read 80–94 and matte masks 3–43 on a handheld glossmeter, probably 60° gloss units ([NPL MAT 5](https://eprintspublications.npl.co.uk/4043/1/MAT5.pdf)). The finish sets the lacquer coat's perceptual roughness; the mapping is **est.** A single-surface look needed a compromise (0.12 too pin-point, 0.28 washed out); with the coat carrying the gloss and the body diffuse, a gloss coat can be sharp without bleaching the colour. A glossmeter reads the specular peak through a small aperture, but a mask cured over traces, weave and filler is not that flat across a reflected light: at 0.06 the studio's strip light lay on the board as a crisp-edged white shaft (VM check, 13 November 2026), so gloss is 0.16, a soft sheen with a clear highlight, and the other finishes keep their order above it. `the_gloss_mask_sheen_has_soft_edges` measures the band's fall-off (3 px at 0.06, 13 px at 0.16).
 
 | Finish | Coat roughness | Exceptions |
 |---|---|---|
-| Gloss | 0.06 | Clear 0.05 (no pigment breaks the surface); yellow 0.12 (fabricators sell it semi-gloss) |
-| Satin | 0.20 | – |
+| Gloss | 0.16 | Clear 0.12 (no pigment breaks the surface); yellow 0.20 (fabricators sell it semi-gloss) |
+| Satin | 0.26 | – |
 | Matte | 0.40 | Black 0.45 |
 
 ### Surface patterns

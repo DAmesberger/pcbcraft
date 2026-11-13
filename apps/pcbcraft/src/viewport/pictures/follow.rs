@@ -96,6 +96,46 @@ fn a_followed_bottom_track_shows_through_the_faded_board() -> Result<(), Box<dyn
     Ok(())
 }
 
+/// The faded board around a followed net reads in the Realistic look as
+/// it does in the Standard one, not as a dark smoke: the overview's board
+/// pixels are about as bright in both looks.
+#[test]
+fn the_faded_board_is_as_legible_in_the_realistic_look() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut gpu) = super::esp32::gpu_or_skip()? else {
+        return Ok(());
+    };
+    let mut v = viewport(&showcase_project()?)?;
+    let (item, _) = bottom_track(&v).ok_or("the showcase has no bottom track")?;
+    v.set_follow_net(true);
+    v.set_focus(vec![item]);
+    let (w, h) = (240, 180);
+    let mut board =
+        |v: &mut Viewport, realistic: bool| -> Result<f64, Box<dyn std::error::Error>> {
+            v.set_realistic(realistic);
+            let rgba = gpu.draw(v, w, h, 1.0).ok_or("no picture")?;
+            let bg = |c: u8, b: f64| (f64::from(c) / 255.0 - b).abs() < 0.04;
+            let shown: Vec<f64> = rgba
+                .chunks_exact(4)
+                .filter(|p| {
+                    !(bg(p[0], BACKGROUND.r) && bg(p[1], BACKGROUND.g) && bg(p[2], BACKGROUND.b))
+                })
+                .map(luminance)
+                .collect();
+            if shown.len() < 2000 {
+                return Err("the board is not in the frame".into());
+            }
+            Ok(shown.iter().sum::<f64>() / shown.len() as f64)
+        };
+    let standard = board(&mut v, false)?;
+    let realistic = board(&mut v, true)?;
+    eprintln!("faded board luminance: standard {standard:.4}, realistic {realistic:.4}");
+    assert!(
+        realistic >= 0.8 * standard,
+        "a dark smoke in the Realistic look: {realistic:.4} against {standard:.4}"
+    );
+    Ok(())
+}
+
 /// Follow-the-net pictures of the showcase for review, written to
 /// `PCBCRAFT_PICTURES`: the overview and a close-up of a bottom track,
 /// as built and followed, in both looks.

@@ -214,6 +214,20 @@ impl Detail {
 
 /// Bare copper F0, Johnson & Christy 1972 via Hoffman's table.
 const COPPER: [f64; 3] = [0.955, 0.638, 0.538];
+/// F0 of a board's exposed copper (tracks, pads, vias, fills and the foil
+/// lines at the edge): copper in air carries a native Cu2O film a few
+/// nanometres thick, so it is not the freshly polished metal of
+/// [`COPPER`], whose bright, cool pink read as pale salmon on the board.
+/// The film takes the blue down steeply, the green a little and leaves the
+/// red: at 440 nm normal reflectance falls from 54 % bare to 10 % under
+/// 10 nm of oxide, nearly linearly (about 41 % at 3 nm, from the
+/// patent's fit), at 560 nm it stays about 55–65 % under 5 nm, and 630 nm
+/// is insensitive to it (Powell, Settles and Kailasam, US 6,525,829 B1,
+/// Novellus Systems, 2003: modelled reflectance of Cu under Cu2O). So red
+/// keeps the bare value, green takes the middle of that range and blue
+/// the 3 nm value; the 3 nm film is **est.** (a native oxide after days in
+/// air). Fresh copper under OSP keeps [`COPPER`].
+const COPPER_AIR: [f64; 3] = [0.955, 0.61, 0.41];
 /// Natural FR-4 laminate albedo (est.).
 const FR4: [f64; 3] = [0.36, 0.32, 0.17];
 /// A soldermask's pigmented resin: per-pass transmittance through 20 µm,
@@ -250,12 +264,20 @@ pub fn pigment(colour: MaskColour) -> Pigment {
 /// carries its gloss (est. from glossmeter readings: gloss masks 80–94 GU,
 /// matte 3–43). Clear resin has no pigment to break the surface; the yellow
 /// fabricators sell is semi-gloss at best; black matte is the flattest.
+///
+/// A glossmeter reads the specular peak through a small aperture; a mask
+/// cured over traces, weave and filler is not that flat across a
+/// reflected light, so a gloss board shows a light's reflection as a soft
+/// sheen, never a mirror image with hard edges. At 0.06 the studio's strip
+/// light lay on the board as a crisp-edged white shaft (VM check
+/// 13 Nov 2026); 0.16 keeps a clear gloss highlight with soft edges, and
+/// the other finishes keep their order above it.
 pub fn mask_coat_roughness(colour: MaskColour, finish: MaskFinish) -> f64 {
     match (finish, colour) {
-        (MaskFinish::Gloss, MaskColour::Clear) => 0.05,
-        (MaskFinish::Gloss, MaskColour::Yellow) => 0.12,
-        (MaskFinish::Gloss, _) => 0.06,
-        (MaskFinish::Satin, _) => 0.20,
+        (MaskFinish::Gloss, MaskColour::Clear) => 0.12,
+        (MaskFinish::Gloss, MaskColour::Yellow) => 0.20,
+        (MaskFinish::Gloss, _) => 0.16,
+        (MaskFinish::Satin, _) => 0.26,
         (MaskFinish::Matte, MaskColour::Black) => 0.45,
         (MaskFinish::Matte, _) => 0.40,
     }
@@ -445,7 +467,7 @@ fn base_material(kind: BodyKind, fabrication: &Fabrication, stack: &Stack) -> Ma
         | BodyKind::PadCopper
         | BodyKind::ViaCopper
         | BodyKind::FillCopper
-        | BodyKind::EdgeCopper => metal("Copper", COPPER, 0.30),
+        | BodyKind::EdgeCopper => metal("Copper", COPPER_AIR, 0.30),
         // The routed edge of the laminate; its weave is the detail.
         BodyKind::EdgeDielectric => dielectric("FR-4 laminate edge", FR4, 0.60, EPOXY_IOR),
         BodyKind::ViaBore => dielectric("Shadowed drill", BORE_SHADOW, 0.90, EPOXY_IOR),
@@ -655,7 +677,7 @@ mod tests {
     fn metals_are_metallic_with_their_documented_f0() {
         let cu = default_look(BodyKind::CopperTrack);
         assert_eq!(cu.metallic, 1.0);
-        assert_eq!(cu.base_linear, [0.955, 0.638, 0.538]);
+        assert_eq!(cu.base_linear, [0.955, 0.61, 0.41]);
         assert_eq!(default_look(BodyKind::PadCopper), cu);
         let pad = |pad_finish| {
             let m = material(
@@ -748,7 +770,7 @@ mod tests {
         assert_eq!(default_look(BodyKind::MaskTop).base_linear, body(laminate));
         assert_eq!(default_look(BodyKind::MaskCap).base_linear, body(copper));
         let coat = default_look(BodyKind::MaskTop).coat;
-        assert_eq!(coat.map(|c| c.roughness), Some(0.06));
+        assert_eq!(coat.map(|c| c.roughness), Some(0.16));
     }
 
     /// The documented colour table (`docs/materials.md`), to three decimals.
@@ -898,7 +920,7 @@ mod tests {
             );
             assert!(gloss < satin && satin < matte, "{colour:?}");
             assert!(
-                (0.045..=0.12).contains(&gloss) && matte >= 0.40,
+                (0.10..=0.20).contains(&gloss) && matte >= 0.40,
                 "{colour:?}"
             );
             for finish in FINISHES {

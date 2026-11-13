@@ -207,7 +207,7 @@ impl Instanced {
     ) -> Vec<InstancedMesh> {
         let solid = scene.color(self.colour);
         let kept = self.placed(geometry, display, self.mesh.look, solid, |g| fade.keeps(g));
-        let faded = scene.color(Fade::faded(self.colour));
+        let faded = scene.color(fade.faded(self.colour));
         let faded = self.placed(geometry, display, InstanceLook::Faded, faded, |g| {
             !fade.keeps(g)
         });
@@ -642,10 +642,20 @@ pub const MAX_FOCUS: usize = 1 << 20;
 /// order-independent transparency. A display look of the cached meshes:
 /// the stream is packed again ([`pack_faded`]) and instanced placements are
 /// split by look ([`Instanced::split`]); no body is rebuilt.
+///
+/// The X-ray layer view draws the same way with an empty focus
+/// ([`Fade::x_ray`]): every shown body (the copper and vias) see-through
+/// at [`X_RAY_ALPHA`], so the stackup's copper reads layer over layer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Fade {
     focus: std::collections::BTreeSet<u64>,
+    alpha: u8,
 }
+
+/// Opacity of the copper in the X-ray view ([`Fade::x_ray`]): about half,
+/// so a top-side pour still shows the inner layers and the bottom under
+/// it, each layer over the next.
+pub const X_RAY_ALPHA: u8 = 64;
 
 impl Fade {
     /// The look for `focus`; `None` for an empty focus (nothing to follow)
@@ -653,7 +663,24 @@ impl Fade {
     pub fn new(focus: impl IntoIterator<Item = u64>) -> Option<Self> {
         let focus: std::collections::BTreeSet<u64> =
             focus.into_iter().take(MAX_FOCUS + 1).collect();
-        (!focus.is_empty() && focus.len() <= MAX_FOCUS).then_some(Self { focus })
+        (!focus.is_empty() && focus.len() <= MAX_FOCUS).then_some(Self {
+            focus,
+            alpha: FADE_ALPHA,
+        })
+    }
+
+    /// The X-ray look: no body kept, every shown one see-through at
+    /// [`X_RAY_ALPHA`].
+    pub fn x_ray() -> Self {
+        Self {
+            focus: Default::default(),
+            alpha: X_RAY_ALPHA,
+        }
+    }
+
+    /// Whether this look follows a net (has a focus), not X-ray's.
+    pub fn follows(&self) -> bool {
+        !self.focus.is_empty()
     }
 
     /// Whether `g` stays solid: a body of the focus. A track's conforming
@@ -663,8 +690,8 @@ impl Fade {
     }
 
     /// The faded colour of a body of plain colour `rgba`.
-    pub fn faded(rgba: [u8; 4]) -> [u8; 4] {
-        [rgba[0], rgba[1], rgba[2], FADE_ALPHA]
+    pub fn faded(&self, rgba: [u8; 4]) -> [u8; 4] {
+        [rgba[0], rgba[1], rgba[2], self.alpha]
     }
 }
 
@@ -704,8 +731,8 @@ pub fn pack_faded(
     let mut looks = Looks::default();
     let mut runs: Runs = Vec::new();
     for (layer, g) in bodies {
-        if fade.is_some_and(|f| !f.keeps(g)) {
-            let colour = scene.color(Fade::faded(plain_colour(g.surface)));
+        if let Some(fade) = fade.filter(|f| !f.keeps(g)) {
+            let colour = scene.color(fade.faded(plain_colour(g.surface)));
             faded_tris(&mut scene, g, colour)?;
             continue;
         }
