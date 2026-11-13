@@ -18,8 +18,13 @@ use std::collections::VecDeque;
 
 /// How long a toast stays, in seconds (upstream `STATUS_TOAST_MS = 6000`).
 pub const TOAST_SECONDS: f64 = 6.0;
-/// The most toasts shown at once; older ones go to Messages only.
-pub const MAX_TOASTS: usize = 3;
+/// The most toasts shown at once: a new toast replaces the shown one,
+/// which stays in Messages, so quick actions don't pile up on the canvas.
+pub const MAX_TOASTS: usize = 1;
+/// How long a warning or error toast holds its place against a less
+/// severe toast, in seconds, so it can be read; the newer toast then goes
+/// to Messages only.
+pub const HOLD_SECONDS: f64 = 3.0;
 /// The most text rows of one toast.
 pub const MAX_TOAST_ROWS: usize = 3;
 /// The widest a toast grows, as upstream's centred toasts (440 pt).
@@ -78,7 +83,9 @@ pub struct Toasts {
 }
 
 impl Toasts {
-    /// Show `text` at `now`; a repeat of the newest toast counts ×n.
+    /// Show `text` at `now`, replacing the shown toast; a repeat of the
+    /// newest toast counts ×n. A warning or error younger than
+    /// [`HOLD_SECONDS`] keeps its place against a less severe toast.
     pub fn push(
         &mut self,
         level: Level,
@@ -94,6 +101,12 @@ impl Toasts {
             newest.count = newest.count.saturating_add(1);
             newest.at = now;
             newest.actions = actions;
+            return;
+        }
+        // `Level` orders most severe first.
+        if self.items.back().is_some_and(|newest| {
+            newest.level <= Level::Warning && level > newest.level && now - newest.at < HOLD_SECONDS
+        }) {
             return;
         }
         self.items.push_back(Toast {
@@ -374,7 +387,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn repeats_count_up_and_the_stack_keeps_three() {
+    fn repeats_count_up_and_a_new_toast_replaces_the_shown_one() {
         let mut toasts = Toasts::default();
         toasts.push(Level::Error, "Locked", vec![], 1.0);
         toasts.push(Level::Error, "Locked", vec![ToastAction::Details], 2.0);
@@ -387,37 +400,58 @@ mod tests {
             "a repeat restarts the clock"
         );
         assert_eq!(first.as_ref().map(toast_text).as_deref(), Some("Locked ×2"));
-        toasts.push(Level::Info, "Locked", vec![], 2.5);
-        assert_eq!(
-            toasts.items().count(),
-            2,
-            "another severity is another toast"
-        );
-        for i in 0..5 {
-            toasts.push(Level::Ok, format!("Saved {i}"), vec![], 3.0);
-        }
+        toasts.push(Level::Error, "Out of bounds", vec![], 2.5);
         let texts: Vec<_> = toasts.items().map(|t| t.text.as_str()).collect();
+        assert_eq!(texts, ["Out of bounds"], "another text replaces it");
+        for i in 0..5 {
+            let at = 6.0 + f64::from(i);
+            toasts.push(
+                Level::Ok,
+                format!("Routed {i}"),
+                vec![ToastAction::Undo],
+                at,
+            );
+        }
+        let shown: Vec<_> = toasts.items().cloned().collect();
+        assert_eq!(shown.len(), 1, "one toast at a time");
+        assert_eq!(shown.first().map(|t| t.text.as_str()), Some("Routed 4"));
         assert_eq!(
-            texts,
-            ["Saved 2", "Saved 3", "Saved 4"],
-            "the oldest go first"
+            shown.first().map(|t| t.actions.clone()),
+            Some(vec![ToastAction::Undo]),
+            "the newest keeps its Undo"
         );
+    }
+
+    /// A warning or error stays readable for [`HOLD_SECONDS`] against
+    /// less severe toasts; one as severe or more replaces it at once.
+    #[test]
+    fn a_fresh_error_holds_against_info() {
+        let texts =
+            |toasts: &Toasts| -> Vec<String> { toasts.items().map(|t| t.text.clone()).collect() };
+        let mut toasts = Toasts::default();
+        toasts.push(Level::Error, "Locked", vec![], 10.0);
+        toasts.push(Level::Ok, "Routed", vec![ToastAction::Undo], 10.5);
+        toasts.push(Level::Warning, "Close to R3", vec![], 11.0);
+        assert_eq!(texts(&toasts), ["Locked"]);
+        toasts.push(Level::Ok, "Routed", vec![], 10.0 + HOLD_SECONDS);
+        assert_eq!(texts(&toasts), ["Routed"], "read by now");
+        toasts.push(Level::Warning, "Close to R3", vec![], 14.0);
+        toasts.push(Level::Error, "Crossing N2", vec![], 14.5);
+        assert_eq!(texts(&toasts), ["Crossing N2"], "as severe or more");
     }
 
     #[test]
     fn toasts_expire_and_undo_and_errors_can_be_withdrawn() {
         let mut toasts = Toasts::default();
-        toasts.push(Level::Ok, "Placed R1", vec![ToastAction::Undo], 0.0);
-        toasts.push(Level::Error, "Locked", vec![ToastAction::Details], 1.0);
+        toasts.push(Level::Error, "Locked", vec![ToastAction::Details], 0.0);
+        toasts.dismiss_errors();
+        assert!(toasts.is_empty());
+        let actions = vec![ToastAction::Undo, ToastAction::Show];
+        toasts.push(Level::Ok, "Placed R1", actions, 0.0);
         toasts.withdraw(ToastAction::Undo);
-        assert!(
-            toasts
-                .items()
-                .all(|t| !t.actions.contains(&ToastAction::Undo))
-        );
         assert_eq!(
-            toasts.get(1).map(|t| t.actions.clone()),
-            Some(vec![ToastAction::Details])
+            toasts.get(0).map(|t| t.actions.clone()),
+            Some(vec![ToastAction::Show])
         );
         toasts.dismiss_errors();
         assert_eq!(toasts.items().count(), 1);

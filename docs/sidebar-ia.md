@@ -160,7 +160,7 @@ Anything that blocks publishing is always Error and always counted.
 
 ## Feedback
 
-- **Toasts:** a severity glyph, at most 3 rows and 6 s each, with Undo / Show / Details. Up to 3 are stacked, and a repeat counts ×n. A click opens Messages.
+- **Toasts:** a severity glyph, at most 3 rows and 6 s each, with Undo / Show / Details. One shows at a time: a new toast replaces it, and a repeat counts ×n. A warning or error holds its place for 3 s against a less severe toast, which then goes to Messages only. A click opens Messages.
 - **Messages window:** newest first, ×n folding, Copy all, Clear, File › Messages… (the app has no Help menu yet). It keeps 200 entries of up to 4000 characters, with the full engine text.
 - **Explicit severity:** `App::say` takes a severity, which replaces guessing it from the text "fail".
 - **Pills:** routing, highlighted net, shown issue and layer focus, each with ×.
