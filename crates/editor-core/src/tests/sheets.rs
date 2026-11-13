@@ -949,6 +949,39 @@ fn renaming_the_project_is_one_undo_step() -> Result<()> {
     Ok(())
 }
 
+/// A first save names an Untitled project after its file; a chosen name,
+/// a file called Untitled and a name the rename refuses all keep it.
+#[test]
+fn a_first_save_names_an_untitled_project_after_its_file() {
+    use std::path::Path;
+    let mut project = std::sync::Arc::new(crate::Project::default());
+    let file = Path::new("/boards/usb-led-e2e.pcbcraft");
+    assert_eq!(
+        crate::name_by_file(&mut project, file).as_deref(),
+        Some("usb-led-e2e")
+    );
+    assert_eq!(project.name, "usb-led-e2e");
+    // Now a name: a later save under another file keeps it.
+    assert_eq!(
+        crate::name_by_file(&mut project, Path::new("other.pcbcraft")),
+        None
+    );
+    assert_eq!(project.name, "usb-led-e2e");
+    for kept in [
+        "Untitled.pcbcraft",
+        " .pcbcraft",
+        &format!("{}.pcbcraft", "x".repeat(257)),
+    ] {
+        let mut project = std::sync::Arc::new(crate::Project::default());
+        assert_eq!(
+            crate::name_by_file(&mut project, Path::new(kept)),
+            None,
+            "{kept}"
+        );
+        assert_eq!(project.name, crate::UNTITLED);
+    }
+}
+
 #[test]
 fn the_title_block_shows_properties_and_the_page() -> Result<()> {
     let Two { mut engine, s2, .. } = two_sheets()?;

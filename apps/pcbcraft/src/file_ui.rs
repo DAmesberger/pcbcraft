@@ -209,6 +209,14 @@ pub enum Effect {
         path: Option<PathBuf>,
         recovered: bool,
     },
+    /// A first save wrote the project under its file's name
+    /// (`pcbcraft_core::name_by_file`): apply that `project.rename`, then
+    /// call [`FileUi::renamed`]. `saved` says the write saved the current
+    /// revision.
+    Rename {
+        name: String,
+        saved: bool,
+    },
     Close,
 }
 
@@ -354,6 +362,9 @@ pub struct FileUi {
     /// Older session files past the listing's read limit, named so the
     /// recovery question can say so and offer to discard them.
     older_recoveries: Vec<PathBuf>,
+    /// The name a first save in flight writes (its ticket id), for the
+    /// engine to take once the file holds it.
+    naming: Option<(u64, String)>,
     /// The recovery the dialog would restore or discard.
     recovery_selected: usize,
     /// A restored session file, removed once this session has saved its
@@ -420,6 +431,7 @@ impl FileUi {
             status: None,
             recoveries: vec![],
             older_recoveries: vec![],
+            naming: None,
             recovery_selected: 0,
             restored_source: None,
             restored_origin: None,
@@ -446,6 +458,15 @@ impl FileUi {
                 self.controller.back_at_saved();
                 self.clear_recovery(false);
             }
+        }
+    }
+    /// The engine took the name the first save wrote ([`Effect::Rename`]):
+    /// when that save was current, the renamed document is the saved one.
+    pub fn renamed(&mut self, engine: &Engine, saved: bool) {
+        self.observe(engine, self.now);
+        if saved {
+            self.controller.back_at_saved();
+            self.saved_document = Some(self.document.clone());
         }
     }
     pub fn dirty(&self) -> bool {
@@ -779,7 +800,14 @@ impl FileUi {
                 }
                 match kind {
                     Kind::Save => {
-                        if let Some(document) = self.captured.clone() {
+                        if let Some(mut document) = self.captured.clone() {
+                            if self.controller.path.is_none()
+                                && let Some(name) =
+                                    pcbcraft_core::name_by_file(&mut document.project, &path)
+                            {
+                                self.naming = Some((ticket.id, name));
+                                self.captured = Some(document.clone());
+                            }
                             self.send(Job::Write(ticket, path, document));
                         }
                     }
@@ -829,12 +857,19 @@ impl FileUi {
                         if current {
                             self.clear_recovery(false);
                         }
+                        if let Some((_, name)) = self.naming.take().filter(|n| n.0 == ticket.id) {
+                            self.effects.push(Effect::Rename {
+                                name,
+                                saved: current,
+                            });
+                        }
                         if let Some(transition) = continuation {
                             self.proceed(transition);
                         }
                     }
                 }
                 Err(error) => {
+                    self.naming = None;
                     self.controller.cancel(&ticket, Kind::Save);
                     self.status = Some((Level::Error, format!("Save failed: {error}")));
                 }
@@ -1062,7 +1097,9 @@ impl FileUi {
                         crate::kit::value_row(ui, "File", &path.display().to_string());
                     }
                     if let Some(error) = &entry.error {
-                        crate::kit::status(ui, error, crate::kit::Tone::Error);
+                        // The cause in plain words; the technical one on hover.
+                        crate::kit::status(ui, UNREADABLE_NOTE, crate::kit::Tone::Error)
+                            .on_hover_text(error);
                     }
                     crate::kit::note(
                         ui,
@@ -1132,11 +1169,14 @@ fn older_sessions_note(count: usize) -> String {
     )
 }
 
-/// One recovery as the dialog lists it: name, age and size.
+/// Why an unreadable recovery cannot be restored. Another version's
+/// session is rejected, never migrated.
+const UNREADABLE_NOTE: &str =
+    "Saved by another version or damaged, so this session cannot be restored.";
+
+/// One recovery as the dialog lists it: name, age and size (an unreadable
+/// one: name and file age).
 fn recovery_label(entry: &RecoveryEntry, now_ms: u64) -> String {
-    if entry.error.is_some() {
-        return entry.project_name.clone();
-    }
     let minutes = now_ms.saturating_sub(entry.saved_unix_ms) / 60_000;
     let age = match minutes {
         0 => "just now".to_owned(),
@@ -1144,6 +1184,9 @@ fn recovery_label(entry: &RecoveryEntry, now_ms: u64) -> String {
         60..=1439 => format!("{} h ago", minutes / 60),
         _ => format!("{} days ago", minutes / 1440),
     };
+    if entry.error.is_some() {
+        return format!("{} · {age}", entry.project_name);
+    }
     let instances = match entry.instances {
         1 => "1 instance".to_owned(),
         n => format!("{n} instances"),
@@ -1292,6 +1335,15 @@ mod tests {
         assert_eq!(
             recovery_label(&entry, 0),
             "Untitled · just now · 4 instances"
+        );
+        let unreadable = RecoveryEntry {
+            project_name: recovery::UNREADABLE.into(),
+            error: Some("unknown variant `x`".into()),
+            ..entry
+        };
+        assert_eq!(
+            recovery_label(&unreadable, 1_000_000 + 2 * 86_400_000),
+            "Older or damaged recovery · 2 days ago"
         );
     }
 
