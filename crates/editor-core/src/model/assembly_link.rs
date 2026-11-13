@@ -130,8 +130,14 @@ pub struct UnexportedUse {
     /// The feature's name in the linked design ("Lid rib").
     pub feature: String,
     /// The board design's body it is attached to, by its name there
-    /// ("U1 model").
+    /// ("pkg15r1 body (pkg15r1:2)").
     pub body: String,
+    /// The part that body belongs to, from the published sidecar's
+    /// [`PartBody`](crate::interface::sidecar::PartBody) list: SolidCraft
+    /// names a part's body by its package, so this, not the body's name,
+    /// says which part it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<crate::ids::Id>,
 }
 
 /// A loop between the two files: the board follows followed face

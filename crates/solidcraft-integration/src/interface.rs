@@ -589,6 +589,21 @@ pub fn build_watched(
             _ => faces.remove(&index).unwrap_or_default(),
         };
     }
+    // Section 2, then the sidecar with the part each part body is (a
+    // package's bodies are named by the package), into the design's
+    // metadata.
+    let (mut native, check, board) = match crate::export::section(project, sidecar.tier) {
+        None => (native, None, false),
+        Some(board) => {
+            let model = project::build_onto(native, &board)?;
+            let check = crate::export::check(&board, &model, watch)?;
+            sidecar.parts = model.part_bodies(&board)?;
+            let native = model.into_native().ok_or_else(|| {
+                Error::Verification("the board's model has no native design".into())
+            })?;
+            (native, Some(check), true)
+        }
+    };
     sidecar
         .check()
         .map_err(|e| Error::Verification(e.to_string()))?;
@@ -598,16 +613,10 @@ pub fn build_watched(
     for (key, value) in metadata(&text) {
         native.set_metadata(&key, value)?;
     }
-    let (design, check) = match crate::export::section(project, sidecar.tier) {
-        None => (Design::Slots(Box::new(native)), None),
-        Some(board) => {
-            let model = project::build_onto(native, &board)?;
-            let check = crate::export::check(&board, &model, watch)?;
-            let native = model.into_native().ok_or_else(|| {
-                Error::Verification("the board's model has no native design".into())
-            })?;
-            (Design::Board(Box::new(native)), Some(check))
-        }
+    let design = if board {
+        Design::Board(Box::new(native))
+    } else {
+        Design::Slots(Box::new(native))
     };
     Ok(Exported {
         design,

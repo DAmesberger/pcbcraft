@@ -1103,9 +1103,14 @@ pub fn agreement(project: &Project, held: Option<ContentHash>) -> Agreement {
     }
 }
 
-/// The part a board body belongs to, in the user's words, from its name in
-/// the published design ("U1 model" is U1), and the objects to locate.
-fn body_words(project: &Project, body: &str) -> (String, Vec<ObjectRef>) {
+/// The part a board body belongs to, in the user's words, and the objects
+/// to locate: the part the published sidecar maps it to (`part`), else
+/// from its name in the published design (a pad's `pad_<instance>_<pad>`,
+/// or a name that starts with the designator).
+fn body_words(project: &Project, body: &str, part: Option<Id>) -> (String, Vec<ObjectRef>) {
+    if let Some(i) = part.and_then(|id| project.instances.iter().find(|i| i.id == id)) {
+        return (i.designator.clone(), vec![ObjectRef::Instance { id: i.id }]);
+    }
     // A pad's body names its instance (`pad_<instance>_<pad>`); a part's
     // body may start with its designator.
     let pad_of = body
@@ -1265,7 +1270,7 @@ fn two_way(project: &Project, link: &AssemblyLink) -> Vec<Finding> {
         out.push(findings::assembly_older_board(revision));
     }
     for u in &link.unexported {
-        let (part, objects) = body_words(project, &u.body);
+        let (part, objects) = body_words(project, &u.body, u.part);
         out.push(findings::assembly_unexported_face(
             &format!("‘{}’", u.feature),
             &part,

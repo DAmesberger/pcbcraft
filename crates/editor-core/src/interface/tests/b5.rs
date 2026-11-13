@@ -411,10 +411,12 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> Fallible {
         UnexportedUse {
             feature: "Lid rib".into(),
             body: format!("{designator} model"),
+            part: None,
         },
         UnexportedUse {
             feature: "Clip".into(),
             body: "Laminate".into(),
+            part: None,
         },
     ];
     apply(
@@ -455,5 +457,53 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> Fallible {
             .filter(|i| i.code == ASSEMBLY_UNEXPORTED_FACE)
             .all(|i| i.severity == Severity::Warning)
     );
+    Ok(())
+}
+
+/// Slice P1, item 6: a body named by its package (two parts share it)
+/// names the part the published sidecar maps it to, the second part's own
+/// designator, not the first's.
+#[test]
+fn a_body_of_a_shared_package_names_its_own_part() -> Fallible {
+    let mut engine = with_openings()?;
+    publish(&mut engine, file(1))?;
+    let instances: Vec<(crate::ids::Id, String)> = engine
+        .project()
+        .instances
+        .iter()
+        .map(|i| (i.id, i.designator.clone()))
+        .collect();
+    let [(first, first_name), (second, second_name), ..] = instances.as_slice() else {
+        return Err("two parts".into());
+    };
+    let mut linked = read(LINKED_DESIGN, Some(file(1)));
+    linked.unexported = vec![UnexportedUse {
+        feature: "Lid rib".into(),
+        body: "pkg15r1 body (pkg15r1:2)".into(),
+        part: Some(*second),
+    }];
+    apply(
+        &mut engine,
+        Operation::Assembly(AssemblyCommand::RecordLink { read: linked }),
+    )?;
+    let found: Vec<_> = assembly_link::checks(engine.project())
+        .into_iter()
+        .filter(|f| f.code == ASSEMBLY_UNEXPORTED_FACE)
+        .collect();
+    let [rib] = found.as_slice() else {
+        return Err(format!("{found:?}").into());
+    };
+    assert!(
+        rib.message
+            .contains(&format!("attached to a face of {second_name} that")),
+        "{}",
+        rib.message
+    );
+    assert!(!rib.message.contains(&format!(" {first_name} ")) || first_name == second_name);
+    assert_eq!(
+        rib.objects,
+        vec![crate::diagnostics::ObjectRef::Instance { id: *second }]
+    );
+    assert_ne!(first, second);
     Ok(())
 }

@@ -506,12 +506,21 @@
         "description": "A linked design feature attached to a face of the board's design that is\nnot exported (no slot carries it).",
         "properties": {
           "body": {
-            "description": "The board design's body it is attached to, by its name there\n(\"U1 model\").",
+            "description": "The board design's body it is attached to, by its name there\n(\"pkg15r1 body (pkg15r1:2)\").",
             "type": "string"
           },
           "feature": {
             "description": "The feature's name in the linked design (\"Lid rib\").",
             "type": "string"
+          },
+          "part": {
+            "description": "The part that body belongs to, from the published sidecar's\n[`PartBody`](crate::interface::sidecar::PartBody) list: SolidCraft\nnames a part's body by its package, so this, not the body's name,\nsays which part it is.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
@@ -1148,12 +1157,21 @@
         "description": "A linked design feature attached to a face of the board's design that is\nnot exported (no slot carries it).",
         "properties": {
           "body": {
-            "description": "The board design's body it is attached to, by its name there\n(\"U1 model\").",
+            "description": "The board design's body it is attached to, by its name there\n(\"pkg15r1 body (pkg15r1:2)\").",
             "type": "string"
           },
           "feature": {
             "description": "The feature's name in the linked design (\"Lid rib\").",
             "type": "string"
+          },
+          "part": {
+            "description": "The part that body belongs to, from the published sidecar's\n[`PartBody`](crate::interface::sidecar::PartBody) list: SolidCraft\nnames a part's body by its package, so this, not the body's name,\nsays which part it is.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4898,6 +4916,31 @@
         ],
         "type": "object"
       },
+      "PartBody": {
+        "description": "One part body of the published design and the part it belongs to.\nSolidCraft names a body of a package by its package's definition\n(\"pkg15r1 body\", and \"pkg15r1 body (pkg15r1:2)\" where the package is\nplaced again), so the body's name alone does not say which part it\nis; this does, so findings name the part (\"C2\"). Built after the\ndesign, from the board's own record of which placement is which part.",
+        "properties": {
+          "body": {
+            "description": "The body's name in the published design, as a linked design's link\nreads it.",
+            "type": "string"
+          },
+          "designator": {
+            "description": "Its designator when published; a finding names the instance's\ndesignator now.",
+            "type": "string"
+          },
+          "instance": {
+            "description": "The part's instance.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "body",
+          "instance",
+          "designator"
+        ],
+        "type": "object"
+      },
       "Segment": {
         "oneOf": [
           {
@@ -5084,6 +5127,13 @@
       "hash": {
         "$ref": "#/$defs/ContentHash",
         "description": "SHA-256 of the canonical datum table."
+      },
+      "parts": {
+        "description": "The published design's part bodies and their parts, by body name;\nempty for the interface tier, which carries no parts.",
+        "items": {
+          "$ref": "#/$defs/PartBody"
+        },
+        "type": "array"
       },
       "retired_slots": {
         "default": [],

@@ -341,7 +341,44 @@ fn sidecar() -> Sidecar {
         }],
         retired_slots: vec![Slot(3)],
         unresolved_slots: vec![],
+        parts: Vec::new(),
     }
+}
+
+/// Slice P1: the sidecar says which part each part body is, by body name;
+/// a body listed twice, out of order or unprintable is refused.
+#[test]
+fn a_sidecar_maps_part_bodies_to_their_parts() -> Fallible {
+    use super::sidecar::PartBody;
+    let part = |body: &str, instance, designator: &str| PartBody {
+        body: body.into(),
+        instance,
+        designator: designator.into(),
+    };
+    let mut mapped = sidecar();
+    mapped.parts = vec![
+        part("pkg15r1 body", 3, "C1"),
+        part("pkg15r1 body (pkg15r1:2)", 4, "C2"),
+    ];
+    let read = Sidecar::read(&mapped.text()?)?;
+    assert_eq!(read, mapped);
+    assert_eq!(
+        read.part_of("pkg15r1 body (pkg15r1:2)")
+            .map(|p| p.designator.as_str()),
+        Some("C2")
+    );
+    assert_eq!(read.part_of("pkg15r1 body").map(|p| p.instance), Some(3));
+    assert!(read.part_of("Laminate").is_none());
+    for parts in [
+        vec![part("b", 1, "R1"), part("a", 2, "R2")],
+        vec![part("a", 1, "R1"), part("a", 2, "R2")],
+        vec![part("a", 1, " ")],
+    ] {
+        let mut bad = sidecar();
+        bad.parts = parts;
+        assert!(bad.check().is_err(), "{:?}", bad.parts);
+    }
+    Ok(())
 }
 
 #[test]

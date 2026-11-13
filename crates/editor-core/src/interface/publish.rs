@@ -122,6 +122,7 @@ pub fn candidate(project: &Project, tier: Tier, source_id: InterfaceSourceId) ->
         datums,
         retired_slots: table.retired.clone(),
         unresolved_slots: unresolved,
+        parts: Vec::new(),
     };
     sidecar.check()?;
     Ok(sidecar)

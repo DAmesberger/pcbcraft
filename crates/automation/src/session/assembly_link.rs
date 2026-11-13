@@ -389,6 +389,7 @@ fn unexported(opened: &Opened) -> Vec<UnexportedUse> {
         .unexported(&opened.board, sidecar)
         .into_iter()
         .map(|u| UnexportedUse {
+            part: sidecar.part_of(&u.body).map(|p| p.instance),
             feature: u.feature,
             body: u.body,
         })

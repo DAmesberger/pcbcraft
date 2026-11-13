@@ -583,3 +583,99 @@ fn b5_a_linked_design_from_a_newer_solidcraft_is_refused() -> TestResult {
     assert_eq!(status(&mut session)?["state"], "linked");
     Ok(())
 }
+
+/// Slice P1, item 6: SolidCraft names a package's bodies by the package
+/// ("pkg15r1 body", then "pkg15r1 body (pkg15r1:2)" for the next part of
+/// that package), so the published sidecar maps each part body to its
+/// part. A linked design feature on a face of the second part's body is
+/// named with the second part's designator, never the first's, in the
+/// finding and in the publish dry run.
+#[test]
+fn a_feature_on_a_repeated_package_names_its_own_part() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let design = dir.path().join("board.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
+    let mut session = open(dir.path())?;
+    let opening = format!("i{}.opening", instance(&session, "J1")?);
+    publish(&mut session, &design, "mechanical")?;
+    let sidecar = pcbcraft_io::interface::read_sidecar(&design)?.ok_or("a sidecar")?;
+    // A body of a package placed more than once, at its second placement,
+    // and the first placement's same body.
+    let (second, first) = sidecar
+        .parts
+        .iter()
+        .find_map(|p| {
+            let (source, _) = p.body.split_once(" (")?;
+            let first = sidecar.part_of(source)?;
+            Some((p.clone(), first.clone()))
+        })
+        .ok_or("a package placed twice")?;
+    assert_ne!(second.instance, first.instance);
+    assert_ne!(second.designator, first.designator);
+    let (mut built, _) = linked_design(&design, &opening)?;
+    let up = faces(&mut built, &second.body)?
+        .into_iter()
+        .find(|f| f.normal.is_some_and(|n| n[2] > 0.99))
+        .ok_or("a face of the second part that looks up")?;
+    built.projected(
+        "Lid rib",
+        [
+            [0.0, 0.0, up.point[2] + 3.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ],
+        &second.body,
+        up.point,
+        1.0,
+        Extrude::New,
+    )?;
+    let errors = built.feature_errors();
+    assert!(errors.is_empty(), "{errors:?}");
+    built.save(&assembly_link.display().to_string())?;
+
+    let linked = link(&mut session, &assembly_link, &design)?;
+    let unexported = linked["assembly"]["unexported"]
+        .as_array()
+        .ok_or("unexported")?;
+    assert!(
+        unexported.iter().any(|u| u["feature"] == "Lid rib"
+            && u["body"] == second.body.as_str()
+            && u["part"] == second.instance),
+        "{unexported:?}"
+    );
+    let now = status(&mut session)?;
+    let found = findings(&now, "assembly.unexported_face");
+    let [finding] = found.as_slice() else {
+        return Err(format!("{now}").into());
+    };
+    let message = finding["message"].as_str().ok_or("a message")?;
+    assert_eq!(
+        message,
+        format!(
+            "The linked design's ‘Lid rib’ is attached to a face of {} that is not exported. It \
+             may move to another part when the board changes. Export the face to keep it stable",
+            second.designator
+        )
+    );
+    assert_eq!(finding["objects"][0]["id"], second.instance, "{finding}");
+
+    let preview = ok(
+        &mut session,
+        json!({"command": "interface.publish_preview", "params": {
+            "path": design.display().to_string(), "tier": "mechanical",
+            "assembly_path": assembly_link.display().to_string()}}),
+    )?;
+    let effects = preview["dry_run"]["effects"]
+        .as_array()
+        .ok_or("the dry run")?;
+    let rib = effects
+        .iter()
+        .find(|e| e["effect"] == "unexported_reference" && e["feature"] == "Lid rib")
+        .ok_or("the dry run names the rib")?;
+    let words = rib["message"].as_str().ok_or("words")?;
+    assert!(
+        words.contains(&format!("a face of {} ", second.designator)),
+        "{words}"
+    );
+    Ok(())
+}

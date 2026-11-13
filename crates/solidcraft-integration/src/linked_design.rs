@@ -886,10 +886,12 @@ impl LinkedDesign {
             if !named.insert(u.feature.clone()) {
                 continue;
             }
-            let part = if u.body.is_empty() {
-                "the board".to_owned()
-            } else {
-                format!("the board's ‘{}’", u.body)
+            // The part the body is, as the sidecar names it: a package's
+            // body is named by its package, not by its part.
+            let part = match published.part_of(&u.body) {
+                Some(p) => p.designator.clone(),
+                None if u.body.is_empty() => "the board".to_owned(),
+                None => format!("the board's ‘{}’", u.body),
             };
             effects.push(AssemblyEffect {
                 feature: u.feature.clone(),
