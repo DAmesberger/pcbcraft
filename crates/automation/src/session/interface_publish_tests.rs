@@ -3,13 +3,13 @@
 //! headless SolidCraft assembly (`sparksmith_solidcraft::linked_design`) that
 //! links the published interface as SolidCraft's Insert Design does.
 //!
-//! The fixture is the example with J1's package carrying the opening its
-//! USB4105 part file declares (as the part-file reader stores it when the
-//! part file is used); every change after that is a typed command.
+//! The fixture is the example, whose J1 package carries the opening its
+//! USB4105 part file declares (the part-file reader stored it when the
+//! replay used the part file); every change after that is a typed command.
 use super::Session;
 use serde_json::{Value, json};
 use sparksmith_core::layout::fill::FillCommand;
-use sparksmith_core::library::package_model::{PackageEdit, edit_package};
+use sparksmith_core::library::datum::PackageDatumOrigin;
 use sparksmith_core::model::fill::{FillRegion, FillSpec};
 use sparksmith_core::{CopperLayer, Engine, InstanceCommand, Operation};
 use sparksmith_solidcraft::linked_design::{Face, LinkedDesign, Operation as Extrude};
@@ -52,12 +52,13 @@ pub(super) fn instance(session: &Session, designator: &str) -> TestResult<u64> {
         .id)
 }
 
-/// The example, J1's package carrying the USB4105 part file's opening,
-/// saved in `dir` and opened.
+/// The example, saved in `dir` and opened. J1's package carries the
+/// opening its USB4105 part file declares, copied by the part-file reader
+/// when the example's replay used the part file.
 pub(super) fn open(dir: &Path) -> TestResult<Session> {
-    let mut file = sparksmith_io::read_project(Path::new(EXAMPLE))?;
+    let file = sparksmith_io::read_project(Path::new(EXAMPLE))?;
     let part = sparksmith_solidcraft::models::part_file::evaluate(USB4105, &Default::default())?;
-    let project = &mut file.project;
+    let project = &file.project;
     let j1 = project
         .instances
         .iter()
@@ -67,21 +68,29 @@ pub(super) fn open(dir: &Path) -> TestResult<Session> {
         .physical
         .ok_or("J1 is placed")?
         .package;
-    let (id, revision) = (package.id, package.revision);
     let entry = project
         .library
         .packages
-        .iter_mut()
-        .find(|p| p.id == id && p.revision == revision)
+        .iter()
+        .find(|p| p.id == package.id && p.revision == package.revision)
         .ok_or("J1's package")?;
-    let edits: Vec<PackageEdit> = part
+    assert_eq!(part.datums.len(), 1, "the part file declares its opening");
+    let stored: Vec<_> = entry
+        .definition
         .datums
         .iter()
-        .cloned()
-        .map(PackageEdit::AddDatum)
+        .filter(|d| d.origin == PackageDatumOrigin::PartFile)
+        .map(|d| (&d.name, &d.geometry, d.clearance_nm, d.external))
         .collect();
-    assert_eq!(edits.len(), 1, "the part file declares its opening");
-    entry.definition = edit_package(&entry.definition, &edits)?;
+    let declared: Vec<_> = part
+        .datums
+        .iter()
+        .map(|d| (&d.name, &d.geometry, d.clearance_nm, d.external))
+        .collect();
+    assert_eq!(
+        stored, declared,
+        "J1's package carries the part file's opening"
+    );
     let path = dir.join("board.sparksmith");
     sparksmith_io::write_project(&path, &file)?;
     let mut session = Session::new(Engine::default());
