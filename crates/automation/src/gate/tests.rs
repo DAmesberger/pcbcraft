@@ -229,6 +229,11 @@ fn path_samples() -> Fallible<Vec<Request>> {
             "library.use_part_file",
             json!({"package": 1, "path": at, "expected_revision": 0}),
         ),
+        ("interface.publish_preview", json!({"path": at})),
+        (
+            "interface.publish",
+            json!({"path": at, "expected_revision": 0}),
+        ),
     ] {
         samples.push(request(command, params)?);
     }

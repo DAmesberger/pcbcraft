@@ -174,6 +174,20 @@ pub struct BoardJoint {
     pub mount: Mount,
 }
 
+/// A closed loop of [`Native::named_sketch`] whose curves carry ids.
+pub enum NamedLoop<'a> {
+    /// Lines and arcs, one id per segment.
+    Outline {
+        outline: &'a pcbcraft_core::library::Outline,
+        ids: Vec<String>,
+    },
+    Circle {
+        center: [f64; 2],
+        radius: f64,
+        id: String,
+    },
+}
+
 /// A native Solidcraft design under construction or opened from disk.
 pub struct Native {
     session: Session,
@@ -858,6 +872,129 @@ impl Native {
             from = segment.to();
         }
         self.lines(&mut run)
+    }
+
+    /// The next id the design gives a feature (or any other item that
+    /// takes one): Solidcraft never reuses an id, so a feature made and
+    /// deleted still uses its id.
+    pub fn next_id(&self) -> u64 {
+        self.session.doc.next_id.max(1)
+    }
+
+    /// The persistent names of `body`'s faces.
+    pub fn face_names(&mut self, body: &str) -> Result<Vec<String>> {
+        let reply = self.call("model.faces", json!({"body": body}))?;
+        Ok(reply["faces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f["name"].as_str().map(str::to_owned))
+            .collect())
+    }
+
+    /// Use up ids until the next is `to`: an empty sketch made and deleted
+    /// per id (a feature that is never evaluated into anything). Refused
+    /// when the next id is past `to` already, or an empty sketch does not
+    /// use an id.
+    pub fn use_ids_to(&mut self, to: u64) -> Result<()> {
+        if self.next_id() > to {
+            return Err(Error::Verification(format!(
+                "the design's next id is {}, past {to}",
+                self.next_id()
+            )));
+        }
+        while self.next_id() < to {
+            let before = self.next_id();
+            let reply = self.call(
+                "sketch.create",
+                json!({"plane": Plane::Xy.name(), "name": "Unused id"}),
+            )?;
+            let sketch = id(&reply, "sketch")?;
+            self.call("sketch.finish", json!({}))?;
+            self.call("timeline.delete", json!({"features": [sketch]}))?;
+            if self.next_id() <= before || self.next_id() > to {
+                return Err(Error::Verification(format!(
+                    "an unused sketch took ids {before} to {}, not one up to {to}",
+                    self.next_id()
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// A finished sketch named `name` on the plane through `origin` with
+    /// axes `x` and `y` (its normal `x × y`), of closed loops whose curves
+    /// carry the given ids (Solidcraft names an extrusion's side faces
+    /// after them: `F<feature>:side:<id>`). Each loop is lines and arcs in
+    /// the plane's coordinates, or a circle. Returns the sketch's feature id.
+    pub fn named_sketch(
+        &mut self,
+        name: &str,
+        plane: [[f64; 3]; 3],
+        loops: &[NamedLoop<'_>],
+    ) -> Result<u64> {
+        let [origin, x, y] = plane;
+        let reply = self.call(
+            "sketch.create",
+            json!({"plane": {"origin": origin, "x_dir": x, "y_dir": y}, "name": name}),
+        )?;
+        let sketch = id(&reply, "sketch")?;
+        for named in loops {
+            self.named_loop(named)?;
+        }
+        self.call("sketch.finish", json!({}))?;
+        Ok(sketch)
+    }
+
+    fn named_loop(&mut self, named: &NamedLoop<'_>) -> Result<()> {
+        use pcbcraft_core::library::Segment;
+        match named {
+            NamedLoop::Circle { center, radius, id } => {
+                self.call(
+                    "sketch.circle.center",
+                    json!({"center": center, "radius": radius, "id": id}),
+                )?;
+            }
+            NamedLoop::Outline { outline, ids } => {
+                if ids.len() != outline.segments.len() {
+                    return Err(Error::Invalid("a named loop has one id per segment".into()));
+                }
+                let mut from = outline.start;
+                for (segment, id) in outline.segments.iter().zip(ids.iter()) {
+                    match *segment {
+                        Segment::Line { to } => {
+                            self.call("sketch.line", json!({"points": [from, to], "ids": [id]}))?;
+                        }
+                        Segment::Arc { to, bulge } => {
+                            self.call(
+                                "sketch.arc.three_point",
+                                json!({"start": from, "end": to,
+                                    "through": bulge_midpoint(from, to, bulge), "id": id}),
+                            )?;
+                        }
+                    }
+                    from = segment.to();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Extrude every profile of `sketch` by `distance` along its normal into
+    /// a new body `body`, as the feature `name`. Returns the feature's id.
+    pub fn extrude_new(
+        &mut self,
+        sketch: u64,
+        distance: f64,
+        name: &str,
+        body: &str,
+    ) -> Result<u64> {
+        let reply = self.call(
+            "solid.extrude",
+            json!({"sketch": sketch, "distance": distance, "operation": "new",
+                "name": name, "body_name": body}),
+        )?;
+        id(&reply, "feature")
     }
 
     /// Draw an open polyline run and restart it at its last point.

@@ -1,14 +1,9 @@
 //! Acceptance tests of slices B2 and B3 (B1's are written, in `b1.rs`;
-//! B2's bodies are in `package_datums.rs`). B3's are placeholders that
-//! fail: the slice removes the `ignore` from its tests and writes the
-//! body; the name and the doc comment are the requirement, from
+//! B2's bodies are in `package_datums.rs`, B3's in `b3.rs`). The name and
+//! the doc comment are the requirement, from
 //! docs/architecture/board-interface.md ("Slices and their tests") and the
 //! design note's acceptance criteria. Never weaken one to make it pass.
 use super::Fallible;
-
-fn not_built(slice: &str) -> Fallible {
-    Err(format!("{slice}: not built yet").into())
-}
 
 // B2: package datums. The bodies are in `super::package_datums`; the
 // part-file reader's half of the first also runs against the real USB4105
@@ -37,53 +32,24 @@ fn b2_no_opening_is_inferred_from_a_name() -> Fallible {
 }
 
 // B3: the exported design, the sidecar, publish and its preview
-// (acceptance 1 to 5 and 8).
+// (acceptance 1 to 5 and 8). The core's halves are here, with their bodies
+// in `super::b3`; the halves that need Solidcraft or files run where those
+// are: the exported design and a headless SolidCraft enclosure in
+// `pcbcraft-solidcraft` (`interface::tests`), and `interface.publish` and
+// `interface.publish_preview` over the ESP32 example in the automation
+// session (`session::interface_publish_tests`), under the same names.
 
 /// Acceptance 1 and 2: J1 moved 2 mm by a typed command; the preview lists
 /// exactly one moved datum, "J1 opening, 2 mm along X".
 #[test]
-#[ignore = "B3: publish_preview"]
 fn b3_the_preview_lists_the_one_moved_datum() -> Fallible {
-    not_built("B3")
-}
-
-/// Acceptance 3: a headless SolidCraft test enclosure re-evaluates after
-/// `component.update_links` with the cutout moved 2.000 mm ± 1 µm and no
-/// other face of the wall moved.
-#[test]
-#[ignore = "B3: exported design"]
-fn b3_the_enclosure_cutout_follows_by_two_millimetres() -> Fallible {
-    not_built("B3")
-}
-
-/// Acceptance 4: closing and reopening the project, or building on another
-/// machine, gives a byte-identical sidecar with the same face names.
-#[test]
-#[ignore = "B3: deterministic sidecar"]
-fn b3_the_sidecar_is_byte_identical_after_reopen() -> Fallible {
-    not_built("B3")
-}
-
-/// Acceptance 5: deleting an unrelated part, adding a fill and renaming J1
-/// change nothing the enclosure references.
-#[test]
-#[ignore = "B3: stable references"]
-fn b3_unrelated_edits_change_nothing_in_the_enclosure() -> Fallible {
-    not_built("B3")
+    super::b3::the_preview_lists_the_one_moved_datum()
 }
 
 /// The sidecar's revision counts only publishes whose hash differs, and
-/// `interface.publish` at a stale `expected_revision` writes nothing.
+/// `interface.publish` at a stale `expected_revision` writes nothing (that
+/// half in the automation session).
 #[test]
-#[ignore = "B3: interface.publish"]
 fn b3_publish_records_a_revision_only_when_the_hash_changes() -> Fallible {
-    not_built("B3")
-}
-
-/// Acceptance 8 (target, until measured): publishing the interface tier of
-/// the ESP32 board takes under 100 ms in release.
-#[test]
-#[ignore = "B3: timing target; run in release with --ignored --nocapture"]
-fn b3_publishing_the_interface_tier_is_under_100_ms() -> Fallible {
-    not_built("B3")
+    super::b3::publish_records_a_revision_only_when_the_hash_changes()
 }

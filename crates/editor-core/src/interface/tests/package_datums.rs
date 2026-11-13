@@ -25,7 +25,7 @@ fn nm(mm: f64) -> Nm {
 /// The opening the USB4105 part file declares (its `opening` plane at the
 /// shell's mating face, 8.34 × 2.56 mm with round ends, 1.85 mm deep), as
 /// the host's part-file reader stores it in the package's derived data.
-fn usb4105_opening() -> PackageDatum {
+pub(super) fn usb4105_opening() -> PackageDatum {
     PackageDatum {
         name: DatumName("opening".into()),
         geometry: PackageDatumGeometry::Volume {
@@ -46,7 +46,7 @@ fn usb4105_opening() -> PackageDatum {
     }
 }
 
-fn demo() -> Fallible<Project> {
+pub(super) fn demo() -> Fallible<Project> {
     let project = Engine::demo()?.project().clone();
     if project.placements.is_empty() {
         return Err("the demo has no placements".into());

@@ -7,8 +7,7 @@
 //! after the files are written, record the publish with
 //! [`InterfaceCommand::RecordPublish`].
 //!
-//! Contract only until slice B1 (commands) and B3 (publish): no transport
-//! offers them yet.
+//! The host requests are served by the automation session (slice B3).
 use crate::ids::{Id, InterfaceSourceId};
 use crate::library::datum::DatumName;
 use crate::library::footprint_source::ParamName;
@@ -100,6 +99,12 @@ pub struct PublishPreviewParams {
     /// [`Tier::Mechanical`], when omitted.
     #[serde(default)]
     pub tier: Option<Tier>,
+    /// The published `.solidcraft` design to compare with: the sidecar
+    /// beside it says where each datum was, so a moved datum reads by how
+    /// much. Without it, or when it is gone, a changed datum reads only as
+    /// changed.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// `interface.publish` (a host request; Ask, because it writes files):

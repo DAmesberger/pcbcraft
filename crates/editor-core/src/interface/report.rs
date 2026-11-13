@@ -1,6 +1,6 @@
 //! What `interface.list` and `interface.publish_preview` answer
 //! (docs/architecture/board-interface.md, "Commands" and "Link updates").
-//! Contract only until slices B1 (list) and B3 to B4 (preview).
+//! The preview's diff is slice B3's; its dry run is B4's.
 use super::{DatumGeometry, DatumStatus, Vec3};
 use crate::ids::{ContentHash, InterfaceSourceId};
 use crate::library::datum::DatumKind;
@@ -68,6 +68,9 @@ pub enum ChangeKind {
     },
     /// Its shape changed (a profile, diameter, height or value).
     Reshaped,
+    /// Its content changed, but how is not known: the published sidecar
+    /// was not there to compare with.
+    Changed,
     Added,
     /// Its slot was retired.
     Retired,
@@ -86,6 +89,8 @@ pub struct DatumChange {
     pub name: String,
     #[serde(flatten)]
     pub change: ChangeKind,
+    /// The sentence the user reads: "J1 opening, 2 mm along X".
+    pub summary: String,
 }
 
 /// What a candidate publish would do to the linked enclosure's feature.

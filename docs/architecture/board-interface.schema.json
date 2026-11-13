@@ -1497,6 +1497,19 @@
             "type": "object"
           },
           {
+            "description": "Its content changed, but how is not known: the published sidecar\nwas not there to compare with.",
+            "properties": {
+              "change": {
+                "const": "changed",
+                "type": "string"
+              }
+            },
+            "required": [
+              "change"
+            ],
+            "type": "object"
+          },
+          {
             "properties": {
               "change": {
                 "const": "added",
@@ -1552,12 +1565,17 @@
           },
           "slot": {
             "$ref": "#/$defs/Slot"
+          },
+          "summary": {
+            "description": "The sentence the user reads: \"J1 opening, 2 mm along X\".",
+            "type": "string"
           }
         },
         "required": [
           "datum",
           "slot",
-          "name"
+          "name",
+          "summary"
         ],
         "type": "object"
       },
@@ -1836,6 +1854,14 @@
     "additionalProperties": false,
     "description": "`interface.publish_preview` (a host request; reads only): the diff\nagainst the last published revision and, when an enclosure is linked,\nthe dry run on a scratch copy of it (slices B3 and B4).",
     "properties": {
+      "path": {
+        "default": null,
+        "description": "The published `.solidcraft` design to compare with: the sidecar\nbeside it says where each datum was, so a moved datum reads by how\nmuch. Without it, or when it is gone, a changed datum reads only as\nchanged.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "tier": {
         "anyOf": [
           {
@@ -2407,6 +2433,13 @@
       "units": {
         "description": "Always [`UNITS`].",
         "type": "string"
+      },
+      "unresolved_slots": {
+        "description": "Live datums the design carries nothing for, ascending: lost ones,\nand parameters whose value is an expression the core cannot\nevaluate. Their slots keep their place, and an enclosure reference\nto one fails until it resolves again.",
+        "items": {
+          "$ref": "#/$defs/Slot"
+        },
+        "type": "array"
       }
     },
     "required": [

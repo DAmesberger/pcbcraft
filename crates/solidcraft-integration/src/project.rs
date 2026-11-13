@@ -247,9 +247,14 @@ struct Builder {
 
 impl Builder {
     fn new(name: &str, sources: &SourceCache, flat: Flat) -> Result<Self> {
-        let mut native = Native::new(name)?;
+        Ok(Self::on(Native::new(name)?, sources, flat))
+    }
+
+    /// A build that continues `native`, after what it holds already (the
+    /// slots of an exported board interface).
+    fn on(mut native: Native, sources: &SourceCache, flat: Flat) -> Self {
         native.record();
-        Ok(Self {
+        Self {
             native,
             flat,
             meshes: mesh::Memo::default(),
@@ -266,7 +271,7 @@ impl Builder {
             laminate: Vec::new(),
             previous: None,
             display: appearance::Memo::default(),
-        })
+        }
     }
 
     /// A build of an edited board replayed against `native`, the model
@@ -852,7 +857,18 @@ fn finish_with(
             Some(body.measure().map_or(f64::NAN, |m| m.volume))
         })
     };
+    // An exported board interface's slots come before the board, in a
+    // component of their own (`crate::interface`): reference geometry, not
+    // part of the board's model.
+    let reference: Option<u64> = doc
+        .components
+        .iter()
+        .find(|c| c.name == crate::interface::REFERENCE_COMPONENT)
+        .map(|c| c.id);
     for (index, body) in world.bodies.iter().enumerate() {
+        if reference.is_some_and(|c| body.component == c) {
+            continue;
+        }
         let name = body.definition_name();
         let kind = *kinds
             .get(name)
@@ -1529,6 +1545,17 @@ fn track_outline(start: Point, end: Point, width: f64) -> Vec<Point> {
 
 pub fn build(project: &Project) -> Result<NativeModel> {
     build_with(project, &SourceCache::default(), None)
+}
+
+/// [`build`] continuing `native`: the board's model made after what the
+/// design holds already, which keeps its feature ids (the exported board
+/// interface's slots, `crate::interface`).
+pub fn build_onto(native: Native, project: &Project) -> Result<NativeModel> {
+    let sources = SourceCache::default();
+    sources.begin();
+    let built = build_on(Builder::on(native, &sources, Flat::Native), project);
+    sources.sweep();
+    built
 }
 
 /// [`build`] that stops with [`Error::Cancelled`] at its next native

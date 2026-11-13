@@ -8,8 +8,9 @@
 //! reading. Slice B1 keeps the table in `Project::interface`: the
 //! automatic rules ([`auto`]), the commands ([`apply`]), `interface.list`
 //! and the datums' derived geometry ([`list`]), all through the engine.
-//! Slice B2 adds package datums ([`package`]), and slice B3 builds the
-//! exported design and the sidecar.
+//! Slice B2 adds package datums ([`package`]), and slice B3 the sidecar
+//! a publish writes and the publish preview's diff ([`publish`]); the host
+//! builds the exported design from that sidecar.
 //!
 //! The stored data (`model::interface`) holds identity only. A datum's
 //! geometry ([`DatumGeometry`]) is derived from the board and its parts
@@ -32,6 +33,7 @@ pub mod command;
 pub mod findings;
 pub mod list;
 pub mod package;
+pub mod publish;
 pub mod report;
 pub mod sidecar;
 #[cfg(test)]

@@ -12,6 +12,7 @@ use crate::model::interface::{AutoRule, DatumId, DatumSource, Tier};
 use std::collections::BTreeMap;
 
 mod b1;
+mod b3;
 mod package_datums;
 mod skeletons;
 
@@ -353,6 +354,7 @@ fn sidecar() -> Sidecar {
             faces: BTreeMap::from([("front".to_owned(), "F7:start".to_owned())]),
         }],
         retired_slots: vec![Slot(3)],
+        unresolved_slots: vec![],
     }
 }
 
