@@ -22,7 +22,7 @@ use super::{Error, MAX_CORNERS, MAX_WIRES, Project, Result, invalid, not_found};
 use crate::geometry::{self, Point};
 use crate::ids::Id;
 use crate::instances;
-use crate::model::{Corner, Wire, WireEnd};
+use crate::model::{Corner, FreeEnd, Wire, WireEnd};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -843,7 +843,77 @@ pub(super) fn follow_moved(project: &mut Project, before: &Ends) {
         if let Some(wire) = project.wires.get_mut(index) {
             wire.corners = corners;
         }
+        slide_t(project, index);
     }
+}
+
+/// A followed wire that now leaves an unplaced junction back along another
+/// wire there hides the T where the two really part. Its end there is
+/// freed at that point, so [`wiring::tidy`] moves the T, and its dot, to
+/// where the drawing shows it.
+fn slide_t(project: &mut Project, index: usize) -> Option<()> {
+    let wire = project.wires.get(index)?.clone();
+    for (end, first) in [(wire.from, true), (wire.to, false)] {
+        let Some(junction) = end.junction_id() else {
+            continue;
+        };
+        if project.junction(junction).is_none_or(|j| j.placed) {
+            continue;
+        }
+        let mut path = wiring::wire_path(project, &wire)?;
+        if !first {
+            path.reverse();
+        }
+        let (&s, &e) = (path.first()?, path.get(1)?);
+        let length = geometry::distance(s, e);
+        if length <= JUNCTION_TOLERANCE_MM {
+            continue;
+        }
+        let dir = [(e[0] - s[0]) / length, (e[1] - s[1]) / length];
+        // How far along its first segment the wire runs on another one.
+        let reach = project
+            .wires
+            .iter()
+            .filter(|w| w.id != wire.id && (w.from == end || w.to == end))
+            .filter_map(|w| {
+                let mut other = wiring::wire_path(project, w)?;
+                if w.from != end {
+                    other.reverse();
+                }
+                let q = *other.get(1)?;
+                let along = (q[0] - s[0]) * dir[0] + (q[1] - s[1]) * dir[1];
+                let off = (q[0] - s[0]) * dir[1] - (q[1] - s[1]) * dir[0];
+                (along > 0.0 && off.abs() <= JUNCTION_TOLERANCE_MM).then_some(along.min(length))
+            })
+            .fold(0.0, f64::max);
+        // Nothing shared, or the whole wire lies on the other.
+        if reach <= JUNCTION_TOLERANCE_MM
+            || (path.len() == 2 && reach >= length - JUNCTION_TOLERANCE_MM)
+        {
+            continue;
+        }
+        let at = [s[0] + dir[0] * reach, s[1] + dir[1] * reach];
+        let free = WireEnd::Free(FreeEnd::new(at)?);
+        let mut corners = wire.corners.clone();
+        if !first {
+            corners.reverse();
+        }
+        if reach >= length - JUNCTION_TOLERANCE_MM && !corners.is_empty() {
+            corners.remove(0);
+        }
+        if !first {
+            corners.reverse();
+        }
+        let wire = project.wires.get_mut(index)?;
+        if first {
+            wire.from = free;
+        } else {
+            wire.to = free;
+        }
+        wire.corners = corners;
+        return Some(());
+    }
+    Some(())
 }
 
 #[cfg(test)]

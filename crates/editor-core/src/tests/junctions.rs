@@ -587,3 +587,52 @@ fn refused_wire_draws_leave_the_document_unchanged() -> Result<()> {
     kept.assert_kept(&engine, "refused connect");
     Ok(())
 }
+
+/// Finding 9 of docs/e2e-run-4.md: U4 hangs from the U1–U2 wire by a T at
+/// (20, 0). Moved 2 mm right, its wire rubber-bands up from (23, -20) to
+/// y = 0 and runs back along the net to the old T; the T, and its dot,
+/// move to (23, 0), where the drawing shows the wires part.
+#[test]
+fn moving_a_part_on_a_t_moves_the_t_and_its_dot_with_it() -> Result<()> {
+    let Sheet {
+        mut engine,
+        u,
+        wire,
+    } = sheet()?;
+    connect_to(&mut engine, ep(u[3], 2).into(), on(wire, [20.0, 0.0]))?;
+    assert_eq!(dots(&engine), vec![[20.0, 0.0]]);
+    let before = engine.document().clone();
+    let net = net_of(&engine, ep(u[0], 2))?;
+    let occurrence = engine
+        .project()
+        .occurrences
+        .iter()
+        .find(|o| o.instance == u[3])
+        .map(|o| o.id)
+        .ok_or_else(|| Error::NotFound("occurrence".into()))?;
+    apply(
+        &mut engine,
+        Operation::Schematic(SchematicCommand::MoveUnit {
+            occurrence,
+            position: pt([18.0, -20.0]),
+        }),
+    )?;
+    assert_eq!(dots(&engine), vec![[23.0, 0.0]]);
+    let mut drawn = paths(&engine);
+    drawn.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    assert_eq!(
+        drawn,
+        vec![
+            vec![[5.0, 0.0], [23.0, 0.0]],
+            vec![[23.0, -20.0], [23.0, 0.0]],
+            vec![[23.0, 0.0], [25.0, 0.0]],
+        ]
+    );
+    assert_eq!(engine.project().junctions.len(), 1);
+    for end in [ep(u[1], 1), ep(u[3], 2)] {
+        assert_eq!(net_of(&engine, end)?, net);
+    }
+    engine.undo()?;
+    assert_eq!(engine.document(), &before);
+    Ok(())
+}

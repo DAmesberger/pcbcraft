@@ -395,7 +395,9 @@ fn a_junction_comes_along_with_a_named_wire_only() -> Result<()> {
         .first()
         .map(|j| (j.id, j.position))
         .ok_or_else(|| Error::Invalid("no junction".into()))?;
-    let by = [0.0, 5.0];
+    // Down, so U1's wire does not come back up along U2's onto the T
+    // (which would move the T to where they part).
+    let by = [0.0, -2.5];
     let spot = |engine: &Engine| {
         engine
             .project()
