@@ -972,7 +972,7 @@ fn painted(
 }
 
 /// [`painted`], with the interface shown at rest or not (PCB 3D's
-/// Enclosure interface entry).
+/// Board interface entry).
 fn painted_at(
     editor: &mut PcbEditor,
     engine: &Engine,
@@ -1070,7 +1070,7 @@ fn datums_are_drawn_in_layout_and_3d_by_one_painter() -> TestResult {
 
 /// PCB 3D hides the interface by default (finding 18 of the fourth E2E
 /// run): the Board card or a selected part draws nothing over the model
-/// until the Layers popover's Enclosure interface entry is on. Editing the
+/// until the Layers popover's Board interface entry is on. Editing the
 /// interface shows it anyway: the selected datum, and every datum while a
 /// publish preview is docked.
 #[test]
@@ -1111,7 +1111,7 @@ fn pcb_3d_shows_the_interface_only_when_asked_or_edited() -> TestResult {
         .map(|r| r.id);
     editor.interface.datum = id;
     let (words, colours, _) = in_3d(&mut editor, &engine);
-    assert_eq!(words, [opening.clone()]);
+    assert_eq!(words, std::slice::from_ref(&opening));
     let t = pcbcraft_ui::theme::Tokens::get();
     assert!(colours.contains(&t.accent), "the selected datum is lit");
     editor.interface.datum = None;

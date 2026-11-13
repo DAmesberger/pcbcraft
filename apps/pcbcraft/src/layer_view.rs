@@ -10,7 +10,7 @@
 //! toggle, and no saved body has it. They are drawn while
 //! [`LayerView::shows_markings`]: hiding the bodies hides them too.
 //!
-//! The Enclosure interface entry (finding 18 of the fourth E2E run) is not
+//! The Board interface entry (finding 18 of the fourth E2E run) is not
 //! a layer of the model: it shows the board interface's datums painted
 //! over the view, off by default. It is kept beside the [`LayerView`], so
 //! turning it never repacks or rebuilds anything.
@@ -273,7 +273,7 @@ impl LayerView {
 }
 
 /// The navigation bar's layer button and its popover of toggles for a
-/// board of `stack` and the Enclosure interface entry `interface`, with
+/// board of `stack` and the Board interface entry `interface`, with
 /// the follow-the-net toggle `follow` (labelled
 /// `follow_label`, its shortcut in it) under them. Returns whether `view`
 /// changed. The button is outlined while a layer is hidden or the net is
@@ -380,7 +380,7 @@ pub fn copper_rows(ui: &mut Ui, len: usize, mut row: impl FnMut(&mut Ui, usize))
         });
 }
 
-/// The popover's content: a caption, one check per layer, the Enclosure
+/// The popover's content: a caption, one check per layer, the Board
 /// interface entry and Show all. Returns whether `view` changed; the
 /// interface entry changes `interface` only.
 fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack, interface: &mut bool) -> bool {
@@ -425,7 +425,7 @@ fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack, interface: &mut boo
     for layer in below {
         toggle(ui, *layer);
     }
-    crate::kit::check(ui, "Enclosure interface", interface);
+    crate::kit::check(ui, "Board interface", interface);
     ui.horizontal(|ui| {
         let x_ray = LayerView::x_ray(stack);
         let preset = ui_kit::button(ui, "X-ray", Button::Enabled(*view != x_ray))
@@ -615,7 +615,7 @@ mod tests {
         click_with(ctx, view, &mut false, label)
     }
 
-    /// [`click`] with the Enclosure interface entry `interface`.
+    /// [`click`] with the Board interface entry `interface`.
     fn click_with(
         ctx: &egui::Context,
         view: &mut LayerView,
@@ -653,16 +653,16 @@ mod tests {
         Ok(changed)
     }
 
-    /// The Enclosure interface entry starts off, turns the overlay on and
+    /// The Board interface entry starts off, turns the overlay on and
     /// off again, and never changes the layers, so the model is not packed
     /// again ([`crate::viewport::Viewport::set_layers`] sees no change).
     #[test]
-    fn the_enclosure_interface_entry_toggles_only_the_overlay() -> Result<(), String> {
+    fn the_board_interface_entry_toggles_only_the_overlay() -> Result<(), String> {
         let ctx = egui::Context::default();
         let mut view = LayerView::default();
         let mut interface = false;
         for expected in [true, false] {
-            let changed = click_with(&ctx, &mut view, &mut interface, "Enclosure interface")?;
+            let changed = click_with(&ctx, &mut view, &mut interface, "Board interface")?;
             assert!(!changed, "the layers are unchanged");
             assert_eq!(interface, expected);
             assert_eq!(view, LayerView::default());

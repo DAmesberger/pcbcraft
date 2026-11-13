@@ -429,7 +429,7 @@ pub struct PcbEditor {
     /// PCB 3D's layer toggles; its outer copper and silkscreen entries are
     /// `layers`' ([`PcbEditor::layer_view`]).
     view_layers: crate::layer_view::LayerView,
-    /// PCB 3D's Enclosure interface entry: the interface's datums drawn
+    /// PCB 3D's Board interface entry: the interface's datums drawn
     /// over the model at rest. Off by default; editing the interface shows
     /// them anyway ([`PcbEditor::paint_datums`]).
     interface_3d: bool,
@@ -674,12 +674,12 @@ impl PcbEditor {
         self.view_layers = view;
     }
 
-    /// Whether PCB 3D's Enclosure interface entry is on.
+    /// Whether PCB 3D's Board interface entry is on.
     pub fn shows_interface_3d(&self) -> bool {
         self.interface_3d
     }
 
-    /// Turn PCB 3D's Enclosure interface entry on or off: display only,
+    /// Turn PCB 3D's Board interface entry on or off: display only,
     /// the model is neither rebuilt nor packed again.
     pub fn set_shows_interface_3d(&mut self, shown: bool) {
         self.interface_3d = shown;
