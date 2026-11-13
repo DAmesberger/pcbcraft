@@ -588,7 +588,7 @@ impl App {
             match self.workspace {
                 Workspace::Part => self.part.fit(),
                 Workspace::Schematic => self.schematic.fit(),
-                Workspace::Pcb => self.pcb.fit(),
+                Workspace::Pcb => self.pcb.fit(&self.engine),
             }
         }
     }

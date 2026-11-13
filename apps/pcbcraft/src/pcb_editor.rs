@@ -17,7 +17,7 @@ use egui::{Align2, Color32, FontId, PointerButton, Pos2, Rect, Sense, Shape, Str
 use pcbcraft_core::{
     CopperLayer, Engine, Id, Layer, ObjectRef, Operation, Placement, Point, Project, Query,
     QueryResult, Via,
-    geometry::{Shape as CoreShape, Transform2},
+    geometry::{Bounds, Shape as CoreShape, Transform2},
     instances,
     issues::{IssueArea, IssueScope},
     layout::{
@@ -1425,10 +1425,19 @@ impl PcbEditor {
         self.update.is_open()
     }
 
-    /// Return the layout view to its fitted scale.
-    pub fn fit(&mut self) {
+    /// Return the layout view to its fitted scale, zoomed out to show every
+    /// part as well when some lie off the board (staged beside it).
+    pub fn fit(&mut self, engine: &Engine) {
         self.zoom = 1.0;
         self.pan = Vec2::ZERO;
+        let project = engine.project();
+        let board = Bounds::point([0.0, 0.0]).including(project.board_size);
+        let all = layout::staging::part_boxes(project)
+            .into_values()
+            .fold(board, Bounds::union);
+        if all != board {
+            self.overview_request = Some([all.min, all.max]);
+        }
     }
 
     /// The docked update review, for the app's Esc.
@@ -3236,21 +3245,23 @@ const LOCATE_MARGIN_MM: f64 = 2.0;
 /// bounds plus a margin filling about two thirds of the canvas, never
 /// zoomed out past the fitted board nor in past [`LOCATE_MAX_ZOOM`].
 /// The zoom and pan that show `bounds` whole, at most at the board's fit
-/// and as far out as the zoom range allows, centred.
+/// and as far out as the zoom range allows, centred above the navigation
+/// bar's band, like the fitted board.
 fn overview(rect: Rect, board: Point, bounds: [Point; 2], from_bottom: bool) -> (f32, Vec2) {
     let fit = fit_scale(rect, board);
     let size = [
         (bounds[1][0] - bounds[0][0]).max(1.0) as f32,
         (bounds[1][1] - bounds[0][1]).max(1.0) as f32,
     ];
-    let wanted = (rect.width() / size[0]).min(rect.height() / size[1]) * 0.9;
+    let area = fit_area(rect);
+    let wanted = (area.width() / size[0]).min(area.height() / size[1]) * 0.9;
     let zoom = (wanted / fit).clamp(*ZOOM_RANGE.start(), 1.0);
     let centre = [
         (bounds[0][0] + bounds[1][0]) / 2.0,
         (bounds[0][1] + bounds[1][1]) / 2.0,
     ];
     let unpanned = board_view(rect, board, zoom, Vec2::ZERO, from_bottom);
-    (zoom, rect.center() - unpanned.screen(centre))
+    (zoom, area.center() - unpanned.screen(centre))
 }
 
 fn frame_view(rect: Rect, board: Point, bounds: [Point; 2], from_bottom: bool) -> (f32, Vec2) {
