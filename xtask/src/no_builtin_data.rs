@@ -60,16 +60,6 @@ const ALLOWED: &[(&str, &str, Reason)] = &[
         Reason::SkillPrompt,
     ),
     // Being moved: assistant run profiles.
-    (
-        "crates/assist/src/profile.rs",
-        "profiles/default.json",
-        Reason::BeingMoved,
-    ),
-    (
-        "crates/assist/src/profile.rs",
-        "profiles/claude.json",
-        Reason::BeingMoved,
-    ),
     // Being moved: fab profiles.
     (
         "crates/io/src/rule_profiles.rs",
@@ -82,26 +72,6 @@ const ALLOWED: &[(&str, &str, Reason)] = &[
         Reason::BeingMoved,
     ),
     // Being moved: built-in part files.
-    (
-        "crates/solidcraft-integration/src/models/part_file.rs",
-        "library/parts/esp32-s31-wroom-3.solidcraft",
-        Reason::BeingMoved,
-    ),
-    (
-        "crates/solidcraft-integration/src/models/part_file.rs",
-        "library/parts/smd-nut.solidcraft",
-        Reason::BeingMoved,
-    ),
-    (
-        "crates/solidcraft-integration/src/models/part_file.rs",
-        "library/parts/round-spacer.solidcraft",
-        Reason::BeingMoved,
-    ),
-    (
-        "crates/solidcraft-integration/src/models/part_file.rs",
-        "library/parts/finned-heatsink.solidcraft",
-        Reason::BeingMoved,
-    ),
     // Until GP5: the starter package rows, which generator modules replace.
     (
         "crates/editor-core/src/library/templates/starter.rs",
