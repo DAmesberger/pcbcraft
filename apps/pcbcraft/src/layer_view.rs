@@ -188,12 +188,20 @@ impl LayerView {
 }
 
 /// The navigation bar's layer button and its popover of toggles for a
-/// board of `stack`. Returns whether `view` changed. The button is
-/// outlined while a layer is hidden.
-pub fn button(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
+/// board of `stack`, with the follow-the-net toggle `follow` (labelled
+/// `follow_label`, its shortcut in it) under them. Returns whether `view`
+/// changed. The button is outlined while a layer is hidden or the net is
+/// followed.
+pub fn button(
+    ui: &mut Ui,
+    view: &mut LayerView,
+    stack: &Stack,
+    follow: &mut bool,
+    follow_label: &str,
+) -> bool {
     let t = Tokens::get();
     let response = shell::icon_button(ui, "eye", "Layers", true);
-    if view.hides_any() {
+    if view.hides_any() || *follow {
         ui.painter().rect_stroke(
             response.rect,
             t.radius_sm,
@@ -210,8 +218,26 @@ pub fn button(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
             crate::kit::form(ui, |ui| {
                 ui.set_width(POPOVER_WIDTH);
                 changed = popover(ui, view, stack);
+                follow_row(ui, follow, follow_label);
             });
         });
+    changed
+}
+
+/// The popover's View caption and the follow-the-net check. Returns
+/// whether it was toggled.
+fn follow_row(ui: &mut Ui, follow: &mut bool, label: &str) -> bool {
+    let t = Tokens::get();
+    let (rect, _) = ui.allocate_exact_size(vec2(POPOVER_WIDTH, CAPTION_HEIGHT), Sense::hover());
+    ui.painter().text(
+        pos2(rect.left() + t.space_4, rect.center().y),
+        Align2::LEFT_CENTER,
+        "View",
+        FontId::proportional(t.font_caption),
+        t.text_dim,
+    );
+    let changed = crate::kit::check(ui, label, follow);
+    crate::kit::hint(ui, "The selected net stays solid, the rest see-through", "");
     changed
 }
 
@@ -455,6 +481,47 @@ mod tests {
             changed |= frame(view, events).1;
         }
         Ok(changed)
+    }
+
+    /// The popover's follow-the-net row toggles the preference on and off
+    /// again, and leaves the layers as they are.
+    #[test]
+    fn the_follow_net_row_toggles_following() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let label = "Follow net (see-through) (⇧N)";
+        let mut follow = false;
+        let frame = |follow: &mut bool, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut toggled = false;
+            let mut output = ctx.run_ui(input, |ui| toggled = follow_row(ui, follow, label));
+            output.textures_delta.clear();
+            (output, toggled)
+        };
+        let (output, _) = frame(&mut follow, vec![]);
+        assert!(text_at(&output, "View").is_some(), "under a View caption");
+        let at = text_at(&output, label).ok_or("no follow row")?;
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for expected in [true, false] {
+            let mut toggled = false;
+            for events in [
+                vec![egui::Event::PointerMoved(at)],
+                vec![button(true)],
+                vec![button(false)],
+            ] {
+                toggled |= frame(&mut follow, events).1;
+            }
+            assert!(toggled);
+            assert_eq!(follow, expected);
+        }
+        Ok(())
     }
 
     /// Copper on no single layer is the Vias toggle's; X-ray shows only

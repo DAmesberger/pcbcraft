@@ -13,6 +13,36 @@ fn the_default_keymap_has_no_conflicts() {
     assert_eq!(registry.conflicts(), vec![]);
 }
 
+/// Follow net is a PCB 3D command in the palette with ⇧N, which the
+/// footprint tab's ⇧N (pad row) and Layout do not reach.
+#[test]
+fn follow_net_is_a_pcb_3d_command_on_shift_n() -> Result<(), String> {
+    let registry = Registry::standard();
+    let command = registry
+        .for_app(AppCommand::ToggleFollowNet)
+        .ok_or("no follow-net command")?;
+    assert_eq!(command.id, "view.follow-net");
+    assert_eq!(command.context, Context::Pcb3d);
+    assert!(command.runnable(), "listed in the palette");
+    let chord = Chord::key(K::N).with_shift();
+    assert_eq!(registry.chords(command), vec![chord]);
+    let resolved = |context| {
+        registry
+            .resolve(chord, &active_contexts(context))
+            .map(|c| c.id.clone())
+    };
+    assert_eq!(resolved(Context::Pcb3d).as_deref(), Some("view.follow-net"));
+    assert_ne!(
+        resolved(Context::PcbLayout).as_deref(),
+        Some("view.follow-net")
+    );
+    assert_ne!(
+        resolved(Context::Footprint).as_deref(),
+        Some("view.follow-net")
+    );
+    Ok(())
+}
+
 #[test]
 fn ids_are_unique_and_titles_and_icons_are_set() {
     let registry = Registry::standard();

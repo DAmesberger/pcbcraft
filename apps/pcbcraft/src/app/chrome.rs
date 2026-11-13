@@ -829,10 +829,50 @@ impl App {
                 &project.stackup,
                 project.fabrication.pad_finish,
             );
-            if crate::layer_view::button(&mut child, &mut view, &stack) {
+            let follow_label =
+                self.with_shortcut("Follow net (see-through)", AppCommand::ToggleFollowNet);
+            let mut follow = self.scene.viewport.follow_net();
+            if crate::layer_view::button(&mut child, &mut view, &stack, &mut follow, &follow_label)
+            {
                 self.scene.viewport.set_layers(view.clone());
                 self.pcb.set_layer_view(view);
             }
+            if follow != self.scene.viewport.follow_net() {
+                self.toggle_follow_net();
+            }
+        }
+    }
+
+    /// The pill of following the net, top-centre of the PCB 3D view at
+    /// `rect` while the look draws: what is followed, its key; × stops.
+    pub(super) fn follow_pill(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        if !self.scene.viewport.following() {
+            return;
+        }
+        let t = Tokens::get();
+        let project = self.engine.project();
+        let what = match self.pcb.highlighted_net() {
+            Some(net) if project.net(net).is_some() => project.net_name(net).to_owned(),
+            _ => "the selection".to_owned(),
+        };
+        let text = crate::keys::labelled(ui.ctx(), &format!("Following {what}"), "view.follow-net");
+        let text_width = ui
+            .painter()
+            .layout_no_wrap(
+                text.clone(),
+                egui::FontId::proportional(t.font_label),
+                t.text,
+            )
+            .size()
+            .x;
+        let width = (text_width + 3.0 * t.control_height).min(rect.width());
+        let area = Rect::from_min_size(
+            rect.center_top() + vec2(-width / 2.0, t.space_8),
+            vec2(width, t.control_height + t.space_8),
+        );
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(area));
+        if kit::pill(&mut child, None, &text).closed {
+            self.toggle_follow_net();
         }
     }
 

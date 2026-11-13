@@ -635,16 +635,28 @@ impl SceneController {
     ) {
         let mut ids = Vec::new();
         let mut selected = Vec::new();
+        // What following the net keeps solid: the net's bodies and the
+        // selected ones, while a net or a track or via is chosen (not what
+        // a row only lights).
+        let mut focus = Vec::new();
+        let mut copper = net.is_some();
         for s in &self.sources {
             let picked = picks(s, chosen);
+            let on_net = s.net.is_some() && s.net == net;
             if picked {
                 selected.push(s.pick_id);
+                copper |= s.track.is_some() || s.via.is_some();
             }
-            if picked || s.net.is_some() && s.net == net || picks(s, lit) {
+            if picked || on_net {
+                focus.push(s.pick_id);
+            }
+            if picked || on_net || picks(s, lit) {
                 ids.push(s.pick_id);
             }
         }
         self.viewport.highlight_selected(ids, selected);
+        self.viewport
+            .set_focus(if copper { focus } else { Vec::new() });
     }
 
     /// The pick identities of every body of the selected parts, tracks,

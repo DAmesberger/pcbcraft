@@ -357,6 +357,7 @@ impl App {
             }
             AppCommand::View3d(view) => self.view_3d(view),
             AppCommand::ToggleRealistic => self.toggle_realistic(),
+            AppCommand::ToggleFollowNet => self.toggle_follow_net(),
             // The same request as the window's close button.
             AppCommand::Quit | AppCommand::CloseWindow => {
                 self.files.request(file_ui::Action::Close)
@@ -373,6 +374,27 @@ impl App {
         }
         let on = !self.scene.viewport.realistic();
         self.scene.viewport.set_realistic(on);
+    }
+
+    /// Follow the net in the PCB 3D view, or stop, opening the view if
+    /// needed: a view preference, never part of the document or its undo
+    /// history. Turned on with nothing to follow, it says what to select.
+    pub(super) fn toggle_follow_net(&mut self) {
+        self.enter(Workspace::Pcb);
+        if !self.pcb.is_3d() {
+            self.pcb.set_3d(true);
+        }
+        let on = !self.scene.viewport.follow_net();
+        // The focus as the 3D view sets it each frame, for the hint below.
+        self.scene.highlight(
+            &self.pcb.selected(),
+            self.pcb.highlighted_net(),
+            &self.pcb.lit(),
+        );
+        self.scene.viewport.set_follow_net(on);
+        if on && !self.scene.viewport.following() {
+            self.say(Level::Info, "Select a track, via or net to follow");
+        }
     }
 
     /// Turn the PCB 3D view to a standard view, opening it if needed.

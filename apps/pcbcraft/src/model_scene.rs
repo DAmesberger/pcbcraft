@@ -192,6 +192,31 @@ impl Instanced {
         out
     }
 
+    /// Its placements in the follow-the-net look `fade`, moved by
+    /// `display`: those `fade` keeps as built (shaded through its look, with
+    /// their coarser levels), the rest faded, see-through in the faded
+    /// colour of `scene`'s palette. Both are drawn from the same shared
+    /// triangles, so their GPU buffers are kept; a mesh without placements
+    /// is left out.
+    pub fn split(
+        &self,
+        scene: &mut GpuScene,
+        geometry: &[Geometry],
+        display: Option<&Place>,
+        fade: &Fade,
+    ) -> Vec<InstancedMesh> {
+        let solid = scene.color(self.colour);
+        let kept = self.placed(geometry, display, self.mesh.look, solid, |g| fade.keeps(g));
+        let faded = scene.color(Fade::faded(self.colour));
+        let faded = self.placed(geometry, display, InstanceLook::Faded, faded, |g| {
+            !fade.keeps(g)
+        });
+        let kept = (kept.count() > 0).then(|| self.shaded(scene, kept));
+        kept.into_iter()
+            .chain((faded.count() > 0).then_some(faded))
+            .collect()
+    }
+
     /// The highlighted placements, drawn again flat: the selected object's
     /// in the strong selection colour (palette entry 1 of the highlight
     /// scene), the rest of its net's in the lighter net colour (entry 0),
@@ -569,6 +594,13 @@ const WALL_NZ: f64 = 0.1;
 /// as a grazing coat, grey, wherever the bias spanned the 20 µm; pad copper
 /// under its 5 µm finish showed through it as a rose cast.
 fn covered(g: &Geometry, n: Vec3, stack: &Stack, view: &LayerView) -> bool {
+    covered_in(g, n, stack, view, None)
+}
+
+/// [`covered`] in the follow-the-net look `fade`: only a land's finish,
+/// which stays solid with its pad, covers; the mask and the laminate are
+/// seen through, so a followed body under them keeps its material.
+fn covered_in(g: &Geometry, n: Vec3, stack: &Stack, view: &LayerView, fade: Option<&Fade>) -> bool {
     use pcbcraft_core::Layer;
     let toward = if n.z.abs() >= FLAT_NZ {
         Some(if n.z > 0.0 { Layer::Top } else { Layer::Bottom })
@@ -577,9 +609,9 @@ fn covered(g: &Geometry, n: Vec3, stack: &Stack, view: &LayerView) -> bool {
     } else {
         return false;
     };
-    stack
-        .cover(g.kind, g.layer, toward)
-        .is_some_and(|film| view.draws(ViewLayer::from(film)))
+    stack.cover(g.kind, g.layer, toward).is_some_and(|film| {
+        view.draws(ViewLayer::from(film)) && (fade.is_none() || matches!(film, Slot::Finish(_)))
+    })
 }
 
 /// The opaque vertices of the streamed bodies of `geometry` that `view` shows
@@ -591,6 +623,60 @@ pub fn pack(
     decals: &[Geometry],
     view: &LayerView,
     stack: &Stack,
+) -> Result<(GpuScene, Runs), String> {
+    pack_faded(geometry, decals, view, stack, None)
+}
+
+/// Opacity of a faded body in the follow-the-net look ([`Fade`]): its plain
+/// colour at this alpha, so the few films stacked over an inner track (the
+/// mask, the laminate, other copper) still let it show.
+pub const FADE_ALPHA: u8 = 22;
+
+/// Most pick identities a follow-the-net focus holds; past it the look is
+/// not drawn (a focus is one net's bodies, far fewer on any real board).
+pub const MAX_FOCUS: usize = 1 << 20;
+
+/// The follow-the-net look: the bodies of the focus (a net's tracks, vias,
+/// pads and fills) drawn as built, every other body faded, see-through in
+/// its plain colour at [`FADE_ALPHA`] and blended by Solidcraft's
+/// order-independent transparency. A display look of the cached meshes:
+/// the stream is packed again ([`pack_faded`]) and instanced placements are
+/// split by look ([`Instanced::split`]); no body is rebuilt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fade {
+    focus: std::collections::BTreeSet<u64>,
+}
+
+impl Fade {
+    /// The look for `focus`; `None` for an empty focus (nothing to follow)
+    /// or one past [`MAX_FOCUS`].
+    pub fn new(focus: impl IntoIterator<Item = u64>) -> Option<Self> {
+        let focus: std::collections::BTreeSet<u64> =
+            focus.into_iter().take(MAX_FOCUS + 1).collect();
+        (!focus.is_empty() && focus.len() <= MAX_FOCUS).then_some(Self { focus })
+    }
+
+    /// Whether `g` stays solid: a body of the focus. A track's conforming
+    /// mask is mask, not copper, and fades with the rest.
+    pub fn keeps(&self, g: &Geometry) -> bool {
+        g.kind != BodyKind::MaskCap && g.item.is_some_and(|item| self.focus.contains(&item))
+    }
+
+    /// The faded colour of a body of plain colour `rgba`.
+    pub fn faded(rgba: [u8; 4]) -> [u8; 4] {
+        [rgba[0], rgba[1], rgba[2], FADE_ALPHA]
+    }
+}
+
+/// [`pack`] in the follow-the-net look `fade`: a body it does not keep goes
+/// into the see-through triangles ([`GpuScene::trans`]) in its faded colour
+/// instead, without its material stream, and is left out of the runs.
+pub fn pack_faded(
+    geometry: &[Geometry],
+    decals: &[Geometry],
+    view: &LayerView,
+    stack: &Stack,
+    fade: Option<&Fade>,
 ) -> Result<(GpuScene, Runs), String> {
     let bodies: Vec<(ViewLayer, &Geometry)> = ordered(geometry)
         .into_iter()
@@ -618,6 +704,11 @@ pub fn pack(
     let mut looks = Looks::default();
     let mut runs: Runs = Vec::new();
     for (layer, g) in bodies {
+        if fade.is_some_and(|f| !f.keeps(g)) {
+            let colour = scene.color(Fade::faded(plain_colour(g.surface)));
+            faded_tris(&mut scene, g, colour)?;
+            continue;
+        }
         let start = scene.tris.len();
         let colour = scene.color(plain_colour(g.surface));
         let look = looks.get(g)?;
@@ -631,7 +722,7 @@ pub fn pack(
             };
             let face = (p[1] - p[0]).cross(p[2] - p[0]);
             let face = unit_direction(face).unwrap_or(Vec3::Z);
-            let shaded = !covered(g, face, stack, view);
+            let shaded = !covered_in(g, face, stack, view, fade);
             for (corner, index) in p.iter().zip(indices) {
                 let normal = usize::try_from(*index)
                     .ok()
@@ -651,8 +742,36 @@ pub fn pack(
             _ => runs.push((layer, start..end)),
         }
     }
-    pack_placed(&mut scene, &mut looks, geometry, decals, view, stack)?;
+    pack_placed(&mut scene, &mut looks, geometry, decals, view, stack, fade)?;
     Ok((scene, runs))
+}
+
+/// `g`'s triangles into `scene`'s see-through triangles in `colour`, lit by
+/// its normals as its opaque copy is.
+fn faded_tris(scene: &mut GpuScene, g: &Geometry, colour: PaletteIndex) -> Result<(), String> {
+    let bytes = g
+        .mesh
+        .triangles
+        .len()
+        .checked_mul(3 * TRI_SIZE)
+        .ok_or("model too large for the 3D view")?;
+    scene.trans.try_reserve(bytes).map_err(|e| e.to_string())?;
+    for indices in &g.mesh.triangles {
+        let Some(p) = g.mesh.tri(indices) else {
+            continue;
+        };
+        let face = (p[1] - p[0]).cross(p[2] - p[0]);
+        let face = unit_direction(face).unwrap_or(Vec3::Z);
+        for (corner, index) in p.iter().zip(indices) {
+            let normal = usize::try_from(*index)
+                .ok()
+                .and_then(|i| g.mesh.normals.get(i))
+                .and_then(|n| unit_direction(*n).ok())
+                .unwrap_or(face);
+            scene.trans_tri(corner.to_f32(), normal.to_f32(), colour);
+        }
+    }
+    Ok(())
 }
 
 /// Bytes the material stream may hold before a placed body's vertices go in.
@@ -670,13 +789,18 @@ fn pack_placed(
     decals: &[Geometry],
     view: &LayerView,
     stack: &Stack,
+    fade: Option<&Fade>,
 ) -> Result<(), String> {
     let mut uses: HashMap<usize, usize> = HashMap::new();
+    // A faded body is drawn see-through, which no material shades.
     let placed: Vec<&Geometry> = geometry
         .iter()
         .chain(decals)
         .filter(|g| {
-            !streamed(g) && stream_shaded(g, stack) && view.draws(ViewLayer::of(g.kind, g.layer))
+            !streamed(g)
+                && stream_shaded(g, stack)
+                && view.draws(ViewLayer::of(g.kind, g.layer))
+                && fade.is_none_or(|f| f.keeps(g))
         })
         .inspect(|g| *uses.entry(Arc::as_ptr(&g.mesh) as usize).or_default() += 1)
         .collect();
@@ -702,11 +826,12 @@ fn pack_placed(
             };
             let face = (p[1] - p[0]).cross(p[2] - p[0]);
             let face = unit_direction(face).unwrap_or(Vec3::Z);
-            if covered(
+            if covered_in(
                 g,
                 unit_direction(place.vector(face)).unwrap_or(face),
                 stack,
                 view,
+                fade,
             ) {
                 continue;
             }
