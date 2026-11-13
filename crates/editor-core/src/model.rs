@@ -15,6 +15,7 @@ use std::sync::Arc;
 pub mod board;
 pub mod dimension;
 pub mod fill;
+pub mod housing;
 pub mod interface;
 pub mod production;
 pub mod sheet;
@@ -512,6 +513,10 @@ pub struct Project {
     /// their append-only slot table (docs/architecture/board-interface.md).
     #[serde(default, skip_serializing_if = "interface_is_empty")]
     pub interface: Shared<interface::InterfaceTable>,
+    /// The link to an enclosure design, its references, bindings and
+    /// snapshot (`interface::housing`); `None` until `housing.link`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub housing: Option<Box<housing::HousingLink>>,
 }
 
 fn interface_is_empty(table: &Shared<interface::InterfaceTable>) -> bool {
@@ -554,6 +559,7 @@ impl Default for Project {
             drawings: Shared::default(),
             production: production::Production::default(),
             interface: Shared::default(),
+            housing: None,
         }
     }
 }

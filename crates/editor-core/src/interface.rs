@@ -31,6 +31,7 @@ pub mod apply;
 pub mod auto;
 pub mod command;
 pub mod findings;
+pub mod housing;
 pub mod list;
 pub mod package;
 pub mod publish;
@@ -59,6 +60,10 @@ pub fn schemas() -> serde_json::Value {
         "publish_preview": schemars::schema_for!(PublishPreviewParams),
         "list": schemars::schema_for!(InterfaceList),
         "preview": schemars::schema_for!(PublishPreview),
+        "housing_link": schemars::schema_for!(crate::model::housing::HousingLink),
+        "housing_command": schemars::schema_for!(housing::HousingCommand),
+        "housing_preview": schemars::schema_for!(housing::HousingPreview),
+        "housing_status": schemars::schema_for!(housing::HousingStatus),
     })
 }
 

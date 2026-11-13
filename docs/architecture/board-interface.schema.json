@@ -899,6 +899,2179 @@
     ],
     "title": "InterfaceCommand"
   },
+  "housing_command": {
+    "$defs": {
+      "BindingRead": {
+        "additionalProperties": false,
+        "description": "One binding's enclosure parameter as the host found it.",
+        "properties": {
+          "board_param": {
+            "$ref": "#/$defs/ParamName"
+          },
+          "value_mm": {
+            "description": "Its value now in mm; `None` when the enclosure no longer has it.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "board_param"
+        ],
+        "type": "object"
+      },
+      "BodyName": {
+        "description": "A body of a model design, by its name there.",
+        "type": "string"
+      },
+      "Consumer": {
+        "additionalProperties": false,
+        "description": "An enclosure feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the enclosure. A consumer whose datum no longer resolves is a\nbroken reference (`housing.reference_lost`), which blocks fabrication\noutput.",
+        "properties": {
+          "datum": {
+            "$ref": "#/$defs/DatumId",
+            "description": "The datum it uses."
+          },
+          "feature": {
+            "description": "The feature's name in the enclosure (\"USB opening\").",
+            "type": "string"
+          },
+          "name": {
+            "description": "The datum's display name as published (\"J1 opening\").",
+            "type": "string"
+          },
+          "token": {
+            "description": "The datum's token as published (`i80.opening`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feature",
+          "datum",
+          "token",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ContentHash": {
+        "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
+        "type": "string"
+      },
+      "DatumId": {
+        "description": "A datum's document identity, allocated from the table's own counter\n([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a\ndatum never shifts the ids of other objects. Never reused: the counter,\nlike the slot counter, only grows, through undo and redo too.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "FaceName": {
+        "description": "A face's persistent name in a model design (`F2:side:l4`).",
+        "type": "string"
+      },
+      "FeatureGeometry": {
+        "description": "A feature's geometry in its target's frame (part frame, before the\nplacement mirrors and turns it), mm.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "shape": {
+                "const": "point",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shape",
+              "at"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "a": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "b": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "shape": {
+                "const": "line",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shape",
+              "a",
+              "b"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A bulge arc from `a` to `b` (as `library::Segment::Arc`).",
+            "properties": {
+              "a": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "b": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "bulge": {
+                "format": "double",
+                "type": "number"
+              },
+              "shape": {
+                "const": "arc",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shape",
+              "a",
+              "b",
+              "bulge"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "center": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "radius": {
+                "format": "double",
+                "type": "number"
+              },
+              "shape": {
+                "const": "circle",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shape",
+              "center",
+              "radius"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "HousingBinding": {
+        "additionalProperties": false,
+        "description": "A board parameter set from an enclosure user parameter (§7.2). Units\nare checked; names are never matched automatically.",
+        "properties": {
+          "board_param": {
+            "$ref": "#/$defs/ParamName"
+          },
+          "housing_param": {
+            "description": "The enclosure's parameter, by its name there.",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/Nm",
+            "description": "The snapshot: its value when last read."
+          }
+        },
+        "required": [
+          "board_param",
+          "housing_param",
+          "value"
+        ],
+        "type": "object"
+      },
+      "HousingRead": {
+        "additionalProperties": false,
+        "description": "What the host read of the enclosure: the link, every housing\nreference's trace and every binding's value now, and the enclosure\nfeatures that use the board's datums.",
+        "properties": {
+          "bindings": {
+            "description": "One per binding of the link (none for a new link).",
+            "items": {
+              "$ref": "#/$defs/BindingRead"
+            },
+            "type": "array"
+          },
+          "board_revision": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "component": {
+            "type": "string"
+          },
+          "consumers": {
+            "items": {
+              "$ref": "#/$defs/Consumer"
+            },
+            "type": "array"
+          },
+          "design_hint": {
+            "description": "The board's published design as the request named it.",
+            "type": "string"
+          },
+          "enclosure_hint": {
+            "description": "The enclosure's file as the request named it.",
+            "type": "string"
+          },
+          "file_sha256": {
+            "$ref": "#/$defs/ContentHash"
+          },
+          "references": {
+            "description": "One per housing reference of the link (none for a new link).",
+            "items": {
+              "$ref": "#/$defs/ReferenceRead"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "enclosure_hint",
+          "design_hint",
+          "component",
+          "file_sha256"
+        ],
+        "type": "object"
+      },
+      "HousingRefId": {
+        "description": "A housing reference's identity in the project (slice S7).",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "NewReference": {
+        "additionalProperties": false,
+        "description": "A housing reference to add: the face the host traced and its trace.",
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/BodyName"
+          },
+          "face": {
+            "$ref": "#/$defs/FaceName"
+          },
+          "geometry": {
+            "$ref": "#/$defs/FeatureGeometry"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pick": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "body",
+          "face",
+          "pick",
+          "name",
+          "geometry"
+        ],
+        "type": "object"
+      },
+      "Nm": {
+        "description": "A length in whole nanometres.",
+        "maximum": 2000000000,
+        "minimum": -2000000000,
+        "type": "integer"
+      },
+      "ParamName": {
+        "description": "A footprint parameter or package-value name: an identifier\n`[A-Za-z_][A-Za-z0-9_]*`. Names starting `pkg_` are reserved for\ninjected package values.",
+        "type": "string"
+      },
+      "ReferenceRead": {
+        "additionalProperties": false,
+        "description": "One housing reference as the host found it.",
+        "properties": {
+          "geometry": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FeatureGeometry"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its trace now; `None` when it is lost."
+          },
+          "id": {
+            "$ref": "#/$defs/HousingRefId"
+          },
+          "note": {
+            "type": "string"
+          },
+          "pick": {
+            "description": "A point on the face where it is now, enclosure frame (the stored\npick, unless the face moved).",
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/$defs/ReferenceStatus"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ReferenceStatus": {
+        "description": "How a reference resolves against its source (§5.5). Derived: a 3D\nmodel reference's status is the host's, kept in its [`ModelTrace`];\nevery other one is read from the document. `Lost` and `Inexact`\nreferences are reported (`board.reference_lost`,\n`board.reference_inexact`), stop driving and keep their last geometry.",
+        "oneOf": [
+          {
+            "enum": [
+              "resolved"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "inexact",
+            "description": "Found, but not provably the same geometry (a renamed or unverified\nface); acknowledged in an impact preview, it becomes `Resolved`.",
+            "type": "string"
+          },
+          {
+            "const": "lost",
+            "description": "Its source is gone.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "The enclosure link's document changes. Each is one undo step; a refused\ncommand changes nothing.",
+    "oneOf": [
+      {
+        "additionalProperties": false,
+        "description": "Link the enclosure the host read (`housing.link`). Refused when a\nlink exists: relink it instead.",
+        "properties": {
+          "command": {
+            "const": "housing.record_link",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "read": {
+                "$ref": "#/$defs/HousingRead"
+              }
+            },
+            "required": [
+              "read"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Apply what the host read of the linked enclosure.\n\nSent by `housing.update` and `housing.relink`: the references'\ntraces move the fixed geometry they own, bindings set their board\nparameters, and the snapshot becomes the read. Refused, changing\nnothing, when the board would not solve, or a bound parameter is\ngone.",
+        "properties": {
+          "command": {
+            "const": "housing.record_update",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "read": {
+                "$ref": "#/$defs/HousingRead"
+              }
+            },
+            "required": [
+              "read"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Add a housing reference the host traced (`housing.add_reference`):\nits trace enters the board sketch as fixed geometry it owns.",
+        "properties": {
+          "command": {
+            "const": "housing.record_reference",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "reference": {
+                "$ref": "#/$defs/NewReference"
+              }
+            },
+            "required": [
+              "reference"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Remove a housing reference and the geometry it owns, with every\nboard-sketch dimension to it.",
+        "properties": {
+          "command": {
+            "const": "housing.remove_reference",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/HousingRefId"
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Bind a board parameter to an enclosure parameter the host read\n(`housing.bind`), setting it to the value.",
+        "properties": {
+          "command": {
+            "const": "housing.record_binding",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "binding": {
+                "$ref": "#/$defs/HousingBinding"
+              }
+            },
+            "required": [
+              "binding"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Stop setting a board parameter from the enclosure; it keeps its\nvalue.",
+        "properties": {
+          "command": {
+            "const": "housing.unbind",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "board_param": {
+                "$ref": "#/$defs/ParamName"
+              }
+            },
+            "required": [
+              "board_param"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Forget the link. The geometry the references owned stays in the\nboard sketch as plain fixed geometry; the board keeps its shape.",
+        "properties": {
+          "command": {
+            "const": "housing.unlink",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "HousingCommand"
+  },
+  "housing_link": {
+    "$defs": {
+      "BodyName": {
+        "description": "A body of a model design, by its name there.",
+        "type": "string"
+      },
+      "Consumer": {
+        "additionalProperties": false,
+        "description": "An enclosure feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the enclosure. A consumer whose datum no longer resolves is a\nbroken reference (`housing.reference_lost`), which blocks fabrication\noutput.",
+        "properties": {
+          "datum": {
+            "$ref": "#/$defs/DatumId",
+            "description": "The datum it uses."
+          },
+          "feature": {
+            "description": "The feature's name in the enclosure (\"USB opening\").",
+            "type": "string"
+          },
+          "name": {
+            "description": "The datum's display name as published (\"J1 opening\").",
+            "type": "string"
+          },
+          "token": {
+            "description": "The datum's token as published (`i80.opening`).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feature",
+          "datum",
+          "token",
+          "name"
+        ],
+        "type": "object"
+      },
+      "ContentHash": {
+        "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
+        "type": "string"
+      },
+      "DatumId": {
+        "description": "A datum's document identity, allocated from the table's own counter\n([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a\ndatum never shifts the ids of other objects. Never reused: the counter,\nlike the slot counter, only grows, through undo and redo too.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "FaceName": {
+        "description": "A face's persistent name in a model design (`F2:side:l4`).",
+        "type": "string"
+      },
+      "FeatureGeometry": {
+        "description": "A feature's geometry in its target's frame (part frame, before the\nplacement mirrors and turns it), mm.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "shape": {
+                "const": "point",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shape",
+              "at"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "a": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "b": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "shape": {
+                "const": "line",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shape",
+              "a",
+              "b"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A bulge arc from `a` to `b` (as `library::Segment::Arc`).",
+            "properties": {
+              "a": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "b": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "bulge": {
+                "format": "double",
+                "type": "number"
+              },
+              "shape": {
+                "const": "arc",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shape",
+              "a",
+              "b",
+              "bulge"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "center": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "radius": {
+                "format": "double",
+                "type": "number"
+              },
+              "shape": {
+                "const": "circle",
+                "type": "string"
+              }
+            },
+            "required": [
+              "shape",
+              "center",
+              "radius"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "HousingBinding": {
+        "additionalProperties": false,
+        "description": "A board parameter set from an enclosure user parameter (§7.2). Units\nare checked; names are never matched automatically.",
+        "properties": {
+          "board_param": {
+            "$ref": "#/$defs/ParamName"
+          },
+          "housing_param": {
+            "description": "The enclosure's parameter, by its name there.",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/$defs/Nm",
+            "description": "The snapshot: its value when last read."
+          }
+        },
+        "required": [
+          "board_param",
+          "housing_param",
+          "value"
+        ],
+        "type": "object"
+      },
+      "HousingRef": {
+        "additionalProperties": false,
+        "description": "One piece of enclosure geometry the board follows (§7.2): a face of an\nenclosure body, by its persistent Solidcraft name and a pick point on\nit, traced along the board's normal into the board plane. Its trace is\nfixed geometry of the board sketch, owned by the reference\n([`Self::sketch`]), so board curves are dimensioned to it; only a\nhousing update moves it.",
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/BodyName",
+            "description": "The enclosure body, by its name there."
+          },
+          "face": {
+            "$ref": "#/$defs/FaceName",
+            "description": "The face's persistent name in the enclosure design."
+          },
+          "geometry": {
+            "$ref": "#/$defs/FeatureGeometry",
+            "description": "The snapshot: its trace in the board plane, board mm, as last read.\nA lost or inexact reference keeps the last geometry."
+          },
+          "id": {
+            "$ref": "#/$defs/HousingRefId"
+          },
+          "name": {
+            "description": "For people (\"Far wall · face\"); never identity.",
+            "type": "string"
+          },
+          "note": {
+            "description": "Why it is inexact or lost, in the user's words.",
+            "type": "string"
+          },
+          "pick": {
+            "description": "A point on the face, enclosure frame, in nanometres; it moves with\nthe face when an update finds the face elsewhere.",
+            "items": {
+              "$ref": "#/$defs/Nm"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          },
+          "sketch": {
+            "$ref": "#/$defs/SketchRef",
+            "description": "The board-sketch point or construction line that holds the trace,\nfixed and owned by this reference."
+          },
+          "status": {
+            "$ref": "#/$defs/ReferenceStatus"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "face",
+          "pick",
+          "name",
+          "geometry",
+          "status",
+          "sketch"
+        ],
+        "type": "object"
+      },
+      "HousingRefId": {
+        "description": "A housing reference's identity in the project (slice S7).",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "Nm": {
+        "description": "A length in whole nanometres.",
+        "maximum": 2000000000,
+        "minimum": -2000000000,
+        "type": "integer"
+      },
+      "ParamName": {
+        "description": "A footprint parameter or package-value name: an identifier\n`[A-Za-z_][A-Za-z0-9_]*`. Names starting `pkg_` are reserved for\ninjected package values.",
+        "type": "string"
+      },
+      "ReferenceStatus": {
+        "description": "How a reference resolves against its source (§5.5). Derived: a 3D\nmodel reference's status is the host's, kept in its [`ModelTrace`];\nevery other one is read from the document. `Lost` and `Inexact`\nreferences are reported (`board.reference_lost`,\n`board.reference_inexact`), stop driving and keep their last geometry.",
+        "oneOf": [
+          {
+            "enum": [
+              "resolved"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "inexact",
+            "description": "Found, but not provably the same geometry (a renamed or unverified\nface); acknowledged in an impact preview, it becomes `Resolved`.",
+            "type": "string"
+          },
+          {
+            "const": "lost",
+            "description": "Its source is gone.",
+            "type": "string"
+          }
+        ]
+      },
+      "SketchConstraintId": {
+        "description": "A SolidCraft sketch constraint id (for example `k10`).",
+        "type": "string"
+      },
+      "SketchCurveId": {
+        "description": "A SolidCraft sketch curve id (for example `l2`).",
+        "type": "string"
+      },
+      "SketchPointId": {
+        "description": "A SolidCraft sketch point id (for example `p3`); never reused.",
+        "type": "string"
+      },
+      "SketchRef": {
+        "description": "Any sketch entity, by id.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "point": {
+                "$ref": "#/$defs/SketchPointId"
+              }
+            },
+            "required": [
+              "point"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "curve": {
+                "$ref": "#/$defs/SketchCurveId"
+              }
+            },
+            "required": [
+              "curve"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "constraint": {
+                "$ref": "#/$defs/SketchConstraintId"
+              }
+            },
+            "required": [
+              "constraint"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "description": "The project's link to an enclosure design.",
+    "properties": {
+      "bindings": {
+        "description": "Board parameters set from enclosure parameters.",
+        "items": {
+          "$ref": "#/$defs/HousingBinding"
+        },
+        "type": "array"
+      },
+      "board_revision": {
+        "description": "The interface revision the enclosure linked when it was read, if\nthe published sidecar beside the linked design said.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "component": {
+        "description": "The enclosure component that links this board's published design\n(matched by its link resolving to that file, never by name); its\nname in the enclosure, for messages.",
+        "type": "string"
+      },
+      "consumers": {
+        "description": "Enclosure features that use the board's datums, as last read.",
+        "items": {
+          "$ref": "#/$defs/Consumer"
+        },
+        "type": "array"
+      },
+      "design_hint": {
+        "description": "Where the board's published design was, which the enclosure links\nand whose sidecar names the datums; a hint, like\n[`Self::enclosure_hint`].",
+        "type": "string"
+      },
+      "enclosure_hint": {
+        "description": "Where the enclosure design was, as the user gave it (absolute, or\nrelative to the project's folder). A hint for the desktop and for\nmessages: every request that reads the enclosure names its file, so\nthe permission gate sees it, and is refused when it is not this one\n(`housing.relink` changes it).",
+        "type": "string"
+      },
+      "file_sha256": {
+        "$ref": "#/$defs/ContentHash",
+        "description": "SHA-256 of the enclosure file's bytes when the board last read it:\na different hash is \"the enclosure changed\"."
+      },
+      "next_ref": {
+        "description": "Next [`HousingRefId`]; ids are never reused.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "references": {
+        "description": "Enclosure geometry the board follows, by id.",
+        "items": {
+          "$ref": "#/$defs/HousingRef"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "enclosure_hint",
+      "design_hint",
+      "component",
+      "file_sha256",
+      "next_ref"
+    ],
+    "title": "HousingLink",
+    "type": "object"
+  },
+  "housing_preview": {
+    "$defs": {
+      "ContentHash": {
+        "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
+        "type": "string"
+      },
+      "DefinitionId": {
+        "description": "A definition lineage. Opaque so the representation can change when shared\nlibrary folders need collision-free identities.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "Endpoint": {
+        "additionalProperties": false,
+        "description": "One terminal of one component instance: the electrical identity wires,\nnets and pads refer to.",
+        "properties": {
+          "instance": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminal": {
+            "$ref": "#/$defs/TerminalId"
+          }
+        },
+        "required": [
+          "instance",
+          "terminal"
+        ],
+        "type": "object"
+      },
+      "HousingRefId": {
+        "description": "A housing reference's identity in the project (slice S7).",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "ObjectChange": {
+        "description": "One board object a housing update would move.",
+        "oneOf": [
+          {
+            "description": "Moved rigidly by `offset` (mm) and turned by `turn_deg`.",
+            "properties": {
+              "change": {
+                "const": "moved",
+                "type": "string"
+              },
+              "offset": {
+                "items": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "maxItems": 2,
+                "minItems": 2,
+                "type": "array"
+              },
+              "turn_deg": {
+                "format": "double",
+                "type": "number"
+              }
+            },
+            "required": [
+              "change",
+              "offset",
+              "turn_deg"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Its shape changed (an edge got longer).",
+            "properties": {
+              "change": {
+                "const": "reshaped",
+                "type": "string"
+              }
+            },
+            "required": [
+              "change"
+            ],
+            "type": "object"
+          }
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/$defs/ObjectKind"
+          },
+          "name": {
+            "description": "\"top\" (an edge), \"H2\" (a hole), \"SW2\" (a part), \"width\".",
+            "type": "string"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/$defs/ObjectRef"
+            },
+            "type": "array"
+          },
+          "summary": {
+            "description": "The sentence the user reads: \"Board edge top, 1 mm along Y\".",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "ObjectKind": {
+        "description": "What kind of board object a row names.",
+        "enum": [
+          "edge",
+          "hole",
+          "part",
+          "parameter"
+        ],
+        "type": "string"
+      },
+      "ObjectRef": {
+        "description": "An object a finding refers to, by stable identity.",
+        "oneOf": [
+          {
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "instance",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "endpoint": {
+                "$ref": "#/$defs/Endpoint"
+              },
+              "kind": {
+                "const": "terminal",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "endpoint"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "net",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "track",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "instance": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "pad",
+                "type": "string"
+              },
+              "pad": {
+                "$ref": "#/$defs/PadId"
+              }
+            },
+            "required": [
+              "kind",
+              "instance",
+              "pad"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A definition lineage (draft or published revision).",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/DefinitionId"
+              },
+              "kind": {
+                "const": "definition",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A local object of a definition (terminal, unit, package terminal or\npad), by its local ID within that lineage.",
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/DefinitionId"
+              },
+              "kind": {
+                "const": "library_object",
+                "type": "string"
+              },
+              "local": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "definition",
+              "local"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A symbol occurrence on the sheet.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "occurrence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "One unit of one instance, placed or not.",
+            "properties": {
+              "instance": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              },
+              "unit": {
+                "$ref": "#/$defs/UnitId"
+              }
+            },
+            "required": [
+              "kind",
+              "instance",
+              "unit"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "One field of one instance, by field lineage.",
+            "properties": {
+              "field": {
+                "$ref": "#/$defs/DefinitionId"
+              },
+              "instance": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "property",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "instance",
+              "field"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A board via.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "via",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A copper fill (zone).",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fill",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A keepout region.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "keepout",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The board as a whole, for a finding about the board rather than any\none object on it (a check that stopped at its limit). Locating it\nframes the board.",
+            "properties": {
+              "kind": {
+                "const": "board",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A net label or power port on a schematic sheet.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "label",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A hierarchical sheet symbol.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "sheet_symbol",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A pin on a sheet symbol.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "sheet_pin",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A schematic sheet.",
+            "properties": {
+              "kind": {
+                "const": "sheet",
+                "type": "string"
+              },
+              "sheet": {
+                "$ref": "#/$defs/SheetId"
+              }
+            },
+            "required": [
+              "kind",
+              "sheet"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A schematic wire: its whole path.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "wire",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PadId": {
+        "description": "A footprint pad (copper land).",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "ReferenceChange": {
+        "description": "One housing reference's row in the preview.",
+        "properties": {
+          "from": {
+            "$ref": "#/$defs/ReferenceStatus"
+          },
+          "id": {
+            "$ref": "#/$defs/HousingRefId"
+          },
+          "name": {
+            "type": "string"
+          },
+          "offset": {
+            "description": "How far its trace moves, mm, when it does.",
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "to": {
+            "$ref": "#/$defs/ReferenceStatus"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "from",
+          "to",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "ReferenceStatus": {
+        "description": "How a reference resolves against its source (§5.5). Derived: a 3D\nmodel reference's status is the host's, kept in its [`ModelTrace`];\nevery other one is read from the document. `Lost` and `Inexact`\nreferences are reported (`board.reference_lost`,\n`board.reference_inexact`), stop driving and keep their last geometry.",
+        "oneOf": [
+          {
+            "enum": [
+              "resolved"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "inexact",
+            "description": "Found, but not provably the same geometry (a renamed or unverified\nface); acknowledged in an impact preview, it becomes `Resolved`.",
+            "type": "string"
+          },
+          {
+            "const": "lost",
+            "description": "Its source is gone.",
+            "type": "string"
+          }
+        ]
+      },
+      "SheetId": {
+        "description": "A schematic sheet, in its own allocation space (`Project.sheets.next`).\nEvery project has at least one sheet; a new project's is\n[`SheetId::FIRST`].",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "TerminalId": {
+        "description": "A component's electrical terminal, stable across revisions.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "UnitId": {
+        "description": "A symbol unit, stable across revisions of one symbol lineage.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "`housing.preview`: what `housing.update` (or `housing.relink`) would\nchange, without changing anything.",
+    "properties": {
+      "changed": {
+        "description": "The enclosure changed since the board last read it.",
+        "type": "boolean"
+      },
+      "consumers": {
+        "description": "Enclosure features newly using, or no longer using, the board.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "document_revision": {
+        "description": "The document revision the preview was made at.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "expect_hash": {
+        "$ref": "#/$defs/ContentHash",
+        "description": "The enclosure file's hash now: `housing.update` takes it as\n`expect_hash`, and is refused when the file changed since."
+      },
+      "objects": {
+        "description": "Board edges, holes, parts and parameters that would move.",
+        "items": {
+          "$ref": "#/$defs/ObjectChange"
+        },
+        "type": "array"
+      },
+      "references": {
+        "items": {
+          "$ref": "#/$defs/ReferenceChange"
+        },
+        "type": "array"
+      },
+      "refused": {
+        "description": "Why the update would be refused (the board would not solve), when\nit would be; then nothing else is listed.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "document_revision",
+      "expect_hash",
+      "changed",
+      "references",
+      "objects"
+    ],
+    "title": "HousingPreview",
+    "type": "object"
+  },
+  "housing_status": {
+    "$defs": {
+      "ContentHash": {
+        "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
+        "type": "string"
+      },
+      "DefinitionId": {
+        "description": "A definition lineage. Opaque so the representation can change when shared\nlibrary folders need collision-free identities.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "Endpoint": {
+        "additionalProperties": false,
+        "description": "One terminal of one component instance: the electrical identity wires,\nnets and pads refer to.",
+        "properties": {
+          "instance": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminal": {
+            "$ref": "#/$defs/TerminalId"
+          }
+        },
+        "required": [
+          "instance",
+          "terminal"
+        ],
+        "type": "object"
+      },
+      "Finding": {
+        "description": "One check result: an electrical rule, a board check or a completeness\nfinding. Circuit and board findings never block a component stage.",
+        "properties": {
+          "blocks": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Stage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The stage this finding prevents, if any. Advisory findings have none."
+          },
+          "code": {
+            "description": "Stable machine-readable rule code, e.g. `board.clearance`.",
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/$defs/ObjectRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "objects"
+        ],
+        "type": "object"
+      },
+      "LinkState": {
+        "description": "What `housing.status` reads, most serious first.",
+        "oneOf": [
+          {
+            "const": "unlinked",
+            "description": "No enclosure is linked.",
+            "type": "string"
+          },
+          {
+            "const": "broken_reference",
+            "description": "A reference no longer resolves, in either direction: fabrication\noutput is blocked.",
+            "type": "string"
+          },
+          {
+            "const": "missing",
+            "description": "The enclosure file is not where the request said; the board uses\nits snapshot.",
+            "type": "string"
+          },
+          {
+            "const": "changed",
+            "description": "The enclosure changed since the board read it.",
+            "type": "string"
+          },
+          {
+            "const": "in_sync",
+            "description": "The board holds what the enclosure holds.",
+            "type": "string"
+          },
+          {
+            "const": "linked",
+            "description": "Linked; the file was not checked (no path was given).",
+            "type": "string"
+          }
+        ]
+      },
+      "ObjectRef": {
+        "description": "An object a finding refers to, by stable identity.",
+        "oneOf": [
+          {
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "instance",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "endpoint": {
+                "$ref": "#/$defs/Endpoint"
+              },
+              "kind": {
+                "const": "terminal",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "endpoint"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "net",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "track",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "instance": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "pad",
+                "type": "string"
+              },
+              "pad": {
+                "$ref": "#/$defs/PadId"
+              }
+            },
+            "required": [
+              "kind",
+              "instance",
+              "pad"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A definition lineage (draft or published revision).",
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/DefinitionId"
+              },
+              "kind": {
+                "const": "definition",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A local object of a definition (terminal, unit, package terminal or\npad), by its local ID within that lineage.",
+            "properties": {
+              "definition": {
+                "$ref": "#/$defs/DefinitionId"
+              },
+              "kind": {
+                "const": "library_object",
+                "type": "string"
+              },
+              "local": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "definition",
+              "local"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A symbol occurrence on the sheet.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "occurrence",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "One unit of one instance, placed or not.",
+            "properties": {
+              "instance": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "unit",
+                "type": "string"
+              },
+              "unit": {
+                "$ref": "#/$defs/UnitId"
+              }
+            },
+            "required": [
+              "kind",
+              "instance",
+              "unit"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "One field of one instance, by field lineage.",
+            "properties": {
+              "field": {
+                "$ref": "#/$defs/DefinitionId"
+              },
+              "instance": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "property",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "instance",
+              "field"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A board via.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "via",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A copper fill (zone).",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fill",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A keepout region.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "keepout",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The board as a whole, for a finding about the board rather than any\none object on it (a check that stopped at its limit). Locating it\nframes the board.",
+            "properties": {
+              "kind": {
+                "const": "board",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A net label or power port on a schematic sheet.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "label",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A hierarchical sheet symbol.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "sheet_symbol",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A pin on a sheet symbol.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "sheet_pin",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A schematic sheet.",
+            "properties": {
+              "kind": {
+                "const": "sheet",
+                "type": "string"
+              },
+              "sheet": {
+                "$ref": "#/$defs/SheetId"
+              }
+            },
+            "required": [
+              "kind",
+              "sheet"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A schematic wire: its whole path.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "wire",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "PadId": {
+        "description": "A footprint pad (copper land).",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "SheetId": {
+        "description": "A schematic sheet, in its own allocation space (`Project.sheets.next`).\nEvery project has at least one sheet; a new project's is\n[`SheetId::FIRST`].",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "Stage": {
+        "description": "A derived completeness state a finding can block. Nothing stores these\nstates; they hold when no current finding blocks them.",
+        "oneOf": [
+          {
+            "const": "publish",
+            "description": "A definition revision may be published.",
+            "type": "string"
+          },
+          {
+            "const": "board_placeable",
+            "description": "An instance can be placed on the board.",
+            "type": "string"
+          },
+          {
+            "const": "electrically_resolved",
+            "description": "Every unit and terminal of an instance has an explicit decision.",
+            "type": "string"
+          }
+        ]
+      },
+      "TerminalId": {
+        "description": "A component's electrical terminal, stable across revisions.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "UnitId": {
+        "description": "A symbol unit, stable across revisions of one symbol lineage.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "`housing.status`: the link's state and its findings.",
+    "properties": {
+      "design_hint": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "enclosure_hint": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "file_sha256": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ContentHash"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "The hash the board last read, which `housing.update` expects when\nthe file has not changed since."
+      },
+      "findings": {
+        "items": {
+          "$ref": "#/$defs/Finding"
+        },
+        "type": "array"
+      },
+      "state": {
+        "$ref": "#/$defs/LinkState"
+      },
+      "words": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "state",
+      "words",
+      "findings"
+    ],
+    "title": "HousingStatus",
+    "type": "object"
+  },
   "list": {
     "$defs": {
       "AutoRule": {
@@ -1854,6 +4027,14 @@
     "additionalProperties": false,
     "description": "`interface.publish_preview` (a host request; reads only): the diff\nagainst the last published revision and, when an enclosure is linked,\nthe dry run on a scratch copy of it (slices B3 and B4).",
     "properties": {
+      "enclosure_path": {
+        "default": null,
+        "description": "The linked enclosure's file: with it (and `path`, the design it\nlinks), the preview runs the dry run on a scratch copy of it and\nnames the enclosure features that would move or fail (slice B4).",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "path": {
         "default": null,
         "description": "The published `.solidcraft` design to compare with: the sidecar\nbeside it says where each datum was, so a moved datum reads by how\nmuch. Without it, or when it is gone, a changed datum reads only as\nchanged.",

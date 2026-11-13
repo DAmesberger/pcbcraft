@@ -21,7 +21,7 @@ const SOURCE: InterfaceSourceId = InterfaceSourceId(0x005e_edb3);
 /// The demo with an authored external opening on its package, opened as
 /// a file so its interface starts empty: each placement exports one
 /// opening.
-fn with_openings() -> Fallible<Engine> {
+pub(super) fn with_openings() -> Fallible<Engine> {
     let mut project = demo()?;
     let entry = project.library.packages.first_mut().ok_or("package")?;
     let opening = crate::library::datum::PackageDatum {
@@ -37,7 +37,7 @@ fn with_openings() -> Fallible<Engine> {
 
 /// Publish the document as the host does: the candidate sidecar, then
 /// `interface.record_publish` with its record. Returns the sidecar.
-fn publish(engine: &mut Engine, tier: Tier) -> Fallible<Sidecar> {
+pub(super) fn publish(engine: &mut Engine, tier: Tier) -> Fallible<Sidecar> {
     let sidecar = candidate(engine.project(), tier, SOURCE)?;
     let record = record(engine.project(), &sidecar)?;
     let revision = engine.revision();
@@ -51,7 +51,7 @@ fn publish(engine: &mut Engine, tier: Tier) -> Fallible<Sidecar> {
     Ok(sidecar)
 }
 
-fn first_placed(engine: &Engine) -> Fallible<(Id, [f64; 2], f64, crate::Layer)> {
+pub(super) fn first_placed(engine: &Engine) -> Fallible<(Id, [f64; 2], f64, crate::Layer)> {
     let p = engine.project().placements.first().ok_or("placement")?;
     Ok((p.instance, p.position, p.rotation_deg, p.layer))
 }

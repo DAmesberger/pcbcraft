@@ -431,6 +431,15 @@ pub enum Request {
     /// sidecar, then record the publish.
     #[serde(rename = "interface.publish")]
     InterfacePublish(pcbcraft_core::interface::PublishParams),
+    /// Enclosure link: follow an enclosure face or parameter.
+    #[serde(rename = "housing.follow")]
+    HousingFollow(pcbcraft_core::interface::housing::FollowParams),
+    /// Enclosure link: what an update or relink would change.
+    #[serde(rename = "housing.preview")]
+    HousingPreview(pcbcraft_core::interface::housing::PreviewParams),
+    /// Enclosure link: link, update or relink, as previewed.
+    #[serde(rename = "housing.update")]
+    HousingUpdate(pcbcraft_core::interface::housing::UpdateParams),
 }
 
 // A new request chooses its permission class here. `project.apply` and
@@ -481,6 +490,9 @@ pcbcraft_core::declare_classes!(Request {
     SetPartFileValues "layout.set_part_file_values" Edit "Change a placed part file",
     InterfacePreview "interface.publish_preview" Read "Preview publishing the board interface",
     InterfacePublish "interface.publish" Ask "Publish the board interface",
+    HousingFollow "housing.follow" Ask "Follow enclosure geometry",
+    HousingPreview "housing.preview" Read "Preview an enclosure update",
+    HousingUpdate "housing.update" Ask "Update from the enclosure",
 });
 
 impl Request {
@@ -545,6 +557,9 @@ impl Request {
         "layout.place_part_file",
         "interface.publish_preview",
         "interface.publish",
+        "housing.follow",
+        "housing.preview",
+        "housing.update",
     ];
 
     /// Every file or folder path this request names.
@@ -572,8 +587,16 @@ impl Request {
             Self::CheckPartFile(params) => params.path.iter().map(String::as_str).collect(),
             Self::UsePartFile(params) => params.path.iter().map(String::as_str).collect(),
             Self::PlacePartFile(params) => params.path.iter().map(String::as_str).collect(),
-            Self::InterfacePreview(params) => params.path.iter().map(String::as_str).collect(),
+            Self::InterfacePreview(params) => params
+                .path
+                .iter()
+                .chain(&params.enclosure_path)
+                .map(String::as_str)
+                .collect(),
             Self::InterfacePublish(params) => vec![params.path.as_str()],
+            Self::HousingFollow(params) => vec![params.path.as_str(), params.design.as_str()],
+            Self::HousingPreview(params) => vec![params.path.as_str(), params.design.as_str()],
+            Self::HousingUpdate(params) => vec![params.path.as_str(), params.design.as_str()],
             Self::Apply(_)
             | Self::ApplyAll(_)
             | Self::Inspect(_)
@@ -626,6 +649,9 @@ impl Request {
             Self::PlacePartFile(params) => Some(params.expected_revision),
             Self::SetPartFileValues(params) => Some(params.expected_revision),
             Self::InterfacePublish(params) => Some(params.expected_revision),
+            Self::HousingFollow(params) => Some(params.expected_revision),
+            Self::HousingUpdate(params) => Some(params.expected_revision),
+            Self::HousingPreview(_) => None,
             Self::Inspect(_)
             | Self::Schema(_)
             | Self::Query(_)
@@ -903,6 +929,21 @@ impl Request {
                 "interface.publish",
                 "Publish the board interface: write the .solidcraft design an enclosure links and its sidecar, atomically.",
                 "Write the board interface at path, a .solidcraft design built by Solidcraft whose slots carry every exported datum as named reference bodies with stable face names (then the laminate, pads and parts for tier mechanical, the default, or every copper body for full), and its sidecar <name>.interface.json beside it; both replace what was there atomically. Then records the publish (revision, hash, per-datum hashes) in one undo step at expected_revision; a stale revision writes nothing. Refused when the files there are another board's interface. The revision grows only when the datums changed.",
+            ),
+            info::<pcbcraft_core::interface::housing::FollowParams>(
+                "housing.follow",
+                "Make the board follow an enclosure face or length parameter.",
+                "body, face, pick: its trace becomes fixed board-sketch geometry to dimension curves to; or board_param, housing_param. One undo step.",
+            ),
+            info::<pcbcraft_core::interface::housing::PreviewParams>(
+                "housing.preview",
+                "Preview updating the board from the enclosure: what moves, what is lost.",
+                "Read the enclosure at path (linked, or a new place) on a copy: references and board edges, holes and parts that would move, and expect_hash. Not a document change.",
+            ),
+            info::<pcbcraft_core::interface::housing::UpdateParams>(
+                "housing.update",
+                "Link the enclosure, or update or relink the board from it as previewed.",
+                "Read the SolidCraft enclosure at path whose component links design (interface.publish's path). None linked: link it. Else apply it at expect_hash, relinking if path moved; one undo step.",
             ),
             info::<models::ModelFileParams>(
                 "library.inspect_model_file",
@@ -1275,6 +1316,9 @@ impl Session {
             Request::SetPartFileValues(params) => return self.set_part_file_values(params),
             Request::InterfacePreview(params) => return self.interface_preview(params),
             Request::InterfacePublish(params) => return self.interface_publish(params),
+            Request::HousingFollow(params) => return self.housing_follow(params),
+            Request::HousingPreview(params) => return self.housing_preview(params),
+            Request::HousingUpdate(params) => return self.housing_update(params),
         }
         Ok(self.document_reply())
     }
@@ -1573,6 +1617,7 @@ pub fn schemas() -> Value {
 
 pub mod discovery;
 mod firmware;
+mod housing;
 mod interface;
 mod marking;
 pub mod mechanical_parts;
@@ -1595,6 +1640,8 @@ mod firmware_tests;
 mod folder_tests;
 #[cfg(test)]
 mod high_speed_tests;
+#[cfg(test)]
+mod housing_tests;
 #[cfg(test)]
 mod interface_publish_tests;
 #[cfg(test)]
