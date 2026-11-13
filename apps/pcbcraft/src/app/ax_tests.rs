@@ -461,3 +461,71 @@ fn an_issue_is_waived_inline_with_a_reason_and_one_undo_restores_it() -> Fallibl
     assert_eq!(ax.app.engine.document(), &before, "one undo restores it");
     Ok(())
 }
+
+/// Run 4, finding 15: at 1558 x 889 with a track selected and Issues
+/// expanded over a long list, ticking a production group opens its reason
+/// form inside the docked dialog's visible body, clear of the footer, and
+/// "Waive n findings" waives that group with the dialog still open.
+#[test]
+fn the_production_waive_form_shows_beside_a_long_issues_list() -> Fallible {
+    let mut engine = Engine::showcase()?;
+    let tracks: Vec<_> = engine
+        .project()
+        .tracks
+        .iter()
+        .map(|t| (t.id, t.net))
+        .collect();
+    // Every third track removed: unrouted nets and dangling ends, two
+    // groups of findings and a long Issues list.
+    for (id, _) in tracks.iter().skip(1).step_by(3) {
+        engine.apply(
+            engine.revision(),
+            pcbcraft_core::Operation::Layout(pcbcraft_core::layout::LayoutCommand::DeleteTrack {
+                id: *id,
+            }),
+        )?;
+    }
+    let mut ax = Ax::with_engine(engine, Workspace::Pcb)?;
+    ax.window = egui::vec2(1558.0, 889.0);
+    let (track, net) = *tracks.first().ok_or("the showcase has tracks")?;
+    ax.app.pcb.set_selection(None, Some(track), Some(net));
+    ax.settle();
+    let bar = ax.find_prefix(Role::Button, "Issues:")?;
+    ax.click_at(bar.center());
+    ax.settle();
+    ax.button("Production")?;
+    ax.until("the production check", |ax| {
+        ax.has(Role::CheckBox, "Track ends joining nothing")
+    })?;
+    ax.click(Role::CheckBox, "Track ends joining nothing")?;
+    ax.settle();
+    let header = ax.find(Role::Label, "Production files")?;
+    let footer = ax.find(Role::Button, "Export")?;
+    let reason = ax.find(Role::TextInput, "Reason")?;
+    let waive = ax
+        .all_prefix(Role::Button, "Waive ")
+        .into_iter()
+        .find(|n| n.name.ends_with("findings"))
+        .ok_or_else(|| format!("no Waive button:\n{}", ax.dump()))?
+        .clone();
+    let row = pcbcraft_ui::theme::Tokens::get().control_height;
+    assert!(
+        header.rect.bottom() < reason.rect.top() && waive.rect.bottom() + row <= footer.rect.top(),
+        "the form shows in the body, clear of the footer: {:?} {:?} {:?}\n{}",
+        reason.rect,
+        waive.rect,
+        footer.rect,
+        ax.dump()
+    );
+    ax.click_at(waive.center());
+    ax.settle();
+    assert!(ax.app.pcb.production_open(), "{}", ax.dump());
+    let waivers = &ax.app.engine.project().production.waivers;
+    assert!(
+        waivers
+            .iter()
+            .any(|w| w.key.starts_with("board.track_dangling")),
+        "the group is waived: {waivers:?}"
+    );
+    Ok(())
+}
