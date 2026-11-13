@@ -50,6 +50,20 @@ impl Session {
     /// Refused, writing nothing, when the files there belong to another
     /// board's interface.
     pub(super) fn interface_publish(&mut self, params: PublishParams) -> Result<Value> {
+        let (operation, published) = self.interface_write(&params)?;
+        let mut reply = self.apply(params.expected_revision, operation)?;
+        reply["published"] = published;
+        Ok(reply)
+    }
+
+    /// The files of `interface.publish`, without recording it: build the
+    /// design from the document's candidate sidecar, put it and the sidecar
+    /// in place atomically, and return `interface.record_publish` with what
+    /// was written, for the host to apply as one undo step, and the reply's
+    /// `published` summary. The desktop runs this off the UI thread, on a
+    /// session over a fork of the window's engine, and applies the record
+    /// on its own engine; nothing else differs from the request.
+    pub fn interface_write(&self, params: &PublishParams) -> Result<(Operation, Value)> {
         let design = Path::new(&params.path);
         files::check_design_path(design)?;
         let project = self.engine.project_arc().clone();
@@ -89,11 +103,7 @@ impl Session {
         files::put_in_place(design, &temporary, &text)?;
         let mut record = publish::record(&project, &exported.sidecar)?;
         record.design_sha256 = Some(written);
-        let mut reply = self.apply(
-            params.expected_revision,
-            Operation::Interface(InterfaceCommand::RecordPublish { source_id, record }),
-        )?;
-        reply["published"] = json!({
+        let mut published = json!({
             "path": params.path,
             "sidecar": files::sidecar_path(design).to_string_lossy(),
             "revision": exported.sidecar.revision,
@@ -111,8 +121,11 @@ impl Session {
                 Default::default(),
             );
             let checked = super::export_reply(&project, &report, json!({}));
-            reply["published"]["check"] = checked["check"].clone();
+            published["check"] = checked["check"].clone();
         }
-        Ok(reply)
+        Ok((
+            Operation::Interface(InterfaceCommand::RecordPublish { source_id, record }),
+            published,
+        ))
     }
 }

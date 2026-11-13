@@ -33,4 +33,5 @@ mod tool;
 mod view_2d;
 mod view_3d;
 
+pub(super) use draw::{Surface, arc_points};
 pub(super) use state::Dimensions;

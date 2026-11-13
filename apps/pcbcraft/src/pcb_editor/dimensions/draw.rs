@@ -18,7 +18,7 @@ use pcbcraft_solidcraft::geom::Vec2;
 use pcbcraft_ui::theme::Tokens;
 
 /// A view's mapping of a board point (board mm, z up) to the screen.
-pub(super) trait Surface {
+pub(in crate::pcb_editor) trait Surface {
     fn to_screen(&self, p: [f64; 3]) -> Option<Pos2>;
 }
 
@@ -157,7 +157,7 @@ pub(super) fn trace_reference(
 
 /// Points along a bulge arc from `a` to `b` (`library::Segment::Arc`:
 /// the bulge is the tangent of a quarter of the counter-clockwise sweep).
-pub(super) fn arc_points(a: [f64; 2], b: [f64; 2], bulge: f64) -> Vec<[f64; 2]> {
+pub(in crate::pcb_editor) fn arc_points(a: [f64; 2], b: [f64; 2], bulge: f64) -> Vec<[f64; 2]> {
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     let chord = dx.hypot(dy);
     if !(chord > 1e-12 && bulge.is_finite() && bulge != 0.0) {

@@ -1368,6 +1368,10 @@ impl App {
     /// and hand the kept one to the next Production files dialog. A
     /// project never saved has no file to keep it by.
     fn production_folder(&mut self) {
+        // The board interface publishes beside the project file.
+        if self.pcb.project_path.as_deref() != self.files.path() {
+            self.pcb.project_path = self.files.path().map(std::path::Path::to_path_buf);
+        }
         let Some(project) = self.files.path() else {
             self.pcb.production_folder = None;
             return;
