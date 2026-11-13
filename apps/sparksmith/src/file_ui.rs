@@ -677,7 +677,12 @@ impl FileUi {
                 .set_file_name(&filename)
                 .add_filter(
                     concat!(sparksmith_core::product_name!(), " project"),
-                    &["sparksmith", "SPARKSMITH"],
+                    if kind == Kind::Open {
+                        // Files saved before the rename open too.
+                        &["sparksmith", "SPARKSMITH", "pcbcraft", "PCBCRAFT"][..]
+                    } else {
+                        &["sparksmith", "SPARKSMITH"][..]
+                    },
                 )
         };
         // Construct the parented native future on the event thread, just as
@@ -1207,12 +1212,14 @@ fn same_content(a: &Document, b: &Document) -> bool {
     Arc::ptr_eq(&a.project, &b.project) && Arc::ptr_eq(&a.drafts, &b.drafts)
 }
 
-/// The name the project panel proposes: the file's own, else the project's
-/// name ("USB sensor board.sparksmith") without characters a file name
-/// cannot hold, else [`sparksmith_core::UNTITLED`] ("Untitled.sparksmith").
+/// The name the project panel proposes: the file's own (a `.pcbcraft`
+/// file's with the current extension, so Save As writes `.sparksmith`),
+/// else the project's name ("USB sensor board.sparksmith") without
+/// characters a file name cannot hold, else [`sparksmith_core::UNTITLED`]
+/// ("Untitled.sparksmith").
 fn proposed_file_name(path: Option<&Path>, project: &str) -> String {
-    if let Some(name) = path.and_then(|p| p.file_name()).and_then(|n| n.to_str()) {
-        return name.to_owned();
+    if let Some(stem) = path.and_then(|p| p.file_stem()).and_then(|n| n.to_str()) {
+        return format!("{stem}.{}", sparksmith_core::format::EXTENSION);
     }
     let stem: String = project
         .chars()
@@ -1367,6 +1374,11 @@ mod tests {
         );
         assert_eq!(
             proposed_file_name(Some(Path::new("/x/board.sparksmith")), "USB sensor board"),
+            "board.sparksmith"
+        );
+        // Save As of a file from before the rename proposes `.sparksmith`.
+        assert_eq!(
+            proposed_file_name(Some(Path::new("/x/board.pcbcraft")), "USB sensor board"),
             "board.sparksmith"
         );
         let mut controller = Controller::new(1);

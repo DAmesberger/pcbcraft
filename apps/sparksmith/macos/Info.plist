@@ -6,7 +6,8 @@
      when copying. The names and identifiers match sparksmith_core::product, which
      src/bundle_tests.rs checks. The document-type keys follow Solidcraft's
      assets/platforms/macos/Info.plist.in: they make Sparksmith the owner of .sparksmith
-     files, so Finder's double-click, Open With and a Dock drop reach
+     files, and of .pcbcraft files saved before the rename (docs/rename-phase-b.md),
+     so Finder's double-click, Open With and a Dock drop reach
      src/open_documents.rs. -->
 <plist version="1.0">
 <dict>
@@ -36,7 +37,7 @@
       <key>CFBundleTypeName</key>
       <string>Sparksmith project</string>
       <key>CFBundleTypeExtensions</key>
-      <array><string>sparksmith</string></array>
+      <array><string>sparksmith</string><string>pcbcraft</string></array>
       <key>LSItemContentTypes</key>
       <array><string>io.sparksmith.project</string></array>
       <key>CFBundleTypeRole</key>
@@ -57,7 +58,7 @@
       <key>UTTypeTagSpecification</key>
       <dict>
         <key>public.filename-extension</key>
-        <array><string>sparksmith</string></array>
+        <array><string>sparksmith</string><string>pcbcraft</string></array>
         <key>public.mime-type</key>
         <array><string>application/x-sparksmith</string></array>
       </dict>

@@ -46,11 +46,12 @@ fn arrive(paths: impl IntoIterator<Item = PathBuf>) {
     }
 }
 
-/// Whether `path` names a Sparksmith project (`.sparksmith`, in any letter case as Finder matches it).
+/// Whether `path` names a Sparksmith project (`.sparksmith`, or `.pcbcraft` from before the
+/// rename, in any letter case as Finder matches it).
 pub fn is_project(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case("sparksmith"))
+        .is_some_and(sparksmith_core::format::is_project_extension)
 }
 
 /// What a batch of arrived files asks for. Sparksmith holds one project, so of several projects
@@ -204,6 +205,10 @@ mod tests {
             ]
         );
         assert_eq!(sort(vec![]), Arrivals::default());
+        // A project saved before the rename opens from Finder too.
+        let former = sort(vec![PathBuf::from("/a/old.PCBCRAFT")]);
+        assert_eq!(former.open, Some(PathBuf::from("/a/old.PCBCRAFT")));
+        assert!(former.skipped.is_empty());
     }
 
     /// AppKit's URL array: file URLs queue as paths (spaces decoded); other URLs are left out.

@@ -49,6 +49,44 @@ fn saved_project_reopens_offline_with_exact_revisions_and_drafts() -> Result<()>
     Ok(())
 }
 
+/// A `.pcbcraft` file from before the rename holds the same format: it
+/// opens through the same reader and version check, and saving keeps its
+/// name. Other extensions are refused as before.
+#[test]
+fn a_project_under_the_former_extension_opens_and_saves_in_place() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let current = dir.path().join("board.sparksmith");
+    let former = dir.path().join("board.pcbcraft");
+    let mut engine = Engine::demo()?;
+    unfinished(&mut engine)?;
+    write_project(&current, &engine.to_file())?;
+    std::fs::copy(&current, &former)?;
+    assert_eq!(read_project(&former)?, read_project(&current)?);
+    write_project(&former, &engine.to_file())?;
+    assert_eq!(std::fs::read(&former)?, std::fs::read(&current)?);
+
+    // The same version check: another version is refused under either name.
+    let mut newer = engine.to_file();
+    newer.version = sparksmith_core::format::FILE_VERSION + 1;
+    assert!(write_project(&former, &newer).is_err());
+    assert_eq!(read_project(&former)?, read_project(&current)?);
+
+    for refused in ["board.json", "board.PCBCRAFT", "board"] {
+        assert!(
+            read_project(&dir.path().join(refused)).is_err(),
+            "{refused}"
+        );
+    }
+
+    // A file the app wrote under its former name (the first assistant
+    // run's project) opens.
+    let run1 = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-wroom-3/run1/esp32-s31-wroom-3.pcbcraft");
+    let opened = Engine::from_file(read_project(&run1)?)?;
+    assert!(!opened.drafts().items.is_empty());
+    Ok(())
+}
+
 #[test]
 fn invalid_files_are_refused_without_side_effects() -> Result<()> {
     let dir = tempfile::tempdir()?;
