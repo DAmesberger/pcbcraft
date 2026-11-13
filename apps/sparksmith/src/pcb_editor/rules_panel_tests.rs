@@ -663,7 +663,7 @@ fn a_new_project_asks_for_a_profile_with_jlcpcb_preselected() -> TestResult {
     editor.ask_for_profile();
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
     let shown = texts(&output);
-    for text in ["Choose a fab profile", "JLCPCB 2-layer 1 oz", "Use profile"] {
+    for text in ["Fab profile", "JLCPCB 2-layer 1 oz", "Use profile"] {
         assert!(shown.iter().any(|t| t == text), "{text}: {shown:?}");
     }
     // The picker lists both built-ins.

@@ -723,3 +723,43 @@ fn fit_view_shows_parts_staged_beside_the_board() -> TestResult {
     assert_eq!((editor.zoom, editor.pan), (1.0, Vec2::ZERO));
     Ok(())
 }
+
+/// Run 4, finding 6: the canvas runs under the docked cards, and Fit
+/// frames the board and its staged parts in the part they leave clear.
+#[test]
+fn fit_view_keeps_the_board_clear_of_the_docked_cards() -> TestResult {
+    let engine = Engine::demo()?;
+    let mut project = engine.project().clone();
+    project.placements = project.placements.iter().step_by(2).cloned().collect();
+    let mut staged = with_project(&engine, project)?;
+    staged.apply(
+        staged.revision(),
+        sparksmith_core::Operation::Layout(layout::LayoutCommand::Sync),
+    )?;
+    let board = staged.project().board_size;
+    let boxes = layout::staging::part_boxes(staged.project());
+    // A Browser on the left and the properties column on the right.
+    let clear = Rect::from_min_max(
+        Pos2::new(260.0, 0.0),
+        Pos2::new(SCREEN[0] - 240.0, SCREEN[1]),
+    );
+    let mut editor = PcbEditor {
+        zoom: 2.0,
+        ..Default::default()
+    };
+    editor.fit(&staged);
+    render(|ui| {
+        crate::shell::set_canvas_clear(ui.ctx(), clear);
+        editor.canvas(ui, &staged);
+    });
+    let view = board_view(clear, board, editor.zoom, editor.pan, editor.from_bottom);
+    let area = fit_area(clear);
+    let whole = sparksmith_core::geometry::Bounds::point([0.0, 0.0]).including(board);
+    for b in boxes.values().chain([&whole]) {
+        for p in [b.min, [b.min[0], b.max[1]], b.max, [b.max[0], b.min[1]]] {
+            let at = view.screen(p);
+            assert!(area.contains(at), "{p:?} at {at:?} is outside {area:?}");
+        }
+    }
+    Ok(())
+}

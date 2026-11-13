@@ -376,6 +376,10 @@ impl PcbEditor {
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
             return None;
         }
+        // As Layout's canvas: drawn under the docked cards, viewed in the
+        // part they leave clear.
+        let surface = rect;
+        let rect = crate::shell::canvas_clear(ui.ctx(), surface);
         if response.dragged_by(PointerButton::Middle) {
             self.pan += response.drag_delta();
         }
@@ -577,7 +581,7 @@ impl PcbEditor {
                 vec![],
             );
         }
-        let painter = ui.painter().with_clip_rect(rect);
+        let painter = ui.painter().with_clip_rect(surface);
         self.paint_board(&painter, view, project);
         self.paint_sketch(&painter, view, board, cursor, pointer);
         let tool = self.shape.tool;

@@ -1610,6 +1610,10 @@ impl PcbEditor {
         if rect.width() <= 0.0 || rect.height() <= 0.0 {
             return None;
         }
+        // The board is drawn in all of `surface`, under the docked cards;
+        // the view (fit, centre, locate) works in the part they leave clear.
+        let surface = rect;
+        let rect = crate::shell::canvas_clear(ui.ctx(), surface);
         self.layout_dimension_start(ui, engine);
         if response.dragged_by(PointerButton::Middle) {
             self.pan += response.drag_delta();
@@ -1659,7 +1663,7 @@ impl PcbEditor {
         let screen = |p: Point| view.screen(p);
         let world = |p: Pos2| view.world(p);
         self.view_centre = Some(world(rect.center()));
-        let painter = ui.painter().with_clip_rect(rect);
+        let painter = ui.painter().with_clip_rect(surface);
         let metric = symbol_view::metric(&painter);
         let pointer = response
             .interact_pointer_pos()

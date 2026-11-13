@@ -6,14 +6,16 @@ use super::*;
 use egui::{Key, Modifiers, Role};
 use sparksmith_core::{Point, schematic};
 
-/// Where the sheet point `p` is on the schematic canvas now.
+/// Where the sheet point `p` is on the schematic canvas now, in the part
+/// no docked card covers.
 fn on_sheet(ax: &Ax, p: Point) -> Fallible<egui::Pos2> {
-    let canvas = ax.find(Role::Canvas, "Schematic")?;
-    let at = ax.app.schematic.screen_point(canvas.rect, p);
-    if canvas.rect.contains(at) {
+    ax.find(Role::Canvas, "Schematic")?;
+    let clear = ax.app.schematic.clear_rect();
+    let at = ax.app.schematic.screen_point(p);
+    if clear.contains(at) {
         Ok(at)
     } else {
-        Err(format!("{p:?} is at {at:?}, off the canvas {:?}", canvas.rect).into())
+        Err(format!("{p:?} is at {at:?}, off the clear canvas {clear:?}").into())
     }
 }
 
@@ -338,11 +340,68 @@ fn a_launch_frames_the_whole_empty_page() -> Fallible {
     let ([w, h], [x, y]) = (sheet.size_mm(), sheet.top_left());
     let (a, b) = ([x, y], [x + w, y - h]);
     let (a, b) = (on_sheet(&ax, a)?, on_sheet(&ax, b)?);
-    let canvas = ax.find(Role::Canvas, "Schematic")?.rect;
-    // Fitted: the page fills the canvas's width or its height.
+    let canvas = ax.app.schematic.clear_rect();
+    // Fitted: the page fills the clear canvas's width or its height.
     assert!(
         (b.x - a.x) > canvas.width() * 0.8 || (b.y - a.y) > canvas.height() * 0.6,
         "page {a:?}–{b:?} in {canvas:?}"
+    );
+    Ok(())
+}
+
+/// Run 4, finding 6: the schematic runs under the docked Browser, which
+/// floats over it, while Fit keeps the page in the part it leaves clear. A
+/// part panned under the Browser's column, below its card, is drawn and
+/// picked there.
+#[test]
+fn the_schematic_runs_under_the_docked_browser() -> Fallible {
+    let mut ax = Ax::new(Workspace::Schematic)?;
+    assert!(ax.app.browser_visible, "the Browser docks at this width");
+    let canvas = ax.find(Role::Canvas, "Schematic")?.rect;
+    let clear = ax.app.schematic.clear_rect();
+    let card = ax
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("project-browser")))
+        .ok_or("the Browser card")?;
+    assert!(
+        canvas.left() < card.left() && clear.left() >= card.right(),
+        "canvas {canvas:?}, clear {clear:?}, Browser {card:?}"
+    );
+    // Middle-drag R1's body under the Browser's column, below its card.
+    let to = egui::pos2(card.center().x, (card.bottom() + canvas.bottom()) / 2.0);
+    assert!(to.y > card.bottom() + 20.0, "room below the card: {card:?}");
+    let from = on_sheet(&ax, R1_BODY)?;
+    let middle = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Middle,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    ax.hover(from);
+    ax.frame(vec![middle(from, true)]);
+    ax.frame(vec![egui::Event::PointerMoved(to)]);
+    ax.frame(vec![middle(to, false)]);
+    let at = ax.app.schematic.screen_point(R1_BODY);
+    assert!((at - to).length() < 1.0, "R1 at {at:?}, dragged to {to:?}");
+    ax.click_at(at);
+    let r1 = ax.app.engine.project().instances[0].id;
+    assert_eq!(ax.app.schematic.selected_instance(), Some(r1));
+    Ok(())
+}
+
+/// The board's 2D canvas runs under the docked cards as the schematic
+/// does.
+#[test]
+fn the_board_runs_under_the_docked_browser() -> Fallible {
+    let ax = Ax::new(Workspace::Pcb)?;
+    let canvas = ax.find(Role::Canvas, "Board")?.rect;
+    let card = ax
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("project-browser")))
+        .ok_or("the Browser card")?;
+    assert!(
+        canvas.left() < card.left(),
+        "canvas {canvas:?}, Browser {card:?}"
     );
     Ok(())
 }

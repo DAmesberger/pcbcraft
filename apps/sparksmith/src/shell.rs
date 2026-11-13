@@ -1064,6 +1064,25 @@ pub fn resized_width(width: f32, delta: f32, range: &std::ops::RangeInclusive<f3
     next.clamp(min, max)
 }
 
+fn canvas_clear_id() -> egui::Id {
+    egui::Id::unique("canvas-clear")
+}
+
+/// Record, for this frame, the part of the viewport no docked card covers.
+/// The 2D canvases run under the cards and fit their content into it.
+pub fn set_canvas_clear(ctx: &egui::Context, clear: Rect) {
+    ctx.data_mut(|d| d.insert_temp(canvas_clear_id(), clear));
+}
+
+/// The part of `canvas` no docked card covers: where Fit puts the content
+/// and what the view centres on. The whole canvas when nothing is recorded.
+pub fn canvas_clear(ctx: &egui::Context, canvas: Rect) -> Rect {
+    ctx.data(|d| d.get_temp::<Rect>(canvas_clear_id()))
+        .map(|clear| clear.intersect(canvas))
+        .filter(|clear| clear.width() >= 1.0 && clear.height() >= 1.0)
+        .unwrap_or(canvas)
+}
+
 /// A floating card at `rect`: `header` draws its title band, `add` its
 /// scrolling body. The card hugs its content up to `rect`'s height. With
 /// `resize`, its right edge is a rail that drags the card's width, as
