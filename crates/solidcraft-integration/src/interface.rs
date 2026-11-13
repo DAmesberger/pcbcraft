@@ -35,7 +35,7 @@ use pcbcraft_core::interface::{DatumGeometry, Frame, Sidecar, SidecarDatum};
 use pcbcraft_core::library::Outline;
 use pcbcraft_core::model::Project;
 use pcbcraft_core::model::board::RECT_EDGES;
-use pcbcraft_core::model::interface::{DatumOwner, SLOT_FEATURE_BUDGET, Tier};
+use pcbcraft_core::model::interface::{DatumOwner, SLOT_FEATURE_BUDGET};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The board slab's body name.
@@ -63,6 +63,9 @@ const MAX_FACES: usize = pcbcraft_core::interface::sidecar::MAX_FACES;
 pub struct Exported {
     design: Design,
     pub sidecar: Sidecar,
+    /// Section 2's bodies checked against the board plan
+    /// ([`crate::export::check`]); `None` for the interface tier.
+    pub check: Option<crate::export::Check>,
 }
 
 enum Design {
@@ -508,29 +511,27 @@ pub fn read_metadata(native: &Native) -> Result<Option<Sidecar>> {
         .map_err(|e| Error::Verification(e.to_string()))
 }
 
-/// The board as the tier's section 2 shows it: without tracks, vias and
-/// fills for the mechanical tier.
-fn section_two(project: &Project, tier: Tier) -> Option<Project> {
-    match tier {
-        Tier::Interface => None,
-        Tier::Full => Some(project.clone()),
-        Tier::Mechanical => {
-            let mut board = project.clone();
-            board.tracks = Default::default();
-            board.vias = Default::default();
-            board.fills = Default::default();
-            Some(board)
-        }
-    }
-}
-
 /// Build the interface design of `project` from `sidecar` (the core's
 /// `interface::publish::candidate`): the slots, then the tier's section 2.
 /// Returns the design and the sidecar with every datum's faces named and
 /// a copy in the design's metadata.
-pub fn build(project: &Project, mut sidecar: Sidecar) -> Result<Exported> {
+pub fn build(project: &Project, sidecar: Sidecar) -> Result<Exported> {
+    build_watched(project, sidecar, &crate::export::Watch::new())
+}
+
+/// [`build`] counting its commands on `watch` and stopping with
+/// [`Error::Cancelled`] once it is cancelled. Section 2's bodies are
+/// checked against the board plan ([`crate::export::check`]) before the
+/// design is returned.
+pub fn build_watched(
+    project: &Project,
+    mut sidecar: Sidecar,
+    watch: &std::sync::Arc<crate::export::Watch>,
+) -> Result<Exported> {
     sidecar.check().map_err(|e| Error::Invalid(e.to_string()))?;
+    watch.enter(crate::export::Stage::Building)?;
     let mut native = Native::new(&format!("{} interface", project.name))?;
+    native.watch_with(std::sync::Arc::clone(watch));
     let reference = native.component(REFERENCE_COMPONENT, true)?;
     native.activate(reference.component)?;
     let budget = u64::from(SLOT_FEATURE_BUDGET);
@@ -597,17 +598,22 @@ pub fn build(project: &Project, mut sidecar: Sidecar) -> Result<Exported> {
     for (key, value) in metadata(&text) {
         native.set_metadata(&key, value)?;
     }
-    let design = match section_two(project, sidecar.tier) {
-        None => Design::Slots(Box::new(native)),
-        Some(board) => Design::Board(Box::new(
-            project::build_onto(native, &board)?
-                .into_native()
-                .ok_or_else(|| {
-                    Error::Verification("the board's model has no native design".into())
-                })?,
-        )),
+    let (design, check) = match crate::export::section(project, sidecar.tier) {
+        None => (Design::Slots(Box::new(native)), None),
+        Some(board) => {
+            let model = project::build_onto(native, &board)?;
+            let check = crate::export::check(&board, &model, watch)?;
+            let native = model.into_native().ok_or_else(|| {
+                Error::Verification("the board's model has no native design".into())
+            })?;
+            (Design::Board(Box::new(native)), Some(check))
+        }
     };
-    Ok(Exported { design, sidecar })
+    Ok(Exported {
+        design,
+        sidecar,
+        check,
+    })
 }
 
 #[cfg(test)]

@@ -114,6 +114,10 @@ pub struct NativeModel {
     /// reaches them only while this model lives.
     /// `None` for a meshed model, whose part bodies its designs hold.
     world: Option<std::sync::Arc<solidcraft_engine::doc::ModelState>>,
+    /// How many of [`Self::geometry`]'s entries, from the first, are the
+    /// native design's bodies (the display-only layers follow); 0 for a
+    /// meshed model.
+    native_bodies: usize,
 }
 
 /// How [`update`] made its model.
@@ -169,6 +173,21 @@ impl NativeModel {
     /// revision, each evaluated once ([`designs`]).
     pub fn part_designs(&self) -> usize {
         self.designs.len()
+    }
+
+    /// The geometry of the board's native design, one entry per body (an
+    /// exported interface's reference bodies left out), without the
+    /// display-only layers. Refused for a meshed model, which has no
+    /// design of the board.
+    pub fn native_geometry(&self) -> Result<&[Geometry]> {
+        if self.native.is_none() {
+            return Err(Error::Verification(
+                "a meshed model has no design of the board".into(),
+            ));
+        }
+        self.geometry
+            .get(..self.native_bodies)
+            .ok_or_else(|| Error::Verification("the model has fewer bodies than its design".into()))
     }
 }
 
@@ -385,7 +404,9 @@ impl Builder {
     /// Store each kind's physical look (one assignment per kind) and the
     /// body → kind map, then evaluate.
     fn finish(mut self, sources: Vec<Source>) -> Result<NativeModel> {
+        self.native.stage(crate::export::Stage::Evaluating)?;
         self.native.evaluate_deferred()?;
+        self.native.stage(crate::export::Stage::Building)?;
         self.native.activate_root()?;
         // Generated bodies already carry their materials' looks.
         for kind in BodyKind::ALL.into_iter().filter(|k| !k.is_generated()) {
@@ -498,7 +519,7 @@ fn shared_picks(native: &Native, sources: &[Source]) -> Result<BTreeMap<usize, u
 }
 
 #[cfg(test)]
-fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
+pub(crate) fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
     finish_with(native, sources, Vec::new(), &BTreeMap::new())
 }
 
@@ -685,6 +706,7 @@ fn finish_with(
             g.place = Some(Place::IDENTITY);
         }
     }
+    let geometry_len = geometry.len();
     Ok(NativeModel {
         native: Some(native),
         flat: Flat::Native,
@@ -696,6 +718,7 @@ fn finish_with(
         stack: crate::stack::Stack::none(),
         models,
         display: appearance::Memo::default(),
+        native_bodies: geometry_len,
         world: Some(world),
     })
 }
@@ -1345,6 +1368,23 @@ pub fn build_onto(native: Native, project: &Project) -> Result<NativeModel> {
     built
 }
 
+/// [`build`] for an export: each native command counted on `watch`, its
+/// stages said there, stopping with [`Error::Cancelled`] at the next
+/// command once it is cancelled ([`crate::export`]).
+pub fn build_watched(
+    project: &Project,
+    watch: std::sync::Arc<crate::export::Watch>,
+) -> Result<NativeModel> {
+    let sources = SourceCache::default();
+    sources.begin();
+    let built = Builder::new(&project.name, &sources).and_then(|mut b| {
+        b.native.watch_with(watch);
+        build_on(b, project)
+    });
+    sources.sweep();
+    built
+}
+
 /// [`build`] that stops with [`Error::Cancelled`] at its next native
 /// command once `cancel` is set (a newer board replaced this one).
 pub fn build_cancellable(
@@ -1580,6 +1620,7 @@ fn build_meshed(
         models,
         display: memo,
         world: None,
+        native_bodies: 0,
     })
 }
 

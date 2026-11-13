@@ -596,8 +596,14 @@ fn b3_the_mechanical_tier_keeps_the_slots() -> TestResult {
     let mut session = open(dir.path())?;
     let slots = dir.path().join("slots.solidcraft");
     let board = dir.path().join("board.solidcraft");
-    publish(&mut session, &slots, "interface")?;
-    publish(&mut session, &board, "mechanical")?;
+    let interface = publish(&mut session, &slots, "interface")?;
+    let mechanical = publish(&mut session, &board, "mechanical")?;
+    // The board after the slots is checked against the board plan (A5);
+    // the slots alone build no board.
+    assert!(interface["published"].get("check").is_none(), "{interface}");
+    let check = &mechanical["published"]["check"];
+    assert_eq!(check["differs"], false, "{check}");
+    assert!(check["planned"].as_u64() > Some(0), "{check}");
     let faces = |path: &Path| -> TestResult<Vec<_>> {
         Ok(sidecar(path)?
             .datums

@@ -839,6 +839,14 @@ impl Compared {
         (self.kind, self.object, self.layer)
     }
 
+    fn measure(&self) -> Measure {
+        Measure {
+            min: self.min,
+            max: self.max,
+            volume: self.volume,
+        }
+    }
+
     /// Whether built body `built` is this plan body.
     fn holds(&self, built: &Self) -> bool {
         let corners = self
@@ -864,6 +872,129 @@ const FLAT: [BodyKind; 5] = [
     BodyKind::FillCopper,
 ];
 
+/// Whether `kind` is one of the board's flat bodies, which the plan
+/// describes.
+pub fn is_flat(kind: BodyKind) -> bool {
+    FLAT.contains(&kind)
+}
+
+/// The document object a compared body comes from, as a check reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    /// The laminate (or a flat body the build ties to no object).
+    Board,
+    Pad {
+        instance: Id,
+        pad: PadId,
+    },
+    Track {
+        track: Id,
+    },
+    Via {
+        via: Id,
+    },
+    Fill {
+        fill: Id,
+    },
+}
+
+impl From<Object> for Source {
+    fn from(object: Object) -> Self {
+        match object {
+            Object::Board => Self::Board,
+            Object::Pad(instance, pad) => Self::Pad { instance, pad },
+            Object::Track(track) => Self::Track { track },
+            Object::Via(via) => Self::Via { via },
+            Object::Fill(fill) => Self::Fill { fill },
+        }
+    }
+}
+
+/// A body's box (mm) and volume, as compared.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct Measure {
+    pub min: [f64; 3],
+    pub max: [f64; 3],
+    /// mm³; `None` where the plan states none (a laminate slab).
+    pub volume: Option<f64>,
+}
+
+/// How a built body and the plan disagree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Problem {
+    /// The plan holds the body; the build made none like it.
+    PlannedNotBuilt,
+    /// The build made a flat body the plan does not hold.
+    BuiltNotPlanned,
+}
+
+/// One body where a build differs from its plan.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct Difference {
+    pub problem: Problem,
+    pub kind: BodyKind,
+    pub source: Source,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer: Option<CopperLayer>,
+    /// The plan body's name (planned, not built).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    /// The planned body (planned, not built), or the built one.
+    pub measure: Measure,
+    /// Bodies built of the same object, kind and layer that no planned
+    /// body took (planned, not built): what was built instead.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub instead: Vec<Measure>,
+}
+
+impl Difference {
+    /// The difference as one line of text, starting `planned, not built`
+    /// or `built, not planned`.
+    pub fn text(&self) -> String {
+        let what = match self.problem {
+            Problem::PlannedNotBuilt => "planned, not built",
+            Problem::BuiltNotPlanned => "built, not planned",
+        };
+        format!(
+            "{what}: {} {:?} {:?} {:?} box {:?}–{:?} volume {:?}; built of that object instead: {:?}",
+            self.body.as_deref().unwrap_or("-"),
+            self.kind,
+            self.source,
+            self.layer,
+            self.measure.min,
+            self.measure.max,
+            self.measure.volume,
+            self.instead
+                .iter()
+                .map(|m| (m.min, m.max, m.volume))
+                .collect::<Vec<_>>()
+        )
+    }
+}
+
+/// A build checked against its plan ([`check`]).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct Check {
+    /// Flat bodies the plan holds.
+    pub planned: usize,
+    /// Flat bodies the build made (a slab cut into pieces counted once).
+    pub built: usize,
+    /// Where they differ; empty when they agree.
+    pub differences: Vec<Difference>,
+}
+
+/// [`check`]'s differences, one line of text each. Empty when the build
+/// and the plan agree.
+pub fn parity(plan: &BoardPlan, model: &super::NativeModel) -> Result<Vec<String>> {
+    Ok(check(plan, model, &mut || Ok(()))?
+        .differences
+        .iter()
+        .map(Difference::text)
+        .collect())
+}
+
 /// Where `model`'s flat bodies differ from `plan`'s: each plan body must be
 /// built once, of its kind, object and layer, its box within
 /// [`PARITY_MM`] and its volume (where the plan states one) within
@@ -871,17 +1002,17 @@ const FLAT: [BodyKind; 5] = [
 /// A slab the kernel cut into pieces (laminate left standing in a fill's
 /// clearance) counts as the one body it was planned as. The build files
 /// a via's bodies under no layer (a via shows with every layer), so a
-/// via ring's layer is not compared. Empty when they agree.
-pub fn parity(plan: &BoardPlan, model: &super::NativeModel) -> Result<Vec<String>> {
-    let count = model
-        .world()
-        .ok_or_else(|| Error::Verification("the model has no native design".into()))?
-        .bodies
-        .len();
-    let natives = model
-        .geometry
-        .get(..count)
-        .ok_or_else(|| Error::Verification("the model has fewer bodies than its world".into()))?;
+/// via ring's layer is not compared.
+///
+/// `step` runs before each built body is measured (its volume is measured
+/// here, on first use), so a caller can count and stop a long check; its
+/// error ends the check.
+pub fn check(
+    plan: &BoardPlan,
+    model: &super::NativeModel,
+    step: &mut dyn FnMut() -> Result<()>,
+) -> Result<Check> {
+    let natives = model.native_geometry()?;
     let object = |item: Option<u64>| -> Object {
         let Some(source) = item.and_then(|pick| model.sources.iter().find(|s| s.pick_id == pick))
         else {
@@ -903,13 +1034,15 @@ pub fn parity(plan: &BoardPlan, model: &super::NativeModel) -> Result<Vec<String
     };
     let mut built: Vec<Compared> = Vec::new();
     for g in natives.iter().filter(|g| FLAT.contains(&g.kind)) {
+        step()?;
         let body = Compared {
             kind: g.kind,
             object: object(g.item),
             layer: g.layer,
             min: g.min,
             max: g.max,
-            volume: Some(g.volume.get()),
+            // The plan states no slab's volume, so a slab is not measured.
+            volume: (g.kind != BodyKind::Substrate).then(|| g.volume.get()),
         };
         // The pieces of one slab share its z span; slabs differ in it.
         let piece_of = built.iter_mut().find(|s| {
@@ -924,17 +1057,19 @@ pub fn parity(plan: &BoardPlan, model: &super::NativeModel) -> Result<Vec<String
                     slab.min[i] = slab.min[i].min(body.min[i]);
                     slab.max[i] = slab.max[i].max(body.max[i]);
                 }
-                slab.volume = slab.volume.zip(body.volume).map(|(a, b)| a + b);
             }
             None => built.push(body),
         }
     }
+    let built_count = built.len();
     let mut groups: std::collections::BTreeMap<_, Vec<Compared>> = Default::default();
     for body in built {
         groups.entry(body.key()).or_default().push(body);
     }
-    let mut out = Vec::new();
+    let mut planned_count = 0;
+    let mut missing = Vec::new();
     for body in plan.bodies() {
+        planned_count += 1;
         let (min, max) = body.bounds()?;
         let planned = Compared {
             kind: body.kind,
@@ -952,24 +1087,41 @@ pub fn parity(plan: &BoardPlan, model: &super::NativeModel) -> Result<Vec<String
             Some(at) => {
                 group.swap_remove(at);
             }
-            None => out.push(format!(
-                "planned, not built: {} {:?} {:?} {:?} box {:?}–{:?} volume {:?}; built of that object: {:?}",
-                body.name,
-                body.kind,
-                body.source,
-                body.layer,
-                min,
-                max,
-                planned.volume,
-                group
-                    .iter()
-                    .map(|b| (b.min, b.max, b.volume))
-                    .collect::<Vec<_>>()
-            )),
+            None => missing.push((body.name.clone(), planned)),
         }
     }
-    for body in groups.into_values().flatten() {
-        out.push(format!("built, not planned: {body:?}"));
+    let mut differences = Vec::new();
+    for (name, planned) in missing {
+        let instead = groups
+            .get(&planned.key())
+            .into_iter()
+            .flatten()
+            .map(Compared::measure)
+            .collect();
+        differences.push(Difference {
+            problem: Problem::PlannedNotBuilt,
+            kind: planned.kind,
+            source: planned.object.into(),
+            layer: planned.layer,
+            body: Some(name),
+            measure: planned.measure(),
+            instead,
+        });
     }
-    Ok(out)
+    for body in groups.into_values().flatten() {
+        differences.push(Difference {
+            problem: Problem::BuiltNotPlanned,
+            kind: body.kind,
+            source: body.object.into(),
+            layer: body.layer,
+            body: None,
+            measure: body.measure(),
+            instead: Vec::new(),
+        });
+    }
+    Ok(Check {
+        planned: planned_count,
+        built: built_count,
+        differences,
+    })
 }

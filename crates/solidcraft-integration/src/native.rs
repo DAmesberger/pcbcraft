@@ -192,6 +192,9 @@ pub struct Native {
     session: Session,
     /// Set by another thread to stop a build at its next command.
     cancel: Option<Arc<AtomicBool>>,
+    /// An export's progress and cancel ([`crate::export::Watch`]): each
+    /// command is counted, and none runs once it is cancelled.
+    watch: Option<Arc<crate::export::Watch>>,
 }
 
 /// MEASUREMENT SWITCH (repin-smlib): when SMLib's full check runs on Pcbcraft's native builds.
@@ -212,6 +215,7 @@ impl Native {
         let mut native = Self {
             session,
             cancel: None,
+            watch: None,
         };
         if cfg!(test) {
             native.session.param_check = solidcraft_engine::schema::ParamCheck::Strict;
@@ -245,6 +249,21 @@ impl Native {
     /// Stop at the next command once `cancel` is set ([`Error::Cancelled`]).
     pub fn cancel_with(&mut self, cancel: Arc<AtomicBool>) {
         self.cancel = Some(cancel);
+    }
+
+    /// Count each command on `watch` and stop at the next one once it is
+    /// cancelled ([`Error::Cancelled`]).
+    pub fn watch_with(&mut self, watch: Arc<crate::export::Watch>) {
+        self.watch = Some(watch);
+    }
+
+    /// Say on the watch, if there is one, that the build is in `stage`;
+    /// refused once it is cancelled.
+    pub(crate) fn stage(&self, stage: crate::export::Stage) -> Result<()> {
+        match &self.watch {
+            Some(watch) => watch.enter(stage),
+            None => Ok(()),
+        }
     }
 
     /// Drop the design's undo history: a built model is never undone, and
@@ -974,6 +993,9 @@ impl Native {
             .is_some_and(|c| c.load(Ordering::Relaxed))
         {
             return Err(Error::Cancelled);
+        }
+        if let Some(watch) = &self.watch {
+            watch.command()?;
         }
         self.run(command, &params)
     }

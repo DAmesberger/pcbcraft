@@ -215,7 +215,6 @@ pub enum Effect {
 enum Job {
     Read(Ticket, PathBuf),
     Write(Ticket, PathBuf, Document),
-    Export(Ticket, PathBuf, Arc<Project>),
     SchematicPdf(Ticket, PathBuf, Arc<Project>),
     Recover(Ticket, Document, Option<PathBuf>),
     ClearRecovery(Ticket, bool),
@@ -229,7 +228,6 @@ enum Event {
     Picked(Ticket, Kind, Option<PathBuf>),
     Read(Ticket, PathBuf, Outcome<EditorFile>),
     Written(Ticket, PathBuf, Outcome<()>),
-    Exported(Ticket, PathBuf, Outcome<()>),
     PdfExported(Ticket, PathBuf, Outcome<usize>),
     Recovered(Ticket, bool, bool, Outcome<()>),
     Restored(Ticket, PathBuf, Outcome<EditorFile>),
@@ -274,13 +272,6 @@ fn worker(ctx: egui::Context, directory: Outcome<PathBuf>, events: Sender<Event>
                         pcbcraft_io::write_project(&path, &EditorFile::from_document(&document))
                             .map_err(|e| e.to_string());
                     Event::Written(ticket, path, result)
-                }
-                Job::Export(ticket, path, project) => {
-                    let result = path
-                        .to_str()
-                        .ok_or_else(|| "Native export path must be UTF-8".to_owned())
-                        .and_then(|path| export_project(&project, path));
-                    Event::Exported(ticket, path, result)
                 }
                 Job::SchematicPdf(ticket, path, project) => {
                     let result =
@@ -343,12 +334,6 @@ fn worker(ctx: egui::Context, directory: Outcome<PathBuf>, events: Sender<Event>
     sender
 }
 
-pub(crate) fn export_project(project: &Project, path: &str) -> Outcome<()> {
-    pcbcraft_solidcraft::project::build(project)
-        .and_then(|model| model.save(path))
-        .map_err(|e| e.to_string())
-}
-
 pub struct FileUi {
     controller: Controller,
     /// The current document; cloning shares its data.
@@ -390,6 +375,9 @@ pub struct FileUi {
     /// The window is closing with the user's answer (or nothing unsaved):
     /// the exit keeps no recovery copy.
     closed: bool,
+    /// Export to SolidCraft: its window and the export running on its own
+    /// thread, which saving and recovery do not wait for.
+    model_export: crate::model_export::ModelExport,
 }
 impl FileUi {
     pub fn new(cc: &eframe::CreationContext<'_>, engine: &Engine) -> Self {
@@ -442,6 +430,7 @@ impl FileUi {
             close_pending: false,
             writing: None,
             closed: false,
+            model_export: crate::model_export::ModelExport::new(ctx),
         }
     }
     pub fn observe(&mut self, engine: &Engine, now: f64) {
@@ -575,11 +564,7 @@ impl FileUi {
         match action {
             Action::Save => self.save(false, None),
             Action::SaveAs => self.save(true, None),
-            Action::Export => {
-                if let Some(ticket) = self.begin(Kind::Export, None) {
-                    self.pick(ticket, Kind::Export);
-                }
-            }
+            Action::Export => self.model_export.open(),
             Action::ExportSchematicPdf => {
                 if let Some(ticket) = self.begin(Kind::SchematicPdf, None) {
                     self.pick(ticket, Kind::SchematicPdf);
@@ -722,6 +707,10 @@ impl FileUi {
         while let Ok(event) = self.receiver.try_recv() {
             self.receive(event);
         }
+        self.model_export.poll(self.now, &self.document.project);
+        if let Some(status) = self.model_export.take_status() {
+            self.status = Some(status);
+        }
         if self.close_pending && !self.busy() {
             self.close_pending = false;
             self.request(Action::Close);
@@ -798,9 +787,11 @@ impl FileUi {
                         self.send(Job::Read(ticket, path))
                     }
                     Kind::Export if ticket.stamp == self.controller.current => {
-                        if let Some(document) = self.captured.as_ref() {
-                            let project = Arc::clone(&document.project);
-                            self.send(Job::Export(ticket, path, project));
+                        // The export runs on its own thread: the file
+                        // workflow is free again at once.
+                        let _ = self.controller.take_flight(&ticket, Kind::Export);
+                        if let Some(document) = self.captured.take() {
+                            self.model_export.start(document.project, path);
                         }
                     }
                     Kind::SchematicPdf if ticket.stamp == self.controller.current => {
@@ -884,20 +875,6 @@ impl FileUi {
                     Err(error) => (Level::Error, format!("PDF export failed: {error}")),
                 });
             }
-            Event::Exported(ticket, path, result) => {
-                let current = self.controller.accept(&ticket, Kind::Export);
-                self.status = Some(match result {
-                    Ok(()) if current => (Level::Ok, format!("Exported {}", path.display())),
-                    Ok(()) => (
-                        Level::Warning,
-                        format!(
-                            "Exported captured PCB to {}; current document has changed",
-                            path.display()
-                        ),
-                    ),
-                    Err(error) => (Level::Error, format!("Export failed: {error}")),
-                });
-            }
             Event::Recovered(ticket, removed, close, result) => {
                 // This session now holds the restored work in its own
                 // snapshot: the restored session file is no longer needed.
@@ -914,6 +891,8 @@ impl FileUi {
                     let current = self.controller.accept(&ticket, Kind::Close);
                     if current && result.is_ok() {
                         self.closed = true;
+                        // An export still running writes nothing.
+                        self.model_export.stop();
                         self.effects.push(Effect::Close);
                     } else if result.is_ok() {
                         self.controller.prompt = Some(Transition::Close);
@@ -974,6 +953,16 @@ impl FileUi {
     /// Unsaved-changes and startup-recovery prompts, in Solidcraft's system
     /// window chrome.
     pub fn dialogs(&mut self, ctx: &egui::Context) {
+        if self.model_export.show(ctx) == Some(crate::model_export::Answer::Pick) {
+            if self.busy() || self.prompting() {
+                self.status = Some((
+                    Level::Warning,
+                    "Another file operation is still running".into(),
+                ));
+            } else if let Some(ticket) = self.begin(Kind::Export, None) {
+                self.pick(ticket, Kind::Export);
+            }
+        }
         if let Some(transition) = &self.controller.prompt {
             let title = match transition {
                 Transition::Close => "Save changes before quitting?",
@@ -1263,7 +1252,7 @@ fn home_directory() -> PathBuf {
 }
 
 /// Dialog content inset like the kit's cards, in the kit's form scope.
-fn dialog_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+pub(crate) fn dialog_body(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     let t = Tokens::get();
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(t.space_12 as i8, t.space_8 as i8))

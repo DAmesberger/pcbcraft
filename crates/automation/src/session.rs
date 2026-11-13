@@ -109,6 +109,19 @@ pub struct PathParams {
     pub path: String,
 }
 
+/// Where `project.export_native` writes and how much of the board.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExportNativeParams {
+    /// A new `.solidcraft` file.
+    pub path: String,
+    /// `mechanical` (the default: the laminate, pads and parts) or `full`
+    /// (every copper body as well). The interface tier is published with
+    /// `interface.publish`.
+    #[serde(default)]
+    pub tier: pcbcraft_core::model::interface::Tier,
+}
+
 /// Where `schematic.export_pdf` writes and which sheets it prints.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -329,10 +342,10 @@ pub enum Request {
     /// Apply a previewed update at its revision.
     #[serde(rename = "project.apply_update")]
     ApplyUpdate(updates::ApplyUpdate),
-    /// Write the board as a native, parametric `.solidcraft` model.
-    /// Refuses existing files.
+    /// Write the board as a native, parametric `.solidcraft` model, its
+    /// bodies checked against the board plan. Refuses existing files.
     #[serde(rename = "project.export_native")]
-    ExportNative(PathParams),
+    ExportNative(ExportNativeParams),
     /// Check the design and write its production files (Gerber X2,
     /// Excellon, job file, pick-and-place, BOM, PDF drawings).
     #[serde(rename = "project.export_fabrication")]
@@ -566,9 +579,8 @@ impl Request {
     pub fn paths(&self) -> Vec<&str> {
         match self {
             Self::Open(params) => vec![params.path.as_str()],
-            Self::ExportNative(params) | Self::SourceRemove(params) => {
-                vec![params.path.as_str()]
-            }
+            Self::ExportNative(params) => vec![params.path.as_str()],
+            Self::SourceRemove(params) => vec![params.path.as_str()],
             Self::Save(params) => params.path.iter().map(String::as_str).collect(),
             Self::ExportFabrication(params) => vec![params.output.as_str()],
             Self::SourceAdd(params) => vec![params.path.as_str()],
@@ -771,10 +783,10 @@ impl Request {
                 "Apply a previewed update at its revision, optionally removing the listed conflicting tracks.",
                 "Apply a previewed update at its revision, optionally removing the listed conflicting tracks.",
             ),
-            info::<PathParams>(
+            info::<ExportNativeParams>(
                 "project.export_native",
                 "Export the board as a native parametric .solidcraft 3D model to a new file.",
-                "Export the board as a native parametric .solidcraft model to a new file.",
+                "Export the board as a native parametric .solidcraft model to a new file (refused when it exists), built by Solidcraft from the board plan: tier mechanical (the default: laminate, pads and parts) or full (every track, via and fill as well). Before the file is written, every flat body built is checked against the board plan by kind, source, layer, box and volume; the reply's check lists each body that differs (planned, not built, or built, not planned) with a sentence naming its object, and the file is written all the same. Returns the tier, the bodies written, the check and the milliseconds spent building, checking and saving. Not a document change.",
             ),
             info::<FabricationParams>(
                 "project.export_fabrication",
@@ -928,7 +940,7 @@ impl Request {
             info::<pcbcraft_core::interface::PublishParams>(
                 "interface.publish",
                 "Publish the board interface: write the .solidcraft design an enclosure links and its sidecar, atomically.",
-                "Write the board interface at path, a .solidcraft design built by Solidcraft whose slots carry every exported datum as named reference bodies with stable face names (then the laminate, pads and parts for tier mechanical, the default, or every copper body for full), and its sidecar <name>.interface.json beside it; both replace what was there atomically. Then records the publish (revision, hash, per-datum hashes) in one undo step at expected_revision; a stale revision writes nothing. Refused when the files there are another board's interface. The revision grows only when the datums changed.",
+                "Write the board interface at path, a .solidcraft design built by Solidcraft whose slots carry every exported datum as named reference bodies with stable face names (then the laminate, pads and parts for tier mechanical, the default, or every copper body for full), and its sidecar <name>.interface.json beside it; both replace what was there atomically. Then records the publish (revision, hash, per-datum hashes) in one undo step at expected_revision; a stale revision writes nothing. Refused when the files there are another board's interface. The revision grows only when the datums changed. For tiers mechanical and full, published.check is the board bodies checked against the board plan, as project.export_native reports it.",
             ),
             info::<pcbcraft_core::interface::housing::FollowParams>(
                 "housing.follow",
@@ -1186,11 +1198,21 @@ impl Session {
                 )?;
             }
             Request::ExportNative(params) => {
-                pcbcraft_solidcraft::project::build(self.engine.project())?.save(&params.path)?;
-                return Ok(json!({
-                    "revision": self.engine.revision(),
-                    "exported_path": params.path
-                }));
+                let watch = pcbcraft_solidcraft::export::Watch::new();
+                let report = pcbcraft_solidcraft::export::board(
+                    self.engine.project(),
+                    params.tier,
+                    &params.path,
+                    &watch,
+                )?;
+                return Ok(export_reply(
+                    self.engine.project(),
+                    &report,
+                    json!({
+                        "revision": self.engine.revision(),
+                        "exported_path": params.path,
+                    }),
+                ));
             }
             Request::ExportFabrication(params) => {
                 let profile = params
@@ -1685,4 +1707,28 @@ pub fn hosted() -> pcbcraft_core::Evaluators<'static> {
         footprint: Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
         board: Some(&pcbcraft_solidcraft::board::SketchBoardEvaluator),
     }
+}
+
+/// `reply` with an export's report ([`pcbcraft_solidcraft::export::Report`]):
+/// the tier, the bodies written, the check against the board plan with a
+/// sentence per differing body, and the timings.
+pub(crate) fn export_reply(
+    project: &Project,
+    report: &pcbcraft_solidcraft::export::Report,
+    mut reply: Value,
+) -> Value {
+    reply["tier"] = json!(report.tier);
+    reply["bodies"] = json!(report.bodies);
+    reply["ms"] = json!(report.ms);
+    if let Some(check) = &report.check {
+        reply["check"] = json!({
+            "planned": check.planned,
+            "built": check.built,
+            "differs": report.differs(),
+            "difference_count": report.difference_count(),
+            "differences": check.differences,
+            "lines": report.lines(project),
+        });
+    }
+    reply
 }
