@@ -191,10 +191,10 @@ fn naming_a_path_makes_a_request_at_least_ask() -> Fallible {
 /// A content hash for the samples that take one.
 const HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
-/// The paths a sample names: one, or two for the enclosure requests, which
-/// name the enclosure and the board's published design.
+/// The paths a sample names: one, or two for the linked design requests, which
+/// name the linked design and the board's published design.
 fn sample_paths(command: &str) -> usize {
-    if command.starts_with("housing.") {
+    if command.starts_with("assembly.") {
         2
     } else {
         1
@@ -248,13 +248,13 @@ fn path_samples() -> Fallible<Vec<Request>> {
             json!({"path": at, "expected_revision": 0}),
         ),
         (
-            "housing.follow",
+            "assembly.follow",
             json!({"path": at, "design": at, "board_param": "width",
-                "housing_param": "inner", "expected_revision": 0}),
+                "assembly_param": "inner", "expected_revision": 0}),
         ),
-        ("housing.preview", json!({"path": at, "design": at})),
+        ("assembly.preview", json!({"path": at, "design": at})),
         (
-            "housing.update",
+            "assembly.update",
             json!({"path": at, "design": at, "expect_hash": HASH, "expected_revision": 0}),
         ),
     ] {

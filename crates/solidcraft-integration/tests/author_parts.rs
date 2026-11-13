@@ -511,10 +511,10 @@ pub fn author_finned_heatsink() -> Vec<u8> {
 }
 
 /// The Omron B3U-1000P top-actuated tactile switch of the ESP32-S31 dev
-/// board example: a black housing, a metal cover, the round black plunger
+/// board example: a black case, a metal cover, the round black plunger
 /// and two tin-plated terminals, one each side along x. Dimensions from
 /// Omron's public B3U catalog (en-b3u.pdf, p.2, Dimensions, B3U-1000P(M)):
-/// housing 3 x 2.5 mm, 1.2 mm to the cover, 1.6 mm over the 1.5 mm
+/// case 3 x 2.5 mm, 1.2 mm to the cover, 1.6 mm over the 1.5 mm
 /// plunger, 4 mm over the terminals, terminals 1.4 mm wide. The drawing
 /// gives no cover or terminal thickness; those two are illustrative. No
 /// CAD or EDA library data was copied.
@@ -522,8 +522,8 @@ pub fn author_b3u_1000p() -> Vec<u8> {
     let mut s = new_part(
         "Omron B3U-1000P tactile switch",
         &[
-            ("length", "3 mm", "mm", "housing size along x"),
-            ("width", "2.5 mm", "mm", "housing size along y"),
+            ("length", "3 mm", "mm", "case size along x"),
+            ("width", "2.5 mm", "mm", "case size along y"),
             (
                 "body_height",
                 "1.2 mm",
@@ -558,8 +558,8 @@ pub fn author_b3u_1000p() -> Vec<u8> {
         &mut s,
         "solid.box",
         json!({"corner": ["-length / 2", "-width / 2", "0 mm"], "length": "length",
-            "width": "width", "height": "body_height - cover_thickness", "name": "Housing",
-            "body_name": "Housing"}),
+            "width": "width", "height": "body_height - cover_thickness", "name": "Case",
+            "body_name": "Case"}),
     );
     run(
         &mut s,
@@ -586,7 +586,7 @@ pub fn author_b3u_1000p() -> Vec<u8> {
                 "height": "terminal_thickness", "name": name, "body_name": name}),
         );
     }
-    assign_look(&mut s, &["Housing"], MaterialId::Lcp);
+    assign_look(&mut s, &["Case"], MaterialId::Lcp);
     assign_look(&mut s, &["Cover"], MaterialId::NickelSilver);
     assign_look(&mut s, &["Plunger"], MaterialId::Pa9t);
     assign_look(&mut s, &["Terminal 1", "Terminal 2"], MaterialId::TinMatte);

@@ -281,7 +281,7 @@ impl Tokens {
         self.secondary_line(painter, [egui::pos2(x, range.min), egui::pos2(x, range.max)], color);
     }
 
-    /// Enclosures stay solid independently of the section-divider pattern.
+    /// Containers stay solid independently of the section-divider pattern.
     pub fn container_rect(&self, painter: &egui::Painter, rect: egui::Rect, radius: impl Into<egui::CornerRadius>, fill: Color32, color: Color32) {
         let radius = radius.into();
         painter.rect(rect, radius, fill, self.container_border(color), egui::StrokeKind::Inside);

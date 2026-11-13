@@ -1,15 +1,15 @@
 //! The board interface in the desktop (docs/architecture/board-interface.md;
 //! slice B6): the Board card's Interface section, the Placement card's
-//! Enclosure section, the two docked previews and the datums drawn in
+//! Interface section, the two docked previews and the datums drawn in
 //! Layout and 3D.
 //!
 //! **Interface section.** Its status in one chip ("Not published",
 //! "Published · revision 3", "3 datums changed since revision 14",
-//! "Broken reference"), the enclosure link with Link… or Update…, the
+//! "Broken reference"), the assembly link with Link… or Update…, the
 //! published design with Publish…, then the datums as a `kit::list`
 //! (direction A): exported datums grouped as Board, Holes and Parts, each
 //! with its kind and slot, then what may be exported but is not (board
-//! parameters, part datums the package does not mark for the enclosure)
+//! parameters, part datums the package does not mark for the linked design)
 //! under "Not exported". A row's action marks it for export
 //! (`interface.export`) or unmarks it (`interface.unexport`; ⌫ too); an
 //! automatic datum is withdrawn by switching its rule off in "Automatic"
@@ -18,8 +18,8 @@
 //!
 //! **Previews.** Publish… docks the publish preview as an impact review:
 //! what changed since the last publish, datum by datum, and the linked
-//! enclosure's dry run, the features that would fail first; then the tier
-//! and the file. Update… docks the enclosure preview: the references,
+//! linked design's dry run, the features that would fail first; then the tier
+//! and the file. Update… docks the linked design preview: the references,
 //! board edges, holes and parts that would move. Both run off the UI
 //! thread through the automation session's own requests
 //! ([`super::interface_host`]); Apply sends the one typed command the
@@ -40,8 +40,8 @@ use crate::kit::{
     toast,
 };
 use egui::Ui;
-use pcbcraft_core::interface::housing::{
-    self as housing, FileCheck, HousingPreview, HousingStatus, LinkState, PreviewParams,
+use pcbcraft_core::interface::assembly_link::{
+    self as assembly_link, AssemblyPreview, AssemblyStatus, FileCheck, LinkState, PreviewParams,
     UpdateParams,
 };
 use pcbcraft_core::interface::{
@@ -71,7 +71,7 @@ pub(super) struct Shown {
     /// The live datums' stored identity, in the list's (slot) order.
     pub keys: Vec<InterfaceDatum>,
     pub candidates: Vec<Candidate>,
-    pub housing: HousingStatus,
+    pub assembly_link: AssemblyStatus,
 }
 
 /// The card's status chip.
@@ -85,11 +85,11 @@ pub(super) enum State {
 
 impl State {
     /// What the interface's state is: broken while a reference the
-    /// enclosure or the interface uses no longer resolves, stale while
+    /// linked design or the interface uses no longer resolves, stale while
     /// datums changed since the last publish.
-    pub(super) fn of(list: &InterfaceList, housing: &HousingStatus) -> Self {
+    pub(super) fn of(list: &InterfaceList, assembly_link: &AssemblyStatus) -> Self {
         let lost = list.datums.iter().any(|d| d.status == DatumStatus::Lost);
-        if housing.state == LinkState::BrokenReference || (lost && list.published.is_some()) {
+        if assembly_link.state == LinkState::BrokenReference || (lost && list.published.is_some()) {
             return Self::Broken;
         }
         match list.published {
@@ -128,7 +128,7 @@ impl State {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Pick {
     Design,
-    Enclosure,
+    LinkedDesign,
 }
 
 /// A docked preview and what it is waiting for.
@@ -149,8 +149,8 @@ pub(super) enum ReviewKind {
         /// Apply was pressed: the design is being built and written.
         publishing: bool,
     },
-    Housing {
-        preview: Option<HousingPreview>,
+    Assembly {
+        preview: Option<AssemblyPreview>,
         updating: bool,
     },
 }
@@ -167,11 +167,11 @@ pub(super) struct InterfaceUi {
     design: Option<PathBuf>,
     pub(super) review: Option<Review>,
     picking: Option<(Pick, std::sync::mpsc::Receiver<Option<PathBuf>>)>,
-    /// Linking an enclosure, which needs no preview.
+    /// Linking a linked design, which needs no preview.
     linking: Option<Running>,
     /// A design file was just chosen: preview against it next frame.
     pending_preview: bool,
-    /// An enclosure file was just chosen: link it next frame.
+    /// A linked design file was just chosen: link it next frame.
     pending_link: Option<PathBuf>,
     /// The Board group was folded once, as the list starts.
     folded_board: bool,
@@ -184,7 +184,7 @@ fn rule_words(rule: AutoRule) -> &'static str {
         AutoRule::Outline => "Board outline",
         AutoRule::Cutouts => "Cutouts and slots",
         AutoRule::Holes => "Mounting holes",
-        AutoRule::ExternalDatums => "Part openings and axes for the enclosure",
+        AutoRule::ExternalDatums => "Part openings and axes for the linked design",
         AutoRule::SideHeights => "Tallest part per side",
     }
 }
@@ -240,7 +240,7 @@ impl Group {
 }
 
 /// What may be exported and is not, for the Board card: board parameters
-/// and part datums the package does not mark for the enclosure. A part's
+/// and part datums the package does not mark for the linked design. A part's
 /// frame and envelope are offered on its own Placement card.
 pub(super) fn candidates(project: &Project, keys: &[InterfaceDatum]) -> Vec<Candidate> {
     let mut out = Vec::new();
@@ -318,7 +318,7 @@ pub(super) fn shown(engine: &Engine) -> Result<Shown, String> {
     let candidates = candidates(project, &keys);
     Ok(Shown {
         revision: engine.revision(),
-        housing: housing::status(project, FileCheck::NotChecked),
+        assembly_link: assembly_link::status(project, FileCheck::NotChecked),
         list,
         keys,
         candidates,
@@ -447,7 +447,7 @@ pub(super) fn publish_summary(preview: &PublishPreview) -> String {
     }
 }
 
-/// The publish preview's blockers: the enclosure features the dry run says
+/// The publish preview's blockers: the linked design features the dry run says
 /// would fail or lose a joint, each confirmed to publish anyway, and those
 /// on a face that is not exported, as warnings.
 pub(super) fn publish_blockers(preview: &PublishPreview) -> Vec<ReviewLine> {
@@ -478,7 +478,7 @@ pub(super) fn publish_blockers(preview: &PublishPreview) -> Vec<ReviewLine> {
 }
 
 /// The publish preview's change groups: the datums that change, and the
-/// enclosure features that follow them.
+/// linked design features that follow them.
 pub(super) fn publish_groups(preview: &PublishPreview) -> Vec<ReviewGroup> {
     let lines: Vec<String> = preview
         .changes
@@ -493,7 +493,7 @@ pub(super) fn publish_groups(preview: &PublishPreview) -> Vec<ReviewGroup> {
     }];
     if let Some(dry) = &preview.dry_run {
         groups.push(ReviewGroup {
-            title: format!("Enclosure · {}", file_name(&dry.enclosure)),
+            title: format!("Linked design · {}", file_name(&dry.linked_design)),
             summary: String::new(),
             lines: dry
                 .effects
@@ -506,9 +506,9 @@ pub(super) fn publish_groups(preview: &PublishPreview) -> Vec<ReviewGroup> {
     groups
 }
 
-/// The enclosure preview's summary, blockers and groups.
-pub(super) fn housing_content(
-    preview: &HousingPreview,
+/// The linked design preview's summary, blockers and groups.
+pub(super) fn assembly_content(
+    preview: &AssemblyPreview,
 ) -> (String, Vec<ReviewLine>, Vec<ReviewGroup>) {
     if let Some(why) = &preview.refused {
         return (
@@ -524,12 +524,12 @@ pub(super) fn housing_content(
     }
     let moved = preview.objects.len();
     let summary = if !preview.changed && moved == 0 {
-        "The enclosure is as the board last read it".into()
+        "The linked design is as the board last read it".into()
     } else if moved == 0 {
-        "The enclosure changed · nothing on the board moves".into()
+        "The linked design changed · nothing on the board moves".into()
     } else {
         format!(
-            "The enclosure changed · {moved} board object{} move",
+            "The linked design changed · {moved} board object{} move",
             if moved == 1 { "" } else { "s" }
         )
     };
@@ -562,7 +562,7 @@ pub(super) fn housing_content(
     ];
     if !preview.consumers.is_empty() {
         groups.push(ReviewGroup {
-            title: "Enclosure features".into(),
+            title: "Linked design features".into(),
             summary: String::new(),
             lines: preview.consumers.clone(),
         });
@@ -584,14 +584,14 @@ impl PcbEditor {
         self.interface.shown.as_ref()
     }
 
-    /// The published design: the one chosen, the linked enclosure's, or
+    /// The published design: the one chosen, the linked design's, or
     /// `<project>-board.solidcraft` beside a saved project.
     fn design_path(&self, project: &Project) -> Option<PathBuf> {
         if let Some(path) = &self.interface.design {
             return Some(path.clone());
         }
         let file = self.project_path.as_deref();
-        if let Some(link) = project.housing.as_deref() {
+        if let Some(link) = project.assembly_link.as_deref() {
             return Some(resolved(file, &link.design_hint));
         }
         let file = file?;
@@ -658,7 +658,7 @@ impl PcbEditor {
     }
 
     /// Take what the interface's requests gave back: an operation to apply
-    /// now (a publish's record, an enclosure's read), once per result.
+    /// now (a publish's record, a linked design's read), once per result.
     pub(super) fn interface_poll(&mut self, ctx: &egui::Context) -> Option<Operation> {
         self.poll_picker();
         if let Some(running) = &mut self.interface.linking
@@ -666,14 +666,14 @@ impl PcbEditor {
         {
             self.interface.linking = None;
             match done {
-                Done::HousingRead(Ok(operation)) => {
-                    toast::post(ctx, Level::Ok, "Linked the enclosure", Vec::new());
+                Done::AssemblyRead(Ok(operation)) => {
+                    toast::post(ctx, Level::Ok, "Linked the design", Vec::new());
                     return Some(operation);
                 }
-                Done::HousingRead(Err(why))
+                Done::AssemblyRead(Err(why))
                 | Done::PublishPreview(Err(why))
                 | Done::Published(Err(why))
-                | Done::HousingPreview(Err(why)) => {
+                | Done::AssemblyPreview(Err(why)) => {
                     toast::post(
                         ctx,
                         Level::Error,
@@ -718,20 +718,20 @@ impl PcbEditor {
                     Err(why) => review.refusal = Some(why),
                 }
             }
-            (ReviewKind::Housing { preview, .. }, Done::HousingPreview(result)) => match result {
+            (ReviewKind::Assembly { preview, .. }, Done::AssemblyPreview(result)) => match result {
                 Ok(p) => {
-                    review.acked = vec![false; housing_content(&p).1.len()];
+                    review.acked = vec![false; assembly_content(&p).1.len()];
                     review.refusal = None;
                     *preview = Some(p);
                 }
                 Err(why) => review.refusal = Some(why),
             },
-            (ReviewKind::Housing { updating, .. }, Done::HousingRead(result)) => {
+            (ReviewKind::Assembly { updating, .. }, Done::AssemblyRead(result)) => {
                 *updating = false;
                 match result {
                     Ok(operation) => {
                         self.interface.review = None;
-                        toast::post(ctx, Level::Ok, "Updated from the enclosure", Vec::new());
+                        toast::post(ctx, Level::Ok, "Updated from the linked design", Vec::new());
                         return Some(operation);
                     }
                     Err(why) => review.refusal = Some(why),
@@ -741,8 +741,8 @@ impl PcbEditor {
                 review.refusal = Some(match other {
                     Done::PublishPreview(Err(w))
                     | Done::Published(Err(w))
-                    | Done::HousingPreview(Err(w))
-                    | Done::HousingRead(Err(w)) => w,
+                    | Done::AssemblyPreview(Err(w))
+                    | Done::AssemblyRead(Err(w)) => w,
                     _ => "The request answered something else".into(),
                 });
             }
@@ -827,7 +827,7 @@ impl PcbEditor {
                             }
                             self.interface.pending_preview = true;
                         }
-                        Pick::Enclosure => self.interface.pending_link = Some(path),
+                        Pick::LinkedDesign => self.interface.pending_link = Some(path),
                     }
                 }
             }
@@ -860,8 +860,8 @@ impl PcbEditor {
                         .save_file(),
                 )
             }
-            Pick::Enclosure => {
-                Box::pin(dialog.set_title("Choose the enclosure design").pick_file())
+            Pick::LinkedDesign => {
+                Box::pin(dialog.set_title("Choose the linked design").pick_file())
             }
         };
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -904,10 +904,10 @@ impl PcbEditor {
     fn preview_publish(&mut self, ctx: &egui::Context, engine: &Engine) {
         let project = engine.project();
         let design = self.design_path(project);
-        let enclosure = project
-            .housing
+        let linked_design = project
+            .assembly_link
             .as_deref()
-            .map(|l| resolved(self.project_path.as_deref(), &l.enclosure_hint));
+            .map(|l| resolved(self.project_path.as_deref(), &l.assembly_hint));
         let project_path = self.project_path.clone();
         let Some(review) = &mut self.interface.review else {
             return;
@@ -921,25 +921,25 @@ impl PcbEditor {
             path: design
                 .filter(|d| d.exists())
                 .map(|d| d.to_string_lossy().into_owned()),
-            enclosure_path: enclosure.map(|e| e.to_string_lossy().into_owned()),
+            assembly_path: linked_design.map(|e| e.to_string_lossy().into_owned()),
         };
         let params = PublishPreviewParams {
-            enclosure_path: params.enclosure_path.filter(|_| params.path.is_some()),
+            assembly_path: params.assembly_path.filter(|_| params.path.is_some()),
             ..params
         };
         review.running =
             interface_host::start(ctx, engine, project_path, Job::PublishPreview(params));
     }
 
-    /// Open the enclosure preview, and compute it.
-    pub(super) fn open_housing(&mut self, ctx: &egui::Context, engine: &Engine) {
+    /// Open the linked design preview, and compute it.
+    pub(super) fn open_assembly(&mut self, ctx: &egui::Context, engine: &Engine) {
         let project = engine.project();
-        let Some(link) = project.housing.as_deref() else {
+        let Some(link) = project.assembly_link.as_deref() else {
             return;
         };
         let file = self.project_path.as_deref();
         let params = PreviewParams {
-            path: resolved(file, &link.enclosure_hint)
+            path: resolved(file, &link.assembly_hint)
                 .to_string_lossy()
                 .into_owned(),
             design: resolved(file, &link.design_hint)
@@ -950,10 +950,10 @@ impl PcbEditor {
             ctx,
             engine,
             self.project_path.clone(),
-            Job::HousingPreview(params),
+            Job::AssemblyPreview(params),
         );
         self.interface.review = Some(Review {
-            kind: ReviewKind::Housing {
+            kind: ReviewKind::Assembly {
                 preview: None,
                 updating: false,
             },
@@ -964,8 +964,8 @@ impl PcbEditor {
         });
     }
 
-    /// Link the enclosure at `path` to the published design.
-    fn link_enclosure(&mut self, ctx: &egui::Context, engine: &Engine, path: &Path) {
+    /// Link the linked design at `path` to the published design.
+    fn link_linked_design(&mut self, ctx: &egui::Context, engine: &Engine, path: &Path) {
         let Some(design) = self.design_path(engine.project()) else {
             return;
         };
@@ -979,11 +979,11 @@ impl PcbEditor {
             ctx,
             engine,
             self.project_path.clone(),
-            Job::HousingUpdate(params),
+            Job::AssemblyUpdate(params),
         );
     }
 
-    /// INTERFACE, in the Board card: status, enclosure, publish, the datum
+    /// INTERFACE, in the Board card: status, linked design, publish, the datum
     /// list and the automatic rules.
     pub(super) fn interface_section(&mut self, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
         let ctx = ui.ctx().clone();
@@ -992,12 +992,12 @@ impl PcbEditor {
             self.preview_publish(&ctx, engine);
         }
         if let Some(path) = self.interface.pending_link.take() {
-            self.link_enclosure(&ctx, engine, &path);
+            self.link_linked_design(&ctx, engine, &path);
         }
         let project = engine.project();
         let design = self.design_path(project);
         let shown = self.interface_shown(engine)?.clone();
-        let state = State::of(&shown.list, &shown.housing);
+        let state = State::of(&shown.list, &shown.assembly_link);
         let mut operation = None;
         let mut publish = false;
         let mut update = false;
@@ -1016,19 +1016,24 @@ impl PcbEditor {
                 };
                 publish = kit::summary_row(ui, &summary, Some("Publish…"));
             });
-            kit::row(ui, "Enclosure", |ui| match project.housing.as_deref() {
-                Some(l) => {
-                    let summary =
-                        format!("{} · {}", file_name(&l.enclosure_hint), shown.housing.words);
-                    update = kit::summary_row(ui, &summary, Some("Update…"));
+            kit::row(ui, "Linked design", |ui| {
+                match project.assembly_link.as_deref() {
+                    Some(l) => {
+                        let summary = format!(
+                            "{} · {}",
+                            file_name(&l.assembly_hint),
+                            shown.assembly_link.words
+                        );
+                        update = kit::summary_row(ui, &summary, Some("Update…"));
+                    }
+                    None if linking => {
+                        kit::summary_row(ui, "Reading the linked design…", None);
+                    }
+                    None if shown.list.published.is_none() => {
+                        kit::summary_row(ui, "Publish first to link a design", None);
+                    }
+                    None => link = kit::summary_row(ui, "No linked design", Some("Link…")),
                 }
-                None if linking => {
-                    kit::summary_row(ui, "Reading the enclosure…", None);
-                }
-                None if shown.list.published.is_none() => {
-                    kit::summary_row(ui, "Publish first to link an enclosure", None);
-                }
-                None => link = kit::summary_row(ui, "No enclosure", Some("Link…")),
             });
             operation = self.datum_list(ui, project, &shown);
             kit::section(ui, "pcb-interface-auto", "Automatic", false, None, |ui| {
@@ -1047,11 +1052,11 @@ impl PcbEditor {
             self.open_publish(&ctx, engine);
         }
         if update {
-            self.open_housing(&ctx, engine);
+            self.open_assembly(&ctx, engine);
         }
         if link {
             let proposed = design.clone();
-            self.start_pick(&ctx, Pick::Enclosure, proposed.as_deref());
+            self.start_pick(&ctx, Pick::LinkedDesign, proposed.as_deref());
         }
         operation
     }
@@ -1116,7 +1121,7 @@ impl PcbEditor {
             .zip(&names)
             .map(|((_, item), name)| match item {
                 Item::Datum(_) => format!("Stop exporting {name}"),
-                Item::Candidate(_) => format!("Export {name} to the enclosure"),
+                Item::Candidate(_) => format!("Export {name} to the linked design"),
                 Item::Header(..) => String::new(),
             })
             .collect();
@@ -1279,9 +1284,9 @@ impl PcbEditor {
         operation
     }
 
-    /// ENCLOSURE, in the Placement card: the part's frame, envelope and
+    /// INTERFACE, in the Placement card: the part's frame, envelope and
     /// package datums, each marked for export or not. A datum the package
-    /// marks for the enclosure is exported by its rule.
+    /// marks for the linked design is exported by its rule.
     pub(super) fn interface_part_section(
         &mut self,
         ui: &mut Ui,
@@ -1331,7 +1336,7 @@ impl PcbEditor {
         kit::summary_section(
             ui,
             "pcb-part-interface",
-            "Enclosure",
+            "Interface",
             false,
             &summary,
             |ui| {
@@ -1354,7 +1359,7 @@ impl PcbEditor {
                         }
                     }
                 }
-                kit::note(ui, "Exported datums are what an enclosure may reference");
+                kit::note(ui, "Exported datums are what a linked design may reference");
             },
         );
         operation
@@ -1484,12 +1489,12 @@ impl PcbEditor {
                     recompute = true;
                 }
             }
-            ReviewKind::Housing { preview, updating } => {
-                let title = "Update from enclosure";
+            ReviewKind::Assembly { preview, updating } => {
+                let title = "Update from linked design";
                 match (preview.as_ref(), waiting) {
                     (Some(p), false) => {
                         let stale = p.document_revision != engine.revision();
-                        let (summary, blockers, groups) = housing_content(p);
+                        let (summary, blockers, groups) = assembly_content(p);
                         review.acked.resize(blockers.len(), false);
                         let panel = ReviewPanel {
                             id: review_id(),
@@ -1510,13 +1515,13 @@ impl PcbEditor {
                             |_| {},
                         );
                         if action == Some(ReviewAction::Apply)
-                            && let Some(link) = engine.project().housing.as_deref()
+                            && let Some(link) = engine.project().assembly_link.as_deref()
                         {
                             let file = self.project_path.as_deref();
                             *updating = true;
                             review.refusal = None;
-                            start = Some(Job::HousingUpdate(UpdateParams {
-                                path: resolved(file, &link.enclosure_hint)
+                            start = Some(Job::AssemblyUpdate(UpdateParams {
+                                path: resolved(file, &link.assembly_hint)
                                     .to_string_lossy()
                                     .into_owned(),
                                 design: resolved(file, &link.design_hint)
@@ -1529,9 +1534,9 @@ impl PcbEditor {
                     }
                     _ => {
                         let status = if *updating {
-                            "Reading the enclosure and updating…"
+                            "Reading the linked design and updating…"
                         } else if waiting {
-                            "Reading the enclosure…"
+                            "Reading the linked design…"
                         } else {
                             "The preview could not be made"
                         };
@@ -1569,7 +1574,7 @@ impl PcbEditor {
         if recompute {
             match self.interface.review.as_ref().map(|r| &r.kind) {
                 Some(ReviewKind::Publish { .. }) => self.preview_publish(&ctx, engine),
-                Some(ReviewKind::Housing { .. }) => self.open_housing(&ctx, engine),
+                Some(ReviewKind::Assembly { .. }) => self.open_assembly(&ctx, engine),
                 None => {}
             }
         }
@@ -1595,10 +1600,10 @@ fn report(review: &Review) -> String {
             }
             lines.join("\n")
         }
-        ReviewKind::Housing {
+        ReviewKind::Assembly {
             preview: Some(p), ..
         } => {
-            let (summary, blockers, groups) = housing_content(p);
+            let (summary, blockers, groups) = assembly_content(p);
             let mut lines = vec![summary];
             lines.extend(blockers.into_iter().map(|b| b.title));
             for g in groups {

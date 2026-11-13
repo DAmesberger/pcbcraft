@@ -1,7 +1,7 @@
 //! Slice B3 in the core: the sidecar a publish writes, the revision it
 //! records and the publish preview's diff (`interface::publish`), on the
 //! demo board with an external opening on its package. The exported design
-//! itself, the files and the enclosure that follows them are tested where
+//! itself, the files and the linked design that follows them are tested where
 //! Solidcraft runs (`pcbcraft-solidcraft` `interface` and the automation
 //! session's `interface_publish_tests`).
 use super::Fallible;

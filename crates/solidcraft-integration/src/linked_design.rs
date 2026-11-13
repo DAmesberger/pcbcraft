@@ -1,12 +1,12 @@
-//! A SolidCraft enclosure design, opened in Sparksmith's own engine: the
-//! headless side of the board → enclosure link (docs/architecture/
+//! A SolidCraft linked design, opened in Sparksmith's own engine: the
+//! headless side of the board → assembly link (docs/architecture/
 //! board-interface.md, "Link updates"). It links a published board
 //! interface as SolidCraft's Insert Design does, re-reads it as Update
 //! Links does, and reports its bodies' faces and its features' failures.
 //!
-//! Slice B3 uses it to check that an enclosure follows a published board
+//! Slice B3 uses it to check that a linked design follows a published board
 //! (a wall with a cutout projected from an opening, a boss on a mounting
-//! hole). Slice B4 reads a saved enclosure the board is linked to (the
+//! hole). Slice B4 reads a saved linked design the board is linked to (the
 //! component that links the board's design and the board frame in it, the
 //! faces the board follows traced in the board plane, its parameters, the
 //! features that use the board's datums) and runs the dry run of a publish
@@ -15,9 +15,9 @@ use crate::native::{BoxBody, Native, id};
 use crate::{Error, Result};
 use pcbcraft_core::geometry::Transform3;
 use pcbcraft_core::ids::ContentHash;
-use pcbcraft_core::interface::{EffectKind, EnclosureEffect, Sidecar};
+use pcbcraft_core::interface::{AssemblyEffect, EffectKind, Sidecar};
+use pcbcraft_core::model::assembly_link::UseKind;
 use pcbcraft_core::model::dimension::{BodyName, FaceName, ModelFaceRef};
-use pcbcraft_core::model::housing::UseKind;
 use serde_json::{Value, json};
 use solidcraft_engine::doc::FeatureKind;
 use solidcraft_engine::sketch::LinkSource;
@@ -47,7 +47,7 @@ pub struct LinkUpdate {
     pub warnings: Vec<String>,
 }
 
-/// A feature that does not evaluate, by its name in the enclosure.
+/// A feature that does not evaluate, by its name in the linked design.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FeatureNote {
     pub feature: String,
@@ -61,8 +61,8 @@ pub enum Operation {
     Cut,
 }
 
-/// An enclosure design.
-pub struct Enclosure {
+/// An linked design.
+pub struct LinkedDesign {
     native: Native,
 }
 
@@ -88,8 +88,8 @@ fn strings(value: &Value) -> Vec<String> {
         .collect()
 }
 
-impl Enclosure {
-    /// A new, empty enclosure design.
+impl LinkedDesign {
+    /// A new, empty linked design.
     pub fn new(name: &str) -> Result<Self> {
         Ok(Self {
             native: Native::new(name)?,
@@ -215,44 +215,44 @@ impl Enclosure {
     }
 }
 
-// Slice B4: reading an enclosure the board is linked to, and the dry run.
+// Slice B4: reading a linked design the board is linked to, and the dry run.
 
-/// Enclosure bodies whose faces a dry run compares, at most.
+/// Linked design bodies whose faces a dry run compares, at most.
 const MAX_DRY_RUN_BODIES: usize = 512;
 /// How far (mm) a face's centroid may move and still count as unmoved.
 const MOVED_MM: f64 = 1e-6;
 
-/// The component of an enclosure that links the board's published design,
+/// The component of a linked design that links the board's published design,
 /// and the board's frame in it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BoardLink {
     pub component: u64,
-    /// Its name in the enclosure.
+    /// Its name in the linked design.
     pub name: String,
     /// The Import feature that holds the linked bodies.
     pub feature: u64,
-    /// The enclosure's world frame to the board's frame.
+    /// The linked design's world frame to the board's frame.
     pub to_board: Transform3,
-    /// The linked bodies, by their names in the enclosure.
+    /// The linked bodies, by their names in the linked design.
     pub bodies: Vec<String>,
-    /// SHA-256 of the board's design file as the enclosure last read it
+    /// SHA-256 of the board's design file as the linked design last read it
     /// (SolidCraft keeps it on the link), when it keeps one: the older-board
     /// check.
     pub file_sha256: Option<ContentHash>,
 }
 
-/// An enclosure feature that uses a published datum, as its sketch's
+/// A linked design feature that uses a published datum, as its sketch's
 /// links say, or a joint that places the board by one.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Use {
-    /// The feature's (or joint's) name in the enclosure.
+    /// The feature's (or joint's) name in the linked design.
     pub feature: String,
     pub feature_id: u64,
     pub token: String,
     pub via: UseKind,
 }
 
-/// An enclosure feature attached to a face of the board's design that no
+/// A linked design feature attached to a face of the board's design that no
 /// slot carries (section 2).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Unexported {
@@ -272,10 +272,10 @@ enum Carried<'a> {
     Unexported,
 }
 
-/// Enclosure features one dependency walk visits, at most.
+/// Linked design features one dependency walk visits, at most.
 const MAX_WALK: usize = 4096;
 
-/// The published datums by what names them in the enclosure: their bodies
+/// The published datums by what names them in the linked design: their bodies
 /// (by token) and their faces (by SolidCraft's digest of the published
 /// face name), with the slab's own token.
 struct Slots<'a> {
@@ -413,8 +413,8 @@ fn offset_words(d: [f64; 3]) -> String {
     }
 }
 
-impl Enclosure {
-    /// Open a saved enclosure design read-only (a copy the caller made, so
+impl LinkedDesign {
+    /// Open a saved linked design read-only (a copy the caller made, so
     /// nothing the user saved is ever touched). `true` with it when a newer
     /// SolidCraft saved it: what this build cannot read is then missing.
     pub fn open(path: &str) -> Result<(Self, bool)> {
@@ -430,7 +430,7 @@ impl Enclosure {
 
     /// The component that links `design` (the board's published design),
     /// matched by its link resolving to that file, never by name. Link
-    /// paths relative to the enclosure resolve against `folder`, where the
+    /// paths relative to the linked design resolve against `folder`, where the
     /// user keeps it.
     pub fn board_link(&self, folder: &Path, design: &Path) -> Result<BoardLink> {
         let session = self.native.session();
@@ -456,30 +456,30 @@ impl Enclosure {
         });
         let (component, link) = found.next().ok_or_else(|| {
             Error::Invalid(format!(
-                "housing.board: the enclosure does not link this board's published design \
+                "assembly.board: the linked design does not link this board's published design \
                  ({}); insert it in SolidCraft with Insert Design, or relink",
                 design.display()
             ))
         })?;
         if found.next().is_some() {
             return Err(Error::Invalid(
-                "housing.board: the enclosure links the board's design twice; keep one".into(),
+                "assembly.board: the assembly links the board's design twice; keep one".into(),
             ));
         }
         let mut occurrences = doc.occurrences.iter().filter(|o| o.component == *component);
         let occurrence = occurrences.next().ok_or_else(|| {
-            Error::Invalid("housing.board: the board's component is not placed".into())
+            Error::Invalid("assembly.board: the board's component is not placed".into())
         })?;
         if occurrences.next().is_some() {
             return Err(Error::Invalid(
-                "housing.board: the board is placed more than once in the enclosure; the board \
+                "assembly.board: the board is placed more than once in the linked design; the board \
                  frame must be one"
                     .into(),
             ));
         }
         let world = solidcraft_engine::doc::joints::occurrence_world(doc, occurrence.id);
         let inverse = solidcraft_engine::doc::mat_inverse(&world).ok_or_else(|| {
-            Error::Invalid("housing.board: the board's placement cannot be inverted".into())
+            Error::Invalid("assembly.board: the board's placement cannot be inverted".into())
         })?;
         let name = doc
             .components
@@ -502,8 +502,8 @@ impl Enclosure {
         })
     }
 
-    /// Trace the face `face` of enclosure body `body` (picked at `pick`,
-    /// enclosure frame) in the board plane: a face square to the board as
+    /// Trace the face `face` of linked design body `body` (picked at `pick`,
+    /// linked design frame) in the board plane: a face square to the board as
     /// its line, a vertical cylinder as its axis point. With it, a point on
     /// the face where it is now (the pick, unless the face moved).
     pub fn trace(
@@ -525,11 +525,11 @@ impl Enclosure {
             face: FaceName(face.to_owned()),
             pick,
         };
-        let words = format!("the enclosure's face ‘{face}’ of ‘{body}’");
-        crate::board::model_refs::trace_enclosure_face(&state, &reference, &words, &link.to_board)
+        let words = format!("the linked design's face ‘{face}’ of ‘{body}’");
+        crate::board::model_refs::trace_linked_face(&state, &reference, &words, &link.to_board)
     }
 
-    /// The value of the enclosure's user parameter `name` in mm, when it is
+    /// The value of the linked design's user parameter `name` in mm, when it is
     /// a length.
     pub fn parameter_mm(&self, name: &str) -> Option<f64> {
         let (values, _) = self.native.session().doc.param_values();
@@ -537,12 +537,12 @@ impl Enclosure {
         (value.len == 1 && value.ang == 0).then_some(value.v)
     }
 
-    /// Set the enclosure's user parameter `name` (test fixtures).
+    /// Set the linked design's user parameter `name` (test fixtures).
     pub fn set_parameter(&mut self, name: &str, expression: &str) -> Result<()> {
         self.native.parameter(name, expression.to_owned())
     }
 
-    /// Every enclosure feature whose sketch projects or intersects a body
+    /// Every linked design feature whose sketch projects or intersects a body
     /// of the linked board that a slot of `sidecar` carries (a datum's own
     /// body, named by its token; a face the sidecar lists for a datum; any
     /// face of the board slab, the outline's slot), and every joint that
@@ -572,7 +572,7 @@ impl Enclosure {
         out.into_iter().collect()
     }
 
-    /// Every enclosure feature (and joint) attached to a face of the
+    /// Every linked design feature (and joint) attached to a face of the
     /// linked board that no slot carries: section 2's parts, laminate and
     /// pads, whose names may move to another body when the board changes.
     pub fn unexported(&self, link: &BoardLink, sidecar: &Sidecar) -> Vec<Unexported> {
@@ -641,12 +641,12 @@ impl Enclosure {
         (uses, unexported)
     }
 
-    /// The board's datums the enclosure geometry under the face `face`
+    /// The board's datums the linked design geometry under the face `face`
     /// (a persistent name) is built on: walking back from the feature that
     /// made the face through the sketches, faces and bodies it is made
     /// from to every reference a slot carries, and every joint that places
     /// the board (the board frame, and the face's trace with it, depends
-    /// on those). The enclosure half of the cycle graph.
+    /// on those). The linked design half of the cycle graph.
     pub fn built_on(&self, link: &BoardLink, sidecar: &Sidecar, face: &str) -> Vec<Use> {
         let slots = Slots::new(link, sidecar);
         let doc = &self.native.session().doc;
@@ -716,7 +716,7 @@ impl Enclosure {
         out.into_iter().collect()
     }
 
-    /// The faces of every enclosure body that is not the board's, by
+    /// The faces of every linked design body that is not the board's, by
     /// persistent name, with their centroid and area.
     fn own_faces(&mut self, link: &BoardLink) -> Result<BTreeMap<String, Face>> {
         let state = self.native.world_state()?;
@@ -763,10 +763,10 @@ impl Enclosure {
     }
 
     /// The dry run (docs/architecture/board-interface.md, "Link updates"):
-    /// point this enclosure's board link at the candidate design (as
-    /// `component.relink` does), evaluate, and report in the enclosure's
+    /// point this linked design's board link at the candidate design (as
+    /// `component.relink` does), evaluate, and report in the linked design's
     /// own names the features that would move, fail or leave a joint
-    /// unsolved. `published` is the sidecar the enclosure links now, which
+    /// unsolved. `published` is the sidecar the assembly links now, which
     /// says which datum each feature uses; `candidate` the one about to be
     /// published. Run it on a copy: the design is changed in memory.
     pub fn dry_run(
@@ -775,7 +775,7 @@ impl Enclosure {
         design: &str,
         published: &Sidecar,
         candidate: &Sidecar,
-    ) -> Result<Vec<EnclosureEffect>> {
+    ) -> Result<Vec<AssemblyEffect>> {
         let uses = self.uses(link, published);
         let unexported = self.unexported(link, published);
         let before_errors: BTreeSet<String> = self
@@ -808,19 +808,19 @@ impl Enclosure {
             }
             effects.push(match uses.iter().find(|u| u.feature == note.feature) {
                 Some(u) => failure(u, &note.error, published, candidate),
-                None => EnclosureEffect {
+                None => AssemblyEffect {
                     feature: note.feature.clone(),
                     effect: EffectKind::Fails,
                     datum: None,
                     message: format!(
-                        "The enclosure's ‘{}’ would fail: {}",
+                        "The linked design's ‘{}’ would fail: {}",
                         note.feature, note.error
                     ),
                 },
             });
         }
         for joint in strings(&reply["joint_errors"]) {
-            effects.push(EnclosureEffect {
+            effects.push(AssemblyEffect {
                 feature: joint.clone(),
                 effect: EffectKind::JointUnsolved,
                 datum: None,
@@ -839,11 +839,11 @@ impl Enclosure {
             } else {
                 format!("the board's ‘{}’", u.body)
             };
-            effects.push(EnclosureEffect {
+            effects.push(AssemblyEffect {
                 feature: u.feature.clone(),
                 effect: EffectKind::UnexportedReference,
                 datum: None,
-                message: pcbcraft_core::interface::findings::housing_unexported_face(
+                message: pcbcraft_core::interface::findings::assembly_unexported_face(
                     &format!("‘{}’", u.feature),
                     &part,
                     Vec::new(),
@@ -897,18 +897,18 @@ impl Enclosure {
             let named = used.and_then(|u| published.datums.iter().find(|d| d.token == u.token));
             let message = match (used, named) {
                 (_, Some(datum)) => format!(
-                    "The enclosure's ‘{name}’ follows {}: it moves {}",
+                    "The linked design's ‘{name}’ follows {}: it moves {}",
                     datum.name,
                     offset_words(d)
                 ),
                 (Some(u), None) => format!(
-                    "The enclosure's ‘{name}’ follows {}: it moves {}",
+                    "The linked design's ‘{name}’ follows {}: it moves {}",
                     u.token,
                     offset_words(d)
                 ),
-                (None, None) => format!("The enclosure's ‘{name}’ moves {}", offset_words(d)),
+                (None, None) => format!("The linked design's ‘{name}’ moves {}", offset_words(d)),
             };
-            effects.push(EnclosureEffect {
+            effects.push(AssemblyEffect {
                 feature: name,
                 effect: EffectKind::Moves,
                 datum: named.map(|d| d.id),
@@ -932,22 +932,22 @@ fn link_body(source: &LinkSource) -> Option<&str> {
 
 /// A feature that would fail, in the user's words: the datum it uses and
 /// why.
-fn failure(u: &Use, error: &str, published: &Sidecar, candidate: &Sidecar) -> EnclosureEffect {
+fn failure(u: &Use, error: &str, published: &Sidecar, candidate: &Sidecar) -> AssemblyEffect {
     let named = published.datums.iter().find(|d| d.token == u.token);
     let name = named.map_or_else(|| u.token.clone(), |d| d.name.clone());
     let gone = !candidate.datums.iter().any(|d| d.token == u.token);
     let message = if gone {
         format!(
-            "The enclosure's ‘{}’ uses {name}, which this publish removes, so it would fail",
+            "The linked design's ‘{}’ uses {name}, which this publish removes, so it would fail",
             u.feature
         )
     } else {
         format!(
-            "The enclosure's ‘{}’ uses {name} and would fail: {error}",
+            "The linked design's ‘{}’ uses {name} and would fail: {error}",
             u.feature
         )
     };
-    EnclosureEffect {
+    AssemblyEffect {
         feature: u.feature.clone(),
         effect: EffectKind::Fails,
         datum: named.map(|d| d.id),

@@ -394,10 +394,10 @@ A body the 3D view draws for realism but never saves: soldermask and via tents, 
 Which layers PCB 3D shows, toggled from the navigation bar's Layers popover. It is display state: hiding a layer filters what is drawn and picked and never rebuilds geometry. Outer copper and silkscreen share their state with PCB 2D.
 
 **Mechanical export**:
-A geometric representation of the board and its components for enclosure and assembly work. It does not contain the complete electrical design.
+A geometric representation of the board and its components for assembly work in other designs. It does not contain the complete electrical design.
 
 **Board interface**:
-The datums a board publishes for an enclosure to reference, and nothing else: an enclosure may depend only on them. Published as a `.solidcraft` design whose datum bodies come first, in slot order, with a sidecar file. See [board interface](docs/architecture/board-interface.md).
+The datums a board publishes for a linked design to reference, and nothing else: a linked design may depend only on them. Published as a `.solidcraft` design whose datum bodies come first, in slot order, with a sidecar file. See [board interface](docs/architecture/board-interface.md).
 
 **Interface datum** (datum):
 One exported reference of the board interface: a frame, plane, axis, profile, volume or parameter, such as the board top, a mounting hole's axis or a connector's opening. Its identity is its owner, role and name, never a designator or display name; its geometry is derived from the board each time, never stored. Not the footprint datum, which is a footprint's origin.
@@ -406,7 +406,7 @@ One exported reference of the board interface: a frame, plane, axis, profile, vo
 A datum's position in the board's append-only slot table. The exported design builds slots first and in order, so a slot's face names follow from its number alone. A slot is never reused: removing its datum retires it.
 
 **Datum token**:
-The name an interface datum is written under in the exported design and sidecar, built from ids only (`i80.opening`, `h12`, `board.top`), so renaming a part changes nothing an enclosure references.
+The name an interface datum is written under in the exported design and sidecar, built from ids only (`i80.opening`, `h12`, `board.top`), so renaming a part changes nothing an assembly references.
 
 **Package datum**:
 A datum a package revision declares as explicit geometry in its model frame, such as a connector's opening from the datasheet's panel cutout. One marked external is exported for every placement of the package. Never inferred from a part's name or category.
@@ -417,8 +417,11 @@ How much of the board the published design carries after the slots: the interfac
 **Interface sidecar**:
 The `<name>.interface.json` file beside a published board interface, also stored in the design's metadata: the format version, the board's permanent interface identity, the revision, a hash, and every datum's token, slot, geometry, status and face names.
 
-**Enclosure** (housing):
-A SolidCraft design that links the published board interface, and whose walls, bosses and openings the board may in turn follow through housing references. Updates in either direction go through a preview bound to both files' revisions.
+**Linked design** (assembly link):
+A SolidCraft design that links the published board interface, and whose walls, bosses and openings the board may in turn follow through followed faces. An enclosure is one example; the code names only the generic concept. Updates in either direction go through a preview bound to both files' revisions.
+
+**Followed face**:
+A face of a linked design's body that the board follows (`assembly.follow`): its trace along the board's normal becomes fixed board-sketch geometry the reference owns, which only an assembly update moves.
 
 **Native Solidcraft model**:
 A Solidcraft design containing the board and component models, with editable parameters, features and placement relationships. It is the 3D model used by Sparksmith and saved for direct use in Solidcraft.

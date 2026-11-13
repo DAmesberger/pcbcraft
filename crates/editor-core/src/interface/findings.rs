@@ -1,7 +1,7 @@
-//! The interface's and enclosure link's findings and refusals, in the
+//! The interface's and assembly link's findings and refusals, in the
 //! user's words (docs/architecture/board-interface.md, "Conflicts and
 //! broken references"; docs/board-sketch-references.md §7 for the
-//! `housing.*` codes it already named). Every code is listed once in
+//! `assembly.*` codes it already named). Every code is listed once in
 //! [`CODES`] with whether it blocks fabrication output and whether a
 //! waiver may lift that. Slices B1 and B5 raise them and wire the blocking
 //! ones into the production check.
@@ -13,26 +13,26 @@ pub const UNPUBLISHED: &str = "interface.unpublished";
 pub const DATUM_LOST: &str = "interface.datum_lost";
 /// An exported datum was found again by geometry, not by name.
 pub const DATUM_INEXACT: &str = "interface.datum_inexact";
-/// The enclosure changed since the board last read it (advisory).
-pub const HOUSING_STALE: &str = "housing.stale";
-/// The enclosure still links an older published board.
-pub const HOUSING_OLDER_BOARD: &str = "housing.older_board";
-/// The board and the enclosure both changed since they last agreed.
-pub const HOUSING_BOTH_CHANGED: &str = "housing.both_changed";
-/// An enclosure feature uses a datum that no longer resolves.
-pub const HOUSING_REFERENCE_LOST: &str = "housing.reference_lost";
-/// An enclosure feature's datum was found again only by geometry.
-pub const HOUSING_REFERENCE_INEXACT: &str = "housing.reference_inexact";
-/// An enclosure feature references a face that is not exported.
-pub const HOUSING_UNEXPORTED_FACE: &str = "housing.unexported_face";
-/// The board and the enclosure depend on each other in a loop.
-pub const HOUSING_CYCLE: &str = "housing.cycle";
-/// The enclosure file was not found; the board uses its snapshot.
-pub const HOUSING_MISSING: &str = "housing.missing";
-/// The enclosure was saved by a newer SolidCraft than this build reads.
-pub const HOUSING_NEWER: &str = "housing.newer";
-/// Refusal: a board edge driven by the enclosure was edited locally.
-pub const HOUSING_DRIVEN_EDGE: &str = "housing.driven_edge";
+/// The linked design changed since the board last read it (advisory).
+pub const ASSEMBLY_STALE: &str = "assembly.stale";
+/// The linked design still links an older published board.
+pub const ASSEMBLY_OLDER_BOARD: &str = "assembly.older_board";
+/// The board and the linked design both changed since they last agreed.
+pub const ASSEMBLY_BOTH_CHANGED: &str = "assembly.both_changed";
+/// A linked design feature uses a datum that no longer resolves.
+pub const ASSEMBLY_REFERENCE_LOST: &str = "assembly.reference_lost";
+/// A linked design feature's datum was found again only by geometry.
+pub const ASSEMBLY_REFERENCE_INEXACT: &str = "assembly.reference_inexact";
+/// A linked design feature references a face that is not exported.
+pub const ASSEMBLY_UNEXPORTED_FACE: &str = "assembly.unexported_face";
+/// The board and the linked design depend on each other in a loop.
+pub const ASSEMBLY_CYCLE: &str = "assembly.cycle";
+/// The linked design file was not found; the board uses its snapshot.
+pub const ASSEMBLY_MISSING: &str = "assembly.missing";
+/// The linked design was saved by a newer SolidCraft than this build reads.
+pub const ASSEMBLY_NEWER: &str = "assembly.newer";
+/// Refusal: a board edge driven by the linked design was edited locally.
+pub const ASSEMBLY_DRIVEN_EDGE: &str = "assembly.driven_edge";
 
 /// One finding code's consequences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,20 +54,20 @@ const fn spec(code: &'static str, blocks_fabrication: bool, waivable: bool) -> C
     }
 }
 
-/// Every finding code of the interface and the enclosure link.
+/// Every finding code of the interface and the assembly link.
 pub const CODES: [CodeSpec; 12] = [
     spec(UNPUBLISHED, false, true),
     spec(DATUM_LOST, false, true),
     spec(DATUM_INEXACT, false, true),
-    spec(HOUSING_STALE, false, true),
-    spec(HOUSING_OLDER_BOARD, false, true),
-    spec(HOUSING_BOTH_CHANGED, false, true),
-    spec(HOUSING_REFERENCE_LOST, true, false),
-    spec(HOUSING_REFERENCE_INEXACT, true, false),
-    spec(HOUSING_UNEXPORTED_FACE, false, true),
-    spec(HOUSING_CYCLE, true, false),
-    spec(HOUSING_MISSING, false, true),
-    spec(HOUSING_NEWER, false, true),
+    spec(ASSEMBLY_STALE, false, true),
+    spec(ASSEMBLY_OLDER_BOARD, false, true),
+    spec(ASSEMBLY_BOTH_CHANGED, false, true),
+    spec(ASSEMBLY_REFERENCE_LOST, true, false),
+    spec(ASSEMBLY_REFERENCE_INEXACT, true, false),
+    spec(ASSEMBLY_UNEXPORTED_FACE, false, true),
+    spec(ASSEMBLY_CYCLE, true, false),
+    spec(ASSEMBLY_MISSING, false, true),
+    spec(ASSEMBLY_NEWER, false, true),
 ];
 
 /// `interface.unpublished`: "3 datums changed since revision 14", or that
@@ -100,49 +100,49 @@ pub fn datum_inexact(datum: &str, owner: Option<ObjectRef>) -> Finding {
     )
 }
 
-/// `housing.stale`.
-pub fn housing_stale() -> Finding {
+/// `assembly.stale`.
+pub fn assembly_stale() -> Finding {
     Finding::new(
-        HOUSING_STALE,
-        "The enclosure changed. Preview the update to see what moves".into(),
+        ASSEMBLY_STALE,
+        "The linked design changed. Preview the update to see what moves".into(),
         vec![ObjectRef::Board],
     )
 }
 
-/// `housing.older_board`: the enclosure links board revision `revision`,
+/// `assembly.older_board`: the assembly links board revision `revision`,
 /// or (`None`) a board design file this board did not publish last and
 /// does not remember.
-pub fn housing_older_board(revision: Option<u32>) -> Finding {
+pub fn assembly_older_board(revision: Option<u32>) -> Finding {
     let held = match revision {
         Some(revision) => format!("board revision {revision}"),
         None => "an older board".into(),
     };
     Finding::new(
-        HOUSING_OLDER_BOARD,
+        ASSEMBLY_OLDER_BOARD,
         format!(
-            "The enclosure still uses {held}. Run Update Links in SolidCraft, then check again"
+            "The linked design still uses {held}. Run Update Links in SolidCraft, then check again"
         ),
         vec![ObjectRef::Board],
     )
 }
 
-/// `housing.both_changed`.
-pub fn housing_both_changed() -> Finding {
+/// `assembly.both_changed`.
+pub fn assembly_both_changed() -> Finding {
     Finding::new(
-        HOUSING_BOTH_CHANGED,
-        "The board and the enclosure both changed since they last agreed. Update the enclosure \
+        ASSEMBLY_BOTH_CHANGED,
+        "The board and the linked design both changed since they last agreed. Update the linked design \
          first; nothing was applied"
             .into(),
         vec![ObjectRef::Board],
     )
 }
 
-/// `housing.reference_lost`: "The enclosure's sketch 'USB opening' uses
+/// `assembly.reference_lost`: "The linked design's sketch 'USB opening' uses
 /// J1's opening. J1 was deleted, so the cutout would fail. Restore J1, or
-/// pick another opening in SolidCraft." `feature` is the enclosure's own
+/// pick another opening in SolidCraft." `feature` is the linked design's own
 /// name for it, `datum` the datum's display name, `cause` what happened on
 /// the board and `restore` what to restore.
-pub fn housing_reference_lost(
+pub fn assembly_reference_lost(
     feature: &str,
     datum: &str,
     cause: &str,
@@ -150,68 +150,68 @@ pub fn housing_reference_lost(
     objects: Vec<ObjectRef>,
 ) -> Finding {
     Finding::new(
-        HOUSING_REFERENCE_LOST,
+        ASSEMBLY_REFERENCE_LOST,
         format!(
-            "The enclosure's {feature} uses {datum}. {cause}, so it would fail. Restore \
+            "The linked design's {feature} uses {datum}. {cause}, so it would fail. Restore \
              {restore}, or pick another reference in SolidCraft"
         ),
         objects,
     )
 }
 
-/// `housing.reference_inexact`.
-pub fn housing_reference_inexact(feature: &str, datum: &str, objects: Vec<ObjectRef>) -> Finding {
+/// `assembly.reference_inexact`.
+pub fn assembly_reference_inexact(feature: &str, datum: &str, objects: Vec<ObjectRef>) -> Finding {
     Finding::new(
-        HOUSING_REFERENCE_INEXACT,
+        ASSEMBLY_REFERENCE_INEXACT,
         format!(
-            "The enclosure's {feature} uses {datum}, which was found again only by its shape. \
+            "The linked design's {feature} uses {datum}, which was found again only by its shape. \
              Check it in SolidCraft"
         ),
         objects,
     )
 }
 
-/// `housing.unexported_face`: "Sketch 'Lid rib' is attached to a face of
+/// `assembly.unexported_face`: "Sketch 'Lid rib' is attached to a face of
 /// U1 that is not exported. …"
-pub fn housing_unexported_face(feature: &str, part: &str, objects: Vec<ObjectRef>) -> Finding {
+pub fn assembly_unexported_face(feature: &str, part: &str, objects: Vec<ObjectRef>) -> Finding {
     Finding::new(
-        HOUSING_UNEXPORTED_FACE,
+        ASSEMBLY_UNEXPORTED_FACE,
         format!(
-            "The enclosure's {feature} is attached to a face of {part} that is not exported. It \
+            "The linked design's {feature} is attached to a face of {part} that is not exported. It \
              may move to another part when the board changes. Export the face to keep it stable"
         ),
         objects,
     )
 }
 
-/// `housing.cycle`: `path` names the loop in both files' words ("Hole H2
-/// follows boss 'Boss 3', and the enclosure places the board by hole H2").
-pub fn housing_cycle(path: &str, objects: Vec<ObjectRef>) -> Finding {
-    Finding::new(HOUSING_CYCLE, path.to_owned(), objects)
+/// `assembly.cycle`: `path` names the loop in both files' words ("Hole H2
+/// follows boss 'Boss 3', and the linked design places the board by hole H2").
+pub fn assembly_cycle(path: &str, objects: Vec<ObjectRef>) -> Finding {
+    Finding::new(ASSEMBLY_CYCLE, path.to_owned(), objects)
 }
 
-/// `housing.missing`.
-pub fn housing_missing() -> Finding {
+/// `assembly.missing`.
+pub fn assembly_missing() -> Finding {
     Finding::new(
-        HOUSING_MISSING,
-        "The enclosure file was not found. The board uses the last known geometry".into(),
+        ASSEMBLY_MISSING,
+        "The linked design file was not found. The board uses the last known geometry".into(),
         vec![ObjectRef::Board],
     )
 }
 
-/// `housing.newer`.
-pub fn housing_newer() -> Finding {
+/// `assembly.newer`.
+pub fn assembly_newer() -> Finding {
     Finding::new(
-        HOUSING_NEWER,
-        "This enclosure was saved by a newer SolidCraft than this Sparksmith can read".into(),
+        ASSEMBLY_NEWER,
+        "This linked design was saved by a newer SolidCraft than this Sparksmith can read".into(),
         vec![ObjectRef::Board],
     )
 }
 
-/// The refusal of a local edit to an edge the enclosure drives.
+/// The refusal of a local edit to an edge the linked design drives.
 pub fn driven_edge() -> Error {
     Error::Conflict(format!(
-        "{HOUSING_DRIVEN_EDGE}: this edge follows the enclosure's wall. Break the link to edit \
+        "{ASSEMBLY_DRIVEN_EDGE}: this edge follows the linked design's wall. Break the link to edit \
          it here"
     ))
 }

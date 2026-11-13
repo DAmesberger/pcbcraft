@@ -1,14 +1,14 @@
 //! Slice B4's gate (acceptance 6 and 7 of the design note) through the
 //! JSON transport, over the ESP32-S31 dev board example (with J1's package
 //! carrying its USB4105 part file's opening, as in B3's gate), with an
-//! original headless SolidCraft enclosure test document: the published
+//! original headless SolidCraft assembly test document: the published
 //! board linked and grounded; a 2 mm wall across J1's opening with a
 //! cutout projected from the opening ("USB opening"); a boss projected
 //! from mounting hole 1 ("Boss"); and a far wall beyond the board's top
 //! edge ("Far wall"), saved as a `.solidcraft` file.
 use super::Session;
 use super::interface_publish_tests::{
-    TestResult, apply, enclosure, faces, instance, ok, open, publish, remove,
+    TestResult, apply, faces, instance, linked_design, ok, open, publish, remove,
 };
 use pcbcraft_core::Operation;
 use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
@@ -17,7 +17,7 @@ use pcbcraft_core::library::footprint_source::{
     SketchRef,
 };
 use pcbcraft_core::model::BoardShape;
-use pcbcraft_solidcraft::enclosure::Enclosure;
+use pcbcraft_solidcraft::linked_design::LinkedDesign;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -25,51 +25,60 @@ use std::path::Path;
 /// a millimetre beyond the board's top edge (y = 64).
 pub(super) const FAR_WALL_Y: f64 = 64.5;
 
-/// The test enclosure with its far wall's inner face at `far_y`, saved at
+/// The test linked design with its far wall's inner face at `far_y`, saved at
 /// `path`.
-pub(super) fn save_enclosure(design: &Path, opening: &str, far_y: f64, path: &Path) -> TestResult {
-    let (mut housing, _) = enclosure(design, opening)?;
-    housing.solid_box("Far wall", [-5.0, far_y, -2.0], [50.0, 2.0, 12.0])?;
+pub(super) fn save_linked_design(
+    design: &Path,
+    opening: &str,
+    far_y: f64,
+    path: &Path,
+) -> TestResult {
+    let (mut assembly_link, _) = linked_design(design, opening)?;
+    assembly_link.solid_box("Far wall", [-5.0, far_y, -2.0], [50.0, 2.0, 12.0])?;
     let _ = std::fs::remove_file(path);
-    housing.save(&path.display().to_string())?;
+    assembly_link.save(&path.display().to_string())?;
     Ok(())
 }
 
-/// The far wall's inner face (normal -y) in a saved enclosure: its name
+/// The far wall's inner face (normal -y) in a saved linked design: its name
 /// and a point on it.
 pub(super) fn far_face(path: &Path) -> TestResult<(String, [f64; 3])> {
-    let (mut housing, newer) = Enclosure::open(&path.display().to_string())?;
+    let (mut assembly_link, newer) = LinkedDesign::open(&path.display().to_string())?;
     assert!(!newer);
-    let face = faces(&mut housing, "Far wall")?
+    let face = faces(&mut assembly_link, "Far wall")?
         .into_iter()
         .find(|f| f.normal.is_some_and(|n| n[1] < -0.99))
         .ok_or("the far wall's inner face")?;
     Ok((face.name, face.point))
 }
 
-/// `housing.status`, the document's view of the link.
+/// `assembly.status`, the document's view of the link.
 pub(super) fn status(session: &mut Session) -> TestResult<Value> {
     Ok(ok(
         session,
         json!({"command": "project.query", "params": {
-            "query": "housing.status", "params": {}}}),
+            "query": "assembly.status", "params": {}}}),
     )?["result"]
         .clone())
 }
 
-/// Whether `housing.preview` finds the enclosure changed since the board
+/// Whether `assembly.preview` finds the linked design changed since the board
 /// read it.
-pub(super) fn changed(session: &mut Session, housing: &Path, design: &Path) -> TestResult<bool> {
+pub(super) fn changed(
+    session: &mut Session,
+    assembly_link: &Path,
+    design: &Path,
+) -> TestResult<bool> {
     let preview = ok(
         session,
-        json!({"command": "housing.preview", "params": files(housing, design)}),
+        json!({"command": "assembly.preview", "params": files(assembly_link, design)}),
     )?;
     preview["changed"].as_bool().ok_or_else(|| "changed".into())
 }
 
-/// The files every enclosure request names.
-pub(super) fn files(housing: &Path, design: &Path) -> Value {
-    json!({"path": housing.display().to_string(), "design": design.display().to_string()})
+/// The files every linked design request names.
+pub(super) fn files(assembly_link: &Path, design: &Path) -> Value {
+    json!({"path": assembly_link.display().to_string(), "design": design.display().to_string()})
 }
 
 pub(super) fn with(mut params: Value, more: Value) -> Value {
@@ -79,13 +88,17 @@ pub(super) fn with(mut params: Value, more: Value) -> Value {
     params
 }
 
-/// `housing.update` with no enclosure linked: link it.
-pub(super) fn link(session: &mut Session, housing: &Path, design: &Path) -> TestResult<Value> {
+/// `assembly.update` with no assembly linked: link it.
+pub(super) fn link(
+    session: &mut Session,
+    assembly_link: &Path,
+    design: &Path,
+) -> TestResult<Value> {
     let revision = session.engine().revision();
     ok(
         session,
-        json!({"command": "housing.update", "params": {
-            "path": housing.display().to_string(),
+        json!({"command": "assembly.update", "params": {
+            "path": assembly_link.display().to_string(),
             "design": design.display().to_string(),
             "expected_revision": revision}}),
     )
@@ -141,22 +154,22 @@ pub(super) fn position(session: &Session, designator: &str) -> TestResult<[f64; 
 }
 
 /// Acceptance 6: deleting J1, the publish preview's dry run names the
-/// enclosure's cutout that would fail, before anything is written. Published
-/// anyway, `housing.status` reads "broken reference", the production check
-/// has an unwaivable `housing.reference_lost` naming the cutout and J1, and
+/// linked design's cutout that would fail, before anything is written. Published
+/// anyway, `assembly.status` reads "broken reference", the production check
+/// has an unwaivable `assembly.reference_lost` naming the cutout and J1, and
 /// undo restores everything.
 #[test]
 fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
-    let housing = dir.path().join("housing.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
     let mut session = open(dir.path())?;
     let j1 = instance(&session, "J1")?;
     let opening = format!("i{j1}.opening");
     publish(&mut session, &design, "interface")?;
-    save_enclosure(&design, &opening, FAR_WALL_Y, &housing)?;
-    let linked = link(&mut session, &housing, &design)?;
-    let consumers = linked["housing"]["consumers"]
+    save_linked_design(&design, &opening, FAR_WALL_Y, &assembly_link)?;
+    let linked = link(&mut session, &assembly_link, &design)?;
+    let consumers = linked["assembly"]["consumers"]
         .as_array()
         .ok_or("consumers")?;
     assert!(
@@ -170,9 +183,9 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
         "the boss uses mounting hole 1: {consumers:?}"
     );
     assert_eq!(status(&mut session)?["state"], "linked");
-    assert!(!changed(&mut session, &housing, &design)?);
+    assert!(!changed(&mut session, &assembly_link, &design)?);
     let before = session.engine().project().clone();
-    let enclosure_bytes = std::fs::read(&housing)?;
+    let linked_design_bytes = std::fs::read(&assembly_link)?;
 
     remove(&mut session, j1)?;
     let design_bytes = std::fs::read(&design)?;
@@ -180,7 +193,7 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
         &mut session,
         json!({"command": "interface.publish_preview", "params": {
             "path": design.display().to_string(), "tier": "interface",
-            "enclosure_path": housing.display().to_string()}}),
+            "assembly_path": assembly_link.display().to_string()}}),
     )?;
     assert_eq!(
         std::fs::read(&design)?,
@@ -188,9 +201,9 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
         "a preview writes nothing"
     );
     assert_eq!(
-        std::fs::read(&housing)?,
-        enclosure_bytes,
-        "the enclosure is never written"
+        std::fs::read(&assembly_link)?,
+        linked_design_bytes,
+        "the linked design is never written"
     );
     let effects = preview["dry_run"]["effects"]
         .as_array()
@@ -202,7 +215,7 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
     assert_eq!(cutout["feature"], "USB opening");
     assert_eq!(
         cutout["message"],
-        "The enclosure's ‘USB opening’ uses J1 opening, which this publish removes, so it would \
+        "The linked design's ‘USB opening’ uses J1 opening, which this publish removes, so it would \
          fail"
     );
     assert!(cutout["datum"].is_u64(), "{cutout}");
@@ -212,7 +225,7 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
     let broken = status(&mut session)?;
     assert_eq!(broken["state"], "broken_reference", "{broken}");
     assert_eq!(broken["words"], "broken reference");
-    let items = preflight(&mut session, "housing.reference_lost")?;
+    let items = preflight(&mut session, "assembly.reference_lost")?;
     let [item] = items.as_slice() else {
         return Err(format!("one broken reference: {items:?}").into());
     };
@@ -228,7 +241,7 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
         "expected_revision": revision,
         "operation": {"editor": "Fabrication", "operation": {
             "command": "fabrication.waive",
-            "params": {"keys": [item["key"]], "reason": "the enclosure is redone"}}}}}));
+            "params": {"keys": [item["key"]], "reason": "the linked design is redone"}}}}}));
     assert_eq!(waive["ok"], false, "{waive}");
 
     // Undo the publish's record, then the deletion.
@@ -239,30 +252,30 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
         before,
         "undo restores the document"
     );
-    assert!(preflight(&mut session, "housing.reference_lost")?.is_empty());
+    assert!(preflight(&mut session, "assembly.reference_lost")?.is_empty());
     assert_eq!(status(&mut session)?["state"], "linked");
     Ok(())
 }
 
-/// The dry run of a move names the enclosure feature that follows, by its
+/// The dry run of a move names the linked design feature that follows, by its
 /// SolidCraft name (acceptance 2's second half): J1 moved 2 mm, the
 /// cutout moves 2 mm along X; nothing fails.
 #[test]
 fn b4_the_dry_run_names_the_feature_that_follows() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
-    let housing = dir.path().join("housing.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "interface")?;
-    save_enclosure(&design, &opening, FAR_WALL_Y, &housing)?;
-    link(&mut session, &housing, &design)?;
+    save_linked_design(&design, &opening, FAR_WALL_Y, &assembly_link)?;
+    link(&mut session, &assembly_link, &design)?;
     super::interface_publish_tests::move_j1(&mut session, 2.0)?;
     let preview = ok(
         &mut session,
         json!({"command": "interface.publish_preview", "params": {
             "path": design.display().to_string(), "tier": "interface",
-            "enclosure_path": housing.display().to_string()}}),
+            "assembly_path": assembly_link.display().to_string()}}),
     )?;
     let effects = preview["dry_run"]["effects"]
         .as_array()
@@ -274,37 +287,37 @@ fn b4_the_dry_run_names_the_feature_that_follows() -> TestResult {
     assert_eq!(moves["feature"], "USB opening");
     assert_eq!(
         moves["message"],
-        "The enclosure's ‘USB opening’ follows J1 opening: it moves 2 mm along X"
+        "The linked design's ‘USB opening’ follows J1 opening: it moves 2 mm along X"
     );
     Ok(())
 }
 
-/// Acceptance 7: the enclosure → board direction. The board's top edge
+/// Acceptance 7: the linked design → board direction. The board's top edge
 /// is dimensioned 0.5 mm from the far wall's inner face, followed as a
-/// housing reference, and SW2 is dimensioned 7 mm from the top edge. The
-/// wall moved 1 mm in the test document: `housing.preview` finds the
-/// enclosure changed and lists the reference, the top
-/// edge and SW2, each 1 mm along Y; `housing.update` at the previewed hash
+/// followed face, and SW2 is dimensioned 7 mm from the top edge. The
+/// wall moved 1 mm in the test document: `assembly.preview` finds the
+/// linked design changed and lists the reference, the top
+/// edge and SW2, each 1 mm along Y; `assembly.update` at the previewed hash
 /// applies it as one undo step.
 #[test]
-fn b4_the_board_follows_the_enclosure_wall() -> TestResult {
+fn b4_the_board_follows_the_linked_design_wall() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
-    let housing = dir.path().join("housing.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "interface")?;
-    save_enclosure(&design, &opening, FAR_WALL_Y, &housing)?;
-    link(&mut session, &housing, &design)?;
-    let (face, pick) = far_face(&housing)?;
+    save_linked_design(&design, &opening, FAR_WALL_Y, &assembly_link)?;
+    link(&mut session, &assembly_link, &design)?;
+    let (face, pick) = far_face(&assembly_link)?;
     let revision = session.engine().revision();
     let added = ok(
         &mut session,
-        json!({"command": "housing.follow", "params": with(files(&housing, &design), json!({
+        json!({"command": "assembly.follow", "params": with(files(&assembly_link, &design), json!({
             "body": "Far wall", "face": face, "pick": pick, "name": "Far wall · inner face",
             "expected_revision": revision}))}),
     )?;
-    let reference = &added["housing"]["references"][0];
+    let reference = &added["assembly"]["references"][0];
     assert_eq!(reference["status"], "resolved");
     let curve = reference["sketch"]["curve"]
         .as_str()
@@ -361,17 +374,17 @@ fn b4_the_board_follows_the_enclosure_wall() -> TestResult {
     let sw2_before = position(&session, "SW2")?;
     assert!((sw2_before[1] - 57.0).abs() <= 1e-9, "{sw2_before:?}");
     let j1_before = position(&session, "J1")?;
-    assert!(!changed(&mut session, &housing, &design)?);
+    assert!(!changed(&mut session, &assembly_link, &design)?);
 
     // The wall moves 1 mm in the test document.
-    save_enclosure(&design, &opening, FAR_WALL_Y + 1.0, &housing)?;
-    assert_eq!(far_face(&housing)?.0, face, "the same face, by name");
+    save_linked_design(&design, &opening, FAR_WALL_Y + 1.0, &assembly_link)?;
+    assert_eq!(far_face(&assembly_link)?.0, face, "the same face, by name");
 
     let before = session.engine().project().clone();
     let revision = session.engine().revision();
     let preview = ok(
         &mut session,
-        json!({"command": "housing.preview", "params": files(&housing, &design)}),
+        json!({"command": "assembly.preview", "params": files(&assembly_link, &design)}),
     )?;
     assert_eq!(
         session.engine().revision(),
@@ -402,16 +415,16 @@ fn b4_the_board_follows_the_enclosure_wall() -> TestResult {
     assert_eq!(row["summary"], "Far wall · inner face, 1 mm along Y");
 
     // A stale hash is refused, changing nothing.
-    let stale = session.dispatch(json!({"command": "housing.update", "params": with(
-        files(&housing, &design), json!({
-        "expect_hash": before.housing.as_ref().ok_or("linked")?.file_sha256.to_string(),
+    let stale = session.dispatch(json!({"command": "assembly.update", "params": with(
+        files(&assembly_link, &design), json!({
+        "expect_hash": before.assembly_link.as_ref().ok_or("linked")?.file_sha256.to_string(),
         "expected_revision": revision}))}));
     assert_eq!(stale["ok"], false, "{stale}");
     assert_eq!(session.engine().revision(), revision);
 
     ok(
         &mut session,
-        json!({"command": "housing.update", "params": with(files(&housing, &design), json!({
+        json!({"command": "assembly.update", "params": with(files(&assembly_link, &design), json!({
             "expect_hash": preview["expect_hash"], "expected_revision": revision}))}),
     )?;
     assert_eq!(session.engine().revision(), revision + 1, "one step");
@@ -421,7 +434,7 @@ fn b4_the_board_follows_the_enclosure_wall() -> TestResult {
     assert!((sw2_after[1] - sw2_before[1] - 1.0).abs() <= 1e-9);
     assert!((sw2_after[0] - sw2_before[0]).abs() <= 1e-9);
     assert_eq!(position(&session, "J1")?, j1_before);
-    assert!(!changed(&mut session, &housing, &design)?);
+    assert!(!changed(&mut session, &assembly_link, &design)?);
     assert_eq!(status(&mut session)?["state"], "linked");
 
     undo(&mut session)?;
@@ -433,53 +446,53 @@ fn b4_the_board_follows_the_enclosure_wall() -> TestResult {
     Ok(())
 }
 
-/// A missing enclosure: the preview says so in the user's words, the
+/// A missing linked design: the preview says so in the user's words, the
 /// project keeps its snapshot, and a relink to its new place, previewed
 /// there, links it again.
 #[test]
-fn b4_a_missing_enclosure_keeps_the_snapshot() -> TestResult {
+fn b4_a_missing_linked_design_keeps_the_snapshot() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
-    let housing = dir.path().join("housing.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "interface")?;
-    save_enclosure(&design, &opening, FAR_WALL_Y, &housing)?;
-    link(&mut session, &housing, &design)?;
+    save_linked_design(&design, &opening, FAR_WALL_Y, &assembly_link)?;
+    link(&mut session, &assembly_link, &design)?;
     let moved = dir.path().join("moved.solidcraft");
-    std::fs::rename(&housing, &moved)?;
-    let missing = session.dispatch(json!({"command": "housing.preview",
-        "params": files(&housing, &design)}));
+    std::fs::rename(&assembly_link, &moved)?;
+    let missing = session.dispatch(json!({"command": "assembly.preview",
+        "params": files(&assembly_link, &design)}));
     assert_eq!(missing["ok"], false);
     assert!(
         missing
             .to_string()
-            .contains("The enclosure file was not found"),
+            .contains("The linked design file was not found"),
         "{missing}"
     );
     // The project keeps its snapshot.
     assert_eq!(status(&mut session)?["state"], "linked");
     // Without a preview's hash nothing is applied.
     let revision = session.engine().revision();
-    let unreviewed = session.dispatch(json!({"command": "housing.update", "params": with(
+    let unreviewed = session.dispatch(json!({"command": "assembly.update", "params": with(
         files(&moved, &design), json!({"expected_revision": revision}))}));
     assert_eq!(unreviewed["ok"], false, "{unreviewed}");
     assert_eq!(session.engine().revision(), revision);
     // Relinked at its new place, as previewed there.
     let there = ok(
         &mut session,
-        json!({"command": "housing.preview", "params": files(&moved, &design)}),
+        json!({"command": "assembly.preview", "params": files(&moved, &design)}),
     )?;
     assert!(there["refused"].is_null(), "{there}");
     assert_eq!(there["changed"], false, "the same file, moved");
     ok(
         &mut session,
-        json!({"command": "housing.update", "params": with(files(&moved, &design), json!({
+        json!({"command": "assembly.update", "params": with(files(&moved, &design), json!({
             "expect_hash": there["expect_hash"], "expected_revision": revision}))}),
     )?;
     let linked = status(&mut session)?;
     assert_eq!(
-        linked["enclosure_hint"],
+        linked["assembly_hint"],
         moved.display().to_string(),
         "{linked}"
     );

@@ -73,8 +73,8 @@ fn project_except_library(p: &Project) -> Result<()> {
         ));
     }
     crate::interface::check_table(&p.interface)?;
-    if let Some(link) = p.housing.as_deref() {
-        crate::interface::housing::check_link(link)?;
+    if let Some(link) = p.assembly_link.as_deref() {
+        crate::interface::assembly_link::check_link(link)?;
     }
     instances::check_all(p)?;
     instances::check_designators(p)?;

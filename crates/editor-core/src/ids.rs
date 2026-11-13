@@ -399,7 +399,7 @@ random_id!(
 random_id!(
     /// A board's permanent identity in its published interface
     /// (docs/architecture/board-interface.md): random, drawn once and kept
-    /// across every publish, so an enclosure can tell an older revision of
+    /// across every publish, so a linked design can tell an older revision of
     /// the same board from a different board. A deliberate slot
     /// compaction draws a new one (a new epoch).
     InterfaceSourceId

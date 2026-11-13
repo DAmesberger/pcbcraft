@@ -1,4 +1,4 @@
-//! The board interface: the datums an enclosure may reference, their
+//! The board interface: the datums a linked design may reference, their
 //! append-only slot table, the `interface.*` commands, the reports, the
 //! findings and the exported sidecar (docs/architecture/board-interface.md).
 //!
@@ -28,10 +28,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub mod apply;
+pub mod assembly_link;
 pub mod auto;
 pub mod command;
 pub mod findings;
-pub mod housing;
 pub mod list;
 pub mod package;
 pub mod publish;
@@ -42,7 +42,7 @@ mod tests;
 
 pub use command::{ExportTarget, InterfaceCommand, PublishParams, PublishPreviewParams};
 pub use report::{
-    ChangeKind, DatumChange, DatumRow, DryRun, EffectKind, EnclosureEffect, InterfaceList,
+    AssemblyEffect, ChangeKind, DatumChange, DatumRow, DryRun, EffectKind, InterfaceList,
     PublishPreview, RuleState,
 };
 pub use sidecar::{FORMAT, Sidecar, SidecarDatum};
@@ -60,10 +60,10 @@ pub fn schemas() -> serde_json::Value {
         "publish_preview": schemars::schema_for!(PublishPreviewParams),
         "list": schemars::schema_for!(InterfaceList),
         "preview": schemars::schema_for!(PublishPreview),
-        "housing_link": schemars::schema_for!(crate::model::housing::HousingLink),
-        "housing_command": schemars::schema_for!(housing::HousingCommand),
-        "housing_preview": schemars::schema_for!(housing::HousingPreview),
-        "housing_status": schemars::schema_for!(housing::HousingStatus),
+        "assembly_link": schemars::schema_for!(crate::model::assembly_link::AssemblyLink),
+        "assembly_command": schemars::schema_for!(assembly_link::AssemblyCommand),
+        "assembly_preview": schemars::schema_for!(assembly_link::AssemblyPreview),
+        "assembly_status": schemars::schema_for!(assembly_link::AssemblyStatus),
     })
 }
 
@@ -313,7 +313,7 @@ pub fn allocate_slot(table: &mut InterfaceTable) -> Result<Slot> {
     if table.next_slot >= MAX_SLOTS {
         return Err(Error::Limit(format!(
             "interface.slots: a board's interface holds at most {MAX_SLOTS} slots over its \
-             history; compacting them makes every enclosure reference to be picked again"
+             history; compacting them makes every assembly reference to be picked again"
         )));
     }
     let slot = Slot(table.next_slot);
@@ -376,10 +376,10 @@ pub fn check_table(table: &InterfaceTable) -> Result<()> {
         if is_feature != datum.feature.is_some()
             || matches!(
                 datum.feature,
-                Some(crate::model::dimension::BoardRef::Housing(_))
+                Some(crate::model::dimension::BoardRef::FollowedFace(_))
             )
         {
-            return bad("only a feature datum names a feature, and never a housing reference");
+            return bad("only a feature datum names a feature, and never a followed face");
         }
         if !is_feature && !keys.insert(&datum.key) {
             return bad("two datums share a key");

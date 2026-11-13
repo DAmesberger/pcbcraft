@@ -34,7 +34,7 @@ fn b2_no_opening_is_inferred_from_a_name() -> Fallible {
 // B3: the exported design, the sidecar, publish and its preview
 // (acceptance 1 to 5 and 8). The core's halves are here, with their bodies
 // in `super::b3`; the halves that need Solidcraft or files run where those
-// are: the exported design and a headless SolidCraft enclosure in
+// are: the exported design and a headless SolidCraft assembly in
 // `pcbcraft-solidcraft` (`interface::tests`), and `interface.publish` and
 // `interface.publish_preview` over the ESP32 example in the automation
 // session (`session::interface_publish_tests`), under the same names.

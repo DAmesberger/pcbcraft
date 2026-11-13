@@ -468,7 +468,7 @@ pub struct PcbEditor {
     /// (`interface_card`).
     interface: interface_card::InterfaceUi,
     /// The project file, set by the app each frame: where the interface is
-    /// published by default, and what relative enclosure paths are read
+    /// published by default, and what relative linked design paths are read
     /// against. `None` for a project never saved.
     pub project_path: Option<std::path::PathBuf>,
     /// Board bounds a Locate asked the next Layout frame to frame.
@@ -1313,7 +1313,7 @@ impl PcbEditor {
         if let Some(operation) = self.part_chooser_frame(ui.ctx(), engine) {
             return CardResponse::output(Some(operation));
         }
-        // A publish's record or an enclosure's read, the frame it arrives.
+        // A publish's record or a linked design's read, the frame it arrives.
         if let Some(operation) = self.interface_poll(ui.ctx()) {
             return CardResponse::output(Some(operation));
         }

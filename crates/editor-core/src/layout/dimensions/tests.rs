@@ -200,8 +200,8 @@ fn bad_dimensions_and_a_missing_evaluator_are_refused() -> Fallible<()> {
     no_value.value = None;
     let mut valued = to_right(part);
     valued.kind = PartRelation::Geom(crate::library::footprint_source::GeomConstraint::Coincident);
-    let mut housing = to_right(part);
-    housing.refs[1] = BoardRef::Housing(crate::model::dimension::HousingRefId(1));
+    let mut assembly_link = to_right(part);
+    assembly_link.refs[1] = BoardRef::FollowedFace(crate::model::dimension::FollowedFaceId(1));
     let mut pad = to_right(part);
     pad.refs[0] = BoardRef::Part(FeatureRef::Pad {
         placement: part,
@@ -214,7 +214,7 @@ fn bad_dimensions_and_a_missing_evaluator_are_refused() -> Fallible<()> {
         board_only,
         no_value,
         valued,
-        housing,
+        assembly_link,
         pad,
         to_right(part),
     ] {

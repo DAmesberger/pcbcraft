@@ -18,7 +18,7 @@ pub const MAX_PART_DIMENSIONS: usize = 4096;
 /// References one part dimension names (1–3).
 pub const MAX_DIMENSION_REFS: usize = 3;
 
-/// A dimension or constraint between board, housing and part geometry.
+/// A dimension or constraint between board, assembly and part geometry.
 /// Only parts it names are solved; every other part keeps its stored pose.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -103,8 +103,8 @@ pub enum BoardRef {
     Board(SketchRef),
     /// A feature of a placed part (or of a fill or keepout's origin).
     Part(FeatureRef),
-    /// A housing reference (§7.2; slice S7).
-    Housing(HousingRefId),
+    /// A followed face (§7.2; slice S7).
+    FollowedFace(FollowedFaceId),
 }
 
 /// A feature of a placed part, rebuilt from the library
@@ -208,12 +208,12 @@ pub enum End {
     End,
 }
 
-/// A housing reference's identity in the project (slice S7).
+/// A followed face's identity in the project (slice S7).
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
 #[serde(transparent)]
-pub struct HousingRefId(pub u32);
+pub struct FollowedFaceId(pub u32);
 
 macro_rules! model_name {
     ($(#[$doc:meta])* $name:ident) => {

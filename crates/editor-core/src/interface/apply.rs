@@ -59,10 +59,10 @@ fn key_of(project: &Project, target: &ExportTarget) -> Result<(DatumKey, Option<
     match target {
         ExportTarget::Feature { feature } => {
             let owner = match feature {
-                BoardRef::Housing(_) => {
+                BoardRef::FollowedFace(_) => {
                     return Err(refused(
-                        "interface.housing",
-                        "a housing reference belongs to the enclosure; the board cannot export it",
+                        "interface.followed_face",
+                        "a followed face belongs to the linked design; the board cannot export it",
                     ));
                 }
                 BoardRef::Board(_) => DatumOwner::Board,
@@ -94,7 +94,7 @@ fn key_of(project: &Project, target: &ExportTarget) -> Result<(DatumKey, Option<
                 })?;
             if declared.external {
                 return Err(Error::Conflict(
-                    "interface.automatic: the package marks this datum for the enclosure, so it \
+                    "interface.automatic: the package marks this datum for the linked design, so it \
                      is exported for every placement; switch the external datums rule instead"
                         .into(),
                 ));
@@ -231,7 +231,7 @@ fn record_publish(
     }
     let mut record = record;
     if let Some(last) = table.published.take() {
-        // The files earlier publishes wrote name the revision an enclosure
+        // The files earlier publishes wrote name the revision a linked design
         // still holds (slice B5); the oldest go first past the bound.
         let mut earlier = last.earlier;
         if let Some(sha256) = last.design_sha256

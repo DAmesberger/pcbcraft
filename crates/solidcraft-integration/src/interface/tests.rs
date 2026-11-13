@@ -2,11 +2,11 @@
 //! Slice B3's exported design on the demo board, with an external opening
 //! on its package: the slots name faces Solidcraft really made, a slot's
 //! names do not depend on what came before it, the tiers share section 1,
-//! the metadata carries the sidecar, and a headless enclosure that links
+//! the metadata carries the sidecar, and a headless linked design that links
 //! the design follows a part moved by `layout.move`. The ESP32 example's
 //! acceptance tests run through the automation session.
 use super::{SLAB, build, read_metadata};
-use crate::enclosure::{Enclosure, Operation};
+use crate::linked_design::{LinkedDesign, Operation};
 use pcbcraft_core::ids::{Id, InterfaceSourceId};
 use pcbcraft_core::interface::publish::{candidate, record};
 use pcbcraft_core::interface::{InterfaceCommand, Sidecar};
@@ -126,8 +126,8 @@ fn face_names(native: &mut crate::native::Native, body: &str) -> Fallible<Vec<St
 /// made moved by 2 mm ± 1 µm along X. Returns how many moved.
 fn compare_wall(
     box_faces: &[String],
-    before: &[crate::enclosure::Face],
-    after: &[crate::enclosure::Face],
+    before: &[crate::linked_design::Face],
+    after: &[crate::linked_design::Face],
 ) -> Fallible<usize> {
     let mut followed = 0;
     assert_eq!(before.len(), after.len(), "the wall keeps its faces");
@@ -305,13 +305,13 @@ fn a_published_board_is_checked_against_its_plan() -> Fallible {
     Ok(())
 }
 
-/// The enclosure follows: a wall in front of the board with a cutout
+/// The linked design follows: a wall in front of the board with a cutout
 /// projected from the first part's opening; the part moved 2 mm along X by
 /// `layout.move`, the interface published again and the links updated,
 /// the cutout's faces moved 2 mm ± 1 µm along X and no other face of the
 /// wall moved.
 #[test]
-fn a_linked_enclosure_follows_a_moved_part() -> Fallible {
+fn a_linked_design_follows_a_moved_part() -> Fallible {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("board.solidcraft");
     let mut engine = engine()?;
@@ -327,27 +327,27 @@ fn a_linked_enclosure_follows_a_moved_part() -> Fallible {
         return Err("a volume".into());
     };
     let o = frame.origin.0;
-    let mut enclosure = Enclosure::new("Housing")?;
-    let bodies = enclosure.link(path.to_str().ok_or("path")?, "Board")?;
+    let mut linked_design = LinkedDesign::new("Assembly")?;
+    let bodies = linked_design.link(path.to_str().ok_or("path")?, "Board")?;
     assert!(bodies.contains(&token), "{bodies:?}");
-    let front = enclosure
+    let front = linked_design
         .faces(&token)?
         .into_iter()
         .find(|f| f.normal.is_some_and(|n| n[1] < -0.99))
         .ok_or("the opening's front face")?;
     // A 2 mm wall across the opening's way out, 1 mm in front of it.
     let wall_y = o[1] - 1.0;
-    enclosure.solid_box(
+    linked_design.solid_box(
         "Wall",
         [o[0] - 20.0, wall_y - 2.0, o[2] - 6.0],
         [40.0, 2.0, 12.0],
     )?;
-    let box_faces: Vec<String> = enclosure
+    let box_faces: Vec<String> = linked_design
         .faces("Wall")?
         .into_iter()
         .map(|f| f.name)
         .collect();
-    enclosure.projected(
+    linked_design.projected(
         "USB opening",
         [[0.0, wall_y, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
         &token,
@@ -356,11 +356,11 @@ fn a_linked_enclosure_follows_a_moved_part() -> Fallible {
         Operation::Cut,
     )?;
     assert!(
-        enclosure.feature_errors().is_empty(),
+        linked_design.feature_errors().is_empty(),
         "{:?}",
-        enclosure.feature_errors()
+        linked_design.feature_errors()
     );
-    let wall = enclosure.faces("Wall")?;
+    let wall = linked_design.faces("Wall")?;
     assert!(
         wall.len() > 6,
         "the cutout went through the wall: {} faces",
@@ -369,14 +369,14 @@ fn a_linked_enclosure_follows_a_moved_part() -> Fallible {
 
     move_by(&mut engine, part, [2.0, 0.0])?;
     publish(&mut engine, Tier::Interface, &path)?;
-    let update = enclosure.update_links()?;
+    let update = linked_design.update_links()?;
     assert!(update.failed.is_empty(), "{update:?}");
     assert!(
-        enclosure.feature_errors().is_empty(),
+        linked_design.feature_errors().is_empty(),
         "{:?}",
-        enclosure.feature_errors()
+        linked_design.feature_errors()
     );
-    let moved = enclosure.faces("Wall")?;
+    let moved = linked_design.faces("Wall")?;
     let followed = compare_wall(&box_faces, &wall, &moved)?;
     assert!(followed >= 4, "the cutout's faces moved: {followed}");
     Ok(())

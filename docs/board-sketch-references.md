@@ -1,4 +1,4 @@
-# Board sketch, dimensioned parts and housings (design)
+# Board sketch, dimensioned parts and assemblies (design)
 
 Design for review, 9 November 2026. Base: `component-model` at 88fc2bb. Nothing here is built.
 
@@ -8,12 +8,12 @@ The founder asked: "can we do complex board shapes also with solidcrafts sketch 
 2. **Parts are assembled, not projected.** Their seating on the board surface is given and never solved. Dimensions go to the faces, edges and points of the part's own 3D model.
 3. **Only dimensioned parts are solved.** Every other part keeps its stored x, y and rotation.
 4. **Parts never drive the board.**
-5. **A housing drives the board.** An enclosure designed in Solidcraft can drive the outline, the mounting holes and the board's position.
-6. **Solidcraft sees the same geometry.** Solidcraft must be able to dimension between a connector on the board and an opening in the housing, in either direction. The board's parts must therefore be real faces with stable names inside the Solidcraft assembly.
+5. **An assembly drives the board.** A linked design designed in Solidcraft can drive the outline, the mounting holes and the board's position.
+6. **Solidcraft sees the same geometry.** Solidcraft must be able to dimension between a connector on the board and an opening in the assembly, in either direction. The board's parts must therefore be real faces with stable names inside the Solidcraft assembly.
 7. **Face references on every model,** generated and library models included.
-8. **The board is a sub-assembly of the housing,** placed by ordinary mates. Cycles across the two files are detected and reported.
-9. **Changes are checked both ways.** A change in either file is checked and previewed, like a library update, before it is applied on the other side. A missing housing offers relink. Housing parameters bind explicitly.
-10. **No upstream proposal for live cross-file links.** The round trip uses only what Solidcraft has. Sparksmith writes its own board `.solidcraft`, never the housing.
+8. **The board is a sub-assembly of the linked design,** placed by ordinary mates. Cycles across the two files are detected and reported.
+9. **Changes are checked both ways.** A change in either file is checked and previewed, like a library update, before it is applied on the other side. A missing assembly offers relink. Assembly parameters bind explicitly.
+10. **No upstream proposal for live cross-file links.** The round trip uses only what Solidcraft has. Sparksmith writes its own board `.solidcraft`, never the assembly.
 11. **Lost or inexact references block fab output,** with no waiver. Free-form outlines reach fab output as fitted arcs, within a tolerance that is a design rule.
 
 ## 1. Where it stands (verified in code)
@@ -48,7 +48,7 @@ Checked in two places: upstream `tangency-labs/solidcraft` main as checked out a
 
 **How a linked design behaves** (`component_link.rs`, `session_bodies`):
 
-- The linked design is evaluated on its own. Its **solid** world bodies are exported as STEP and imported into one Import feature of one component. A board inserted this way is one rigid component in the housing; its inner occurrences are not kept.
+- The linked design is evaluated on its own. Its **solid** world bodies are exported as STEP and imported into one Import feature of one component. A board inserted this way is one rigid component in the assembly; its inner occurrences are not kept.
 - **Mesh bodies are not linked** ("mesh bodies of … are not linked").
 - The imported faces carry the source design's own face names (`carried_face_names`, `Feature::link_faces`). A joint or sketch link on a linked face therefore follows the source's naming through `update_links`, and reports when the face is gone.
 - `update_links` re-reads a design only when its bytes changed (an in-session digest that is not saved). It returns `updated`, `unchanged` and warnings, including joints whose faces are gone or no longer solve, and it can be undone. It has no dry run.
@@ -62,21 +62,21 @@ There are two files and three solves. Every value has exactly one owner.
 
 | Value | Owner and solver | Others see it as |
 | --- | --- | --- |
-| Board outline, cutouts, mounting holes | `.pcbcraft`: the board sketch solve (§5.1), whose inputs may include housing references | Housing: faces of the linked board (laminate side faces, hole walls) |
-| Pose of a dimensioned part | `.pcbcraft`: the parts solve (§5.2) | Board design: planar joint expressions; housing: the part's linked faces |
+| Board outline, cutouts, mounting holes | `.pcbcraft`: the board sketch solve (§5.1), whose inputs may include followed faces | Assembly: faces of the linked board (laminate side faces, hole walls) |
+| Pose of a dimensioned part | `.pcbcraft`: the parts solve (§5.2) | Board design: planar joint expressions; assembly: the part's linked faces |
 | Pose of any other part | `.pcbcraft`: stored `Placement` | Same as above |
 | Seating (side, z, tilt) | Side and stackup (§5.3); never solved | Joint offset expression |
-| Housing geometry (walls, openings, bosses) | Housing file: Solidcraft's own evaluation, whose sketches may project linked board faces | Sparksmith: housing references, read from the housing file |
-| The board's place in the housing | Housing file: Solidcraft mates on the board component | Sparksmith: the board component's world transform, read from the housing |
+| Assembly geometry (walls, openings, bosses) | Assembly file: Solidcraft's own evaluation, whose sketches may project linked board faces | Sparksmith: followed faces, read from the assembly file |
+| The board's place in the assembly | Assembly file: Solidcraft mates on the board component | Sparksmith: the board component's world transform, read from the assembly |
 
-**A connector and a housing opening.** Both directions use real named faces:
+**A connector and an assembly opening.** Both directions use real named faces:
 
-- **The opening follows the connector.** In Solidcraft, the housing's opening sketch projects the connector's linked faces (`LinkSource::Face` with `face_name`) and is dimensioned to them on all four sides. The housing owns that dimension.
-- **The connector follows the opening.** In Sparksmith, a part dimension names the housing's opening face as a housing reference. The `.pcbcraft` owns that dimension.
+- **The opening follows the connector.** In Solidcraft, the assembly's opening sketch projects the connector's linked faces (`LinkSource::Face` with `face_name`) and is dimensioned to them on all four sides. The assembly owns that dimension.
+- **The connector follows the opening.** In Sparksmith, a part dimension names the assembly's opening face as a followed face. The `.pcbcraft` owns that dimension.
 
 A dimension lives in the file whose geometry it drives. The cycle check (§7.3) refuses one piece of geometry being driven from both files.
 
-**One placement, seen by both.** `Placement` → the board design's joint expressions → the board's solid bodies → the housing's linked copy after Update Links. Solidcraft never solves a part pose. Sparksmith never solves housing geometry or the board's place in the housing; it reads them.
+**One placement, seen by both.** `Placement` → the board design's joint expressions → the board's solid bodies → the assembly's linked copy after Update Links. Solidcraft never solves a part pose. Sparksmith never solves assembly geometry or the board's place in the assembly; it reads them.
 
 ## 4. Scope
 
@@ -89,17 +89,17 @@ A dimension lives in the file whose geometry it drives. The cycle check (§7.3) 
   - courtyard;
   - authored anchors;
   - 3D faces, edges and vertices of every 3D model kind except glTF meshes (§6.3).
-- Housing references: faces, edges, axes and sketch curves of the housing, in the board's frame, driving the board sketch and dimensioned parts. Explicit parameter bindings.
-- Stable face names in the board `.solidcraft` that Sparksmith writes, so the housing can reference board and part faces.
-- A two-way impact check, cycle detection, update order, and relink for a missing housing.
+- Followed faces: faces, edges, axes and sketch curves of the assembly, in the board's frame, driving the board sketch and dimensioned parts. Explicit parameter bindings.
+- Stable face names in the board `.solidcraft` that Sparksmith writes, so the assembly can reference board and part faces.
+- A two-way impact check, cycle detection, update order, and relink for a missing assembly.
 - `EdgeConstraint` replaced.
 
 ### Out
 
 - Parts driving the board.
-- Sparksmith writing the housing file.
+- Sparksmith writing the assembly file.
 - Live cross-file links (founder decision).
-- Part faces with no single trace in the board plane: sloped or free-form part faces. A housing wall with draft is read as its section at a board surface.
+- Part faces with no single trace in the board plane: sloped or free-form part faces. An assembly wall with draft is read as its section at a board surface.
 - Tracks, vias and copper as dimension participants.
 - Panels.
 
@@ -137,7 +137,7 @@ pub struct PartDimension {
 pub enum BoardRef {
     Board(SketchRef),                // board-sketch point or curve, stable sketch id
     Part(FeatureRef),
-    Housing(HousingRefId),           // §7.2
+    Assembly(FollowedFaceId),           // §7.2
 }
 
 pub enum FeatureRef {
@@ -160,7 +160,7 @@ pub struct ModelFaceRef { pub body: BodyName, pub face: FaceName, pub pick: [f64
 
 1. Group the dimensioned parts into connected components; two parts are connected when a dimension names both.
 2. For each component the operation touched, build a scratch Solidcraft sketch:
-   - the named board and housing geometry, held fixed;
+   - the named board and assembly geometry, held fixed;
    - per part, an origin and a construction axis;
    - the referenced features, bound to that frame with `PatternPoint` (y mirrored on the bottom side);
    - the dimensions.
@@ -206,18 +206,18 @@ The trace is exact, because the seating leaves only x, y and the rotation. It is
 | Courtyard side | The box side in the part frame | Always resolves |
 | Anchor | Authored name in the model design | Absent: `Lost` |
 | Model face, edge, vertex | `ModelFaceRef` in an exact model revision | Re-found by name. Upstream `inexact`, a geometry check failing (§6.2), or an unverified name → `Inexact`; not found or no longer square → `Lost` |
-| Housing reference | §7.2 | Same rules, against the housing file |
+| Followed face | §7.2 | Same rules, against the assembly file |
 | Board curve or point | Stable sketch id | Deleted: `Lost` |
 
-A lost or inexact reference keeps its last geometry, so nothing jumps. It is reported as `board.reference_lost` or `board.reference_inexact`, and blocks fab preflight with no waiver. The user re-picks the reference, or acknowledges an `Inexact` one in an impact preview, which makes it `Resolved`. Library-update and housing-update previews list these references before anything changes.
+A lost or inexact reference keeps its last geometry, so nothing jumps. It is reported as `board.reference_lost` or `board.reference_inexact`, and blocks fab preflight with no waiver. The user re-picks the reference, or acknowledges an `Inexact` one in an impact preview, which makes it `Resolved`. Library-update and assembly-update previews list these references before anything changes.
 
 ### 5.6 Commands, persistence, `EdgeConstraint`
 
 - **Commands.** Each is one atomic undo step through the one engine.
   - `board.edit` gains `SetCutoutKind`, `AddSpline`, `AddEllipse` and `AddConic`.
   - New `layout.dimensions` (add, edit, delete) for part dimensions.
-  - New `housing.*` commands (§7).
-- **Persistence.** `Project::edge_constraints` and `BoardSketch::outline` are removed; `part_dimensions` and `housing` are added. The format has one version and no migration. `deny_unknown_fields` refuses old files; only the showcase used `edge_constraints`, and it is regenerated.
+  - New `assembly.*` commands (§7).
+- **Persistence.** `Project::edge_constraints` and `BoardSketch::outline` are removed; `part_dimensions` and `assembly_link` are added. The format has one version and no migration. `deny_unknown_fields` refuses old files; only the showcase used `edge_constraints`, and it is regenerated.
 - **`EdgeConstraint` replaced.** Each `EdgeConstraint` becomes part dimensions:
 
   | `EdgeConstraint` | Part dimensions |
@@ -230,15 +230,15 @@ A lost or inexact reference keeps its last geometry, so nothing jumps. It is rep
 
   A filleted edge measures between its virtual corners, as today. `layout::outline::follow` is deleted.
 - **Copper and checks.** A part moved by its dimensions is an ordinary placement change for the copper graph, fills and checks. Dimensions never decide connectivity.
-- **CLI and MCP.** Typed ids. The automation layer accepts `J1.pad(A6)`, `J1.face(Shell, "F3:side:l2")`, `edge(left)` and `housing.face(Case, "F12:side:l3")`, and resolves those labels when it receives the request; they are never stored.
+- **CLI and MCP.** Typed ids. The automation layer accepts `J1.pad(A6)`, `J1.face(Shell, "F3:side:l2")`, `edge(left)` and `assembly.face(Case, "F12:side:l3")`, and resolves those labels when it receives the request; they are never stored.
 
 ## 6. Stable names on every model and in the board design
 
-A housing can only keep a mate or a projection on a board face across updates if that face keeps its name in the board `.solidcraft`. Solidcraft names a face after the id of the feature that made it, so a name is stable exactly as long as that feature's id is.
+An assembly can only keep a mate or a projection on a board face across updates if that face keeps its name in the board `.solidcraft`. Solidcraft names a face after the id of the feature that made it, so a name is stable exactly as long as that feature's id is.
 
 ### 6.1 The board design is persistent and edited in place
 
-Today a structural edit (a part added, a track count changed) rebuilds the board design, and the rebuild hands out new feature ids (`native/replay.rs`). Once a housing links a board, Sparksmith must keep its board design and edit it the way a designer would:
+Today a structural edit (a part added, a track count changed) rebuilds the board design, and the rebuild hands out new feature ids (`native/replay.rs`). Once a assembly links a board, Sparksmith must keep its board design and edit it the way a designer would:
 
 - **New objects** append features.
 - **Deleted objects** delete their features. Solidcraft does not reuse or renumber feature ids, so the remaining names are unchanged.
@@ -248,7 +248,7 @@ Sparksmith keeps the map from its own objects (instance ids, board sketch curve 
 
 - **Laminate side faces.** These are named after the laminate sketch's curve ids (`F<extrude>:side:<curve>`). The laminate sketch is therefore edited curve by curve, following the board sketch's own curves: an edited curve keeps its laminate curve, a new one adds one, a deleted one deletes one. A board edge keeps its face name for as long as the board curve exists.
 - **Parts.** A part's faces keep their names while its package revision is the same.
-- **Revisions and rebuilds.** A new package revision re-inserts that part's features: new ids, new names. A forced full rebuild (another Solidcraft version, a damaged design) renames everything. Both appear in the board → housing preview as "names change: the housing's references must be picked again in Solidcraft" (§7.4).
+- **Revisions and rebuilds.** A new package revision re-inserts that part's features: new ids, new names. A forced full rebuild (another Solidcraft version, a damaged design) renames everything. Both appear in the board → assembly preview as "names change: the assembly's references must be picked again in Solidcraft" (§7.4).
 
 ### 6.2 Every model kind as a named design
 
@@ -267,64 +267,64 @@ Sparksmith keeps the map from its own objects (instance ids, board sketch curve 
 
 Sparksmith handles the first with the persistent design (§6.1) and has no workaround for the second (decision 3).
 
-## 7. The housing round trip
+## 7. The assembly round trip
 
 ### 7.1 Linking
 
-- **The housing's side.** The housing author inserts Sparksmith's board design with `component.insert_design` and places it with ordinary mates (to bosses, walls or standoffs), like any sub-assembly. Sparksmith saves the board design next to the project; the user can name its path.
-- **The project's side.** The project stores a `HousingLink`:
+- **The assembly's side.** The assembly author inserts Sparksmith's board design with `component.insert_design` and places it with ordinary mates (to bosses, walls or standoffs), like any sub-assembly. Sparksmith saves the board design next to the project; the user can name its path.
+- **The project's side.** The project stores a `AssemblyLink`:
   - `path`, relative to the project;
-  - the housing component and occurrence that link Sparksmith's board file (matched by `DesignLink.path` resolving to that file, never by name);
+  - the assembly component and occurrence that link Sparksmith's board file (matched by `DesignLink.path` resolving to that file, never by name);
   - the references;
   - the bindings;
-  - a snapshot: the last resolved geometry, the housing file's hash, and the board-design revision the housing was checked against.
+  - a snapshot: the last resolved geometry, the assembly file's hash, and the board-design revision the assembly was checked against.
 
-  The project opens, solves and checks on the snapshot without the housing file.
-- **The board's frame.** The board frame in the housing is the board component's world transform after the housing's own joint solve (`world_state`, `occurrence_world`). There is no special frame.
+  The project opens, solves and checks on the snapshot without the assembly file.
+- **The board's frame.** The board frame in the assembly is the board component's world transform after the assembly's own joint solve (`world_state`, `occurrence_world`). There is no special frame.
 
-### 7.2 Housing references and bindings
+### 7.2 Followed faces and bindings
 
-A `HousingRef { id, body, face | edge | sketch curve (persistent name), pick, section }`:
+A `FollowedFace { id, body, face | edge | sketch curve (persistent name), pick, section }`:
 
 - `section` is `Project` (along the board normal) or `Intersect` at the board's top or bottom surface, so a wall with draft gives its section where the board meets it.
-- It is resolved with `naming` and `project` on the evaluated housing, in the board frame.
+- It is resolved with `naming` and `project` on the evaluated assembly, in the board frame.
 - It enters the board sketch as fixed geometry owned by the reference, so board curves (outline offset from a wall, a hole centred on a boss axis) are dimensioned to it. Part dimensions can name it too.
-- It is refreshed only by a housing update.
+- It is refreshed only by an assembly update.
 
-A `HousingBinding { board_param, housing_param }` sets a board parameter from a housing user parameter (`Document::param_values`). Units are checked, and names are never matched automatically.
+A `AssemblyBinding { board_param, assembly_param }` sets a board parameter from an assembly user parameter (`Document::param_values`). Units are checked, and names are never matched automatically.
 
 ### 7.3 What is allowed: cycles
 
-Each housing reference is measured in the board's frame, so it depends on how the housing places the board. That placement comes from mates on board faces. A cycle exists when a board face that places the board, or that housing geometry projects, depends in turn on housing geometry that depends on it. Sparksmith builds the dependency graph over both files:
+Each followed face is measured in the board's frame, so it depends on how the assembly places the board. That placement comes from mates on board faces. A cycle exists when a board face that places the board, or that assembly geometry projects, depends in turn on assembly geometry that depends on it. Sparksmith builds the dependency graph over both files:
 
 | Edge | Source of the edge |
 | --- | --- |
-| Board object → housing reference it is dimensioned to | Sparksmith: the board sketch (`determined_by` on the solved sketch) and part dimensions |
-| Housing reference → the board's placement in the housing | Always (a reference is read in the board frame) |
-| Board placement → each board face a mate on the board component uses | The housing's `Assembly.joints` whose origin is on the board occurrence (`Snap::face_names`) |
-| Housing face → board faces its feature's history projects | The housing's sketch `links` on linked board bodies, for the feature that made the face and the features before it in its component (conservative) |
+| Board object → followed face it is dimensioned to | Sparksmith: the board sketch (`determined_by` on the solved sketch) and part dimensions |
+| Followed face → the board's placement in the assembly | Always (a reference is read in the board frame) |
+| Board placement → each board face a mate on the board component uses | The assembly's `Assembly.joints` whose origin is on the board occurrence (`Snap::face_names`) |
+| Assembly face → board faces its feature's history projects | The assembly's sketch `links` on linked board bodies, for the feature that made the face and the features before it in its component (conservative) |
 | Board face → board object it belongs to | Sparksmith's metadata map (§6.1) |
 
-A cycle is reported as `housing.cycle`, naming the path in both files' words: "hole H2 follows boss 'Boss 3'; the housing places the board by hole H2". The housing update or the publish is refused until the cycle is broken. Nothing iterates, so nothing hangs. Detection is a strongly connected components search, linear in the edges.
+A cycle is reported as `assembly.cycle`, naming the path in both files' words: "hole H2 follows boss 'Boss 3'; the assembly places the board by hole H2". The assembly update or the publish is refused until the cycle is broken. Nothing iterates, so nothing hangs. Detection is a strongly connected components search, linear in the edges.
 
 **Allowed patterns:**
 
 - The outline follows walls while the board is placed by its mounting holes, with the bosses following those holes.
-- Holes follow bosses while the board is placed by a connector face, or by edges that do not follow the housing.
+- Holes follow bosses while the board is placed by a connector face, or by edges that do not follow the assembly.
 - Openings follow connectors.
 
 **Refused:** a hole that follows a boss while the board is placed by that same hole.
 
 ### 7.4 Two-way impact check and update order
 
-**Board → housing (`housing.publish_preview`, then `housing.publish`).** Sparksmith writes the board design the housing links only through this step; an edit itself is never blocked. The preview reads the housing and lists every housing object that consumes board faces:
+**Board → assembly (`assembly.publish_preview`, then `assembly.publish`).** Sparksmith writes the board design the assembly links only through this step; an edit itself is never blocked. The preview reads the assembly and lists every assembly object that consumes board faces:
 
 - mates on the board component;
 - sketches projecting board faces.
 
-For each consumed face it compares the face in the board design about to be written with the board design the housing was last checked against: unchanged, moved (by how much), renamed or gone (§6.1), or now in a cycle. Rows name the housing's own objects ("joint 'USB stop', sketch 'Front opening'"). Publishing writes the board design and records it as the board revision offered to the housing.
+For each consumed face it compares the face in the board design about to be written with the board design the assembly was last checked against: unchanged, moved (by how much), renamed or gone (§6.1), or now in a cycle. Rows name the assembly's own objects ("joint 'USB stop', sketch 'Front opening'"). Publishing writes the board design and records it as the board revision offered to the assembly.
 
-**In Solidcraft (manual).** The housing author runs Update Links. Solidcraft shows its own generic result:
+**In Solidcraft (manual).** The assembly author runs Update Links. Solidcraft shows its own generic result:
 
 - updated and unchanged links;
 - warnings for joints whose faces are gone or no longer solve;
@@ -332,29 +332,29 @@ For each consumed face it compares the face in the board design about to be writ
 
 It can be undone. Solidcraft has no dry run of Update Links, so the Sparksmith preview is the pre-check. This is the one step in the round trip that Sparksmith cannot do.
 
-**Housing → board (`housing.preview`, then `housing.update`).** The desktop watches the housing file and its hash, and shows `housing.stale`. The preview re-evaluates the housing, re-resolves the references and bindings, and solves the board and the parts on a candidate. It lists:
+**Assembly → board (`assembly.preview`, then `assembly.update`).** The desktop watches the assembly file and its hash, and shows `assembly.stale`. The preview re-evaluates the assembly, re-resolves the references and bindings, and solves the board and the parts on a candidate. It lists:
 
 - the outline, holes, fills and dimensioned parts that would move;
 - references that would become `Lost` or `Inexact`;
 - cycles;
-- **whether the housing still holds an older board.** The faces the housing consumes, as they are in its linked copy, are compared with the last published board. `DesignLink` stores no source revision, so this comparison is the only way to tell, and Sparksmith says "run Update Links in Solidcraft first".
+- **whether the assembly still holds an older board.** The faces the assembly consumes, as they are in its linked copy, are compared with the last published board. `DesignLink` stores no source revision, so this comparison is the only way to tell, and Sparksmith says "run Update Links in Solidcraft first".
 
 The update is applied as one undo step. It is refused atomically if the board would not solve or close, and the preview names why.
 
-**Update order.** Sparksmith publish → Update Links in Solidcraft (manual) → housing edits and save → Sparksmith housing preview and update.
+**Update order.** Sparksmith publish → Update Links in Solidcraft (manual) → assembly edits and save → Sparksmith assembly preview and update.
 
 - Each step crosses the file boundary once, in one direction. Sparksmith never loops automatically.
-- In an acyclic graph a change settles after as many rounds as the longest chain that alternates between the files. One preview says when another round is needed: "publishing this moves hole H2, which the housing's boss follows".
+- In an acyclic graph a change settles after as many rounds as the longest chain that alternates between the files. One preview says when another round is needed: "publishing this moves hole H2, which the assembly's boss follows".
 
 **What each side shows:**
 
-- **Sparksmith.** A housing status in the Board card and Issues: in sync, housing changed, housing holds an older board, cycle, or missing (with Relink). The two previews. Reference status on each dimension.
+- **Sparksmith.** An assembly status in the Board card and Issues: in sync, assembly changed, assembly holds an older board, cycle, or missing (with Relink). The two previews. Reference status on each dimension.
 - **Solidcraft.** Only its generic link, joint and sketch-link reports; nothing Sparksmith-specific.
 
 ### 7.5 Missing or moved files
 
-- **A missing or moved housing.** The project opens on the snapshot and reports `housing.missing`, with Relink (`housing.relink { path }`, previewed like an update).
-- **A moved board design.** The housing's own `component.relink` handles it on the Solidcraft side.
+- **A missing or moved assembly.** The project opens on the snapshot and reports `assembly.missing`, with Relink (`assembly.relink { path }`, previewed like an update).
+- **A moved board design.** The assembly's own `component.relink` handles it on the Solidcraft side.
 
 ### 7.6 No fork
 
@@ -364,12 +364,12 @@ Everything Sparksmith does here uses public upstream APIs: `io::read_design`, `S
 
 | Gap (upstream as found) | Effect | Handling |
 | --- | --- | --- |
-| No live cross-file links; the assembly cannot drive a linked design | Housing → board needs Sparksmith to read the housing | §7 (founder: no upstream proposal now) |
+| No live cross-file links; the assembly cannot drive a linked design | Assembly → board needs Sparksmith to read the assembly | §7 (founder: no upstream proposal now) |
 | `update_links` is manual and has no dry run | The Solidcraft side cannot be previewed in Solidcraft | Sparksmith's publish preview; Solidcraft's undo |
-| `DesignLink` stores no source digest or revision | Sparksmith cannot read which board the housing holds | Comparing the consumed faces (§7.4) |
+| `DesignLink` stores no source digest or revision | Sparksmith cannot read which board the assembly holds | Comparing the consumed faces (§7.4) |
 | Face names follow history position; no assigned names | Rebuilds rename faces | Persistent board design (§6.1) |
-| No faces on mesh bodies; meshes are not linked | glTF parts cannot be referenced or seen by the housing | Reported; decision 3 |
-| A linked design is flattened into one component | The housing sees the board as one rigid body, not a sub-assembly of parts | Enough for mates and projections, because part poses are Sparksmith's |
+| No faces on mesh bodies; meshes are not linked | glTF parts cannot be referenced or seen by the assembly | Reported; decision 3 |
+| A linked design is flattened into one component | The assembly sees the board as one rigid body, not a sub-assembly of parts | Enough for mates and projections, because part poses are Sparksmith's |
 | `face_on_body`'s `inexact` only upstream | — | Adopted when Sparksmith next repins |
 
 Rejected alternative, kept from the earlier draft: Solidcraft's assembly solver deciding part poses. It would need the evaluated board design inside every core operation, cannot drive a sketch, and is bounded per loop group (`MAX_LOOP_VALUES` = 64, `MAX_LOOPS` = 100, `doc/src/joints.rs`). The founder's requirement that Solidcraft can dimension to Sparksmith's parts is met through linked faces instead (§3).
@@ -389,14 +389,14 @@ With the board held, 500 parts solved in 7.2–9.3 ms. A real board has tens of 
 
 **Not measured:**
 
-- evaluating a housing design;
+- evaluating an assembly design;
 - the cycle-graph build;
 - Solidcraft's Update Links on a full board, which exports every solid body as STEP (`session_bodies`).
 
 **Targets** (labelled as targets, measured in S11):
 
 - any edit re-solves within 16 ms with 100 dimensioned parts;
-- a housing preview finishes within 1 s;
+- an assembly preview finishes within 1 s;
 - publishing the board design finishes within the time a full native build takes today.
 
 **Selection and camera rebuild nothing.** The solves run only when their inputs change. Hover, pick and the camera read the stored results.
@@ -414,10 +414,10 @@ C0 comes first; dependencies are listed per slice.
 | S4 | Named designs for generated, envelope and STEP models; revision checks; the glTF finding | S3 | 10 |
 | S5 | PCB 3D picking and dimension display | S3 | 6 |
 | S6 | Persistent board design: structural edits in place, laminate curve map, identity metadata, publish | S1 | 14 |
-| S7 | Housing link: reading the housing, references, bindings, snapshot, preview and update, relink, missing | S1, S2 | 10 |
+| S7 | Assembly link: reading the assembly, references, bindings, snapshot, preview and update, relink, missing | S1, S2 | 10 |
 | S8 | Two-way check: consumer detection, face diff against the published revision, the older-board check, the cycle graph | S6, S7 | 8 |
-| S9 | Housing UI: status, both previews, picking housing faces in a 3D context view | S7, S8 | 6 |
-| S10 | VM run: a real enclosure in Solidcraft, the full round trip including Update Links | S9 | 4 |
+| S9 | Assembly UI: status, both previews, picking assembly faces in a 3D context view | S7, S8 | 6 |
+| S10 | VM run: a real linked design in Solidcraft, the full round trip including Update Links | S9 | 4 |
 | S11 | Measurements against §9 | S8 | 3 |
 | | **Total** | | **91** |
 
@@ -437,7 +437,7 @@ C0 is the contract for S1 and S2. Every path that needs either slice refuses wit
 
 ### What C0 put in place
 
-- **Types.** `model::dimension` (new): `PartDimension`, `PartDimensionSpec`, `PartRelation`, `BoardRef`, `FeatureRef`, `PadPoint`, `BoxSide`, `PartAxis`, `End`, `ModelFaceRef`, `ModelEdgeRef`, the name newtypes, `HousingRefId` and `ReferenceStatus`. `Project::part_dimensions` sits beside `edge_constraints`. `DimValue::Expr(Expr)` is added; footprint and board-sketch dimensions refuse it.
+- **Types.** `model::dimension` (new): `PartDimension`, `PartDimensionSpec`, `PartRelation`, `BoardRef`, `FeatureRef`, `PadPoint`, `BoxSide`, `PartAxis`, `End`, `ModelFaceRef`, `ModelEdgeRef`, the name newtypes, `FollowedFaceId` and `ReferenceStatus`. `Project::part_dimensions` sits beside `edge_constraints`. `DimValue::Expr(Expr)` is added; footprint and board-sketch dimensions refuse it.
 - **Commands.** `board.edit` has `SetCutoutKind`, `AddSpline`, `AddEllipse` and `AddConic`; the free-form ones reach `BoardShapeEvaluator::add_curve` with a `FreeFormCurve`. The new `Operation::Dimension` family has `layout.dimension_add`, `layout.dimension_edit` and `layout.dimension_delete`, with `Outcome::DimensionAdded`. `layout.dimension_order` (added with the list system) stores the Dimensions list's order, as set by a drag or ⌥↑/⌥↓: document data, one undo step, with no geometry change. There is no new query: `board.shape` and `project.issues` cover S1 and S2.
 - **Solve seam.** `BoardShapeEvaluator::solve_parts(&PartsRequest) -> PartsSolution` (`layout::dimensions`). The engine calls `layout::dimensions::follow` right after `layout::outline::follow`. `dimensions::validate` and `dimensions::checks` are wired into `layout::validate` and `layout::checks`.
 - **Findings.** `board.shape_open` and `board.shape_invalid` (`layout::outline`), and `board.reference_lost` and `board.reference_inexact` (`layout::dimensions`). All four are classified as errors with group titles and fixes, and pre-flight blocks on them. `fabrication::preflight::NO_WAIVER` already keeps the two reference codes from being waived; `fabrication.waive` refuses them.
@@ -610,7 +610,7 @@ S5 built picking in PCB 3D and the dimension display there.
 ### For later slices
 
 - Only `Distance` is made. Angles and the 3D display of non-distance relations are not drawn.
-- Picks reach every model kind but glTF since S4 (§16). Housing faces are S9.
+- Picks reach every model kind but glTF since S4 (§16). Assembly faces are S9.
 - A dimension's text cannot be dragged. Since §19 the 3D label is edited in place as well as in the Placement card.
 
 ## 16. S4 notes

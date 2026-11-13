@@ -17,7 +17,7 @@ pub(super) fn boxed() -> (Vec<u8>, String) {
     let made = s
         .execute(
             "solid.box",
-            &json!({"corner": [-2, -1, 0], "length": 4, "width": 2, "height": 1, "name": "Housing"}),
+            &json!({"corner": [-2, -1, 0], "length": 4, "width": 2, "height": 1, "name": "Assembly"}),
         )
         .unwrap();
     let body = made["created_bodies"][0].as_str().unwrap().to_owned();

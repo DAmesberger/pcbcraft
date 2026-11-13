@@ -1,31 +1,33 @@
-//! Slice B4 in the core: the enclosure link's document commands, its
+//! Slice B4 in the core: the assembly link's document commands, its
 //! findings and status, on the demo board with an external opening on its
-//! package (as in `b3`). Reading an enclosure and the dry run run where
-//! Solidcraft does: the automation session's `housing_tests`, over the
-//! ESP32 example with a headless SolidCraft enclosure.
+//! package (as in `b3`). Reading a linked design and the dry run run where
+//! Solidcraft does: the automation session's `assembly_link_tests`, over the
+//! ESP32 example with a headless SolidCraft assembly.
 use super::Fallible;
 use super::b3::{first_placed, publish, with_openings};
 use crate::fabrication::preflight;
 use crate::ids::ContentHash;
-use crate::interface::findings::{HOUSING_REFERENCE_INEXACT, HOUSING_REFERENCE_LOST};
-use crate::interface::housing::{
-    self, FileCheck, HousingCommand, HousingRead, LinkState, NewReference,
+use crate::interface::assembly_link::{
+    self, AssemblyCommand, AssemblyRead, FileCheck, LinkState, NewReference,
 };
+use crate::interface::findings::{ASSEMBLY_REFERENCE_INEXACT, ASSEMBLY_REFERENCE_LOST};
 use crate::interface::list;
 use crate::issues::Severity;
 use crate::library::footprint_source::{SketchCurveId, SketchRef};
-use crate::model::dimension::{BodyName, FaceName, FeatureGeometry, HousingRefId, ReferenceStatus};
-use crate::model::housing::{Consumer, HousingRef};
+use crate::model::assembly_link::{Consumer, FollowedFace};
+use crate::model::dimension::{
+    BodyName, FaceName, FeatureGeometry, FollowedFaceId, ReferenceStatus,
+};
 use crate::model::interface::Tier;
 use crate::units::Nm;
 use crate::{Engine, Operation};
 
 const HASH: ContentHash = ContentHash([7; 32]);
 
-/// What a host reads of an enclosure whose ‘USB opening’ uses `consumer`.
-fn read(consumers: Vec<Consumer>) -> HousingRead {
-    HousingRead {
-        enclosure_hint: "housing.solidcraft".into(),
+/// What a host reads of a linked design whose ‘USB opening’ uses `consumer`.
+fn read(consumers: Vec<Consumer>) -> AssemblyRead {
+    AssemblyRead {
+        assembly_hint: "assembly.solidcraft".into(),
         design_hint: "board.solidcraft".into(),
         component: "Board".into(),
         file_sha256: HASH,
@@ -38,13 +40,13 @@ fn read(consumers: Vec<Consumer>) -> HousingRead {
     }
 }
 
-fn apply(engine: &mut Engine, command: HousingCommand) -> Fallible {
+fn apply(engine: &mut Engine, command: AssemblyCommand) -> Fallible {
     let revision = engine.revision();
-    engine.apply(revision, Operation::Housing(command))?;
+    engine.apply(revision, Operation::Assembly(command))?;
     Ok(())
 }
 
-/// The demo, published, with an enclosure linked whose ‘USB opening’ uses
+/// The demo, published, with an assembly linked whose ‘USB opening’ uses
 /// the first placement's opening. Returns the engine and that instance.
 fn linked() -> Fallible<(Engine, u64)> {
     let mut engine = with_openings()?;
@@ -66,7 +68,7 @@ fn linked() -> Fallible<(Engine, u64)> {
     };
     apply(
         &mut engine,
-        HousingCommand::RecordLink {
+        AssemblyCommand::RecordLink {
             read: read(vec![consumer]),
         },
     )?;
@@ -74,21 +76,21 @@ fn linked() -> Fallible<(Engine, u64)> {
 }
 
 fn codes(engine: &Engine) -> Vec<String> {
-    housing::checks(engine.project())
+    assembly_link::checks(engine.project())
         .into_iter()
         .map(|f| f.code)
         .collect()
 }
 
-/// Acceptance 6 in the core: the enclosure's cutout uses a part's opening;
+/// Acceptance 6 in the core: the linked design's cutout uses a part's opening;
 /// deleting the part makes it a broken reference that names the cutout
 /// and the part, reads "broken reference", is an error in the production
 /// check that no waiver lifts, and undo takes it away.
 #[test]
-fn b4_deleting_the_part_breaks_the_enclosure_reference() -> Fallible {
+fn b4_deleting_the_part_breaks_the_linked_design_reference() -> Fallible {
     let (mut engine, instance) = linked()?;
     assert!(codes(&engine).is_empty());
-    let status = housing::status(engine.project(), FileCheck::Found(HASH));
+    let status = assembly_link::status(engine.project(), FileCheck::Found(HASH));
     assert_eq!(status.state, LinkState::InSync);
     let designator = engine
         .project()
@@ -107,19 +109,19 @@ fn b4_deleting_the_part_breaks_the_enclosure_reference() -> Fallible {
         },
         false,
     )?;
-    let findings = housing::checks(engine.project());
+    let findings = assembly_link::checks(engine.project());
     let [broken] = findings.as_slice() else {
         return Err(format!("{findings:?}").into());
     };
-    assert_eq!(broken.code, HOUSING_REFERENCE_LOST);
+    assert_eq!(broken.code, ASSEMBLY_REFERENCE_LOST);
     assert_eq!(
         broken.message,
         format!(
-            "The enclosure's ‘USB opening’ uses {designator} opening. {designator} was deleted, \
+            "The linked design's ‘USB opening’ uses {designator} opening. {designator} was deleted, \
              so it would fail. Restore {designator}, or pick another reference in SolidCraft"
         )
     );
-    let status = housing::status(engine.project(), FileCheck::Found(HASH));
+    let status = assembly_link::status(engine.project(), FileCheck::Found(HASH));
     assert_eq!(status.state, LinkState::BrokenReference);
     assert_eq!(status.words, "broken reference");
 
@@ -127,7 +129,7 @@ fn b4_deleting_the_part_breaks_the_enclosure_reference() -> Fallible {
     let item = report
         .items
         .iter()
-        .find(|i| i.code == HOUSING_REFERENCE_LOST)
+        .find(|i| i.code == ASSEMBLY_REFERENCE_LOST)
         .ok_or("the production check lists it")?;
     assert_eq!(item.severity, Severity::Error);
     assert!(!report.ready());
@@ -136,7 +138,7 @@ fn b4_deleting_the_part_breaks_the_enclosure_reference() -> Fallible {
         revision,
         Operation::Fabrication(crate::fabrication::FabricationCommand::Waive {
             keys: vec![item.key.clone()],
-            reason: "the enclosure is redone".into(),
+            reason: "the linked design is redone".into(),
         }),
     );
     assert!(waived.is_err(), "never waived");
@@ -147,35 +149,35 @@ fn b4_deleting_the_part_breaks_the_enclosure_reference() -> Fallible {
     Ok(())
 }
 
-/// A datum the enclosure uses that the last publish no longer carries is
+/// A datum the linked design uses that the last publish no longer carries is
 /// broken too, even while it is live again on the board.
 #[test]
 fn b4_a_datum_missing_from_the_publish_is_broken() -> Fallible {
     let (engine, _) = linked()?;
     let mut project = engine.project().clone();
     let consumer = project
-        .housing
+        .assembly_link
         .as_ref()
         .and_then(|l| l.consumers.first().cloned())
         .ok_or("a consumer")?;
     let record = project.interface.published.as_mut().ok_or("published")?;
     record.datums.retain(|d| d.id != consumer.datum);
-    assert_eq!(housing::broken(&project).len(), 1);
+    assert_eq!(assembly_link::broken(&project).len(), 1);
     // The board itself still has the datum.
     assert!(list::table(&project)?.datum(consumer.datum).is_some());
     Ok(())
 }
 
-/// Lost and inexact housing references are reported in the user's words
+/// Lost and inexact followed faces are reported in the user's words
 /// and block fabrication output.
 #[test]
 fn b4_lost_and_inexact_references_are_reported() -> Fallible {
     let (engine, _) = linked()?;
     let mut project = engine.project().clone();
-    let link = project.housing.as_deref_mut().ok_or("linked")?;
-    let reference = |id: u32, status: ReferenceStatus, note: &str| -> Fallible<HousingRef> {
-        Ok(HousingRef {
-            id: HousingRefId(id),
+    let link = project.assembly_link.as_deref_mut().ok_or("linked")?;
+    let reference = |id: u32, status: ReferenceStatus, note: &str| -> Fallible<FollowedFace> {
+        Ok(FollowedFace {
+            id: FollowedFaceId(id),
             body: BodyName("Far wall".into()),
             face: FaceName(format!("F{id}:side:e1")),
             pick: [Nm::ZERO, Nm::new(70_000_000)?, Nm::new(1_000_000)?],
@@ -195,32 +197,36 @@ fn b4_lost_and_inexact_references_are_reported() -> Fallible {
         reference(2, ReferenceStatus::Inexact, "")?,
     ];
     link.next_ref = 3;
-    housing::check_link(link)?;
-    let findings = housing::checks(&project);
+    assembly_link::check_link(link)?;
+    let findings = assembly_link::checks(&project);
     let lost = findings
         .iter()
-        .find(|f| f.code == HOUSING_REFERENCE_LOST)
+        .find(|f| f.code == ASSEMBLY_REFERENCE_LOST)
         .ok_or("lost")?;
     assert_eq!(
         lost.message,
-        "The board follows the enclosure's Far wall · face 1, which is no longer there: the face \
+        "The board follows the linked design's Far wall · face 1, which is no longer there: the face \
          is gone. Pick it again, or stop following it"
     );
-    assert!(findings.iter().any(|f| f.code == HOUSING_REFERENCE_INEXACT));
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.code == ASSEMBLY_REFERENCE_INEXACT)
+    );
     let report = preflight::report(&project, engine.drafts(), None)?;
-    for code in [HOUSING_REFERENCE_LOST, HOUSING_REFERENCE_INEXACT] {
+    for code in [ASSEMBLY_REFERENCE_LOST, ASSEMBLY_REFERENCE_INEXACT] {
         let item = report.items.iter().find(|i| i.code == code).ok_or(code)?;
         assert_eq!(item.severity, Severity::Error, "{code}");
     }
     assert_eq!(
-        housing::status(&project, FileCheck::NotChecked).state,
+        assembly_link::status(&project, FileCheck::NotChecked).state,
         LinkState::BrokenReference
     );
     Ok(())
 }
 
 /// A second link is refused (relink instead), a new link carries no
-/// references, and with no link every housing command but a link is
+/// references, and with no link every assembly command but a link is
 /// refused, changing nothing.
 #[test]
 fn b4_refused_link_commands_change_nothing() -> Fallible {
@@ -228,24 +234,24 @@ fn b4_refused_link_commands_change_nothing() -> Fallible {
     let revision = engine.revision();
     let again = engine.apply(
         revision,
-        Operation::Housing(HousingCommand::RecordLink {
+        Operation::Assembly(AssemblyCommand::RecordLink {
             read: read(Vec::new()),
         }),
     );
     assert!(again.is_err());
     assert_eq!(engine.revision(), revision);
-    apply(&mut engine, HousingCommand::Unlink)?;
-    assert!(engine.project().housing.is_none());
+    apply(&mut engine, AssemblyCommand::Unlink)?;
+    assert!(engine.project().assembly_link.is_none());
     let revision = engine.revision();
     for command in [
-        HousingCommand::Unlink,
-        HousingCommand::RecordUpdate {
+        AssemblyCommand::Unlink,
+        AssemblyCommand::RecordUpdate {
             read: read(Vec::new()),
         },
-        HousingCommand::RemoveReference {
-            id: HousingRefId(1),
+        AssemblyCommand::RemoveReference {
+            id: FollowedFaceId(1),
         },
-        HousingCommand::RecordReference {
+        AssemblyCommand::RecordReference {
             reference: NewReference {
                 body: BodyName("Wall".into()),
                 face: FaceName("F1:start".into()),
@@ -258,26 +264,28 @@ fn b4_refused_link_commands_change_nothing() -> Fallible {
     ] {
         assert!(
             engine
-                .apply(revision, Operation::Housing(command.clone()))
+                .apply(revision, Operation::Assembly(command.clone()))
                 .is_err(),
             "{command:?}"
         );
         assert_eq!(engine.revision(), revision);
     }
     let mut with_reference = read(Vec::new());
-    with_reference.references.push(housing::ReferenceRead {
-        id: HousingRefId(1),
-        status: ReferenceStatus::Resolved,
-        pick: None,
-        geometry: None,
-        note: String::new(),
-        built_on: Vec::new(),
-    });
+    with_reference
+        .references
+        .push(assembly_link::ReferenceRead {
+            id: FollowedFaceId(1),
+            status: ReferenceStatus::Resolved,
+            pick: None,
+            geometry: None,
+            note: String::new(),
+            built_on: Vec::new(),
+        });
     assert!(
         engine
             .apply(
                 revision,
-                Operation::Housing(HousingCommand::RecordLink {
+                Operation::Assembly(AssemblyCommand::RecordLink {
                     read: with_reference,
                 }),
             )
@@ -285,7 +293,7 @@ fn b4_refused_link_commands_change_nothing() -> Fallible {
     );
     // Undo brings the link back.
     engine.undo()?;
-    assert!(engine.project().housing.is_some());
+    assert!(engine.project().assembly_link.is_some());
     Ok(())
 }
 
@@ -297,9 +305,12 @@ fn b4_the_link_survives_save_and_reopen() -> Fallible {
     let text = serde_json::to_string(&engine.to_file())?;
     let file: crate::format::EditorFile = serde_json::from_str(&text)?;
     let reopened = Engine::from_file(file)?;
-    assert_eq!(reopened.project().housing, engine.project().housing);
+    assert_eq!(
+        reopened.project().assembly_link,
+        engine.project().assembly_link
+    );
     let mut bad = engine.to_file();
-    if let Some(link) = bad.project.housing.as_deref_mut() {
+    if let Some(link) = bad.project.assembly_link.as_deref_mut() {
         link.component = "\u{7}".into();
     }
     assert!(Engine::from_file(bad).is_err());

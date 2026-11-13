@@ -424,13 +424,13 @@ fn square_faces(body: &ModelBody, frame: &Transform3) -> String {
     }
 }
 
-/// Trace a face of an enclosure's evaluated design in the board plane
-/// (`enclosure`): `frame` takes the enclosure's world frame to the board's.
-/// An enclosure face moves when the enclosure changes, so a name that
+/// Trace a face of a linked design's evaluated design in the board plane
+/// (`linked_design`): `frame` takes the linked design's world frame to the board's.
+/// A linked design face moves when the linked design changes, so a name that
 /// follows the design's history is found where the face is now, and the
 /// pick goes with it: the point on the face it returns. Without verified
 /// history the stored pick must still lie on the face.
-pub(crate) fn trace_enclosure_face(
+pub(crate) fn trace_linked_face(
     state: &ModelState,
     face: &ModelFaceRef,
     words: &str,

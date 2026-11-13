@@ -1,4 +1,4 @@
-//! The exported board interface: the `.solidcraft` design an enclosure
+//! The exported board interface: the `.solidcraft` design a linked design
 //! links (docs/architecture/board-interface.md, "The export format"; slice
 //! B3). Built with Solidcraft's own commands and saved by its own writer.
 //!
@@ -41,7 +41,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The board slab's body name.
 pub const SLAB: &str = "board";
 /// The component holding the slots' bodies, named as reference geometry so
-/// an enclosure can leave them out of mass, interference and its bill of
+/// a linked design can leave them out of mass, interference and its bill of
 /// materials.
 pub const REFERENCE_COMPONENT: &str = "Board interface (reference geometry)";
 /// The design metadata key holding the sidecar: its format and chunk

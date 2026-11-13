@@ -27,7 +27,7 @@ use crate::units::Nm;
 pub struct PlacedDatum {
     pub instance: Id,
     pub name: DatumName,
-    /// Marked for the enclosure (the `external_datums` rule exports it).
+    /// Marked for the linked design (the `external_datums` rule exports it).
     pub external: bool,
     pub clearance_mm: Option<f64>,
     pub geometry: DatumGeometry,

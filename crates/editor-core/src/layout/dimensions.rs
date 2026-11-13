@@ -7,7 +7,7 @@
 //! (two parts are connected when a dimension names both), and each
 //! component an operation touched is solved by the host's board evaluator
 //! ([`super::outline::BoardShapeEvaluator::solve_parts`]) in a scratch
-//! Solidcraft sketch: the named board (and housing) geometry held fixed, per
+//! Solidcraft sketch: the named board (and assembly) geometry held fixed, per
 //! part an origin and a construction axis, its referenced features bound to
 //! that frame, and the dimensions. A degree of freedom no dimension fixes
 //! keeps its stored value. A move or rotate of a dimensioned part is a
@@ -238,9 +238,9 @@ fn check_new(project: &Project, d: &PartDimension) -> Result<()> {
     let ids = board_ids(project);
     for r in &d.refs {
         match r {
-            BoardRef::Housing(_) => {
+            BoardRef::FollowedFace(_) => {
                 return Err(Error::Unsupported(
-                    "layout.dimension: housing references are not yet supported".into(),
+                    "layout.dimension: followed faces are not yet supported".into(),
                 ));
             }
             BoardRef::Board(SketchRef::Constraint(_)) => {
@@ -316,7 +316,7 @@ pub fn reference_status(
 ) -> ReferenceStatus {
     let found = match r {
         BoardRef::Board(b) => ids.is_none_or(|ids| ids.contains(b)),
-        BoardRef::Housing(_) => false,
+        BoardRef::FollowedFace(_) => false,
         BoardRef::Part(f) if f.is_model() => {
             if !features::target_exists(project, f.target()) {
                 return ReferenceStatus::Lost;
@@ -391,7 +391,9 @@ pub fn checks(project: &Project) -> Vec<Finding> {
                 BoardRef::Board(_) => {
                     format!("{who} is dimensioned to board geometry that was deleted")
                 }
-                BoardRef::Housing(_) => format!("{who} is dimensioned to a missing housing"),
+                BoardRef::FollowedFace(_) => {
+                    format!("{who} is dimensioned to a missing followed face")
+                }
                 BoardRef::Part(f) if !features::target_exists(project, f.target()) => {
                     "A dimension names a part that is no longer on the board".into()
                 }
@@ -1088,7 +1090,7 @@ fn reference_words(project: &Project, board: &BoardSketch, r: &BoardRef) -> Stri
             edge_name(board, c).map_or_else(|| "a board curve".into(), edge_words)
         }
         BoardRef::Board(_) => "a board point".into(),
-        BoardRef::Housing(_) => "the housing".into(),
+        BoardRef::FollowedFace(_) => "the linked design".into(),
         BoardRef::Part(f) => {
             let name = target_words(project, f.target());
             match f {
@@ -1254,7 +1256,7 @@ fn well_formed(d: &PartDimension) -> bool {
 fn reference_well_formed(r: &BoardRef) -> bool {
     let pick = |p: &[f64; 3]| p.iter().all(|v| v.is_finite());
     match r {
-        BoardRef::Board(_) | BoardRef::Housing(_) => true,
+        BoardRef::Board(_) | BoardRef::FollowedFace(_) => true,
         BoardRef::Part(f) => match f {
             FeatureRef::Origin { .. }
             | FeatureRef::Axis { .. }

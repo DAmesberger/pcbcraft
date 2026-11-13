@@ -53,7 +53,7 @@ fn three(engine: &mut Engine) -> Fallible<()> {
     header
         .custom_materials
         .push(crate::library::model3d::CustomMaterial {
-            name: "Housing".into(),
+            name: "Case".into(),
             base_colour: [0.1, 0.1, 0.1, 1.0],
             metallic: 0.0,
             roughness: 0.6,

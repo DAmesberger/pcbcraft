@@ -188,7 +188,7 @@ pub struct InterfaceDatum {
     pub key: DatumKey,
     pub source: DatumSource,
     /// The exported feature of a [`DatumRole::Feature`] datum (never a
-    /// housing reference); `None` for every other role.
+    /// followed face); `None` for every other role.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feature: Option<BoardRef>,
     /// The display name the user gave (`interface.rename`); `None` shows
@@ -234,12 +234,12 @@ pub struct PublishedRecord {
     /// Every datum published, in slot order.
     pub datums: Vec<PublishedDatum>,
     /// SHA-256 of the design file this publish wrote, as SolidCraft keeps
-    /// it on an enclosure's link to the file (slice B5): an enclosure whose
+    /// it on a linked design's link to the file (slice B5): a linked design whose
     /// link holds another hash holds an older board.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub design_sha256: Option<ContentHash>,
     /// The files earlier publishes wrote, oldest first, at most
-    /// [`MAX_PUBLISHED_FILES`]: they name the revision an enclosure still
+    /// [`MAX_PUBLISHED_FILES`]: they name the revision a linked design still
     /// holds. Kept by `interface.record_publish`, never by the host.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub earlier: Vec<PublishedFile>,

@@ -1,658 +1,53 @@
 {
-  "command": {
+  "assembly_command": {
     "$defs": {
-      "AnchorName": {
-        "description": "An anchor authored by name in a part's model design.",
-        "type": "string"
-      },
-      "AutoRule": {
-        "description": "An automatic export rule. Every rule is on by default; each can be\nswitched off (`interface.auto`).",
-        "oneOf": [
-          {
-            "const": "board",
-            "description": "The board frame, top, bottom and thickness.",
-            "type": "string"
-          },
-          {
-            "const": "outline",
-            "description": "The board outline.",
-            "type": "string"
-          },
-          {
-            "const": "cutouts",
-            "description": "Every cutout and slot.",
-            "type": "string"
-          },
-          {
-            "const": "holes",
-            "description": "Every mounting hole.",
-            "type": "string"
-          },
-          {
-            "const": "external_datums",
-            "description": "Every package datum marked `external`, for each placed instance.",
-            "type": "string"
-          },
-          {
-            "const": "side_heights",
-            "description": "The tallest part per side.",
-            "type": "string"
-          }
-        ]
-      },
-      "BoardRef": {
-        "description": "One reference of a part dimension.",
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "description": "A board-sketch point or curve, by its stable sketch id.",
-            "properties": {
-              "board": {
-                "$ref": "#/$defs/SketchRef"
-              }
-            },
-            "required": [
-              "board"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "A feature of a placed part (or of a fill or keepout's origin).",
-            "properties": {
-              "part": {
-                "$ref": "#/$defs/FeatureRef"
-              }
-            },
-            "required": [
-              "part"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "A housing reference (§7.2; slice S7).",
-            "properties": {
-              "housing": {
-                "$ref": "#/$defs/HousingRefId"
-              }
-            },
-            "required": [
-              "housing"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "BodyName": {
-        "description": "A body of a model design, by its name there.",
-        "type": "string"
-      },
-      "BoxSide": {
-        "description": "A side of an axis-aligned box in the part frame (before the placement\nturns or mirrors it).",
-        "enum": [
-          "left",
-          "right",
-          "bottom",
-          "top"
-        ],
-        "type": "string"
-      },
-      "ConstraintTarget": {
-        "description": "What a part dimension moves (`model::dimension`).",
-        "oneOf": [
-          {
-            "description": "A component placement, by instance.",
-            "properties": {
-              "id": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "kind": {
-                "const": "placement",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "id": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "kind": {
-                "const": "fill",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "id": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "kind": {
-                "const": "keepout",
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "id"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "ContentHash": {
-        "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
-        "type": "string"
-      },
-      "DatumId": {
-        "description": "A datum's document identity, allocated from the table's own counter\n([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a\ndatum never shifts the ids of other objects. Never reused: the counter,\nlike the slot counter, only grows, through undo and redo too.",
-        "format": "uint64",
-        "minimum": 0,
-        "type": "integer"
-      },
-      "DatumName": {
-        "description": "A datum's name inside its owner (`opening`, `axis_led`, `top`): lower\ncase `[a-z][a-z0-9_]*`, at most [`MAX_DATUM_NAME`] bytes. It is part of\nthe datum's key and token, so it is identity, unlike the display name.",
-        "type": "string"
-      },
-      "End": {
-        "description": "An end of an edge.",
-        "enum": [
-          "start",
-          "end"
-        ],
-        "type": "string"
-      },
-      "ExportTarget": {
-        "description": "What `interface.export` exports. Everything the automatic rules export\ncan only be switched with `interface.auto`.",
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "description": "Any dimensionable feature: a part face, edge or vertex, a pad, a\nboard-sketch point or curve. Never a housing reference.",
-            "properties": {
-              "feature": {
-                "$ref": "#/$defs/BoardRef"
-              },
-              "target": {
-                "const": "feature",
-                "type": "string"
-              }
-            },
-            "required": [
-              "target",
-              "feature"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "A datum the instance's package revision declares (one not marked\n`external`, which the automatic rule already exports).",
-            "properties": {
-              "instance": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "name": {
-                "$ref": "#/$defs/DatumName"
-              },
-              "target": {
-                "const": "package_datum",
-                "type": "string"
-              }
-            },
-            "required": [
-              "target",
-              "instance",
-              "name"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "A placement's frame.",
-            "properties": {
-              "instance": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "target": {
-                "const": "part_frame",
-                "type": "string"
-              }
-            },
-            "required": [
-              "target",
-              "instance"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "A placement's envelope: courtyard × body height.",
-            "properties": {
-              "instance": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "target": {
-                "const": "part_envelope",
-                "type": "string"
-              }
-            },
-            "required": [
-              "target",
-              "instance"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "A board parameter, read-only on the other side.",
-            "properties": {
-              "name": {
-                "$ref": "#/$defs/ParamName"
-              },
-              "target": {
-                "const": "board_parameter",
-                "type": "string"
-              }
-            },
-            "required": [
-              "target",
-              "name"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "FaceName": {
-        "description": "A face's persistent name in a model design (`F2:side:l4`).",
-        "type": "string"
-      },
-      "FeatureRef": {
-        "description": "A feature of a placed part, rebuilt from the library\nsnapshot (or the part's model design) for every solve and never stored.",
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "description": "The placement origin (footprint datum), or a fill's or keepout's\noutline start.",
-            "properties": {
-              "feature": {
-                "const": "origin",
-                "type": "string"
-              },
-              "target": {
-                "$ref": "#/$defs/ConstraintTarget"
-              }
-            },
-            "required": [
-              "feature",
-              "target"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "An axis of the target's frame through its origin.",
-            "properties": {
-              "axis": {
-                "$ref": "#/$defs/PartAxis"
-              },
-              "feature": {
-                "const": "axis",
-                "type": "string"
-              },
-              "target": {
-                "$ref": "#/$defs/ConstraintTarget"
-              }
-            },
-            "required": [
-              "feature",
-              "target",
-              "axis"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "at": {
-                "$ref": "#/$defs/PadPoint"
-              },
-              "feature": {
-                "const": "pad",
-                "type": "string"
-              },
-              "pad": {
-                "$ref": "#/$defs/PadId"
-              },
-              "placement": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "feature",
-              "placement",
-              "pad",
-              "at"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "A side of the courtyard's box in the part frame; `None`: its centre.",
-            "properties": {
-              "feature": {
-                "const": "courtyard",
-                "type": "string"
-              },
-              "placement": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "side": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/BoxSide"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "feature",
-              "placement"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "An anchor authored by name in the part's model design.",
-            "properties": {
-              "feature": {
-                "const": "anchor",
-                "type": "string"
-              },
-              "name": {
-                "$ref": "#/$defs/AnchorName"
-              },
-              "placement": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "feature",
-              "placement",
-              "name"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "A face of the part's part file, by body, persistent face name and a\npick point on it (model frame, mm), traced in the board plane by the\nhost ([`ModelTrace`]). A name the part does not have is refused with\nits faces square to the board, each by name with a point on it.",
-            "properties": {
-              "face": {
-                "$ref": "#/$defs/ModelFaceRef"
-              },
-              "feature": {
-                "const": "face",
-                "type": "string"
-              },
-              "placement": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "feature",
-              "placement",
-              "face"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "An edge of the part's 3D model.",
-            "properties": {
-              "edge": {
-                "$ref": "#/$defs/ModelEdgeRef"
-              },
-              "feature": {
-                "const": "edge",
-                "type": "string"
-              },
-              "placement": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "feature",
-              "placement",
-              "edge"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "description": "An end of an edge of the part's 3D model.",
-            "properties": {
-              "edge": {
-                "$ref": "#/$defs/ModelEdgeRef"
-              },
-              "end": {
-                "$ref": "#/$defs/End"
-              },
-              "feature": {
-                "const": "vertex",
-                "type": "string"
-              },
-              "placement": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              }
-            },
-            "required": [
-              "feature",
-              "placement",
-              "edge",
-              "end"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "HousingRefId": {
-        "description": "A housing reference's identity in the project (slice S7).",
-        "format": "uint32",
-        "minimum": 0,
-        "type": "integer"
-      },
-      "InterfaceSourceId": {
-        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so an enclosure can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
-        "type": "string"
-      },
-      "ModelEdgeName": {
-        "description": "An edge's persistent name in a model design.",
-        "type": "string"
-      },
-      "ModelEdgeRef": {
+      "AssemblyBinding": {
         "additionalProperties": false,
-        "description": "An edge of the package's own 3D model, in the model's frame.",
+        "description": "A board parameter set from a linked design user parameter (§7.2). Units\nare checked; names are never matched automatically.",
         "properties": {
-          "body": {
-            "$ref": "#/$defs/BodyName"
+          "assembly_param": {
+            "description": "The linked design's parameter, by its name there.",
+            "type": "string"
           },
-          "edge": {
-            "$ref": "#/$defs/ModelEdgeName"
+          "board_param": {
+            "$ref": "#/$defs/ParamName"
           },
-          "pick": {
+          "value": {
+            "$ref": "#/$defs/Nm",
+            "description": "The snapshot: its value when last read."
+          }
+        },
+        "required": [
+          "board_param",
+          "assembly_param",
+          "value"
+        ],
+        "type": "object"
+      },
+      "AssemblyRead": {
+        "additionalProperties": false,
+        "description": "What the host read of the linked design: the link, every assembly\nreference's trace and every binding's value now, and the linked design\nfeatures that use the board's datums.",
+        "properties": {
+          "assembly_hint": {
+            "description": "The linked design's file as the request named it.",
+            "type": "string"
+          },
+          "bindings": {
+            "description": "One per binding of the link (none for a new link).",
             "items": {
-              "format": "double",
-              "type": "number"
+              "$ref": "#/$defs/BindingRead"
             },
-            "maxItems": 3,
-            "minItems": 3,
             "type": "array"
-          }
-        },
-        "required": [
-          "body",
-          "edge",
-          "pick"
-        ],
-        "type": "object"
-      },
-      "ModelFaceRef": {
-        "additionalProperties": false,
-        "description": "A face of the package's own 3D model, in the model's frame (§6.2):\nre-found by name, checked against `pick` (a point on it, mm).",
-        "properties": {
-          "body": {
-            "$ref": "#/$defs/BodyName"
           },
-          "face": {
-            "$ref": "#/$defs/FaceName"
-          },
-          "pick": {
-            "items": {
-              "format": "double",
-              "type": "number"
-            },
-            "maxItems": 3,
-            "minItems": 3,
-            "type": "array"
-          }
-        },
-        "required": [
-          "body",
-          "face",
-          "pick"
-        ],
-        "type": "object"
-      },
-      "PadId": {
-        "description": "A footprint pad (copper land).",
-        "format": "uint32",
-        "minimum": 0,
-        "type": "integer"
-      },
-      "PadPoint": {
-        "description": "Where on a pad a reference measures.",
-        "oneOf": [
-          {
-            "enum": [
-              "centre"
-            ],
-            "type": "string"
-          },
-          {
-            "additionalProperties": false,
-            "description": "A side of the pad's box in the part frame.",
-            "properties": {
-              "side": {
-                "$ref": "#/$defs/BoxSide"
-              }
-            },
-            "required": [
-              "side"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "ParamName": {
-        "description": "A footprint parameter or package-value name: an identifier\n`[A-Za-z_][A-Za-z0-9_]*`. Names starting `pkg_` are reserved for\ninjected package values.",
-        "type": "string"
-      },
-      "PartAxis": {
-        "description": "An axis of a part frame.",
-        "enum": [
-          "x",
-          "y"
-        ],
-        "type": "string"
-      },
-      "PublishedDatum": {
-        "additionalProperties": false,
-        "description": "One datum as it was last published: its slot and content hash, so a\npreview tells changed datums from unchanged ones without the file.",
-        "properties": {
-          "hash": {
-            "$ref": "#/$defs/ContentHash"
-          },
-          "id": {
-            "$ref": "#/$defs/DatumId"
-          },
-          "slot": {
-            "$ref": "#/$defs/Slot"
-          }
-        },
-        "required": [
-          "id",
-          "slot",
-          "hash"
-        ],
-        "type": "object"
-      },
-      "PublishedFile": {
-        "additionalProperties": false,
-        "description": "A design file an earlier publish wrote: its revision and SHA-256.",
-        "properties": {
-          "revision": {
+          "board_revision": {
             "format": "uint32",
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
-          "sha256": {
-            "$ref": "#/$defs/ContentHash"
-          }
-        },
-        "required": [
-          "revision",
-          "sha256"
-        ],
-        "type": "object"
-      },
-      "PublishedRecord": {
-        "additionalProperties": false,
-        "description": "The last publish the project recorded (`interface.record_publish`).",
-        "properties": {
-          "datums": {
-            "description": "Every datum published, in slot order.",
-            "items": {
-              "$ref": "#/$defs/PublishedDatum"
-            },
-            "type": "array"
-          },
-          "design_sha256": {
+          "board_sha256": {
             "anyOf": [
               {
                 "$ref": "#/$defs/ContentHash"
@@ -661,292 +56,56 @@
                 "type": "null"
               }
             ],
-            "description": "SHA-256 of the design file this publish wrote, as SolidCraft keeps\nit on an enclosure's link to the file (slice B5): an enclosure whose\nlink holds another hash holds an older board."
+            "description": "SHA-256 of the board's published design as the linked design's link to\nit last read it, when the linked design keeps one."
           },
-          "earlier": {
-            "description": "The files earlier publishes wrote, oldest first, at most\n[`MAX_PUBLISHED_FILES`]: they name the revision an enclosure still\nholds. Kept by `interface.record_publish`, never by the host.",
+          "component": {
+            "type": "string"
+          },
+          "consumers": {
             "items": {
-              "$ref": "#/$defs/PublishedFile"
+              "$ref": "#/$defs/Consumer"
             },
             "type": "array"
           },
-          "hash": {
-            "$ref": "#/$defs/ContentHash",
-            "description": "The canonical datum table's SHA-256."
+          "design_hint": {
+            "description": "The board's published design as the request named it.",
+            "type": "string"
           },
-          "revision": {
-            "description": "Counts publishes whose content hash differed, from 1.",
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
+          "file_sha256": {
+            "$ref": "#/$defs/ContentHash"
           },
-          "tier": {
-            "$ref": "#/$defs/Tier"
+          "references": {
+            "description": "One per followed face of the link (none for a new link).",
+            "items": {
+              "$ref": "#/$defs/ReferenceRead"
+            },
+            "type": "array"
+          },
+          "unexported": {
+            "description": "Linked design features attached to faces of the board that no slot\ncarries.",
+            "items": {
+              "$ref": "#/$defs/UnexportedUse"
+            },
+            "type": "array"
           }
         },
         "required": [
-          "revision",
-          "hash",
-          "tier",
-          "datums"
+          "assembly_hint",
+          "design_hint",
+          "component",
+          "file_sha256"
         ],
         "type": "object"
       },
-      "SketchConstraintId": {
-        "description": "A SolidCraft sketch constraint id (for example `k10`).",
-        "type": "string"
-      },
-      "SketchCurveId": {
-        "description": "A SolidCraft sketch curve id (for example `l2`).",
-        "type": "string"
-      },
-      "SketchPointId": {
-        "description": "A SolidCraft sketch point id (for example `p3`); never reused.",
-        "type": "string"
-      },
-      "SketchRef": {
-        "description": "Any sketch entity, by id.",
-        "oneOf": [
-          {
-            "additionalProperties": false,
-            "properties": {
-              "point": {
-                "$ref": "#/$defs/SketchPointId"
-              }
-            },
-            "required": [
-              "point"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "curve": {
-                "$ref": "#/$defs/SketchCurveId"
-              }
-            },
-            "required": [
-              "curve"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "constraint": {
-                "$ref": "#/$defs/SketchConstraintId"
-              }
-            },
-            "required": [
-              "constraint"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "Slot": {
-        "description": "A datum's position in the board's append-only slot table, from 0. The\nexported design builds slots first and in slot order, so a slot's\nfeature ids, and with them its face names, follow from this number\nalone. A slot is never reused: a removed datum's slot is retired.",
-        "format": "uint32",
-        "minimum": 0,
-        "type": "integer"
-      },
-      "Tier": {
-        "description": "How much of the board the exported design carries after the slots.",
-        "oneOf": [
-          {
-            "const": "interface",
-            "description": "The slots only.",
-            "type": "string"
-          },
-          {
-            "const": "mechanical",
-            "description": "The slots, the laminate, pads and parts (the default).",
-            "type": "string"
-          },
-          {
-            "const": "full",
-            "description": "The slots and every copper body as well.",
-            "type": "string"
-          }
-        ]
-      }
-    },
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "description": "Document changes to the board's interface. Each is one undo step; a\ncommand that changes nothing is not.",
-    "oneOf": [
-      {
-        "additionalProperties": false,
-        "description": "Export a feature, package datum, part frame or envelope, or board\nparameter, allocating a new slot. Refused when it is already\nexported, when its owner does not exist, or at the slot bound.",
-        "properties": {
-          "command": {
-            "const": "interface.export",
-            "type": "string"
-          },
-          "params": {
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "default": null,
-                "description": "A display name; the derived one (\"J1 opening\") when omitted.",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "target": {
-                "$ref": "#/$defs/ExportTarget"
-              }
-            },
-            "required": [
-              "target"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "command",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "additionalProperties": false,
-        "description": "Stop exporting a datum and retire its slot, which is never used\nagain. An automatic datum is withdrawn by switching its rule off.\nThe publish preview names the enclosure features that used it.",
-        "properties": {
-          "command": {
-            "const": "interface.unexport",
-            "type": "string"
-          },
-          "params": {
-            "additionalProperties": false,
-            "properties": {
-              "datum": {
-                "$ref": "#/$defs/DatumId"
-              }
-            },
-            "required": [
-              "datum"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "command",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "additionalProperties": false,
-        "description": "Set a datum's display name, or with `None` go back to the derived\none. Never changes its token, slot or anything the enclosure sees\nother than the label.",
-        "properties": {
-          "command": {
-            "const": "interface.rename",
-            "type": "string"
-          },
-          "params": {
-            "additionalProperties": false,
-            "properties": {
-              "datum": {
-                "$ref": "#/$defs/DatumId"
-              },
-              "name": {
-                "default": null,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "datum"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "command",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "additionalProperties": false,
-        "description": "Switch an automatic export rule on or off. Off retires the slots of\nthe datums it made; on again allocates new slots.",
-        "properties": {
-          "command": {
-            "const": "interface.auto",
-            "type": "string"
-          },
-          "params": {
-            "additionalProperties": false,
-            "properties": {
-              "on": {
-                "type": "boolean"
-              },
-              "rule": {
-                "$ref": "#/$defs/AutoRule"
-              }
-            },
-            "required": [
-              "rule",
-              "on"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "command",
-          "params"
-        ],
-        "type": "object"
-      },
-      {
-        "additionalProperties": false,
-        "description": "Record a publish the host has written. It holds the revision, its\nhash, the tier and every datum's hash, and the board's interface\nidentity on the first publish. Sent by the host after `interface.publish`\nwrote the files; refused when `source_id` differs from a recorded\none or the revision does not follow the recorded one.",
-        "properties": {
-          "command": {
-            "const": "interface.record_publish",
-            "type": "string"
-          },
-          "params": {
-            "additionalProperties": false,
-            "properties": {
-              "record": {
-                "$ref": "#/$defs/PublishedRecord"
-              },
-              "source_id": {
-                "$ref": "#/$defs/InterfaceSourceId"
-              }
-            },
-            "required": [
-              "source_id",
-              "record"
-            ],
-            "type": "object"
-          }
-        },
-        "required": [
-          "command",
-          "params"
-        ],
-        "type": "object"
-      }
-    ],
-    "title": "InterfaceCommand"
-  },
-  "housing_command": {
-    "$defs": {
       "BindingRead": {
         "additionalProperties": false,
-        "description": "One binding's enclosure parameter as the host found it.",
+        "description": "One binding's linked design parameter as the host found it.",
         "properties": {
           "board_param": {
             "$ref": "#/$defs/ParamName"
           },
           "value_mm": {
-            "description": "Its value now in mm; `None` when the enclosure no longer has it.",
+            "description": "Its value now in mm; `None` when the linked design no longer has it.",
             "format": "double",
             "type": [
               "number",
@@ -965,14 +124,14 @@
       },
       "Consumer": {
         "additionalProperties": false,
-        "description": "An enclosure feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the enclosure. A consumer whose datum no longer resolves is a\nbroken reference (`housing.reference_lost`), which blocks fabrication\noutput.",
+        "description": "A linked design feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the linked design. A consumer whose datum no longer resolves is a\nbroken reference (`assembly.reference_lost`), which blocks fabrication\noutput.",
         "properties": {
           "datum": {
             "$ref": "#/$defs/DatumId",
             "description": "The datum it uses."
           },
           "feature": {
-            "description": "The feature's name in the enclosure (\"USB opening\").",
+            "description": "The feature's name in the linked design (\"USB opening\").",
             "type": "string"
           },
           "name": {
@@ -981,7 +140,7 @@
           },
           "slot": {
             "$ref": "#/$defs/Slot",
-            "description": "The slot that carries it in the published design: the enclosure's\nlink names a face or body of that slot. The board checks the\nconsumer by its slot, which is never reused."
+            "description": "The slot that carries it in the published design: the linked design's\nlink names a face or body of that slot. The board checks the\nconsumer by its slot, which is never reused."
           },
           "token": {
             "description": "The datum's token as published (`i80.opening`).",
@@ -1143,117 +302,21 @@
           }
         ]
       },
-      "HousingBinding": {
-        "additionalProperties": false,
-        "description": "A board parameter set from an enclosure user parameter (§7.2). Units\nare checked; names are never matched automatically.",
-        "properties": {
-          "board_param": {
-            "$ref": "#/$defs/ParamName"
-          },
-          "housing_param": {
-            "description": "The enclosure's parameter, by its name there.",
-            "type": "string"
-          },
-          "value": {
-            "$ref": "#/$defs/Nm",
-            "description": "The snapshot: its value when last read."
-          }
-        },
-        "required": [
-          "board_param",
-          "housing_param",
-          "value"
-        ],
-        "type": "object"
-      },
-      "HousingRead": {
-        "additionalProperties": false,
-        "description": "What the host read of the enclosure: the link, every housing\nreference's trace and every binding's value now, and the enclosure\nfeatures that use the board's datums.",
-        "properties": {
-          "bindings": {
-            "description": "One per binding of the link (none for a new link).",
-            "items": {
-              "$ref": "#/$defs/BindingRead"
-            },
-            "type": "array"
-          },
-          "board_revision": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "board_sha256": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ContentHash"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "SHA-256 of the board's published design as the enclosure's link to\nit last read it, when the enclosure keeps one."
-          },
-          "component": {
-            "type": "string"
-          },
-          "consumers": {
-            "items": {
-              "$ref": "#/$defs/Consumer"
-            },
-            "type": "array"
-          },
-          "design_hint": {
-            "description": "The board's published design as the request named it.",
-            "type": "string"
-          },
-          "enclosure_hint": {
-            "description": "The enclosure's file as the request named it.",
-            "type": "string"
-          },
-          "file_sha256": {
-            "$ref": "#/$defs/ContentHash"
-          },
-          "references": {
-            "description": "One per housing reference of the link (none for a new link).",
-            "items": {
-              "$ref": "#/$defs/ReferenceRead"
-            },
-            "type": "array"
-          },
-          "unexported": {
-            "description": "Enclosure features attached to faces of the board that no slot\ncarries.",
-            "items": {
-              "$ref": "#/$defs/UnexportedUse"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "enclosure_hint",
-          "design_hint",
-          "component",
-          "file_sha256"
-        ],
-        "type": "object"
-      },
-      "HousingRefId": {
-        "description": "A housing reference's identity in the project (slice S7).",
+      "FollowedFaceId": {
+        "description": "A followed face's identity in the project (slice S7).",
         "format": "uint32",
         "minimum": 0,
         "type": "integer"
       },
       "NewReference": {
         "additionalProperties": false,
-        "description": "A housing reference to add: the face the host traced and its trace.",
+        "description": "A followed face to add: the face the host traced and its trace.",
         "properties": {
           "body": {
             "$ref": "#/$defs/BodyName"
           },
           "built_on": {
-            "description": "The board's datums the enclosure geometry under the face is built\non.",
+            "description": "The board's datums the linked design geometry under the face is built\non.",
             "items": {
               "$ref": "#/$defs/Consumer"
             },
@@ -1299,10 +362,10 @@
       },
       "ReferenceRead": {
         "additionalProperties": false,
-        "description": "One housing reference as the host found it.",
+        "description": "One followed face as the host found it.",
         "properties": {
           "built_on": {
-            "description": "The board's datums the enclosure geometry under the face is built\non now.",
+            "description": "The board's datums the linked design geometry under the face is built\non now.",
             "items": {
               "$ref": "#/$defs/Consumer"
             },
@@ -1320,13 +383,13 @@
             "description": "Its trace now; `None` when it is lost."
           },
           "id": {
-            "$ref": "#/$defs/HousingRefId"
+            "$ref": "#/$defs/FollowedFaceId"
           },
           "note": {
             "type": "string"
           },
           "pick": {
-            "description": "A point on the face where it is now, enclosure frame (the stored\npick, unless the face moved).",
+            "description": "A point on the face where it is now, linked design frame (the stored\npick, unless the face moved).",
             "items": {
               "format": "double",
               "type": "number"
@@ -1377,14 +440,14 @@
       },
       "UnexportedUse": {
         "additionalProperties": false,
-        "description": "An enclosure feature attached to a face of the board's design that is\nnot exported (no slot carries it).",
+        "description": "A linked design feature attached to a face of the board's design that is\nnot exported (no slot carries it).",
         "properties": {
           "body": {
             "description": "The board design's body it is attached to, by its name there\n(\"U1 model\").",
             "type": "string"
           },
           "feature": {
-            "description": "The feature's name in the enclosure (\"Lid rib\").",
+            "description": "The feature's name in the linked design (\"Lid rib\").",
             "type": "string"
           }
         },
@@ -1395,7 +458,7 @@
         "type": "object"
       },
       "UseKind": {
-        "description": "How an enclosure feature uses a datum.",
+        "description": "How a linked design feature uses a datum.",
         "oneOf": [
           {
             "const": "sketch",
@@ -1404,28 +467,28 @@
           },
           {
             "const": "joint",
-            "description": "A joint places the board by it: the whole board frame in the\nenclosure, and every housing reference with it, depends on it.",
+            "description": "A joint places the board by it: the whole board frame in the\nlinked design, and every followed face with it, depends on it.",
             "type": "string"
           }
         ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "description": "The enclosure link's document changes. Each is one undo step; a refused\ncommand changes nothing.",
+    "description": "The assembly link's document changes. Each is one undo step; a refused\ncommand changes nothing.",
     "oneOf": [
       {
         "additionalProperties": false,
-        "description": "Link the enclosure the host read (`housing.link`). Refused when a\nlink exists: relink it instead.",
+        "description": "Link the linked design the host read (`assembly.link`). Refused when a\nlink exists: relink it instead.",
         "properties": {
           "command": {
-            "const": "housing.record_link",
+            "const": "assembly.record_link",
             "type": "string"
           },
           "params": {
             "additionalProperties": false,
             "properties": {
               "read": {
-                "$ref": "#/$defs/HousingRead"
+                "$ref": "#/$defs/AssemblyRead"
               }
             },
             "required": [
@@ -1442,17 +505,17 @@
       },
       {
         "additionalProperties": false,
-        "description": "Apply what the host read of the linked enclosure.\n\nSent by `housing.update` and `housing.relink`: the references'\ntraces move the fixed geometry they own, bindings set their board\nparameters, and the snapshot becomes the read. Refused, changing\nnothing, when the board would not solve, or a bound parameter is\ngone.",
+        "description": "Apply what the host read of the linked design.\n\nSent by `assembly.update` and `assembly.relink`: the references'\ntraces move the fixed geometry they own, bindings set their board\nparameters, and the snapshot becomes the read. Refused, changing\nnothing, when the board would not solve, or a bound parameter is\ngone.",
         "properties": {
           "command": {
-            "const": "housing.record_update",
+            "const": "assembly.record_update",
             "type": "string"
           },
           "params": {
             "additionalProperties": false,
             "properties": {
               "read": {
-                "$ref": "#/$defs/HousingRead"
+                "$ref": "#/$defs/AssemblyRead"
               }
             },
             "required": [
@@ -1469,10 +532,10 @@
       },
       {
         "additionalProperties": false,
-        "description": "Add a housing reference the host traced (`housing.add_reference`):\nits trace enters the board sketch as fixed geometry it owns.",
+        "description": "Add a followed face the host traced (`assembly.add_reference`):\nits trace enters the board sketch as fixed geometry it owns.",
         "properties": {
           "command": {
-            "const": "housing.record_reference",
+            "const": "assembly.record_reference",
             "type": "string"
           },
           "params": {
@@ -1496,17 +559,17 @@
       },
       {
         "additionalProperties": false,
-        "description": "Remove a housing reference and the geometry it owns, with every\nboard-sketch dimension to it.",
+        "description": "Remove a followed face and the geometry it owns, with every\nboard-sketch dimension to it.",
         "properties": {
           "command": {
-            "const": "housing.remove_reference",
+            "const": "assembly.remove_reference",
             "type": "string"
           },
           "params": {
             "additionalProperties": false,
             "properties": {
               "id": {
-                "$ref": "#/$defs/HousingRefId"
+                "$ref": "#/$defs/FollowedFaceId"
               }
             },
             "required": [
@@ -1523,17 +586,17 @@
       },
       {
         "additionalProperties": false,
-        "description": "Bind a board parameter to an enclosure parameter the host read\n(`housing.bind`), setting it to the value.",
+        "description": "Bind a board parameter to a linked design parameter the host read\n(`assembly.bind`), setting it to the value.",
         "properties": {
           "command": {
-            "const": "housing.record_binding",
+            "const": "assembly.record_binding",
             "type": "string"
           },
           "params": {
             "additionalProperties": false,
             "properties": {
               "binding": {
-                "$ref": "#/$defs/HousingBinding"
+                "$ref": "#/$defs/AssemblyBinding"
               }
             },
             "required": [
@@ -1550,10 +613,10 @@
       },
       {
         "additionalProperties": false,
-        "description": "Stop setting a board parameter from the enclosure; it keeps its\nvalue.",
+        "description": "Stop setting a board parameter from the linked design; it keeps its\nvalue.",
         "properties": {
           "command": {
-            "const": "housing.unbind",
+            "const": "assembly.unbind",
             "type": "string"
           },
           "params": {
@@ -1580,7 +643,7 @@
         "description": "Forget the link. The geometry the references owned stays in the\nboard sketch as plain fixed geometry; the board keeps its shape.",
         "properties": {
           "command": {
-            "const": "housing.unlink",
+            "const": "assembly.unlink",
             "type": "string"
           }
         },
@@ -1590,24 +653,72 @@
         "type": "object"
       }
     ],
-    "title": "HousingCommand"
+    "title": "AssemblyCommand"
   },
-  "housing_link": {
+  "assembly_link": {
     "$defs": {
+      "AssemblyBinding": {
+        "additionalProperties": false,
+        "description": "A board parameter set from a linked design user parameter (§7.2). Units\nare checked; names are never matched automatically.",
+        "properties": {
+          "assembly_param": {
+            "description": "The linked design's parameter, by its name there.",
+            "type": "string"
+          },
+          "board_param": {
+            "$ref": "#/$defs/ParamName"
+          },
+          "value": {
+            "$ref": "#/$defs/Nm",
+            "description": "The snapshot: its value when last read."
+          }
+        },
+        "required": [
+          "board_param",
+          "assembly_param",
+          "value"
+        ],
+        "type": "object"
+      },
+      "AssemblyCycle": {
+        "additionalProperties": false,
+        "description": "A loop between the two files: the board follows followed face\n`reference`, whose linked design geometry is built on `datum` through the\nlinked design's `feature`, and `datum` moves when the reference does.",
+        "properties": {
+          "datum": {
+            "$ref": "#/$defs/DatumId"
+          },
+          "feature": {
+            "description": "The linked design feature (or joint) that uses the datum, by its name\nthere.",
+            "type": "string"
+          },
+          "reference": {
+            "$ref": "#/$defs/FollowedFaceId"
+          },
+          "via": {
+            "$ref": "#/$defs/UseKind"
+          }
+        },
+        "required": [
+          "reference",
+          "datum",
+          "feature"
+        ],
+        "type": "object"
+      },
       "BodyName": {
         "description": "A body of a model design, by its name there.",
         "type": "string"
       },
       "Consumer": {
         "additionalProperties": false,
-        "description": "An enclosure feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the enclosure. A consumer whose datum no longer resolves is a\nbroken reference (`housing.reference_lost`), which blocks fabrication\noutput.",
+        "description": "A linked design feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the linked design. A consumer whose datum no longer resolves is a\nbroken reference (`assembly.reference_lost`), which blocks fabrication\noutput.",
         "properties": {
           "datum": {
             "$ref": "#/$defs/DatumId",
             "description": "The datum it uses."
           },
           "feature": {
-            "description": "The feature's name in the enclosure (\"USB opening\").",
+            "description": "The feature's name in the linked design (\"USB opening\").",
             "type": "string"
           },
           "name": {
@@ -1616,7 +727,7 @@
           },
           "slot": {
             "$ref": "#/$defs/Slot",
-            "description": "The slot that carries it in the published design: the enclosure's\nlink names a face or body of that slot. The board checks the\nconsumer by its slot, which is never reused."
+            "description": "The slot that carries it in the published design: the linked design's\nlink names a face or body of that slot. The board checks the\nconsumer by its slot, which is never reused."
           },
           "token": {
             "description": "The datum's token as published (`i80.opening`).",
@@ -1778,64 +889,16 @@
           }
         ]
       },
-      "HousingBinding": {
+      "FollowedFace": {
         "additionalProperties": false,
-        "description": "A board parameter set from an enclosure user parameter (§7.2). Units\nare checked; names are never matched automatically.",
-        "properties": {
-          "board_param": {
-            "$ref": "#/$defs/ParamName"
-          },
-          "housing_param": {
-            "description": "The enclosure's parameter, by its name there.",
-            "type": "string"
-          },
-          "value": {
-            "$ref": "#/$defs/Nm",
-            "description": "The snapshot: its value when last read."
-          }
-        },
-        "required": [
-          "board_param",
-          "housing_param",
-          "value"
-        ],
-        "type": "object"
-      },
-      "HousingCycle": {
-        "additionalProperties": false,
-        "description": "A loop between the two files: the board follows housing reference\n`reference`, whose enclosure geometry is built on `datum` through the\nenclosure's `feature`, and `datum` moves when the reference does.",
-        "properties": {
-          "datum": {
-            "$ref": "#/$defs/DatumId"
-          },
-          "feature": {
-            "description": "The enclosure feature (or joint) that uses the datum, by its name\nthere.",
-            "type": "string"
-          },
-          "reference": {
-            "$ref": "#/$defs/HousingRefId"
-          },
-          "via": {
-            "$ref": "#/$defs/UseKind"
-          }
-        },
-        "required": [
-          "reference",
-          "datum",
-          "feature"
-        ],
-        "type": "object"
-      },
-      "HousingRef": {
-        "additionalProperties": false,
-        "description": "One piece of enclosure geometry the board follows (§7.2): a face of an\nenclosure body, by its persistent Solidcraft name and a pick point on\nit, traced along the board's normal into the board plane. Its trace is\nfixed geometry of the board sketch, owned by the reference\n([`Self::sketch`]), so board curves are dimensioned to it; only a\nhousing update moves it.",
+        "description": "One piece of linked design geometry the board follows (§7.2): a face of an\nlinked design body, by its persistent Solidcraft name and a pick point on\nit, traced along the board's normal into the board plane. Its trace is\nfixed geometry of the board sketch, owned by the reference\n([`Self::sketch`]), so board curves are dimensioned to it; only a\nassembly update moves it.",
         "properties": {
           "body": {
             "$ref": "#/$defs/BodyName",
-            "description": "The enclosure body, by its name there."
+            "description": "The linked design body, by its name there."
           },
           "built_on": {
-            "description": "The board's datums the enclosure geometry under this face is built\non, as last read: through the sketches its feature is made from,\nand every joint that places the board. A datum here that follows\nthis reference on the board is a loop (`housing.cycle`).",
+            "description": "The board's datums the linked design geometry under this face is built\non, as last read: through the sketches its feature is made from,\nand every joint that places the board. A datum here that follows\nthis reference on the board is a loop (`assembly.cycle`).",
             "items": {
               "$ref": "#/$defs/Consumer"
             },
@@ -1843,14 +906,14 @@
           },
           "face": {
             "$ref": "#/$defs/FaceName",
-            "description": "The face's persistent name in the enclosure design."
+            "description": "The face's persistent name in the linked design."
           },
           "geometry": {
             "$ref": "#/$defs/FeatureGeometry",
             "description": "The snapshot: its trace in the board plane, board mm, as last read.\nA lost or inexact reference keeps the last geometry."
           },
           "id": {
-            "$ref": "#/$defs/HousingRefId"
+            "$ref": "#/$defs/FollowedFaceId"
           },
           "name": {
             "description": "For people (\"Far wall · face\"); never identity.",
@@ -1861,7 +924,7 @@
             "type": "string"
           },
           "pick": {
-            "description": "A point on the face, enclosure frame, in nanometres; it moves with\nthe face when an update finds the face elsewhere.",
+            "description": "A point on the face, linked design frame, in nanometres; it moves with\nthe face when an update finds the face elsewhere.",
             "items": {
               "$ref": "#/$defs/Nm"
             },
@@ -1889,8 +952,8 @@
         ],
         "type": "object"
       },
-      "HousingRefId": {
-        "description": "A housing reference's identity in the project (slice S7).",
+      "FollowedFaceId": {
+        "description": "A followed face's identity in the project (slice S7).",
         "format": "uint32",
         "minimum": 0,
         "type": "integer"
@@ -1987,14 +1050,14 @@
       },
       "UnexportedUse": {
         "additionalProperties": false,
-        "description": "An enclosure feature attached to a face of the board's design that is\nnot exported (no slot carries it).",
+        "description": "A linked design feature attached to a face of the board's design that is\nnot exported (no slot carries it).",
         "properties": {
           "body": {
             "description": "The board design's body it is attached to, by its name there\n(\"U1 model\").",
             "type": "string"
           },
           "feature": {
-            "description": "The feature's name in the enclosure (\"Lid rib\").",
+            "description": "The feature's name in the linked design (\"Lid rib\").",
             "type": "string"
           }
         },
@@ -2005,7 +1068,7 @@
         "type": "object"
       },
       "UseKind": {
-        "description": "How an enclosure feature uses a datum.",
+        "description": "How a linked design feature uses a datum.",
         "oneOf": [
           {
             "const": "sketch",
@@ -2014,7 +1077,7 @@
           },
           {
             "const": "joint",
-            "description": "A joint places the board by it: the whole board frame in the\nenclosure, and every housing reference with it, depends on it.",
+            "description": "A joint places the board by it: the whole board frame in the\nlinked design, and every followed face with it, depends on it.",
             "type": "string"
           }
         ]
@@ -2022,17 +1085,21 @@
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
-    "description": "The project's link to an enclosure design.",
+    "description": "The project's link to a linked design.",
     "properties": {
+      "assembly_hint": {
+        "description": "Where the linked design was, as the user gave it (absolute, or\nrelative to the project's folder). A hint for the desktop and for\nmessages: every request that reads the linked design names its file, so\nthe permission gate sees it, and is refused when it is not this one\n(`assembly.relink` changes it).",
+        "type": "string"
+      },
       "bindings": {
-        "description": "Board parameters set from enclosure parameters.",
+        "description": "Board parameters set from linked design parameters.",
         "items": {
-          "$ref": "#/$defs/HousingBinding"
+          "$ref": "#/$defs/AssemblyBinding"
         },
         "type": "array"
       },
       "board_revision": {
-        "description": "The interface revision the enclosure linked when it was read, if\nthe published sidecar beside the linked design said.",
+        "description": "The interface revision the assembly linked when it was read, if\nthe published sidecar beside the linked design said.",
         "format": "uint32",
         "minimum": 0,
         "type": [
@@ -2049,53 +1116,49 @@
             "type": "null"
           }
         ],
-        "description": "SHA-256 of the board's published design file as the enclosure's\nlink to it last read it (SolidCraft keeps it on the link), when\nthe enclosure keeps one: another hash than the last publish's is\n\"the enclosure holds an older board\" (slice B5)."
+        "description": "SHA-256 of the board's published design file as the linked design's\nlink to it last read it (SolidCraft keeps it on the link), when\nthe linked design keeps one: another hash than the last publish's is\n\"the linked design holds an older board\" (slice B5)."
       },
       "component": {
-        "description": "The enclosure component that links this board's published design\n(matched by its link resolving to that file, never by name); its\nname in the enclosure, for messages.",
+        "description": "The linked design component that links this board's published design\n(matched by its link resolving to that file, never by name); its\nname in the linked design, for messages.",
         "type": "string"
       },
       "consumers": {
-        "description": "Enclosure features that use the board's datums, as last read.",
+        "description": "Linked design features that use the board's datums, as last read.",
         "items": {
           "$ref": "#/$defs/Consumer"
         },
         "type": "array"
       },
       "cycles": {
-        "description": "Loops between the two files: a housing reference whose enclosure\ngeometry is built on a datum that itself follows the reference on\nthe board. Derived after every edit that can change them\n(`interface::housing::follow_cycles`); each blocks fabrication\noutput.",
+        "description": "Loops between the two files: a followed face whose linked design\ngeometry is built on a datum that itself follows the reference on\nthe board. Derived after every edit that can change them\n(`interface::assembly_link::follow_cycles`); each blocks fabrication\noutput.",
         "items": {
-          "$ref": "#/$defs/HousingCycle"
+          "$ref": "#/$defs/AssemblyCycle"
         },
         "type": "array"
       },
       "design_hint": {
-        "description": "Where the board's published design was, which the enclosure links\nand whose sidecar names the datums; a hint, like\n[`Self::enclosure_hint`].",
-        "type": "string"
-      },
-      "enclosure_hint": {
-        "description": "Where the enclosure design was, as the user gave it (absolute, or\nrelative to the project's folder). A hint for the desktop and for\nmessages: every request that reads the enclosure names its file, so\nthe permission gate sees it, and is refused when it is not this one\n(`housing.relink` changes it).",
+        "description": "Where the board's published design was, which the assembly links\nand whose sidecar names the datums; a hint, like\n[`Self::assembly_hint`].",
         "type": "string"
       },
       "file_sha256": {
         "$ref": "#/$defs/ContentHash",
-        "description": "SHA-256 of the enclosure file's bytes when the board last read it:\na different hash is \"the enclosure changed\"."
+        "description": "SHA-256 of the linked design file's bytes when the board last read it:\na different hash is \"the linked design changed\"."
       },
       "next_ref": {
-        "description": "Next [`HousingRefId`]; ids are never reused.",
+        "description": "Next [`FollowedFaceId`]; ids are never reused.",
         "format": "uint32",
         "minimum": 0,
         "type": "integer"
       },
       "references": {
-        "description": "Enclosure geometry the board follows, by id.",
+        "description": "Linked design geometry the board follows, by id.",
         "items": {
-          "$ref": "#/$defs/HousingRef"
+          "$ref": "#/$defs/FollowedFace"
         },
         "type": "array"
       },
       "unexported": {
-        "description": "Enclosure features attached to a face of the board's design that no\nslot carries (section 2: parts, laminate, pads), as last read. Such a\nface may move to another body when the board changes.",
+        "description": "Linked design features attached to a face of the board's design that no\nslot carries (section 2: parts, laminate, pads), as last read. Such a\nface may move to another body when the board changes.",
         "items": {
           "$ref": "#/$defs/UnexportedUse"
         },
@@ -2103,16 +1166,16 @@
       }
     },
     "required": [
-      "enclosure_hint",
+      "assembly_hint",
       "design_hint",
       "component",
       "file_sha256",
       "next_ref"
     ],
-    "title": "HousingLink",
+    "title": "AssemblyLink",
     "type": "object"
   },
-  "housing_preview": {
+  "assembly_preview": {
     "$defs": {
       "ContentHash": {
         "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
@@ -2179,14 +1242,14 @@
         ],
         "type": "object"
       },
-      "HousingRefId": {
-        "description": "A housing reference's identity in the project (slice S7).",
+      "FollowedFaceId": {
+        "description": "A followed face's identity in the project (slice S7).",
         "format": "uint32",
         "minimum": 0,
         "type": "integer"
       },
       "ObjectChange": {
-        "description": "One board object a housing update would move.",
+        "description": "One board object an assembly update would move.",
         "oneOf": [
           {
             "description": "Moved rigidly by `offset` (mm) and turned by `turn_deg`.",
@@ -2638,13 +1701,13 @@
         "type": "integer"
       },
       "ReferenceChange": {
-        "description": "One housing reference's row in the preview.",
+        "description": "One followed face's row in the preview.",
         "properties": {
           "from": {
             "$ref": "#/$defs/ReferenceStatus"
           },
           "id": {
-            "$ref": "#/$defs/HousingRefId"
+            "$ref": "#/$defs/FollowedFaceId"
           },
           "name": {
             "type": "string"
@@ -2739,14 +1802,14 @@
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "description": "`housing.preview`: what `housing.update` (or `housing.relink`) would\nchange, without changing anything.",
+    "description": "`assembly.preview`: what `assembly.update` (or `assembly.relink`) would\nchange, without changing anything.",
     "properties": {
       "changed": {
-        "description": "The enclosure changed since the board last read it.",
+        "description": "The linked design changed since the board last read it.",
         "type": "boolean"
       },
       "consumers": {
-        "description": "Enclosure features newly using, or no longer using, the board.",
+        "description": "Linked design features newly using, or no longer using, the board.",
         "items": {
           "type": "string"
         },
@@ -2760,10 +1823,10 @@
       },
       "expect_hash": {
         "$ref": "#/$defs/ContentHash",
-        "description": "The enclosure file's hash now: `housing.update` takes it as\n`expect_hash`, and is refused when the file changed since."
+        "description": "The linked design file's hash now: `assembly.update` takes it as\n`expect_hash`, and is refused when the file changed since."
       },
       "findings": {
-        "description": "The two-way check after the update (slice B5): the enclosure holds\nan older board, features on unexported faces, loops; or, refused,\nboth changed.",
+        "description": "The two-way check after the update (slice B5): the linked design holds\nan older board, features on unexported faces, loops; or, refused,\nboth changed.",
         "items": {
           "$ref": "#/$defs/Finding"
         },
@@ -2797,10 +1860,10 @@
       "references",
       "objects"
     ],
-    "title": "HousingPreview",
+    "title": "AssemblyPreview",
     "type": "object"
   },
-  "housing_status": {
+  "assembly_status": {
     "$defs": {
       "ContentHash": {
         "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
@@ -2868,11 +1931,11 @@
         "type": "object"
       },
       "LinkState": {
-        "description": "What `housing.status` reads, most serious first.",
+        "description": "What `assembly.status` reads, most serious first.",
         "oneOf": [
           {
             "const": "unlinked",
-            "description": "No enclosure is linked.",
+            "description": "No linked design is linked.",
             "type": "string"
           },
           {
@@ -2882,32 +1945,32 @@
           },
           {
             "const": "cycle",
-            "description": "The board and the enclosure follow each other in a loop:\nfabrication output is blocked.",
+            "description": "The board and the linked design follow each other in a loop:\nfabrication output is blocked.",
             "type": "string"
           },
           {
             "const": "missing",
-            "description": "The enclosure file is not where the request said; the board uses\nits snapshot.",
+            "description": "The linked design file is not where the request said; the board uses\nits snapshot.",
             "type": "string"
           },
           {
             "const": "both_changed",
-            "description": "The enclosure changed and still holds an older board: they no\nlonger agree.",
+            "description": "The linked design changed and still holds an older board: they no\nlonger agree.",
             "type": "string"
           },
           {
             "const": "changed",
-            "description": "The enclosure changed since the board read it.",
+            "description": "The linked design changed since the board read it.",
             "type": "string"
           },
           {
             "const": "older_board",
-            "description": "The enclosure still holds an older published board.",
+            "description": "The linked design still holds an older published board.",
             "type": "string"
           },
           {
             "const": "in_sync",
-            "description": "The board holds what the enclosure holds.",
+            "description": "The board holds what the linked design holds.",
             "type": "string"
           },
           {
@@ -3328,15 +2391,15 @@
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "description": "`housing.status`: the link's state and its findings.",
+    "description": "`assembly.status`: the link's state and its findings.",
     "properties": {
-      "design_hint": {
+      "assembly_hint": {
         "type": [
           "string",
           "null"
         ]
       },
-      "enclosure_hint": {
+      "design_hint": {
         "type": [
           "string",
           "null"
@@ -3351,7 +2414,7 @@
             "type": "null"
           }
         ],
-        "description": "The hash the board last read, which `housing.update` expects when\nthe file has not changed since."
+        "description": "The hash the board last read, which `assembly.update` expects when\nthe file has not changed since."
       },
       "findings": {
         "items": {
@@ -3371,8 +2434,945 @@
       "words",
       "findings"
     ],
-    "title": "HousingStatus",
+    "title": "AssemblyStatus",
     "type": "object"
+  },
+  "command": {
+    "$defs": {
+      "AnchorName": {
+        "description": "An anchor authored by name in a part's model design.",
+        "type": "string"
+      },
+      "AutoRule": {
+        "description": "An automatic export rule. Every rule is on by default; each can be\nswitched off (`interface.auto`).",
+        "oneOf": [
+          {
+            "const": "board",
+            "description": "The board frame, top, bottom and thickness.",
+            "type": "string"
+          },
+          {
+            "const": "outline",
+            "description": "The board outline.",
+            "type": "string"
+          },
+          {
+            "const": "cutouts",
+            "description": "Every cutout and slot.",
+            "type": "string"
+          },
+          {
+            "const": "holes",
+            "description": "Every mounting hole.",
+            "type": "string"
+          },
+          {
+            "const": "external_datums",
+            "description": "Every package datum marked `external`, for each placed instance.",
+            "type": "string"
+          },
+          {
+            "const": "side_heights",
+            "description": "The tallest part per side.",
+            "type": "string"
+          }
+        ]
+      },
+      "BoardRef": {
+        "description": "One reference of a part dimension.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "A board-sketch point or curve, by its stable sketch id.",
+            "properties": {
+              "board": {
+                "$ref": "#/$defs/SketchRef"
+              }
+            },
+            "required": [
+              "board"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A feature of a placed part (or of a fill or keepout's origin).",
+            "properties": {
+              "part": {
+                "$ref": "#/$defs/FeatureRef"
+              }
+            },
+            "required": [
+              "part"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A followed face (§7.2; slice S7).",
+            "properties": {
+              "followed_face": {
+                "$ref": "#/$defs/FollowedFaceId"
+              }
+            },
+            "required": [
+              "followed_face"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BodyName": {
+        "description": "A body of a model design, by its name there.",
+        "type": "string"
+      },
+      "BoxSide": {
+        "description": "A side of an axis-aligned box in the part frame (before the placement\nturns or mirrors it).",
+        "enum": [
+          "left",
+          "right",
+          "bottom",
+          "top"
+        ],
+        "type": "string"
+      },
+      "ConstraintTarget": {
+        "description": "What a part dimension moves (`model::dimension`).",
+        "oneOf": [
+          {
+            "description": "A component placement, by instance.",
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "placement",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "fill",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "keepout",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ContentHash": {
+        "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
+        "type": "string"
+      },
+      "DatumId": {
+        "description": "A datum's document identity, allocated from the table's own counter\n([`InterfaceTable::next_datum`]), like nets from theirs, so exporting a\ndatum never shifts the ids of other objects. Never reused: the counter,\nlike the slot counter, only grows, through undo and redo too.",
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "DatumName": {
+        "description": "A datum's name inside its owner (`opening`, `axis_led`, `top`): lower\ncase `[a-z][a-z0-9_]*`, at most [`MAX_DATUM_NAME`] bytes. It is part of\nthe datum's key and token, so it is identity, unlike the display name.",
+        "type": "string"
+      },
+      "End": {
+        "description": "An end of an edge.",
+        "enum": [
+          "start",
+          "end"
+        ],
+        "type": "string"
+      },
+      "ExportTarget": {
+        "description": "What `interface.export` exports. Everything the automatic rules export\ncan only be switched with `interface.auto`.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Any dimensionable feature: a part face, edge or vertex, a pad, a\nboard-sketch point or curve. Never a followed face.",
+            "properties": {
+              "feature": {
+                "$ref": "#/$defs/BoardRef"
+              },
+              "target": {
+                "const": "feature",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "feature"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A datum the instance's package revision declares (one not marked\n`external`, which the automatic rule already exports).",
+            "properties": {
+              "instance": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "name": {
+                "$ref": "#/$defs/DatumName"
+              },
+              "target": {
+                "const": "package_datum",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "instance",
+              "name"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A placement's frame.",
+            "properties": {
+              "instance": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "target": {
+                "const": "part_frame",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "instance"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A placement's envelope: courtyard × body height.",
+            "properties": {
+              "instance": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "target": {
+                "const": "part_envelope",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "instance"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A board parameter, read-only on the other side.",
+            "properties": {
+              "name": {
+                "$ref": "#/$defs/ParamName"
+              },
+              "target": {
+                "const": "board_parameter",
+                "type": "string"
+              }
+            },
+            "required": [
+              "target",
+              "name"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "FaceName": {
+        "description": "A face's persistent name in a model design (`F2:side:l4`).",
+        "type": "string"
+      },
+      "FeatureRef": {
+        "description": "A feature of a placed part, rebuilt from the library\nsnapshot (or the part's model design) for every solve and never stored.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "The placement origin (footprint datum), or a fill's or keepout's\noutline start.",
+            "properties": {
+              "feature": {
+                "const": "origin",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ConstraintTarget"
+              }
+            },
+            "required": [
+              "feature",
+              "target"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An axis of the target's frame through its origin.",
+            "properties": {
+              "axis": {
+                "$ref": "#/$defs/PartAxis"
+              },
+              "feature": {
+                "const": "axis",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ConstraintTarget"
+              }
+            },
+            "required": [
+              "feature",
+              "target",
+              "axis"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "$ref": "#/$defs/PadPoint"
+              },
+              "feature": {
+                "const": "pad",
+                "type": "string"
+              },
+              "pad": {
+                "$ref": "#/$defs/PadId"
+              },
+              "placement": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "feature",
+              "placement",
+              "pad",
+              "at"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A side of the courtyard's box in the part frame; `None`: its centre.",
+            "properties": {
+              "feature": {
+                "const": "courtyard",
+                "type": "string"
+              },
+              "placement": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "side": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BoxSide"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "feature",
+              "placement"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An anchor authored by name in the part's model design.",
+            "properties": {
+              "feature": {
+                "const": "anchor",
+                "type": "string"
+              },
+              "name": {
+                "$ref": "#/$defs/AnchorName"
+              },
+              "placement": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "feature",
+              "placement",
+              "name"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A face of the part's part file, by body, persistent face name and a\npick point on it (model frame, mm), traced in the board plane by the\nhost ([`ModelTrace`]). A name the part does not have is refused with\nits faces square to the board, each by name with a point on it.",
+            "properties": {
+              "face": {
+                "$ref": "#/$defs/ModelFaceRef"
+              },
+              "feature": {
+                "const": "face",
+                "type": "string"
+              },
+              "placement": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "feature",
+              "placement",
+              "face"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An edge of the part's 3D model.",
+            "properties": {
+              "edge": {
+                "$ref": "#/$defs/ModelEdgeRef"
+              },
+              "feature": {
+                "const": "edge",
+                "type": "string"
+              },
+              "placement": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "feature",
+              "placement",
+              "edge"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "An end of an edge of the part's 3D model.",
+            "properties": {
+              "edge": {
+                "$ref": "#/$defs/ModelEdgeRef"
+              },
+              "end": {
+                "$ref": "#/$defs/End"
+              },
+              "feature": {
+                "const": "vertex",
+                "type": "string"
+              },
+              "placement": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "feature",
+              "placement",
+              "edge",
+              "end"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "FollowedFaceId": {
+        "description": "A followed face's identity in the project (slice S7).",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "InterfaceSourceId": {
+        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
+        "type": "string"
+      },
+      "ModelEdgeName": {
+        "description": "An edge's persistent name in a model design.",
+        "type": "string"
+      },
+      "ModelEdgeRef": {
+        "additionalProperties": false,
+        "description": "An edge of the package's own 3D model, in the model's frame.",
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/BodyName"
+          },
+          "edge": {
+            "$ref": "#/$defs/ModelEdgeName"
+          },
+          "pick": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "body",
+          "edge",
+          "pick"
+        ],
+        "type": "object"
+      },
+      "ModelFaceRef": {
+        "additionalProperties": false,
+        "description": "A face of the package's own 3D model, in the model's frame (§6.2):\nre-found by name, checked against `pick` (a point on it, mm).",
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/BodyName"
+          },
+          "face": {
+            "$ref": "#/$defs/FaceName"
+          },
+          "pick": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "body",
+          "face",
+          "pick"
+        ],
+        "type": "object"
+      },
+      "PadId": {
+        "description": "A footprint pad (copper land).",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "PadPoint": {
+        "description": "Where on a pad a reference measures.",
+        "oneOf": [
+          {
+            "enum": [
+              "centre"
+            ],
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A side of the pad's box in the part frame.",
+            "properties": {
+              "side": {
+                "$ref": "#/$defs/BoxSide"
+              }
+            },
+            "required": [
+              "side"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ParamName": {
+        "description": "A footprint parameter or package-value name: an identifier\n`[A-Za-z_][A-Za-z0-9_]*`. Names starting `pkg_` are reserved for\ninjected package values.",
+        "type": "string"
+      },
+      "PartAxis": {
+        "description": "An axis of a part frame.",
+        "enum": [
+          "x",
+          "y"
+        ],
+        "type": "string"
+      },
+      "PublishedDatum": {
+        "additionalProperties": false,
+        "description": "One datum as it was last published: its slot and content hash, so a\npreview tells changed datums from unchanged ones without the file.",
+        "properties": {
+          "hash": {
+            "$ref": "#/$defs/ContentHash"
+          },
+          "id": {
+            "$ref": "#/$defs/DatumId"
+          },
+          "slot": {
+            "$ref": "#/$defs/Slot"
+          }
+        },
+        "required": [
+          "id",
+          "slot",
+          "hash"
+        ],
+        "type": "object"
+      },
+      "PublishedFile": {
+        "additionalProperties": false,
+        "description": "A design file an earlier publish wrote: its revision and SHA-256.",
+        "properties": {
+          "revision": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sha256": {
+            "$ref": "#/$defs/ContentHash"
+          }
+        },
+        "required": [
+          "revision",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "PublishedRecord": {
+        "additionalProperties": false,
+        "description": "The last publish the project recorded (`interface.record_publish`).",
+        "properties": {
+          "datums": {
+            "description": "Every datum published, in slot order.",
+            "items": {
+              "$ref": "#/$defs/PublishedDatum"
+            },
+            "type": "array"
+          },
+          "design_sha256": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContentHash"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SHA-256 of the design file this publish wrote, as SolidCraft keeps\nit on a linked design's link to the file (slice B5): a linked design whose\nlink holds another hash holds an older board."
+          },
+          "earlier": {
+            "description": "The files earlier publishes wrote, oldest first, at most\n[`MAX_PUBLISHED_FILES`]: they name the revision a linked design still\nholds. Kept by `interface.record_publish`, never by the host.",
+            "items": {
+              "$ref": "#/$defs/PublishedFile"
+            },
+            "type": "array"
+          },
+          "hash": {
+            "$ref": "#/$defs/ContentHash",
+            "description": "The canonical datum table's SHA-256."
+          },
+          "revision": {
+            "description": "Counts publishes whose content hash differed, from 1.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tier": {
+            "$ref": "#/$defs/Tier"
+          }
+        },
+        "required": [
+          "revision",
+          "hash",
+          "tier",
+          "datums"
+        ],
+        "type": "object"
+      },
+      "SketchConstraintId": {
+        "description": "A SolidCraft sketch constraint id (for example `k10`).",
+        "type": "string"
+      },
+      "SketchCurveId": {
+        "description": "A SolidCraft sketch curve id (for example `l2`).",
+        "type": "string"
+      },
+      "SketchPointId": {
+        "description": "A SolidCraft sketch point id (for example `p3`); never reused.",
+        "type": "string"
+      },
+      "SketchRef": {
+        "description": "Any sketch entity, by id.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "point": {
+                "$ref": "#/$defs/SketchPointId"
+              }
+            },
+            "required": [
+              "point"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "curve": {
+                "$ref": "#/$defs/SketchCurveId"
+              }
+            },
+            "required": [
+              "curve"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "constraint": {
+                "$ref": "#/$defs/SketchConstraintId"
+              }
+            },
+            "required": [
+              "constraint"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "Slot": {
+        "description": "A datum's position in the board's append-only slot table, from 0. The\nexported design builds slots first and in slot order, so a slot's\nfeature ids, and with them its face names, follow from this number\nalone. A slot is never reused: a removed datum's slot is retired.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "Tier": {
+        "description": "How much of the board the exported design carries after the slots.",
+        "oneOf": [
+          {
+            "const": "interface",
+            "description": "The slots only.",
+            "type": "string"
+          },
+          {
+            "const": "mechanical",
+            "description": "The slots, the laminate, pads and parts (the default).",
+            "type": "string"
+          },
+          {
+            "const": "full",
+            "description": "The slots and every copper body as well.",
+            "type": "string"
+          }
+        ]
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "description": "Document changes to the board's interface. Each is one undo step; a\ncommand that changes nothing is not.",
+    "oneOf": [
+      {
+        "additionalProperties": false,
+        "description": "Export a feature, package datum, part frame or envelope, or board\nparameter, allocating a new slot. Refused when it is already\nexported, when its owner does not exist, or at the slot bound.",
+        "properties": {
+          "command": {
+            "const": "interface.export",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "default": null,
+                "description": "A display name; the derived one (\"J1 opening\") when omitted.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "target": {
+                "$ref": "#/$defs/ExportTarget"
+              }
+            },
+            "required": [
+              "target"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Stop exporting a datum and retire its slot, which is never used\nagain. An automatic datum is withdrawn by switching its rule off.\nThe publish preview names the linked design features that used it.",
+        "properties": {
+          "command": {
+            "const": "interface.unexport",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "datum": {
+                "$ref": "#/$defs/DatumId"
+              }
+            },
+            "required": [
+              "datum"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Set a datum's display name, or with `None` go back to the derived\none. Never changes its token, slot or anything the linked design sees\nother than the label.",
+        "properties": {
+          "command": {
+            "const": "interface.rename",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "datum": {
+                "$ref": "#/$defs/DatumId"
+              },
+              "name": {
+                "default": null,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "datum"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Switch an automatic export rule on or off. Off retires the slots of\nthe datums it made; on again allocates new slots.",
+        "properties": {
+          "command": {
+            "const": "interface.auto",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "on": {
+                "type": "boolean"
+              },
+              "rule": {
+                "$ref": "#/$defs/AutoRule"
+              }
+            },
+            "required": [
+              "rule",
+              "on"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "description": "Record a publish the host has written. It holds the revision, its\nhash, the tier and every datum's hash, and the board's interface\nidentity on the first publish. Sent by the host after `interface.publish`\nwrote the files; refused when `source_id` differs from a recorded\none or the revision does not follow the recorded one.",
+        "properties": {
+          "command": {
+            "const": "interface.record_publish",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": false,
+            "properties": {
+              "record": {
+                "$ref": "#/$defs/PublishedRecord"
+              },
+              "source_id": {
+                "$ref": "#/$defs/InterfaceSourceId"
+              }
+            },
+            "required": [
+              "source_id",
+              "record"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "command",
+          "params"
+        ],
+        "type": "object"
+      }
+    ],
+    "title": "InterfaceCommand"
   },
   "list": {
     "$defs": {
@@ -3731,7 +3731,7 @@
         "type": "object"
       },
       "InterfaceSourceId": {
-        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so an enclosure can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
+        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
         "type": "string"
       },
       "Outline": {
@@ -3917,6 +3917,39 @@
   },
   "preview": {
     "$defs": {
+      "AssemblyEffect": {
+        "description": "One linked design feature the dry run reports, in the linked design's own\nnames.",
+        "properties": {
+          "datum": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DatumId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The datum it references, when it is one Sparksmith published."
+          },
+          "effect": {
+            "$ref": "#/$defs/EffectKind"
+          },
+          "feature": {
+            "description": "The feature's name in SolidCraft (\"USB opening\").",
+            "type": "string"
+          },
+          "message": {
+            "description": "The sentence the user reads.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feature",
+          "effect",
+          "message"
+        ],
+        "type": "object"
+      },
       "ContentHash": {
         "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
         "type": "string"
@@ -4081,27 +4114,27 @@
         ]
       },
       "DryRun": {
-        "description": "The dry run on a scratch copy of the linked enclosure (slice B4). The\nuser's enclosure file is never touched.",
+        "description": "The dry run on a scratch copy of the linked design (slice B4). The\nuser's linked design file is never touched.",
         "properties": {
           "effects": {
             "items": {
-              "$ref": "#/$defs/EnclosureEffect"
+              "$ref": "#/$defs/AssemblyEffect"
             },
             "type": "array"
           },
-          "enclosure": {
-            "description": "The enclosure file the copy was made from, as the link names it.",
+          "linked_design": {
+            "description": "The linked design file the copy was made from, as the link names it.",
             "type": "string"
           }
         },
         "required": [
-          "enclosure",
+          "linked_design",
           "effects"
         ],
         "type": "object"
       },
       "EffectKind": {
-        "description": "What a candidate publish would do to the linked enclosure's feature.",
+        "description": "What a candidate publish would do to the linked design's feature.",
         "oneOf": [
           {
             "const": "moves",
@@ -4124,39 +4157,6 @@
             "type": "string"
           }
         ]
-      },
-      "EnclosureEffect": {
-        "description": "One enclosure feature the dry run reports, in the enclosure's own\nnames.",
-        "properties": {
-          "datum": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/DatumId"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "The datum it references, when it is one Sparksmith published."
-          },
-          "effect": {
-            "$ref": "#/$defs/EffectKind"
-          },
-          "feature": {
-            "description": "The feature's name in SolidCraft (\"USB opening\").",
-            "type": "string"
-          },
-          "message": {
-            "description": "The sentence the user reads.",
-            "type": "string"
-          }
-        },
-        "required": [
-          "feature",
-          "effect",
-          "message"
-        ],
-        "type": "object"
       },
       "Slot": {
         "description": "A datum's position in the board's append-only slot table, from 0. The\nexported design builds slots first and in slot order, so a slot's\nfeature ids, and with them its face names, follow from this number\nalone. A slot is never reused: a removed datum's slot is retired.",
@@ -4327,11 +4327,11 @@
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
-    "description": "`interface.publish_preview` (a host request; reads only): the diff\nagainst the last published revision and, when an enclosure is linked,\nthe dry run on a scratch copy of it (slices B3 and B4).",
+    "description": "`interface.publish_preview` (a host request; reads only): the diff\nagainst the last published revision and, when a linked design is linked,\nthe dry run on a scratch copy of it (slices B3 and B4).",
     "properties": {
-      "enclosure_path": {
+      "assembly_path": {
         "default": null,
-        "description": "The linked enclosure's file: with it (and `path`, the design it\nlinks), the preview runs the dry run on a scratch copy of it and\nnames the enclosure features that would move or fail (slice B4).",
+        "description": "The linked design's file: with it (and `path`, the design it\nlinks), the preview runs the dry run on a scratch copy of it and\nnames the linked design features that would move or fail (slice B4).",
         "type": [
           "string",
           "null"
@@ -4672,7 +4672,7 @@
         "type": "object"
       },
       "InterfaceSourceId": {
-        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so an enclosure can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
+        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
         "type": "string"
       },
       "Outline": {
@@ -4815,7 +4815,7 @@
             "$ref": "#/$defs/DatumStatus"
           },
           "token": {
-            "description": "Built from ids only (`i80.opening`); the name the enclosure's link\nstores.",
+            "description": "Built from ids only (`i80.opening`); the name the linked design's link\nstores.",
             "type": "string"
           }
         },
@@ -4918,7 +4918,7 @@
         "type": "string"
       },
       "unresolved_slots": {
-        "description": "Live datums the design carries nothing for, ascending: lost ones,\nand parameters whose value is an expression the core cannot\nevaluate. Their slots keep their place, and an enclosure reference\nto one fails until it resolves again.",
+        "description": "Live datums the design carries nothing for, ascending: lost ones,\nand parameters whose value is an expression the core cannot\nevaluate. Their slots keep their place, and an assembly reference\nto one fails until it resolves again.",
         "items": {
           "$ref": "#/$defs/Slot"
         },
@@ -5015,14 +5015,14 @@
           },
           {
             "additionalProperties": false,
-            "description": "A housing reference (§7.2; slice S7).",
+            "description": "A followed face (§7.2; slice S7).",
             "properties": {
-              "housing": {
-                "$ref": "#/$defs/HousingRefId"
+              "followed_face": {
+                "$ref": "#/$defs/FollowedFaceId"
               }
             },
             "required": [
-              "housing"
+              "followed_face"
             ],
             "type": "object"
           }
@@ -5509,8 +5509,8 @@
           }
         ]
       },
-      "HousingRefId": {
-        "description": "A housing reference's identity in the project (slice S7).",
+      "FollowedFaceId": {
+        "description": "A followed face's identity in the project (slice S7).",
         "format": "uint32",
         "minimum": 0,
         "type": "integer"
@@ -5528,7 +5528,7 @@
                 "type": "null"
               }
             ],
-            "description": "The exported feature of a [`DatumRole::Feature`] datum (never a\nhousing reference); `None` for every other role."
+            "description": "The exported feature of a [`DatumRole::Feature`] datum (never a\nfollowed face); `None` for every other role."
           },
           "id": {
             "$ref": "#/$defs/DatumId"
@@ -5559,7 +5559,7 @@
         "type": "object"
       },
       "InterfaceSourceId": {
-        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so an enclosure can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
+        "description": "A board's permanent identity in its published interface\n(docs/architecture/board-interface.md): random, drawn once and kept\nacross every publish, so a linked design can tell an older revision of\nthe same board from a different board. A deliberate slot\ncompaction draws a new one (a new epoch).\n\nWritten as 32 lower-case hex digits. The core never generates one:\n`pcbcraft-io` draws them from the operating system and passes them\nin as values.",
         "type": "string"
       },
       "ModelEdgeName": {
@@ -5718,10 +5718,10 @@
                 "type": "null"
               }
             ],
-            "description": "SHA-256 of the design file this publish wrote, as SolidCraft keeps\nit on an enclosure's link to the file (slice B5): an enclosure whose\nlink holds another hash holds an older board."
+            "description": "SHA-256 of the design file this publish wrote, as SolidCraft keeps\nit on a linked design's link to the file (slice B5): a linked design whose\nlink holds another hash holds an older board."
           },
           "earlier": {
-            "description": "The files earlier publishes wrote, oldest first, at most\n[`MAX_PUBLISHED_FILES`]: they name the revision an enclosure still\nholds. Kept by `interface.record_publish`, never by the host.",
+            "description": "The files earlier publishes wrote, oldest first, at most\n[`MAX_PUBLISHED_FILES`]: they name the revision a linked design still\nholds. Kept by `interface.record_publish`, never by the host.",
             "items": {
               "$ref": "#/$defs/PublishedFile"
             },

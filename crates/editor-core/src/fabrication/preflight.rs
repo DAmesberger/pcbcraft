@@ -209,9 +209,9 @@ const MAX_LEGEND_NAME: usize = 16;
 pub const NO_WAIVER: &[&str] = &[
     layout::dimensions::REFERENCE_LOST,
     layout::dimensions::REFERENCE_INEXACT,
-    crate::interface::findings::HOUSING_REFERENCE_LOST,
-    crate::interface::findings::HOUSING_REFERENCE_INEXACT,
-    crate::interface::findings::HOUSING_CYCLE,
+    crate::interface::findings::ASSEMBLY_REFERENCE_LOST,
+    crate::interface::findings::ASSEMBLY_REFERENCE_INEXACT,
+    crate::interface::findings::ASSEMBLY_CYCLE,
     "rules.no_fab_profile",
 ];
 
@@ -243,9 +243,9 @@ fn severity(row: &IssueRow) -> Option<Severity> {
             | layout::outline::SHAPE_INVALID
             | layout::dimensions::REFERENCE_LOST
             | layout::dimensions::REFERENCE_INEXACT
-            | crate::interface::findings::HOUSING_REFERENCE_LOST
-            | crate::interface::findings::HOUSING_REFERENCE_INEXACT
-            | crate::interface::findings::HOUSING_CYCLE
+            | crate::interface::findings::ASSEMBLY_REFERENCE_LOST
+            | crate::interface::findings::ASSEMBLY_REFERENCE_INEXACT
+            | crate::interface::findings::ASSEMBLY_CYCLE
     ) {
         return Some(Severity::Error);
     }

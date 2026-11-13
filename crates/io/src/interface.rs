@@ -1,7 +1,7 @@
 //! The published board interface's files (docs/architecture/
 //! board-interface.md, "The export format"): the `.solidcraft` design an
-//! enclosure links and its sidecar `<name>.interface.json` beside it. Both
-//! are replaced atomically, so an enclosure never reads half a publish.
+//! assembly links and its sidecar `<name>.interface.json` beside it. Both
+//! are replaced atomically, so a linked design never reads half a publish.
 use crate::persistence::{atomic_write, read_bytes, sync_directory};
 use crate::{Error, Result};
 use pcbcraft_core::ids::InterfaceSourceId;

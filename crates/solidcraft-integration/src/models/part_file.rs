@@ -20,7 +20,7 @@
 //! when given; the normal points out of the part, along the mating plug's
 //! way in. A construction axis `axis` or `axis-<suffix>` is the datum
 //! `axis` or `axis_<suffix>`, its diameter `<datum>_d` when given. Every
-//! declared datum is marked external: it was declared for the enclosure.
+//! declared datum is marked external: it was declared for the linked design.
 //!
 //! [`insert`] adds an evaluated part's history to a board design as one
 //! component definition, parameters prefixed, so the saved board stays

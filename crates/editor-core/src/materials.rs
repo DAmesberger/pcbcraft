@@ -53,9 +53,9 @@ pub enum MaterialId {
     Aluminium,
     PvcSleeve,
     BorosilicateGlass,
-    /// PBT plastic (connector housings, headers).
+    /// PBT plastic (connector bodies, headers).
     Pbt,
-    /// LCP plastic (high-temperature connector housings).
+    /// LCP plastic (high-temperature connector bodies).
     Lcp,
     Pa9t,
     SiliconeClear,
@@ -368,13 +368,13 @@ fn values(id: MaterialId) -> Values {
             .cite("est", "slight green attenuation of diode glass; opaque tint until a layered saved appearance exists"),
         Pbt => dielectric("PBT", [0.030, 0.030, 0.032], 0.50, 1.57)
             .density(1530.0)
-            .cite("est", "black glass-filled PBT housing; n ≈ 1.57 and density typical of 30 % glass-filled grades"),
+            .cite("est", "black glass-filled PBT body; n ≈ 1.57 and density typical of 30 % glass-filled grades"),
         Lcp => dielectric("LCP", [0.025, 0.025, 0.028], 0.35, 1.60)
             .density(1620.0)
-            .cite("est", "black glass-filled LCP housing; n and density typical"),
+            .cite("est", "black glass-filled LCP body; n and density typical"),
         Pa9t => dielectric("PA9T", [0.030, 0.030, 0.030], 0.45, 1.53)
             .density(1450.0)
-            .cite("est", "black glass-filled PA9T housing; n and density typical"),
+            .cite("est", "black glass-filled PA9T body; n and density typical"),
         SiliconeClear => dielectric("Clear silicone", [0.90, 0.90, 0.90], 0.08, 1.41)
             .transmission(1.0, [0.97, 0.97, 0.96], 1.0)
             .density(1030.0)

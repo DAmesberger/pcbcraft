@@ -7,7 +7,7 @@ use crate::ids::{ContentHash, InterfaceSourceId};
 use crate::library::footprint_source::{SketchCurveId, SketchRef};
 use crate::library::{Outline, Segment};
 use crate::model::board::BoardFeatureId;
-use crate::model::dimension::{BoardRef, HousingRefId};
+use crate::model::dimension::{BoardRef, FollowedFaceId};
 use crate::model::interface::{AutoRule, DatumId, DatumSource, Tier};
 use std::collections::BTreeMap;
 
@@ -284,16 +284,16 @@ fn the_table_refuses_a_reused_or_unallocated_slot() {
 }
 
 #[test]
-fn the_table_refuses_a_housing_feature_and_a_doubled_feature() {
+fn the_table_refuses_an_assembly_feature_and_a_doubled_feature() {
     let feature = |id, slot, f| {
         let mut d = datum(id, slot, key(DatumOwner::Board, DatumRole::Feature, None));
         d.feature = Some(f);
         d
     };
     let curve = || BoardRef::Board(SketchRef::Curve(SketchCurveId("l2".into())));
-    let housing = InterfaceTable {
+    let assembly_link = InterfaceTable {
         next_slot: 1,
-        datums: vec![feature(1, 0, BoardRef::Housing(HousingRefId(1)))],
+        datums: vec![feature(1, 0, BoardRef::FollowedFace(FollowedFaceId(1)))],
         ..InterfaceTable::default()
     };
     let doubled = InterfaceTable {
@@ -308,7 +308,7 @@ fn the_table_refuses_a_housing_feature_and_a_doubled_feature() {
         datums: vec![keyed],
         ..InterfaceTable::default()
     };
-    for t in [housing, doubled, stray] {
+    for t in [assembly_link, doubled, stray] {
         assert!(check_table(&t).is_err(), "{t:?}");
     }
 }
@@ -500,8 +500,8 @@ fn every_finding_code_is_listed_once() {
     // Lost and inexact references block fabrication with no waiver, as for
     // part dimensions.
     for code in [
-        findings::HOUSING_REFERENCE_LOST,
-        findings::HOUSING_REFERENCE_INEXACT,
+        findings::ASSEMBLY_REFERENCE_LOST,
+        findings::ASSEMBLY_REFERENCE_INEXACT,
     ] {
         let spec = findings::CODES.iter().find(|c| c.code == code);
         assert!(
@@ -515,7 +515,7 @@ fn every_finding_code_is_listed_once() {
     );
     assert_eq!(
         findings::driven_edge().rule(),
-        Some(findings::HOUSING_DRIVEN_EDGE)
+        Some(findings::ASSEMBLY_DRIVEN_EDGE)
     );
 }
 

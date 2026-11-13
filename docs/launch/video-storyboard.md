@@ -69,7 +69,7 @@ Total: 126 s.
 |---|---|
 | ESP32-S31 dev board (`esp32-board`) | 0, 5, 6, 7, 8, 9, 10, 11, 13 — the story's board |
 | Realistic view mode and material graphs (`material-graph-design`, `mg-*`) | 0, 3, 10, 13 |
-| Mechanical parts (`mech-authoring`): USB connector, enclosure-relevant parts | 0, 8, 10 |
+| Mechanical parts (`mech-authoring`): USB connector, parts an enclosure or other linked design uses | 0, 8, 10 |
 | Part placement (`part-placement`) and layer focus (`layer-focus`) | 6 (placement flow), 10 (layer peel) |
 | Live desktop ↔ MCP session (not started) | 12 (optional upgrade) |
 | Datasheet replay in the desktop dialog (not started) | 1 (repeatable take) |

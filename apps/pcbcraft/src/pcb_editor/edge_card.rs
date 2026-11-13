@@ -316,7 +316,7 @@ pub(super) fn name_parts(
                 )
             }
             BoardRef::Board(_) => "board point".into(),
-            BoardRef::Housing(_) => "housing".into(),
+            BoardRef::FollowedFace(_) => "followed face".into(),
             BoardRef::Part(f) if f.target() != ConstraintTarget::Placement(instance) => {
                 match f.target() {
                     ConstraintTarget::Placement(id) => project

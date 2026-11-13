@@ -47,9 +47,9 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         | "board.shape_invalid"
         | "board.reference_lost"
         | "board.reference_inexact"
-        | "housing.reference_lost"
-        | "housing.reference_inexact"
-        | "housing.cycle"
+        | "assembly.reference_lost"
+        | "assembly.reference_inexact"
+        | "assembly.cycle"
         | CHECK_FAILED => Severity::Error,
         "board.unrouted" | "board.unplaced" | NO_PART => Severity::ToDo,
         "erc.unchecked_terminal"
@@ -107,11 +107,11 @@ pub fn group_title(code: &str) -> String {
         "board.reference_inexact" => "Dimension references to check",
         "interface.datum_lost" => "Exported datums lost",
         "interface.datum_inexact" => "Exported datums to check",
-        "housing.reference_lost" => "Enclosure references broken",
-        "housing.reference_inexact" => "Enclosure references to check",
-        "housing.older_board" => "Enclosure holds an older board",
-        "housing.unexported_face" => "Enclosure uses faces not exported",
-        "housing.cycle" => "Board and enclosure in a loop",
+        "assembly.reference_lost" => "Assembly references broken",
+        "assembly.reference_inexact" => "Assembly references to check",
+        "assembly.older_board" => "Linked design holds an older board",
+        "assembly.unexported_face" => "Linked design uses faces not exported",
+        "assembly.cycle" => "Board and linked design in a loop",
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
@@ -239,13 +239,17 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "board.reference_inexact" => "Check the reference and acknowledge it, or pick it again",
         "interface.datum_lost" => "Unexport the datum, or undo what removed its source",
         "interface.datum_inexact" => "Check the datum, or export the feature again",
-        "housing.reference_lost" => {
-            "Restore what the enclosure uses, or pick another reference in SolidCraft"
+        "assembly.reference_lost" => {
+            "Restore what the linked design uses, or pick another reference in SolidCraft"
         }
-        "housing.reference_inexact" => "Check the reference, then update from the enclosure",
-        "housing.older_board" => "Run Update Links in SolidCraft, then update from the enclosure",
-        "housing.unexported_face" => "Export the face, then pick it again in SolidCraft",
-        "housing.cycle" => "Stop following the enclosure geometry, or rebuild it without the datum",
+        "assembly.reference_inexact" => "Check the reference, then update from the linked design",
+        "assembly.older_board" => {
+            "Run Update Links in SolidCraft, then update from the linked design"
+        }
+        "assembly.unexported_face" => "Export the face, then pick it again in SolidCraft",
+        "assembly.cycle" => {
+            "Stop following the linked design geometry, or rebuild it without the datum"
+        }
         "instance.unit_unplaced" => "Place the unit or mark it unused",
         "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
         "instance.required_terminal_no_connect" => "Connect the power input",
@@ -606,11 +610,11 @@ pub const KNOWN_CODES: &[&str] = &[
     "graphic.invisible",
     "graphic.polygon_self_intersecting",
     "graphic.radius_too_large",
-    "housing.cycle",
-    "housing.older_board",
-    "housing.reference_inexact",
-    "housing.reference_lost",
-    "housing.unexported_face",
+    "assembly.cycle",
+    "assembly.older_board",
+    "assembly.reference_inexact",
+    "assembly.reference_lost",
+    "assembly.unexported_face",
     "impedance.mismatch",
     "instance.field_required",
     "instance.no_connect_connected",

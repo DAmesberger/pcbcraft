@@ -197,7 +197,7 @@ pub trait BoardShapeEvaluator: Sync {
         ))
     }
     /// Add, move or remove fixed geometry that something outside the
-    /// sketch owns (a housing reference's trace, `interface::housing`): a
+    /// sketch owns (a followed face's trace, `interface::assembly_link`): a
     /// fixed point, or a construction line between two fixed points. The
     /// sketch's own edits cannot move it; board curves are dimensioned to
     /// it. Returns the edited sketch and, for an add, the owned entity.
@@ -207,21 +207,21 @@ pub trait BoardShapeEvaluator: Sync {
         _edit: &FixedEdit<'_>,
     ) -> Result<(SketchBlob, Option<SketchRef>)> {
         Err(Error::Unsupported(
-            "board.fixed: this board evaluator cannot hold enclosure geometry".into(),
+            "board.fixed: this board evaluator cannot hold linked design geometry".into(),
         ))
     }
     /// Where the fixed geometry `owned` (what [`Self::fixed_geometry`]
     /// added) stands in `sketch` (a point, or a line between its two ends),
     /// with every entity that holds it (the point; the line and its ends).
-    /// `None` when the sketch no longer has it. The enclosure link checks
-    /// with it that no board edit moves what the enclosure drives.
+    /// `None` when the sketch no longer has it. The assembly link checks
+    /// with it that no board edit moves what the linked design drives.
     fn fixed_geometry_of(
         &self,
         _sketch: &SketchBlob,
         _owned: &SketchRef,
     ) -> Result<Option<(crate::model::dimension::FeatureGeometry, Vec<SketchRef>)>> {
         Err(Error::Unsupported(
-            "board.fixed: this board evaluator cannot hold enclosure geometry".into(),
+            "board.fixed: this board evaluator cannot hold linked design geometry".into(),
         ))
     }
 }

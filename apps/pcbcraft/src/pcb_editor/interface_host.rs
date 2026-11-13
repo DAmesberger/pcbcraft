@@ -1,17 +1,17 @@
 //! The board interface's host requests for the desktop, off the UI thread
 //! (docs/architecture/board-interface.md, "Commands"; slice B6).
 //!
-//! The publish preview, the publish, the enclosure preview and reading an
-//! enclosure update run the automation session's own code, the code the
+//! The publish preview, the publish, the linked design preview and reading an
+//! linked design update run the automation session's own code, the code the
 //! CLI and MCP run, on a session over a fork of the window's engine: the
 //! window keeps drawing and navigating while Solidcraft builds or reads a
 //! design. What changes the document comes back as the typed command the
 //! request would have applied (`interface.record_publish`,
-//! `housing.record_link` or `housing.record_update`), and the window
+//! `assembly.record_link` or `assembly.record_update`), and the window
 //! applies it on its own engine as one undo step.
 use pcbcraft_automation::{Request, Session};
 use pcbcraft_core::interface::PublishPreview;
-use pcbcraft_core::interface::housing::{HousingPreview, PreviewParams, UpdateParams};
+use pcbcraft_core::interface::assembly_link::{AssemblyPreview, PreviewParams, UpdateParams};
 use pcbcraft_core::interface::{PublishParams, PublishPreviewParams};
 use pcbcraft_core::{Engine, Operation};
 use std::path::PathBuf;
@@ -22,8 +22,8 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 pub(super) enum Job {
     PublishPreview(PublishPreviewParams),
     Publish(PublishParams),
-    HousingPreview(PreviewParams),
-    HousingUpdate(UpdateParams),
+    AssemblyPreview(PreviewParams),
+    AssemblyUpdate(UpdateParams),
 }
 
 /// What a job gave back, in the words the window shows on failure.
@@ -32,9 +32,9 @@ pub(super) enum Done {
     PublishPreview(Result<PublishPreview, String>),
     /// The record to apply, and the revision the design was published at.
     Published(Result<(Operation, u32), String>),
-    HousingPreview(Result<HousingPreview, String>),
-    /// `housing.record_link` or `housing.record_update` to apply.
-    HousingRead(Result<Operation, String>),
+    AssemblyPreview(Result<AssemblyPreview, String>),
+    /// `assembly.record_link` or `assembly.record_update` to apply.
+    AssemblyRead(Result<Operation, String>),
 }
 
 /// One job in flight.
@@ -80,7 +80,7 @@ pub(super) fn words(error: &pcbcraft_automation::Error) -> String {
 }
 
 /// Run `job` on a session over a fork of `engine`, whose file is
-/// `project` (relative enclosure paths are read against its folder).
+/// `project` (relative linked design paths are read against its folder).
 /// `None` when no thread could be started.
 pub(super) fn start(
     ctx: &egui::Context,
@@ -124,16 +124,16 @@ pub(super) fn run(session: &mut Session, job: Job) -> Done {
                 })
                 .map_err(|e| words(&e)),
         ),
-        Job::HousingPreview(params) => Done::HousingPreview(
+        Job::AssemblyPreview(params) => Done::AssemblyPreview(
             session
-                .execute(Request::HousingPreview(params))
+                .execute(Request::AssemblyPreview(params))
                 .map_err(|e| words(&e))
                 .and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string())),
         ),
-        Job::HousingUpdate(params) => Done::HousingRead(
+        Job::AssemblyUpdate(params) => Done::AssemblyRead(
             session
-                .housing_update_command(&params)
-                .map(Operation::Housing)
+                .assembly_update_command(&params)
+                .map(Operation::Assembly)
                 .map_err(|e| words(&e)),
         ),
     }

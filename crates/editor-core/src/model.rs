@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+pub mod assembly_link;
 pub mod board;
 pub mod dimension;
 pub mod fill;
-pub mod housing;
 pub mod interface;
 pub mod production;
 pub mod sheet;
@@ -480,7 +480,7 @@ pub struct Project {
     #[serde(default, skip_serializing_if = "BoardShape::is_rectangle")]
     pub board_shape: BoardShape,
     /// Dimensions and constraints that place parts relative to the board,
-    /// the housing and each other (`layout::dimensions`).
+    /// the linked design and each other (`layout::dimensions`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub part_dimensions: Shared<Vec<PartDimension>>,
     /// The host's traces of the 3D model faces, edges and vertices the
@@ -509,14 +509,14 @@ pub struct Project {
     /// Waived pre-flight findings for fabrication output.
     #[serde(default, skip_serializing_if = "production::Production::is_default")]
     pub production: production::Production,
-    /// The board interface: the datums an enclosure may reference and
+    /// The board interface: the datums a linked design may reference and
     /// their append-only slot table (docs/architecture/board-interface.md).
     #[serde(default, skip_serializing_if = "interface_is_empty")]
     pub interface: Shared<interface::InterfaceTable>,
-    /// The link to an enclosure design, its references, bindings and
-    /// snapshot (`interface::housing`); `None` until `housing.link`.
+    /// The link to a linked design, its references, bindings and
+    /// snapshot (`interface::assembly_link`); `None` until `assembly.link`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub housing: Option<Box<housing::HousingLink>>,
+    pub assembly_link: Option<Box<assembly_link::AssemblyLink>>,
 }
 
 fn interface_is_empty(table: &Shared<interface::InterfaceTable>) -> bool {
@@ -559,7 +559,7 @@ impl Default for Project {
             drawings: Shared::default(),
             production: production::Production::default(),
             interface: Shared::default(),
-            housing: None,
+            assembly_link: None,
         }
     }
 }

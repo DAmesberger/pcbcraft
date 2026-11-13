@@ -33,7 +33,7 @@ pub const MAX_FACES: usize = 64;
 pub struct SidecarDatum {
     pub id: DatumId,
     pub slot: Slot,
-    /// Built from ids only (`i80.opening`); the name the enclosure's link
+    /// Built from ids only (`i80.opening`); the name the linked design's link
     /// stores.
     pub token: String,
     /// For people ("J1 opening"); never identity.
@@ -76,7 +76,7 @@ pub struct Sidecar {
     pub retired_slots: Vec<Slot>,
     /// Live datums the design carries nothing for, ascending: lost ones,
     /// and parameters whose value is an expression the core cannot
-    /// evaluate. Their slots keep their place, and an enclosure reference
+    /// evaluate. Their slots keep their place, and an assembly reference
     /// to one fails until it resolves again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unresolved_slots: Vec<Slot>,

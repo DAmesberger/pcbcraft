@@ -458,7 +458,7 @@ fn resolve(sk: &Sketch, frames: &[Frame], r: &BoardRef) -> Outcome<Option<Ref>> 
         BoardRef::Board(SketchRef::Constraint(_)) => {
             Err(err("a dimension names board points and curves"))
         }
-        BoardRef::Housing(_) => Err(err("housing references are not yet supported")),
+        BoardRef::FollowedFace(_) => Err(err("followed faces are not yet supported")),
         BoardRef::Part(f) => frames
             .iter()
             .find(|frame| frame.target == f.target())

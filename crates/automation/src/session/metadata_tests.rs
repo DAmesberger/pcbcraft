@@ -22,9 +22,9 @@ fn the_catalog_has_its_257_entries() {
     assert_eq!(names("operation").len(), Operation::classes().count());
     assert_eq!(names("query").len(), Query::CLASSES.len());
     // 47 requests (library.review_check and project.apply_all joined, then
-    // interface.publish_preview and interface.publish, then housing.follow,
-    // housing.preview and housing.update), 167 operations
-    // (the seven housing.* commands joined), 43 queries (housing.status
+    // interface.publish_preview and interface.publish, then assembly.follow,
+    // assembly.preview and assembly.update), 167 operations
+    // (the seven assembly.* commands joined), 43 queries (assembly.status
     // joined); the three tables above are what keeps the count honest.
     assert_eq!(metadata::entries().len(), 257);
 }

@@ -24,7 +24,7 @@ impl PartEditor {
         let placement = self.placement_inspector(ui, engine);
         // D6: the Marking section.
         let marking = self.marking_section(ui, engine);
-        // B2: the datums an enclosure may reference.
+        // B2: the datums a linked design may reference.
         let datums = self.datum_section(ui, engine);
         operation.or(placement).or(marking).or(datums)
     }

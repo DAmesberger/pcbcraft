@@ -17,7 +17,7 @@ use crate::model::board::{
     BoardFeatureId, BoardShape, BoardSketch, CutoutKind, MountingHoleRole, SolvedBoard,
     SolvedCutout, SolvedMountingHole,
 };
-use crate::model::dimension::{BoardRef, FeatureRef, HousingRefId, PadPoint};
+use crate::model::dimension::{BoardRef, FeatureRef, FollowedFaceId, PadPoint};
 use crate::model::interface::{
     AutoRule, DatumId, DatumSource, PublishedDatum, PublishedRecord, Slot, Tier,
 };
@@ -374,7 +374,7 @@ fn b1_export_allocates_one_slot_per_datum() -> Fallible {
     Ok(())
 }
 
-/// Exporting a housing reference, a missing instance or an unknown package
+/// Exporting a followed face, a missing instance or an unknown package
 /// datum is refused and leaves document, revision and history unchanged.
 #[test]
 fn b1_refused_exports_change_nothing() -> Fallible {
@@ -383,7 +383,7 @@ fn b1_refused_exports_change_nothing() -> Fallible {
     export(&mut engine, ExportTarget::PartFrame { instance: part })?;
     let refusals = [
         ExportTarget::Feature {
-            feature: BoardRef::Housing(HousingRefId(1)),
+            feature: BoardRef::FollowedFace(FollowedFaceId(1)),
         },
         ExportTarget::PartFrame { instance: 999_999 },
         ExportTarget::PartEnvelope { instance: 999_999 },
