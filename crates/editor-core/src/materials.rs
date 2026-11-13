@@ -306,7 +306,7 @@ fn values(id: MaterialId) -> Values {
             .cite("est", "TiO2-pigmented epoxy ink, as silkscreen legend ink"),
         MetalLaserMarked => metal("Laser-marked nickel silver", [0.30, 0.29, 0.27], 0.70)
             .density(8700.0)
-            .cite("est", "laser marking on a nickel-silver can anneals a thin oxide that darkens the metal to a dull grey and roughens it; still a metal, so it reflects the studio as the can does, only duller (F0 about 0.3, roughness 0.70: clearly rougher than the satin can's 0.45)"),
+            .cite("est", "laser marking on a nickel-silver can anneals a thin oxide that darkens the metal to a dull grey and roughens it; still a metal, so it reflects the studio as the can does, only duller (F0 about 0.3, roughness 0.70: clearly rougher than the satin can's 0.25)"),
         PadPrintInk => dielectric("Pad-print ink", [0.82, 0.82, 0.80], 0.40, 1.50)
             .cite("est", "TiO2-pigmented two-part epoxy pad-print ink: a thinner, smoother film than screen-printed legend ink, so glossier"),
 
@@ -385,10 +385,10 @@ fn values(id: MaterialId) -> Values {
             .density(1100.0)
             .cite("palik-crc", "n of PDMS ≈ 1.41")
             .cite("est", "scattering filler: a white, partly transmitting body"),
-        NickelSilver => metal("Nickel silver", [0.80, 0.77, 0.70], 0.45)
+        NickelSilver => metal("Nickel silver", [0.65, 0.63, 0.59], 0.25)
             .density(8700.0)
-            .cite("est", "CuNiZn (about 18 % Ni) reads silver-white: F0 between the Ni and Cu-alloy F0 with the copper tint mostly bleached; density of C75200")
-            .cite("est", "satin, lightly brushed finish of a stamped module shield can: roughness 0.45, so its flat lid gathers the studio into a light-silver sheen instead of mirroring the dark surroundings (0.22 read as a near-black mirror)"),
+            .cite("est", "CuNiZn (about 18 % Ni) is a nickel-grey metal: F0 at the Ni F0's level with its yellow mostly bleached; density of C75200")
+            .cite("est", "satin finish of a stamped module shield can: roughness 0.25, so the lid shows the studio's gradient as metal does; F0 0.80 at roughness 0.45 spread the overhead scrim into a flat off-white that read as matte plastic, and 0.22 at F0 0.80 mirrored the dark surroundings"),
         SolderMaskGreen => dielectric("Green soldermask over FR-4", [0.0118, 0.116, 0.032], 0.20, 1.52)
             .density(1850.0)
             .cite("est", "the board mask composite of docs/materials.md (mask_over(green, FR-4, 20 µm)) and its gloss roughness; density of the FR-4 board under it"),
