@@ -151,11 +151,11 @@ fn b4_deleting_the_part_breaks_the_linked_design_reference() -> Fallible {
     );
     assert_eq!(
         assembly_link::publish_blockers(engine.project()),
-        [broken.message.clone()]
+        std::slice::from_ref(&broken.message)
     );
     let preview =
         crate::interface::publish::preview(engine.project(), None, None, engine.revision())?;
-    assert_eq!(preview.blocked, [broken.message.clone()]);
+    assert_eq!(preview.blocked, std::slice::from_ref(&broken.message));
 
     engine.undo()?;
     assert_eq!(*engine.project(), before);
@@ -237,7 +237,7 @@ fn b4_lost_and_inexact_references_are_reported() -> Fallible {
     }
     assert_eq!(
         assembly_link::publish_blockers(&project),
-        [lost.message.clone()]
+        std::slice::from_ref(&lost.message)
     );
     assert_eq!(
         assembly_link::status(&project, FileCheck::NotChecked).state,

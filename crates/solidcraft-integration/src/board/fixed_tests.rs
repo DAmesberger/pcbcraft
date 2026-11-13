@@ -741,7 +741,7 @@ fn when_both_changed_the_user_chooses_which_side_wins() -> Fallible<()> {
     assert!((top(&engine)? - height).abs() <= 1e-9);
     let link = engine.project().assembly_link.as_deref().ok_or("linked")?;
     assert_eq!(
-        link.references.first().map(|r| r.geometry.clone()),
+        link.references.first().map(|r| r.geometry),
         Some(line(height + 1.0, width))
     );
     assert_eq!(link.file_sha256, both.file_sha256);
