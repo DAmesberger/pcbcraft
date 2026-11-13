@@ -680,15 +680,20 @@ impl PcbEditor {
     }
 
     /// The datums on the Layout canvas or in 3D, after the view is drawn.
+    /// With `at_rest` off (PCB 3D while its Board interface entry is
+    /// off), only an interface being edited shows: the hovered or selected
+    /// datum, and while a preview is docked the board's datums.
     pub(super) fn paint_datums(
         &mut self,
         ui: &Ui,
         painter: &egui::Painter,
         surface: &dyn super::dimensions::Surface,
         engine: &Engine,
+        at_rest: bool,
     ) {
         let hot = self.hot_datum(ui.ctx());
-        let board = self.interface_on_canvas(engine.project());
+        let board = self.interface.review.is_some()
+            || (at_rest && self.interface_on_canvas(engine.project()));
         let selected: Vec<Id> = self
             .instance
             .into_iter()
@@ -709,7 +714,7 @@ impl PcbEditor {
                     Look::Quiet
                 };
                 let part = match key.key.owner {
-                    DatumOwner::Instance { id } => selected.contains(&id),
+                    DatumOwner::Instance { id } => at_rest && selected.contains(&id),
                     _ => false,
                 };
                 let shows =

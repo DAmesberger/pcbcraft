@@ -585,7 +585,7 @@ impl PcbEditor {
             painter.rect_filled(back, t.radius_sm, t.panel);
             painter.galley(at + vec2(t.space_4, t.space_2), galley, t.hover_edge);
         }
-        self.paint_datums(ui, painter, view, engine);
+        self.paint_datums(ui, painter, view, engine, true);
         self.paint_dimensions(ui, painter, view, project, true);
         self.chooser(ui, project);
         self.dimension_fields(ui, engine)

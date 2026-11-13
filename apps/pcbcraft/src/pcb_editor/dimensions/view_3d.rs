@@ -336,7 +336,7 @@ impl PcbEditor {
             }
         }
         let painter = ui.painter_at(rect);
-        self.paint_datums(ui, &painter, &scene.viewport, engine);
+        self.paint_datums(ui, &painter, &scene.viewport, engine, self.interface_3d);
         self.paint_dimensions(ui, &painter, &scene.viewport, project, true);
         let fields = self.dimension_fields(ui, engine);
         operation.or(fields)
@@ -350,7 +350,7 @@ impl PcbEditor {
         self.answered(ui.ctx(), engine);
         if let Some(rect) = scene.viewport.rect() {
             let painter = ui.painter_at(rect);
-            self.paint_datums(ui, &painter, &scene.viewport, engine);
+            self.paint_datums(ui, &painter, &scene.viewport, engine, self.interface_3d);
             self.paint_dimensions(ui, &painter, &scene.viewport, engine.project(), false);
         }
     }
