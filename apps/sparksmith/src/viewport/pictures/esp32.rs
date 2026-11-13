@@ -158,6 +158,81 @@ fn write_esp32_pictures() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Close-ups of the example board's solder joints and contact shadows, in
+/// the realistic look: chips, the SOT-23 regulators, the module's edge and
+/// the headers' pins under the board.
+#[test]
+#[ignore = "writes tuning pictures"]
+fn write_esp32_joint_pictures() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(dir) = std::env::var_os("SPARKSMITH_PICTURES") else {
+        return Err("set SPARKSMITH_PICTURES".into());
+    };
+    let dir = std::path::PathBuf::from(dir);
+    std::fs::create_dir_all(&dir)?;
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let (_, _, mut v) = esp32()?;
+    v.set_realistic(true);
+    let shots: [(&str, [f64; 3], f64, f64, f64); 9] = [
+        ("joints-regulator", [20.0, 12.0, 1.8], 9.0, 210.0, 30.0),
+        ("joints-regulator-low", [20.0, 12.0, 1.8], 7.0, 200.0, 12.0),
+        ("joints-ldo-caps", [8.5, 13.5, 1.8], 8.0, 30.0, 28.0),
+        ("joints-led", [33.0, 11.2, 1.8], 5.0, 20.0, 25.0),
+        ("joints-module-edge", [9.0, 42.0, 1.8], 10.0, 120.0, 20.0),
+        ("joints-module-edge-2", [9.0, 42.0, 1.8], 10.0, 300.0, 20.0),
+        ("joints-overview", [20.0, 32.0, 1.6], 70.0, 30.0, 35.0),
+        ("joints-header-top", [2.54, 21.0, 1.8], 14.0, 20.0, 30.0),
+        ("joints-header-bottom", [2.54, 21.0, 0.0], 14.0, 20.0, -30.0),
+    ];
+    for (name, at, distance, yaw, pitch) in shots {
+        aim(&mut v, Vec3::new(at[0], at[1], at[2]), distance, yaw, pitch);
+        settled(&mut v);
+        let (w, h) = (1200, 800);
+        let rgba = gpu.draw(&mut v, w, h, 2.0).ok_or("no picture")?;
+        let png = sparksmith_solidcraft::viewport::png(w as usize, h as usize, rgba)
+            .ok_or("png encoding failed")?;
+        std::fs::write(dir.join(format!("{name}.png")), png)?;
+    }
+    Ok(())
+}
+
+/// Opening the example board in 3D: the model made (as the worker makes
+/// it while the board is edited in 2D), the scene prepared, and the first
+/// frame drawn; best of five. `cargo test --profile ci -p sparksmith
+/// opening_esp32_timings -- --ignored --nocapture`.
+#[test]
+#[ignore = "benchmark"]
+fn opening_esp32_timings() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut gpu) = Gpu::new() else {
+        return Err("no GPU adapter".into());
+    };
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    let project = (*sparksmith_io::read_project(&path)?.into_document().project).clone();
+    let (mut built, mut scened, mut framed) = (f64::MAX, f64::MAX, f64::MAX);
+    let mut triangles = 0;
+    for _ in 0..5 {
+        let start = std::time::Instant::now();
+        let model = sparksmith_solidcraft::project::build(&project)?;
+        built = built.min(start.elapsed().as_secs_f64() * 1e3);
+        triangles = model.geometry.iter().map(|g| g.mesh.triangles.len()).sum();
+        let start = std::time::Instant::now();
+        let scene = crate::model_scene::build(model.geometry, &model.stack)?;
+        scened = scened.min(start.elapsed().as_secs_f64() * 1e3);
+        let start = std::time::Instant::now();
+        let mut viewport = Viewport::detached();
+        viewport.set_model(scene);
+        viewport.fit_to(16.0 / 10.0);
+        gpu.draw(&mut viewport, 1600, 1000, 1.0).ok_or("no frame")?;
+        framed = framed.min(start.elapsed().as_secs_f64() * 1e3);
+    }
+    println!(
+        "esp32: model {built:.0} ms, scene {scened:.0} ms, first frame {framed:.0} ms; {triangles} triangles"
+    );
+    Ok(())
+}
+
 pub(super) fn gpu_or_skip() -> Result<Option<Gpu>, Box<dyn std::error::Error>> {
     match Gpu::new() {
         Some(gpu) => Ok(Some(gpu)),

@@ -962,9 +962,14 @@ pub fn build(geometry: Vec<Geometry>, stack: &Stack) -> Result<ModelScene, Strin
 /// middle out, fading to nothing.
 const GROUND_SEGMENTS: usize = 48;
 const GROUND_RINGS: [(f64, f32); 4] = [(0.0, 1.0), (0.55, 0.75), (0.85, 1.0 / 3.0), (1.0, 0.0)];
-/// Contact rings: offset from the body footprint (share of its mean half
-/// size) and weight.
-const CONTACT_RINGS: [(f64, f32); 3] = [(0.0, 1.0), (0.15, 0.5), (0.4, 0.0)];
+/// Contact rings: offset from the body footprint (share of the shadow's
+/// reach) and weight: darkest along the body's foot, then a soft tail.
+const CONTACT_RINGS: [(f64, f32); 4] = [(0.0, 1.0), (0.1, 0.75), (0.4, 0.3), (1.0, 0.0)];
+/// A contact shadow reaches out this share of the body's height above the
+/// board, within these bounds (mm): a tall part shades more of the board
+/// round it than a chip, whatever its plan size.
+const CONTACT_REACH_SHARE: f64 = 0.8;
+const CONTACT_REACH_MM: [f64; 2] = [0.3, 2.0];
 /// Arc steps per rounded corner of a contact ring.
 const CORNER_STEPS: usize = 4;
 /// Height of a contact shadow above the board's surface (mm).
@@ -981,12 +986,47 @@ fn shadows(geometry: &[Geometry], bounds: &Aabb3, stack: &Stack) -> Shadows {
         return out;
     }
     let (top, bottom) = (stack.surface(Layer::Top), stack.surface(Layer::Bottom));
+    // The shadow lies on the highest outer film: the mask over copper (a
+    // pour, a track), else it would be hidden under it, or the plated
+    // finish on a side without mask.
+    let crown = |side: Layer| {
+        let height = if stack.mask(side) {
+            stack
+                .mask_laminate_mm()
+                .max(stack.copper(side) + stack.mask_mm())
+        } else {
+            stack.copper(side) + stack.finish_mm()
+        };
+        stack.z(side, height)
+    };
+    let (top_film, bottom_film) = (crown(Layer::Top), crown(Layer::Bottom));
+    // The whole package's height (a module's can, not only its board).
+    let mut spans: std::collections::HashMap<u64, [f64; 2]> = std::collections::HashMap::new();
+    for g in geometry.iter().filter(|g| g.kind.is_envelope()) {
+        if let Some(item) = g.item {
+            let span = spans.entry(item).or_insert([g.min[2], g.max[2]]);
+            *span = [span[0].min(g.min[2]), span[1].max(g.max[2])];
+        }
+    }
+    let reach = |height: f64| {
+        (CONTACT_REACH_SHARE * height).clamp(CONTACT_REACH_MM[0], CONTACT_REACH_MM[1])
+    };
     for body in package_bodies(geometry) {
         let corners = footprint(body);
+        let [low, high] = body
+            .item
+            .and_then(|item| spans.get(&item).copied())
+            .unwrap_or([body.min[2], body.max[2]]);
         if body.min[2] >= top - 1e-6 {
-            contact(&mut out.top, &corners, top + CONTACT_LIFT);
+            contact(
+                &mut out.top,
+                &corners,
+                top_film + CONTACT_LIFT,
+                reach(high - top),
+            );
         } else if body.max[2] <= bottom + 1e-6 {
-            contact(&mut out.bottom, &corners, bottom - CONTACT_LIFT);
+            let reach = reach(bottom - low);
+            contact(&mut out.bottom, &corners, bottom_film - CONTACT_LIFT, reach);
         }
     }
     out
@@ -1073,8 +1113,9 @@ fn footprint(body: &Geometry) -> Vec<[f64; 2]> {
     corners
 }
 
-/// A rounded-rectangle falloff around a footprint, at height `z`.
-fn contact(out: &mut Vec<ShadowVertex>, corners: &[[f64; 2]], z: f64) {
+/// A rounded-rectangle falloff around a footprint, at height `z`,
+/// fading out `reach` beyond it.
+fn contact(out: &mut Vec<ShadowVertex>, corners: &[[f64; 2]], z: f64, reach: f64) {
     let n = corners.len();
     if n < 3 {
         return;
@@ -1089,8 +1130,6 @@ fn contact(out: &mut Vec<ShadowVertex>, corners: &[[f64; 2]], z: f64) {
         // Outward normal of a counter-clockwise edge.
         ([dy / len, -dx / len], len)
     };
-    let half = (0..n).map(|i| edge(i).1).fold(0.0, f64::max) * 0.25
-        + (0..n).map(|i| edge(i).1).fold(f64::INFINITY, f64::min) * 0.25;
     let ring = |offset: f64| -> Vec<[f32; 3]> {
         let mut points = Vec::with_capacity(n * (CORNER_STEPS + 1));
         for (i, &corner) in corners.iter().enumerate() {
@@ -1117,7 +1156,7 @@ fn contact(out: &mut Vec<ShadowVertex>, corners: &[[f64; 2]], z: f64) {
     };
     let rings: Vec<(Vec<[f32; 3]>, f32)> = CONTACT_RINGS
         .iter()
-        .map(|(share, weight)| (ring(share * half), *weight))
+        .map(|(share, weight)| (ring(share * reach), *weight))
         .collect();
     let mid = Vec3::new(center[0], center[1], z).to_f32();
     if let Some((inner, weight)) = rings.first() {
@@ -1483,7 +1522,8 @@ pub(crate) mod tests {
     /// finish: the stack, not the mask's view toggle (shown), says nothing
     /// lies on the laminate; outer copper lies under the finish that plates
     /// it all, and laminate in a mask opening under nothing. Its packages
-    /// still cast contact shadows, on the laminate.
+    /// still cast contact shadows, at the height of the plated copper's
+    /// finish, so a pour round a part does not hide its shadow.
     #[test]
     fn a_side_without_mask_keeps_its_laminate_and_copper() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -1526,7 +1566,10 @@ pub(crate) mod tests {
             }
         }
         assert!(tracks > 0);
-        let top = scene.stack.laminate() + CONTACT_LIFT;
+        let top = scene.stack.z(
+            Layer::Top,
+            scene.stack.copper(Layer::Top) + scene.stack.finish_mm(),
+        ) + CONTACT_LIFT;
         assert!(
             !scene.shadows.top.is_empty(),
             "contact shadows without mask"
@@ -1809,7 +1852,7 @@ pub(crate) mod tests {
         assert_eq!(scene.shadows.ground.len(), GROUND_SEGMENTS * (3 + 6 + 6));
         let per_body = {
             let ring = 4 * (CORNER_STEPS + 1);
-            3 * ring + 2 * 6 * ring
+            3 * ring + (CONTACT_RINGS.len() - 1) * 6 * ring
         };
         // One shadow per package, however many bodies its model has.
         let packages = package_bodies(&scene.geometry).len();
@@ -1818,14 +1861,22 @@ pub(crate) mod tests {
             scene.shadows.top.len() + scene.shadows.bottom.len(),
             packages * per_body
         );
-        let mask = scene
+        // On the mask over copper (a track, a pour), the highest outer
+        // film, so no mask face hides it.
+        use sparksmith_core::Layer;
+        let stack = &scene.stack;
+        let crown = stack.z(Layer::Top, stack.copper(Layer::Top) + stack.mask_mm()) as f32;
+        let films = scene
             .geometry
             .iter()
-            .find(|g| g.kind == BodyKind::MaskTop)
+            .filter(|g| matches!(g.kind, BodyKind::MaskTop | BodyKind::MaskCap))
             .map(|g| g.max[2] as f32)
-            .ok_or("no mask")?;
+            .fold(f32::MIN, f32::max);
+        assert!(films > f32::MIN, "no mask");
         assert!(scene.shadows.top.iter().all(|(p, w)| {
-            (p[2] - mask - CONTACT_LIFT as f32).abs() < 1e-4 && (0.0..=1.0).contains(w)
+            (p[2] - crown - CONTACT_LIFT as f32).abs() < 1e-4
+                && p[2] > films
+                && (0.0..=1.0).contains(w)
         }));
         Ok(())
     }

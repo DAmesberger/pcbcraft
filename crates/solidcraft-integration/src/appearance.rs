@@ -15,7 +15,7 @@ use crate::{Error, Result};
 use sparksmith_core::geometry::{cos_sin, is_quarter_turn};
 use sparksmith_core::library::offset_polygon;
 use sparksmith_core::library::{
-    ChipKind, FootprintDefinition, PackageDefinition, PadKind, PadSide,
+    ChipKind, FootprintDefinition, PackageDefinition, PackageForm, PadKind, PadSide,
 };
 use sparksmith_core::{CopperLayer, Fabrication, Layer, Placement, Point, Project, layout};
 use std::sync::Arc;
@@ -57,6 +57,24 @@ const FILLET_MAX_MM: f64 = 0.4;
 const FILLET_WIDTH_SHARE: f64 = 0.92;
 /// Pads reaching less than this beyond the termination get no fillet.
 const FILLET_MIN_TOE_MM: f64 = 0.02;
+/// A gull-wing foot's toe fillet climbs its end face to this share of the
+/// lead thickness, its heel fillet to this share (IPC J-STD-001 asks for a
+/// heel fillet of at least the lead thickness).
+const FOOT_TOE_SHARE: f64 = 0.9;
+const FOOT_HEEL_SHARE: f64 = 1.5;
+/// A foot fillet's segments along and across: a lead is a fraction of a
+/// millimetre wide, so few suffice.
+const FOOT_STEPS: [usize; 2] = [8, 6];
+/// A header pin's solder cone covers this share of its land's radius and
+/// climbs the pin by this share of the land beyond the pin (plus half the
+/// pin side), at most [`PIN_RISE_MAX_MM`].
+const PIN_LAND_SHARE: f64 = 0.95;
+const PIN_RISE_SHARE: f64 = 0.8;
+const PIN_RISE_MAX_MM: f64 = 0.8;
+/// Segments round a pin's cone (a multiple of 8, so the square pin's
+/// corners are vertices) and rows up it.
+const PIN_SEGMENTS: usize = 24;
+const PIN_STEPS: usize = 6;
 /// Segments of a round track end and of a fillet profile.
 const ARC_STEPS: usize = 8;
 const FILLET_STEPS: usize = 24;
@@ -835,6 +853,10 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         return Ok(());
     }
     if part.body == Body::Moulded {
+        // A generated model's leads are real bodies: only their joints.
+        if part.generated {
+            return lead_joints(out, board, &frame, part);
+        }
         let Some(footprint) = part.footprint.filter(|f| f.pads.len() <= 2) else {
             return Ok(());
         };
@@ -934,10 +956,301 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             reach,
             rise,
             [mid - half, mid + half],
+            [FILLET_STEPS, FILLET_ACROSS_STEPS],
         );
         push(out, board, BodyKind::Solder, part.pick, None, mesh)?;
     }
     Ok(())
+}
+
+/// A lead's solder joint on its land: how long and wide the flat foot is
+/// and how thick its strip.
+#[derive(Clone, Copy, Debug)]
+struct Foot {
+    length: f64,
+    width: f64,
+    thickness: f64,
+}
+
+/// The solder joints of a generated package's leads, from its form: a toe
+/// and a heel fillet at each gull-wing foot (SOIC, QFP, SOT, DPAK), and a
+/// cone round each pin of a pin header on the far side's land. Other
+/// families get none here (a chip's fillets are drawn by [`package`]).
+fn lead_joints(
+    out: &mut Vec<Geometry>,
+    board: Option<&Board>,
+    frame: &Frame<'_>,
+    part: &Part<'_>,
+) -> Result<()> {
+    let (Some(footprint), Some(board)) = (part.footprint, board) else {
+        return Ok(());
+    };
+    match &part.package.form {
+        PackageForm::GullWing(g) => feet(
+            out,
+            board,
+            frame,
+            part,
+            footprint,
+            Foot {
+                length: g.foot_length(),
+                width: g.lead_width(),
+                thickness: g.lead_thickness(),
+            },
+        ),
+        PackageForm::Tabbed(t) => feet(
+            out,
+            board,
+            frame,
+            part,
+            footprint,
+            Foot {
+                length: t.foot_length(),
+                width: t.lead_width(),
+                thickness: t.lead_thickness(),
+            },
+        ),
+        PackageForm::Header(h) => pins(out, board, frame, part, footprint, h.pin_side()),
+        _ => Ok(()),
+    }
+}
+
+/// The form's lead points in the package frame (the datum's), on the
+/// seating plane.
+fn lead_points(package: &PackageDefinition) -> Vec<Point> {
+    let offset = package.placement.translation();
+    package
+        .form
+        .lead_points()
+        .into_iter()
+        .map(|p| [p[0] + offset[0], p[1] + offset[1]])
+        .collect()
+}
+
+/// The lead point standing on a land (`center`, `extent`), if one does.
+fn lead_on(points: &[Point], center: Point, extent: Point) -> Option<Point> {
+    points.iter().copied().find(|p| {
+        (p[0] - center[0]).abs() <= extent[0] / 2.0 + 1e-6
+            && (p[1] - center[1]).abs() <= extent[1] / 2.0 + 1e-6
+    })
+}
+
+/// Toe and heel fillets of gull-wing feet on their lands. The foot runs
+/// along the land's long side, outward from the body's middle.
+fn feet(
+    out: &mut Vec<Geometry>,
+    board: &Board,
+    frame: &Frame<'_>,
+    part: &Part<'_>,
+    footprint: &FootprintDefinition,
+    foot: Foot,
+) -> Result<()> {
+    if !(positive(foot.length) && positive(foot.width) && positive(foot.thickness)) {
+        return Ok(());
+    }
+    let points = lead_points(part.package);
+    let offset = part.package.placement.translation();
+    for pad in &footprint.pads {
+        let Some((center, extent)) = pad_box(footprint, pad) else {
+            continue;
+        };
+        let Some(lead) = lead_on(&points, center, extent) else {
+            continue;
+        };
+        let axis = if (extent[0] - extent[1]).abs() > 1e-6 {
+            usize::from(extent[1] > extent[0])
+        } else {
+            usize::from((lead[1] - offset[1]).abs() > (lead[0] - offset[0]).abs())
+        };
+        let across = 1 - axis;
+        let sign = if lead[axis] >= offset[axis] {
+            1.0
+        } else {
+            -1.0
+        };
+        // A wide tab is as wide as its land at most.
+        let width = foot.width.min(extent[across]) * FILLET_WIDTH_SHARE;
+        let span = [lead[across] - width / 2.0, lead[across] + width / 2.0];
+        let toe = lead[axis] + sign * foot.length / 2.0;
+        let heel = lead[axis] - sign * foot.length / 2.0;
+        let land_toe = center[axis] + sign * extent[axis] / 2.0;
+        let land_heel = center[axis] - sign * extent[axis] / 2.0;
+        for (face, side, reach, rise) in [
+            (
+                toe,
+                sign,
+                sign * (land_toe - toe),
+                FOOT_TOE_SHARE * foot.thickness,
+            ),
+            (
+                heel,
+                -sign,
+                sign * (heel - land_heel),
+                FOOT_HEEL_SHARE * foot.thickness,
+            ),
+        ] {
+            if reach < FILLET_MIN_TOE_MM {
+                continue;
+            }
+            let mesh = fillet(frame, axis, side, face, reach, rise, span, FOOT_STEPS);
+            push(out, Some(board), BodyKind::Solder, part.pick, None, mesh)?;
+        }
+    }
+    Ok(())
+}
+
+/// Solder cones round a header's pins on the far side: from the land's
+/// edge up the pin, concave, where the pin leaves the plated hole.
+fn pins(
+    out: &mut Vec<Geometry>,
+    board: &Board,
+    frame: &Frame<'_>,
+    part: &Part<'_>,
+    footprint: &FootprintDefinition,
+    side: f64,
+) -> Result<()> {
+    if !positive(side) {
+        return Ok(());
+    }
+    let points = lead_points(part.package);
+    let far = match frame.layer() {
+        Layer::Top => Layer::Bottom,
+        Layer::Bottom => Layer::Top,
+    };
+    let half = side / 2.0;
+    // Does the placement mirror the plan (a bottom-side part)?
+    let mirrored = {
+        let x = frame.direction(Vec3::X);
+        let y = frame.direction(Vec3::Y);
+        x.x * y.y - x.y * y.x < 0.0
+    };
+    for pad in &footprint.pads {
+        if pad.kind != PadKind::PlatedThrough {
+            continue;
+        }
+        let Some((center, extent)) = pad_box(footprint, pad) else {
+            continue;
+        };
+        let Some(lead) = lead_on(&points, center, extent) else {
+            continue;
+        };
+        let ring = extent[0].min(extent[1]) / 2.0 * PIN_LAND_SHARE;
+        if ring <= half * std::f64::consts::SQRT_2 * 1.05 {
+            continue;
+        }
+        let rise = (PIN_RISE_SHARE * (ring - half) + half).min(PIN_RISE_MAX_MM);
+        let base = board.copper(far) + board.stack.finish_mm() + PROUD_MM;
+        let mesh = cone(
+            |p: Point| frame.xy([lead[0] + p[0], lead[1] + p[1]]),
+            |h| board.z(far, base + h),
+            mirrored,
+            [half, ring],
+            rise,
+        );
+        push(out, Some(board), BodyKind::Solder, part.pick, None, mesh)?;
+    }
+    Ok(())
+}
+
+/// A closed concave cone of solder round a square pin: round, `radii[1]`
+/// across on the land, closing in to the pin's square (half side
+/// `radii[0]`) `rise` up it, with the profile r = r₀ + (r₁ − r₀)(1 − h/rise)²
+/// (r₀ the square's radius at that angle). `place` maps a pin-relative
+/// plan point to the board (`mirrored` when it mirrors), `z` a height off
+/// the land to world z (up or down by side). Its inner wall stands inside
+/// the pin.
+fn cone(
+    place: impl Fn(Point) -> Point,
+    z: impl Fn(f64) -> f64,
+    mirrored: bool,
+    radii: [f64; 2],
+    rise: f64,
+) -> Mesh {
+    let [half, ring] = radii;
+    let inner = 0.8 * half;
+    let up = (z(1.0) - z(0.0)).signum();
+    let flip = (up < 0.0) != mirrored;
+    let mut mesh = Mesh::default();
+    let vertex = |mesh: &mut Mesh, p: Vec3, n: Vec3| -> u32 {
+        mesh.positions.push(p);
+        mesh.normals.push(n);
+        u32::try_from(mesh.positions.len() - 1).unwrap_or(u32::MAX)
+    };
+    // Counter-clockwise seen from outside in the pin's frame.
+    let tri = |mesh: &mut Mesh, a: u32, b: u32, c: u32, face: u32| {
+        mesh.triangles
+            .push(if flip { [a, c, b] } else { [a, b, c] });
+        mesh.tri_face.push(face);
+    };
+    let n = PIN_SEGMENTS;
+    let dir = |k: usize| {
+        let a = k as f64 / n as f64 * std::f64::consts::TAU;
+        (a.cos(), a.sin())
+    };
+    // The square pin's radius at angle k.
+    let square = |k: usize| {
+        let (c, s) = dir(k);
+        half / c.abs().max(s.abs())
+    };
+    let at3 = |r: f64, k: usize, h: f64| {
+        let (c, s) = dir(k);
+        let [x, y] = place([r * c, r * s]);
+        Vec3::new(x, y, z(h))
+    };
+    let origin = place([0.0, 0.0]);
+    let radial = |k: usize, vertical: f64| {
+        let (c, s) = dir(k);
+        let [x, y] = place([c, s]);
+        Vec3::new(x - origin[0], y - origin[1], vertical)
+            .normalized()
+            .unwrap_or(Vec3::Z)
+    };
+    // The concave top: rows from the land (t = 0) to the pin (t = 1).
+    let rows = PIN_STEPS;
+    let first = u32::try_from(mesh.positions.len()).unwrap_or(u32::MAX);
+    for j in 0..=rows {
+        let t = j as f64 / rows as f64;
+        let h = rise * t;
+        for k in 0..n {
+            let pin = square(k);
+            let r = pin + (ring - pin) * (1.0 - t) * (1.0 - t);
+            // dr/dh: the normal leans up by its negative.
+            let slope = -2.0 * (ring - pin) * (1.0 - t) / rise;
+            vertex(&mut mesh, at3(r, k, h), radial(k, -slope * up));
+        }
+    }
+    let idx = |j: usize, k: usize| first + u32::try_from(j * n + k % n).unwrap_or(u32::MAX);
+    for j in 0..rows {
+        for k in 0..n {
+            tri(&mut mesh, idx(j, k), idx(j, k + 1), idx(j + 1, k + 1), 0);
+            tri(&mut mesh, idx(j, k), idx(j + 1, k + 1), idx(j + 1, k), 0);
+        }
+    }
+    // The lip inside the pin, the inner wall and the annulus on the land.
+    let ring_of =
+        |mesh: &mut Mesh, r: &dyn Fn(usize) -> f64, h: f64, normal: &dyn Fn(usize) -> Vec3| {
+            (0..n)
+                .map(|k| vertex(mesh, at3(r(k), k, h), normal(k)))
+                .collect::<Vec<u32>>()
+        };
+    let flat = |sign: f64| move |_: usize| Vec3::new(0.0, 0.0, sign * up);
+    let inward = |k: usize| -radial(k, 0.0);
+    let top = ring_of(&mut mesh, &|_| inner, rise, &inward);
+    let low = ring_of(&mut mesh, &|_| inner, 0.0, &inward);
+    let lip = ring_of(&mut mesh, &square, rise, &flat(1.0));
+    let rim = ring_of(&mut mesh, &|_| inner, rise, &flat(1.0));
+    let outer = ring_of(&mut mesh, &|_| ring, 0.0, &flat(-1.0));
+    let foot = ring_of(&mut mesh, &|_| inner, 0.0, &flat(-1.0));
+    for k in 0..n {
+        let k1 = (k + 1) % n;
+        tri(&mut mesh, rim[k], lip[k], lip[k1], 1);
+        tri(&mut mesh, rim[k], lip[k1], rim[k1], 1);
+        tri(&mut mesh, low[k], top[k], top[k1], 2);
+        tri(&mut mesh, low[k], top[k1], low[k1], 2);
+        tri(&mut mesh, foot[k], outer[k1], outer[k], 3);
+        tri(&mut mesh, foot[k], foot[k1], outer[k1], 3);
+    }
+    mesh
 }
 
 /// The lead band of a pad under a moulded body, in the package frame: the
@@ -1012,7 +1325,9 @@ fn pad_box(
 /// like a wetted meniscus; across it the solder rounds down to the land at
 /// both sides, z ∝ 1 − u⁴ (u = −1..1 over the span). A closed solid with
 /// no vertical side walls: every face of its top looks partly up, so it
-/// reflects the studio rather than its dark lower walls.
+/// reflects the studio rather than its dark lower walls. `steps` are the
+/// segments along and across.
+#[allow(clippy::too_many_arguments)]
 fn fillet(
     frame: &Frame<'_>,
     axis: usize,
@@ -1021,7 +1336,9 @@ fn fillet(
     reach: f64,
     rise: f64,
     span: [f64; 2],
+    steps: [usize; 2],
 ) -> Mesh {
+    let [along_steps, across_steps] = steps.map(|n| n.max(1));
     // The foot stands off the land's finish: the meniscus thins to nothing
     // at the toe, and lying on the finish there it flickered against it.
     let base = frame.board.map_or(0.0, |b| b.stack.finish_mm()) + PROUD_MM;
@@ -1071,12 +1388,12 @@ fn fillet(
         mesh.normals.push(n);
         u32::try_from(mesh.positions.len() - 1).unwrap_or(u32::MAX)
     };
-    let across = |j: usize| -1.0 + 2.0 * j as f64 / FILLET_ACROSS_STEPS as f64;
+    let across = |j: usize| -1.0 + 2.0 * j as f64 / across_steps as f64;
     // Curved top: a grid along (t) and across (u).
-    let row = FILLET_ACROSS_STEPS + 1;
+    let row = across_steps + 1;
     let first = u32::try_from(mesh.positions.len()).unwrap_or(u32::MAX);
-    for k in 0..=FILLET_STEPS {
-        let t = k as f64 / FILLET_STEPS as f64;
+    for k in 0..=along_steps {
+        let t = k as f64 / along_steps as f64;
         for j in 0..row {
             let u = across(j);
             let (z, n) = surface(t, u);
@@ -1084,8 +1401,8 @@ fn fillet(
         }
     }
     let at = |k: usize, j: usize| first + u32::try_from(k * row + j).unwrap_or(u32::MAX);
-    for k in 0..FILLET_STEPS {
-        for j in 0..FILLET_ACROSS_STEPS {
+    for k in 0..along_steps {
+        for j in 0..across_steps {
             tri(&mut mesh, at(k, j), at(k + 1, j), at(k + 1, j + 1), 0);
             tri(&mut mesh, at(k, j), at(k + 1, j + 1), at(k, j + 1), 0);
         }
