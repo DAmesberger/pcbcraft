@@ -20,10 +20,10 @@ use pcbcraft_core::interface::housing::{
 use pcbcraft_core::interface::{DryRun, Sidecar};
 use pcbcraft_core::library::footprint_source::ParamName;
 use pcbcraft_core::model::dimension::{BodyName, FaceName, ReferenceStatus};
-use pcbcraft_core::model::housing::{Consumer, HousingBinding, HousingLink};
+use pcbcraft_core::model::housing::{Consumer, HousingBinding, HousingLink, UnexportedUse};
 use pcbcraft_core::units::Nm;
 use pcbcraft_io::housing::{EnclosureCopy, copy};
-use pcbcraft_solidcraft::enclosure::{BoardLink, Enclosure};
+use pcbcraft_solidcraft::enclosure::{BoardLink, Enclosure, Use};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -110,6 +110,7 @@ impl Session {
                         pick: Some(pick),
                         geometry: Some(traced.geometry),
                         note: traced.note,
+                        built_on: built_on(opened, &r.face.0),
                     },
                     Err(error) => ReferenceRead {
                         id: r.id,
@@ -117,6 +118,7 @@ impl Session {
                         pick: None,
                         geometry: None,
                         note: words(&error.to_string()),
+                        built_on: Vec::new(),
                     },
                 },
             );
@@ -136,6 +138,8 @@ impl Session {
             references,
             bindings,
             consumers: consumers(opened),
+            board_sha256: opened.board.file_sha256,
+            unexported: unexported(opened),
         }
     }
 
@@ -223,6 +227,7 @@ impl Session {
                         )));
                     }
                     let name = params.name.unwrap_or_else(|| format!("{body} · {face}"));
+                    let built_on = built_on(&opened, &face);
                     HousingCommand::RecordReference {
                         reference: NewReference {
                             body: BodyName(body),
@@ -230,6 +235,7 @@ impl Session {
                             pick,
                             name,
                             geometry: traced.geometry,
+                            built_on,
                         },
                     }
                 }
@@ -280,9 +286,7 @@ impl Session {
             super::hosted(),
         ) {
             Ok(_) => housing::diff(self.engine.project(), fork.project(), revision, hash),
-            Err(error) => {
-                housing::refused(self.engine.project(), revision, hash, error.to_string())
-            }
+            Err(error) => housing::refused(self.engine.project(), revision, hash, &error),
         };
         Ok(serde_json::to_value(preview)?)
     }
@@ -347,26 +351,58 @@ impl Session {
     }
 }
 
-/// The enclosure features that use the published datums, with the datum's
-/// id and name as published.
-fn consumers(opened: &Opened) -> Vec<Consumer> {
-    let Some(sidecar) = opened.published.as_ref() else {
-        return Vec::new();
-    };
-    opened
-        .enclosure
-        .uses(&opened.board, sidecar)
-        .into_iter()
+/// Enclosure uses as consumers: the datum's id, slot and name as
+/// published.
+fn as_consumers(sidecar: &Sidecar, uses: Vec<Use>) -> Vec<Consumer> {
+    uses.into_iter()
         .filter_map(|u| {
             let d = sidecar.datums.iter().find(|d| d.token == u.token)?;
             Some(Consumer {
                 feature: u.feature,
                 datum: d.id,
+                slot: d.slot,
+                via: u.via,
                 token: u.token,
                 name: d.name.clone(),
             })
         })
         .collect()
+}
+
+/// The enclosure features (and joints) that use the published datums, by
+/// the slot that carries each.
+fn consumers(opened: &Opened) -> Vec<Consumer> {
+    let Some(sidecar) = opened.published.as_ref() else {
+        return Vec::new();
+    };
+    as_consumers(sidecar, opened.enclosure.uses(&opened.board, sidecar))
+}
+
+/// The enclosure features attached to faces of the board no slot carries.
+fn unexported(opened: &Opened) -> Vec<UnexportedUse> {
+    let Some(sidecar) = opened.published.as_ref() else {
+        return Vec::new();
+    };
+    opened
+        .enclosure
+        .unexported(&opened.board, sidecar)
+        .into_iter()
+        .map(|u| UnexportedUse {
+            feature: u.feature,
+            body: u.body,
+        })
+        .collect()
+}
+
+/// The board's datums the enclosure geometry under `face` is built on.
+fn built_on(opened: &Opened, face: &str) -> Vec<Consumer> {
+    let Some(sidecar) = opened.published.as_ref() else {
+        return Vec::new();
+    };
+    as_consumers(
+        sidecar,
+        opened.enclosure.built_on(&opened.board, sidecar, face),
+    )
 }
 
 /// An error's message without its code prefix, as a note.

@@ -77,8 +77,18 @@ impl Session {
             return Err(error.into());
         }
         let text = exported.sidecar.text()?;
+        // The hash SolidCraft keeps on an enclosure's link to the file: the
+        // older-board check compares the two (slice B5).
+        let written = match std::fs::read(&temporary) {
+            Ok(bytes) => pcbcraft_core::interface::housing::file_hash(&bytes),
+            Err(error) => {
+                let _ = std::fs::remove_file(&temporary);
+                return Err(pcbcraft_io::Error::from(error).into());
+            }
+        };
         files::put_in_place(design, &temporary, &text)?;
-        let record = publish::record(&project, &exported.sidecar)?;
+        let mut record = publish::record(&project, &exported.sidecar)?;
+        record.design_sha256 = Some(written);
         let mut reply = self.apply(
             params.expected_revision,
             Operation::Interface(InterfaceCommand::RecordPublish { source_id, record }),
