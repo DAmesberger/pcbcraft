@@ -1,0 +1,55 @@
+{
+  "format": 1,
+  "about": "The words that ask the part catalog for a generic part built on demand. Each family declares its patterns with typed slots: {name} a count; {name:length} a length (mm unless it says); {name:code} a size code; {name:ohm}, {name:farad}, {name:henry}, {name:volt} a quantity of a value slot below; {colour:list} a colour of the colour field; {package:list} a listed diode package. A trailing ? makes a step optional. Patterns match the whole text, word by word, with no reordering. Examples must each build a part.",
+  "families": [
+    {
+      "family": "header",
+      "patterns": [
+        "header {rows}x{columns} {pitch:length}?",
+        "pin header {rows}x{columns} {pitch:length}?"
+      ],
+      "examples": ["header 1x4", "header 2x5 2mm", "pin header 1×3"]
+    },
+    {
+      "family": "resistor",
+      "patterns": ["resistor {size:code} {value:ohm}?", "{value:ohm} {size:code}"],
+      "examples": ["resistor 0603", "resistor 0402 4k7", "10k 0603", "10 kΩ 0805"]
+    },
+    {
+      "family": "capacitor",
+      "patterns": [
+        "capacitor {size:code} {value:farad}? {voltage:volt}?",
+        "{value:farad} {size:code} {voltage:volt}?"
+      ],
+      "examples": ["capacitor 0603", "100nF 0402", "100n 0603 16V"]
+    },
+    {
+      "family": "inductor",
+      "patterns": ["inductor {size:code} {value:henry}?", "{value:henry} {size:code}"],
+      "examples": ["inductor 0603", "4.7uH 0805"]
+    },
+    {
+      "family": "led",
+      "patterns": ["led {size:code} {colour:list}?"],
+      "examples": ["led 0603", "led 0805 red"]
+    },
+    {
+      "family": "diode",
+      "patterns": ["diode {package:list}"],
+      "examples": ["diode sod-123", "diode sma"]
+    }
+  ],
+  "value_slots": [
+    { "slot": "ohm", "field": "Resistance", "bare": ["", "m", "k", "M", "G"] },
+    { "slot": "farad", "field": "Capacitance", "bare": ["p", "n", "u", "µ", "μ"] },
+    { "slot": "henry", "field": "Inductance", "bare": ["n", "u", "µ", "μ", "m"] },
+    { "slot": "volt", "field": "Rated voltage", "bare": [] }
+  ],
+  "colour_field": "Colour",
+  "length_units": [
+    { "symbol": "mm", "scale": 0.001 },
+    { "symbol": "mil", "scale": 2.54e-5 },
+    { "symbol": "in", "scale": 0.0254 }
+  ],
+  "header_pitch_mm": "2.54"
+}

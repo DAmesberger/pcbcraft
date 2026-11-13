@@ -1,0 +1,33 @@
+{
+  "format": 1,
+  "kind": "fuse",
+  "convention": "IEC 60617 as published",
+  "about": "A rectangle with the line through it; terminal 1 left, 2 right.",
+  "ops": [
+    {
+      "op": "two_pins",
+      "left": 2.5,
+      "right": 2.5
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "rect": {
+          "a": [-2.5, -0.875],
+          "b": [2.5, 0.875]
+        }
+      },
+      "fill": "body"
+    },
+    {
+      "op": "line",
+      "a": [-2.5, 0.0],
+      "b": [2.5, 0.0]
+    },
+    {
+      "op": "labels",
+      "top": 0.875,
+      "bottom": -0.875
+    }
+  ]
+}

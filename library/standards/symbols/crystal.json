@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "kind": "crystal",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "A crystal or resonator: a body between two plates; terminal 1 left, 2 right.",
+  "ops": [
+    {
+      "op": "two_pins",
+      "left": 1.25,
+      "right": 1.25
+    },
+    {
+      "op": "plate",
+      "a": [-1.25, -1.25],
+      "b": [-1.25, 1.25]
+    },
+    {
+      "op": "plate",
+      "a": [1.25, -1.25],
+      "b": [1.25, 1.25]
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "rect": {
+          "a": [-0.6, -1.5],
+          "b": [0.6, 1.5]
+        }
+      },
+      "fill": "body"
+    },
+    {
+      "op": "labels",
+      "top": 1.5,
+      "bottom": -1.5
+    }
+  ]
+}

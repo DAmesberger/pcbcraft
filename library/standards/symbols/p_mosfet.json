@@ -1,0 +1,79 @@
+{
+  "format": 1,
+  "kind": "p_mosfet",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "Enhancement P-channel: terminal 1 gate, 2 source, 3 drain (the common SOT-23 assignment); the body joins the source, its arrow pointing out.",
+  "numbered": true,
+  "ops": [
+    {
+      "op": "pin",
+      "terminal": 1,
+      "at": [-5.0, 0.0],
+      "direction": "right",
+      "length": 3.5
+    },
+    {
+      "op": "pin",
+      "terminal": 2,
+      "at": [2.5, -5.0],
+      "direction": "up",
+      "length": 3.5
+    },
+    {
+      "op": "pin",
+      "terminal": 3,
+      "at": [2.5, 5.0],
+      "direction": "down",
+      "length": 3.5
+    },
+    {
+      "op": "line",
+      "a": [-1.5, -1.75],
+      "b": [-1.5, 1.75]
+    },
+    {
+      "op": "plate",
+      "a": [-0.75, 1.0],
+      "b": [-0.75, 2.0]
+    },
+    {
+      "op": "plate",
+      "a": [-0.75, -0.5],
+      "b": [-0.75, 0.5]
+    },
+    {
+      "op": "plate",
+      "a": [-0.75, -2.0],
+      "b": [-0.75, -1.0]
+    },
+    {
+      "op": "line",
+      "a": [-0.75, 1.5],
+      "b": [2.5, 1.5]
+    },
+    {
+      "op": "line",
+      "a": [-0.75, -1.5],
+      "b": [2.5, -1.5]
+    },
+    {
+      "op": "line",
+      "a": [-0.75, 0.0],
+      "b": [2.5, 0.0]
+    },
+    {
+      "op": "line",
+      "a": [2.5, 0.0],
+      "b": [2.5, -1.5]
+    },
+    {
+      "op": "arrow_head",
+      "from": [-0.6, 0.0],
+      "tip": [0.75, 0.0]
+    },
+    {
+      "op": "side_labels",
+      "at": [4.0, 0.0]
+    }
+  ]
+}

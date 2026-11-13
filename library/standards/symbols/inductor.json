@@ -1,0 +1,62 @@
+{
+  "format": 1,
+  "kind": "inductor",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "Four half-turn loops; terminal 1 left, 2 right.",
+  "ops": [
+    {
+      "op": "two_pins",
+      "left": 2.5,
+      "right": 2.5
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "arc": {
+          "center": [-1.875, 0.0],
+          "radius": 0.625,
+          "start_deg": 180.0,
+          "sweep_deg": -180.0
+        }
+      }
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "arc": {
+          "center": [-0.625, 0.0],
+          "radius": 0.625,
+          "start_deg": 180.0,
+          "sweep_deg": -180.0
+        }
+      }
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "arc": {
+          "center": [0.625, 0.0],
+          "radius": 0.625,
+          "start_deg": 180.0,
+          "sweep_deg": -180.0
+        }
+      }
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "arc": {
+          "center": [1.875, 0.0],
+          "radius": 0.625,
+          "start_deg": 180.0,
+          "sweep_deg": -180.0
+        }
+      }
+    },
+    {
+      "op": "labels",
+      "top": 0.625,
+      "bottom": -0.5
+    }
+  ]
+}

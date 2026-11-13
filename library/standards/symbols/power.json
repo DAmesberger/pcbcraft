@@ -1,0 +1,24 @@
+{
+  "format": 1,
+  "kind": "power",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "One terminal: a supply rail, a bar above the pin. The rail shows its name; the designator is kept but hidden.",
+  "ops": [
+    {
+      "op": "pin",
+      "terminal": 1,
+      "at": [0.0, 0.0],
+      "direction": "up",
+      "length": 2.5
+    },
+    {
+      "op": "line",
+      "a": [-1.5, 2.5],
+      "b": [1.5, 2.5]
+    },
+    {
+      "op": "rail_labels",
+      "y": 2.5
+    }
+  ]
+}

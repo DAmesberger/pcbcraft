@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "kind": "diode",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "Triangle and bar: terminal 1 is the cathode (the bar, right; the band end of a molded package), terminal 2 the anode (left).",
+  "ops": [
+    {
+      "op": "pin",
+      "terminal": 2,
+      "at": [-5.0, 0.0],
+      "direction": "right",
+      "length": 3.75
+    },
+    {
+      "op": "pin",
+      "terminal": 1,
+      "at": [5.0, 0.0],
+      "direction": "left",
+      "length": 3.75
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "polygon": {
+          "points": [
+            [-1.25, 1.25],
+            [-1.25, -1.25],
+            [1.25, 0.0]
+          ]
+        }
+      },
+      "fill": "body"
+    },
+    {
+      "op": "line",
+      "a": [1.25, -1.25],
+      "b": [1.25, 1.25]
+    },
+    {
+      "op": "labels",
+      "top": 1.6,
+      "bottom": -1.6
+    }
+  ]
+}

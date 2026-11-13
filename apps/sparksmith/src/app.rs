@@ -145,6 +145,10 @@ impl App {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        // The standards every engine draws on (symbol drawings, marking codes,
+        // standard fields, the generic-part grammar), from the shipped
+        // library, before the first engine is made.
+        sparksmith_io::standards::install_shipped()?;
         follow_system_theme(&cc.egui_ctx, true);
         // Solidcraft's icons and glyphs, which its UI kit draws only once
         // a host installs them (once per process).

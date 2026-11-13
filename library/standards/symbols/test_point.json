@@ -1,0 +1,29 @@
+{
+  "format": 1,
+  "kind": "test_point",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "One terminal: a probe pad above its pin.",
+  "ops": [
+    {
+      "op": "pin",
+      "terminal": 1,
+      "at": [0.0, -2.5],
+      "direction": "up",
+      "length": 1.25
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "circle": {
+          "center": [0.0, -0.5],
+          "radius": 0.75
+        }
+      },
+      "fill": "body"
+    },
+    {
+      "op": "side_labels",
+      "at": [1.25, -0.5]
+    }
+  ]
+}

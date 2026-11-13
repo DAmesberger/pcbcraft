@@ -1,0 +1,53 @@
+{
+  "format": 1,
+  "kind": "zener",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "A diode whose bar bends at both ends: terminal 1 cathode, 2 anode.",
+  "ops": [
+    {
+      "op": "pin",
+      "terminal": 2,
+      "at": [-5.0, 0.0],
+      "direction": "right",
+      "length": 3.75
+    },
+    {
+      "op": "pin",
+      "terminal": 1,
+      "at": [5.0, 0.0],
+      "direction": "left",
+      "length": 3.75
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "polygon": {
+          "points": [
+            [-1.25, 1.25],
+            [-1.25, -1.25],
+            [1.25, 0.0]
+          ]
+        }
+      },
+      "fill": "body"
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "polyline": {
+          "points": [
+            [0.75, -1.6],
+            [1.25, -1.25],
+            [1.25, 1.25],
+            [1.75, 1.6]
+          ]
+        }
+      }
+    },
+    {
+      "op": "labels",
+      "top": 1.6,
+      "bottom": -1.6
+    }
+  ]
+}

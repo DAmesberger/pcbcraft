@@ -3,21 +3,26 @@
 //! {pitch:length}?`); one matcher reads them all, and the family's own form
 //! decides whether the values can be built (`library::templates::generic`).
 //!
+//! The families, their patterns and examples, the value slot types and the
+//! defaults are data (the shipped library's `catalog/generic-families.json`,
+//! [`GenericGrammar`]); this module is the matcher that reads them.
+//!
 //! Patterns match the whole text, word by word, with no reordering: "5x2" is
 //! 5 rows of 2 columns and "2x5" another part. A size code reads as imperial
 //! whatever the PCB's display units, unless spelled `1608M` or `metric 1608`.
 //! Matching is bounded: at most [`MAX_WORDS`] words over patterns of at most
 //! [`MAX_STEPS`] steps, each trying at most two spans.
 use super::{MAX_QUERY, rkm};
+use crate::diagnostics::{Error, Result};
 use crate::ids::ComponentRef;
 use crate::library::Drafts;
-use crate::library::standard_fields;
+use crate::library::standards::{self, GenericGrammar, Standards};
 use crate::library::templates::catalog::NewFromTemplate;
 use crate::library::templates::generic::{
     self, ChipPart, GenericPlan, GenericSpec, GenericState, GenericValue,
 };
 use crate::model::Project;
-use crate::quantity::{self, Decimal, UnitOfMeasure, UnitSet};
+use crate::quantity::{self, Decimal};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -25,81 +30,8 @@ use serde::{Deserialize, Serialize};
 pub const MAX_WORDS: usize = 8;
 /// Steps of one declared pattern.
 pub const MAX_STEPS: usize = 6;
-/// A header's pitch when the text gives none.
-const DEFAULT_PITCH_MM: &str = "2.54";
 
-/// The families that build on demand.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum GenericFamily {
-    Header,
-    Resistor,
-    Capacitor,
-    Inductor,
-    Led,
-    Diode,
-}
-
-/// One family's declared patterns, and example texts each building a part.
-pub struct FamilyPatterns {
-    pub family: GenericFamily,
-    pub patterns: &'static [&'static str],
-    pub examples: &'static [&'static str],
-}
-
-/// Every declared pattern. Slots: `{name}` a count; `{name:length}` a length
-/// (mm unless it says); `{name:code}` a size code; `{name:ohm}`, `:farad`,
-/// `:henry`, `:volt` a typed quantity; `{colour:list}` and `{package:list}` a
-/// listed word. A trailing `?` makes a step optional.
-pub const FAMILIES: [FamilyPatterns; 6] = [
-    FamilyPatterns {
-        family: GenericFamily::Header,
-        patterns: &[
-            "header {rows}x{columns} {pitch:length}?",
-            "pin header {rows}x{columns} {pitch:length}?",
-        ],
-        examples: &["header 1x4", "header 2x5 2mm", "pin header 1×3"],
-    },
-    FamilyPatterns {
-        family: GenericFamily::Resistor,
-        patterns: &[
-            "resistor {size:code} {value:ohm}?",
-            "{value:ohm} {size:code}",
-        ],
-        examples: &[
-            "resistor 0603",
-            "resistor 0402 4k7",
-            "10k 0603",
-            "10 kΩ 0805",
-        ],
-    },
-    FamilyPatterns {
-        family: GenericFamily::Capacitor,
-        patterns: &[
-            "capacitor {size:code} {value:farad}? {voltage:volt}?",
-            "{value:farad} {size:code} {voltage:volt}?",
-        ],
-        examples: &["capacitor 0603", "100nF 0402", "100n 0603 16V"],
-    },
-    FamilyPatterns {
-        family: GenericFamily::Inductor,
-        patterns: &[
-            "inductor {size:code} {value:henry}?",
-            "{value:henry} {size:code}",
-        ],
-        examples: &["inductor 0603", "4.7uH 0805"],
-    },
-    FamilyPatterns {
-        family: GenericFamily::Led,
-        patterns: &["led {size:code} {colour:list}?"],
-        examples: &["led 0603", "led 0805 red"],
-    },
-    FamilyPatterns {
-        family: GenericFamily::Diode,
-        patterns: &["diode {package:list}"],
-        examples: &["diode sod-123", "diode sma"],
-    },
-];
+pub use crate::library::standards::{FamilyPatterns, GenericFamily};
 
 /// A typed slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,36 +39,11 @@ enum Slot {
     Count,
     Length,
     Code,
-    Value(ValueKind),
+    /// A value slot type, by its index in the grammar's value slots.
+    Value(usize),
     Colour,
     Package,
 }
-
-/// A slot's quantity: the standard field it fills, and the suffixes it reads
-/// without a unit, so "10k" is a resistance and "100n" a capacitance.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ValueKind {
-    field: &'static str,
-    /// `""` is a plain number.
-    bare: &'static [&'static str],
-}
-
-const OHM: ValueKind = ValueKind {
-    field: "Resistance",
-    bare: &["", "m", "k", "M", "G"],
-};
-const FARAD: ValueKind = ValueKind {
-    field: "Capacitance",
-    bare: &["p", "n", "u", "µ", "\u{3bc}"],
-};
-const HENRY: ValueKind = ValueKind {
-    field: "Inductance",
-    bare: &["n", "u", "µ", "\u{3bc}", "m"],
-};
-const VOLT: ValueKind = ValueKind {
-    field: "Rated voltage",
-    bare: &[],
-};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Piece {
@@ -151,12 +58,28 @@ pub struct Step {
     optional: bool,
 }
 
+/// Every declared pattern of `grammar` parses: what loading the grammar
+/// checks beyond [`GenericGrammar::check`].
+pub fn check(grammar: &GenericGrammar) -> Result<()> {
+    grammar.check()?;
+    for family in &grammar.families {
+        for pattern in &family.patterns {
+            parse_pattern(grammar, pattern)
+                .map_err(|why| Error::Invalid(format!("the generic-part grammar: {why}")))?;
+        }
+    }
+    Ok(())
+}
+
 /// Parse a declared pattern, or say why it does not parse.
-pub fn parse_pattern(text: &str) -> Result<Vec<Step>, String> {
+pub fn parse_pattern(
+    grammar: &GenericGrammar,
+    text: &str,
+) -> std::result::Result<Vec<Step>, String> {
     let steps = text
         .split_whitespace()
-        .map(parse_step)
-        .collect::<Result<Vec<Step>, String>>()?;
+        .map(|token| parse_step(grammar, token))
+        .collect::<std::result::Result<Vec<Step>, String>>()?;
     if steps.is_empty() || steps.len() > MAX_STEPS {
         return Err(format!("‘{text}’ needs 1–{MAX_STEPS} steps"));
     }
@@ -177,7 +100,7 @@ pub fn parse_pattern(text: &str) -> Result<Vec<Step>, String> {
     Ok(steps)
 }
 
-fn parse_step(token: &str) -> Result<Step, String> {
+fn parse_step(grammar: &GenericGrammar, token: &str) -> std::result::Result<Step, String> {
     let (body, optional) = match token.strip_suffix('?') {
         Some(body) => (body, true),
         None => (token, false),
@@ -190,7 +113,10 @@ fn parse_step(token: &str) -> Result<Step, String> {
                 .split_once('}')
                 .ok_or_else(|| format!("‘{token}’ has an open slot"))?;
             let (name, kind) = slot.split_once(':').unwrap_or((slot, ""));
-            pieces.push(Piece::Slot(name.to_owned(), slot_of(name, kind, token)?));
+            pieces.push(Piece::Slot(
+                name.to_owned(),
+                slot_of(grammar, name, kind, token)?,
+            ));
             rest = after;
         } else {
             let (word, after) = rest.split_at(rest.find('{').unwrap_or(rest.len()));
@@ -210,18 +136,22 @@ fn parse_step(token: &str) -> Result<Step, String> {
     Ok(Step { pieces, optional })
 }
 
-fn slot_of(name: &str, kind: &str, token: &str) -> Result<Slot, String> {
+fn slot_of(
+    grammar: &GenericGrammar,
+    name: &str,
+    kind: &str,
+    token: &str,
+) -> std::result::Result<Slot, String> {
     Ok(match (name, kind) {
         (_, "") => Slot::Count,
         (_, "length") => Slot::Length,
         (_, "code") => Slot::Code,
-        (_, "ohm") => Slot::Value(OHM),
-        (_, "farad") => Slot::Value(FARAD),
-        (_, "henry") => Slot::Value(HENRY),
-        (_, "volt") => Slot::Value(VOLT),
         ("colour", "list") => Slot::Colour,
         ("package", "list") => Slot::Package,
-        _ => return Err(format!("‘{token}’ has an unknown slot type ‘{kind}’")),
+        _ => match grammar.value_slots.iter().position(|v| v.slot == kind) {
+            Some(index) => Slot::Value(index),
+            None => return Err(format!("‘{token}’ has an unknown slot type ‘{kind}’")),
+        },
     })
 }
 
@@ -240,21 +170,11 @@ fn folded(word: &str) -> String {
     word.to_lowercase().replace('×', "x")
 }
 
-fn length_units() -> UnitSet {
-    let unit = |symbol: &str, scale: f64| UnitOfMeasure {
-        symbol: symbol.into(),
-        aliases: Vec::new(),
-        scale,
-        si_prefixes: false,
-    };
-    UnitSet {
-        dimension: quantity::LENGTH,
-        units: vec![unit("mm", 1e-3), unit("mil", 2.54e-5), unit("in", 0.0254)],
-    }
-}
-
-fn read_length(text: &str) -> Option<Bound> {
-    let parsed = quantity::parse(&folded(text), &length_units(), "mm").ok()?;
+/// A length in the grammar's length units; a bare number is in the first.
+fn read_length(grammar: &GenericGrammar, text: &str) -> Option<Bound> {
+    let units = grammar.length_unit_set();
+    let bare = units.units.first()?.symbol.clone();
+    let parsed = quantity::parse(&folded(text), &units, &bare).ok()?;
     if parsed.si.is_zero() || parsed.si.is_negative() {
         return None;
     }
@@ -286,14 +206,15 @@ fn read_code(text: &str) -> Option<Bound> {
 /// A quantity through the one parser, so it stays an exact decimal: `10k`,
 /// `4k7`, `10 kΩ`. It is not read as this kind when its suffix is neither a
 /// unit of the kind nor one the kind reads bare, or when it is not positive.
-fn read_value(text: &str, kind: ValueKind) -> Option<Bound> {
-    let units = standard_fields::units(kind.field)?;
+fn read_value(standards: &Standards, text: &str, kind: usize) -> Option<Bound> {
+    let kind = standards.generic.value_slots.get(kind)?;
+    let units = standards.fields.units(&kind.field)?;
     let symbol = units.units.first()?.symbol.clone();
     let spelled = text
         .replace('K', "k")
         .replace("Ohm", "ohm")
         .replace("OHM", "ohm");
-    let spelled = rkm(&spelled, &units).unwrap_or(spelled);
+    let spelled = rkm(&spelled, units).unwrap_or(spelled);
     if !spelled.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
         return None;
     }
@@ -303,35 +224,40 @@ fn read_value(text: &str, kind: ValueKind) -> Option<Bound> {
     let bare = units.resolve(suffix).is_none();
     // "0603" alone is a size code, not 603 Ω.
     let code_like = suffix.is_empty() && spelled.starts_with('0') && !spelled.contains('.');
-    if code_like || (bare && !kind.bare.contains(&suffix)) {
+    if code_like || (bare && !kind.bare.iter().any(|b| b == suffix)) {
         return None;
     }
-    let parsed = quantity::parse(&spelled, &units, &symbol).ok()?;
+    let parsed = quantity::parse(&spelled, units, &symbol).ok()?;
     if parsed.si.is_zero() || parsed.si.is_negative() {
         return None;
     }
     Some(Bound::Value(GenericValue {
-        field: kind.field.to_owned(),
-        text: quantity::format_decimal(parsed.si, &units, &symbol, None),
+        field: kind.field.clone(),
+        text: quantity::format_decimal(parsed.si, units, &symbol, None),
     }))
 }
 
-fn read_slot(slot: Slot, words: &[&str]) -> Option<Bound> {
+fn read_slot(standards: &Standards, slot: Slot, words: &[&str]) -> Option<Bound> {
     let text = words.join(" ");
     match slot {
         Slot::Count => None,
-        Slot::Length => read_length(&text),
+        Slot::Length => read_length(&standards.generic, &text),
         Slot::Code => read_code(&text),
-        Slot::Value(kind) => read_value(&text, kind),
-        Slot::Colour => standard_fields::LED_COLOURS
-            .into_iter()
-            .find(|c| c.eq_ignore_ascii_case(&text))
-            .map(|colour| {
-                Bound::Value(GenericValue {
-                    field: "Colour".to_owned(),
-                    text: colour.to_owned(),
+        Slot::Value(kind) => read_value(standards, &text, kind),
+        Slot::Colour => {
+            let field = &standards.generic.colour_field;
+            standards
+                .fields
+                .choices(field)?
+                .iter()
+                .find(|c| c.eq_ignore_ascii_case(&text))
+                .map(|colour| {
+                    Bound::Value(GenericValue {
+                        field: field.clone(),
+                        text: colour.clone(),
+                    })
                 })
-            }),
+        }
         Slot::Package => generic::diode_row(&text).map(|r| Bound::Package(r.name.clone())),
     }
 }
@@ -363,7 +289,12 @@ fn read_glued(pieces: &[Piece], word: &str) -> Option<Vec<(String, Bound)>> {
     rest.is_empty().then_some(out)
 }
 
-fn walk(steps: &[Step], words: &[&str], found: &mut Vec<(String, Bound)>) -> bool {
+fn walk(
+    standards: &Standards,
+    steps: &[Step],
+    words: &[&str],
+    found: &mut Vec<(String, Bound)>,
+) -> bool {
     let Some((step, rest)) = steps.split_first() else {
         return words.is_empty();
     };
@@ -374,7 +305,7 @@ fn walk(steps: &[Step], words: &[&str], found: &mut Vec<(String, Bound)>) -> boo
         };
         let bound = match (step.pieces.as_slice(), taken) {
             ([Piece::Slot(name, slot)], _) if *slot != Slot::Count => {
-                read_slot(*slot, taken).map(|b| vec![(name.clone(), b)])
+                read_slot(standards, *slot, taken).map(|b| vec![(name.clone(), b)])
             }
             (pieces, [word]) => read_glued(pieces, word),
             _ => None,
@@ -382,20 +313,26 @@ fn walk(steps: &[Step], words: &[&str], found: &mut Vec<(String, Bound)>) -> boo
         if let Some(bound) = bound {
             let kept = found.len();
             found.extend(bound);
-            if walk(rest, left, found) {
+            if walk(standards, rest, left, found) {
                 return true;
             }
             found.truncate(kept);
         }
     }
-    step.optional && walk(rest, words, found)
+    step.optional && walk(standards, rest, words, found)
 }
 
-/// The slots of `words` when `pattern` reads all of them.
-fn read_pattern(pattern: &str, words: &[&str]) -> Option<Vec<(String, Bound)>> {
-    let steps = parse_pattern(pattern).ok()?;
+/// The slots of `words` when `pattern` reads all of them; an error when the
+/// pattern does not parse.
+fn read_pattern(
+    standards: &Standards,
+    pattern: &str,
+    words: &[&str],
+) -> Result<Option<Vec<(String, Bound)>>> {
+    let steps = parse_pattern(&standards.generic, pattern)
+        .map_err(|why| Error::Invalid(format!("the generic-part grammar: {why}")))?;
     let mut found = Vec::new();
-    walk(&steps, words, &mut found).then_some(found)
+    Ok(walk(standards, &steps, words, &mut found).then_some(found))
 }
 
 /// One interpretation badge of a result row.
@@ -519,7 +456,10 @@ fn chip_spec(
     })
 }
 
-fn header_spec(bounds: &[(String, Bound)]) -> Option<(GenericSpec, Vec<GenericBadge>)> {
+fn header_spec(
+    grammar: &GenericGrammar,
+    bounds: &[(String, Bound)],
+) -> Option<(GenericSpec, Vec<GenericBadge>)> {
     let (rows, columns) = (count(bounds, "rows")?, count(bounds, "columns")?);
     let typed = bounds.iter().find_map(|(_, b)| match b {
         Bound::Length(mm) => Some(*mm),
@@ -527,7 +467,7 @@ fn header_spec(bounds: &[(String, Bound)]) -> Option<(GenericSpec, Vec<GenericBa
     });
     let pitch_mm = match typed {
         Some(mm) => mm,
-        None => DEFAULT_PITCH_MM.parse().ok()?,
+        None => grammar.header_pitch_mm.parse().ok()?,
     };
     let badges = vec![
         badge(
@@ -553,11 +493,12 @@ fn header_spec(bounds: &[(String, Bound)]) -> Option<(GenericSpec, Vec<GenericBa
 /// The spec a family's bound slots name, with the badges that say how the
 /// text was read.
 fn spec_of(
+    grammar: &GenericGrammar,
     family: GenericFamily,
     bounds: &[(String, Bound)],
 ) -> Option<(GenericSpec, Vec<GenericBadge>)> {
     match family {
-        GenericFamily::Header => header_spec(bounds),
+        GenericFamily::Header => header_spec(grammar, bounds),
         GenericFamily::Resistor => chip_spec(ChipPart::Resistor, bounds),
         GenericFamily::Capacitor => chip_spec(ChipPart::Capacitor, bounds),
         GenericFamily::Inductor => chip_spec(ChipPart::Inductor, bounds),
@@ -575,13 +516,14 @@ fn spec_of(
 }
 
 fn candidate(
+    grammar: &GenericGrammar,
     project: &Project,
     drafts: &Drafts,
     family: GenericFamily,
     pattern: &str,
     bounds: &[(String, Bound)],
 ) -> Option<GenericCandidate> {
-    let (spec, mut badges) = spec_of(family, bounds)?;
+    let (spec, mut badges) = spec_of(grammar, family, bounds)?;
     let (value_badges, values) = value_parts(bounds);
     let plan = match spec.plan() {
         Ok(plan) => plan,
@@ -641,18 +583,23 @@ fn candidate(
 /// `library.generic_parts`: every part `query` reads as under the declared
 /// patterns, in family order; none when it reads as none. "10u 0603" is a
 /// capacitor and an inductor: both are listed, each saying which it is.
-pub fn search(project: &Project, drafts: &Drafts, query: &str) -> GenericReport {
+/// The grammar is the installed standards'; a pattern of it that does not
+/// parse is an error.
+pub fn search(project: &Project, drafts: &Drafts, query: &str) -> Result<GenericReport> {
     let words: Vec<&str> = query.split_whitespace().collect();
     if query.len() > MAX_QUERY || words.is_empty() || words.len() > MAX_WORDS {
-        return GenericReport::default();
+        return Ok(GenericReport::default());
     }
+    let standards = standards::get()?;
+    let grammar = &standards.generic;
     let mut candidates: Vec<GenericCandidate> = Vec::new();
-    for family in &FAMILIES {
-        for pattern in family.patterns {
-            let Some(bounds) = read_pattern(pattern, &words) else {
+    for family in &grammar.families {
+        for pattern in &family.patterns {
+            let Some(bounds) = read_pattern(standards, pattern, &words)? else {
                 continue;
             };
-            let Some(found) = candidate(project, drafts, family.family, pattern, &bounds) else {
+            let Some(found) = candidate(grammar, project, drafts, family.family, pattern, &bounds)
+            else {
                 continue;
             };
             if !candidates
@@ -663,7 +610,7 @@ pub fn search(project: &Project, drafts: &Drafts, query: &str) -> GenericReport 
             }
         }
     }
-    GenericReport { candidates }
+    Ok(GenericReport { candidates })
 }
 
 #[cfg(test)]

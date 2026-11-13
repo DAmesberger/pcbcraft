@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "name": "Resistor colour code",
+  "source": "IEC 60062, Marking codes for resistors and capacitors: the colour of each significant digit, of each multiplier (a power of ten) and of each tolerance band. A colour's position in this list is its index in a laid marking's bands, and the 3D view colours bands by that index.",
+  "colours": [
+    { "name": "black", "digit": 0, "multiplier": 0 },
+    { "name": "brown", "digit": 1, "multiplier": 1, "tolerance": 0.01 },
+    { "name": "red", "digit": 2, "multiplier": 2, "tolerance": 0.02 },
+    { "name": "orange", "digit": 3, "multiplier": 3 },
+    { "name": "yellow", "digit": 4, "multiplier": 4 },
+    { "name": "green", "digit": 5, "multiplier": 5, "tolerance": 0.005 },
+    { "name": "blue", "digit": 6, "multiplier": 6, "tolerance": 0.0025 },
+    { "name": "violet", "digit": 7, "multiplier": 7, "tolerance": 0.001 },
+    { "name": "grey", "digit": 8, "multiplier": 8, "tolerance": 0.0005 },
+    { "name": "white", "digit": 9, "multiplier": 9 },
+    { "name": "gold", "multiplier": -1, "tolerance": 0.05 },
+    { "name": "silver", "multiplier": -2, "tolerance": 0.1 }
+  ],
+  "unbanded_tolerance": 0.2
+}

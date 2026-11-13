@@ -113,7 +113,7 @@ pub(crate) fn find_or_create(
     index: Option<usize>,
     evaluator: Option<&dyn FootprintEvaluator>,
 ) -> Result<Outcome> {
-    let mut found = catalog_generic::search(&document.project, &document.drafts, query).candidates;
+    let mut found = catalog_generic::search(&document.project, &document.drafts, query)?.candidates;
     let chosen = match (index, found.len()) {
         (_, 0) => {
             return Err(Error::NotFound(format!(

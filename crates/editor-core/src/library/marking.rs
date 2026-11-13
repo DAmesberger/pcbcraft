@@ -485,8 +485,9 @@ pub enum LaidElement {
         origin: [f64; 2],
         size_mm: [f64; 2],
     },
-    /// Colour bands from the −x end: IEC 60062 colour indices
-    /// ([`codes::BAND_COLOURS`]). Band `i` of `n` is centred at
+    /// Colour bands from the −x end: indices into the shipped IEC 60062
+    /// colour code ([`codes::ColourCode`]: 0–9 the digits, 10 gold, 11
+    /// silver). Band `i` of `n` is centred at
     /// `x = (i − (n − 1) / 2) × pitch_mm` and spans the area's height.
     Bands {
         colours: Vec<u8>,

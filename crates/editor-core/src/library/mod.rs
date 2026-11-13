@@ -27,6 +27,7 @@ pub mod pinout;
 mod publish;
 pub mod samples;
 pub mod standard_fields;
+pub mod standards;
 mod symbol;
 pub mod symbol_style;
 pub mod templates;

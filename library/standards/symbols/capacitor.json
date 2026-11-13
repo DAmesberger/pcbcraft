@@ -1,0 +1,28 @@
+{
+  "format": 1,
+  "kind": "capacitor",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "Two straight plates; terminal 1 left, 2 right.",
+  "ops": [
+    {
+      "op": "two_pins",
+      "left": 0.5,
+      "right": 0.5
+    },
+    {
+      "op": "plate",
+      "a": [-0.5, -1.75],
+      "b": [-0.5, 1.75]
+    },
+    {
+      "op": "plate",
+      "a": [0.5, -1.75],
+      "b": [0.5, 1.75]
+    },
+    {
+      "op": "labels",
+      "top": 1.75,
+      "bottom": -1.75
+    }
+  ]
+}
