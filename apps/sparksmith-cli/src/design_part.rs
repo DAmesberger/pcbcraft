@@ -19,7 +19,6 @@ use sparksmith_assist::model::{
 };
 use sparksmith_assist::profile as run_profile;
 use sparksmith_assist::{AssistLibrary, Datasheet, Event, Goal, RunConfig};
-use sparksmith_core::Engine;
 use sparksmith_core::product::SHORT_NAME as CLI;
 use std::io::Read as _;
 use std::path::PathBuf;

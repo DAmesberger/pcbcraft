@@ -207,6 +207,9 @@ fn run() -> Result<()> {
     sparksmith_io::settings::adopt_former_folders();
     // The standards every engine draws on, from the shipped library.
     sparksmith_io::standards::install_shipped()?;
+    // What a new project starts with (fab profile, stackup, board size),
+    // from the shipped library, once.
+    sparksmith_io::new_project::shipped()?;
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command] if command == "commands" => print(&session::schemas()),

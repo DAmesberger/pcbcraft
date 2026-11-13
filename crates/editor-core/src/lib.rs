@@ -752,6 +752,7 @@ impl Engine {
             waiver_reason_required: false,
             copper: std::sync::OnceLock::new(),
             rerouted: layout::router::reroute::Rerouted::default(),
+            generators: None,
         }
     }
 

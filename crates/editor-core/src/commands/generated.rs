@@ -128,7 +128,14 @@ fn module_bytes(document: &Document, source: &ModuleSource) -> Result<(AssetByte
 fn context_value(document: &Document, param: &v1::Param) -> Option<v1::ParamValue> {
     match param.context.as_deref()? {
         "project.land.chip_gap_min" => {
-            let mm = document.project.rules.land_estimators().land.chip_gap_min;
+            // Without a fab profile the board has no land margins.
+            let mm = document
+                .project
+                .rules
+                .land_estimators()
+                .ok()?
+                .land
+                .chip_gap_min;
             crate::units::Nm::from_mm_f64_rounded(mm)
                 .ok()
                 .map(|nm| v1::ParamValue::Int(nm.get()))

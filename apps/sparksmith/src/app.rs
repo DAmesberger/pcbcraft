@@ -149,6 +149,9 @@ impl App {
         // standard fields, the generic-part grammar), from the shipped
         // library, before the first engine is made.
         sparksmith_io::standards::install_shipped()?;
+        // What a new project starts with (fab profile, stackup, board
+        // size), from the shipped library, once.
+        sparksmith_io::new_project::shipped()?;
         follow_system_theme(&cc.egui_ctx, true);
         // Solidcraft's icons and glyphs, which its UI kit draws only once
         // a host installs them (once per process).

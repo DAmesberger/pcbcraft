@@ -1065,6 +1065,7 @@ impl Session {
             sources,
             compact: false,
             baseline: None,
+            shipped: None,
         }
     }
     /// A session without a project of its own, for a host that only lends
@@ -1105,6 +1106,9 @@ impl Session {
         self.ensure_generators();
         // Once per process; later calls only read it.
         crate::load_materials();
+        // The new-project defaults, once per process; a failure is kept and
+        // returned, naming the file, by the request that needs them.
+        let _ = sparksmith_io::new_project::shipped();
         // The one revision check of every document-changing request.
         if let Some(expected) = request.expected_revision() {
             self.engine.check_revision(expected)?;
