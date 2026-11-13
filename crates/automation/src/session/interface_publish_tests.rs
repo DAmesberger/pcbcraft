@@ -15,7 +15,7 @@ use pcbcraft_solidcraft::enclosure::{Enclosure, Face, Operation as Extrude};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
-type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub(super) type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const EXAMPLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -24,7 +24,7 @@ const EXAMPLE: &str = concat!(
 const USB4105: &[u8] =
     include_bytes!("../../../../examples/esp32-s31-devboard/parts/usb4105.solidcraft");
 
-fn ok(session: &mut Session, request: Value) -> TestResult<Value> {
+pub(super) fn ok(session: &mut Session, request: Value) -> TestResult<Value> {
     let reply = session.dispatch(request);
     if reply["ok"] != true {
         return Err(format!("refused: {reply}").into());
@@ -32,7 +32,7 @@ fn ok(session: &mut Session, request: Value) -> TestResult<Value> {
     Ok(reply["result"].clone())
 }
 
-fn apply(session: &mut Session, operation: Operation) -> TestResult<Value> {
+pub(super) fn apply(session: &mut Session, operation: Operation) -> TestResult<Value> {
     let revision = session.engine().revision();
     ok(
         session,
@@ -41,7 +41,7 @@ fn apply(session: &mut Session, operation: Operation) -> TestResult<Value> {
     )
 }
 
-fn instance(session: &Session, designator: &str) -> TestResult<u64> {
+pub(super) fn instance(session: &Session, designator: &str) -> TestResult<u64> {
     Ok(session
         .engine()
         .project()
@@ -54,7 +54,7 @@ fn instance(session: &Session, designator: &str) -> TestResult<u64> {
 
 /// The example, J1's package carrying the USB4105 part file's opening,
 /// saved in `dir` and opened.
-fn open(dir: &Path) -> TestResult<Session> {
+pub(super) fn open(dir: &Path) -> TestResult<Session> {
     let mut file = pcbcraft_io::read_project(Path::new(EXAMPLE))?;
     let part = pcbcraft_solidcraft::models::part_file::evaluate(USB4105, &Default::default())?;
     let project = &mut file.project;
@@ -93,7 +93,7 @@ fn open(dir: &Path) -> TestResult<Session> {
     Ok(session)
 }
 
-fn publish(session: &mut Session, path: &Path, tier: &str) -> TestResult<Value> {
+pub(super) fn publish(session: &mut Session, path: &Path, tier: &str) -> TestResult<Value> {
     let revision = session.engine().revision();
     ok(
         session,
@@ -102,7 +102,7 @@ fn publish(session: &mut Session, path: &Path, tier: &str) -> TestResult<Value> 
     )
 }
 
-fn preview(session: &mut Session, path: &Path) -> TestResult<Value> {
+pub(super) fn preview(session: &mut Session, path: &Path) -> TestResult<Value> {
     ok(
         session,
         json!({"command": "interface.publish_preview", "params": {
@@ -111,7 +111,7 @@ fn preview(session: &mut Session, path: &Path) -> TestResult<Value> {
 }
 
 /// The rows of a preview that are not unchanged.
-fn changes(preview: &Value) -> Vec<Value> {
+pub(super) fn changes(preview: &Value) -> Vec<Value> {
     preview["changes"]
         .as_array()
         .into_iter()
@@ -125,7 +125,7 @@ fn changes(preview: &Value) -> Vec<Value> {
 /// the board edge (`width / 2`), edited with `layout.dimension_edit`. The
 /// parts dimensioned from J1 come along; their datums are not exported
 /// unless a test exports them.
-fn move_j1(session: &mut Session, dx: f64) -> TestResult {
+pub(super) fn move_j1(session: &mut Session, dx: f64) -> TestResult {
     use pcbcraft_core::library::footprint_source::{DimValue, Expr};
     use pcbcraft_core::model::board::ConstraintTarget;
     use pcbcraft_core::model::dimension::{BoardRef, FeatureRef};
@@ -181,7 +181,7 @@ fn move_j1(session: &mut Session, dx: f64) -> TestResult {
 
 /// Delete a part from the design (`project.apply_update`), its tracks
 /// with it.
-fn remove(session: &mut Session, id: u64) -> TestResult {
+pub(super) fn remove(session: &mut Session, id: u64) -> TestResult {
     let revision = session.engine().revision();
     let change = pcbcraft_core::updates::Change::Instance {
         edit: pcbcraft_core::updates::InstanceChange::Remove { instance: id },
@@ -195,7 +195,7 @@ fn remove(session: &mut Session, id: u64) -> TestResult {
     Ok(())
 }
 
-fn sidecar(design: &Path) -> TestResult<pcbcraft_core::interface::Sidecar> {
+pub(super) fn sidecar(design: &Path) -> TestResult<pcbcraft_core::interface::Sidecar> {
     Ok(pcbcraft_io::interface::read_sidecar(design)?.ok_or("a sidecar")?)
 }
 
@@ -204,7 +204,7 @@ fn sidecar(design: &Path) -> TestResult<pcbcraft_core::interface::Sidecar> {
 /// cutout projected from the opening's outer face; a boss under the board
 /// projected from mounting hole 1's wall. Returns it with the wall's own
 /// box faces.
-fn enclosure(design: &Path, opening: &str) -> TestResult<(Enclosure, Vec<String>)> {
+pub(super) fn enclosure(design: &Path, opening: &str) -> TestResult<(Enclosure, Vec<String>)> {
     let mut housing = Enclosure::new("Housing")?;
     let bodies = housing.link(&design.display().to_string(), "Board")?;
     assert!(bodies.iter().any(|b| b == opening), "{bodies:?}");
@@ -242,7 +242,7 @@ fn enclosure(design: &Path, opening: &str) -> TestResult<(Enclosure, Vec<String>
 }
 
 /// Every face of `body`, by name, with its centroid and area.
-fn faces(housing: &mut Enclosure, body: &str) -> TestResult<Vec<Face>> {
+pub(super) fn faces(housing: &mut Enclosure, body: &str) -> TestResult<Vec<Face>> {
     let mut faces = housing.faces(body)?;
     faces.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(faces)

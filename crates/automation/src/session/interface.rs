@@ -25,12 +25,22 @@ impl Session {
             }
             None => None,
         };
-        let preview = publish::preview(
+        let mut preview = publish::preview(
             self.engine.project(),
             params.tier,
             previous.as_ref(),
             self.engine.revision(),
         )?;
+        // With the linked enclosure named, the dry run on a scratch copy.
+        let project = self.engine.project_arc().clone();
+        if let (Some(enclosure), Some(design), Some(source_id)) = (
+            params.enclosure_path.as_deref(),
+            params.path.as_deref(),
+            project.interface.source_id,
+        ) {
+            let candidate = publish::candidate(&project, preview.tier, source_id)?;
+            preview.dry_run = self.dry_run(enclosure, design, candidate)?;
+        }
         Ok(serde_json::to_value(preview)?)
     }
 

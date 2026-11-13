@@ -188,6 +188,19 @@ fn naming_a_path_makes_a_request_at_least_ask() -> Fallible {
     Ok(())
 }
 
+/// A content hash for the samples that take one.
+const HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// The paths a sample names: one, or two for the enclosure requests, which
+/// name the enclosure and the board's published design.
+fn sample_paths(command: &str) -> usize {
+    if command.starts_with("housing.") {
+        2
+    } else {
+        1
+    }
+}
+
 /// One sample per command that can name a path. A new one fails the
 /// comparison below until it is listed here and its path reaches
 /// [`Request::paths`].
@@ -233,6 +246,16 @@ fn path_samples() -> Fallible<Vec<Request>> {
         (
             "interface.publish",
             json!({"path": at, "expected_revision": 0}),
+        ),
+        (
+            "housing.follow",
+            json!({"path": at, "design": at, "board_param": "width",
+                "housing_param": "inner", "expected_revision": 0}),
+        ),
+        ("housing.preview", json!({"path": at, "design": at})),
+        (
+            "housing.update",
+            json!({"path": at, "design": at, "expect_hash": HASH, "expected_revision": 0}),
         ),
     ] {
         samples.push(request(command, params)?);
@@ -294,7 +317,12 @@ fn every_path_a_command_can_name_reaches_the_gate() -> Fallible {
     let policy = Policy::new(Mode::AllowAll, [PathBuf::from("/allowed")]);
     for sample in &samples {
         let paths = sample.paths();
-        assert_eq!(paths, ["/samples/f"], "{}", sample.command());
+        assert_eq!(
+            paths,
+            vec!["/samples/f"; sample_paths(sample.command())],
+            "{}",
+            sample.command()
+        );
         assert!(
             sample.effective_class() >= Class::Ask,
             "{}",
