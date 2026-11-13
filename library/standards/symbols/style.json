@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "about": "Shared drawing sizes of the generated schematic symbols, in millimetres. Shapes without a width take the symbol stroke; plates (capacitor and crystal plates, a transistor's base bar and channel) take the plate stroke.",
+  "plate_stroke_mm": 0.35,
+  "arrow_mm": [0.6, 0.3],
+  "arrow_stroke_mm": 0.1,
+  "contact_radius_mm": 0.3,
+  "label_gap_mm": 0.5,
+  "side_label_gap_mm": 0.25,
+  "rail_designator_mm": [1.75, 0.0]
+}

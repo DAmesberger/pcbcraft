@@ -203,6 +203,8 @@ impl McpOptions {
 fn run() -> Result<()> {
     // Before anything reads or creates the per-user folders.
     sparksmith_io::settings::adopt_former_folders();
+    // The standards every engine draws on, from the shipped library.
+    sparksmith_io::standards::install_shipped()?;
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command] if command == "commands" => print(&session::schemas()),

@@ -10,24 +10,24 @@
 //! | 4.7 Ω | `4R7` | `4R70` | — | — |
 //! | 100 nF | — | — | — | `104` |
 //!
-//! Sources (public specifications and manufacturer documentation, no EDA
-//! data):
+//! The rules are code; the tables are data in the shipped library's
+//! `standards/` folder, each file citing its source ([`MarkingCodes`]):
 //!
-//! - **3- and 4-digit resistor codes and the colour code:** IEC 60062
-//!   *Marking codes for resistors and capacitors*: significant digits
-//!   followed by a power-of-ten multiplier digit, and the letter `R` as the
-//!   decimal marker for values below the multiplier range.
+//! - **3- and 4-digit resistor codes:** IEC 60062 *Marking codes for
+//!   resistors and capacitors*: significant digits followed by a
+//!   power-of-ten multiplier digit, and the letter `R` as the decimal marker
+//!   for values below the multiplier range.
+//! - **Colour code:** IEC 60062's colours of digits, multipliers and
+//!   tolerances (`colour-code.json`).
 //! - **E96 series:** IEC 60063 *Preferred number series for resistors and
-//!   capacitors*, the 96 values per decade of [`E96`].
-//! - **EIA-96:** the two-digit index into the E96 series (01 = 100 …
-//!   96 = 976) followed by a multiplier letter ([`EIA96_MULTIPLIERS`]), as
-//!   published in chip-resistor manufacturer data sheets.
+//!   capacitors* (`e96.json`).
+//! - **EIA-96:** the two-digit index into the E96 series followed by a
+//!   multiplier letter (`eia-96.json`), as published in chip-resistor
+//!   manufacturer data sheets.
 //! - **Capacitor 3-digit code:** two significant digits in picofarads and
 //!   a multiplier digit 0–6, with 9 for ×0.1 and 8 for ×0.01 (IEC 60062).
-//! - **Tantalum voltage letters:** [`TANTALUM_VOLTAGE_LETTERS`], the rated
-//!   voltage codes printed by Vishay 293D, TDK/EPCOS B45196E and AVX TAJ
-//!   data sheets (identical for the voltages listed). Letters vary by
-//!   series and case for some makers, so the table is named explicitly.
+//! - **Voltage letters:** named, cited tables (`voltage-letters.json`).
+use super::super::standards::{self, check_format};
 use crate::diagnostics::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,7 @@ pub const MAX_AUTO_SCHEMES: usize = 8;
 const EXACT: f64 = 1e-9;
 
 /// A cited voltage-letter table (tantalum capacitors), by name. The known
-/// names are in [`voltage_tables`].
+/// names are [`MarkingCodes::voltage_table_names`].
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct TableRef(pub String);
@@ -102,90 +102,349 @@ impl CodeScheme {
                 Self::Auto { .. } => Some("automatic codes cannot nest".into()),
                 other => other.problem(),
             }),
-            Self::VoltageLetter { table } if voltage_table(&table.0).is_none() => {
-                Some(format!("unknown voltage-letter table \"{}\"", table.0))
-            }
+            Self::VoltageLetter { table } => match standards::get() {
+                Ok(s) if s.marking.voltage_table(&table.0).is_some() => None,
+                Ok(_) => Some(format!("unknown voltage-letter table \"{}\"", table.0)),
+                Err(error) => Some(error.to_string()),
+            },
             _ => None,
         }
     }
 }
 
-/// The E96 series per decade (IEC 60063), index 0 = EIA-96 code `01`.
-pub const E96: [u16; 96] = [
-    100, 102, 105, 107, 110, 113, 115, 118, 121, 124, 127, 130, 133, 137, 140, 143, 147, 150, 154,
-    158, 162, 165, 169, 174, 178, 182, 187, 191, 196, 200, 205, 210, 215, 221, 226, 232, 237, 243,
-    249, 255, 261, 267, 274, 280, 287, 294, 301, 309, 316, 324, 332, 340, 348, 357, 365, 374, 383,
-    392, 402, 412, 422, 432, 442, 453, 464, 475, 487, 499, 511, 523, 536, 549, 562, 576, 590, 604,
-    619, 634, 649, 665, 681, 698, 715, 732, 750, 768, 787, 806, 825, 845, 866, 887, 909, 931, 953,
-    976,
-];
-
-/// EIA-96 multiplier letters with their power of ten. The alternative
-/// letters some makers print (`R` for Y, `S` for X, `H` for B) decode to
-/// the same values; Sparksmith writes the letters below.
-pub const EIA96_MULTIPLIERS: [(char, i32); 9] = [
-    ('Z', -3),
-    ('Y', -2),
-    ('X', -1),
-    ('A', 0),
-    ('B', 1),
-    ('C', 2),
-    ('D', 3),
-    ('E', 4),
-    ('F', 5),
-];
-
-/// Name of the tantalum voltage-letter table.
-pub const TANTALUM_TABLE: &str = "tantalum";
-
-/// Tantalum rated-voltage letters: (letter, volts). Cited in the module
-/// documentation.
-pub const TANTALUM_VOLTAGE_LETTERS: [(&str, f64); 9] = [
-    ("e", 2.5),
-    ("G", 4.0),
-    ("J", 6.3),
-    ("A", 10.0),
-    ("C", 16.0),
-    ("D", 20.0),
-    ("E", 25.0),
-    ("V", 35.0),
-    ("T", 50.0),
-];
-
-/// The named voltage-letter tables.
-pub fn voltage_tables() -> [&'static str; 1] {
-    [TANTALUM_TABLE]
+/// A preferred number series of one decade (`standards/e96.json`), as
+/// three significant digits in increasing order.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PreferredSeries {
+    pub format: u32,
+    pub name: String,
+    pub source: String,
+    pub values: Vec<u16>,
 }
 
-fn voltage_table(name: &str) -> Option<&'static [(&'static str, f64)]> {
-    (name == TANTALUM_TABLE).then_some(&TANTALUM_VOLTAGE_LETTERS[..])
+/// One EIA-96 multiplier letter with its power of ten.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Eia96Multiplier {
+    pub letter: char,
+    pub exponent: i32,
 }
 
-/// IEC 60062 colour indices used by [`LaidElement::Bands`]: 0–9 are the
-/// digit colours black, brown, red, orange, yellow, green, blue, violet,
-/// grey and white; then gold and silver.
+/// The EIA-96 code (`standards/eia-96.json`): a two-digit index into the
+/// E96 series (01 = its first value) followed by a multiplier letter.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Eia96Code {
+    pub format: u32,
+    pub name: String,
+    pub source: String,
+    pub multipliers: Vec<Eia96Multiplier>,
+}
+
+/// One rated-voltage letter.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct VoltageLetter {
+    pub letter: String,
+    pub volts: f64,
+}
+
+/// A cited voltage-letter table, by name.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct VoltageLetterTable {
+    pub name: String,
+    pub source: String,
+    pub letters: Vec<VoltageLetter>,
+}
+
+/// The voltage-letter tables (`standards/voltage-letters.json`).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct VoltageLetterTables {
+    pub format: u32,
+    #[serde(default)]
+    pub about: String,
+    pub tables: Vec<VoltageLetterTable>,
+}
+
+/// One colour of the resistor colour code: the digit, multiplier (a power
+/// of ten) and relative tolerance it stands for, where it stands for one.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BandColour {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digit: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiplier: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<f64>,
+}
+
+/// The resistor colour code (`standards/colour-code.json`, IEC 60062). A
+/// colour's position in [`ColourCode::colours`] is its index in
+/// [`LaidElement::Bands`].
 ///
 /// [`LaidElement::Bands`]: super::LaidElement::Bands
-pub const BAND_GOLD: u8 = 10;
-pub const BAND_SILVER: u8 = 11;
-/// Colour names by index, for presentation.
-pub const BAND_COLOURS: [&str; 12] = [
-    "black", "brown", "red", "orange", "yellow", "green", "blue", "violet", "grey", "white",
-    "gold", "silver",
-];
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ColourCode {
+    pub format: u32,
+    pub name: String,
+    pub source: String,
+    pub colours: Vec<BandColour>,
+    /// The tolerance of a value printed without a tolerance band.
+    pub unbanded_tolerance: f64,
+}
 
-/// IEC 60062 tolerance colours: (relative tolerance, colour index).
-/// Without a tolerance band the tolerance is ±20 %.
-const TOLERANCE_COLOURS: [(f64, u8); 8] = [
-    (0.01, 1),
-    (0.02, 2),
-    (0.005, 5),
-    (0.0025, 6),
-    (0.001, 7),
-    (0.0005, 8),
-    (0.05, BAND_GOLD),
-    (0.10, BAND_SILVER),
-];
+/// Entries one marking table may list.
+const MAX_TABLE: usize = 99;
+
+/// The marking-code standards, checked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MarkingCodes {
+    pub e96: PreferredSeries,
+    pub eia96: Eia96Code,
+    pub voltage_letters: VoltageLetterTables,
+    pub colour_code: ColourCode,
+}
+
+fn bad(what: &str) -> Error {
+    Error::Invalid(format!("the marking standards: {what}"))
+}
+
+fn finite_positive(value: f64) -> bool {
+    value.is_finite() && value > 0.0
+}
+
+/// Whether `values` holds no value twice.
+fn unique<T: Ord + Clone>(values: impl Iterator<Item = T>) -> bool {
+    let mut all: Vec<T> = values.collect();
+    let count = all.len();
+    all.sort_unstable();
+    all.dedup();
+    all.len() == count
+}
+
+impl PreferredSeries {
+    /// 1–99 increasing three-digit values.
+    pub fn check(&self) -> Result<()> {
+        check_format(self.format, "the E96 series")?;
+        let values = &self.values;
+        if values.is_empty()
+            || values.len() > MAX_TABLE
+            || values.iter().any(|v| !(100..=999).contains(v))
+            || values.windows(2).any(|w| w[0] >= w[1])
+        {
+            return Err(bad(
+                "the E96 series needs 1–99 increasing three-digit values",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Eia96Code {
+    /// Unique upper-case letters with unique exponents within ±9.
+    pub fn check(&self) -> Result<()> {
+        check_format(self.format, "the EIA-96 code")?;
+        let letters = &self.multipliers;
+        if letters.is_empty()
+            || letters.len() > MAX_TABLE
+            || !unique(letters.iter().map(|m| m.letter))
+            || !unique(letters.iter().map(|m| m.exponent))
+            || letters
+                .iter()
+                .any(|m| !m.letter.is_ascii_uppercase() || !(-9..=9).contains(&m.exponent))
+        {
+            return Err(bad(
+                "EIA-96 needs unique upper-case multiplier letters with unique exponents within ±9",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl VoltageLetterTables {
+    /// Uniquely named tables of 1–99 short letters of positive voltages.
+    pub fn check(&self) -> Result<()> {
+        check_format(self.format, "the voltage-letter tables")?;
+        let tables = &self.tables;
+        if tables.len() > MAX_TABLE
+            || !unique(tables.iter().map(|t| t.name.as_str()))
+            || tables.iter().any(|t| t.name.is_empty())
+        {
+            return Err(bad("voltage-letter tables need unique names"));
+        }
+        for table in tables {
+            if table.letters.is_empty()
+                || table.letters.len() > MAX_TABLE
+                || table
+                    .letters
+                    .iter()
+                    .any(|l| l.letter.is_empty() || l.letter.len() > 4 || !finite_positive(l.volts))
+            {
+                return Err(bad(&format!(
+                    "the {} voltage-letter table needs 1–99 letters of positive voltages",
+                    table.name
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ColourCode {
+    /// Each digit 0–9 once, unique multipliers within ±9 and positive
+    /// tolerances.
+    pub fn check(&self) -> Result<()> {
+        check_format(self.format, "the colour code")?;
+        let colours = &self.colours;
+        let digits_once =
+            (0..10u8).all(|d| colours.iter().filter(|c| c.digit == Some(d)).count() == 1);
+        if colours.len() > usize::from(u8::MAX)
+            || !digits_once
+            || colours.iter().any(|c| c.digit.is_some_and(|d| d > 9))
+            || !unique(colours.iter().filter_map(|c| c.multiplier))
+            || colours
+                .iter()
+                .filter_map(|c| c.multiplier)
+                .any(|m| !(-9..=9).contains(&m))
+            || colours
+                .iter()
+                .any(|c| c.tolerance.is_some_and(|t| !finite_positive(t)))
+            || !finite_positive(self.unbanded_tolerance)
+        {
+            return Err(bad(
+                "the colour code needs each digit 0–9 once, unique multipliers within ±9 and positive tolerances",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl MarkingCodes {
+    /// The tables, after each table's own check.
+    pub fn new(
+        e96: PreferredSeries,
+        eia96: Eia96Code,
+        voltage_letters: VoltageLetterTables,
+        colour_code: ColourCode,
+    ) -> Result<Self> {
+        e96.check()?;
+        eia96.check()?;
+        voltage_letters.check()?;
+        colour_code.check()?;
+        Ok(Self {
+            e96,
+            eia96,
+            voltage_letters,
+            colour_code,
+        })
+    }
+
+    /// The letters of a named voltage table.
+    pub fn voltage_table(&self, name: &str) -> Option<&[VoltageLetter]> {
+        self.voltage_letters
+            .tables
+            .iter()
+            .find(|t| t.name == name)
+            .map(|t| t.letters.as_slice())
+    }
+
+    /// The names of the voltage-letter tables.
+    pub fn voltage_table_names(&self) -> impl Iterator<Item = &str> {
+        self.voltage_letters.tables.iter().map(|t| t.name.as_str())
+    }
+
+    /// The band index of the colour named `name`.
+    pub fn colour_index(&self, name: &str) -> Option<u8> {
+        self.colour_where(|c| c.name == name)
+    }
+
+    fn colour_where(&self, test: impl Fn(&BandColour) -> bool) -> Option<u8> {
+        self.colour_code
+            .colours
+            .iter()
+            .position(test)
+            .and_then(|k| u8::try_from(k).ok())
+    }
+
+    fn eia96(&self, value: f64) -> Option<String> {
+        self.eia96.multipliers.iter().find_map(|m| {
+            let mantissa = value / 10f64.powi(m.exponent);
+            let index = self
+                .e96
+                .values
+                .iter()
+                .position(|&e| same(mantissa, f64::from(e)))?;
+            Some(format!("{:02}{}", index + 1, m.letter))
+        })
+    }
+
+    fn voltage_letter(&self, table: &TableRef, volts: f64) -> Result<Option<String>> {
+        let rows = self.voltage_table(&table.0).ok_or_else(|| {
+            Error::Invalid(format!(
+                "marking.template: unknown voltage-letter table \"{}\"",
+                table.0
+            ))
+        })?;
+        Ok(rows
+            .iter()
+            .find(|row| same(row.volts, volts))
+            .map(|row| row.letter.clone()))
+    }
+
+    /// [`bands`] under these tables.
+    pub fn bands(&self, value: f64, tolerance: Option<f64>) -> Result<Option<Vec<u8>>> {
+        if !value.is_finite() || tolerance.is_some_and(|t| !t.is_finite()) {
+            return Err(Error::Invalid(
+                "marking.template: colour bands need finite values".into(),
+            ));
+        }
+        if value <= 0.0 {
+            return Ok(None);
+        }
+        let code = &self.colour_code;
+        let tolerance_colour = match tolerance {
+            None => None,
+            Some(t) if same(t, code.unbanded_tolerance) => None,
+            Some(t) => match self.colour_where(|c| c.tolerance.is_some_and(|v| same(v, t))) {
+                Some(colour) => Some(colour),
+                None => return Ok(None),
+            },
+        };
+        let exponents = code.colours.iter().filter_map(|c| c.multiplier);
+        let (Some(min_exp), Some(max_exp)) = (exponents.clone().min(), exponents.max()) else {
+            return Ok(None);
+        };
+        let digits = significant(value, 2, min_exp, max_exp)
+            .map(|(m, e)| (m, e, 2))
+            .or_else(|| significant(value, 3, min_exp, max_exp).map(|(m, e)| (m, e, 3)));
+        let Some((mantissa, exp, count)) = digits else {
+            return Ok(None);
+        };
+        let mut colours = Vec::with_capacity(count + 2);
+        for b in mantissa.to_string().bytes() {
+            let digit = b.saturating_sub(b'0');
+            match self.colour_where(|c| c.digit == Some(digit)) {
+                Some(colour) => colours.push(colour),
+                None => return Ok(None),
+            }
+        }
+        if colours.len() != count {
+            return Ok(None);
+        }
+        match self.colour_where(|c| c.multiplier == Some(exp)) {
+            Some(colour) => colours.push(colour),
+            None => return Ok(None),
+        }
+        colours.extend(tolerance_colour);
+        Ok(Some(colours))
+    }
+}
 
 fn same(a: f64, b: f64) -> bool {
     (a - b).abs() <= EXACT * a.abs().max(b.abs())
@@ -245,14 +504,6 @@ fn resistor_code(value: f64, sig: u32) -> Option<String> {
     Some(format!("{head}R{tail}"))
 }
 
-fn eia96(value: f64) -> Option<String> {
-    EIA96_MULTIPLIERS.iter().find_map(|&(letter, exp)| {
-        let mantissa = value / 10f64.powi(exp);
-        let index = E96.iter().position(|&e| same(mantissa, f64::from(e)))?;
-        Some(format!("{:02}{letter}", index + 1))
-    })
-}
-
 fn capacitor_code(farads: f64) -> Option<String> {
     let pf = farads * 1e12;
     let (mantissa, exp) = significant(pf, 2, -2, 6)?;
@@ -264,24 +515,11 @@ fn capacitor_code(farads: f64) -> Option<String> {
     Some(format!("{mantissa:02}{digit}"))
 }
 
-fn voltage_letter(table: &TableRef, volts: f64) -> Result<Option<String>> {
-    let rows = voltage_table(&table.0).ok_or_else(|| {
-        Error::Invalid(format!(
-            "marking.template: unknown voltage-letter table \"{}\"",
-            table.0
-        ))
-    })?;
-    Ok(rows
-        .iter()
-        .find(|(_, v)| same(*v, volts))
-        .map(|(letter, _)| (*letter).to_string()))
-}
-
 /// The code of `value` (SI units: ohm, farad, volt) in `scheme`, or `None`
 /// when the scheme cannot represent it exactly. `Auto` returns the first
 /// representable scheme's code (fitting is [`super::layout`]'s job). A
 /// non-finite value, a nested or oversized `Auto` list and an unknown table
-/// are errors.
+/// are errors. The tables are the installed standards'.
 pub fn encode(scheme: &CodeScheme, value: f64) -> Result<Option<String>> {
     if !value.is_finite() {
         return Err(Error::Invalid(
@@ -297,9 +535,11 @@ pub fn encode(scheme: &CodeScheme, value: f64) -> Result<Option<String>> {
     Ok(match scheme {
         CodeScheme::Resistor3Digit => resistor_code(value, 2),
         CodeScheme::Resistor4Digit => resistor_code(value, 3),
-        CodeScheme::Eia96 => eia96(value),
+        CodeScheme::Eia96 => standards::get()?.marking.eia96(value),
         CodeScheme::CapacitorPf3Digit => capacitor_code(value),
-        CodeScheme::VoltageLetter { table } => voltage_letter(table, value)?,
+        CodeScheme::VoltageLetter { table } => {
+            standards::get()?.marking.voltage_letter(table, value)?
+        }
         CodeScheme::Auto { schemes } => {
             for inner in schemes {
                 if let Some(code) = encode(inner, value)? {
@@ -312,48 +552,13 @@ pub fn encode(scheme: &CodeScheme, value: f64) -> Result<Option<String>> {
 }
 
 /// IEC 60062 colour bands of a resistance (ohm) with an optional relative
-/// tolerance, from the −x end: two digits and a multiplier (silver ×0.01
-/// to white ×10⁹), or three digits when the value needs them; then the
-/// tolerance colour. `None` when the value or tolerance has no code; no
-/// tolerance band means ±20 %.
+/// tolerance, from the −x end: two digits and a multiplier, or three digits
+/// when the value needs them; then the tolerance colour. Each band is an
+/// index into the installed colour code ([`ColourCode`]). `None` when the
+/// value or tolerance has no code; no tolerance band means the code's
+/// unbanded tolerance (±20 %).
 pub fn bands(value: f64, tolerance: Option<f64>) -> Result<Option<Vec<u8>>> {
-    if !value.is_finite() || tolerance.is_some_and(|t| !t.is_finite()) {
-        return Err(Error::Invalid(
-            "marking.template: colour bands need finite values".into(),
-        ));
-    }
-    if value <= 0.0 {
-        return Ok(None);
-    }
-    let tolerance_colour = match tolerance {
-        None => None,
-        Some(t) if same(t, 0.20) => None,
-        Some(t) => match TOLERANCE_COLOURS.iter().find(|(v, _)| same(*v, t)) {
-            Some(&(_, colour)) => Some(colour),
-            None => return Ok(None),
-        },
-    };
-    let digits = significant(value, 2, -2, 9)
-        .map(|(m, e)| (m, e, 2))
-        .or_else(|| significant(value, 3, -2, 9).map(|(m, e)| (m, e, 3)));
-    let Some((mantissa, exp, count)) = digits else {
-        return Ok(None);
-    };
-    let mut colours: Vec<u8> = mantissa
-        .to_string()
-        .bytes()
-        .map(|b| b.saturating_sub(b'0'))
-        .collect();
-    if colours.len() != count {
-        return Ok(None);
-    }
-    colours.push(match exp {
-        -2 => BAND_SILVER,
-        -1 => BAND_GOLD,
-        e => u8::try_from(e).map_err(|_| Error::Invalid("band multiplier".into()))?,
-    });
-    colours.extend(tolerance_colour);
-    Ok(Some(colours))
+    standards::get()?.marking.bands(value, tolerance)
 }
 
 #[cfg(test)]
@@ -416,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn eia96_covers_the_series_and_multipliers() {
+    fn eia96_covers_the_series_and_multipliers() -> Result<()> {
         use CodeScheme::Eia96;
         assert_eq!(code(Eia96, 976e5).as_deref(), Some("96F"));
         assert_eq!(code(Eia96, 0.1).as_deref(), Some("01Z"));
@@ -426,8 +631,11 @@ mod tests {
         assert_eq!(code(Eia96, 10.3e3), None, "103 is not an E96 value");
         assert_eq!(code(Eia96, 1e8), None, "above the F multiplier");
         // The series is strictly increasing within one decade.
-        assert!(E96.windows(2).all(|w| w[0] < w[1]));
-        assert_eq!(E96[67], 499);
+        let e96 = &standards::get()?.marking.e96.values;
+        assert_eq!(e96.len(), 96);
+        assert!(e96.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(e96[67], 499);
+        Ok(())
     }
 
     #[test]
@@ -445,7 +653,7 @@ mod tests {
     #[test]
     fn voltage_letters_come_from_the_named_table() -> Result<()> {
         let tantalum = CodeScheme::VoltageLetter {
-            table: TableRef(TANTALUM_TABLE.into()),
+            table: TableRef("tantalum".into()),
         };
         assert_eq!(code(tantalum.clone(), 6.3).as_deref(), Some("J"));
         assert_eq!(code(tantalum.clone(), 16.0).as_deref(), Some("C"));
@@ -478,20 +686,51 @@ mod tests {
 
     #[test]
     fn colour_bands() -> Result<()> {
-        // 4.7 kΩ ±5 %: yellow violet red gold.
-        assert_eq!(bands(4.7e3, Some(0.05))?, Some(vec![4, 7, 2, BAND_GOLD]));
+        // 4.7 kΩ ±5 %: yellow violet red gold (index 10).
+        assert_eq!(bands(4.7e3, Some(0.05))?, Some(vec![4, 7, 2, 10]));
         // 10 kΩ ±1 %: brown black orange brown.
         assert_eq!(bands(10e3, Some(0.01))?, Some(vec![1, 0, 3, 1]));
         // 4.99 kΩ ±1 %: yellow white white brown brown (three digits).
         assert_eq!(bands(4.99e3, Some(0.01))?, Some(vec![4, 9, 9, 1, 1]));
-        // 0.47 Ω, no tolerance band: yellow violet silver.
-        assert_eq!(bands(0.47, None)?, Some(vec![4, 7, BAND_SILVER]));
+        // 0.47 Ω, no tolerance band: yellow violet silver (index 11).
+        assert_eq!(bands(0.47, None)?, Some(vec![4, 7, 11]));
         // ±20 % has no band.
         assert_eq!(bands(1e3, Some(0.20))?, Some(vec![1, 0, 2]));
         assert_eq!(bands(1e3, Some(0.03))?, None, "no ±3 % colour");
         assert_eq!(bands(4.991e3, None)?, None);
         assert_eq!(bands(0.0, None)?, None);
         assert!(bands(f64::INFINITY, None).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn broken_tables_are_refused() -> Result<()> {
+        let shipped = &standards::get()?.marking;
+        let rebuilt = |edit: &dyn Fn(&mut MarkingCodes)| {
+            let mut codes = shipped.clone();
+            edit(&mut codes);
+            MarkingCodes::new(
+                codes.e96,
+                codes.eia96,
+                codes.voltage_letters,
+                codes.colour_code,
+            )
+        };
+        assert!(rebuilt(&|_| {}).is_ok());
+        assert!(rebuilt(&|c| c.e96.values.swap(0, 1)).is_err(), "decreasing");
+        assert!(rebuilt(&|c| c.e96.format = 2).is_err(), "another format");
+        assert!(
+            rebuilt(&|c| c.eia96.multipliers[1].letter = 'Z').is_err(),
+            "a letter twice"
+        );
+        assert!(
+            rebuilt(&|c| c.colour_code.colours[3].digit = Some(2)).is_err(),
+            "a digit twice"
+        );
+        assert!(
+            rebuilt(&|c| c.voltage_letters.tables[0].letters[0].volts = f64::NAN).is_err(),
+            "a voltage that is not a number"
+        );
         Ok(())
     }
 }

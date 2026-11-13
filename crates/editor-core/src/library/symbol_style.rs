@@ -1,7 +1,9 @@
 //! Kind-specific schematic symbol drawings: original geometry following the
 //! general conventions of IEC 60617 and IEEE 315 as published (a rectangle
 //! or zigzag resistor, parallel capacitor plates, a triangle and bar diode,
-//! …). Pure and wasm-safe: a generator returns an ordinary
+//! …). The shapes and their coordinates are data, one file per kind in the
+//! shipped library's `standards/symbols/` ([`SymbolDrawings`]); this module
+//! draws them. Pure and wasm-safe: a generator returns an ordinary
 //! [`SymbolDefinition`] the author then edits; nothing here is a category
 //! the engine reasons about.
 //!
@@ -22,6 +24,7 @@ use super::graphics::{
     self, Fill, Graphic, HAlign, Item, Justify, PIN_TEXT_HEIGHT, Pin, PinDirection, Rotation,
     SYMBOL_STROKE_MM, SYMBOL_TEXT_HEIGHT, ShapeNm, Text, TextContent, VAlign,
 };
+use super::standards::{self, check_format};
 use super::{SymbolDefinition, Unit};
 use crate::diagnostics::{Error, Result};
 use crate::geometry::{Point, Shape};
@@ -276,11 +279,259 @@ pub fn restyle(
     })
 }
 
+/// The shared sizes of generated symbols (`standards/symbols/style.json`),
+/// in millimetres.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolStyle {
+    pub format: u32,
+    #[serde(default)]
+    pub about: String,
+    /// The stroke of capacitor and crystal plates and a transistor's bars.
+    pub plate_stroke_mm: f64,
+    /// Arrow head length and half width.
+    pub arrow_mm: [f64; 2],
+    /// The outline stroke of a solid arrow head.
+    pub arrow_stroke_mm: f64,
+    /// The radius of a switch's open contact.
+    pub contact_radius_mm: f64,
+    /// The gap between a drawing and its centred labels, and between a
+    /// rail's bar and its name.
+    pub label_gap_mm: f64,
+    /// Half the gap between stacked side labels.
+    pub side_label_gap_mm: f64,
+    /// Where a rail keeps its hidden designator.
+    pub rail_designator_mm: Point,
+}
+
+/// One step of a kind's drawing, in millimetres. Terminals count from 1 in
+/// the order the module documents.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum DrawOp {
+    /// Terminal 1 at x = −5 and 2 at x = +5 on y = 0, their stubs reaching
+    /// the body at −`left` and +`right`.
+    TwoPins { left: f64, right: f64 },
+    /// One pin: its connection end `at`, pointing into the body.
+    Pin {
+        terminal: usize,
+        at: Point,
+        direction: PinDirection,
+        length: f64,
+    },
+    /// A shape with the symbol stroke unless `width` says otherwise.
+    Shape {
+        shape: Shape,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<f64>,
+        #[serde(default)]
+        fill: Fill,
+    },
+    /// A straight line with the symbol stroke.
+    Line { a: Point, b: Point },
+    /// A straight line with the plate stroke.
+    Plate { a: Point, b: Point },
+    /// A small open contact circle at a switch terminal.
+    Contact { center: Point },
+    /// A solid arrow head with its tip at `tip`, pointing away from `from`.
+    ArrowHead { from: Point, tip: Point },
+    /// A shaft from `from` to `tip` with a solid head at `tip`.
+    Arrow { from: Point, tip: Point },
+    /// The designator above the drawing's `top` and the name below its
+    /// `bottom`, centred.
+    Labels { top: f64, bottom: f64 },
+    /// The designator and name stacked, left-aligned, right of `at`.
+    SideLabels { at: Point },
+    /// A rail's name beyond its bar at `y`; the designator kept but hidden.
+    RailLabels { y: f64 },
+    /// Steps drawn only under one resistor convention.
+    Styled {
+        resistor: ResistorStyle,
+        ops: Vec<DrawOp>,
+    },
+}
+
+/// One kind's drawing (`standards/symbols/<kind>.json`).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct KindDrawing {
+    pub format: u32,
+    pub kind: SymbolKind,
+    /// The published convention the drawing follows.
+    #[serde(default)]
+    pub convention: String,
+    #[serde(default)]
+    pub about: String,
+    /// Pins show their numbers (transistors); two-terminal parts and rails
+    /// hide them.
+    #[serde(default)]
+    pub numbered: bool,
+    pub ops: Vec<DrawOp>,
+}
+
+/// Steps of one kind's drawing, nested ones included.
+const MAX_OPS: usize = 64;
+
+/// Every drawn kind's drawing and the shared style, checked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SymbolDrawings {
+    style: SymbolStyle,
+    kinds: Vec<KindDrawing>,
+}
+
+fn finite(point: Point) -> bool {
+    point.iter().all(|v| v.is_finite())
+}
+
+impl SymbolStyle {
+    /// Finite sizes; strokes, arrow and contact positive.
+    pub fn check(&self) -> Result<()> {
+        check_format(self.format, "the symbol style")?;
+        let sizes = [
+            self.plate_stroke_mm,
+            self.arrow_mm[0],
+            self.arrow_mm[1],
+            self.arrow_stroke_mm,
+            self.contact_radius_mm,
+        ];
+        if sizes.iter().any(|v| !v.is_finite() || *v <= 0.0)
+            || !self.label_gap_mm.is_finite()
+            || !self.side_label_gap_mm.is_finite()
+            || !finite(self.rail_designator_mm)
+        {
+            return Err(Error::Invalid(
+                "the symbol style needs finite, positive sizes".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl KindDrawing {
+    /// A drawn kind (not a box), bounded steps of finite sizes, no nested
+    /// `styled` step, and one pin for each terminal under every resistor
+    /// convention.
+    pub fn check(&self) -> Result<()> {
+        let Some(count) = self.kind.terminal_count() else {
+            return Err(Error::Invalid(format!(
+                "the {} is laid out from its pins; it takes no drawing",
+                self.kind.label()
+            )));
+        };
+        check_drawing(self, count)
+    }
+}
+
+impl SymbolDrawings {
+    /// The drawings, after the style's and each drawing's own check, with
+    /// exactly one drawing of each drawn kind (every kind but the boxes).
+    pub fn new(style: SymbolStyle, kinds: Vec<KindDrawing>) -> Result<Self> {
+        style.check()?;
+        for drawing in &kinds {
+            drawing.check()?;
+        }
+        for kind in SymbolKind::ALL
+            .into_iter()
+            .filter(|k| k.terminal_count().is_some())
+        {
+            if kinds.iter().filter(|k| k.kind == kind).count() != 1 {
+                return Err(Error::Invalid(format!(
+                    "the symbol drawings need exactly one {} drawing",
+                    kind.label()
+                )));
+            }
+        }
+        Ok(Self { style, kinds })
+    }
+
+    /// The shared sizes.
+    pub fn style(&self) -> &SymbolStyle {
+        &self.style
+    }
+
+    /// The drawing of `kind`; `None` for the boxes.
+    pub fn drawing(&self, kind: SymbolKind) -> Option<&KindDrawing> {
+        self.kinds.iter().find(|k| k.kind == kind)
+    }
+}
+
+/// One drawing's checks: format, bounded steps, finite sizes, no nested
+/// `styled` step, and each terminal 1..=`count` pinned under every
+/// resistor convention.
+fn check_drawing(drawing: &KindDrawing, count: usize) -> Result<()> {
+    let what = drawing.kind.label();
+    check_format(drawing.format, &format!("the {what} drawing"))?;
+    let invalid = |why: &str| Error::Invalid(format!("the {what} drawing: {why}"));
+    let mut total = 0usize;
+    for op in &drawing.ops {
+        total += 1;
+        if let DrawOp::Styled { ops, .. } = op {
+            total += ops.len();
+            if ops.iter().any(|o| matches!(o, DrawOp::Styled { .. })) {
+                return Err(invalid("a styled step cannot nest"));
+            }
+        }
+    }
+    if total > MAX_OPS {
+        return Err(invalid(&format!("more than {MAX_OPS} steps")));
+    }
+    let all = drawing.ops.iter().flat_map(|op| match op {
+        DrawOp::Styled { ops, .. } => ops.iter().collect::<Vec<_>>(),
+        other => vec![other],
+    });
+    for op in all {
+        let sizes_finite = match op {
+            DrawOp::TwoPins { left, right } => left.is_finite() && right.is_finite(),
+            DrawOp::Pin { at, length, .. } => finite(*at) && length.is_finite(),
+            DrawOp::Shape { width, .. } => width.is_none_or(f64::is_finite),
+            DrawOp::Line { a, b } | DrawOp::Plate { a, b } => finite(*a) && finite(*b),
+            DrawOp::Contact { center } => finite(*center),
+            DrawOp::ArrowHead { from, tip } | DrawOp::Arrow { from, tip } => {
+                finite(*from) && finite(*tip)
+            }
+            DrawOp::Labels { top, bottom } => top.is_finite() && bottom.is_finite(),
+            DrawOp::SideLabels { at } => finite(*at),
+            DrawOp::RailLabels { y } => y.is_finite(),
+            DrawOp::Styled { .. } => true,
+        };
+        if !sizes_finite {
+            return Err(invalid("a size is not a finite number"));
+        }
+    }
+    for style in [ResistorStyle::Iec, ResistorStyle::Us] {
+        let mut pinned = Vec::new();
+        for op in drawn_ops(&drawing.ops, style) {
+            match op {
+                DrawOp::TwoPins { .. } => pinned.extend([1, 2]),
+                DrawOp::Pin { terminal, .. } => pinned.push(*terminal),
+                _ => {}
+            }
+        }
+        pinned.sort_unstable();
+        if pinned != (1..=count).collect::<Vec<_>>() {
+            return Err(invalid(&format!(
+                "it needs exactly one pin for each of terminals 1–{count}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The steps drawn under the resistor `style`, in order.
+fn drawn_ops(ops: &[DrawOp], style: ResistorStyle) -> impl Iterator<Item = &DrawOp> {
+    ops.iter().flat_map(move |op| match op {
+        DrawOp::Styled { resistor, ops } if *resistor == style => ops.iter().collect(),
+        DrawOp::Styled { .. } => Vec::new(),
+        other => vec![other],
+    })
+}
+
 /// The symbol of `kind` for `component`, its pins on `terminals` in the
-/// order the module documents. One unit `A` with local ID 1, graphics from
-/// ID 2 (a resistor's IEC rectangle is the body graphic, ID 2), the
-/// designator and component name as text. Refuses the box kinds (the
-/// samples lay those out) and a terminal count the drawing does not have.
+/// order the module documents, drawn from the installed standards'
+/// drawing of the kind. One unit `A` with local ID 1, graphics from ID 2
+/// (a resistor's IEC rectangle is the body graphic, ID 2), the designator
+/// and component name as text. Refuses the box kinds (the samples lay those
+/// out) and a terminal count the drawing does not have.
 pub fn generate(
     kind: SymbolKind,
     conventions: SymbolConventions,
@@ -301,245 +552,41 @@ pub fn generate(
             terminals.len()
         )));
     }
-    let mut d = Drawing::default();
-    let t = |k: usize| terminals.get(k).copied().unwrap_or(TerminalId(0));
-    match kind {
-        SymbolKind::Resistor => {
-            d.two_pins(t(0), t(1), 2.5, 2.5);
-            match conventions.resistor {
-                ResistorStyle::Iec => d.shape(
-                    Shape::rect([-2.5, -1.0], [2.5, 1.0]),
-                    SYMBOL_STROKE_MM,
-                    Fill::Body,
-                ),
-                ResistorStyle::Us => {
-                    let mut points = vec![[-2.5, 0.0]];
-                    for k in 0..6 {
-                        let x = -2.5 + 5.0 * (2 * k + 1) as f64 / 12.0;
-                        points.push([x, if k % 2 == 0 { 1.0 } else { -1.0 }]);
-                    }
-                    points.push([2.5, 0.0]);
-                    d.open(Shape::polyline(points));
-                }
+    let drawings = &standards::get()?.symbols;
+    let drawing = drawings
+        .drawing(kind)
+        .ok_or_else(|| Error::NotFound(format!("symbol.kind: no {} drawing", kind.label())))?;
+    let mut d = Drawing::new(drawings.style());
+    d.numbered = drawing.numbered;
+    let t = |n: usize| {
+        n.checked_sub(1)
+            .and_then(|k| terminals.get(k))
+            .copied()
+            .unwrap_or(TerminalId(0))
+    };
+    for op in drawn_ops(&drawing.ops, conventions.resistor) {
+        match op {
+            DrawOp::TwoPins { left, right } => d.two_pins(t(1), t(2), *left, *right),
+            DrawOp::Pin {
+                terminal,
+                at,
+                direction,
+                length,
+            } => d.pin(t(*terminal), *at, *direction, *length),
+            DrawOp::Shape { shape, width, fill } => {
+                d.shape(shape.clone(), width.unwrap_or(SYMBOL_STROKE_MM), *fill);
             }
-            d.labels(1.0, -1.0);
+            DrawOp::Line { a, b } => d.line(*a, *b),
+            DrawOp::Plate { a, b } => d.plate(*a, *b),
+            DrawOp::Contact { center } => d.contact(*center),
+            DrawOp::ArrowHead { from, tip } => d.arrow_head(*from, *tip),
+            DrawOp::Arrow { from, tip } => d.arrow(*from, *tip),
+            DrawOp::Labels { top, bottom } => d.labels(*top, *bottom),
+            DrawOp::SideLabels { at } => d.side_labels(*at),
+            DrawOp::RailLabels { y } => d.rail_labels(*y),
+            // `drawn_ops` has opened the styled steps that apply.
+            DrawOp::Styled { .. } => {}
         }
-        SymbolKind::Capacitor => {
-            d.two_pins(t(0), t(1), 0.5, 0.5);
-            d.plate([-0.5, -1.75], [-0.5, 1.75]);
-            d.plate([0.5, -1.75], [0.5, 1.75]);
-            d.labels(1.75, -1.75);
-        }
-        SymbolKind::PolarisedCapacitor => {
-            d.two_pins(t(0), t(1), 0.5, 0.5);
-            d.plate([-0.5, -1.75], [-0.5, 1.75]);
-            // The − plate curves away from the + plate: an arc through
-            // (0.5, 0) whose ends reach ±1.75 mm.
-            let radius: f64 = 2.5;
-            let half = (1.75 / radius).asin().to_degrees();
-            d.shape(
-                Shape::Arc {
-                    center: [0.5 + radius, 0.0],
-                    radius,
-                    start_deg: 180.0 - half,
-                    sweep_deg: 2.0 * half,
-                },
-                0.35,
-                Fill::None,
-            );
-            // The + mark beside the + plate.
-            d.line([-2.25, 1.5], [-1.25, 1.5]);
-            d.line([-1.75, 1.0], [-1.75, 2.0]);
-            d.labels(2.0, -1.75);
-        }
-        SymbolKind::Inductor => {
-            d.two_pins(t(0), t(1), 2.5, 2.5);
-            for k in 0..4 {
-                d.open(Shape::Arc {
-                    center: [-1.875 + 1.25 * k as f64, 0.0],
-                    radius: 0.625,
-                    start_deg: 180.0,
-                    sweep_deg: -180.0,
-                });
-            }
-            d.labels(0.625, -0.5);
-        }
-        SymbolKind::FerriteBead => {
-            d.two_pins(t(0), t(1), 2.5, 2.5);
-            d.line([-2.5, 0.0], [2.5, 0.0]);
-            // A slanted solid block across the line.
-            let (c, s) = (
-                std::f64::consts::FRAC_1_SQRT_2,
-                std::f64::consts::FRAC_1_SQRT_2,
-            );
-            let corner = |u: f64, v: f64| [u * c - v * s, u * s + v * c];
-            d.shape(
-                Shape::polygon(vec![
-                    corner(-0.6, -1.6),
-                    corner(0.6, -1.6),
-                    corner(0.6, 1.6),
-                    corner(-0.6, 1.6),
-                ]),
-                SYMBOL_STROKE_MM,
-                Fill::Solid,
-            );
-            d.labels(1.6, -1.6);
-        }
-        SymbolKind::Diode | SymbolKind::Zener | SymbolKind::Schottky | SymbolKind::Led => {
-            // Anode (terminal 2) left, cathode (terminal 1) right.
-            d.pin(
-                t(1),
-                [-TWO_TERMINAL_PIN_X_MM, 0.0],
-                PinDirection::Right,
-                3.75,
-            );
-            d.pin(t(0), [TWO_TERMINAL_PIN_X_MM, 0.0], PinDirection::Left, 3.75);
-            d.shape(
-                Shape::polygon(vec![[-1.25, 1.25], [-1.25, -1.25], [1.25, 0.0]]),
-                SYMBOL_STROKE_MM,
-                Fill::Body,
-            );
-            match kind {
-                SymbolKind::Zener => d.open(Shape::polyline(vec![
-                    [0.75, -1.6],
-                    [1.25, -1.25],
-                    [1.25, 1.25],
-                    [1.75, 1.6],
-                ])),
-                SymbolKind::Schottky => d.open(Shape::polyline(vec![
-                    [0.75, -0.85],
-                    [0.75, -1.25],
-                    [1.25, -1.25],
-                    [1.25, 1.25],
-                    [1.75, 1.25],
-                    [1.75, 0.85],
-                ])),
-                _ => d.line([1.25, -1.25], [1.25, 1.25]),
-            }
-            if kind == SymbolKind::Led {
-                // Two arrows leaving the junction, up and to the right.
-                for dx in [-0.5, 0.5] {
-                    d.arrow([dx - 0.25, 1.25], [dx + 0.75, 2.25]);
-                }
-                d.labels(2.5, -1.25);
-            } else {
-                d.labels(1.6, -1.6);
-            }
-        }
-        SymbolKind::Crystal => {
-            d.two_pins(t(0), t(1), 1.25, 1.25);
-            d.plate([-1.25, -1.25], [-1.25, 1.25]);
-            d.plate([1.25, -1.25], [1.25, 1.25]);
-            d.shape(
-                Shape::rect([-0.6, -1.5], [0.6, 1.5]),
-                SYMBOL_STROKE_MM,
-                Fill::Body,
-            );
-            d.labels(1.5, -1.5);
-        }
-        SymbolKind::Fuse => {
-            d.two_pins(t(0), t(1), 2.5, 2.5);
-            d.shape(
-                Shape::rect([-2.5, -0.875], [2.5, 0.875]),
-                SYMBOL_STROKE_MM,
-                Fill::Body,
-            );
-            d.line([-2.5, 0.0], [2.5, 0.0]);
-            d.labels(0.875, -0.875);
-        }
-        SymbolKind::Switch => {
-            d.two_pins(t(0), t(1), 2.5, 2.5);
-            d.contact([-2.5, 0.0]);
-            d.contact([2.5, 0.0]);
-            d.line([-2.15, 0.2], [2.25, 1.6]);
-            d.labels(1.75, -0.5);
-        }
-        SymbolKind::Pushbutton => {
-            d.two_pins(t(0), t(1), 2.5, 2.5);
-            d.contact([-2.5, 0.0]);
-            d.contact([2.5, 0.0]);
-            d.line([-2.75, 1.0], [2.75, 1.0]);
-            d.line([0.0, 1.0], [0.0, 2.25]);
-            d.line([-0.75, 2.25], [0.75, 2.25]);
-            d.labels(2.25, -0.5);
-        }
-        SymbolKind::TestPoint => {
-            d.pin(t(0), [0.0, -2.5], PinDirection::Up, 1.25);
-            d.shape(
-                Shape::Circle {
-                    center: [0.0, -0.5],
-                    radius: 0.75,
-                },
-                SYMBOL_STROKE_MM,
-                Fill::Body,
-            );
-            d.side_labels([1.25, -0.5]);
-        }
-        SymbolKind::Ground => {
-            d.pin(t(0), [0.0, 0.0], PinDirection::Down, 2.5);
-            d.line([-1.5, -2.5], [1.5, -2.5]);
-            d.line([-1.0, -3.1], [1.0, -3.1]);
-            d.line([-0.5, -3.7], [0.5, -3.7]);
-            d.rail_labels(-3.7);
-        }
-        SymbolKind::Power => {
-            d.pin(t(0), [0.0, 0.0], PinDirection::Up, 2.5);
-            d.line([-1.5, 2.5], [1.5, 2.5]);
-            d.rail_labels(2.5);
-        }
-        SymbolKind::NpnBjt | SymbolKind::PnpBjt => {
-            d.numbered = true;
-            d.pin(t(0), [-5.0, 0.0], PinDirection::Right, 3.75);
-            d.pin(t(1), [2.5, -5.0], PinDirection::Up, 2.5);
-            d.pin(t(2), [2.5, 5.0], PinDirection::Down, 2.5);
-            d.plate([-1.25, -1.5], [-1.25, 1.5]);
-            d.line([-1.25, 0.75], [2.5, 2.5]);
-            let (base, emitter) = ([-1.25, -0.75], [2.5, -2.5]);
-            d.line(base, emitter);
-            let along = |t: f64| {
-                [
-                    base[0] + (emitter[0] - base[0]) * t,
-                    base[1] + (emitter[1] - base[1]) * t,
-                ]
-            };
-            if kind == SymbolKind::NpnBjt {
-                d.arrow_head(along(0.45), along(0.8));
-            } else {
-                d.arrow_head(along(0.75), along(0.4));
-            }
-            d.shape(
-                Shape::Circle {
-                    center: [0.75, 0.0],
-                    radius: 3.25,
-                },
-                SYMBOL_STROKE_MM,
-                Fill::None,
-            );
-            d.side_labels([4.5, 0.0]);
-        }
-        SymbolKind::NMosfet | SymbolKind::PMosfet => {
-            d.numbered = true;
-            d.pin(t(0), [-5.0, 0.0], PinDirection::Right, 3.5);
-            d.pin(t(1), [2.5, -5.0], PinDirection::Up, 3.5);
-            d.pin(t(2), [2.5, 5.0], PinDirection::Down, 3.5);
-            // Gate electrode, then the broken enhancement channel.
-            d.line([-1.5, -1.75], [-1.5, 1.75]);
-            for (a, b) in [(1.0, 2.0), (-0.5, 0.5), (-2.0, -1.0)] {
-                d.plate([-0.75, a], [-0.75, b]);
-            }
-            d.line([-0.75, 1.5], [2.5, 1.5]);
-            d.line([-0.75, -1.5], [2.5, -1.5]);
-            // The body joins the source.
-            d.line([-0.75, 0.0], [2.5, 0.0]);
-            d.line([2.5, 0.0], [2.5, -1.5]);
-            if kind == SymbolKind::NMosfet {
-                d.arrow_head([0.75, 0.0], [-0.6, 0.0]);
-            } else {
-                d.arrow_head([-0.6, 0.0], [0.75, 0.0]);
-            }
-            d.side_labels([4.0, 0.0]);
-        }
-        SymbolKind::IcBox | SymbolKind::Connector => {}
     }
     d.finish(component)
 }
@@ -547,7 +594,8 @@ pub fn generate(
 /// Collects one unit's graphics and pins with sequential local IDs. It
 /// draws in millimetres and stores each item rounded to nanometres; the
 /// first value that cannot be stored fails [`Drawing::finish`].
-struct Drawing {
+struct Drawing<'a> {
+    style: &'a SymbolStyle,
     graphics: Vec<Graphic>,
     pins: Vec<Pin>,
     next: u32,
@@ -557,9 +605,10 @@ struct Drawing {
     error: Option<Error>,
 }
 
-impl Default for Drawing {
-    fn default() -> Self {
+impl<'a> Drawing<'a> {
+    fn new(style: &'a SymbolStyle) -> Self {
         Self {
+            style,
             graphics: Vec::new(),
             pins: Vec::new(),
             // Local ID 1 is the unit.
@@ -568,14 +617,7 @@ impl Default for Drawing {
             error: None,
         }
     }
-}
 
-/// The stroke of capacitor and crystal plates and the BJT base bar.
-const PLATE_STROKE_MM: f64 = 0.35;
-/// Arrow head length and half width.
-const ARROW_MM: [f64; 2] = [0.6, 0.3];
-
-impl Drawing {
     fn push(&mut self, item: Item) {
         self.graphics.push(Graphic {
             id: GraphicId(self.next),
@@ -607,31 +649,25 @@ impl Drawing {
         }
     }
 
-    fn open(&mut self, shape: Shape) {
-        self.shape(shape, SYMBOL_STROKE_MM, Fill::None);
-    }
-
     fn line(&mut self, a: Point, b: Point) {
-        self.open(Shape::Line { a, b });
+        self.shape(Shape::Line { a, b }, SYMBOL_STROKE_MM, Fill::None);
     }
 
     fn plate(&mut self, a: Point, b: Point) {
-        self.shape(Shape::Line { a, b }, PLATE_STROKE_MM, Fill::None);
+        self.shape(Shape::Line { a, b }, self.style.plate_stroke_mm, Fill::None);
     }
 
-    /// A small open contact circle at a switch terminal.
     fn contact(&mut self, center: Point) {
         self.shape(
             Shape::Circle {
                 center,
-                radius: 0.3,
+                radius: self.style.contact_radius_mm,
             },
             SYMBOL_STROKE_MM,
             Fill::Body,
         );
     }
 
-    /// A solid arrow head with its tip at `tip`, pointing away from `from`.
     fn arrow_head(&mut self, from: Point, tip: Point) {
         let (dx, dy) = (tip[0] - from[0], tip[1] - from[1]);
         let length = dx.hypot(dy);
@@ -639,7 +675,7 @@ impl Drawing {
             return;
         }
         let (ux, uy) = (dx / length, dy / length);
-        let [l, w] = ARROW_MM;
+        let [l, w] = self.style.arrow_mm;
         let back = [tip[0] - ux * l, tip[1] - uy * l];
         self.shape(
             Shape::polygon(vec![
@@ -647,19 +683,19 @@ impl Drawing {
                 [back[0] - uy * w, back[1] + ux * w],
                 [back[0] + uy * w, back[1] - ux * w],
             ]),
-            0.1,
+            self.style.arrow_stroke_mm,
             Fill::Solid,
         );
     }
 
-    /// A shaft from `from` to `tip` with a solid head at `tip`.
     fn arrow(&mut self, from: Point, tip: Point) {
         let (dx, dy) = (tip[0] - from[0], tip[1] - from[1]);
         let length = dx.hypot(dy);
-        if length <= ARROW_MM[0] {
+        let head = self.style.arrow_mm[0];
+        if length <= head {
             return;
         }
-        let shaft = 1.0 - ARROW_MM[0] / length;
+        let shaft = 1.0 - head / length;
         self.line(from, [from[0] + dx * shaft, from[1] + dy * shaft]);
         self.arrow_head(from, tip);
     }
@@ -675,8 +711,6 @@ impl Drawing {
         }
     }
 
-    /// Terminal `a` at x = −5 and `b` at x = +5 on y = 0, their stubs
-    /// reaching the body at −`left` and +`right`.
     fn two_pins(&mut self, a: TerminalId, b: TerminalId, left: f64, right: f64) {
         let x = TWO_TERMINAL_PIN_X_MM;
         self.pin(a, [-x, 0.0], PinDirection::Right, x - left);
@@ -698,10 +732,8 @@ impl Drawing {
         }));
     }
 
-    /// The designator above the drawing's `top` and the name below its
-    /// `bottom`, centred.
     fn labels(&mut self, top: f64, bottom: f64) {
-        let gap = 0.5;
+        let gap = self.style.label_gap_mm;
         self.text(
             TextContent::Designator,
             [0.0, top + gap],
@@ -718,9 +750,8 @@ impl Drawing {
         );
     }
 
-    /// The designator and name stacked, left-aligned, right of `at`.
     fn side_labels(&mut self, at: Point) {
-        let gap = 0.25;
+        let gap = self.style.side_label_gap_mm;
         self.text(
             TextContent::Designator,
             [at[0], at[1] + gap],
@@ -737,10 +768,8 @@ impl Drawing {
         );
     }
 
-    /// A rail shows its name beyond the bar at `y`; the designator is kept
-    /// but hidden.
     fn rail_labels(&mut self, y: f64) {
-        let gap = 0.5;
+        let gap = self.style.label_gap_mm;
         let (at, v) = if y < 0.0 {
             ([0.0, y - gap], VAlign::Top)
         } else {
@@ -749,7 +778,7 @@ impl Drawing {
         self.text(TextContent::ComponentName, at, HAlign::Center, v, true);
         self.text(
             TextContent::Designator,
-            [1.75, 0.0],
+            self.style.rail_designator_mm,
             HAlign::Left,
             VAlign::Middle,
             false,

@@ -1,0 +1,555 @@
+{
+  "library": "5f0d2c7a9e3b41688ac4e17db26f9035",
+  "name": "Standard fields",
+  "root": {
+    "lineage": "6be14d0ac2f7493d9b05e8a13c72d690",
+    "revision": 1
+  },
+  "records": [
+    {
+      "lineage": "a1c37e5490d24b6f8e12c9037bd6f418",
+      "revision": 1,
+      "kind": "quantity_kind",
+      "meta": {
+        "name": "Resistance",
+        "description": "Built-in SI quantity kind.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "quantity_kind",
+        "body": {
+          "units": {
+            "dimension": [2, 1, -3, -2, 0, 0, 0],
+            "units": [
+              {
+                "symbol": "Ω",
+                "aliases": [
+                  "ohm",
+                  "R"
+                ],
+                "scale": 1.0,
+                "si_prefixes": true
+              }
+            ]
+          },
+          "default_unit": "Ω"
+        }
+      },
+      "links": []
+    },
+    {
+      "lineage": "d4802f6be91a47c3a57d30c8ee16b295",
+      "revision": 1,
+      "kind": "quantity_kind",
+      "meta": {
+        "name": "Capacitance",
+        "description": "Built-in SI quantity kind.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "quantity_kind",
+        "body": {
+          "units": {
+            "dimension": [-2, -1, 4, 2, 0, 0, 0],
+            "units": [
+              {
+                "symbol": "F",
+                "aliases": [],
+                "scale": 1.0,
+                "si_prefixes": true
+              }
+            ]
+          },
+          "default_unit": "F"
+        }
+      },
+      "links": []
+    },
+    {
+      "lineage": "38f6b1d07ca54e92b6c1a2e4907d3f5b",
+      "revision": 1,
+      "kind": "quantity_kind",
+      "meta": {
+        "name": "Inductance",
+        "description": "Built-in SI quantity kind.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "quantity_kind",
+        "body": {
+          "units": {
+            "dimension": [2, 1, -2, -2, 0, 0, 0],
+            "units": [
+              {
+                "symbol": "H",
+                "aliases": [],
+                "scale": 1.0,
+                "si_prefixes": true
+              }
+            ]
+          },
+          "default_unit": "H"
+        }
+      },
+      "links": []
+    },
+    {
+      "lineage": "92d5c04e7ab1486d8f39e6b10c47da23",
+      "revision": 1,
+      "kind": "quantity_kind",
+      "meta": {
+        "name": "Voltage",
+        "description": "Built-in SI quantity kind.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "quantity_kind",
+        "body": {
+          "units": {
+            "dimension": [2, 1, -3, -1, 0, 0, 0],
+            "units": [
+              {
+                "symbol": "V",
+                "aliases": [],
+                "scale": 1.0,
+                "si_prefixes": true
+              }
+            ]
+          },
+          "default_unit": "V"
+        }
+      },
+      "links": []
+    },
+    {
+      "lineage": "4c7ea92816d34fb09a65d8c3f1072eb6",
+      "revision": 1,
+      "kind": "quantity_kind",
+      "meta": {
+        "name": "Current",
+        "description": "Built-in SI quantity kind.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "quantity_kind",
+        "body": {
+          "units": {
+            "dimension": [0, 0, 0, 1, 0, 0, 0],
+            "units": [
+              {
+                "symbol": "A",
+                "aliases": [],
+                "scale": 1.0,
+                "si_prefixes": true
+              }
+            ]
+          },
+          "default_unit": "A"
+        }
+      },
+      "links": []
+    },
+    {
+      "lineage": "b63a10f9d7e2458c8c21f4e7906ad3b1",
+      "revision": 1,
+      "kind": "quantity_kind",
+      "meta": {
+        "name": "Power",
+        "description": "Built-in SI quantity kind.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "quantity_kind",
+        "body": {
+          "units": {
+            "dimension": [2, 1, -3, 0, 0, 0, 0],
+            "units": [
+              {
+                "symbol": "W",
+                "aliases": [],
+                "scale": 1.0,
+                "si_prefixes": true
+              }
+            ]
+          },
+          "default_unit": "W"
+        }
+      },
+      "links": []
+    },
+    {
+      "lineage": "2e98c4b7013d4fa6b7d05a96e1c38f42",
+      "revision": 1,
+      "kind": "quantity_kind",
+      "meta": {
+        "name": "Frequency",
+        "description": "Built-in SI quantity kind.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "quantity_kind",
+        "body": {
+          "units": {
+            "dimension": [0, 0, -1, 0, 0, 0, 0],
+            "units": [
+              {
+                "symbol": "Hz",
+                "aliases": [],
+                "scale": 1.0,
+                "si_prefixes": true
+              }
+            ]
+          },
+          "default_unit": "Hz"
+        }
+      },
+      "links": []
+    },
+    {
+      "lineage": "6be14d0ac2f7493d9b05e8a13c72d690",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Resistance",
+        "description": "Built-in field.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 1,
+          "value_type": {
+            "type": "quantity",
+            "kind": {
+              "id": 1,
+              "revision": 1
+            },
+            "min": 0.0,
+            "max": null
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": [
+        {
+          "local": 1,
+          "lineage": "a1c37e5490d24b6f8e12c9037bd6f418"
+        }
+      ]
+    },
+    {
+      "lineage": "17ac95e3f06b4d28b3e4d172a9c05f86",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Capacitance",
+        "description": "Built-in field.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 1,
+          "value_type": {
+            "type": "quantity",
+            "kind": {
+              "id": 1,
+              "revision": 1
+            },
+            "min": 0.0,
+            "max": null
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": [
+        {
+          "local": 1,
+          "lineage": "d4802f6be91a47c3a57d30c8ee16b295"
+        }
+      ]
+    },
+    {
+      "lineage": "c02e7a941db8436fa86f15d3b07e92c4",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Inductance",
+        "description": "Built-in field.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 1,
+          "value_type": {
+            "type": "quantity",
+            "kind": {
+              "id": 1,
+              "revision": 1
+            },
+            "min": 0.0,
+            "max": null
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": [
+        {
+          "local": 1,
+          "lineage": "38f6b1d07ca54e92b6c1a2e4907d3f5b"
+        }
+      ]
+    },
+    {
+      "lineage": "e7304bc6185f4a9dbc72f09ad1e563b8",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Rated voltage",
+        "description": "Built-in field.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 1,
+          "value_type": {
+            "type": "quantity",
+            "kind": {
+              "id": 1,
+              "revision": 1
+            },
+            "min": 0.0,
+            "max": null
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": [
+        {
+          "local": 1,
+          "lineage": "92d5c04e7ab1486d8f39e6b10c47da23"
+        }
+      ]
+    },
+    {
+      "lineage": "0fb86d21e5c74a3899d4c7e06a13f25d",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Rated current",
+        "description": "Built-in field.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 1,
+          "value_type": {
+            "type": "quantity",
+            "kind": {
+              "id": 1,
+              "revision": 1
+            },
+            "min": 0.0,
+            "max": null
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": [
+        {
+          "local": 1,
+          "lineage": "4c7ea92816d34fb09a65d8c3f1072eb6"
+        }
+      ]
+    },
+    {
+      "lineage": "75d1e3c08fa2496ba2e83b6d4f09c17a",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Rated power",
+        "description": "Built-in field.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 1,
+          "value_type": {
+            "type": "quantity",
+            "kind": {
+              "id": 1,
+              "revision": 1
+            },
+            "min": 0.0,
+            "max": null
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": [
+        {
+          "local": 1,
+          "lineage": "b63a10f9d7e2458c8c21f4e7906ad3b1"
+        }
+      ]
+    },
+    {
+      "lineage": "ad406f7b39e1425c91f7c2d85e06b3a9",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Frequency",
+        "description": "Built-in field.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 1,
+          "value_type": {
+            "type": "quantity",
+            "kind": {
+              "id": 1,
+              "revision": 1
+            },
+            "min": 0.0,
+            "max": null
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": [
+        {
+          "local": 1,
+          "lineage": "2e98c4b7013d4fa6b7d05a96e1c38f42"
+        }
+      ]
+    },
+    {
+      "lineage": "58c3f7e16a0d4b929e47b1d30ca2f685",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Tolerance",
+        "description": "Built-in field: a fraction of the nominal value.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 1,
+          "value_type": {
+            "type": "tolerance",
+            "basis": {
+              "basis": "relative"
+            }
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": []
+    },
+    {
+      "lineage": "0eeb669094bf434ab801ff44513db708",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Forward voltage",
+        "description": "Built-in field: an LED's or diode's forward voltage.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 1,
+          "value_type": {
+            "type": "quantity",
+            "kind": {
+              "id": 1,
+              "revision": 1
+            },
+            "min": 0.0,
+            "max": null
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": [
+        {
+          "local": 1,
+          "lineage": "92d5c04e7ab1486d8f39e6b10c47da23"
+        }
+      ]
+    },
+    {
+      "lineage": "b2387bbf96b94b0495552e4d79c1645a",
+      "revision": 1,
+      "kind": "field",
+      "meta": {
+        "name": "Colour",
+        "description": "Built-in field: the colour an LED emits.",
+        "provenance": "Built into Sparksmith."
+      },
+      "definition": {
+        "kind": "field",
+        "body": {
+          "next_local": 9,
+          "value_type": {
+            "type": "enum",
+            "choices": [
+              {
+                "id": 1,
+                "label": "Red"
+              },
+              {
+                "id": 2,
+                "label": "Orange"
+              },
+              {
+                "id": 3,
+                "label": "Amber"
+              },
+              {
+                "id": 4,
+                "label": "Yellow"
+              },
+              {
+                "id": 5,
+                "label": "Yellow-green"
+              },
+              {
+                "id": 6,
+                "label": "Green"
+              },
+              {
+                "id": 7,
+                "label": "Blue"
+              },
+              {
+                "id": 8,
+                "label": "White"
+              }
+            ]
+          },
+          "default": null,
+          "required_at": null
+        }
+      },
+      "links": []
+    }
+  ],
+  "assets": []
+}

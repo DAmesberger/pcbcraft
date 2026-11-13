@@ -1,0 +1,16 @@
+{
+  "format": 1,
+  "name": "EIA-96",
+  "source": "The EIA-96 chip-resistor code as published in chip-resistor manufacturers' data sheets: a two-digit index into the E96 series (01 = 100 ... 96 = 976) followed by a multiplier letter. Some makers print R for Y, S for X and H for B; these decode to the same values, and Sparksmith writes the letters below.",
+  "multipliers": [
+    { "letter": "Z", "exponent": -3 },
+    { "letter": "Y", "exponent": -2 },
+    { "letter": "X", "exponent": -1 },
+    { "letter": "A", "exponent": 0 },
+    { "letter": "B", "exponent": 1 },
+    { "letter": "C", "exponent": 2 },
+    { "letter": "D", "exponent": 3 },
+    { "letter": "E", "exponent": 4 },
+    { "letter": "F", "exponent": 5 }
+  ]
+}

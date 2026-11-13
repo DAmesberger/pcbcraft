@@ -1,0 +1,63 @@
+{
+  "format": 1,
+  "kind": "npn_bjt",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "Terminal 1 base, 2 emitter (arrow pointing out), 3 collector: the common SOT-23 assignment, to verify against the datasheet.",
+  "numbered": true,
+  "ops": [
+    {
+      "op": "pin",
+      "terminal": 1,
+      "at": [-5.0, 0.0],
+      "direction": "right",
+      "length": 3.75
+    },
+    {
+      "op": "pin",
+      "terminal": 2,
+      "at": [2.5, -5.0],
+      "direction": "up",
+      "length": 2.5
+    },
+    {
+      "op": "pin",
+      "terminal": 3,
+      "at": [2.5, 5.0],
+      "direction": "down",
+      "length": 2.5
+    },
+    {
+      "op": "plate",
+      "a": [-1.25, -1.5],
+      "b": [-1.25, 1.5]
+    },
+    {
+      "op": "line",
+      "a": [-1.25, 0.75],
+      "b": [2.5, 2.5]
+    },
+    {
+      "op": "line",
+      "a": [-1.25, -0.75],
+      "b": [2.5, -2.5]
+    },
+    {
+      "op": "arrow_head",
+      "from": [0.4375, -1.5375],
+      "tip": [1.75, -2.1500000000000004]
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "circle": {
+          "center": [0.75, 0.0],
+          "radius": 3.25
+        }
+      }
+    },
+    {
+      "op": "side_labels",
+      "at": [4.5, 0.0]
+    }
+  ]
+}

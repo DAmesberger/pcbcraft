@@ -1961,7 +1961,7 @@ impl Engine {
                 )?))
             }
             Query::GenericParts { query } => Ok(QueryResult::GenericParts(
-                catalog::generic::search(&self.document.project, &self.document.drafts, &query),
+                catalog::generic::search(&self.document.project, &self.document.drafts, &query)?,
             )),
             Query::PackagePlan { request } => Ok(QueryResult::PackagePlan(
                 commands::templates::package_plan(&self.document, &request, evaluator)?,

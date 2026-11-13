@@ -1,6 +1,6 @@
 //! D4 marking behaviour: layout units over plain inputs, then the engine
 //! surface (`instance.set_marking`, `instance.marking`, publish findings).
-use super::codes::{CodeScheme, TANTALUM_TABLE, TableRef};
+use super::codes::{CodeScheme, TableRef};
 use super::*;
 use crate::diagnostics::Error;
 use crate::ids::Revision;
@@ -212,7 +212,7 @@ fn polarity_bands_take_room_from_the_text() -> Fallible<()> {
             },
             MarkingItem::Code {
                 scheme: CodeScheme::VoltageLetter {
-                    table: TableRef(TANTALUM_TABLE.into()),
+                    table: TableRef("tantalum".into()),
                 },
                 field: field_ref(TOLERANCE),
             },
@@ -271,7 +271,7 @@ fn colour_bands_and_artwork() -> Fallible<()> {
     assert!(matches!(
         laid.elements.as_slice(),
         [LaidElement::Bands { colours, .. }, LaidElement::Artwork { .. }]
-            if colours == &vec![4, 7, 2, codes::BAND_GOLD]
+            if colours == &vec![4, 7, 2, 10]
     ));
     // A ±3 % tolerance has no colour: nothing, with a finding.
     values.fields.insert(TOLERANCE, ("±3%".into(), Some(0.03)));

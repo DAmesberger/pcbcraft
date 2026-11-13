@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "kind": "polarised_capacitor",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "A straight + plate (terminal 1, left), a curved - plate (terminal 2): an arc through (0.5, 0) whose ends reach 1.75 mm either side, and a + mark beside the + plate.",
+  "ops": [
+    {
+      "op": "two_pins",
+      "left": 0.5,
+      "right": 0.5
+    },
+    {
+      "op": "plate",
+      "a": [-0.5, -1.75],
+      "b": [-0.5, 1.75]
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "arc": {
+          "center": [3.0, 0.0],
+          "radius": 2.5,
+          "start_deg": 135.5729959991943,
+          "sweep_deg": 88.8540080016114
+        }
+      },
+      "width": 0.35
+    },
+    {
+      "op": "line",
+      "a": [-2.25, 1.5],
+      "b": [-1.25, 1.5]
+    },
+    {
+      "op": "line",
+      "a": [-1.75, 1.0],
+      "b": [-1.75, 2.0]
+    },
+    {
+      "op": "labels",
+      "top": 2.0,
+      "bottom": -1.75
+    }
+  ]
+}

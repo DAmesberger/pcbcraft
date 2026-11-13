@@ -1,0 +1,21 @@
+{
+  "format": 1,
+  "about": "Rated-voltage letter tables, each named and cited. A marking's voltage-letter code names its table.",
+  "tables": [
+    {
+      "name": "tantalum",
+      "source": "The rated-voltage codes printed on molded tantalum capacitors in the Vishay 293D, TDK/EPCOS B45196E and AVX TAJ data sheets, identical for the voltages listed. Letters vary by series and case for some makers, so the table is named explicitly.",
+      "letters": [
+        { "letter": "e", "volts": 2.5 },
+        { "letter": "G", "volts": 4.0 },
+        { "letter": "J", "volts": 6.3 },
+        { "letter": "A", "volts": 10.0 },
+        { "letter": "C", "volts": 16.0 },
+        { "letter": "D", "volts": 20.0 },
+        { "letter": "E", "volts": 25.0 },
+        { "letter": "V", "volts": 35.0 },
+        { "letter": "T", "volts": 50.0 }
+      ]
+    }
+  ]
+}

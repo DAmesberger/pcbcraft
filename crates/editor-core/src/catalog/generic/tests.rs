@@ -46,13 +46,16 @@ fn find_or_create(engine: &mut Engine, query: &str, candidate: Option<usize>) ->
 #[test]
 fn every_declared_pattern_parses_and_every_example_builds_a_valid_form() -> Result<()> {
     let engine = Engine::default();
-    for family in &FAMILIES {
+    let grammar = &standards::get()?.generic;
+    check(grammar)?;
+    assert_eq!(grammar.families.len(), 6, "every family declares patterns");
+    for family in &grammar.families {
         assert!(!family.patterns.is_empty() && !family.examples.is_empty());
-        for pattern in family.patterns {
-            let parsed = parse_pattern(pattern);
+        for pattern in &family.patterns {
+            let parsed = parse_pattern(grammar, pattern);
             assert!(parsed.is_ok(), "{pattern}: {parsed:?}");
         }
-        for example in family.examples {
+        for example in &family.examples {
             let found = read(&engine, example);
             let Some(own) = found.iter().find(|c| c.family == family.family) else {
                 return fail(&format!("{example} reads as {found:?}"));
@@ -68,7 +71,8 @@ fn every_declared_pattern_parses_and_every_example_builds_a_valid_form() -> Resu
 }
 
 #[test]
-fn a_bad_pattern_says_why() {
+fn a_bad_pattern_says_why() -> Result<()> {
+    let grammar = &standards::get()?.generic;
     for bad in [
         "",
         "header {rows",
@@ -77,8 +81,16 @@ fn a_bad_pattern_says_why() {
         "x{value:ohm}",
         "a b c d e f g",
     ] {
-        assert!(parse_pattern(bad).is_err(), "{bad}");
+        assert!(parse_pattern(grammar, bad).is_err(), "{bad}");
     }
+    // A grammar declaring one is refused as a whole.
+    let mut broken = grammar.clone();
+    broken.families[0].patterns.push("{a:nope}".into());
+    assert!(check(&broken).is_err());
+    let mut broken = grammar.clone();
+    broken.header_pitch_mm = "wide".into();
+    assert!(check(&broken).is_err());
+    Ok(())
 }
 
 #[test]

@@ -21,8 +21,9 @@ If none is found, the message lists every folder searched and names the variable
 | Profiles | `profiles/` | Fab profiles, one JSON each, with sources |
 | Stackups | `stackups/` | Layer stackups and their materials |
 | Materials | `materials/` | Body, board, finish and mask materials |
-| Standards | `standards/` | Published standards: preferred number series, marking codes |
-| Standard fields | `standard-fields/` | Standard quantity fields |
+| Standards | `standards/` | Published standards and conventions: preferred number series, marking codes, schematic symbol drawings (`symbols/`) |
+| Standard fields | `standard-fields/` | Standard quantity fields, as a bundle `library.import` takes, and what each is for |
+| Catalog | `catalog/` | The part catalog's search vocabulary: the generic-part families, their patterns and defaults |
 | Assist | `assist/` | Assistant run profiles and prompts |
 | Parts | `parts/` | Part files (`.solidcraft`), each with a sidecar |
 | Templates | `templates/` | Package templates and starter rows |

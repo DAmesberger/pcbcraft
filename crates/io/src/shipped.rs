@@ -1,6 +1,6 @@
 //! The shipped library: the data that comes with Sparksmith (fab profiles,
-//! stackups, materials, standards, standard fields, assistant profiles, part
-//! files, templates and generator modules). It is loaded as data from one
+//! stackups, materials, standards, standard fields, catalog vocabulary,
+//! assistant profiles, part files, templates and generator modules). It is loaded as data from one
 //! folder, never compiled into the program, so the program holds no rules,
 //! profiles or library data of its own.
 //!
@@ -44,6 +44,8 @@ pub enum Shelf {
     Standards,
     /// Standard quantity fields (`standard-fields/`).
     StandardFields,
+    /// The part catalog's search vocabulary (`catalog/`).
+    Catalog,
     /// Assistant run profiles and prompts (`assist/`).
     Assist,
     /// Part files (`parts/*.solidcraft` with their sidecars).
@@ -63,6 +65,7 @@ impl Shelf {
             Self::Materials => "materials",
             Self::Standards => "standards",
             Self::StandardFields => "standard-fields",
+            Self::Catalog => "catalog",
             Self::Assist => "assist",
             Self::Parts => "parts",
             Self::Templates => "templates",

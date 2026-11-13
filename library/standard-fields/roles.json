@@ -1,0 +1,32 @@
+{
+  "format": 1,
+  "about": "What the fields of standard-fields.json are for, by lineage. Value fields are a part's value as a BOM's Value column states it; ratings and tolerances only qualify a value. Chip fields are the selections a new chip component starts with, all shown on its symbol.",
+  "value_fields": [
+    "6be14d0ac2f7493d9b05e8a13c72d690",
+    "17ac95e3f06b4d28b3e4d172a9c05f86",
+    "c02e7a941db8436fa86f15d3b07e92c4",
+    "ad406f7b39e1425c91f7c2d85e06b3a9",
+    "b2387bbf96b94b0495552e4d79c1645a"
+  ],
+  "chip_fields": {
+    "resistor": [
+      "6be14d0ac2f7493d9b05e8a13c72d690",
+      "e7304bc6185f4a9dbc72f09ad1e563b8",
+      "58c3f7e16a0d4b929e47b1d30ca2f685"
+    ],
+    "capacitor": [
+      "17ac95e3f06b4d28b3e4d172a9c05f86",
+      "e7304bc6185f4a9dbc72f09ad1e563b8",
+      "58c3f7e16a0d4b929e47b1d30ca2f685"
+    ],
+    "inductor": [
+      "c02e7a941db8436fa86f15d3b07e92c4",
+      "0fb86d21e5c74a3899d4c7e06a13f25d",
+      "58c3f7e16a0d4b929e47b1d30ca2f685"
+    ],
+    "led": [
+      "b2387bbf96b94b0495552e4d79c1645a",
+      "0eeb669094bf434ab801ff44513db708"
+    ]
+  }
+}

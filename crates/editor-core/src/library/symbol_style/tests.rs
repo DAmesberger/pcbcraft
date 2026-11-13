@@ -288,3 +288,25 @@ fn prefixes_name_their_kinds() {
         assert!(back.is_some(), "{kind:?}");
     }
 }
+
+/// Every drawn kind under both resistor conventions, as stored: the shipped
+/// drawings (`standards/symbols/`) draw exactly these bytes. A change to a
+/// shipped drawing changes new symbols' saved files and schematic output,
+/// so it is a deliberate update of this hash.
+#[test]
+fn the_shipped_drawings_do_not_change() -> Result<()> {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    for kind in drawn() {
+        for resistor in [ResistorStyle::Iec, ResistorStyle::Us] {
+            let symbol = build(kind, SymbolConventions { resistor })?;
+            hash.update(serde_json::to_vec(&symbol)?);
+        }
+    }
+    let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(
+        digest,
+        "8e930decbbb1918905191f21de48a1910c603ec93a8c1ecb5ce26937752d087e"
+    );
+    Ok(())
+}

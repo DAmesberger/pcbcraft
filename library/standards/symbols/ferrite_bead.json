@@ -1,0 +1,37 @@
+{
+  "format": 1,
+  "kind": "ferrite_bead",
+  "convention": "IEC 60617 as published",
+  "about": "A solid block slanted 45 degrees across the line; terminal 1 left, 2 right.",
+  "ops": [
+    {
+      "op": "two_pins",
+      "left": 2.5,
+      "right": 2.5
+    },
+    {
+      "op": "line",
+      "a": [-2.5, 0.0],
+      "b": [2.5, 0.0]
+    },
+    {
+      "op": "shape",
+      "shape": {
+        "polygon": {
+          "points": [
+            [0.7071067811865477, -1.5556349186104048],
+            [1.5556349186104048, -0.7071067811865477],
+            [-0.7071067811865477, 1.5556349186104048],
+            [-1.5556349186104048, 0.7071067811865477]
+          ]
+        }
+      },
+      "fill": "solid"
+    },
+    {
+      "op": "labels",
+      "top": 1.6,
+      "bottom": -1.6
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "format": 1,
+  "kind": "resistor",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "Two terminals, 1 left and 2 right. The project's resistor convention picks the IEC rectangle or the IEEE zigzag.",
+  "ops": [
+    {
+      "op": "two_pins",
+      "left": 2.5,
+      "right": 2.5
+    },
+    {
+      "op": "styled",
+      "resistor": "iec",
+      "ops": [
+        {
+          "op": "shape",
+          "shape": {
+            "rect": {
+              "a": [-2.5, -1.0],
+              "b": [2.5, 1.0]
+            }
+          },
+          "fill": "body"
+        }
+      ]
+    },
+    {
+      "op": "styled",
+      "resistor": "us",
+      "ops": [
+        {
+          "op": "shape",
+          "shape": {
+            "polyline": {
+              "points": [
+                [-2.5, 0.0],
+                [-2.0833333333333335, 1.0],
+                [-1.25, -1.0],
+                [-0.4166666666666665, 1.0],
+                [0.4166666666666665, -1.0],
+                [1.25, 1.0],
+                [2.083333333333333, -1.0],
+                [2.5, 0.0]
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "op": "labels",
+      "top": 1.0,
+      "bottom": -1.0
+    }
+  ]
+}

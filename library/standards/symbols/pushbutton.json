@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "kind": "pushbutton",
+  "convention": "IEC 60617 and IEEE 315 as published",
+  "about": "A push button, normally open: two contacts under a bar with a plunger; terminal 1 left, 2 right.",
+  "ops": [
+    {
+      "op": "two_pins",
+      "left": 2.5,
+      "right": 2.5
+    },
+    {
+      "op": "contact",
+      "center": [-2.5, 0.0]
+    },
+    {
+      "op": "contact",
+      "center": [2.5, 0.0]
+    },
+    {
+      "op": "line",
+      "a": [-2.75, 1.0],
+      "b": [2.75, 1.0]
+    },
+    {
+      "op": "line",
+      "a": [0.0, 1.0],
+      "b": [0.0, 2.25]
+    },
+    {
+      "op": "line",
+      "a": [-0.75, 2.25],
+      "b": [0.75, 2.25]
+    },
+    {
+      "op": "labels",
+      "top": 2.25,
+      "bottom": -0.5
+    }
+  ]
+}
