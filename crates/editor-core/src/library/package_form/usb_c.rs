@@ -203,7 +203,7 @@ impl UsbCForm {
     /// `opening_z` up on the mating face (y = −depth / 2). Its frame's z
     /// points out of the receptacle along the insertion path and the
     /// space reaches [`PLUG_SHELL_REACH_NM`], where the plug's overmold
-    /// begins. Marked external: it is meant for the enclosure. The drawing
+    /// begins. Marked external: it is meant for the linked design. The drawing
     /// gives no panel clearance, so none is recorded.
     pub fn opening_datum(&self) -> PackageDatum {
         let [across, high] = self.opening_nm;

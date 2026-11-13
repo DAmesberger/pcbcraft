@@ -1194,7 +1194,7 @@ fn package_details_name_each_physical_change() {
     assert!(lines[1].starts_with("model placement"));
 }
 
-/// A package datum an enclosure may reference is named in the update
+/// A package datum a linked design may reference is named in the update
 /// preview when a revision adds, changes or removes it.
 #[test]
 fn package_details_name_each_datum_change() {

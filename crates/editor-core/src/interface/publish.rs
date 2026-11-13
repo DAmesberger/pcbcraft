@@ -69,7 +69,7 @@ fn clearance(project: &Project, datum: &InterfaceDatum) -> Option<f64> {
 /// without face names (the host fills those in as it builds the design).
 /// A live datum without geometry (lost, or a parameter given as an
 /// expression) is left out and its slot listed as unresolved: the design
-/// carries nothing in it, and the enclosure's references to it fail.
+/// carries nothing in it, and the linked design's references to it fail.
 pub fn candidate(project: &Project, tier: Tier, source_id: InterfaceSourceId) -> Result<Sidecar> {
     let table = list::table(project)?;
     if table.source_id.is_some_and(|s| s != source_id) {
@@ -166,14 +166,14 @@ pub fn summary(name: &str, change: &ChangeKind) -> String {
     let what = match change {
         ChangeKind::Unchanged => "unchanged".into(),
         ChangeKind::Added => "added".into(),
-        ChangeKind::Retired => "removed: an enclosure feature that uses it will fail".into(),
+        ChangeKind::Retired => "removed: a linked design feature that uses it will fail".into(),
         ChangeKind::Reshaped => "reshaped".into(),
         ChangeKind::Changed => "changed".into(),
         ChangeKind::StatusChanged { to, .. } => match to {
             DatumStatus::Resolved => "found again".into(),
             DatumStatus::Inexact => "found again only by geometry".into(),
             DatumStatus::Lost => {
-                "lost: what it belongs to is gone, and an enclosure feature that uses it will fail"
+                "lost: what it belongs to is gone, and a linked design feature that uses it will fail"
                     .into()
             }
         },

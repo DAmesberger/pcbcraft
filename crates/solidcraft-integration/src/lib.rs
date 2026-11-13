@@ -6,10 +6,10 @@
 
 pub mod appearance;
 pub mod board;
-pub mod enclosure;
 pub mod export;
 pub mod footprint;
 pub mod interface;
+pub mod linked_design;
 pub mod look_graph;
 pub mod marking;
 pub mod material;

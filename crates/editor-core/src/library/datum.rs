@@ -284,11 +284,11 @@ pub struct PackageDatum {
     pub name: DatumName,
     #[params]
     pub geometry: PackageDatumGeometry,
-    /// Room an enclosure should leave round the datum (a cutout's
+    /// Room a linked design should leave round the datum (a cutout's
     /// clearance), when the package recommends one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clearance_nm: Option<Nm>,
-    /// Meant for the enclosure: the `external_datums` rule exports it for
+    /// Meant for the linked design: the `external_datums` rule exports it for
     /// every placement.
     #[serde(default)]
     pub external: bool,

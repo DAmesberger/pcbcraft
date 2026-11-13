@@ -546,14 +546,14 @@ fn solidcraft_designs_are_inspected_but_not_built() -> Result<()> {
     let mut native = Native::new("parametric")?;
     native.parameter("w", "3 mm")?;
     native.solid_box(BoxBody {
-        name: "Housing",
+        name: "Case",
         corner: [0.0.into(), 0.0.into(), 0.0.into()],
         size: ["w".into(), 2.0.into(), 1.0.into()],
     })?;
     let bytes = solidcraft_engine::io::write_design(&native.session().doc);
     let seen = inspect::inspect(&bytes, ModelFormat::Solidcraft)?;
     assert_eq!(seen.bodies.len(), 1);
-    assert_eq!(seen.bodies[0].key, "Housing");
+    assert_eq!(seen.bodies[0].key, "Case");
     assert!(
         near(seen.bounds_mm[1], [3.0, 2.0, 1.0], EPS),
         "{:?}",

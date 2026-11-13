@@ -1,8 +1,8 @@
 //! The Component 3D tab's Datums section (slice B2): the datums the
-//! package declares for an enclosure, such as a connector's opening, each
-//! with where it came from and whether it is meant for the enclosure. Each
+//! package declares for a linked design, such as a connector's opening, each
+//! with where it came from and whether it is meant for the linked design. Each
 //! control sends one typed `library.edit_package` datum edit: mark or
-//! unmark for the enclosure, remove, or add an opening on the envelope's
+//! unmark for the linked design, remove, or add an opening on the envelope's
 //! front face to start from. Exact geometry from a datasheet's panel
 //! cutout is authored through the same edits (MCP or CLI), from a part
 //! file's `opening-*` planes, or by a connector form.
@@ -73,8 +73,8 @@ impl PartEditor {
                 });
                 kit::hint(
                     ui,
-                    "Checked datums are exported to the enclosure",
-                    "A datum is explicit geometry in the model frame: a connector's opening is the aperture its mating plug needs, from the datasheet's panel cutout. Checked datums are exported to the enclosure for every placement.",
+                    "Checked datums are exported to the linked design",
+                    "A datum is explicit geometry in the model frame: a connector's opening is the aperture its mating plug needs, from the datasheet's panel cutout. Checked datums are exported to the linked design for every placement.",
                 );
             },
         );

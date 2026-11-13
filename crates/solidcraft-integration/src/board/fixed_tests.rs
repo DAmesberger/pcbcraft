@@ -1,33 +1,33 @@
-//! Fixed geometry an enclosure link owns in the board sketch (slice B4,
-//! `interface::housing`): a housing reference's trace enters the sketch as
+//! Fixed geometry an assembly link owns in the board sketch (slice B4,
+//! `interface::assembly_link`): a followed face's trace enters the sketch as
 //! a construction line between fixed points; a board edge dimensioned to
 //! it follows when an update moves it; a trace that changed shape is lost
 //! and keeps its last place; removing the reference removes the line and
 //! the dimension to it. Slice B5: a board edit never moves that line,
-//! and a loop between the board and the enclosure is found and blocks
+//! and a loop between the board and the linked design is found and blocks
 //! fabrication output.
 use super::tests::{Fallible, apply, edit, sketch, sketched};
 use pcbcraft_core::fabrication::preflight;
 use pcbcraft_core::ids::ContentHash;
-use pcbcraft_core::interface::findings;
-use pcbcraft_core::interface::housing::{
-    self, FileCheck, HousingCommand, HousingRead, LinkState, NewReference, ReferenceRead,
+use pcbcraft_core::interface::assembly_link::{
+    self, AssemblyCommand, AssemblyRead, FileCheck, LinkState, NewReference, ReferenceRead,
 };
+use pcbcraft_core::interface::findings;
 use pcbcraft_core::issues::Severity;
 use pcbcraft_core::layout::outline::BoardEdit;
 use pcbcraft_core::library::footprint_source::{
     DimKind, DimValue, SketchConstraintId, SketchCurveId, SketchEdit, SketchPointId, SketchRef,
 };
+use pcbcraft_core::model::assembly_link::{Consumer, UseKind};
 use pcbcraft_core::model::dimension::{
-    BodyName, FaceName, FeatureGeometry, HousingRefId, ReferenceStatus,
+    BodyName, FaceName, FeatureGeometry, FollowedFaceId, ReferenceStatus,
 };
-use pcbcraft_core::model::housing::{Consumer, UseKind};
 use pcbcraft_core::model::interface::DatumRole;
 use pcbcraft_core::{Engine, Operation};
 
-fn read(references: Vec<ReferenceRead>) -> HousingRead {
-    HousingRead {
-        enclosure_hint: "housing.solidcraft".into(),
+fn read(references: Vec<ReferenceRead>) -> AssemblyRead {
+    AssemblyRead {
+        assembly_hint: "assembly.solidcraft".into(),
         design_hint: "board.solidcraft".into(),
         component: "Board".into(),
         file_sha256: ContentHash([1; 32]),
@@ -82,13 +82,13 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
     let [width, height] = engine.project().board_size;
     apply(
         &mut engine,
-        Operation::Housing(HousingCommand::RecordLink {
+        Operation::Assembly(AssemblyCommand::RecordLink {
             read: read(Vec::new()),
         }),
     )?;
     apply(
         &mut engine,
-        Operation::Housing(HousingCommand::RecordReference {
+        Operation::Assembly(AssemblyCommand::RecordReference {
             reference: NewReference {
                 body: BodyName("Far wall".into()),
                 face: FaceName("F1:side:e1".into()),
@@ -101,7 +101,7 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
     )?;
     let owned = engine
         .project()
-        .housing
+        .assembly_link
         .as_ref()
         .and_then(|l| l.references.first())
         .map(|r| r.sketch.clone())
@@ -154,7 +154,7 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
 
     // The wall moves 2 mm: the edge follows.
     let moved = ReferenceRead {
-        id: HousingRefId(1),
+        id: FollowedFaceId(1),
         status: ReferenceStatus::Resolved,
         pick: Some([0.0, height + 3.0, 0.0]),
         geometry: Some(line(height + 3.0, width)),
@@ -163,7 +163,7 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
     };
     apply(
         &mut engine,
-        Operation::Housing(HousingCommand::RecordUpdate {
+        Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(vec![moved]),
         }),
     )?;
@@ -172,7 +172,7 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
 
     // A trace that changed shape is lost and keeps its last place.
     let changed = ReferenceRead {
-        id: HousingRefId(1),
+        id: FollowedFaceId(1),
         status: ReferenceStatus::Resolved,
         pick: None,
         geometry: Some(FeatureGeometry::Point { at: [0.0, 0.0] }),
@@ -181,13 +181,13 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
     };
     apply(
         &mut engine,
-        Operation::Housing(HousingCommand::RecordUpdate {
+        Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(vec![changed]),
         }),
     )?;
     let reference = engine
         .project()
-        .housing
+        .assembly_link
         .as_ref()
         .and_then(|l| l.references.first().cloned())
         .ok_or("kept")?;
@@ -199,8 +199,8 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
     // shape.
     apply(
         &mut engine,
-        Operation::Housing(HousingCommand::RemoveReference {
-            id: HousingRefId(1),
+        Operation::Assembly(AssemblyCommand::RemoveReference {
+            id: FollowedFaceId(1),
         }),
     )?;
     let s = sketch(&engine)?;
@@ -218,20 +218,20 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
 // Slice B5: the two-way check on the board side.
 
 /// The demo board sketched and linked, its top edge held 1 mm below the
-/// fixed line a housing reference owns; the reference's enclosure geometry
+/// fixed line a followed face owns; the reference's linked design geometry
 /// is built on `built_on`. Returns the engine and the owned line.
 fn followed(built_on: Vec<Consumer>) -> Fallible<(Engine, SketchCurveId)> {
     let mut engine = sketched()?;
     let [width, height] = engine.project().board_size;
     apply(
         &mut engine,
-        Operation::Housing(HousingCommand::RecordLink {
+        Operation::Assembly(AssemblyCommand::RecordLink {
             read: read(Vec::new()),
         }),
     )?;
     apply(
         &mut engine,
-        Operation::Housing(HousingCommand::RecordReference {
+        Operation::Assembly(AssemblyCommand::RecordReference {
             reference: NewReference {
                 body: BodyName("Far wall".into()),
                 face: FaceName("F1:side:e1".into()),
@@ -244,7 +244,7 @@ fn followed(built_on: Vec<Consumer>) -> Fallible<(Engine, SketchCurveId)> {
     )?;
     let owned = engine
         .project()
-        .housing
+        .assembly_link
         .as_ref()
         .and_then(|l| l.references.first())
         .map(|r| r.sketch.clone())
@@ -280,7 +280,7 @@ fn followed(built_on: Vec<Consumer>) -> Fallible<(Engine, SketchCurveId)> {
     Ok((engine, curve))
 }
 
-/// The board's datum with `role`, as an enclosure feature would use it.
+/// The board's datum with `role`, as a linked design feature would use it.
 fn uses(engine: &Engine, role: DatumRole, feature: &str) -> Fallible<Consumer> {
     let table = pcbcraft_core::interface::list::table(engine.project())?;
     let datum = table
@@ -303,11 +303,11 @@ fn uses(engine: &Engine, role: DatumRole, feature: &str) -> Fallible<Consumer> {
 }
 
 /// Conflict row "the board's driven outline was edited locally": a board
-/// edit that deletes or moves the fixed line the enclosure drives, or one
-/// of its ends, is refused with `housing.driven_edge` in the user's words,
+/// edit that deletes or moves the fixed line the linked design drives, or one
+/// of its ends, is refused with `assembly.driven_edge` in the user's words,
 /// changing nothing; an edit that leaves it alone is applied.
 #[test]
-fn b5_a_board_edit_never_moves_what_the_enclosure_drives() -> Fallible<()> {
+fn b5_a_board_edit_never_moves_what_the_linked_design_drives() -> Fallible<()> {
     let (mut engine, curve) = followed(Vec::new())?;
     let before = engine.project().clone();
     let revision = engine.revision();
@@ -363,12 +363,12 @@ fn b5_a_board_edit_never_moves_what_the_enclosure_drives() -> Fallible<()> {
         };
         assert_eq!(
             error.rule(),
-            Some(findings::HOUSING_DRIVEN_EDGE),
+            Some(findings::ASSEMBLY_DRIVEN_EDGE),
             "{attempt:?}: {error}"
         );
         assert_eq!(
             error.to_string(),
-            "This edge follows the enclosure's wall. Break the link to edit it here",
+            "This edge follows the linked design's wall. Break the link to edit it here",
             "{attempt:?}"
         );
         assert_eq!(engine.revision(), revision, "{attempt:?}");
@@ -381,27 +381,27 @@ fn b5_a_board_edit_never_moves_what_the_enclosure_drives() -> Fallible<()> {
 }
 
 /// Conflict row "a cycle", on the board side of the graph: the top edge
-/// follows the enclosure's far wall, which the enclosure builds from the
+/// follows the linked design's far wall, which the linked design builds from the
 /// board outline. The outline moves when the wall does, so the loop is
 /// found, named in both files' words, blocks fabrication output with no
 /// waiver and reads in the link's status; the board's top face, which does
 /// not move with the wall, is no loop; stopping following the wall ends
 /// it, and undo brings it back.
 #[test]
-fn b5_a_loop_between_board_and_enclosure_blocks_fabrication() -> Fallible<()> {
+fn b5_a_loop_between_board_and_linked_design_blocks_fabrication() -> Fallible<()> {
     let engine = sketched()?;
     let outline = uses(&engine, DatumRole::BoardOutline, "Far wall")?;
     let top_face = uses(&engine, DatumRole::BoardTop, "Lid")?;
     let (mut engine, _) = followed(vec![outline.clone(), top_face])?;
-    let link = engine.project().housing.as_deref().ok_or("linked")?;
+    let link = engine.project().assembly_link.as_deref().ok_or("linked")?;
     let [cycle] = link.cycles.as_slice() else {
         return Err(format!("one loop: {:?}", link.cycles).into());
     };
     assert_eq!(cycle.datum, outline.datum);
     assert_eq!(cycle.feature, "Far wall");
-    let found: Vec<_> = housing::checks(engine.project())
+    let found: Vec<_> = assembly_link::checks(engine.project())
         .into_iter()
-        .filter(|f| f.code == findings::HOUSING_CYCLE)
+        .filter(|f| f.code == findings::ASSEMBLY_CYCLE)
         .collect();
     let [finding] = found.as_slice() else {
         return Err(format!("{found:?}").into());
@@ -410,21 +410,21 @@ fn b5_a_loop_between_board_and_enclosure_blocks_fabrication() -> Fallible<()> {
     assert_eq!(
         finding.message,
         format!(
-            "{} follows the enclosure's Far wall · face, and the enclosure builds ‘Far wall’ \
+            "{} follows the linked design's Far wall · face, and the linked design builds ‘Far wall’ \
              from {name}. Break the loop: stop following Far wall · face, or build ‘Far wall’ \
              in SolidCraft without {name}",
             capitalised(name)
         )
     );
     assert_eq!(
-        housing::status(engine.project(), FileCheck::NotChecked).state,
+        assembly_link::status(engine.project(), FileCheck::NotChecked).state,
         LinkState::Cycle
     );
     let report = preflight::report(engine.project(), engine.drafts(), None)?;
     let item = report
         .items
         .iter()
-        .find(|i| i.code == findings::HOUSING_CYCLE)
+        .find(|i| i.code == findings::ASSEMBLY_CYCLE)
         .ok_or("the production check lists it")?;
     assert_eq!(item.severity, Severity::Error);
     assert!(!report.ready());
@@ -440,14 +440,14 @@ fn b5_a_loop_between_board_and_enclosure_blocks_fabrication() -> Fallible<()> {
 
     apply(
         &mut engine,
-        Operation::Housing(HousingCommand::RemoveReference {
-            id: HousingRefId(1),
+        Operation::Assembly(AssemblyCommand::RemoveReference {
+            id: FollowedFaceId(1),
         }),
     )?;
-    let link = engine.project().housing.as_deref().ok_or("linked")?;
+    let link = engine.project().assembly_link.as_deref().ok_or("linked")?;
     assert!(link.cycles.is_empty());
     engine.undo()?;
-    let link = engine.project().housing.as_deref().ok_or("linked")?;
+    let link = engine.project().assembly_link.as_deref().ok_or("linked")?;
     assert_eq!(link.cycles.len(), 1);
     Ok(())
 }

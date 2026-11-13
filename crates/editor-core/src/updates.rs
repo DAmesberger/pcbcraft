@@ -1282,7 +1282,7 @@ pub fn package_details(a: &PackageDefinition, b: &PackageDefinition) -> Vec<Stri
             b.placement.rotation_deg()
         ));
     }
-    // Package datums by name: an enclosure references them (slice B2).
+    // Package datums by name: an assembly references them (slice B2).
     for datum in &b.datums {
         match a.datum(&datum.name.0) {
             None => out.push(format!("datum {} added.", datum.name.0)),

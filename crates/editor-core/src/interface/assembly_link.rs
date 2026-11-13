@@ -1,35 +1,35 @@
-//! The enclosure link (docs/architecture/board-interface.md, "Link
+//! The assembly link (docs/architecture/board-interface.md, "Link
 //! updates"; docs/board-sketch-references.md §7; slice B4): the
-//! `housing.*` document commands, the findings a link raises, its status
+//! `assembly.*` document commands, the findings a link raises, its status
 //! and the preview of an update.
 //!
-//! Reading the enclosure is the host's: it opens the design in its own
+//! Reading the linked design is the host's: it opens the design in its own
 //! engine, finds the component that links this board's published design,
-//! traces each housing reference in the board frame, reads the bound
-//! parameters and the enclosure features that use the board's datums, and
-//! hands the core a [`HousingRead`]. The core never reads files. A host
+//! traces each followed face in the board frame, reads the bound
+//! parameters and the linked design features that use the board's datums, and
+//! hands the core a [`AssemblyRead`]. The core never reads files. A host
 //! request applies a read with one command, one undo step:
 //!
 //! | Host request | Command |
 //! | --- | --- |
-//! | `housing.update {path, design}`, none linked | [`HousingCommand::RecordLink`] |
-//! | `housing.update {path, design, expect_hash}` (an update, or a relink to another file) | [`HousingCommand::RecordUpdate`] |
-//! | `housing.follow {face}` | [`HousingCommand::RecordReference`] |
-//! | `housing.follow {parameter}` | [`HousingCommand::RecordBinding`] |
+//! | `assembly.update {path, design}`, none linked | [`AssemblyCommand::RecordLink`] |
+//! | `assembly.update {path, design, expect_hash}` (an update, or a relink to another file) | [`AssemblyCommand::RecordUpdate`] |
+//! | `assembly.follow {face}` | [`AssemblyCommand::RecordReference`] |
+//! | `assembly.follow {parameter}` | [`AssemblyCommand::RecordBinding`] |
 //!
-//! `housing.remove_reference`, `housing.unbind` and `housing.unlink` need
-//! no read. Updates are always reviewed: `housing.preview` applies the read
+//! `assembly.remove_reference`, `assembly.unbind` and `assembly.unlink` need
+//! no read. Updates are always reviewed: `assembly.preview` applies the read
 //! to a copy of the document and lists what moves ([`diff`]); the update
-//! takes the hash the preview showed and is refused when the enclosure
+//! takes the hash the preview showed and is refused when the linked design
 //! changed since.
 //!
-//! A housing reference's trace is fixed geometry of the board sketch,
+//! A followed face's trace is fixed geometry of the board sketch,
 //! owned by the reference (`BoardShapeEvaluator::fixed_geometry`): board
 //! curves are dimensioned to it with the board sketch's own dimensions,
 //! and parts dimensioned to those curves follow, as for any board edit.
 //! A reference that no longer resolves keeps its last geometry and stops
-//! moving; it, and an enclosure feature whose datum no longer resolves
-//! on the board, block fabrication output (`housing.reference_lost`, never
+//! moving; it, and a linked design feature whose datum no longer resolves
+//! on the board, block fabrication output (`assembly.reference_lost`, never
 //! waived).
 use super::findings;
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
@@ -37,11 +37,13 @@ use crate::geometry::Point;
 use crate::ids::{ContentHash, Id, printable};
 use crate::layout::outline::{BoardShapeEvaluator, FixedEdit};
 use crate::library::footprint_source::{Expr, FootprintParam, ParamName, ParamUnit};
-use crate::model::dimension::{BodyName, FaceName, FeatureGeometry, HousingRefId, ReferenceStatus};
-use crate::model::housing::{
-    Consumer, HousingBinding, HousingCycle, HousingLink, HousingRef, MAX_BUILT_ON, MAX_CONSUMERS,
-    MAX_HOUSING_BINDINGS, MAX_HOUSING_NAME, MAX_HOUSING_PATH, MAX_HOUSING_REFS, UnexportedUse,
-    UseKind,
+use crate::model::assembly_link::{
+    AssemblyBinding, AssemblyCycle, AssemblyLink, Consumer, FollowedFace, MAX_ASSEMBLY_BINDINGS,
+    MAX_ASSEMBLY_NAME, MAX_ASSEMBLY_PATH, MAX_BUILT_ON, MAX_CONSUMERS, MAX_FOLLOWED_FACES,
+    UnexportedUse, UseKind,
+};
+use crate::model::dimension::{
+    BodyName, FaceName, FeatureGeometry, FollowedFaceId, ReferenceStatus,
 };
 use crate::model::{BoardShape, Project};
 use crate::units::Nm;
@@ -49,7 +51,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// The SHA-256 of an enclosure file's bytes, as the link keeps it.
+/// The SHA-256 of a linked design file's bytes, as the link keeps it.
 pub fn file_hash(bytes: &[u8]) -> ContentHash {
     use sha2::{Digest, Sha256};
     ContentHash(Sha256::digest(bytes).into())
@@ -61,7 +63,7 @@ const MAX_VALUE_NM: i64 = 10_000_000_000;
 /// A point in mm as the document stores it, in whole nanometres.
 fn nm3(p: [f64; 3]) -> Result<[Nm; 3]> {
     if !p.iter().all(|v| v.is_finite() && v.abs() <= 10_000.0) {
-        return Err(bad("housing.reference: the pick is out of range"));
+        return Err(bad("assembly.reference: the pick is out of range"));
     }
     Ok([
         Nm::from_mm_f64_rounded(p[0])?,
@@ -73,21 +75,21 @@ fn nm3(p: [f64; 3]) -> Result<[Nm; 3]> {
 /// How far (mm) a trace may move and still read as unchanged.
 pub const SAME_MM: f64 = 1e-9;
 
-/// What the host read of the enclosure: the link, every housing
-/// reference's trace and every binding's value now, and the enclosure
+/// What the host read of the linked design: the link, every assembly
+/// reference's trace and every binding's value now, and the linked design
 /// features that use the board's datums.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct HousingRead {
-    /// The enclosure's file as the request named it.
-    pub enclosure_hint: String,
+pub struct AssemblyRead {
+    /// The linked design's file as the request named it.
+    pub assembly_hint: String,
     /// The board's published design as the request named it.
     pub design_hint: String,
     pub component: String,
     pub file_sha256: ContentHash,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_revision: Option<u32>,
-    /// One per housing reference of the link (none for a new link).
+    /// One per followed face of the link (none for a new link).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<ReferenceRead>,
     /// One per binding of the link (none for a new link).
@@ -95,23 +97,23 @@ pub struct HousingRead {
     pub bindings: Vec<BindingRead>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub consumers: Vec<Consumer>,
-    /// SHA-256 of the board's published design as the enclosure's link to
-    /// it last read it, when the enclosure keeps one.
+    /// SHA-256 of the board's published design as the linked design's link to
+    /// it last read it, when the linked design keeps one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_sha256: Option<ContentHash>,
-    /// Enclosure features attached to faces of the board that no slot
+    /// Linked design features attached to faces of the board that no slot
     /// carries.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unexported: Vec<UnexportedUse>,
 }
 
-/// One housing reference as the host found it.
+/// One followed face as the host found it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ReferenceRead {
-    pub id: HousingRefId,
+    pub id: FollowedFaceId,
     pub status: ReferenceStatus,
-    /// A point on the face where it is now, enclosure frame (the stored
+    /// A point on the face where it is now, linked design frame (the stored
     /// pick, unless the face moved).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pick: Option<[f64; 3]>,
@@ -120,23 +122,23 @@ pub struct ReferenceRead {
     pub geometry: Option<FeatureGeometry>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
-    /// The board's datums the enclosure geometry under the face is built
+    /// The board's datums the linked design geometry under the face is built
     /// on now.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub built_on: Vec<Consumer>,
 }
 
-/// One binding's enclosure parameter as the host found it.
+/// One binding's linked design parameter as the host found it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BindingRead {
     pub board_param: ParamName,
-    /// Its value now in mm; `None` when the enclosure no longer has it.
+    /// Its value now in mm; `None` when the linked design no longer has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_mm: Option<f64>,
 }
 
-/// A housing reference to add: the face the host traced and its trace.
+/// A followed face to add: the face the host traced and its trace.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct NewReference {
@@ -145,61 +147,61 @@ pub struct NewReference {
     pub pick: [f64; 3],
     pub name: String,
     pub geometry: FeatureGeometry,
-    /// The board's datums the enclosure geometry under the face is built
+    /// The board's datums the linked design geometry under the face is built
     /// on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub built_on: Vec<Consumer>,
 }
 
-/// The enclosure link's document changes. Each is one undo step; a refused
+/// The assembly link's document changes. Each is one undo step; a refused
 /// command changes nothing.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
-pub enum HousingCommand {
-    /// Link the enclosure the host read (`housing.link`). Refused when a
+pub enum AssemblyCommand {
+    /// Link the linked design the host read (`assembly.link`). Refused when a
     /// link exists: relink it instead.
-    #[serde(rename = "housing.record_link")]
-    RecordLink { read: HousingRead },
-    /// Apply what the host read of the linked enclosure.
+    #[serde(rename = "assembly.record_link")]
+    RecordLink { read: AssemblyRead },
+    /// Apply what the host read of the linked design.
     ///
-    /// Sent by `housing.update` and `housing.relink`: the references'
+    /// Sent by `assembly.update` and `assembly.relink`: the references'
     /// traces move the fixed geometry they own, bindings set their board
     /// parameters, and the snapshot becomes the read. Refused, changing
     /// nothing, when the board would not solve, or a bound parameter is
     /// gone.
-    #[serde(rename = "housing.record_update")]
-    RecordUpdate { read: HousingRead },
-    /// Add a housing reference the host traced (`housing.add_reference`):
+    #[serde(rename = "assembly.record_update")]
+    RecordUpdate { read: AssemblyRead },
+    /// Add a followed face the host traced (`assembly.add_reference`):
     /// its trace enters the board sketch as fixed geometry it owns.
-    #[serde(rename = "housing.record_reference")]
+    #[serde(rename = "assembly.record_reference")]
     RecordReference { reference: NewReference },
-    /// Remove a housing reference and the geometry it owns, with every
+    /// Remove a followed face and the geometry it owns, with every
     /// board-sketch dimension to it.
-    #[serde(rename = "housing.remove_reference")]
-    RemoveReference { id: HousingRefId },
-    /// Bind a board parameter to an enclosure parameter the host read
-    /// (`housing.bind`), setting it to the value.
-    #[serde(rename = "housing.record_binding")]
-    RecordBinding { binding: HousingBinding },
-    /// Stop setting a board parameter from the enclosure; it keeps its
+    #[serde(rename = "assembly.remove_reference")]
+    RemoveReference { id: FollowedFaceId },
+    /// Bind a board parameter to a linked design parameter the host read
+    /// (`assembly.bind`), setting it to the value.
+    #[serde(rename = "assembly.record_binding")]
+    RecordBinding { binding: AssemblyBinding },
+    /// Stop setting a board parameter from the linked design; it keeps its
     /// value.
-    #[serde(rename = "housing.unbind")]
+    #[serde(rename = "assembly.unbind")]
     Unbind { board_param: ParamName },
     /// Forget the link. The geometry the references owned stays in the
     /// board sketch as plain fixed geometry; the board keeps its shape.
-    #[serde(rename = "housing.unlink")]
+    #[serde(rename = "assembly.unlink")]
     Unlink,
 }
 
 // A new command chooses its permission class here.
-declare_classes!(HousingCommand {
-    RecordLink "housing.record_link" Edit "Link an enclosure",
-    RecordUpdate "housing.record_update" Edit "Update from the enclosure",
-    RecordReference "housing.record_reference" Edit "Follow enclosure geometry",
-    RemoveReference "housing.remove_reference" Edit "Stop following enclosure geometry",
-    RecordBinding "housing.record_binding" Edit "Bind a board parameter to the enclosure",
-    Unbind "housing.unbind" Edit "Unbind a board parameter",
-    Unlink "housing.unlink" Edit "Unlink the enclosure",
+declare_classes!(AssemblyCommand {
+    RecordLink "assembly.record_link" Edit "Link a linked design",
+    RecordUpdate "assembly.record_update" Edit "Update from the linked design",
+    RecordReference "assembly.record_reference" Edit "Follow assembly geometry",
+    RemoveReference "assembly.remove_reference" Edit "Stop following assembly geometry",
+    RecordBinding "assembly.record_binding" Edit "Bind a board parameter to the assembly",
+    Unbind "assembly.unbind" Edit "Unbind a board parameter",
+    Unlink "assembly.unlink" Edit "Unlink the linked design",
 });
 
 fn bad(message: impl Into<String>) -> Error {
@@ -207,7 +209,7 @@ fn bad(message: impl Into<String>) -> Error {
 }
 
 fn name_ok(text: &str) -> bool {
-    printable(text) && text.len() <= MAX_HOUSING_NAME
+    printable(text) && text.len() <= MAX_ASSEMBLY_NAME
 }
 
 fn geometry_ok(g: &FeatureGeometry) -> bool {
@@ -219,29 +221,29 @@ fn geometry_ok(g: &FeatureGeometry) -> bool {
 }
 
 /// The host's read is bounded and well formed.
-fn check_read(read: &HousingRead) -> Result<()> {
-    if read.enclosure_hint.trim().is_empty()
-        || read.enclosure_hint.len() > MAX_HOUSING_PATH
-        || read.enclosure_hint.chars().any(char::is_control)
+fn check_read(read: &AssemblyRead) -> Result<()> {
+    if read.assembly_hint.trim().is_empty()
+        || read.assembly_hint.len() > MAX_ASSEMBLY_PATH
+        || read.assembly_hint.chars().any(char::is_control)
         || read.design_hint.trim().is_empty()
-        || read.design_hint.len() > MAX_HOUSING_PATH
+        || read.design_hint.len() > MAX_ASSEMBLY_PATH
         || read.design_hint.chars().any(char::is_control)
     {
         return Err(bad(format!(
-            "housing.path: the enclosure's path is 1–{MAX_HOUSING_PATH} bytes of text"
+            "assembly.path: the linked design's path is 1–{MAX_ASSEMBLY_PATH} bytes of text"
         )));
     }
     if !name_ok(&read.component) {
         return Err(bad(
-            "housing.read: the linking component needs a printable name",
+            "assembly.read: the linking component needs a printable name",
         ));
     }
-    if read.references.len() > MAX_HOUSING_REFS
-        || read.bindings.len() > MAX_HOUSING_BINDINGS
+    if read.references.len() > MAX_FOLLOWED_FACES
+        || read.bindings.len() > MAX_ASSEMBLY_BINDINGS
         || read.consumers.len() > MAX_CONSUMERS
     {
         return Err(Error::Limit(format!(
-            "housing.limit: at most {MAX_HOUSING_REFS} references, {MAX_HOUSING_BINDINGS} \
+            "assembly.limit: at most {MAX_FOLLOWED_FACES} references, {MAX_ASSEMBLY_BINDINGS} \
              bindings and {MAX_CONSUMERS} consumers"
         )));
     }
@@ -252,7 +254,7 @@ fn check_read(read: &HousingRead) -> Result<()> {
                 .is_some_and(|p| !p.iter().all(|v| v.is_finite() && v.abs() <= 10_000.0))
         {
             return Err(bad(format!(
-                "housing.read: reference {} has a bad trace or note",
+                "assembly.read: reference {} has a bad trace or note",
                 r.id.0
             )));
         }
@@ -262,7 +264,7 @@ fn check_read(read: &HousingRead) -> Result<()> {
             .is_some_and(|v| !v.is_finite() || v.abs() > 10_000.0)
         {
             return Err(bad(format!(
-                "housing.read: `{}` has a value out of range",
+                "assembly.read: `{}` has a value out of range",
                 b.board_param.0
             )));
         }
@@ -275,7 +277,7 @@ fn check_read(read: &HousingRead) -> Result<()> {
             .any(|u| !name_ok(&u.feature) || !(u.body.is_empty() || name_ok(&u.body)))
     {
         return Err(bad(format!(
-            "housing.read: at most {MAX_CONSUMERS} features on unexported faces, with printable \
+            "assembly.read: at most {MAX_CONSUMERS} features on unexported faces, with printable \
              names"
         )));
     }
@@ -289,7 +291,7 @@ fn check_consumers(consumers: &[Consumer]) -> Result<()> {
     for c in consumers {
         if !name_ok(&c.feature) || !name_ok(&c.name) || !super::token_valid(&c.token) {
             return Err(bad(
-                "housing.read: a consumer needs printable names and a token",
+                "assembly.read: a consumer needs printable names and a token",
             ));
         }
     }
@@ -299,7 +301,7 @@ fn check_consumers(consumers: &[Consumer]) -> Result<()> {
 fn check_built_on(built_on: &[Consumer]) -> Result<()> {
     if built_on.len() > MAX_BUILT_ON {
         return Err(Error::Limit(format!(
-            "housing.limit: a reference is built on at most {MAX_BUILT_ON} datums"
+            "assembly.limit: a reference is built on at most {MAX_BUILT_ON} datums"
         )));
     }
     check_consumers(built_on)
@@ -308,17 +310,17 @@ fn check_built_on(built_on: &[Consumer]) -> Result<()> {
 fn evaluator(evaluator: Option<&dyn BoardShapeEvaluator>) -> Result<&dyn BoardShapeEvaluator> {
     evaluator.ok_or_else(|| {
         Error::Unsupported(
-            "housing.evaluator: following enclosure geometry needs the host's sketch evaluator"
+            "assembly.evaluator: following linked design geometry needs the host's sketch evaluator"
                 .into(),
         )
     })
 }
 
-fn link_mut(project: &mut Project) -> Result<&mut HousingLink> {
+fn link_mut(project: &mut Project) -> Result<&mut AssemblyLink> {
     project
-        .housing
+        .assembly_link
         .as_deref_mut()
-        .ok_or_else(|| Error::Conflict("housing.unlinked: no enclosure is linked".into()))
+        .ok_or_else(|| Error::Conflict("assembly.unlinked: no linked design is linked".into()))
 }
 
 /// Apply `edits` to the board sketch's fixed geometry and solve the board
@@ -330,7 +332,7 @@ fn edit_fixed(
 ) -> Result<Vec<crate::library::footprint_source::SketchRef>> {
     let BoardShape::Sketch(sketch) = &project.board_shape else {
         return Err(Error::Conflict(
-            "housing.not_sketch: start a board sketch first (board.start_sketch)".into(),
+            "assembly.not_sketch: start a board sketch first (board.start_sketch)".into(),
         ));
     };
     let mut sketch = (**sketch).clone();
@@ -373,7 +375,7 @@ fn bound_expr(value_mm: f64) -> Expr {
 fn set_parameter(project: &mut Project, name: &ParamName, value_mm: f64) -> Result<bool> {
     let BoardShape::Sketch(sketch) = &mut project.board_shape else {
         return Err(Error::Conflict(
-            "housing.not_sketch: start a board sketch first (board.start_sketch)".into(),
+            "assembly.not_sketch: start a board sketch first (board.start_sketch)".into(),
         ));
     };
     let param = sketch
@@ -382,13 +384,13 @@ fn set_parameter(project: &mut Project, name: &ParamName, value_mm: f64) -> Resu
         .find(|p| p.name == *name)
         .ok_or_else(|| {
             Error::NotFound(format!(
-                "housing.bind: the board has no parameter `{}`",
+                "assembly.bind: the board has no parameter `{}`",
                 name.0
             ))
         })?;
     if param.unit != ParamUnit::Mm {
         return Err(bad(format!(
-            "housing.bind: `{}` is not a length; only lengths are bound",
+            "assembly.bind: `{}` is not a length; only lengths are bound",
             name.0
         )));
     }
@@ -403,19 +405,19 @@ fn set_parameter(project: &mut Project, name: &ParamName, value_mm: f64) -> Resu
     Ok(true)
 }
 
-/// Apply a housing command to a candidate. The board solves again where a
+/// Apply an assembly command to a candidate. The board solves again where a
 /// command moved fixed geometry or set a parameter; dimensioned parts
 /// follow in the engine's `layout::dimensions::follow`.
 pub fn apply(
     project: &mut Project,
-    command: HousingCommand,
+    command: AssemblyCommand,
     board: Option<&dyn BoardShapeEvaluator>,
 ) -> Result<()> {
     match command {
-        HousingCommand::RecordLink { read } => {
-            if project.housing.is_some() {
+        AssemblyCommand::RecordLink { read } => {
+            if project.assembly_link.is_some() {
                 return Err(Error::Conflict(
-                    "housing.linked: an enclosure is linked already; relink it to change the \
+                    "assembly.linked: a linked design is linked already; relink it to change the \
                      file"
                         .into(),
                 ));
@@ -423,11 +425,11 @@ pub fn apply(
             check_read(&read)?;
             if !read.references.is_empty() || !read.bindings.is_empty() {
                 return Err(bad(
-                    "housing.read: a new link has no references or bindings yet",
+                    "assembly.read: a new link has no references or bindings yet",
                 ));
             }
-            project.housing = Some(Box::new(HousingLink {
-                enclosure_hint: read.enclosure_hint,
+            project.assembly_link = Some(Box::new(AssemblyLink {
+                assembly_hint: read.assembly_hint,
                 design_hint: read.design_hint,
                 component: read.component,
                 file_sha256: read.file_sha256,
@@ -442,23 +444,23 @@ pub fn apply(
             }));
             Ok(())
         }
-        HousingCommand::RecordUpdate { read } => update(project, read, board),
-        HousingCommand::RecordReference { reference } => {
+        AssemblyCommand::RecordUpdate { read } => update(project, read, board),
+        AssemblyCommand::RecordReference { reference } => {
             let link = link_mut(project)?;
-            if link.references.len() >= MAX_HOUSING_REFS {
+            if link.references.len() >= MAX_FOLLOWED_FACES {
                 return Err(Error::Limit(format!(
-                    "housing.limit: at most {MAX_HOUSING_REFS} references"
+                    "assembly.limit: at most {MAX_FOLLOWED_FACES} references"
                 )));
             }
             if !geometry_ok(&reference.geometry) {
                 return Err(Error::Unsupported(
-                    "housing.reference: only a face square to the board (a line) or a vertical \
+                    "assembly.reference: only a face square to the board (a line) or a vertical \
                      cylinder (its axis point) is followed"
                         .into(),
                 ));
             }
             if !reference.body.valid() || !reference.face.valid() || !name_ok(&reference.name) {
-                return Err(bad("housing.reference: a body, a face, a name and a pick"));
+                return Err(bad("assembly.reference: a body, a face, a name and a pick"));
             }
             check_built_on(&reference.built_on)?;
             let pick = nm3(reference.pick)?;
@@ -468,15 +470,15 @@ pub fn apply(
                 .any(|r| r.body == reference.body && r.face == reference.face)
             {
                 return Err(Error::Conflict(format!(
-                    "housing.reference: {} is followed already",
+                    "assembly.reference: {} is followed already",
                     reference.name
                 )));
             }
-            let id = HousingRefId(link.next_ref);
+            let id = FollowedFaceId(link.next_ref);
             link.next_ref = link
                 .next_ref
                 .checked_add(1)
-                .ok_or_else(|| Error::Limit("housing.limit: reference ids exhausted".into()))?;
+                .ok_or_else(|| Error::Limit("assembly.limit: reference ids exhausted".into()))?;
             let evaluator = evaluator(board)?;
             let geometry = reference.geometry;
             let owned = edit_fixed(
@@ -489,8 +491,8 @@ pub fn apply(
             let sketch = owned
                 .into_iter()
                 .next()
-                .ok_or_else(|| bad("housing.reference: the evaluator made no geometry"))?;
-            link_mut(project)?.references.push(HousingRef {
+                .ok_or_else(|| bad("assembly.reference: the evaluator made no geometry"))?;
+            link_mut(project)?.references.push(FollowedFace {
                 id,
                 body: reference.body,
                 face: reference.face,
@@ -504,14 +506,14 @@ pub fn apply(
             });
             Ok(())
         }
-        HousingCommand::RemoveReference { id } => {
+        AssemblyCommand::RemoveReference { id } => {
             let link = link_mut(project)?;
             let index = link
                 .references
                 .iter()
                 .position(|r| r.id == id)
                 .ok_or_else(|| {
-                    Error::NotFound(format!("housing.reference: no housing reference {}", id.0))
+                    Error::NotFound(format!("assembly.reference: no followed face {}", id.0))
                 })?;
             let gone = link.references.remove(index);
             let evaluator = evaluator(board)?;
@@ -524,14 +526,14 @@ pub fn apply(
             )?;
             Ok(())
         }
-        HousingCommand::RecordBinding { binding } => {
-            if !binding.board_param.valid() || !name_ok(&binding.housing_param) {
+        AssemblyCommand::RecordBinding { binding } => {
+            if !binding.board_param.valid() || !name_ok(&binding.assembly_param) {
                 return Err(bad(
-                    "housing.bind: a board parameter and an enclosure parameter",
+                    "assembly.bind: a board parameter and a linked design parameter",
                 ));
             }
             if binding.value.abs().get() > MAX_VALUE_NM {
-                return Err(bad("housing.bind: the value is out of range"));
+                return Err(bad("assembly.bind: the value is out of range"));
             }
             let link = link_mut(project)?;
             if link
@@ -540,13 +542,13 @@ pub fn apply(
                 .any(|b| b.board_param == binding.board_param)
             {
                 return Err(Error::Conflict(format!(
-                    "housing.bind: `{}` is bound already",
+                    "assembly.bind: `{}` is bound already",
                     binding.board_param.0
                 )));
             }
-            if link.bindings.len() >= MAX_HOUSING_BINDINGS {
+            if link.bindings.len() >= MAX_ASSEMBLY_BINDINGS {
                 return Err(Error::Limit(format!(
-                    "housing.limit: at most {MAX_HOUSING_BINDINGS} bindings"
+                    "assembly.limit: at most {MAX_ASSEMBLY_BINDINGS} bindings"
                 )));
             }
             link.bindings.push(binding.clone());
@@ -554,22 +556,22 @@ pub fn apply(
             resolve_board(project, board)?;
             Ok(())
         }
-        HousingCommand::Unbind { board_param } => {
+        AssemblyCommand::Unbind { board_param } => {
             let link = link_mut(project)?;
             let before = link.bindings.len();
             link.bindings.retain(|b| b.board_param != board_param);
             if link.bindings.len() == before {
                 return Err(Error::NotFound(format!(
-                    "housing.bind: `{}` is not bound",
+                    "assembly.bind: `{}` is not bound",
                     board_param.0
                 )));
             }
             Ok(())
         }
-        HousingCommand::Unlink => {
-            if project.housing.take().is_none() {
+        AssemblyCommand::Unlink => {
+            if project.assembly_link.take().is_none() {
                 return Err(Error::Conflict(
-                    "housing.unlinked: no enclosure is linked".into(),
+                    "assembly.unlinked: no linked design is linked".into(),
                 ));
             }
             Ok(())
@@ -592,19 +594,18 @@ fn sorted<T: Ord>(mut items: Vec<T>) -> Vec<T> {
     items
 }
 
-/// `housing.record_update`.
+/// `assembly.record_update`.
 fn update(
     project: &mut Project,
-    read: HousingRead,
+    read: AssemblyRead,
     board: Option<&dyn BoardShapeEvaluator>,
 ) -> Result<()> {
     check_read(&read)?;
-    let link = project
-        .housing
-        .as_deref()
-        .cloned()
-        .ok_or_else(|| Error::Conflict("housing.unlinked: no enclosure is linked".into()))?;
-    // The enclosure changed while it still holds an older board: the two
+    let link =
+        project.assembly_link.as_deref().cloned().ok_or_else(|| {
+            Error::Conflict("assembly.unlinked: no linked design is linked".into())
+        })?;
+    // The linked design changed while it still holds an older board: the two
     // no longer agree on the board, so nothing of it is applied.
     if read.file_sha256 != link.file_sha256
         && matches!(
@@ -614,11 +615,11 @@ fn update(
     {
         return Err(Error::Conflict(format!(
             "{}: {}",
-            findings::HOUSING_BOTH_CHANGED,
-            findings::housing_both_changed().message
+            findings::ASSEMBLY_BOTH_CHANGED,
+            findings::assembly_both_changed().message
         )));
     }
-    let ids: BTreeSet<HousingRefId> = read.references.iter().map(|r| r.id).collect();
+    let ids: BTreeSet<FollowedFaceId> = read.references.iter().map(|r| r.id).collect();
     if ids.len() != read.references.len()
         || read
             .references
@@ -626,7 +627,7 @@ fn update(
             .any(|r| !link.references.iter().any(|h| h.id == r.id))
     {
         return Err(bad(
-            "housing.read: the read names each of the link's references once",
+            "assembly.read: the read names each of the link's references once",
         ));
     }
     let mut next = link.clone();
@@ -663,7 +664,7 @@ fn update(
             }
             None => {
                 reference.status = ReferenceStatus::Lost;
-                reference.note = "the enclosure was read without it".into();
+                reference.note = "the linked design was read without it".into();
             }
         }
     }
@@ -676,15 +677,15 @@ fn update(
             .and_then(|b| b.value_mm)
             .ok_or_else(|| {
                 Error::NotFound(format!(
-                    "housing.bind: the enclosure no longer has parameter `{}` that board \
+                    "assembly.bind: the linked design no longer has parameter `{}` that board \
                      parameter `{}` follows; unbind it first",
-                    binding.housing_param, binding.board_param.0
+                    binding.assembly_param, binding.board_param.0
                 ))
             })?;
         binding.value = Nm::from_mm_f64_rounded(value)?;
         set.push((binding.board_param.clone(), binding.value.to_mm_f64()));
     }
-    next.enclosure_hint = read.enclosure_hint;
+    next.assembly_hint = read.assembly_hint;
     next.design_hint = read.design_hint;
     next.component = read.component;
     next.file_sha256 = read.file_sha256;
@@ -706,7 +707,7 @@ fn update(
     } else if reshaped {
         resolve_board(project, board)?;
     }
-    project.housing = Some(Box::new(next));
+    project.assembly_link = Some(Box::new(next));
     Ok(())
 }
 
@@ -726,12 +727,12 @@ fn owner_words(project: &Project, token: &str) -> (String, Vec<ObjectRef>, bool)
     }
 }
 
-/// The enclosure features whose datum no longer resolves on the board,
-/// checked by the slot the enclosure's link names (slots are never
+/// The linked design features whose datum no longer resolves on the board,
+/// checked by the slot the linked design's link names (slots are never
 /// reused): the slot is retired or its datum lost, or the last publish no
 /// longer carries it.
 pub fn broken(project: &Project) -> Vec<&Consumer> {
-    let Some(link) = project.housing.as_deref() else {
+    let Some(link) = project.assembly_link.as_deref() else {
         return Vec::new();
     };
     let Ok(table) = super::list::table(project) else {
@@ -757,10 +758,10 @@ pub fn broken(project: &Project) -> Vec<&Consumer> {
         .collect()
 }
 
-/// Whether the enclosure holds the board's last published design.
+/// Whether the linked design holds the board's last published design.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Agreement {
-    /// Not known: the enclosure's link keeps no hash, or nothing was
+    /// Not known: the linked design's link keeps no hash, or nothing was
     /// published with one.
     Unknown,
     /// It holds the last publish.
@@ -770,7 +771,7 @@ pub enum Agreement {
     Older { revision: Option<u32> },
 }
 
-/// Whether the board design an enclosure holds (`held`, the SHA-256 on its
+/// Whether the board design a linked design holds (`held`, the SHA-256 on its
 /// link) is the board's last publish: the older-board check.
 pub fn agreement(project: &Project, held: Option<ContentHash>) -> Agreement {
     let (Some(held), Some(record)) = (held, project.interface.published.as_ref()) else {
@@ -814,7 +815,7 @@ fn body_words(project: &Project, body: &str) -> (String, Vec<ObjectRef>) {
     }
 }
 
-/// A datum's display name now, or as the enclosure last read it.
+/// A datum's display name now, or as the linked design last read it.
 fn datum_words(project: &Project, datum: crate::model::interface::DatumId, read: &str) -> String {
     super::list::table(project)
         .ok()
@@ -825,8 +826,8 @@ fn datum_words(project: &Project, datum: crate::model::interface::DatumId, read:
         .unwrap_or_else(|| read.to_owned())
 }
 
-/// `housing.cycle`'s sentence: what follows what, in both files' words.
-fn cycle_words(project: &Project, link: &HousingLink, cycle: &HousingCycle) -> String {
+/// `assembly.cycle`'s sentence: what follows what, in both files' words.
+fn cycle_words(project: &Project, link: &AssemblyLink, cycle: &AssemblyCycle) -> String {
     let reference = link.references.iter().find(|r| r.id == cycle.reference);
     let reference_name = reference.map_or("geometry", |r| r.name.as_str());
     let read = reference
@@ -834,14 +835,17 @@ fn cycle_words(project: &Project, link: &HousingLink, cycle: &HousingCycle) -> S
         .map_or("a datum", |c| c.name.as_str());
     let datum = datum_words(project, cycle.datum, read);
     let tail = match cycle.via {
-        UseKind::Sketch => format!("and the enclosure builds ‘{}’ from {datum}", cycle.feature),
+        UseKind::Sketch => format!(
+            "and the linked design builds ‘{}’ from {datum}",
+            cycle.feature
+        ),
         UseKind::Joint => format!(
-            "and the enclosure places the board by {datum} (‘{}’)",
+            "and the linked design places the board by {datum} (‘{}’)",
             cycle.feature
         ),
     };
     format!(
-        "{} follows the enclosure's {reference_name}, {tail}. Break the loop: stop following \
+        "{} follows the linked design's {reference_name}, {tail}. Break the loop: stop following \
          {reference_name}, or build ‘{}’ in SolidCraft without {datum}",
         capitalised(&datum),
         cycle.feature
@@ -856,11 +860,11 @@ fn capitalised(text: &str) -> String {
     }
 }
 
-/// The enclosure link's findings: lost and inexact housing references, and
-/// enclosure features whose datum no longer resolves on the board. Each
+/// The assembly link's findings: lost and inexact followed faces, and
+/// linked design features whose datum no longer resolves on the board. Each
 /// blocks fabrication output and is never waived.
 pub fn checks(project: &Project) -> Vec<Finding> {
-    let Some(link) = project.housing.as_deref() else {
+    let Some(link) = project.assembly_link.as_deref() else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -869,16 +873,16 @@ pub fn checks(project: &Project) -> Vec<Finding> {
         match r.status {
             ReferenceStatus::Resolved => {}
             ReferenceStatus::Lost => out.push(Finding::new(
-                findings::HOUSING_REFERENCE_LOST,
+                findings::ASSEMBLY_REFERENCE_LOST,
                 if note.is_empty() {
                     format!(
-                        "The board follows the enclosure's {}, which is no longer there. Pick it \
+                        "The board follows the linked design's {}, which is no longer there. Pick it \
                          again, or stop following it",
                         r.name
                     )
                 } else {
                     format!(
-                        "The board follows the enclosure's {}, which is no longer there: {note}. \
+                        "The board follows the linked design's {}, which is no longer there: {note}. \
                          Pick it again, or stop following it",
                         r.name
                     )
@@ -886,9 +890,9 @@ pub fn checks(project: &Project) -> Vec<Finding> {
                 vec![ObjectRef::Board],
             )),
             ReferenceStatus::Inexact => out.push(Finding::new(
-                findings::HOUSING_REFERENCE_INEXACT,
+                findings::ASSEMBLY_REFERENCE_INEXACT,
                 format!(
-                    "The board follows the enclosure's {}, which was found again only by its \
+                    "The board follows the linked design's {}, which was found again only by its \
                      shape{}. Check it, or pick it again",
                     r.name,
                     if note.is_empty() {
@@ -921,7 +925,7 @@ pub fn checks(project: &Project) -> Vec<Finding> {
                 .to_owned();
             (format!("{part} was deleted"), part)
         };
-        out.push(findings::housing_reference_lost(
+        out.push(findings::assembly_reference_lost(
             &format!("‘{}’", c.feature),
             &c.name,
             &cause,
@@ -934,23 +938,23 @@ pub fn checks(project: &Project) -> Vec<Finding> {
 }
 
 /// The two-way check's findings from what the board last read (slice
-/// B5): the enclosure holds an older board, an enclosure feature is on a
+/// B5): the linked design holds an older board, a linked design feature is on a
 /// face no slot carries, and loops between the two files.
-fn two_way(project: &Project, link: &HousingLink) -> Vec<Finding> {
+fn two_way(project: &Project, link: &AssemblyLink) -> Vec<Finding> {
     let mut out = Vec::new();
     if let Agreement::Older { revision } = agreement(project, link.board_sha256) {
-        out.push(findings::housing_older_board(revision));
+        out.push(findings::assembly_older_board(revision));
     }
     for u in &link.unexported {
         let (part, objects) = body_words(project, &u.body);
-        out.push(findings::housing_unexported_face(
+        out.push(findings::assembly_unexported_face(
             &format!("‘{}’", u.feature),
             &part,
             objects,
         ));
     }
     for cycle in &link.cycles {
-        out.push(findings::housing_cycle(
+        out.push(findings::assembly_cycle(
             &cycle_words(project, link, cycle),
             vec![ObjectRef::Board],
         ));
@@ -958,29 +962,29 @@ fn two_way(project: &Project, link: &HousingLink) -> Vec<Finding> {
     out
 }
 
-/// What `housing.status` reads, most serious first.
+/// What `assembly.status` reads, most serious first.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LinkState {
-    /// No enclosure is linked.
+    /// No linked design is linked.
     Unlinked,
     /// A reference no longer resolves, in either direction: fabrication
     /// output is blocked.
     BrokenReference,
-    /// The board and the enclosure follow each other in a loop:
+    /// The board and the linked design follow each other in a loop:
     /// fabrication output is blocked.
     Cycle,
-    /// The enclosure file is not where the request said; the board uses
+    /// The linked design file is not where the request said; the board uses
     /// its snapshot.
     Missing,
-    /// The enclosure changed and still holds an older board: they no
+    /// The linked design changed and still holds an older board: they no
     /// longer agree.
     BothChanged,
-    /// The enclosure changed since the board read it.
+    /// The linked design changed since the board read it.
     Changed,
-    /// The enclosure still holds an older published board.
+    /// The linked design still holds an older published board.
     OlderBoard,
-    /// The board holds what the enclosure holds.
+    /// The board holds what the linked design holds.
     InSync,
     /// Linked; the file was not checked (no path was given).
     Linked,
@@ -990,20 +994,20 @@ impl LinkState {
     /// The words the Board card shows.
     pub fn words(self) -> &'static str {
         match self {
-            Self::Unlinked => "no enclosure",
+            Self::Unlinked => "no linked design",
             Self::BrokenReference => "broken reference",
-            Self::Cycle => "board and enclosure in a loop",
-            Self::Missing => "enclosure missing",
+            Self::Cycle => "board and linked design in a loop",
+            Self::Missing => "linked design missing",
             Self::BothChanged => "both changed",
-            Self::Changed => "enclosure changed",
-            Self::OlderBoard => "enclosure holds an older board",
+            Self::Changed => "linked design changed",
+            Self::OlderBoard => "linked design holds an older board",
             Self::InSync => "in sync",
             Self::Linked => "linked",
         }
     }
 }
 
-/// What the host found of the enclosure file for `housing.status`.
+/// What the host found of the linked design file for `assembly.status`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileCheck {
     /// No path was given; the file was not read.
@@ -1013,29 +1017,29 @@ pub enum FileCheck {
     Found(ContentHash),
 }
 
-/// `housing.status`: the link's state and its findings.
+/// `assembly.status`: the link's state and its findings.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct HousingStatus {
+pub struct AssemblyStatus {
     pub state: LinkState,
     pub words: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enclosure_hint: Option<String>,
+    pub assembly_hint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub design_hint: Option<String>,
-    /// The hash the board last read, which `housing.update` expects when
+    /// The hash the board last read, which `assembly.update` expects when
     /// the file has not changed since.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_sha256: Option<ContentHash>,
     pub findings: Vec<Finding>,
 }
 
-/// The link's status, given what the host found of the enclosure file.
-pub fn status(project: &Project, file: FileCheck) -> HousingStatus {
-    let Some(link) = project.housing.as_deref() else {
-        return HousingStatus {
+/// The link's status, given what the host found of the linked design file.
+pub fn status(project: &Project, file: FileCheck) -> AssemblyStatus {
+    let Some(link) = project.assembly_link.as_deref() else {
+        return AssemblyStatus {
             state: LinkState::Unlinked,
             words: LinkState::Unlinked.words().into(),
-            enclosure_hint: None,
+            assembly_hint: None,
             design_hint: None,
             file_sha256: None,
             findings: Vec::new(),
@@ -1043,7 +1047,8 @@ pub fn status(project: &Project, file: FileCheck) -> HousingStatus {
     };
     let mut findings = checks(project);
     let broken = findings.iter().any(|f| {
-        f.code == findings::HOUSING_REFERENCE_LOST || f.code == findings::HOUSING_REFERENCE_INEXACT
+        f.code == findings::ASSEMBLY_REFERENCE_LOST
+            || f.code == findings::ASSEMBLY_REFERENCE_INEXACT
     });
     let cycle = !link.cycles.is_empty();
     let older = matches!(
@@ -1062,26 +1067,26 @@ pub fn status(project: &Project, file: FileCheck) -> HousingStatus {
         FileCheck::NotChecked => LinkState::Linked,
     };
     match file {
-        FileCheck::Missing => findings.push(findings::housing_missing()),
+        FileCheck::Missing => findings.push(findings::assembly_missing()),
         _ if changed && older => {
             // Both moved on since they last agreed: one finding says so.
-            findings.retain(|f| f.code != findings::HOUSING_OLDER_BOARD);
-            findings.push(findings::housing_both_changed());
+            findings.retain(|f| f.code != findings::ASSEMBLY_OLDER_BOARD);
+            findings.push(findings::assembly_both_changed());
         }
-        _ if changed => findings.push(findings::housing_stale()),
+        _ if changed => findings.push(findings::assembly_stale()),
         _ => {}
     }
-    HousingStatus {
+    AssemblyStatus {
         state,
         words: state.words().into(),
-        enclosure_hint: Some(link.enclosure_hint.clone()),
+        assembly_hint: Some(link.assembly_hint.clone()),
         design_hint: Some(link.design_hint.clone()),
         file_sha256: Some(link.file_sha256),
         findings,
     }
 }
 
-/// How one board object would change in a housing update.
+/// How one board object would change in an assembly update.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "change")]
 pub enum Motion {
@@ -1101,7 +1106,7 @@ pub enum ObjectKind {
     Parameter,
 }
 
-/// One board object a housing update would move.
+/// One board object an assembly update would move.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ObjectChange {
     pub kind: ObjectKind,
@@ -1115,10 +1120,10 @@ pub struct ObjectChange {
     pub objects: Vec<ObjectRef>,
 }
 
-/// One housing reference's row in the preview.
+/// One followed face's row in the preview.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ReferenceChange {
-    pub id: HousingRefId,
+    pub id: FollowedFaceId,
     pub name: String,
     pub from: ReferenceStatus,
     pub to: ReferenceStatus,
@@ -1128,21 +1133,21 @@ pub struct ReferenceChange {
     pub summary: String,
 }
 
-/// `housing.preview`: what `housing.update` (or `housing.relink`) would
+/// `assembly.preview`: what `assembly.update` (or `assembly.relink`) would
 /// change, without changing anything.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct HousingPreview {
+pub struct AssemblyPreview {
     /// The document revision the preview was made at.
     pub document_revision: u64,
-    /// The enclosure file's hash now: `housing.update` takes it as
+    /// The linked design file's hash now: `assembly.update` takes it as
     /// `expect_hash`, and is refused when the file changed since.
     pub expect_hash: ContentHash,
-    /// The enclosure changed since the board last read it.
+    /// The linked design changed since the board last read it.
     pub changed: bool,
     pub references: Vec<ReferenceChange>,
     /// Board edges, holes, parts and parameters that would move.
     pub objects: Vec<ObjectChange>,
-    /// Enclosure features newly using, or no longer using, the board.
+    /// Linked design features newly using, or no longer using, the board.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub consumers: Vec<String>,
     /// Why the update would be refused (the board would not solve, or
@@ -1150,7 +1155,7 @@ pub struct HousingPreview {
     /// nothing else is listed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
-    /// The two-way check after the update (slice B5): the enclosure holds
+    /// The two-way check after the update (slice B5): the linked design holds
     /// an older board, features on unexported faces, loops; or, refused,
     /// both changed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1197,13 +1202,13 @@ fn motion(a: (Point, Point, f64), b: (Point, Point, f64)) -> Option<Motion> {
 }
 
 /// The preview's rows: `before` is the document, `after` the document
-/// with the read applied (`housing.record_update` on a copy).
+/// with the read applied (`assembly.record_update` on a copy).
 pub fn diff(
     before: &Project,
     after: &Project,
     document_revision: u64,
     expect_hash: ContentHash,
-) -> HousingPreview {
+) -> AssemblyPreview {
     let mut objects = Vec::new();
     let solved = |p: &Project| match &p.board_shape {
         BoardShape::Sketch(s) => Some(s.solved.clone()),
@@ -1303,7 +1308,10 @@ pub fn diff(
     let mut references = Vec::new();
     let mut consumers = Vec::new();
     let mut changed = false;
-    if let (Some(a), Some(b)) = (before.housing.as_deref(), after.housing.as_deref()) {
+    if let (Some(a), Some(b)) = (
+        before.assembly_link.as_deref(),
+        after.assembly_link.as_deref(),
+    ) {
         changed = a.file_sha256 != expect_hash;
         for r in &a.references {
             let Some(s) = b.references.iter().find(|s| s.id == r.id) else {
@@ -1343,11 +1351,11 @@ pub fn diff(
         }
     }
     let findings = after
-        .housing
+        .assembly_link
         .as_deref()
         .map(|link| two_way(after, link))
         .unwrap_or_default();
-    HousingPreview {
+    AssemblyPreview {
         document_revision,
         expect_hash,
         changed,
@@ -1365,19 +1373,19 @@ pub fn refused(
     document_revision: u64,
     expect_hash: ContentHash,
     error: &Error,
-) -> HousingPreview {
-    HousingPreview {
+) -> AssemblyPreview {
+    AssemblyPreview {
         document_revision,
         expect_hash,
         changed: project
-            .housing
+            .assembly_link
             .as_deref()
             .is_some_and(|l| l.file_sha256 != expect_hash),
         references: Vec::new(),
         objects: Vec::new(),
         consumers: Vec::new(),
-        findings: if error.rule() == Some(findings::HOUSING_BOTH_CHANGED) {
-            vec![findings::housing_both_changed()]
+        findings: if error.rule() == Some(findings::ASSEMBLY_BOTH_CHANGED) {
+            vec![findings::assembly_both_changed()]
         } else {
             Vec::new()
         },
@@ -1386,9 +1394,9 @@ pub fn refused(
 }
 
 /// Validate a stored link (document decode and every edit).
-pub fn check_link(link: &HousingLink) -> Result<()> {
-    let read = HousingRead {
-        enclosure_hint: link.enclosure_hint.clone(),
+pub fn check_link(link: &AssemblyLink) -> Result<()> {
+    let read = AssemblyRead {
+        assembly_hint: link.assembly_hint.clone(),
         design_hint: link.design_hint.clone(),
         component: link.component.clone(),
         file_sha256: link.file_sha256,
@@ -1407,33 +1415,35 @@ pub fn check_link(link: &HousingLink) -> Result<()> {
             .any(|c| !name_ok(&c.feature) || !link.references.iter().any(|r| r.id == c.reference))
     {
         return Err(bad(
-            "housing.cycle: loops name the link's references and printable features",
+            "assembly.cycle: loops name the link's references and printable features",
         ));
     }
-    if link.references.len() > MAX_HOUSING_REFS || link.bindings.len() > MAX_HOUSING_BINDINGS {
+    if link.references.len() > MAX_FOLLOWED_FACES || link.bindings.len() > MAX_ASSEMBLY_BINDINGS {
         return Err(Error::Limit(
-            "housing.limit: too many references or bindings".into(),
+            "assembly.limit: too many references or bindings".into(),
         ));
     }
     let mut ids = BTreeSet::new();
     for r in &link.references {
         if r.id.0 == 0 || r.id.0 >= link.next_ref || !ids.insert(r.id) {
             return Err(bad(
-                "housing.reference: reference ids are unique and allocated",
+                "assembly.reference: reference ids are unique and allocated",
             ));
         }
         if !geometry_ok(&r.geometry) || !name_ok(&r.name) || r.note.len() > 1024 {
-            return Err(bad("housing.reference: a bad trace or name"));
+            return Err(bad("assembly.reference: a bad trace or name"));
         }
         check_built_on(&r.built_on)?;
     }
     let mut params = BTreeSet::new();
     for b in &link.bindings {
         if !params.insert(&b.board_param)
-            || !name_ok(&b.housing_param)
+            || !name_ok(&b.assembly_param)
             || b.value.abs().get() > MAX_VALUE_NM
         {
-            return Err(bad("housing.bind: bindings name each board parameter once"));
+            return Err(bad(
+                "assembly.bind: bindings name each board parameter once",
+            ));
         }
     }
     Ok(())
@@ -1501,13 +1511,13 @@ fn datum_geometry(
     Ok(out)
 }
 
-/// The datums that follow housing reference `reference` on the board: its
+/// The datums that follow followed face `reference` on the board: its
 /// trace moved by a small probe, the board and its dimensioned parts
 /// solved again on a copy, and every datum compared. `None` when the probe
 /// does not solve.
 fn followers(
     project: &Project,
-    reference: &HousingRef,
+    reference: &FollowedFace,
     evaluator: &dyn BoardShapeEvaluator,
     before: &std::collections::BTreeMap<crate::model::interface::DatumId, serde_json::Value>,
 ) -> Result<Option<BTreeSet<crate::model::interface::DatumId>>> {
@@ -1539,7 +1549,7 @@ fn followers(
 }
 
 /// Derive the link's loops after an edit (slice B5, the cycle graph): a
-/// housing reference whose enclosure geometry is built on a board datum
+/// followed face whose linked design geometry is built on a board datum
 /// (a sketch projecting it, a joint placing the board by it) is a loop
 /// when that datum follows the reference on the board. Only references
 /// built on a datum are probed, and only when the board, its parts, its
@@ -1550,17 +1560,17 @@ pub fn follow_cycles(
     project: &mut Project,
     board: Option<&dyn BoardShapeEvaluator>,
 ) -> Result<()> {
-    let Some(link) = project.housing.as_deref() else {
+    let Some(link) = project.assembly_link.as_deref() else {
         return Ok(());
     };
-    let probed: Vec<&HousingRef> = link
+    let probed: Vec<&FollowedFace> = link
         .references
         .iter()
         .filter(|r| r.status != ReferenceStatus::Lost && !r.built_on.is_empty())
         .collect();
     if probed.is_empty() {
         if !link.cycles.is_empty()
-            && let Some(link) = project.housing.as_deref_mut()
+            && let Some(link) = project.assembly_link.as_deref_mut()
         {
             link.cycles.clear();
         }
@@ -1571,7 +1581,7 @@ pub fn follow_cycles(
         && before.part_dimensions == project.part_dimensions
         && before.interface == project.interface
         && before
-            .housing
+            .assembly_link
             .as_deref()
             .map(|l| (&l.references, &l.consumers))
             == Some((&link.references, &link.consumers));
@@ -1589,7 +1599,7 @@ pub fn follow_cycles(
         };
         for used in &reference.built_on {
             if moved.contains(&used.datum) {
-                cycles.push(HousingCycle {
+                cycles.push(AssemblyCycle {
                     reference: reference.id,
                     datum: used.datum,
                     feature: used.feature.clone(),
@@ -1600,22 +1610,22 @@ pub fn follow_cycles(
     }
     let mut cycles = sorted(cycles);
     cycles.truncate(MAX_BUILT_ON);
-    if let Some(link) = project.housing.as_deref_mut() {
+    if let Some(link) = project.assembly_link.as_deref_mut() {
         link.cycles = cycles;
     }
     Ok(())
 }
 
-/// Refuse a board edit that moved or removed the geometry a housing
-/// reference owns: the enclosure drives it (`housing.driven_edge`). Only
-/// the enclosure link's own commands move it. Without the host's sketch
+/// Refuse a board edit that moved or removed the geometry an assembly
+/// reference owns: the linked design drives it (`assembly.driven_edge`). Only
+/// the assembly link's own commands move it. Without the host's sketch
 /// evaluator there is nothing to read it with.
 pub fn guard_driven(
     before: &Project,
     project: &Project,
     board: Option<&dyn BoardShapeEvaluator>,
 ) -> Result<()> {
-    let Some(link) = project.housing.as_deref() else {
+    let Some(link) = project.assembly_link.as_deref() else {
         return Ok(());
     };
     if link.references.is_empty() || before.board_shape == project.board_shape {
@@ -1638,16 +1648,16 @@ pub fn guard_driven(
     Ok(())
 }
 
-/// Refuse, before it runs, a board edit that names geometry a housing
-/// reference owns to move or delete it (`housing.driven_edge`), so the user
-/// reads why in the enclosure's terms rather than the sketch's.
+/// Refuse, before it runs, a board edit that names geometry an assembly
+/// reference owns to move or delete it (`assembly.driven_edge`), so the user
+/// reads why in the linked design's terms rather than the sketch's.
 pub fn guard_edits(
     project: &Project,
     edits: &[crate::layout::outline::BoardEdit],
     board: Option<&dyn BoardShapeEvaluator>,
 ) -> Result<()> {
     use crate::library::footprint_source::{SketchEdit, SketchRef};
-    let Some(link) = project.housing.as_deref() else {
+    let Some(link) = project.assembly_link.as_deref() else {
         return Ok(());
     };
     let (BoardShape::Sketch(sketch), Some(evaluator)) = (&project.board_shape, board) else {
@@ -1688,13 +1698,13 @@ pub fn guard_edits(
 // The host requests' parameters. Their words are in the request catalog
 // (the automation session's `Request::catalog`), not here: the MCP tool
 // list carries both, and its size is budgeted. Every request names the
-// enclosure (`path`) and the board's published design (`design`), so the
+// linked design (`path`) and the board's published design (`design`), so the
 // permission gate sees every file it reads.
 
-// `housing.follow`: follow the face `face` (persistent name) of enclosure
-// body `body`, picked at `pick` (enclosure frame, mm), named `name` for
-// people; or set board parameter `board_param` from the enclosure's length
-// parameter `housing_param`. One of the two. Plain strings here, checked
+// `assembly.follow`: follow the face `face` (persistent name) of linked design
+// body `body`, picked at `pick` (linked design frame, mm), named `name` for
+// people; or set board parameter `board_param` from the linked design's length
+// parameter `assembly_param`. One of the two. Plain strings here, checked
 // when read, keep the MCP tool list small.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -1712,11 +1722,11 @@ pub struct FollowParams {
     #[serde(default)]
     pub board_param: Option<String>,
     #[serde(default)]
-    pub housing_param: Option<String>,
+    pub assembly_param: Option<String>,
     pub expected_revision: u64,
 }
 
-// `housing.preview` (reads only).
+// `assembly.preview` (reads only).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewParams {
@@ -1724,7 +1734,7 @@ pub struct PreviewParams {
     pub design: String,
 }
 
-// `housing.update`: link the enclosure at `path` when none is linked;
+// `assembly.update`: link the linked design at `path` when none is linked;
 // else apply it at `expect_hash` (64 hex digits, from the preview),
 // relinking when `path` is another file.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -1740,6 +1750,6 @@ pub struct UpdateParams {
 /// A request's `expect_hash`, read.
 pub fn expected_hash(text: &str) -> Result<ContentHash> {
     ContentHash::parse(text).ok_or_else(|| {
-        bad("housing.expect_hash: expect_hash is the 64 hex digits housing.preview gave")
+        bad("assembly.expect_hash: expect_hash is the 64 hex digits assembly.preview gave")
     })
 }

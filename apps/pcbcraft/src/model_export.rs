@@ -35,7 +35,7 @@ const TIERS: [(Tier, &str, &str); 2] = [
     (
         Tier::Mechanical,
         "Mechanical: laminate, pads and parts",
-        "For an enclosure and for fit checks. Quick even on large boards.",
+        "For a linked design and for fit checks. Quick even on large boards.",
     ),
     (
         Tier::Full,

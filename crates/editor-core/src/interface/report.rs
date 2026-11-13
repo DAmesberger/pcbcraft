@@ -93,7 +93,7 @@ pub struct DatumChange {
     pub summary: String,
 }
 
-/// What a candidate publish would do to the linked enclosure's feature.
+/// What a candidate publish would do to the linked design's feature.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectKind {
@@ -108,10 +108,10 @@ pub enum EffectKind {
     UnexportedReference,
 }
 
-/// One enclosure feature the dry run reports, in the enclosure's own
+/// One linked design feature the dry run reports, in the linked design's own
 /// names.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct EnclosureEffect {
+pub struct AssemblyEffect {
     /// The feature's name in SolidCraft ("USB opening").
     pub feature: String,
     pub effect: EffectKind,
@@ -122,13 +122,13 @@ pub struct EnclosureEffect {
     pub message: String,
 }
 
-/// The dry run on a scratch copy of the linked enclosure (slice B4). The
-/// user's enclosure file is never touched.
+/// The dry run on a scratch copy of the linked design (slice B4). The
+/// user's linked design file is never touched.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct DryRun {
-    /// The enclosure file the copy was made from, as the link names it.
-    pub enclosure: String,
-    pub effects: Vec<EnclosureEffect>,
+    /// The linked design file the copy was made from, as the link names it.
+    pub linked_design: String,
+    pub effects: Vec<AssemblyEffect>,
 }
 
 /// `interface.publish_preview`: what publishing would change.

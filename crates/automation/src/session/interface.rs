@@ -31,15 +31,15 @@ impl Session {
             previous.as_ref(),
             self.engine.revision(),
         )?;
-        // With the linked enclosure named, the dry run on a scratch copy.
+        // With the linked design named, the dry run on a scratch copy.
         let project = self.engine.project_arc().clone();
-        if let (Some(enclosure), Some(design), Some(source_id)) = (
-            params.enclosure_path.as_deref(),
+        if let (Some(linked_design), Some(design), Some(source_id)) = (
+            params.assembly_path.as_deref(),
             params.path.as_deref(),
             project.interface.source_id,
         ) {
             let candidate = publish::candidate(&project, preview.tier, source_id)?;
-            preview.dry_run = self.dry_run(enclosure, design, candidate)?;
+            preview.dry_run = self.dry_run(linked_design, design, candidate)?;
         }
         Ok(serde_json::to_value(preview)?)
     }
@@ -91,10 +91,10 @@ impl Session {
             return Err(error.into());
         }
         let text = exported.sidecar.text()?;
-        // The hash SolidCraft keeps on an enclosure's link to the file: the
+        // The hash SolidCraft keeps on a linked design's link to the file: the
         // older-board check compares the two (slice B5).
         let written = match std::fs::read(&temporary) {
-            Ok(bytes) => pcbcraft_core::interface::housing::file_hash(&bytes),
+            Ok(bytes) => pcbcraft_core::interface::assembly_link::file_hash(&bytes),
             Err(error) => {
                 let _ = std::fs::remove_file(&temporary);
                 return Err(pcbcraft_io::Error::from(error).into());

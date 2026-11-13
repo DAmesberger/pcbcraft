@@ -101,7 +101,7 @@ mod tests {
         let document = json!({
             "asset": {"version": "2.0"},
             "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"mesh": 0}],
-            "meshes": [{"name": "Housing", "primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
+            "meshes": [{"name": "Assembly", "primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0}]}],
             "materials": [{"name": "Grey", "pbrMetallicRoughness": {"metallicFactor": 0.0}}],
             "buffers": [{"byteLength": bin.len()}],
             "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": at},
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn inspects_a_glb_without_changing_the_document() -> Fallible<()> {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("housing.glb");
+        let path = dir.path().join("assembly.glb");
         std::fs::write(&path, one_box_glb())?;
         let mut session = Session::new(Engine::demo()?);
         let before = session.dispatch(json!({"command": "project.inspect"}));
@@ -143,7 +143,7 @@ mod tests {
             "params": {"path": path.to_string_lossy(), "format": "gltf"}}));
         assert_eq!(reply["ok"], true, "{reply}");
         let result = &reply["result"];
-        assert_eq!(result["bodies"][0]["key"], "Housing");
+        assert_eq!(result["bodies"][0]["key"], "Assembly");
         assert_eq!(result["materials"][0]["name"], "Grey");
         let hi = &result["bounds_mm"][1];
         let near = |v: &Value, x: f64| v.as_f64().is_some_and(|v| (v - x).abs() < 1e-4);

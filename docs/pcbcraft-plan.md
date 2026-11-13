@@ -112,7 +112,7 @@ The board's flat bodies (laminate, copper, drills and films) are described once 
 
 The inspected source supports native persistence and assembly operations, but the occurrence-move command evaluates expressions into stored matrices. Its linked-design path also transfers evaluated solids rather than the full source feature history. Therefore, prototype persistent placement dependencies and native model composition first. Use existing suitable Solidcraft features where proven, or extend the shared engine APIs to support the required behavior; do not hide the gap behind numeric transforms or a new private 3D engine. See [integration research](solidcraft-interop-research.md).
 
-Sparksmith remains authoritative for electrical and PCB layout changes. Exported native models can be edited independently in Solidcraft; those edits do not automatically modify the PCB. Refreshing a generated model must not silently overwrite user-edited copies. Later linked enclosure updates and bidirectional conflict resolution are distinct from the first release's native parametric compatibility.
+Sparksmith remains authoritative for electrical and PCB layout changes. Exported native models can be edited independently in Solidcraft; those edits do not automatically modify the PCB. Refreshing a generated model must not silently overwrite user-edited copies. Later linked design updates and bidirectional conflict resolution are distinct from the first release's native parametric compatibility.
 
 STEP remains an optional interoperability export, produced through Solidcraft's exporter. Real copper geometry is in the first-release scope and the native model: traces, pads and zones have stackup-defined thickness, and plated holes/vias have barrel geometry. Solder joints and photorealistic materials remain later work. Rendering copper as flat decoration does not satisfy the requirement. See [copper performance research](copper-performance-research.md).
 
@@ -167,7 +167,7 @@ The PCB reference suite should include analytically known gaps and drill dimensi
 
 Milestone 0 should challenge four risks immediately: library identity/mapping changes on a routed sample; robust copper clearance/zone geometry; scalable volumetric copper display/picking/incremental updates; and native parametric Solidcraft composition, including top/bottom placement relationships. Estimate implementation effort after those probes. Solidcraft's historical agent-hour estimates are not a transferable schedule for a new EDA core.
 
-The second release prioritizes push-and-shove if it did not ship in the first edition; it is not an unscheduled backlog item. Additional improvements follow actual boards: broader component/footprint primitives, multi-sheet hierarchy, more copper layers, better import, and linked Solidcraft enclosure updates. Basic multi-unit symbols belong to the first edition. Hosted libraries, high-speed design, simulation and collaboration are separate later expansions.
+The second release prioritizes push-and-shove if it did not ship in the first edition; it is not an unscheduled backlog item. Additional improvements follow actual boards: broader component/footprint primitives, multi-sheet hierarchy, more copper layers, better import, and linked Solidcraft assembly updates. Basic multi-unit symbols belong to the first edition. Hosted libraries, high-speed design, simulation and collaboration are separate later expansions.
 
 ## Review decisions
 

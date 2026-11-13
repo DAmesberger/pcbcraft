@@ -51,7 +51,7 @@ pub enum BodyKind {
     Solder,
     /// The envelope in the component authoring preview.
     PartBody,
-    /// A body of a generated package model (moulding, housing, ceramic).
+    /// A body of a generated package model (moulding, case, ceramic).
     /// Its material is recorded per body (`models::MODEL_BODIES_KEY`).
     ModelBody,
     /// A lead, termination or exposed pad of a generated package model.

@@ -213,7 +213,7 @@ pub(super) fn words(
             })
             .unwrap_or_else(|| "Board · edge".into()),
         BoardRef::Board(_) => "Board · point".into(),
-        BoardRef::Housing(_) => "the housing".into(),
+        BoardRef::FollowedFace(_) => "the linked design".into(),
         BoardRef::Part(f) if f.is_model() => {
             dimensions::model_feature_words_with(project, f, local)
         }

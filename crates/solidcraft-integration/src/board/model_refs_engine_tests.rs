@@ -41,17 +41,17 @@ fn spec(bytes: &[u8]) -> PartSpec {
     let part = part_file::evaluate(bytes, &Default::default()).unwrap();
     let packed = asset(bytes);
     PartSpec {
-        name: "Housing".into(),
+        name: "Assembly".into(),
         designator_prefix: "J".into(),
-        source: "housing.solidcraft".into(),
+        source: "assembly.solidcraft".into(),
         model: PartModelSource::File {
-            name: "housing".into(),
+            name: "assembly".into(),
             definition: Box::new(ModelDefinition {
                 asset: AssetRef {
                     hash: packed.hash,
                     bytes: bytes.len() as u64,
                     media_type: MEDIA.into(),
-                    file_name: "housing.solidcraft".into(),
+                    file_name: "assembly.solidcraft".into(),
                 },
                 format: ModelFormat::Solidcraft,
                 bounds_nm: crate::test_units::bounds(part.bounds_mm),
@@ -95,8 +95,8 @@ fn right(engine: &Engine) -> Fallible<BoardRef> {
     Ok(BoardRef::Board(SketchRef::Curve(e.curve.clone())))
 }
 
-/// A sketched demo board with the box housing placed at (30, 20), and the
-/// housing's +x face (x = 2 in the part) named by `name`, picked at `pick`.
+/// A sketched demo board with the box assembly placed at (30, 20), and the
+/// assembly's +x face (x = 2 in the part) named by `name`, picked at `pick`.
 fn placed() -> Fallible<(Engine, Id, Vec<u8>, BoardRef)> {
     let mut engine = sketched()?;
     let (bytes, body) = boxed();
@@ -149,7 +149,7 @@ fn flush(face: BoardRef, edge: BoardRef) -> PartDimensionSpec {
 }
 
 /// Held flush to the right edge by its +x face (2 mm right of its origin),
-/// the housing's origin sits 2 mm inside the edge, and follows the edge
+/// the assembly's origin sits 2 mm inside the edge, and follows the edge
 /// when the board grows 10 mm wider. Undo takes the dimension and its
 /// trace away again.
 #[test]
@@ -194,7 +194,7 @@ fn a_part_held_by_its_face_follows_the_board_width() -> Fallible<()> {
 }
 
 /// A sloped face is refused when the dimension is added, with nothing
-/// changed: the housing tilted 30° about x by its model placement has no
+/// changed: the assembly tilted 30° about x by its model placement has no
 /// square ±y faces.
 #[test]
 fn a_dimension_to_a_sloped_face_is_refused() -> Fallible<()> {
@@ -244,7 +244,7 @@ fn a_dimension_to_a_sloped_face_is_refused() -> Fallible<()> {
     Ok(())
 }
 
-/// The next revision of the housing's whole library chain (model, package,
+/// The next revision of the assembly's whole library chain (model, package,
 /// footprint, binding, component), its part file `bytes`, appended as a
 /// library import appends one.
 fn revise(engine: &Engine, part: Id, bytes: &[u8]) -> Fallible<(Engine, ComponentRef)> {
@@ -325,7 +325,7 @@ fn reordered() -> Vec<u8> {
         .execute(
             "solid.box",
             &serde_json::json!({"corner": [-2, -1, 0], "length": 4, "width": 2, "height": 1,
-                "name": "Housing", "operation": "new_body"}),
+                "name": "Assembly", "operation": "new_body"}),
         )
         .unwrap();
     let body = made["created_bodies"][0].as_str().unwrap().to_owned();
@@ -338,7 +338,7 @@ fn reordered() -> Vec<u8> {
 }
 
 /// A library revision whose part file lost the face: the preview lists it
-/// first; applied, the reference is lost, the housing stays where it was
+/// first; applied, the reference is lost, the assembly stays where it was
 /// and fabrication output is blocked; undo restores everything.
 #[test]
 fn a_revision_that_loses_the_face_is_previewed_first_and_blocks_fab() -> Fallible<()> {

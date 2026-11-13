@@ -6,6 +6,7 @@ mod convert_v1;
 mod core_modules;
 mod f64_lengths;
 mod generators;
+mod generic_terms;
 mod kicad_compare;
 mod layers;
 mod licences;
@@ -79,6 +80,7 @@ fn run() -> Result<()> {
             licences::check()?;
             brand_crates::check()?;
             clean_room::check()?;
+            generic_terms::check()?;
             ui_containers::check()?;
             ui_forms::check()?;
             raw_keys::check()?;
@@ -124,6 +126,7 @@ fn run() -> Result<()> {
         "connectivity" => connectivity::check(),
         "f64-lengths" => f64_lengths::check(),
         "clean-room" => clean_room::check(),
+        "generic-terms" => generic_terms::check(),
         "licences --check" => licences::check(),
         "brand-crates" => brand_crates::check(),
         "ui-containers" => ui_containers::check(),
@@ -131,7 +134,7 @@ fn run() -> Result<()> {
         "raw-keys" => raw_keys::check(),
         _ => Err(
             "usage: cargo xtask ci | ci-native | board-parity | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
-             | licences --check | brand-crates | clean-room | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
+             | licences --check | brand-crates | clean-room | generic-terms | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
              | convert-v1 [--profile PROFILE.json] PATH… | kicad-compare [--design PATH]"
                 .into(),
         ),

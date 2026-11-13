@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case", tag = "target", deny_unknown_fields)]
 pub enum ExportTarget {
     /// Any dimensionable feature: a part face, edge or vertex, a pad, a
-    /// board-sketch point or curve. Never a housing reference.
+    /// board-sketch point or curve. Never a followed face.
     Feature { feature: BoardRef },
     /// A datum the instance's package revision declares (one not marked
     /// `external`, which the automatic rule already exports).
@@ -52,11 +52,11 @@ pub enum InterfaceCommand {
     },
     /// Stop exporting a datum and retire its slot, which is never used
     /// again. An automatic datum is withdrawn by switching its rule off.
-    /// The publish preview names the enclosure features that used it.
+    /// The publish preview names the linked design features that used it.
     #[serde(rename = "interface.unexport")]
     Unexport { datum: DatumId },
     /// Set a datum's display name, or with `None` go back to the derived
-    /// one. Never changes its token, slot or anything the enclosure sees
+    /// one. Never changes its token, slot or anything the linked design sees
     /// other than the label.
     #[serde(rename = "interface.rename")]
     Rename {
@@ -82,7 +82,7 @@ pub enum InterfaceCommand {
 
 // A new command chooses its permission class here.
 declare_classes!(InterfaceCommand {
-    Export "interface.export" Edit "Export to the enclosure",
+    Export "interface.export" Edit "Export to the linked design",
     Unexport "interface.unexport" Edit "Stop exporting a datum",
     Rename "interface.rename" Edit "Rename an exported datum",
     Auto "interface.auto" Edit "Switch an automatic export",
@@ -90,7 +90,7 @@ declare_classes!(InterfaceCommand {
 });
 
 /// `interface.publish_preview` (a host request; reads only): the diff
-/// against the last published revision and, when an enclosure is linked,
+/// against the last published revision and, when a linked design is linked,
 /// the dry run on a scratch copy of it (slices B3 and B4).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -105,11 +105,11 @@ pub struct PublishPreviewParams {
     /// changed.
     #[serde(default)]
     pub path: Option<String>,
-    /// The linked enclosure's file: with it (and `path`, the design it
+    /// The linked design's file: with it (and `path`, the design it
     /// links), the preview runs the dry run on a scratch copy of it and
-    /// names the enclosure features that would move or fail (slice B4).
+    /// names the linked design features that would move or fail (slice B4).
     #[serde(default)]
-    pub enclosure_path: Option<String>,
+    pub assembly_path: Option<String>,
 }
 
 /// `interface.publish` (a host request; Ask, because it writes files):

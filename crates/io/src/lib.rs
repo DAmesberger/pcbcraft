@@ -2,10 +2,10 @@
 //! recovery. Document meaning, versions and migrations stay in
 //! `pcbcraft_core::format`; this crate only moves bytes safely.
 pub mod artwork;
+pub mod assembly_link;
 pub mod fab_drawings;
 pub mod fabrication;
 mod former_name;
-pub mod housing;
 pub mod interface;
 pub mod library_folder;
 pub mod library_folder_index;

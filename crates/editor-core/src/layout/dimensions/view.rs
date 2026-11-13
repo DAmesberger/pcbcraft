@@ -142,7 +142,7 @@ pub fn reference_geometry(
             .into_iter()
             .find(|(c, _)| c == curve)
             .map(|(_, g)| g)?,
-        BoardRef::Board(_) | BoardRef::Housing(_) => return None,
+        BoardRef::Board(_) | BoardRef::FollowedFace(_) => return None,
         BoardRef::Part(f) => {
             let local = if f.is_model() {
                 model::find(project, f).and_then(|t| t.geometry)?

@@ -9,7 +9,7 @@ Every statement below is marked by where it comes from:
 - **Given**: from the lost earlier study, as summarised in the brief; not re-checked unless it says so.
 - **Estimate** and **Recommendation**: mine.
 
-**Decided 2026-11-12.** The founder approved every recommendation of this note: option 3 for the board's flat bodies (parts stay one Solidcraft design per package, shared by placements), the rule texts of 3.4, the slot interface in place of the full board and the persistent board design, datum solids in the enclosure for now, connector openings as package data from the datasheet's panel cutout, interface plus mechanical bodies as the default export tier (copper on request), live update over the control channel as a later opt-in per link, no upstream posting, the part cache later, and `MAX_TRACKS` kept at 2,000. The staged path in 3.2 is the plan of work.
+**Decided 2026-11-12.** The founder approved every recommendation of this note: option 3 for the board's flat bodies (parts stay one Solidcraft design per package, shared by placements), the rule texts of 3.4, the slot interface in place of the full board and the persistent board design, datum solids in the linked design for now, connector openings as package data from the datasheet's panel cutout, interface plus mechanical bodies as the default export tier (copper on request), live update over the control channel as a later opt-in per link, no upstream posting, the part cache later, and `MAX_TRACKS` kept at 2,000. The staged path in 3.2 is the plan of work.
 
 ---
 
@@ -17,7 +17,7 @@ Every statement below is marked by where it comes from:
 
 ### The question
 
-Should the live 3D board stop being a Solidcraft model (option 3), what should Solidcraft's engine still do, and how does a board take part in an enclosure assembly that follows it?
+Should the live 3D board stop being a Solidcraft model (option 3), what should Solidcraft's engine still do, and how does a board take part in a linked design assembly that follows it?
 
 ### Conclusions
 
@@ -25,25 +25,25 @@ Should the live 3D board stop being a Solidcraft model (option 3), what should S
 
 2. **A parity test alone does not keep two geometry paths together. A shared board plan does.** Both the mesher and the exact export must read one pure-data list of bodies (the "board plan": which prism, from which loops, between which heights, for which object). Then they can only differ in how they extrude the same loops, and that is what the parity test measures. Without the plan, option 3 is two builders that happen to agree today.
 
-3. **The lead's enclosure design does not work on today's Solidcraft as described, and the prototype shows why.** Three measured facts:
+3. **The lead's linked design does not work on today's Solidcraft as described, and the prototype shows why.** Three measured facts:
    - Only solid bodies cross a Solidcraft link. Construction planes, axes, sketches and parameters do not (read). "Datums" as the lead describes them have no carrier.
    - A linked face's name is a digest of its name in the board file, which contains a feature number. Deleting one unrelated part (J1) broke a reference to another part (R5) that had not changed (measured).
-   - Repeated parts are told apart only by their order. Deleting R4 moved the enclosure's reference from R5 to R2 **without any warning** (measured). This is the most serious finding: a silent wrong cutout.
+   - Repeated parts are told apart only by their order. Deleting R4 moved the linked design's reference from R5 to R2 **without any warning** (measured). This is the most serious finding: a silent wrong cutout.
 
-4. **A small interface design with stable slots fixes this without any Solidcraft change.** The prototype exports each datum as a named solid in a fixed slot; a deleted datum's slot stays used. Result (measured): J1 moved 2 mm, the enclosure cutout moved 2.0000 mm; R4 deleted, R5's reference stayed on R5; J1 deleted, the cutout was reported broken. The file is 11 KB, and export plus Update Links take about 50 ms, against 25–37 s for the full board.
+4. **A small interface design with stable slots fixes this without any Solidcraft change.** The prototype exports each datum as a named solid in a fixed slot; a deleted datum's slot stays used. Result (measured): J1 moved 2 mm, the linked design cutout moved 2.0000 mm; R4 deleted, R5's reference stayed on R5; J1 deleted, the cutout was reported broken. The file is 11 KB, and export plus Update Links take about 50 ms, against 25–37 s for the full board.
 
 5. **Keep the kernel for parts, but not at board-open time.** The lead is right that parts need the kernel (parametric parts, exact faces, STEP). The lead's either/or misses the middle: evaluate a part once per revision and keep its mesh and face table. Today about 4 s of every board build is part evaluation (read, `docs/3d-speed-profile.md`, 8 November build: 5.5 s with 20 parts, 1.2 s with none; today's mechanical subset builds in 5.3 s, measured).
 
-6. **Sparksmith still needs the engine, as a library off the interactive path.** It is needed for part models, STEP, the exact export, and reading and dry-running the enclosure. "Only the solver plus an export" is not possible, because the export is the engine: a mesh body can neither be linked nor written to STEP (read). An own renderer is not justified: frames take 1 ms (given) and the viewport crates do not depend on the kernel (read).
+6. **Sparksmith still needs the engine, as a library off the interactive path.** It is needed for part models, STEP, the exact export, and reading and dry-running the linked design. "Only the solver plus an export" is not possible, because the export is the engine: a mesh body can neither be linked nor written to STEP (read). An own renderer is not justified: frames take 1 ms (given) and the viewport crates do not depend on the kernel (read).
 
 ### Where I disagree with the lead
 
 | The lead said | Finding |
 | --- | --- |
-| The board exports as a component and the enclosure references its datums | Only solids cross a link today; names depend on feature numbers and on the order of repeated parts. Needs the slot interface, or upstream changes. |
+| The board exports as a component and the assembly references its datums | Only solids cross a link today; names depend on feature numbers and on the order of repeated parts. Needs the slot interface, or upstream changes. |
 | Upstream needs a link source revision, an `update_links` dry run and an exactness token | The pin already stores the file's SHA-256 on the link and reports `changed`; faces already carry `exact`. A dry run can run in Sparksmith's own engine on a copy. The real gaps are different (section 2.6). |
 | "Export-only" is right for the board but not for parts | Right conclusion, wrong framing: parts need the kernel per revision, not per board open. |
-| 3D only adds faces to reference | It also adds heights (keepouts, collisions) and a third model, the enclosure, which only the engine can evaluate. |
+| 3D only adds faces to reference | It also adds heights (keepouts, collisions) and a third model, the linked design, which only the engine can evaluate. |
 | It maps to RFC 0001 | RFC 0001 is a draft with nothing built. Its PCB payload is to be "defined with PCBCraft", which is upstream's own app, not Sparksmith. The plan must work on today's commands first. |
 | (9 November) The published board design is the full board | Update Links on the full ESP32 board took 17.1 s, and its names are the fragile ones. Publish the interface; offer the full board as an option. |
 | (Earlier study) 20,000 drills × 5 slabs in 135 ms | Not reproduced: 2.5–6.9 s with the mesher as it is; 0.53 s for one slab with 1 mm tiles. Still far faster than the kernel. The live laminate was one merged body for a while; it is one body per slab again (L1, see the [speed profile](../3d-speed-profile.md)), so the view peels it per dielectric. |
@@ -54,7 +54,7 @@ Should the live 3D board stop being a Solidcraft model (option 3), what should S
 - **Board plan**: pure data derived from the document; the only description of the board's flat bodies.
 - **Live 3D**: plan → meshes (option 3). Parts are Solidcraft models, one per package revision, prepared in the background and cached; placed by the document's own transforms.
 - **Exact board**: plan → Solidcraft commands, only for export and as the test reference.
-- **Interface design**: a small `.solidcraft` with slot-stable datum bodies, optionally followed by the mechanical or full board. This is what an enclosure links.
+- **Interface design**: a small `.solidcraft` with slot-stable datum bodies, optionally followed by the mechanical or full board. This is what an assembly links.
 - **Links**: reviewed in both directions, bound to revisions, with Sparksmith's in-process engine doing the dry run. `.craftx` replaces the file format when upstream builds it.
 
 ### Order of work (agent hours, estimates)
@@ -67,11 +67,11 @@ Should the live 3D board stop being a Solidcraft model (option 3), what should S
 | A2 | Direct mesher behind a setting, parity gate | 14–20 |
 | B3 | Interface export with slots: the prototype target | 10–12 |
 | A3–A4 | Parts without a board design; the live native board removed | 14–20 |
-| B4–B6 | Enclosure link, two-way check, UI | 30–36 |
+| B4–B6 | Assembly link, two-way check, UI | 30–36 |
 | A5, B7, B9 | Export tiers, live channel, VM run | 22–27 |
 | Later | Part cache, scale work, `.craftx` | 28–42 |
 
-About 124–157 hours to a reviewed two-way enclosure link on a direct-meshed board. The earlier housing plan's 14-hour "persistent board design" slice is no longer needed.
+About 124–157 hours to a reviewed two-way assembly link on a direct-meshed board. The earlier assembly plan's 14-hour "persistent board design" slice is no longer needed.
 
 ---
 
@@ -136,24 +136,24 @@ Two corrections to the earlier study's figures:
 
 **"The document is the single source; 2D and 3D are views; 3D only adds faces to reference."** Mostly agreed. Two additions:
 
-- 3D adds heights, not only faces: keepout heights, collisions with an enclosure, the realistic view.
-- The enclosure is a third model that only the engine can evaluate. The engine therefore stays in the interactive loop for enclosure previews (not per edit).
+- 3D adds heights, not only faces: keepout heights, collisions with a linked design, the realistic view.
+- The linked design is a third model that only the engine can evaluate. The engine therefore stays in the interactive loop for linked design previews (not per edit).
 
-**"The board publishes a named, versioned interface of datums; the enclosure references them."** The direction is right and is what Part 2 designs. As stated it assumes carriers that do not exist today:
+**"The board publishes a named, versioned interface of datums; the assembly references them."** The direction is right and is what Part 2 designs. As stated it assumes carriers that do not exist today:
 
 1. *Datums.* Planes, axes, points, sketches and parameters do not cross `component.insert_design`. Only solid bodies do.
-2. *Named.* A face in the enclosure is called `F3:link:<digest>`, where the digest is of the face's name in the board file, such as `F4:start`. The 4 is a feature number. In the saved ESP32 board J1's shell is feature 4 and a resistor package's body is feature 39 (measured, `logs/names.log`); definitions built earlier shift every later number.
+2. *Named.* A face in the linked design is called `F3:link:<digest>`, where the digest is of the face's name in the board file, such as `F4:start`. The 4 is a feature number. In the saved ESP32 board J1's shell is feature 4 and a resistor package's body is feature 39 (measured, `logs/names.log`); definitions built earlier shift every later number.
 3. *Per connector.* The five resistors of one package are bodies `pkg15r1 body`, `pkg15r1 body (pkg15r1:2)`, … All five carry the same face names. The order is their only identity.
 
 Measured consequences on the full-name path (`logs/retarget.log`):
 
-| Board edit | Enclosure's reference to R5's top face |
+| Board edit | Linked design's reference to R5's top face |
 | --- | --- |
 | None | on R5, at (24.0, 11.5) |
 | R4 deleted (same package, placed before R5) | **on R2, at (33.0, 10.0). No warning, no error.** |
 | J1 deleted as well (another package, defined earlier) | error: "the reference `F3:link:5cdd40b8252af9d8` no longer exists as it was picked; reselect it" |
 
-The 9 November housing design knew that names follow feature numbers and planned a persistent, edited-in-place board design to hold them still (slice S6, 14 h). It did not address the ordinal identity of repeated parts. Under option 3 there is no live board design to keep persistent, so that plan loses its footing either way.
+The 9 November assembly design knew that names follow feature numbers and planned a persistent, edited-in-place board design to hold them still (slice S6, 14 h). It did not address the ordinal identity of repeated parts. Under option 3 there is no live board design to keep persistent, so that plan loses its footing either way.
 
 **"Updates go through reviewed link updates, live or file-based."** Agreed. See 2.5.
 
@@ -161,7 +161,7 @@ The 9 November housing design knew that names follow feature numbers and planned
 
 - The link already stores the source file's SHA-256 at our pin, and `component.links` says whether the file changed. (The 9 November note said there was no digest; that was true at the older pin.)
 - `model.faces` already reports `exact` per face.
-- A dry run does not need upstream: Sparksmith can open a copy of the enclosure in its in-process engine, run `component.update_links` there and read the result. The prototype does exactly this.
+- A dry run does not need upstream: Sparksmith can open a copy of the linked design in its in-process engine, run `component.update_links` there and read the result. The prototype does exactly this.
 
 And on the mapping itself:
 
@@ -205,7 +205,7 @@ And on the mapping itself:
 
 **G. The board plan as the source, Solidcraft as an export target only.** This is the recommendation for the board. For parts it is alternative C.
 
-**H. Publish less.** Not listed by the lead, and the main new proposal here: the enclosure links an interface, not the board (Part 2).
+**H. Publish less.** Not listed by the lead, and the main new proposal here: the assembly links an interface, not the board (Part 2).
 
 ### 1.4 Hidden costs
 
@@ -217,7 +217,7 @@ And on the mapping itself:
 - *A check at every export.* The exporter compares each built body's volume with the plan's area × thickness and reports a mismatch as an export finding. This covers boards no test ever saw.
 - *Flattening is the one real difference.* Fills go to the kernel simplified to a 10 µm chord (`MODEL_CHORD_MM`) and in 12 mm tiles. State both in the plan, not in a consumer.
 
-**2. The enclosure link on full-board names.** Section 1.2 above. Cost in time as well (measured): the full board takes 7.5 s to save, 9.3 s to open and 17.1 s for one Update Links; the mechanical subset 2.8 s, 3.6 s and 4.9 s.
+**2. The assembly link on full-board names.** Section 1.2 above. Cost in time as well (measured): the full board takes 7.5 s to save, 9.3 s to open and 17.1 s for one Update Links; the mechanical subset 2.8 s, 3.6 s and 4.9 s.
 
 **3. Picking and dimensions when the mesh is not the B-rep.**
 
@@ -231,7 +231,7 @@ And on the mapping itself:
 **5. The browser.**
 
 - The kernel compiles to wasm, but an exact board needs about 1 GB, a quarter of wasm32's address space, and evaluation is single-threaded (read). The direct mesh makes the board viewable there; the exact export should stay a desktop or server action until measured.
-- Reading an enclosure in the browser needs the whole engine in the page. The cached interface snapshot lets a project open and solve without it.
+- Reading a linked design in the browser needs the whole engine in the page. The cached interface snapshot lets a project open and solve without it.
 
 **6. Very large boards.** The mesher is fast enough; memory is the limit. Solidcraft's `Mesh` holds positions and normals as `f64` without sharing between faces, about 107 bytes per triangle. For 20,000 vias and 60,000 tracks:
 
@@ -249,21 +249,21 @@ Further steps, all inside the present renderer path: build inner layers only whe
 - A large board's exact export may take minutes or fail. It needs a clear progress and failure report, and a default that does not include copper.
 - There is no shortcut through meshes: STEP refuses them.
 
-**8. Version skew.** Sparksmith reads and writes `.solidcraft` with its pinned engine. A user's installed SolidCraft may be newer. An enclosure saved by a newer app may be unreadable until Sparksmith repins, and Sparksmith's rule is to reject unsupported versions. Neither the lead's design nor the 9 November note mentions this. A versioned exchange file (`.craftx`) is the long-term answer; until then it is a stated limitation with a clear message.
+**8. Version skew.** Sparksmith reads and writes `.solidcraft` with its pinned engine. A user's installed SolidCraft may be newer. A linked design saved by a newer app may be unreadable until Sparksmith repins, and Sparksmith's rule is to reject unsupported versions. Neither the lead's design nor the 9 November note mentions this. A versioned exchange file (`.craftx`) is the long-term answer; until then it is a stated limitation with a clear message.
 
 **9. Save cost.** Saving the exact model is itself slow: 2.8 s for the mechanical subset and 7.5–8.4 s for the full board (measured). Any "publish on every edit" idea has to count it.
 
 ---
 
-## Part 2. Design note: board interface and enclosure links
+## Part 2. Design note: board interface and assembly links
 
-Nothing here is built except the headless prototype (2.7).
+A linked design is any other SolidCraft design or assembly that links the board, for example an enclosure that cuts openings for its connectors. Nothing here is built except the headless prototype (2.7).
 
 ### 2.1 Principles
 
-1. **An enclosure references the board only through exported datums.** Anything else in the published file is for looking at.
+1. **An assembly references the board only through exported datums.** Anything else in the published file is for looking at.
 2. **A datum's identity never depends on build order, feature numbers, designators or names.**
-3. **Each value has one owner.** The board owns its outline, holes and placements. The enclosure owns its walls and openings. A dimension lives in the file whose geometry it drives.
+3. **Each value has one owner.** The board owns its outline, holes and placements. The linked design owns its walls and openings. A dimension lives in the file whose geometry it drives.
 4. **Updates are reviewed and bound to revisions, in both directions. Never silent.**
 5. **A reference that no longer resolves is reported in the user's words and blocks fabrication output** (founder direction 11 of 9 November).
 6. **Solidcraft stays generic.** Nothing Sparksmith-specific goes into Solidcraft (founder, 3 November). Upstream asks are generic.
@@ -304,7 +304,7 @@ Nothing here is built except the headless prototype (2.7).
 
 **How a connector's opening is defined.** Three sources, in this order of preference:
 
-1. **A datum authored on the package** (recommended as the stored form). A package revision holds `datums: [{name, kind, frame, profile, direction, clearance?, external}]` as explicit geometry in the model frame. It is revisioned with the package, and it works for every model kind, including STEP and glTF. For a connector the opening is the aperture the mating plug needs, taken from the datasheet's panel-cutout drawing, not the shell's own outline. `external: true` means "meant for the enclosure".
+1. **A datum authored on the package** (recommended as the stored form). A package revision holds `datums: [{name, kind, frame, profile, direction, clearance?, external}]` as explicit geometry in the model frame. It is revisioned with the package, and it works for every model kind, including STEP and glTF. For a connector the opening is the aperture the mating plug needs, taken from the datasheet's panel-cutout drawing, not the shell's own outline. `external: true` means "meant for the linked design".
 2. **A datum declared in the part file** (an authoring convenience that produces form 1). The existing convention for marking surfaces is reused: a construction plane named `opening-<name>` with two size parameters, or a sketch of that name for a free profile; `axis-<name>` for an axis. This is how `marking-<name>` and `pin1` already work (`docs/part-templates.md`). The check that reads marking surfaces reads these.
 3. **A face of the part model** (ad hoc). The user exports a feature that is a face reference, resolved by the existing `model_refs` trace with its `Resolved`, `Inexact` and `Lost` states. Useful, but the weakest: STEP face names are found by geometry.
 
@@ -323,7 +323,7 @@ An opening is never inferred from a part's name or category. That follows the ru
 
 - a part's frame or envelope;
 - any other package datum;
-- any dimensionable feature, with "Export to enclosure" in the Properties card and the context menu, in Layout and in 3D;
+- any dimensionable feature, with "Export to linked design" in the Properties card and the context menu, in Layout and in 3D;
 - board parameters.
 
 **UI** (within the shared containers; one new card):
@@ -338,13 +338,13 @@ An opening is never inferred from a part's name or category. That follows the ru
 | --- | --- |
 | `interface.list` (query) | Datums with id, slot, name, kind, source, geometry, status |
 | `interface.export {feature \| datum, name?}` | Exports a feature or package datum; allocates a slot |
-| `interface.unexport {datum}` | Retires its slot; the preview names enclosure features that use it |
+| `interface.unexport {datum}` | Retires its slot; the preview names linked design features that use it |
 | `interface.rename {datum, name}` | Display name only |
 | `interface.auto {rule, on}` | Switches an automatic rule |
-| `interface.publish_preview {tier?}` (query) | The diff against the last published revision, and the dry run on the linked enclosure |
+| `interface.publish_preview {tier?}` (query) | The diff against the last published revision, and the dry run on the linked design |
 | `interface.publish {path, tier, expect_revision}` | Writes the file atomically; records the revision |
 | `package.datum.add \| edit \| remove` | On a package draft |
-| `housing.link`, `housing.preview`, `housing.update {expect_hash}`, `housing.relink`, `housing.unlink` | The enclosure side, as designed on 9 November |
+| `assembly.link`, `assembly.preview`, `assembly.update {expect_hash}`, `assembly.relink`, `assembly.unlink` | The linked design side, as designed on 9 November |
 
 ### 2.4 The export format
 
@@ -365,7 +365,7 @@ An opening is never inferred from a part's name or category. That follows the ru
 | Volume | a prism body |
 | Frame, parameter | the sidecar and `params` only, until parameters can cross |
 
-*Section 2, optional, after the slots:* the mechanical board (laminate, pads, parts) or the full board (with copper). Its feature numbers may change freely. The preview warns when an enclosure references anything in it (2.5).
+*Section 2, optional, after the slots:* the mechanical board (laminate, pads, parts) or the full board (with copper). Its feature numbers may change freely. The preview warns when an assembly references anything in it (2.5).
 
 **Tiers.**
 
@@ -400,7 +400,7 @@ An opening is never inferred from a part's name or category. That follows the ru
 
 - `format` has a major version. A reader rejects a major it does not know. Fields may be added within a major.
 - `revision` counts publishes whose content hash differs. Each datum has its own hash, so a diff is per datum.
-- Renumbering slots (a deliberate compaction) is a new `source_id` epoch with an impact preview that says every enclosure reference must be picked again.
+- Renumbering slots (a deliberate compaction) is a new `source_id` epoch with an impact preview that says every assembly reference must be picked again.
 
 **Relation to RFC 0001's exchange file.** The sidecar is shaped to become the `board.json` part:
 
@@ -415,24 +415,24 @@ An opening is never inferred from a part's name or category. That follows the ru
 
 ### 2.5 Link updates
 
-**Board → enclosure, file-based.** J1 moves; the cutout follows.
+**Board → linked design, file-based.** J1 moves; the cutout follows.
 
 1. The user edits the board. Nothing is written; an edit is never blocked. The Interface card shows "3 datums changed since revision 14".
 2. `interface.publish_preview` lists, per datum: unchanged, moved (by how much), reshaped, added, retired, or status changed.
-3. If an enclosure is linked, the preview also runs a **dry run**: Sparksmith copies the enclosure file to a scratch folder, opens it in its own engine, points the copy's link at the candidate interface file, runs `component.update_links` and reads the result. It reports, in the enclosure's own names: features that moved (the cutout's faces before and after), features that failed, joints that no longer solve, and references to section-2 bodies ("this sketch is on a face that is not exported; export it to keep it stable"). The user's enclosure file is not touched.
+3. If a linked design is linked, the preview also runs a **dry run**: Sparksmith copies the linked design file to a scratch folder, opens it in its own engine, points the copy's link at the candidate interface file, runs `component.update_links` and reads the result. It reports, in the linked design's own names: features that moved (the cutout's faces before and after), features that failed, joints that no longer solve, and references to section-2 bodies ("this sketch is on a face that is not exported; export it to keep it stable"). The user's linked design file is not touched.
 4. The user confirms. `interface.publish` writes the file atomically and records revision 15 and its hash.
 5. In SolidCraft the user runs Update Links (one undoable step).
 
-**Enclosure → board outline, file-based.** As designed on 9 November (`docs/board-sketch-references.md` §7), unchanged in substance:
+**Linked design → board outline, file-based.** As designed on 9 November (`docs/board-sketch-references.md` §7), unchanged in substance:
 
-1. The project stores a link: the enclosure's path hint, its file hash, the references (`HousingRef`), the parameter bindings and a snapshot of the last resolved geometry. The project opens and solves on the snapshot without the enclosure.
-2. Sparksmith notices the enclosure's hash changed and shows "enclosure changed".
-3. `housing.preview` evaluates the enclosure in-process, resolves the references in the board's frame, solves the board sketch and the dimensioned parts on a candidate, and lists what would move, what would be lost or inexact, and cycles.
-4. `housing.update {expect_hash}` applies it as one undo step, or refuses atomically and says why.
+1. The project stores a link: the linked design's path hint, its file hash, the references (`FollowedFace`), the parameter bindings and a snapshot of the last resolved geometry. The project opens and solves on the snapshot without the linked design.
+2. Sparksmith notices the linked design's hash changed and shows "linked design changed".
+3. `assembly.preview` evaluates the linked design in-process, resolves the references in the board's frame, solves the board sketch and the dimensioned parts on a candidate, and lists what would move, what would be lost or inexact, and cycles.
+4. `assembly.update {expect_hash}` applies it as one undo step, or refuses atomically and says why.
 
 **Live, both apps open.** The file stays the contract; the channel only carries notices, as RFC 0001 recommends.
 
-- Sparksmith connects to SolidCraft's control channel (loopback, per-launch token file) and calls `control.subscribe`. A `design.changed` event for the enclosure document marks the link stale at once, instead of at the next save.
+- Sparksmith connects to SolidCraft's control channel (loopback, per-launch token file) and calls `control.subscribe`. A `design.changed` event for the linked design document marks the link stale at once, instead of at the next save.
 - After a publish, Sparksmith can offer "Update in SolidCraft now": it sends `engine.execute component.update_links` over the channel. This is off unless the user turns it on per link, and it always follows the reviewed preview. The step is one undo step in SolidCraft.
 - When RFC 0001's session messages exist (`exchange.changed`, `exchange.request`), they replace the direct command.
 
@@ -440,14 +440,14 @@ An opening is never inferred from a part's name or category. That follows the ru
 
 | Situation | How it is detected | What the user reads |
 | --- | --- | --- |
-| The enclosure holds an older board | the SHA-256 on the enclosure's link is not the last published file's | "The enclosure still uses board revision 13. Run Update Links in SolidCraft, then check again." |
-| Both sides changed | the above, and the enclosure's own hash changed | "The board and the enclosure both changed since they last agreed. Update the enclosure first; nothing was applied." |
-| A datum the enclosure uses is gone | the dry run's failed feature names a digest Sparksmith published | "The enclosure's sketch 'USB opening' uses J1's opening. J1 was deleted, so the cutout would fail. Restore J1, or pick another opening in SolidCraft." |
+| The linked design holds an older board | the SHA-256 on the linked design's link is not the last published file's | "The linked design still uses board revision 13. Run Update Links in SolidCraft, then check again." |
+| Both sides changed | the above, and the linked design's own hash changed | "The board and the linked design both changed since they last agreed. Update the linked design first; nothing was applied." |
+| A datum the linked design uses is gone | the dry run's failed feature names a digest Sparksmith published | "The linked design's sketch 'USB opening' uses J1's opening. J1 was deleted, so the cutout would fail. Restore J1, or pick another opening in SolidCraft." |
 | A reference is on an unexported face | the dry run finds a link whose digest is not a slot's | "Sketch 'Lid rib' is attached to a face of U1 that is not exported. It may move to another part when the board changes. Export it?" |
-| The board's driven outline was edited locally | the curve is owned by a reference | "This edge follows the enclosure's wall. Break the link to edit it here." |
-| A cycle | the dependency graph over both files | "Hole H2 follows boss 'Boss 3', and the enclosure places the board by hole H2." |
-| The enclosure is missing or moved | the path does not resolve | "The enclosure file was not found. The board uses the last known geometry." with Relink |
-| The enclosure is from a newer SolidCraft | the reader refuses the version | "This enclosure was saved by a newer SolidCraft than this Sparksmith can read." |
+| The board's driven outline was edited locally | the curve is owned by a reference | "This edge follows the linked design's wall. Break the link to edit it here." |
+| A cycle | the dependency graph over both files | "Hole H2 follows boss 'Boss 3', and the linked design places the board by hole H2." |
+| The linked design is missing or moved | the path does not resolve | "The linked design file was not found. The board uses the last known geometry." with Relink |
+| The linked design is from a newer SolidCraft | the reader refuses the version | "This linked design was saved by a newer SolidCraft than this Sparksmith can read." |
 
 A lost or inexact reference blocks fabrication output without a waiver.
 
@@ -463,7 +463,7 @@ A lost or inexact reference blocks fabrication output without a waiver.
 | U4 | `component.update_links {dry_run}` | A preview inside SolidCraft, without Sparksmith | `bridge.links` reporting `changed` and missing references |
 | U5 | Update Links lists lost sketch links, and names the source's own name, not a digest | Today the result's `warnings` omit them; the error shows `F3:link:216d…` (measured) | §4: "naming the face and where it was" |
 | U6 | A permanent source id and revision on a link, next to the hash | Tell "older" from "different" | `design-source-id`, link `{source_id, revision, hash}` |
-| U7 | Parameters across a link, read-only | Thickness and exported board parameters in the enclosure's expressions | `params.json` |
+| U7 | Parameters across a link, read-only | Thickness and exported board parameters in the linked design's expressions | `params.json` |
 | U8 | A display label separate from a body's identity | "J1 opening" in the browser while the identity stays `i80.opening` | `meta.json` |
 
 **On the Sparksmith side,** mapped to the option-3 plan:
@@ -474,7 +474,7 @@ A lost or inexact reference blocks fabrication output without a waiver.
 | Package datums and the part-file convention | the library; the part evaluation that already reads marking surfaces |
 | Board slab and volumes for the slots | the board plan (A1) |
 | The interface builder | Solidcraft commands, like the exact exporter, sharing its code for the tiers |
-| The dry run and the enclosure reader | the in-process engine, on a worker |
+| The dry run and the linked design reader | the in-process engine, on a worker |
 | Reference display in 3D | the direct mesh view; datums drawn from the document, not from the file |
 
 ### 2.7 The prototype target and its acceptance criteria
@@ -485,22 +485,22 @@ A lost or inexact reference blocks fabrication output without a waiver.
 | --- | --- | --- |
 | J1 moved 2 mm in the board | model updated in place, 0.29 s | interface rebuilt, 9 ms |
 | The exported file is updated | saved in 2.8 s | saved in 12 ms |
-| The enclosure re-evaluates with the cutout moved 2 mm | yes: centre x 20.0000 → 22.0000; Update Links 4.9 s | yes: 20.0000 → 22.0000; Update Links 10 ms |
+| The linked design re-evaluates with the cutout moved 2 mm | yes: centre x 20.0000 → 22.0000; Update Links 4.9 s | yes: 20.0000 → 22.0000; Update Links 10 ms |
 | The same board built afresh keeps the reference | yes | yes |
 | An unrelated part deleted leaves other references alone | **no**: silent retarget, or broken | yes: R5's reference stayed at (24.0, 11.5) |
 | A broken reference is reported | yes, as a feature error with a digest; not in Update Links' own result | the same; Sparksmith must translate |
 
-Limits of the prototype: datums are boxes made by hand from the placement, not from package datums; the board is edited by changing the document's data, not through typed commands; the enclosure is a session in the same process, not the SolidCraft app.
+Limits of the prototype: datums are boxes made by hand from the placement, not from package datums; the board is edited by changing the document's data, not through typed commands; the linked design is a session in the same process, not the SolidCraft app.
 
 **Acceptance for the real slice (B3 and B4).**
 
 1. Through typed commands only: the placement move of J1 by 2 mm, `interface.publish_preview`, `interface.publish`.
-2. The preview lists exactly one moved datum, "J1 opening, 2 mm along X", and one enclosure feature that follows, by its SolidCraft name.
+2. The preview lists exactly one moved datum, "J1 opening, 2 mm along X", and one linked design feature that follows, by its SolidCraft name.
 3. A headless SolidCraft test document (a wall with a cutout projected from the opening, and a boss mated to a mounting hole) re-evaluates after `component.update_links` with the cutout moved 2.000 mm ± 1 µm and no other face of the wall moved.
 4. The same after closing and reopening the project, and on a second machine, with the same face names (compare the sidecars byte for byte).
-5. Deleting an unrelated part, adding a pour and renaming J1 change nothing in the enclosure.
-6. Deleting J1: the preview names the cutout that would fail, before anything is written. After publishing anyway, `housing` status reads "broken reference", fabrication output is blocked, and undo restores everything.
-7. The enclosure → board direction: the wall moved 1 mm in the test document; `housing.preview` lists the outline edge and the parts held to it; `housing.update` applies one undo step.
+5. Deleting an unrelated part, adding a pour and renaming J1 change nothing in the linked design.
+6. Deleting J1: the preview names the cutout that would fail, before anything is written. After publishing anyway, `assembly_link` status reads "broken reference", fabrication output is blocked, and undo restores everything.
+7. The linked design → board direction: the wall moved 1 mm in the test document; `assembly.preview` lists the outline edge and the parts held to it; `assembly.update` applies one undo step.
 8. Publishing the interface tier takes under 100 ms on the ESP32 board (target; 21–52 ms in the prototype with 5 slots).
 9. A VM run with the real SolidCraft app repeats 3 and 7 by hand.
 
@@ -512,12 +512,12 @@ Limits of the prototype: datums are boxes made by hand from the placement, not f
 | B1 | Datum model in the core, automatic rules, slot table, `interface.*` commands, persistence | B0 | 10–12 | Slots survive undo, redo, save and reopen; retired slots never reused |
 | B2 | Package datums; the part-file convention; authoring in the package editor; connector templates emit openings | B0 | 8–10 | A USB-C part file's opening reaches a placed instance in the board frame, both sides, all rotations |
 | B3 | Interface builder with slots and tiers; sidecar and metadata; `publish_preview` (diff only) and `publish` | B1, B2, A1 | 10–12 | Acceptance 1–5 and 8 |
-| B4 | Enclosure link: reading, references, bindings, snapshot, `housing.preview` and `update`, relink; the in-process dry run | B3 | 14–16 | Acceptance 6 and 7 |
+| B4 | Assembly link: reading, references, bindings, snapshot, `assembly.preview` and `update`, relink; the in-process dry run | B3 | 14–16 | Acceptance 6 and 7 |
 | B5 | Two-way check: consumers by slot, the older-board check by link hash, the cycle graph | B4 | 6–8 | Each row of the conflict table has a test |
 | B6 | UI: Interface card, export actions, status, both previews, datums drawn in 2D and 3D | B4 | 10–12 | VM screenshots reviewed |
 | B7 | Live: control-channel subscription, stale notice, optional "Update in SolidCraft now" | B5 | 8–10 | Both apps in the VM |
 | B8 | `.craftx` writer and reader | upstream RFC phases 0–1 | 8–12 | Blocked on upstream |
-| B9 | VM run with a real enclosure; measurements | B6 | 6–7 | Acceptance 9; timings recorded |
+| B9 | VM run with a real linked design; measurements | B6 | 6–7 | Acceptance 9; timings recorded |
 
 B0–B6 and B9: 68–81 hours. The 9 November plan's S6 (14 h) is dropped; its S7–S10 (28 h) are B4–B6 and B9.
 
@@ -525,11 +525,11 @@ B0–B6 and B9: 68–81 hours. The 9 November plan's S6 (14 h) is dropped; its S
 
 | Risk | Likelihood | Effect | Handling |
 | --- | --- | --- | --- |
-| Slot ids are not as stable as the prototype suggests (another Solidcraft version allocates ids differently) | Low within a pin; real across repins | Every enclosure reference breaks at once | A golden test of the sidecar's face names in CI; a repin that changes them is an explicit, previewed epoch change. U2 removes the risk |
-| Datum solids confuse the enclosure (mass, interference, bill of materials) | Certain to be noticed | Annoyance; wrong mass if not excluded | A separate component named as reference geometry; openings sit in free space; U3 removes them |
+| Slot ids are not as stable as the prototype suggests (another Solidcraft version allocates ids differently) | Low within a pin; real across repins | Every assembly reference breaks at once | A golden test of the sidecar's face names in CI; a repin that changes them is an explicit, previewed epoch change. U2 removes the risk |
+| Datum solids confuse the linked design (mass, interference, bill of materials) | Certain to be noticed | Annoyance; wrong mass if not excluded | A separate component named as reference geometry; openings sit in free space; U3 removes them |
 | Users reference unexported faces in SolidCraft anyway | High | The silent retarget | The dry run finds and names them; one click exports the face |
-| The enclosure is too slow to evaluate in-process for a preview | Unknown; not measured | Slow previews | Off the UI thread, cancellable, with the snapshot as fallback; measure in B9 |
-| Version skew between the pin and the installed app | Medium | An enclosure cannot be read | A clear message; `.craftx` later |
+| The linked design is too slow to evaluate in-process for a preview | Unknown; not measured | Slow previews | Off the UI thread, cancellable, with the snapshot as fallback; measure in B9 |
+| Version skew between the pin and the installed app | Medium | A linked design cannot be read | A clear message; `.craftx` later |
 | RFC 0001 lands differently from this design | Medium | Rework of the sidecar | The sidecar is versioned and small; decide whether to help shape `board/1` |
 
 ---
@@ -543,7 +543,7 @@ B0–B6 and B9: 68–81 hours. The 9 November plan's S6 (14 h) is dropped; its S
                          │ Document (the project file)     single source │
                          │ parameters · sketched outline · placements    │
                          │ copper · library snapshot · datums and slots  │
-                         │ enclosure link and its snapshot               │
+                         │ assembly link and its snapshot               │
                          └───────┬───────────────────────┬──────────────┘
                                  │                       │
                      ┌───────────▼──────────┐   ┌────────▼─────────────┐
@@ -559,13 +559,13 @@ B0–B6 and B9: 68–81 hours. The 9 November plan's S6 (14 h) is dropped; its S
         │ board meshes       │   │ (library, on workers)  │      │
         │ + part meshes      │   │ part evaluation · STEP │      │
         │ + display layers   │   │ exact board · interface│      │
-        │ viewport, renderer │   │ enclosure read, dry run│      │
+        │ viewport, renderer │   │ assembly read, dry run │      │
         └────────────────────┘   └─────┬──────────────────┘      │
                                        │ Solidcraft's writer     │
                          ┌─────────────▼──────────────┐          │
                          │ board.solidcraft            │◄─────────┘
                          │ 1 slots (stable datums)     │   linked by
-                         │ 2 mechanical or full bodies │──────────────► enclosure.solidcraft
+                         │ 2 mechanical or full bodies │──────────────► assembly.solidcraft
                          │ + interface sidecar         │◄────────────── read back, reviewed
                          └─────────────────────────────┘
 ```
@@ -580,7 +580,7 @@ B0–B6 and B9: 68–81 hours. The 9 November plan's S6 (14 h) is dropped; its S
 | Realistic view | Looks as data; Solidcraft viewport | renderer only |
 | Exact board, STEP, `.solidcraft` | Exporter from the plan | everything |
 | Interface | Document datums → interface builder | commands and writer |
-| Enclosure reading and dry run | Sparksmith, in-process | everything |
+| Linked design reading and dry run | Sparksmith, in-process | everything |
 | Connectivity | The copper graph alone | none |
 
 ### 3.2 Staged path
@@ -596,7 +596,7 @@ Stages A are option 3; stages B are the interface (2.8). Hours are estimates.
 | 4 | B3 | Interface export: the prototype target | 10–12 | Acceptance 1–5, 8 |
 | 5 | A3 | Parts placed by the document's transforms from their own designs; no board-level native session in the live path | 8–12 | Every placement matches the exact export's joint-solved pose within 1 µm, both sides, all rotations |
 | 6 | A4 | Remove the live native board and its kept undo models; the direct mesh becomes the only live path | 6–8 | 3D open on the ESP32 under 300 MB (target; about 1.8 GB live today, read in `docs/3d-speed-profile.md`); undo needs no kept model |
-| 7 | B4, B5 | Enclosure link and two-way check | 20–24 | Acceptance 6, 7; conflict table |
+| 7 | B4, B5 | Assembly link and two-way check | 20–24 | Acceptance 6, 7; conflict table |
 | 8 | B6 | UI | 10–12 | VM review |
 | 9 | A5 (built) | Export tiers, progress and cancel, the per-export volume check | 8–10 | A full export reports any body that differs from the plan (`export::tests::a_full_export_reports_a_body_that_differs_from_the_plan`) |
 | 10 | B7, B9 | Live channel; VM run and measurements | 14–17 | Acceptance 9 |
@@ -607,7 +607,7 @@ Stages A are option 3; stages B are the interface (2.8). Hours are estimates.
 Why this order:
 
 - **A1 first.** Both the mesher and the interface builder read the plan, and it changes nothing visible, so it can be verified against today's build exactly.
-- **B3 before A3–A4.** The interface is small, independent of the live view, and removes the reason to keep a persistent native board. Once it works, deleting the live native board (A4) loses nothing the enclosure plan needed.
+- **B3 before A3–A4.** The interface is small, independent of the live view, and removes the reason to keep a persistent native board. Once it works, deleting the live native board (A4) loses nothing the linked design plan needed.
 - **A4 only after parity has run on every example.** Until then the exact build stays available as the live path behind the setting, which is also the fallback.
 - **Upstream's stitch fix (option c1 of the speed profile) only with a separate go; nothing is posted upstream for now.** It does not block anything here, but it bounds the exact export, which is the one slow step left.
 
@@ -641,7 +641,7 @@ Adopted text:
 
 **A new hard rule.**
 
-> An enclosure references a board only through its published interface: datums with ids and slots that survive edits, rebuilds and renames. Link updates in either direction go through a preview bound to both files' revisions and are never silent. A reference that no longer resolves is named in the user's words and blocks fabrication output.
+> An assembly references a board only through its published interface: datums with ids and slots that survive edits, rebuilds and renames. Link updates in either direction go through a preview bound to both files' revisions and are never silent. A reference that no longer resolves is named in the user's words and blocks fabrication output.
 
 **The "Start here" paragraph** gains `cargo xtask board-parity` in the list of enforced boundaries.
 
@@ -745,7 +745,7 @@ R4 (the placement before R5) deleted: update_links warnings [only the antenna me
 
 ### C. What was not measured or checked
 
-- Evaluating a real enclosure in-process, and the dry run's cost on one.
+- Evaluating a real linked design in-process, and the dry run's cost on one.
 - The slot design with sketched profiles and explicit curve ids (read as possible; the prototype used boxes).
 - Whether a part file linked inside the interface file keeps its own face names through two links. If it does, a real part's faces can be exported with stable names without waiting for U2.
 - Slot id stability across Solidcraft revisions.
@@ -760,8 +760,8 @@ R4 (the placement before R5) deleted: update_links warnings [only the antenna me
 | --- | --- |
 | Board plan | The pure-data list of the board's flat bodies derived from the document: object, kind, layer, heights, loops, look |
 | Exact board | The Solidcraft model built from the plan through native commands |
-| Interface | The datums a board publishes for an enclosure |
+| Interface | The datums a board publishes for a linked design |
 | Datum | One published piece of reference geometry with a stable id and slot |
 | Slot | A datum's fixed position in the append-only table that fixes its feature ids in the exported file |
 | Tier | How much of the board follows the slots in the exported file: nothing, the mechanical bodies, or everything |
-| Enclosure (housing) | The Solidcraft design that links the board; "housing" in the 9 November note and in command names |
+| Linked design (assembly) | The Solidcraft design that links the board; "assembly" in the 9 November note and in command names |

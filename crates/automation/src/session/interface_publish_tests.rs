@@ -1,6 +1,6 @@
 //! Slice B3's gate (acceptance 1 to 5 and 8 of the design note) through
 //! the JSON transport, over the ESP32-S31 dev board example, with a
-//! headless SolidCraft enclosure (`pcbcraft_solidcraft::enclosure`) that
+//! headless SolidCraft assembly (`pcbcraft_solidcraft::linked_design`) that
 //! links the published interface as SolidCraft's Insert Design does.
 //!
 //! The fixture is the example with J1's package carrying the opening its
@@ -11,7 +11,7 @@ use pcbcraft_core::layout::fill::FillCommand;
 use pcbcraft_core::library::package_model::{PackageEdit, edit_package};
 use pcbcraft_core::model::fill::{FillRegion, FillSpec};
 use pcbcraft_core::{CopperLayer, Engine, InstanceCommand, Operation};
-use pcbcraft_solidcraft::enclosure::{Enclosure, Face, Operation as Extrude};
+use pcbcraft_solidcraft::linked_design::{Face, LinkedDesign, Operation as Extrude};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -199,23 +199,30 @@ pub(super) fn sidecar(design: &Path) -> TestResult<pcbcraft_core::interface::Sid
     Ok(pcbcraft_io::interface::read_sidecar(design)?.ok_or("a sidecar")?)
 }
 
-/// The test enclosure (acceptance 3): the board linked and grounded; a
+/// The test linked design (acceptance 3): the board linked and grounded; a
 /// 2 mm wall across J1's opening, 1 mm in front of the board edge, with a
 /// cutout projected from the opening's outer face; a boss under the board
 /// projected from mounting hole 1's wall. Returns it with the wall's own
 /// box faces.
-pub(super) fn enclosure(design: &Path, opening: &str) -> TestResult<(Enclosure, Vec<String>)> {
-    let mut housing = Enclosure::new("Housing")?;
-    let bodies = housing.link(&design.display().to_string(), "Board")?;
+pub(super) fn linked_design(
+    design: &Path,
+    opening: &str,
+) -> TestResult<(LinkedDesign, Vec<String>)> {
+    let mut assembly_link = LinkedDesign::new("Assembly")?;
+    let bodies = assembly_link.link(&design.display().to_string(), "Board")?;
     assert!(bodies.iter().any(|b| b == opening), "{bodies:?}");
-    let front = housing
+    let front = assembly_link
         .faces(opening)?
         .into_iter()
         .find(|f| f.normal.is_some_and(|n| n[1] < -0.99))
         .ok_or("the opening's outer face")?;
-    housing.solid_box("Wall", [-5.0, -3.0, -2.0], [50.0, 2.0, 12.0])?;
-    let box_faces = housing.faces("Wall")?.into_iter().map(|f| f.name).collect();
-    housing.projected(
+    assembly_link.solid_box("Wall", [-5.0, -3.0, -2.0], [50.0, 2.0, 12.0])?;
+    let box_faces = assembly_link
+        .faces("Wall")?
+        .into_iter()
+        .map(|f| f.name)
+        .collect();
+    assembly_link.projected(
         "USB opening",
         [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
         opening,
@@ -223,12 +230,12 @@ pub(super) fn enclosure(design: &Path, opening: &str) -> TestResult<(Enclosure, 
         2.0,
         Extrude::Cut,
     )?;
-    let wall = housing
+    let wall = assembly_link
         .faces("board")?
         .into_iter()
         .find(|f| f.normal.is_none())
         .ok_or("a hole wall")?;
-    housing.projected(
+    assembly_link.projected(
         "Boss",
         [[0.0, 0.0, -6.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
         "board",
@@ -236,14 +243,14 @@ pub(super) fn enclosure(design: &Path, opening: &str) -> TestResult<(Enclosure, 
         4.0,
         Extrude::New,
     )?;
-    let errors = housing.feature_errors();
+    let errors = assembly_link.feature_errors();
     assert!(errors.is_empty(), "{errors:?}");
-    Ok((housing, box_faces))
+    Ok((assembly_link, box_faces))
 }
 
 /// Every face of `body`, by name, with its centroid and area.
-pub(super) fn faces(housing: &mut Enclosure, body: &str) -> TestResult<Vec<Face>> {
-    let mut faces = housing.faces(body)?;
+pub(super) fn faces(assembly_link: &mut LinkedDesign, body: &str) -> TestResult<Vec<Face>> {
+    let mut faces = assembly_link.faces(body)?;
     faces.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(faces)
 }
@@ -312,34 +319,34 @@ fn b3_the_preview_lists_the_one_moved_datum() -> TestResult {
     Ok(())
 }
 
-/// Acceptance 3: the test enclosure re-evaluates after
+/// Acceptance 3: the test linked design re-evaluates after
 /// `component.update_links` with the cutout moved 2 mm ± 1 µm along X, no
 /// other face of the wall moved, and the boss on the mounting hole where
 /// it was.
 #[test]
-fn b3_the_enclosure_cutout_follows_by_two_millimetres() -> TestResult {
+fn b3_the_linked_design_cutout_follows_by_two_millimetres() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "interface")?;
-    let (mut housing, box_faces) = enclosure(&design, &opening)?;
-    let wall = faces(&mut housing, "Wall")?;
-    let boss = faces(&mut housing, "Boss")?;
+    let (mut assembly_link, box_faces) = linked_design(&design, &opening)?;
+    let wall = faces(&mut assembly_link, "Wall")?;
+    let boss = faces(&mut assembly_link, "Boss")?;
 
     move_j1(&mut session, 2.0)?;
     publish(&mut session, &design, "interface")?;
-    let update = housing.update_links()?;
+    let update = assembly_link.update_links()?;
     assert!(
         update.failed.is_empty() && !update.updated.is_empty(),
         "{update:?}"
     );
     assert!(
-        housing.feature_errors().is_empty(),
+        assembly_link.feature_errors().is_empty(),
         "{:?}",
-        housing.feature_errors()
+        assembly_link.feature_errors()
     );
-    let after = faces(&mut housing, "Wall")?;
+    let after = faces(&mut assembly_link, "Wall")?;
     assert_eq!(after.len(), wall.len());
     let mut followed = 0;
     for a in &wall {
@@ -365,7 +372,7 @@ fn b3_the_enclosure_cutout_follows_by_two_millimetres() -> TestResult {
         }
     }
     assert!(followed >= 4, "the cutout's faces: {followed}");
-    same_faces(&boss, &faces(&mut housing, "Boss")?, "the boss");
+    same_faces(&boss, &faces(&mut assembly_link, "Boss")?, "the boss");
     Ok(())
 }
 
@@ -408,10 +415,10 @@ fn b3_the_sidecar_is_byte_identical_after_reopen() -> TestResult {
 /// Acceptance 5: R4's and R5's envelopes exported (R4's slot before
 /// R5's), and a body over R5 projected from its envelope's top. Deleting
 /// R4, adding a board fill and renaming J1, each published, change nothing
-/// in the enclosure: every face of the wall, the boss and the body over
+/// in the linked design: every face of the wall, the boss and the body over
 /// R5 stays where it was, and Update Links reports no failure.
 #[test]
-fn b3_unrelated_edits_change_nothing_in_the_enclosure() -> TestResult {
+fn b3_unrelated_edits_change_nothing_in_the_linked_design() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
     let mut session = open(dir.path())?;
@@ -428,13 +435,13 @@ fn b3_unrelated_edits_change_nothing_in_the_enclosure() -> TestResult {
     }
     let r5 = format!("i{}.envelope", instance(&session, "R5")?);
     publish(&mut session, &design, "interface")?;
-    let (mut housing, _) = enclosure(&design, &opening)?;
-    let top = housing
+    let (mut assembly_link, _) = linked_design(&design, &opening)?;
+    let top = assembly_link
         .faces(&r5)?
         .into_iter()
         .find(|f| f.normal.is_some_and(|n| n[2] > 0.99))
         .ok_or("R5's envelope top")?;
-    housing.projected(
+    assembly_link.projected(
         "Over R5",
         [[0.0, 0.0, 10.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
         &r5,
@@ -445,7 +452,7 @@ fn b3_unrelated_edits_change_nothing_in_the_enclosure() -> TestResult {
     let watched = ["Wall", "Boss", "Over R5"];
     let mut before = Vec::new();
     for body in watched {
-        before.push(faces(&mut housing, body)?);
+        before.push(faces(&mut assembly_link, body)?);
     }
 
     // R4 deleted (its tracks with it).
@@ -493,15 +500,15 @@ fn b3_unrelated_edits_change_nothing_in_the_enclosure() -> TestResult {
         "R4's envelope is reported lost under its published name: {changed:?}"
     );
     publish(&mut session, &design, "interface")?;
-    let update = housing.update_links()?;
+    let update = assembly_link.update_links()?;
     assert!(update.failed.is_empty(), "{update:?}");
     assert!(
-        housing.feature_errors().is_empty(),
+        assembly_link.feature_errors().is_empty(),
         "{:?}",
-        housing.feature_errors()
+        assembly_link.feature_errors()
     );
     for (body, faces_before) in watched.iter().zip(&before) {
-        same_faces(faces_before, &faces(&mut housing, body)?, body);
+        same_faces(faces_before, &faces(&mut assembly_link, body)?, body);
     }
     // The sidecar names J1's opening by its new designator, under the same
     // token and faces.
@@ -516,7 +523,7 @@ fn b3_unrelated_edits_change_nothing_in_the_enclosure() -> TestResult {
 }
 
 /// Deleting J1 is reported before anything is written: the preview names
-/// "J1 opening" as removed. Published anyway, the enclosure's cutout no
+/// "J1 opening" as removed. Published anyway, the linked design's cutout no
 /// longer evaluates, and Solidcraft names the feature (slice B4 turns that
 /// into the user's words and blocks fabrication).
 #[test]
@@ -526,7 +533,7 @@ fn b3_deleting_j1_is_reported() -> TestResult {
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "interface")?;
-    let (mut housing, _) = enclosure(&design, &opening)?;
+    let (mut assembly_link, _) = linked_design(&design, &opening)?;
     let j1 = instance(&session, "J1")?;
     remove(&mut session, j1)?;
     let before = std::fs::read(&design)?;
@@ -543,11 +550,11 @@ fn b3_deleting_j1_is_reported() -> TestResult {
     assert_eq!(row["name"], "J1 opening");
     assert_eq!(
         row["summary"],
-        "J1 opening, removed: an enclosure feature that uses it will fail"
+        "J1 opening, removed: a linked design feature that uses it will fail"
     );
     publish(&mut session, &design, "interface")?;
-    housing.update_links()?;
-    let errors = housing.feature_errors();
+    assembly_link.update_links()?;
+    let errors = assembly_link.feature_errors();
     assert!(
         errors.iter().any(|e| e.feature == "USB opening"),
         "the cutout's sketch fails: {errors:?}"

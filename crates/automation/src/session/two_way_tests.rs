@@ -1,16 +1,16 @@
 //! Slice B5's gate: every row of the conflict table (docs/architecture/
 //! board-interface.md, "The two-way check") through the JSON transport,
 //! over the ESP32-S31 dev board example with an original headless
-//! SolidCraft enclosure, as in B4's gate (`housing_tests`). Rows B4
-//! already proves are named there: "a datum the enclosure uses is gone"
+//! SolidCraft assembly, as in B4's gate (`assembly_link_tests`). Rows B4
+//! already proves are named there: "a datum the linked design uses is gone"
 //! is `b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication`, "the
-//! enclosure is missing or moved" `b4_a_missing_enclosure_keeps_the_snapshot`.
+//! linked design is missing or moved" `b4_a_missing_linked_design_keeps_the_snapshot`.
 use super::Session;
-use super::housing_tests::{
-    FAR_WALL_Y, changed, far_face, files, link, preflight, save_enclosure, status, with,
+use super::assembly_link_tests::{
+    FAR_WALL_Y, changed, far_face, files, link, preflight, save_linked_design, status, with,
 };
 use super::interface_publish_tests::{
-    TestResult, apply, enclosure, faces, instance, move_j1, ok, open, publish,
+    TestResult, apply, faces, instance, linked_design, move_j1, ok, open, publish,
 };
 use pcbcraft_core::Operation;
 use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
@@ -18,11 +18,11 @@ use pcbcraft_core::library::footprint_source::{
     DimKind, DimValue, ParamName, SketchConstraintId, SketchCurveId, SketchEdit, SketchPointId,
     SketchRef,
 };
-use pcbcraft_solidcraft::enclosure::{Enclosure, Operation as Extrude};
+use pcbcraft_solidcraft::linked_design::{LinkedDesign, Operation as Extrude};
 use serde_json::{Value, json};
 use std::path::Path;
 
-/// `housing.status`'s findings with `code`.
+/// `assembly.status`'s findings with `code`.
 fn findings(status: &Value, code: &str) -> Vec<Value> {
     status["findings"]
         .as_array()
@@ -33,37 +33,37 @@ fn findings(status: &Value, code: &str) -> Vec<Value> {
         .collect()
 }
 
-/// SolidCraft's Update Links on the saved enclosure at `path`, saved
+/// SolidCraft's Update Links on the saved linked design at `path`, saved
 /// again in place (as the user does in SolidCraft).
 fn update_links(path: &Path) -> TestResult {
-    let (mut housing, newer) = Enclosure::open(&path.display().to_string())?;
+    let (mut assembly_link, newer) = LinkedDesign::open(&path.display().to_string())?;
     assert!(!newer);
-    let update = housing.update_links()?;
+    let update = assembly_link.update_links()?;
     assert!(update.failed.is_empty(), "{update:?}");
     let saved = path.with_extension("saving.solidcraft");
     let _ = std::fs::remove_file(&saved);
-    housing.save(&saved.display().to_string())?;
+    assembly_link.save(&saved.display().to_string())?;
     std::fs::rename(&saved, path)?;
     Ok(())
 }
 
 /// The board's top edge held 0.5 mm from the far wall's inner face, which
-/// the board follows as a housing reference (B4's acceptance 7). Returns
-/// the reply of `housing.follow` and the fixed line the reference owns.
+/// the board follows as a followed face (B4's acceptance 7). Returns
+/// the reply of `assembly.follow` and the fixed line the reference owns.
 fn follow_top_edge(
     session: &mut Session,
-    housing: &Path,
+    assembly_link: &Path,
     design: &Path,
 ) -> TestResult<(Value, String)> {
-    let (face, pick) = far_face(housing)?;
+    let (face, pick) = far_face(assembly_link)?;
     let revision = session.engine().revision();
     let added = ok(
         session,
-        json!({"command": "housing.follow", "params": with(files(housing, design), json!({
+        json!({"command": "assembly.follow", "params": with(files(assembly_link, design), json!({
             "body": "Far wall", "face": face, "pick": pick, "name": "Far wall · inner face",
             "expected_revision": revision}))}),
     )?;
-    let curve = added["housing"]["references"][0]["sketch"]["curve"]
+    let curve = added["assembly"]["references"][0]["sketch"]["curve"]
         .as_str()
         .ok_or("the reference owns a fixed line")?
         .to_owned();
@@ -95,31 +95,31 @@ fn follow_top_edge(
     Ok((added, curve))
 }
 
-/// Conflict row "the enclosure holds an older board": the board publishes
-/// a new revision the enclosure has not read. The SHA-256 SolidCraft keeps
-/// on the enclosure's link is not the last published file's, so the link's
-/// status reads "enclosure holds an older board" and says, in the user's
+/// Conflict row "the linked design holds an older board": the board publishes
+/// a new revision the linked design has not read. The SHA-256 SolidCraft keeps
+/// on the linked design's link is not the last published file's, so the link's
+/// status reads "linked design holds an older board" and says, in the user's
 /// words, which revision it holds and what to do; it is advisory. After
-/// Update Links in SolidCraft and an update from the enclosure, it is gone.
+/// Update Links in SolidCraft and an update from the linked design, it is gone.
 /// The consumers the board read carry the slot that carries their datum.
 #[test]
-fn b5_the_enclosure_holds_an_older_board_until_it_updates_links() -> TestResult {
+fn b5_the_linked_design_holds_an_older_board_until_it_updates_links() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
-    let housing = dir.path().join("housing.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     let first = publish(&mut session, &design, "interface")?;
     assert_eq!(first["published"]["revision"], 1);
-    save_enclosure(&design, &opening, FAR_WALL_Y, &housing)?;
-    let linked = link(&mut session, &housing, &design)?;
+    save_linked_design(&design, &opening, FAR_WALL_Y, &assembly_link)?;
+    let linked = link(&mut session, &assembly_link, &design)?;
     let sidecar = pcbcraft_io::interface::read_sidecar(&design)?.ok_or("a sidecar")?;
     let datum = sidecar
         .datums
         .iter()
         .find(|d| d.token == opening)
         .ok_or("J1's opening")?;
-    let consumers = linked["housing"]["consumers"]
+    let consumers = linked["assembly"]["consumers"]
         .as_array()
         .ok_or("consumers")?;
     let cutout = consumers
@@ -128,12 +128,12 @@ fn b5_the_enclosure_holds_an_older_board_until_it_updates_links() -> TestResult 
         .ok_or("the cutout uses J1's opening")?;
     assert_eq!(cutout["slot"], datum.slot.0, "by slot: {cutout}");
     assert!(
-        linked["housing"]["board_sha256"].is_string(),
-        "the enclosure's link keeps the board file's hash: {linked}"
+        linked["assembly"]["board_sha256"].is_string(),
+        "the linked design's link keeps the board file's hash: {linked}"
     );
     let agreed = status(&mut session)?;
     assert!(
-        findings(&agreed, "housing.older_board").is_empty(),
+        findings(&agreed, "assembly.older_board").is_empty(),
         "{agreed}"
     );
 
@@ -142,28 +142,28 @@ fn b5_the_enclosure_holds_an_older_board_until_it_updates_links() -> TestResult 
     assert_eq!(second["published"]["revision"], 2);
     let older = status(&mut session)?;
     assert_eq!(older["state"], "older_board", "{older}");
-    assert_eq!(older["words"], "enclosure holds an older board");
-    let found = findings(&older, "housing.older_board");
+    assert_eq!(older["words"], "linked design holds an older board");
+    let found = findings(&older, "assembly.older_board");
     let [finding] = found.as_slice() else {
         return Err(format!("{older}").into());
     };
     assert_eq!(
         finding["message"],
-        "The enclosure still uses board revision 1. Run Update Links in SolidCraft, then check \
+        "The linked design still uses board revision 1. Run Update Links in SolidCraft, then check \
          again"
     );
-    let items = preflight(&mut session, "housing.older_board")?;
+    let items = preflight(&mut session, "assembly.older_board")?;
     let [item] = items.as_slice() else {
         return Err(format!("{items:?}").into());
     };
     assert_eq!(item["severity"], "warning", "advisory: {item}");
 
-    // Update Links in SolidCraft, then the board reads the enclosure again.
-    update_links(&housing)?;
-    assert!(changed(&mut session, &housing, &design)?);
+    // Update Links in SolidCraft, then the board reads the linked design again.
+    update_links(&assembly_link)?;
+    assert!(changed(&mut session, &assembly_link, &design)?);
     let preview = ok(
         &mut session,
-        json!({"command": "housing.preview", "params": files(&housing, &design)}),
+        json!({"command": "assembly.preview", "params": files(&assembly_link, &design)}),
     )?;
     assert!(preview["refused"].is_null(), "{preview}");
     assert!(
@@ -173,17 +173,17 @@ fn b5_the_enclosure_holds_an_older_board_until_it_updates_links() -> TestResult 
     let revision = session.engine().revision();
     ok(
         &mut session,
-        json!({"command": "housing.update", "params": with(files(&housing, &design), json!({
+        json!({"command": "assembly.update", "params": with(files(&assembly_link, &design), json!({
             "expect_hash": preview["expect_hash"], "expected_revision": revision}))}),
     )?;
     let current = status(&mut session)?;
     assert_eq!(current["state"], "linked", "{current}");
-    assert!(findings(&current, "housing.older_board").is_empty());
+    assert!(findings(&current, "assembly.older_board").is_empty());
     Ok(())
 }
 
 /// Conflict row "both changed": the board published revision 2 while the
-/// enclosure, still holding revision 1, was edited and saved (its far wall
+/// linked design, still holding revision 1, was edited and saved (its far wall
 /// moved). The preview refuses in the user's words and says so as a
 /// finding; the update at the preview's hash is refused, changing
 /// nothing.
@@ -191,30 +191,30 @@ fn b5_the_enclosure_holds_an_older_board_until_it_updates_links() -> TestResult 
 fn b5_both_changed_refuses_the_update() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
-    let housing = dir.path().join("housing.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
     let edited = dir.path().join("edited.solidcraft");
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "interface")?;
-    save_enclosure(&design, &opening, FAR_WALL_Y, &housing)?;
-    // The same enclosure with its far wall moved, saved on revision 1.
-    save_enclosure(&design, &opening, FAR_WALL_Y + 1.0, &edited)?;
-    link(&mut session, &housing, &design)?;
+    save_linked_design(&design, &opening, FAR_WALL_Y, &assembly_link)?;
+    // The same linked design with its far wall moved, saved on revision 1.
+    save_linked_design(&design, &opening, FAR_WALL_Y + 1.0, &edited)?;
+    link(&mut session, &assembly_link, &design)?;
     move_j1(&mut session, 2.0)?;
     publish(&mut session, &design, "interface")?;
-    std::fs::rename(&edited, &housing)?;
+    std::fs::rename(&edited, &assembly_link)?;
 
     let before = session.engine().project().clone();
     let revision = session.engine().revision();
     let preview = ok(
         &mut session,
-        json!({"command": "housing.preview", "params": files(&housing, &design)}),
+        json!({"command": "assembly.preview", "params": files(&assembly_link, &design)}),
     )?;
     let refused = preview["refused"].as_str().ok_or("refused")?;
     assert!(
         refused.contains(
-            "The board and the enclosure both changed since they last agreed. Update the \
-             enclosure first; nothing was applied"
+            "The board and the linked design both changed since they last agreed. Update the \
+             linked design first; nothing was applied"
         ),
         "{refused}"
     );
@@ -222,15 +222,17 @@ fn b5_both_changed_refuses_the_update() -> TestResult {
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|f| f["code"] == "housing.both_changed")
+        .filter(|f| f["code"] == "assembly.both_changed")
         .collect();
     assert_eq!(found.len(), 1, "{preview}");
-    let update = session.dispatch(json!({"command": "housing.update", "params": with(
-        files(&housing, &design), json!({
+    let update = session.dispatch(json!({"command": "assembly.update", "params": with(
+        files(&assembly_link, &design), json!({
         "expect_hash": preview["expect_hash"], "expected_revision": revision}))}));
     assert_eq!(update["ok"], false, "{update}");
     assert!(
-        update.to_string().contains("Update the enclosure first"),
+        update
+            .to_string()
+            .contains("Update the linked design first"),
         "{update}"
     );
     assert_eq!(session.engine().revision(), revision);
@@ -239,24 +241,24 @@ fn b5_both_changed_refuses_the_update() -> TestResult {
 }
 
 /// Conflict row "a reference is on an unexported face": published with
-/// the mechanical tier, the enclosure's ‘Lid rib’ is a sketch projecting
-/// a part's pad, which no slot carries. Reading the enclosure names it
+/// the mechanical tier, the linked design's ‘Lid rib’ is a sketch projecting
+/// a part's pad, which no slot carries. Reading the linked design names it
 /// and the part in the user's words, as an advisory; the publish
 /// preview's dry run names it too.
 #[test]
 fn b5_a_feature_on_an_unexported_face_is_named() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
-    let housing = dir.path().join("housing.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "mechanical")?;
-    let (mut built, _) = enclosure(&design, &opening)?;
+    let (mut built, _) = linked_design(&design, &opening)?;
     // A pad of a placed part, by its body's name in the published design,
     // which no slot carries, and a face of it that looks up.
     let sidecar = pcbcraft_io::interface::read_sidecar(&design)?.ok_or("a sidecar")?;
     let tokens: Vec<&str> = sidecar.datums.iter().map(|d| d.token.as_str()).collect();
-    let mut linked = Enclosure::new("Probe")?;
+    let mut linked = LinkedDesign::new("Probe")?;
     let bodies = linked.link(&design.display().to_string(), "Board")?;
     let mut target = None;
     for body in &bodies {
@@ -305,10 +307,10 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> TestResult {
     )?;
     let errors = built.feature_errors();
     assert!(errors.is_empty(), "{errors:?}");
-    built.save(&housing.display().to_string())?;
+    built.save(&assembly_link.display().to_string())?;
 
-    let linked = link(&mut session, &housing, &design)?;
-    let unexported = linked["housing"]["unexported"]
+    let linked = link(&mut session, &assembly_link, &design)?;
+    let unexported = linked["assembly"]["unexported"]
         .as_array()
         .ok_or("unexported")?;
     assert!(
@@ -317,7 +319,7 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> TestResult {
             .any(|u| u["feature"] == "Lid rib" && u["body"] == body.as_str()),
         "{unexported:?}"
     );
-    let consumers = linked["housing"]["consumers"]
+    let consumers = linked["assembly"]["consumers"]
         .as_array()
         .ok_or("consumers")?;
     assert!(
@@ -325,19 +327,19 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> TestResult {
         "a face no slot carries is no consumer: {consumers:?}"
     );
     let now = status(&mut session)?;
-    let found = findings(&now, "housing.unexported_face");
+    let found = findings(&now, "assembly.unexported_face");
     let [finding] = found.as_slice() else {
         return Err(format!("{now}").into());
     };
     assert_eq!(
         finding["message"],
         format!(
-            "The enclosure's ‘Lid rib’ is attached to a face of {designator} that is not \
+            "The linked design's ‘Lid rib’ is attached to a face of {designator} that is not \
              exported. It may move to another part when the board changes. Export the face to \
              keep it stable"
         )
     );
-    let items = preflight(&mut session, "housing.unexported_face")?;
+    let items = preflight(&mut session, "assembly.unexported_face")?;
     assert!(
         items.iter().all(|i| i["severity"] == "warning"),
         "advisory: {items:?}"
@@ -347,7 +349,7 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> TestResult {
         &mut session,
         json!({"command": "interface.publish_preview", "params": {
             "path": design.display().to_string(), "tier": "mechanical",
-            "enclosure_path": housing.display().to_string()}}),
+            "assembly_path": assembly_link.display().to_string()}}),
     )?;
     let effects = preview["dry_run"]["effects"]
         .as_array()
@@ -362,21 +364,21 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> TestResult {
 }
 
 /// Conflict rows "a cycle" and "the board's driven outline was edited
-/// locally", with the enclosure half of the cycle graph read from the
-/// file: the enclosure's far wall is a sketch projecting the board slab's
+/// locally", with the linked design half of the cycle graph read from the
+/// file: the linked design's far wall is a sketch projecting the board slab's
 /// top face, so it is built on the board outline; the board's top edge
 /// follows the far wall's inner face. The loop is named in both files'
 /// words, reads in the status and blocks fabrication; deleting the line
-/// the enclosure drives is refused in the user's words.
+/// the linked design drives is refused in the user's words.
 #[test]
-fn b5_a_loop_between_board_and_enclosure_is_found() -> TestResult {
+fn b5_a_loop_between_board_and_linked_design_is_found() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
-    let housing = dir.path().join("housing.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "interface")?;
-    let (mut built, _) = enclosure(&design, &opening)?;
+    let (mut built, _) = linked_design(&design, &opening)?;
     let top = faces(&mut built, "board")?
         .into_iter()
         .find(|f| f.normal.is_some_and(|n| n[1] > 0.99))
@@ -391,11 +393,11 @@ fn b5_a_loop_between_board_and_enclosure_is_found() -> TestResult {
     )?;
     let errors = built.feature_errors();
     assert!(errors.is_empty(), "{errors:?}");
-    built.save(&housing.display().to_string())?;
-    link(&mut session, &housing, &design)?;
+    built.save(&assembly_link.display().to_string())?;
+    link(&mut session, &assembly_link, &design)?;
 
-    let (added, curve) = follow_top_edge(&mut session, &housing, &design)?;
-    let built_on = added["housing"]["references"][0]["built_on"]
+    let (added, curve) = follow_top_edge(&mut session, &assembly_link, &design)?;
+    let built_on = added["assembly"]["references"][0]["built_on"]
         .as_array()
         .ok_or("the far wall is built on board datums")?;
     let outline = sidecar_datum(&design, "board.outline")?;
@@ -407,7 +409,7 @@ fn b5_a_loop_between_board_and_enclosure_is_found() -> TestResult {
     );
     let looped = status(&mut session)?;
     assert_eq!(looped["state"], "cycle", "{looped}");
-    let found = findings(&looped, "housing.cycle");
+    let found = findings(&looped, "assembly.cycle");
     let [finding] = found.as_slice() else {
         return Err(format!("{looped}").into());
     };
@@ -423,18 +425,18 @@ fn b5_a_loop_between_board_and_enclosure_is_found() -> TestResult {
     assert_eq!(
         finding["message"],
         format!(
-            "{capital} follows the enclosure's Far wall · inner face, and the enclosure builds \
+            "{capital} follows the linked design's Far wall · inner face, and the linked design builds \
              ‘Far wall’ from {name}. Break the loop: stop following Far wall · inner face, or \
              build ‘Far wall’ in SolidCraft without {name}"
         )
     );
-    let items = preflight(&mut session, "housing.cycle")?;
+    let items = preflight(&mut session, "assembly.cycle")?;
     let [item] = items.as_slice() else {
         return Err(format!("{items:?}").into());
     };
     assert_eq!(item["severity"], "error");
 
-    // The line the enclosure drives is not the board's to delete.
+    // The line the linked design drives is not the board's to delete.
     let revision = session.engine().revision();
     let delete = session.dispatch(json!({"command": "project.apply", "params": {
         "expected_revision": revision,
@@ -446,7 +448,7 @@ fn b5_a_loop_between_board_and_enclosure_is_found() -> TestResult {
     assert!(
         delete
             .to_string()
-            .contains("This edge follows the enclosure's wall. Break the link to edit it here"),
+            .contains("This edge follows the linked design's wall. Break the link to edit it here"),
         "{delete}"
     );
     assert_eq!(session.engine().revision(), revision);
@@ -494,27 +496,27 @@ fn saved_by_a_newer_solidcraft(path: &Path) -> TestResult {
     Ok(())
 }
 
-/// Conflict row "the enclosure is from a newer SolidCraft": the reader
+/// Conflict row "the linked design is from a newer SolidCraft": the reader
 /// refuses the version in the user's words; nothing is applied and the
 /// board keeps its snapshot.
 #[test]
-fn b5_an_enclosure_from_a_newer_solidcraft_is_refused() -> TestResult {
+fn b5_a_linked_design_from_a_newer_solidcraft_is_refused() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
-    let housing = dir.path().join("housing.solidcraft");
+    let assembly_link = dir.path().join("assembly.solidcraft");
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "interface")?;
-    save_enclosure(&design, &opening, FAR_WALL_Y, &housing)?;
-    link(&mut session, &housing, &design)?;
-    saved_by_a_newer_solidcraft(&housing)?;
+    save_linked_design(&design, &opening, FAR_WALL_Y, &assembly_link)?;
+    link(&mut session, &assembly_link, &design)?;
+    saved_by_a_newer_solidcraft(&assembly_link)?;
     let before = session.engine().project().clone();
-    let preview = session.dispatch(json!({"command": "housing.preview",
-        "params": files(&housing, &design)}));
+    let preview = session.dispatch(json!({"command": "assembly.preview",
+        "params": files(&assembly_link, &design)}));
     assert_eq!(preview["ok"], false, "{preview}");
     assert!(
         preview.to_string().contains(
-            "This enclosure was saved by a newer SolidCraft than this Sparksmith can read"
+            "This linked design was saved by a newer SolidCraft than this Sparksmith can read"
         ),
         "{preview}"
     );

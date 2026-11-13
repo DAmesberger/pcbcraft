@@ -11,18 +11,18 @@ use super::*;
 use egui::{Pos2, Shape};
 use pcbcraft_core::Engine;
 use pcbcraft_core::ids::ContentHash;
-use pcbcraft_core::interface::housing::{
-    HousingCommand, HousingPreview, HousingRead, Motion, ObjectChange, ObjectKind,
+use pcbcraft_core::interface::assembly_link::{
+    AssemblyCommand, AssemblyPreview, AssemblyRead, Motion, ObjectChange, ObjectKind,
 };
 use pcbcraft_core::interface::{
-    ChangeKind, DatumChange, DryRun, EffectKind, EnclosureEffect, ExportTarget, InterfaceCommand,
+    AssemblyEffect, ChangeKind, DatumChange, DryRun, EffectKind, ExportTarget, InterfaceCommand,
     PublishPreview, publish,
 };
 use pcbcraft_core::library::datum::{
     DatumFrame, DatumName, DatumProfile, PackageDatum, PackageDatumGeometry, PackageDatumOrigin,
 };
 use pcbcraft_core::library::package_model::{PackageEdit, edit_package};
-use pcbcraft_core::model::housing::Consumer;
+use pcbcraft_core::model::assembly_link::Consumer;
 use pcbcraft_core::model::interface::{AutoRule, DatumId, Slot, Tier};
 use pcbcraft_core::units::Nm;
 use pcbcraft_ui::fonts;
@@ -157,7 +157,7 @@ fn mm(v: f64) -> TestResult<Nm> {
 }
 
 /// The demo board with an opening on its first package marked for the
-/// enclosure, and an axis that is not.
+/// linked design, and an axis that is not.
 fn demo() -> TestResult<Engine> {
     let mut file = Engine::demo()?.to_file();
     let entry = file
@@ -250,7 +250,7 @@ fn move_part(engine: &mut Engine, instance: Id, by: [f64; 2]) -> TestResult {
 fn status_of(editor: &mut PcbEditor, engine: &Engine, ctx: &egui::Context) -> TestResult<String> {
     let shown = shows(editor, engine, ctx);
     let state = interface_card::shown(engine)?;
-    let words = State::of(&state.list, &state.housing).words();
+    let words = State::of(&state.list, &state.assembly_link).words();
     if !shown.contains(&words) {
         return Err(format!("{words} not painted in {shown:?}").into());
     }
@@ -269,7 +269,7 @@ fn the_interface_section_lists_datums_by_group_with_kind_and_slot() -> TestResul
         "Not published",
         "PARTS",
         "Publish…",
-        "Publish first to link an enclosure",
+        "Publish first to link a design",
         "NOT EXPORTED",
         &format!("{part} light"),
         "AUTOMATIC",
@@ -317,7 +317,7 @@ fn the_status_reads_published_then_stale_then_broken() -> TestResult {
         "a changed datum's row is badged"
     );
 
-    // An enclosure feature uses the part's opening; deleting the part
+    // A linked design feature uses the part's opening; deleting the part
     // breaks it.
     let token = format!("i{instance}.opening");
     let datum = sidecar
@@ -327,9 +327,9 @@ fn the_status_reads_published_then_stale_then_broken() -> TestResult {
         .ok_or("the opening was published")?;
     apply(
         &mut engine,
-        Operation::Housing(HousingCommand::RecordLink {
-            read: HousingRead {
-                enclosure_hint: "housing.solidcraft".into(),
+        Operation::Assembly(AssemblyCommand::RecordLink {
+            read: AssemblyRead {
+                assembly_hint: "assembly.solidcraft".into(),
                 design_hint: "board.solidcraft".into(),
                 component: "Board".into(),
                 file_sha256: ContentHash([7; 32]),
@@ -351,7 +351,7 @@ fn the_status_reads_published_then_stale_then_broken() -> TestResult {
     )?;
     let shown = shows(&mut editor, &engine, &ctx);
     assert!(
-        shown.iter().any(|t| t == "housing.solidcraft · linked"),
+        shown.iter().any(|t| t == "assembly.solidcraft · linked"),
         "the link and its state: {shown:?}"
     );
     let revision = engine.revision();
@@ -427,7 +427,7 @@ fn the_placement_card_marks_a_parts_frame_for_export() -> TestResult {
     let (instance, _) = first_part(&engine)?;
     editor.instance = Some(instance);
     assert!(
-        click(&mut editor, &engine, &ctx, "ENCLOSURE")?.is_none(),
+        click(&mut editor, &engine, &ctx, "INTERFACE")?.is_none(),
         "opening the section changes nothing"
     );
     let shown = shows(&mut editor, &engine, &ctx);
@@ -464,7 +464,7 @@ fn an_automatic_rule_is_switched_from_its_check() -> TestResult {
     Ok(())
 }
 
-/// A preview of one moved opening from revision 1, its enclosure's cutout
+/// A preview of one moved opening from revision 1, its linked design's cutout
 /// following it and a lid rib that would fail.
 fn preview(engine: &Engine, name: &str) -> PublishPreview {
     PublishPreview {
@@ -484,21 +484,21 @@ fn preview(engine: &Engine, name: &str) -> PublishPreview {
             summary: format!("{name}, 2 mm along X"),
         }],
         dry_run: Some(DryRun {
-            enclosure: "/tmp/enclosure.solidcraft".into(),
+            linked_design: "/tmp/linked.solidcraft".into(),
             effects: vec![
-                EnclosureEffect {
+                AssemblyEffect {
                     feature: "USB opening".into(),
                     effect: EffectKind::Moves,
                     datum: Some(DatumId(1)),
                     message: format!(
-                        "The enclosure's ‘USB opening’ follows {name}: it moves 2 mm along X"
+                        "The linked design's ‘USB opening’ follows {name}: it moves 2 mm along X"
                     ),
                 },
-                EnclosureEffect {
+                AssemblyEffect {
                     feature: "Lid rib".into(),
                     effect: EffectKind::Fails,
                     datum: None,
-                    message: "The enclosure's ‘Lid rib’ would fail".into(),
+                    message: "The linked design's ‘Lid rib’ would fail".into(),
                 },
             ],
         }),
@@ -541,11 +541,11 @@ fn the_publish_preview_waits_then_shows_changes_and_the_dry_run() -> TestResult 
     let shown = shows(&mut editor, &engine, &ctx);
     for text in [
         "Revision 1 → 2 · 1 datum changed",
-        "The enclosure's ‘Lid rib’ would fail",
+        "The linked design's ‘Lid rib’ would fail",
         "Publish anyway: ‘Lid rib’ will fail in SolidCraft",
         "DATUMS",
         "J1 opening, 2 mm along X",
-        "The enclosure's ‘USB opening’ follows J1 opening: it moves 2 mm along X",
+        "The linked design's ‘USB opening’ follows J1 opening: it moves 2 mm along X",
     ] {
         assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
     }
@@ -608,10 +608,10 @@ fn a_stale_or_failed_publish_preview_offers_to_compute_it_again() -> TestResult 
 }
 
 #[test]
-fn the_enclosure_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
+fn the_linked_design_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
     let engine = demo()?;
     let ctx = context();
-    // No enclosure is there: the real request says so, in the user's words.
+    // No linked design is there: the real request says so, in the user's words.
     let mut editor = PcbEditor {
         project_path: Some(std::env::temp_dir().join("sparksmith-b6-absent/board.pcbcraft")),
         ..PcbEditor::default()
@@ -619,9 +619,9 @@ fn the_enclosure_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
     let mut linked = engine.fork();
     apply(
         &mut linked,
-        Operation::Housing(HousingCommand::RecordLink {
-            read: HousingRead {
-                enclosure_hint: "housing.solidcraft".into(),
+        Operation::Assembly(AssemblyCommand::RecordLink {
+            read: AssemblyRead {
+                assembly_hint: "assembly.solidcraft".into(),
                 design_hint: "board.solidcraft".into(),
                 component: "Board".into(),
                 file_sha256: ContentHash([7; 32]),
@@ -635,12 +635,12 @@ fn the_enclosure_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
         }),
     )?;
     let engine = linked;
-    editor.open_housing(&ctx, &engine);
+    editor.open_assembly(&ctx, &engine);
     let started = std::time::Instant::now();
     while editor.interface_waiting() {
         frame(&mut editor, &engine, &ctx, vec![]);
         if started.elapsed() > std::time::Duration::from_secs(60) {
-            return Err("the enclosure read did not answer".into());
+            return Err("the linked design read did not answer".into());
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
@@ -648,14 +648,14 @@ fn the_enclosure_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
     assert!(
         shown
             .iter()
-            .any(|t| t.starts_with("The enclosure file was not found")),
+            .any(|t| t.starts_with("The linked design file was not found")),
         "{shown:?}"
     );
 
     let _hold = waiting(&mut editor);
     editor.interface_answer(
         &ctx,
-        Done::HousingPreview(Ok(HousingPreview {
+        Done::AssemblyPreview(Ok(AssemblyPreview {
             document_revision: engine.revision(),
             expect_hash: ContentHash([8; 32]),
             changed: true,
@@ -689,8 +689,8 @@ fn the_enclosure_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
     );
     let shown = shows(&mut editor, &engine, &ctx);
     for text in [
-        "Update from enclosure",
-        "The enclosure changed · 2 board objects move",
+        "Update from linked design",
+        "The linked design changed · 2 board objects move",
         "Board edge top, 1 mm along Y",
         "SW2, 1 mm along Y",
         "Update",
@@ -701,7 +701,7 @@ fn the_enclosure_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
     let _hold = waiting(&mut editor);
     editor.interface_answer(
         &ctx,
-        Done::HousingPreview(Ok(HousingPreview {
+        Done::AssemblyPreview(Ok(AssemblyPreview {
             document_revision: engine.revision(),
             expect_hash: ContentHash([8; 32]),
             changed: true,

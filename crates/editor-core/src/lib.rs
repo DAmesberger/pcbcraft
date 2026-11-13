@@ -73,10 +73,10 @@ pub enum Operation {
     Dimension(layout::dimensions::DimensionCommand),
     /// Pre-flight waivers for fabrication output (`fabrication.*`).
     Fabrication(fabrication::FabricationCommand),
-    /// The board interface an enclosure references (`interface.*`).
+    /// The board interface an assembly references (`interface.*`).
     Interface(interface::InterfaceCommand),
-    /// The enclosure link (`housing.*`).
-    Housing(interface::housing::HousingCommand),
+    /// The assembly link (`assembly.*`).
+    Assembly(interface::assembly_link::AssemblyCommand),
     Update(Box<updates::ApplyUpdate>),
 }
 
@@ -94,7 +94,7 @@ impl Operation {
             Self::Dimension(command) => command.class(),
             Self::Fabrication(command) => command.class(),
             Self::Interface(command) => command.class(),
-            Self::Housing(command) => command.class(),
+            Self::Assembly(command) => command.class(),
             Self::Update(_) => Class::Edit,
         }
     }
@@ -112,7 +112,7 @@ impl Operation {
             Self::Dimension(command) => command.command(),
             Self::Fabrication(command) => command.command(),
             Self::Interface(command) => command.command(),
-            Self::Housing(command) => command.command(),
+            Self::Assembly(command) => command.command(),
             Self::Update(_) => "update",
         }
     }
@@ -137,7 +137,7 @@ impl Operation {
             | Self::Dimension(_)
             | Self::Fabrication(_)
             | Self::Interface(_)
-            | Self::Housing(_) => Area::Pcb,
+            | Self::Assembly(_) => Area::Pcb,
             Self::Schematic(
                 schematic::SchematicCommand::SetProperties { .. }
                 | schematic::SchematicCommand::RenameProject { .. },
@@ -192,7 +192,7 @@ impl Operation {
             layout::dimensions::DimensionCommand::CLASSES,
             fabrication::FabricationCommand::CLASSES,
             interface::InterfaceCommand::CLASSES,
-            interface::housing::HousingCommand::CLASSES,
+            interface::assembly_link::AssemblyCommand::CLASSES,
             UPDATE,
         ]
         .into_iter()
@@ -214,7 +214,7 @@ impl Operation {
             layout::dimensions::DimensionCommand::TITLES,
             fabrication::FabricationCommand::TITLES,
             interface::InterfaceCommand::TITLES,
-            interface::housing::HousingCommand::TITLES,
+            interface::assembly_link::AssemblyCommand::TITLES,
             UPDATE,
         ]
         .into_iter()
@@ -480,11 +480,11 @@ pub enum Query {
     /// since the last publish; the list has the last published revision.
     #[serde(rename = "interface.list")]
     InterfaceList {},
-    /// The enclosure link's state from the document: no enclosure, a
+    /// The assembly link's state from the document: none, a
     /// broken reference (fabrication output is blocked) or linked, with
-    /// the findings. `housing.preview` reads the file.
-    #[serde(rename = "housing.status")]
-    HousingStatus {},
+    /// the findings. `assembly.preview` reads the file.
+    #[serde(rename = "assembly.status")]
+    AssemblyStatus {},
 }
 
 // A new command chooses its permission class here.
@@ -531,7 +531,7 @@ declare_classes!(Query {
     TunePreview "layout.tune_preview" Read "Preview length tuning",
     Preflight "fabrication.preflight" Read "Production check",
     InterfaceList "interface.list" Read "List the board interface",
-    HousingStatus "housing.status" Read "Check the enclosure link",
+    AssemblyStatus "assembly.status" Read "Check the assembly link",
 });
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -579,7 +579,7 @@ pub enum QueryResult {
     RoutePreview(Box<layout::router::RoutePlan>),
     Preflight(Box<fabrication::PreflightReport>),
     InterfaceList(Box<interface::InterfaceList>),
-    HousingStatus(Box<interface::housing::HousingStatus>),
+    AssemblyStatus(Box<interface::assembly_link::AssemblyStatus>),
 }
 
 /// The host engines a command may need. The core never interprets a
@@ -1317,9 +1317,9 @@ impl Engine {
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
         let merge_named = matches!(&operation, Operation::Update(u) if u.merge_named_nets);
-        // Only the enclosure link's own commands move the board-sketch
+        // Only the assembly link's own commands move the board-sketch
         // geometry its references own.
-        let housing_command = matches!(operation, Operation::Housing(_));
+        let assembly_command = matches!(operation, Operation::Assembly(_));
         // Parts the operation moves by hand: their attached copper is
         // carried with them, all at once.
         // Selected loose copper a group drag slides with its parts; the
@@ -1496,7 +1496,7 @@ impl Engine {
             }
             Operation::Board(command) => {
                 if let layout::outline::BoardCommand::Edit { edits } = &command {
-                    interface::housing::guard_edits(
+                    interface::assembly_link::guard_edits(
                         &self.document.project,
                         edits,
                         evaluators.board,
@@ -1533,9 +1533,9 @@ impl Engine {
                 }
                 Outcome::None
             }
-            Operation::Housing(command) => {
+            Operation::Assembly(command) => {
                 let project = Arc::make_mut(&mut candidate.project);
-                interface::housing::apply(project, command, evaluators.board)?;
+                interface::assembly_link::apply(project, command, evaluators.board)?;
                 Outcome::None
             }
             Operation::Update(update) => {
@@ -1608,16 +1608,20 @@ impl Engine {
             if let Some(table) = interface::auto::follow(&self.document.project, project)? {
                 project.interface = table.into();
             }
-            // A board edit never moves what the enclosure drives, and the
+            // A board edit never moves what the linked design drives, and the
             // loops between the two files follow the edit (slice B5).
-            if !housing_command {
-                interface::housing::guard_driven(
+            if !assembly_command {
+                interface::assembly_link::guard_driven(
                     &self.document.project,
                     project,
                     evaluators.board,
                 )?;
             }
-            interface::housing::follow_cycles(&self.document.project, project, evaluators.board)?;
+            interface::assembly_link::follow_cycles(
+                &self.document.project,
+                project,
+                evaluators.board,
+            )?;
             validate::edited_document(
                 &self.document.project,
                 &candidate.project,
@@ -1808,10 +1812,10 @@ impl Engine {
             Query::InterfaceList {} => Ok(QueryResult::InterfaceList(Box::new(
                 interface::list::list(&self.document.project)?,
             ))),
-            Query::HousingStatus {} => Ok(QueryResult::HousingStatus(Box::new(
-                interface::housing::status(
+            Query::AssemblyStatus {} => Ok(QueryResult::AssemblyStatus(Box::new(
+                interface::assembly_link::status(
                     &self.document.project,
-                    interface::housing::FileCheck::NotChecked,
+                    interface::assembly_link::FileCheck::NotChecked,
                 ),
             ))),
             Query::FillStatus {} => Ok(QueryResult::FillStatus(layout::fill::status(

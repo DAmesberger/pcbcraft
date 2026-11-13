@@ -476,7 +476,7 @@ fn collect(
     );
     let mut board = layout::checks_with(project, graph);
     board.extend(crate::interface::list::checks(project));
-    board.extend(crate::interface::housing::checks(project));
+    board.extend(crate::interface::assembly_link::checks(project));
     out.extend(
         merge::board(board)
             .into_iter()

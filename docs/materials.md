@@ -106,14 +106,14 @@ Every value carries a source key: `johnson-christy-1972`, `rakic-1998`, `hoffman
 | Nickel silver | (0.80, 0.77, 0.70) | 1 | 0.45 | – | – | 8700 | **est.** CuNiZn (about 18 % Ni) reads silver-white: F0 between the Ni and Cu-alloy F0 with the copper tint mostly bleached; C75200 density. Module shield cans are stamped and lightly brushed, a satin light silver: 0.45 (was 0.22, which mirrored the dark surroundings and read near-black). Laser-marked nickel silver (F0 0.3) went from roughness 0.55 to 0.70, so it stays clearly duller than the satin can and still reads on it. The renderer has no anisotropic highlight, so the brushing is not drawn. |
 | PVC sleeve | (0.020, 0.045, 0.16) | 0 | 0.35 | 1.54 | – | 1380 | **est.** colour of a blue sleeve; n handbook. |
 | Borosilicate glass | (0.85, 0.88, 0.86) | 0 | 0.05 | 1.47 | transmission 1.0, (0.92, 0.95, 0.93) at 1 mm | 2230 | n and density handbook; attenuation **est.** Saved as an opaque tint until a layered saved appearance exists. |
-| PBT | (0.030, 0.030, 0.032) | 0 | 0.50 | 1.57 | – | 1530 | **est.** Black 30 % glass-filled housing. |
-| LCP | (0.025, 0.025, 0.028) | 0 | 0.35 | 1.60 | – | 1620 | **est.** Black glass-filled housing. |
-| PA9T | (0.030, 0.030, 0.030) | 0 | 0.45 | 1.53 | – | 1450 | **est.** Black glass-filled housing. |
+| PBT | (0.030, 0.030, 0.032) | 0 | 0.50 | 1.57 | – | 1530 | **est.** Black 30 % glass-filled body. |
+| LCP | (0.025, 0.025, 0.028) | 0 | 0.35 | 1.60 | – | 1620 | **est.** Black glass-filled body. |
+| PA9T | (0.030, 0.030, 0.030) | 0 | 0.45 | 1.53 | – | 1450 | **est.** Black glass-filled body. |
 | Clear silicone | (0.90, 0.90, 0.90) | 0 | 0.08 | 1.41 | transmission 1.0, (0.97, 0.97, 0.96) at 1 mm | 1030 | n of PDMS handbook; attenuation **est.** |
 | Diffuse silicone | (0.75, 0.75, 0.72) | 0 | 0.40 | 1.41 | transmission 0.3, (0.80, 0.80, 0.78) at 0.5 mm | 1100 | **est.** Scattering filler. |
 | Polyimide | (0.40, 0.15, 0.02) | 0 | 0.25 | 1.70 | – | 1420 | n and density handbook; amber colour **est.** |
 
-Family defaults (`library::default_material`, never from names): chip bodies alumina (resistor), barium titanate (capacitor) or ferrite (inductor); header housings PBT and pins gold; leads, terminations and exposed pads matte tin; markings laser-marked epoxy; lenses clear silicone; sleeves PVC; every other body epoxy mould compound. A generated model may override a role (`GeneratedMaterials`).
+Family defaults (`library::default_material`, never from names): chip bodies alumina (resistor), barium titanate (capacitor) or ferrite (inductor); header bodies PBT and pins gold; leads, terminations and exposed pads matte tin; markings laser-marked epoxy; lenses clear silicone; sleeves PVC; every other body epoxy mould compound. A generated model may override a role (`GeneratedMaterials`).
 
 ## Fabrication presets
 
