@@ -9,10 +9,10 @@
 use crate::geom::Vec3;
 use crate::stack::Stack;
 use crate::{Error, Result};
-use pcbcraft_core::{Fabrication, MaskColour, MaskFinish, PadFinish, SilkscreenColour};
 use serde::{Deserialize, Serialize};
 use solidcraft_viewport::clear_coat::ClearCoat;
 use solidcraft_viewport::surface::OpaqueSurface;
+use sparksmith_core::{Fabrication, MaskColour, MaskFinish, PadFinish, SilkscreenColour};
 
 /// What a native body represents, stored per body in the model metadata so a
 /// reopened file renders and picks the same way.
@@ -570,7 +570,7 @@ pub fn srgb8_to_linear(value: u8) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::SilkscreenColour;
+    use sparksmith_core::SilkscreenColour;
 
     const COLOURS: [MaskColour; 8] = [
         MaskColour::Green,

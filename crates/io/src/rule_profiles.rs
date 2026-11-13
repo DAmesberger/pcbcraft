@@ -14,7 +14,7 @@ use crate::library_folder::{pretty, read_bounded};
 use crate::persistence::{atomic_create, atomic_write};
 use crate::settings::UserDirs;
 use crate::{Error, Result};
-use pcbcraft_core::rules::{PROFILE_FILE_FORMAT, ProfileFile, RuleProfile};
+use sparksmith_core::rules::{PROFILE_FILE_FORMAT, ProfileFile, RuleProfile};
 use std::path::{Path, PathBuf};
 
 /// The library folder's name under the user config directory.
@@ -152,9 +152,9 @@ pub fn decode(bytes: &[u8]) -> Result<RuleProfile> {
     match value.get("format").and_then(serde_json::Value::as_u64) {
         Some(format) if format == u64::from(PROFILE_FILE_FORMAT) => {}
         Some(format) => {
-            return Err(Error::Document(pcbcraft_core::Error::Unsupported(format!(
-                "unsupported fab profile format {format}"
-            ))));
+            return Err(Error::Document(sparksmith_core::Error::Unsupported(
+                format!("unsupported fab profile format {format}"),
+            )));
         }
         None => {
             return Err(Error::Invalid(
@@ -198,7 +198,7 @@ pub fn export_replacing(profile: &RuleProfile, path: &Path) -> Result<()> {
 }
 
 fn not_found(id: &str) -> Error {
-    Error::Document(pcbcraft_core::Error::NotFound(format!(
+    Error::Document(sparksmith_core::Error::NotFound(format!(
         "no fab profile {id}"
     )))
 }
@@ -331,7 +331,7 @@ impl ProfileLibrary {
     fn check_name(&self, listing: &Listing, name: &str, id: &str) -> Result<()> {
         let taken = |p: &RuleProfile| p.id != id && p.name.trim().eq_ignore_ascii_case(name.trim());
         if listing.profiles.iter().any(taken) {
-            return Err(Error::Document(pcbcraft_core::Error::Conflict(format!(
+            return Err(Error::Document(sparksmith_core::Error::Conflict(format!(
                 "a fab profile named {} exists; choose another name",
                 name.trim()
             ))));
@@ -353,7 +353,7 @@ impl ProfileLibrary {
         std::fs::create_dir_all(&self.dir)?;
         match atomic_create(&path, &encode(profile)?) {
             Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                Err(Error::Document(pcbcraft_core::Error::Conflict(format!(
+                Err(Error::Document(sparksmith_core::Error::Conflict(format!(
                     "a user fab profile {} exists",
                     profile.id
                 ))))
@@ -522,7 +522,7 @@ mod tests {
         assert_eq!(p.source.date, "2026-11-11");
         assert!(matches!(
             p.drill_files,
-            pcbcraft_core::rules::DrillFiles::NotPublished { .. }
+            sparksmith_core::rules::DrillFiles::NotPublished { .. }
         ));
         // Formulas resolve: the preferred via pad and the stroke share.
         assert!((p.rules().holes.via_diameter_default - 0.45).abs() < 1e-12);
@@ -546,7 +546,7 @@ mod tests {
     /// pad annular ring is its 0.45 mm row.
     #[test]
     fn the_jlcpcb_examples_split_holes_and_take_the_recommended_values() -> Result<()> {
-        use pcbcraft_core::rules::CopperObject::{NpthHole, Pad, PthHole, Track, ViaHole};
+        use sparksmith_core::rules::CopperObject::{NpthHole, Pad, PthHole, Track, ViaHole};
         const FOUR: &str = include_str!("../../../examples/profiles/jlcpcb-4-layer-1oz.json");
         // (file, PTH ring, PTH to track, via hole to track)
         for (text, ring, pth, via) in [(JLCPCB, 0.25, 0.35, 0.2), (FOUR, 0.2, 0.35, 0.2)] {

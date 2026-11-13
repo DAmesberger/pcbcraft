@@ -7,7 +7,7 @@ use super::Fallible;
 
 // B2: package datums. The bodies are in `super::package_datums`; the
 // part-file reader's half of the first also runs against the real USB4105
-// part file in `pcbcraft-solidcraft` (`board::package_datum_tests`).
+// part file in `sparksmith-solidcraft` (`board::package_datum_tests`).
 
 /// A USB-C part file's `opening` plane becomes the package datum
 /// `opening`, and reaches a placed instance in the board frame on both
@@ -35,7 +35,7 @@ fn b2_no_opening_is_inferred_from_a_name() -> Fallible {
 // (acceptance 1 to 5 and 8). The core's halves are here, with their bodies
 // in `super::b3`; the halves that need Solidcraft or files run where those
 // are: the exported design and a headless SolidCraft assembly in
-// `pcbcraft-solidcraft` (`interface::tests`), and `interface.publish` and
+// `sparksmith-solidcraft` (`interface::tests`), and `interface.publish` and
 // `interface.publish_preview` over the ESP32 example in the automation
 // session (`session::interface_publish_tests`), under the same names.
 

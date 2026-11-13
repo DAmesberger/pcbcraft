@@ -1,7 +1,7 @@
 {
   "project": {
     "revision": 3,
-    "saved_path": "/private/tmp/claude-501/-Users-amd-dev-pcbcraft/17b68a65-4f80-4764-aec6-ceb135ce7274/scratchpad/bindfix/regen/esp32-s31-wroom-3.pcbcraft"
+    "saved_path": "/private/tmp/claude-501/-Users-amd-dev-pcbcraft/17b68a65-4f80-4764-aec6-ceb135ce7274/scratchpad/bindfix/regen/esp32-s31-wroom-3.sparksmith"
   },
   "report": {
     "open_questions": [
@@ -233,7 +233,7 @@
       {
         "confidence": "high",
         "item": "can mark",
-        "note": "Matches the Ø0.5 in the datasheet's top view (Figure 10-1). It is not a pin-1 mark (pin 1 is at the +y end of the left row), so the can carries no polarity mark here; Espressif's footprint has no pin-1 silkscreen mark either (Pcbcraft's footprint adds its own at pad 1).",
+        "note": "Matches the Ø0.5 in the datasheet's top view (Figure 10-1). It is not a pin-1 mark (pin 1 is at the +y end of the left row), so the can carries no polarity mark here; Espressif's footprint has no pin-1 silkscreen mark either (Sparksmith's footprint adds its own at pad 1).",
         "source": {
           "document": "ESPSTEP",
           "location": "shield can lid",

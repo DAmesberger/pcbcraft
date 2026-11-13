@@ -10,17 +10,17 @@
 use super::tests::{Fallible, apply};
 use crate::models::part_file;
 use crate::project::build;
-use pcbcraft_core::ids::Id;
-use pcbcraft_core::interface::package::{instance_datums, model_to_board};
-use pcbcraft_core::interface::{DatumGeometry, Frame};
-use pcbcraft_core::layout::LayoutCommand;
-use pcbcraft_core::library::Provenance;
-use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
-use pcbcraft_core::library::datum::{DatumProfile, PackageDatumGeometry, PackageDatumOrigin};
-use pcbcraft_core::library::mechanical::{PadUse, PartModelSource, PartSpec};
-use pcbcraft_core::library::model3d::{AssetRef, ModelDefinition, ModelFormat, ModelProvenance};
-use pcbcraft_core::units::Nm;
-use pcbcraft_core::{Engine, Layer, Operation, Outcome};
+use sparksmith_core::ids::Id;
+use sparksmith_core::interface::package::{instance_datums, model_to_board};
+use sparksmith_core::interface::{DatumGeometry, Frame};
+use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::library::Provenance;
+use sparksmith_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
+use sparksmith_core::library::datum::{DatumProfile, PackageDatumGeometry, PackageDatumOrigin};
+use sparksmith_core::library::mechanical::{PadUse, PartModelSource, PartSpec};
+use sparksmith_core::library::model3d::{AssetRef, ModelDefinition, ModelFormat, ModelProvenance};
+use sparksmith_core::units::Nm;
+use sparksmith_core::{Engine, Layer, Operation, Outcome};
 
 /// The example's original USB4105 part file (`author_parts`).
 pub(crate) const USB4105: &[u8] =

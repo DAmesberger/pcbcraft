@@ -47,7 +47,7 @@ fn the_local_run_replays_to_the_same_ldo() -> Fallible {
         .items
         .iter()
         .find_map(|d| match &d.definition {
-            pcbcraft_core::library::Definition::Footprint(f) => Some(f),
+            sparksmith_core::library::Definition::Footprint(f) => Some(f),
             _ => None,
         })
         .ok_or("a footprint draft")?;

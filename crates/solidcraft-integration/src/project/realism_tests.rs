@@ -4,7 +4,7 @@
 //! finished rings, bores, silkscreen and edge bands) carry their layers.
 use super::*;
 use crate::geom::Vec3;
-use pcbcraft_core::{Engine, Track, Via, ViaSpan};
+use sparksmith_core::{Engine, Track, Via, ViaSpan};
 
 fn near(actual: f64, expected: f64) {
     assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
@@ -321,7 +321,7 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
         .into_iter()
         .find(|g| g.kind == BodyKind::MaskCap && g.layer == Some(CopperLayer::Top))
         .ok_or_else(|| invalid("no dome"))?;
-    near(dome.max[2], t + 0.035 + pcbcraft_core::MASK_UM / 1000.0);
+    near(dome.max[2], t + 0.035 + sparksmith_core::MASK_UM / 1000.0);
     Ok(())
 }
 
@@ -329,9 +329,9 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
 /// expansion, as the Gerber mask draws it (`Via::mask_opening`).
 #[test]
 fn an_open_via_s_mask_opening_follows_the_mask_expansion_rule() -> Result<()> {
-    use pcbcraft_core::rules::{RuleKey, RuleOverride, RuleValue};
+    use sparksmith_core::rules::{RuleKey, RuleOverride, RuleValue};
     let (mut project, _, _) = four_layer()?;
-    project.rules = pcbcraft_core::rules::fixtures::rules().map_err(invalid)?;
+    project.rules = sparksmith_core::rules::fixtures::rules().map_err(invalid)?;
     project.rules.overrides.push(RuleOverride {
         key: RuleKey::MaskExpansion,
         value: RuleValue::Length(0.2),
@@ -446,7 +446,7 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
     }
     // White ink by default; the colour follows the fabrication.
     let mut black = project.clone();
-    black.fabrication.silkscreen_colour = pcbcraft_core::SilkscreenColour::Black;
+    black.fabrication.silkscreen_colour = sparksmith_core::SilkscreenColour::Black;
     let dark = build(&black)?;
     let ink = |m: &NativeModel| {
         m.geometry

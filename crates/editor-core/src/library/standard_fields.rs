@@ -192,7 +192,7 @@ fn meta(name: &str, description: &str) -> DefinitionMeta {
     DefinitionMeta {
         name: name.to_owned(),
         description: description.to_owned(),
-        provenance: "Built into Pcbcraft.".to_owned(),
+        provenance: "Built into Sparksmith.".to_owned(),
     }
 }
 

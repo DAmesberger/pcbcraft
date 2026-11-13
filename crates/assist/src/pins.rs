@@ -7,9 +7,9 @@
 //!
 //! Both read the document snapshot (`Session::snapshot`), the same JSON
 //! the MCP server and CLI return.
-use pcbcraft_core::functions::mux_text;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sparksmith_core::functions::mux_text;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 

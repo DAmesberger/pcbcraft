@@ -3,7 +3,7 @@ request it sends, so the session can be replayed exactly."""
 import json, subprocess, sys
 
 import os as _os
-CLI = _os.environ.get("PCBCRAFT_CLI", "target/nix/ci/sparksmith")
+CLI = _os.environ.get("SPARKSMITH_CLI", "target/nix/ci/sparksmith")
 
 
 class Refused(Exception):
@@ -16,9 +16,9 @@ class Session:
         import os
         env = dict(os.environ)
         import tempfile
-        base = os.environ.get("E2E_DIRS") or tempfile.mkdtemp(prefix="pcbcraft-e2e-")
-        env["PCBCRAFT_CONFIG_DIR"] = base + "/config"
-        env["PCBCRAFT_CACHE_DIR"] = base + "/cache"
+        base = os.environ.get("E2E_DIRS") or tempfile.mkdtemp(prefix="sparksmith-e2e-")
+        env["SPARKSMITH_CONFIG_DIR"] = base + "/config"
+        env["SPARKSMITH_CACHE_DIR"] = base + "/cache"
         self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, env=env)
         self.record = open(record, "w") if record else None
         self.rev = None

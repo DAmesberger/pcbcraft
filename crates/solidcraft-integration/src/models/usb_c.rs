@@ -14,8 +14,8 @@ use super::{Build, check_positive, require};
 use crate::Result;
 use crate::native::{Plane, ProfileBody, mm};
 use crate::pad_outline::Contour;
-use pcbcraft_core::library::package_form::usb_c::UsbCForm;
-use pcbcraft_core::library::{BodyRole, Outline, Segment};
+use sparksmith_core::library::package_form::usb_c::UsbCForm;
+use sparksmith_core::library::{BodyRole, Outline, Segment};
 
 /// The builder revision (`PackageModel::Generated { family_rev }`).
 pub(super) const FAMILY_REV: Option<u16> = Some(1);

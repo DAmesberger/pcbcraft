@@ -83,8 +83,8 @@ fn placement(p: &mut Map<String, Value>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::library::marking::{InstanceMarking, MarkingSpec};
     use serde_json::json;
+    use sparksmith_core::library::marking::{InstanceMarking, MarkingSpec};
 
     fn old_spec() -> Value {
         json!({
@@ -143,8 +143,11 @@ mod tests {
         assert_eq!(spec.placement.rotation_deg(), 270.0);
         assert_eq!(spec.placement.wrap.map(|w| w.wrap_deg()), Some(360.0));
         assert!(
-            pcbcraft_core::library::marking::spec_findings(pcbcraft_core::DefinitionId(1), &spec)
-                .is_empty()
+            sparksmith_core::library::marking::spec_findings(
+                sparksmith_core::DefinitionId(1),
+                &spec
+            )
+            .is_empty()
         );
         Ok(())
     }

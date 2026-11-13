@@ -2,11 +2,11 @@
 //! file, Solidcraft's reader converts it, and one `library.edit_graphics`
 //! step adds it.
 use super::*;
-use pcbcraft_core::library::{
+use sparksmith_core::library::{
     Definition, DefinitionMeta, FootprintDefinition, PackageDefinition, SymbolDefinition, Unit,
     graphics::DrawingLayer,
 };
-use pcbcraft_core::{PackageRef, Revision, UnitId};
+use sparksmith_core::{PackageRef, Revision, UnitId};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
@@ -40,7 +40,7 @@ fn symbol_graphics(session: &Session, draft: u64) -> usize {
     match session
         .engine()
         .drafts()
-        .get(pcbcraft_core::DefinitionId(draft))
+        .get(sparksmith_core::DefinitionId(draft))
         .map(|d| &d.definition)
     {
         Some(Definition::Symbol(s)) => s.units.iter().map(|u| u.graphics.len()).sum(),
@@ -129,14 +129,14 @@ fn an_svg_lands_on_footprint_silkscreen_not_the_courtyard() -> TestResult {
     let package = new_draft(
         &mut session,
         Definition::Package(PackageDefinition {
-            envelope_nm: [2.0, 1.2, 0.5].map(pcbcraft_core::library::package_form::typical_nm),
+            envelope_nm: [2.0, 1.2, 0.5].map(sparksmith_core::library::package_form::typical_nm),
             ..PackageDefinition::default()
         }),
     )?;
     let footprint = new_draft(
         &mut session,
         Definition::Footprint(FootprintDefinition {
-            package: PackageRef::new(pcbcraft_core::DefinitionId(package), Revision::FIRST),
+            package: PackageRef::new(sparksmith_core::DefinitionId(package), Revision::FIRST),
             next_local: 1,
             ..FootprintDefinition::default()
         }),
@@ -159,7 +159,7 @@ fn an_svg_lands_on_footprint_silkscreen_not_the_courtyard() -> TestResult {
     let Some(Definition::Footprint(f)) = session
         .engine()
         .drafts()
-        .get(pcbcraft_core::DefinitionId(footprint))
+        .get(sparksmith_core::DefinitionId(footprint))
         .map(|d| &d.definition)
     else {
         return Err("footprint draft".into());

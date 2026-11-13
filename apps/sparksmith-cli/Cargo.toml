@@ -1,0 +1,25 @@
+[package]
+name = "sparksmith-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# The binary takes the product's short name (sparksmith_core::product).
+[[bin]]
+name = "sparksmith"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+sparksmith-core.workspace = true
+sparksmith-automation.workspace = true
+sparksmith-io.workspace = true
+sparksmith-assist.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+sparksmith-core = { workspace = true, features = ["test-fixtures"] }

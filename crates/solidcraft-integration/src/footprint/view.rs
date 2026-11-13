@@ -14,15 +14,15 @@ use crate::geom::prelude::*;
 use std::collections::BTreeSet;
 
 use crate::geom::Vec2;
-use pcbcraft_core::diagnostics::{Error, Result};
-use pcbcraft_core::geometry::Point;
-use pcbcraft_core::library::footprint_source::{
-    FootprintSource, PackageValue, ParamName, ParamUnit, ParamValue, SketchConstraintId,
-    SketchCurveId, SketchPointId, SolveStatus,
-};
 use solidcraft_engine::sketch::{
     Analysis, Budget, CurveKind, Hold, Sketch, chain_centres, default_text, dim_frame,
     dim_layout_reaching, dim_reach, move_point_towards, solve_after_edit_with_analysis, solve_with,
+};
+use sparksmith_core::diagnostics::{Error, Result};
+use sparksmith_core::geometry::Point;
+use sparksmith_core::library::footprint_source::{
+    FootprintSource, PackageValue, ParamName, ParamUnit, ParamValue, SketchConstraintId,
+    SketchCurveId, SketchPointId, SolveStatus,
 };
 
 use super::check::{self, MAX_COORD_MM};
@@ -291,7 +291,7 @@ impl ParamReaders {
 /// pad rules, overrides and expression-placed points (the same readers
 /// the evaluator's removal check counts).
 pub fn readers(source: &FootprintSource, name: &ParamName) -> Result<ParamReaders> {
-    use pcbcraft_core::library::footprint_source::{
+    use sparksmith_core::library::footprint_source::{
         ArrayLayout, DerivedGraphic, Expr, GraphicSource, MaskRuleExpr, PadShapeExpr, PasteRuleExpr,
     };
     let readers = readers_of(source, name);
@@ -699,7 +699,7 @@ impl LiveSketch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::library::footprint_source::{
+    use sparksmith_core::library::footprint_source::{
         DimKind, DimValue, Expr, FootprintEvaluator, FootprintParam, GeomConstraint, ParamUnit,
         SketchEdit, SketchRef,
     };
@@ -1076,7 +1076,7 @@ mod tests {
     /// Drag-preview frame time against the 16 ms target (design §2.5) on
     /// 100 dimensioned, fully constrained rectangles with one rectangle
     /// left free to drag: solve, view and dimension layout per frame. Run with
-    /// `cargo test --release -p pcbcraft-solidcraft drag_frame_time -- --ignored --nocapture`.
+    /// `cargo test --release -p sparksmith-solidcraft drag_frame_time -- --ignored --nocapture`.
     #[test]
     #[ignore = "timing measurement; run explicitly in release"]
     fn drag_frame_time() -> Result<()> {

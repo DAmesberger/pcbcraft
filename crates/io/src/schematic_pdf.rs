@@ -1,5 +1,5 @@
 //! Schematic printing: a vector PDF with one page per sheet at its paper
-//! size, drawn only from `pcbcraft_core::schematic::scene::sheet_scene`
+//! size, drawn only from `sparksmith_core::schematic::scene::sheet_scene`
 //! (page frame and title block, labels, power ports, sheet symbols,
 //! furniture, wires, junction dots, no-connect crosses and units), so the
 //! print matches the canvas. Black ink on white, through the shared PDF
@@ -8,10 +8,10 @@
 use crate::pdf::{Align, Colour, Document, Font, Page, Stroke};
 use crate::persistence::atomic_write;
 use crate::{Error, Result};
-use pcbcraft_core::geometry::{Point, Shape};
-use pcbcraft_core::library::{Fill, HAlign, PlacedText};
-use pcbcraft_core::schematic::scene::{self, Drawing, SheetScene};
-use pcbcraft_core::{Project, SheetId};
+use sparksmith_core::geometry::{Point, Shape};
+use sparksmith_core::library::{Fill, HAlign, PlacedText};
+use sparksmith_core::schematic::scene::{self, Drawing, SheetScene};
+use sparksmith_core::{Project, SheetId};
 use std::path::Path;
 
 /// Pages one schematic PDF holds.
@@ -164,7 +164,7 @@ fn draw(scene: &SheetScene) -> Page {
         page.disc(f.map(*p), DOT_MM, Colour::BLACK);
     }
     for p in &scene.no_connects {
-        let h = pcbcraft_core::schematic::NO_CONNECT_MM;
+        let h = sparksmith_core::schematic::NO_CONNECT_MM;
         line(&mut page, &f, [p[0] - h, p[1] - h], [p[0] + h, p[1] + h]);
         line(&mut page, &f, [p[0] - h, p[1] + h], [p[0] + h, p[1] - h]);
     }

@@ -1,5 +1,5 @@
-//! A `.pcbcraft` project container: its document is converted as JSON,
-//! then read back through `pcbcraft-io` as the app reads it (typed and
+//! A `.sparksmith` project container: its document is converted as JSON,
+//! then read back through `sparksmith-io` as the app reads it (typed and
 //! validated, so a conversion that missed a field fails here and writes
 //! nothing), its remembered hashes are recomputed ([`identity`]), and it is
 //! written as the app writes it.
@@ -27,7 +27,7 @@ pub struct Converted {
 /// conversion ([`crate::convert_rules`]).
 pub fn convert_document(file: &mut Value, pinned: Option<&Value>) -> Result<usize> {
     if file.get("version") != Some(&Value::from(1)) {
-        return Err("not a version 1 Pcbcraft document".into());
+        return Err("not a version 1 Sparksmith document".into());
     }
     let mut n = 0;
     let project = file
@@ -64,7 +64,7 @@ pub fn convert(path: &Path, backup: &Path, pinned: Option<&Value>) -> Result<Con
 
     // The converted JSON in a container beside the file, read as the app
     // reads it.
-    let staged = sibling(path, ".convert-tmp.pcbcraft");
+    let staged = sibling(path, ".convert-tmp.sparksmith");
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
@@ -81,7 +81,7 @@ pub fn convert(path: &Path, backup: &Path, pinned: Option<&Value>) -> Result<Con
         }
     }
     fs::write(&staged, out.finish()?.into_inner())?;
-    let read = pcbcraft_io::read_project(&staged);
+    let read = sparksmith_io::read_project(&staged);
     fs::remove_file(&staged)?;
     let mut typed = read.map_err(|e| format!("the converted document does not read: {e}"))?;
     let identity = identity::refresh(&mut typed)?;
@@ -92,7 +92,7 @@ pub fn convert(path: &Path, backup: &Path, pinned: Option<&Value>) -> Result<Con
     if !backup.exists() {
         fs::write(backup, &original)?;
     }
-    pcbcraft_io::write_project(path, &typed)?;
+    sparksmith_io::write_project(path, &typed)?;
     Ok(converted)
 }
 

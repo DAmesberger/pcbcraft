@@ -2,10 +2,10 @@
 //! ordinary parametric Solidcraft design, a **part file**, built at the
 //! package's literal parameter values through Solidcraft's engine.
 //!
-//! Pcbcraft reads what it needs by convention over generic Solidcraft
+//! Sparksmith reads what it needs by convention over generic Solidcraft
 //! features, and checks the conventions itself ([`evaluate`]'s findings):
 //! the design origin is the footprint origin and z = 0 the seating plane;
-//! each body's appearance is named after a Pcbcraft material
+//! each body's appearance is named after a Sparksmith material
 //! ([`material_of`]); a construction plane `marking-<name>` with the length
 //! parameters `marking_<name>_u` and `marking_<name>_v` is a marking
 //! surface; a construction point `pin1` marks pin 1.
@@ -30,24 +30,24 @@ use super::{GeneratedBody, ModelDefinition, PARAMETER_PREFIX, look};
 use crate::geom::prelude::*;
 use crate::native::Native;
 use crate::{Error, Result};
-use pcbcraft_core::library::BodyRole;
-use pcbcraft_core::library::bundle::{MAX_ASSET_BYTES, asset_hash};
-use pcbcraft_core::library::datum::{
-    DatumFrame, DatumName, DatumProfile, MAX_PACKAGE_DATUMS, PART_FILE_AXIS, PART_FILE_OPENING,
-    PackageDatum, PackageDatumGeometry, PackageDatumOrigin, PackageDatumParams,
-};
-use pcbcraft_core::library::marking::surface::{AnchorInfo, SurfaceGeometry};
-use pcbcraft_core::library::model3d::MarkingArea;
-use pcbcraft_core::library::package_model::{
-    MAX_PART_BODIES, MAX_PART_SURFACES, MAX_PART_VALUES, PartDerived, PartValue,
-    part_parameter_name_ok,
-};
-use pcbcraft_core::materials::MaterialId;
-use pcbcraft_core::units::Nm;
 use serde::{Deserialize, Serialize};
 use solidcraft_engine::Session;
 use solidcraft_engine::doc::construct::ConstructGeom;
 use solidcraft_engine::doc::{Document, FeatureKind, ModelState, clone_expression};
+use sparksmith_core::library::BodyRole;
+use sparksmith_core::library::bundle::{MAX_ASSET_BYTES, asset_hash};
+use sparksmith_core::library::datum::{
+    DatumFrame, DatumName, DatumProfile, MAX_PACKAGE_DATUMS, PART_FILE_AXIS, PART_FILE_OPENING,
+    PackageDatum, PackageDatumGeometry, PackageDatumOrigin, PackageDatumParams,
+};
+use sparksmith_core::library::marking::surface::{AnchorInfo, SurfaceGeometry};
+use sparksmith_core::library::model3d::MarkingArea;
+use sparksmith_core::library::package_model::{
+    MAX_PART_BODIES, MAX_PART_SURFACES, MAX_PART_VALUES, PartDerived, PartValue,
+    part_parameter_name_ok,
+};
+use sparksmith_core::materials::MaterialId;
+use sparksmith_core::units::Nm;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -104,7 +104,7 @@ pub struct PartBody {
     pub name: String,
     /// The appearance name the file gives it.
     pub appearance: Option<String>,
-    /// The Pcbcraft material that name maps to.
+    /// The Sparksmith material that name maps to.
     pub material: Option<MaterialId>,
     pub bounds_mm: [[f64; 3]; 2],
 }
@@ -213,7 +213,7 @@ impl EvaluatedPart {
 /// bounds through the one crossing into stored nanometres.
 pub fn derived(part: &EvaluatedPart) -> Result<PartDerived> {
     Ok(PartDerived {
-        bounds_nm: pcbcraft_core::library::model3d::bounds_nm(part.bounds_mm)
+        bounds_nm: sparksmith_core::library::model3d::bounds_nm(part.bounds_mm)
             .map_err(|e| Error::Invalid(format!("part_file.bounds: {e}")))?,
         bodies: u32::try_from(part.bodies.len()).unwrap_or(u32::MAX),
         surfaces: part.surfaces.clone(),
@@ -281,7 +281,7 @@ fn same_json(a: &serde_json::Value, b: &serde_json::Value, tol: f64) -> bool {
     }
 }
 
-/// The Pcbcraft material an appearance name means: a [`MaterialId`] in
+/// The Sparksmith material an appearance name means: a [`MaterialId`] in
 /// kebab case (`nickel-silver`), case and `-`, `_` or space not told
 /// apart. This is the one place a part's looks map, so a future material
 /// graph named the same way maps the same way.
@@ -607,7 +607,7 @@ fn evaluate_now(bytes: &[u8], values: &PartValues, key: [u8; 32]) -> Result<Eval
             format!(
                 "{} body(ies) have no appearance named after a {} material: {}",
                 unmapped.len(),
-                pcbcraft_core::product::NAME,
+                sparksmith_core::product::NAME,
                 unmapped
                     .iter()
                     .take(8)
@@ -757,7 +757,7 @@ fn datum_name(feature: &str, prefix: &str) -> std::result::Result<DatumName, Str
             "‘{}’ does not make a datum name ({prefix} or {prefix}-<suffix> in lower case \
              letters, digits and -, at most {} bytes)",
             feature.chars().take(40).collect::<String>(),
-            pcbcraft_core::library::datum::MAX_DATUM_NAME
+            sparksmith_core::library::datum::MAX_DATUM_NAME
         )
     })
 }
@@ -1031,7 +1031,7 @@ pub fn insert_design(
     })
 }
 
-/// Pcbcraft's built-in part files (`library/parts/`, original work,
+/// Sparksmith's built-in part files (`library/parts/`, original work,
 /// MIT OR Apache-2.0), by name.
 pub const BUILTIN: &[(&str, &[u8])] = &[
     (

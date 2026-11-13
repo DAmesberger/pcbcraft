@@ -1,4 +1,4 @@
-//! Pcbcraft's legend stroke font: monoline glyphs on a 4 × 6 grid (cap
+//! Sparksmith's legend stroke font: monoline glyphs on a 4 × 6 grid (cap
 //! height 6, baseline 0), drawn for the silkscreen films. Original, made
 //! for this project; lowercase prints as capitals, as legend fonts do.
 //! Characters without a glyph print nothing but keep their advance.

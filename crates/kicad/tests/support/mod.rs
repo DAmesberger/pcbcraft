@@ -116,7 +116,7 @@ impl Board {
             format!("00000000-0000-4000-8000-{uuid:012}")
         };
         let mut s = String::new();
-        s.push_str("(kicad_pcb (version 20240108) (generator \"pcbcraft_test\") (generator_version \"8.0\")\n");
+        s.push_str("(kicad_pcb (version 20240108) (generator \"sparksmith_test\") (generator_version \"8.0\")\n");
         s.push_str(
             "  (general (thickness 1.6) (legacy_teardrops no))\n  (paper \"A4\")\n  (layers\n",
         );

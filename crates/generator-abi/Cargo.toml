@@ -1,5 +1,5 @@
 [package]
-name = "pcbcraft-generator-abi"
+name = "sparksmith-generator-abi"
 description = "Generator plugin ABI: wire types and the canonical JSON codec shared by the host and generator modules"
 version.workspace = true
 edition.workspace = true

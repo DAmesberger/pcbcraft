@@ -11,10 +11,10 @@ use super::{Build, check_positive, mm, require, top_edges};
 use crate::Result;
 use crate::native::{Expr, Plane, ProfileBody};
 use crate::pad_outline::Contour;
-use pcbcraft_core::library::BodyRole;
-use pcbcraft_core::library::package_form::MoldedForm;
-use pcbcraft_core::library::package_form::molded::MoldedLead;
-use pcbcraft_core::materials::MaterialId;
+use sparksmith_core::library::BodyRole;
+use sparksmith_core::library::package_form::MoldedForm;
+use sparksmith_core::library::package_form::molded::MoldedLead;
+use sparksmith_core::materials::MaterialId;
 
 /// The builder revision (`PackageModel::Generated { family_rev }`).
 pub(super) const FAMILY_REV: Option<u16> = Some(1);
@@ -173,7 +173,7 @@ fn moulded(b: &mut Build<'_>, f: &MoldedForm) -> Result<()> {
         _ => exit + t / 2.0,
     };
     let band_inset =
-        pcbcraft_core::library::package_form::molded::BAND_INSET_SHARE * f.body_length();
+        sparksmith_core::library::package_form::molded::BAND_INSET_SHARE * f.body_length();
     let small = f.body_length().min(f.body_width());
     let cap = (0.08 * small).min(band_inset * 0.8);
     let corner_room = (f.body_width() - f.terminal_width()) / 2.0;
@@ -312,11 +312,11 @@ mod tests {
     #[allow(unused_imports)]
     use crate::models::tests::{nm, pt};
     use crate::native::Native;
-    use pcbcraft_core::PackageTerminalId;
-    use pcbcraft_core::library::PackageTerminal;
-    use pcbcraft_core::library::package_form::MoldedForm;
-    use pcbcraft_core::library::package_form::molded::MoldedLead;
-    use pcbcraft_core::materials::MaterialId;
+    use sparksmith_core::PackageTerminalId;
+    use sparksmith_core::library::PackageTerminal;
+    use sparksmith_core::library::package_form::MoldedForm;
+    use sparksmith_core::library::package_form::molded::MoldedLead;
+    use sparksmith_core::materials::MaterialId;
 
     fn package(form: MoldedForm) -> PackageDefinition {
         let form = PackageForm::Molded(Box::new(form));

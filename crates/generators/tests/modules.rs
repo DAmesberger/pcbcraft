@@ -4,20 +4,22 @@
 //!
 //! These need the modules built, so they are ignored in a plain
 //! `cargo test`; `cargo xtask generators check` builds the modules and runs
-//! them with `PCBCRAFT_GENERATOR_MODULES` pointing at the build.
-use pcbcraft_generator_abi::v1::{self, ErrorBody, Request, Scope};
-use pcbcraft_generator_abi::{Failure, codec, hex, result_hash};
-use pcbcraft_generators::{Limits, WasmiRuntime, config};
+//! them with `SPARKSMITH_GENERATOR_MODULES` pointing at the build.
 use serde_json::Value;
+use sparksmith_generator_abi::v1::{self, ErrorBody, Request, Scope};
+use sparksmith_generator_abi::{Failure, codec, hex, result_hash};
+use sparksmith_generators::{Limits, WasmiRuntime, config};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 type TestResult = Result<(), String>;
 
 fn modules_dir() -> Result<PathBuf, String> {
-    std::env::var_os("PCBCRAFT_GENERATOR_MODULES")
+    std::env::var_os("SPARKSMITH_GENERATOR_MODULES")
         .map(PathBuf::from)
-        .ok_or_else(|| "set PCBCRAFT_GENERATOR_MODULES (run `cargo xtask generators check`)".into())
+        .ok_or_else(|| {
+            "set SPARKSMITH_GENERATOR_MODULES (run `cargo xtask generators check`)".into()
+        })
 }
 
 fn workspace() -> PathBuf {
@@ -48,7 +50,7 @@ fn goldens() -> Result<Vec<Golden>, String> {
                 .map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
-        let module_path = dir.join(format!("pcbcraft_gen_{}.wasm", name.replace('-', "_")));
+        let module_path = dir.join(format!("sparksmith_gen_{}.wasm", name.replace('-', "_")));
         let module =
             std::fs::read(&module_path).map_err(|e| format!("{}: {e}", module_path.display()))?;
         let mut cases = Vec::new();
@@ -136,7 +138,7 @@ fn probe_input(module: &[u8], request: &Request) -> Result<Vec<u8>, String> {
 #[test]
 #[ignore = "needs built modules: cargo xtask generators check"]
 fn golden_hashes_match_under_wasmi_built_for_wasm32() -> TestResult {
-    let probe = std::fs::read(modules_dir()?.join("pcbcraft_generators_probe.wasm"))
+    let probe = std::fs::read(modules_dir()?.join("sparksmith_generators_probe.wasm"))
         .map_err(|e| format!("probe module: {e}"))?;
     let outer = WasmiRuntime::new(PROBE_LIMITS);
     // The wasm32 build of the host imports nothing either.
@@ -291,7 +293,7 @@ fn measure() -> TestResult {
         }
     }
     // The probe: the wasm32 host's own size.
-    if let Ok(probe) = std::fs::read(modules_dir()?.join("pcbcraft_generators_probe.wasm")) {
+    if let Ok(probe) = std::fs::read(modules_dir()?.join("sparksmith_generators_probe.wasm")) {
         println!("\nwasm32 build of the host (probe): {} bytes", probe.len());
     }
     Ok(())
@@ -327,15 +329,18 @@ fn host_completes_defaults_and_refuses_bad_params_before_running() -> TestResult
         let loaded = runtime.load(&g.module).map_err(|f| f.to_string())?;
         let description = loaded.describe().map_err(|f| f.to_string())?;
         // An empty request completes to the defaults and generates.
-        let request =
-            pcbcraft_generators::params::complete(&description, Scope::Package, &v1::Params::new())
-                .map_err(|f| f.to_string())?;
+        let request = sparksmith_generators::params::complete(
+            &description,
+            Scope::Package,
+            &v1::Params::new(),
+        )
+        .map_err(|f| f.to_string())?;
         loaded.generate(&request).map_err(|f| f.to_string())?;
         // An unknown parameter is refused by the host, naming it.
         let mut given = v1::Params::new();
         given.insert("no_such_param".into(), v1::ParamValue::Int(1));
         let refused: Result<Request, Failure> =
-            pcbcraft_generators::params::complete(&description, Scope::Package, &given);
+            sparksmith_generators::params::complete(&description, Scope::Package, &given);
         assert_eq!(
             refused.err().and_then(|f| f.code().map(str::to_string)),
             Some("param.unknown".into())

@@ -2,22 +2,22 @@
 //! width: widening the board moves J1, and the tracks on its pads come with
 //! it (`layout::dimensions::carry`), so once the pours are refilled
 //! nothing is left unconnected.
-use pcbcraft_automation::session::hosted;
-use pcbcraft_core::layout::dimensions::DimensionCommand;
-use pcbcraft_core::layout::fill::{FillCommand, RefillTarget};
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
-use pcbcraft_core::layout::{self, CopperGraph};
-use pcbcraft_core::library::footprint_source::{
+use sparksmith_automation::session::hosted;
+use sparksmith_core::layout::dimensions::DimensionCommand;
+use sparksmith_core::layout::fill::{FillCommand, RefillTarget};
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::layout::{self, CopperGraph};
+use sparksmith_core::library::footprint_source::{
     DimKind, DimValue, Expr, FootprintParam, ParamName, ParamUnit, SketchRef,
 };
-use pcbcraft_core::model::board::{BoardShape, ConstraintTarget};
-use pcbcraft_core::model::dimension::{BoardRef, FeatureRef, PartDimensionSpec, PartRelation};
-use pcbcraft_core::{Engine, Operation, Outcome, Project};
+use sparksmith_core::model::board::{BoardShape, ConstraintTarget};
+use sparksmith_core::model::dimension::{BoardRef, FeatureRef, PartDimensionSpec, PartRelation};
+use sparksmith_core::{Engine, Operation, Outcome, Project};
 use std::path::Path;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-fn apply(engine: &mut Engine, op: Operation) -> pcbcraft_core::Result<Outcome> {
+fn apply(engine: &mut Engine, op: Operation) -> sparksmith_core::Result<Outcome> {
     engine.apply_hosted(engine.revision(), op, hosted())
 }
 
@@ -39,7 +39,7 @@ fn errors(project: &Project) -> usize {
         .count()
 }
 
-fn set_width(engine: &mut Engine, mm: f64) -> pcbcraft_core::Result<Outcome> {
+fn set_width(engine: &mut Engine, mm: f64) -> sparksmith_core::Result<Outcome> {
     apply(
         engine,
         Operation::Board(BoardCommand::Edit {
@@ -58,8 +58,8 @@ fn set_width(engine: &mut Engine, mm: f64) -> pcbcraft_core::Result<Outcome> {
 #[test]
 fn j1_held_at_half_the_width_keeps_its_tracks_when_the_board_widens() -> Fallible {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    let mut engine = Engine::from_file(pcbcraft_io::read_project(&path)?)?;
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    let mut engine = Engine::from_file(sparksmith_io::read_project(&path)?)?;
     if matches!(engine.project().board_shape, BoardShape::Rectangle) {
         apply(&mut engine, Operation::Board(BoardCommand::StartSketch))?;
     }

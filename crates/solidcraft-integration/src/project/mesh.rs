@@ -25,7 +25,7 @@ use crate::geom::{Mesh, Vec3};
 use crate::pad_outline::{Contour, FLATTEN_TOLERANCE_MM};
 use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
-use pcbcraft_core::{Id, PadId, Point};
+use sparksmith_core::{Id, PadId, Point};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -185,7 +185,7 @@ fn hash_point(h: &mut impl Hasher, p: Point) {
 /// What a body's mesh is made from, digested: kind, heights and loops in
 /// its own frame (every number exactly).
 fn key(body: &PlanBody) -> u64 {
-    use pcbcraft_core::library::Segment;
+    use sparksmith_core::library::Segment;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     format!("{:?}", body.kind).hash(&mut h);
     body.z[0].to_bits().hash(&mut h);
@@ -455,7 +455,7 @@ pub fn bodies(
             None => None,
         };
         let frame = body.frame;
-        let (c, s) = pcbcraft_core::geometry::cos_sin(frame.angle_deg);
+        let (c, s) = sparksmith_core::geometry::cos_sin(frame.angle_deg);
         let [ox, oy] = frame.origin;
         let place = (frame.origin != [0.0, 0.0] || c != 1.0 || s != 0.0)
             .then(|| Place([[c, -s, 0.0, ox], [s, c, 0.0, oy], [0.0, 0.0, 1.0, 0.0]]));

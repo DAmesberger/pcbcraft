@@ -5,26 +5,28 @@
 //! status is the core's `assembly.status` query.
 //!
 //! Every read copies the linked design into a scratch folder first
-//! (`pcbcraft_io::assembly_link::copy`) and opens the copy in Sparksmith's own
-//! engine (`pcbcraft_solidcraft::linked_design`): the user's linked design file is
+//! (`sparksmith_io::assembly_link::copy`) and opens the copy in Sparksmith's own
+//! engine (`sparksmith_solidcraft::linked_design`): the user's linked design file is
 //! only ever read. What was read becomes one `assembly.*` command, one undo
 //! step; an update is only applied at the hash its preview showed.
 use super::Session;
 use crate::Result;
-use pcbcraft_core::Operation;
-use pcbcraft_core::diagnostics::Error as CoreError;
-use pcbcraft_core::interface::assembly_link::{
+use serde_json::Value;
+use sparksmith_core::Operation;
+use sparksmith_core::diagnostics::Error as CoreError;
+use sparksmith_core::interface::assembly_link::{
     self, AssemblyCommand, AssemblyRead, BindingRead, FollowParams, NewReference, PreviewParams,
     ReferenceRead, UpdateParams,
 };
-use pcbcraft_core::interface::{DryRun, Sidecar};
-use pcbcraft_core::library::footprint_source::ParamName;
-use pcbcraft_core::model::assembly_link::{AssemblyBinding, AssemblyLink, Consumer, UnexportedUse};
-use pcbcraft_core::model::dimension::{BodyName, FaceName, ReferenceStatus};
-use pcbcraft_core::units::Nm;
-use pcbcraft_io::assembly_link::{LinkedDesignCopy, copy};
-use pcbcraft_solidcraft::linked_design::{BoardLink, LinkedDesign, Use};
-use serde_json::Value;
+use sparksmith_core::interface::{DryRun, Sidecar};
+use sparksmith_core::library::footprint_source::ParamName;
+use sparksmith_core::model::assembly_link::{
+    AssemblyBinding, AssemblyLink, Consumer, UnexportedUse,
+};
+use sparksmith_core::model::dimension::{BodyName, FaceName, ReferenceStatus};
+use sparksmith_core::units::Nm;
+use sparksmith_io::assembly_link::{LinkedDesignCopy, copy};
+use sparksmith_solidcraft::linked_design::{BoardLink, LinkedDesign, Use};
 use std::path::{Path, PathBuf};
 
 /// A linked design read from a scratch copy.
@@ -58,7 +60,7 @@ impl Session {
     /// board's published `design`.
     fn open_linked_design(&self, path: &str, design: &str) -> Result<Opened> {
         let file = self.assembly_path(path);
-        if !file.try_exists().map_err(pcbcraft_io::Error::from)? {
+        if !file.try_exists().map_err(sparksmith_io::Error::from)? {
             return Err(refused(format!(
                 "assembly.missing: The linked design file was not found at {}. The board uses the \
                  last known geometry; relink it",
@@ -76,7 +78,7 @@ impl Session {
         }
         let design = self.assembly_path(design);
         let board = linked_design.board_link(&copy.folder, &design)?;
-        let published = pcbcraft_io::interface::read_sidecar(&design)?;
+        let published = sparksmith_io::interface::read_sidecar(&design)?;
         Ok(Opened {
             copy,
             linked_design,
@@ -335,7 +337,7 @@ impl Session {
             return Ok(None);
         };
         let project = self.engine.project_arc().clone();
-        let exported = pcbcraft_solidcraft::interface::build(&project, candidate)?;
+        let exported = sparksmith_solidcraft::interface::build(&project, candidate)?;
         let built = opened.copy.scratch().join("candidate.solidcraft");
         let built_text = built.to_string_lossy().into_owned();
         exported.save_new(&built_text)?;

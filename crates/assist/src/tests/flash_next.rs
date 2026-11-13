@@ -53,7 +53,7 @@ fn replay(reference: &Reference) -> Fallible {
 
     let drafts = &session.engine().drafts().items;
     let family = drafts.iter().find_map(|d| match &d.definition {
-        pcbcraft_core::library::Definition::Package(p) => serde_json::to_value(p)
+        sparksmith_core::library::Definition::Package(p) => serde_json::to_value(p)
             .ok()
             .map(|v| v["form"]["family"].clone()),
         _ => None,
@@ -62,7 +62,7 @@ fn replay(reference: &Reference) -> Fallible {
     let footprint = drafts
         .iter()
         .find_map(|d| match &d.definition {
-            pcbcraft_core::library::Definition::Footprint(f) => Some(f),
+            sparksmith_core::library::Definition::Footprint(f) => Some(f),
             _ => None,
         })
         .ok_or("a footprint draft")?;
@@ -72,7 +72,7 @@ fn replay(reference: &Reference) -> Fallible {
     let mut ys = Vec::new();
     let mut xs = Vec::new();
     for pad in pads {
-        let pcbcraft_core::library::PadShape::Rect { size } = &pad.shape else {
+        let sparksmith_core::library::PadShape::Rect { size } = &pad.shape else {
             return Err(format!("a rectangular land: {pad:?}").into());
         };
         let [w, h] = size.to_mm_f64();

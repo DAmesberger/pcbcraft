@@ -4,8 +4,8 @@
 //! are replaced atomically, so a linked design never reads half a publish.
 use crate::persistence::{atomic_write, read_bytes, sync_directory};
 use crate::{Error, Result};
-use pcbcraft_core::ids::InterfaceSourceId;
-use pcbcraft_core::interface::Sidecar;
+use sparksmith_core::ids::InterfaceSourceId;
+use sparksmith_core::interface::Sidecar;
 use std::path::{Path, PathBuf};
 
 /// The sidecar's file name ending.

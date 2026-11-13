@@ -197,7 +197,7 @@ mod tests {
         let elsewhere = home.path().join("elsewhere");
         let overridden = |name: &str| match name {
             "HOME" => Some(OsString::from(home.path())),
-            "PCBCRAFT_CONFIG_DIR" | "PCBCRAFT_RECOVERY_DIR" => Some(elsewhere.clone().into()),
+            "SPARKSMITH_CONFIG_DIR" | "SPARKSMITH_RECOVERY_DIR" => Some(elsewhere.clone().into()),
             _ => None,
         };
         assert!(UserDirs::adopt_former_from_vars(overridden).is_empty());

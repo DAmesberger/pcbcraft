@@ -8,12 +8,12 @@
 
 use super::tests::{Fallible, apply, edit, sketch, sketched};
 use super::*;
-use pcbcraft_core::fabrication::PreflightReport;
-use pcbcraft_core::issues::Severity;
-use pcbcraft_core::layout::outline::{BoardEdit, PARAM_IDLE, SHAPE_INVALID, SHAPE_OPEN};
-use pcbcraft_core::library::footprint_source::SketchRef;
-use pcbcraft_core::model::board::{CutoutKind, flatten};
-use pcbcraft_core::{Engine, Operation, Outcome, Query, QueryResult};
+use sparksmith_core::fabrication::PreflightReport;
+use sparksmith_core::issues::Severity;
+use sparksmith_core::layout::outline::{BoardEdit, PARAM_IDLE, SHAPE_INVALID, SHAPE_OPEN};
+use sparksmith_core::library::footprint_source::SketchRef;
+use sparksmith_core::model::board::{CutoutKind, flatten};
+use sparksmith_core::{Engine, Operation, Outcome, Query, QueryResult};
 
 /// The curve of the rectangle sketch's named edge.
 fn edge_curve(engine: &Engine, name: &str) -> Fallible<SketchCurveId> {
@@ -37,7 +37,7 @@ fn delete_rectangle(engine: &Engine) -> Fallible<BoardEdit> {
 }
 
 fn codes(engine: &Engine, code: &str) -> Vec<Finding> {
-    pcbcraft_core::layout::outline::checks(engine.project())
+    sparksmith_core::layout::outline::checks(engine.project())
         .into_iter()
         .filter(|f| f.code == code)
         .collect()
@@ -323,7 +323,7 @@ fn an_ellipse_cutout_is_fitted_within_the_outline_fit_rule() -> Fallible<()> {
     let spans = |engine: &Engine, tol: f64| -> Fallible<usize> {
         let board = engine.project().board().into_owned();
         let cutout = board.cutouts.first().ok_or("ellipse cutout")?;
-        let b = pcbcraft_core::model::board::outline_bounds(&cutout.outline);
+        let b = sparksmith_core::model::board::outline_bounds(&cutout.outline);
         for (got, want) in [
             (b.min[0], 20.0),
             (b.min[1], 15.0),
@@ -377,7 +377,7 @@ fn a_conic_closed_by_a_line_is_a_cutout() -> Fallible<()> {
     )?;
     let board = engine.project().board().into_owned();
     let cutout = board.cutouts.first().ok_or("conic cutout")?;
-    let b = pcbcraft_core::model::board::outline_bounds(&cutout.outline);
+    let b = sparksmith_core::model::board::outline_bounds(&cutout.outline);
     assert!((b.min[1] - 10.0).abs() <= 0.01);
     assert!((b.max[1] - 17.5).abs() <= 0.01, "{}", b.max[1]);
     assert!((b.min[0] - 20.0).abs() <= 0.01 && (b.max[0] - 40.0).abs() <= 0.01);

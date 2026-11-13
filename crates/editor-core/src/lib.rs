@@ -1,7 +1,7 @@
-//! Pcbcraft's electronics document and its single typed command engine.
+//! Sparksmith's electronics document and its single typed command engine.
 //!
 //! This crate is pure and wasm-compatible: no files, threads, windows or
-//! transports. `pcbcraft-io` reads and writes documents; transports (UI, CLI,
+//! transports. `sparksmith-io` reads and writes documents; transports (UI, CLI,
 //! MCP) translate requests into [`Operation`]s applied by [`Engine`].
 // First: its `declare_classes!` is in textual scope for every module below.
 #[macro_use]
@@ -665,7 +665,7 @@ impl Step {
 }
 
 /// The name a project's first save gives it: a project still called
-/// [`UNTITLED`] takes the file's name ("usb-led.pcbcraft" names it
+/// [`UNTITLED`] takes the file's name ("usb-led.sparksmith" names it
 /// "usb-led"); a name someone chose is kept (`None`). `project` is the
 /// copy being written, cloned only when renamed. Once the write succeeds the caller applies the same
 /// `project.rename` to the engine, its own undo step: undo never takes back

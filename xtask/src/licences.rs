@@ -1,6 +1,6 @@
 //! `cargo xtask licences --check`: license gate over the resolved dependency graph.
 //!
-//! Pcbcraft is MIT OR Apache-2.0 and stays independent of GPL-family code. The gate reads
+//! Sparksmith is MIT OR Apache-2.0 and stays independent of GPL-family code. The gate reads
 //! `cargo metadata --locked` and fails when:
 //! - a workspace member does not declare exactly `MIT OR Apache-2.0`;
 //! - a resolved package's SPDX expression cannot be satisfied without a GPL, LGPL or AGPL
@@ -25,7 +25,7 @@ const MAX_EXPRESSION_BYTES: usize = 512;
 const MAX_TOKENS: usize = 128;
 const MAX_DEPTH: usize = 16;
 
-/// SPDX ids reviewed as compatible with distributing Pcbcraft under MIT OR Apache-2.0.
+/// SPDX ids reviewed as compatible with distributing Sparksmith under MIT OR Apache-2.0.
 /// Add an id only after reading its terms; unlisted ids fail the gate.
 const PERMITTED: &[&str] = &[
     "0BSD",
@@ -50,7 +50,7 @@ const PERMITTED: &[&str] = &[
     "Zlib",
 ];
 
-/// Strong copyleft families that Pcbcraft never depends on.
+/// Strong copyleft families that Sparksmith never depends on.
 const COPYLEFT_FAMILIES: &[&str] = &["GPL", "LGPL", "AGPL"];
 
 /// A reviewed package whose metadata lacks a usable license expression.
@@ -500,9 +500,9 @@ mod tests {
     fn workspace_members_must_use_the_project_license() -> Result<()> {
         let data = metadata(
             vec![
-                package("a", "pcbcraft-a", Some("MIT OR Apache-2.0")),
-                package("b", "pcbcraft-b", None),
-                package("c", "pcbcraft-c", Some("MIT")),
+                package("a", "sparksmith-a", Some("MIT OR Apache-2.0")),
+                package("b", "sparksmith-b", None),
+                package("c", "sparksmith-c", Some("MIT")),
             ],
             &["a", "b", "c"],
             &["a", "b", "c"],

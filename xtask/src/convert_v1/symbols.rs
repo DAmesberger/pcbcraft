@@ -12,9 +12,9 @@
 //! a symbol's pin text height and the drafts' grid become nanometres.
 use super::json::{items, length, object, point};
 use crate::Result;
-use pcbcraft_core::geometry::Shape;
-use pcbcraft_core::library::ShapeNm;
 use serde_json::{Map, Value};
+use sparksmith_core::geometry::Shape;
+use sparksmith_core::library::ShapeNm;
 
 /// A stored shape in the old millimetre form converted in place; 1 if it
 /// changed. A shape already in nanometres does not read as the old form
@@ -118,9 +118,9 @@ pub fn project(_project: &mut Map<String, Value>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::library::graphics::Grid;
-    use pcbcraft_core::library::{FootprintDefinition, SymbolDefinition};
     use serde_json::json;
+    use sparksmith_core::library::graphics::Grid;
+    use sparksmith_core::library::{FootprintDefinition, SymbolDefinition};
 
     fn convert(kind: &str, mut body: Value) -> Result<(usize, Value)> {
         let o = body.as_object_mut().ok_or("object")?;
@@ -213,9 +213,9 @@ mod tests {
                                   "start_deg": 0.0, "sweep_deg": 360.0}},
                 "width": 0.05, "fill": "none"}}
         }]);
-        let mut pad = serde_json::to_value(pcbcraft_core::library::Pad::smd_rect_mm(
-            pcbcraft_core::ids::PadId(1),
-            pcbcraft_core::ids::PackageTerminalId(1),
+        let mut pad = serde_json::to_value(sparksmith_core::library::Pad::smd_rect_mm(
+            sparksmith_core::ids::PadId(1),
+            sparksmith_core::ids::PackageTerminalId(1),
             "1",
             [0.0, 0.0],
             [1.0, 1.0],

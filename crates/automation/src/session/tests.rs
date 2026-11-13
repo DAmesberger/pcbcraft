@@ -1,11 +1,11 @@
 use super::*;
-use pcbcraft_core::{
+use sparksmith_core::{
     DefinitionKind, Engine, InstanceCommand, Operation, QueryResult, UnitId, instances::NewInstance,
 };
 
 /// A sheet point a test writes in mm; test points lie within the range.
-fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
-    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+fn pt(p: [f64; 2]) -> sparksmith_core::units::PointNm {
+    sparksmith_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
 }
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -119,7 +119,7 @@ fn pad_generator_is_available_through_the_shared_transport_contract() -> TestRes
 #[test]
 fn save_and_open_are_file_effects_outside_undo_history() -> TestResult {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("session.pcbcraft");
+    let path = dir.path().join("session.sparksmith");
     let path_text = path.display().to_string();
     let mut session = Session::new(Engine::demo()?);
     let revision = session.engine().revision();
@@ -220,13 +220,13 @@ fn native_export_reports_its_tier_and_the_check_against_the_plan() -> TestResult
 /// transport as `export_unfit`, its message the one naming the bodies.
 #[test]
 fn an_unfit_export_is_reported_as_export_unfit() {
-    let report = pcbcraft_solidcraft::export::report(
-        pcbcraft_core::model::interface::Tier::Full,
+    let report = sparksmith_solidcraft::export::report(
+        sparksmith_core::model::interface::Tier::Full,
         0,
         None,
         Default::default(),
     );
-    let error = crate::Error::from(pcbcraft_solidcraft::Error::Unfit {
+    let error = crate::Error::from(sparksmith_solidcraft::Error::Unfit {
         message: "export.unfit: 1 body of the model does not fit the board".into(),
         report: Box::new(report),
     });
@@ -419,8 +419,8 @@ fn select_functions_through_json_returns_the_engine_resolution() -> TestResult {
 /// A synthetic parts project as a session, built through the public format.
 fn parts_session() -> std::result::Result<Session, Box<dyn std::error::Error>> {
     let file = EditorFile {
-        version: pcbcraft_core::format::FILE_VERSION,
-        project: pcbcraft_core::catalog::synthetic::project(24)?,
+        version: sparksmith_core::format::FILE_VERSION,
+        project: sparksmith_core::catalog::synthetic::project(24)?,
         drafts: Drafts::default(),
     };
     Ok(Session::new(Engine::from_file(file)?))
@@ -478,20 +478,20 @@ fn library_search_through_json_matches_the_engine_and_places() -> TestResult {
     assert_eq!(report["latest"], true);
 
     // Place the found revision through the one engine.
-    let id = |value: &Value| value.as_u64().map(pcbcraft_core::DefinitionId);
+    let id = |value: &Value| value.as_u64().map(sparksmith_core::DefinitionId);
     let revision = results[0]["entry"]["revision"].as_u64().ok_or("revision")?;
     let place = Operation::Instance(InstanceCommand::Place(NewInstance {
         sheet: None,
-        component: pcbcraft_core::ComponentRef::new(
-            pcbcraft_core::DefinitionId(lineage),
-            pcbcraft_core::Revision(u32::try_from(revision)?),
+        component: sparksmith_core::ComponentRef::new(
+            sparksmith_core::DefinitionId(lineage),
+            sparksmith_core::Revision(u32::try_from(revision)?),
         ),
         designator: None,
         properties: vec![],
         representation: id(&report["symbols"][0]["symbol"]["id"]).ok_or("symbol")?,
         unit: UnitId(1),
         position: pt([0.0, 0.0]),
-        physical: Some(pcbcraft_core::PhysicalChoice {
+        physical: Some(sparksmith_core::PhysicalChoice {
             binding: id(&report["implementations"][0]["binding"]["id"]).ok_or("binding")?,
             footprint: id(&report["implementations"][0]["footprints"][0]["footprint"]["id"])
                 .ok_or("footprint")?,
@@ -571,7 +571,7 @@ fn board_fabrication_through_json_is_undoable_and_discoverable() -> TestResult {
     assert_eq!(undo["result"]["step"], step, "{undo}");
     assert_eq!(
         session.engine().project().fabrication,
-        pcbcraft_core::Fabrication::default()
+        sparksmith_core::Fabrication::default()
     );
     let redo = session.dispatch(json!({"command": "project.redo", "params": {"expected_revision": session.engine().revision()}}));
     assert_eq!(redo["result"]["step"], step, "{redo}");
@@ -617,11 +617,11 @@ fn orienting_a_unit_through_json_is_one_undo_step() -> TestResult {
     assert_eq!(stored["rotation"], "r90");
     assert_eq!(stored["mirror"], true);
     // R1 at (−12, 0): local pin 1 (−5, 0) mirrors to itself, then turns.
-    let pin = pcbcraft_core::schematic::pin_position(
+    let pin = sparksmith_core::schematic::pin_position(
         session.engine().project(),
-        pcbcraft_core::Endpoint {
+        sparksmith_core::Endpoint {
             instance: r1,
-            terminal: pcbcraft_core::TerminalId(1),
+            terminal: sparksmith_core::TerminalId(1),
         },
     );
     assert_eq!(pin, Some([-12.0, -5.0]));
@@ -647,10 +647,10 @@ fn orienting_a_unit_through_json_is_one_undo_step() -> TestResult {
 /// `SketchEvaluator`; a failed edit changes nothing; undo restores.
 #[test]
 fn parametric_footprint_through_json_is_atomic_and_undoable() -> TestResult {
-    use pcbcraft_core::library::{
+    use sparksmith_core::library::{
         Definition, DefinitionMeta, FootprintDefinition, PackageDefinition, PackageTerminal,
     };
-    use pcbcraft_core::{DefinitionId, LibraryCommand, PackageRef, PackageTerminalId, Revision};
+    use sparksmith_core::{DefinitionId, LibraryCommand, PackageRef, PackageTerminalId, Revision};
     let mut session = Session::default();
     let meta = |name: &str| DefinitionMeta {
         name: name.into(),
@@ -665,7 +665,7 @@ fn parametric_footprint_through_json_is_atomic_and_undoable() -> TestResult {
                 designation: n.to_string(),
             })
             .collect(),
-        envelope_nm: [2.0, 1.2, 0.5].map(pcbcraft_core::library::package_form::typical_nm),
+        envelope_nm: [2.0, 1.2, 0.5].map(sparksmith_core::library::package_form::typical_nm),
         ..PackageDefinition::default()
     });
     let created = |reply: &Value| -> std::result::Result<u64, Box<dyn std::error::Error>> {
@@ -787,12 +787,12 @@ fn parametric_footprint_through_json_is_atomic_and_undoable() -> TestResult {
 /// width changes by ID in one undo step.
 #[test]
 fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult {
-    use pcbcraft_core::layout::{LayoutCommand, RouteRequest};
-    use pcbcraft_core::library::templates::footprint_family::{FootprintTemplate, TemplateKind};
-    use pcbcraft_core::library::{
+    use sparksmith_core::layout::{LayoutCommand, RouteRequest};
+    use sparksmith_core::library::templates::footprint_family::{FootprintTemplate, TemplateKind};
+    use sparksmith_core::library::{
         Definition, DefinitionMeta, FootprintDefinition, PackageDefinition, PackageTerminal,
     };
-    use pcbcraft_core::{LibraryCommand, PackageRef, PackageTerminalId, Revision};
+    use sparksmith_core::{LibraryCommand, PackageRef, PackageTerminalId, Revision};
     let mut session = Session::default();
     let meta = |name: &str| DefinitionMeta {
         name: name.into(),
@@ -807,7 +807,7 @@ fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult
                 designation: n.to_string(),
             })
             .collect(),
-        envelope_nm: [2.0, 1.2, 0.5].map(pcbcraft_core::library::package_form::typical_nm),
+        envelope_nm: [2.0, 1.2, 0.5].map(sparksmith_core::library::package_form::typical_nm),
         ..PackageDefinition::default()
     };
     let mut created = |definition, name: &str| -> std::result::Result<u64, String> {
@@ -825,7 +825,7 @@ fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult
     let package_id = created(Definition::Package(package.clone()), "chip")?;
     let draft = created(
         Definition::Footprint(FootprintDefinition {
-            package: PackageRef::new(pcbcraft_core::DefinitionId(package_id), Revision::FIRST),
+            package: PackageRef::new(sparksmith_core::DefinitionId(package_id), Revision::FIRST),
             next_local: 1,
             ..FootprintDefinition::default()
         }),
@@ -872,7 +872,7 @@ fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult
             instance,
             position: [x, 10.0],
             rotation_deg: 0.0,
-            layer: pcbcraft_core::Layer::Top,
+            layer: sparksmith_core::Layer::Top,
         }));
     }
     ops.push(Operation::Layout(LayoutCommand::Route {
@@ -881,7 +881,7 @@ fn template_replace_and_track_set_through_json_are_one_undo_step() -> TestResult
             start: [11.2, 10.0],
             end: [23.8, 10.0],
             width: 0.3,
-            layer: pcbcraft_core::Layer::Top.into(),
+            layer: sparksmith_core::Layer::Top.into(),
         },
     }));
     for op in &ops {
@@ -946,7 +946,7 @@ fn schematic_export_pdf_writes_a_pdf_without_changing_the_document() -> TestResu
 #[test]
 fn history_and_replacing_requests_at_a_stale_revision_change_nothing() -> TestResult {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("other.pcbcraft").display().to_string();
+    let path = dir.path().join("other.sparksmith").display().to_string();
     let mut session = Session::new(Engine::demo()?);
     let saved = session.dispatch(json!({"command": "project.save", "params": {"path": path}}));
     assert_eq!(saved["ok"], true, "{saved}");

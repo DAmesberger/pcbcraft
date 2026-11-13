@@ -12,14 +12,14 @@ use super::assembly_link_tests::{
 use super::interface_publish_tests::{
     TestResult, apply, faces, instance, linked_design, move_j1, ok, open, publish,
 };
-use pcbcraft_core::Operation;
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
-use pcbcraft_core::library::footprint_source::{
+use serde_json::{Value, json};
+use sparksmith_core::Operation;
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::library::footprint_source::{
     DimKind, DimValue, ParamName, SketchConstraintId, SketchCurveId, SketchEdit, SketchPointId,
     SketchRef,
 };
-use pcbcraft_solidcraft::linked_design::{LinkedDesign, Operation as Extrude};
-use serde_json::{Value, json};
+use sparksmith_solidcraft::linked_design::{LinkedDesign, Operation as Extrude};
 use std::path::Path;
 
 /// `assembly.status`'s findings with `code`.
@@ -113,7 +113,7 @@ fn b5_the_linked_design_holds_an_older_board_until_it_updates_links() -> TestRes
     assert_eq!(first["published"]["revision"], 1);
     save_linked_design(&design, &opening, FAR_WALL_Y, &assembly_link)?;
     let linked = link(&mut session, &assembly_link, &design)?;
-    let sidecar = pcbcraft_io::interface::read_sidecar(&design)?.ok_or("a sidecar")?;
+    let sidecar = sparksmith_io::interface::read_sidecar(&design)?.ok_or("a sidecar")?;
     let datum = sidecar
         .datums
         .iter()
@@ -189,7 +189,7 @@ fn b5_the_linked_design_holds_an_older_board_until_it_updates_links() -> TestRes
 /// both changed. Nothing the board follows was changed on both sides, so
 /// there is no side to choose: a choice for an item that is no conflict is
 /// refused, changing nothing, and the update at the preview's hash is
-/// applied. (Conflicting items and the choice: `pcbcraft-solidcraft`'s
+/// applied. (Conflicting items and the choice: `sparksmith-solidcraft`'s
 /// `board::fixed_tests`.)
 #[test]
 fn b5_both_changed_shows_both_sides() -> TestResult {
@@ -275,7 +275,7 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> TestResult {
     let (mut built, _) = linked_design(&design, &opening)?;
     // A pad of a placed part, by its body's name in the published design,
     // which no slot carries, and a face of it that looks up.
-    let sidecar = pcbcraft_io::interface::read_sidecar(&design)?.ok_or("a sidecar")?;
+    let sidecar = sparksmith_io::interface::read_sidecar(&design)?.ok_or("a sidecar")?;
     let tokens: Vec<&str> = sidecar.datums.iter().map(|d| d.token.as_str()).collect();
     let mut linked = LinkedDesign::new("Probe")?;
     let bodies = linked.link(&design.display().to_string(), "Board")?;
@@ -392,7 +392,7 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> TestResult {
 /// words as a warning, reads no loop in the status and blocks nothing. The
 /// wall's end face, placed by the projected outline edge, is built on the
 /// outline by position (such a loop blocks fabrication output:
-/// `pcbcraft-solidcraft`'s `board::fixed_tests`). Deleting the line the
+/// `sparksmith-solidcraft`'s `board::fixed_tests`). Deleting the line the
 /// linked design drives is refused in the user's words.
 #[test]
 fn b5_a_loop_between_board_and_linked_design_is_found() -> TestResult {
@@ -516,7 +516,7 @@ fn b5_a_loop_between_board_and_linked_design_is_found() -> TestResult {
 
 /// The published datum with `role`: its id and display name.
 fn sidecar_datum(design: &Path, role: &str) -> TestResult<(u64, String)> {
-    let sidecar = pcbcraft_io::interface::read_sidecar(design)?.ok_or("a sidecar")?;
+    let sidecar = sparksmith_io::interface::read_sidecar(design)?.ok_or("a sidecar")?;
     let datum = sidecar
         .datums
         .iter()
@@ -598,7 +598,7 @@ fn a_feature_on_a_repeated_package_names_its_own_part() -> TestResult {
     let mut session = open(dir.path())?;
     let opening = format!("i{}.opening", instance(&session, "J1")?);
     publish(&mut session, &design, "mechanical")?;
-    let sidecar = pcbcraft_io::interface::read_sidecar(&design)?.ok_or("a sidecar")?;
+    let sidecar = sparksmith_io::interface::read_sidecar(&design)?.ok_or("a sidecar")?;
     // A body of a package placed more than once, at its second placement,
     // and the first placement's same body.
     let (second, first) = sidecar

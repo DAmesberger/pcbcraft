@@ -1,6 +1,6 @@
 //! Slice C3: typed pinout import. The agent (or the Pins
 //! tab's Paste table) reads the datasheet and states every field
-//! explicitly in a [`PinoutDocument`]; Pcbcraft never parses free text and
+//! explicitly in a [`PinoutDocument`]; Sparksmith never parses free text and
 //! never splits "USART1_TX" into peripheral and role. `library.pinout_preview`
 //! returns a [`PinoutPlan`] (changes, findings, review items);
 //! `library.pinout_apply` applies it atomically as one undo step, refused

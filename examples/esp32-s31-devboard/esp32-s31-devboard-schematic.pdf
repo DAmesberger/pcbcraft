@@ -36,7 +36,7 @@ endobj
 
 7 0 obj
 <<
-  /Length 19638
+  /Length 19642
 >>
 stream
 1 J
@@ -260,7 +260,7 @@ ET
 BT
 /F1 7.895949 Tf
 1 0 0 1 505.98425 73.13386 Tm
-(Pcbcraft example) Tj
+(Sparksmith example) Tj
 ET
 BT
 /F1 4.7375693 Tf
@@ -270,7 +270,7 @@ ET
 BT
 /F1 7.895949 Tf
 1 0 0 1 661.8898 73.13386 Tm
-(Pcbcraft e2e run (agent)) Tj
+(Sparksmith e2e run (agent)) Tj
 ET
 BT
 /F1 4.7375693 Tf
@@ -1486,7 +1486,7 @@ endobj
 
 9 0 obj
 <<
-  /Length 67815
+  /Length 67819
 >>
 stream
 1 J
@@ -1774,7 +1774,7 @@ ET
 BT
 /F1 7.895949 Tf
 1 0 0 1 854.6457 73.13386 Tm
-(Pcbcraft example) Tj
+(Sparksmith example) Tj
 ET
 BT
 /F1 4.7375693 Tf
@@ -1784,7 +1784,7 @@ ET
 BT
 /F1 7.895949 Tf
 1 0 0 1 1010.5512 73.13386 Tm
-(Pcbcraft e2e run (agent)) Tj
+(Sparksmith e2e run (agent)) Tj
 ET
 BT
 /F1 4.7375693 Tf
@@ -6193,22 +6193,22 @@ endobj
 5 0 obj
 <<
   /Title (ESP32-S31 dev board)
-  /Creator (Pcbcraft)
+  /Creator (Sparksmith)
 >>
 endobj
 
 xref
 0 10
 0000000000 65535 f
-0000088227 00000 n
-0000088157 00000 n
+0000088235 00000 n
+0000088165 00000 n
 0000000016 00000 n
 0000000122 00000 n
-0000088281 00000 n
+0000088289 00000 n
 0000000233 00000 n
 0000000412 00000 n
-0000020106 00000 n
-0000020286 00000 n
+0000020110 00000 n
+0000020290 00000 n
 trailer
 <<
   /Size 10
@@ -6216,5 +6216,5 @@ trailer
   /Info 5 0 R
 >>
 startxref
-88356
+88366
 %%EOF

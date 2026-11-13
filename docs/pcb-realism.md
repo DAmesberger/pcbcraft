@@ -19,7 +19,7 @@ toggles. This note records what was built. Its rules are the usual ones:
 
 Materials, heights and looks are in [materials](materials.md).
 
-## Core (`pcbcraft-core`)
+## Core (`sparksmith-core`)
 
 ### Copper layers and the stackup
 
@@ -125,7 +125,7 @@ as "via on GND".
 
 `Engine::showcase()`, and the CLI command `sparksmith showcase FILE`, build a
 44 × 28 mm 4-layer board. The app has no menu entry for it yet: write it with
-`cargo run --locked --profile ci -p pcbcraft-cli -- showcase showcase.pcbcraft` and open
+`cargo run --locked --profile ci -p sparksmith-cli -- showcase showcase.sparksmith` and open
 the file. It has:
 
 - an SOIC-8, a QFN-16 and a 2×5 header;
@@ -137,7 +137,7 @@ It is routed on top, bottom and both inner layers through tented and open vias. 
 ground traces are wide because there are no zones yet. The silkscreen has pin-1 marks.
 The board and ERC checks pass with no findings.
 
-## Native (`pcbcraft-solidcraft`)
+## Native (`sparksmith-solidcraft`)
 
 ### Saved physical bodies
 
@@ -245,10 +245,10 @@ These are never saved:
 
   `write_layer_pictures` writes the layer toggles on the showcase: every layer, no top
   mask, X-ray, copper only, Inner 1 only, Inner 2 only, and no top copper or mask. Both are
-  ignored tests that write to `PCBCRAFT_PICTURES` (`PCBCRAFT_PICTURES_ONLY` limits the
+  ignored tests that write to `SPARKSMITH_PICTURES` (`SPARKSMITH_PICTURES_ONLY` limits the
   showcase set to a name prefix).
 
-## 3D layer toggles (`apps/pcbcraft`)
+## 3D layer toggles (`apps/sparksmith`)
 
 - `ViewLayer` lists the toggles: components, silkscreen and mask for each side, copper for
   each stackup layer, each dielectric between the foils either side of it (`Dielectric 1`,
@@ -281,7 +281,7 @@ These are never saved:
 - PCB 2D and 3D share one state for every copper layer, the vias and silkscreen.
   Component 3D always shows every layer.
 
-## Follow the net (`apps/pcbcraft`, `viewport/follow.rs`)
+## Follow the net (`apps/sparksmith`, `viewport/follow.rs`)
 
 - Follow net (see-through), ⇧N, the command palette's `view.follow-net` and the View row
   of the 3D Layers popover, is a view preference, off by default. While it is on and a net
@@ -316,7 +316,7 @@ These are never saved:
 - Tests in `viewport/follow.rs` cover the toggle, the opaque and faded split of stream and
   placements, picking through, and selection changes that keep every cached mesh.
 
-## PCB 2D (`apps/pcbcraft`)
+## PCB 2D (`apps/sparksmith`)
 
 - Layout draws every copper layer of the stackup in its own colour. The active layer (the
   one Route, Via and Fill use, set by 1–0 or the Route card) is always on top at full
@@ -402,7 +402,7 @@ from the GUI. The core warning that restated them is no longer shown twice.
 
 ## Build cost (measured)
 
-`build_timings` (`cargo test --profile ci -p pcbcraft-solidcraft build_timings -- --ignored
+`build_timings` (`cargo test --profile ci -p sparksmith-solidcraft build_timings -- --ignored
 --nocapture`, one 18-core machine shared with other builds, release-like `ci` profile). The
 via boards are `via_board` in `project/tests.rs`: the showcase on 4 layers with that many
 vias on a 1.27 mm grid and about 260 tracks (200 inner).
@@ -421,12 +421,12 @@ vias on a 1.27 mm grid and about 260 tracks (200 inner).
 "Before" is the pinned `pcbcraft-product-look` build (the showcase with 50 vias took 607 s
 there). Phase 1 and phase 2 were measured at a load average of about 5–40 from other builds;
 the phase 2 10,000-via cell is the range of best-of-3 runs over several minutes
-(`via_build_profile` in `project/tests.rs`, `PCBCRAFT_VIAS=10000`). The integrated column is
+(`via_build_profile` in `project/tests.rs`, `SPARKSMITH_VIAS=10000`). The integrated column is
 the merged branch (fork branch `pcbcraft-via2`), best of two runs at a load average of 5–8.
 "Tracks put off" is the same branch after the review fixes, best of three runs (one for
 4,096 vias) at a load average of about 6; the 2,000-track board is the 10,000-via board with
 tracks added on the outer layers between its via rows up to the layout's 2,000
-(`with_tracks` in `project/tests.rs`; `PCBCRAFT_TRACKS=2000` for `via_build_profile`).
+(`with_tracks` in `project/tests.rs`; `SPARKSMITH_TRACKS=2000` for `via_build_profile`).
 `build_timings` fails when the 10,000-via benchmark board takes 3 s or more (best of three).
 
 Merged with the board batch (design rules, fills, sketched board shape; 2 November 2026,
@@ -525,7 +525,7 @@ own identity; selection draws the selected placements again from the shared tria
 layer toggle publishes the same shared meshes (their GPU buffers are kept) with or without
 their placements.
 
-`via_display_timings` (`cargo test --profile ci -p pcbcraft via_display_timings -- --ignored
+`via_display_timings` (`cargo test --profile ci -p sparksmith via_display_timings -- --ignored
 --nocapture`; showcase on 4 layers plus a grid of through vias, 1280 × 800, a frame read back
 to the CPU each time, best of three for the first frame and of five for orbiting, load
 average about 20):
@@ -591,7 +591,7 @@ and each via's dome and bore whose inputs did not change (`appearance::Memo`). A
 pad offsets in its joints are rounded to a nanometre, so moving a part is a parameter
 change.
 
-`update_timings` (`cargo test --profile ci -p pcbcraft-solidcraft update_timings --
+`update_timings` (`cargo test --profile ci -p sparksmith-solidcraft update_timings --
 --ignored --nocapture`) times a fresh build and three updates of each edit, best of three:
 
 | Board | Fresh build | Outer track width | Part moved | Via moved | Inner track moved |
@@ -614,7 +614,7 @@ extrusion picked several profiles is rebuilt from its command (`timeline.redefin
 `native/replay.rs`): Solidcraft stores such a pick by profile index or curve, and a
 redrawn sketch numbers both anew.
 
-An update takes the kept model (`kept.board.take()` in `apps/pcbcraft/src/scene.rs`): a
+An update takes the kept model (`kept.board.take()` in `apps/sparksmith/src/scene.rs`): a
 replay that fails consumes it, and a build anew that a newer edit cancels leaves none. The
 next edit then builds the board anew (about 3 s on the 10,000-via board) instead of
 updating it, until a build finishes. An update in place is not cancelled.
@@ -629,9 +629,9 @@ build.
 
 Opening PCB 3D shows the model prepared in the background: the scene is already packed
 on the worker and published to the viewport when it arrives, so the first frame only
-uploads it and draws. `PCBCRAFT_TIMINGS=1` prints the time from opening to the end of the
+uploads it and draws. `SPARKSMITH_TIMINGS=1` prints the time from opening to the end of the
 first frame with the board in it (`app/open_timing.rs`); `opening_3d_timings`
-(`cargo test --profile ci -p pcbcraft opening_3d_timings -- --ignored --nocapture`, needs
+(`cargo test --profile ci -p sparksmith opening_3d_timings -- --ignored --nocapture`, needs
 a GPU) measures the same steps offscreen:
 
 | Board | Prepared in the background | First frame after opening |
@@ -644,7 +644,7 @@ a GPU) measures the same steps offscreen:
 Integrated branch, load average about 5, 1600 × 1000, best of five openings (each a new
 viewport; the frame is read back, which the window does not do).
 
-In the running app (`PCBCRAFT_TIMINGS=1`, the integrated branch, a 10,000-via 4-layer
+In the running app (`SPARKSMITH_TIMINGS=1`, the integrated branch, a 10,000-via 4-layer
 board added over `sparksmith stdio`, PCB 3D opened on its finished background build),
 eight openings drew their first frame in 8.2–37.4 ms (median about 23 ms).
 

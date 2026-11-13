@@ -5,15 +5,15 @@
 //! through one `Engine::apply`. Sources never enter the project or undo
 //! history.
 use crate::{Error, Result};
-use pcbcraft_core::catalog::{CatalogContext, EntryKey, SourceCatalog};
-use pcbcraft_core::ids::{LibraryId, Revision, SourceLineageId};
-use pcbcraft_core::library::bundle::{self, Bundle, SourceRevision};
-use pcbcraft_io::library_folder::{self, Disabled, Folder};
-use pcbcraft_io::library_folder_index::{self, IndexState};
-use pcbcraft_io::settings::{
+use serde::Serialize;
+use sparksmith_core::catalog::{CatalogContext, EntryKey, SourceCatalog};
+use sparksmith_core::ids::{LibraryId, Revision, SourceLineageId};
+use sparksmith_core::library::bundle::{self, Bundle, SourceRevision};
+use sparksmith_io::library_folder::{self, Disabled, Folder};
+use sparksmith_io::library_folder_index::{self, IndexState};
+use sparksmith_io::settings::{
     self, MAX_FAVOURITES, MAX_RECENT, MAX_SOURCES, SourceSetting, UserDirs, UserSettings,
 };
-use serde::Serialize;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -60,7 +60,7 @@ pub struct SourceInfo {
     pub reason: Option<String>,
     /// Why a source with a valid manifest could not be read.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<pcbcraft_core::Diagnostic>,
+    pub error: Option<sparksmith_core::Diagnostic>,
 }
 
 enum State {
@@ -70,7 +70,7 @@ enum State {
         index: IndexOrigin,
     },
     Disabled(Disabled),
-    Failed(pcbcraft_core::Diagnostic),
+    Failed(sparksmith_core::Diagnostic),
 }
 
 struct Loaded {
@@ -115,8 +115,8 @@ impl Sources {
         Ok(sources)
     }
 
-    /// [`Self::with_dirs`] of the user's directories (`PCBCRAFT_CONFIG_DIR`
-    /// and `PCBCRAFT_CACHE_DIR` when set).
+    /// [`Self::with_dirs`] of the user's directories (`SPARKSMITH_CONFIG_DIR`
+    /// and `SPARKSMITH_CACHE_DIR` when set).
     pub fn from_env() -> Result<Self> {
         Self::with_dirs(UserDirs::from_env()?)
     }
@@ -148,13 +148,13 @@ impl Sources {
             }
             None => library_folder::read_records(&folder).and_then(|stored| {
                 let records: Vec<_> = stored.into_iter().map(|s| s.record).collect();
-                pcbcraft_core::catalog::source_catalog(
+                sparksmith_core::catalog::source_catalog(
                     folder.manifest.library,
                     &folder.manifest.name,
                     &records,
                 )
                 .map(|catalog| (catalog, IndexOrigin::Memory))
-                .map_err(pcbcraft_io::Error::from)
+                .map_err(sparksmith_io::Error::from)
             }),
         };
         match built {
@@ -180,7 +180,7 @@ impl Sources {
                 let library = folder.manifest.library;
                 if let Some((_, first)) = seen.iter().find(|(l, _)| *l == library) {
                     state = State::Failed(
-                        pcbcraft_core::Error::Conflict(format!("same library as {first}"))
+                        sparksmith_core::Error::Conflict(format!("same library as {first}"))
                             .diagnostic(),
                     );
                 } else {
@@ -197,9 +197,11 @@ impl Sources {
 
     fn persist(&self) -> Result<()> {
         if let Some(reason) = &self.unavailable {
-            return Err(Error::File(pcbcraft_io::Error::Io(std::io::Error::other(
-                format!("library settings unavailable, so nothing was saved: {reason}"),
-            ))));
+            return Err(Error::File(sparksmith_io::Error::Io(
+                std::io::Error::other(format!(
+                    "library settings unavailable, so nothing was saved: {reason}"
+                )),
+            )));
         }
         if let Some(dirs) = &self.dirs {
             settings::write_settings(&dirs.settings_path(), &self.settings)?;
@@ -224,14 +226,14 @@ impl Sources {
     pub fn add(&mut self, path: &Path, writable: bool) -> Result<SourceInfo> {
         let folder = library_folder::inspect_folder(path)
             .map_err(|why| refusal(&why, &format!("library folder {}: {why}", path.display())))?;
-        let path = std::fs::canonicalize(path).map_err(pcbcraft_io::Error::from)?;
+        let path = std::fs::canonicalize(path).map_err(sparksmith_io::Error::from)?;
         if self.settings.sources.len() >= MAX_SOURCES {
-            return Err(core(pcbcraft_core::Error::Limit(format!(
+            return Err(core(sparksmith_core::Error::Limit(format!(
                 "at most {MAX_SOURCES} library sources"
             ))));
         }
         if self.settings.sources.iter().any(|s| s.path == path) {
-            return Err(core(pcbcraft_core::Error::Conflict(format!(
+            return Err(core(sparksmith_core::Error::Conflict(format!(
                 "{} is already a library source",
                 path.display()
             ))));
@@ -240,7 +242,7 @@ impl Sources {
             .ready()
             .find(|(f, _)| f.manifest.library == folder.manifest.library)
         {
-            return Err(core(pcbcraft_core::Error::Conflict(format!(
+            return Err(core(sparksmith_core::Error::Conflict(format!(
                 "library {} ({}) is already a source at {}",
                 folder.manifest.name,
                 folder.manifest.library,
@@ -289,7 +291,7 @@ impl Sources {
         next.favourites.retain(|k| *k != key);
         if favourite {
             if next.favourites.len() >= MAX_FAVOURITES {
-                return Err(core(pcbcraft_core::Error::Limit(format!(
+                return Err(core(sparksmith_core::Error::Limit(format!(
                     "at most {MAX_FAVOURITES} favourites"
                 ))));
             }
@@ -322,7 +324,7 @@ impl Sources {
             .iter()
             .position(|s| s.path == path || Some(&s.path) == canonical.as_ref())
             .ok_or_else(|| {
-                core(pcbcraft_core::Error::NotFound(format!(
+                core(sparksmith_core::Error::NotFound(format!(
                     "{} is not a library source",
                     path.display()
                 )))
@@ -351,7 +353,7 @@ impl Sources {
                 _ => None,
             })
             .ok_or_else(|| {
-                core(pcbcraft_core::Error::NotFound(format!(
+                core(sparksmith_core::Error::NotFound(format!(
                     "library {library} is not a ready library source"
                 )))
             })
@@ -368,7 +370,7 @@ impl Sources {
             .find(|loaded| loaded.setting.path == path)
             .map(describe)
             .ok_or_else(|| {
-                core(pcbcraft_core::Error::NotFound(format!(
+                core(sparksmith_core::Error::NotFound(format!(
                     "{} is not a library source",
                     path.display()
                 )))
@@ -395,7 +397,7 @@ impl Sources {
             .map(|r| r.revision)
             .max()
             .ok_or_else(|| {
-                core(pcbcraft_core::Error::NotFound(format!(
+                core(sparksmith_core::Error::NotFound(format!(
                     "library {} has no lineage {lineage}",
                     catalog.name
                 )))
@@ -424,7 +426,7 @@ impl Sources {
     pub fn writable(&self, library: LibraryId) -> Result<&Folder> {
         let (folder, _, writable) = self.source(library)?;
         if !writable {
-            return Err(core(pcbcraft_core::Error::Conflict(format!(
+            return Err(core(sparksmith_core::Error::Conflict(format!(
                 "library {} is a read-only source",
                 folder.manifest.name
             ))));
@@ -490,13 +492,13 @@ fn describe(loaded: &Loaded) -> SourceInfo {
 fn per_user(key: EntryKey) -> Result<()> {
     match key {
         EntryKey::Library { .. } => Ok(()),
-        EntryKey::Project { .. } => Err(core(pcbcraft_core::Error::Invalid(
+        EntryKey::Project { .. } => Err(core(sparksmith_core::Error::Invalid(
             "favourites and recents name library items (source library and lineage); a project lineage id means something else in every project".into(),
         ))),
     }
 }
 
-fn core(error: pcbcraft_core::Error) -> Error {
+fn core(error: sparksmith_core::Error) -> Error {
     Error::Document(error)
 }
 
@@ -504,10 +506,10 @@ fn core(error: pcbcraft_core::Error) -> Error {
 /// `unsupported` (another format or feature) or `invalid_input`.
 fn refusal(why: &Disabled, message: &str) -> Error {
     core(match why {
-        Disabled::PathMissing => pcbcraft_core::Error::NotFound(message.into()),
+        Disabled::PathMissing => sparksmith_core::Error::NotFound(message.into()),
         Disabled::UnsupportedFormat(_) | Disabled::UnknownFeatures(_) => {
-            pcbcraft_core::Error::Unsupported(message.into())
+            sparksmith_core::Error::Unsupported(message.into())
         }
-        Disabled::Off | Disabled::Malformed(_) => pcbcraft_core::Error::Invalid(message.into()),
+        Disabled::Off | Disabled::Malformed(_) => sparksmith_core::Error::Invalid(message.into()),
     })
 }

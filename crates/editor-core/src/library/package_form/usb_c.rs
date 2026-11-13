@@ -4,7 +4,7 @@
 //! through-hole stakes, with two plastic locating pegs. The form, its
 //! range rules, lead order, lands and the electrical terminals the A and
 //! B contact rows share live here; the model builder is
-//! `pcbcraft-solidcraft` `models/usb_c.rs`.
+//! `sparksmith-solidcraft` `models/usb_c.rs`.
 //!
 //! Frame: seen from above, x across the receptacle (`width`), y along its
 //! depth with the mating face at −y (the board edge side) and the solder

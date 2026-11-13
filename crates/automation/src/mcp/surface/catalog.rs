@@ -6,8 +6,8 @@
 //! verbs resolve their `name` argument through [`resolve`]; `find` and the
 //! catalog resources (P4) list [`reachable`].
 use crate::session::metadata::{self, EntryMeta, Kind};
-use pcbcraft_core::Diagnostic;
 use serde_json::{Value, json};
+use sparksmith_core::Diagnostic;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 

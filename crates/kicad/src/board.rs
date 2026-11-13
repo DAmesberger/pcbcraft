@@ -1,14 +1,14 @@
 //! The parts of a `.kicad_pcb` board file the footprint import reads, as
 //! typed values in KiCad's own frame (millimetre decimals turned into whole
 //! nanometres, y growing downward, angles in degrees counter-clockwise as
-//! seen on screen). Turning them into Pcbcraft's frame is `translate`'s.
+//! seen on screen). Turning them into Sparksmith's frame is `translate`'s.
 //!
 //! Format facts come from the founder's files and from what `kicad-cli`
 //! plots for synthetic boards (the oracle); KiCad's documentation is used
 //! for facts only (decision D1).
 use crate::report::Report;
 use crate::sexpr::Node;
-use pcbcraft_core::units::text::{LengthUnit, parse_length};
+use sparksmith_core::units::text::{LengthUnit, parse_length};
 
 /// Board file versions accepted: KiCad 7 (20221018) to KiCad 8 (20240108),
 /// the versions the test design uses. A newer or older file is refused.

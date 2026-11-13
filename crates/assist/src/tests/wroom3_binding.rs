@@ -8,7 +8,7 @@
 //! carry over by number, so every pad lands its datasheet pin with no
 //! correction step; position is only an explicit request option.
 use super::*;
-use pcbcraft_core::library::Definition;
+use sparksmith_core::library::Definition;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

@@ -4,7 +4,7 @@
 #   tools/launch/selftest.sh [OUT_DIR]
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-out="${1:-${TMPDIR:-/tmp}/pcbcraft-launch-selftest}"
+out="${1:-${TMPDIR:-/tmp}/sparksmith-launch-selftest}"
 mkdir -p "$out"
 export FFMPEG="${FFMPEG:-$(nix build nixpkgs#ffmpeg-full.bin --print-out-paths --no-link)/bin/ffmpeg}"
 

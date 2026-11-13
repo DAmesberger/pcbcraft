@@ -18,7 +18,7 @@
 //!   paste rule (inherited pads by the rules' paste reduction), or its
 //!   explicit windows.
 //! - **Legend** (`Legend`, positive). Footprint silkscreen strokes with a
-//!   round pen and filled shapes as regions; text in Pcbcraft's stroke font
+//!   round pen and filled shapes as regions; text in Sparksmith's stroke font
 //!   (`layout::legend`). The legend is not clipped at mask openings; the
 //!   pre-flight check reports ink over pads.
 //! - **Profile** (`Profile,NP`). The outer outline, cutouts and non-plated
@@ -68,7 +68,7 @@ pub(super) fn common_attributes(
 /// same id.
 pub(super) fn project_guid(project: &Project) -> String {
     use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(format!("pcbcraft project {}", project.name).as_bytes());
+    let digest = Sha256::digest(format!("sparksmith project {}", project.name).as_bytes());
     let mut b = [0u8; 16];
     for (i, byte) in digest.iter().take(16).enumerate() {
         b[i] = *byte;

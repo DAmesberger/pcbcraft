@@ -12,17 +12,17 @@
 //! (`layout::router::reroute`). After each edit the live view's model,
 //! made from the last one, holds the same bodies as a fresh live model of
 //! the edited board.
-use pcbcraft_automation::session::hosted;
-use pcbcraft_core::layout::dimensions::DimensionCommand;
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
-use pcbcraft_core::library::footprint_source::{
+use sparksmith_automation::session::hosted;
+use sparksmith_core::layout::dimensions::DimensionCommand;
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::library::footprint_source::{
     DimValue, Expr, FootprintParam, ParamName, ParamUnit,
 };
-use pcbcraft_core::model::dimension::{BoardRef, FeatureRef};
-use pcbcraft_core::{Engine, Operation};
-use pcbcraft_solidcraft::models::imported::SourceCache;
-use pcbcraft_solidcraft::project::{self, Flat, NativeModel, Rebuilt};
-use pcbcraft_solidcraft::scene::Geometry;
+use sparksmith_core::model::dimension::{BoardRef, FeatureRef};
+use sparksmith_core::{Engine, Operation};
+use sparksmith_solidcraft::models::imported::SourceCache;
+use sparksmith_solidcraft::project::{self, Flat, NativeModel, Rebuilt};
+use sparksmith_solidcraft::scene::Geometry;
 use std::path::Path;
 use std::time::Instant;
 
@@ -30,8 +30,8 @@ type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn example() -> Fallible<Engine> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    Ok(Engine::from_file(pcbcraft_io::read_project(&path)?)?)
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    Ok(Engine::from_file(sparksmith_io::read_project(&path)?)?)
 }
 
 /// The edits: J1 0.5, 1 and 2 mm from the bottom edge (by its dimension),
@@ -196,7 +196,7 @@ fn the_model_follows_j1_moved_by_its_dimension_or_the_board_width() -> Fallible 
 }
 
 /// Each edit's live model made from a fresh live model of the example,
-/// best of three (`cargo test --profile ci -p pcbcraft-automation --test
+/// best of three (`cargo test --profile ci -p sparksmith-automation --test
 /// esp32_dimension_model -- --ignored --nocapture`).
 #[test]
 #[ignore = "timing; run by hand"]

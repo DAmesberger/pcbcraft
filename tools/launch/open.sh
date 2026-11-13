@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Start the app on a project with the private launch state (for measuring shot coordinates),
 # print its pid and window frame. Close it with: kill PID
-#   tools/launch/open.sh PROJECT.pcbcraft [STILL.png]
+#   tools/launch/open.sh PROJECT.sparksmith [STILL.png]
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-bin="${PCBCRAFT_BIN:-$repo/target/nix/ci/pcbcraft}"
-[ -x "$bin" ] || bin="$repo/target/ci/pcbcraft"
+bin="${SPARKSMITH_BIN:-$repo/target/nix/ci/sparksmith-desktop}"
+[ -x "$bin" ] || bin="$repo/target/ci/sparksmith-desktop"
 kit="$repo/target/launch/launchkit"
 [ -x "$kit" ] || swiftc -O -o "$kit" "$here/launchkit.swift"
 state="$repo/target/launch/state"
 rm -rf "$state"; mkdir -p "$state/recovery" "$state/config" "$state/cache" "$state/home"
-export PCBCRAFT_RECOVERY_DIR="$state/recovery" PCBCRAFT_CONFIG_DIR="$state/config" PCBCRAFT_CACHE_DIR="$state/cache"
+export SPARKSMITH_RECOVERY_DIR="$state/recovery" SPARKSMITH_CONFIG_DIR="$state/config" SPARKSMITH_CACHE_DIR="$state/cache"
 HOME="$state/home" "$bin" "$1" > "$repo/target/launch/open.log" 2>&1 &
 pid=$!
 for _ in $(seq 1 100); do "$kit" window "$pid" > /dev/null 2>&1 && break; sleep 0.2; done

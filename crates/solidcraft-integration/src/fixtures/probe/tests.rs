@@ -37,7 +37,7 @@ fn native_file_recomputes_with_only_the_upstream_engine()
     let mut probe = create()?;
     probe.execute(Command::Save(FilePath { path: path.clone() }))?;
     drop(probe);
-    // No Pcbcraft rebuild/update code is used to regenerate this file.
+    // No Sparksmith rebuild/update code is used to regenerate this file.
     let mut upstream = Session::default();
     call(
         &mut upstream,
@@ -116,7 +116,7 @@ fn rejected_updates_and_failed_open_preserve_document_and_revision() -> Result<(
     assert!(
         probe
             .execute(Command::Open(FilePath {
-                path: "/nonexistent-pcbcraft-probe/file.solidcraft".into()
+                path: "/nonexistent-sparksmith-probe/file.solidcraft".into()
             }))
             .is_err()
     );

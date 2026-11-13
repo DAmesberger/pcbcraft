@@ -33,11 +33,11 @@ The audit found these problems, most harmful first:
 | D10 | Resolve parts is a table `ui_kit::Window`, like Library sources. |
 | D11 | Layer and view toggles move to a navigation-bar popover. |
 | D12 | The surface is called **Issues**. |
-| D13 | The pcbcraft-ui skill's bootstrap line now allows this fixed column layout (still not a docking framework). |
+| D13 | The sparksmith-ui skill's bootstrap line now allows this fixed column layout (still not a docking framework). |
 
 ## Principles
 
-These are rules for every slice. [pcbcraft-ui](../skills/pcbcraft-ui/SKILL.md) carries them as skill rules.
+These are rules for every slice. [sparksmith-ui](../skills/sparksmith-ui/SKILL.md) carries them as skill rules.
 
 1. **One card, one subject.** The card shows the selection or, with nothing selected, the workspace's document object (component, sheet or board). The header (icon, name, kind chip, "…" menu) names it; the body never repeats the name. A multi-selection shows the shared properties and a count.
 2. **Tools configure in a tool card, only while armed.** A tool card never shares a title with an object section. Tool help is one hint line.
@@ -78,7 +78,7 @@ These are rules for every slice. [pcbcraft-ui](../skills/pcbcraft-ui/SKILL.md) c
 
 - `app/chrome.rs` `workspace_area` owns the column. The subject slot holds exactly one of: Properties card, tool card, dialog panel or review panel.
 - Collapsed, Issues is a 28 pt bar. Expanded, Issues takes only the height its content uses (bar, toolbar, list, footer) and the subject the rest; the subject keeps its header and 10 rows (after upstream `stack_first_bounds`), or its whole content when that is shorter, so a short board card gives Issues the room. A docked dialog or review keeps its whole height (its body up to `body_rows`), so a form it opens shows without scrolling; Issues takes the rest. All heights are measured on the previous frame.
-- The column is a fixed layout, not a docking framework, as [the product plan](pcbcraft-plan.md) asks ("Initial panel layouts should be fixed and coherent").
+- The column is a fixed layout, not a docking framework, as [the product plan](sparksmith-plan.md) asks ("Initial panel layouts should be fixed and coherent").
 - Toasts sit bottom-centre of the canvas, clear of the bottom-left hint line. The canvas count badge sits top-right.
 
 ## Properties card by subject
@@ -192,7 +192,7 @@ Wording is chosen by `Error` variant and code, never by matching strings. For ex
 
 Glyphs are drawn by `kit::severity_glyph`, never typed.
 
-**Enforcement.** `pcbcraft_core::issues::style::check` is the one implementation. It flags:
+**Enforcement.** `sparksmith_core::issues::style::check` is the one implementation. It flags:
 
 - empty text, more than 80 characters, several lines or a final full stop;
 - `ID 8`, `[68]` and `[3, 4]`, `net 32` and `D20 r2`;
@@ -219,7 +219,7 @@ These signatures are fixed and wired: every surface above runs on them. A slice 
 - `style::{check, Problem}`.
 - `object_names(&Project, &Drafts, &[ObjectRef]) -> Vec<String>` (A1): the user names of objects, as titles name them, for object chips.
 
-**Desktop** (`apps/pcbcraft/src`):
+**Desktop** (`apps/sparksmith/src`):
 
 | Item | File | Signature |
 | --- | --- | --- |
@@ -280,7 +280,7 @@ Every slice ends with `cargo xtask ci`. A visible slice also adds real-app scree
 
 ### Card files after S1
 
-Paths are relative to `apps/pcbcraft/src`. Each editor's `subject_slot` and card dispatch stay in the editor file and dispatch to these files.
+Paths are relative to `apps/sparksmith/src`. Each editor's `subject_slot` and card dispatch stay in the editor file and dispatch to these files.
 
 | File | Holds |
 | --- | --- |

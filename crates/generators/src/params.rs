@@ -1,10 +1,10 @@
 //! Complete parameters: the host fills every default from the description
 //! before it calls and before it hashes, so a default that changes in a
 //! later module revision can never silently change a part's identity.
-use pcbcraft_generator_abi::Failure;
-use pcbcraft_generator_abi::v1::{self, Description, Params, Request, Scope};
+use sparksmith_generator_abi::Failure;
+use sparksmith_generator_abi::v1::{self, Description, Params, Request, Scope};
 
-pub use pcbcraft_generator_abi::params::fits;
+pub use sparksmith_generator_abi::params::fits;
 
 /// The request for `given` parameters in `scope`, with every default
 /// filled. Refuses a scope the generator does not offer, unknown
@@ -30,7 +30,7 @@ pub fn complete(
             .entry(param.key.clone())
             .or_insert_with(|| param.default.clone());
     }
-    pcbcraft_generator_abi::params::check(description, &params)
+    sparksmith_generator_abi::params::check(description, &params)
         .map_err(|problems| Failure { problems })?;
     Ok(Request {
         abi: v1::ABI,

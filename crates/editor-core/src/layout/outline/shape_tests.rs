@@ -1,6 +1,6 @@
 //! Slice S1 without a sketch evaluator: the `board.outline_fit` design rule
 //! (docs/board-sketch-references.md §5.1). The closed-loop tests that need
-//! the sketch solver live in `pcbcraft_solidcraft::board::closed_loop_tests`.
+//! the sketch solver live in `sparksmith_solidcraft::board::closed_loop_tests`.
 use crate::rules::{ProjectRules, RuleGroup, RuleKey, RuleValue};
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;

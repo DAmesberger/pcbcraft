@@ -1,4 +1,4 @@
-//! KiCad footprints and pads in Pcbcraft's frame.
+//! KiCad footprints and pads in Sparksmith's frame.
 //!
 //! **Axes.** KiCad's y grows downward and ours upward: a board point
 //! becomes `(x − ox, −(y − oy))` mm about the auxiliary origin `o` (or the
@@ -24,14 +24,14 @@ use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 use i_overlay::mesh::float::outline::offset::OutlineOffset;
 use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
-use pcbcraft_core::Layer;
-use pcbcraft_core::geometry::{Bounds, Point, Transform2};
-use pcbcraft_core::library::{
+use sparksmith_core::Layer;
+use sparksmith_core::geometry::{Bounds, Point, Transform2};
+use sparksmith_core::library::{
     ApertureId, CornerMask, Hole, HoleShape, MAX_OUTLINE_SEGMENTS, MaskRule, Outline, Pad, PadKind,
     PadShape, PadSide, PasteRule, PasteWindow, Segment, ShapeNm,
 };
-use pcbcraft_core::units::{Angle, Nm};
-use pcbcraft_core::{PackageTerminalId, PadId};
+use sparksmith_core::units::{Angle, Nm};
+use sparksmith_core::{PackageTerminalId, PadId};
 
 /// Largest distance of a custom pad's chord from its round primitive, mm.
 pub const CHORD_MM: f64 = 0.000_25;
@@ -60,8 +60,8 @@ fn nm(v: f64) -> Result<Nm, Case> {
 }
 
 /// A point in whole nanometres (see [`nm`]).
-fn nm_point(p: Point) -> Result<pcbcraft_core::units::PointNm, Case> {
-    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).map_err(|_| Case::PadOutOfRange)
+fn nm_point(p: Point) -> Result<sparksmith_core::units::PointNm, Case> {
+    sparksmith_core::units::PointNm::from_mm_f64_rounded(p).map_err(|_| Case::PadOutOfRange)
 }
 
 /// A KiCad length (whole nanometres already) within the coordinate bound.
@@ -168,7 +168,7 @@ fn pad_or_refusal(
         return Err(Case::PadUnknownToken);
     }
     let place = transform(board, fp);
-    let (c, s) = pcbcraft_core::geometry::cos_sin(place.rotation_deg);
+    let (c, s) = sparksmith_core::geometry::cos_sin(place.rotation_deg);
     // The pad's `at` is its hole; a drill `offset` moves the copper shape
     // from the hole, in the pad's frame (oracle). Our pad origin is the
     // shape's centre, with the hole offset back from it.
@@ -178,7 +178,7 @@ fn pad_or_refusal(
         place.translate[1] + s * p[0] + c * p[1],
     ];
     let shift = local(kpad.drill.map(|d| d.offset).unwrap_or_default());
-    let (pc, ps) = pcbcraft_core::geometry::cos_sin(snap_angle(kpad.angle));
+    let (pc, ps) = sparksmith_core::geometry::cos_sin(snap_angle(kpad.angle));
     let center = [
         anchor[0] + pc * shift[0] - ps * shift[1],
         anchor[1] + ps * shift[0] + pc * shift[1],
@@ -538,7 +538,7 @@ fn pad_shape(
             || kpad.chamfer.bottom_left
             || kpad.chamfer.bottom_right);
     let exact =
-        pcbcraft_core::units::PointNm::new(nm_exact(kpad.size[0])?, nm_exact(kpad.size[1])?);
+        sparksmith_core::units::PointNm::new(nm_exact(kpad.size[0])?, nm_exact(kpad.size[1])?);
     Ok(match kpad.shape {
         // KiCad writes chamfers on round-rect pads (a ratio of 0 for
         // sharp corners).
@@ -870,7 +870,7 @@ pub fn add_paste_window(pads: &mut [Pad], window: &Pad) -> bool {
     let Some(target) = pads.iter_mut().find(|p| {
         p.side == window.side
             && p.kind != PadKind::NonPlatedHole
-            && pcbcraft_core::geometry::polygon_contains(
+            && sparksmith_core::geometry::polygon_contains(
                 &p.shape.flatten(0.001),
                 frame(p).inverse().apply(window.position()),
             )

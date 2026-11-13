@@ -10,8 +10,8 @@
 //! between SoC vendors; the file says it is a starting point to check
 //! against the board's HAL.
 use crate::text::{comment, lower_ident, preamble};
-use pcbcraft_core::firmware::{FirmwarePin, PinConfigReport};
-use pcbcraft_core::functions::Pull;
+use sparksmith_core::firmware::{FirmwarePin, PinConfigReport};
+use sparksmith_core::functions::Pull;
 use std::fmt::Write;
 
 fn pinctrl(peripheral: &str, pin: &FirmwarePin) -> Option<String> {

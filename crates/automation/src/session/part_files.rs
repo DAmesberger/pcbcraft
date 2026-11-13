@@ -13,28 +13,28 @@
 //! CLI and MCP issue the same typed command (docs/mechanical-parts.md M4).
 use super::Session;
 use crate::Result;
-use pcbcraft_core::commands::LibraryCommand;
-use pcbcraft_core::ids::{DefinitionId, ModelRef};
-use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
-use pcbcraft_core::library::model3d::{
-    AssetRef, AssignModel, AssignPart, ImportModel, ModelDefinition, ModelFormat, ModelProvenance,
-    Redistribution,
-};
-use pcbcraft_core::library::package_model::{PackageEdit, PartFileModel};
-use pcbcraft_core::library::{Basis, Provenance};
-use pcbcraft_core::library::{Definition, PackageDefinition, PackageModel};
-use pcbcraft_core::{Engine, Operation};
-use pcbcraft_solidcraft::models::part_file::{self, PartReport, PartValues};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sparksmith_core::commands::LibraryCommand;
+use sparksmith_core::ids::{DefinitionId, ModelRef};
+use sparksmith_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
+use sparksmith_core::library::model3d::{
+    AssetRef, AssignModel, AssignPart, ImportModel, ModelDefinition, ModelFormat, ModelProvenance,
+    Redistribution,
+};
+use sparksmith_core::library::package_model::{PackageEdit, PartFileModel};
+use sparksmith_core::library::{Basis, Provenance};
+use sparksmith_core::library::{Definition, PackageDefinition, PackageModel};
+use sparksmith_core::{Engine, Operation};
+use sparksmith_solidcraft::models::part_file::{self, PartReport, PartValues};
 use std::path::Path;
 
 /// Longest accepted path, bytes.
 const MAX_PATH: usize = 4095;
 /// The media type of a part file asset.
 const MEDIA_TYPE: &str = "application/x-solidcraft";
-/// Licence of Pcbcraft's built-in part files.
+/// Licence of Sparksmith's built-in part files.
 const BUILTIN_LICENCE: &str = "MIT OR Apache-2.0";
 
 /// `library.check_part_file`: a file (`path`) or a built-in part file
@@ -87,7 +87,7 @@ pub struct SetPartValuesParams {
 }
 
 fn invalid(message: String) -> crate::Error {
-    crate::Error::Document(pcbcraft_core::Error::Invalid(message))
+    crate::Error::Document(sparksmith_core::Error::Invalid(message))
 }
 
 /// A part file's bytes and the name it goes by: read from a path, a
@@ -97,7 +97,7 @@ pub struct PartFileBytes {
     pub bytes: Vec<u8>,
     /// The file name (`esp32-s31-wroom-3.solidcraft`).
     pub file_name: String,
-    /// One of Pcbcraft's built-in part files (MIT OR Apache-2.0).
+    /// One of Sparksmith's built-in part files (MIT OR Apache-2.0).
     pub builtin: bool,
 }
 
@@ -125,7 +125,7 @@ pub fn read_part_file(path: Option<&str>, builtin: Option<&str>) -> Result<PartF
                 .unwrap_or("part.solidcraft")
                 .to_owned();
             Ok(PartFileBytes {
-                bytes: pcbcraft_io::persistence::read_bytes(p)?,
+                bytes: sparksmith_io::persistence::read_bytes(p)?,
                 file_name,
                 builtin: false,
             })
@@ -218,7 +218,7 @@ pub fn model_part_file(engine: &Engine, model: ModelRef) -> Result<PartFileBytes
 
 /// A Model (published or drafted) whose asset is `hash` and format
 /// `solidcraft`: its newest revision.
-fn model_with(engine: &Engine, hash: pcbcraft_core::ids::ContentHash) -> Option<ModelRef> {
+fn model_with(engine: &Engine, hash: sparksmith_core::ids::ContentHash) -> Option<ModelRef> {
     let library = &engine.project().library;
     let published = library
         .models
@@ -311,7 +311,7 @@ pub fn use_part_file_operation(
                     file_name: file.file_name.clone(),
                 },
                 format: ModelFormat::Solidcraft,
-                bounds_nm: pcbcraft_core::library::model3d::bounds_nm(as_is.bounds_mm)?,
+                bounds_nm: sparksmith_core::library::model3d::bounds_nm(as_is.bounds_mm)?,
                 provenance: ModelProvenance {
                     redistribution: if file.builtin {
                         Redistribution::Permitted

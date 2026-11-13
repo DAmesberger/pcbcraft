@@ -2,7 +2,7 @@
 //! limit, a run that was told to publish, and MCP under each mode.
 use super::*;
 use crate::mcp::{Server, tool_name};
-use pcbcraft_core::{Engine, Operation, Query};
+use sparksmith_core::{Engine, Operation, Query};
 use std::collections::BTreeSet;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -127,15 +127,15 @@ fn a_path_outside_the_folders_is_refused_in_every_mode() -> Fallible {
     for mode in MODES {
         let policy = Policy::new(mode, [PathBuf::from(abs("/work/board"))]);
         for outside in [
-            abs("/work/other/x.pcbcraft"),
+            abs("/work/other/x.sparksmith"),
             // A sibling that shares the folder's text is not inside it.
-            abs("/work/board-evil/x.pcbcraft"),
+            abs("/work/board-evil/x.sparksmith"),
             // `..` is refused even where it would land inside.
-            abs("/work/board/../other/x.pcbcraft"),
-            abs("/work/board/../board/x.pcbcraft"),
+            abs("/work/board/../other/x.sparksmith"),
+            abs("/work/board/../board/x.sparksmith"),
             // Relative paths depend on the process's folder.
-            "x.pcbcraft".into(),
-            "../x.pcbcraft".into(),
+            "x.sparksmith".into(),
+            "../x.sparksmith".into(),
             String::new(),
         ] {
             assert_eq!(
@@ -144,12 +144,12 @@ fn a_path_outside_the_folders_is_refused_in_every_mode() -> Fallible {
                 "{outside}"
             );
         }
-        let inside = verdict(&policy, &open(&abs("/work/board/sub/x.pcbcraft"))?);
+        let inside = verdict(&policy, &open(&abs("/work/board/sub/x.sparksmith"))?);
         let expected = if mode == Mode::AllowAll { "run" } else { "ask" };
         assert_eq!(inside, expected);
     }
     // No folders: every path is refused, and the refusal says what to do.
-    let file = abs("/work/board/x.pcbcraft");
+    let file = abs("/work/board/x.sparksmith");
     let Decision::Refuse(refusal) = decide(&Policy::default(), &open(&file)?) else {
         return Err("no folders allow no path".into());
     };
@@ -505,8 +505,8 @@ fn a_request_from_a_run_cannot_publish_or_write_without_allow() -> Fallible {
     let writes = [
         (
             "project.save",
-            json!({"path": at("stolen.pcbcraft")}),
-            "stolen.pcbcraft",
+            json!({"path": at("stolen.sparksmith")}),
+            "stolen.sparksmith",
         ),
         (
             "project.export_native",
@@ -553,7 +553,7 @@ fn a_request_from_a_run_cannot_publish_or_write_without_allow() -> Fallible {
     // what stopped them, not a failure of their own.
     let saved = session.respond(Caller::Allowed(&policy), attempts[2].clone());
     assert_eq!(saved["ok"], true, "{saved}");
-    assert!(root.path().join("stolen.pcbcraft").exists());
+    assert!(root.path().join("stolen.sparksmith").exists());
     let promoted = session.respond(Caller::Allowed(&policy), promote);
     assert_eq!(promoted["ok"], true, "{promoted}");
     assert!(file_count(&folder)? > records_before);
@@ -602,7 +602,7 @@ fn edits_run_inside_the_turn_and_settings_are_refused_with_no_way_around() -> Fa
 fn saving_without_a_path_counts_as_naming_the_current_file() -> Fallible {
     let root = tempfile::tempdir()?;
     let elsewhere = tempfile::tempdir()?;
-    let file = elsewhere.path().join("board.pcbcraft");
+    let file = elsewhere.path().join("board.sparksmith");
     let mut session = Session::new(Engine::demo()?);
     let saved = session.dispatch(
         json!({"command": "project.save", "params": {"path": file.display().to_string()}}),
@@ -628,7 +628,7 @@ fn a_link_cannot_lead_out_of_an_allowed_folder() -> Fallible {
     std::os::unix::fs::symlink(secret.path(), allowed.path().join("door"))?;
     std::os::unix::fs::symlink(
         secret.path().join("not-yet"),
-        allowed.path().join("dangling.pcbcraft"),
+        allowed.path().join("dangling.sparksmith"),
     )?;
     let session = Session::default();
     let policy = Policy::new(Mode::AllowAll, [allowed.path().to_path_buf()]);
@@ -639,8 +639,8 @@ fn a_link_cannot_lead_out_of_an_allowed_folder() -> Fallible {
         )
     };
     for path in [
-        allowed.path().join("door/stolen.pcbcraft"),
-        allowed.path().join("dangling.pcbcraft"),
+        allowed.path().join("door/stolen.sparksmith"),
+        allowed.path().join("dangling.sparksmith"),
     ] {
         let Decision::Refuse(refusal) = check(path.clone()) else {
             return Err(format!("{} passed", path.display()).into());
@@ -649,7 +649,7 @@ fn a_link_cannot_lead_out_of_an_allowed_folder() -> Fallible {
     }
     // A file not yet made, in a folder not yet made, is still inside.
     assert!(matches!(
-        check(allowed.path().join("new/sub/board.pcbcraft")),
+        check(allowed.path().join("new/sub/board.sparksmith")),
         Decision::Run
     ));
     // The allowed folder may itself be reached through a link.
@@ -660,7 +660,7 @@ fn a_link_cannot_lead_out_of_an_allowed_folder() -> Fallible {
     let reply = session.check_request(
         &policy,
         &json!({"command": "project.save", "params": {
-            "path": allowed.path().join("x.pcbcraft").display().to_string()}}),
+            "path": allowed.path().join("x.sparksmith").display().to_string()}}),
     );
     assert!(matches!(reply, Decision::Run), "{reply:?}");
     Ok(())
@@ -722,7 +722,7 @@ fn mcp_runs_under_each_mode_and_allows_edits_by_default() -> Fallible {
         (Mode::AutoAllowEdits, true, false),
         (Mode::AllowAll, true, true),
     ] {
-        let name = format!("{}.pcbcraft", mode.name());
+        let name = format!("{}.sparksmith", mode.name());
         let policy = Policy::new(mode, [root.path().to_path_buf()]);
         let mut server = Server::new(Session::new(Engine::demo()?), policy);
 
@@ -755,7 +755,7 @@ fn mcp_runs_under_each_mode_and_allows_edits_by_default() -> Fallible {
             &mut server,
             4,
             "project.save",
-            json!({"path": "/elsewhere/x.pcbcraft"}),
+            json!({"path": "/elsewhere/x.sparksmith"}),
         );
         assert!(failed);
         assert_eq!(reply["code"], "gate.path_outside", "{mode:?}: {reply}");
@@ -778,11 +778,11 @@ fn mcp_runs_under_each_mode_and_allows_edits_by_default() -> Fallible {
         &mut server,
         1,
         "project.save",
-        json!({"path": file("default.pcbcraft")}),
+        json!({"path": file("default.sparksmith")}),
     );
     assert!(failed, "{reply}");
     assert_eq!(reply["code"], "gate.cannot_ask", "{reply}");
-    assert!(!root.path().join("default.pcbcraft").exists());
+    assert!(!root.path().join("default.sparksmith").exists());
     Ok(())
 }
 
@@ -799,7 +799,7 @@ fn a_model_never_adds_a_library_source() -> Fallible {
     let created = Session::default().dispatch(json!({"command": "library.source.create",
         "params": {"path": folder.display().to_string(), "name": "Shared"}}));
     assert_eq!(created["ok"], true, "{created}");
-    let dirs = pcbcraft_io::settings::UserDirs {
+    let dirs = sparksmith_io::settings::UserDirs {
         config: root.path().join("config"),
         cache: root.path().join("cache"),
     };

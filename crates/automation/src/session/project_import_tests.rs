@@ -2,17 +2,17 @@
 //! of the end-to-end run), driven over the JSON contract. Library content is
 //! the original synthetic `EX-` catalog and the ESP32-S31-WROOM-3 example.
 use super::*;
-use pcbcraft_core::library::import::{PROJECT_FILES, project_lineage_id};
-use pcbcraft_core::{DefinitionKind, format::FILE_VERSION};
-use pcbcraft_io::settings::UserDirs;
 use sources::Sources;
+use sparksmith_core::library::import::{PROJECT_FILES, project_lineage_id};
+use sparksmith_core::{DefinitionKind, format::FILE_VERSION};
+use sparksmith_io::settings::UserDirs;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const MODULE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft"
+    "/../../examples/esp32-s31-wroom-3/esp32-s31-wroom-3.sparksmith"
 );
 
 fn ok(session: &mut Session, command: &str, params: Value) -> Fallible<Value> {
@@ -54,7 +54,7 @@ fn import_params(session: &Session, path: &str, root: DefinitionRef) -> Value {
 fn synthetic_engine() -> Fallible<Engine> {
     Ok(Engine::from_file(EditorFile {
         version: FILE_VERSION,
-        project: pcbcraft_core::catalog::synthetic::project_with_parts(3)?,
+        project: sparksmith_core::catalog::synthetic::project_with_parts(3)?,
         drafts: Default::default(),
     })?)
 }
@@ -86,9 +86,9 @@ fn a_part_imports_with_its_closure_as_one_undo_step_and_reopens_offline() -> Tes
     let temp = tempfile::tempdir()?;
     let mut source = synthetic_session()?;
     let root = latest_part(&source)?;
-    let path = save(&mut source, &temp.path().join("source.pcbcraft"))?;
+    let path = save(&mut source, &temp.path().join("source.sparksmith"))?;
     let members =
-        pcbcraft_core::library::bundle::closure(&source.engine().project().library, root)?;
+        sparksmith_core::library::bundle::closure(&source.engine().project().library, root)?;
     assert!(members.len() >= 5, "a real closure: {members:?}");
 
     let mut session = Session::new(Engine::default());
@@ -115,7 +115,7 @@ fn a_part_imports_with_its_closure_as_one_undo_step_and_reopens_offline() -> Tes
     }
 
     // The copy works as a placed, assigned part.
-    let part = pcbcraft_core::PartRef::new(
+    let part = sparksmith_core::PartRef::new(
         serde_json::from_value(reply["outcome"]["report"]["root"]["id"].clone())?,
         serde_json::from_value(reply["outcome"]["report"]["root"]["revision"].clone())?,
     );
@@ -162,7 +162,7 @@ fn a_part_imports_with_its_closure_as_one_undo_step_and_reopens_offline() -> Tes
     );
 
     // Offline: the source file is deleted, the project reopens whole.
-    let saved = save(&mut session, &temp.path().join("target.pcbcraft"))?;
+    let saved = save(&mut session, &temp.path().join("target.sparksmith"))?;
     std::fs::remove_file(&path)?;
     let mut reopened = Session::new(Engine::default());
     let now = reopened.engine().revision();
@@ -185,7 +185,7 @@ fn exact_source_revisions_are_kept_across_imports() -> TestResult {
     let part = latest_part(&source)?;
     let library = &source.engine().project().library;
     let pinned = library
-        .part(pcbcraft_core::PartRef::new(part.id, part.revision))
+        .part(sparksmith_core::PartRef::new(part.id, part.revision))
         .ok_or("the Part")?
         .definition
         .component;
@@ -220,7 +220,7 @@ fn exact_source_revisions_are_kept_across_imports() -> TestResult {
         })
     };
     let r2 = new_revision(&mut source, "second")?;
-    let path = save(&mut source, &temp.path().join("source.pcbcraft"))?;
+    let path = save(&mut source, &temp.path().join("source.sparksmith"))?;
     let source_lineage = project_lineage_id(
         &source.engine().project().library,
         DefinitionKind::Component,
@@ -271,7 +271,7 @@ fn exact_source_revisions_are_kept_across_imports() -> TestResult {
     let params = import_params(&session, &path, part);
     let reply = ok(&mut session, "library.import_from_project", params)?;
     let local = origin_of(&session, 1).ok_or("r1's origin")?;
-    let copy: pcbcraft_core::PartRef = pcbcraft_core::PartRef::new(
+    let copy: sparksmith_core::PartRef = sparksmith_core::PartRef::new(
         serde_json::from_value(reply["outcome"]["report"]["root"]["id"].clone())?,
         serde_json::from_value(reply["outcome"]["report"]["root"]["revision"].clone())?,
     );
@@ -288,7 +288,7 @@ fn exact_source_revisions_are_kept_across_imports() -> TestResult {
     // A newer revision of the file's lineage appends to the same copy, and
     // the file's edits in between did not change the lineage's identity.
     let r3 = new_revision(&mut source, "third")?;
-    let path = save(&mut source, &temp.path().join("renamed.pcbcraft"))?;
+    let path = save(&mut source, &temp.path().join("renamed.sparksmith"))?;
     let params = import_params(&session, &path, r3);
     ok(&mut session, "library.import_from_project", params)?;
     let third = origin_of(&session, 3).ok_or("r3's origin")?;
@@ -304,7 +304,7 @@ fn importing_from_a_project_replays_to_an_equal_document() -> TestResult {
     let temp = tempfile::tempdir()?;
     let mut source = synthetic_session()?;
     let root = latest_part(&source)?;
-    let path = save(&mut source, &temp.path().join("source.pcbcraft"))?;
+    let path = save(&mut source, &temp.path().join("source.sparksmith"))?;
     let run = || -> Fallible<String> {
         let mut session = Session::new(Engine::default());
         let params = import_params(&session, &path, root);
@@ -354,7 +354,7 @@ fn the_example_module_imports_once_published_in_its_project() -> TestResult {
     let ids: Vec<_> = drafts.items.iter().map(|d| d.id).collect();
     library_op(&mut module, "library.publish", json!({"drafts": ids}))?;
     assert!(module.engine().drafts().items.is_empty());
-    let path = save(&mut module, &temp.path().join("module.pcbcraft"))?;
+    let path = save(&mut module, &temp.path().join("module.sparksmith"))?;
 
     let params = import_params(&board, &path, root);
     let reply = ok(&mut board, "library.import_from_project", params)?;
@@ -366,12 +366,12 @@ fn the_example_module_imports_once_published_in_its_project() -> TestResult {
     assert_eq!(copied.0.name, component.meta.name);
     assert_eq!(
         library.origins.len(),
-        pcbcraft_core::library::bundle::closure(source, root)?.len()
+        sparksmith_core::library::bundle::closure(source, root)?.len()
     );
     // Terminal identities and the pin data come across unchanged.
     let (
-        Some((_, pcbcraft_core::library::Definition::Component(ours))),
-        Some((_, pcbcraft_core::library::Definition::Component(theirs))),
+        Some((_, sparksmith_core::library::Definition::Component(ours))),
+        Some((_, sparksmith_core::library::Definition::Component(theirs))),
     ) = (library.definition(root_copy), source.definition(root))
     else {
         return Err("component bodies".into());
@@ -388,7 +388,7 @@ fn the_example_module_imports_once_published_in_its_project() -> TestResult {
                           "component": {"id": root_copy.id, "revision": root_copy.revision}},
                "position": [0.0, 0.0]}),
     )?;
-    let saved = save(&mut board, &temp.path().join("board.pcbcraft"))?;
+    let saved = save(&mut board, &temp.path().join("board.sparksmith"))?;
     std::fs::remove_file(&path)?;
     let mut reopened = Session::new(Engine::default());
     let now = reopened.engine().revision();
@@ -406,7 +406,7 @@ fn import_from_project_refusals_change_nothing() -> TestResult {
     let temp = tempfile::tempdir()?;
     let mut source = synthetic_session()?;
     let root = latest_part(&source)?;
-    let path = save(&mut source, &temp.path().join("source.pcbcraft"))?;
+    let path = save(&mut source, &temp.path().join("source.sparksmith"))?;
     let mut session = synthetic_session()?;
     let command = "library.import_from_project";
 
@@ -416,10 +416,10 @@ fn import_from_project_refusals_change_nothing() -> TestResult {
     refused(&mut session, command, stale, "stale_revision")?;
 
     // A missing file, and bytes that are not a project.
-    let missing = temp.path().join("missing.pcbcraft").display().to_string();
+    let missing = temp.path().join("missing.sparksmith").display().to_string();
     let params = import_params(&session, &missing, root);
     refused(&mut session, command, params, "io_error")?;
-    let broken = temp.path().join("broken.pcbcraft");
+    let broken = temp.path().join("broken.sparksmith");
     std::fs::write(&broken, b"not a project")?;
     let params = import_params(&session, &broken.display().to_string(), root);
     let reply = session.dispatch(json!({"command": command, "params": params}));
@@ -493,10 +493,10 @@ fn import_from_project_refusals_change_nothing() -> TestResult {
         })
     };
     let r2 = bump(&mut first, "one way")?;
-    let a = save(&mut first, &temp.path().join("a.pcbcraft"))?;
+    let a = save(&mut first, &temp.path().join("a.sparksmith"))?;
     let mut second = synthetic_session()?;
     bump(&mut second, "another way")?;
-    let b = save(&mut second, &temp.path().join("b.pcbcraft"))?;
+    let b = save(&mut second, &temp.path().join("b.sparksmith"))?;
     let mut target = Session::new(Engine::default());
     let params = import_params(&target, &a, r2);
     ok(&mut target, command, params)?;
@@ -603,7 +603,7 @@ fn folder_id_refusals_write_nothing() -> TestResult {
         "path": reserved.display().to_string(), "name": "No", "library": PROJECT_FILES,
     }}));
     assert_eq!(reply["error"]["code"], "invalid_input", "{reply}");
-    assert!(!reserved.join("pcbcraft-library.json").exists());
+    assert!(!reserved.join("sparksmith-library.json").exists());
 
     let created = ok(
         &mut session,

@@ -1,7 +1,7 @@
 //! Slice P1 in the core: a publish, like a save, is no undo step, and its
 //! preview compares against the file on disk; the project keeps where it
 //! last published. Broken references, conflicts, extent loops and cutout
-//! ids are tested in `b4`, `b5` and `pcbcraft-solidcraft`'s `board` tests.
+//! ids are tested in `b4`, `b5` and `sparksmith-solidcraft`'s `board` tests.
 use super::Fallible;
 use super::b3::{first_placed, move_by, publish};
 use crate::interface::publish::{candidate, preview, record};

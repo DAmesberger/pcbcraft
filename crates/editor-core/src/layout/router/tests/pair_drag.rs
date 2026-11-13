@@ -252,9 +252,9 @@ fn a_pair_drag_checks_only_the_pairs_copper() -> Fallible {
 
 /// Per-move cost of dragging a pair half on the large board, the whole
 /// board's graph build each move used to repeat, and the pair check that
-/// replaced it (`cargo test -p pcbcraft-core --release pair_drag_timings
-/// -- --ignored --nocapture`; `PCBCRAFT_PAIR_VIAS` sets the vias, 10,000
-/// by default, and `PCBCRAFT_PAIR_MOVES` the moves, 21).
+/// replaced it (`cargo test -p sparksmith-core --release pair_drag_timings
+/// -- --ignored --nocapture`; `SPARKSMITH_PAIR_VIAS` sets the vias, 10,000
+/// by default, and `SPARKSMITH_PAIR_MOVES` the moves, 21).
 #[test]
 #[ignore = "timing report; run in release with --ignored --nocapture"]
 fn pair_drag_timings() -> Fallible {
@@ -264,7 +264,7 @@ fn pair_drag_timings() -> Fallible {
             .and_then(|v| v.parse().ok())
             .unwrap_or(default)
     };
-    let vias = setting("PCBCRAFT_PAIR_VIAS", 10_000);
+    let vias = setting("SPARKSMITH_PAIR_VIAS", 10_000);
     let (p, pair) = large(vias as usize)?;
     let index = RouteIndex::of(&p);
     let a1 = segment(&p, A, 30.0)?;
@@ -276,7 +276,7 @@ fn pair_drag_timings() -> Fallible {
     let checked = start.elapsed();
     let mut times: Vec<Duration> = Vec::new();
     let mut moved = 0usize;
-    for i in 0..setting("PCBCRAFT_PAIR_MOVES", 21) {
+    for i in 0..setting("SPARKSMITH_PAIR_MOVES", 21) {
         let offset = -1.0 + 2.0 * f64::from(i % 21) / 20.0;
         let start = Instant::now();
         let plan = drag_plan(&p, &index, &drag(a1, offset, RouteMode::Shove));

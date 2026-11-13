@@ -1,4 +1,4 @@
-//! Pcbcraft's UI toolkit. It starts as SolidCraft's MIT/Apache interface code as Pcbcraft draws
+//! Sparksmith's UI toolkit. It starts as SolidCraft's MIT/Apache interface code as Sparksmith draws
 //! with it: the UI kit's controls, the theme tokens, the icon set and code-drawn glyphs, the
 //! bundled IBM Plex faces, the move triad and a few shell helpers. The project's own design
 //! language grows from here; the look is unchanged for now.
@@ -14,15 +14,15 @@
 //! `LICENSE-MIT` and `LICENSE-APACHE` beside this crate carry those notices. The IBM Plex fonts in
 //! `assets/fonts` are under the SIL Open Font License 1.1 (the `OFL.txt` beside each face).
 //!
-//! Only what Pcbcraft uses is kept, and the modules below name where each part came from
-//! (`ATTRIBUTION.md` at the repository root has the map). Pcbcraft does not link SolidCraft's
+//! Only what Sparksmith uses is kept, and the modules below name where each part came from
+//! (`ATTRIBUTION.md` at the repository root has the map). Sparksmith does not link SolidCraft's
 //! brand-licensed crates (`solidcraft-ui-kit`, `solidcraft-look`, `solidcraft-theme`) or
 //! `solidcraft-ui-egui`; `cargo xtask brand-crates` holds that.
 //!
 //! Everything the dead-code analysis could remove without breaking the build has been removed.
 //! What it still reports (methods of types it believes are never built, helpers of those) is
 //! reached through code the analysis cannot follow, so it stays as upstream wrote it.
-#![allow(dead_code, reason = "vendored: pruned to what Pcbcraft reaches; see the crate documentation")]
+#![allow(dead_code, reason = "vendored: pruned to what Sparksmith reaches; see the crate documentation")]
 
 mod box_select;
 mod chrome;

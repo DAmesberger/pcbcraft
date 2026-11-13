@@ -2,7 +2,7 @@
 //! records and the publish preview's diff (`interface::publish`), on the
 //! demo board with an external opening on its package. The exported design
 //! itself, the files and the linked design that follows them are tested where
-//! Solidcraft runs (`pcbcraft-solidcraft` `interface` and the automation
+//! Solidcraft runs (`sparksmith-solidcraft` `interface` and the automation
 //! session's `interface_publish_tests`).
 use super::Fallible;
 use super::package_datums::{demo, usb4105_opening};

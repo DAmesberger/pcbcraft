@@ -6,7 +6,7 @@
 //! A profile is a file with a stated source ([`profile`]); the project
 //! embeds a snapshot of the one it uses ([`ProjectRules::profile`]), so a
 //! file opens with the same rules on any machine. A user profile library
-//! (JSON files in the user config folder, read by `pcbcraft-io`) supplies
+//! (JSON files in the user config folder, read by `sparksmith-io`) supplies
 //! profiles to choose. A project without a profile has no rules: nothing
 //! is checked, the production check blocks and tools that need a default
 //! refuse ([`ProjectRules::require`]).
@@ -19,7 +19,7 @@
 //! effective rule.
 //!
 //! Every value here is pure data: no files and no fabricator data. The
-//! built-in profiles are files `pcbcraft-io` reads (`rule_profiles::builtins`).
+//! built-in profiles are files `sparksmith-io` reads (`rule_profiles::builtins`).
 use crate::diagnostics::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

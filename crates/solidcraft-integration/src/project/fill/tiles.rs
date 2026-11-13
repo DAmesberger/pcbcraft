@@ -16,8 +16,8 @@ use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay::Overlay;
 use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::i_float::int::point::IntPoint;
-use pcbcraft_core::Point;
-use pcbcraft_core::model::fill::FilledRegion;
+use sparksmith_core::Point;
+use sparksmith_core::model::fill::FilledRegion;
 
 /// The side of a tile's cell, mm. A cell of the ESP32 example's pours
 /// holds up to about 400 edges, extruded in about 0.1 s. On that board

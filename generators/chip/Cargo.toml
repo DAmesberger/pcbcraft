@@ -1,6 +1,6 @@
 [package]
-name = "pcbcraft-gen-chip"
-description = "Pcbcraft generator module: chip resistors, capacitors, inductors, ferrite beads and LEDs"
+name = "sparksmith-gen-chip"
+description = "Sparksmith generator module: chip resistors, capacitors, inductors, ferrite beads and LEDs"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -28,4 +28,4 @@ unreachable = "deny"
 
 # A generator depends on the SDK only; `cargo xtask layers` enforces it.
 [dependencies]
-pcbcraft-generator-sdk.workspace = true
+sparksmith-generator-sdk.workspace = true

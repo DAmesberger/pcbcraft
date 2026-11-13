@@ -1,5 +1,5 @@
 use super::*;
-use pcbcraft_core::{
+use sparksmith_core::{
     DefinitionKind, Engine, InstanceCommand, LibraryCommand, Operation,
     library::{Definition, DefinitionMeta},
 };
@@ -26,7 +26,7 @@ pub(crate) fn unfinished(engine: &mut Engine) -> Result<()> {
     engine.apply(
         engine.revision(),
         Operation::Library(LibraryCommand::Edit {
-            edits: vec![pcbcraft_core::library::DraftEdit {
+            edits: vec![sparksmith_core::library::DraftEdit {
                 id: binding.id,
                 meta: binding.meta,
                 definition: binding.definition,
@@ -39,7 +39,7 @@ pub(crate) fn unfinished(engine: &mut Engine) -> Result<()> {
 #[test]
 fn saved_project_reopens_offline_with_exact_revisions_and_drafts() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("offline.pcbcraft");
+    let path = dir.path().join("offline.sparksmith");
     let mut engine = Engine::demo()?;
     unfinished(&mut engine)?;
     write_project(&path, &engine.to_file())?;
@@ -49,10 +49,48 @@ fn saved_project_reopens_offline_with_exact_revisions_and_drafts() -> Result<()>
     Ok(())
 }
 
+/// A `.pcbcraft` file from before the rename holds the same format: it
+/// opens through the same reader and version check, and saving keeps its
+/// name. Other extensions are refused as before.
+#[test]
+fn a_project_under_the_former_extension_opens_and_saves_in_place() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let current = dir.path().join("board.sparksmith");
+    let former = dir.path().join("board.pcbcraft");
+    let mut engine = Engine::demo()?;
+    unfinished(&mut engine)?;
+    write_project(&current, &engine.to_file())?;
+    std::fs::copy(&current, &former)?;
+    assert_eq!(read_project(&former)?, read_project(&current)?);
+    write_project(&former, &engine.to_file())?;
+    assert_eq!(std::fs::read(&former)?, std::fs::read(&current)?);
+
+    // The same version check: another version is refused under either name.
+    let mut newer = engine.to_file();
+    newer.version = sparksmith_core::format::FILE_VERSION + 1;
+    assert!(write_project(&former, &newer).is_err());
+    assert_eq!(read_project(&former)?, read_project(&current)?);
+
+    for refused in ["board.json", "board.PCBCRAFT", "board"] {
+        assert!(
+            read_project(&dir.path().join(refused)).is_err(),
+            "{refused}"
+        );
+    }
+
+    // A file the app wrote under its former name (the first assistant
+    // run's project) opens.
+    let run1 = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-wroom-3/run1/esp32-s31-wroom-3.pcbcraft");
+    let opened = Engine::from_file(read_project(&run1)?)?;
+    assert!(!opened.drafts().items.is_empty());
+    Ok(())
+}
+
 #[test]
 fn invalid_files_are_refused_without_side_effects() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("bad.pcbcraft");
+    let path = dir.path().join("bad.sparksmith");
     let mut engine = Engine::demo()?;
     let r1 = engine.project().instances[0].id;
     engine.apply(
@@ -80,7 +118,7 @@ fn invalid_files_are_refused_without_side_effects() -> Result<()> {
     )?;
     assert!(matches!(
         read_project(&path),
-        Err(Error::Document(pcbcraft_core::Error::Unsupported(_)))
+        Err(Error::Document(sparksmith_core::Error::Unsupported(_)))
     ));
     let large = std::fs::File::create(&path)?;
     large.set_len(format::CONTAINER_MAX_BYTES + 1)?;
@@ -95,7 +133,7 @@ fn failed_saves_preserve_existing_target_and_leave_no_temporary_file() -> Result
     let dir = tempfile::tempdir()?;
     let engine = Engine::demo()?;
     let valid = engine.to_file();
-    let path = dir.path().join("existing.pcbcraft");
+    let path = dir.path().join("existing.sparksmith");
     write_project(&path, &valid)?;
     let original = std::fs::read(&path)?;
     let mut invalid = valid.clone();
@@ -105,7 +143,7 @@ fn failed_saves_preserve_existing_target_and_leave_no_temporary_file() -> Result
     assert_eq!(std::fs::read(&path)?, original);
     assert_eq!(std::fs::read_dir(dir.path())?.count(), 1);
 
-    let occupied = dir.path().join("occupied.pcbcraft");
+    let occupied = dir.path().join("occupied.sparksmith");
     std::fs::create_dir(&occupied)?;
     std::fs::write(occupied.join("sentinel"), b"preserve")?;
     assert!(write_project(&occupied, &valid).is_err());

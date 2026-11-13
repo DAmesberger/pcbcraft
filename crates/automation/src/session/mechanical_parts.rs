@@ -7,24 +7,24 @@
 //! operation, so the desktop applies exactly what automation applies.
 use super::Session;
 use crate::Result;
-use pcbcraft_core::geometry::Point;
-use pcbcraft_core::ids::{ContentHash, FootprintRef, Id, ModelRef};
-use pcbcraft_core::layout::LayoutCommand;
-use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
-use pcbcraft_core::library::mechanical::{
-    self, LandShape, MechanicalLand, PadUse, PartModelSource, PartSpec,
-};
-use pcbcraft_core::library::model3d::{
-    AssetRef, ModelDefinition, ModelFormat, ModelProvenance, Redistribution,
-};
-use pcbcraft_core::library::{Basis, PackageModel, PadKind, PadShape, Provenance};
-use pcbcraft_core::model::Layer;
-use pcbcraft_core::units::{Degrees, Nm, PointNm};
-use pcbcraft_core::{Engine, Operation};
-use pcbcraft_solidcraft::models::part_file::{self, EvaluatedPart, PartReport, PartValues};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sparksmith_core::geometry::Point;
+use sparksmith_core::ids::{ContentHash, FootprintRef, Id, ModelRef};
+use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
+use sparksmith_core::library::mechanical::{
+    self, LandShape, MechanicalLand, PadUse, PartModelSource, PartSpec,
+};
+use sparksmith_core::library::model3d::{
+    AssetRef, ModelDefinition, ModelFormat, ModelProvenance, Redistribution,
+};
+use sparksmith_core::library::{Basis, PackageModel, PadKind, PadShape, Provenance};
+use sparksmith_core::model::Layer;
+use sparksmith_core::units::{Degrees, Nm, PointNm};
+use sparksmith_core::{Engine, Operation};
+use sparksmith_solidcraft::models::part_file::{self, EvaluatedPart, PartReport, PartValues};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ use std::sync::Arc;
 const MAX_PATH: usize = 4095;
 /// The media type of a part file asset.
 const MEDIA_TYPE: &str = "application/x-solidcraft";
-/// Licence of Pcbcraft's built-in part files.
+/// Licence of Sparksmith's built-in part files.
 pub const BUILTIN_LICENCE: &str = "MIT OR Apache-2.0";
 /// The designator prefix of a part file that names none.
 pub const DEFAULT_PREFIX: &str = "MP";
@@ -46,7 +46,7 @@ pub struct Term {
     pub add_mm: f64,
 }
 
-/// A built-in part's land rule: Pcbcraft data over the part's parameters
+/// A built-in part's land rule: Sparksmith data over the part's parameters
 /// (the part file never supplies lands, M1.4).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LandRule {
@@ -77,7 +77,7 @@ const fn term(param: &'static str, add_mm: f64) -> Term {
     }
 }
 
-/// Pcbcraft's data about each built-in part file (docs/mechanical-parts.md
+/// Sparksmith's data about each built-in part file (docs/mechanical-parts.md
 /// M7). Generic illustrative land sizes; verify against the chosen part.
 pub const BUILTIN_PARTS: &[BuiltinPart] = &[
     BuiltinPart {
@@ -115,7 +115,7 @@ pub const BUILTIN_PARTS: &[BuiltinPart] = &[
     },
 ];
 
-/// Pcbcraft's data about a built-in part file.
+/// Sparksmith's data about a built-in part file.
 pub fn builtin_part(name: &str) -> Option<&'static BuiltinPart> {
     BUILTIN_PARTS.iter().find(|b| b.name == name)
 }
@@ -133,7 +133,7 @@ pub enum PartFileSource {
 }
 
 fn invalid(message: String) -> crate::Error {
-    crate::Error::Document(pcbcraft_core::Error::Invalid(message))
+    crate::Error::Document(sparksmith_core::Error::Invalid(message))
 }
 
 /// A part file's bytes, the name it goes by and its built-in data.
@@ -167,7 +167,7 @@ pub fn read_part(engine: &Engine, source: &PartFileSource) -> Result<ReadPart> {
                 .unwrap_or("part.solidcraft")
                 .to_owned();
             Ok(ReadPart {
-                bytes: pcbcraft_io::persistence::read_bytes(p)?,
+                bytes: sparksmith_io::persistence::read_bytes(p)?,
                 file_name,
                 builtin: None,
                 model: None,
@@ -294,8 +294,8 @@ pub fn footprint_lands(engine: &Engine, footprint: FootprintRef) -> Result<Vec<M
         .enumerate()
         .map(|(k, pad)| {
             let hole = pad.hole.as_ref().and_then(|h| match h.shape {
-                pcbcraft_core::library::HoleShape::Round { diameter_nm } => Some(diameter_nm),
-                pcbcraft_core::library::HoleShape::Slot { .. } => None,
+                sparksmith_core::library::HoleShape::Round { diameter_nm } => Some(diameter_nm),
+                sparksmith_core::library::HoleShape::Slot { .. } => None,
             });
             let name: String = if pad.number.trim().is_empty() {
                 (k + 1).to_string()
@@ -496,7 +496,7 @@ fn model_source(
             file_name: read.file_name.clone(),
         },
         format: ModelFormat::Solidcraft,
-        bounds_nm: pcbcraft_core::library::model3d::bounds_nm(as_is)?,
+        bounds_nm: sparksmith_core::library::model3d::bounds_nm(as_is)?,
         provenance: ModelProvenance {
             redistribution: if builtin {
                 Redistribution::Permitted

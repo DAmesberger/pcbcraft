@@ -22,9 +22,9 @@ use super::{Build, check_count, check_positive, require, top_edges, upright_edge
 use crate::Result;
 use crate::native::{BoxBody, Expr, Pattern, Plane, ProfileBody};
 use crate::pad_outline::Contour;
-use pcbcraft_core::library::BodyRole;
-use pcbcraft_core::library::package_form::ThtForm;
-use pcbcraft_core::library::package_form::tht::{
+use sparksmith_core::library::BodyRole;
+use sparksmith_core::library::package_form::ThtForm;
+use sparksmith_core::library::package_form::tht::{
     DIP_LEAD_EXIT_SHARE, DIP_LEAD_THICKNESS_MM, ThtBody,
 };
 
@@ -459,10 +459,10 @@ mod tests {
     use crate::Error;
     #[allow(unused_imports)]
     use crate::models::tests::{nm, pt};
-    use pcbcraft_core::PackageTerminalId;
-    use pcbcraft_core::library::PackageTerminal;
-    use pcbcraft_core::library::package_form::ThtForm;
-    use pcbcraft_core::library::package_form::tht::ThtKind;
+    use sparksmith_core::PackageTerminalId;
+    use sparksmith_core::library::PackageTerminal;
+    use sparksmith_core::library::package_form::ThtForm;
+    use sparksmith_core::library::package_form::tht::ThtKind;
 
     // Original synthetic forms with round numbers, from no library.
     fn package(form: ThtForm) -> PackageDefinition {

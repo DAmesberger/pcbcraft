@@ -5,20 +5,20 @@
 //! generated models as standalone named designs and inserts them; this
 //! compares that with the build before it.
 //!
-//! `nix develop -c cargo test --profile ci -p pcbcraft-automation --test model_build_timing -- --ignored --nocapture --test-threads 1`
+//! `nix develop -c cargo test --profile ci -p sparksmith-automation --test model_build_timing -- --ignored --nocapture --test-threads 1`
 //! Run each test in its own process for a cold first build
 //! (`-- --exact esp32_build_timing`).
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pcbcraft_core::{Engine, Evaluators, Project};
-use pcbcraft_solidcraft::models::imported::SourceCache;
-use pcbcraft_solidcraft::project;
+use sparksmith_core::{Engine, Evaluators, Project};
+use sparksmith_solidcraft::models::imported::SourceCache;
+use sparksmith_solidcraft::project;
 use std::time::Instant;
 
 fn esp32() -> Project {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
-    pcbcraft_io::read_project(&path)
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith");
+    sparksmith_io::read_project(&path)
         .unwrap()
         .into_document()
         .project
@@ -28,8 +28,8 @@ fn esp32() -> Project {
 
 fn showcase() -> Project {
     let engine = Engine::showcase_hosted_fixture(Evaluators {
-        footprint: Some(&pcbcraft_solidcraft::footprint::SketchEvaluator),
-        board: Some(&pcbcraft_solidcraft::board::SketchBoardEvaluator),
+        footprint: Some(&sparksmith_solidcraft::footprint::SketchEvaluator),
+        board: Some(&sparksmith_solidcraft::board::SketchBoardEvaluator),
     })
     .unwrap();
     engine.project().clone()

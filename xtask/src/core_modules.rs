@@ -1,4 +1,4 @@
-//! `cargo xtask core-modules`: the intra-crate module map of `pcbcraft-core`.
+//! `cargo xtask core-modules`: the intra-crate module map of `sparksmith-core`.
 //!
 //! `docs/component-model.md` ("Module map") gives every core module the complete set of
 //! `crate::` modules it may use. This gate parses each module's non-test sources with `syn`,

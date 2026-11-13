@@ -11,9 +11,9 @@
 //!   bottom page is viewed from below, so it is mirrored left to right.
 use crate::Result;
 use crate::pdf::{A3_LANDSCAPE, Align, Colour, Document, Font, Page, Stroke, text_width};
-use pcbcraft_core::Layer;
-use pcbcraft_core::fabrication::drawing::{AssemblySide, DrawingData};
-use pcbcraft_core::fabrication::{DrillTool, HoleFeature};
+use sparksmith_core::Layer;
+use sparksmith_core::fabrication::drawing::{AssemblySide, DrawingData};
+use sparksmith_core::fabrication::{DrillTool, HoleFeature};
 
 type P = [f64; 2];
 /// Draws the symbol of a table row at a paper point.
@@ -459,7 +459,7 @@ pub fn fabrication_pdf(data: &DrawingData) -> Result<Vec<u8>> {
         page.polyline(&view.map_all(cutout), true, &Stroke::new(0.3, INK));
     }
     // Holes at scale, each with its tool's symbol.
-    let index_of = |hole: &pcbcraft_core::fabrication::DrillHole| {
+    let index_of = |hole: &sparksmith_core::fabrication::DrillHole| {
         data.drills
             .tool_of(hole)
             .and_then(|t| data.drills.tools.iter().position(|u| u == t))
@@ -621,7 +621,7 @@ pub fn fabrication_pdf(data: &DrawingData) -> Result<Vec<u8>> {
             ),
             ("Finish", data.finish.clone()),
             ("Mask / legend", format!("{} / {}", data.mask, data.legend)),
-            ("Generator", pcbcraft_core::product::NAME.into()),
+            ("Generator", sparksmith_core::product::NAME.into()),
         ],
     );
     let mut doc = Document::new();
@@ -748,7 +748,7 @@ fn assembly_page(data: &DrawingData, side: &AssemblySide) -> Page {
             ),
             ("View", heading.into()),
             ("Parts", side.parts.len().to_string()),
-            ("Generator", pcbcraft_core::product::NAME.into()),
+            ("Generator", sparksmith_core::product::NAME.into()),
         ],
     );
     page
@@ -783,8 +783,8 @@ fn assembly_pages(data: &DrawingData) -> Vec<Page> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::Engine;
-    use pcbcraft_core::fabrication::{FabricationOptions, drawing};
+    use sparksmith_core::Engine;
+    use sparksmith_core::fabrication::{FabricationOptions, drawing};
 
     fn showcase() -> Result<DrawingData> {
         let engine = Engine::showcase()?;
@@ -800,10 +800,10 @@ mod tests {
     fn the_esp32_bom_value_keeps_the_voltage_rating() -> Result<()> {
         let path = std::path::Path::new(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+            "/../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith"
         ));
         let project = crate::read_project(path)?.project;
-        let bom = pcbcraft_core::fabrication::assembly::bom_parts_csv(&project)?;
+        let bom = sparksmith_core::fabrication::assembly::bom_parts_csv(&project)?;
         let row = |designator: &str| {
             bom.lines()
                 .find(|l| l.starts_with(&format!("{designator},")))
@@ -863,10 +863,10 @@ mod tests {
     }
 
     /// Writes the showcase drawings for visual review when
-    /// `PCBCRAFT_DRAWINGS_DIR` is set.
+    /// `SPARKSMITH_DRAWINGS_DIR` is set.
     #[test]
     fn write_samples_when_asked() -> Result<()> {
-        let Ok(dir) = std::env::var("PCBCRAFT_DRAWINGS_DIR") else {
+        let Ok(dir) = std::env::var("SPARKSMITH_DRAWINGS_DIR") else {
             return Ok(());
         };
         let data = showcase()?;

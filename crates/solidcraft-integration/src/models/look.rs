@@ -9,9 +9,9 @@ use crate::geom::Vec3;
 use crate::material::{Coat, Detail, Material, Pattern, linear_to_srgb8};
 use crate::native::Look;
 use crate::{Error, Result};
-use pcbcraft_core::materials::{self, MaterialCategory, MaterialDef, MaterialId, PatternKind};
 use solidcraft_viewport::clear_coat::ClearCoat;
 use solidcraft_viewport::surface::OpaqueSurface;
+use sparksmith_core::materials::{self, MaterialCategory, MaterialDef, MaterialId, PatternKind};
 
 /// Metals ignore the dielectric IOR; Solidcraft still requires one in [1, 3].
 const METAL_IOR: f64 = 1.5;

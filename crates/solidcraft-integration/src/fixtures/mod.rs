@@ -2,7 +2,7 @@
 //! top/bottom placement, independent regeneration) and a copper sample (via,
 //! zone with hole, same-net island). They prove Solidcraft capabilities the
 //! product relies on and run only as tests; they have their own small
-//! harnesses and are not part of Pcbcraft's command engine.
+//! harnesses and are not part of Sparksmith's command engine.
 mod copper;
 mod measure;
 mod probe;

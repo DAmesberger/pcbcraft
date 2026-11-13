@@ -4,9 +4,9 @@
 //! native model draws them exactly; display layers flatten them at an
 //! explicit chord tolerance.
 use crate::{Error, Result};
-use pcbcraft_core::Point;
-use pcbcraft_core::geometry::Shape;
-use pcbcraft_core::library::{
+use sparksmith_core::Point;
+use sparksmith_core::geometry::Shape;
+use sparksmith_core::library::{
     Hole, HoleShape, Outline, Pad, PadDefaults, PadShape, Segment, offset_polygon,
 };
 
@@ -19,7 +19,7 @@ use pcbcraft_core::library::{
 pub const PLATING_MM: f64 = 0.025;
 /// Chord tolerance of flattened display outlines (the core's display
 /// tolerance for pad arcs).
-pub const FLATTEN_TOLERANCE_MM: f64 = pcbcraft_core::library::PAD_ARC_TOLERANCE_MM;
+pub const FLATTEN_TOLERANCE_MM: f64 = sparksmith_core::library::PAD_ARC_TOLERANCE_MM;
 /// Points of one flattened loop.
 pub const MAX_FLAT_POINTS: usize = 8192;
 /// Chords of one flattened arc.
@@ -68,7 +68,7 @@ impl Contour {
 
     /// Turned counter-clockwise by `deg` about the origin.
     pub fn rotated(&self, deg: f64) -> Self {
-        let (c, s) = pcbcraft_core::geometry::cos_sin(deg);
+        let (c, s) = sparksmith_core::geometry::cos_sin(deg);
         self.mapped(|p| [c * p[0] - s * p[1], s * p[0] + c * p[1]], false)
     }
 
@@ -185,7 +185,7 @@ pub struct Arc {
 impl Arc {
     /// `None` for a straight segment (zero bulge or zero chord).
     pub fn of(from: Point, to: Point, bulge: f64) -> Option<Self> {
-        match pcbcraft_core::library::bulge_arc(from, to, bulge)? {
+        match sparksmith_core::library::bulge_arc(from, to, bulge)? {
             Shape::Arc {
                 center,
                 radius,
@@ -406,7 +406,7 @@ pub fn mask_opening(pad: &Pad, defaults: &PadDefaults) -> Option<Contour> {
 mod tests {
     use super::*;
     use crate::test_units::{deg, nm, pt};
-    use pcbcraft_core::library::CornerMask;
+    use sparksmith_core::library::CornerMask;
 
     /// The native contour and the core's `PadShape::grown` (the one pad
     /// geometry 2D, checks and the update preview use) agree to within

@@ -15,15 +15,15 @@
 pub mod params;
 pub mod validate;
 
-use pcbcraft_generator_abi::v1::{self, Description, ErrorBody, Generation, Request};
-use pcbcraft_generator_abi::{CodecError, Failure, Generated, GeneratorRuntime, codec};
+use sparksmith_generator_abi::v1::{self, Description, ErrorBody, Generation, Request};
+use sparksmith_generator_abi::{CodecError, Failure, Generated, GeneratorRuntime, codec};
 use wasmi::errors::{ErrorKind, MemoryError};
 use wasmi::{
     CompilationMode, Config, Engine, ExternType, Instance, Linker, Memory, Module, Store,
     StoreLimits, StoreLimitsBuilder, TrapCode, TypedFunc,
 };
 
-pub use pcbcraft_generator_abi as abi;
+pub use sparksmith_generator_abi as abi;
 
 /// Execution bounds of one call. The defaults are set from GP0's
 /// measurements of the chip generator (`generators/README.md`).
@@ -469,7 +469,7 @@ impl Loaded<'_> {
                     codec::decode(&raw.body, limit).map_err(|e| invalid_output("part", &e))?;
                 validate::generation(&generation, request.scope)?;
                 Ok(Generated {
-                    result_hash: pcbcraft_generator_abi::result_hash(&raw.body),
+                    result_hash: sparksmith_generator_abi::result_hash(&raw.body),
                     canonical: raw.body,
                     generation,
                     fuel_used: Some(raw.fuel_used),

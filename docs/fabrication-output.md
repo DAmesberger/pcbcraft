@@ -7,13 +7,13 @@ The Gerber writer follows Ucamco's public Gerber Layer Format Specification. The
 ## One command
 
 - **Automation:** the `project.export_fabrication` request takes `{output, zip, profile, options}`. It runs the production check and then writes a new or empty folder, or one new `.zip`. It returns the pre-flight report, every file with its size, and the time each step took. It is a file effect: it adds no revision and no undo step.
-- **CLI:** `sparksmith fab FILE.pcbcraft OUT_DIR|OUT.zip [--zip] [--profile ID] [--date ISO|none]`. Files are named after the project file. A blocked export prints the title of each unwaived error, up to 100 and then how many remain.
+- **CLI:** `sparksmith fab FILE.sparksmith OUT_DIR|OUT.zip [--zip] [--profile ID] [--date ISO|none]`. Files are named after the project file. A blocked export prints the title of each unwaived error, up to 100 and then how many remain.
 - **MCP:** the same request reaches MCP through the generic catalog.
 - **Desktop:** PCB workspace → ribbon Output → Production, or "Production files…" in the command palette.
   - The dialog shows a profile picker, Folder or ZIP output, an output toggle for each group and the placement convention.
   - It lists the pre-flight report, computed on a worker, grouped by kind of finding. Tick findings (Shift-click ticks a run, a group's box ticks the whole group), or use a row's or a group's Waive…. The reason form opens under that row or group, and Waive applies one optional reason to every ticked finding as one undo step. A waived finding offers Restore.
   - Export runs on a worker and shows progress; the result lists the written files.
-- **Shared path:** all of these call `pcbcraft_io::fabrication::export`. The pure generation is `pcbcraft_core::fabrication::generate`, the PDF drawings are `pcbcraft_io::fab_drawings`, and `pcbcraft_io::pdf` is a small generic PDF canvas that schematic printing can reuse.
+- **Shared path:** all of these call `sparksmith_io::fabrication::export`. The pure generation is `sparksmith_core::fabrication::generate`, the PDF drawings are `sparksmith_io::fab_drawings`, and `sparksmith_io::pdf` is a small generic PDF canvas that schematic printing can reuse.
 - **Writing:** a folder is written to a sibling staging folder and then renamed into place. A ZIP is written atomically, entries in set order with a fixed timestamp.
 
 ## Production check (`fabrication.preflight`)

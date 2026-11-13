@@ -573,7 +573,7 @@ fn the_standard_records_do_not_change() -> Result<()> {
     assert_eq!(root.meta.name, "Resistance");
     assert_eq!(
         content_hash(root)?.to_string(),
-        "940a4e0297cf0fecc2a9ad8d29c0a1910fcaddfd116c1a6d5975fb870a487b70"
+        "3334074e080e08c5839d7100b1ac55e7b3cdb269ebbe079b720328d6f7296701"
     );
     Ok(())
 }

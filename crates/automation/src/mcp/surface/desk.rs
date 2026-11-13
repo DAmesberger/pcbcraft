@@ -20,9 +20,9 @@
 //! open; with several, it must name one.
 use crate::gate::{Caller, Decision, Policy};
 use crate::session::Session;
-use pcbcraft_core::Diagnostic;
 use rmcp::ErrorData;
 use serde_json::{Value, json};
+use sparksmith_core::Diagnostic;
 use std::collections::BTreeMap;
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -68,7 +68,7 @@ impl Desk {
         let (jobs, mut inbox) = mpsc::channel::<Job>(QUEUE);
         let (published, revisions) = watch::channel(desk.revisions());
         std::thread::Builder::new()
-            .name("pcbcraft-mcp-session".into())
+            .name("sparksmith-mcp-session".into())
             .spawn(move || {
                 while let Some(job) = inbox.blocking_recv() {
                     job(&mut desk);

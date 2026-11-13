@@ -1,5 +1,5 @@
 //! Copper fills in the native model: each fill's computed copper
-//! ([`pcbcraft_core::model::fill::FilledCopper`]) as saved copper on its
+//! ([`sparksmith_core::model::fill::FilledCopper`]) as saved copper on its
 //! layer, one body per tile of its regions ([`tiles`]) in one component
 //! per fill, each extruded once from its boundary and holes (inserted
 //! into the sketch in one
@@ -31,10 +31,10 @@ use crate::native::{BoardJoint, Expr, JointFrame, Mount, ProfileBody};
 use crate::pad_outline::{Contour, FLATTEN_TOLERANCE_MM};
 use crate::scene::Geometry;
 use crate::{Error, Result};
-use pcbcraft_core::layout::fill::{FillContact, copper_union};
-use pcbcraft_core::model::Fill;
-use pcbcraft_core::model::fill::FilledRegion;
-use pcbcraft_core::{CopperLayer, Layer, Point, Project};
+use sparksmith_core::layout::fill::{FillContact, copper_union};
+use sparksmith_core::model::Fill;
+use sparksmith_core::model::fill::FilledRegion;
+use sparksmith_core::{CopperLayer, Layer, Point, Project};
 
 /// Mask cap tiles over a fill, as the board mask's.
 const CAP_TILE_MM: f64 = 4.0;
@@ -67,7 +67,7 @@ pub(super) fn simplified_regions(fill: &Fill) -> Vec<FilledRegion> {
 
 /// The chord tolerance a fill's boundary is simplified to in the native
 /// model, mm. The document's copper is flattened at
-/// [`pcbcraft_core::layout::fill::FILL_CHORD_MM`] (5 µm) for the checks;
+/// [`sparksmith_core::layout::fill::FILL_CHORD_MM`] (5 µm) for the checks;
 /// at that resolution a pour of thermals and clearance arcs holds
 /// thousands of points, each a face of the saved body and of the
 /// laminate's cut. 10 µm, a quarter of the thinnest foil, is far below
@@ -428,7 +428,7 @@ impl Item {
             },
             Contour::Outline(outline) => {
                 let points = outline.flatten(FLATTEN_TOLERANCE_MM);
-                let ring = pcbcraft_core::library::offset_polygon(&points, FLATTEN_TOLERANCE_MM)
+                let ring = sparksmith_core::library::offset_polygon(&points, FLATTEN_TOLERANCE_MM)
                     .unwrap_or(points);
                 let [lo, hi] = bounds(&ring);
                 let centre = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
@@ -526,7 +526,7 @@ fn spread(items: &[Item], joined: &mut [bool]) {
 /// The distance between segments `a`–`b` and `c`–`d` (either may be a
 /// point).
 fn spine_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
-    use pcbcraft_core::geometry::{segment_distance, segments_cross};
+    use sparksmith_core::geometry::{segment_distance, segments_cross};
     if segments_cross(a, b, c, d) {
         return 0.0;
     }

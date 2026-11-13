@@ -40,7 +40,7 @@ fn names(result: &Value) -> Vec<String> {
 #[test]
 fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let mut session = Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?);
+    let mut session = Session::new(showcase(sparksmith_core::rules::fixtures::prototype()?)?);
     let revision = session.engine().revision();
     let folder = dir.path().join("fab");
     let result = ok(&mut session, export(&folder, false, None))?;
@@ -101,7 +101,7 @@ fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
 #[test]
 fn the_project_name_reaches_the_production_files() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let mut session = Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?);
+    let mut session = Session::new(showcase(sparksmith_core::rules::fixtures::prototype()?)?);
     let was = session.engine().project().name.clone();
     let revision = session.engine().revision();
     let renamed = ok(
@@ -158,10 +158,10 @@ fn the_project_name_reaches_the_production_files() -> Fallible<()> {
 }
 
 /// The query takes a whole profile; an id the profile library does not
-/// hold and a malformed profile are refused. Pcbcraft has no built-in ids.
+/// hold and a malformed profile are refused. Sparksmith has no built-in ids.
 #[test]
 fn the_production_check_takes_a_whole_profile() -> Fallible<()> {
-    let mut session = Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?);
+    let mut session = Session::new(showcase(sparksmith_core::rules::fixtures::prototype()?)?);
     let query = |profile: Value| {
         json!({"command": "project.query", "params": {
             "query": "fabrication.preflight",
@@ -171,7 +171,7 @@ fn the_production_check_takes_a_whole_profile() -> Fallible<()> {
     let whole = ok(
         &mut session,
         query(serde_json::to_value(
-            pcbcraft_core::rules::fixtures::fine()?
+            sparksmith_core::rules::fixtures::fine()?,
         )?),
     )?;
     // The report names the profile it checked under; the fills computed
@@ -190,8 +190,10 @@ fn the_production_check_takes_a_whole_profile() -> Fallible<()> {
 
     // The engine alone resolves no id.
     let engine = session.engine();
-    let refused = engine.query(pcbcraft_core::Query::Preflight {
-        profile: Some(pcbcraft_core::fabrication::ProfileChoice::Id("mine".into())),
+    let refused = engine.query(sparksmith_core::Query::Preflight {
+        profile: Some(sparksmith_core::fabrication::ProfileChoice::Id(
+            "mine".into(),
+        )),
     });
     assert!(refused.is_err());
     Ok(())
@@ -200,7 +202,7 @@ fn the_production_check_takes_a_whole_profile() -> Fallible<()> {
 #[test]
 fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let mut session = Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?);
+    let mut session = Session::new(showcase(sparksmith_core::rules::fixtures::prototype()?)?);
     // Switched to a finer profile, the fills were computed under other
     // rules: they are stale, an error that blocks production.
     let revision = session.engine().revision();
@@ -210,7 +212,7 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
             "expected_revision": revision,
             "operation": {"editor": "Rules", "operation": {
                 "command": "rules.set_fab_profile",
-                "params": {"profile": pcbcraft_core::rules::fixtures::fine()?}}},
+                "params": {"profile": sparksmith_core::rules::fixtures::fine()?}}},
         }}),
     )?;
     let out = dir.path().join("blocked");
@@ -282,7 +284,7 @@ fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible
     assert_eq!(result["preflight"]["blocking"], 0);
     assert_eq!(result["preflight"]["waived"], blocking.len());
     // Waivers are saved with the project.
-    let file = dir.path().join("waived.pcbcraft");
+    let file = dir.path().join("waived.sparksmith");
     ok(
         &mut session,
         json!({"command": "project.save", "params": {"path": file.display().to_string()}}),

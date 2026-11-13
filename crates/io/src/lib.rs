@@ -1,6 +1,6 @@
-//! File effects for Pcbcraft documents: bounded reads, atomic writes and crash
+//! File effects for Sparksmith documents: bounded reads, atomic writes and crash
 //! recovery. Document meaning, versions and migrations stay in
-//! `pcbcraft_core::format`; this crate only moves bytes safely.
+//! `sparksmith_core::format`; this crate only moves bytes safely.
 pub mod artwork;
 pub mod assembly_link;
 pub mod fab_drawings;
@@ -21,7 +21,7 @@ pub use persistence::{read_project, write_project};
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Document(#[from] pcbcraft_core::Error),
+    Document(#[from] sparksmith_core::Error),
     #[error("{0}")]
     Invalid(String),
     #[error("{0}")]
@@ -47,10 +47,10 @@ impl Error {
             Self::Json(_) => "malformed_file",
         }
     }
-    pub fn diagnostic(&self) -> pcbcraft_core::Diagnostic {
+    pub fn diagnostic(&self) -> sparksmith_core::Diagnostic {
         match self {
             Self::Document(error) => error.diagnostic(),
-            other => pcbcraft_core::Diagnostic {
+            other => sparksmith_core::Diagnostic {
                 code: other.code().into(),
                 rule: None,
                 message: other.to_string(),

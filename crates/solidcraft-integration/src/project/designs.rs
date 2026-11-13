@@ -4,7 +4,7 @@
 //! that holds nothing else), evaluated and meshed once and shared by
 //! every placement of that revision. A placement draws the design's
 //! meshes where the document's transform puts them
-//! ([`pcbcraft_core::interface::package::model_to_board`]): the pose the
+//! ([`sparksmith_core::interface::package::model_to_board`]): the pose the
 //! exact build's board joints solve, so no design of the board is made.
 //!
 //! [`Memo`] keeps the designs between models, so an edit evaluates no
@@ -18,8 +18,8 @@ use crate::models::imported::SourceCache;
 use crate::native::BoxBody;
 use crate::scene::{Geometry, Place};
 use crate::{Error, Result};
-use pcbcraft_core::CopperLayer;
-use pcbcraft_core::geometry::Transform3;
+use sparksmith_core::CopperLayer;
+use sparksmith_core::geometry::Transform3;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock};

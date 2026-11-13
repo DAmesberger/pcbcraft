@@ -1,12 +1,12 @@
 //! Refusals: hand-written modules that break one rule each. Every refusal
 //! is a sentence a person can act on that says nothing ran or nothing
 //! changed, and the runtime keeps working for the next module.
-use pcbcraft_generator_abi::v1::{
+use sparksmith_generator_abi::v1::{
     self, Footprint, Generation, Lead, Opening, Package, PackageGeometry, Pad, PadShape, Request,
     Scope, Side,
 };
-use pcbcraft_generator_abi::{Failure, GeneratorRuntime, codec};
-use pcbcraft_generators::{Limits, WasmiRuntime};
+use sparksmith_generator_abi::{Failure, GeneratorRuntime, codec};
+use sparksmith_generators::{Limits, WasmiRuntime};
 
 /// Where the fixture keeps its description, response and request buffer.
 const DESCRIPTION_AT: u32 = 1024;
@@ -97,7 +97,7 @@ struct Fixture {
     extra: &'static str,
     /// Memory pages.
     pages: u32,
-    /// The body of `pcbcraft_gen_generate`, which must leave an i64.
+    /// The body of `sparksmith_gen_generate`, which must leave an i64.
     generate: String,
     /// The response bytes stored at `RESPONSE_AT`.
     response: Vec<u8>,
@@ -124,10 +124,10 @@ impl Fixture {
               (global $calls (mut i32) (i32.const 0))
               (data (i32.const {DESCRIPTION_AT}) "{description_data}")
               (data (i32.const {RESPONSE_AT}) "{response_data}")
-              (func (export "pcbcraft_gen_abi") (result i32) i32.const 1)
-              (func (export "pcbcraft_gen_alloc") (param i32) (result i32) i32.const {REQUEST_AT})
-              (func (export "pcbcraft_gen_describe") (result i64) i64.const {describe})
-              (func (export "pcbcraft_gen_generate") (param i32 i32) (result i64)
+              (func (export "sparksmith_gen_abi") (result i32) i32.const 1)
+              (func (export "sparksmith_gen_alloc") (param i32) (result i32) i32.const {REQUEST_AT})
+              (func (export "sparksmith_gen_describe") (result i64) i64.const {describe})
+              (func (export "sparksmith_gen_generate") (param i32 i32) (result i64)
                 ;; A second call on the same instance traps: calls must not share one.
                 (global.set $calls (i32.add (global.get $calls) (i32.const 1)))
                 (if (i32.gt_u (global.get $calls) (i32.const 1)) (then unreachable))
@@ -323,7 +323,7 @@ fn a_module_without_the_abi_exports_is_refused() -> Result<(), String> {
     assert_eq!(code(&failure), "generator.missing_export");
     assert_eq!(
         failure.to_string(),
-        "The generator does not export \"pcbcraft_gen_abi\", which ABI 1 requires. It was not run."
+        "The generator does not export \"sparksmith_gen_abi\", which ABI 1 requires. It was not run."
     );
     Ok(())
 }

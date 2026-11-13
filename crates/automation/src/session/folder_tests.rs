@@ -6,9 +6,9 @@
 //!
 //! The library content is the original synthetic `EX-` catalog.
 use super::*;
-use pcbcraft_io::library_folder::{FOLDER_FORMAT, MANIFEST_FILE};
-use pcbcraft_io::settings::{SourceSetting, UserDirs, UserSettings, write_settings};
 use sources::Sources;
+use sparksmith_io::library_folder::{FOLDER_FORMAT, MANIFEST_FILE};
+use sparksmith_io::settings::{SourceSetting, UserDirs, UserSettings, write_settings};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -361,7 +361,7 @@ fn publish_to_folder_refuses_unknown_sources_and_stale_revisions() -> TestResult
         .latest_components()
         .first()
         .map(|c| DefinitionRef {
-            kind: pcbcraft_core::DefinitionKind::Component,
+            kind: sparksmith_core::DefinitionKind::Component,
             id: c.id,
             revision: c.revision,
         })
@@ -428,13 +428,13 @@ fn install_place_publish_update_delete_and_reopen_offline() -> TestResult {
     let temp = tempfile::tempdir()?;
     let folder = temp.path().join("team-library");
     let folder_text = folder.display().to_string();
-    let project_path = temp.path().join("board.pcbcraft");
+    let project_path = temp.path().join("board.sparksmith");
     let designer_dirs = dirs(&temp.path().join("designer"));
 
     // The author writes the synthetic catalog to a new folder.
     let mut author = Session::new(Engine::from_file(EditorFile {
-        version: pcbcraft_core::format::FILE_VERSION,
-        project: pcbcraft_core::catalog::synthetic::project_with_parts(6)?,
+        version: sparksmith_core::format::FILE_VERSION,
+        project: sparksmith_core::catalog::synthetic::project_with_parts(6)?,
         drafts: Drafts::default(),
     })?);
     let sample = publish_library(&mut author, &folder_text, "Team library")?;
@@ -739,7 +739,7 @@ fn publish_library_again(author: &mut Session, library: &Value) -> Fallible<usiz
         .latest_components()
         .iter()
         .map(|c| DefinitionRef {
-            kind: pcbcraft_core::DefinitionKind::Component,
+            kind: sparksmith_core::DefinitionKind::Component,
             id: c.id,
             revision: c.revision,
         })
@@ -764,11 +764,13 @@ fn publish_library_again(author: &mut Session, library: &Value) -> Fallible<usiz
 /// Reserve a component's five drafts and fill them from `preset`'s
 /// generated-model sample, as the Component workspace's templates do.
 fn packaged_engine(
-    preset: pcbcraft_core::library::samples::Preset,
+    preset: sparksmith_core::library::samples::Preset,
 ) -> Fallible<(Engine, [DefinitionId; 5])> {
-    use pcbcraft_core::library::samples::{self, SampleRefs};
-    use pcbcraft_core::library::{Definition, DefinitionMeta};
-    use pcbcraft_core::{BindingRef, DefinitionKind, FootprintRef, Outcome, PackageRef, SymbolRef};
+    use sparksmith_core::library::samples::{self, SampleRefs};
+    use sparksmith_core::library::{Definition, DefinitionMeta};
+    use sparksmith_core::{
+        BindingRef, DefinitionKind, FootprintRef, Outcome, PackageRef, SymbolRef,
+    };
     let mut engine = Engine::default();
     let mut ids = Vec::new();
     for kind in [
@@ -817,13 +819,13 @@ fn packaged_engine(
 /// equal the author's, and its origin is recorded.
 #[test]
 fn a_generated_package_model_round_trips_through_a_folder() -> TestResult {
-    use pcbcraft_core::PackageRef;
-    use pcbcraft_core::library::samples::Preset;
-    use pcbcraft_core::library::{
+    use sparksmith_core::PackageRef;
+    use sparksmith_core::library::samples::Preset;
+    use sparksmith_core::library::{
         BodyRole, Definition, GeneratedMaterials, ModelPlacement, PackageEdit, PackageModel,
         RoleMaterial,
     };
-    use pcbcraft_core::materials::MaterialId;
+    use sparksmith_core::materials::MaterialId;
     let temp = tempfile::tempdir()?;
     let folder = temp.path().join("models");
     let folder_text = folder.display().to_string();

@@ -8,18 +8,18 @@ Release plan step 5: a real ESP32-S31-WROOM-3 development board designed from co
 
 | File | What |
 |---|---|
-| `esp32-s31-devboard.pcbcraft` | The project. Open it in the desktop app. It holds the parts library, two schematic sheets, the 4-layer board, the fills and the waiver-free production state. |
+| `esp32-s31-devboard.sparksmith` | The project. Open it in the desktop app. It holds the parts library, two schematic sheets, the 4-layer board, the fills and the waiver-free production state. |
 | `esp32-s31-devboard.replay.jsonl` | The full command sequence: 583 JSON-lines requests through `sparksmith stdio --operator`. It replays to a byte-identical `project.json`. |
 | `regenerate.sh` | Replays the board and writes `fab/` and the schematic PDF. With `NATIVE=1` it also writes the `.solidcraft` model (about 10 s of CPU). |
 | `fab/` | Gerber X2 for 4 copper layers, masks, top paste, top legend and profile; plated and non-plated Excellon; drill map and table; job file; top pick-and-place; both BOMs; fabrication and assembly PDFs. |
 | `esp32-s31-devboard-schematic.pdf` | The schematic, two sheets. |
 | `authoring/` | The Python client that wrote the replay: placement coordinates, routes and part data with their datasheet sources. It is not application code. `python3 -B examples/esp32-s31-devboard/authoring/build.py route` from the repository root re-records the replay. |
-| `parts/b3u-1000p.solidcraft` | The switches' 3D model: original work (MIT OR Apache-2.0), authored through Solidcraft's commands by `cargo test -p pcbcraft-solidcraft --test author_parts -- --ignored`. `sparksmith part check` checks it. |
+| `parts/b3u-1000p.solidcraft` | The switches' 3D model: original work (MIT OR Apache-2.0), authored through Solidcraft's commands by `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`. `sparksmith part check` checks it. |
 | `parts/usb4105.solidcraft` | J1's 3D model, authored the same way: a nickel shell with a stadium (racetrack) cross-section, sketched and extruded, open at the mating face, with its four stakes; the LCP insulator closing its rear and the round-cornered tongue centred in the opening; the twelve gold solder tails of the rear row. The board holds J1 by its shell's front face (`F2:start`, the extrusion's start face): two part dimensions keep that face on the bottom edge and J1's origin at `width / 2` from the left edge, so J1 follows a change of the board's width. |
 | `images/` | Schematic pages; copper layers rendered by PyGerber (MIT) from the Gerber files; desktop screenshots of PCB 2D and 3D. |
 
 ```sh
-cargo build --locked --profile ci -p pcbcraft-cli        # or inside nix develop
+cargo build --locked --profile ci -p sparksmith-cli        # or inside nix develop
 sh examples/esp32-s31-devboard/regenerate.sh
 ```
 

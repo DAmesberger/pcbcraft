@@ -5,9 +5,9 @@
 //! file as a skill, a prompt and through `describe`.
 use serde_json::{Value, json};
 
-/// The datasheet-to-component workflow (`skills/pcbcraft-datasheet-part`).
+/// The datasheet-to-component workflow (`skills/sparksmith-datasheet-part`).
 pub const DATASHEET_PART_SKILL: &str =
-    include_str!("../../../../skills/pcbcraft-datasheet-part/SKILL.md");
+    include_str!("../../../../skills/sparksmith-datasheet-part/SKILL.md");
 /// Its prompt name.
 pub const DATASHEET_PART: &str = "datasheet_to_component";
 /// Bytes of one prompt argument.
@@ -30,7 +30,7 @@ pub fn list() -> Value {
         "description": "Author one component (pins and functions, symbol, package, footprint, binding, 3D model) from its manufacturer datasheets as drafts, with every value cited and checked by library_review_check, for a person to review and publish.",
         "arguments": [
             {"name": "part", "description": "The part name the drafts take, e.g. its manufacturer part number.", "required": true},
-            {"name": "datasheets", "description": concat!("The datasheets: file paths or URLs, one per line. You read them; ", pcbcraft_core::product_name!(), " does not."), "required": true},
+            {"name": "datasheets", "description": concat!("The datasheets: file paths or URLs, one per line. You read them; ", sparksmith_core::product_name!(), " does not."), "required": true},
             {"name": "notes", "description": "Anything else: which variant or package, what to include or leave out.", "required": false},
         ],
     }]})

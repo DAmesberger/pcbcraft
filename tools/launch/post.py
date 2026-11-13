@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post-process Pcbcraft launch takes with ffmpeg (stdlib only).
+"""Post-process Sparksmith launch takes with ffmpeg (stdlib only).
 
   post.py take TAKE_DIR [--width 1920] [--stage 1920x1080]
                                               raw.mov + track.json -> TAKE_DIR/final.mp4; --stage floats

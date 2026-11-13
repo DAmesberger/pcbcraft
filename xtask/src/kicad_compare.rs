@@ -1,5 +1,5 @@
 //! `cargo xtask kicad-compare [--design PATH]`: import every KiCad board of
-//! a design (a `.kicad_pcb` file or a folder; `PCBCRAFT_KICAD_DESIGN` when
+//! a design (a `.kicad_pcb` file or a folder; `SPARKSMITH_KICAD_DESIGN` when
 //! no path is given), write our fabrication files, plot KiCad's own with
 //! the installed `kicad-cli` from a temporary copy, and compare the pad
 //! layers (copper pads, mask, paste) and drill hits to 1 µm.
@@ -10,12 +10,12 @@
 //! widths and pass or fail only; names and locations stay in the local
 //! `report.json` of each board. Boards are numbered, never named.
 use crate::{Result, root};
-use pcbcraft_core::fabrication::{self, FabricationOptions};
-use pcbcraft_fabcheck::reference;
-use pcbcraft_fabcheck::sets::{
+use sha2::{Digest, Sha256};
+use sparksmith_core::fabrication::{self, FabricationOptions};
+use sparksmith_fabcheck::reference;
+use sparksmith_fabcheck::sets::{
     Arc, Corner, File, Judge, PadBox, PieceKind, Scope, SetDiff, attribute, compare_sets,
 };
-use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -32,11 +32,11 @@ fn skipped(name: &str) -> bool {
 
 pub fn run(args: &[String]) -> Result<()> {
     let design = match args {
-        [] => std::env::var_os("PCBCRAFT_KICAD_DESIGN").map(PathBuf::from),
+        [] => std::env::var_os("SPARKSMITH_KICAD_DESIGN").map(PathBuf::from),
         [flag, path] if flag == "--design" => Some(PathBuf::from(path)),
         _ => return Err("usage: cargo xtask kicad-compare [--design PATH]".into()),
     }
-    .ok_or("name the design: --design PATH or PCBCRAFT_KICAD_DESIGN")?;
+    .ok_or("name the design: --design PATH or SPARKSMITH_KICAD_DESIGN")?;
     let (summary, passed) = compare_design(&design)?;
     print!("{summary}");
     if passed {
@@ -134,7 +134,7 @@ fn kind_of(e: &dyn std::error::Error) -> String {
 
 fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
     let bytes = std::fs::read(board)?;
-    let imported = pcbcraft_kicad::import(&bytes)?;
+    let imported = sparksmith_kicad::import(&bytes)?;
     let project = board.with_extension("kicad_pro");
     let project = project.is_file().then_some(project);
     let copper = imported.report.counts.copper_layers;
@@ -206,7 +206,7 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
 /// pass or fail), whether every layer passed, and the per-class rows with
 /// locations for the local report.
 pub fn summarize(
-    report: &pcbcraft_kicad::Report,
+    report: &sparksmith_kicad::Report,
     diff: &SetDiff,
     judge: &Judge,
     pads: &[PadBox],
@@ -283,11 +283,11 @@ mod tests {
     use super::*;
 
     /// The private design comparison: opt-in, ignored by default, and
-    /// silent when `PCBCRAFT_KICAD_DESIGN` is not set (CI, other machines).
+    /// silent when `SPARKSMITH_KICAD_DESIGN` is not set (CI, other machines).
     #[test]
-    #[ignore = "needs the private design and kicad-cli; set PCBCRAFT_KICAD_DESIGN"]
+    #[ignore = "needs the private design and kicad-cli; set SPARKSMITH_KICAD_DESIGN"]
     fn the_private_design_matches_kicad() -> Result<()> {
-        let Some(design) = std::env::var_os("PCBCRAFT_KICAD_DESIGN") else {
+        let Some(design) = std::env::var_os("SPARKSMITH_KICAD_DESIGN") else {
             return Ok(());
         };
         let (summary, passed) = compare_design(Path::new(&design))?;
@@ -307,7 +307,7 @@ mod tests {
               (property \"Value\" \"QQSECRETVALUE\" (at 0 0 0) (layer \"F.Fab\")) \
               (pad \"QQ7\" smd rect (at 0.4321 0 90) (size 1.2345 0.6789) (layers \"F.Cu\" \"F.Paste\" \"F.Mask\") \
                 (net 1 \"QQSECRETNET\") (pinfunction \"QQPINFN\") (zqxtoken 1))))";
-        let imported = pcbcraft_kicad::import(text.as_bytes())?;
+        let imported = sparksmith_kicad::import(text.as_bytes())?;
         let set = fabrication::generate(imported.engine.project(), &FabricationOptions::default())?;
         let ours: Vec<File> = set
             .files

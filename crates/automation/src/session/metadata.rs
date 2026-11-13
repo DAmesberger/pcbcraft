@@ -5,13 +5,13 @@
 //! fits inline, and the MCP tool annotations its class gives.
 //!
 //! Everything here is derived from the typed catalog: titles from the class
-//! listings beside each enum ([`pcbcraft_core::declare_classes!`]), summaries
+//! listings beside each enum ([`sparksmith_core::declare_classes!`]), summaries
 //! from the request catalog and the operations' and queries' doc comments,
 //! and the rest from [`Class`], [`super::Request::NAMING_PATHS`] and the short lists
 //! below, each checked against the catalog by `metadata_tests.rs`.
 use super::discovery::{self, Entry};
-use pcbcraft_core::Class;
 use serde::Serialize;
+use sparksmith_core::Class;
 use std::sync::OnceLock;
 
 /// The longest one-line summary, in bytes: what a `find` hit and a catalog

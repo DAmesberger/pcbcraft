@@ -7,7 +7,7 @@
 //! `A` = 0) and `_AF_NUM` (a mux code `AF<n>` or `<n>`) give it as a
 //! number for preprocessor arithmetic and token pasting.
 use crate::text::{c_string, comment, level_name, lower_ident, preamble, pull_name};
-use pcbcraft_core::firmware::{FirmwarePin, PinConfigReport, sanitise};
+use sparksmith_core::firmware::{FirmwarePin, PinConfigReport, sanitise};
 use std::fmt::Write;
 
 /// A one-letter port's index (`A` = 0 … `Z` = 25).
@@ -29,7 +29,7 @@ fn af_number(mux: &str) -> Option<u32> {
 
 pub fn emit(report: &PinConfigReport) -> String {
     let device = sanitise(&report.device.designator);
-    let guard = format!("PCBCRAFT_PINS_{device}_H");
+    let guard = format!("SPARKSMITH_PINS_{device}_H");
     let table = lower_ident(&report.device.designator);
     let mut out = String::new();
     out.push_str("/*\n");
@@ -79,24 +79,28 @@ pub fn emit(report: &PinConfigReport) -> String {
             let _ = writeln!(out, "#define {name}_MUX_TABLE {}", c_string(table));
         }
         if let Some(pull) = pin.pull {
-            let _ = writeln!(out, "#define {name}_PULL PCBCRAFT_PULL_{}", pull_name(pull));
+            let _ = writeln!(
+                out,
+                "#define {name}_PULL SPARKSMITH_PULL_{}",
+                pull_name(pull)
+            );
         }
         if let Some(level) = pin.initial {
             let _ = writeln!(
                 out,
-                "#define {name}_INITIAL PCBCRAFT_LEVEL_{}",
+                "#define {name}_INITIAL SPARKSMITH_LEVEL_{}",
                 level_name(level)
             );
         }
         out.push('\n');
     }
     out.push_str(
-        "#ifndef PCBCRAFT_PIN_DEFINED
-#define PCBCRAFT_PIN_DEFINED
-enum pcbcraft_pull { PCBCRAFT_PULL_UNSET = -1, PCBCRAFT_PULL_NONE = 0, PCBCRAFT_PULL_UP = 1, PCBCRAFT_PULL_DOWN = 2 };
-enum pcbcraft_level { PCBCRAFT_LEVEL_UNSET = -1, PCBCRAFT_LEVEL_LOW = 0, PCBCRAFT_LEVEL_HIGH = 1 };
+        "#ifndef SPARKSMITH_PIN_DEFINED
+#define SPARKSMITH_PIN_DEFINED
+enum sparksmith_pull { SPARKSMITH_PULL_UNSET = -1, SPARKSMITH_PULL_NONE = 0, SPARKSMITH_PULL_UP = 1, SPARKSMITH_PULL_DOWN = 2 };
+enum sparksmith_level { SPARKSMITH_LEVEL_UNSET = -1, SPARKSMITH_LEVEL_LOW = 0, SPARKSMITH_LEVEL_HIGH = 1 };
 /* port and mux are NULL and pin is -1 when the data does not state them. */
-struct pcbcraft_pin {
+struct sparksmith_pin {
     const char *name;
     const char *terminal;
     const char *port;
@@ -105,9 +109,9 @@ struct pcbcraft_pin {
     const char *peripheral;
     const char *role;
     const char *mux;
-    enum pcbcraft_pull pull;
+    enum sparksmith_pull pull;
     const char *speed;
-    enum pcbcraft_level initial;
+    enum sparksmith_level initial;
 };
 #endif
 
@@ -125,7 +129,7 @@ struct pcbcraft_pin {
     } else {
         let _ = writeln!(
             out,
-            "static const struct pcbcraft_pin {table}_pins[{device}_PIN_COUNT] = {{"
+            "static const struct sparksmith_pin {table}_pins[{device}_PIN_COUNT] = {{"
         );
         for pin in &assigned {
             let (port, index) = pin.gpio.as_ref().map_or_else(
@@ -134,7 +138,7 @@ struct pcbcraft_pin {
             );
             let _ = writeln!(
                 out,
-                "    {{ {}, {}, {port}, {index}, {}, {}, {}, {}, PCBCRAFT_PULL_{}, {}, PCBCRAFT_LEVEL_{} }},",
+                "    {{ {}, {}, {port}, {index}, {}, {}, {}, {}, SPARKSMITH_PULL_{}, {}, SPARKSMITH_LEVEL_{} }},",
                 c_string(&pin.firmware_name),
                 c_string(&pin.name),
                 c_string(&pin.function),

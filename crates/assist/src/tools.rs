@@ -1,4 +1,4 @@
-//! The tools an assisted run offers the model: the Pcbcraft MCP contract
+//! The tools an assisted run offers the model: the Sparksmith MCP contract
 //! narrowed to authoring one part, executed in-process against an
 //! automation [`Session`] through the gate ([`send`]: the same request
 //! types and command engine the MCP server and CLI use). Each tool names
@@ -19,11 +19,11 @@
 //! creates drafts; publishing stays with a person (the import review gate).
 use crate::model::ToolSpec;
 use crate::report::ReviewReport;
-use pcbcraft_automation::{Caller, Policy, Session};
-use pcbcraft_core::library::pinout::{
+use serde_json::{Map, Value, json};
+use sparksmith_automation::{Caller, Policy, Session};
+use sparksmith_core::library::pinout::{
     MAX_PINOUT_PERIPHERALS, MAX_PINOUT_PINS, MAX_PINOUT_RULES, MAX_PINOUT_VARIANTS,
 };
-use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
 /// Characters of one tool result sent back; longer results are cut with a
@@ -284,7 +284,8 @@ pub fn execute(
                 Ok(report) => {
                     // The MCP workflow's `library.review_check`, on the same
                     // report and drafts: one set of rules for both paths.
-                    let checked = pcbcraft_automation::review::check(&session.snapshot(), &report);
+                    let checked =
+                        sparksmith_automation::review::check(&session.snapshot(), &report);
                     if checked["accepted"] == true {
                         ToolOutcome::Report(Box::new(report))
                     } else {
@@ -866,7 +867,7 @@ fn package_schema() -> Value {
     json!({
         "frame": "Seen from above; x across the module (width), y along it (length); the antenna end is +y; the origin is the outline centre; millimetres. Rows number counter-clockwise: left rows downwards (-y), bottom rows towards +x, right rows upwards, top rows towards -x; pads number from 1 through the rows in the order listed, then the ground array (one terminal), then each single pad.",
         "request": {"draft": "the package draft id", "row": {"source": "custom", "family": "module"}, "values": {"family": "module", "...": "the fields below"}},
-        "schema": schemars::schema_for!(pcbcraft_core::library::package_form::ModuleForm),
+        "schema": schemars::schema_for!(sparksmith_core::library::package_form::ModuleForm),
     })
 }
 
@@ -921,7 +922,7 @@ mod tests {
     /// the review check.
     fn with_a_component_draft() -> Session {
         let mut session = Session::default();
-        let body = serde_json::to_value(pcbcraft_core::library::ComponentDefinition::default())
+        let body = serde_json::to_value(sparksmith_core::library::ComponentDefinition::default())
             .unwrap_or_default();
         let revision = session.engine().revision();
         let reply = session.respond(

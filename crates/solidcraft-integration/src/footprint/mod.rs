@@ -21,15 +21,15 @@ pub(crate) mod params;
 mod tests;
 pub mod view;
 
-use pcbcraft_core::diagnostics::{Error, Result};
-use pcbcraft_core::geometry::Point;
-use pcbcraft_core::library::footprint_source::{
+use solidcraft_engine::sketch::Sketch;
+use sparksmith_core::diagnostics::{Error, Result};
+use sparksmith_core::geometry::Point;
+use sparksmith_core::library::footprint_source::{
     ArrayLayout, DerivedGraphic, Evaluation, EvaluationRequest, EvaluatorRef, Expr,
     FootprintEvaluator, FootprintSource, MaskRuleExpr, PackageValue, PadShapeExpr, PadTemplate,
     PadTemplateParams, ParamName, PasteRuleExpr, SketchBlob, SketchCurveId, SketchEdit,
     SketchOutcome, SketchPointId, TemplatePad,
 };
-use solidcraft_engine::sketch::Sketch;
 
 /// The engine name stored in [`EvaluatorRef::engine`].
 pub const ENGINE: &str = "solidcraft-sketch";
@@ -78,7 +78,7 @@ impl From<Problem> for Error {
     }
 }
 
-/// Solidcraft's sketch solver as Pcbcraft's footprint evaluator. Stateless;
+/// Solidcraft's sketch solver as Sparksmith's footprint evaluator. Stateless;
 /// every call is pure in its inputs.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SketchEvaluator;
@@ -134,7 +134,7 @@ impl FootprintEvaluator for SketchEvaluator {
         if to.is_package() || from.is_package() {
             return Err(Error::Invalid(format!(
                 "footprint.param_name: package values (`{}`) cannot be renamed",
-                pcbcraft_core::library::footprint_source::PACKAGE_PREFIX
+                sparksmith_core::library::footprint_source::PACKAGE_PREFIX
             )));
         }
         if !source.parameters.iter().any(|p| p.name == *from) {
@@ -280,7 +280,7 @@ fn exprs_mut(source: &mut FootprintSource) -> Vec<&mut Expr> {
     }
     for g in &mut source.graphics {
         out.push(&mut g.width);
-        if let pcbcraft_core::library::footprint_source::GraphicSource::Derived(
+        if let sparksmith_core::library::footprint_source::GraphicSource::Derived(
             DerivedGraphic::CourtyardFromExtents { excess, round },
         ) = &mut g.source
         {

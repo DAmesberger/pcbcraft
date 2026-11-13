@@ -15,15 +15,15 @@ macOS only (ScreenCaptureKit, macOS 15 or later).
 ## Run a take
 
 ```sh
-nix develop -c cargo build --locked --profile ci -p pcbcraft -p pcbcraft-cli
-target/nix/ci/sparksmith showcase target/launch/showcase.pcbcraft
+nix develop -c cargo build --locked --profile ci -p sparksmith -p sparksmith-cli
+target/nix/ci/sparksmith showcase target/launch/showcase.sparksmith
 
-cp examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft target/launch/wroom3.pcbcraft
+cp examples/esp32-s31-wroom-3/esp32-s31-wroom-3.sparksmith target/launch/wroom3.sparksmith
 
-tools/launch/take.sh route-shove  target/launch/showcase.pcbcraft OUT/route-shove  --activate --no-post
-tools/launch/take.sh board-3d     target/launch/showcase.pcbcraft OUT/board-3d     --activate --no-post \
+tools/launch/take.sh route-shove  target/launch/showcase.sparksmith OUT/route-shove  --activate --no-post
+tools/launch/take.sh board-3d     target/launch/showcase.sparksmith OUT/board-3d     --activate --no-post \
   --prelude board-3d.prelude --settle 20
-tools/launch/take.sh component-3d target/launch/wroom3.pcbcraft   OUT/component-3d --activate --no-post
+tools/launch/take.sh component-3d target/launch/wroom3.sparksmith   OUT/component-3d --activate --no-post
 for t in route-shove board-3d component-3d; do python3 tools/launch/post.py take OUT/$t --stage 1920x1080; done
 python3 tools/launch/post.py reel OUT/reel.mp4 OUT/route-shove OUT/board-3d OUT/component-3d
 python3 tools/launch/post.py hero OUT/board-3d/final.mp4 OUT/hero --from 0.6 --to 6.6 --width 960

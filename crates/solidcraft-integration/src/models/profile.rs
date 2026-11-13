@@ -4,7 +4,7 @@
 //! true cylindrical bend faces.
 use crate::pad_outline::Contour;
 use crate::{Error, Result};
-use pcbcraft_core::library::{Outline, Segment};
+use sparksmith_core::library::{Outline, Segment};
 
 type P = [f64; 2];
 

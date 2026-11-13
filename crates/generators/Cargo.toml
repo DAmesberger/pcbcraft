@@ -1,6 +1,6 @@
 [package]
-name = "pcbcraft-generators"
-description = "Runs Pcbcraft generator modules in a bounded wasmi sandbox"
+name = "sparksmith-generators"
+description = "Runs Sparksmith generator modules in a bounded wasmi sandbox"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +10,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-pcbcraft-generator-abi = { workspace = true, features = ["nfc"] }
+sparksmith-generator-abi = { workspace = true, features = ["nfc"] }
 # The WebAssembly interpreter (MIT OR Apache-2.0). Core modules only, no
 # SIMD (the feature stays off, so SIMD modules fail validation), no wat
 # parser; `deterministic` canonicalises NaN results; `portable-dispatch`

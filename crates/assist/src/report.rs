@@ -1,13 +1,13 @@
 //! The review report of an assisted run: the report itself (its types and
-//! checks are `pcbcraft_automation::review`, shared with the MCP workflow's
+//! checks are `sparksmith_automation::review`, shared with the MCP workflow's
 //! `library.review_check`) and what the runner adds to it (requests,
 //! tokens, drafts, findings), written as JSON and Markdown beside the
 //! project.
-pub use pcbcraft_automation::review::{
+use serde::{Deserialize, Serialize};
+pub use sparksmith_automation::review::{
     Citation, Confidence, ExtractedValue, MAX_TEXT, MAX_VALUES, ReviewReport, SourceDocument,
 };
-use pcbcraft_automation::review::{cell, report_markdown};
-use serde::{Deserialize, Serialize};
+use sparksmith_automation::review::{cell, report_markdown};
 use std::fmt::Write;
 
 /// What the runner adds to the model's report.
@@ -59,7 +59,7 @@ pub struct RunFacts {
     pub pins: Vec<crate::pins::PinRow>,
     /// The component draft's pin rules over their samples.
     #[serde(default)]
-    pub rules: Vec<pcbcraft_core::functions::rules::RuleCheck>,
+    pub rules: Vec<sparksmith_core::functions::rules::RuleCheck>,
 }
 
 /// One request of a run.
@@ -84,7 +84,7 @@ pub(crate) fn finish_facts(
     facts: &mut RunFacts,
     tally: &crate::usage::Tally,
     stop: &crate::Stop,
-    session: &pcbcraft_automation::Session,
+    session: &sparksmith_automation::Session,
 ) {
     facts.requests = tally.requests;
     facts.input_tokens = tally.usage.input_tokens;
@@ -100,8 +100,8 @@ pub(crate) fn finish_facts(
         .items
         .iter()
         .find_map(|d| match &d.definition {
-            pcbcraft_core::library::Definition::Component(c) => {
-                Some(pcbcraft_core::functions::rules::check_samples(
+            sparksmith_core::library::Definition::Component(c) => {
+                Some(sparksmith_core::functions::rules::check_samples(
                     &c.declarations(),
                     &c.resources,
                     &c.pin_rules,
@@ -231,7 +231,7 @@ pub fn markdown(report: Option<&ReviewReport>, facts: &RunFacts) -> String {
     if !facts.pins.is_empty() {
         let _ = writeln!(
             s,
-            "\n## Pins\n\nOne row per package pin as imported; check each against the datasheet in the Pins tab. `sparksmith review-diff A.pcbcraft B.pcbcraft` lists two runs' differences pin by pin.\n"
+            "\n## Pins\n\nOne row per package pin as imported; check each against the datasheet in the Pins tab. `sparksmith review-diff A.sparksmith B.sparksmith` lists two runs' differences pin by pin.\n"
         );
         s.push_str(&crate::pins::markdown(&facts.pins));
     }

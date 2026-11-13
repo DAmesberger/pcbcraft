@@ -7,11 +7,11 @@ use crate::models::family_rev;
 use crate::models::imported::tests::{fixture_step, model};
 #[allow(unused_imports)]
 use crate::models::tests::{nm, pt};
-use pcbcraft_core::PackageTerminalId;
-use pcbcraft_core::library::{
+use solidcraft_engine::doc::naming;
+use sparksmith_core::PackageTerminalId;
+use sparksmith_core::library::{
     ChipForm, ChipKind, GeneratedMaterials, PackageForm, PackageModel, PackageTerminal,
 };
-use solidcraft_engine::doc::naming;
 
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -176,9 +176,9 @@ fn a_named_design_has_the_same_names_on_every_build() -> Fallible {
     Ok(())
 }
 
-const DUMP: &str = "PCBCRAFT_NAMED_DESIGN_DUMP";
+const DUMP: &str = "SPARKSMITH_NAMED_DESIGN_DUMP";
 
-/// Writes [`built_names`] to the file `PCBCRAFT_NAMED_DESIGN_DUMP` names;
+/// Writes [`built_names`] to the file `SPARKSMITH_NAMED_DESIGN_DUMP` names;
 /// run in a fresh process by the next test.
 #[test]
 #[ignore = "run in a fresh process by a_named_design_has_the_same_names_in_a_fresh_process"]

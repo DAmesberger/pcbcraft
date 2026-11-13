@@ -1,4 +1,4 @@
-//! Authors Pcbcraft's built-in part files (docs/part-templates.md §11)
+//! Authors Sparksmith's built-in part files (docs/part-templates.md §11)
 //! through Solidcraft's own commands and public API, and writes them under
 //! `library/parts/`. Original work (MIT OR Apache-2.0).
 //!
@@ -7,7 +7,7 @@
 //! generated model's, measured equal by `part_file` parity tests), moved
 //! into the root component of a new design with plain parameter names
 //! (`can_height`, `pcb_thickness`, …) and plain body names. Appearances are
-//! named after Pcbcraft materials; the marking surfaces are construction
+//! named after Sparksmith materials; the marking surfaces are construction
 //! planes `marking-<name>` placed by expressions over those parameters,
 //! sized by `marking_<name>_u` / `_v`; `pin1` is a construction point.
 //!
@@ -16,32 +16,32 @@
 //! parametric pattern over plain parameters, with generic illustrative
 //! dimensions.
 //!
-//! `cargo test -p pcbcraft-solidcraft --test author_parts -- --ignored`
+//! `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pcbcraft_core::ids::PackageTerminalId;
-use pcbcraft_core::library::{
-    GeneratedMaterials, PackageDefinition, PackageForm, PackageModel, PackageTerminal,
-};
-use pcbcraft_core::materials::MaterialId;
-use pcbcraft_solidcraft::models::{self, look, part_file};
-use pcbcraft_solidcraft::native::Native;
 use serde_json::json;
 use solidcraft_engine::Session;
 use solidcraft_engine::doc::clone_expression;
+use sparksmith_core::ids::PackageTerminalId;
+use sparksmith_core::library::{
+    GeneratedMaterials, PackageDefinition, PackageForm, PackageModel, PackageTerminal,
+};
+use sparksmith_core::materials::MaterialId;
+use sparksmith_solidcraft::models::{self, look, part_file};
+use sparksmith_solidcraft::native::Native;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// A test length in mm, as stored.
 #[allow(dead_code)]
-fn nm(mm: f64) -> pcbcraft_core::units::Nm {
-    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+fn nm(mm: f64) -> sparksmith_core::units::Nm {
+    sparksmith_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
 
 /// A test point or size in mm, as stored.
 #[allow(dead_code)]
-fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
-    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+fn pt(p: [f64; 2]) -> sparksmith_core::units::PointNm {
+    sparksmith_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
 }
 
 const STEM: &str = "pkgT";
@@ -49,7 +49,7 @@ const STEM: &str = "pkgT";
 fn wroom3() -> PackageDefinition {
     // The fixture is the module datasheet's millimetres: the wire form.
     let form: PackageForm = serde_json::from_str::<
-        pcbcraft_core::library::package_form::PackageFormParams,
+        sparksmith_core::library::package_form::PackageFormParams,
     >(include_str!("template_spike_wroom3.json"))
     .unwrap()
     .into();
@@ -201,7 +201,7 @@ pub fn author_wroom3() -> Vec<u8> {
         .filter_map(|r| r.error.clone().map(|e| format!("{}: {e}", r.name)))
         .collect();
     assert!(errors.is_empty(), "{errors:?}");
-    // 3. Appearances named after Pcbcraft materials.
+    // 3. Appearances named after Sparksmith materials.
     let mut by_material: BTreeMap<_, Vec<String>> = BTreeMap::new();
     for b in &def.bodies {
         by_material
@@ -227,7 +227,7 @@ pub fn author_wroom3() -> Vec<u8> {
     // module form's anchors (`surface::anchors`) in place and size. The
     // builder draws the can's centre and the antenna from numbers, so those
     // stay numbers here too.
-    use pcbcraft_core::library::marking::surface::{BoxFace, MODULE_TRACE_MM};
+    use sparksmith_core::library::marking::surface::{BoxFace, MODULE_TRACE_MM};
     let mm = |v: f64| format!("({v} mm)");
     let [cx, cy] = form.can_centre();
     let board_top = "(pad_thickness + board_thickness)".to_owned();
@@ -349,7 +349,7 @@ pub fn author_wroom3() -> Vec<u8> {
 }
 
 /// Give `bodies` the Solidcraft appearance named after `material`, with
-/// Pcbcraft's opaque PBR projection of its look.
+/// Sparksmith's opaque PBR projection of its look.
 fn assign_look(s: &mut Session, bodies: &[&str], material: MaterialId) {
     let d = look::definition(material).unwrap();
     let l = look::saved(&d);

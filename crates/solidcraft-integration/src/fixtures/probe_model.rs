@@ -121,7 +121,7 @@ pub(crate) fn build(parameters: &Parameters) -> Result<Session> {
     call(
         &mut s,
         "file.new",
-        json!({"name": "Pcbcraft native model probe"}),
+        json!({"name": "Sparksmith native model probe"}),
     )?;
     for (name, expression) in parameters.expressions() {
         call(

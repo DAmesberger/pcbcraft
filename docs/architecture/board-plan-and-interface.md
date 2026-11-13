@@ -81,7 +81,7 @@ About 124–157 hours to a reviewed two-way assembly link on a direct-meshed boa
 
 **The current pipeline (read).**
 
-- The app's model worker hands the view meshes, pick sources and the stack, nothing else: `BuiltGeometry` in `apps/pcbcraft/src/scene.rs:121-130`.
+- The app's model worker hands the view meshes, pick sources and the stack, nothing else: `BuiltGeometry` in `apps/sparksmith/src/scene.rs:121-130`.
 - No non-test code in `apps/` reads the native session of a board model. The only non-test callers of the board build are the scene worker (`scene.rs:221-232`), the desktop export (`file_ui.rs:346-350`) and the automation export (`crates/automation/src/session.rs:1123`). Both exports build a fresh model.
 - Display-only layers (mask, finish, silkscreen, edge bands, via domes) are already meshed straight from 2D data in `crates/solidcraft-integration/src/appearance.rs` and never saved. On the full ESP32 build today 772 of 2,186 drawn bodies are of this kind (measured; given as 776 of 2,187).
 - A dimension to a part face is resolved on the part's own design, not on the board model: `crates/solidcraft-integration/src/board/model_refs.rs:1-20`.
@@ -626,7 +626,7 @@ Totals: stages 0 to 10 are about 124–157 hours; the later stages 28–42.
 
 ### 3.4 Rules and decisions that change
 
-Adopted on 12 November 2026. `AGENTS.md`, `skills/pcbcraft-solidcraft/SKILL.md` and `docs/pcbcraft-plan.md` carry these texts; `cargo xtask board-parity` is added with the board plan (A1).
+Adopted on 12 November 2026. `AGENTS.md`, `skills/sparksmith-solidcraft/SKILL.md` and `docs/sparksmith-plan.md` carry these texts; `cargo xtask board-parity` is added with the board plan (A1).
 
 **AGENTS.md hard rule 2.** Former text:
 
@@ -646,14 +646,14 @@ Adopted text:
 
 **The "Start here" paragraph** gains `cargo xtask board-parity` in the list of enforced boundaries.
 
-**`skills/pcbcraft-solidcraft/SKILL.md`.**
+**`skills/sparksmith-solidcraft/SKILL.md`.**
 
 - "The displayed model and `.solidcraft` output share parametric definitions" → "share the board plan and the part designs".
 - "Reuse shared-engine primitives or add a native copper collection …" → the board plan and its two consumers; the engine guidance (one command per kind, tiles) now applies to the exporter.
 - "Native bodies stay physical and disjoint … display-only meshes from `appearance.rs`, never native features or saved" stays, with "physical board bodies are meshed from the plan in the live view and built natively for export".
 - A new section for the interface: slots first, id-based tokens, never reference section-2 bodies from tests or tools.
 
-**`docs/pcbcraft-plan.md`,** section "Native Solidcraft integration": "The live PCB 3D view consumes this engine-evaluated model. Saving for Solidcraft serializes that same model; there is no separate export reconstruction with different placement rules" → the export is a construction from the same plan, checked against it.
+**`docs/sparksmith-plan.md`,** section "Native Solidcraft integration": "The live PCB 3D view consumes this engine-evaluated model. Saving for Solidcraft serializes that same model; there is no separate export reconstruction with different placement rules" → the export is a construction from the same plan, checked against it.
 
 **Earlier decisions.**
 

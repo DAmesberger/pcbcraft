@@ -62,9 +62,9 @@ There are two files and three solves. Every value has exactly one owner.
 
 | Value | Owner and solver | Others see it as |
 | --- | --- | --- |
-| Board outline, cutouts, mounting holes | `.pcbcraft`: the board sketch solve (§5.1), whose inputs may include followed faces | Assembly: faces of the linked board (laminate side faces, hole walls) |
-| Pose of a dimensioned part | `.pcbcraft`: the parts solve (§5.2) | Board design: planar joint expressions; assembly: the part's linked faces |
-| Pose of any other part | `.pcbcraft`: stored `Placement` | Same as above |
+| Board outline, cutouts, mounting holes | `.sparksmith`: the board sketch solve (§5.1), whose inputs may include followed faces | Assembly: faces of the linked board (laminate side faces, hole walls) |
+| Pose of a dimensioned part | `.sparksmith`: the parts solve (§5.2) | Board design: planar joint expressions; assembly: the part's linked faces |
+| Pose of any other part | `.sparksmith`: stored `Placement` | Same as above |
 | Seating (side, z, tilt) | Side and stackup (§5.3); never solved | Joint offset expression |
 | Assembly geometry (walls, openings, bosses) | Assembly file: Solidcraft's own evaluation, whose sketches may project linked board faces | Sparksmith: followed faces, read from the assembly file |
 | The board's place in the assembly | Assembly file: Solidcraft mates on the board component | Sparksmith: the board component's world transform, read from the assembly |
@@ -72,7 +72,7 @@ There are two files and three solves. Every value has exactly one owner.
 **A connector and an assembly opening.** Both directions use real named faces:
 
 - **The opening follows the connector.** In Solidcraft, the assembly's opening sketch projects the connector's linked faces (`LinkSource::Face` with `face_name`) and is dimensioned to them on all four sides. The assembly owns that dimension.
-- **The connector follows the opening.** In Sparksmith, a part dimension names the assembly's opening face as a followed face. The `.pcbcraft` owns that dimension.
+- **The connector follows the opening.** In Sparksmith, a part dimension names the assembly's opening face as a followed face. The `.sparksmith` owns that dimension.
 
 A dimension lives in the file whose geometry it drives. The cycle check (§7.3) refuses one piece of geometry being driven from both files.
 
@@ -244,7 +244,7 @@ Today a structural edit (a part added, a track count changed) rebuilds the board
 - **Deleted objects** delete their features. Solidcraft does not reuse or renumber feature ids, so the remaining names are unchanged.
 - **Value changes** replay in place, as today.
 
-Sparksmith keeps the map from its own objects (instance ids, board sketch curve ids, hole ids) to the design's feature and sketch-curve ids in its namespaced metadata (`org.pcbcraft.electronics.*`, `project/identity.rs`). That is generic document metadata.
+Sparksmith keeps the map from its own objects (instance ids, board sketch curve ids, hole ids) to the design's feature and sketch-curve ids in its namespaced metadata (`org.sparksmith.electronics.*`, `project/identity.rs`). That is generic document metadata.
 
 - **Laminate side faces.** These are named after the laminate sketch's curve ids (`F<extrude>:side:<curve>`). The laminate sketch is therefore edited curve by curve, following the board sketch's own curves: an edited curve keeps its laminate curve, a new one adds one, a deleted one deletes one. A board edge keeps its face name for as long as the board curve exists.
 - **Parts.** A part's faces keep their names while its package revision is the same.
@@ -473,7 +473,7 @@ C0 is the contract for S1 and S2. Every path that needs either slice refuses wit
 | App `pcb_editor/edge_card.rs`, `hold_mark.rs`, `hold_tests.rs`, `pcb_editor.rs` (constraint painting) | — | Owns |
 | `automation` label resolution (`J1.pad(A6)`, `edge(left)`; a new module) | — | Owns |
 | `issues/rules.rs`, `fabrication/preflight.rs` | Done in C0; touch only for a new code | Same |
-| `automation/src/mcp/surface/golden/core.json` | Regenerate with `PCBCRAFT_BLESS=1` after rebasing; never hand-merge | Same |
+| `automation/src/mcp/surface/golden/core.json` | Regenerate with `SPARKSMITH_BLESS=1` after rebasing; never hand-merge | Same |
 | This document | Its own slice notes | Same |
 
 Whichever slice lands second rebases onto the first. The other slice's ignored tests stay ignored until that slice lands.
@@ -530,7 +530,7 @@ S3 built dimensions to the faces, edges and vertices of a part's part file (`Pac
 
 ### How a model reference resolves
 
-- **Behind the evaluator seam.** The core never reads a model. `BoardShapeEvaluator::trace_model` (`layout::dimensions::model::TraceRequest` → `Traced`) is implemented in `pcbcraft-solidcraft` `board/model_refs.rs`. It evaluates the part through the one part-file cache the 3D build uses (`part_file::evaluate`, which now also keeps the evaluated `ModelState`), so there is no second model load or cache.
+- **Behind the evaluator seam.** The core never reads a model. `BoardShapeEvaluator::trace_model` (`layout::dimensions::model::TraceRequest` → `Traced`) is implemented in `sparksmith-solidcraft` `board/model_refs.rs`. It evaluates the part through the one part-file cache the 3D build uses (`part_file::evaluate`, which now also keeps the evaluated `ModelState`), so there is no second model load or cache.
 - **Lookup.** The face is re-found by body and persistent name with `naming::locate_face_on_body`, an edge with `naming::locate_edge`, both on the part file's own design, then put in the part frame by the package's model placement (`ModelPlacement::transform`).
 - **Trace** (§5.4, all in the part frame):
 
@@ -619,7 +619,7 @@ S4 made faces, edges and vertices of every model kind but glTF dimension referen
 
 ### One design per model
 
-`layout::dimensions::model::TraceRequest` now carries a `TraceModel`: `PartFile`, `Package` (the generated model, or the envelope when the package has none, decided by the host as the board build decides it) or `Step`. The host traces each on the design the 3D build uses (`board::model_refs::ModelDesign`), from `pcbcraft-solidcraft` `models::named`:
+`layout::dimensions::model::TraceRequest` now carries a `TraceModel`: `PartFile`, `Package` (the generated model, or the envelope when the package has none, decided by the host as the board build decides it) or `Step`. The host traces each on the design the 3D build uses (`board::model_refs::ModelDesign`), from `sparksmith-solidcraft` `models::named`:
 
 | Model | Design | Shared with the 3D build |
 | --- | --- | --- |

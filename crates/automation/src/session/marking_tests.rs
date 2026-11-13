@@ -1,16 +1,16 @@
 //! `library.set_marking` placements, finishes, codes and decals, and
 //! `library.marking_surfaces`, over the ESP32-S31-WROOM-3 example drafts.
 use super::super::Session;
-use pcbcraft_core::Engine;
-use pcbcraft_core::library::Definition;
-use pcbcraft_core::library::marking::{Finish, MarkingItem, SurfaceRef};
 use serde_json::{Value, json};
+use sparksmith_core::Engine;
+use sparksmith_core::library::Definition;
+use sparksmith_core::library::marking::{Finish, MarkingItem, SurfaceRef};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 const EXAMPLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../examples/esp32-s31-wroom-3/esp32-s31-wroom-3.pcbcraft"
+    "/../../examples/esp32-s31-wroom-3/esp32-s31-wroom-3.sparksmith"
 );
 
 /// The example's session and its component and package draft ids.
@@ -50,7 +50,7 @@ pub fn wroom_marking() -> Value {
 fn component_marking(
     session: &Session,
     component: u64,
-) -> Option<pcbcraft_core::library::marking::MarkingSpec> {
+) -> Option<sparksmith_core::library::marking::MarkingSpec> {
     session
         .engine()
         .drafts()
@@ -77,19 +77,19 @@ fn the_example_carries_its_marking() -> TestResult {
 }
 
 /// Writes the example's marking into the example file (run after the
-/// assistant's replay regenerates it): `PCBCRAFT_WRITE_EXAMPLE=1 cargo
-/// test -p pcbcraft-automation write_the_example_marking -- --ignored`.
+/// assistant's replay regenerates it): `SPARKSMITH_WRITE_EXAMPLE=1 cargo
+/// test -p sparksmith-automation write_the_example_marking -- --ignored`.
 #[test]
 #[ignore = "writes examples/esp32-s31-wroom-3"]
 fn write_the_example_marking() -> TestResult {
-    if std::env::var_os("PCBCRAFT_WRITE_EXAMPLE").is_none() {
-        return Err("set PCBCRAFT_WRITE_EXAMPLE".into());
+    if std::env::var_os("SPARKSMITH_WRITE_EXAMPLE").is_none() {
+        return Err("set SPARKSMITH_WRITE_EXAMPLE".into());
     }
     let (mut session, component, _) = example()?;
     let reply = session.dispatch(json!({"command": "library.set_marking", "params": {
         "expected_revision": revision(&session), "draft": component, "marking": wroom_marking()}}));
     assert_eq!(reply["ok"], true, "{reply}");
-    pcbcraft_io::persistence::write_project(
+    sparksmith_io::persistence::write_project(
         std::path::Path::new(EXAMPLE),
         &session.engine().to_file(),
     )?;

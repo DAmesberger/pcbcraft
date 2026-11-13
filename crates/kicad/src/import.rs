@@ -8,24 +8,24 @@
 use crate::board::{self, Board, Footprint};
 use crate::report::{Case, Report};
 use crate::translate::{self, DefPad, Mapped};
-use pcbcraft_core::functions::{Direction, TerminalFunctions};
-use pcbcraft_core::geometry::Bounds;
-use pcbcraft_core::layout::LayoutCommand;
-use pcbcraft_core::library::samples::named_block_symbol;
-use pcbcraft_core::library::{
+use sparksmith_core::functions::{Direction, TerminalFunctions};
+use sparksmith_core::geometry::Bounds;
+use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::library::samples::named_block_symbol;
+use sparksmith_core::library::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
     FootprintDefinition, ModelPlacement, PackageDefinition, PackageForm, PackageModel,
     PackageTerminal, Pad, PadDefaults, PadKind, Terminal, TerminalClass, TerminalMap,
     designator_prefix_valid,
 };
-use pcbcraft_core::materials::MaterialId;
-use pcbcraft_core::units::{Nm, PointNm};
-use pcbcraft_core::{
+use sparksmith_core::materials::MaterialId;
+use sparksmith_core::units::{Nm, PointNm};
+use sparksmith_core::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, FunctionId, Id,
     InstanceCommand, LibraryCommand, Operation, Outcome, PackageRef, PackageTerminalId, PadId,
     PhysicalChoice, Revision, Stackup, SymbolRef, TerminalId, UnitId,
 };
-use pcbcraft_core::{Engine, instances::NewInstance};
+use sparksmith_core::{Engine, instances::NewInstance};
 use std::collections::BTreeMap;
 
 /// Why an import failed. Messages carry no file content.
@@ -172,7 +172,7 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
         let n = placed.len();
         placed.push(fp);
         records.extend(recs);
-        let designator = if pcbcraft_core::instances::designator_valid(&fp.reference)
+        let designator = if sparksmith_core::instances::designator_valid(&fp.reference)
             && taken.insert(fp.reference.to_ascii_uppercase())
         {
             Some(fp.reference.clone())
@@ -359,7 +359,7 @@ impl Session {
             })
     }
 
-    /// Apply `ops` in batches of at most [`pcbcraft_core::MAX_BATCH`].
+    /// Apply `ops` in batches of at most [`sparksmith_core::MAX_BATCH`].
     fn batches(
         &mut self,
         step: &'static str,
@@ -368,7 +368,7 @@ impl Session {
         let mut out = Vec::with_capacity(ops.len());
         let mut ops = ops.into_iter().peekable();
         while ops.peek().is_some() {
-            let batch: Vec<Operation> = ops.by_ref().take(pcbcraft_core::MAX_BATCH).collect();
+            let batch: Vec<Operation> = ops.by_ref().take(sparksmith_core::MAX_BATCH).collect();
             let outcomes = self
                 .engine
                 .apply_all_hosted(self.engine.revision(), batch, Default::default())
@@ -456,7 +456,7 @@ fn drafts(
     pads: Vec<Pad>,
     prefix: &str,
     [component, symbol, package, footprint, binding]: [DefinitionId; 5],
-) -> pcbcraft_core::Result<Vec<DraftEdit>> {
+) -> sparksmith_core::Result<Vec<DraftEdit>> {
     // Package terminals in id order, designated by their first pad's
     // number (an unnumbered plated pad is "MP" and its terminal number).
     let mut designations: BTreeMap<PackageTerminalId, String> = BTreeMap::new();

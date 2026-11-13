@@ -24,14 +24,14 @@ use crate::material::{BodyKind, Detail};
 use crate::project::Source;
 use crate::scene::{Geometry, Place};
 use crate::{Error, Result};
-use pcbcraft_core::geometry::cos_sin;
-use pcbcraft_core::ids::{ContentHash, Id};
-use pcbcraft_core::library::PackageDefinition;
-use pcbcraft_core::library::marking::surface::{self, CylinderArea, SurfaceGeometry};
-use pcbcraft_core::library::marking::{BoxFace, MarkingLayout, Placement, SurfaceRef};
-use pcbcraft_core::library::model3d::MarkingArea;
-use pcbcraft_core::{Layer, Project};
 use solidcraft_viewport::surface::OpaqueSurface;
+use sparksmith_core::geometry::cos_sin;
+use sparksmith_core::ids::{ContentHash, Id};
+use sparksmith_core::library::PackageDefinition;
+use sparksmith_core::library::marking::surface::{self, CylinderArea, SurfaceGeometry};
+use sparksmith_core::library::marking::{BoxFace, MarkingLayout, Placement, SurfaceRef};
+use sparksmith_core::library::model3d::MarkingArea;
+use sparksmith_core::{Layer, Project};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -44,7 +44,7 @@ const FLAT_COS: f64 = 0.999;
 /// Vertices this close to the outermost reach lie on the face, mm.
 const FACE_EPS_MM: f64 = 1e-4;
 /// Media type of SVG artwork assets.
-const SVG_MEDIA_TYPE: &str = pcbcraft_core::library::marking::ARTWORK_MEDIA_TYPE;
+const SVG_MEDIA_TYPE: &str = sparksmith_core::library::marking::ARTWORK_MEDIA_TYPE;
 
 /// Bodies a marking is printed on.
 fn printable(kind: BodyKind) -> bool {
@@ -258,7 +258,7 @@ impl Marked<'_> {
                     }
                     SurfaceGeometry::Cylinder(c) => {
                         let cylinder = CylinderArea {
-                            base_nm: pcbcraft_core::library::model3d::triple_nm(arr(world(
+                            base_nm: sparksmith_core::library::model3d::triple_nm(arr(world(
                                 c.base(),
                             )?))
                             .ok()?,
@@ -411,7 +411,7 @@ pub fn project_artwork(project: &Project) -> impl Fn(&ContentHash) -> Option<Str
 
 /// SVG artwork from a library's packed assets.
 pub fn project_artwork_of(
-    library: &pcbcraft_core::library::Library,
+    library: &sparksmith_core::library::Library,
 ) -> impl Fn(&ContentHash) -> Option<String> + '_ {
     move |hash| {
         library
@@ -464,7 +464,7 @@ pub struct InstanceLayouts {
 
 /// Each placed instance's resolved marking layout, read straight from the
 /// valid `project` through the core's pure `instance.marking`
-/// ([`pcbcraft_core::commands::instance_marking`]): no project copy, no
+/// ([`sparksmith_core::commands::instance_marking`]): no project copy, no
 /// engine and no revalidation of the library or its packed assets. Only
 /// when [`any_marked`] says there is something to read.
 pub fn instance_layouts(project: &Project) -> InstanceLayouts {
@@ -474,7 +474,7 @@ pub fn instance_layouts(project: &Project) -> InstanceLayouts {
     }
     for placement in &project.placements {
         let instance = placement.instance;
-        match pcbcraft_core::commands::instance_marking(project, instance) {
+        match sparksmith_core::commands::instance_marking(project, instance) {
             Ok(Some(layout)) if !layout.is_blank() => {
                 out.layouts.insert(instance, layout);
             }
@@ -490,7 +490,7 @@ fn package_of(project: &Project, instance: Id) -> Option<&PackageDefinition> {
     let target = project.instance(instance)?;
     let component = project.library.component(target.component)?;
     let choice = target.physical?;
-    pcbcraft_core::instances::resolve_physical(&project.library, &component.definition, choice)
+    sparksmith_core::instances::resolve_physical(&project.library, &component.definition, choice)
         .ok()
         .map(|view| &view.package.definition)
 }

@@ -4,7 +4,7 @@
 use super::{ProfileFile, ProjectRules, RuleProfile};
 use crate::diagnostics::{Error, Result};
 
-/// The values Pcbcraft's checks used before profiles were files (0.2 mm
+/// The values Sparksmith's checks used before profiles were files (0.2 mm
 /// copper clearance, 0.3/0.6 mm vias, tented), kept so the tests that
 /// measure against them still do. Not a fabricator's numbers.
 pub const PROTOTYPE_JSON: &str = include_str!("fixtures/prototype.json");

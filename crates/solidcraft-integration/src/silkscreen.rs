@@ -12,12 +12,12 @@ use crate::appearance::{self, Board, CAP_MARGIN_MM, Land, Path, Region, ViaMark,
 use crate::material::BodyKind;
 use crate::scene::Geometry;
 use crate::stack::{INK_MM, INK_SINK_SHARE, Slot};
-use pcbcraft_core::geometry::Shape;
-use pcbcraft_core::layout::{self, BoardDrawing, PlacedItem};
-use pcbcraft_core::library::graphics::PlacedText;
-use pcbcraft_core::library::offset_polygon;
-use pcbcraft_core::rules::SilkscreenRules;
-use pcbcraft_core::{CopperLayer, Id, Layer, Point, Project};
+use sparksmith_core::geometry::Shape;
+use sparksmith_core::layout::{self, BoardDrawing, PlacedItem};
+use sparksmith_core::library::graphics::PlacedText;
+use sparksmith_core::library::offset_polygon;
+use sparksmith_core::rules::SilkscreenRules;
+use sparksmith_core::{CopperLayer, Id, Layer, Point, Project};
 use std::collections::BTreeMap;
 
 /// Chord tolerance of curves in the legend.
@@ -294,7 +294,7 @@ fn stroke(out: &mut Vec<Vec<Point>>, points: &[Point], closed: bool, width: f64)
 }
 
 /// The loops of placed legend text: the core's legend strokes
-/// (`layout::legend`, Pcbcraft's stroke font laid out by the text metric),
+/// (`layout::legend`, Sparksmith's stroke font laid out by the text metric),
 /// each stroked with its round pen.
 fn text_loops(out: &mut Vec<Vec<Point>>, text: &PlacedText, silk: &SilkscreenRules) {
     let strokes = layout::legend::text_strokes(text, silk);

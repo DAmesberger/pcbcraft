@@ -588,7 +588,7 @@ fn inspect_reports_the_latest_revision_and_what_it_pins() -> TestResult {
 
 /// Keystroke-to-results latency of core `search` on 10 k–50 k synthetic
 /// entries. Run with
-/// `cargo test --release -p pcbcraft-core catalog::tests::bench -- --ignored --nocapture`.
+/// `cargo test --release -p sparksmith-core catalog::tests::bench -- --ignored --nocapture`.
 /// Target (not a gate): ≤ 10 ms p95 at 50 k entries, warm.
 #[test]
 #[ignore = "benchmark; run explicitly in release mode"]

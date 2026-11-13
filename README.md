@@ -60,7 +60,7 @@ The goal is one workflow from idea to product: design, simulate, test without ha
 - **Smart parts.** Parts that carry electrical and behavioural models next to their symbol, footprint and 3D body, mapped pin by pin, so they simulate both as circuits and in software.
 - **Idea to production, AI-driven.** An assistant takes a description to a board: parts from datasheets, schematic, layout, virtual testing and the production files.
 
-Nearer steps, also planned: build and test the ESP32-S31 reference board; buses and reusable schematic sheets. The [roadmap](ROADMAP.md) tracks the work, and the [product plan](docs/pcbcraft-plan.md) defines the first release.
+Nearer steps, also planned: build and test the ESP32-S31 reference board; buses and reusable schematic sheets. The [roadmap](ROADMAP.md) tracks the work, and the [product plan](docs/sparksmith-plan.md) defines the first release.
 
 ## Status
 
@@ -74,7 +74,7 @@ Needs Rust (the toolchain is pinned in `rust-toolchain.toml`) or Nix.
 
 ```sh
 nix develop    # optional: the pinned toolchain without rustup
-cargo run --locked --profile ci -p pcbcraft -- examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft
+cargo run --locked --profile ci -p sparksmith -- examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith
 ```
 
 Open the PCB workspace, press **D** to switch between layout and 3D, and **⌘P** to find any command.
@@ -82,7 +82,7 @@ Open the PCB workspace, press **D** to switch between layout and 3D, and **⌘P*
 ## Documentation
 
 - [Development](docs/development.md): build, checks, crate layout, command line, JSON lines and MCP.
-- [Architecture and product plan](docs/pcbcraft-plan.md), and the [component model](docs/component-model.md).
+- [Architecture and product plan](docs/sparksmith-plan.md), and the [component model](docs/component-model.md).
 - [MCP and AI integration](docs/llm-integration.md), including [live MCP](docs/development.md#live-mcp) and the [datasheet assistant](docs/datasheet-assistant.md).
 - [Keyboard shortcuts](docs/keyboard-shortcuts.md), [push-and-shove routing](docs/push-and-shove.md), [high-speed routing](docs/high-speed-routing.md), [fabrication output](docs/fabrication-output.md).
 

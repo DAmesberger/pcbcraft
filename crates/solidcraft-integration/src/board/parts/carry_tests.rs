@@ -1,19 +1,19 @@
 //! A solved part carries the copper attached to its pads
-//! (`pcbcraft_core::layout::dimensions::carry`): a board-parameter edit
+//! (`sparksmith_core::layout::dimensions::carry`): a board-parameter edit
 //! that moves a dimensioned part keeps its tracks connected, in one undo
 //! step.
 #![allow(clippy::unwrap_used)]
 
 use super::super::tests::{Fallible, apply, close, edit, set, sketched};
-use pcbcraft_core::geometry::Point;
-use pcbcraft_core::ids::Id;
-use pcbcraft_core::layout::connectivity::CopperGraph;
-use pcbcraft_core::layout::dimensions::{DimensionCommand, carry};
-use pcbcraft_core::layout::{self, LayoutCommand, RouteEditSet, RouteRequest, WorldPad};
-use pcbcraft_core::library::footprint_source::{DimKind, DimValue, Expr, SketchRef};
-use pcbcraft_core::model::board::{BoardShape, ConstraintTarget};
-use pcbcraft_core::model::dimension::{BoardRef, FeatureRef, PartDimensionSpec, PartRelation};
-use pcbcraft_core::{CopperLayer, Engine, Operation, Project, Via, ViaSpan};
+use sparksmith_core::geometry::Point;
+use sparksmith_core::ids::Id;
+use sparksmith_core::layout::connectivity::CopperGraph;
+use sparksmith_core::layout::dimensions::{DimensionCommand, carry};
+use sparksmith_core::layout::{self, LayoutCommand, RouteEditSet, RouteRequest, WorldPad};
+use sparksmith_core::library::footprint_source::{DimKind, DimValue, Expr, SketchRef};
+use sparksmith_core::model::board::{BoardShape, ConstraintTarget};
+use sparksmith_core::model::dimension::{BoardRef, FeatureRef, PartDimensionSpec, PartRelation};
+use sparksmith_core::{CopperLayer, Engine, Operation, Project, Via, ViaSpan};
 
 fn pad(project: &Project, instance: Id, n: usize) -> Fallible<WorldPad> {
     layout::pads(project)
@@ -117,7 +117,7 @@ fn a_part_held_at_half_the_width_keeps_its_tracks_when_the_width_changes() -> Fa
         tracks.first().ok_or("track")?,
         tracks.get(1).ok_or("track")?,
     );
-    let way = |t: &pcbcraft_core::Track| {
+    let way = |t: &sparksmith_core::Track| {
         let (dx, dy) = (t.end[0] - t.start[0], t.end[1] - t.start[1]);
         let length = dx.hypot(dy);
         [dx / length, dy / length]

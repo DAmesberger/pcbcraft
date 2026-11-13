@@ -198,7 +198,7 @@ pub fn check() -> Result<()> {
 
 /// Why a Solidcraft parameter stays f64 millimetres (founder decision,
 /// 10 November 2026).
-const SOLIDCRAFT: &str = "Solidcraft parameter: Solidcraft computes in f64 mm; converted only at the pcbcraft-solidcraft boundary";
+const SOLIDCRAFT: &str = "Solidcraft parameter: Solidcraft computes in f64 mm; converted only at the sparksmith-solidcraft boundary";
 
 /// Why a computed value may stay f64 millimetres.
 const COMPUTED: &str =

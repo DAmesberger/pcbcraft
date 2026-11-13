@@ -2,7 +2,7 @@
 //! decision F1: pin configuration only; no clock trees, register init or
 //! HAL projects). `project.pin_config { instance }` produces a versioned,
 //! JSON-schema'd [`PinConfigReport`]; emitters (C header, Zephyr overlay,
-//! JSON, Rust consts, user templates) live in the `pcbcraft-firmware`
+//! JSON, Rust consts, user templates) live in the `sparksmith-firmware`
 //! crate. Generated text is never imported back.
 //!
 //! Firmware names are the `PinConfig::name` or the net name, sanitised to

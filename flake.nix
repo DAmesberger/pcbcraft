@@ -1,5 +1,5 @@
 {
-  description = "Pcbcraft — development shell with the pinned Rust toolchain for `cargo xtask ci`";
+  description = "Sparksmith — development shell with the pinned Rust toolchain for `cargo xtask ci`";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -57,7 +57,7 @@
     {
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          name = "pcbcraft";
+          name = "sparksmith";
           packages = [
             (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
             pkgs.git
@@ -69,7 +69,7 @@
           # A separate target directory keeps this toolchain's cache apart from rustup's.
           CARGO_TARGET_DIR = "target/nix";
           shellHook = ''
-            echo "pcbcraft: $(rustc --version); run cargo xtask ci"
+            echo "sparksmith: $(rustc --version); run cargo xtask ci"
           '';
         };
       });

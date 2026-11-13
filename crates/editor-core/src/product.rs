@@ -4,7 +4,7 @@
 //! one line in [`product_name!`] and [`product_short_name!`].
 //!
 //! The macros exist for text built at compile time (`concat!`, `const`
-//! tables); everything else uses the constants. `apps/pcbcraft/macos/Info.plist`
+//! tables); everything else uses the constants. `apps/sparksmith/macos/Info.plist`
 //! cannot read Rust, so a test checks its names against these.
 
 /// The product name as people read it: "Sparksmith".

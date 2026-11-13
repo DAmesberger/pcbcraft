@@ -15,10 +15,10 @@ use super::{Build, check_count, check_positive, mm, require, top_edges};
 use crate::Result;
 use crate::native::{Expr, Pattern, ProfileBody};
 use crate::pad_outline::Contour;
-use pcbcraft_core::library::BodyRole;
-use pcbcraft_core::library::package_form::GridForm;
-use pcbcraft_core::library::package_form::grid::GridContact;
-use pcbcraft_core::materials::MaterialId;
+use sparksmith_core::library::BodyRole;
+use sparksmith_core::library::package_form::GridForm;
+use sparksmith_core::library::package_form::grid::GridContact;
+use sparksmith_core::materials::MaterialId;
 
 /// The builder revision (`PackageModel::Generated { family_rev }`).
 pub(super) const FAMILY_REV: Option<u16> = Some(1);
@@ -211,10 +211,10 @@ mod tests {
     use crate::Error;
     #[allow(unused_imports)]
     use crate::models::tests::{nm, pt};
-    use pcbcraft_core::PackageTerminalId;
-    use pcbcraft_core::library::PackageTerminal;
-    use pcbcraft_core::library::package_form::GridForm;
-    use pcbcraft_core::library::package_form::grid::GridContact;
+    use sparksmith_core::PackageTerminalId;
+    use sparksmith_core::library::PackageTerminal;
+    use sparksmith_core::library::package_form::GridForm;
+    use sparksmith_core::library::package_form::grid::GridContact;
 
     fn package(form: GridForm) -> PackageDefinition {
         let names = form.ball_names();

@@ -5,14 +5,14 @@
 //! them, and J1's front face (a 3D model reference the example's
 //! dimension already traces) is exported as a feature.
 use super::Session;
-use pcbcraft_core::Engine;
 use serde_json::{Value, json};
+use sparksmith_core::Engine;
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const EXAMPLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    "/../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith"
 );
 
 fn ok(session: &mut Session, request: Value) -> TestResult<Value> {
@@ -142,7 +142,7 @@ fn the_interface_slots_survive_undo_redo_save_and_reopen() -> TestResult {
         .part_dimensions
         .iter()
         .flat_map(|d| d.refs.iter())
-        .find(|r| matches!(r, pcbcraft_core::model::dimension::BoardRef::Part(f) if f.is_model()))
+        .find(|r| matches!(r, sparksmith_core::model::dimension::BoardRef::Part(f) if f.is_model()))
         .cloned()
         .ok_or("a model reference")?;
     interface(
@@ -189,7 +189,7 @@ fn the_interface_slots_survive_undo_redo_save_and_reopen() -> TestResult {
 
     // Save and reopen: the same list, and the counters keep going.
     let dir = tempfile::tempdir()?;
-    let file = dir.path().join("interface.pcbcraft");
+    let file = dir.path().join("interface.sparksmith");
     let path = file.display().to_string();
     ok(
         &mut session,

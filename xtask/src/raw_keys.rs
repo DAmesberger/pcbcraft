@@ -1,5 +1,5 @@
 //! Every keyboard shortcut goes through the command registry
-//! (apps/pcbcraft/src/keys.rs): an editor asks for a command id, never for
+//! (apps/sparksmith/src/keys.rs): an editor asks for a command id, never for
 //! a key, so a rebinding changes what the key does. This check parses the
 //! desktop app and rejects raw key reads (`key_pressed`, `consume_key`,
 //! `consume_shortcut`, `key_down`, `key_released`, `num_presses`) outside
@@ -199,7 +199,7 @@ fn scan(source: &str) -> std::result::Result<Vec<usize>, String> {
 }
 
 pub fn check() -> Result<()> {
-    let base = root()?.join("apps/pcbcraft/src");
+    let base = root()?.join("apps/sparksmith/src");
     let mut files = Vec::new();
     rust_files(&base, &mut files)?;
     let allowed: BTreeMap<&str, usize> = EXCEPTIONS.iter().map(|(f, n, _)| (*f, *n)).collect();

@@ -20,10 +20,10 @@ use super::{
 use crate::material::{self, BodyKind, Material};
 use crate::pad_outline::{self, Contour, FLATTEN_TOLERANCE_MM};
 use crate::{Error, Result};
-use pcbcraft_core::library::PadCopper;
-use pcbcraft_core::model::Fill;
-use pcbcraft_core::model::fill::FilledRegion;
-use pcbcraft_core::{CopperLayer, Fabrication, Id, Layer, PadId, Point, Project, ViaSpan};
+use sparksmith_core::library::PadCopper;
+use sparksmith_core::model::Fill;
+use sparksmith_core::model::fill::FilledRegion;
+use sparksmith_core::{CopperLayer, Fabrication, Id, Layer, PadId, Point, Project, ViaSpan};
 
 /// How far a built body's box may lie from its plan body's, mm: the
 /// kernel bounds a curved face by its tessellation and the plan an arc by
@@ -58,7 +58,7 @@ impl Frame {
     /// A point of the body's frame on the board.
     pub fn apply(&self, p: Point) -> Point {
         let q = if self.flipped { [p[0], -p[1]] } else { p };
-        let (c, s) = pcbcraft_core::geometry::cos_sin(self.angle_deg);
+        let (c, s) = sparksmith_core::geometry::cos_sin(self.angle_deg);
         [
             self.origin[0] + c * q[0] - s * q[1],
             self.origin[1] + s * q[0] + c * q[1],
@@ -263,7 +263,7 @@ pub struct ViaPlan {
 #[derive(Clone, Debug)]
 pub struct BoardPlan {
     pub fills: Vec<FillPlan>,
-    /// One per placed pad, in [`pcbcraft_core::layout::placed_pads`] order.
+    /// One per placed pad, in [`sparksmith_core::layout::placed_pads`] order.
     pub pads: Vec<PadPlan>,
     pub tracks: Vec<TrackPlan>,
     pub vias: Vec<ViaPlan>,
@@ -289,7 +289,7 @@ impl BoardPlan {
 /// copper has no outline, a track has no length or the board holds more
 /// drills than [`MAX_DRILLS`].
 pub fn of(project: &Project) -> Result<BoardPlan> {
-    pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
+    sparksmith_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     project
         .stackup
         .check()

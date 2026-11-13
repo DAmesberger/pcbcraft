@@ -4,8 +4,8 @@
 //! added to the engine is listed and served without changing this module.
 use super::{CommandInfo, Request, SchemaParams};
 use crate::{Error, Result};
-use pcbcraft_core::{Class, Operation, Query};
 use serde_json::{Map, Value, json};
+use sparksmith_core::{Class, Operation, Query};
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::OnceLock;
 
@@ -593,9 +593,9 @@ fn copy(from: &Value, to: &mut Value, keys: &[&str]) {
 }
 
 fn invalid(text: &str) -> Error {
-    pcbcraft_core::Error::Invalid(text.to_owned()).into()
+    sparksmith_core::Error::Invalid(text.to_owned()).into()
 }
 
 fn not_found(text: String) -> Error {
-    pcbcraft_core::Error::NotFound(text).into()
+    sparksmith_core::Error::NotFound(text).into()
 }

@@ -11,9 +11,9 @@ impl Session {
     /// rule script contract (helpers, verdicts, examples).
     pub(super) fn pinout_schema(&self) -> Result<Value> {
         Ok(serde_json::json!({
-            "format": pcbcraft_core::library::pinout::PINOUT_FORMAT,
-            "schema": pcbcraft_core::library::pinout::schema(),
-            "rule_api": pcbcraft_core::functions::rules::RULE_API,
+            "format": sparksmith_core::library::pinout::PINOUT_FORMAT,
+            "schema": sparksmith_core::library::pinout::schema(),
+            "rule_api": sparksmith_core::functions::rules::RULE_API,
         }))
     }
 }

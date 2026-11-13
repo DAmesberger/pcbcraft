@@ -1,4 +1,4 @@
-//! Legend text as strokes: Pcbcraft's stroke font laid out by the core's
+//! Legend text as strokes: Sparksmith's stroke font laid out by the core's
 //! text metric (each line in its box, the upright rule applied, bottom-side
 //! text reflected within its line). The silkscreen films in 3D and the
 //! Gerber legend layers both draw these strokes, so both print the same ink.

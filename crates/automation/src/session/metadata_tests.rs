@@ -4,7 +4,7 @@
 //! same titles and annotations.
 use super::metadata::{self, Annotations, Kind, Person, ResultSize};
 use super::*;
-use pcbcraft_core::permission::MAX_TITLE;
+use sparksmith_core::permission::MAX_TITLE;
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -181,7 +181,7 @@ fn the_tools_carry_the_catalog_titles_and_annotations() -> Fallible<()> {
 #[test]
 fn inline_and_linked_results_hold_on_the_showcase() -> Fallible<()> {
     let mut server = crate::mcp::Server::new(
-        Session::new(showcase(pcbcraft_core::rules::fixtures::prototype()?)?),
+        Session::new(showcase(sparksmith_core::rules::fixtures::prototype()?)?),
         crate::gate::Policy::default(),
     );
     let mut size = |tool: &str, arguments: Value| -> usize {
@@ -194,7 +194,7 @@ fn inline_and_linked_results_hold_on_the_showcase() -> Fallible<()> {
             .as_str()
             .map_or(0, str::len)
     };
-    let revision = showcase(pcbcraft_core::rules::fixtures::prototype()?)?.revision();
+    let revision = showcase(sparksmith_core::rules::fixtures::prototype()?)?.revision();
     let result = |name: &str| {
         metadata::entries()
             .iter()

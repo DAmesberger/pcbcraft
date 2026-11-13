@@ -12,19 +12,19 @@ use crate::Generator;
 use alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
-use pcbcraft_generator_abi::{codec, v1};
+use sparksmith_generator_abi::{codec, v1};
 use spin::Mutex;
 use v1::{ErrorBody, Problem, Request};
 
 static INPUT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 static OUTPUT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
-/// `pcbcraft_gen_abi`.
+/// `sparksmith_gen_abi`.
 pub fn abi() -> u32 {
     v1::ABI
 }
 
-/// `pcbcraft_gen_alloc`: a zeroed buffer of `len` bytes for the request, or
+/// `sparksmith_gen_alloc`: a zeroed buffer of `len` bytes for the request, or
 /// 0 when `len` is 0 or exceeds [`v1::limits::REQUEST_BYTES`].
 pub fn alloc(len: u32) -> u32 {
     let Ok(len) = usize::try_from(len) else {
@@ -41,7 +41,7 @@ pub fn alloc(len: u32) -> u32 {
     address
 }
 
-/// `pcbcraft_gen_describe`.
+/// `sparksmith_gen_describe`.
 pub fn describe<G: Generator>() -> u64 {
     match codec::encode(&G::describe()) {
         Ok(bytes) => reply(bytes),
@@ -51,7 +51,7 @@ pub fn describe<G: Generator>() -> u64 {
     }
 }
 
-/// `pcbcraft_gen_generate`.
+/// `sparksmith_gen_generate`.
 pub fn generate<G: Generator>(ptr: u32, len: u32) -> u64 {
     let request = core::mem::take(&mut *INPUT.lock());
     let named = usize::try_from(ptr).ok() == Some(request.as_ptr() as usize)

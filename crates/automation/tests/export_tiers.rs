@@ -1,23 +1,23 @@
 //! The ESP32-S31 example exported at the mechanical and full tiers
-//! (`pcbcraft_solidcraft::export::board`, slice A5): every board body
+//! (`sparksmith_solidcraft::export::board`, slice A5): every board body
 //! checked against the plan, and the time each stage took. A measurement,
-//! not a gate: run with `cargo test -p pcbcraft-automation --profile ci
+//! not a gate: run with `cargo test -p sparksmith-automation --profile ci
 //! --test export_tiers -- --ignored --nocapture`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use pcbcraft_solidcraft::export::{self, Stage, Tier, Watch};
+use sparksmith_solidcraft::export::{self, Stage, Tier, Watch};
 use std::path::Path;
 use std::time::Instant;
 
 const EXAMPLE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+    "/../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith"
 );
 
 #[test]
 #[ignore = "measurement; run with --ignored --nocapture"]
 fn esp32_export_tiers_are_checked_against_the_plan() {
-    let project = pcbcraft_io::read_project(Path::new(EXAMPLE))
+    let project = sparksmith_io::read_project(Path::new(EXAMPLE))
         .unwrap()
         .into_document()
         .project

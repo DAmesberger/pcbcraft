@@ -1,10 +1,10 @@
 //! `cargo xtask convert-v1 PATH…`: a one-off converter for files written
-//! before a units-migration slice changed the file format. Pcbcraft is
+//! before a units-migration slice changed the file format. Sparksmith is
 //! pre-release and keeps one file version with no legacy readers
 //! (AGENTS.md), so this lives here, not in the app.
 //!
-//! Each PATH is a `.pcbcraft` project container, a library folder (a
-//! directory holding `pcbcraft-library.json`) or a JSON-lines replay
+//! Each PATH is a `.sparksmith` project container, a library folder (a
+//! directory holding `sparksmith-library.json`) or a JSON-lines replay
 //! (`*.jsonl`, [`replay`]). Stored f64 millimetres
 //! become integer nanometres and degrees whole millidegrees, rounded half
 //! away from zero as the app's one crossing does: U1 converts the
@@ -39,7 +39,7 @@ mod symbols;
 
 pub fn run(args: &[String]) -> Result<()> {
     const USAGE: &str = "usage: cargo xtask convert-v1 [--profile PROFILE.json] \
-                         FILE.pcbcraft|LIBRARY_FOLDER|REPLAY.jsonl|OLD_PROFILE.json…";
+                         FILE.sparksmith|LIBRARY_FOLDER|REPLAY.jsonl|OLD_PROFILE.json…";
     let (pinned, paths) = match args {
         [flag, profile, rest @ ..] if flag == "--profile" => (Some(read_profile(profile)?), rest),
         _ => (None, args),
@@ -141,7 +141,7 @@ fn convert_profile(path: &Path, backup: &Path) -> Result<usize> {
         if !backup.exists() {
             std::fs::write(backup, &original)?;
         }
-        pcbcraft_io::persistence::atomic_write(path, text.as_bytes())?;
+        sparksmith_io::persistence::atomic_write(path, text.as_bytes())?;
     }
     Ok(changed)
 }

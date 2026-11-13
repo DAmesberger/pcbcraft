@@ -5,11 +5,11 @@
 #![allow(clippy::unwrap_used)]
 
 use super::*;
-use pcbcraft_core::layout::LayoutCommand;
-use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
-use pcbcraft_core::library::footprint_source::{DimKind, SketchRef};
-use pcbcraft_core::model::board::{BoardShape, CutoutKind};
-use pcbcraft_core::{Engine, Evaluators, Layer, Operation, Outcome, Query, QueryResult, format};
+use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::library::footprint_source::{DimKind, SketchRef};
+use sparksmith_core::model::board::{BoardShape, CutoutKind};
+use sparksmith_core::{Engine, Evaluators, Layer, Operation, Outcome, Query, QueryResult, format};
 
 pub(crate) type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -22,11 +22,11 @@ pub(super) fn hosted() -> Evaluators<'static> {
     }
 }
 
-pub(crate) fn apply(engine: &mut Engine, op: Operation) -> pcbcraft_core::Result<Outcome> {
+pub(crate) fn apply(engine: &mut Engine, op: Operation) -> sparksmith_core::Result<Outcome> {
     engine.apply_hosted(engine.revision(), op, hosted())
 }
 
-pub(super) fn edit(engine: &mut Engine, edits: Vec<BoardEdit>) -> pcbcraft_core::Result<Outcome> {
+pub(super) fn edit(engine: &mut Engine, edits: Vec<BoardEdit>) -> sparksmith_core::Result<Outcome> {
     apply(engine, Operation::Board(BoardCommand::Edit { edits }))
 }
 
@@ -190,7 +190,7 @@ fn rounded_corners_follow_a_corner_radius_parameter() -> Fallible<()> {
     assert!(s.solved.contains([3.0, 3.0], 0.001));
     // The laminate in 3D has the rounded corners: it lacks exactly the
     // four corner pieces the rectangle has.
-    let volume = |project: &pcbcraft_core::Project| -> Fallible<f64> {
+    let volume = |project: &sparksmith_core::Project| -> Fallible<f64> {
         Ok(crate::project::build(project)?
             .geometry
             .iter()
@@ -273,7 +273,7 @@ fn cutouts_slots_and_mounting_holes_solve_and_build_in_3d() -> Fallible<()> {
         .iter()
         .find(|c| matches!(c.kind, CutoutKind::Slot { .. }))
         .ok_or("slot")?;
-    let b = pcbcraft_core::model::board::outline_bounds(&slot.outline);
+    let b = sparksmith_core::model::board::outline_bounds(&slot.outline);
     assert!(
         close(b.min, [9.0, 29.0]) && close(b.max, [21.0, 31.0]),
         "{b:?}"
@@ -295,9 +295,9 @@ fn cutouts_slots_and_mounting_holes_solve_and_build_in_3d() -> Fallible<()> {
     )?);
     assert_eq!(engine.project().board().into_owned(), kept);
     let invalid = |engine: &Engine| {
-        pcbcraft_core::layout::outline::checks(engine.project())
+        sparksmith_core::layout::outline::checks(engine.project())
             .iter()
-            .filter(|f| f.code == pcbcraft_core::layout::outline::SHAPE_INVALID)
+            .filter(|f| f.code == sparksmith_core::layout::outline::SHAPE_INVALID)
             .count()
     };
     assert_eq!(invalid(&engine), 1);
@@ -315,7 +315,7 @@ fn cutouts_slots_and_mounting_holes_solve_and_build_in_3d() -> Fallible<()> {
     // The laminate is the outline with its cutouts, slot and hole cut.
     let laminate = laminate(engine.project()).ok_or("laminate")?;
     assert_eq!(laminate.through.len(), 3);
-    let substrate = |project: &pcbcraft_core::Project| -> Fallible<f64> {
+    let substrate = |project: &sparksmith_core::Project| -> Fallible<f64> {
         let model = crate::project::build(project)?;
         Ok(model
             .geometry
@@ -366,7 +366,7 @@ fn bad_edits_are_refused_and_leave_the_board() -> Fallible<()> {
             edit: SketchEdit::AddDimension {
                 kind: DimKind::Distance,
                 refs: vec![SketchRef::Curve(bottom.clone())],
-                value: pcbcraft_core::library::footprint_source::DimValue::Fixed(10.0),
+                value: sparksmith_core::library::footprint_source::DimValue::Fixed(10.0),
             },
         }],
         // The parameter `width` drives a dimension.
@@ -398,9 +398,9 @@ fn bad_edits_are_refused_and_leave_the_board() -> Fallible<()> {
     assert_eq!(engine.project().board().into_owned(), board);
     assert_eq!(engine.project().board_size, [60.0, 40.0]);
     assert!(
-        pcbcraft_core::layout::outline::checks(engine.project())
+        sparksmith_core::layout::outline::checks(engine.project())
             .iter()
-            .any(|f| f.code == pcbcraft_core::layout::outline::SHAPE_OPEN)
+            .any(|f| f.code == sparksmith_core::layout::outline::SHAPE_OPEN)
     );
     Ok(())
 }
@@ -469,17 +469,17 @@ fn the_mask_and_edge_bands_follow_the_sketched_shape() -> Fallible<()> {
     // The mask reaches the routed edge (no pull-back), so its wall
     // triangles lie on the outline as the display flattens it: inside it
     // grown by a micrometre.
-    let outer = pcbcraft_core::model::board::flatten(
+    let outer = sparksmith_core::model::board::flatten(
         &board.outer,
         crate::pad_outline::FLATTEN_TOLERANCE_MM,
     );
-    let grown = pcbcraft_core::library::offset_polygon(&outer, 0.001).ok_or("outline")?;
+    let grown = sparksmith_core::library::offset_polygon(&outer, 0.001).ok_or("outline")?;
     for kind in [BodyKind::MaskTop, BodyKind::MaskBottom] {
         let mask = centroids(kind);
         assert!(!mask.is_empty(), "{kind:?}");
         for c in &mask {
             assert!(
-                pcbcraft_core::geometry::polygon_contains(&grown, *c),
+                sparksmith_core::geometry::polygon_contains(&grown, *c),
                 "{kind:?} mask at {c:?}"
             );
         }
@@ -521,11 +521,11 @@ fn the_mask_and_edge_bands_follow_the_sketched_shape() -> Fallible<()> {
 /// along each of `relief`'s spokes, as wide as the spoke and no wider,
 /// halfway across the relief gap, and none between the spokes.
 fn thermal_relief(
-    copper: &pcbcraft_core::model::fill::FilledCopper,
-    pad: &pcbcraft_core::layout::PlacedPad,
-    relief: &pcbcraft_core::rules::ThermalRelief,
+    copper: &sparksmith_core::model::fill::FilledCopper,
+    pad: &sparksmith_core::layout::PlacedPad,
+    relief: &sparksmith_core::rules::ThermalRelief,
 ) -> bool {
-    use pcbcraft_core::geometry::polygon_contains;
+    use sparksmith_core::geometry::polygon_contains;
     let inside = |p: [f64; 2]| {
         copper.regions.iter().any(|r| {
             polygon_contains(&r.outer, p) && !r.holes.iter().any(|h| polygon_contains(h, p))
@@ -570,7 +570,7 @@ fn thermal_relief(
 /// corners).
 #[test]
 fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible<()> {
-    use pcbcraft_core::layout::showcase::{CORNER_MM, CUTOUT, SLOT};
+    use sparksmith_core::layout::showcase::{CORNER_MM, CUTOUT, SLOT};
     let mut engine = Engine::showcase_hosted_fixture(hosted())?;
     let s = sketch(&engine)?;
     // The outline is driven by its parameters; the cutout and slot stand
@@ -611,7 +611,7 @@ fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible
     let top = project
         .fills
         .iter()
-        .find(|f| f.layer == pcbcraft_core::CopperLayer::Top)
+        .find(|f| f.layer == sparksmith_core::CopperLayer::Top)
         .ok_or("top pour")?;
     let copper = top.computed.as_ref().ok_or("top pour filled")?;
     assert!(!copper.regions.is_empty());
@@ -628,12 +628,12 @@ fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible
         .find(|n| n.name == "GND")
         .ok_or("GND")?
         .id;
-    let relieved = pcbcraft_core::layout::placed_pads(project)
+    let relieved = sparksmith_core::layout::placed_pads(project)
         .into_iter()
         .filter(|p| p.net == Some(gnd) && p.on_copper(Layer::Top))
         .find(|p| thermal_relief(copper, p, &relief))
         .ok_or("no ground pad with a thermal relief")?;
-    let graph = pcbcraft_core::layout::CopperGraph::of(project);
+    let graph = sparksmith_core::layout::CopperGraph::of(project);
     let pad = graph
         .pads()
         .iter()
@@ -644,7 +644,7 @@ fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible
         .iter()
         .enumerate()
         .filter(|(_, e)| {
-            matches!(e.kind, pcbcraft_core::layout::connectivity::ElementKind::Fill { fill, .. } if fill == top.id)
+            matches!(e.kind, sparksmith_core::layout::connectivity::ElementKind::Fill { fill, .. } if fill == top.id)
         })
         .filter_map(|(i, _)| graph.island_of(graph.vertices_of(i).start))
         .collect::<Vec<_>>();
@@ -653,9 +653,9 @@ fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible
         project
             .fills
             .iter()
-            .all(|f| !pcbcraft_core::layout::fill::is_stale(project, f))
+            .all(|f| !sparksmith_core::layout::fill::is_stale(project, f))
     );
-    let findings = pcbcraft_core::layout::checks(project);
+    let findings = sparksmith_core::layout::checks(project);
     assert!(findings.is_empty(), "{findings:#?}");
     let j1 = project
         .instance_by_designator("J1")
@@ -848,7 +848,7 @@ fn board_edit_reports_what_it_created() -> Fallible<()> {
 }
 
 /// The largest x of a fill's computed copper, if it has any.
-fn copper_right(engine: &Engine, fill: pcbcraft_core::Id) -> Option<f64> {
+fn copper_right(engine: &Engine, fill: sparksmith_core::Id) -> Option<f64> {
     let copper = engine.project().fill(fill)?.computed.as_ref()?;
     copper
         .regions
@@ -864,10 +864,10 @@ fn copper_right(engine: &Engine, fill: pcbcraft_core::Id) -> Option<f64> {
 /// stays where it was drawn, and undo restores both.
 #[test]
 fn a_board_following_fill_grows_with_the_board_width() -> Fallible<()> {
-    use pcbcraft_core::layout::fill::{FillCommand, RefillTarget};
-    use pcbcraft_core::model::fill::{FillRegion, FillSpec};
+    use sparksmith_core::layout::fill::{FillCommand, RefillTarget};
+    use sparksmith_core::model::fill::{FillRegion, FillSpec};
     let mut engine = sketched()?;
-    let add = |engine: &mut Engine, spec: serde_json::Value| -> Fallible<pcbcraft_core::Id> {
+    let add = |engine: &mut Engine, spec: serde_json::Value| -> Fallible<sparksmith_core::Id> {
         let spec: FillSpec = serde_json::from_value(spec)?;
         match apply(
             engine,
@@ -907,8 +907,8 @@ fn a_board_following_fill_grows_with_the_board_width() -> Fallible<()> {
     };
     refill(&mut engine)?;
     let edge = engine.project().rules.effective().copper.clearance.get(
-        pcbcraft_core::rules::CopperObject::Fill,
-        pcbcraft_core::rules::CopperObject::BoardEdge,
+        sparksmith_core::rules::CopperObject::Fill,
+        sparksmith_core::rules::CopperObject::BoardEdge,
     );
     assert!(edge > 0.0);
     let near = |x: Option<f64>, want: f64| x.is_some_and(|x| x <= want + 1e-6 && x >= want - 0.02);
@@ -919,7 +919,7 @@ fn a_board_following_fill_grows_with_the_board_width() -> Fallible<()> {
     assert_eq!(engine.project().board_size, [80.0, 40.0]);
     // The region follows at once; the stored copper is stale until a refill.
     assert_eq!(fill(&engine, follows)?.outline, outer(&engine));
-    assert!(pcbcraft_core::layout::fill::is_stale(
+    assert!(sparksmith_core::layout::fill::is_stale(
         engine.project(),
         &fill(&engine, follows)?
     ));
@@ -977,13 +977,13 @@ fn a_board_following_fill_grows_with_the_board_width() -> Fallible<()> {
 /// new id, never a used one.
 #[test]
 fn a_cutout_keeps_its_id_as_its_curves_change() -> Fallible<()> {
-    use pcbcraft_core::model::interface::{DatumOwner, DatumRole};
+    use sparksmith_core::model::interface::{DatumOwner, DatumRole};
     let mut engine = sketched()?;
     // The board uses its interface: the table is stored from here on.
     apply(
         &mut engine,
-        Operation::Interface(pcbcraft_core::interface::InterfaceCommand::Auto {
-            rule: pcbcraft_core::model::interface::AutoRule::Holes,
+        Operation::Interface(sparksmith_core::interface::InterfaceCommand::Auto {
+            rule: sparksmith_core::model::interface::AutoRule::Holes,
             on: false,
         }),
     )?;
@@ -1016,12 +1016,12 @@ fn a_cutout_keeps_its_id_as_its_curves_change() -> Fallible<()> {
             .cutouts
             .iter()
             .find(|c| {
-                let b = pcbcraft_core::model::board::outline_bounds(&c.outline);
+                let b = sparksmith_core::model::board::outline_bounds(&c.outline);
                 b.min[0] <= at[0] && at[0] <= b.max[0] && b.min[1] <= at[1] && at[1] <= b.max[1]
             })
             .and_then(|c| c.id)
             .ok_or("the cutout has its id")?;
-        let table = pcbcraft_core::interface::list::table(engine.project())?;
+        let table = sparksmith_core::interface::list::table(engine.project())?;
         let datum = table
             .datums
             .iter()
@@ -1029,7 +1029,11 @@ fn a_cutout_keeps_its_id_as_its_curves_change() -> Fallible<()> {
                 d.key.role == DatumRole::BoardCutout && d.key.owner == DatumOwner::Cutout { id }
             })
             .ok_or("the cutout's datum")?;
-        Ok((id.0, pcbcraft_core::interface::token(datum)?, datum.slot.0))
+        Ok((
+            id.0,
+            sparksmith_core::interface::token(datum)?,
+            datum.slot.0,
+        ))
     };
     let (a, a_token, a_slot) = cutout(&engine, [13.0, 13.0])?;
     let (b, b_token, b_slot) = cutout(&engine, [33.0, 13.0])?;

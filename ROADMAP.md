@@ -1,6 +1,6 @@
 # Sparksmith roadmap
 
-The [product plan](docs/pcbcraft-plan.md) defines release scope. This file tracks execution; unchecked work is not implemented.
+The [product plan](docs/sparksmith-plan.md) defines release scope. This file tracks execution; unchecked work is not implemented.
 
 ## Current milestone — prove the foundation
 
@@ -25,7 +25,7 @@ The native fixture proof is complete; see [foundation evidence](docs/foundation-
 - [x] Multi-sheet capture: net labels, power ports, sheets with a hierarchy (one use per child sheet), annotation across sheets, sheet furniture with a title block, label/hierarchy/power ERC and schematic PDF printing ([schematic capture](docs/schematic-capture.md)). Buses and reused child sheets remain.
 - [x] Explicit schematic-to-board sync, placement, manual routing and physical-island checks.
 - [x] Parametric PCB/pad/trace/envelope `.solidcraft` generation and independent engine regeneration tests.
-- [x] Atomic `.pcbcraft` save, offline reopen, shared command engine and undo/redo.
+- [x] Atomic `.sparksmith` save, offline reopen, shared command engine and undo/redo.
 - [x] One typed engine for UI, CLI and MCP; persistent net identity; engine-owned definition drafts; file dialogs, background saves and crash recovery.
 - [x] Manufacturing output: Gerber X2, Excellon, job file, pick-and-place, BOM, fabrication and assembly drawings, a production check with saved waivers, and one export command for UI, CLI and MCP ([as built](docs/fabrication-output.md)).
 - [ ] Complete first-release editors, library updates and manufacturing workflow.

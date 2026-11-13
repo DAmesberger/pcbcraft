@@ -1,5 +1,5 @@
 //! Electronics → native Solidcraft. Parametric pads, traces and envelopes are
-//! ordinary native features and planar joints, editable without Pcbcraft.
+//! ordinary native features and planar joints, editable without Sparksmith.
 //!
 //! The native model holds only physical bodies: the laminate, exact copper
 //! (pads, tracks, vias and copper fills, [`fill`]) and package envelopes.
@@ -19,18 +19,18 @@ use crate::native::{
 use crate::pad_outline::{self, Contour, FLATTEN_TOLERANCE_MM};
 use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
-use pcbcraft_core::geometry::{Transform3, cos_sin};
-use pcbcraft_core::library::model3d::{LibraryModel, ModelDefinition as LibraryModelDefinition};
-use pcbcraft_core::library::{
-    ModelPlacement, PackageDefinition, PackageModel, Pad, PadCopper, PadDefaults, PadShape,
-};
-use pcbcraft_core::{
-    CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, Stackup, instances,
-    layout,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use solidcraft_viewport::surface::OpaqueSurface;
+use sparksmith_core::geometry::{Transform3, cos_sin};
+use sparksmith_core::library::model3d::{LibraryModel, ModelDefinition as LibraryModelDefinition};
+use sparksmith_core::library::{
+    ModelPlacement, PackageDefinition, PackageModel, Pad, PadCopper, PadDefaults, PadShape,
+};
+use sparksmith_core::{
+    CopperLayer, Fabrication, Id, Layer, PadId, Placement, Point, Project, Stackup, instances,
+    layout,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Chords of each round end cap of a track's 3D copper. The core checks
@@ -38,7 +38,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// bounded (within 2 % of the radius) on boards of thousands of tracks.
 const TRACK_CAP_SEGMENTS: usize = 8;
 
-/// Which Pcbcraft object a native body came from. Stored in the native file's
+/// Which Sparksmith object a native body came from. Stored in the native file's
 /// metadata so identity survives reopening, compactly ([`identity`]).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Source {
@@ -205,11 +205,11 @@ impl NativeModel {
     /// names a package's bodies by the package, so this is what says
     /// which part a body is ([`PartBody`]). Refused for a meshed model.
     ///
-    /// [`PartBody`]: pcbcraft_core::interface::sidecar::PartBody
+    /// [`PartBody`]: sparksmith_core::interface::sidecar::PartBody
     pub fn part_bodies(
         &self,
         project: &Project,
-    ) -> Result<Vec<pcbcraft_core::interface::sidecar::PartBody>> {
+    ) -> Result<Vec<sparksmith_core::interface::sidecar::PartBody>> {
         let geometry = self.native_geometry()?;
         let Some(world) = self.world.as_deref() else {
             return Err(no_design());
@@ -240,7 +240,7 @@ impl NativeModel {
                     return None;
                 }
                 let instance = project.instance(source.instance?)?;
-                Some(pcbcraft_core::interface::sidecar::PartBody {
+                Some(sparksmith_core::interface::sidecar::PartBody {
                     body: body.to_owned(),
                     instance: instance.id,
                     designator: instance.designator.clone(),
@@ -352,7 +352,7 @@ impl Builder {
             self.record(&body.name, body.kind())?;
             if matches!(
                 body.material,
-                pcbcraft_core::library::model3d::ModelMaterial::Custom(_)
+                sparksmith_core::library::model3d::ModelMaterial::Custom(_)
             ) {
                 let look = models::imported::surface(model, body.material)?;
                 self.custom_looks.insert(body.name.clone(), look);
@@ -370,7 +370,7 @@ impl Builder {
     fn define_part(
         &mut self,
         package: &str,
-        use_: &pcbcraft_core::library::package_model::PartFileModel,
+        use_: &sparksmith_core::library::package_model::PartFileModel,
         bytes: &[u8],
     ) -> Result<String> {
         use crate::models::part_file;
@@ -571,7 +571,7 @@ fn shared_picks(native: &Native, sources: &[Source]) -> Result<BTreeMap<usize, u
                 .and_then(|o| by_occurrence.get(o))
                 .copied()
                 .ok_or_else(|| {
-                    Error::Verification(format!("placement {path:?} has no Pcbcraft source"))
+                    Error::Verification(format!("placement {path:?} has no Sparksmith source"))
                 })?;
             out.insert(*index, pick);
         }
@@ -653,7 +653,7 @@ fn finish_with(
         let name = body.definition_name();
         let kind = *kinds
             .get(name)
-            .ok_or_else(|| Error::Verification(format!("body {name} has no Pcbcraft kind")))?;
+            .ok_or_else(|| Error::Verification(format!("body {name} has no Sparksmith kind")))?;
         let item = shared
             .get(&index)
             .copied()
@@ -684,7 +684,7 @@ fn finish_with(
             // Saved bodies' detail does not depend on the fabrication.
             (
                 saved,
-                crate::material::detail(kind, &pcbcraft_core::Fabrication::default()),
+                crate::material::detail(kind, &sparksmith_core::Fabrication::default()),
             )
         };
         let t = body.source_transform;
@@ -1033,7 +1033,7 @@ enum PartModel<'a> {
     Library((&'a LibraryModelDefinition, &'a LibraryModel, &'a [u8])),
     /// A part file at the package's values, and its bytes.
     PartFile(
-        &'a pcbcraft_core::library::package_model::PartFileModel,
+        &'a sparksmith_core::library::package_model::PartFileModel,
         &'a [u8],
     ),
     /// The package's generated model.
@@ -1045,9 +1045,9 @@ enum PartModel<'a> {
 /// One placed part and what its model is made of.
 struct PlacedPart<'a> {
     placement: &'a Placement,
-    instance: &'a pcbcraft_core::ComponentInstance,
+    instance: &'a sparksmith_core::ComponentInstance,
     package: &'a PackageDefinition,
-    footprint: &'a pcbcraft_core::library::FootprintDefinition,
+    footprint: &'a sparksmith_core::library::FootprintDefinition,
     /// The model definition's name: one per package revision.
     stem: String,
     model: PartModel<'a>,
@@ -1248,7 +1248,7 @@ fn stackup_params(b: &mut Builder, project: &Project) -> Result<()> {
 
 /// A closed polyline as a sketch contour.
 fn polygon(points: &[Point]) -> Option<Contour> {
-    use pcbcraft_core::library::{Outline, Segment};
+    use sparksmith_core::library::{Outline, Segment};
     let (first, rest) = points.split_first()?;
     let mut segments: Vec<Segment> = rest.iter().map(|&to| Segment::Line { to }).collect();
     segments.push(Segment::Line { to: *first });
@@ -1561,7 +1561,7 @@ struct Kept {
 /// ([`mesh`]), and each part is its package revision's own design
 /// ([`designs`]), evaluated once and shared by every placement, placed by
 /// the document's transform (the pose the exact build's joints solve,
-/// [`pcbcraft_core::interface::package::model_to_board`]). What `kept`
+/// [`sparksmith_core::interface::package::model_to_board`]). What `kept`
 /// holds is taken instead of made again. The sources (and so the picks)
 /// are the exact build's, in its order. A part design not held is built
 /// on every core, stopping with [`Error::Cancelled`] at its next native
@@ -1572,7 +1572,7 @@ fn build_meshed(
     library: &SourceCache,
     cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<NativeModel> {
-    pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
+    sparksmith_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     let stackup = &project.stackup;
     stackup.check().map_err(|e| Error::Invalid(e.to_string()))?;
     let Kept {
@@ -1594,7 +1594,7 @@ fn build_meshed(
         let pick = next_pick(&sources);
         parts.extend(part.display(pick));
         sources.push(part.source(pick, NO_COMPONENT, None));
-        let pose = pcbcraft_core::interface::package::model_to_board(
+        let pose = sparksmith_core::interface::package::model_to_board(
             part.placement,
             part.package,
             stackup,
@@ -1637,9 +1637,9 @@ fn build_meshed(
         let started = std::time::Instant::now();
         let (bodies, stats) = mesh::bodies(&plan, &sources, meshes)?;
         #[cfg(not(target_arch = "wasm32"))]
-        if std::env::var_os("PCBCRAFT_TIMINGS").is_some() {
+        if std::env::var_os("SPARKSMITH_TIMINGS").is_some() {
             eprintln!(
-                "pcbcraft: {} flat bodies meshed in {:.1} ms ({} meshes made, {} reused)",
+                "sparksmith: {} flat bodies meshed in {:.1} ms ({} meshes made, {} reused)",
                 stats.bodies,
                 started.elapsed().as_secs_f64() * 1e3,
                 stats.meshed,
@@ -1692,7 +1692,7 @@ fn build_meshed(
 
 /// Build `project`'s exact model with `b`.
 fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
-    pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
+    sparksmith_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     let stackup = &project.stackup;
     let pads = placed_pads(project)?;
     // The board's flat bodies, described once ([`plan`]): the fills, pads,
@@ -2055,7 +2055,7 @@ fn pad_lands(pad: &PlacedPad<'_>, pick: u64, lands: &mut Vec<Land>) -> Result<Op
 /// A track's source, picked as `pick` with its body in `component`; an
 /// outer track's path (for the mask cap and finish over it) into `paths`.
 fn track_source(
-    track: &pcbcraft_core::Track,
+    track: &sparksmith_core::Track,
     pick: u64,
     component: u64,
     paths: &mut Vec<Path>,
@@ -2182,7 +2182,7 @@ struct ViaStyle {
 fn via_style(
     b: &mut Builder,
     project: &Project,
-    via: &pcbcraft_core::Via,
+    via: &sparksmith_core::Via,
     planned: &plan::ViaPlan,
 ) -> Result<ViaStyle> {
     let stackup = &project.stackup;
@@ -2282,7 +2282,7 @@ pub fn library_model<'a>(
 /// `solidcraft`) and that model's asset in the project.
 pub fn part_bytes<'a>(
     project: &'a Project,
-    use_: &pcbcraft_core::library::package_model::PartFileModel,
+    use_: &sparksmith_core::library::package_model::PartFileModel,
 ) -> Result<&'a [u8]> {
     let model = project.library.model(use_.model).ok_or_else(|| {
         Error::Invalid(format!(
@@ -2295,7 +2295,7 @@ pub fn part_bytes<'a>(
 
 /// The packed asset of a part-file model definition.
 pub fn part_asset<'a>(project: &'a Project, model: &LibraryModelDefinition) -> Result<&'a [u8]> {
-    if model.format != pcbcraft_core::library::model3d::ModelFormat::Solidcraft {
+    if model.format != sparksmith_core::library::model3d::ModelFormat::Solidcraft {
         return Err(Error::Invalid(format!(
             "part_file.model: a part file is a SolidCraft design, not {}",
             model.format.label()

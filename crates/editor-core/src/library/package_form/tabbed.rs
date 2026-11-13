@@ -3,7 +3,7 @@
 //! their own counts and lead spacing, and an optional tab on the +y side:
 //! either a wide gull-wing tab lead (SOT-223) or a flat flange under the
 //! body (DPAK). The footprint template is `templates/footprint_family/
-//! tabbed.rs` and the model builder `pcbcraft-solidcraft` `models/tabbed.rs`.
+//! tabbed.rs` and the model builder `sparksmith-solidcraft` `models/tabbed.rs`.
 //!
 //! Lead order (module docs of `package_form`): the −y row from −x to +x,
 //! then the +y row from +x to −x, then the tab. All leads sit on one grid of

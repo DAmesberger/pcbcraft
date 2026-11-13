@@ -18,8 +18,8 @@ use crate::geom::Mesh;
 use crate::material::{BodyKind, Detail, Pattern};
 use crate::scene::Geometry;
 use crate::stack::PROUD_MM;
-use pcbcraft_core::library::offset_polygon;
-use pcbcraft_core::{CopperLayer, DielectricKind, GlassStyle, Layer, Point, Stackup};
+use sparksmith_core::library::offset_polygon;
+use sparksmith_core::{CopperLayer, DielectricKind, GlassStyle, Layer, Point, Stackup};
 
 /// Copper lines stand a little prouder than the dielectric beside them.
 const COPPER_PROUD_SHARE: f64 = 1.5;
@@ -205,7 +205,7 @@ fn layout(stackup: &Stackup, board: &Board) -> Vec<(Band, f64, f64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::Fabrication;
+    use sparksmith_core::Fabrication;
 
     fn board(stackup: &Stackup) -> Board {
         Board {

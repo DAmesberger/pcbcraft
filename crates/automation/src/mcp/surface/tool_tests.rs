@@ -26,7 +26,7 @@ impl ClientHandler for Client {
     fn get_info(&self) -> ClientConfig {
         ClientConfig::new(
             ClientCapabilities::default(),
-            Implementation::new("pcbcraft-p2-client", "0"),
+            Implementation::new("sparksmith-p2-client", "0"),
         )
     }
 }
@@ -367,7 +367,7 @@ fn find_and_describe_reach_the_catalog() -> Fallible<()> {
 #[test]
 fn query_apply_and_act_run_through_the_gate() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let saved = dir.path().join("p2.pcbcraft");
+    let saved = dir.path().join("p2.sparksmith");
     let path = saved.display().to_string();
     block_on(async move {
         let c = Connection::open(Mode::AutoAllowEdits, dir.path()).await?;
@@ -568,14 +568,14 @@ fn query_apply_and_act_run_through_the_gate() -> Fallible<()> {
 #[test]
 fn projects_are_kept_apart_by_handle() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let file = dir.path().join("second.pcbcraft");
+    let file = dir.path().join("second.sparksmith");
     let path = file.display().to_string();
     let outside = std::env::temp_dir()
-        .join("pcbcraft-p2-outside.pcbcraft")
+        .join("sparksmith-p2-outside.sparksmith")
         .display()
         .to_string();
     let new = json!({"name": "project.new", "params": {
-        "profile": pcbcraft_core::rules::fixtures::prototype()?}});
+        "profile": sparksmith_core::rules::fixtures::prototype()?}});
     block_on(async move {
         let c = Connection::open(Mode::AllowAll, dir.path()).await?;
         let first = c.ok(QUERY, json!({"name": "project.inspect"})).await?;

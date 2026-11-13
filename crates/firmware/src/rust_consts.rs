@@ -1,9 +1,9 @@
 //! `rust-consts`: a `Pin` type and one `pub const` per assigned pin. Pins
 //! on their default function are listed in a comment only.
 use crate::text::{comment, preamble, rust_string};
-use pcbcraft_core::firmware::PinConfigReport;
-use pcbcraft_core::functions::{Level, Pull};
-use pcbcraft_core::{Error, Result};
+use sparksmith_core::firmware::PinConfigReport;
+use sparksmith_core::functions::{Level, Pull};
+use sparksmith_core::{Error, Result};
 use std::fmt::Write;
 
 /// The table's name; a pin may not take it.

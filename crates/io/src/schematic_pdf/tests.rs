@@ -1,19 +1,19 @@
 use super::*;
-use pcbcraft_core::geometry::Bounds;
-use pcbcraft_core::library::TextMetric;
-use pcbcraft_core::model::{LabelKind, PortShape, PowerStyle, SheetItem};
-use pcbcraft_core::schematic::SchematicCommand as C;
-use pcbcraft_core::{Engine, Operation, Outcome};
+use sparksmith_core::geometry::Bounds;
+use sparksmith_core::library::TextMetric;
+use sparksmith_core::model::{LabelKind, PortShape, PowerStyle, SheetItem};
+use sparksmith_core::schematic::SchematicCommand as C;
+use sparksmith_core::{Engine, Operation, Outcome};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 /// A sheet point a test writes in mm; test points lie within the range.
-fn pt(p: [f64; 2]) -> pcbcraft_core::units::PointNm {
-    pcbcraft_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
+fn pt(p: [f64; 2]) -> sparksmith_core::units::PointNm {
+    sparksmith_core::units::PointNm::from_mm_f64_rounded(p).unwrap_or_default()
 }
 
-fn nm(mm: f64) -> pcbcraft_core::units::Nm {
-    pcbcraft_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
+fn nm(mm: f64) -> sparksmith_core::units::Nm {
+    sparksmith_core::units::Nm::from_mm_f64_rounded(mm).unwrap_or_default()
 }
 
 fn apply(
@@ -194,7 +194,7 @@ const MARK_GAP_MM: f64 = 0.1;
 fn the_esp32_board_labels_clear_bodies_and_each_other() -> TestResult {
     let path = std::path::Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft"
+        "/../../examples/esp32-s31-devboard/esp32-s31-devboard.sparksmith"
     ));
     let project = crate::read_project(path)?.project;
     // Label text measured as it prints (capitals in Helvetica).
@@ -252,7 +252,7 @@ fn the_esp32_board_labels_clear_bodies_and_each_other() -> TestResult {
             .chain(printed.no_connects.iter().map(|p| {
                 (
                     "a no-connect cross".to_owned(),
-                    Bounds::point(*p).inflated(pcbcraft_core::schematic::NO_CONNECT_MM),
+                    Bounds::point(*p).inflated(sparksmith_core::schematic::NO_CONNECT_MM),
                     [MARK_GAP_MM, MARK_GAP_MM],
                 )
             }))
@@ -313,8 +313,8 @@ fn the_esp32_board_labels_clear_bodies_and_each_other() -> TestResult {
 /// sharp corner. Where the arc runs is checked on the scene in core.
 #[test]
 fn a_rounded_wire_corner_prints_as_its_arc() -> TestResult {
-    use pcbcraft_core::model::{Corner, FreeEnd};
-    use pcbcraft_core::schematic::WireTarget;
+    use sparksmith_core::model::{Corner, FreeEnd};
+    use sparksmith_core::schematic::WireTarget;
     let mut engine = Engine::default();
     let free = |p: Point| FreeEnd::new(p).map(WireTarget::Free).ok_or("free");
     apply(

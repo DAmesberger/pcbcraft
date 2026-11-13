@@ -59,7 +59,7 @@ pub struct Geometry {
     /// copper layer) a mask or silkscreen film covers; `None` for bodies
     /// spanning the board (substrate, through barrels) and component
     /// bodies. Layer visibility in 3D reads it.
-    pub layer: Option<pcbcraft_core::CopperLayer>,
+    pub layer: Option<sparksmith_core::CopperLayer>,
     /// The dielectric (counted from the top, [`crate::stack::Stack::dielectrics`])
     /// a laminate body lies in: each slab of the laminate, the laminate in a
     /// mask opening, and the board edge's band of that dielectric and the

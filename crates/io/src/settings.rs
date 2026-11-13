@@ -8,8 +8,8 @@
 use crate::library_folder::{pretty, read_bounded};
 use crate::persistence::atomic_write;
 use crate::{Error, Result};
-use pcbcraft_core::catalog::EntryKey;
 use serde::{Deserialize, Serialize};
+use sparksmith_core::catalog::EntryKey;
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -37,16 +37,16 @@ pub const MAX_PANEL_WIDTH: f32 = 4096.0;
 /// Bytes of one configured path.
 pub const MAX_PATH: usize = 4096;
 /// Overrides the config directory (tests, sandboxes).
-pub const CONFIG_VAR: &str = "PCBCRAFT_CONFIG_DIR";
+pub const CONFIG_VAR: &str = "SPARKSMITH_CONFIG_DIR";
 /// Overrides the cache directory (tests, sandboxes).
-pub const CACHE_VAR: &str = "PCBCRAFT_CACHE_DIR";
+pub const CACHE_VAR: &str = "SPARKSMITH_CACHE_DIR";
 /// Overrides the recovery directory (tests, sandboxes).
-pub const RECOVERY_VAR: &str = "PCBCRAFT_RECOVERY_DIR";
+pub const RECOVERY_VAR: &str = "SPARKSMITH_RECOVERY_DIR";
 /// The per-user folder name (config, cache, Linux state): the product's
 /// short name.
-const APP_DIR: &str = pcbcraft_core::product::SHORT_NAME;
+const APP_DIR: &str = sparksmith_core::product::SHORT_NAME;
 /// The recovery folder's parent on macOS and Windows: the product name.
-const APP_NAME: &str = pcbcraft_core::product::NAME;
+const APP_NAME: &str = sparksmith_core::product::NAME;
 /// The folder names before the rename (docs/rename-phase-b.md), read only by
 /// [`UserDirs::adopt_former`].
 const FORMER_APP_DIR: &str = "pcbcraft";
@@ -123,7 +123,7 @@ pub const MAX_SAVED_FILTERS: usize = 64;
 /// Bytes of a saved filter's list name.
 pub const MAX_FILTER_LIST: usize = 64;
 /// Bytes of a saved filter's query: the catalog query's own bound.
-pub const MAX_FILTER_QUERY: usize = pcbcraft_core::catalog::MAX_QUERY;
+pub const MAX_FILTER_QUERY: usize = sparksmith_core::catalog::MAX_QUERY;
 
 /// How tall list rows are.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -351,10 +351,9 @@ impl KeyboardSettings {
     /// most [`MAX_BINDING_TEXT`] bytes, each command once.
     pub fn check(&self) -> Result<()> {
         if self.format != KEYMAP_FORMAT {
-            return Err(Error::Document(pcbcraft_core::Error::Unsupported(format!(
-                "unsupported keymap format {}",
-                self.format
-            ))));
+            return Err(Error::Document(sparksmith_core::Error::Unsupported(
+                format!("unsupported keymap format {}", self.format),
+            )));
         }
         if self.bindings.len() > MAX_BINDINGS {
             return Err(Error::TooLarge(format!(
@@ -426,7 +425,7 @@ pub fn write_keymap(path: &Path, bindings: &[KeyBinding]) -> Result<()> {
     atomic_write(path, &pretty(&file)?)
 }
 
-/// Where per-user files live: `PCBCRAFT_CONFIG_DIR` / `PCBCRAFT_CACHE_DIR`
+/// Where per-user files live: `SPARKSMITH_CONFIG_DIR` / `SPARKSMITH_CACHE_DIR`
 /// when set (tests, sandboxes), else the platform's config and cache
 /// directories under the product's short name (`sparksmith`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -436,7 +435,7 @@ pub struct UserDirs {
 }
 
 impl UserDirs {
-    /// `PCBCRAFT_CONFIG_DIR` / `PCBCRAFT_CACHE_DIR` when set, else the
+    /// `SPARKSMITH_CONFIG_DIR` / `SPARKSMITH_CACHE_DIR` when set, else the
     /// platform directories under the product's short name.
     pub fn from_env() -> Result<Self> {
         Self::from_vars(|name| std::env::var_os(name))
@@ -472,7 +471,7 @@ impl UserDirs {
         self.config.join(SETTINGS_FILE)
     }
 
-    /// Where crash-recovery snapshots live: `PCBCRAFT_RECOVERY_DIR` when
+    /// Where crash-recovery snapshots live: `SPARKSMITH_RECOVERY_DIR` when
     /// set, else the platform's state directory (`~/Library/Application
     /// Support/Sparksmith/Recovery`, `%LOCALAPPDATA%\Sparksmith\Recovery`,
     /// `$XDG_STATE_HOME/sparksmith/recovery` or `~/.local/state/sparksmith/recovery`).
@@ -548,7 +547,7 @@ impl UserDirs {
 /// outcome a line on stderr. A failed copy leaves the former folder as it
 /// is and is tried again on the next start.
 pub fn adopt_former_folders() {
-    let app = pcbcraft_core::product::SHORT_NAME;
+    let app = sparksmith_core::product::SHORT_NAME;
     for adopted in UserDirs::adopt_former() {
         match adopted {
             Ok(Adopted { from, to }) => eprintln!(
@@ -707,10 +706,9 @@ impl UserSettings {
     /// Bounds, path shapes and duplicates.
     pub fn check(&self) -> Result<()> {
         if self.format != SETTINGS_FORMAT {
-            return Err(Error::Document(pcbcraft_core::Error::Unsupported(format!(
-                "unsupported settings format {}",
-                self.format
-            ))));
+            return Err(Error::Document(sparksmith_core::Error::Unsupported(
+                format!("unsupported settings format {}", self.format),
+            )));
         }
         if self.sources.len() > MAX_SOURCES
             || self.favourites.len() > MAX_FAVOURITES
@@ -802,7 +800,7 @@ impl UserSettings {
             if source
                 .name
                 .as_deref()
-                .is_some_and(|n| !pcbcraft_core::ids::printable(n))
+                .is_some_and(|n| !sparksmith_core::ids::printable(n))
             {
                 return Err(Error::Invalid(format!(
                     "library source {} has a blank, overlong or non-printable name",
@@ -861,7 +859,7 @@ pub fn write_settings(path: &Path, settings: &UserSettings) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::ids::{DefinitionId, LibraryId, SourceLineageId};
+    use sparksmith_core::ids::{DefinitionId, LibraryId, SourceLineageId};
 
     /// `path` made absolute on this platform: Windows needs a drive, so
     /// `/work` becomes `C:/work` there.
@@ -1186,12 +1184,12 @@ mod tests {
     fn production_folders_are_kept_per_project_file() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join(SETTINGS_FILE);
-        let board = PathBuf::from(abs("/work/board.pcbcraft"));
+        let board = PathBuf::from(abs("/work/board.sparksmith"));
         let mut settings = UserSettings::default();
         settings.remember_production_folder(board.clone(), abs("/work/out").into());
         settings.remember_production_folder(board.clone(), abs("/work/fab").into());
-        settings.remember_production_folder("relative.pcbcraft".into(), abs("/x").into());
-        settings.remember_production_folder(abs("/work/other.pcbcraft").into(), "x".into());
+        settings.remember_production_folder("relative.sparksmith".into(), abs("/x").into());
+        settings.remember_production_folder(abs("/work/other.sparksmith").into(), "x".into());
         assert_eq!(settings.production_folders.len(), 1, "one per project");
         write_settings(&path, &settings)?;
         let read = read_settings(&path)?;
@@ -1200,12 +1198,12 @@ mod tests {
             Some(Path::new(&abs("/work/fab")))
         );
         assert_eq!(
-            read.production_folder(Path::new(&abs("/work/x.pcbcraft"))),
+            read.production_folder(Path::new(&abs("/work/x.sparksmith"))),
             None
         );
         for n in 0..40 {
             settings.remember_production_folder(
-                PathBuf::from(abs(&format!("/p/{n}.pcbcraft"))),
+                PathBuf::from(abs(&format!("/p/{n}.sparksmith"))),
                 PathBuf::from(abs("/out")),
             );
         }
@@ -1229,19 +1227,19 @@ mod tests {
         let path = dir.path().join(SETTINGS_FILE);
         let mut settings = UserSettings::default();
         for i in 0..12 {
-            settings.remember_project(format!("/work/p{i}.pcbcraft").into());
+            settings.remember_project(format!("/work/p{i}.sparksmith").into());
         }
-        settings.remember_project("relative.pcbcraft".into());
-        settings.remember_project("/work/p5.pcbcraft".into());
+        settings.remember_project("relative.sparksmith".into());
+        settings.remember_project("/work/p5.sparksmith".into());
         assert_eq!(settings.projects.len(), MAX_RECENT_PROJECTS);
-        assert_eq!(settings.projects[0], PathBuf::from("/work/p5.pcbcraft"));
-        assert_eq!(settings.projects[1], PathBuf::from("/work/p11.pcbcraft"));
-        let p5 = PathBuf::from("/work/p5.pcbcraft");
+        assert_eq!(settings.projects[0], PathBuf::from("/work/p5.sparksmith"));
+        assert_eq!(settings.projects[1], PathBuf::from("/work/p11.sparksmith"));
+        let p5 = PathBuf::from("/work/p5.sparksmith");
         assert_eq!(settings.projects.iter().filter(|p| **p == p5).count(), 1);
         assert!(
             !settings
                 .projects
-                .contains(&PathBuf::from("/work/p0.pcbcraft"))
+                .contains(&PathBuf::from("/work/p0.sparksmith"))
         );
         write_settings(&path, &settings)?;
         assert_eq!(read_settings(&path)?, settings);
@@ -1249,7 +1247,7 @@ mod tests {
         twice.projects[1] = twice.projects[0].clone();
         assert!(write_settings(&path, &twice).is_err(), "duplicate");
         let mut relative = settings.clone();
-        relative.projects[0] = "relative.pcbcraft".into();
+        relative.projects[0] = "relative.sparksmith".into();
         assert!(write_settings(&path, &relative).is_err(), "relative");
         assert_eq!(read_settings(&path)?, settings, "refusals changed nothing");
         Ok(())

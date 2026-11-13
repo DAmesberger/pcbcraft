@@ -130,7 +130,7 @@ Desktop (`pcb_editor/shove_tests.rs`), headless through the canvas:
 
 ## Performance
 
-Measured on Apple silicon (this checkout, release build), with `cargo test -p pcbcraft-core --release route_plan_timings -- --ignored --nocapture`:
+Measured on Apple silicon (this checkout, release build), with `cargo test -p sparksmith-core --release route_plan_timings -- --ignored --nocapture`:
 
 | Board | Index build | Walkaround per move (median / p95 / max) | Shove per move (median / p95 / max) |
 | --- | --- | --- | --- |
@@ -169,7 +169,7 @@ Every attempt is a pure function of the board, so the same edit gives the same b
 
 Tests: `crates/automation/tests/esp32_reroute.rs` on the ESP32 board: 40 → 41 mm keeps the USB pair coupled (before: 21.03 mm uncoupled); a pair re-routed by hand stays clear at 40 → 42 mm (before: 6 clearance errors, pair gap, skew and uncoupled findings, the R7-1 case); U2 turned 37° re-routes VBUS and GND (before: 4 clearance errors); the same edits twice give the same board; the reply carries the report. Each checks the refilled board for rule errors and the pair's class limits, and that one undo restores the file exactly. `layout/router/tests/reroute.rs`: a track whose part moves into a closed box of keepouts is left unrouted with no finding, and undo restores it. The desktop toast is `app::flow_tests::a_reroute_after_a_board_edit_is_one_toast`. J1 held 2 mm from the edge now re-routes VBUS and GND, which the carry alone left with 3 clearance errors, so `esp32_dimension_model` compares that update with a fresh build as a set of bodies, as it does for the widened board.
 
-Measured with `cargo test --release -p pcbcraft-automation --test esp32_reroute reroute_timings -- --ignored --nocapture` (Apple silicon, the whole edit through the engine, 15 runs):
+Measured with `cargo test --release -p sparksmith-automation --test esp32_reroute reroute_timings -- --ignored --nocapture` (Apple silicon, the whole edit through the engine, 15 runs):
 
 | Edit | Re-routed | Edit with re-route (median / max) | Carry only, before this change (median / max) |
 | --- | --- | --- | --- |

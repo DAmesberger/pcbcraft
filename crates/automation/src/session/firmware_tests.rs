@@ -9,8 +9,8 @@ use super::pinout_tests::{
     Fallible, Placed, Scenario, import_reviewed, instance_op, publish_and_place, schematic_op,
 };
 use super::*;
-use pcbcraft_core::firmware::PinConfigReport;
-use pcbcraft_firmware::{Emitter, template_hash};
+use sparksmith_core::firmware::PinConfigReport;
+use sparksmith_firmware::{Emitter, template_hash};
 
 fn assign_op(instance: &Value, peripheral: u64, roles: &[(u64, Option<u64>)]) -> Value {
     let roles: Vec<Value> = roles

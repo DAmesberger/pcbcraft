@@ -7,7 +7,7 @@
 //! The fixture is original: `ExampleCo` is a fictitious manufacturer and the
 //! `EX-` MPN, distributor and SKU are invented.
 use super::*;
-use pcbcraft_core::{Engine, PartRef};
+use sparksmith_core::{Engine, PartRef};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -152,7 +152,7 @@ fn publish_part(pair: &mut Pair) -> Fallible<PartRef> {
         "description": "Synthetic 10 kΩ ±1 % 0603 resistor; not a real product.",
         "provenance": "Original test fixture. ExampleCo is fictitious.",
     });
-    let empty = serde_json::to_value(pcbcraft_core::library::PartDefinition::default())?;
+    let empty = serde_json::to_value(sparksmith_core::library::PartDefinition::default())?;
     let created = pair.apply(json!({"editor": "Library", "operation": {
         "command": "library.new_draft",
         "params": {"meta": meta, "definition": {"kind": "part", "body": empty}},
@@ -224,7 +224,7 @@ fn publish_part(pair: &mut Pair) -> Fallible<PartRef> {
     let stored = &published["project"]["library"]["parts"][0]["definition"];
     assert_eq!(stored, &body);
     let dir = tempfile::tempdir()?;
-    let path = dir.path().join("parts.pcbcraft").display().to_string();
+    let path = dir.path().join("parts.sparksmith").display().to_string();
     let saved = pair
         .session
         .dispatch(json!({"command": "project.save", "params": {"path": path}}));
@@ -262,7 +262,7 @@ fn assign_part_clears_and_refuses_bad_input_through_json() -> TestResult {
 
     pair.apply(assign(&instances, None)?)?;
     pair.refuse(assign(&[], None)?, "invalid_input")?;
-    let unknown = PartRef::new(pcbcraft_core::DefinitionId(9999), part.revision);
+    let unknown = PartRef::new(sparksmith_core::DefinitionId(9999), part.revision);
     let before = pair.session.engine().document().clone();
     let refused = pair
         .session

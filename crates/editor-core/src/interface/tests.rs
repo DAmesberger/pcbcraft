@@ -553,19 +553,19 @@ fn every_finding_code_is_listed_once() {
     );
 }
 
-/// The recorded schemas are the generated ones. Set `PCBCRAFT_BLESS=1` to
+/// The recorded schemas are the generated ones. Set `SPARKSMITH_BLESS=1` to
 /// rewrite the file after a deliberate contract change.
 #[test]
 fn the_recorded_schemas_match() -> Fallible {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(SCHEMA_FILE);
     let generated = schemas();
-    if std::env::var_os("PCBCRAFT_BLESS").is_some() {
+    if std::env::var_os("SPARKSMITH_BLESS").is_some() {
         std::fs::write(&path, serde_json::to_string_pretty(&generated)? + "\n")?;
     }
     let recorded: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
     assert!(
         recorded == generated,
-        "docs/architecture/board-interface.schema.json is stale; rerun with PCBCRAFT_BLESS=1"
+        "docs/architecture/board-interface.schema.json is stale; rerun with SPARKSMITH_BLESS=1"
     );
     Ok(())
 }

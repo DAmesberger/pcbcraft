@@ -8,11 +8,11 @@
 //! design blocks the publish, writing nothing.
 use super::Session;
 use crate::Result;
-use pcbcraft_core::Operation;
-use pcbcraft_core::interface::publish;
-use pcbcraft_core::interface::{InterfaceCommand, PublishParams, PublishPreviewParams};
-use pcbcraft_io::interface as files;
 use serde_json::{Value, json};
+use sparksmith_core::Operation;
+use sparksmith_core::interface::publish;
+use sparksmith_core::interface::{InterfaceCommand, PublishParams, PublishPreviewParams};
+use sparksmith_io::interface as files;
 use std::path::Path;
 
 impl Session {
@@ -95,9 +95,9 @@ impl Session {
         let design = Path::new(&params.path);
         files::check_design_path(design)?;
         let project = self.engine.project_arc().clone();
-        let blockers = pcbcraft_core::interface::assembly_link::publish_blockers(&project);
+        let blockers = sparksmith_core::interface::assembly_link::publish_blockers(&project);
         if !blockers.is_empty() {
-            return Err(pcbcraft_core::interface::findings::publish_blocked(&blockers).into());
+            return Err(sparksmith_core::interface::findings::publish_blocked(&blockers).into());
         }
         let previous = files::read_sidecar(design)?;
         let recorded = project.interface.source_id;
@@ -108,14 +108,14 @@ impl Session {
             (None, None) => Some(files::new_source_id()?),
         }
         .ok_or_else(|| {
-            pcbcraft_io::Error::Invalid(
+            sparksmith_io::Error::Invalid(
                 "interface.source: the interface published there belongs to another board; \
                  choose another file"
                     .into(),
             )
         })?;
         let sidecar = publish::candidate(&project, params.tier, source_id)?;
-        let exported = pcbcraft_solidcraft::interface::build(&project, sidecar)?;
+        let exported = sparksmith_solidcraft::interface::build(&project, sidecar)?;
         let temporary = files::temporary_design(design)?;
         let temporary_text = temporary.to_string_lossy().into_owned();
         if let Err(error) = exported.save_new(&temporary_text) {
@@ -126,10 +126,10 @@ impl Session {
         // The hash SolidCraft keeps on a linked design's link to the file: the
         // older-board check compares the two (slice B5).
         let written = match std::fs::read(&temporary) {
-            Ok(bytes) => pcbcraft_core::interface::assembly_link::file_hash(&bytes),
+            Ok(bytes) => sparksmith_core::interface::assembly_link::file_hash(&bytes),
             Err(error) => {
                 let _ = std::fs::remove_file(&temporary);
-                return Err(pcbcraft_io::Error::from(error).into());
+                return Err(sparksmith_io::Error::from(error).into());
             }
         };
         files::put_in_place(design, &temporary, &text)?;
@@ -149,7 +149,7 @@ impl Session {
         // Section 2 checked against the board plan (A5): reported, the
         // files written all the same.
         if let Some(check) = exported.check {
-            let report = pcbcraft_solidcraft::export::report(
+            let report = sparksmith_solidcraft::export::report(
                 exported.sidecar.tier,
                 0,
                 Some(check),

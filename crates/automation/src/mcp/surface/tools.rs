@@ -17,13 +17,13 @@ use super::outcome;
 use crate::session::Request;
 use crate::session::discovery::{self, Call};
 use crate::session::metadata::{self, EntryMeta, Kind};
-use pcbcraft_core::{Class, MAX_BATCH};
 use rmcp::ErrorData;
 use rmcp::model::{CallToolResult, JsonObject, Tool, ToolAnnotations};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
+use sparksmith_core::{Class, MAX_BATCH};
 use std::sync::{Arc, OnceLock};
 
 /// The longest `find` text, in characters.

@@ -16,11 +16,11 @@
 //! its old name and a later import of the converted file brings the
 //! lineage in again under its new name. The run lists those lineages.
 use crate::Result;
-use pcbcraft_core::format::EditorFile;
-use pcbcraft_core::ids::{DefinitionKind, DefinitionRef, LibraryId};
-use pcbcraft_core::layout::dimensions::model::package_design_key;
-use pcbcraft_core::library::bundle::{OriginRecord, SourceRevision, content_hash, to_record};
-use pcbcraft_core::library::import::PROJECT_FILES;
+use sparksmith_core::format::EditorFile;
+use sparksmith_core::ids::{DefinitionKind, DefinitionRef, LibraryId};
+use sparksmith_core::layout::dimensions::model::package_design_key;
+use sparksmith_core::library::bundle::{OriginRecord, SourceRevision, content_hash, to_record};
+use sparksmith_core::library::import::PROJECT_FILES;
 
 /// What [`refresh`] changed, and what it could not.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -38,7 +38,7 @@ pub struct Refreshed {
     /// The farthest a recomputed fill's copper moved, nanometres.
     pub fill_moved_nm: u64,
     /// Fills whose refill would change their copper: left stale.
-    pub stale_fills: Vec<pcbcraft_core::Id>,
+    pub stale_fills: Vec<sparksmith_core::Id>,
 }
 
 impl Refreshed {
@@ -116,7 +116,7 @@ const MAX_FILL_COMPARISONS: usize = 200_000_000;
 /// conversion or depends on one that was: it keeps its copper and old key,
 /// and still reads stale.
 fn fill_keys(file: &mut EditorFile, out: &mut Refreshed) -> Result<()> {
-    use pcbcraft_core::layout::fill::{RefillTarget, refill};
+    use sparksmith_core::layout::fill::{RefillTarget, refill};
     let refilled = refill(&file.project, RefillTarget::Stale)?;
     if refilled.is_empty() {
         return Ok(());
@@ -148,15 +148,15 @@ fn fill_keys(file: &mut EditorFile, out: &mut Refreshed) -> Result<()> {
     Ok(())
 }
 
-type Ring = [pcbcraft_core::geometry::Point];
+type Ring = [sparksmith_core::geometry::Point];
 
 /// The farthest any outline of `a` lies from its counterpart in `b` (each
 /// vertex from the other ring's edges, both ways), mm; `None` when the
 /// regions or their holes do not pair up one to one, or the comparison
 /// would be too large.
 fn copper_moved(
-    a: &[pcbcraft_core::model::fill::FilledRegion],
-    b: &[pcbcraft_core::model::fill::FilledRegion],
+    a: &[sparksmith_core::model::fill::FilledRegion],
+    b: &[sparksmith_core::model::fill::FilledRegion],
 ) -> Option<f64> {
     if a.len() != b.len() {
         return None;
@@ -217,7 +217,7 @@ fn origin_hash(
     file: &EditorFile,
     origins: &[OriginRecord],
     record: &OriginRecord,
-) -> Result<pcbcraft_core::ids::ContentHash> {
+) -> Result<sparksmith_core::ids::ContentHash> {
     let library = &file.project.library;
     let source = record.origin.library;
     let (meta, body) = library
@@ -237,7 +237,7 @@ fn origin_hash(
                     revision: o.origin.revision,
                 })
                 .ok_or_else(|| {
-                    pcbcraft_core::Error::NotFound(format!(
+                    sparksmith_core::Error::NotFound(format!(
                         "{} names {}, which came from no revision of its library",
                         library.describe(record.local),
                         library.describe(r)
@@ -249,7 +249,7 @@ fn origin_hash(
                 .find(|o| o.local.kind == kind && o.local.id == id)
                 .map(|o| o.origin.lineage)
                 .ok_or_else(|| {
-                    pcbcraft_core::Error::NotFound(format!(
+                    sparksmith_core::Error::NotFound(format!(
                         "{} names {}, which came from no lineage of its library",
                         library.describe(record.local),
                         library.describe_lineage(kind, id)
@@ -263,15 +263,15 @@ fn origin_hash(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pcbcraft_core::ids::{ContentHash, DefinitionId};
-    use pcbcraft_core::library::import;
+    use sparksmith_core::ids::{ContentHash, DefinitionId};
+    use sparksmith_core::library::import;
 
     /// Every Part of the synthetic catalog imported into an empty project,
     /// with the origins import recorded.
     fn imported() -> Result<EditorFile> {
-        let source = pcbcraft_core::catalog::synthetic::project_with_parts(4)?.library;
+        let source = sparksmith_core::catalog::synthetic::project_with_parts(4)?.library;
         let mut file = EditorFile {
-            version: pcbcraft_core::format::FILE_VERSION,
+            version: sparksmith_core::format::FILE_VERSION,
             project: Default::default(),
             drafts: Default::default(),
         };
@@ -291,8 +291,8 @@ mod tests {
         Ok(file)
     }
 
-    fn region(outer: Vec<[f64; 2]>) -> pcbcraft_core::model::fill::FilledRegion {
-        pcbcraft_core::model::fill::FilledRegion {
+    fn region(outer: Vec<[f64; 2]>) -> sparksmith_core::model::fill::FilledRegion {
+        sparksmith_core::model::fill::FilledRegion {
             outer,
             holes: Vec::new(),
         }

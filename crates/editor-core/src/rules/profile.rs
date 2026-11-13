@@ -1,7 +1,7 @@
 //! Fab profiles as files: every rule and default a board reads, each a
 //! value or a formula ([`super::formula`]), with the profile's source (a
 //! fabricator's capability page, its URL and the date it was read) and an
-//! optional source per value. Pcbcraft ships no estimated profiles: a
+//! optional source per value. Sparksmith ships no estimated profiles: a
 //! profile is a file someone wrote from a source they name.
 //!
 //! A profile file is versioned JSON ([`ProfileFile`], format
@@ -39,7 +39,7 @@ pub const PROFILE_FILE_FORMAT: u32 = 1;
 #[serde(deny_unknown_fields)]
 pub struct ProfileSource {
     /// Who published the numbers: a fabricator, or for a test fixture
-    /// "Pcbcraft test fixture".
+    /// "Sparksmith test fixture".
     pub publisher: String,
     /// The document's title.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -52,7 +52,7 @@ pub struct ProfileSource {
     pub notes: String,
 }
 
-/// How the fabricator reads hole sizes in drill files. Pcbcraft's hole
+/// How the fabricator reads hole sizes in drill files. Sparksmith's hole
 /// sizes are always finished sizes, as the industry states them; this
 /// says what the drill file and the fabrication drawing write.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -63,7 +63,7 @@ pub enum DrillFiles {
     /// Drill files list tool sizes: a plated hole's finished size plus
     /// `pth_allowance` mm; unplated holes are drilled at their size.
     Drilled { pth_allowance: f64, source: String },
-    /// The fabricator does not publish how it reads drill files. Pcbcraft
+    /// The fabricator does not publish how it reads drill files. Sparksmith
     /// writes finished sizes and the drawing says so; ask the fabricator.
     NotPublished { source: String },
 }

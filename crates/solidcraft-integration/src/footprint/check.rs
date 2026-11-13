@@ -11,7 +11,7 @@ use solidcraft_engine::sketch::{ConstraintKind, CurveKind, MAX_SPLINE_POINTS, Sk
 
 use super::{Outcome, problem};
 
-use pcbcraft_core::library::footprint_source::{
+use sparksmith_core::library::footprint_source::{
     MAX_SKETCH_BYTES, MAX_SKETCH_CONSTRAINTS as MAX_CONSTRAINTS, MAX_SKETCH_POINTS as MAX_POINTS,
 };
 

@@ -1,7 +1,7 @@
 use super::*;
-use pcbcraft_core::geometry::segment_distance;
-use pcbcraft_core::ids::UnitId;
-use pcbcraft_core::library::graphics::{ItemParams, ShapeNmParams, Side};
+use sparksmith_core::geometry::segment_distance;
+use sparksmith_core::ids::UnitId;
+use sparksmith_core::library::graphics::{ItemParams, ShapeNmParams, Side};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 

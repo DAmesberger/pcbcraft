@@ -5,7 +5,7 @@
 //! pre-flight report that gates export. Written from Ucamco's public Gerber
 //! Layer Format and Gerber Job File specifications and the public Excellon
 //! format description; no other tool's reader or writer was consulted.
-//! `pcbcraft-io` writes the files (a folder or one ZIP) and the PDF drawings.
+//! `sparksmith-io` writes the files (a folder or one ZIP) and the PDF drawings.
 //!
 //! Coordinates are board millimetres (the board origin, y up), written at
 //! 6 decimals (1 nm), the precision the Gerber specification recommends.
@@ -76,7 +76,7 @@ pub struct Outputs {
     #[serde(default = "yes")]
     pub assembly: bool,
     /// The fabrication and assembly drawings (PDF, written by
-    /// `pcbcraft-io`; the core ignores this flag).
+    /// `sparksmith-io`; the core ignores this flag).
     #[serde(default = "yes")]
     pub drawings: bool,
 }
@@ -186,7 +186,7 @@ pub fn base_name(project: &Project, options: &FabricationOptions) -> Result<Stri
 /// Every text file of the set for `project`: Gerber layers and the job
 /// file, drill files, drill map and table, pick-and-place and BOM, in a
 /// fixed order. Deterministic: the same design and options give the same
-/// bytes. The PDF drawings are `pcbcraft-io`'s ([`drawing::data`]).
+/// bytes. The PDF drawings are `sparksmith-io`'s ([`drawing::data`]).
 ///
 /// Generation does not check the design; run [`preflight::report`] first.
 /// It fails only on input it cannot represent (a coordinate past the

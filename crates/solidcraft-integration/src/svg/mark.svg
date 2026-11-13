@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Original Pcbcraft test artwork, MIT OR Apache-2.0: a badge with a dot,
+<!-- Original Sparksmith test artwork, MIT OR Apache-2.0: a badge with a dot,
      a wave, a tilted triangle, a ring and a rounded tab. 30 mm x 20 mm. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="20mm" viewBox="0 0 300 200">
   <rect x="10" y="10" width="280" height="180" rx="20" fill="none" stroke="#000" stroke-width="4"/>

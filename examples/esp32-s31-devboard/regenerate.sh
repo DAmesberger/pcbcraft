@@ -5,15 +5,15 @@
 # 1. The replay (583 JSON-lines requests through `sparksmith stdio
 #    --operator`, the same command engine the desktop and MCP use) opens the
 #    module example, authors the other parts, draws the schematic, lays out
-#    and routes the board and saves esp32-s31-devboard.pcbcraft. Any refused
+#    and routes the board and saves esp32-s31-devboard.sparksmith. Any refused
 #    request fails.
 # 2. `fab` writes the production files (byte-identical: --date none).
 # 3. The schematic PDF and the native Solidcraft model are written beside it.
 set -eu
 dir=examples/esp32-s31-devboard
-cli=${PCBCRAFT_CLI:-target/nix/ci/sparksmith}
+cli=${SPARKSMITH_CLI:-target/nix/ci/sparksmith}
 [ -x "$cli" ] || cli=target/ci/sparksmith
-[ -x "$cli" ] || { echo "build first: cargo build --locked --profile ci -p pcbcraft-cli" >&2; exit 1; }
+[ -x "$cli" ] || { echo "build first: cargo build --locked --profile ci -p sparksmith-cli" >&2; exit 1; }
 
 replies=$(mktemp)
 # --operator: your own replay, not a model's (relative paths, ungated).
@@ -28,10 +28,10 @@ echo "replay: $(wc -l < "$replies") requests accepted"
 rm -f "$replies"
 
 rm -rf "$dir/fab" "$dir/esp32-s31-devboard-schematic.pdf" "$dir/esp32-s31-devboard.solidcraft"
-"$cli" fab "$dir/esp32-s31-devboard.pcbcraft" "$dir/fab" --date none > /dev/null
-"$cli" export-schematic-pdf "$dir/esp32-s31-devboard.pcbcraft" "$dir/esp32-s31-devboard-schematic.pdf" > /dev/null
+"$cli" fab "$dir/esp32-s31-devboard.sparksmith" "$dir/fab" --date none > /dev/null
+"$cli" export-schematic-pdf "$dir/esp32-s31-devboard.sparksmith" "$dir/esp32-s31-devboard-schematic.pdf" > /dev/null
 if [ "${NATIVE:-0}" = 1 ]; then
     # About 10 s of CPU (see docs/e2e-esp32-devboard.md, gap 3).
-    "$cli" export "$dir/esp32-s31-devboard.pcbcraft" "$dir/esp32-s31-devboard.solidcraft" > /dev/null
+    "$cli" export "$dir/esp32-s31-devboard.sparksmith" "$dir/esp32-s31-devboard.solidcraft" > /dev/null
 fi
-echo "wrote $dir/esp32-s31-devboard.pcbcraft, $dir/fab/ and the schematic PDF"
+echo "wrote $dir/esp32-s31-devboard.sparksmith, $dir/fab/ and the schematic PDF"

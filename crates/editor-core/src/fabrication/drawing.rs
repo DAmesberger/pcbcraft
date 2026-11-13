@@ -1,5 +1,5 @@
 //! What the fabrication and assembly drawings print, in board millimetres,
-//! curves already flattened: `pcbcraft-io` lays it out as PDF pages and
+//! curves already flattened: `sparksmith-io` lays it out as PDF pages and
 //! interprets nothing.
 use super::FabricationOptions;
 use super::drill::{DrillHole, DrillTable};

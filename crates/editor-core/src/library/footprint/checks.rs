@@ -61,7 +61,7 @@ impl LintLimits {
     }
 }
 
-/// `needs 0.1 mm (Pcbcraft default: min mask web)`.
+/// `needs 0.1 mm (Sparksmith default: min mask web)`.
 fn needs((mm, cite): &(f64, String)) -> String {
     let text = format!("{mm:.3}");
     let text = text.trim_end_matches('0').trim_end_matches('.');

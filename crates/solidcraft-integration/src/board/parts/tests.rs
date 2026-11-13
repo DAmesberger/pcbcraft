@@ -6,23 +6,23 @@
 use super::super::tests::{
     EV, Fallible, apply, close, created_curves, edit, hosted, set, sketch, sketched,
 };
-use pcbcraft_core::geometry::Point;
-use pcbcraft_core::ids::Id;
-use pcbcraft_core::layout::LayoutCommand;
-use pcbcraft_core::layout::dimensions::DimensionCommand;
-use pcbcraft_core::layout::fill::FillCommand;
-use pcbcraft_core::layout::outline::{BoardEdit, BoardShapeEvaluator};
-use pcbcraft_core::library::footprint_source::{
+use sparksmith_core::geometry::Point;
+use sparksmith_core::ids::Id;
+use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::layout::dimensions::DimensionCommand;
+use sparksmith_core::layout::fill::FillCommand;
+use sparksmith_core::layout::outline::{BoardEdit, BoardShapeEvaluator};
+use sparksmith_core::library::footprint_source::{
     DimKind, DimValue, Expr, GeomConstraint, SketchCurveId, SketchEdit, SketchPointId, SketchRef,
 };
-use pcbcraft_core::library::{Outline, Segment};
-use pcbcraft_core::model::board::ConstraintTarget;
-use pcbcraft_core::model::board::outline_bounds;
-use pcbcraft_core::model::dimension::{
+use sparksmith_core::library::{Outline, Segment};
+use sparksmith_core::model::board::ConstraintTarget;
+use sparksmith_core::model::board::outline_bounds;
+use sparksmith_core::model::dimension::{
     BoardRef, BoxSide, FeatureRef, PadPoint, PartAxis, PartDimensionSpec, PartRelation,
 };
-use pcbcraft_core::model::fill::{FillRegion, FillSpec};
-use pcbcraft_core::{CopperLayer, Engine, Layer, Operation, Outcome};
+use sparksmith_core::model::fill::{FillRegion, FillSpec};
+use sparksmith_core::{CopperLayer, Engine, Layer, Operation, Outcome};
 
 fn curve(engine: &Engine, name: &str) -> Fallible<SketchCurveId> {
     sketch(engine)?
@@ -52,13 +52,13 @@ fn distance(refs: Vec<BoardRef>, value: DimValue) -> PartDimensionSpec {
     }
 }
 
-fn add(engine: &mut Engine, dimension: PartDimensionSpec) -> pcbcraft_core::Result<Id> {
+fn add(engine: &mut Engine, dimension: PartDimensionSpec) -> sparksmith_core::Result<Id> {
     match apply(
         engine,
         Operation::Dimension(DimensionCommand::Add { dimension }),
     )? {
         Outcome::DimensionAdded { dimension } => Ok(dimension),
-        _ => Err(pcbcraft_core::Error::Invalid("no dimension added".into())),
+        _ => Err(sparksmith_core::Error::Invalid("no dimension added".into())),
     }
 }
 
@@ -80,7 +80,7 @@ fn pose(engine: &Engine, part: Id) -> Fallible<(Point, f64, Layer)> {
         .ok_or_else(|| "placement".into())
 }
 
-fn move_to(engine: &mut Engine, part: Id, to: Point) -> Fallible<pcbcraft_core::Result<Outcome>> {
+fn move_to(engine: &mut Engine, part: Id, to: Point) -> Fallible<sparksmith_core::Result<Outcome>> {
     let (_, rotation_deg, layer) = pose(engine, part)?;
     Ok(apply(
         engine,
@@ -282,7 +282,7 @@ fn parts_dimensioned_to_each_other_solve_together() -> Fallible<()> {
 fn a_pad_side_is_dimensioned_in_the_part_frame() -> Fallible<()> {
     let mut engine = sketched()?;
     let (part, _) = parts(&engine)?;
-    let pad = pcbcraft_core::layout::pads(engine.project())
+    let pad = sparksmith_core::layout::pads(engine.project())
         .into_iter()
         .find(|p| p.instance == part)
         .ok_or("pad")?
@@ -302,7 +302,7 @@ fn a_pad_side_is_dimensioned_in_the_part_frame() -> Fallible<()> {
             DimValue::Fixed(1.0),
         ),
     )?;
-    let placed = pcbcraft_core::layout::pads(engine.project())
+    let placed = sparksmith_core::layout::pads(engine.project())
         .into_iter()
         .find(|p| p.instance == part && p.pad == pad)
         .ok_or("pad")?;
@@ -506,18 +506,18 @@ fn a_part_held_by_expressions_follows_the_board() -> Fallible<()> {
     )?;
     let held = pose(&engine, other)?;
     assert!((held.0[0] - 25.0).abs() < 1e-6, "{held:?}");
-    assert!(pcbcraft_core::layout::dimensions::checks(engine.project()).is_empty());
+    assert!(sparksmith_core::layout::dimensions::checks(engine.project()).is_empty());
     edit(
         &mut engine,
         vec![BoardEdit::Sketch {
             edit: SketchEdit::Delete { ids: vec![line] },
         }],
     )?;
-    let findings = pcbcraft_core::layout::checks(engine.project());
+    let findings = sparksmith_core::layout::checks(engine.project());
     assert_eq!(
         findings
             .iter()
-            .filter(|f| f.code == pcbcraft_core::layout::dimensions::REFERENCE_LOST)
+            .filter(|f| f.code == sparksmith_core::layout::dimensions::REFERENCE_LOST)
             .count(),
         1,
         "{findings:#?}"
@@ -592,7 +592,7 @@ fn a_part_is_held_to_an_arc_edge() -> Fallible<()> {
                 construction: true,
             }),
             BoardEdit::NameEdge {
-                name: pcbcraft_core::model::board::EdgeName("rim".into()),
+                name: sparksmith_core::model::board::EdgeName("rim".into()),
                 curve: upper.first().cloned().ok_or("arc")?,
             },
             sketch_edit(SketchEdit::Delete { ids: old }),
@@ -715,9 +715,9 @@ fn fills_translate_to_their_dimensions_and_report_when_gone() -> Fallible<()> {
         &mut engine,
         Operation::Fill(FillCommand::Delete { id: fill }),
     )?;
-    let lost = pcbcraft_core::layout::checks(engine.project())
+    let lost = sparksmith_core::layout::checks(engine.project())
         .into_iter()
-        .filter(|f| f.code == pcbcraft_core::layout::dimensions::REFERENCE_LOST)
+        .filter(|f| f.code == sparksmith_core::layout::dimensions::REFERENCE_LOST)
         .count();
     assert_eq!(lost, 2);
     Ok(())
@@ -749,13 +749,13 @@ fn courtyard_features_put_the_part_extent_on_the_edge() -> Fallible<()> {
         distance(vec![courtyard(None), left], DimValue::Fixed(20.0)),
     )?;
     let project = engine.project();
-    let mut pts: Vec<Point> = pcbcraft_core::layout::courtyard::placed_courtyards(project)
+    let mut pts: Vec<Point> = sparksmith_core::layout::courtyard::placed_courtyards(project)
         .into_iter()
         .filter(|c| c.instance == part)
         .flat_map(|c| c.shape.flatten(1e-4))
         .collect();
     if pts.is_empty() {
-        pts = pcbcraft_core::layout::pads(project)
+        pts = sparksmith_core::layout::pads(project)
             .into_iter()
             .filter(|p| p.instance == part)
             .flat_map(|p| p.outline().flatten(1e-4))
@@ -772,7 +772,7 @@ fn courtyard_features_put_the_part_extent_on_the_edge() -> Fallible<()> {
 
 /// Timing of the parts solve against §9's target (any edit re-solves within
 /// 16 ms with 100 dimensioned parts). Run in release:
-/// `cargo test --release -p pcbcraft-solidcraft parts_solve_timing -- --ignored --nocapture`.
+/// `cargo test --release -p sparksmith-solidcraft parts_solve_timing -- --ignored --nocapture`.
 /// 100 parts on a 200 mm board: 50 held to the right and bottom edges, 50
 /// held to one of those by a horizontal and a vertical distance (pairs), each
 /// with its origin and a pad-sized line feature; solved as one request (the
@@ -781,8 +781,8 @@ fn courtyard_features_put_the_part_extent_on_the_edge() -> Fallible<()> {
 #[test]
 #[ignore = "timing; run in release"]
 fn parts_solve_timing() -> Fallible<()> {
-    use pcbcraft_core::layout::dimensions::{FeatureGeometry, PartPose, PartsRequest, SolvePart};
-    use pcbcraft_core::model::dimension::PartDimension;
+    use sparksmith_core::layout::dimensions::{FeatureGeometry, PartPose, PartsRequest, SolvePart};
+    use sparksmith_core::model::dimension::PartDimension;
     let mut times = Vec::new();
     for width in [200.0, 220.0] {
         let board = EV.rectangle([width, 200.0])?;
@@ -960,7 +960,7 @@ fn a_spline_top_edge_keeps_the_header_on_its_own_edges() -> Fallible<()> {
     }
     assert!(close(pose(&engine, id)?.0, [6.0, 18.0]));
     assert_eq!(pose(&engine, id)?, pose(&plain, j1(&plain)?)?);
-    assert!(pcbcraft_core::layout::dimensions::checks(engine.project()).is_empty());
+    assert!(sparksmith_core::layout::dimensions::checks(engine.project()).is_empty());
     Ok(())
 }
 
@@ -972,9 +972,9 @@ fn a_spline_top_edge_keeps_the_header_on_its_own_edges() -> Fallible<()> {
 #[test]
 fn a_parameter_that_drives_no_outline_edge_is_reported() -> Fallible<()> {
     let idle = |engine: &Engine| -> Vec<String> {
-        pcbcraft_core::layout::outline::checks(engine.project())
+        sparksmith_core::layout::outline::checks(engine.project())
             .into_iter()
-            .filter(|f| f.code == pcbcraft_core::layout::outline::PARAM_IDLE)
+            .filter(|f| f.code == sparksmith_core::layout::outline::PARAM_IDLE)
             .map(|f| f.message)
             .collect()
     };
@@ -988,23 +988,23 @@ fn a_parameter_that_drives_no_outline_edge_is_reported() -> Fallible<()> {
           parameter."
         ]
     );
-    let pcbcraft_core::QueryResult::Preflight(report) =
-        engine.query(pcbcraft_core::Query::Preflight { profile: None })?
+    let sparksmith_core::QueryResult::Preflight(report) =
+        engine.query(sparksmith_core::Query::Preflight { profile: None })?
     else {
         return Err("preflight".into());
     };
     assert!(report.items.iter().any(|i| {
-        i.code == pcbcraft_core::layout::outline::PARAM_IDLE
-            && i.severity == pcbcraft_core::issues::Severity::Warning
+        i.code == sparksmith_core::layout::outline::PARAM_IDLE
+            && i.severity == sparksmith_core::issues::Severity::Warning
             && !i.blocks()
     }));
     Ok(())
 }
 
 fn param_idle(engine: &Engine) -> Vec<String> {
-    pcbcraft_core::layout::outline::checks(engine.project())
+    sparksmith_core::layout::outline::checks(engine.project())
         .into_iter()
-        .filter(|f| f.code == pcbcraft_core::layout::outline::PARAM_IDLE)
+        .filter(|f| f.code == sparksmith_core::layout::outline::PARAM_IDLE)
         .map(|f| f.message)
         .collect()
 }
@@ -1024,7 +1024,7 @@ fn is_construction(engine: &Engine, id: &SketchCurveId) -> Fallible<bool> {
 /// line on purpose leaves `height` idle, which the warning reports.
 #[test]
 fn a_curve_over_a_filleted_edge_keeps_the_board_parameters_driving_it() -> Fallible<()> {
-    use pcbcraft_core::layout::outline::{SHAPE_INVALID, SHAPE_OPEN};
+    use sparksmith_core::layout::outline::{SHAPE_INVALID, SHAPE_OPEN};
     let curves = [
         BoardEdit::AddSpline {
             points: vec![[42.0, 28.0], [22.0, 29.5], [2.0, 28.0]],
@@ -1041,7 +1041,7 @@ fn a_curve_over_a_filleted_edge_keeps_the_board_parameters_driving_it() -> Falli
         },
     ];
     let faults = |engine: &Engine| -> Vec<String> {
-        pcbcraft_core::layout::outline::checks(engine.project())
+        sparksmith_core::layout::outline::checks(engine.project())
             .into_iter()
             .filter(|f| f.code == SHAPE_OPEN || f.code == SHAPE_INVALID)
             .map(|f| f.message)
@@ -1051,7 +1051,7 @@ fn a_curve_over_a_filleted_edge_keeps_the_board_parameters_driving_it() -> Falli
         let mut engine = Engine::showcase_hosted_fixture(hosted())?;
         let top = super::super::tests::created_curves_of(apply(
             &mut engine,
-            Operation::Board(pcbcraft_core::layout::outline::BoardCommand::Edit {
+            Operation::Board(sparksmith_core::layout::outline::BoardCommand::Edit {
                 edits: vec![curve],
             }),
         )?);
@@ -1067,7 +1067,7 @@ fn a_curve_over_a_filleted_edge_keeps_the_board_parameters_driving_it() -> Falli
         assert!(faults(&engine).is_empty(), "{:?}", faults(&engine));
         assert!(param_idle(&engine).is_empty(), "{:?}", param_idle(&engine));
         let board = engine.project().board().into_owned();
-        let poly = pcbcraft_core::model::board::flatten(&board.outer, 1e-3);
+        let poly = sparksmith_core::model::board::flatten(&board.outer, 1e-3);
         for end in [[42.0, 34.0], [2.0, 34.0]] {
             assert!(
                 poly.iter()
@@ -1096,7 +1096,7 @@ fn a_curve_over_a_filleted_edge_keeps_the_board_parameters_driving_it() -> Falli
 /// showcase.
 #[test]
 fn a_construction_line_leaves_the_fabrication_output_unchanged() -> Fallible<()> {
-    use pcbcraft_core::fabrication::{FabricationOptions, generate};
+    use sparksmith_core::fabrication::{FabricationOptions, generate};
     let plain = Engine::showcase_hosted_fixture(hosted())?;
     let mut engine = Engine::showcase_hosted_fixture(hosted())?;
     edit(

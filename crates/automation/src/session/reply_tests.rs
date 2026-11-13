@@ -22,7 +22,7 @@ fn add_via(session: &Session, position: [f64; 2]) -> Value {
 }
 
 fn demo() -> std::result::Result<Session, Box<dyn std::error::Error>> {
-    Ok(Session::new(pcbcraft_core::Engine::demo()?))
+    Ok(Session::new(sparksmith_core::Engine::demo()?))
 }
 
 fn ok(reply: Value) -> std::result::Result<Value, Box<dyn std::error::Error>> {
@@ -265,7 +265,7 @@ fn inspect_summarizes_and_reads_one_part() -> TestResult {
 #[test]
 fn replacing_the_document_answers_with_a_summary() -> TestResult {
     let mut session = demo()?;
-    let profile = pcbcraft_core::rules::fixtures::prototype()?;
+    let profile = sparksmith_core::rules::fixtures::prototype()?;
     let reply = ok(session.respond(Caller::Operator, json!({"command": "project.new", "params": {"expected_revision": session.engine().revision(), "profile": profile}})))?;
     assert_eq!(reply["summary"]["counts"]["tracks"], 0);
     // The new board pins the profile it was given.
@@ -336,8 +336,8 @@ fn the_board_replay_builds_the_same_document_with_compact_replies() -> TestResul
 
 mod diff {
     use super::super::reply::tests_support::{changes_of, delta};
-    use pcbcraft_core::Finding;
     use serde_json::json;
+    use sparksmith_core::Finding;
 
     #[test]
     fn collections_are_diffed_by_identity() {

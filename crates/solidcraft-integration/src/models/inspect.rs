@@ -12,12 +12,14 @@ use super::gltf_ext;
 use super::imported::{self, Source};
 use crate::native::Native;
 use crate::{Error, Result};
-use pcbcraft_core::library::model3d::{CustomMaterial, MAX_MODEL_BODIES, ModelFormat, SourceFrame};
 use serde::{Deserialize, Serialize};
+use sparksmith_core::library::model3d::{
+    CustomMaterial, MAX_MODEL_BODIES, ModelFormat, SourceFrame,
+};
 
 /// Bytes one inspected file may have (the packed-asset bound, raised by
 /// the D0 container).
-pub const MAX_INSPECT_BYTES: usize = pcbcraft_core::library::bundle::MAX_ASSET_BYTES;
+pub const MAX_INSPECT_BYTES: usize = sparksmith_core::library::bundle::MAX_ASSET_BYTES;
 
 /// One body of the source file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
-//! The per-source catalog index cache (S3): `<cache>/pcbcraft/index/
+//! The per-source catalog index cache (S3): `<cache>/sparksmith/index/
 //! <LibraryId>.json`, holding the manifest hash, each record's content hash
-//! and the `SourceCatalog` built by `pcbcraft_core::catalog::source_catalog`.
+//! and the `SourceCatalog` built by `sparksmith_core::catalog::source_catalog`.
 //! Never authoritative: a version mismatch, an unreadable file or any
 //! changed record rebuilds the whole index from every record, and a
 //! deleted index rebuilds identically. A cache that cannot be written (an
@@ -13,10 +13,10 @@ use crate::library_folder::{
 };
 use crate::persistence::{atomic_write, read_bytes};
 use crate::{Error, Result};
-use pcbcraft_core::catalog::{SourceCatalog, source_catalog};
-use pcbcraft_core::ids::{ContentHash, LibraryId};
-use pcbcraft_core::library::bundle::{RevisionRecord, asset_hash};
 use serde::{Deserialize, Serialize};
+use sparksmith_core::catalog::{SourceCatalog, source_catalog};
+use sparksmith_core::ids::{ContentHash, LibraryId};
+use sparksmith_core::library::bundle::{RevisionRecord, asset_hash};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -146,7 +146,7 @@ mod tests {
     use super::*;
     use crate::library_folder::folder_tests::{bundle, field};
     use crate::library_folder::{create_folder, record_path, write_bundle};
-    use pcbcraft_core::ids::{Revision, SourceLineageId};
+    use sparksmith_core::ids::{Revision, SourceLineageId};
 
     /// The real catalog builder, as `load_or_build` uses it.
     fn listing(
@@ -154,7 +154,7 @@ mod tests {
         name: &str,
         records: &[RevisionRecord],
     ) -> Result<SourceCatalog> {
-        Ok(pcbcraft_core::catalog::source_catalog(
+        Ok(sparksmith_core::catalog::source_catalog(
             library, name, records,
         )?)
     }
@@ -264,7 +264,7 @@ mod tests {
         let (_library, cache, folder) = sample()?;
         let huge = |library: LibraryId, _: &str, records: &[RevisionRecord]| {
             let mut catalog = listing(library, "Bench", records)?;
-            catalog.name = "x".repeat(pcbcraft_core::format::MAX_FILE_BYTES + 1);
+            catalog.name = "x".repeat(sparksmith_core::format::MAX_FILE_BYTES + 1);
             Ok(catalog)
         };
         let (index, state) = load_or_build_with(cache.path(), &folder, huge)?;
@@ -281,7 +281,7 @@ mod tests {
     }
 
     /// Folder indexing and searching at scale. Run with
-    /// `cargo test --release -p pcbcraft-io library_folder_index::tests::bench -- --ignored --nocapture`.
+    /// `cargo test --release -p sparksmith-io library_folder_index::tests::bench -- --ignored --nocapture`.
     /// Targets (not gates, not yet measured on CI hardware): a cold index
     /// of 1 000 component lineages ≤ 2 s, a cached load ≤ 200 ms, and
     /// `Index::with_sources` plus one search (what each keystroke costs the
@@ -289,20 +289,20 @@ mod tests {
     #[test]
     #[ignore = "benchmark; run explicitly in release mode"]
     fn bench_index_and_search_a_large_folder() -> Result<()> {
-        use pcbcraft_core::catalog::{CatalogContext, Index, SearchOptions};
-        use pcbcraft_core::library::import;
+        use sparksmith_core::catalog::{CatalogContext, Index, SearchOptions};
+        use sparksmith_core::library::import;
         use std::sync::Arc;
         use std::time::Instant;
         let library_dir = tempfile::tempdir()?;
         let cache = tempfile::tempdir()?;
         let folder = create_folder(library_dir.path(), "Bench")?;
-        let mut project = pcbcraft_core::catalog::synthetic::project(1_000)?;
+        let mut project = sparksmith_core::catalog::synthetic::project(1_000)?;
         let roots: Vec<_> = project
             .library
             .latest_components()
             .iter()
-            .map(|c| pcbcraft_core::ids::DefinitionRef {
-                kind: pcbcraft_core::DefinitionKind::Component,
+            .map(|c| sparksmith_core::ids::DefinitionRef {
+                kind: sparksmith_core::DefinitionKind::Component,
                 id: c.id,
                 revision: c.revision,
             })
@@ -341,8 +341,8 @@ mod tests {
             started.elapsed().as_secs_f64() * 1e3
         );
         let sources = vec![Arc::new(catalog)];
-        let empty = pcbcraft_core::model::Project::default();
-        let drafts = pcbcraft_core::library::Drafts::default();
+        let empty = sparksmith_core::model::Project::default();
+        let drafts = sparksmith_core::library::Drafts::default();
         for text in ["10k", "res>=10k pkg:0603", "ex-c"] {
             let started = Instant::now();
             let index = Index::with_sources(&empty, &drafts, &sources)?;

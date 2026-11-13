@@ -286,7 +286,7 @@ pub fn import(
     })
 }
 
-/// The library every copy from a `.pcbcraft` file names as its origin
+/// The library every copy from a `.sparksmith` file names as its origin
 /// (`library.import_from_project`). A project file has no identity of its
 /// own that survives editing, copying or moving it, so the identity of what
 /// it holds is its lineages' (see [`project_lineage_id`]), and the origin's
@@ -319,7 +319,7 @@ pub fn project_lineage_id(
     let text = serde_json::to_vec(&(id, kind, meta, body))
         .map_err(|e| Error::Invalid(format!("a definition could not be written: {e}")))?;
     let mut hasher = Sha256::new();
-    hasher.update(b"pcbcraft.project-lineage\0");
+    hasher.update(b"sparksmith.project-lineage\0");
     hasher.update(&text);
     let digest: [u8; 32] = hasher.finalize().into();
     let mut bytes = [0u8; 16];

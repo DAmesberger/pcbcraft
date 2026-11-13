@@ -202,7 +202,7 @@ pub struct Connection {
 }
 
 /// What one run may use: request, token and time caps, the same for every
-/// model, hosted or local. Pcbcraft keeps no prices; billing is the
+/// model, hosted or local. Sparksmith keeps no prices; billing is the
 /// provider's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Budget {

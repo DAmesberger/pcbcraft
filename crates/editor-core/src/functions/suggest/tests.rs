@@ -185,7 +185,7 @@ fn optional_roles_are_placed_and_complete_assignments_rank_first() -> Result<()>
 
 /// Release-mode measurement of the 50 ms target: 176 terminals, 8
 /// peripherals of 2 roles each and 32 rules evaluated at every node. Run
-/// with `cargo test --release -p pcbcraft-core suggest_benchmark --
+/// with `cargo test --release -p sparksmith-core suggest_benchmark --
 /// --ignored --nocapture`; the result is recorded in
 /// docs/editor-evidence.md.
 #[test]

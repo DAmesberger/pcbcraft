@@ -13,14 +13,14 @@
 //! on a scratch copy of it.
 use crate::native::{BoxBody, Native, id};
 use crate::{Error, Result};
-use pcbcraft_core::geometry::Transform3;
-use pcbcraft_core::ids::ContentHash;
-use pcbcraft_core::interface::{AssemblyEffect, EffectKind, Sidecar};
-use pcbcraft_core::model::assembly_link::UseKind;
-use pcbcraft_core::model::dimension::{BodyName, FaceName, ModelFaceRef};
 use serde_json::{Value, json};
 use solidcraft_engine::doc::FeatureKind;
 use solidcraft_engine::sketch::LinkSource;
+use sparksmith_core::geometry::Transform3;
+use sparksmith_core::ids::ContentHash;
+use sparksmith_core::interface::{AssemblyEffect, EffectKind, Sidecar};
+use sparksmith_core::model::assembly_link::UseKind;
+use sparksmith_core::model::dimension::{BodyName, FaceName, ModelFaceRef};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -394,7 +394,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 fn mm_words(v: f64) -> String {
-    pcbcraft_core::layout::limits::mm(v)
+    sparksmith_core::layout::limits::mm(v)
 }
 
 /// "2 mm along X" for an offset.
@@ -512,14 +512,14 @@ impl LinkedDesign {
         body: &str,
         face: &str,
         pick: [f64; 3],
-    ) -> pcbcraft_core::diagnostics::Result<(
-        pcbcraft_core::layout::dimensions::model::Traced,
+    ) -> sparksmith_core::diagnostics::Result<(
+        sparksmith_core::layout::dimensions::model::Traced,
         [f64; 3],
     )> {
         let state = self
             .native
             .world_state()
-            .map_err(|e| pcbcraft_core::diagnostics::Error::Invalid(e.to_string()))?;
+            .map_err(|e| sparksmith_core::diagnostics::Error::Invalid(e.to_string()))?;
         let reference = ModelFaceRef {
             body: BodyName(body.to_owned()),
             face: FaceName(face.to_owned()),
@@ -897,7 +897,7 @@ impl LinkedDesign {
                 feature: u.feature.clone(),
                 effect: EffectKind::UnexportedReference,
                 datum: None,
-                message: pcbcraft_core::interface::findings::assembly_unexported_face(
+                message: sparksmith_core::interface::findings::assembly_unexported_face(
                     &format!("‘{}’", u.feature),
                     &part,
                     Vec::new(),

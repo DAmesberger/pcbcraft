@@ -1,9 +1,9 @@
 //! Folder reader and writer: manifest refusal, immutable revisions, the
 //! asset store, labels and git-friendly output. Fixtures are original.
 use super::*;
-use pcbcraft_core::fields::{FieldDefinition, QuantityKind, ValueType};
-use pcbcraft_core::ids::{DefinitionKind, QuantityKindRef};
-use pcbcraft_core::library::{Definition, DefinitionMeta};
+use sparksmith_core::fields::{FieldDefinition, QuantityKind, ValueType};
+use sparksmith_core::ids::{DefinitionKind, QuantityKindRef};
+use sparksmith_core::library::{Definition, DefinitionMeta};
 
 /// A link-free field record (it names no other lineage).
 pub(crate) fn field(lineage: u128, revision: u32, name: &str) -> RevisionRecord {
@@ -14,7 +14,7 @@ pub(crate) fn field(lineage: u128, revision: u32, name: &str) -> RevisionRecord 
         meta: DefinitionMeta {
             name: name.into(),
             description: format!("Original fixture field {name}"),
-            provenance: "Invented for pcbcraft-io tests".into(),
+            provenance: "Invented for sparksmith-io tests".into(),
         },
         definition: Definition::Field(FieldDefinition::default()),
         links: Vec::new(),
@@ -64,7 +64,7 @@ pub(crate) fn part_bundle(
     bytes: &[u8],
     first_lineage: u128,
 ) -> Result<(Bundle, PackedAsset)> {
-    let mut library = pcbcraft_core::catalog::synthetic::project_with_parts(1)?.library;
+    let mut library = sparksmith_core::catalog::synthetic::project_with_parts(1)?.library;
     let packed = asset(bytes);
     let part = library
         .parts
@@ -76,7 +76,7 @@ pub(crate) fn part_bundle(
         .first_mut()
         .ok_or_else(|| Error::Invalid("the synthetic Part has no reference".into()))?;
     reference.asset = Some(packed.hash.to_string());
-    let root = pcbcraft_core::ids::DefinitionRef {
+    let root = sparksmith_core::ids::DefinitionRef {
         kind: DefinitionKind::Part,
         id: part.id,
         revision: part.revision,
@@ -85,7 +85,7 @@ pub(crate) fn part_bundle(
     let fresh: Vec<SourceLineageId> = (0..64)
         .map(|i| SourceLineageId(first_lineage + i))
         .collect();
-    let plan = pcbcraft_core::library::import::export(
+    let plan = sparksmith_core::library::import::export(
         &library,
         root,
         folder.manifest.library,
@@ -555,7 +555,7 @@ fn read_bundle_follows_links_dependencies_first() -> Result<()> {
         },
         ..FieldDefinition::default()
     });
-    quantity.links = vec![pcbcraft_core::library::bundle::Link {
+    quantity.links = vec![sparksmith_core::library::bundle::Link {
         local: DefinitionId(1),
         lineage: SourceLineageId(10),
     }];

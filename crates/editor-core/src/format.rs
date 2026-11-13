@@ -1,8 +1,8 @@
-//! The `.pcbcraft` document format: version check, validation and bounded
+//! The `.sparksmith` document format: version check, validation and bounded
 //! encoding. This module is pure; reading and writing files belongs to
-//! `pcbcraft-io`.
+//! `sparksmith-io`.
 //!
-//! Pcbcraft is pre-release: only the current format version is accepted and
+//! Sparksmith is pre-release: only the current format version is accepted and
 //! there are no migrations. Any other version is refused, never guessed at.
 use crate::diagnostics::{Error, Result};
 use crate::library::Drafts;
@@ -16,9 +16,24 @@ use std::sync::Arc;
 
 pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 pub const FILE_VERSION: u32 = 1;
-pub const EXTENSION: &str = "pcbcraft";
+pub const EXTENSION: &str = "sparksmith";
+/// The extension before the rename from Pcbcraft (docs/rename-phase-b.md).
+/// Such a file holds this same format, so it opens through the same reader
+/// and version check, and Save keeps its name; Save As and new projects take
+/// [`EXTENSION`].
+pub const FORMER_EXTENSION: &str = "pcbcraft";
+/// The extensions a project file may have, [`EXTENSION`] first.
+pub const EXTENSIONS: [&str; 2] = [EXTENSION, FORMER_EXTENSION];
 
-/// The `.pcbcraft` file is a ZIP container (D0, founder decision F5). It
+/// Whether `extension` (without the dot) names a project file, in any
+/// letter case.
+pub fn is_project_extension(extension: &str) -> bool {
+    EXTENSIONS
+        .iter()
+        .any(|known| extension.eq_ignore_ascii_case(known))
+}
+
+/// The `.sparksmith` file is a ZIP container (D0, founder decision F5). It
 /// holds [`CONTAINER_DOCUMENT`], the editor file with every packed asset's
 /// bytes left out, and one raw entry per asset at
 /// [`CONTAINER_ASSET_PREFIX`]`<sha256>`. Recovery snapshots use the same

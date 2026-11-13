@@ -4,7 +4,7 @@
 //! whose area ([`MoldedForm::band_area`]) and the remaining marking area
 //! ([`MoldedForm::marking_area`]) are data. The footprint template is
 //! `templates/footprint_family/molded.rs` and the model builder
-//! `pcbcraft-solidcraft` `models/molded.rs`.
+//! `sparksmith-solidcraft` `models/molded.rs`.
 use super::{FamilyForm, length_problem, typical_nm};
 use crate::geometry::Point3;
 use crate::library::footprint_source::{PACKAGE_PREFIX, PackageValue, ParamName, ParamValue};

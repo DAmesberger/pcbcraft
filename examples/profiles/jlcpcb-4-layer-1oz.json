@@ -25,7 +25,7 @@
       },
       "chip_gap_min": {
         "value": 0.2,
-        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+        "source": "Sparksmith's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
       },
       "clearance_board_edge_board_edge": {
         "value": 0.0,
@@ -65,7 +65,7 @@
       },
       "clearance_npth_hole_npth_hole": {
         "value": 0.45,
-        "source": "Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no NPTH-specific row; Pcbcraft reads the pad hole row as covering unplated pad holes too (founder decision, 2026-11-12)."
+        "source": "Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no NPTH-specific row; Sparksmith reads the pad hole row as covering unplated pad holes too (founder decision, 2026-11-12)."
       },
       "clearance_pad_board_edge": {
         "value": 0.2,
@@ -97,7 +97,7 @@
       },
       "clearance_pth_hole_npth_hole": {
         "value": 0.45,
-        "source": "Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no NPTH-specific row; Pcbcraft reads the pad hole row as covering unplated pad holes too (founder decision, 2026-11-12)."
+        "source": "Drilling, \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no NPTH-specific row; Sparksmith reads the pad hole row as covering unplated pad holes too (founder decision, 2026-11-12)."
       },
       "clearance_pth_hole_pth_hole": {
         "value": 0.45,
@@ -145,7 +145,7 @@
       },
       "clearance_via_hole_npth_hole": {
         "value": 0.45,
-        "source": "Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no NPTH-specific or via-to-pad-hole row; Pcbcraft reads the pad hole row as covering unplated pad holes too (founder decision, 2026-11-12): the larger, the pad hole's."
+        "source": "Drilling, \"Via Hole-to-Hole Spacing\": \"0.2mm\"; \"Pad Hole-to-Hole Spacing\": \"0.45mm\". JLCPCB gives no NPTH-specific or via-to-pad-hole row; Sparksmith reads the pad hole row as covering unplated pad holes too (founder decision, 2026-11-12): the larger, the pad hole's."
       },
       "clearance_via_hole_pth_hole": {
         "value": 0.45,
@@ -185,7 +185,7 @@
       },
       "exposed_pad_clearance": {
         "value": 0.2,
-        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+        "source": "Sparksmith's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
       },
       "fill_clearance": {
         "value": 0.2,
@@ -201,11 +201,11 @@
       },
       "gull_wing_toe_shift": {
         "value": 0.1,
-        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+        "source": "Sparksmith's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
       },
       "gull_wing_width_extra": {
         "value": 0.2,
-        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+        "source": "Sparksmith's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
       },
       "island_area_min": {
         "value": 0.0,
@@ -285,15 +285,15 @@
       },
       "tht_drill_clearance": {
         "value": 0.3,
-        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+        "source": "Sparksmith's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
       },
       "tht_land_extra": {
         "value": 0.6,
-        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+        "source": "Sparksmith's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
       },
       "tht_land_gap": {
         "value": 0.25,
-        "source": "Pcbcraft's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
+        "source": "Sparksmith's land estimator margin (an original rule of thumb, not a JLCPCB value); the estimators do not read profiles yet."
       },
       "track_width_default": {
         "value": 0.25,

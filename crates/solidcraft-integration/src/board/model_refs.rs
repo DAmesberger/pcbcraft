@@ -29,18 +29,18 @@ use crate::geom::Vec3;
 use crate::geom::prelude::*;
 use crate::models::named::{self, NamedDesign};
 use crate::models::part_file::{self, EvaluatedPart};
-use pcbcraft_core::diagnostics::{Error, Result};
-use pcbcraft_core::geometry::Transform3;
-use pcbcraft_core::layout::dimensions::FeatureGeometry;
-use pcbcraft_core::layout::dimensions::model::{
-    BodyFace, FacesRequest, ModelPicked, PickRequest, TraceModel, TraceRequest, Traced,
-};
-use pcbcraft_core::model::dimension::{
-    BodyName, End, FaceName, FeatureRef, ModelEdgeName, ModelEdgeRef, ModelFaceRef, ReferenceStatus,
-};
 use solidcraft_engine::doc::naming;
 use solidcraft_engine::doc::{ModelBody, ModelState};
 use solidcraft_engine::kernel::{FaceSurface, edge_circle, face_surface};
+use sparksmith_core::diagnostics::{Error, Result};
+use sparksmith_core::geometry::Transform3;
+use sparksmith_core::layout::dimensions::FeatureGeometry;
+use sparksmith_core::layout::dimensions::model::{
+    BodyFace, FacesRequest, ModelPicked, PickRequest, TraceModel, TraceRequest, Traced,
+};
+use sparksmith_core::model::dimension::{
+    BodyName, End, FaceName, FeatureRef, ModelEdgeName, ModelEdgeRef, ModelFaceRef, ReferenceStatus,
+};
 use std::f64::consts::TAU;
 use std::sync::Arc;
 
@@ -67,7 +67,7 @@ fn vec(p: [f64; 3]) -> Vec3 {
 }
 
 fn mm(v: f64) -> String {
-    pcbcraft_core::layout::limits::mm(v)
+    sparksmith_core::layout::limits::mm(v)
 }
 
 fn point_words(p: [f64; 3]) -> String {

@@ -3,8 +3,8 @@
 //! `confirm: false` only reports, `confirm: true` stores the placement, and
 //! the MCP instructions and generated schemas name both commands.
 use super::*;
-use pcbcraft_core::library::{Definition, ModelPlacement};
-use pcbcraft_core::{DefinitionId, Engine};
+use sparksmith_core::library::{Definition, ModelPlacement};
+use sparksmith_core::{DefinitionId, Engine};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 

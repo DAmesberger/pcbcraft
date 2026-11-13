@@ -2,8 +2,8 @@
 //! unique, every reference resolving, every value in range, the parts the
 //! scope requires present and the others absent. The library's publish
 //! rules then apply as to any authored part (slice GP1).
-use pcbcraft_generator_abi::Failure;
-use pcbcraft_generator_abi::v1::{
+use sparksmith_generator_abi::Failure;
+use sparksmith_generator_abi::v1::{
     Description, Footprint, Generation, Graphic, HoleShape, PadShape, ParamType, Point, Primitive,
     Scope, Symbol, limits,
 };
@@ -126,7 +126,7 @@ fn graphic(g: &Graphic) -> Result<(), Failure> {
         } => {
             point(at)?;
             positive("text height", *height_nm)?;
-            if let pcbcraft_generator_abi::v1::TextContent::Literal(s) = content {
+            if let sparksmith_generator_abi::v1::TextContent::Literal(s) = content {
                 text("text", s)?;
             }
             Ok(())
@@ -350,7 +350,7 @@ pub fn description(d: &Description) -> Result<(), Failure> {
             format!("{message} The generator was not used."),
         )
     };
-    if d.abi != pcbcraft_generator_abi::v1::ABI {
+    if d.abi != sparksmith_generator_abi::v1::ABI {
         return Err(bad(format!(
             "The generator describes itself as ABI {}.",
             d.abi

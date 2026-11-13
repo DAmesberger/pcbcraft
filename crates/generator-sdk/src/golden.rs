@@ -6,9 +6,9 @@ use crate::Generator;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use pcbcraft_generator_abi::v1::Request;
-use pcbcraft_generator_abi::{codec, hex, result_hash};
 use serde::Deserialize;
+use sparksmith_generator_abi::v1::Request;
+use sparksmith_generator_abi::{codec, hex, result_hash};
 
 /// A generator crate's `golden.json`.
 #[derive(Clone, Debug, Deserialize)]

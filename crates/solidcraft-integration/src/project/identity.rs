@@ -1,12 +1,12 @@
-//! Which Pcbcraft object each native body came from, and each body's kind,
+//! Which Sparksmith object each native body came from, and each body's kind,
 //! saved compactly in the native file's metadata so identity survives
 //! reopening.
 //!
 //! Solidcraft bounds a design's metadata (256 keys, 64 KiB a value, 256 KiB
 //! in all), and a board has tens of thousands of pads, tracks and vias, so
 //! nothing is listed one object at a time. The metadata holds
-//! `org.pcbcraft.electronics` (`{"version": 1}`) and records under
-//! `org.pcbcraft.electronics.identity.0`, `.1`, … (each `{"records": […]}`,
+//! `org.sparksmith.electronics` (`{"version": 1}`) and records under
+//! `org.sparksmith.electronics.identity.0`, `.1`, … (each `{"records": […]}`,
 //! at most [`CHUNK_BYTES`]):
 //!
 //! - **Sources** are columns over the sources in pick order: each number
@@ -24,14 +24,14 @@ use super::Source;
 use crate::material::BodyKind;
 use crate::native::Native;
 use crate::{Error, Result};
-use pcbcraft_core::{CopperLayer, Id, PadId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sparksmith_core::{CopperLayer, Id, PadId};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-pub(super) const METADATA_KEY: &str = "org.pcbcraft.electronics";
-const RECORDS_KEY: &str = "org.pcbcraft.electronics.identity.";
+pub(super) const METADATA_KEY: &str = "org.sparksmith.electronics";
+const RECORDS_KEY: &str = "org.sparksmith.electronics.identity.";
 const VERSION: u64 = 1;
 /// Largest record value, below Solidcraft's 64 KiB a value.
 pub(super) const CHUNK_BYTES: usize = 48 * 1024;
@@ -213,7 +213,7 @@ impl Column {
 }
 
 fn broken() -> Error {
-    Error::Verification("the native model's Pcbcraft identity records are inconsistent".into())
+    Error::Verification("the native model's Sparksmith identity records are inconsistent".into())
 }
 
 fn opt(value: Option<u64>) -> i128 {
@@ -645,17 +645,17 @@ fn read_values(metadata: &Map<String, Value>) -> Result<(Vec<Source>, BTreeMap<S
         .get(METADATA_KEY)
         .and_then(|m| m.get("version"))
         .and_then(Value::as_u64)
-        .ok_or_else(|| Error::Verification("native model has no Pcbcraft identity".into()))?;
+        .ok_or_else(|| Error::Verification("native model has no Sparksmith identity".into()))?;
     if version != VERSION {
         return Err(Error::Verification(format!(
-            "native model's Pcbcraft identity is version {version}; this build reads {VERSION}"
+            "native model's Sparksmith identity is version {version}; this build reads {VERSION}"
         )));
     }
     let mut sources = Vec::new();
     let mut bodies = BTreeMap::new();
     if !metadata.contains_key(&format!("{RECORDS_KEY}0")) {
         return Err(Error::Verification(
-            "native model's Pcbcraft identity was saved by an older pre-release build; \
+            "native model's Sparksmith identity was saved by an older pre-release build; \
              build its model again from the board"
                 .into(),
         ));
@@ -684,7 +684,7 @@ fn read_values(metadata: &Map<String, Value>) -> Result<(Vec<Source>, BTreeMap<S
     sources.sort_by_key(|s| s.pick_id);
     if bodies.is_empty() {
         return Err(Error::Verification(
-            "native model has no Pcbcraft body kinds".into(),
+            "native model has no Sparksmith body kinds".into(),
         ));
     }
     Ok((sources, bodies))
