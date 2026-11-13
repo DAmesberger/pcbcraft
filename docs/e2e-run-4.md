@@ -79,3 +79,12 @@ The native export is the one slow path. These are `ci`-profile timings.
 ## Clean-up
 
 The app was quit; no Sparksmith process remains in the guest. The test projects were deleted from the guest home and from `results/`. The JLCPCB 2-layer profile stays in the guest's `fab-profiles/`. The guest display was left at 1600 × 1000.
+
+## Status after the fix batches
+
+Fixed on `main` by 9012d770 and checked in the VM unless noted:
+
+- **Fixed:** 1 (built-in JLCPCB profiles, asked for on a new project), 2, 5, 6 (the canvas runs under the docked cards), 7, 8, 9, 10, 11 (connectors show no name as value), 12, 13, 14 (⌘R), 15, 17, 18 (overlays off by default), 19 (the shield can reads as metal), 20 (solder joints on gull-wing feet and header pins, contact shadows above the mask), 21.
+- **3, kept by design:** the USB-C template matches GCT's USB4105 drawing (rev B4), which is itself below JLCPCB's 2-layer limits (a 0.175 mm hole-to-pad gap, 0.20 mm shell-stake rings). The template now says it needs a finer fab.
+- **4:** not reproduced.
+- **Open:** 16 (stacked toasts) and 22 (mouse orbit). New: the ESP32 example's own USB connector symbol has short pins, so its stacked pin numbers now print much smaller than the rest.
