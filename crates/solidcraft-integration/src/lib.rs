@@ -7,6 +7,7 @@
 pub mod appearance;
 pub mod board;
 pub mod enclosure;
+pub mod export;
 pub mod footprint;
 pub mod interface;
 pub mod look_graph;

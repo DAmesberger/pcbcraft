@@ -277,6 +277,34 @@ fn the_tiers_share_their_slots_and_carry_the_sidecar() -> Fallible {
     Ok(())
 }
 
+/// Section 2 of a mechanical or full publish is checked against the board
+/// plan of that tier's board (A5): every planned flat body built as
+/// planned, the slots' reference bodies not taken for board bodies; the
+/// interface tier builds no board and checks none.
+#[test]
+fn a_published_board_is_checked_against_its_plan() -> Fallible {
+    let engine = engine()?;
+    let slots = build(engine.project(), sidecar(&engine, Tier::Interface)?)?;
+    assert!(slots.check.is_none());
+    for tier in [Tier::Mechanical, Tier::Full] {
+        let exported = build(engine.project(), sidecar(&engine, tier)?)?;
+        let check = exported.check.ok_or("a board tier is checked")?;
+        assert!(
+            check.differences.is_empty(),
+            "{tier:?}: {:#?}",
+            check.differences
+        );
+        let board = crate::export::section(engine.project(), tier).ok_or("a board")?;
+        assert_eq!(
+            check.planned,
+            crate::project::plan::of(&board)?.bodies().count(),
+            "{tier:?}"
+        );
+        assert!(check.built > 0, "{tier:?}");
+    }
+    Ok(())
+}
+
 /// The enclosure follows: a wall in front of the board with a cutout
 /// projected from the first part's opening; the part moved 2 mm along X by
 /// `layout.move`, the interface published again and the links updated,
