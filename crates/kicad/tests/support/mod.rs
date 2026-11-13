@@ -7,9 +7,7 @@ use std::fmt::Write as _;
 
 /// `sparksmith_kicad::import` onto the core's test-fixture board and
 /// stackup presets.
-pub fn import(
-    bytes: &[u8],
-) -> Result<sparksmith_kicad::Imported, sparksmith_kicad::ImportError> {
+pub fn import(bytes: &[u8]) -> Result<sparksmith_kicad::Imported, sparksmith_kicad::ImportError> {
     let presets = sparksmith_core::StackupPresets::fixture().map_err(|e| {
         sparksmith_kicad::ImportError::Refused {
             step: "fixture",

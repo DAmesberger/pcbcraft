@@ -647,10 +647,9 @@ pub fn board_sketch<'a>(
         BoardShape::Sketch(s) => Cow::Borrowed(&**s),
         BoardShape::Rectangle => {
             project.rules.require()?;
-            Cow::Owned(evaluator.rectangle(
-                project.board_size,
-                super::outline::outline_fit(project),
-            )?)
+            Cow::Owned(
+                evaluator.rectangle(project.board_size, super::outline::outline_fit(project))?,
+            )
         }
     })
 }

@@ -105,16 +105,19 @@ mod tests {
         list.iter().map(|s| (*s).to_owned()).collect()
     }
 
-    /// The sourced example profile file in `examples/profiles/`.
+    /// A sourced profile file of the shipped library (`library/profiles/`).
     const EXAMPLE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/profiles/jlcpcb-2-layer-1oz.json"
+        "/../../library/profiles/jlcpcb-2-layer-1oz.json"
     );
 
     #[test]
     fn list_import_export_through_the_subcommand() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let library = ProfileLibrary::new(dir.path().join("fab-profiles"));
+        let library = ProfileLibrary::new(
+            dir.path().join("fab-profiles"),
+            sparksmith_io::shipped::ShippedLibrary::locate()?,
+        );
         let kinds = |listed: &serde_json::Value| -> Vec<(String, String)> {
             listed["profiles"]
                 .as_array()

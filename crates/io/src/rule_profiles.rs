@@ -683,13 +683,16 @@ mod tests {
 
     #[test]
     fn a_profile_without_a_source_or_rule_is_refused() -> Result<()> {
-        let mut value: serde_json::Value = serde_json::from_str(&shipped_text("jlcpcb-2-layer-1oz.json")?)?;
+        let mut value: serde_json::Value =
+            serde_json::from_str(&shipped_text("jlcpcb-2-layer-1oz.json")?)?;
         value["fab_profile"]["source"]["date"] = "11.11.2026".into();
         assert!(decode(&serde_json::to_vec(&value)?).is_err(), "date");
-        let mut value: serde_json::Value = serde_json::from_str(&shipped_text("jlcpcb-2-layer-1oz.json")?)?;
+        let mut value: serde_json::Value =
+            serde_json::from_str(&shipped_text("jlcpcb-2-layer-1oz.json")?)?;
         value["fab_profile"]["source"]["publisher"] = "".into();
         assert!(decode(&serde_json::to_vec(&value)?).is_err(), "publisher");
-        let mut value: serde_json::Value = serde_json::from_str(&shipped_text("jlcpcb-2-layer-1oz.json")?)?;
+        let mut value: serde_json::Value =
+            serde_json::from_str(&shipped_text("jlcpcb-2-layer-1oz.json")?)?;
         if let Some(rules) = value["fab_profile"]["rules"].as_object_mut() {
             rules.remove("drill_min");
         }

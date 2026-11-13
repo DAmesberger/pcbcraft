@@ -524,7 +524,10 @@ mod mcp_option_tests {
         let folder = dir.path().join("library").display().to_string();
         let engine = Engine::from_file(sparksmith_core::format::EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
-            project: sparksmith_core::catalog::synthetic::project_with_parts(2, &sparksmith_core::NewBoard::fixture())?,
+            project: sparksmith_core::catalog::synthetic::project_with_parts(
+                2,
+                &sparksmith_core::NewBoard::fixture(),
+            )?,
             drafts: Default::default(),
         })?;
         session::publish_library(&mut Session::new(engine), &folder, "Mine")?;

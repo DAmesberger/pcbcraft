@@ -434,7 +434,10 @@ fn install_place_publish_update_delete_and_reopen_offline() -> TestResult {
     // The author writes the synthetic catalog to a new folder.
     let mut author = Session::new(Engine::from_file(EditorFile {
         version: sparksmith_core::format::FILE_VERSION,
-        project: sparksmith_core::catalog::synthetic::project_with_parts(6, &sparksmith_core::NewBoard::fixture())?,
+        project: sparksmith_core::catalog::synthetic::project_with_parts(
+            6,
+            &sparksmith_core::NewBoard::fixture(),
+        )?,
         drafts: Drafts::default(),
     })?);
     let sample = publish_library(&mut author, &folder_text, "Team library")?;
@@ -804,6 +807,7 @@ fn packaged_engine(
             footprint: FootprintRef::new(footprint, first),
             binding: BindingRef::new(binding, first),
         },
+        &sparksmith_core::rules::DesignRules::default(),
     )?;
     engine.apply(
         engine.revision(),

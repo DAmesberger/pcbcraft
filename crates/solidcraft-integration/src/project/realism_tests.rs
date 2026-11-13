@@ -321,7 +321,10 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
         .into_iter()
         .find(|g| g.kind == BodyKind::MaskCap && g.layer == Some(CopperLayer::Top))
         .ok_or_else(|| invalid("no dome"))?;
-    near(dome.max[2], t + 0.035 + sparksmith_core::Stackup::default().mask_um / 1000.0);
+    near(
+        dome.max[2],
+        t + 0.035 + sparksmith_core::Stackup::default().mask_um / 1000.0,
+    );
     Ok(())
 }
 

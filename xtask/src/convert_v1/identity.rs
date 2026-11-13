@@ -269,7 +269,8 @@ mod tests {
     /// Every Part of the synthetic catalog imported into an empty project,
     /// with the origins import recorded.
     fn imported() -> Result<EditorFile> {
-        let source = sparksmith_core::catalog::synthetic::project_with_parts(4)?.library;
+        let board = sparksmith_io::new_project::shipped()?.board;
+        let source = sparksmith_core::catalog::synthetic::project_with_parts(4, &board)?.library;
         let mut file = EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
             project: Default::default(),

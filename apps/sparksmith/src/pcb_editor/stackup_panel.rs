@@ -415,10 +415,9 @@ fn row_editor(ui: &mut Ui, draft: &mut StackupDraft, row: DraftRow) -> Option<Ro
             kit::choice_row(ui, "Glass", &mut d.glass, &glasses);
             // No entered Dk and no estimate for the glass: the field
             // starts at the bottom of the accepted range.
-            let mut dk = d
-                .dk
-                .or_else(|| estimates.get(d.glass))
-                .unwrap_or(*DK_RANGE.start());
+            let mut dk =
+                d.dk.or_else(|| estimates.get(d.glass))
+                    .unwrap_or(*DK_RANGE.start());
             if kit::number_row(ui, "Dk", &mut dk, "", DK_RANGE) {
                 d.dk = Some(dk);
             }

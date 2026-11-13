@@ -785,7 +785,7 @@ fn parts_solve_timing() -> Fallible<()> {
     use sparksmith_core::model::dimension::PartDimension;
     let mut times = Vec::new();
     for width in [200.0, 220.0] {
-        let board = EV.rectangle([width, 200.0])?;
+        let board = EV.rectangle([width, 200.0], 0.01)?;
         let right = BoardRef::Board(SketchRef::Curve(
             board
                 .edges

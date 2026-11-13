@@ -101,10 +101,12 @@ pub fn import(
         engine: Engine::new(new_board),
     };
     if board.copper.len() != new_board.stackup.copper.len() {
-        let stackup = presets.preset(board.copper.len()).map_err(|e| ImportError::Refused {
-            step: "layout.set_stackup",
-            reason: e.to_string(),
-        })?;
+        let stackup = presets
+            .preset(board.copper.len())
+            .map_err(|e| ImportError::Refused {
+                step: "layout.set_stackup",
+                reason: e.to_string(),
+            })?;
         session.apply(
             "layout.set_stackup",
             Operation::Layout(LayoutCommand::SetStackup(stackup)),

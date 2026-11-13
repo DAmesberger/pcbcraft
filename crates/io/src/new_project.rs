@@ -64,10 +64,9 @@ fn check_format(path: &std::path::Path, format: u32) -> Result<()> {
     if format == FORMAT {
         Ok(())
     } else {
-        Err(Error::Document(sparksmith_core::Error::Unsupported(format!(
-            "{}: unsupported format {format}",
-            path.display()
-        ))))
+        Err(Error::Document(sparksmith_core::Error::Unsupported(
+            format!("{}: unsupported format {format}", path.display()),
+        )))
     }
 }
 
@@ -107,7 +106,12 @@ pub fn load(shipped: &ShippedLibrary) -> Result<NewProjectDefaults> {
         ));
     }
     let [w, h] = board_size_mm;
-    if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0 && w <= MAX_BOARD_MM && h <= MAX_BOARD_MM)
+    if !(w.is_finite()
+        && h.is_finite()
+        && w > 0.0
+        && h > 0.0
+        && w <= MAX_BOARD_MM
+        && h <= MAX_BOARD_MM)
     {
         return Err(invalid(
             &path,

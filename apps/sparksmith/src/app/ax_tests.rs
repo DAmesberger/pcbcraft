@@ -442,7 +442,7 @@ fn a_new_project_asks_for_its_fab_profile_on_the_pcb() -> Fallible {
     let profile = ax.app.engine.project().rules.profile.as_ref();
     assert_eq!(
         profile.map(|p| p.id.as_str()),
-        Some(sparksmith_io::rule_profiles::DEFAULT_BUILTIN)
+        Some(sparksmith_io::new_project::shipped()?.fab_profile.as_str())
     );
     ax.settle();
     assert!(!ax.has(Role::Button, "Use profile"), "asked once");

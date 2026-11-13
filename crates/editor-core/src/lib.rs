@@ -788,8 +788,9 @@ impl Engine {
     /// They are never saved and take no part in revisions or undo.
     pub fn supply_dk_estimates(&mut self, dk_estimates: &GlassDk) {
         if self.document.project.stackup.dk_estimates.0.0.is_empty() {
-            Arc::make_mut(&mut self.document.project).stackup.dk_estimates =
-                Unsaved(dk_estimates.clone());
+            Arc::make_mut(&mut self.document.project)
+                .stackup
+                .dk_estimates = Unsaved(dk_estimates.clone());
         }
     }
 
@@ -816,7 +817,11 @@ impl Engine {
     /// test prototype profile, whose values the showcase was drawn for.
     #[cfg(any(test, feature = "test-fixtures"))]
     pub fn showcase() -> Result<Self> {
-        Self::showcase_in(None, &StackupPresets::fixture()?, rules::fixtures::prototype()?)
+        Self::showcase_in(
+            None,
+            &StackupPresets::fixture()?,
+            rules::fixtures::prototype()?,
+        )
     }
 
     /// The showcase as the shipped file shows it: [`Engine::showcase`]
@@ -870,15 +875,14 @@ impl Engine {
         let mut refs = Vec::new();
         for part in samples::showcase_parts() {
             let lineages = engine.reserve_lineages()?;
-            let mut part_edits =
-                samples::packaged_symbol(
-                    part.name,
-                    part.form,
-                    part.prefix,
-                    part.symbol,
-                    lineages,
-                    &showcase_rules,
-                )?;
+            let mut part_edits = samples::packaged_symbol(
+                part.name,
+                part.form,
+                part.prefix,
+                part.symbol,
+                lineages,
+                &showcase_rules,
+            )?;
             samples::trim_heels(&mut part_edits, part.heel_trim_mm)?;
             if part.pin_one {
                 samples::mark_pin_one(&mut part_edits);

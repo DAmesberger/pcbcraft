@@ -753,7 +753,10 @@ mod tests {
     /// A project of synthetic components, and a folder catalog holding the
     /// promoted closure of its first two.
     fn fixture() -> Fallible<(Engine, Arc<SourceCatalog>)> {
-        let project = sparksmith_core::catalog::synthetic::project_with_parts(6, &sparksmith_core::NewBoard::fixture())?;
+        let project = sparksmith_core::catalog::synthetic::project_with_parts(
+            6,
+            &sparksmith_core::NewBoard::fixture(),
+        )?;
         let mut records = Vec::new();
         let fresh: Vec<sparksmith_core::ids::SourceLineageId> = (1..=256u128)
             .map(|n| sparksmith_core::ids::SourceLineageId((n << 64) | n))

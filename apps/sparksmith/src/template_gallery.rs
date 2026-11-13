@@ -2188,8 +2188,7 @@ mod tests {
     #[test]
     fn previews_build_one_pad_per_terminal() -> Result<(), String> {
         let rules = sparksmith_core::rules::DesignRules::default();
-        let chip_pads =
-            preview_pads(FamilyKind::Chip, &chip(ChipKind::Capacitor), None, &rules)?;
+        let chip_pads = preview_pads(FamilyKind::Chip, &chip(ChipKind::Capacitor), None, &rules)?;
         let landing = |pads: &[Pad]| {
             pads.iter()
                 .filter(|p| matches!(p.kind, PadKind::Smd | PadKind::PlatedThrough))

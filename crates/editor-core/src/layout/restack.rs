@@ -14,8 +14,7 @@
 use super::{Error, Result};
 use crate::model::fill::KeepoutLayers;
 use crate::model::{
-    CopperLayer, DielectricKind, MAX_COPPER_LAYERS, Project,
-    Stackup, StackupPresets, ViaSpan,
+    CopperLayer, DielectricKind, MAX_COPPER_LAYERS, Project, Stackup, StackupPresets, ViaSpan,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

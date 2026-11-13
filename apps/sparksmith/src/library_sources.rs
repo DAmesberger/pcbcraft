@@ -2081,7 +2081,10 @@ mod tests {
     fn folder_picks_are_component_entries_of_a_folder() -> Result<(), Box<dyn std::error::Error>> {
         let engine = Engine::from_file(sparksmith_core::format::EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
-            project: sparksmith_core::catalog::synthetic::project(2, &sparksmith_core::NewBoard::fixture())?,
+            project: sparksmith_core::catalog::synthetic::project(
+                2,
+                &sparksmith_core::NewBoard::fixture(),
+            )?,
             drafts: Default::default(),
         })?;
         let QueryResult::Search(report) = engine.query(Query::Search {
