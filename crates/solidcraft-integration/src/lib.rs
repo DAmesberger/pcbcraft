@@ -11,6 +11,7 @@ pub mod footprint;
 pub mod interface;
 pub mod linked_design;
 pub mod look_graph;
+pub mod looks;
 pub mod marking;
 pub mod material;
 pub mod models;

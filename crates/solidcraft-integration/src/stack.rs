@@ -9,31 +9,23 @@
 //! parameters follow the same rule). A height `h` on a side is measured
 //! outward from that side's laminate face ([`Stack::z`]).
 //!
-//! The display films' own thicknesses are in this one table; their sources
-//! are in `docs/materials.md`.
+//! The display films' own thicknesses (plated finish, legend ink) are
+//! shipped data (`materials/finishes.json`, sources in
+//! `docs/materials.md`), which the stack carries with the rest of the
+//! loaded [`Looks`].
+use crate::Result;
+use crate::looks::Looks;
 use crate::material::BodyKind;
+use sparksmith_core::materials::MaterialLibrary;
 use sparksmith_core::{CopperLayer, Layer, PadFinish, Stackup};
 
 /// Plated finish over exposed copper, µm: the middle of the thickness
-/// range a fabricator publishes for `finish` (sources in
-/// `docs/materials.md`, "Pad finishes").
-pub fn finish_um(finish: PadFinish) -> f64 {
-    let [low, high] = match finish {
-        // JLCPCB's surface-finish page: nickel 3–6 µm, gold 0.025–0.05 µm.
-        PadFinish::Enig => [3.0 + 0.025, 6.0 + 0.05],
-        // LC-PCB's capability table, row 63: HASL, leaded and lead-free,
-        // 2–40 µm.
-        PadFinish::Hasl | PadFinish::LeadFreeHasl => [2.0, 40.0],
-        // LC-PCB's capability table, row 64: film 0.2–0.3 µm.
-        PadFinish::Osp => [0.2, 0.3],
-        // LC-PCB's capability table, row 66: silver 0.2–0.4 µm.
-        PadFinish::ImmersionSilver => [0.2, 0.4],
-    };
-    (low + high) / 2.0
+/// range a fabricator publishes for `finish` (the shipped finishes).
+pub fn finish_um(looks: &MaterialLibrary, finish: PadFinish) -> f64 {
+    crate::material::of_pad_finish(&looks.finishes.pad, finish)
+        .thickness
+        .mid_um()
 }
-/// Legend ink thickness (est.; screen-printed and inkjet legend is
-/// 10–25 µm).
-pub const INK_MM: f64 = 0.015;
 /// The share of the ink sunk into the surface it is printed on, so it never
 /// floats over it.
 pub const INK_SINK_SHARE: f64 = 0.5;
@@ -151,11 +143,14 @@ pub struct Stack {
     mask_laminate: f64,
     /// Plated finish over exposed copper, mm.
     finish: f64,
+    /// The loaded material library the films' looks and thicknesses come
+    /// from.
+    looks: Looks,
 }
 
-impl Default for Stack {
+impl Stack {
     /// The stack of [`Stackup::default`] with the default pad finish.
-    fn default() -> Self {
+    pub fn standard() -> Result<Self> {
         Self::of(&Stackup::default(), PadFinish::default())
     }
 }
@@ -173,7 +168,8 @@ impl Stack {
     /// [`Stackup::copper_span`] and the laminate. The mask is the
     /// stackup's: [`Stackup::mask_laminate_nm`] over the laminate and
     /// [`Stackup::mask_um`] over copper.
-    pub fn of(stackup: &Stackup, finish: PadFinish) -> Self {
+    pub fn of(stackup: &Stackup, finish: PadFinish) -> Result<Self> {
+        let looks = Looks::get()?;
         let foil = |layer: CopperLayer| stackup.copper_span(layer).map_or(0.0, |(a, b)| b - a);
         let layers = stackup.layers();
         let dielectrics = (0..stackup.dielectrics.len())
@@ -193,8 +189,10 @@ impl Stack {
             copper: [foil(CopperLayer::Top), foil(CopperLayer::Bottom)],
             mask: stackup.mask_um / 1000.0,
             mask_laminate: stackup.mask_laminate_nm.to_mm_f64(),
-            finish: finish_um(finish) / 1000.0,
+            finish: finish_um(&looks, finish) / 1000.0,
+            looks,
         };
+        let ink = stack.ink_mm();
         let films = |stack: &Stack, side: Layer| -> Vec<(Slot, Span)> {
             let (mask, silk) = match side {
                 Layer::Top => (stackup.mask_top, stackup.silkscreen_top),
@@ -206,7 +204,7 @@ impl Stack {
             if silk {
                 out.push((
                     Slot::Silk(side),
-                    stack.span(side, ground - INK_SINK_SHARE * INK_MM, ground + INK_MM),
+                    stack.span(side, ground - INK_SINK_SHARE * ink, ground + ink),
                 ));
             }
             if mask {
@@ -248,20 +246,33 @@ impl Stack {
         below.reverse();
         slots.extend(below);
         stack.slots = slots;
-        stack
+        Ok(stack)
     }
 
     /// No board: a package preview, whose bodies lie on nothing.
-    pub fn none() -> Self {
-        Self {
+    pub fn none() -> Result<Self> {
+        let looks = Looks::get()?;
+        Ok(Self {
             slots: Vec::new(),
             dielectrics: Vec::new(),
             top: 0.0,
             copper: [0.0; 2],
             mask: sparksmith_core::MASK_UM / 1000.0,
             mask_laminate: sparksmith_core::MASK_LAMINATE.to_mm_f64(),
-            finish: finish_um(PadFinish::default()) / 1000.0,
-        }
+            finish: finish_um(&looks, PadFinish::default()) / 1000.0,
+            looks,
+        })
+    }
+
+    /// The loaded material library this stack's films take their looks
+    /// and thicknesses from.
+    pub fn looks(&self) -> &'static MaterialLibrary {
+        self.looks.0
+    }
+
+    /// Legend ink thickness, mm.
+    pub fn ink_mm(&self) -> f64 {
+        self.looks.finishes.legend_ink.thickness_mm
     }
 
     /// Every slot the board has, top to bottom, with its z span.
@@ -449,14 +460,14 @@ mod tests {
     /// Every copper slot is where the stackup puts that foil, and the films
     /// stack outward from the outer foils in physical order.
     #[test]
-    fn the_stack_follows_the_stackup_in_physical_order() -> Result<(), String> {
+    fn the_stack_follows_the_stackup_in_physical_order() -> std::result::Result<(), String> {
         let mut stackup = Stackup::preset(6).map_err(|e| e.to_string())?;
         stackup.copper[0].thickness_um = 70.0;
         stackup.copper[2].thickness_um = 18.0;
         stackup.dielectrics[1].thickness_mm = 0.3;
         stackup.mask_um = 25.0;
         stackup.mask_laminate_nm = sparksmith_core::units::Nm::try_new(30_000).ok_or("nm")?;
-        let stack = Stack::of(&stackup, PadFinish::Enig);
+        let stack = Stack::of(&stackup, PadFinish::Enig).map_err(|e| e.to_string())?;
         let order: Vec<Slot> = stack.slots().iter().map(|(s, _)| *s).collect();
         let mut expected = vec![
             Slot::Silk(Layer::Top),
@@ -499,13 +510,13 @@ mod tests {
         let silk = stack.span_of(Slot::Silk(Layer::Top)).ok_or("no legend")?;
         // The default stackup's mask over copper is the core's seed.
         near(
-            Stack::default().mask_mm(),
+            Stack::standard().map_err(|e| e.to_string())?.mask_mm(),
             sparksmith_core::MASK_UM / 1000.0,
         );
         assert!(finish[1] > top + 0.070 && silk[1] > top + 0.030);
-        near(finish[1], top + 0.070 + finish_um(PadFinish::Enig) / 1000.0);
+        near(finish[1], top + 0.070 + finish_um(stack.looks(), PadFinish::Enig) / 1000.0);
         // Each finish has its own thickness.
-        let hasl = Stack::of(&stackup, PadFinish::Hasl);
+        let hasl = Stack::of(&stackup, PadFinish::Hasl).map_err(|e| e.to_string())?;
         near(hasl.finish_mm(), 0.021);
         Ok(())
     }
@@ -514,13 +525,13 @@ mod tests {
     /// copper lie under nothing but the finish, and a legend there lies on
     /// the laminate.
     #[test]
-    fn a_side_without_films_has_no_slots_for_them() {
+    fn a_side_without_films_has_no_slots_for_them() -> Result<()> {
         let stackup = Stackup {
             mask_bottom: false,
             silkscreen_top: false,
             ..Stackup::default()
         };
-        let stack = Stack::of(&stackup, PadFinish::default());
+        let stack = Stack::of(&stackup, PadFinish::default())?;
         assert!(stack.has(Slot::Mask(Layer::Top)));
         assert!(!stack.has(Slot::Mask(Layer::Bottom)));
         assert!(!stack.has(Slot::Silk(Layer::Top)));
@@ -555,5 +566,6 @@ mod tests {
             stack.surface(Layer::Top),
             stackup.dielectric_mm() + stackup.mask_laminate_nm.to_mm_f64(),
         );
+        Ok(())
     }
 }

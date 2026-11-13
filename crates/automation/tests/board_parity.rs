@@ -181,6 +181,8 @@ fn report(what: &str, list: &[&Record]) -> String {
 #[test]
 #[ignore = "board parity: run by `cargo xtask board-parity`"]
 fn example_boards_match_their_record_and_plan() {
+    // The 3D build reads the shipped material library.
+    sparksmith_automation::load_materials();
     let bless = std::env::var_os("SPARKSMITH_BLESS_PARITY").is_some();
     let boards = boards();
     assert!(!boards.is_empty(), "no example boards found");
@@ -286,6 +288,8 @@ fn example_boards_match_their_record_and_plan() {
 /// dielectric slab alone (what one merged laminate body cost).
 #[test]
 fn example_boards_mesh_as_their_plan() {
+    // The 3D build reads the shipped material library.
+    sparksmith_automation::load_materials();
     let mut failures = Vec::new();
     for (name, project) in &boards() {
         let plan = plan::of(project).unwrap();

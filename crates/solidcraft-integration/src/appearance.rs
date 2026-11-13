@@ -14,6 +14,7 @@ use crate::stack::{PROUD_MM, Stack};
 use crate::{Error, Result};
 use sparksmith_core::geometry::{cos_sin, is_quarter_turn};
 use sparksmith_core::library::offset_polygon;
+use sparksmith_core::materials::AppearanceSizes;
 use sparksmith_core::library::{
     ChipKind, FootprintDefinition, PackageDefinition, PackageForm, PadKind, PadSide,
 };
@@ -37,40 +38,11 @@ const CAP_MIN_MM: f64 = 0.01;
 /// Finish over a track inside an opening sits this share of the finish
 /// thickness up, just under the land's own finish where they overlap.
 const STRIP_SHARE: f64 = 0.8;
-/// Termination plating beyond the body faces (real terminations are 10–30 µm).
-const TERMINATION_GROWTH_MM: f64 = 0.01;
-/// A chip termination's band on the top face: a fifth of the length, at
-/// most 0.5 mm (EIA chip-resistor bands are 0.3–0.5 mm from 0603 to 1206).
-const BAND_SHARE: f64 = 0.2;
-const BAND_MAX_MM: f64 = 0.5;
-/// Height share of a non-chip lead band.
-const LEAD_HEIGHT_SHARE: f64 = 0.15;
-/// The resistor overcoat stops this far short of the body's long edges,
-/// leaving a white alumina rim, and stands this far above the body.
-const OVERCOAT_INSET_MM: f64 = 0.04;
-const OVERCOAT_MM: f64 = 0.005;
-/// Solder fillet height as a share of the body height, at most 0.4 mm
-/// (J-STD-001 asks for at least a quarter of the termination height).
-const FILLET_HEIGHT_SHARE: f64 = 0.4;
-const FILLET_MAX_MM: f64 = 0.4;
-/// The fillet is narrower than the termination it wets.
-const FILLET_WIDTH_SHARE: f64 = 0.92;
-/// Pads reaching less than this beyond the termination get no fillet.
-const FILLET_MIN_TOE_MM: f64 = 0.02;
-/// A gull-wing foot's toe fillet climbs its end face to this share of the
-/// lead thickness, its heel fillet to this share (IPC J-STD-001 asks for a
-/// heel fillet of at least the lead thickness).
-const FOOT_TOE_SHARE: f64 = 0.9;
-const FOOT_HEEL_SHARE: f64 = 1.5;
+// The sizes of terminations, overcoat, solder joints and via tents are
+// shipped data (`materials/appearance.json`, [`AppearanceSizes`]).
 /// A foot fillet's segments along and across: a lead is a fraction of a
 /// millimetre wide, so few suffice.
 const FOOT_STEPS: [usize; 2] = [8, 6];
-/// A header pin's solder cone covers this share of its land's radius and
-/// climbs the pin by this share of the land beyond the pin (plus half the
-/// pin side), at most [`PIN_RISE_MAX_MM`].
-const PIN_LAND_SHARE: f64 = 0.95;
-const PIN_RISE_SHARE: f64 = 0.8;
-const PIN_RISE_MAX_MM: f64 = 0.8;
 /// Segments round a pin's cone (a multiple of 8, so the square pin's
 /// corners are vertices) and rows up it.
 const PIN_SEGMENTS: usize = 24;
@@ -83,14 +55,6 @@ const FILLET_ACROSS_STEPS: usize = 24;
 /// normal, and the plan mesher draws no edge between them.
 pub(crate) const SMOOTH_TURN: f64 = 0.55;
 
-/// A tented via's mask sags this far into the drill it bridges (est.; LPI
-/// tents over a 0.3 mm hole dip into it as a visible dimple). 8 µm read as
-/// no dimple in the look review. The dimple stays [`PROUD_MM`] above the
-/// copper under the mask, so a track ending at the via never shows through
-/// it.
-const TENT_SAG_MM: f64 = 0.012;
-/// How far past the ring the tent's dome slopes down into the mask.
-const TENT_SKIRT_MM: f64 = 0.08;
 /// Segments around a via and rings across its dome.
 const VIA_SEGMENTS: usize = 40;
 const DOME_STEPS: usize = 6;
@@ -167,14 +131,14 @@ pub struct Board {
 
 impl Board {
     /// The board of `project`, from its outline, stackup and fabrication.
-    pub fn of(project: &Project) -> Self {
-        Self {
+    pub fn of(project: &Project) -> Result<Self> {
+        Ok(Self {
             width: project.board_size[0],
             depth: project.board_size[1],
             shape: Outline::of(project).map(std::sync::Arc::new),
-            stack: Stack::of(&project.stackup, project.fabrication.pad_finish),
+            stack: Stack::of(&project.stackup, project.fabrication.pad_finish)?,
             fabrication: project.fabrication,
-        }
+        })
     }
 
     /// The outer copper foil thickness on a side.
@@ -836,6 +800,7 @@ impl Frame<'_> {
 
 /// Terminations, overcoat and solder fillets of one package.
 fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> Result<()> {
+    let sizes = &crate::looks::get()?.appearance;
     let frame = Frame {
         board,
         placement: part.placement,
@@ -855,16 +820,16 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
     if part.body == Body::Moulded {
         // A generated model's leads are real bodies: only their joints.
         if part.generated {
-            return lead_joints(out, board, &frame, part);
+            return lead_joints(out, board, &frame, part, sizes);
         }
         let Some(footprint) = part.footprint.filter(|f| f.pads.len() <= 2) else {
             return Ok(());
         };
         for pad in &footprint.pads {
-            let Some((min, max)) = lead_band(package, footprint, pad) else {
+            let Some((min, max)) = lead_band(package, footprint, pad, sizes.termination_growth_mm.value) else {
                 continue;
             };
-            let top = offset[2] + LEAD_HEIGHT_SHARE * height;
+            let top = offset[2] + sizes.lead_band_height_share.value * height;
             if top > 0.001 {
                 let mesh = frame.cuboid([min[0], min[1], 0.0], [max[0], max[1], top]);
                 push(out, board, BodyKind::Termination, part.pick, None, mesh)?;
@@ -876,12 +841,12 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
     let axis = usize::from(width > length);
     let across = 1 - axis;
     let long = package.envelope()[axis];
-    let band = (BAND_SHARE * long).min(BAND_MAX_MM);
+    let band = (sizes.chip_band_share.value * long).min(sizes.chip_band_max_mm.value);
     // A generated chip's terminations are real bodies flush with its ends.
     let g = if part.generated {
         0.0
     } else {
-        TERMINATION_GROWTH_MM
+        sizes.termination_growth_mm.value
     };
     for sign in [-1.0, 1.0] {
         if part.generated {
@@ -908,10 +873,10 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         let (mut min, mut max) = ([0.0; 3], [0.0; 3]);
         min[axis] = lo[axis] + band - 2.0 * g;
         max[axis] = hi[axis] - band + 2.0 * g;
-        min[across] = lo[across] + OVERCOAT_INSET_MM;
-        max[across] = hi[across] - OVERCOAT_INSET_MM;
-        min[2] = hi[2] - OVERCOAT_MM;
-        max[2] = hi[2] + OVERCOAT_MM;
+        min[across] = lo[across] + sizes.overcoat_inset_mm.value;
+        max[across] = hi[across] - sizes.overcoat_inset_mm.value;
+        min[2] = hi[2] - sizes.overcoat_mm.value;
+        max[2] = hi[2] + sizes.overcoat_mm.value;
         if min[axis] < max[axis] && min[across] < max[across] {
             push(
                 out,
@@ -942,12 +907,12 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
         let a = (center[across] - extent[across] / 2.0).max(lo[across]);
         let b = (center[across] + extent[across] / 2.0).min(hi[across]);
         // Solder wets the land only: the end face must stand over it.
-        if reach < FILLET_MIN_TOE_MM || sign * (face - heel) < 0.0 || b <= a {
+        if reach < sizes.fillet_min_toe_mm.value || sign * (face - heel) < 0.0 || b <= a {
             continue;
         }
-        let rise = (FILLET_HEIGHT_SHARE * height).min(FILLET_MAX_MM);
+        let rise = (sizes.fillet_height_share.value * height).min(sizes.fillet_max_mm.value);
         let mid = (a + b) / 2.0;
-        let half = (b - a) / 2.0 * FILLET_WIDTH_SHARE;
+        let half = (b - a) / 2.0 * sizes.fillet_width_share.value;
         let mesh = fillet(
             &frame,
             axis,
@@ -981,6 +946,7 @@ fn lead_joints(
     board: Option<&Board>,
     frame: &Frame<'_>,
     part: &Part<'_>,
+    sizes: &AppearanceSizes,
 ) -> Result<()> {
     let (Some(footprint), Some(board)) = (part.footprint, board) else {
         return Ok(());
@@ -997,6 +963,7 @@ fn lead_joints(
                 width: g.lead_width(),
                 thickness: g.lead_thickness(),
             },
+            sizes,
         ),
         PackageForm::Tabbed(t) => feet(
             out,
@@ -1009,8 +976,9 @@ fn lead_joints(
                 width: t.lead_width(),
                 thickness: t.lead_thickness(),
             },
+            sizes,
         ),
-        PackageForm::Header(h) => pins(out, board, frame, part, footprint, h.pin_side()),
+        PackageForm::Header(h) => pins(out, board, frame, part, footprint, h.pin_side(), sizes),
         _ => Ok(()),
     }
 }
@@ -1044,6 +1012,7 @@ fn feet(
     part: &Part<'_>,
     footprint: &FootprintDefinition,
     foot: Foot,
+    sizes: &AppearanceSizes,
 ) -> Result<()> {
     if !(positive(foot.length) && positive(foot.width) && positive(foot.thickness)) {
         return Ok(());
@@ -1069,7 +1038,7 @@ fn feet(
             -1.0
         };
         // A wide tab is as wide as its land at most.
-        let width = foot.width.min(extent[across]) * FILLET_WIDTH_SHARE;
+        let width = foot.width.min(extent[across]) * sizes.fillet_width_share.value;
         let span = [lead[across] - width / 2.0, lead[across] + width / 2.0];
         let toe = lead[axis] + sign * foot.length / 2.0;
         let heel = lead[axis] - sign * foot.length / 2.0;
@@ -1080,16 +1049,16 @@ fn feet(
                 toe,
                 sign,
                 sign * (land_toe - toe),
-                FOOT_TOE_SHARE * foot.thickness,
+                sizes.foot_toe_share.value * foot.thickness,
             ),
             (
                 heel,
                 -sign,
                 sign * (heel - land_heel),
-                FOOT_HEEL_SHARE * foot.thickness,
+                sizes.foot_heel_share.value * foot.thickness,
             ),
         ] {
-            if reach < FILLET_MIN_TOE_MM {
+            if reach < sizes.fillet_min_toe_mm.value {
                 continue;
             }
             let mesh = fillet(frame, axis, side, face, reach, rise, span, FOOT_STEPS);
@@ -1108,6 +1077,7 @@ fn pins(
     part: &Part<'_>,
     footprint: &FootprintDefinition,
     side: f64,
+    sizes: &AppearanceSizes,
 ) -> Result<()> {
     if !positive(side) {
         return Ok(());
@@ -1134,11 +1104,11 @@ fn pins(
         let Some(lead) = lead_on(&points, center, extent) else {
             continue;
         };
-        let ring = extent[0].min(extent[1]) / 2.0 * PIN_LAND_SHARE;
+        let ring = extent[0].min(extent[1]) / 2.0 * sizes.pin_land_share.value;
         if ring <= half * std::f64::consts::SQRT_2 * 1.05 {
             continue;
         }
-        let rise = (PIN_RISE_SHARE * (ring - half) + half).min(PIN_RISE_MAX_MM);
+        let rise = (sizes.pin_rise_share.value * (ring - half) + half).min(sizes.pin_rise_max_mm.value);
         let base = board.copper(far) + board.stack.finish_mm() + PROUD_MM;
         let mesh = cone(
             |p: Point| frame.xy([lead[0] + p[0], lead[1] + p[1]]),
@@ -1260,6 +1230,7 @@ fn lead_band(
     package: &PackageDefinition,
     footprint: &FootprintDefinition,
     pad: &sparksmith_core::library::Pad,
+    growth: f64,
 ) -> Option<([f64; 2], [f64; 2])> {
     let [length, width, _] = package.envelope();
     let offset = package.placement.translation();
@@ -1277,13 +1248,13 @@ fn lead_band(
         let on = |a: f64, b: f64| (a - b).abs() < 1e-9;
         min[axis] = lo
             - if on(lo, body_min[axis]) {
-                TERMINATION_GROWTH_MM
+                growth
             } else {
                 0.0
             };
         max[axis] = hi
             + if on(hi, body_max[axis]) {
-                TERMINATION_GROWTH_MM
+                growth
             } else {
                 0.0
             };
@@ -1579,7 +1550,7 @@ pub(crate) fn push(
         Some(board) => (board.fabrication, std::borrow::Cow::Borrowed(&board.stack)),
         None => (
             Fabrication::default(),
-            std::borrow::Cow::Owned(Stack::default()),
+            std::borrow::Cow::Owned(Stack::standard()?),
         ),
     };
     let bounds = mesh.bounds();
@@ -1595,7 +1566,7 @@ pub(crate) fn push(
         layer,
         dielectric: None,
         surface: material::material(kind, &looks, &stack).surface()?,
-        detail: material::detail(kind, &looks),
+        detail: material::detail(kind, &looks, stack.looks()),
         mesh: Arc::new(mesh),
         place: None,
         volume: crate::scene::Volume::known(volume),
@@ -1660,7 +1631,7 @@ mod tests {
             width: 10.0,
             depth: 10.0,
             shape: None,
-            stack: Stack::of(&stackup, Fabrication::default().pad_finish),
+            stack: Stack::of(&stackup, Fabrication::default().pad_finish)?,
             fabrication: Fabrication::default(),
         };
         let land = Land {

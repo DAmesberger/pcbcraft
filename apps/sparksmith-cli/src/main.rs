@@ -61,6 +61,8 @@ const USAGE: &str = concat!(
 );
 
 fn main() -> ExitCode {
+    // The shipped material library, once: every 3D build and export reads it.
+    sparksmith_automation::load_materials();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

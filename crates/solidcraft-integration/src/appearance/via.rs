@@ -2,8 +2,8 @@
 //! bore an open side shows. An open side's finished ring and mask opening
 //! are an ordinary [`super::Land`] ([`super::ViaMark::lands`]).
 use super::{
-    BORE_GAP_MM, BORE_SHADOW_MM, Board, DOME_STEPS, Region, TENT_SAG_MM, TENT_SKIRT_MM,
-    VIA_SEGMENTS, ViaMark, circle, push, slab,
+    BORE_GAP_MM, BORE_SHADOW_MM, Board, DOME_STEPS, Region, VIA_SEGMENTS, ViaMark, circle, push,
+    slab,
 };
 use crate::Result;
 use crate::geom::prelude::*;
@@ -90,7 +90,8 @@ pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) 
 /// mask beyond it.
 fn tent_height(board: &Board, via: &ViaMark, side: Layer, r: f64) -> f64 {
     let crown = board.crown(side);
-    let sag = TENT_SAG_MM.min(board.stack.mask_mm() - PROUD_MM);
+    let sizes = &board.stack.looks().appearance;
+    let sag = sizes.tent_sag_mm.value.min(board.stack.mask_mm() - PROUD_MM);
     let ring = via.diameter / 2.0;
     let bore = via.bore().max(0.0);
     if r < bore && bore > 0.0 {
@@ -101,7 +102,7 @@ fn tent_height(board: &Board, via: &ViaMark, side: Layer, r: f64) -> f64 {
     } else {
         // Ends just under the mask's top, so the dome rises out of it.
         let foot = board.stack.mask_laminate_mm() - PROUD_MM;
-        let t = ((r - ring) / TENT_SKIRT_MM).clamp(0.0, 1.0);
+        let t = ((r - ring) / sizes.tent_skirt_mm.value).clamp(0.0, 1.0);
         let ease = 0.5 + 0.5 * (std::f64::consts::PI * t).cos();
         foot + (crown - foot) * ease
     }
@@ -112,7 +113,8 @@ fn tent_height(board: &Board, via: &ViaMark, side: Layer, r: f64) -> f64 {
 fn dome(board: &Board, via: &ViaMark, side: Layer) -> Mesh {
     let ring = via.diameter / 2.0;
     let bore = via.bore().max(0.0);
-    let outer = ring + TENT_SKIRT_MM;
+    let skirt = board.stack.looks().appearance.tent_skirt_mm.value;
+    let outer = ring + skirt;
     // Radii across the dome: through the drill, the ring and the skirt.
     let mut radii: Vec<f64> = Vec::new();
     for k in 1..=DOME_STEPS {
@@ -120,7 +122,7 @@ fn dome(board: &Board, via: &ViaMark, side: Layer) -> Mesh {
     }
     radii.push(ring);
     for k in 1..=2 * DOME_STEPS {
-        radii.push(ring + TENT_SKIRT_MM * k as f64 / (2 * DOME_STEPS) as f64);
+        radii.push(ring + skirt * k as f64 / (2 * DOME_STEPS) as f64);
     }
     radii.retain(|r| *r > 1e-6);
     radii.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
@@ -244,14 +246,14 @@ mod tests {
     use super::*;
     use sparksmith_core::Fabrication;
 
-    fn board() -> Board {
-        Board {
+    fn board() -> Result<Board> {
+        Ok(Board {
             width: 10.0,
             depth: 10.0,
             shape: None,
-            stack: crate::stack::Stack::default(),
+            stack: crate::stack::Stack::standard()?,
             fabrication: Fabrication::default(),
-        }
+        })
     }
 
     fn via(tented: bool) -> ViaMark {
@@ -267,7 +269,7 @@ mod tests {
 
     #[test]
     fn a_tented_via_shows_a_closed_mask_dome_on_each_side() -> Result<()> {
-        let board = board();
+        let board = board()?;
         let mut out = Vec::new();
         via_layers(&mut out, &board, &via(true))?;
         assert_eq!(out.len(), 2, "two domes, no bore");
@@ -277,7 +279,8 @@ mod tests {
             assert_eq!(dome.item, Some(7));
             // It covers the ring and its skirt, above the copper's crown.
             let crown = 0.035 + sparksmith_core::MASK_UM / 1000.0;
-            let r = 0.3 + TENT_SKIRT_MM;
+            // The shipped tent skirt.
+            let r = 0.3 + 0.08;
             assert!((dome.max[0] - dome.min[0] - 2.0 * r).abs() < 1e-6);
             let (top, face) = match side {
                 Layer::Top => (dome.max[2], 1.6),
@@ -300,7 +303,7 @@ mod tests {
 
     #[test]
     fn an_open_via_shows_a_dark_bore_and_lands_with_mask_openings() -> Result<()> {
-        let board = board();
+        let board = board()?;
         let open = via(false);
         let mut out = Vec::new();
         via_layers(&mut out, &board, &open)?;
@@ -331,7 +334,7 @@ mod tests {
                     ..sparksmith_core::Stackup::default()
                 },
                 board.fabrication.pad_finish,
-            ),
+            )?,
             ..board.clone()
         };
         let mut out = Vec::new();

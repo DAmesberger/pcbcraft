@@ -19,8 +19,9 @@ fn write_layer_pictures() -> Result<(), Box<dyn std::error::Error>> {
         return Err("no GPU adapter".into());
     };
     let project = showcase_project()?;
+    crate::test_materials()?;
     let stack =
-        sparksmith_solidcraft::stack::Stack::of(&project.stackup, project.fabrication.pad_finish);
+        sparksmith_solidcraft::stack::Stack::of(&project.stackup, project.fabrication.pad_finish)?;
     if project.stackup.layers().len() < 4 {
         return Err("the showcase is a 4-layer board".into());
     }

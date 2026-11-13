@@ -448,9 +448,9 @@ mod tests {
     use super::*;
 
     fn four() -> Result<Stack, String> {
-        sparksmith_core::Stackup::preset(4)
-            .map(|s| Stack::of(&s, sparksmith_core::PadFinish::default()))
-            .map_err(|e| e.to_string())
+        crate::test_materials()?;
+        let stackup = sparksmith_core::Stackup::preset(4).map_err(|e| e.to_string())?;
+        Stack::of(&stackup, sparksmith_core::PadFinish::default()).map_err(|e| e.to_string())
     }
 
     #[test]
@@ -542,13 +542,14 @@ mod tests {
                 }
             }
         }
-        let two = ViewLayer::stack(&Stack::default());
+        let standard = crate::test_stack()?;
+        let two = ViewLayer::stack(&standard);
         assert_eq!(two.len(), stack.len() - 4);
         // A board of one dielectric calls it the substrate.
         let laminate: Vec<String> = two
             .iter()
             .filter(|l| matches!(l, ViewLayer::Dielectric(_)))
-            .map(|l| l.label_on(&Stack::default()))
+            .map(|l| l.label_on(&standard))
             .collect();
         assert_eq!(laminate, ["Substrate"]);
         // Only the films the stackup has: no bottom mask or top legend
@@ -560,7 +561,8 @@ mod tests {
                 ..sparksmith_core::Stackup::default()
             },
             sparksmith_core::PadFinish::default(),
-        ));
+        )
+        .map_err(|e| e.to_string())?);
         assert_eq!(bare.len(), two.len() - 2);
         assert!(!bare.contains(&ViewLayer::Mask(Layer::Bottom)));
         assert!(!bare.contains(&ViewLayer::Silkscreen(Layer::Top)));
@@ -586,7 +588,7 @@ mod tests {
     fn the_popover_checkboxes_start_under_the_caption() -> Result<(), String> {
         let ctx = egui::Context::default();
         let mut view = LayerView::default();
-        let stack = Stack::default();
+        let stack = crate::test_stack()?;
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             popover(ui, &mut view, &stack, &mut false);
         });
@@ -622,7 +624,7 @@ mod tests {
         interface: &mut bool,
         label: &str,
     ) -> Result<bool, String> {
-        let stack = Stack::default();
+        let stack = crate::test_stack()?;
         let mut frame = |view: &mut LayerView, events: Vec<egui::Event>| {
             let mut changed = false;
             let input = egui::RawInput {

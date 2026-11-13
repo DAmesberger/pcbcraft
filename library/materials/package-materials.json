@@ -1,0 +1,521 @@
+{
+  "about": "Physical materials of package bodies: optical values (linear-sRGB reflectance; metallic, perceptual roughness and IOR in Solidcraft's opaque-surface convention) and densities. Every value is cited or marked estimated: a source's reference is a key of the Sources list in docs/materials.md, and \"est\" marks an estimate. Metals store IOR 1.5, which Solidcraft requires and ignores. The revision is the material table revision a project records; it changes whenever a value changes.",
+  "revision": 1,
+  "materials": [
+    {
+      "id": "epoxy_mould",
+      "name": "Epoxy mould compound",
+      "base_linear": [0.022, 0.022, 0.024],
+      "metallic": 0.0,
+      "roughness": 0.45,
+      "ior": 1.55,
+      "pattern": {
+        "kind": "edm_texture",
+        "strength": 1.0
+      },
+      "density_kg_m3": 1950.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "est. colour: carbon-black pigmented, silica-filled epoxy; n from the filler and resin indices"
+        },
+        {
+          "reference": "est",
+          "note": "EDM mould texture; density typical of 80–90 % silica-filled compounds"
+        }
+      ]
+    },
+    {
+      "id": "epoxy_laser_marked",
+      "name": "Laser-marked epoxy",
+      "base_linear": [0.1, 0.1, 0.105],
+      "metallic": 0.0,
+      "roughness": 0.75,
+      "ior": 1.55,
+      "density_kg_m3": 1950.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "laser ablation exposes lighter silica filler and roughens the surface"
+        }
+      ]
+    },
+    {
+      "id": "marking_ink_white",
+      "name": "White marking ink",
+      "base_linear": [0.8, 0.8, 0.78],
+      "metallic": 0.0,
+      "roughness": 0.6,
+      "ior": 1.5,
+      "source": [
+        {
+          "reference": "est",
+          "note": "TiO2-pigmented epoxy ink, as silkscreen legend ink"
+        }
+      ]
+    },
+    {
+      "id": "metal_laser_marked",
+      "name": "Laser-marked nickel silver",
+      "base_linear": [0.3, 0.29, 0.27],
+      "metallic": 1.0,
+      "roughness": 0.7,
+      "ior": 1.5,
+      "density_kg_m3": 8700.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "laser marking on a nickel-silver can anneals a thin oxide that darkens the metal to a dull grey and roughens it; still a metal, so it reflects the studio as the can does, only duller (F0 about 0.3, roughness 0.70: clearly rougher than the satin can's 0.25)"
+        }
+      ]
+    },
+    {
+      "id": "pad_print_ink",
+      "name": "Pad-print ink",
+      "base_linear": [0.82, 0.82, 0.8],
+      "metallic": 0.0,
+      "roughness": 0.4,
+      "ior": 1.5,
+      "source": [
+        {
+          "reference": "est",
+          "note": "TiO2-pigmented two-part epoxy pad-print ink: a thinner, smoother film than screen-printed legend ink, so glossier"
+        }
+      ]
+    },
+    {
+      "id": "resistor_overcoat",
+      "name": "Resistor overcoat",
+      "base_linear": [0.025, 0.025, 0.027],
+      "metallic": 0.0,
+      "roughness": 0.3,
+      "ior": 1.55,
+      "source": [
+        {
+          "reference": "est",
+          "note": "glass or epoxy overcoat with a black marking layer (docs/materials.md)"
+        }
+      ]
+    },
+    {
+      "id": "alumina96",
+      "name": "96 % alumina",
+      "base_linear": [0.78, 0.77, 0.73],
+      "metallic": 0.0,
+      "roughness": 0.55,
+      "ior": 1.77,
+      "density_kg_m3": 3720.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "n from sapphire, n_o = 1.77"
+        },
+        {
+          "reference": "est",
+          "note": "reflectance of thick-film substrates, 0.75–0.85 across 400–700 nm (published substrate data)"
+        }
+      ]
+    },
+    {
+      "id": "barium_titanate",
+      "name": "Barium titanate ceramic",
+      "base_linear": [0.32, 0.25, 0.15],
+      "metallic": 0.0,
+      "roughness": 0.55,
+      "ior": 2.4,
+      "density_kg_m3": 6020.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "n ≈ 2.4; density of BaTiO3"
+        },
+        {
+          "reference": "est",
+          "note": "tan colour of sintered MLCC bodies"
+        }
+      ]
+    },
+    {
+      "id": "ferrite",
+      "name": "Ferrite",
+      "base_linear": [0.045, 0.045, 0.047],
+      "metallic": 0.0,
+      "roughness": 0.6,
+      "ior": 2.0,
+      "density_kg_m3": 4800.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "dark grey sintered Mn-Zn/Ni-Zn ferrite; n and density estimated"
+        }
+      ]
+    },
+    {
+      "id": "tin_matte",
+      "name": "Matte tin",
+      "base_linear": [0.78, 0.78, 0.8],
+      "metallic": 1.0,
+      "roughness": 0.32,
+      "ior": 1.5,
+      "density_kg_m3": 7265.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "density of beta tin; Palik's Sn n, k to confirm the F0"
+        },
+        {
+          "reference": "est",
+          "note": "F0 below polished tin for its oxide film; electroplated matte tin is rough (0.32: between the 0.40 that went flat grey and the 0.28 that mirrored the studio on chip terminations)"
+        }
+      ]
+    },
+    {
+      "id": "tin_bright",
+      "name": "Bright tin",
+      "base_linear": [0.78, 0.78, 0.8],
+      "metallic": 1.0,
+      "roughness": 0.24,
+      "ior": 1.5,
+      "density_kg_m3": 7265.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "density of beta tin"
+        },
+        {
+          "reference": "est",
+          "note": "same F0 as matte tin, a smoother brightened deposit: satin, not a mirror"
+        }
+      ]
+    },
+    {
+      "id": "solder_sac",
+      "name": "SAC solder",
+      "base_linear": [0.78, 0.78, 0.8],
+      "metallic": 1.0,
+      "roughness": 0.38,
+      "ior": 1.5,
+      "density_kg_m3": 7400.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "SAC alloys are about 96 % Sn, so the Sn F0; lead-free joints freeze satin, not mirror-bright"
+        }
+      ]
+    },
+    {
+      "id": "gold",
+      "name": "Gold plating",
+      "base_linear": [1.0, 0.782, 0.344],
+      "metallic": 1.0,
+      "roughness": 0.3,
+      "ior": 1.5,
+      "density_kg_m3": 19300.0,
+      "source": [
+        {
+          "reference": "johnson-christy-1972",
+          "note": "Au F0 via Hoffman's table"
+        },
+        {
+          "reference": "est",
+          "note": "roughness of hard gold flash over nickel on drawn pins; 0.30 so a pin gathers the studio strips into a visible gradient instead of mirroring its dark walls"
+        }
+      ]
+    },
+    {
+      "id": "nickel",
+      "name": "Nickel",
+      "base_linear": [0.66, 0.609, 0.526],
+      "metallic": 1.0,
+      "roughness": 0.3,
+      "ior": 1.5,
+      "density_kg_m3": 8908.0,
+      "source": [
+        {
+          "reference": "rakic-1998",
+          "note": "Ni F0"
+        },
+        {
+          "reference": "est",
+          "note": "roughness of electroplated nickel"
+        }
+      ]
+    },
+    {
+      "id": "copper_alloy",
+      "name": "Copper-alloy leadframe",
+      "base_linear": [0.955, 0.638, 0.538],
+      "metallic": 1.0,
+      "roughness": 0.32,
+      "ior": 1.5,
+      "density_kg_m3": 8910.0,
+      "source": [
+        {
+          "reference": "johnson-christy-1972",
+          "note": "Cu F0 via Hoffman's table; C194-like alloys are over 97 % Cu"
+        },
+        {
+          "reference": "est",
+          "note": "roughness of rolled and etched leadframe strip"
+        }
+      ]
+    },
+    {
+      "id": "phosphor_bronze",
+      "name": "Phosphor bronze",
+      "base_linear": [0.9, 0.7, 0.52],
+      "metallic": 1.0,
+      "roughness": 0.3,
+      "ior": 1.5,
+      "density_kg_m3": 8860.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "Cu with about 5 % Sn: copper F0 shifted toward tin"
+        }
+      ]
+    },
+    {
+      "id": "brass",
+      "name": "Brass",
+      "base_linear": [0.91, 0.778, 0.423],
+      "metallic": 1.0,
+      "roughness": 0.28,
+      "ior": 1.5,
+      "density_kg_m3": 8500.0,
+      "source": [
+        {
+          "reference": "hoffman",
+          "note": "brass F0"
+        },
+        {
+          "reference": "est",
+          "note": "roughness of a turned or rolled surface"
+        }
+      ]
+    },
+    {
+      "id": "aluminium",
+      "name": "Aluminium",
+      "base_linear": [0.913, 0.922, 0.924],
+      "metallic": 1.0,
+      "roughness": 0.3,
+      "ior": 1.5,
+      "density_kg_m3": 2700.0,
+      "source": [
+        {
+          "reference": "hoffman",
+          "note": "Al F0; CRC density"
+        },
+        {
+          "reference": "est",
+          "note": "roughness of a drawn aluminium can"
+        }
+      ]
+    },
+    {
+      "id": "pvc_sleeve",
+      "name": "PVC sleeve",
+      "base_linear": [0.02, 0.045, 0.16],
+      "metallic": 0.0,
+      "roughness": 0.35,
+      "ior": 1.54,
+      "density_kg_m3": 1380.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "n of PVC ≈ 1.54"
+        },
+        {
+          "reference": "est",
+          "note": "pigmented heat-shrink sleeve colour; density typical of rigid PVC"
+        }
+      ]
+    },
+    {
+      "id": "borosilicate_glass",
+      "name": "Borosilicate glass",
+      "base_linear": [0.85, 0.88, 0.86],
+      "metallic": 0.0,
+      "roughness": 0.05,
+      "ior": 1.47,
+      "transmission": {
+        "weight": 1.0,
+        "attenuation_linear": [0.92, 0.95, 0.93],
+        "distance_mm": 1.0
+      },
+      "density_kg_m3": 2230.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "n_d ≈ 1.47 and density of borosilicate glass"
+        },
+        {
+          "reference": "est",
+          "note": "slight green attenuation of diode glass; opaque tint until a layered saved appearance exists"
+        }
+      ]
+    },
+    {
+      "id": "pbt",
+      "name": "PBT",
+      "base_linear": [0.03, 0.03, 0.032],
+      "metallic": 0.0,
+      "roughness": 0.5,
+      "ior": 1.57,
+      "density_kg_m3": 1530.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "black glass-filled PBT body; n ≈ 1.57 and density typical of 30 % glass-filled grades"
+        }
+      ]
+    },
+    {
+      "id": "lcp",
+      "name": "LCP",
+      "base_linear": [0.025, 0.025, 0.028],
+      "metallic": 0.0,
+      "roughness": 0.35,
+      "ior": 1.6,
+      "density_kg_m3": 1620.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "black glass-filled LCP body; n and density typical"
+        }
+      ]
+    },
+    {
+      "id": "pa9t",
+      "name": "PA9T",
+      "base_linear": [0.03, 0.03, 0.03],
+      "metallic": 0.0,
+      "roughness": 0.45,
+      "ior": 1.53,
+      "density_kg_m3": 1450.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "black glass-filled PA9T body; n and density typical"
+        }
+      ]
+    },
+    {
+      "id": "silicone_clear",
+      "name": "Clear silicone",
+      "base_linear": [0.9, 0.9, 0.9],
+      "metallic": 0.0,
+      "roughness": 0.08,
+      "ior": 1.41,
+      "transmission": {
+        "weight": 1.0,
+        "attenuation_linear": [0.97, 0.97, 0.96],
+        "distance_mm": 1.0
+      },
+      "density_kg_m3": 1030.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "n of PDMS ≈ 1.41"
+        },
+        {
+          "reference": "est",
+          "note": "attenuation of optical-grade encapsulant"
+        }
+      ]
+    },
+    {
+      "id": "silicone_diffuse",
+      "name": "Diffuse silicone",
+      "base_linear": [0.75, 0.75, 0.72],
+      "metallic": 0.0,
+      "roughness": 0.4,
+      "ior": 1.41,
+      "transmission": {
+        "weight": 0.3,
+        "attenuation_linear": [0.8, 0.8, 0.78],
+        "distance_mm": 0.5
+      },
+      "density_kg_m3": 1100.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "n of PDMS ≈ 1.41"
+        },
+        {
+          "reference": "est",
+          "note": "scattering filler: a white, partly transmitting body"
+        }
+      ]
+    },
+    {
+      "id": "nickel_silver",
+      "name": "Nickel silver",
+      "base_linear": [0.65, 0.63, 0.59],
+      "metallic": 1.0,
+      "roughness": 0.25,
+      "ior": 1.5,
+      "density_kg_m3": 8700.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "CuNiZn (about 18 % Ni) is a nickel-grey metal: F0 at the Ni F0's level with its yellow mostly bleached; density of C75200"
+        },
+        {
+          "reference": "est",
+          "note": "satin finish of a stamped module shield can: roughness 0.25, so the lid shows the studio's gradient as metal does; F0 0.80 at roughness 0.45 spread the overhead scrim into a flat off-white that read as matte plastic, and 0.22 at F0 0.80 mirrored the dark surroundings"
+        }
+      ]
+    },
+    {
+      "id": "solder_mask_green",
+      "name": "Green soldermask over FR-4",
+      "base_linear": [0.0118, 0.116, 0.032],
+      "metallic": 0.0,
+      "roughness": 0.2,
+      "ior": 1.52,
+      "density_kg_m3": 1850.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "the board mask composite of docs/materials.md (mask_over(green, FR-4, 20 µm)) and its gloss roughness; density of the FR-4 board under it"
+        }
+      ]
+    },
+    {
+      "id": "solder_mask_over_copper",
+      "name": "Green soldermask over copper",
+      "base_linear": [0.064, 0.237, 0.069],
+      "metallic": 0.0,
+      "roughness": 0.2,
+      "ior": 1.52,
+      "density_kg_m3": 8960.0,
+      "source": [
+        {
+          "reference": "est",
+          "note": "the mask-over-copper composite of docs/materials.md (mask_over(green, Cu, 12 µm)); density of the copper it covers"
+        }
+      ]
+    },
+    {
+      "id": "polyimide",
+      "name": "Polyimide",
+      "base_linear": [0.4, 0.15, 0.02],
+      "metallic": 0.0,
+      "roughness": 0.25,
+      "ior": 1.7,
+      "density_kg_m3": 1420.0,
+      "source": [
+        {
+          "reference": "palik-crc",
+          "note": "n ≈ 1.70 and density of polyimide film"
+        },
+        {
+          "reference": "est",
+          "note": "amber colour of polyimide film"
+        }
+      ]
+    }
+  ]
+}

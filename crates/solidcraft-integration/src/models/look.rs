@@ -3,7 +3,7 @@
 //! product look (clear coat, procedural pattern) the 3D view draws per
 //! triangle. Display-only parts of the look are never saved.
 //!
-//! Values come from the core's cited table (`materials::builtin`), the one
+//! Values come from the shipped, cited table (`crate::looks`), the one
 //! source of package material values.
 use crate::geom::Vec3;
 use crate::material::{Coat, Detail, Material, Pattern, linear_to_srgb8};
@@ -11,14 +11,19 @@ use crate::native::Look;
 use crate::{Error, Result};
 use solidcraft_viewport::clear_coat::ClearCoat;
 use solidcraft_viewport::surface::OpaqueSurface;
-use sparksmith_core::materials::{self, MaterialCategory, MaterialDef, MaterialId, PatternKind};
+use sparksmith_core::materials::{MaterialCategory, MaterialDef, MaterialId, PatternKind};
 
 /// Metals ignore the dielectric IOR; Solidcraft still requires one in [1, 3].
 const METAL_IOR: f64 = 1.5;
 
-/// The definition of `id` from the core's built-in table.
+/// The definition of `id` from the loaded material table
+/// ([`crate::looks`]).
 pub fn definition(id: MaterialId) -> Result<MaterialDef> {
-    materials::builtin(id).map_err(|error| Error::Invalid(error.to_string()))
+    crate::looks::get()?
+        .packages
+        .get(id)
+        .cloned()
+        .map_err(|error| Error::Invalid(error.to_string()))
 }
 
 /// The opaque projection a native look stores. Glass and clear silicone

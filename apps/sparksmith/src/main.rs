@@ -39,10 +39,29 @@ mod template_gallery;
 mod update_preview;
 mod viewport;
 
+/// Tests: the shipped material library, loaded once for the test process
+/// as `main` loads it for the program.
+#[cfg(test)]
+pub(crate) fn test_materials() -> Result<&'static sparksmith_core::materials::MaterialLibrary, String> {
+    sparksmith_solidcraft::looks::ensure(sparksmith_io::materials::load_shipped)
+        .map_err(|e| e.to_string())
+}
+
+/// Tests: the stack of the default stackup with the material library
+/// loaded.
+#[cfg(test)]
+pub(crate) fn test_stack() -> Result<sparksmith_solidcraft::stack::Stack, String> {
+    test_materials()?;
+    sparksmith_solidcraft::stack::Stack::standard().map_err(|e| e.to_string())
+}
+
 fn main() -> eframe::Result {
     let compact = std::env::args().any(|argument| argument == "--compact");
     // Before anything reads or creates the per-user folders.
     sparksmith_io::settings::adopt_former_folders();
+    // The shipped material library, once: the 3D view and every export
+    // read it, so no build reloads it.
+    sparksmith_automation::load_materials();
     // Files opened from Finder arrive as AppKit events, not arguments.
     #[cfg(target_os = "macos")]
     open_documents::install();

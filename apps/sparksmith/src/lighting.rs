@@ -247,7 +247,7 @@ pub(crate) mod tests {
         let mask = material(
             BodyKind::MaskTop,
             &Fabrication::default(),
-            &sparksmith_solidcraft::stack::Stack::default(),
+            &crate::test_stack()?,
         )
         .surface()?;
         let b = board();

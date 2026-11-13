@@ -207,20 +207,20 @@ mod tests {
     use super::*;
     use sparksmith_core::Fabrication;
 
-    fn board(stackup: &Stackup) -> Board {
-        Board {
+    fn board(stackup: &Stackup) -> Result<Board> {
+        Ok(Board {
             width: 20.0,
             depth: 10.0,
             shape: None,
-            stack: crate::stack::Stack::of(stackup, Fabrication::default().pad_finish),
+            stack: crate::stack::Stack::of(stackup, Fabrication::default().pad_finish)?,
             fabrication: Fabrication::default(),
-        }
+        })
     }
 
     #[test]
     fn a_four_layer_edge_shows_every_foil_dielectric_and_mask_lip_without_overlap() -> Result<()> {
         let stackup = Stackup::preset(4).map_err(|e| crate::Error::Invalid(e.to_string()))?;
-        let board = board(&stackup);
+        let board = board(&stackup)?;
         let bands = bands(&stackup, &board)?;
         let copper: Vec<Option<CopperLayer>> = bands
             .iter()
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn a_many_layer_edge_shows_every_foil_and_tiles_the_section() -> Result<()> {
         let stackup = Stackup::preset(24).map_err(|e| crate::Error::Invalid(e.to_string()))?;
-        let bands = bands(&stackup, &board(&stackup))?;
+        let bands = bands(&stackup, &board(&stackup)?)?;
         let copper: Vec<Option<CopperLayer>> = bands
             .iter()
             .filter(|g| g.kind == BodyKind::EdgeCopper)
@@ -308,7 +308,7 @@ mod tests {
             mask_bottom: false,
             ..Stackup::default()
         };
-        let bands = bands(&stackup, &board(&stackup))?;
+        let bands = bands(&stackup, &board(&stackup)?)?;
         assert!(bands.iter().all(|g| g.kind != BodyKind::MaskCap));
         assert_eq!(
             bands

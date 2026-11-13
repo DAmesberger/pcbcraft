@@ -166,8 +166,8 @@ impl PlanBody {
         z: (f64, f64),
         frame: Frame,
         loops: Vec<Contour>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        Ok(Self {
             name,
             kind,
             source,
@@ -176,8 +176,8 @@ impl PlanBody {
             z: [z.0, z.1],
             frame,
             loops,
-            look: look(kind),
-        }
+            look: look(kind)?,
+        })
     }
 
     /// The loops on the board.
@@ -215,12 +215,12 @@ impl PlanBody {
 /// The look a saved body of `kind` carries: the same for every
 /// fabrication (only display-only layers take the project's mask and
 /// finish).
-fn look(kind: BodyKind) -> Material {
-    material::material(
+fn look(kind: BodyKind) -> Result<Material> {
+    Ok(material::material(
         kind,
         &Fabrication::default(),
-        &crate::stack::Stack::default(),
-    )
+        &crate::stack::Stack::standard()?,
+    ))
 }
 
 /// A copper fill's tiles.
@@ -466,7 +466,7 @@ fn fill_plan(fill: &Fill, z: (f64, f64)) -> Result<Option<FillPlan>> {
             z,
             Frame::BOARD,
             contours,
-        );
+        )?;
         tiles.push((body, region));
     }
     Ok(Some(FillPlan {
@@ -524,7 +524,7 @@ fn pad_plan(project: &Project, pad: &PlacedPad<'_>) -> Result<PadPlan> {
         span(project, near)?,
         frame,
         land.clone(),
-    ));
+    )?);
     if copper == PadCopper::Through {
         plan.bodies.push(PlanBody::new(
             format!("{pp}_opposite"),
@@ -535,7 +535,7 @@ fn pad_plan(project: &Project, pad: &PlacedPad<'_>) -> Result<PadPlan> {
             span(project, far)?,
             frame,
             land,
-        ));
+        )?);
     }
     for (index, [drill, bore]) in pad.barrels().iter().enumerate() {
         plan.bodies.push(PlanBody::new(
@@ -547,7 +547,7 @@ fn pad_plan(project: &Project, pad: &PlacedPad<'_>) -> Result<PadPlan> {
             (0.0, board_thickness(project)),
             frame,
             vec![pad.local(drill), pad.local(bore)],
-        ));
+        )?);
     }
     Ok(plan)
 }
@@ -579,7 +579,7 @@ fn tracks(project: &Project) -> Result<Vec<TrackPlan>> {
                     span(project, track.layer)?,
                     frame,
                     vec![contour],
-                ),
+                )?,
             })
         })
         .collect()
@@ -627,7 +627,7 @@ fn vias(project: &Project) -> Result<Vec<ViaPlan>> {
                     None,
                     (0.0, board_thickness(project)),
                     vec![circle(drill), circle(bore)],
-                ));
+                )?);
             }
             for layer in layers.iter().filter(|l| via.on(**l, &layers)) {
                 if bore <= 0.0 && layer.side().is_some() {
@@ -640,7 +640,7 @@ fn vias(project: &Project) -> Result<Vec<ViaPlan>> {
                     Some(*layer),
                     span(project, *layer)?,
                     vec![circle(ring), circle(hole)],
-                ));
+                )?);
             }
             Ok(ViaPlan {
                 via: via.id,
@@ -717,13 +717,14 @@ fn laminate(
             z,
             Frame::BOARD,
             loops,
-        );
+        )?;
         // Each slab shows its own dielectric's weave, as the edge band of
         // that dielectric does.
         if let Some(d) = stackup.dielectrics.get(level.dielectric()) {
             body.look.detail = crate::stackup_edge::laminate_detail(d.kind, d.glass);
         }
         slabs.push(body);
+        Ok::<(), Error>(())
     };
     for index in 0..stackup.dielectrics.len() {
         let (low, high) = stackup
@@ -734,7 +735,7 @@ fn laminate(
             .copied()
             .find(|l| l.side().is_none() && stackup.index(*l) == Some(index));
         let Some(layer) = foil else {
-            slab(Level::Dielectric(index), (low, high), &dielectric);
+            slab(Level::Dielectric(index), (low, high), &dielectric)?;
             continue;
         };
         let mut holes = pad_drills.clone();
@@ -764,8 +765,8 @@ fn laminate(
             None => without_nested(level),
         };
         let (foil_low, _) = span(project, layer)?;
-        slab(Level::Foil { index, layer }, (foil_low, high), &level);
-        slab(Level::UnderFoil(index), (low, foil_low), &dielectric);
+        slab(Level::Foil { index, layer }, (foil_low, high), &level)?;
+        slab(Level::UnderFoil(index), (low, foil_low), &dielectric)?;
     }
     Ok(slabs)
 }

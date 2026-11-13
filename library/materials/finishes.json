@@ -1,0 +1,91 @@
+{
+  "about": "Pad finishes plated over the copper a mask opening exposes, and the legend ink: each finish's look (linear-sRGB F0, metallic, perceptual roughness; metals store IOR 1.5, which Solidcraft requires and ignores) and its plated thickness. The 3D view draws a finish at the middle of the published range (the layers' lows and highs summed). Sources are in docs/materials.md (Pad finishes, Silkscreen colour); est. marks an estimate.",
+  "pad": {
+    "enig": {
+      "look": {
+        "name": "ENIG gold",
+        "base_linear": [1.0, 0.73, 0.3],
+        "metallic": 1.0,
+        "roughness": 0.28,
+        "ior": 1.5,
+        "note": "ENIG pad F0 (est.): the gold F0 (1.000, 0.782, 0.344; Johnson & Christy 1972 via Hoffman's table) with a little nickel showing through the 0.04-0.10 um immersion gold (about 85 % Au over 15 % Ni F0 0.660, 0.609, 0.526: the gold is only 1-2 penetration depths thick), kept saturated so the finish reads gold, not khaki."
+      },
+      "thickness": {
+        "layers": [
+          {"name": "nickel", "um": [3.0, 6.0]},
+          {"name": "gold", "um": [0.025, 0.05]}
+        ],
+        "source": "JLCPCB's surface-finish page (read 2026-11-11): nickel 3-6 um, gold 0.025-0.05 um."
+      }
+    },
+    "hasl": {
+      "look": {
+        "name": "HASL tin-lead",
+        "base_linear": [0.62, 0.62, 0.63],
+        "metallic": 1.0,
+        "roughness": 0.16,
+        "ior": 1.5,
+        "note": "Eutectic tin-lead (Sn63Pb37) F0: about 30 % lead by volume, which reflects less than tin (est.). Eutectic tin-lead freezes bright."
+      },
+      "thickness": {
+        "layers": [{"name": "solder", "um": [2.0, 40.0]}],
+        "source": "LC-PCB's process capability table (read 2026-11-11), row 63: HASL, leaded and lead-free, 2-40 um."
+      }
+    },
+    "lead_free_hasl": {
+      "look": {
+        "name": "Lead-free HASL tin",
+        "base_linear": [0.64, 0.64, 0.66],
+        "metallic": 1.0,
+        "roughness": 0.2,
+        "ior": 1.5,
+        "note": "Tin F0 of a hot-air levelled pad, flat across the visible (est.; below polished tin, for its oxide film; Palik's Sn n, k to confirm). Lead-free tin alloys freeze duller and grainier than tin-lead."
+      },
+      "thickness": {
+        "layers": [{"name": "solder", "um": [2.0, 40.0]}],
+        "source": "LC-PCB's process capability table (read 2026-11-11), row 63: HASL, leaded and lead-free, 2-40 um."
+      }
+    },
+    "osp": {
+      "look": {
+        "name": "OSP copper",
+        "base_linear": [0.955, 0.638, 0.538],
+        "metallic": 1.0,
+        "roughness": 0.35,
+        "ior": 1.5,
+        "note": "A sub-micrometre transparent film over micro-etched, fresh copper: bare Cu F0 (Johnson & Christy 1972 via Hoffman's table); roughness est."
+      },
+      "thickness": {
+        "layers": [{"name": "film", "um": [0.2, 0.3]}],
+        "source": "LC-PCB's process capability table (read 2026-11-11), row 64: film 0.2-0.3 um."
+      }
+    },
+    "immersion_silver": {
+      "look": {
+        "name": "Immersion silver",
+        "base_linear": [0.972, 0.96, 0.915],
+        "metallic": 1.0,
+        "roughness": 0.2,
+        "ior": 1.5,
+        "note": "Silver F0 (Hoffman's table, from measured optical constants); immersion silver is many optical penetration depths thick. Roughness est."
+      },
+      "thickness": {
+        "layers": [{"name": "silver", "um": [0.2, 0.4]}],
+        "source": "LC-PCB's process capability table (read 2026-11-11), row 66: silver 0.2-0.4 um."
+      }
+    }
+  },
+  "legend_ink": {
+    "name": "Epoxy legend ink",
+    "colours": {
+      "white": [0.85, 0.85, 0.83],
+      "black": [0.03, 0.03, 0.03],
+      "yellow": [0.7, 0.52, 0.04]
+    },
+    "roughness": 0.75,
+    "ior": 1.55,
+    "grain": 0.5,
+    "thickness_mm": 0.015,
+    "note": "Matte epoxy legend ink, diffuse reflectance (est.; TiO2-filled white, carbon black, chrome-free yellow) and its matte roughness (est.); epoxy index 1.55 (handbook values). The grain shows at half strength: at full strength it read as blotchy dirt at mid zoom (realism review v4). Thickness est.: screen-printed and inkjet legend is 10-25 um."
+  }
+}

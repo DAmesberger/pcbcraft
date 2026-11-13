@@ -489,7 +489,7 @@ fn each_slab_carries_its_dielectrics_realistic_material() -> Result<()> {
     let laminate = crate::material::material(
         BodyKind::Substrate,
         &sparksmith_core::Fabrication::default(),
-        &crate::stack::Stack::default(),
+        &crate::stack::Stack::standard()?,
     )
     .surface()?;
     let mut keys = std::collections::HashSet::new();

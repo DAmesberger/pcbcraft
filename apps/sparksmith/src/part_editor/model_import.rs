@@ -1025,7 +1025,8 @@ fn steps(
     refusal: Option<&str>,
     importing: bool,
 ) -> Option<Action> {
-    let builtins = sparksmith_core::materials::all().unwrap_or_default();
+    // Loaded at start-up; without it the wizard offers no shipped material.
+    let builtins = sparksmith_solidcraft::looks::get().map_or(&[][..], |l| l.packages.all());
     let step = wizard.step;
     let title = format!(
         "Import model · {} of {} · {}",
@@ -1061,10 +1062,10 @@ fn steps(
         match step {
             Step::File => file_rows(ui, wizard),
             Step::Frame => frame_rows(ui, wizard),
-            Step::Materials => material_rows(ui, wizard, &builtins),
+            Step::Materials => material_rows(ui, wizard, builtins),
             Step::Leads => lead_rows(ui, wizard, package, footprint),
             Step::Licence => licence_rows(ui, wizard),
-            Step::Review => review_rows(ui, wizard, package, &builtins),
+            Step::Review => review_rows(ui, wizard, package, builtins),
         }
         let problem = wizard.problem(step);
         if let (Some(refusal), Step::Review) = (refusal, step) {
@@ -1539,7 +1540,7 @@ mod tests {
     }
 
     #[test]
-    fn unmapped_bodies_block_and_suggestions_fill_only_when_asked() {
+    fn unmapped_bodies_block_and_suggestions_fill_only_when_asked() -> Result<(), String> {
         let mut w = wizard();
         assert_eq!(w.problem(Step::File), None);
         assert_eq!(
@@ -1550,7 +1551,7 @@ mod tests {
         // A mapping the person chose stays.
         w.bodies[0].role = Some(BodyRole::Body);
         w.bodies[0].material = Some(ModelMaterial::Builtin(MaterialId::Ferrite));
-        let builtins = sparksmith_core::materials::all().unwrap_or_default();
+        let builtins = crate::test_materials()?.packages.all().to_vec();
         assert_eq!(w.use_suggestions(&builtins), 4);
         assert_eq!(
             w.bodies[0].material,
@@ -1570,6 +1571,7 @@ mod tests {
             w.problem(Step::Leads).as_deref(),
             Some("2 leads have no designation")
         );
+        Ok(())
     }
 
     #[test]
@@ -1598,10 +1600,10 @@ mod tests {
     }
 
     #[test]
-    fn leads_are_proposed_from_the_nearest_pads_and_named_ones_stay() {
+    fn leads_are_proposed_from_the_nearest_pads_and_named_ones_stay() -> Result<(), String> {
         let (package, footprint) = package();
         let mut w = wizard();
-        let builtins = sparksmith_core::materials::all().unwrap_or_default();
+        let builtins = crate::test_materials()?.packages.all().to_vec();
         w.use_suggestions(&builtins);
         w.bodies[2].designation = "X".into();
         assert_eq!(w.propose_from_pads(&footprint, &package), 1);
@@ -1611,6 +1613,7 @@ mod tests {
         w.propose_from_pads(&footprint, &package);
         assert_eq!(w.bodies[2].designation, "2");
         assert_eq!(w.problem(Step::Leads), None);
+        Ok(())
     }
 
     /// Closed boxes as one triangle mesh (glTF file units, Y up).
@@ -1825,7 +1828,7 @@ mod tests {
     fn the_request_carries_the_bytes_and_an_explicit_definition() -> Result<(), String> {
         let (package, footprint) = package();
         let mut w = wizard();
-        let builtins = sparksmith_core::materials::all().unwrap_or_default();
+        let builtins = crate::test_materials()?.packages.all().to_vec();
         w.use_suggestions(&builtins);
         w.propose_from_pads(&footprint, &package);
         assert_eq!(
