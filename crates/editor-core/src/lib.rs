@@ -1317,6 +1317,9 @@ impl Engine {
         let mut candidate = self.document.clone();
         let reviewed = matches!(operation, Operation::Update(_));
         let merge_named = matches!(&operation, Operation::Update(u) if u.merge_named_nets);
+        // Only the enclosure link's own commands move the board-sketch
+        // geometry its references own.
+        let housing_command = matches!(operation, Operation::Housing(_));
         // Parts the operation moves by hand: their attached copper is
         // carried with them, all at once.
         // Selected loose copper a group drag slides with its parts; the
@@ -1492,6 +1495,13 @@ impl Engine {
                 }
             }
             Operation::Board(command) => {
+                if let layout::outline::BoardCommand::Edit { edits } = &command {
+                    interface::housing::guard_edits(
+                        &self.document.project,
+                        edits,
+                        evaluators.board,
+                    )?;
+                }
                 let project = Arc::make_mut(&mut candidate.project);
                 match layout::outline::apply(project, command, evaluators.board)? {
                     layout::outline::BoardApplied::Edited { created } => {
@@ -1598,6 +1608,16 @@ impl Engine {
             if let Some(table) = interface::auto::follow(&self.document.project, project)? {
                 project.interface = table.into();
             }
+            // A board edit never moves what the enclosure drives, and the
+            // loops between the two files follow the edit (slice B5).
+            if !housing_command {
+                interface::housing::guard_driven(
+                    &self.document.project,
+                    project,
+                    evaluators.board,
+                )?;
+            }
+            interface::housing::follow_cycles(&self.document.project, project, evaluators.board)?;
             validate::edited_document(
                 &self.document.project,
                 &candidate.project,

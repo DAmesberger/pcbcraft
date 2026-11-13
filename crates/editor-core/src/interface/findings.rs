@@ -109,13 +109,18 @@ pub fn housing_stale() -> Finding {
     )
 }
 
-/// `housing.older_board`: the enclosure links board revision `revision`.
-pub fn housing_older_board(revision: u32) -> Finding {
+/// `housing.older_board`: the enclosure links board revision `revision`,
+/// or (`None`) a board design file this board did not publish last and
+/// does not remember.
+pub fn housing_older_board(revision: Option<u32>) -> Finding {
+    let held = match revision {
+        Some(revision) => format!("board revision {revision}"),
+        None => "an older board".into(),
+    };
     Finding::new(
         HOUSING_OLDER_BOARD,
         format!(
-            "The enclosure still uses board revision {revision}. Run Update Links in SolidCraft, \
-             then check again"
+            "The enclosure still uses {held}. Run Update Links in SolidCraft, then check again"
         ),
         vec![ObjectRef::Board],
     )

@@ -128,7 +128,7 @@ pub fn candidate(project: &Project, tier: Tier, source_id: InterfaceSourceId) ->
 /// The record `interface.record_publish` stores after `sidecar` was
 /// written: its revision, hash and tier, and every live datum's slot and
 /// content hash (unresolved ones included, so a preview tells them apart
-/// from new ones).
+/// from new ones). The host sets `design_sha256` to the file it wrote.
 pub fn record(project: &Project, sidecar: &Sidecar) -> Result<PublishedRecord> {
     let table = list::table(project)?;
     let rows = list::rows(project, &table)?;
@@ -145,6 +145,8 @@ pub fn record(project: &Project, sidecar: &Sidecar) -> Result<PublishedRecord> {
         hash: sidecar.hash,
         tier: sidecar.tier,
         datums,
+        design_sha256: None,
+        earlier: Vec::new(),
     })
 }
 

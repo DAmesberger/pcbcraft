@@ -33,6 +33,8 @@ fn read(consumers: Vec<Consumer>) -> HousingRead {
         references: Vec::new(),
         bindings: Vec::new(),
         consumers,
+        board_sha256: None,
+        unexported: Vec::new(),
     }
 }
 
@@ -57,6 +59,8 @@ fn linked() -> Fallible<(Engine, u64)> {
     let consumer = Consumer {
         feature: "USB opening".into(),
         datum: datum.id,
+        slot: datum.slot,
+        via: Default::default(),
         token,
         name: datum.name.clone(),
     };
@@ -183,6 +187,7 @@ fn b4_lost_and_inexact_references_are_reported() -> Fallible {
             status,
             note: note.into(),
             sketch: SketchRef::Curve(SketchCurveId(format!("l{}", 10 + id))),
+            built_on: Vec::new(),
         })
     };
     link.references = vec![
@@ -247,6 +252,7 @@ fn b4_refused_link_commands_change_nothing() -> Fallible {
                 pick: [0.0; 3],
                 name: "Wall".into(),
                 geometry: FeatureGeometry::Point { at: [1.0, 1.0] },
+                built_on: Vec::new(),
             },
         },
     ] {
@@ -265,6 +271,7 @@ fn b4_refused_link_commands_change_nothing() -> Fallible {
         pick: None,
         geometry: None,
         note: String::new(),
+        built_on: Vec::new(),
     });
     assert!(
         engine

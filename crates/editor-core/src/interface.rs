@@ -400,5 +400,11 @@ pub fn check_table(table: &InterfaceTable) -> Result<()> {
     if table.retired.last().is_some_and(|s| s.0 >= table.next_slot) {
         return bad("a retired slot was never allocated");
     }
+    if let Some(record) = &table.published
+        && (record.earlier.len() > crate::model::interface::MAX_PUBLISHED_FILES
+            || record.earlier.iter().any(|f| f.revision > record.revision))
+    {
+        return bad("the earlier published files are bounded and come before this revision");
+    }
     Ok(())
 }

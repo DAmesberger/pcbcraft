@@ -12,7 +12,7 @@ use crate::model::board::{BoardShape, ConstraintTarget};
 use crate::model::dimension::BoardRef;
 use crate::model::interface::{
     DatumId, DatumKey, DatumOwner, DatumRole, DatumSource, InterfaceDatum, InterfaceTable,
-    MAX_DATUMS, PublishedRecord,
+    MAX_DATUMS, MAX_PUBLISHED_FILES, PublishedFile, PublishedRecord,
 };
 use std::collections::BTreeSet;
 
@@ -222,6 +222,33 @@ fn record_publish(
             "interface.record",
             "a published record lists live datums once each, in slot order",
         ));
+    }
+    if !record.earlier.is_empty() {
+        return Err(refused(
+            "interface.record",
+            "the earlier published files are the board's own record",
+        ));
+    }
+    let mut record = record;
+    if let Some(last) = table.published.take() {
+        // The files earlier publishes wrote name the revision an enclosure
+        // still holds (slice B5); the oldest go first past the bound.
+        let mut earlier = last.earlier;
+        if let Some(sha256) = last.design_sha256
+            && record.design_sha256 != Some(sha256)
+        {
+            earlier.retain(|f| f.sha256 != sha256);
+            earlier.push(PublishedFile {
+                revision: last.revision,
+                sha256,
+            });
+        }
+        if let Some(now) = record.design_sha256 {
+            earlier.retain(|f| f.sha256 != now);
+        }
+        let over = earlier.len().saturating_sub(MAX_PUBLISHED_FILES);
+        earlier.drain(..over);
+        record.earlier = earlier;
     }
     table.source_id = Some(source_id);
     table.published = Some(record);

@@ -622,6 +622,25 @@
         ],
         "type": "object"
       },
+      "PublishedFile": {
+        "additionalProperties": false,
+        "description": "A design file an earlier publish wrote: its revision and SHA-256.",
+        "properties": {
+          "revision": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sha256": {
+            "$ref": "#/$defs/ContentHash"
+          }
+        },
+        "required": [
+          "revision",
+          "sha256"
+        ],
+        "type": "object"
+      },
       "PublishedRecord": {
         "additionalProperties": false,
         "description": "The last publish the project recorded (`interface.record_publish`).",
@@ -630,6 +649,24 @@
             "description": "Every datum published, in slot order.",
             "items": {
               "$ref": "#/$defs/PublishedDatum"
+            },
+            "type": "array"
+          },
+          "design_sha256": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContentHash"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SHA-256 of the design file this publish wrote, as SolidCraft keeps\nit on an enclosure's link to the file (slice B5): an enclosure whose\nlink holds another hash holds an older board."
+          },
+          "earlier": {
+            "description": "The files earlier publishes wrote, oldest first, at most\n[`MAX_PUBLISHED_FILES`]: they name the revision an enclosure still\nholds. Kept by `interface.record_publish`, never by the host.",
+            "items": {
+              "$ref": "#/$defs/PublishedFile"
             },
             "type": "array"
           },
@@ -942,14 +979,23 @@
             "description": "The datum's display name as published (\"J1 opening\").",
             "type": "string"
           },
+          "slot": {
+            "$ref": "#/$defs/Slot",
+            "description": "The slot that carries it in the published design: the enclosure's\nlink names a face or body of that slot. The board checks the\nconsumer by its slot, which is never reused."
+          },
           "token": {
             "description": "The datum's token as published (`i80.opening`).",
             "type": "string"
+          },
+          "via": {
+            "$ref": "#/$defs/UseKind",
+            "description": "A sketch, or a joint that places the board."
           }
         },
         "required": [
           "feature",
           "datum",
+          "slot",
           "token",
           "name"
         ],
@@ -1139,6 +1185,17 @@
               "null"
             ]
           },
+          "board_sha256": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContentHash"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SHA-256 of the board's published design as the enclosure's link to\nit last read it, when the enclosure keeps one."
+          },
           "component": {
             "type": "string"
           },
@@ -1165,6 +1222,13 @@
               "$ref": "#/$defs/ReferenceRead"
             },
             "type": "array"
+          },
+          "unexported": {
+            "description": "Enclosure features attached to faces of the board that no slot\ncarries.",
+            "items": {
+              "$ref": "#/$defs/UnexportedUse"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -1187,6 +1251,13 @@
         "properties": {
           "body": {
             "$ref": "#/$defs/BodyName"
+          },
+          "built_on": {
+            "description": "The board's datums the enclosure geometry under the face is built\non.",
+            "items": {
+              "$ref": "#/$defs/Consumer"
+            },
+            "type": "array"
           },
           "face": {
             "$ref": "#/$defs/FaceName"
@@ -1230,6 +1301,13 @@
         "additionalProperties": false,
         "description": "One housing reference as the host found it.",
         "properties": {
+          "built_on": {
+            "description": "The board's datums the enclosure geometry under the face is built\non now.",
+            "items": {
+              "$ref": "#/$defs/Consumer"
+            },
+            "type": "array"
+          },
           "geometry": {
             "anyOf": [
               {
@@ -1287,6 +1365,46 @@
           {
             "const": "lost",
             "description": "Its source is gone.",
+            "type": "string"
+          }
+        ]
+      },
+      "Slot": {
+        "description": "A datum's position in the board's append-only slot table, from 0. The\nexported design builds slots first and in slot order, so a slot's\nfeature ids, and with them its face names, follow from this number\nalone. A slot is never reused: a removed datum's slot is retired.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "UnexportedUse": {
+        "additionalProperties": false,
+        "description": "An enclosure feature attached to a face of the board's design that is\nnot exported (no slot carries it).",
+        "properties": {
+          "body": {
+            "description": "The board design's body it is attached to, by its name there\n(\"U1 model\").",
+            "type": "string"
+          },
+          "feature": {
+            "description": "The feature's name in the enclosure (\"Lid rib\").",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feature",
+          "body"
+        ],
+        "type": "object"
+      },
+      "UseKind": {
+        "description": "How an enclosure feature uses a datum.",
+        "oneOf": [
+          {
+            "const": "sketch",
+            "description": "A sketch projects or intersects the datum's geometry.",
+            "type": "string"
+          },
+          {
+            "const": "joint",
+            "description": "A joint places the board by it: the whole board frame in the\nenclosure, and every housing reference with it, depends on it.",
             "type": "string"
           }
         ]
@@ -1496,14 +1614,23 @@
             "description": "The datum's display name as published (\"J1 opening\").",
             "type": "string"
           },
+          "slot": {
+            "$ref": "#/$defs/Slot",
+            "description": "The slot that carries it in the published design: the enclosure's\nlink names a face or body of that slot. The board checks the\nconsumer by its slot, which is never reused."
+          },
           "token": {
             "description": "The datum's token as published (`i80.opening`).",
             "type": "string"
+          },
+          "via": {
+            "$ref": "#/$defs/UseKind",
+            "description": "A sketch, or a joint that places the board."
           }
         },
         "required": [
           "feature",
           "datum",
+          "slot",
           "token",
           "name"
         ],
@@ -1674,6 +1801,31 @@
         ],
         "type": "object"
       },
+      "HousingCycle": {
+        "additionalProperties": false,
+        "description": "A loop between the two files: the board follows housing reference\n`reference`, whose enclosure geometry is built on `datum` through the\nenclosure's `feature`, and `datum` moves when the reference does.",
+        "properties": {
+          "datum": {
+            "$ref": "#/$defs/DatumId"
+          },
+          "feature": {
+            "description": "The enclosure feature (or joint) that uses the datum, by its name\nthere.",
+            "type": "string"
+          },
+          "reference": {
+            "$ref": "#/$defs/HousingRefId"
+          },
+          "via": {
+            "$ref": "#/$defs/UseKind"
+          }
+        },
+        "required": [
+          "reference",
+          "datum",
+          "feature"
+        ],
+        "type": "object"
+      },
       "HousingRef": {
         "additionalProperties": false,
         "description": "One piece of enclosure geometry the board follows (§7.2): a face of an\nenclosure body, by its persistent Solidcraft name and a pick point on\nit, traced along the board's normal into the board plane. Its trace is\nfixed geometry of the board sketch, owned by the reference\n([`Self::sketch`]), so board curves are dimensioned to it; only a\nhousing update moves it.",
@@ -1681,6 +1833,13 @@
           "body": {
             "$ref": "#/$defs/BodyName",
             "description": "The enclosure body, by its name there."
+          },
+          "built_on": {
+            "description": "The board's datums the enclosure geometry under this face is built\non, as last read: through the sketches its feature is made from,\nand every joint that places the board. A datum here that follows\nthis reference on the board is a loop (`housing.cycle`).",
+            "items": {
+              "$ref": "#/$defs/Consumer"
+            },
+            "type": "array"
           },
           "face": {
             "$ref": "#/$defs/FaceName",
@@ -1819,6 +1978,46 @@
             "type": "object"
           }
         ]
+      },
+      "Slot": {
+        "description": "A datum's position in the board's append-only slot table, from 0. The\nexported design builds slots first and in slot order, so a slot's\nfeature ids, and with them its face names, follow from this number\nalone. A slot is never reused: a removed datum's slot is retired.",
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "UnexportedUse": {
+        "additionalProperties": false,
+        "description": "An enclosure feature attached to a face of the board's design that is\nnot exported (no slot carries it).",
+        "properties": {
+          "body": {
+            "description": "The board design's body it is attached to, by its name there\n(\"U1 model\").",
+            "type": "string"
+          },
+          "feature": {
+            "description": "The feature's name in the enclosure (\"Lid rib\").",
+            "type": "string"
+          }
+        },
+        "required": [
+          "feature",
+          "body"
+        ],
+        "type": "object"
+      },
+      "UseKind": {
+        "description": "How an enclosure feature uses a datum.",
+        "oneOf": [
+          {
+            "const": "sketch",
+            "description": "A sketch projects or intersects the datum's geometry.",
+            "type": "string"
+          },
+          {
+            "const": "joint",
+            "description": "A joint places the board by it: the whole board frame in the\nenclosure, and every housing reference with it, depends on it.",
+            "type": "string"
+          }
+        ]
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1841,6 +2040,17 @@
           "null"
         ]
       },
+      "board_sha256": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ContentHash"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "SHA-256 of the board's published design file as the enclosure's\nlink to it last read it (SolidCraft keeps it on the link), when\nthe enclosure keeps one: another hash than the last publish's is\n\"the enclosure holds an older board\" (slice B5)."
+      },
       "component": {
         "description": "The enclosure component that links this board's published design\n(matched by its link resolving to that file, never by name); its\nname in the enclosure, for messages.",
         "type": "string"
@@ -1849,6 +2059,13 @@
         "description": "Enclosure features that use the board's datums, as last read.",
         "items": {
           "$ref": "#/$defs/Consumer"
+        },
+        "type": "array"
+      },
+      "cycles": {
+        "description": "Loops between the two files: a housing reference whose enclosure\ngeometry is built on a datum that itself follows the reference on\nthe board. Derived after every edit that can change them\n(`interface::housing::follow_cycles`); each blocks fabrication\noutput.",
+        "items": {
+          "$ref": "#/$defs/HousingCycle"
         },
         "type": "array"
       },
@@ -1874,6 +2091,13 @@
         "description": "Enclosure geometry the board follows, by id.",
         "items": {
           "$ref": "#/$defs/HousingRef"
+        },
+        "type": "array"
+      },
+      "unexported": {
+        "description": "Enclosure features attached to a face of the board's design that no\nslot carries (section 2: parts, laminate, pads), as last read. Such a\nface may move to another body when the board changes.",
+        "items": {
+          "$ref": "#/$defs/UnexportedUse"
         },
         "type": "array"
       }
@@ -1916,6 +2140,42 @@
         "required": [
           "instance",
           "terminal"
+        ],
+        "type": "object"
+      },
+      "Finding": {
+        "description": "One check result: an electrical rule, a board check or a completeness\nfinding. Circuit and board findings never block a component stage.",
+        "properties": {
+          "blocks": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Stage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The stage this finding prevents, if any. Advisory findings have none."
+          },
+          "code": {
+            "description": "Stable machine-readable rule code, e.g. `board.clearance`.",
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/$defs/ObjectRef"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "objects"
         ],
         "type": "object"
       },
@@ -2445,6 +2705,26 @@
         "minimum": 0,
         "type": "integer"
       },
+      "Stage": {
+        "description": "A derived completeness state a finding can block. Nothing stores these\nstates; they hold when no current finding blocks them.",
+        "oneOf": [
+          {
+            "const": "publish",
+            "description": "A definition revision may be published.",
+            "type": "string"
+          },
+          {
+            "const": "board_placeable",
+            "description": "An instance can be placed on the board.",
+            "type": "string"
+          },
+          {
+            "const": "electrically_resolved",
+            "description": "Every unit and terminal of an instance has an explicit decision.",
+            "type": "string"
+          }
+        ]
+      },
       "TerminalId": {
         "description": "A component's electrical terminal, stable across revisions.",
         "format": "uint32",
@@ -2482,6 +2762,13 @@
         "$ref": "#/$defs/ContentHash",
         "description": "The enclosure file's hash now: `housing.update` takes it as\n`expect_hash`, and is refused when the file changed since."
       },
+      "findings": {
+        "description": "The two-way check after the update (slice B5): the enclosure holds\nan older board, features on unexported faces, loops; or, refused,\nboth changed.",
+        "items": {
+          "$ref": "#/$defs/Finding"
+        },
+        "type": "array"
+      },
       "objects": {
         "description": "Board edges, holes, parts and parameters that would move.",
         "items": {
@@ -2496,7 +2783,7 @@
         "type": "array"
       },
       "refused": {
-        "description": "Why the update would be refused (the board would not solve), when\nit would be; then nothing else is listed.",
+        "description": "Why the update would be refused (the board would not solve, or\nboth files changed since they last agreed), when it would be; then\nnothing else is listed.",
         "type": [
           "string",
           "null"
@@ -2594,13 +2881,28 @@
             "type": "string"
           },
           {
+            "const": "cycle",
+            "description": "The board and the enclosure follow each other in a loop:\nfabrication output is blocked.",
+            "type": "string"
+          },
+          {
             "const": "missing",
             "description": "The enclosure file is not where the request said; the board uses\nits snapshot.",
             "type": "string"
           },
           {
+            "const": "both_changed",
+            "description": "The enclosure changed and still holds an older board: they no\nlonger agree.",
+            "type": "string"
+          },
+          {
             "const": "changed",
             "description": "The enclosure changed since the board read it.",
+            "type": "string"
+          },
+          {
+            "const": "older_board",
+            "description": "The enclosure still holds an older published board.",
             "type": "string"
           },
           {
@@ -5377,6 +5679,25 @@
         ],
         "type": "object"
       },
+      "PublishedFile": {
+        "additionalProperties": false,
+        "description": "A design file an earlier publish wrote: its revision and SHA-256.",
+        "properties": {
+          "revision": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sha256": {
+            "$ref": "#/$defs/ContentHash"
+          }
+        },
+        "required": [
+          "revision",
+          "sha256"
+        ],
+        "type": "object"
+      },
       "PublishedRecord": {
         "additionalProperties": false,
         "description": "The last publish the project recorded (`interface.record_publish`).",
@@ -5385,6 +5706,24 @@
             "description": "Every datum published, in slot order.",
             "items": {
               "$ref": "#/$defs/PublishedDatum"
+            },
+            "type": "array"
+          },
+          "design_sha256": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ContentHash"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SHA-256 of the design file this publish wrote, as SolidCraft keeps\nit on an enclosure's link to the file (slice B5): an enclosure whose\nlink holds another hash holds an older board."
+          },
+          "earlier": {
+            "description": "The files earlier publishes wrote, oldest first, at most\n[`MAX_PUBLISHED_FILES`]: they name the revision an enclosure still\nholds. Kept by `interface.record_publish`, never by the host.",
+            "items": {
+              "$ref": "#/$defs/PublishedFile"
             },
             "type": "array"
           },
