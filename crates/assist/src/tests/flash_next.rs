@@ -24,8 +24,8 @@ fn replay(reference: &Reference) -> Fallible {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/qwen3.8-flash-next");
     let path = example.join(reference.recording);
     let mut backend = Replay::from_file(&path)?;
-    let mut config = local_config(262_144);
-    config.run_profile = crate::profile::select(
+    let mut config = local_config(262_144)?;
+    config.run_profile = crate::AssistLibrary::locate()?.select(
         None,
         "RadixArk/Qwen3.8-Flash-Next-NVFP4",
         Some(&example.join("assist-profiles")),

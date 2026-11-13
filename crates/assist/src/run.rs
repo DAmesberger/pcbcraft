@@ -6,7 +6,7 @@ use crate::model::{
     Budget, Image, Message, ModelBackend, ModelProfile, ModelRequest, Part, Role, StopReason,
     appended_chars,
 };
-use crate::profile::RunProfile;
+use crate::profile::{AssistLibrary, RunProfile};
 use crate::report::{self, RequestFacts, ReviewReport, RunFacts};
 use crate::tools::{self, ToolOutcome};
 use crate::usage::Tally;
@@ -36,22 +36,44 @@ pub struct RunConfig {
     pub profile: ModelProfile,
     /// What the model is told and how the loop reacts ([`crate::profile`]).
     pub run_profile: RunProfile,
+    /// The shipped base system prompt the run profile builds on
+    /// ([`AssistLibrary::system`]).
+    pub base_prompt: String,
     pub budget: Budget,
     /// What the run's tool calls may do: every call goes through the gate
     /// with it. The hosts give it the output folder as its only folder.
     pub policy: Policy,
 }
 
-impl Default for RunConfig {
-    fn default() -> Self {
-        Self {
-            profile: ModelProfile::anthropic(crate::DEFAULT_MODEL),
-            // Claude's built-in profile: the base prompt and tools as they are.
-            run_profile: crate::profile::select(None, crate::DEFAULT_MODEL, None)
-                .unwrap_or_default(),
+impl RunConfig {
+    /// A run of `profile` with the run profile it selects from `shipped`
+    /// and the user's profile `folder`, the default budget and policy. The
+    /// profile's declarations are set on the model.
+    pub fn new(
+        shipped: &AssistLibrary,
+        mut profile: ModelProfile,
+        run_profile: Option<&str>,
+        folder: Option<&std::path::Path>,
+    ) -> Result<Self> {
+        let run_profile = shipped.select(run_profile, &profile.model, folder)?;
+        run_profile.declare(&mut profile);
+        Ok(Self {
+            profile,
+            run_profile,
+            base_prompt: shipped.system.clone(),
             budget: Budget::default(),
             policy: Policy::default(),
-        }
+        })
+    }
+
+    /// A run of the shipped default model on the Messages API.
+    pub fn shipped_default(shipped: &AssistLibrary) -> Result<Self> {
+        Self::new(
+            shipped,
+            ModelProfile::anthropic(&shipped.default_model),
+            None,
+            None,
+        )
     }
 }
 
@@ -177,7 +199,12 @@ pub fn run(
     let budget = &config.budget;
     let mut prepared = documents::prepare(&goal.datasheets, &profile.capabilities)?;
     let run_profile = &config.run_profile;
-    let system = run_profile.system_prompt();
+    let system = run_profile.system_prompt(&config.base_prompt);
+    if system.trim().is_empty() {
+        return Err(Error::Config(
+            "the run has no system prompt: the shipped base prompt was not loaded".into(),
+        ));
+    }
     let mut specs = tools::definitions();
     if prepared.pages.available() {
         specs.push(prepared.pages.tool());

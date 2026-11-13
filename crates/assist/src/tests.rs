@@ -207,10 +207,16 @@ fn goal(sheet: Datasheet) -> Goal {
 
 /// The Messages backend answering `responses` (raw API JSON) in order, with
 /// a token count for the first request.
-fn anthropic(responses: Vec<Value>) -> AnthropicBackend<ScriptedWire> {
+fn anthropic(responses: Vec<Value>) -> Fallible<AnthropicBackend<ScriptedWire>> {
     let mut wire = ScriptedWire::new(responses);
     wire.count = Some(60_000);
-    AnthropicBackend::new(RunConfig::default().profile, wire)
+    Ok(AnthropicBackend::new(shipped_config()?.profile, wire))
+}
+
+/// The shipped default run: the default model on the Messages API with its
+/// run profile and the shipped base prompt.
+fn shipped_config() -> Fallible<RunConfig> {
+    Ok(RunConfig::shipped_default(&crate::AssistLibrary::locate()?)?)
 }
 
 /// The bodies the Messages backend posted.
@@ -239,10 +245,10 @@ fn run_with(
 #[test]
 fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let mut backend = anthropic(script()?);
+    let mut backend = anthropic(script()?)?;
     let mut session = Session::default();
     let (outcome, log) = run_with(
-        &RunConfig::default(),
+        &shipped_config()?,
         &mut backend,
         datasheet(&dir)?,
         &mut session,
@@ -368,10 +374,10 @@ fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
 #[test]
 fn a_cancelled_run_sends_nothing_and_a_refusal_stops() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let mut backend = anthropic(vec![]);
+    let mut backend = anthropic(vec![])?;
     let outcome = run(
         &goal(datasheet(&dir)?),
-        &RunConfig::default(),
+        &shipped_config()?,
         &mut backend,
         &mut Session::default(),
         &mut |_| {},
@@ -383,9 +389,9 @@ fn a_cancelled_run_sends_nothing_and_a_refusal_stops() -> Fallible {
     let refusal = json!({"id": "m", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
         "content": [], "stop_reason": "refusal", "stop_details": {"type": "refusal", "category": "cyber"},
         "usage": {"input_tokens": 10, "output_tokens": 0}});
-    let mut backend = anthropic(vec![refusal]);
+    let mut backend = anthropic(vec![refusal])?;
     let (outcome, _) = run_with(
-        &RunConfig::default(),
+        &shipped_config()?,
         &mut backend,
         datasheet(&dir)?,
         &mut Session::default(),
@@ -399,11 +405,11 @@ fn a_tool_call_cut_off_at_max_tokens_is_not_run() -> Fallible {
     let dir = tempfile::tempdir()?;
     let mut cut = tool_turn("t1", "library_set_marking", json!({"draft": 1}));
     cut["stop_reason"] = json!("max_tokens");
-    let mut backend = anthropic(vec![cut]);
+    let mut backend = anthropic(vec![cut])?;
     let mut session = Session::default();
     let before = session.engine().revision();
     let (outcome, _) = run_with(
-        &RunConfig::default(),
+        &shipped_config()?,
         &mut backend,
         datasheet(&dir)?,
         &mut session,
@@ -435,7 +441,7 @@ fn pages_are_counted_for_the_estimate() -> Fallible {
     );
     let prepared = documents::prepare(
         &[Datasheet::File(path)],
-        &RunConfig::default().profile.capabilities,
+        &shipped_config()?.profile.capabilities,
     )?;
     assert_eq!(prepared.tokens, 2 * TOKENS_PER_PAGE);
     Ok(())
@@ -502,10 +508,10 @@ fn a_gated_tool_call_comes_back_as_a_tool_result_and_the_run_goes_on() -> Fallib
             "values": [], "open_questions": ["Apply the pinout by hand."]}}),
         ),
     ];
-    let mut backend = anthropic(script);
+    let mut backend = anthropic(script)?;
     let config = RunConfig {
         policy: Policy::new(Mode::AskEveryTime, [dir.path().to_path_buf()]),
-        ..RunConfig::default()
+        ..shipped_config()?
     };
     let mut session = Session::default();
     let (outcome, log) = run_with(&config, &mut backend, datasheet(&dir)?, &mut session)?;
@@ -590,17 +596,17 @@ fn non_pdf_files_and_unnamed_models_are_refused() -> Fallible {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("x.pdf");
     std::fs::write(&path, b"not a pdf")?;
-    let caps = RunConfig::default().profile.capabilities;
+    let caps = shipped_config()?.profile.capabilities;
     assert!(documents::prepare(&[Datasheet::File(path)], &caps).is_err());
     assert!(documents::prepare(&[Datasheet::Url("http://x/y.pdf".into())], &caps).is_err());
     let config = RunConfig {
         profile: ModelProfile::anthropic(" "),
-        ..RunConfig::default()
+        ..shipped_config()?
     };
     let result = run(
         &goal(datasheet(&dir)?),
         &config,
-        &mut anthropic(vec![]),
+        &mut anthropic(vec![])?,
         &mut Session::default(),
         &mut |_| {},
         &AtomicBool::new(false),
@@ -638,13 +644,13 @@ fn chat_script(responses: &[Value]) -> Vec<Value> {
         .collect()
 }
 
-fn local_config(context: u64) -> RunConfig {
+fn local_config(context: u64) -> Fallible<RunConfig> {
     let mut profile = ModelProfile::openai_compatible("local-27b", context);
     profile.capabilities.vision = true;
-    RunConfig {
+    Ok(RunConfig {
         profile,
-        ..RunConfig::default()
-    }
+        ..shipped_config()?
+    })
 }
 
 fn openai(responses: Vec<Value>, config: &RunConfig) -> OpenAiBackend<ScriptedWire> {
@@ -665,7 +671,7 @@ fn text_datasheet(dir: &tempfile::TempDir) -> Fallible<Datasheet> {
 #[test]
 fn a_local_model_authors_the_module_from_text_and_a_page_view() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let config = local_config(131_072);
+    let config = local_config(131_072)?;
     let mut replies = vec![
         // A look at the drawing page first, then one malformed call that the
         // model sends again.
@@ -769,7 +775,7 @@ fn cut_reply() -> Value {
 fn replies_cut_off_at_the_limit_are_reported_never_used() -> Fallible {
     let dir = tempfile::tempdir()?;
     // A small context: 16 384 output tokens a request, 24 576 after a cut.
-    let config = local_config(32_768);
+    let config = local_config(32_768)?;
     let mut backend = openai(vec![cut_reply(), cut_reply(), cut_reply()], &config);
     let mut session = Session::default();
     let before = session.engine().revision();
@@ -809,7 +815,7 @@ fn replies_cut_off_at_the_limit_are_reported_never_used() -> Fallible {
 #[test]
 fn a_prompt_too_large_for_the_context_says_why_before_sending() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let config = local_config(8_000);
+    let config = local_config(8_000)?;
     let mut backend = openai(vec![], &config);
     let result = run_with(
         &config,
@@ -829,7 +835,7 @@ fn a_prompt_too_large_for_the_context_says_why_before_sending() -> Fallible {
 #[test]
 fn token_and_time_caps_bind_a_local_model() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let mut config = local_config(131_072);
+    let mut config = local_config(131_072)?;
     // The first request alone could take 32 000 output tokens.
     config.budget.max_total_tokens = 30_000;
     let mut backend = openai(chat_script(&script()?), &config);
@@ -846,7 +852,7 @@ fn token_and_time_caps_bind_a_local_model() -> Fallible {
     );
     assert!(backend.wire.posts.is_empty());
 
-    let mut config = local_config(131_072);
+    let mut config = local_config(131_072)?;
     config.budget.max_duration = std::time::Duration::ZERO;
     let mut backend = openai(chat_script(&script()?), &config);
     let (outcome, _) = run_with(
@@ -861,7 +867,7 @@ fn token_and_time_caps_bind_a_local_model() -> Fallible {
         outcome.stop
     );
     // Each request waits no longer than the run has left.
-    let mut config = local_config(131_072);
+    let mut config = local_config(131_072)?;
     config.budget.max_duration = std::time::Duration::from_secs(600);
     let mut backend = openai(chat_script(&script()?), &config);
     run_with(
@@ -883,7 +889,7 @@ fn token_and_time_caps_bind_a_local_model() -> Fallible {
 #[test]
 fn a_model_declared_without_tools_says_why() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let mut config = local_config(131_072);
+    let mut config = local_config(131_072)?;
     config.profile.capabilities.tool_calling = false;
     let result = run_with(
         &config,
@@ -902,7 +908,7 @@ fn a_model_declared_without_tools_says_why() -> Fallible {
 #[test]
 fn a_shrinking_prompt_count_warns_of_truncation() -> Fallible {
     let dir = tempfile::tempdir()?;
-    let config = local_config(131_072);
+    let config = local_config(131_072)?;
     let mut replies = chat_script(&script()?);
     // The server suddenly counts far fewer prompt tokens.
     replies[2]["usage"]["prompt_tokens"] = json!(2_000);

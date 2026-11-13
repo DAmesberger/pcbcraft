@@ -14,7 +14,7 @@ fn the_local_run_replays_to_the_same_ldo() -> Fallible {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples/tlv75733-local/tlv757.recording.jsonl");
     let mut backend = Replay::from_file(&path)?;
-    let config = local_config(262_144);
+    let config = local_config(262_144)?;
     let mut session = Session::default();
     let (outcome, log) = run_with(&config, &mut backend, text_datasheet(&dir)?, &mut session)?;
     assert_eq!(outcome.stop, Stop::Submitted, "{log:?}");

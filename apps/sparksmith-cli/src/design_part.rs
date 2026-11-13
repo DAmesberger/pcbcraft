@@ -14,11 +14,11 @@ use super::Result;
 use sparksmith_assist::model::profile::ANTHROPIC_BASE_URL;
 use sparksmith_assist::model::record::{Recording, Replay};
 use sparksmith_assist::model::{
-    self, Connection, Endpoint, KeySource, ModelBackend, ModelProfile, OutputLimits, Provider,
-    Secret, keys,
+    self, Budget, Connection, Endpoint, KeySource, ModelBackend, ModelProfile, OutputLimits,
+    Provider, Secret, keys,
 };
 use sparksmith_assist::profile as run_profile;
-use sparksmith_assist::{Datasheet, Event, Goal, RunConfig};
+use sparksmith_assist::{AssistLibrary, Datasheet, Event, Goal, RunConfig};
 use sparksmith_core::Engine;
 use sparksmith_core::product::SHORT_NAME as CLI;
 use std::io::Read as _;
@@ -93,13 +93,11 @@ fn key_source(text: &str) -> Result<KeySource> {
 }
 
 /// The profile and connection the flags declare.
-fn configure(flags: Flags, config: &mut RunConfig) -> Result<Connection> {
+fn configure(flags: Flags, shipped: &AssistLibrary) -> Result<(RunConfig, Connection)> {
     let provider = Provider::parse(flags.provider.as_deref().unwrap_or("anthropic"))?;
     let (mut profile, base, key) = match provider {
         Provider::Anthropic => {
-            let model = flags
-                .model
-                .unwrap_or_else(|| sparksmith_assist::DEFAULT_MODEL.into());
+            let model = flags.model.unwrap_or_else(|| shipped.default_model.clone());
             let base = flags.base_url.unwrap_or_else(|| {
                 std::env::var("ANTHROPIC_BASE_URL")
                     .ok()
@@ -154,20 +152,21 @@ fn configure(flags: Flags, config: &mut RunConfig) -> Result<Connection> {
     if let Some(seconds) = flags.request_timeout {
         profile.request_timeout = Duration::from_secs(seconds);
     }
-    config.run_profile = run_profile::select(
+    let config = RunConfig::new(
+        shipped,
+        profile,
         flags.profile.as_deref(),
-        &profile.model,
         user_profiles().as_deref(),
     )?;
-    config.profile = profile;
     let key = match flags.key {
         Some(text) => key_source(&text)?,
         None => key,
     };
-    Ok(Connection {
+    let connection = Connection {
         endpoint: Endpoint::parse(&base)?,
         key,
-    })
+    };
+    Ok((config, connection))
 }
 
 fn parse(args: &[String]) -> Result<Args> {
@@ -175,7 +174,7 @@ fn parse(args: &[String]) -> Result<Args> {
     let (mut name, mut out, mut notes) = (String::new(), PathBuf::new(), String::new());
     let (mut record, mut replay) = (None, None);
     let mut flags = Flags::default();
-    let mut config = RunConfig::default();
+    let mut budget = Budget::default();
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         let value = it
@@ -200,10 +199,10 @@ fn parse(args: &[String]) -> Result<Args> {
             "--effort" => flags.effort = Some(value),
             "--request-timeout" => flags.request_timeout = Some(count(f, &value)?),
             "--profile" => flags.profile = Some(value),
-            "--max-requests" => config.budget.max_requests = count(f, &value)?,
-            "--max-tokens" => config.budget.max_total_tokens = count(f, &value)?,
+            "--max-requests" => budget.max_requests = count(f, &value)?,
+            "--max-tokens" => budget.max_total_tokens = count(f, &value)?,
             "--max-seconds" => {
-                config.budget.max_duration = Duration::from_secs(count(f, &value)?);
+                budget.max_duration = Duration::from_secs(count(f, &value)?);
             }
             "--record" => record = Some(PathBuf::from(value)),
             "--replay" => replay = Some(PathBuf::from(value)),
@@ -218,7 +217,9 @@ fn parse(args: &[String]) -> Result<Args> {
     if record.is_some() && replay.is_some() {
         return Err("--record and --replay exclude each other".into());
     }
-    let connection = configure(flags, &mut config)?;
+    let shipped = AssistLibrary::locate()?;
+    let (mut config, connection) = configure(flags, &shipped)?;
+    config.budget = budget;
     config.policy = sparksmith_assist::output_policy(&out)?;
     Ok(Args {
         datasheets,
@@ -320,10 +321,11 @@ fn user_profiles() -> Option<PathBuf> {
 /// `llm-profile list | copy NAME`.
 pub fn profile(args: &[String]) -> Result<()> {
     let folder = user_profiles().ok_or("no config folder: set SPARKSMITH_CONFIG_DIR or HOME")?;
+    let shipped = AssistLibrary::locate()?;
     match args {
         [action] if action == "list" => {
-            for name in run_profile::built_in_names() {
-                let p = run_profile::built_in(name).ok_or("listed")??;
+            for name in shipped.built_in_names() {
+                let p = shipped.built_in(name).ok_or("listed")?;
                 println!("{name} (built in) {}", p.models.join(", "));
             }
             if let Ok(entries) = std::fs::read_dir(&folder) {
@@ -339,7 +341,7 @@ pub fn profile(args: &[String]) -> Result<()> {
             }
         }
         [action, name] if action == "copy" => {
-            let path = run_profile::copy_to_user(name, &folder)?;
+            let path = shipped.copy_to_user(name, &folder)?;
             eprintln!(
                 "copied to {}; edit it, and it takes the built-in's place",
                 path.display()
@@ -427,8 +429,10 @@ mod tests {
     #[test]
     fn the_defaults_are_todays_anthropic_run() -> Result<()> {
         let parsed = parse(&args("--datasheet a.pdf --name X --out x.sparksmith"))?;
-        let defaults = RunConfig::default();
+        let defaults = RunConfig::shipped_default(&AssistLibrary::locate()?)?;
         assert_eq!(parsed.config.profile, defaults.profile);
+        assert_eq!(parsed.config.run_profile, defaults.run_profile);
+        assert_eq!(parsed.config.base_prompt, defaults.base_prompt);
         assert_eq!(parsed.config.budget, defaults.budget);
         // The run may name only its output folder.
         let folder = std::path::absolute(".")?;

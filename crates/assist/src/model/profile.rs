@@ -102,14 +102,8 @@ pub struct ModelProfile {
     pub request_timeout: Duration,
 }
 
-/// Model ids with a declared profile on the Messages API.
+/// The context of a model on the Messages API.
 const ANTHROPIC_CONTEXT: u64 = 1_000_000;
-const FALLBACK_MODELS: &[&str] = &[
-    "claude-opus-5-5",
-    "claude-sonnet-5-5",
-    "claude-opus-5",
-    "claude-fable-5-1",
-];
 
 impl ModelProfile {
     /// A model on the Messages API. Its capabilities are the ones that API
@@ -125,7 +119,9 @@ impl ModelProfile {
                 native_pdf: true,
                 caching: true,
                 adaptive_thinking: true,
-                server_fallback: FALLBACK_MODELS.contains(&model),
+                // The run profile that lists the model declares it
+                // (`RunProfile::declare`).
+                server_fallback: false,
                 context_tokens: ANTHROPIC_CONTEXT,
             },
             output: OutputLimits {

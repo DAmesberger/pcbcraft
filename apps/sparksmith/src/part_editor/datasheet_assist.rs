@@ -16,10 +16,10 @@ use crate::kit;
 use egui::Ui;
 use sparksmith_assist::model::profile::ANTHROPIC_BASE_URL;
 use sparksmith_assist::model::{
-    self, Budget, Connection, Endpoint, KeySource, ModelProfile, Provider, Secret, keys,
+    self, Connection, Endpoint, KeySource, ModelProfile, Provider, Secret, keys,
 };
 use sparksmith_assist::profile as run_profile;
-use sparksmith_assist::{Datasheet, Event, Goal, RunConfig};
+use sparksmith_assist::{AssistLibrary, Datasheet, Event, Goal, RunConfig};
 use sparksmith_automation::Session;
 use sparksmith_core::Engine;
 use sparksmith_ui::ui_kit::{self, Button};
@@ -72,6 +72,9 @@ pub struct DatasheetAssist {
     job: Option<Job>,
     log: Vec<String>,
     result: Option<Result<Finished, String>>,
+    /// The shipped prompt, default model and run profiles, read when the
+    /// form first opens.
+    shipped: Option<Result<AssistLibrary, String>>,
 }
 
 impl Default for DatasheetAssist {
@@ -84,7 +87,8 @@ impl Default for DatasheetAssist {
             out: String::new(),
             provider: Provider::Anthropic,
             endpoint: ANTHROPIC_BASE_URL.into(),
-            model: sparksmith_assist::DEFAULT_MODEL.into(),
+            // The shipped default, filled in when the form opens.
+            model: String::new(),
             key: String::new(),
             context_tokens: DEFAULT_CONTEXT,
             vision: false,
@@ -92,6 +96,7 @@ impl Default for DatasheetAssist {
             job: None,
             log: Vec::new(),
             result: None,
+            shipped: None,
         }
     }
 }
@@ -109,6 +114,46 @@ impl DatasheetAssist {
     pub fn show(&mut self) {
         self.open = true;
         self.reveal = true;
+        if self.provider == Provider::Anthropic && self.model.trim().is_empty() {
+            self.model = self.default_model();
+        }
+    }
+
+    /// The shipped assistant data, read once.
+    fn shipped(&mut self) -> Result<&AssistLibrary, String> {
+        self.shipped
+            .get_or_insert_with(|| AssistLibrary::locate().map_err(|e| e.to_string()))
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    /// The shipped default model, or nothing when the library is unreadable
+    /// (Start then says why).
+    fn default_model(&mut self) -> String {
+        self.shipped()
+            .map(|s| s.default_model.clone())
+            .unwrap_or_default()
+    }
+
+    /// The model ids the shipped run profiles list, for the Messages API's
+    /// model choice.
+    fn listed_models(&mut self) -> Vec<(String, String)> {
+        let Ok(shipped) = self.shipped() else {
+            return Vec::new();
+        };
+        let mut models = Vec::new();
+        for name in shipped.built_in_names() {
+            for model in shipped
+                .built_in(name)
+                .map(|p| p.models.clone())
+                .unwrap_or_default()
+            {
+                if !models.iter().any(|(m, _): &(String, String)| *m == model) {
+                    models.push((model.clone(), model));
+                }
+            }
+        }
+        models
     }
 
     /// Take the background thread's messages.
@@ -230,11 +275,10 @@ impl DatasheetAssist {
         let before = self.provider;
         kit::choice_row(ui, "Provider", &mut self.provider, &providers);
         if self.provider != before {
-            let fresh = Self::default();
             match self.provider {
                 Provider::Anthropic => {
-                    self.endpoint = fresh.endpoint;
-                    self.model = fresh.model;
+                    self.endpoint = ANTHROPIC_BASE_URL.into();
+                    self.model = self.default_model();
                 }
                 Provider::OpenAiCompatible => {
                     self.endpoint = "http://localhost:11434/v1".into();
@@ -247,13 +291,7 @@ impl DatasheetAssist {
         );
         match self.provider {
             Provider::Anthropic => {
-                let models = [
-                    ("claude-opus-5-5".to_owned(), "Claude Opus 5.5".to_owned()),
-                    (
-                        "claude-sonnet-5-5".to_owned(),
-                        "Claude Sonnet 5.5".to_owned(),
-                    ),
-                ];
+                let models = self.listed_models();
                 kit::choice_row(ui, "Model", &mut self.model, &models);
             }
             Provider::OpenAiCompatible => {
@@ -312,14 +350,18 @@ impl DatasheetAssist {
         let folder = sparksmith_io::settings::UserDirs::from_env()
             .ok()
             .map(|dirs| run_profile::user_folder(&dirs.config));
-        let run_profile = run_profile::select(None, &profile.model, folder.as_deref())
-            .map_err(|e| e.to_string())?;
-        let config = RunConfig {
-            profile,
-            run_profile,
-            budget: Budget::default(),
-            policy,
+        let located;
+        let shipped = match &self.shipped {
+            Some(Ok(shipped)) => shipped,
+            Some(Err(why)) => return Err(why.clone()),
+            None => {
+                located = AssistLibrary::locate().map_err(|e| e.to_string())?;
+                &located
+            }
         };
+        let mut config =
+            RunConfig::new(shipped, profile, None, folder.as_deref()).map_err(|e| e.to_string())?;
+        config.policy = policy;
         let goal = Goal {
             name: self.name.trim().to_owned(),
             datasheets: self
